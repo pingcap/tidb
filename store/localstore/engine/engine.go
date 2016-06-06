@@ -13,6 +13,11 @@
 
 package engine
 
+import "github.com/juju/errors"
+
+// ErrNotFound indicates no key is found when trying Get or Seek an entry from DB.
+var ErrNotFound = errors.New("local engine: key not found")
+
 // Driver is the interface that must be implemented by a local storage db engine.
 type Driver interface {
 	// Open opens or creates a local storage DB.
@@ -20,52 +25,37 @@ type Driver interface {
 	Open(schema string) (DB, error)
 }
 
-// DB is the interface for local storage
+// MSeekResult is used to get multiple seek results.
+type MSeekResult struct {
+	Key   []byte
+	Value []byte
+	Err   error
+}
+
+// DB is the interface for local storage.
 type DB interface {
-	// Get the associated value with key
-	// return nil, nil if no value found
+	// Get gets the associated value with key, returns (nil, ErrNotFound) if no value found.
 	Get(key []byte) ([]byte, error)
-	// Getsnapshot generates a snapshot for current DB
-	GetSnapshot() (Snapshot, error)
-	// NewBatch creates a Batch for writing
+	// Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
+	// if such key is not found.
+	Seek(key []byte) ([]byte, []byte, error)
+	// SeekReverse searches the engine in backward order for the first key-value pair which key is less than the key
+	// in byte order, returns (nil, nil, ErrNotFound) if such key is not found. If key is nil, the last key is returned.
+	SeekReverse(key []byte) ([]byte, []byte, error)
+	// NewBatch creates a Batch for writing.
 	NewBatch() Batch
-	// Commit writes the changed data in Batch
+	// Commit writes the changed data in Batch.
 	Commit(b Batch) error
-	// Close closes database
+	// Close closes database.
 	Close() error
 }
 
-// Snapshot is the interface for local storage
-type Snapshot interface {
-	// Get the associated value with key in this snapshot
-	// return nil, nil if no value found
-	Get(key []byte) ([]byte, error)
-	// NewIterator creates an iterator, seeks the iterator to
-	// the first key >= startKey.
-	NewIterator(startKey []byte) Iterator
-	// Release releases the snapshot
-	Release()
-}
-
-// Iterator is the interface for local storage
-type Iterator interface {
-	// Next moves the iterator to the next key/value pair,
-	// returns true/false if the iterator is exhausted
-	Next() bool
-	// Key returns the current key of the key/value pair or nil
-	// if the iterator is done.
-	Key() []byte
-	// Values returns the current value of the key/value pair or nil
-	// if the iterator is done.
-	Value() []byte
-	// Release releases current iterator.
-	Release()
-}
-
-// Batch is the interface for local storage
+// Batch is the interface for local storage.
 type Batch interface {
-	// Put appends 'put operation' of the key/value to the batch
+	// Put appends 'put operation' of the key/value to the batch.
 	Put(key []byte, value []byte)
-	// Delete appends 'delete operation' of the key/value to the batch
+	// Delete appends 'delete operation' of the key/value to the batch.
 	Delete(key []byte)
+	// Len return length of the batch
+	Len() int
 }

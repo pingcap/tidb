@@ -18,15 +18,18 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -41,14 +44,11 @@ type testSuite struct {
 }
 
 func (ts *testSuite) SetUpSuite(c *C) {
-	table.TableFromMeta = tables.TableFromMeta
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Check(err, IsNil)
 	ts.store = store
 	ts.se, err = tidb.CreateSession(ts.store)
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute("CREATE DATABASE test")
 	c.Assert(err, IsNil)
 }
 
@@ -59,44 +59,82 @@ func (ts *testSuite) TestBasic(c *C) {
 	dom := sessionctx.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	c.Assert(tb.TableID(), Greater, int64(0))
-	c.Assert(tb.TableName().L, Equals, "t")
+	c.Assert(tb.Meta().ID, Greater, int64(0))
+	c.Assert(tb.Meta().Name.L, Equals, "t")
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), NotNil)
-	c.Assert(tb.FirstKey(), Not(Equals), "")
-	c.Assert(tb.IndexPrefix(), Not(Equals), "")
-	c.Assert(tb.KeyPrefix(), Not(Equals), "")
-	c.Assert(tb.FindIndexByColName("b"), NotNil)
+	c.Assert(string(tb.FirstKey()), Not(Equals), "")
+	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
+	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
+	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
 	autoid, err := tb.AllocAutoID()
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
-	rid, err := tb.AddRecord(ctx, []interface{}{1, "abc"})
+	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(rid, Greater, int64(0))
 	row, err := tb.Row(ctx, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
-	c.Assert(row[0].(int32), Equals, int32(1))
+	c.Assert(row[0].GetInt64(), Equals, int64(1))
 
-	_, err = tb.AddRecord(ctx, []interface{}{1, "aba"})
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"))
 	c.Assert(err, NotNil)
-	_, err = tb.AddRecord(ctx, []interface{}{2, "abc"})
+	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
 	c.Assert(err, NotNil)
 
-	c.Assert(tb.UpdateRecord(ctx, rid, []interface{}{1, "abc"}, []interface{}{1, "cba"}, []bool{false, true}), IsNil)
+	c.Assert(tb.UpdateRecord(ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), map[int]bool{0: false, 1: true}), IsNil)
 
-	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		return true, nil
 	})
 
-	c.Assert(tb.RemoveRowAllIndex(ctx, rid, []interface{}{1, "cba"}), IsNil)
+	indexCnt := func() int {
+		cnt, err2 := countEntriesWithPrefix(ctx, tb.IndexPrefix())
+		c.Assert(err2, IsNil)
+		return cnt
+	}
 
-	c.Assert(tb.RemoveRow(ctx, rid), IsNil)
+	// RowWithCols test
+	vals, err := tb.RowWithCols(ctx, 1, tb.Cols())
+	c.Assert(err, IsNil)
+	c.Assert(vals, HasLen, 2)
+	c.Assert(vals[0].GetInt64(), Equals, int64(1))
+	cols := []*table.Column{tb.Cols()[1]}
+	vals, err = tb.RowWithCols(ctx, 1, cols)
+	c.Assert(err, IsNil)
+	c.Assert(vals, HasLen, 1)
+	c.Assert(vals[0].GetBytes(), DeepEquals, []byte("cba"))
+
+	// Make sure there is index data in the storage.
+	c.Assert(indexCnt(), Greater, 0)
+	c.Assert(tb.RemoveRecord(ctx, rid, types.MakeDatums(1, "cba")), IsNil)
+	// Make sure index data is also removed after tb.RemoveRecord().
+	c.Assert(indexCnt(), Equals, 0)
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	c.Assert(err, IsNil)
+	c.Assert(indexCnt(), Greater, 0)
+	// Make sure index data is also removed after tb.Truncate().
 	c.Assert(tb.Truncate(ctx), IsNil)
+	c.Assert(indexCnt(), Equals, 0)
+
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
+}
+
+func countEntriesWithPrefix(ctx context.Context, prefix []byte) (int, error) {
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return 0, err
+	}
+	cnt := 0
+	err = util.ScanMetaWithPrefix(txn, prefix, func(k kv.Key, v []byte) bool {
+		cnt++
+		return true
+	})
+	return cnt, err
 }
 
 func (ts *testSuite) TestTypes(c *C) {
@@ -109,20 +147,124 @@ func (ts *testSuite) TestTypes(c *C) {
 	_, err = ts.se.Execute("insert test.t values (1, 2, 3, 4, '5', '6', '7', '10:10:10', null, 1.4)")
 	c.Assert(err, IsNil)
 	rs, err := ts.se.Execute("select * from test.t where c1 = 1")
-	row, err := rs[0].FirstRow()
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
+	row, err := rs[0].Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, NotNil)
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 
-	_, err = ts.se.Execute("CREATE TABLE test.t (c1 tinyint unsigned, c2 smallint unsigned, c3 int unsigned, c4 bigint unsigned, c5 double)")
+	_, err = ts.se.Execute("CREATE TABLE test.t (c1 tinyint unsigned, c2 smallint unsigned, c3 int unsigned, c4 bigint unsigned, c5 double, c6 bit(8))")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute("insert test.t values (1, 2, 3, 4, 5)")
+	_, err = ts.se.Execute("insert test.t values (1, 2, 3, 4, 5, 6)")
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute("select * from test.t where c1 = 1")
-	row, err = rs[0].FirstRow()
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
+	row, err = rs[0].Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, NotNil)
+	c.Assert(row.Data[5].GetMysqlBit(), Equals, mysql.Bit{Value: 6, Width: 8})
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
+
+	_, err = ts.se.Execute("CREATE TABLE test.t (c1 enum('a', 'b', 'c'))")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute("insert test.t values ('a'), (2), ('c')")
+	c.Assert(err, IsNil)
+	rs, err = ts.se.Execute("select c1 + 1 from test.t where c1 = 1")
+	c.Assert(err, IsNil)
+	row, err = rs[0].Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, NotNil)
+	c.Assert(row.Data[0].GetFloat64(), DeepEquals, float64(2))
+	_, err = ts.se.Execute("drop table test.t")
+	c.Assert(err, IsNil)
+}
+
+func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
+	_, err := ts.se.Execute("CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
+	c.Assert(err, IsNil)
+	ctx := ts.se.(context.Context)
+	dom := sessionctx.GetDomain(ctx)
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tb.Meta().ID, Greater, int64(0))
+	c.Assert(tb.Meta().Name.L, Equals, "t")
+	c.Assert(tb.Meta(), NotNil)
+	c.Assert(tb.Indices(), NotNil)
+	c.Assert(string(tb.FirstKey()), Not(Equals), "")
+	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
+	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
+	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
+
+	autoid, err := tb.AllocAutoID()
+	c.Assert(err, IsNil)
+	c.Assert(autoid, Greater, int64(0))
+
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, nil))
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ctx, types.MakeDatums(2, nil))
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute("drop table test.t")
+	c.Assert(err, IsNil)
+}
+
+func (ts *testSuite) TestRowKeyCodec(c *C) {
+	table := []struct {
+		tableID int64
+		h       int64
+		ID      int64
+	}{
+		{1, 1234567890, 0},
+		{2, 1, 0},
+		{3, -1, 0},
+		{4, -1, 1},
+	}
+
+	for _, t := range table {
+		b := tables.EncodeRecordKey(t.tableID, t.h, t.ID)
+		tableID, handle, columnID, err := tables.DecodeRecordKey(b)
+		c.Assert(err, IsNil)
+		c.Assert(tableID, Equals, t.tableID)
+		c.Assert(handle, Equals, t.h)
+		c.Assert(columnID, Equals, t.ID)
+
+		handle, err = tables.DecodeRecordKeyHandle(b)
+		c.Assert(err, IsNil)
+		c.Assert(handle, Equals, t.h)
+	}
+
+	// test error
+	tbl := []string{
+		"",
+		"x",
+		"t1",
+		"t12345678",
+		"t12345678_i",
+		"t12345678_r1",
+		"t12345678_r1234567",
+		"t12345678_r123456781",
+	}
+
+	for _, t := range tbl {
+		_, err := tables.DecodeRecordKeyHandle(kv.Key(t))
+		c.Assert(err, NotNil)
+	}
+}
+
+func (ts *testSuite) TestUnsignedPK(c *C) {
+	defer testleak.AfterTest(c)()
+	_, err := ts.se.Execute("CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
+	c.Assert(err, IsNil)
+	ctx := ts.se.(context.Context)
+	dom := sessionctx.GetDomain(ctx)
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
+	c.Assert(err, IsNil)
+
+	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	c.Assert(err, IsNil)
+	row, err := tb.Row(ctx, rid)
+	c.Assert(err, IsNil)
+	c.Assert(len(row), Equals, 2)
+	c.Assert(row[0].Kind(), Equals, types.KindUint64)
 }

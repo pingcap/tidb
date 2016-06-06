@@ -14,96 +14,114 @@
 package codec
 
 import (
-	"bytes"
+	"encoding/binary"
 	"runtime"
 	"unsafe"
 
 	"github.com/juju/errors"
 )
 
-// EncodeBytes encodes the slice value using an escape based encoding,
-// with the following rule:
-//  \x00 -> \x00\xFF
-//  \xFF -> \xFF\x00 if the first byte is \xFF
-// EncodeBytes will append \x00\x01 at the end of the encoded value to
-// indicate the termination.
+const (
+	encGroupSize = 8
+	encMarker    = byte(0xFF)
+	encPad       = byte(0x0)
+)
+
+var (
+	pads    = make([]byte, encGroupSize)
+	encPads = []byte{encPad}
+)
+
 // EncodeBytes guarantees the encoded value is in ascending order for comparison,
-// The encoded value is >= SmallestNoneNilValue and < InfiniteValue.
+// encoding with the following rule:
+//  [group1][marker1]...[groupN][markerN]
+//  group is 8 bytes slice which is padding with 0.
+//  marker is `0xFF - padding 0 count`
+// For example:
+//   [] -> [0, 0, 0, 0, 0, 0, 0, 0, 247]
+//   [1, 2, 3] -> [1, 2, 3, 0, 0, 0, 0, 0, 250]
+//   [1, 2, 3, 0] -> [1, 2, 3, 0, 0, 0, 0, 0, 251]
+//   [1, 2, 3, 4, 5, 6, 7, 8] -> [1, 2, 3, 4, 5, 6, 7, 8, 255, 0, 0, 0, 0, 0, 0, 0, 0, 247]
+// Refer: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format#memcomparable-format
 func EncodeBytes(b []byte, data []byte) []byte {
-	if len(data) > 0 && data[0] == 0xFF {
-		// we must escape 0xFF here to guarantee encoded value < InfiniteValue \xFF\xFF.
-		b = append(b, 0xFF, 0x00)
-		data = data[1:]
+	// Allocate more space to avoid unnecessary slice growing.
+	// Assume that the byte slice size is about `(len(data) / encGroupSize + 1) * (encGroupSize + 1)` bytes,
+	// that is `(len(data) / 8 + 1) * 9` in our implement.
+	dLen := len(data)
+	reallocSize := (dLen/encGroupSize + 1) * (encGroupSize + 1)
+	result := reallocBytes(b, reallocSize)
+	for idx := 0; idx <= dLen; idx += encGroupSize {
+		remain := dLen - idx
+		padCount := 0
+		if remain >= encGroupSize {
+			result = append(result, data[idx:idx+encGroupSize]...)
+		} else {
+			padCount = encGroupSize - remain
+			result = append(result, data[idx:]...)
+			result = append(result, pads[:padCount]...)
+		}
+
+		marker := encMarker - byte(padCount)
+		result = append(result, marker)
 	}
 
+	return result
+}
+
+func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
+	data := make([]byte, 0, len(b))
 	for {
-		// find 0x00 and escape it.
-		i := bytes.IndexByte(data, 0x00)
-		if i == -1 {
+		if len(b) < encGroupSize+1 {
+			return nil, nil, errors.New("insufficient bytes to decode value")
+		}
+
+		groupBytes := b[:encGroupSize+1]
+
+		group := groupBytes[:encGroupSize]
+		marker := groupBytes[encGroupSize]
+
+		var padCount byte
+		if reverse {
+			padCount = marker
+		} else {
+			padCount = encMarker - marker
+		}
+		if padCount > encGroupSize {
+			return nil, nil, errors.Errorf("invalid marker byte, group bytes %q", groupBytes)
+		}
+
+		realGroupSize := encGroupSize - padCount
+		data = append(data, group[:realGroupSize]...)
+		b = b[encGroupSize+1:]
+
+		if padCount != 0 {
+			var padByte = encPad
+			if reverse {
+				padByte = encMarker
+			}
+			// Check validity of padding bytes.
+			for _, v := range group[realGroupSize:] {
+				if v != padByte {
+					return nil, nil, errors.Errorf("invalid padding byte, group bytes %q", groupBytes)
+				}
+			}
 			break
 		}
-		b = append(b, data[:i]...)
-		b = append(b, 0x00, 0xFF)
-		data = data[i+1:]
 	}
-	b = append(b, data...)
-	return append(b, 0x00, 0x01)
+	if reverse {
+		reverseBytes(data)
+	}
+	return b, data, nil
 }
 
 // DecodeBytes decodes bytes which is encoded by EncodeBytes before,
 // returns the leftover bytes and decoded value if no error.
 func DecodeBytes(b []byte) ([]byte, []byte, error) {
-	return decodeBytes(b, 0xFF, 0x00, 0x01)
-}
-
-func decodeBytes(b []byte, escapeFirst byte, escape byte, term byte) ([]byte, []byte, error) {
-	if len(b) < 2 {
-		return nil, nil, errors.Errorf("insufficient bytes to decode value")
-	}
-
-	var r []byte
-
-	if b[0] == escapeFirst {
-		if b[1] != ^escapeFirst {
-			return nil, nil, errors.Errorf("invalid escape byte, must 0x%x, but 0x%x", ^escapeFirst, b[1])
-		}
-		r = append(r, escapeFirst)
-		b = b[2:]
-	}
-
-	for {
-		i := bytes.IndexByte(b, escape)
-		if i == -1 {
-			return nil, nil, errors.Errorf("invalid termination in bytes")
-		}
-
-		if i+1 >= len(b) {
-			return nil, nil, errors.Errorf("malformed escaped bytes")
-		}
-
-		if b[i+1] == term {
-			if r == nil {
-				r = b[:i]
-			} else {
-				r = append(r, b[:i]...)
-			}
-
-			return b[i+2:], r, nil
-		}
-
-		if b[i+1] != ^escape {
-			return nil, nil, errors.Errorf("invalid escape byte, must 0x%x, but got 0x%0x", ^escape, b[i+1])
-		}
-
-		r = append(r, b[:i]...)
-		r = append(r, escape)
-		b = b[i+2:]
-	}
+	return decodeBytes(b, false)
 }
 
 // EncodeBytesDesc first encodes bytes using EncodeBytes, then bitwise reverses
-// encoded value to guarentee the encoded value is in descending order for comparison,
-// The encoded value is >= SmallestNoneNilValue and < InfiniteValue.
+// encoded value to guarantee the encoded value is in descending order for comparison.
 func EncodeBytesDesc(b []byte, data []byte) []byte {
 	n := len(b)
 	b = EncodeBytes(b, data)
@@ -114,17 +132,28 @@ func EncodeBytesDesc(b []byte, data []byte) []byte {
 // DecodeBytesDesc decodes bytes which is encoded by EncodeBytesDesc before,
 // returns the leftover bytes and decoded value if no error.
 func DecodeBytesDesc(b []byte) ([]byte, []byte, error) {
-	var (
-		r   []byte
-		err error
-	)
-	b, r, err = decodeBytes(b, 0x00, 0xFF, ^byte(0x01))
+	return decodeBytes(b, true)
+}
+
+// EncodeCompactBytes joins bytes with its length into a byte slice. It is more
+// efficient in both space and time compare to EncodeBytes. Note that the encoded
+// result is not memcomparable.
+func EncodeCompactBytes(b []byte, data []byte) []byte {
+	b = reallocBytes(b, binary.MaxVarintLen64+len(data))
+	b = EncodeVarint(b, int64(len(data)))
+	return append(b, data...)
+}
+
+// DecodeCompactBytes decodes bytes which is encoded by EncodeCompactBytes before.
+func DecodeCompactBytes(b []byte) ([]byte, []byte, error) {
+	b, n, err := DecodeVarint(b)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-
-	reverseBytes(r)
-	return b, r, nil
+	if int64(len(b)) < n {
+		return nil, nil, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
+	}
+	return b[n:], b[:n], nil
 }
 
 // See https://golang.org/src/crypto/cipher/xor.go
@@ -159,4 +188,17 @@ func reverseBytes(b []byte) {
 	}
 
 	safeReverseBytes(b)
+}
+
+// like realloc.
+func reallocBytes(b []byte, n int) []byte {
+	newSize := len(b) + n
+	if cap(b) < newSize {
+		bs := make([]byte, len(b), newSize)
+		copy(bs, b)
+		return bs
+	}
+
+	// slice b has capability to store n bytes
+	return b
 }

@@ -25,9 +25,8 @@ import (
 )
 
 var (
-	_ engine.DB       = (*db)(nil)
-	_ engine.Batch    = (*leveldb.Batch)(nil)
-	_ engine.Snapshot = (*snapshot)(nil)
+	_ engine.DB    = (*db)(nil)
+	_ engine.Batch = (*leveldb.Batch)(nil)
 )
 
 var (
@@ -45,23 +44,39 @@ type db struct {
 func (d *db) Get(key []byte) ([]byte, error) {
 	v, err := d.DB.Get(key, nil)
 	if err == leveldb.ErrNotFound {
-		return nil, nil
+		return nil, errors.Trace(engine.ErrNotFound)
 	}
-
 	return v, err
-}
-
-func (d *db) GetSnapshot() (engine.Snapshot, error) {
-	s, err := d.DB.GetSnapshot()
-	if err != nil {
-		return nil, err
-	}
-	return &snapshot{s}, nil
 }
 
 func (d *db) NewBatch() engine.Batch {
 	b := p.Get().(*leveldb.Batch)
 	return b
+}
+
+func (d *db) Seek(startKey []byte) ([]byte, []byte, error) {
+	iter := d.DB.NewIterator(&util.Range{Start: startKey}, nil)
+	defer iter.Release()
+	if ok := iter.First(); !ok {
+		return nil, nil, errors.Trace(engine.ErrNotFound)
+	}
+	return iter.Key(), iter.Value(), nil
+}
+
+func (d *db) SeekReverse(key []byte) ([]byte, []byte, error) {
+	iter := d.DB.NewIterator(&util.Range{}, nil)
+	defer iter.Release()
+	if len(key) == 0 {
+		if ok := iter.Last(); !ok {
+			return nil, nil, engine.ErrNotFound
+		}
+		return iter.Key(), iter.Value(), nil
+	}
+	iter.Seek(key)
+	if ok := iter.Prev(); !ok {
+		return nil, nil, engine.ErrNotFound
+	}
+	return iter.Key(), iter.Value(), nil
 }
 
 func (d *db) Commit(b engine.Batch) error {
@@ -77,28 +92,6 @@ func (d *db) Commit(b engine.Batch) error {
 
 func (d *db) Close() error {
 	return d.DB.Close()
-}
-
-type snapshot struct {
-	*leveldb.Snapshot
-}
-
-func (s *snapshot) Get(key []byte) ([]byte, error) {
-	v, err := s.Snapshot.Get(key, nil)
-	if err == leveldb.ErrNotFound {
-		return nil, nil
-	}
-
-	return v, err
-}
-
-func (s *snapshot) NewIterator(startKey []byte) engine.Iterator {
-	it := s.Snapshot.NewIterator(&util.Range{Start: startKey}, nil)
-	return it
-}
-
-func (s *snapshot) Release() {
-	s.Snapshot.Release()
 }
 
 // Driver implements engine Driver.

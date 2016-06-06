@@ -13,50 +13,157 @@
 
 package kv
 
-// DecodeFn is a function that decode data after fetch from store.
-type DecodeFn func(raw interface{}) (interface{}, error)
+import (
+	"bytes"
+	"io"
+)
 
-// EncodeFn is a function that encode data before put into store
-type EncodeFn func(raw interface{}) (interface{}, error)
+// Transaction options
+const (
+	// PresumeKeyNotExists indicates that when dealing with a Get operation but failing to read data from cache,
+	// we presume that the key does not exist in Store. The actual existence will be checked before the
+	// transaction's commit.
+	// This option is an optimization for frequent checks during a transaction, e.g. batch inserts.
+	PresumeKeyNotExists Option = iota + 1
+	// PresumeKeyNotExistsError is the option key for error.
+	// When PresumeKeyNotExists is set and condition is not match, should throw the error.
+	PresumeKeyNotExistsError
+	// RetryAttempts is the number of txn retry attempt.
+	RetryAttempts
+)
+
+// Retriever is the interface wraps the basic Get and Seek methods.
+type Retriever interface {
+	// Get gets the value for key k from kv store.
+	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
+	Get(k Key) ([]byte, error)
+	// Seek creates an Iterator positioned on the first entry that k <= entry's key.
+	// If such entry is not found, it returns an invalid Iterator with no error.
+	// The Iterator must be Closed after use.
+	Seek(k Key) (Iterator, error)
+
+	// SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+	// The returned iterator will iterate from greater key to smaller key.
+	// If k is nil, the returned iterator will be positioned at the last key.
+	SeekReverse(k Key) (Iterator, error)
+}
+
+// Mutator is the interface wraps the basic Set and Delete methods.
+type Mutator interface {
+	// Set sets the value for key k as v into kv store.
+	// v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
+	Set(k Key, v []byte) error
+	// Delete removes the entry for key k from kv store.
+	Delete(k Key) error
+}
+
+// RetrieverMutator is the interface that groups Retriever and Mutator interfaces.
+type RetrieverMutator interface {
+	Retriever
+	Mutator
+}
+
+// MemBuffer is an in-memory kv collection. It should be released after use.
+type MemBuffer interface {
+	RetrieverMutator
+	// Release releases the buffer.
+	Release()
+}
 
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
 type Transaction interface {
-	// Get gets the value for key k from KV store.
-	Get(k []byte) ([]byte, error)
-	// Set sets the value for key k as v into KV store.
-	Set(k []byte, v []byte) error
-	// Seek searches for the entry with key k in KV store.
-	Seek(k []byte, fnKeyCmp func(key []byte) bool) (Iterator, error)
-	// Inc increases the value for key k in KV store by step.
-	Inc(k []byte, step int64) (int64, error)
-	// Deletes removes the entry for key k from KV store.
-	Delete(k []byte) error
-	// Commit commites the transaction operations to KV store.
+	RetrieverMutator
+	// Commit commits the transaction operations to KV store.
 	Commit() error
 	// Rollback undoes the transaction operations to KV store.
 	Rollback() error
-	// String implements Stringer.String() interface.
+	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
-	LockKeys(keys ...[]byte) error
+	LockKeys(keys ...Key) error
+	// SetOption sets an option with a value, when val is nil, uses the default
+	// value of this option.
+	SetOption(opt Option, val interface{})
+	// DelOption deletes an option.
+	DelOption(opt Option)
+	// IsReadOnly checks if the transaction has only performed read operations.
+	IsReadOnly() bool
+	// GetClient gets a client instance.
+	GetClient() Client
+	// StartTS returns the transaction start timestamp.
+	StartTS() uint64
+}
+
+// Client is used to send request to KV layer.
+type Client interface {
+	// Send sends request to KV layer, returns a Response.
+	Send(req *Request) Response
+
+	// SupportRequestType checks if reqType and subType is supported.
+	SupportRequestType(reqType, subType int64) bool
+}
+
+// ReqTypes.
+const (
+	ReqTypeSelect = 101
+	ReqTypeIndex  = 102
+
+	ReqSubTypeBasic = 0
+	ReqSubTypeDesc  = 10000
+)
+
+// KeyRange represents a range where StartKey <= key < EndKey.
+type KeyRange struct {
+	StartKey Key
+	EndKey   Key
+}
+
+// IsPoint checks if the key range represents a point.
+func (r *KeyRange) IsPoint() bool {
+	return bytes.Equal(r.StartKey.PrefixNext(), r.EndKey)
+}
+
+// Request represents a kv request.
+type Request struct {
+	// The request type.
+	Tp   int64
+	Data []byte
+	// Key Ranges
+	KeyRanges []KeyRange
+	// If KeepOrder is true, the response should be returned in order.
+	KeepOrder bool
+	// If desc is true, the request is sent in descending order.
+	Desc bool
+	// If concurrency is 1, it only sends the request to a single storage unit when
+	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
+	// sent to multiple storage units concurrently.
+	Concurrency int
+}
+
+// Response represents the response returned from KV layer.
+type Response interface {
+	// Next returns a resultSubset from a single storage unit.
+	// When full result set is returned, nil is returned.
+	Next() (resultSubset io.ReadCloser, err error)
+	// Close response.
+	Close() error
 }
 
 // Snapshot defines the interface for the snapshot fetched from KV store.
 type Snapshot interface {
-	// Get gets the value for key k from snapshot.
-	Get(k []byte) ([]byte, error)
-	// NewIterator gets a new iterator on the snapshot.
-	NewIterator(param interface{}) Iterator
+	Retriever
+	// BatchGet gets a batch of values from snapshot.
+	BatchGet(keys []Key) (map[string][]byte, error)
 	// Release releases the snapshot to store.
 	Release()
 }
 
-// Driver is the interface that must be implemented by a kv storage.
+// Driver is the interface that must be implemented by a KV storage.
 type Driver interface {
 	// Open returns a new Storage.
-	// The schema is the string for storage specific format.
-	Open(schema string) (Storage, error)
+	// The path is the string for storage specific format.
+	Open(path string) (Storage, error)
 }
 
 // Storage defines the interface for storage.
@@ -64,35 +171,25 @@ type Driver interface {
 type Storage interface {
 	// Begin transaction
 	Begin() (Transaction, error)
+	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
+	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
+	GetSnapshot(ver Version) (Snapshot, error)
 	// Close store
 	Close() error
 	// Storage's unique ID
 	UUID() string
+	// CurrentVersion returns current max committed version.
+	CurrentVersion() (Version, error)
 }
 
 // FnKeyCmp is the function for iterator the keys
-type FnKeyCmp func(key []byte) bool
+type FnKeyCmp func(key Key) bool
 
-// Iterator is the interface for a interator on KV store.
+// Iterator is the interface for a iterator on KV store.
 type Iterator interface {
-	Next(FnKeyCmp) (Iterator, error)
-	Value() []byte
-	Key() string
 	Valid() bool
+	Key() Key
+	Value() []byte
+	Next() error
 	Close()
-}
-
-// IndexIterator is the interface for iterator of index data on KV store.
-type IndexIterator interface {
-	Next() (k []interface{}, h int64, err error)
-	Close()
-}
-
-// Index is the interface for index data on KV store.
-type Index interface {
-	Create(txn Transaction, indexedValues []interface{}, h int64) error                          // supports insert into statement
-	Delete(txn Transaction, indexedValues []interface{}, h int64) error                          // supports delete from statement
-	Drop(txn Transaction) error                                                                  // supports drop table, drop index statements
-	Seek(txn Transaction, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) // supports where clause
-	SeekFirst(txn Transaction) (iter IndexIterator, err error)                                   // supports aggregate min / ascending order by
 }

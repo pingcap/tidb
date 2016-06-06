@@ -14,151 +14,206 @@
 package kv
 
 import (
-	"github.com/ngaut/pool"
-	"github.com/pingcap/tidb/util/errors2"
-	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/comparer"
-	"github.com/syndtr/goleveldb/leveldb/memdb"
-	"github.com/syndtr/goleveldb/leveldb/util"
+	"bytes"
+
+	"github.com/juju/errors"
 )
 
-// SetCondition is the type for condition consts.
-type SetCondition int
+// UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
+// Also, it provides some transaction related utilities.
+type UnionStore interface {
+	MemBuffer
+	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
+	// Lazy condition pairs should be checked before transaction commit.
+	CheckLazyConditionPairs() error
+	// WalkBuffer iterates all buffered kv pairs.
+	WalkBuffer(f func(k Key, v []byte) error) error
+	// SetOption sets an option with a value, when val is nil, uses the default
+	// value of this option.
+	SetOption(opt Option, val interface{})
+	// DelOption deletes an option.
+	DelOption(opt Option)
+}
 
-const (
-	// ConditionIfNotExist means the condition is not exist.
-	ConditionIfNotExist SetCondition = iota + 1
-	// ConditionIfEqual means the condition is equals.
-	ConditionIfEqual
-	// ConditionForceSet means the condition is force set.
-	ConditionForceSet
-)
+// Option is used for customizing kv store's behaviors during a transaction.
+type Option int
+
+// Options is an interface of a set of options. Each option is associated with a value.
+type Options interface {
+	// Get gets an option value.
+	Get(opt Option) (v interface{}, ok bool)
+}
 
 var (
-	p = pool.NewCache("memdb pool", 100, func() interface{} {
-		return memdb.New(comparer.DefaultComparer, 1*1024*1024)
+	p = newCache("memdb pool", 100, func() MemBuffer {
+		return NewMemDbBuffer()
 	})
 )
 
-// ConditionValue is a data structure used to store current stored data and data verification condition.
-type ConditionValue struct {
-	OriginValue []byte
-	Condition   SetCondition
+// conditionPair is used to store lazy check condition.
+// If condition not match (value is not equal as expected one), returns err.
+type conditionPair struct {
+	key   Key
+	value []byte
+	err   error
 }
 
-// MakeCondition builds a new ConditionValue.
-func MakeCondition(originValue []byte) *ConditionValue {
-	cv := &ConditionValue{
-		OriginValue: originValue,
-		Condition:   ConditionIfEqual,
-	}
-	if originValue == nil {
-		cv.Condition = ConditionIfNotExist
-	}
-	return cv
-}
-
-// IsErrNotFound checks if err is a kind of NotFound error.
-func IsErrNotFound(err error) bool {
-	if errors2.ErrorEqual(err, leveldb.ErrNotFound) || errors2.ErrorEqual(err, ErrNotExist) {
-		return true
-	}
-
-	return false
-}
-
-// UnionStore is a implement of Store which contains a buffer for update.
-type UnionStore struct {
-	Dirty    *memdb.DB // updates are buffered in memory
-	Snapshot Snapshot  // for read
+// UnionStore is an in-memory Store which contains a buffer for write and a
+// snapshot for read.
+type unionStore struct {
+	*BufferStore
+	snapshot           Snapshot                    // for read
+	lazyConditionPairs map[string](*conditionPair) // for delay check
+	opts               options
 }
 
 // NewUnionStore builds a new UnionStore.
-func NewUnionStore(snapshot Snapshot) (UnionStore, error) {
-	dirty := p.Get().(*memdb.DB)
-	return UnionStore{
-		Dirty:    dirty,
-		Snapshot: snapshot,
-	}, nil
+func NewUnionStore(snapshot Snapshot) UnionStore {
+	return &unionStore{
+		BufferStore:        NewBufferStore(snapshot),
+		snapshot:           snapshot,
+		lazyConditionPairs: make(map[string](*conditionPair)),
+		opts:               make(map[Option]interface{}),
+	}
 }
 
-// Get implements the Store Get interface.
-func (us *UnionStore) Get(key []byte) (value []byte, err error) {
-	// Get from update records frist
-	value, err = us.Dirty.Get(key)
-	if IsErrNotFound(err) {
-		// Try get from snapshot
-		return us.Snapshot.Get(key)
-	}
+type lazyMemBuffer struct {
+	mb MemBuffer
+}
 
-	if err != nil {
-		return nil, err
-	}
-
-	if len(value) == 0 { // Deleted marker
+func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
+	if lmb.mb == nil {
 		return nil, ErrNotExist
 	}
 
-	return value, nil
+	return lmb.mb.Get(k)
 }
 
-// Set implements the Store Set interface.
-func (us *UnionStore) Set(key []byte, value []byte) error {
-	return us.Dirty.Put(key, value)
+func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
+	if lmb.mb == nil {
+		lmb.mb = p.get()
+	}
+
+	return lmb.mb.Set(key, value)
 }
 
-// levelDBSnapshot implements the Snapshot interface.
-type levelDBSnapshot struct {
-	*leveldb.Snapshot
+func (lmb *lazyMemBuffer) Delete(k Key) error {
+	if lmb.mb == nil {
+		lmb.mb = p.get()
+	}
+
+	return lmb.mb.Delete(k)
 }
 
-// Get implements the Snapshot Get interface.
-func (s *levelDBSnapshot) Get(k []byte) ([]byte, error) {
-	return s.Snapshot.Get(k, nil)
+func (lmb *lazyMemBuffer) Seek(k Key) (Iterator, error) {
+	if lmb.mb == nil {
+		lmb.mb = p.get()
+	}
+
+	return lmb.mb.Seek(k)
 }
 
-// NewIterator implements the Snapshot NewIterator interface.
-func (s *levelDBSnapshot) NewIterator(param interface{}) Iterator {
-	return nil
+func (lmb *lazyMemBuffer) SeekReverse(k Key) (Iterator, error) {
+	if lmb.mb == nil {
+		lmb.mb = p.get()
+	}
+	return lmb.mb.SeekReverse(k)
 }
 
-// Seek implements the Snapshot Seek interface.
-func (us *UnionStore) Seek(key []byte, txn Transaction) (Iterator, error) {
-	snapshotIt := us.Snapshot.NewIterator(key)
-	dirtyIt := us.Dirty.NewIterator(&util.Range{Start: key})
-	it := newUnionIter(dirtyIt, snapshotIt)
-	return it, nil
+func (lmb *lazyMemBuffer) Release() {
+	if lmb.mb == nil {
+		return
+	}
+
+	lmb.mb.Release()
+
+	p.put(lmb.mb)
+	lmb.mb = nil
 }
 
-// Delete implements the Store Delete interface.
-func (us *UnionStore) Delete(k []byte) error {
-	// Mark as deleted
-	val, err := us.Dirty.Get(k)
-	if err != nil {
-		if !IsErrNotFound(err) { // something wrong
-			return err
+// Get implements the Retriever interface.
+func (us *unionStore) Get(k Key) ([]byte, error) {
+	v, err := us.MemBuffer.Get(k)
+	if IsErrNotFound(err) {
+		if _, ok := us.opts.Get(PresumeKeyNotExists); ok {
+			e, ok := us.opts.Get(PresumeKeyNotExistsError)
+			if ok && e != nil {
+				us.markLazyConditionPair(k, nil, e.(error))
+			} else {
+				us.markLazyConditionPair(k, nil, ErrKeyExists)
+			}
+			return nil, errors.Trace(ErrNotExist)
 		}
+	}
+	if IsErrNotFound(err) {
+		v, err = us.BufferStore.r.Get(k)
+	}
+	if err != nil {
+		return v, errors.Trace(err)
+	}
+	if len(v) == 0 {
+		return nil, errors.Trace(ErrNotExist)
+	}
+	return v, nil
+}
 
-		// miss in dirty
-		val, err = us.Snapshot.Get(k)
-		if err != nil {
-			if IsErrNotFound(err) {
-				return ErrNotExist
+// markLazyConditionPair marks a kv pair for later check.
+// If condition not match, should return e as error.
+func (us *unionStore) markLazyConditionPair(k Key, v []byte, e error) {
+	us.lazyConditionPairs[string(k)] = &conditionPair{
+		key:   k.Clone(),
+		value: v,
+		err:   e,
+	}
+}
+
+// CheckLazyConditionPairs implements the UnionStore interface.
+func (us *unionStore) CheckLazyConditionPairs() error {
+	if len(us.lazyConditionPairs) == 0 {
+		return nil
+	}
+	keys := make([]Key, 0, len(us.lazyConditionPairs))
+	for _, v := range us.lazyConditionPairs {
+		keys = append(keys, v.key)
+	}
+	values, err := us.snapshot.BatchGet(keys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for k, v := range us.lazyConditionPairs {
+		if len(v.value) == 0 {
+			if _, exist := values[k]; exist {
+				return errors.Trace(v.err)
+			}
+		} else {
+			if bytes.Compare(values[k], v.value) != 0 {
+				return errors.Trace(ErrLazyConditionPairsNotMatch)
 			}
 		}
 	}
-
-	if len(val) == 0 { // deleted marker, already deleted
-		return ErrNotExist
-	}
-
-	return us.Dirty.Put(k, nil)
+	return nil
 }
 
-// Close implements the Store Close interface.
-func (us *UnionStore) Close() error {
-	us.Snapshot.Release()
-	us.Dirty.Reset()
-	p.Put(us.Dirty)
-	return nil
+// SetOption implements the UnionStore SetOption interface.
+func (us *unionStore) SetOption(opt Option, val interface{}) {
+	us.opts[opt] = val
+}
+
+// DelOption implements the UnionStore DelOption interface.
+func (us *unionStore) DelOption(opt Option) {
+	delete(us.opts, opt)
+}
+
+// Release implements the UnionStore Release interface.
+func (us *unionStore) Release() {
+	us.snapshot.Release()
+	us.BufferStore.Release()
+}
+
+type options map[Option]interface{}
+
+func (opts options) Get(opt Option) (interface{}, bool) {
+	v, ok := opts[opt]
+	return v, ok
 }

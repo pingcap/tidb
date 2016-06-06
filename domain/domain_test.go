@@ -14,12 +14,17 @@
 package domain
 
 import (
+	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 func TestT(t *testing.T) {
@@ -37,15 +42,37 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	dom, err := NewDomain(store)
+	ctx := mock.NewContext()
+
+	dom, err := NewDomain(store, 0)
 	c.Assert(err, IsNil)
 	store = dom.Store()
 	dd := dom.DDL()
 	c.Assert(dd, NotNil)
-	err = dd.CreateSchema(nil, model.NewCIStr("aaa"))
+	cs := &ast.CharsetOpt{
+		Chs: "utf8",
+		Col: "utf8_bin",
+	}
+	err = dd.CreateSchema(ctx, model.NewCIStr("aaa"), cs)
 	c.Assert(err, IsNil)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
-	dom, err = NewDomain(store)
+	dom, err = NewDomain(store, 0)
 	c.Assert(err, IsNil)
+
+	dom.SetLease(10 * time.Second)
+
+	m, err := dom.Stats()
+	c.Assert(err, IsNil)
+	c.Assert(m[ddlLastReloadSchemaTS], GreaterEqual, int64(0))
+
+	c.Assert(dom.GetScope("dummy_status"), Equals, variable.DefaultScopeFlag)
+
+	dom.SetLease(10 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
+	atomic.StoreInt64(&dom.lastLeaseTS, 0)
+	dom.tryReload()
+
+	store.Close()
+	time.Sleep(1 * time.Second)
 }

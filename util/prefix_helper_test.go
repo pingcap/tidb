@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 const (
@@ -110,62 +110,39 @@ func (c *MockContext) fillTxn() error {
 	return nil
 }
 
-func (c *MockContext) FinishTxn(rollback bool) error {
+func (c *MockContext) CommitTxn() error {
 	if c.txn == nil {
 		return nil
 	}
-
 	return c.txn.Commit()
 }
 
 func (s *testPrefixSuite) TestPrefix(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := &MockContext{10000000, make(map[fmt.Stringer]interface{}), s.s, nil}
 	ctx.fillTxn()
-	err := DelKeyWithPrefix(ctx, string(encodeInt(ctx.prefix)))
+	txn, err := ctx.GetTxn(false)
 	c.Assert(err, IsNil)
-	err = ctx.FinishTxn(false)
+	err = DelKeyWithPrefix(txn, encodeInt(ctx.prefix))
+	c.Assert(err, IsNil)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
-	txn, err := s.s.Begin()
+	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	str := "key100jfowi878230"
-	err = txn.Set([]byte(str), []byte("val32dfaskli384757^*&%^"))
+	k := []byte("key100jfowi878230")
+	err = txn.Set(k, []byte("val32dfaskli384757^*&%^"))
 	c.Assert(err, IsNil)
-	err = ScanMetaWithPrefix(txn, str, func([]byte, []byte) bool { return true })
+	err = ScanMetaWithPrefix(txn, k, func(kv.Key, []byte) bool {
+		return true
+	})
 	c.Assert(err, IsNil)
-	c.Assert(txn.Commit(), IsNil)
-}
-
-func (s *testPrefixSuite) TestCode(c *C) {
-	table := []struct {
-		prefix string
-		h      int64
-		ID     int64
-	}{
-		{"123abc##!@#((_)((**&&^^%$", 1234567890, 0},
-		{"", 1, 0},
-		{"", -1, 0},
-		{"", -1, 1},
-	}
-
-	for _, t := range table {
-		b := EncodeRecordKey(t.prefix, t.h, t.ID)
-		h, err := DecodeHandleFromRowKey(string(b))
-		c.Assert(err, IsNil)
-		c.Assert(h, Equals, t.h)
-	}
-
-	b1 := EncodeRecordKey("aa", 1, 0)
-	b2 := EncodeRecordKey("aa", 1, 1)
-	c.Logf("%#v, %#v", b2, b1)
-	raw, err := codec.StripEnd(b1)
+	err = txn.Commit()
 	c.Assert(err, IsNil)
-	f := hasPrefix(raw)
-	has := f(b2)
-	c.Assert(has, IsTrue)
 }
 
 func (s *testPrefixSuite) TestPrefixFilter(c *C) {
+	defer testleak.AfterTest(c)()
 	rowKey := []byte("test@#$%l(le[0]..prefix) 2uio")
 	rowKey[8] = 0x00
 	rowKey[9] = 0x00

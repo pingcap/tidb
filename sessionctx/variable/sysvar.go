@@ -13,21 +13,27 @@
 
 package variable
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
+)
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
 type ScopeFlag uint8
 
 const (
 	// ScopeNone means the system variable can not be changed dynamically.
-	ScopeNone ScopeFlag = iota << 0
+	ScopeNone ScopeFlag = 0
 	// ScopeGlobal means the system variable can be changed globally.
-	ScopeGlobal
+	ScopeGlobal ScopeFlag = 1 << 0
 	// ScopeSession means the system variable can only be changed in current session.
-	ScopeSession
+	ScopeSession ScopeFlag = 1 << 1
 )
 
-// SysVar is for system variable
+// SysVar is for system variable.
 type SysVar struct {
 	// Scope is for whether can be changed or not
 	Scope ScopeFlag
@@ -39,22 +45,38 @@ type SysVar struct {
 	Value string
 }
 
-// Global sys vars map
+// SysVars is global sys vars map.
 var SysVars map[string]*SysVar
 
-// GetSysVar returns the sysvar value for the given name
-// TODO: later we will get global sys vars from KV storage,
-// so this function will be removed later, maybe.
+// GetSysVar returns sys var info for name as key.
 func GetSysVar(name string) *SysVar {
 	name = strings.ToLower(name)
 	return SysVars[name]
 }
+
+// Variable error codes.
+const (
+	CodeUnknownStatusVar terror.ErrCode = 1
+	CodeUnknownSystemVar terror.ErrCode = 1193
+)
+
+// Variable errors
+var (
+	UnknownStatusVar = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable")
+)
 
 func init() {
 	SysVars = make(map[string]*SysVar)
 	for _, v := range defaultSysVars {
 		SysVars[v.Name] = v
 	}
+
+	// Register terror to mysql error map.
+	mySQLErrCodes := map[terror.ErrCode]uint16{
+		CodeUnknownSystemVar: mysql.ErrUnknownSystemVariable,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
 
 // we only support MySQL now
@@ -99,7 +121,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "skip_name_resolve", "OFF"},
 	{ScopeNone, "performance_schema_max_file_handles", "32768"},
 	{ScopeSession, "transaction_allow_batching", ""},
-	{ScopeGlobal | ScopeSession, "sql_mode", "NO_ENGINE_SUBSTITUTION"},
+	{ScopeGlobal | ScopeSession, "sql_mode", "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"},
 	{ScopeNone, "performance_schema_max_statement_classes", "168"},
 	{ScopeGlobal, "server_id", "0"},
 	{ScopeGlobal, "innodb_flushing_avg_loops", "30"},
@@ -558,4 +580,52 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "min_examined_row_limit", "0"},
 	{ScopeGlobal, "sync_frm", "ON"},
 	{ScopeGlobal, "innodb_online_alter_log_max_size", "134217728"},
+}
+
+// SetNamesVariables is the system variable names related to set names statements.
+var SetNamesVariables = []string{
+	"character_set_client",
+	"character_set_connection",
+	"character_set_results",
+}
+
+const (
+	// CollationConnection is the name for collation_connection system variable.
+	CollationConnection = "collation_connection"
+	// CharsetDatabase is the name for charactor_set_database system variable.
+	CharsetDatabase = "character_set_database"
+	// CollationDatabase is the name for collation_database system variable.
+	CollationDatabase = "collation_database"
+)
+
+// GlobalVarAccessor is the interface for accessing global scope system and status variables.
+type GlobalVarAccessor interface {
+	// GetGlobalSysVar gets the global system variable value for name.
+	GetGlobalSysVar(ctx context.Context, name string) (string, error)
+	// SetGlobalSysVar sets the global system variable name to value.
+	SetGlobalSysVar(ctx context.Context, name string, value string) error
+}
+
+// globalSysVarAccessorKeyType is a dummy type to avoid naming collision in context.
+type globalSysVarAccessorKeyType int
+
+// String defines a Stringer function for debugging and pretty printing.
+func (k globalSysVarAccessorKeyType) String() string {
+	return "global_sysvar_accessor"
+}
+
+const accessorKey globalSysVarAccessorKeyType = 0
+
+// BindGlobalVarAccessor binds global var accessor to context.
+func BindGlobalVarAccessor(ctx context.Context, accessor GlobalVarAccessor) {
+	ctx.SetValue(accessorKey, accessor)
+}
+
+// GetGlobalVarAccessor gets accessor from ctx.
+func GetGlobalVarAccessor(ctx context.Context) GlobalVarAccessor {
+	v, ok := ctx.Value(accessorKey).(GlobalVarAccessor)
+	if !ok {
+		panic("Miss global sysvar accessor")
+	}
+	return v
 }

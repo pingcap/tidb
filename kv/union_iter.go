@@ -13,31 +13,28 @@
 
 package kv
 
-import (
-	"bytes"
-
-	"github.com/ngaut/log"
-	"github.com/syndtr/goleveldb/leveldb/iterator"
-)
+import "github.com/ngaut/log"
 
 // UnionIter is the iterator on an UnionStore.
 type UnionIter struct {
-	dirtyIt       iterator.Iterator
-	snapshotIt    Iterator
-	curIsDirty    bool
+	dirtyIt    Iterator
+	snapshotIt Iterator
+
 	dirtyValid    bool
 	snapshotValid bool
 
-	isValid bool
+	curIsDirty bool
+	isValid    bool
+	reverse    bool
 }
 
-func newUnionIter(dirtyIt iterator.Iterator, snapshotIt Iterator) *UnionIter {
+func newUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) *UnionIter {
 	it := &UnionIter{
-		dirtyIt:    dirtyIt,
-		snapshotIt: snapshotIt,
-		// leveldb use next for checking valid...
-		dirtyValid:    dirtyIt.Next(),
+		dirtyIt:       dirtyIt,
+		snapshotIt:    snapshotIt,
+		dirtyValid:    dirtyIt.Valid(),
 		snapshotValid: snapshotIt.Valid(),
+		reverse:       reverse,
 	}
 	it.updateCur()
 	return it
@@ -45,12 +42,13 @@ func newUnionIter(dirtyIt iterator.Iterator, snapshotIt Iterator) *UnionIter {
 
 // Go next and update valid status.
 func (iter *UnionIter) dirtyNext() {
-	iter.dirtyValid = iter.dirtyIt.Next()
+	iter.dirtyIt.Next()
+	iter.dirtyValid = iter.dirtyIt.Valid()
 }
 
 // Go next and update valid status.
 func (iter *UnionIter) snapshotNext() {
-	iter.snapshotIt, _ = iter.snapshotIt.Next(nil)
+	iter.snapshotIt.Next()
 	iter.snapshotValid = iter.snapshotIt.Valid()
 }
 
@@ -79,13 +77,16 @@ func (iter *UnionIter) updateCur() {
 
 		// both valid
 		if iter.snapshotValid && iter.dirtyValid {
-			snapshotKey := []byte(iter.snapshotIt.Key())
+			snapshotKey := iter.snapshotIt.Key()
 			dirtyKey := iter.dirtyIt.Key()
-			cmp := bytes.Compare(dirtyKey, snapshotKey)
+			cmp := dirtyKey.Cmp(snapshotKey)
+			if iter.reverse {
+				cmp = -cmp
+			}
 			// if equal, means both have value
 			if cmp == 0 {
 				if len(iter.dirtyIt.Value()) == 0 {
-					// snapshot has a record, but trx says we have deleted it
+					// snapshot has a record, but txn says we have deleted it
 					// just go next
 					iter.dirtyNext()
 					iter.snapshotNext()
@@ -102,7 +103,7 @@ func (iter *UnionIter) updateCur() {
 			} else {
 				// record from dirty comes first
 				if len(iter.dirtyIt.Value()) == 0 {
-					log.Warnf("delete a record not exists? k = %s", string(iter.dirtyIt.Key()))
+					log.Warnf("[kv] delete a record not exists? k = %q", iter.dirtyIt.Key())
 					// jump over this deletion
 					iter.dirtyNext()
 					continue
@@ -115,31 +116,31 @@ func (iter *UnionIter) updateCur() {
 }
 
 // Next implements the Iterator Next interface.
-func (iter *UnionIter) Next(f FnKeyCmp) (Iterator, error) {
-	if iter.curIsDirty == false {
+func (iter *UnionIter) Next() error {
+	if !iter.curIsDirty {
 		iter.snapshotNext()
 	} else {
 		iter.dirtyNext()
 	}
 	iter.updateCur()
-	return iter, nil
+	return nil
 }
 
 // Value implements the Iterator Value interface.
 // Multi columns
 func (iter *UnionIter) Value() []byte {
-	if iter.curIsDirty == false {
+	if !iter.curIsDirty {
 		return iter.snapshotIt.Value()
 	}
 	return iter.dirtyIt.Value()
 }
 
 // Key implements the Iterator Key interface.
-func (iter *UnionIter) Key() string {
-	if iter.curIsDirty == false {
-		return string(DecodeKey([]byte(iter.snapshotIt.Key())))
+func (iter *UnionIter) Key() Key {
+	if !iter.curIsDirty {
+		return iter.snapshotIt.Key()
 	}
-	return string(DecodeKey(iter.dirtyIt.Key()))
+	return iter.dirtyIt.Key()
 }
 
 // Valid implements the Iterator Valid interface.
@@ -154,7 +155,7 @@ func (iter *UnionIter) Close() {
 		iter.snapshotIt = nil
 	}
 	if iter.dirtyIt != nil {
-		iter.dirtyIt.Release()
+		iter.dirtyIt.Close()
 		iter.dirtyIt = nil
 	}
 }

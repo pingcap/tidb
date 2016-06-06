@@ -17,10 +17,10 @@ import (
 	"os"
 	"path"
 
+	"github.com/boltdb/bolt"
 	"github.com/juju/errors"
-	"github.com/ngaut/bolt"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/bytes"
 )
 
 var (
@@ -28,7 +28,7 @@ var (
 )
 
 var (
-	bucketName = []byte("tidb_bucket")
+	bucketName = []byte("tidb")
 )
 
 type db struct {
@@ -42,23 +42,66 @@ func (d *db) Get(key []byte) ([]byte, error) {
 		b := tx.Bucket(bucketName)
 		v := b.Get(key)
 		if v == nil {
-			return nil
+			return errors.Trace(engine.ErrNotFound)
 		}
-
-		value = append([]byte(nil), v...)
-
+		value = bytes.CloneBytes(v)
 		return nil
 	})
 
 	return value, errors.Trace(err)
 }
 
-func (d *db) GetSnapshot() (engine.Snapshot, error) {
-	tx, err := d.DB.Begin(false)
+func (d *db) Seek(startKey []byte) ([]byte, []byte, error) {
+	var key, value []byte
+	err := d.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		c := b.Cursor()
+		var k, v []byte
+		if startKey == nil {
+			k, v = c.First()
+		} else {
+			k, v = c.Seek(startKey)
+		}
+		if k != nil {
+			key, value = bytes.CloneBytes(k), bytes.CloneBytes(v)
+		}
+		return nil
+	})
+
 	if err != nil {
-		return nil, err
+		return nil, nil, errors.Trace(err)
 	}
-	return &snapshot{tx}, nil
+	if key == nil {
+		return nil, nil, errors.Trace(engine.ErrNotFound)
+	}
+	return key, value, nil
+}
+
+func (d *db) SeekReverse(startKey []byte) ([]byte, []byte, error) {
+	var key, value []byte
+	err := d.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		c := b.Cursor()
+		var k, v []byte
+		if startKey == nil {
+			k, v = c.Last()
+		} else {
+			c.Seek(startKey)
+			k, v = c.Prev()
+		}
+		if k != nil {
+			key, value = bytes.CloneBytes(k), bytes.CloneBytes(v)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if key == nil {
+		return nil, nil, errors.Trace(engine.ErrNotFound)
+	}
+	return key, value, nil
 }
 
 func (d *db) NewBatch() engine.Batch {
@@ -72,16 +115,17 @@ func (d *db) Commit(b engine.Batch) error {
 	}
 	err := d.DB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketName)
-		var err error
-		for _, w := range bt.Writes {
-			if w.Value != nil {
-				err = b.Put(w.Key, w.Value)
+		// err1 is used for passing `go tool vet --shadow` check.
+		var err1 error
+		for _, w := range bt.writes {
+			if !w.isDelete {
+				err1 = b.Put(w.key, w.value)
 			} else {
-				err = b.Delete(w.Key)
+				err1 = b.Delete(w.key)
 			}
 
-			if err != nil {
-				return errors.Trace(err)
+			if err1 != nil {
+				return errors.Trace(err1)
 			}
 		}
 
@@ -94,91 +138,35 @@ func (d *db) Close() error {
 	return d.DB.Close()
 }
 
-type snapshot struct {
-	*bolt.Tx
-}
-
-func (s *snapshot) Get(key []byte) ([]byte, error) {
-	b := s.Tx.Bucket(bucketName)
-	v := b.Get(key)
-	if v == nil {
-		return nil, nil
-	}
-
-	value := append([]byte(nil), v...)
-
-	return value, nil
-}
-
-func (s *snapshot) NewIterator(startKey []byte) engine.Iterator {
-	return &iterator{tx: s.Tx, key: startKey}
-}
-
-func (s *snapshot) Release() {
-	err := s.Tx.Rollback()
-	if err != nil {
-		log.Errorf("commit err %v", err)
-	}
-}
-
-type iterator struct {
-	tx *bolt.Tx
-	*bolt.Cursor
-
-	key   []byte
-	value []byte
-}
-
-func (i *iterator) Next() bool {
-	if i.Cursor == nil {
-		i.Cursor = i.tx.Bucket(bucketName).Cursor()
-		if i.key == nil {
-			i.key, i.value = i.Cursor.First()
-		} else {
-			i.key, i.value = i.Cursor.Seek(i.key)
-		}
-	} else {
-		i.key, i.value = i.Cursor.Next()
-	}
-
-	return i.key != nil
-}
-
-func (i *iterator) Key() []byte {
-	return i.key
-}
-
-func (i *iterator) Value() []byte {
-	return i.value
-}
-
-func (i *iterator) Release() {
-
-}
-
 type write struct {
-	Key   []byte
-	Value []byte
+	key      []byte
+	value    []byte
+	isDelete bool
 }
 
 type batch struct {
-	Writes []write
+	writes []write
 }
 
 func (b *batch) Put(key []byte, value []byte) {
 	w := write{
-		Key:   append([]byte(nil), key...),
-		Value: append([]byte(nil), value...),
+		key:   append([]byte(nil), key...),
+		value: append([]byte(nil), value...),
 	}
-	b.Writes = append(b.Writes, w)
+	b.writes = append(b.writes, w)
 }
 
 func (b *batch) Delete(key []byte) {
 	w := write{
-		Key:   append([]byte(nil), key...),
-		Value: nil,
+		key:      append([]byte(nil), key...),
+		value:    nil,
+		isDelete: true,
 	}
-	b.Writes = append(b.Writes, w)
+	b.writes = append(b.writes, w)
+}
+
+func (b *batch) Len() int {
+	return len(b.writes)
 }
 
 // Driver implements engine Driver.

@@ -17,8 +17,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/boltdb/bolt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -33,7 +35,7 @@ type testSuite struct {
 
 const testPath = "/tmp/test-tidb-boltdb"
 
-func (s *testSuite) SetUpSuite(c *C) {
+func (s *testSuite) SetUpTest(c *C) {
 	var (
 		d   Driver
 		err error
@@ -42,12 +44,61 @@ func (s *testSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TearDownSuite(c *C) {
+func (s *testSuite) TearDownTest(c *C) {
 	s.db.Close()
 	os.Remove(testPath)
 }
 
-func (s *testSuite) TestDB(c *C) {
+func (s *testSuite) TestPutNilAndDelete(c *C) {
+	defer testleak.AfterTest(c)()
+	d := s.db
+	rawDB := d.(*db).DB
+	// nil as value
+	b := d.NewBatch()
+	b.Put([]byte("aa"), nil)
+	err := d.Commit(b)
+	c.Assert(err, IsNil)
+
+	v, err := d.Get([]byte("aa"))
+	c.Assert(err, IsNil)
+	c.Assert(len(v), Equals, 0)
+
+	found := false
+	rawDB.View(func(tx *bolt.Tx) error {
+		b1 := tx.Bucket(bucketName)
+		c := b1.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			if string(k) == "aa" {
+				found = true
+			}
+		}
+		return nil
+	})
+	c.Assert(found, Equals, true)
+
+	// real delete
+	b = d.NewBatch()
+	b.Delete([]byte("aa"))
+	err = d.Commit(b)
+	c.Assert(err, IsNil)
+
+	found = false
+	rawDB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		c := b.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			if string(k) == "aa" {
+				found = true
+			}
+
+		}
+		return nil
+	})
+	c.Assert(found, Equals, false)
+}
+
+func (s *testSuite) TestGetSet(c *C) {
+	defer testleak.AfterTest(c)()
 	db := s.db
 
 	b := db.NewBatch()
@@ -59,37 +110,83 @@ func (s *testSuite) TestDB(c *C) {
 	c.Assert(err, IsNil)
 
 	v, err := db.Get([]byte("c"))
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 	c.Assert(v, IsNil)
 
 	v, err = db.Get([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, []byte("1"))
+}
 
-	snap, err := db.GetSnapshot()
+func (s *testSuite) TestSeek(c *C) {
+	defer testleak.AfterTest(c)()
+	b := s.db.NewBatch()
+	b.Put([]byte("a"), []byte("1"))
+	b.Put([]byte("b"), []byte("2"))
+	err := s.db.Commit(b)
 	c.Assert(err, IsNil)
 
-	v, err = snap.Get([]byte("a"))
+	k, v, err := s.db.Seek(nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, []byte("1"))
+	c.Assert(k, BytesEquals, []byte("a"))
+	c.Assert(v, BytesEquals, []byte("1"))
 
-	v, err = snap.Get([]byte("c"))
+	k, v, err = s.db.Seek([]byte("a"))
 	c.Assert(err, IsNil)
+	c.Assert(k, BytesEquals, []byte("a"))
+	c.Assert(v, BytesEquals, []byte("1"))
+
+	k, v, err = s.db.Seek([]byte("b"))
+	c.Assert(err, IsNil)
+	c.Assert(k, BytesEquals, []byte("b"))
+	c.Assert(v, BytesEquals, []byte("2"))
+
+	k, v, err = s.db.Seek([]byte("a1"))
+	c.Assert(err, IsNil)
+	c.Assert(k, BytesEquals, []byte("b"))
+	c.Assert(v, BytesEquals, []byte("2"))
+
+	k, v, err = s.db.Seek([]byte("c1"))
+	c.Assert(err, NotNil)
+	c.Assert(k, IsNil)
+	c.Assert(v, IsNil)
+}
+
+func (s *testSuite) TestPrevSeek(c *C) {
+	defer testleak.AfterTest(c)()
+	b := s.db.NewBatch()
+	b.Put([]byte("b"), []byte("1"))
+	b.Put([]byte("c"), []byte("2"))
+	err := s.db.Commit(b)
+	c.Assert(err, IsNil)
+
+	k, v, err := s.db.SeekReverse(nil)
+	c.Assert(err, IsNil)
+	c.Assert(k, BytesEquals, []byte("c"))
+	c.Assert(v, BytesEquals, []byte("2"))
+
+	k, v, err = s.db.SeekReverse([]byte("d"))
+	c.Assert(err, IsNil)
+	c.Assert(k, BytesEquals, []byte("c"))
+	c.Assert(v, BytesEquals, []byte("2"))
+
+	k, v, err = s.db.SeekReverse([]byte("c"))
+	c.Assert(err, IsNil)
+	c.Assert(k, BytesEquals, []byte("b"))
+	c.Assert(v, BytesEquals, []byte("1"))
+
+	k, v, err = s.db.SeekReverse([]byte("bb"))
+	c.Assert(err, IsNil)
+	c.Assert(k, BytesEquals, []byte("b"))
+	c.Assert(v, BytesEquals, []byte("1"))
+
+	k, v, err = s.db.SeekReverse([]byte("b"))
+	c.Assert(err, NotNil)
+	c.Assert(k, IsNil)
 	c.Assert(v, IsNil)
 
-	iter := snap.NewIterator(nil)
-	c.Assert(iter.Next(), Equals, true)
-	c.Assert(iter.Key(), DeepEquals, []byte("a"))
-	c.Assert(iter.Next(), Equals, true)
-	c.Assert(iter.Key(), DeepEquals, []byte("b"))
-	c.Assert(iter.Next(), Equals, false)
-	iter.Release()
-
-	iter = snap.NewIterator([]byte("b"))
-	c.Assert(iter.Next(), Equals, true)
-	c.Assert(iter.Key(), DeepEquals, []byte("b"))
-	c.Assert(iter.Value(), DeepEquals, []byte("2"))
-	c.Assert(iter.Next(), Equals, false)
-
-	snap.Release()
+	k, v, err = s.db.SeekReverse([]byte("a"))
+	c.Assert(err, NotNil)
+	c.Assert(k, IsNil)
+	c.Assert(v, IsNil)
 }

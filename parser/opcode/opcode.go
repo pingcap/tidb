@@ -42,9 +42,11 @@ const (
 	BitNeg
 	IntDiv
 	LogicXor
+	NullEQ
 )
 
-var ops = map[Op]string{
+// Ops maps opcode to string.
+var Ops = map[Op]string{
 	AndAnd:     "&&",
 	LeftShift:  "<<",
 	RightShift: ">>",
@@ -67,11 +69,12 @@ var ops = map[Op]string{
 	BitNeg:     "~",
 	IntDiv:     "DIV",
 	LogicXor:   "XOR",
+	NullEQ:     "<=>",
 }
 
 // String implements Stringer interface.
 func (o Op) String() string {
-	str, ok := ops[o]
+	str, ok := Ops[o]
 	if !ok {
 		panic(fmt.Sprintf("%d", o))
 	}
