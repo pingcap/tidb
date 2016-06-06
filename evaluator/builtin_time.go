@@ -262,6 +262,8 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 			str := fmt.Sprintf("%04d", d.GetInt64())
 			d.SetString(fmt.Sprintf("%02s", str[2:]))
 		}
+	default:
+		d.SetString(string(b))
 	}
 
 	if err == nil && d.Kind() != types.KindNull {
