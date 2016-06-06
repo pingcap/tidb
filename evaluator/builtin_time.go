@@ -273,14 +273,14 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
 func builtinDateFormat(args []types.Datum, _ context.Context) (types.Datum, error) {
 	var (
-		isPerect bool
-		ret      []byte
-		d        types.Datum
+		isPercent bool
+		ret       []byte
+		d         types.Datum
 	)
 
 	// TODO: Some invalid format like 2000-00-01(the month is 0) will return null.
 	for _, b := range []byte(args[1].GetString()) {
-		if isPerect {
+		if isPercent {
 			if b == '%' {
 				ret = append(ret, b)
 			} else {
@@ -293,11 +293,11 @@ func builtinDateFormat(args []types.Datum, _ context.Context) (types.Datum, erro
 				}
 				ret = append(ret, str.GetString()...)
 			}
-			isPerect = false
+			isPercent = false
 			continue
 		}
 		if b == '%' {
-			isPerect = true
+			isPercent = true
 		} else {
 			ret = append(ret, b)
 		}
