@@ -47,9 +47,12 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	_, isDDL := node.(ast.DDLNode)
 	sa := &statement{
-		is:   is,
-		plan: p,
+		is:    is,
+		plan:  p,
+		text:  node.Text(),
+		isDDL: isDDL,
 	}
 	return sa, nil
 }
