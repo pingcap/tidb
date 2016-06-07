@@ -11,29 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer
+package plan
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testPlanSuite{})
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-type testPlanSuite struct{}
 
 func newMockResolve(node ast.Node) error {
 	indices := []*model.IndexInfo{
@@ -88,7 +79,7 @@ func newMockResolve(node ast.Node) error {
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
-	plan.UseNewPlanner = true
+	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql   string
@@ -145,21 +136,21 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		err = newMockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		p, err := plan.BuildPlan(stmt, nil)
+		p, err := BuildPlan(stmt, nil)
 		c.Assert(err, IsNil)
-		c.Assert(plan.ToString(p), Equals, ca.first, Commentf("for %s", ca.sql))
+		c.Assert(ToString(p), Equals, ca.first, Commentf("for %s", ca.sql))
 
-		_, err = plan.PredicatePushDown(p, []expression.Expression{})
+		_, err = PredicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
-		_, err = plan.PruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, err = PruneColumnsAndResolveIndices(p, p.GetSchema())
 		c.Assert(err, IsNil)
-		c.Assert(plan.ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
-	plan.UseNewPlanner = false
+	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestColumnPruning(c *C) {
-	plan.UseNewPlanner = true
+	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql string
@@ -222,22 +213,23 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		err = newMockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		plan.GlobalID = 0
+		GlobalID = 0
 
-		p, err := plan.BuildPlan(stmt, nil)
+		p, err := BuildPlan(stmt, nil)
 		c.Assert(err, IsNil)
 
-		_, err = plan.PredicatePushDown(p, []expression.Expression{})
+		_, err = PredicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
-		_, err = plan.PruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, err = PruneColumnsAndResolveIndices(p, p.GetSchema())
 		c.Assert(err, IsNil)
 		check(p, c, ca.ans, comment)
 	}
+	UseNewPlanner = false
 }
 
-func check(p plan.Plan, c *C, ans map[string][]string, comment CommentInterface) {
+func check(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
 	switch p.(type) {
-	case *plan.NewTableScan:
+	case *NewTableScan:
 		colList, ok := ans[p.GetID()]
 		c.Assert(ok, IsTrue, comment)
 		for i, colName := range colList {

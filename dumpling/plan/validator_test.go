@@ -11,15 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer_test
+package plan_test
 
 import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -63,7 +63,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		err = optimizer.Validate(stmt, ca.inPrepare)
+		err = plan.Validate(stmt, ca.inPrepare)
 		c.Assert(terror.ErrorEqual(err, ca.err), IsTrue)
 	}
 }

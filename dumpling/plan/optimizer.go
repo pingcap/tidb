@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer
+package plan
 
 import (
 	"github.com/juju/errors"
@@ -20,13 +20,12 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/terror"
 )
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, node ast.Node, sb plan.SubQueryBuilder) (plan.Plan, error) {
+func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder) (Plan, error) {
 	// We have to infer type again because after parameter is set, the expression type may change.
 	if err := InferType(node); err != nil {
 		return nil, errors.Trace(err)
@@ -34,32 +33,32 @@ func Optimize(ctx context.Context, node ast.Node, sb plan.SubQueryBuilder) (plan
 	if err := logicOptimize(ctx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	plan.GlobalID = 0
-	p, err := plan.BuildPlan(node, sb)
+	GlobalID = 0
+	p, err := BuildPlan(node, sb)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if plan.UseNewPlanner {
-		_, err = plan.PredicatePushDown(p, []expression.Expression{})
+	if UseNewPlanner {
+		_, err = PredicatePushDown(p, []expression.Expression{})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		_, err = plan.PruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, err = PruneColumnsAndResolveIndices(p, p.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	err = plan.Refine(p)
+	err = Refine(p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return p, nil
 }
 
-// Prepare prepares a raw statement parsed from parser.
+// PrepareStmt prepares a raw statement parsed from parser.
 // The statement must be prepared before it can be passed to optimize function.
 // We pass InfoSchema instead of getting from Context in case it is changed after resolving name.
-func Prepare(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error {
+func PrepareStmt(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error {
 	ast.SetFlag(node)
 	if err := Preprocess(node, is, ctx); err != nil {
 		return errors.Trace(err)
