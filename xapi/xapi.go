@@ -62,7 +62,6 @@ func (r *SelectResult) Next() (subResult *SubResult, err error) {
 // SetFields sets select result field types.
 func (r *SelectResult) SetFields(fields []*types.FieldType) {
 	r.fields = fields
-	r.aggregate = true
 }
 
 // Close closes SelectResult.

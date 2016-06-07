@@ -371,9 +371,8 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.R
 			if ctx.whereColumns[colID] != nil {
 				// The column is saved in evaluator, use it directly.
 				datum := ctx.eval.Row[colID]
-				value := []byte{}
 				var err1 error
-				colVal, err1 = codec.EncodeValue(value, datum)
+				colVal, err1 = codec.EncodeValue(nil, datum)
 				if err1 != nil {
 					return nil, errors.Trace(err1)
 				}
