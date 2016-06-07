@@ -65,6 +65,11 @@ func (d *Datum) Kind() byte {
 	return d.k
 }
 
+// IsNull checks if datum is null.
+func (d *Datum) IsNull() bool {
+	return d.k == KindNull
+}
+
 // GetInt64 gets int64 value.
 func (d *Datum) GetInt64() int64 {
 	return d.i
