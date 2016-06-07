@@ -6,7 +6,7 @@ import (
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/plan"
 )
 
 var smallCount = 100

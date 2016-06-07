@@ -18,8 +18,8 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan"
 )
 
 // compose CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
