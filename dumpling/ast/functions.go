@@ -224,6 +224,11 @@ func (n *AggregateFuncExpr) GetContext() *AggEvaluateContext {
 	return n.contextPerGroupMap[n.CurrentGroup]
 }
 
+// SetContext sets the aggregate expr evaluation context.
+func (n *AggregateFuncExpr) SetContext(ctx map[string](*AggEvaluateContext)) {
+	n.contextPerGroupMap = ctx
+}
+
 func (n *AggregateFuncExpr) updateCount() error {
 	ctx := n.GetContext()
 	vals := make([]interface{}, 0, len(n.Args))
