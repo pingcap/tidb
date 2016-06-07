@@ -28,8 +28,7 @@ func builtinAndAnd(args []types.Datum, _ context.Context) (d types.Datum, err er
 		var x int64
 		x, err = leftDatum.ToBool()
 		if err != nil {
-			err = errors.Trace(err)
-			return
+			return d, errors.Trace(err)
 		} else if x == 0 {
 			// false && any other types is false
 			d.SetInt64(x)
@@ -40,15 +39,13 @@ func builtinAndAnd(args []types.Datum, _ context.Context) (d types.Datum, err er
 		var y int64
 		y, err = rightDatum.ToBool()
 		if err != nil {
-			err = errors.Trace(err)
-			return
+			return d, errors.Trace(err)
 		} else if y == 0 {
 			d.SetInt64(y)
 			return
 		}
 	}
 	if leftDatum.Kind() == types.KindNull || rightDatum.Kind() == types.KindNull {
-		d.SetNull()
 		return
 	}
 	d.SetInt64(int64(1))
@@ -62,8 +59,7 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 		var x int64
 		x, err = leftDatum.ToBool()
 		if err != nil {
-			err = errors.Trace(err)
-			return
+			return d, errors.Trace(err)
 		} else if x == 1 {
 			// false && any other types is false
 			d.SetInt64(x)
@@ -74,15 +70,13 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 		var y int64
 		y, err = rightDatum.ToBool()
 		if err != nil {
-			err = errors.Trace(err)
-			return
+			return d, errors.Trace(err)
 		} else if y == 1 {
 			d.SetInt64(y)
 			return
 		}
 	}
 	if leftDatum.Kind() == types.KindNull || rightDatum.Kind() == types.KindNull {
-		d.SetNull()
 		return
 	}
 	d.SetInt64(int64(0))
@@ -93,19 +87,16 @@ func builtinLogicXor(args []types.Datum, _ context.Context) (d types.Datum, err 
 	leftDatum := args[0]
 	righDatum := args[1]
 	if leftDatum.Kind() == types.KindNull || righDatum.Kind() == types.KindNull {
-		d.SetNull()
 		return
 	}
 	x, err := leftDatum.ToBool()
 	if err != nil {
-		err = errors.Trace(err)
-		return
+		return d, errors.Trace(err)
 	}
 
 	y, err := righDatum.ToBool()
 	if err != nil {
-		err = errors.Trace(err)
-		return
+		return d, errors.Trace(err)
 	}
 	if x == y {
 		d.SetInt64(zeroI64)
@@ -127,16 +118,13 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 				} else {
 					d.SetInt64(zeroI64)
 				}
-			} else {
-				d.SetNull()
 			}
 			return
 		}
 
 		n, err := a.CompareDatum(b)
 		if err != nil {
-			err = errors.Trace(err)
-			return
+			return d, errors.Trace(err)
 		}
 		var result bool
 		switch op {
@@ -167,22 +155,18 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 func bitOpFactory(op opcode.Op) BuiltinFunc {
 	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 		a, b := types.CoerceDatum(args[0], args[1])
-
 		if a.Kind() == types.KindNull || b.Kind() == types.KindNull {
-			d.SetNull()
 			return
 		}
 
 		x, err := a.ToInt64()
 		if err != nil {
-			err = errors.Trace(err)
-			return
+			return d, errors.Trace(err)
 		}
 
 		y, err := b.ToInt64()
 		if err != nil {
-			err = errors.Trace(err)
-			return
+			return d, errors.Trace(err)
 		}
 
 		// use a int64 for bit operator, return uint64
@@ -198,8 +182,7 @@ func bitOpFactory(op opcode.Op) BuiltinFunc {
 		case opcode.LeftShift:
 			d.SetUint64(uint64(x) << uint64(y))
 		default:
-			err = ErrInvalidOperation.Gen("invalid op %v in bit operation", op)
-			return
+			return d, ErrInvalidOperation.Gen("invalid op %v in bit operation", op)
 		}
 		return
 	}
@@ -209,19 +192,16 @@ func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 		a, err := coerceArithmetic(args[0])
 		if err != nil {
-			err = errors.Trace(err)
-			return
+			return d, errors.Trace(err)
 		}
 
 		b, err := coerceArithmetic(args[1])
 		if err != nil {
-			err = errors.Trace(err)
-			return
+			return d, errors.Trace(err)
 		}
 
 		a, b = types.CoerceDatum(a, b)
 		if a.Kind() == types.KindNull || b.Kind() == types.KindNull {
-			d.SetNull()
 			return
 		}
 
@@ -239,8 +219,7 @@ func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 		case opcode.IntDiv:
 			return computeIntDiv(a, b)
 		default:
-			err = ErrInvalidOperation.Gen("invalid op %v in arithmetic operation", op)
-			return
+			return d, ErrInvalidOperation.Gen("invalid op %v in arithmetic operation", op)
 		}
 	}
 }
@@ -254,7 +233,6 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 		}()
 		aDatum := args[0]
 		if aDatum.Kind() == types.KindNull {
-			d.SetNull()
 			return
 		}
 		switch op {
@@ -273,8 +251,7 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 			// for bit operation, we will use int64 first, then return uint64
 			n, err = aDatum.ToInt64()
 			if err != nil {
-				err = errors.Trace(err)
-				return
+				return d, errors.Trace(err)
 			}
 			d.SetUint64(uint64(^n))
 		case opcode.Plus:
@@ -294,8 +271,7 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 				types.KindMysqlSet:
 				d = aDatum
 			default:
-				err = ErrInvalidOperation.Gen("Unsupported type %v for op.Plus", aDatum.Kind())
-				return
+				return d, ErrInvalidOperation.Gen("Unsupported type %v for op.Plus", aDatum.Kind())
 			}
 		case opcode.Minus:
 			switch aDatum.Kind() {
@@ -327,12 +303,10 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 			case types.KindMysqlSet:
 				d.SetFloat64(-aDatum.GetMysqlSet().ToNumber())
 			default:
-				err = ErrInvalidOperation.Gen("Unsupported type %v for op.Minus", aDatum.Kind())
-				return
+				return d, ErrInvalidOperation.Gen("Unsupported type %v for op.Minus", aDatum.Kind())
 			}
 		default:
-			err = ErrInvalidOperation.Gen("Unsupported op %v for unary op", op)
-			return
+			return d, ErrInvalidOperation.Gen("Unsupported op %v for unary op", op)
 		}
 		return
 	}

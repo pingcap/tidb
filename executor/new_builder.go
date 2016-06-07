@@ -27,12 +27,11 @@ func composeCondition(conditions []expression.Expression) expression.Expression 
 	length := len(conditions)
 	if length == 0 {
 		return nil
-	} else if length == 1 {
-		return conditions[0]
-	} else {
-		eqStr, _ := opcode.Ops[opcode.AndAnd]
-		return expression.NewFunction(model.NewCIStr(eqStr), []expression.Expression{composeCondition(conditions[0 : length/2]), composeCondition(conditions[length/2:])})
 	}
+	if length == 1 {
+		return conditions[0]
+	}
+	return expression.NewFunction(model.NewCIStr(opcode.Ops[opcode.AndAnd]), []expression.Expression{composeCondition(conditions[0 : length/2]), composeCondition(conditions[length/2:])})
 }
 
 //TODO: select join algorithm during cbo phase.
@@ -131,7 +130,7 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan) Executor {
 	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
 		// TODO: support condition pushdown and union scan exec.
-		e := &NewTableScanExec{
+		return &NewTableScanExec{
 			tableInfo:   v.Table,
 			ctx:         b.ctx,
 			supportDesc: supportDesc,
@@ -141,7 +140,6 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan) Executor {
 			Columns:     v.Columns,
 			ranges:      v.Ranges,
 		}
-		return e
 	}
 	b.err = errors.New("Not implement yet.")
 	return nil

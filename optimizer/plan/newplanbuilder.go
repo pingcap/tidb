@@ -16,7 +16,6 @@ package plan
 import (
 	"fmt"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -510,7 +509,6 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 			return nil
 		}
 	}
-	log.Warningf("oldLen %d sel %d", oldLen, len(sel.Fields.Fields))
 	if oldLen != len(sel.Fields.Fields) {
 		proj := &Projection{}
 		proj.id = allocID(proj)
