@@ -46,20 +46,23 @@ func (a *recordSet) Close() error {
 }
 
 type statement struct {
-	is   infoschema.InfoSchema
-	plan plan.Plan
+	is    infoschema.InfoSchema
+	plan  plan.Plan
+	text  string
+	isDDL bool
 }
 
 func (a *statement) OriginText() string {
-	return ""
+	return a.text
 }
 
 func (a *statement) SetText(text string) {
+	a.text = text
 	return
 }
 
 func (a *statement) IsDDL() bool {
-	return false
+	return a.isDDL
 }
 
 func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {

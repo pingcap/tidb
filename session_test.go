@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -2231,4 +2232,39 @@ func (s *testSessionSuite) TestSqlLogicTestCase(c *C) {
 
 	sql := "SELECT col0 FROM tab1 WHERE 71*22 >= col1"
 	mustExecMatch(c, se, sql, [][]interface{}{{"26"}})
+}
+
+func newSessionWithoutInit(c *C, store kv.Storage) *session {
+	s := &session{
+		values:      make(map[fmt.Stringer]interface{}),
+		store:       store,
+		sid:         atomic.AddInt64(&sessionID, 1),
+		debugInfos:  make(map[string]interface{}),
+		maxRetryCnt: 10,
+	}
+	return s
+}
+
+func (s *testSessionSuite) TestRetryAttempts(c *C) {
+	defer testleak.AfterTest(c)()
+	store := kv.NewMockStorage()
+	se := newSessionWithoutInit(c, store)
+	c.Assert(se, NotNil)
+	variable.BindSessionVars(se)
+	sv := variable.GetSessionVars(se)
+	// Prevent getting variable value from storage.
+	sv.SetSystemVar("autocommit", types.NewDatum("ON"))
+
+	// Add retry info.
+	retryInfo := sv.RetryInfo
+	retryInfo.Retrying = true
+	retryInfo.Attempts = 10
+	tx, err := se.GetTxn(true)
+	c.Assert(tx, NotNil)
+	c.Assert(err, IsNil)
+	mtx, ok := tx.(kv.MockTxn)
+	c.Assert(ok, IsTrue)
+	// Make sure RetryAttempts option is set.
+	cnt := mtx.GetOption(kv.RetryAttempts)
+	c.Assert(cnt.(int), Equals, retryInfo.Attempts)
 }

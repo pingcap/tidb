@@ -17,26 +17,29 @@ import (
 	"bytes"
 	"sync"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 )
 
-// RegionCache store region cache by region id.
+// RegionCache caches Regions loaded from PD.
 type RegionCache struct {
 	pdClient pd.Client
 	mu       sync.RWMutex
-	// TODO: store in array and use binary search
-	regions map[RegionVerID]*Region
+	regions  map[RegionVerID]*Region
+	sorted   *llrb.LLRB
 }
 
-// NewRegionCache new region cache.
+// NewRegionCache creates a RegionCache.
 func NewRegionCache(pdClient pd.Client) *RegionCache {
 	return &RegionCache{
 		pdClient: pdClient,
 		regions:  make(map[RegionVerID]*Region),
+		sorted:   llrb.New(),
 	}
 }
 
@@ -45,16 +48,27 @@ func (c *RegionCache) GetRegionByVerID(id RegionVerID) *Region {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	return c.regions[id]
+	if r, ok := c.regions[id]; ok {
+		return r.Clone()
+	}
+	return nil
 }
 
 // GetRegion find in cache, or get new region.
 func (c *RegionCache) GetRegion(key []byte) (*Region, error) {
-	if r := c.getRegionFromCache(key); r != nil {
+	c.mu.RLock()
+	r := c.getRegionFromCache(key)
+	c.mu.RUnlock()
+	if r != nil {
 		return r, nil
 	}
 	r, err := c.loadRegion(key)
-	return r, errors.Trace(err)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.insertRegionToCache(r), nil
 }
 
 // DropRegion remove some region cache.
@@ -62,7 +76,7 @@ func (c *RegionCache) DropRegion(id RegionVerID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	delete(c.regions, id)
+	c.dropRegionFromCache(id)
 }
 
 // NextPeer picks next peer as new leader, if out of range of peers delete region.
@@ -74,9 +88,7 @@ func (c *RegionCache) NextPeer(id RegionVerID) {
 		return
 	}
 	if leader, err := region.NextPeer(); err != nil {
-		c.mu.Lock()
-		delete(c.regions, id)
-		c.mu.Unlock()
+		c.DropRegion(id)
 	} else {
 		c.UpdateLeader(id, leader.GetId())
 	}
@@ -84,66 +96,78 @@ func (c *RegionCache) NextPeer(id RegionVerID) {
 
 // UpdateLeader update some region cache with newer leader info.
 func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderID uint64) {
-	old := c.GetRegionByVerID(regionID)
-	if old == nil {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	r, ok := c.regions[regionID]
+	if !ok {
 		log.Debugf("regionCache: cannot find region when updating leader %d,%d", regionID, leaderID)
 		return
 	}
-	var (
-		peer  *metapb.Peer
-		store *metapb.Store
-		err   error
-	)
 
-	curPeerIdx := -1
-	for idx, p := range old.meta.Peers {
+	var found bool
+	for i, p := range r.meta.Peers {
 		if p.GetId() == leaderID {
-			peer = p
-			// No need update leader.
-			if idx == old.curPeerIdx {
-				return
-			}
-			curPeerIdx = idx
+			r.curPeerIdx, r.peer = i, p
+			found = true
 			break
 		}
 	}
-	if peer != nil {
-		store, err = c.pdClient.GetStore(peer.GetStoreId())
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.regions, regionID)
-
-	if peer == nil || err != nil {
-		// Can't find the peer in cache, or error occurs when loading
-		// store from PD.
-		// Leave the region deleted, it will be filled later.
+	if !found {
+		log.Debugf("regionCache: cannot find peer when updating leader %d,%d", regionID, leaderID)
+		c.dropRegionFromCache(r.VerID())
 		return
 	}
 
-	c.regions[regionID] = &Region{
-		meta:       old.meta,
-		peer:       peer,
-		addr:       store.GetAddress(),
-		curPeerIdx: curPeerIdx,
+	store, err := c.pdClient.GetStore(r.peer.GetStoreId())
+	if err != nil {
+		log.Warnf("regionCache: failed load store %d", r.peer.GetStoreId())
+		c.dropRegionFromCache(r.VerID())
+		return
 	}
+
+	r.addr = store.GetAddress()
 }
 
-// getRegionFromCache scan all region cache and find which region contains key.
 func (c *RegionCache) getRegionFromCache(key []byte) *Region {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	for _, r := range c.regions {
-		if r.Contains(key) {
-			return r
-		}
+	var r *Region
+	c.sorted.DescendLessOrEqual(newRBSearchItem(key), func(item llrb.Item) bool {
+		r = item.(*llrbItem).region
+		return false
+	})
+	if r == nil {
+		return nil
+	}
+	if r.Contains(key) {
+		return r.Clone()
 	}
 	return nil
 }
 
-// loadRegion get region from pd client, and pick the random peer as leader.
+// insertRegionToCache tries to insert the Region to cache. If there is an old
+// Region with the same VerID, it will return the old one instead.
+func (c *RegionCache) insertRegionToCache(r *Region) *Region {
+	if old, ok := c.regions[r.VerID()]; ok {
+		return old
+	}
+	old := c.sorted.ReplaceOrInsert(newRBItem(r))
+	if old != nil {
+		delete(c.regions, old.(*llrbItem).region.VerID())
+	}
+	c.regions[r.VerID()] = r
+	return r
+}
+
+func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
+	r, ok := c.regions[verID]
+	if !ok {
+		return
+	}
+	c.sorted.Delete(newRBItem(r))
+	delete(c.regions, r.VerID())
+}
+
+// loadRegion loads region from pd client, and picks the first peer as leader.
 func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 	var region *Region
 	var backoffErr error
@@ -177,15 +201,30 @@ func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 	if backoffErr != nil {
 		return nil, errors.Annotate(backoffErr, txnRetryableMark)
 	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if r, ok := c.regions[region.VerID()]; ok {
-		return r, nil
-	}
-	c.regions[region.VerID()] = region
 	return region, nil
+}
+
+// llrbItem is llrbTree's Item that uses []byte for compare.
+type llrbItem struct {
+	key    []byte
+	region *Region
+}
+
+func newRBItem(r *Region) *llrbItem {
+	return &llrbItem{
+		key:    r.StartKey(),
+		region: r,
+	}
+}
+
+func newRBSearchItem(key []byte) *llrbItem {
+	return &llrbItem{
+		key: key,
+	}
+}
+
+func (item *llrbItem) Less(other llrb.Item) bool {
+	return bytes.Compare(item.key, other.(*llrbItem).key) < 0
 }
 
 // Region stores region info. Region is a readonly class.
@@ -194,6 +233,16 @@ type Region struct {
 	peer       *metapb.Peer
 	addr       string
 	curPeerIdx int
+}
+
+// Clone returns a copy of Region.
+func (r *Region) Clone() *Region {
+	return &Region{
+		meta:       proto.Clone(r.meta).(*metapb.Region),
+		peer:       proto.Clone(r.peer).(*metapb.Peer),
+		addr:       r.addr,
+		curPeerIdx: r.curPeerIdx,
+	}
 }
 
 // GetID returns id.

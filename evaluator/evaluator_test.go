@@ -313,8 +313,8 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 			// we use float64 as the result type check for all.
 			f, err := v.ToFloat64()
 			c.Assert(err, IsNil)
-
-			r, err := types.ToFloat64(t.ret)
+			d := types.NewDatum(t.ret)
+			r, err := d.ToFloat64()
 			c.Assert(err, IsNil)
 			c.Assert(r, Equals, f)
 		}
