@@ -177,8 +177,7 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, ectx context
 }
 
 // GetGroupResult implements AggregationFunction interface.
-func (cf *countFunction) GetGroupResult(groupKey []byte) types.Datum {
-	d := types.Datum{}
+func (cf *countFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	d.SetInt64(cf.getContext(groupKey).Count)
 	return d
 }

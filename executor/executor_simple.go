@@ -53,7 +53,6 @@ func (e *SimpleExec) Fields() []*ast.ResultField {
 // Schema implements Executor Schema interface.
 func (e *SimpleExec) Schema() expression.Schema {
 	return nil
-
 }
 
 // Next implements Execution Next interface.

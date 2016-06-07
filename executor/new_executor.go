@@ -82,7 +82,7 @@ func (e *HashJoinExec) getHashKey(exprs []*expression.Column, row *Row) ([]byte,
 	return codec.EncodeValue([]byte{}, vals...)
 }
 
-// Schema implement Executor Schema interface.
+// Schema implements Executor Schema interface.
 func (e *HashJoinExec) Schema() expression.Schema {
 	return e.schema
 }
@@ -159,9 +159,9 @@ func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, er
 		}
 		if e.otherFilter != nil {
 			otherMatched, err = expression.EvalBool(e.otherFilter, matchedRow.Data, e.ctx)
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		if otherMatched {
 			matchedRows = append(matchedRows, matchedRow)
@@ -171,7 +171,7 @@ func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, er
 	return matchedRows, nil
 }
 
-func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row, err error) {
+func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row) {
 	smallRow := &Row{
 		RowKeys: make([]*RowKeyEntry, len(e.smallExec.Schema())),
 		Data:    make([]types.Datum, len(e.smallExec.Schema())),
@@ -185,7 +185,7 @@ func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row, err error) {
 	} else {
 		returnRow = joinTwoRow(bigRow, smallRow)
 	}
-	return returnRow, nil
+	return returnRow
 }
 
 func (e *HashJoinExec) returnRecord() (ret *Row, ok bool) {
@@ -239,7 +239,7 @@ func (e *HashJoinExec) Next() (*Row, error) {
 		if ok {
 			return row, nil
 		} else if e.outter {
-			row, _ = e.fillNullRow(bigRow)
+			row = e.fillNullRow(bigRow)
 			return row, nil
 		}
 	}
@@ -261,7 +261,7 @@ type AggregationExec struct {
 	GroupByItems      []expression.Expression
 }
 
-// Schema implement Executor Schema interface.
+// Schema implements Executor Schema interface.
 func (e *AggregationExec) Schema() expression.Schema {
 	return e.schema
 }
@@ -379,7 +379,7 @@ type ProjectionExec struct {
 	exprs        []expression.Expression
 }
 
-// Schema implement Executor Schema interface.
+// Schema implements Executor Schema interface.
 func (e *ProjectionExec) Schema() expression.Schema {
 	return e.schema
 }
@@ -439,7 +439,7 @@ type SelectionExec struct {
 	schema    expression.Schema
 }
 
-// Schema implement Executor Schema interface.
+// Schema implements Executor Schema interface.
 func (e *SelectionExec) Schema() expression.Schema {
 	return e.schema
 }
@@ -488,7 +488,7 @@ type NewTableScanExec struct {
 	ranges      []plan.TableRange
 }
 
-// Schema implement Executor Schema interface.
+// Schema implements Executor Schema interface.
 func (e *NewTableScanExec) Schema() expression.Schema {
 	return e.schema
 }

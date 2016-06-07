@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -46,17 +45,10 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 	}
 	var leftHashKey, rightHashKey []*expression.Column
 	for _, eqCond := range v.EqualConditions {
-		eqStr, _ := opcode.Ops[opcode.EQ]
-		if eqCond.FuncName.L == eqStr {
-			ln, lOK := eqCond.Args[0].(*expression.Column)
-			rn, rOK := eqCond.Args[1].(*expression.Column)
-			if lOK && rOK {
-				leftHashKey = append(leftHashKey, ln)
-				rightHashKey = append(rightHashKey, rn)
-				continue
-			}
-		}
-		b.err = ErrUnknownPlan.Gen(fmt.Sprintf("Invalid Join Equal Condition %s !!", eqCond.ToString()))
+		ln, _ := eqCond.Args[0].(*expression.Column)
+		rn, _ := eqCond.Args[1].(*expression.Column)
+		leftHashKey = append(leftHashKey, ln)
+		rightHashKey = append(rightHashKey, rn)
 	}
 	switch v.JoinType {
 	case plan.LeftOuterJoin:
@@ -96,15 +88,13 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 }
 
 func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
-	src := b.build(v.GetChildByIndex(0))
-	e := &AggregationExec{
-		Src:          src,
+	return &AggregationExec{
+		Src:          b.build(v.GetChildByIndex(0)),
 		schema:       v.GetSchema(),
 		ctx:          b.ctx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 	}
-	return e
 }
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
@@ -117,14 +107,12 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 }
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
-	src := b.build(v.GetChildByIndex(0))
-	e := &ProjectionExec{
-		Src:    src,
+	return &ProjectionExec{
+		Src:    b.build(v.GetChildByIndex(0)),
 		ctx:    b.ctx,
 		exprs:  v.Exprs,
 		schema: v.GetSchema(),
 	}
-	return e
 }
 
 func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan) Executor {
@@ -161,11 +149,10 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan) Executor {
 
 func (b *executorBuilder) buildNewSort(v *plan.NewSort) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	e := &NewSortExec{
+	return &NewSortExec{
 		Src:     src,
 		ByItems: v.ByItems,
 		ctx:     b.ctx,
 		schema:  v.GetSchema(),
 	}
-	return e
 }
