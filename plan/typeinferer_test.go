@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer_test
+package plan_test
 
 import (
 	. "github.com/pingcap/check"
@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/optimizer"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testkit"
@@ -143,9 +143,9 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0].(*ast.SelectStmt)
 		is := sessionctx.GetDomain(ctx).InfoSchema()
-		err = optimizer.ResolveName(stmt, is, ctx)
+		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
-		optimizer.InferType(stmt)
+		plan.InferType(stmt)
 		tp := stmt.GetResultFields()[0].Column.Tp
 		chs := stmt.GetResultFields()[0].Column.Charset
 		c.Assert(tp, Equals, ca.tp, Commentf("Tp for %s", ca.expr))

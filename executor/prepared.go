@@ -22,9 +22,8 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/optimizer"
-	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
@@ -147,7 +146,7 @@ func (e *PrepareExec) DoPrepare() {
 		SchemaVersion: e.IS.SchemaMetaVersion(),
 	}
 
-	err = optimizer.Prepare(e.IS, e.Ctx, stmt)
+	err = plan.PrepareStmt(e.IS, e.Ctx, stmt)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
@@ -229,14 +228,14 @@ func (e *ExecuteExec) Build() error {
 	if prepared.SchemaVersion != e.IS.SchemaMetaVersion() {
 		// If the schema version has changed we need to prepare it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		err := optimizer.Prepare(e.IS, e.Ctx, prepared.Stmt)
+		err := plan.PrepareStmt(e.IS, e.Ctx, prepared.Stmt)
 		if err != nil {
 			return ErrSchemaChanged.Gen("Schema change casued error: %s", err.Error())
 		}
 		prepared.SchemaVersion = e.IS.SchemaMetaVersion()
 	}
 	sb := &subqueryBuilder{is: e.IS}
-	plan, err := optimizer.Optimize(e.Ctx, prepared.Stmt, sb)
+	plan, err := plan.Optimize(e.Ctx, prepared.Stmt, sb)
 	if err != nil {
 		return errors.Trace(err)
 	}
