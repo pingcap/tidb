@@ -357,7 +357,7 @@ func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	d := NewDatum(value)
 	casted, err := d.ConvertTo(ft)
 	c.Assert(err, IsNil, Commentf("%v", ft))
-	if casted.Kind() == KindNull {
+	if casted.IsNull() {
 		c.Assert(expected, Equals, "<nil>")
 	} else {
 		str, err := casted.ToString()
@@ -382,7 +382,7 @@ func deny(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	d := NewDatum(value)
 	casted, err := d.ConvertTo(ft)
 	c.Assert(err, NotNil)
-	if casted.Kind() == KindNull {
+	if casted.IsNull() {
 		c.Assert(expected, Equals, "<nil>")
 	} else {
 		str, err := casted.ToString()

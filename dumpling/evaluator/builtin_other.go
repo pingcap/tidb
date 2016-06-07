@@ -24,7 +24,7 @@ import (
 func builtinAndAnd(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	leftDatum := args[0]
 	rightDatum := args[1]
-	if leftDatum.Kind() != types.KindNull {
+	if !leftDatum.IsNull() {
 		var x int64
 		x, err = leftDatum.ToBool()
 		if err != nil {
@@ -35,7 +35,7 @@ func builtinAndAnd(args []types.Datum, _ context.Context) (d types.Datum, err er
 			return
 		}
 	}
-	if rightDatum.Kind() != types.KindNull {
+	if !rightDatum.IsNull() {
 		var y int64
 		y, err = rightDatum.ToBool()
 		if err != nil {
@@ -45,7 +45,7 @@ func builtinAndAnd(args []types.Datum, _ context.Context) (d types.Datum, err er
 			return
 		}
 	}
-	if leftDatum.Kind() == types.KindNull || rightDatum.Kind() == types.KindNull {
+	if leftDatum.IsNull() || rightDatum.IsNull() {
 		return
 	}
 	d.SetInt64(int64(1))
@@ -55,7 +55,7 @@ func builtinAndAnd(args []types.Datum, _ context.Context) (d types.Datum, err er
 func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	leftDatum := args[0]
 	rightDatum := args[1]
-	if leftDatum.Kind() != types.KindNull {
+	if !leftDatum.IsNull() {
 		var x int64
 		x, err = leftDatum.ToBool()
 		if err != nil {
@@ -66,7 +66,7 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 			return
 		}
 	}
-	if rightDatum.Kind() != types.KindNull {
+	if !rightDatum.IsNull() {
 		var y int64
 		y, err = rightDatum.ToBool()
 		if err != nil {
@@ -76,7 +76,7 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 			return
 		}
 	}
-	if leftDatum.Kind() == types.KindNull || rightDatum.Kind() == types.KindNull {
+	if leftDatum.IsNull() || rightDatum.IsNull() {
 		return
 	}
 	d.SetInt64(int64(0))
@@ -86,7 +86,7 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 func builtinLogicXor(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	leftDatum := args[0]
 	righDatum := args[1]
-	if leftDatum.Kind() == types.KindNull || righDatum.Kind() == types.KindNull {
+	if leftDatum.IsNull() || righDatum.IsNull() {
 		return
 	}
 	x, err := leftDatum.ToBool()
@@ -109,11 +109,11 @@ func builtinLogicXor(args []types.Datum, _ context.Context) (d types.Datum, err 
 func compareFuncFactory(op opcode.Op) BuiltinFunc {
 	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 		a, b := types.CoerceDatum(args[0], args[1])
-		if a.Kind() == types.KindNull || b.Kind() == types.KindNull {
+		if a.IsNull() || b.IsNull() {
 			// for <=>, if a and b are both nil, return true.
 			// if a or b is nil, return false.
 			if op == opcode.NullEQ {
-				if a.Kind() == types.KindNull && b.Kind() == types.KindNull {
+				if a.IsNull() && b.IsNull() {
 					d.SetInt64(oneI64)
 				} else {
 					d.SetInt64(zeroI64)
@@ -155,7 +155,7 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 func bitOpFactory(op opcode.Op) BuiltinFunc {
 	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 		a, b := types.CoerceDatum(args[0], args[1])
-		if a.Kind() == types.KindNull || b.Kind() == types.KindNull {
+		if a.IsNull() || b.IsNull() {
 			return
 		}
 
@@ -201,7 +201,7 @@ func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 		}
 
 		a, b = types.CoerceDatum(a, b)
-		if a.Kind() == types.KindNull || b.Kind() == types.KindNull {
+		if a.IsNull() || b.IsNull() {
 			return
 		}
 
@@ -232,7 +232,7 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 			}
 		}()
 		aDatum := args[0]
-		if aDatum.Kind() == types.KindNull {
+		if aDatum.IsNull() {
 			return
 		}
 		switch op {
