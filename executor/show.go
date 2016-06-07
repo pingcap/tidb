@@ -293,7 +293,7 @@ func (e *ShowExec) fetchShowVariables() error {
 		if !e.GlobalScope {
 			// Try to get Session Scope variable value first.
 			sv := sessionVars.GetSystemVar(v.Name)
-			if sv.Kind() == types.KindNull {
+			if sv.IsNull() {
 				value, err = globalVars.GetGlobalSysVar(e.ctx, v.Name)
 				if err != nil {
 					return errors.Trace(err)

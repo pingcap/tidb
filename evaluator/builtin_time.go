@@ -41,7 +41,7 @@ func convertToTime(arg types.Datum, tp byte) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 
-	if d.Kind() == types.KindNull {
+	if d.IsNull() {
 		return d, nil
 	}
 
@@ -62,7 +62,7 @@ func convertToDuration(arg types.Datum, fsp int) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 
-	if d.Kind() == types.KindNull {
+	if d.IsNull() {
 		return d, nil
 	}
 
@@ -79,7 +79,7 @@ func builtinDate(args []types.Datum, _ context.Context) (types.Datum, error) {
 
 func abbrDayOfMonth(arg types.Datum) (types.Datum, error) {
 	day, err := builtinDayOfMonth([]types.Datum{arg}, nil)
-	if err != nil || arg.Kind() == types.KindNull {
+	if err != nil || arg.IsNull() {
 		return types.Datum{}, errors.Trace(err)
 	}
 	var str string
@@ -100,7 +100,7 @@ func abbrDayOfMonth(arg types.Datum) (types.Datum, error) {
 
 func to12Hour(arg types.Datum) (types.Datum, error) {
 	d, err := builtinTime([]types.Datum{arg}, nil)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -290,7 +290,7 @@ func builtinDateFormat(args []types.Datum, _ context.Context) (types.Datum, erro
 				if err != nil {
 					return types.Datum{}, errors.Trace(err)
 				}
-				if str.Kind() == types.KindNull {
+				if str.IsNull() {
 					return types.Datum{}, nil
 				}
 				ret = append(ret, str.GetString()...)
@@ -318,7 +318,7 @@ func builtinDay(args []types.Datum, ctx context.Context) (types.Datum, error) {
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_hour
 func builtinHour(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToDuration(args[0], mysql.MaxFsp)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -331,7 +331,7 @@ func builtinHour(args []types.Datum, _ context.Context) (types.Datum, error) {
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_minute
 func builtinMinute(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToDuration(args[0], mysql.MaxFsp)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -344,7 +344,7 @@ func builtinMinute(args []types.Datum, _ context.Context) (types.Datum, error) {
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_second
 func builtinSecond(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToDuration(args[0], mysql.MaxFsp)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -357,7 +357,7 @@ func builtinSecond(args []types.Datum, _ context.Context) (types.Datum, error) {
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_microsecond
 func builtinMicroSecond(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToDuration(args[0], mysql.MaxFsp)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -370,7 +370,7 @@ func builtinMicroSecond(args []types.Datum, _ context.Context) (types.Datum, err
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_month
 func builtinMonth(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -389,7 +389,7 @@ func builtinMonth(args []types.Datum, _ context.Context) (types.Datum, error) {
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_monthname
 func builtinMonthName(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := builtinMonth(args, nil)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -436,7 +436,7 @@ func builtinNow(args []types.Datum, _ context.Context) (d types.Datum, err error
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayname
 func builtinDayName(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	d, err := builtinWeekDay(args, ctx)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 	weekday := d.GetInt64()
@@ -452,7 +452,7 @@ func builtinDayName(args []types.Datum, ctx context.Context) (types.Datum, error
 func builtinDayOfMonth(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// TODO: some invalid format like 2000-00-00 will return 0 too.
 	d, err = convertToTime(args[0], mysql.TypeDate)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -470,7 +470,7 @@ func builtinDayOfMonth(args []types.Datum, _ context.Context) (d types.Datum, er
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofweek
 func builtinDayOfWeek(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	d, err = convertToTime(args[0], mysql.TypeDate)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -490,7 +490,7 @@ func builtinDayOfWeek(args []types.Datum, _ context.Context) (d types.Datum, err
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofyear
 func builtinDayOfYear(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -509,7 +509,7 @@ func builtinDayOfYear(args []types.Datum, _ context.Context) (types.Datum, error
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_week
 func builtinWeek(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -531,7 +531,7 @@ func builtinWeek(args []types.Datum, _ context.Context) (types.Datum, error) {
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekday
 func builtinWeekDay(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -562,7 +562,7 @@ func builtinWeekOfYear(args []types.Datum, ctx context.Context) (types.Datum, er
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_year
 func builtinYear(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -580,7 +580,7 @@ func builtinYear(args []types.Datum, _ context.Context) (types.Datum, error) {
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
 func builtinYearWeek(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || d.Kind() == types.KindNull {
+	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
 
@@ -633,7 +633,7 @@ func builtinCurrentTime(args []types.Datum, _ context.Context) (d types.Datum, e
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time
 func builtinTime(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	if args[0].Kind() == types.KindNull {
+	if args[0].IsNull() {
 		return
 	}
 
@@ -669,7 +669,7 @@ func builtinExtract(args []types.Datum, _ context.Context) (d types.Datum, err e
 	unit := args[0].GetString()
 	vd := args[1]
 
-	if vd.Kind() == types.KindNull {
+	if vd.IsNull() {
 		d.SetNull()
 		return d, nil
 	}
@@ -681,7 +681,7 @@ func builtinExtract(args []types.Datum, _ context.Context) (d types.Datum, err e
 		d.SetNull()
 		return d, errors.Trace(err)
 	}
-	if val.Kind() == types.KindNull {
+	if val.IsNull() {
 		d.SetNull()
 		return d, nil
 	}
@@ -719,13 +719,13 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	// args[1] -> Date
 	// args[2] -> DateArithInterval
 	// health check for date and interval
-	if args[1].Kind() == types.KindNull {
+	if args[1].IsNull() {
 		return d, nil
 	}
 	nodeDate := args[1]
 	nodeInterval := args[2].GetInterface().(ast.DateArithInterval)
 	nodeIntervalIntervalDatum := nodeInterval.Interval.GetDatum()
-	if nodeIntervalIntervalDatum.Kind() == types.KindNull {
+	if nodeIntervalIntervalDatum.IsNull() {
 		return d, nil
 	}
 	// parse date
@@ -759,7 +759,7 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	if err != nil {
 		return d, ErrInvalidOperation.Gen("DateArith invalid args, need date but get %T", nodeDate)
 	}
-	if value.Kind() == types.KindNull {
+	if value.IsNull() {
 		return d, ErrInvalidOperation.Gen("DateArith invalid args, need date but get %v", value.GetValue())
 	}
 	if value.Kind() != types.KindMysqlTime {

@@ -329,7 +329,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		if col.IsPKHandleColumn(t.meta) {
 			continue
 		}
-		if col.DefaultValue == nil && r[col.Offset].Kind() == types.KindNull {
+		if col.DefaultValue == nil && r[col.Offset].IsNull() {
 			// Save storage space by not storing null value.
 			continue
 		}
@@ -800,7 +800,7 @@ func flatten(data types.Datum) (types.Datum, error) {
 }
 
 func unflatten(datum types.Datum, tp *types.FieldType) (types.Datum, error) {
-	if datum.Kind() == types.KindNull {
+	if datum.IsNull() {
 		return datum, nil
 	}
 	switch tp.Tp {

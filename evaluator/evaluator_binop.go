@@ -81,7 +81,7 @@ func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 			return true
 		}
 	}
-	if leftDatum.Kind() == types.KindNull || rightDatum.Kind() == types.KindNull {
+	if leftDatum.IsNull() || rightDatum.IsNull() {
 		o.SetNull()
 		return true
 	}
@@ -113,7 +113,7 @@ func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 			return true
 		}
 	}
-	if leftDatum.Kind() == types.KindNull || righDatum.Kind() == types.KindNull {
+	if leftDatum.IsNull() || righDatum.IsNull() {
 		o.SetNull()
 		return true
 	}
@@ -124,7 +124,7 @@ func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 func (e *Evaluator) handleXor(o *ast.BinaryOperationExpr) bool {
 	leftDatum := o.L.GetDatum()
 	righDatum := o.R.GetDatum()
-	if leftDatum.Kind() == types.KindNull || righDatum.Kind() == types.KindNull {
+	if leftDatum.IsNull() || righDatum.IsNull() {
 		o.SetNull()
 		return true
 	}
@@ -149,11 +149,11 @@ func (e *Evaluator) handleXor(o *ast.BinaryOperationExpr) bool {
 
 func (e *Evaluator) handleComparisonOp(o *ast.BinaryOperationExpr) bool {
 	a, b := types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum())
-	if a.Kind() == types.KindNull || b.Kind() == types.KindNull {
+	if a.IsNull() || b.IsNull() {
 		// for <=>, if a and b are both nil, return true.
 		// if a or b is nil, return false.
 		if o.Op == opcode.NullEQ {
-			if a.Kind() == types.KindNull && b.Kind() == types.KindNull {
+			if a.IsNull() && b.IsNull() {
 				o.SetInt64(oneI64)
 			} else {
 				o.SetInt64(zeroI64)
@@ -208,7 +208,7 @@ func getCompResult(op opcode.Op, value int) (bool, error) {
 func (e *Evaluator) handleBitOp(o *ast.BinaryOperationExpr) bool {
 	a, b := types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum())
 
-	if a.Kind() == types.KindNull || b.Kind() == types.KindNull {
+	if a.IsNull() || b.IsNull() {
 		o.SetNull()
 		return true
 	}
@@ -258,7 +258,7 @@ func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
 	}
 
 	a, b = types.CoerceDatum(a, b)
-	if a.Kind() == types.KindNull || b.Kind() == types.KindNull {
+	if a.IsNull() || b.IsNull() {
 		o.SetNull()
 		return true
 	}

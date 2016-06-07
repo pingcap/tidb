@@ -433,7 +433,7 @@ func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64) (bool, error
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if result.Kind() == types.KindNull {
+	if result.IsNull() {
 		return false, nil
 	}
 	boolResult, err := result.ToBool()

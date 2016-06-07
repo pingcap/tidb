@@ -497,7 +497,7 @@ func (s *testEvaluatorSuite) TestDateArith(c *C) {
 			c.Assert(err, NotNil)
 		} else {
 			c.Assert(err, IsNil)
-			if v.Kind() == types.KindNull {
+			if v.IsNull() {
 				c.Assert(nil, Equals, t.AddResult)
 			} else {
 				c.Assert(v.Kind(), Equals, types.KindMysqlTime)
@@ -513,7 +513,7 @@ func (s *testEvaluatorSuite) TestDateArith(c *C) {
 			c.Assert(err, NotNil)
 		} else {
 			c.Assert(err, IsNil)
-			if v.Kind() == types.KindNull {
+			if v.IsNull() {
 				c.Assert(nil, Equals, t.AddResult)
 			} else {
 				c.Assert(v.Kind(), Equals, types.KindMysqlTime)

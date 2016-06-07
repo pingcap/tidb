@@ -179,7 +179,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			newHandle = newData[i]
 		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
-			if newData[i].Kind() == types.KindNull {
+			if newData[i].IsNull() {
 				return errors.Errorf("Column '%v' cannot be null", col.Name.O)
 			}
 			val, err := newData[i].ToInt64()
@@ -701,7 +701,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 	var defaultValueCols []*table.Column
 	for i, c := range e.Table.Cols() {
 		// It's used for retry.
-		if mysql.HasAutoIncrementFlag(c.Flag) && row[i].Kind() == types.KindNull &&
+		if mysql.HasAutoIncrementFlag(c.Flag) && row[i].IsNull() &&
 			variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
 			id, err := variable.GetSessionVars(e.ctx).RetryInfo.GetCurrAutoIncrementID()
 			if err != nil {
