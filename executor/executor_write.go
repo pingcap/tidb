@@ -232,7 +232,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	}
 
 	var err error
-	if newHandle.Kind() != types.KindNull {
+	if !newHandle.IsNull() {
 		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
 			return errors.Trace(err)
@@ -709,7 +709,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			}
 			row[i].SetInt64(id)
 		}
-		if row[i].Kind() != types.KindNull {
+		if !row[i].IsNull() {
 			// Column value isn't nil and column isn't auto-increment, continue.
 			if !mysql.HasAutoIncrementFlag(c.Flag) {
 				continue

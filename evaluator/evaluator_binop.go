@@ -60,7 +60,7 @@ func (e *Evaluator) handleLogicOperation(o *ast.BinaryOperationExpr) bool {
 func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 	leftDatum := o.L.GetDatum()
 	rightDatum := o.R.GetDatum()
-	if leftDatum.Kind() != types.KindNull {
+	if !leftDatum.IsNull() {
 		x, err := leftDatum.ToBool()
 		if err != nil {
 			e.err = errors.Trace(err)
@@ -71,7 +71,7 @@ func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 			return true
 		}
 	}
-	if rightDatum.Kind() != types.KindNull {
+	if !rightDatum.IsNull() {
 		y, err := rightDatum.ToBool()
 		if err != nil {
 			e.err = errors.Trace(err)
@@ -91,7 +91,7 @@ func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 
 func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 	leftDatum := o.L.GetDatum()
-	if leftDatum.Kind() != types.KindNull {
+	if !leftDatum.IsNull() {
 		x, err := leftDatum.ToBool()
 		if err != nil {
 			e.err = errors.Trace(err)
@@ -103,7 +103,7 @@ func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 		}
 	}
 	righDatum := o.R.GetDatum()
-	if righDatum.Kind() != types.KindNull {
+	if !righDatum.IsNull() {
 		y, err := righDatum.ToBool()
 		if err != nil {
 			e.err = errors.Trace(err)

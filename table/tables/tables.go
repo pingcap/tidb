@@ -369,7 +369,7 @@ func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 	for _, cv := range colVals {
 		cvs := "NULL"
 		var err error
-		if cv.Kind() != types.KindNull {
+		if !cv.IsNull() {
 			cvs, err = types.ToString(cv.GetValue())
 			if err != nil {
 				return "", errors.Trace(err)

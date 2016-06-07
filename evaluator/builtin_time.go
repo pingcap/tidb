@@ -132,14 +132,14 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 	switch b {
 	case 'b':
 		d, err = builtinMonthName([]types.Datum{arg}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			d.SetString(d.GetString()[:3])
 		}
 	case 'M':
 		d, err = builtinMonthName([]types.Datum{arg}, nil)
 	case 'm':
 		d, err = builtinMonth([]types.Datum{arg}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
 		}
 	case 'c':
@@ -148,7 +148,7 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 		d, err = abbrDayOfMonth(arg)
 	case 'd':
 		d, err = builtinDayOfMonth([]types.Datum{arg}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
 		}
 	case 'e':
@@ -162,7 +162,7 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 		d, err = builtinHour([]types.Datum{arg}, nil)
 	case 'h', 'I', 'l':
 		d, err = builtinHour([]types.Datum{arg}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			if d.GetInt64() > 12 {
 				d.SetInt64(d.GetInt64() - 12)
 			} else if d.GetInt64() == 0 {
@@ -172,12 +172,12 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 		}
 	case 'i':
 		d, err = builtinMinute([]types.Datum{arg}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
 		}
 	case 'p':
 		d, err = builtinHour([]types.Datum{arg}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			if d.GetInt64() < 12 {
 				d.SetString("AM")
 				break
@@ -188,7 +188,7 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 		d, err = to12Hour(arg)
 	case 'T':
 		d, err = builtinTime([]types.Datum{arg}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			duration := mysql.Duration{
 				Duration: d.GetMysqlDuration().Duration,
 				Fsp:      0}
@@ -203,39 +203,39 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 		d, err = builtinMicroSecond([]types.Datum{arg}, nil)
 	case 'U':
 		d, err = builtinWeek([]types.Datum{arg, types.NewIntDatum(0)}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
 		}
 	case 'u':
 		d, err = builtinWeek([]types.Datum{arg, types.NewIntDatum(1)}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
 		}
 	case 'V':
 		d, err = builtinWeek([]types.Datum{arg, types.NewIntDatum(2)}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
 		}
 	case 'v':
 		d, err = builtinWeek([]types.Datum{arg, types.NewIntDatum(3)}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
 		}
 	case 'a':
 		d, err = builtinDayName([]types.Datum{arg}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			d.SetString(d.GetString()[:3])
 		}
 	case 'W':
 		d, err = builtinDayName([]types.Datum{arg}, nil)
 	case 'w':
 		d, err = builtinDayOfWeek([]types.Datum{arg}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			d.SetInt64(d.GetInt64() - 1)
 		}
 	case 'X':
 		d, err = builtinYearWeek([]types.Datum{arg, types.NewIntDatum(2)}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			if d.GetInt64() == math.MaxUint32 {
 				break
 			}
@@ -244,7 +244,7 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 		}
 	case 'x':
 		d, err = builtinYearWeek([]types.Datum{arg, types.NewIntDatum(3)}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			if d.GetInt64() == math.MaxUint32 {
 				break
 			}
@@ -253,12 +253,12 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 		}
 	case 'Y':
 		d, err = builtinYear([]types.Datum{arg}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			d.SetString(fmt.Sprintf("%04d", d.GetInt64()))
 		}
 	case 'y':
 		d, err = builtinYear([]types.Datum{arg}, nil)
-		if err == nil && d.Kind() != types.KindNull {
+		if err == nil && !d.IsNull() {
 			str := fmt.Sprintf("%04d", d.GetInt64())
 			d.SetString(fmt.Sprintf("%02s", str[2:]))
 		}
@@ -266,7 +266,7 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 		d.SetString(string(b))
 	}
 
-	if err == nil && d.Kind() != types.KindNull {
+	if err == nil && !d.IsNull() {
 		d.SetString(fmt.Sprintf("%v", d.GetValue()))
 	}
 	return d, errors.Trace(err)
@@ -410,7 +410,7 @@ func builtinNow(args []types.Datum, _ context.Context) (d types.Datum, err error
 	// TODO: if NOW is used in stored function or trigger, NOW will return the beginning time
 	// of the execution.
 	fsp := 0
-	if len(args) == 1 && args[0].Kind() != types.KindNull {
+	if len(args) == 1 && !args[0].IsNull() {
 		if fsp, err = checkFsp(args[0]); err != nil {
 			d.SetNull()
 			return d, errors.Trace(err)
@@ -621,7 +621,7 @@ func builtinCurrentDate(args []types.Datum, _ context.Context) (d types.Datum, e
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curtime
 func builtinCurrentTime(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	fsp := 0
-	if len(args) == 1 && args[0].Kind() != types.KindNull {
+	if len(args) == 1 && !args[0].IsNull() {
 		if fsp, err = checkFsp(args[0]); err != nil {
 			d.SetNull()
 			return d, errors.Trace(err)

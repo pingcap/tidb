@@ -52,7 +52,7 @@ func builtinIfNull(args []types.Datum, _ context.Context) (d types.Datum, err er
 	v1 := args[0]
 	v2 := args[1]
 
-	if v1.Kind() != types.KindNull {
+	if !v1.IsNull() {
 		return v1, nil
 	}
 

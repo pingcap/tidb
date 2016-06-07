@@ -179,7 +179,7 @@ func (e *Evaluator) caseExpr(v *ast.CaseExpr) bool {
 	if v.Value != nil {
 		target = v.Value.GetDatum()
 	}
-	if target.Kind() != types.KindNull {
+	if !target.IsNull() {
 		for _, val := range v.WhenClauses {
 			cmp, err := target.CompareDatum(*val.Expr.GetDatum())
 			if err != nil {
@@ -437,7 +437,7 @@ func (e *Evaluator) isNull(v *ast.IsNullExpr) bool {
 func (e *Evaluator) isTruth(v *ast.IsTruthExpr) bool {
 	var boolVal bool
 	datum := v.Expr.GetDatum()
-	if datum.Kind() != types.KindNull {
+	if !datum.IsNull() {
 		ival, err := datum.ToBool()
 		if err != nil {
 			e.err = errors.Trace(err)
@@ -577,7 +577,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	sessionVars := variable.GetSessionVars(e.ctx)
 	globalVars := variable.GetGlobalVarAccessor(e.ctx)
 	if !v.IsSystem {
-		if v.Value != nil && v.Value.GetDatum().Kind() != types.KindNull {
+		if v.Value != nil && !v.Value.GetDatum().IsNull() {
 			strVal, err := v.Value.GetDatum().ToString()
 			if err != nil {
 				e.err = errors.Trace(err)
