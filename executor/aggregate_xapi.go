@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -77,6 +78,11 @@ type XAggregateExec struct {
 	groups            []string
 	hasGroupBy        bool
 	currentGroupIndex int
+}
+
+// Schema implements Executor Schema interface.
+func (e *XAggregateExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.

@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -33,6 +34,11 @@ type DDLExec struct {
 	ctx       context.Context
 	is        infoschema.InfoSchema
 	done      bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *DDLExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.

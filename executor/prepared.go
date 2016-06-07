@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/optimizer/plan"
@@ -83,6 +84,12 @@ type PrepareExec struct {
 	ResultFields []*ast.ResultField
 	ParamCount   int
 	Err          error
+}
+
+// Schema implements Executor Schema interface.
+func (e *PrepareExec) Schema() expression.Schema {
+	// Will never be called.
+	return nil
 }
 
 // Fields implements Executor Fields interface.
@@ -170,6 +177,12 @@ type ExecuteExec struct {
 	Stmt      ast.StmtNode
 }
 
+// Schema implements Executor Schema interface.
+func (e *ExecuteExec) Schema() expression.Schema {
+	// Will never be called.
+	return nil
+}
+
 // Fields implements Executor Fields interface.
 func (e *ExecuteExec) Fields() []*ast.ResultField {
 	// Will never be called.
@@ -241,6 +254,12 @@ func (e *ExecuteExec) Build() error {
 type DeallocateExec struct {
 	Name string
 	ctx  context.Context
+}
+
+// Schema implements Executor Schema interface.
+func (e *DeallocateExec) Schema() expression.Schema {
+	// Will never be called.
+	return nil
 }
 
 // Fields implements Executor Fields interface.

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
@@ -108,6 +109,12 @@ type UnionScanExec struct {
 	cursor      int
 	sortErr     error
 	snapshotRow *Row
+}
+
+// Schema implements Executor Schema interface.
+func (us *UnionScanExec) Schema() expression.Schema {
+	return nil
+
 }
 
 // Fields implements Executor Fields interface.

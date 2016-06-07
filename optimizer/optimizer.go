@@ -34,6 +34,7 @@ func Optimize(ctx context.Context, node ast.Node, sb plan.SubQueryBuilder) (plan
 	if err := logicOptimize(ctx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
+	plan.GlobalID = 0
 	p, err := plan.BuildPlan(node, sb)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -43,7 +44,7 @@ func Optimize(ctx context.Context, node ast.Node, sb plan.SubQueryBuilder) (plan
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = plan.PruneColumnsAndResolveIndices(p)
+		_, err = plan.PruneColumnsAndResolveIndices(p, p.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
