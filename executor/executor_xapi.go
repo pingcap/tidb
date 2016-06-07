@@ -306,8 +306,10 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		if task.cursor < len(task.rows) {
 			row := task.rows[task.cursor]
-			for i, field := range e.indexPlan.Fields() {
-				field.Expr.SetDatum(row.Data[i])
+			if len(e.aggFuncs) == 0 {
+				for i, field := range e.indexPlan.Fields() {
+					field.Expr.SetDatum(row.Data[i])
+				}
 			}
 			task.cursor++
 			return row, nil
@@ -723,7 +725,7 @@ func (e *XSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult *xa
 			// compose aggreagte row
 			row := &Row{Data: rowData}
 			rows = append(rows, row)
-			return rows, nil
+			continue
 		}
 		fullRowData := make([]types.Datum, len(e.indexPlan.Fields()))
 		var j int
