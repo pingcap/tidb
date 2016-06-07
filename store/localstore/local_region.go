@@ -170,9 +170,6 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, er
  *		groupKey2, count1, value1, count2, value2
  */
 func (rs *localRegion) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
-	if len(ctx.groupKeys) == 0 {
-		ctx.groupKeys = append(ctx.groupKeys, singleGroup)
-	}
 	rows := make([]*tipb.Row, 0, len(ctx.groupKeys))
 	for _, gk := range ctx.groupKeys {
 		row := new(tipb.Row)

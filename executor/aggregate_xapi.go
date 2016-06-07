@@ -75,6 +75,7 @@ type XAggregateExec struct {
 	aggregaters       []*finalAggregater
 	groupMap          map[string]bool
 	groups            []string
+	hasGroupBy        bool
 	currentGroupIndex int
 }
 
@@ -106,7 +107,7 @@ func (e *XAggregateExec) Next() (*Row, error) {
 			}
 		}
 		e.executed = true
-		if len(e.groups) == 0 {
+		if len(e.groups) == 0 && !e.hasGroupBy {
 			// If no groupby and no data, we should add an empty group.
 			// For example:
 			// "select count(c) from t;" should return one row [0]

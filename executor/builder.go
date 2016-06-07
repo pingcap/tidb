@@ -487,11 +487,13 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 		fields[2*i+2] = agg.GetType()
 	}
 	xSrc.AddAggregate(pbAggFuncs, pbByItems, fields)
+	hasGroupBy := len(v.GroupByItems) > 0
 	xe := &XAggregateExec{
 		Src:          src,
 		ResultFields: v.Fields(),
 		ctx:          b.ctx,
 		AggFuncs:     v.AggFuncs,
+		hasGroupBy:   hasGroupBy,
 	}
 	return xe
 }
