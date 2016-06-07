@@ -13,9 +13,7 @@
 
 package tikv
 
-import (
-	. "github.com/pingcap/check"
-)
+import . "github.com/pingcap/check"
 
 type testLockSuite struct {
 	store *tikvStore

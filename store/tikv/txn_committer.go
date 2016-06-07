@@ -40,14 +40,17 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
 			mutations[string(k)] = &pb.Mutation{
-				Op:    pb.Op_Put.Enum(),
-				Key:   k,
-				Value: v,
+				RowKey:  k,
+				Ops:     []pb.Op{pb.Op_Put},
+				Columns: defaultColumn,
+				Values:  [][]byte{v},
 			}
 		} else {
 			mutations[string(k)] = &pb.Mutation{
-				Op:  pb.Op_Del.Enum(),
-				Key: k,
+				RowKey:  k,
+				Ops:     []pb.Op{pb.Op_Del},
+				Columns: defaultColumn,
+				Values:  [][]byte{nil},
 			}
 		}
 		keys = append(keys, k)
@@ -64,8 +67,10 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	for _, lockKey := range txn.lockKeys {
 		if _, ok := mutations[string(lockKey)]; !ok {
 			mutations[string(lockKey)] = &pb.Mutation{
-				Op:  pb.Op_Lock.Enum(),
-				Key: lockKey,
+				RowKey:  lockKey,
+				Ops:     []pb.Op{pb.Op_Lock},
+				Columns: defaultColumn,
+				Values:  [][]byte{nil},
 			}
 			keys = append(keys, lockKey)
 		}
@@ -123,7 +128,9 @@ func (c *txnCommitter) iterKeysByRegion(keys [][]byte, f func(RegionVerID, [][]b
 func (c *txnCommitter) keyValueSize(key []byte) int {
 	size := c.keySize(key)
 	if mutation := c.mutations[string(key)]; mutation != nil {
-		size += len(mutation.Value)
+		for _, val := range mutation.Values {
+			size += len(val)
+		}
 	}
 	return size
 }
@@ -140,9 +147,9 @@ func (c *txnCommitter) prewriteSingleRegion(regionID RegionVerID, keys [][]byte)
 	req := &pb.Request{
 		Type: pb.MessageType_CmdPrewrite.Enum(),
 		CmdPrewriteReq: &pb.CmdPrewriteRequest{
-			Mutations:    mutations,
-			PrimaryLock:  c.primary(),
-			StartVersion: proto.Uint64(c.startTS),
+			Mutations: mutations,
+			Primary:   c.primary(),
+			Ts:        proto.Uint64(c.startTS),
 		},
 	}
 
@@ -176,7 +183,7 @@ func (c *txnCommitter) prewriteSingleRegion(regionID RegionVerID, keys [][]byte)
 				// It could be `Retryable` or `Abort`.
 				return errors.Trace(err)
 			}
-			lock := newLock(c.store, lockInfo.GetPrimaryLock(), lockInfo.GetLockVersion(), lockInfo.GetKey(), c.startTS)
+			lock := newLock(c.store, lockInfo.GetPrimary(), lockInfo.GetTs(), lockInfo.GetRow(), c.startTS)
 			_, err = lock.cleanup()
 			if err != nil && terror.ErrorNotEqual(err, errInnerRetryable) {
 				return errors.Trace(err)
@@ -190,9 +197,9 @@ func (c *txnCommitter) commitSingleRegion(regionID RegionVerID, keys [][]byte) e
 	req := &pb.Request{
 		Type: pb.MessageType_CmdCommit.Enum(),
 		CmdCommitReq: &pb.CmdCommitRequest{
-			StartVersion:  proto.Uint64(c.startTS),
-			Keys:          keys,
-			CommitVersion: proto.Uint64(c.commitTS),
+			StartTs:  proto.Uint64(c.startTS),
+			Rows:     keys,
+			CommitTs: proto.Uint64(c.commitTS),
 		},
 	}
 
@@ -232,8 +239,8 @@ func (c *txnCommitter) cleanupSingleRegion(regionID RegionVerID, keys [][]byte) 
 	req := &pb.Request{
 		Type: pb.MessageType_CmdBatchRollback.Enum(),
 		CmdBatchRollbackReq: &pb.CmdBatchRollbackRequest{
-			Keys:         keys,
-			StartVersion: proto.Uint64(c.startTS),
+			Ts:   proto.Uint64(c.startTS),
+			Rows: keys,
 		},
 	}
 	resp, err := c.store.SendKVReq(req, regionID)

@@ -27,7 +27,7 @@ type Scanner struct {
 	snapshot     *tikvSnapshot
 	batchSize    int
 	valid        bool
-	cache        []*pb.KvPair
+	cache        []*pb.RowValue
 	idx          int
 	nextStartKey []byte
 	eof          bool
@@ -59,7 +59,7 @@ func (s *Scanner) Valid() bool {
 // Key return key.
 func (s *Scanner) Key() kv.Key {
 	if s.valid {
-		return s.cache[s.idx].Key
+		return s.cache[s.idx].GetRowKey()
 	}
 	return nil
 }
@@ -67,7 +67,7 @@ func (s *Scanner) Key() kv.Key {
 // Value return value.
 func (s *Scanner) Value() []byte {
 	if s.valid {
-		return s.cache[s.idx].Value
+		return defaultRowValue(s.cache[s.idx])
 	}
 	return nil
 }
@@ -129,7 +129,8 @@ func (s *Scanner) resolveCurrentLock() error {
 			return errors.Trace(err)
 		}
 		current.Error = nil
-		current.Value = val
+		current.Columns = defaultColumn
+		current.Values = [][]byte{val}
 		return nil
 	}
 	return errors.Annotate(backoffErr, txnRetryableMark)
@@ -147,9 +148,9 @@ func (s *Scanner) getData() error {
 		req := &pb.Request{
 			Type: pb.MessageType_CmdScan.Enum(),
 			CmdScanReq: &pb.CmdScanRequest{
-				StartKey: []byte(s.nextStartKey),
+				StartRow: defaultRow(s.nextStartKey),
 				Limit:    proto.Uint32(uint32(s.batchSize)),
-				Version:  proto.Uint64(s.startTS()),
+				Ts:       proto.Uint64(s.startTS()),
 			},
 		}
 		resp, err := s.snapshot.store.SendKVReq(req, region.VerID())
@@ -165,20 +166,21 @@ func (s *Scanner) getData() error {
 			return errors.Trace(errBodyMissing)
 		}
 
-		kvPairs := cmdScanResp.Pairs
-		// Check if kvPair contains error, it should be a Lock.
-		for _, pair := range kvPairs {
-			if keyErr := pair.GetError(); keyErr != nil {
+		rows := cmdScanResp.GetRows()
+		// Check if row contains error, it should be a Lock.
+		for _, row := range rows {
+			if keyErr := row.GetError(); keyErr != nil {
 				lock, err := extractLockInfoFromKeyErr(keyErr)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				pair.Key = lock.Key
+
+				row.RowKey = lock.GetRow()
 			}
 		}
 
-		s.cache, s.idx = kvPairs, 0
-		if len(kvPairs) < s.batchSize {
+		s.cache, s.idx = rows, 0
+		if len(rows) < s.batchSize {
 			// No more data in current Region. Next getData() starts
 			// from current Region's endKey.
 			s.nextStartKey = region.EndKey()
@@ -192,7 +194,7 @@ func (s *Scanner) getData() error {
 		// it by appending a '\x00' to the key). Note that next getData()
 		// may get an empty response if the Region in fact does not have
 		// more data.
-		lastKey := kvPairs[len(kvPairs)-1].GetKey()
+		lastKey := rows[len(rows)-1].GetRowKey()
 		s.nextStartKey = kv.Key(lastKey).Next()
 		return nil
 	}

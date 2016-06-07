@@ -63,8 +63,8 @@ func (l *txnLock) cleanup() ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdCleanup.Enum(),
 		CmdCleanupReq: &pb.CmdCleanupRequest{
-			Key:          l.pl.key,
-			StartVersion: proto.Uint64(l.pl.version),
+			Row: l.pl.key,
+			Ts:  proto.Uint64(l.pl.version),
 		},
 	}
 	var backoffErr error
@@ -87,12 +87,12 @@ func (l *txnLock) cleanup() ([]byte, error) {
 		if keyErr := cmdCleanupResp.GetError(); keyErr != nil {
 			return nil, errors.Errorf("unexpected cleanup err: %s", keyErr.String())
 		}
-		if cmdCleanupResp.CommitVersion == nil {
+		if cmdCleanupResp.CommitTs == nil {
 			// cleanup successfully
 			return l.rollbackThenGet()
 		}
 		// already committed
-		return l.commitThenGet(cmdCleanupResp.GetCommitVersion())
+		return l.commitThenGet(cmdCleanupResp.GetCommitTs())
 	}
 	return nil, errors.Annotate(backoffErr, txnRetryableMark)
 }
@@ -102,8 +102,8 @@ func (l *txnLock) rollbackThenGet() ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdRollbackThenGet.Enum(),
 		CmdRbGetReq: &pb.CmdRollbackThenGetRequest{
-			Key:         l.key,
-			LockVersion: proto.Uint64(l.pl.version),
+			Row: defaultRow(l.key),
+			Ts:  proto.Uint64(l.pl.version),
 		},
 	}
 	var backoffErr error
@@ -123,10 +123,14 @@ func (l *txnLock) rollbackThenGet() ([]byte, error) {
 		if cmdRbGResp == nil {
 			return nil, errors.Trace(errBodyMissing)
 		}
-		if keyErr := cmdRbGResp.GetError(); keyErr != nil {
+		rowVal := cmdRbGResp.GetRowValue()
+		if rowVal == nil {
+			return nil, errors.Trace(errBodyMissing)
+		}
+		if keyErr := rowVal.GetError(); keyErr != nil {
 			return nil, errors.Errorf("unexpected rollback err: %s", keyErr.String())
 		}
-		return cmdRbGResp.GetValue(), nil
+		return defaultRowValue(rowVal), nil
 	}
 	return nil, errors.Annotate(backoffErr, txnRetryableMark)
 }
@@ -136,10 +140,10 @@ func (l *txnLock) commitThenGet(commitVersion uint64) ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdCommitThenGet.Enum(),
 		CmdCommitGetReq: &pb.CmdCommitThenGetRequest{
-			Key:           l.key,
-			LockVersion:   proto.Uint64(l.pl.version),
-			CommitVersion: proto.Uint64(commitVersion),
-			GetVersion:    proto.Uint64(l.ver),
+			Row:      defaultRow(l.key),
+			StartTs:  proto.Uint64(l.pl.version),
+			CommitTs: proto.Uint64(commitVersion),
+			GetTs:    proto.Uint64(l.ver),
 		},
 	}
 	var backoffErr error
@@ -159,10 +163,14 @@ func (l *txnLock) commitThenGet(commitVersion uint64) ([]byte, error) {
 		if cmdCommitGetResp == nil {
 			return nil, errors.Trace(errBodyMissing)
 		}
-		if keyErr := cmdCommitGetResp.GetError(); keyErr != nil {
+		rowVal := cmdCommitGetResp.GetRowValue()
+		if rowVal == nil {
+			return nil, errors.Trace(errBodyMissing)
+		}
+		if keyErr := rowVal.GetError(); keyErr != nil {
 			return nil, errors.Errorf("unexpected commit err: %s", keyErr.String())
 		}
-		return cmdCommitGetResp.GetValue(), nil
+		return defaultRowValue(rowVal), nil
 	}
 	return nil, errors.Annotate(backoffErr, txnRetryableMark)
 }

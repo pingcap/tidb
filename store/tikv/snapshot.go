@@ -60,14 +60,14 @@ func (s *tikvSnapshot) makeBatchGetReqs(keys []kv.Key) (map[RegionVerID]*batchGe
 		if !ok {
 			singleBatchGet = &batchGetRegion{
 				CmdBatchGetRequest: &pb.CmdBatchGetRequest{
-					Version: proto.Uint64(startTS),
+					Ts: proto.Uint64(startTS),
 				},
 				region: regionID,
 			}
 			multiBatchGet[regionID] = singleBatchGet
 		}
 		cmdBatchGetReq := singleBatchGet.CmdBatchGetRequest
-		cmdBatchGetReq.Keys = append(cmdBatchGetReq.Keys, k)
+		cmdBatchGetReq.Rows = append(cmdBatchGetReq.Rows, defaultRow(k))
 	}
 	return multiBatchGet, nil
 }
@@ -75,8 +75,7 @@ func (s *tikvSnapshot) makeBatchGetReqs(keys []kv.Key) (map[RegionVerID]*batchGe
 // doBatchGet sends BatchGet RPC request. If any key is locked, use tikvSnapshot.Get() to retry.
 func (s *tikvSnapshot) doBatchGet(singleBatchGet *batchGetRegion) (map[string][]byte, error) {
 	cmdBatchGetReq := singleBatchGet.CmdBatchGetRequest
-	keys := cmdBatchGetReq.GetKeys()
-	if len(keys) == 0 {
+	if len(cmdBatchGetReq.GetRows()) == 0 {
 		return nil, nil
 	}
 	req := &pb.Request{
@@ -95,13 +94,13 @@ func (s *tikvSnapshot) doBatchGet(singleBatchGet *batchGetRegion) (map[string][]
 	if cmdBatchGetResp == nil {
 		return nil, errors.Trace(errBodyMissing)
 	}
-	pairs := cmdBatchGetResp.GetPairs()
-	m := make(map[string][]byte, len(pairs))
-	for _, pair := range pairs {
-		keyErr := pair.GetError()
+	rowVals := cmdBatchGetResp.GetRowValues()
+	m := make(map[string][]byte, len(rowVals))
+	for _, rowVal := range rowVals {
+		keyErr := rowVal.GetError()
 		if keyErr == nil {
-			if val := pair.GetValue(); len(val) > 0 {
-				m[string(pair.GetKey())] = val
+			if val := defaultRowValue(rowVal); len(val) > 0 {
+				m[string(rowVal.GetRowKey())] = val
 			}
 			continue
 		}
@@ -109,14 +108,14 @@ func (s *tikvSnapshot) doBatchGet(singleBatchGet *batchGetRegion) (map[string][]
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		val, err := s.Get(lockInfo.GetKey())
+		val, err := s.Get(lockInfo.GetRow())
 		if err != nil {
 			if terror.ErrorEqual(err, kv.ErrNotExist) {
 				continue
 			}
 			return nil, errors.Trace(err)
 		}
-		m[string(lockInfo.GetKey())] = val
+		m[string(lockInfo.GetRow())] = val
 	}
 	return m, nil
 }
@@ -131,16 +130,16 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	for _, singleBatchGet := range multiBatchGet {
-		keys := singleBatchGet.GetKeys()
-		for startIdx := 0; startIdx < len(keys); startIdx += batchGetSize {
+		rows := singleBatchGet.GetRows()
+		for startIdx := 0; startIdx < len(rows); startIdx += batchGetSize {
 			endIdx := startIdx + batchGetSize
-			if endIdx > len(keys) {
-				endIdx = len(keys)
+			if endIdx > len(rows) {
+				endIdx = len(rows)
 			}
 			newSingleBatchGet := &batchGetRegion{
 				CmdBatchGetRequest: &pb.CmdBatchGetRequest{
-					Keys:    keys[startIdx:endIdx],
-					Version: proto.Uint64(singleBatchGet.GetVersion()),
+					Rows: rows[startIdx:endIdx],
+					Ts:   proto.Uint64(singleBatchGet.GetTs()),
 				},
 				region: singleBatchGet.region,
 			}
@@ -163,8 +162,8 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdGet.Enum(),
 		CmdGetReq: &pb.CmdGetRequest{
-			Key:     k,
-			Version: proto.Uint64(s.version.Ver),
+			Row: defaultRow(k),
+			Ts:  proto.Uint64(s.version.Ver),
 		},
 	}
 
@@ -190,8 +189,12 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 		if cmdGetResp == nil {
 			return nil, errors.Trace(errBodyMissing)
 		}
-		val := cmdGetResp.GetValue()
-		if keyErr := cmdGetResp.GetError(); keyErr != nil {
+		rowVal := cmdGetResp.GetRow()
+		if rowVal == nil {
+			return nil, errors.Trace(errBodyMissing)
+		}
+		var val []byte
+		if keyErr := rowVal.GetError(); keyErr != nil {
 			val, err = s.handleKeyError(keyErr)
 			if err != nil {
 				if terror.ErrorEqual(err, errInnerRetryable) {
@@ -200,6 +203,8 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 				}
 				return nil, errors.Trace(err)
 			}
+		} else {
+			val = defaultRowValue(rowVal)
 		}
 		if len(val) == 0 {
 			return nil, kv.ErrNotExist
@@ -247,7 +252,7 @@ func (s *tikvSnapshot) handleKeyError(keyErr *pb.KeyError) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	lock := newLock(s.store, lockInfo.GetPrimaryLock(), lockInfo.GetLockVersion(), lockInfo.GetKey(), s.version.Ver)
+	lock := newLock(s.store, lockInfo.GetPrimary(), lockInfo.GetTs(), lockInfo.GetRow(), s.version.Ver)
 	val, err := lock.cleanup()
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -326,7 +326,7 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 			continue
 		}
 		if e := resp.GetLocked(); e != nil {
-			lock := newLock(it.store, e.GetPrimaryLock(), e.GetLockVersion(), e.GetKey(), e.GetLockVersion())
+			lock := newLock(it.store, e.GetPrimary(), e.GetTs(), e.GetRow(), e.GetTs())
 			_, lockErr := lock.cleanup()
 			if lockErr == nil || terror.ErrorEqual(lockErr, errInnerRetryable) {
 				continue
