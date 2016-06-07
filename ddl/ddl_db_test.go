@@ -384,7 +384,7 @@ LOOP:
 	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		// c4 must be -1 or > 0
-		v, err1 := types.ToInt64(data[3].GetValue())
+		v, err1 := data[3].ToInt64()
 		c.Assert(err1, IsNil)
 		if v == -1 {
 			j++

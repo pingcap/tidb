@@ -18,8 +18,9 @@ import (
 	"io"
 )
 
+// Transaction options
 const (
-	// PresumeKeyNotExists directives that when dealing with a Get operation but failing to read data from cache,
+	// PresumeKeyNotExists indicates that when dealing with a Get operation but failing to read data from cache,
 	// we presume that the key does not exist in Store. The actual existence will be checked before the
 	// transaction's commit.
 	// This option is an optimization for frequent checks during a transaction, e.g. batch inserts.
@@ -27,6 +28,8 @@ const (
 	// PresumeKeyNotExistsError is the option key for error.
 	// When PresumeKeyNotExists is set and condition is not match, should throw the error.
 	PresumeKeyNotExistsError
+	// RetryAttempts is the number of txn retry attempt.
+	RetryAttempts
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.

@@ -14,6 +14,7 @@
 package evaluator
 
 import (
+	"math"
 	"strings"
 	"time"
 
@@ -66,6 +67,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 	}{
 		{"2000-01-01", 2000, 1, "January", 1, 7, 1, 5, "Saturday", 52, 52, 199952},
 		{"2011-11-11", 2011, 11, "November", 11, 6, 315, 4, "Friday", 45, 45, 201145},
+		{"0000-01-01", int64(0), 1, "January", 1, 7, 1, 5, "Saturday", 52, 52, math.MaxUint32},
 	}
 
 	dtbl := tblToDtbl(tbl)
@@ -184,6 +186,46 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestDateFormat(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tblDate := []struct {
+		Input  []string
+		Expect interface{}
+	}{
+		{[]string{"2010-01-07 23:12:34.12345",
+			"%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%"},
+			"Jan January 01 1 7th 07 7 007 23 11 12 PM 11:12:34 PM 23:12:34 34 123450 01 01 01 01 Thu Thursday 4 2010 2010 2010 10 %"},
+		{[]string{"2012-12-21 23:12:34.123456",
+			"%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%"},
+			"Dec December 12 12 21st 21 21 356 23 11 12 PM 11:12:34 PM 23:12:34 34 123456 51 51 51 51 Fri Friday 5 2012 2012 2012 12 %"},
+		{[]string{"0000-01-01 00:00:00.123456",
+			// Functions week() and yearweek() don't support multi mode,
+			// so the result of "%U %u %V %Y" is different from MySQL.
+			"%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %v %x %Y %y %%"},
+			"Jan January 01 1 1st 01 1 001 0 12 00 AM 12:00:00 AM 00:00:00 00 123456 52 4294967295 0000 00 %"},
+		{[]string{"2016-09-3 00:59:59.123456",
+			"abc%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y!123 %%xyz %z"},
+			"abcSep September 09 9 3rd 03 3 247 0 12 59 AM 12:59:59 AM 00:59:59 59 123456 35 35 35 35 Sat Saturday 6 2016 2016 2016 16!123 %xyz z"},
+	}
+	dtblDate := tblToDtbl(tblDate)
+
+	for i, t := range dtblDate {
+		v, err := builtinDateFormat(t["Input"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Expect"][0], Commentf("no.%d \nobtain:%v \nexpect:%v\n", i,
+			v.GetValue(), t["Expect"][0].GetValue()))
+	}
+
+	// error
+	ds := types.MakeDatums("0000-01-00 00:00:00.123456",
+		"%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%")
+	_, err := builtinDateFormat(ds, nil)
+	// Some like dayofweek() doesn't support the date format like 2000-00-00 returns 0,
+	// so it returns an error.
+	c.Assert(err, NotNil)
+}
+
 func (s *testEvaluatorSuite) TestClock(c *C) {
 	defer testleak.AfterTest(c)()
 	// test hour, minute, second, micro second
@@ -194,10 +236,11 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		Minute      int64
 		Second      int64
 		MicroSecond int64
+		Time        string
 	}{
-		{"10:10:10.123456", 10, 10, 10, 123456},
-		{"11:11:11.11", 11, 11, 11, 110000},
-		{"2010-10-10 11:11:11.11", 11, 11, 11, 110000},
+		{"10:10:10.123456", 10, 10, 10, 123456, "10:10:10.123456"},
+		{"11:11:11.11", 11, 11, 11, 110000, "11:11:11.11"},
+		{"2010-10-10 11:11:11.11", 11, 11, 11, 110000, "11:11:11.11"},
 	}
 
 	dtbl := tblToDtbl(tbl)
@@ -217,6 +260,10 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		v, err = builtinMicroSecond(t["Input"], nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["MicroSecond"][0])
+
+		v, err = builtinTime(t["Input"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Time"][0])
 	}
 
 	// nil
@@ -236,9 +283,14 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 
+	v, err = builtinTime(types.MakeDatums(nil), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
+
 	// test error
 	errTbl := []string{
 		"2011-11-11T10:10:10.11",
+		"2011-11-11 10:10:10.11.12",
 	}
 
 	for _, t := range errTbl {
@@ -253,6 +305,9 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		c.Assert(err, NotNil)
 
 		_, err = builtinMicroSecond(td, nil)
+		c.Assert(err, NotNil)
+
+		_, err = builtinTime(td, nil)
 		c.Assert(err, NotNil)
 	}
 }
