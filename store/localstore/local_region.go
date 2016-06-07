@@ -180,6 +180,9 @@ func (rs *localRegion) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
 		for i, agg := range ctx.aggregates {
 			agg.currentGroup = gk
 			ds := agg.toDatums()
+			if ds == nil {
+				return nil, errors.Errorf("Aggregate partial result is nil. This should not happend!")
+			}
 			rowData[2*i+1] = ds[0]
 			rowData[2*i+2] = ds[1]
 		}
