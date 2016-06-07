@@ -710,7 +710,9 @@ func (e *XSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult *xa
 		}
 		if len(e.aggFuncs) > 0 {
 			// compose aggreagte row
-			return []*Row{&Row{Data: rowData}}, nil
+			row := &Row{Data: rowData}
+			rows = append(rows, row)
+			return rows, nil
 		}
 		fullRowData := make([]types.Datum, len(e.indexPlan.Fields()))
 		var j int
