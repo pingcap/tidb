@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -135,6 +136,11 @@ func (e *XSelectTableExec) Fields() []*ast.ResultField {
 	return e.tablePlan.Fields()
 }
 
+// Schema implements Executor Schema interface.
+func (e *XSelectTableExec) Schema() expression.Schema {
+	return nil
+}
+
 // Close implements Executor Close interface.
 func (e *XSelectTableExec) Close() error {
 	if e.result != nil {
@@ -237,6 +243,11 @@ type lookupTableTask struct {
 	status  int
 	done    bool
 	doneCh  chan error
+}
+
+// Schema implements Executor Schema interface.
+func (e *XSelectIndexExec) Schema() expression.Schema {
+	return nil
 }
 
 // AddAggregate implements XExecutor interface.

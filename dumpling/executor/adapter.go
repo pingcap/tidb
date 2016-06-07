@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer/plan"
 )
@@ -25,6 +26,7 @@ import (
 type recordSet struct {
 	fields   []*ast.ResultField
 	executor Executor
+	schema   expression.Schema
 }
 
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
@@ -78,7 +80,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		e = executorExec.StmtExec
 	}
 
-	if len(e.Fields()) == 0 {
+	if len(e.Fields()) == 0 && len(e.Schema()) == 0 {
 		// No result fields means no Recordset.
 		defer e.Close()
 		for {

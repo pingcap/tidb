@@ -49,7 +49,7 @@ type Join struct {
 // Projection represents a select fields plan.
 type Projection struct {
 	basePlan
-	exprs []expression.Expression
+	Exprs []expression.Expression
 }
 
 // Aggregation represents an aggregate plan.
@@ -73,9 +73,11 @@ type Selection struct {
 type NewTableScan struct {
 	basePlan
 
-	Table  *model.TableInfo
-	Desc   bool
-	Ranges []TableRange
+	Table   *model.TableInfo
+	Columns []*model.ColumnInfo
+	DBName  *model.CIStr
+	Desc    bool
+	Ranges  []TableRange
 
 	// RefAccess indicates it references a previous joined table, used in explain.
 	RefAccess bool

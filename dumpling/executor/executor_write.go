@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -49,6 +50,11 @@ type UpdateExec struct {
 	newRowsData [][]types.Datum // The new values to be set.
 	fetched     bool
 	cursor      int
+}
+
+// Schema implements Executor Schema interface.
+func (e *UpdateExec) Schema() expression.Schema {
+	return nil
 }
 
 // Next implements Executor Next interface.
@@ -276,6 +282,11 @@ type DeleteExec struct {
 	finished bool
 }
 
+// Schema implements Executor Schema interface.
+func (e *DeleteExec) Schema() expression.Schema {
+	return nil
+}
+
 // Next implements Executor Next interface.
 func (e *DeleteExec) Next() (*Row, error) {
 	if e.finished {
@@ -418,6 +429,11 @@ type InsertExec struct {
 	Priority int
 
 	finished bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *InsertExec) Schema() expression.Schema {
+	return nil
 }
 
 // Next implements Executor Next interface.
@@ -810,6 +826,11 @@ type ReplaceExec struct {
 	*InsertValues
 	Priority int
 	finished bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *ReplaceExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.

@@ -15,13 +15,15 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 )
 
-func addFilter(p Plan, child Plan, conditions []expression.Expression) error {
-	filter := &Selection{Conditions: conditions}
-	filter.SetSchema(child.GetSchema())
-	return InsertPlan(p, child, filter)
+func addSelection(p Plan, child Plan, conditions []expression.Expression) error {
+	selection := &Selection{Conditions: conditions}
+	selection.SetSchema(child.GetSchema().DeepCopy())
+	selection.id = allocID(selection)
+	return InsertPlan(p, child, selection)
 }
 
 // columnSubstitute substitutes the columns in filter to expressions in select fields.
@@ -91,13 +93,13 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 			return nil, errors.Trace(err2)
 		}
 		if len(leftRet) > 0 {
-			err2 = addFilter(p, leftPlan, leftRet)
+			err2 = addSelection(p, leftPlan, leftRet)
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
 		}
 		if len(rightRet) > 0 {
-			err2 = addFilter(p, rightPlan, rightRet)
+			err2 = addSelection(p, rightPlan, rightRet)
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
@@ -117,13 +119,13 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 			extractedCols := extractColumn(cond, make([]*expression.Column, 0))
 			for _, col := range extractedCols {
 				id := v.GetSchema().GetIndex(col)
-				if _, ok := v.exprs[id].(*expression.ScalarFunction); ok {
+				if _, ok := v.Exprs[id].(*expression.ScalarFunction); ok {
 					canSubstitute = false
 					break
 				}
 			}
 			if canSubstitute {
-				push = append(push, columnSubstitute(cond, v.GetSchema(), v.exprs))
+				push = append(push, columnSubstitute(cond, v.GetSchema(), v.Exprs))
 			} else {
 				ret = append(ret, cond)
 			}
@@ -133,19 +135,19 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 			return nil, errors.Trace(err1)
 		}
 		if len(restConds) > 0 {
-			err1 = addFilter(v, v.GetChildByIndex(0), restConds)
+			err1 = addSelection(v, v.GetChildByIndex(0), restConds)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
 		}
 		return
-	case *Sort, *Limit, *Distinct:
+	case *NewSort, *Limit, *Distinct:
 		rest, err1 := PredicatePushDown(p.GetChildByIndex(0), predicates)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
 		if len(rest) > 0 {
-			err1 = addFilter(p, p.GetChildByIndex(0), rest)
+			err1 = addSelection(p, p.GetChildByIndex(0), rest)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
@@ -163,12 +165,15 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 				return nil, errors.Trace(err)
 			}
 			if len(retCond) != 0 {
-				addFilter(v, proj, retCond)
+				addSelection(v, proj, retCond)
 			}
 		}
 		return
 	//TODO: support aggregation.
+	case *Aggregation, *Simple:
+		return predicates, nil
 	default:
-		return predicates, errors.Errorf("Unkown type %T.", v)
+		log.Warnf("Unknown Type %T in Predicate Pushdown", v)
+		return predicates, nil
 	}
 }

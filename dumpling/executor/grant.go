@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -47,6 +48,11 @@ type GrantExec struct {
 
 	ctx  context.Context
 	done bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *GrantExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.
