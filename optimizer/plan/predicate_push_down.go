@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
