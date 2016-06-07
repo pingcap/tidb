@@ -2268,3 +2268,16 @@ func (s *testSessionSuite) TestRetryAttempts(c *C) {
 	cnt := mtx.GetOption(kv.RetryAttempts)
 	c.Assert(cnt.(int), Equals, retryInfo.Attempts)
 }
+
+func (s *testSessionSuite) TestXAggregateWithIndexScan(c *C) {
+	initSQL := `
+		drop table IF EXISTS t;
+		CREATE TABLE t(c INT, index cidx (c));
+		INSERT INTO t VALUES(1), (null), (2);`
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecMultiSQL(c, se, initSQL)
+
+	sql := "SELECT COUNT(c) FROM t WHERE c IS NOT NULL;"
+	mustExecMatch(c, se, sql, [][]interface{}{{"2"}})
+}
