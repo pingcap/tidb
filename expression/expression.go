@@ -65,7 +65,7 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if data.Kind() == types.KindNull {
+	if data.IsNull() {
 		return false, nil
 	}
 

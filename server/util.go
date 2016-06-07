@@ -248,7 +248,7 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 	nullsLen := ((len(columns) + 7 + 2) / 8)
 	nulls := make([]byte, nullsLen)
 	for i, val := range row {
-		if val.Kind() == types.KindNull {
+		if val.IsNull() {
 			bytePos := (i + 2) / 8
 			bitPos := byte((i + 2) % 8)
 			nulls[bytePos] |= 1 << bitPos

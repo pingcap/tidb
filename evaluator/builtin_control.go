@@ -27,7 +27,7 @@ func builtinIf(args []types.Datum, _ context.Context) (d types.Datum, err error)
 	v2 := args[1]
 	v3 := args[2]
 
-	if v1.Kind() == types.KindNull {
+	if v1.IsNull() {
 		return v3, nil
 	}
 
@@ -52,7 +52,7 @@ func builtinIfNull(args []types.Datum, _ context.Context) (d types.Datum, err er
 	v1 := args[0]
 	v2 := args[1]
 
-	if v1.Kind() != types.KindNull {
+	if !v1.IsNull() {
 		return v1, nil
 	}
 
@@ -66,7 +66,7 @@ func builtinNullIf(args []types.Datum, _ context.Context) (d types.Datum, err er
 	v1 := args[0]
 	v2 := args[1]
 
-	if v1.Kind() == types.KindNull || v2.Kind() == types.KindNull {
+	if v1.IsNull() || v2.IsNull() {
 		return v1, nil
 	}
 

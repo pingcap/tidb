@@ -53,7 +53,7 @@ func builtinAbs(args []types.Datum, _ context.Context) (d types.Datum, err error
 }
 
 func builtinRand(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	if len(args) == 1 && args[0].Kind() != types.KindNull {
+	if len(args) == 1 && !args[0].IsNull() {
 		seed, err := args[0].ToInt64()
 		if err != nil {
 			return d, errors.Trace(err)

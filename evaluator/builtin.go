@@ -149,7 +149,7 @@ var Funcs = map[string]Func{
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	for _, d = range args {
-		if d.Kind() != types.KindNull {
+		if !d.IsNull() {
 			return d, nil
 		}
 	}
@@ -158,7 +158,7 @@ func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, er
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
 func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	if args[0].Kind() == types.KindNull {
+	if args[0].IsNull() {
 		d.SetInt64(1)
 	} else {
 		d.SetInt64(0)

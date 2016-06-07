@@ -58,7 +58,7 @@ func EvalBool(ctx context.Context, expr ast.ExprNode) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if val.Kind() == types.KindNull {
+	if val.IsNull() {
 		return false, nil
 	}
 
@@ -179,7 +179,7 @@ func (e *Evaluator) caseExpr(v *ast.CaseExpr) bool {
 	if v.Value != nil {
 		target = v.Value.GetDatum()
 	}
-	if target.Kind() != types.KindNull {
+	if !target.IsNull() {
 		for _, val := range v.WhenClauses {
 			cmp, err := target.CompareDatum(*val.Expr.GetDatum())
 			if err != nil {
@@ -211,7 +211,7 @@ func (e *Evaluator) defaultExpr(v *ast.DefaultExpr) bool {
 
 func (e *Evaluator) compareSubquery(cs *ast.CompareSubqueryExpr) bool {
 	lv := *cs.L.GetDatum()
-	if lv.Kind() == types.KindNull {
+	if lv.IsNull() {
 		cs.SetNull()
 		return true
 	}
@@ -234,7 +234,7 @@ func (e *Evaluator) checkResult(cs *ast.CompareSubqueryExpr, lv types.Datum, res
 func (e *Evaluator) checkAllResult(cs *ast.CompareSubqueryExpr, lv types.Datum, result []types.Datum) (d types.Datum, err error) {
 	hasNull := false
 	for _, v := range result {
-		if v.Kind() == types.KindNull {
+		if v.IsNull() {
 			hasNull = true
 			continue
 		}
@@ -266,7 +266,7 @@ func (e *Evaluator) checkAllResult(cs *ast.CompareSubqueryExpr, lv types.Datum, 
 func (e *Evaluator) checkAnyResult(cs *ast.CompareSubqueryExpr, lv types.Datum, result []types.Datum) (d types.Datum, err error) {
 	hasNull := false
 	for _, v := range result {
-		if v.Kind() == types.KindNull {
+		if v.IsNull() {
 			hasNull = true
 			continue
 		}
@@ -299,7 +299,7 @@ func (e *Evaluator) checkAnyResult(cs *ast.CompareSubqueryExpr, lv types.Datum, 
 
 func (e *Evaluator) existsSubquery(v *ast.ExistsSubqueryExpr) bool {
 	d := v.Sel.GetDatum()
-	if d.Kind() == types.KindNull {
+	if d.IsNull() {
 		v.SetInt64(0)
 		return true
 	}
@@ -361,7 +361,7 @@ func EvalSubquery(ctx context.Context, v *ast.SubqueryExpr) error {
 func (e *Evaluator) checkInList(not bool, in types.Datum, list []types.Datum) (d types.Datum) {
 	hasNull := false
 	for _, v := range list {
-		if v.Kind() == types.KindNull {
+		if v.IsNull() {
 			hasNull = true
 			continue
 		}
@@ -397,7 +397,7 @@ func (e *Evaluator) checkInList(not bool, in types.Datum, list []types.Datum) (d
 
 func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 	lhs := *n.Expr.GetDatum()
-	if lhs.Kind() == types.KindNull {
+	if lhs.IsNull() {
 		n.SetNull()
 		return true
 	}
@@ -424,7 +424,7 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 
 func (e *Evaluator) isNull(v *ast.IsNullExpr) bool {
 	var boolVal bool
-	if v.Expr.GetDatum().Kind() == types.KindNull {
+	if v.Expr.GetDatum().IsNull() {
 		boolVal = true
 	}
 	if v.Not {
@@ -437,7 +437,7 @@ func (e *Evaluator) isNull(v *ast.IsNullExpr) bool {
 func (e *Evaluator) isTruth(v *ast.IsTruthExpr) bool {
 	var boolVal bool
 	datum := v.Expr.GetDatum()
-	if datum.Kind() != types.KindNull {
+	if !datum.IsNull() {
 		ival, err := datum.ToBool()
 		if err != nil {
 			e.err = errors.Trace(err)
@@ -484,7 +484,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		}
 	}()
 	aDatum := u.V.GetDatum()
-	if aDatum.Kind() == types.KindNull {
+	if aDatum.IsNull() {
 		u.SetNull()
 		return true
 	}
@@ -577,7 +577,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	sessionVars := variable.GetSessionVars(e.ctx)
 	globalVars := variable.GetGlobalVarAccessor(e.ctx)
 	if !v.IsSystem {
-		if v.Value != nil && v.Value.GetDatum().Kind() != types.KindNull {
+		if v.Value != nil && !v.Value.GetDatum().IsNull() {
 			strVal, err := v.Value.GetDatum().ToString()
 			if err != nil {
 				e.err = errors.Trace(err)
@@ -610,7 +610,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 
 	if !v.IsGlobal {
 		d := sessionVars.GetSystemVar(name)
-		if d.Kind() == types.KindNull {
+		if d.IsNull() {
 			if sysVar.Scope&variable.ScopeGlobal == 0 {
 				d.SetString(sysVar.Value)
 			} else {
@@ -667,7 +667,7 @@ func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
 func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
 	d := *v.Expr.GetDatum()
 	// Casting nil to any type returns null
-	if d.Kind() == types.KindNull {
+	if d.IsNull() {
 		v.SetNull()
 		return true
 	}

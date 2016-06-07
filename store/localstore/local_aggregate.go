@@ -143,7 +143,7 @@ func (n *aggregateFuncExpr) getAggItem() *aggItem {
 
 func (n *aggregateFuncExpr) updateCount(ctx *selectContext, args []types.Datum) error {
 	for _, a := range args {
-		if a.Kind() == types.KindNull {
+		if a.IsNull() {
 			return nil
 		}
 	}

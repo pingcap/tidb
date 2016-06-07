@@ -128,7 +128,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 				return errors.Trace(err)
 			}
 
-			if value.Kind() == types.KindNull {
+			if value.IsNull() {
 				delete(sessionVars.Users, name)
 			} else {
 				svalue, err1 := value.ToString()
@@ -157,7 +157,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if value.Kind() == types.KindNull {
+			if value.IsNull() {
 				value.SetString("")
 			}
 			svalue, err := value.ToString()

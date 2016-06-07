@@ -1045,7 +1045,7 @@ func (b *executorBuilder) datumsToValueList(datums []types.Datum) *tipb.Expr {
 		if prevKind == types.KindNull {
 			prevKind = d.Kind()
 		}
-		if d.Kind() != types.KindNull && d.Kind() != prevKind {
+		if !d.IsNull() && d.Kind() != prevKind {
 			return nil
 		}
 	}
