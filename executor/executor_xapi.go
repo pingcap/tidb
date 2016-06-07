@@ -509,7 +509,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, 
 	// Aggregate Info
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
-	resp, err := xapi.Select(txn.GetClient(), selTableReq, 10)
+	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -707,6 +707,10 @@ func (e *XSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult *xa
 		}
 		if rowData == nil {
 			break
+		}
+		if len(e.aggFuncs) > 0 {
+			// compose aggreagte row
+			return []*Row{&Row{Data: rowData}}, nil
 		}
 		fullRowData := make([]types.Datum, len(e.indexPlan.Fields()))
 		var j int
