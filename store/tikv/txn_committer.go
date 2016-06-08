@@ -280,11 +280,7 @@ func (c *txnCommitter) cleanupSingleRegion(batch batchKeys) error {
 		err = c.cleanupKeys(batch.keys)
 		return errors.Trace(err)
 	}
-	rollbackResp := resp.GetCmdBatchRollbackResp()
-	if rollbackResp == nil {
-		return errors.Trace(errBodyMissing)
-	}
-	if keyErr := rollbackResp.GetError(); keyErr != nil {
+	if keyErr := resp.GetCmdBatchRollbackResp().GetError(); keyErr != nil {
 		err = errors.Errorf("cleanup failed: %s", keyErr)
 		log.Errorf("txn failed cleanup key: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
