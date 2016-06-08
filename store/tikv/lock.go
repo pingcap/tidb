@@ -53,7 +53,7 @@ const lockTTL = 3000
 
 // cleanup cleanup the lock
 func (l *txnLock) cleanup() ([]byte, error) {
-	expired, err := l.store.oracle.IsExpired(l.pl.version, lockTTL)
+	expired, err := l.store.checkTimestampExpiredWithRetry(l.pl.version, lockTTL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

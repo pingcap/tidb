@@ -310,7 +310,7 @@ func (c *txnCommitter) Commit() error {
 		return errors.Trace(err)
 	}
 
-	commitTS, err := c.store.oracle.GetTimestamp()
+	commitTS, err := c.store.getTimestampWithRetry()
 	if err != nil {
 		return errors.Trace(err)
 	}
