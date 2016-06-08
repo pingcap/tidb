@@ -343,7 +343,7 @@ func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn 
 	var start, end int
 	for start = 0; start < len(keys); start = end {
 		var size int
-		for end = start; end < len(keys) && size < txnCommitBatchSize; end++ {
+		for end = start; end < len(keys) && size < limit; end++ {
 			size += sizeFn(keys[end])
 		}
 		b = append(b, batchKeys{
