@@ -100,11 +100,11 @@ func (c *txnCommitter) iterKeys(keys [][]byte, f func(batchKeys) error, sizeFn f
 	var batches []batchKeys
 	// Make sure the group that contains primary key goes first.
 	if firstIsPrimary {
-		batches = appendBatchBySize(batches, firstRegion, groups[firstRegion], sizeFn)
+		batches = appendBatchBySize(batches, firstRegion, groups[firstRegion], sizeFn, txnCommitBatchSize)
 		delete(groups, firstRegion)
 	}
 	for id, g := range groups {
-		batches = appendBatchBySize(batches, id, g, sizeFn)
+		batches = appendBatchBySize(batches, id, g, sizeFn, txnCommitBatchSize)
 	}
 
 	if firstIsPrimary {
@@ -339,11 +339,11 @@ type batchKeys struct {
 
 // appendBatchBySize appends keys to []batchKeys. It may split the keys to make
 // sure each batch's size does not exceed the limit.
-func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn func([]byte) int) []batchKeys {
+func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn func([]byte) int, limit int) []batchKeys {
 	var start, end int
 	for start = 0; start < len(keys); start = end {
 		var size int
-		for end = start; end < len(keys) && size < txnCommitBatchSize; end++ {
+		for end = start; end < len(keys) && size < limit; end++ {
 			size += sizeFn(keys[end])
 		}
 		b = append(b, batchKeys{
