@@ -319,9 +319,9 @@ func regionMissBackoff() func() error {
 // pdBackoff is for PD RPC retry.
 func pdBackoff() func() error {
 	const (
-		maxRetry  = 5
+		maxRetry  = 10
 		sleepBase = 500
-		sleepCap  = 1000
+		sleepCap  = 3000
 	)
 	return NewBackoff(maxRetry, sleepBase, sleepCap, EqualJitter)
 }

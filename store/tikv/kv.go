@@ -165,12 +165,38 @@ func (s *tikvStore) UUID() string {
 }
 
 func (s *tikvStore) CurrentVersion() (kv.Version, error) {
-	startTS, err := s.oracle.GetTimestamp()
+	startTS, err := s.getTimestampWithRetry()
 	if err != nil {
 		return kv.NewVersion(0), errors.Trace(err)
 	}
 
 	return kv.NewVersion(startTS), nil
+}
+
+func (s *tikvStore) getTimestampWithRetry() (uint64, error) {
+	var backoffErr error
+	for backoff := pdBackoff(); backoffErr == nil; backoffErr = backoff() {
+		startTS, err := s.oracle.GetTimestamp()
+		if err != nil {
+			log.Warnf("get timestamp failed: %v, retry later", err)
+			continue
+		}
+		return startTS, nil
+	}
+	return 0, errors.Annotate(backoffErr, txnRetryableMark)
+}
+
+func (s *tikvStore) checkTimestampExpiredWithRetry(ts uint64, TTL uint64) (bool, error) {
+	var backoffErr error
+	for backoff := pdBackoff(); backoffErr == nil; backoffErr = backoff() {
+		expired, err := s.oracle.IsExpired(ts, TTL)
+		if err != nil {
+			log.Warnf("check expired failed: %v, retry later", err)
+			continue
+		}
+		return expired, nil
+	}
+	return false, errors.Annotate(backoffErr, txnRetryableMark)
 }
 
 // sendKVReq sends req to tikv server. It will retry internally to find the right
