@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"sync"
-
 	"time"
 
 	"github.com/juju/errors"
