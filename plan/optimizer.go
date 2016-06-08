@@ -33,13 +33,13 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder) (Plan, err
 	if err := logicOptimize(ctx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	GlobalID = 0
-	p, err := BuildPlan(node, sb)
-	if err != nil {
-		return nil, errors.Trace(err)
+	builder := &planBuilder{sb: sb}
+	p := builder.build(node)
+	if builder.err != nil {
+		return nil, errors.Trace(builder.err)
 	}
 	if UseNewPlanner {
-		_, err = PredicatePushDown(p, []expression.Expression{})
+		_, err := builder.predicatePushDown(p, []expression.Expression{})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -48,7 +48,7 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder) (Plan, err
 			return nil, errors.Trace(err)
 		}
 	}
-	err = Refine(p)
+	err := Refine(p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

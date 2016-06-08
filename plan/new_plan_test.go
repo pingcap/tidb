@@ -136,11 +136,12 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		err = newMockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		p, err := BuildPlan(stmt, nil)
-		c.Assert(err, IsNil)
+		builder := &planBuilder{}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
 		c.Assert(ToString(p), Equals, ca.first, Commentf("for %s", ca.sql))
 
-		_, err = PredicatePushDown(p, []expression.Expression{})
+		_, err = builder.predicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
 		_, err = PruneColumnsAndResolveIndices(p, p.GetSchema())
 		c.Assert(err, IsNil)
@@ -213,18 +214,29 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		err = newMockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		GlobalID = 0
+		builder := &planBuilder{}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
 
-		p, err := BuildPlan(stmt, nil)
-		c.Assert(err, IsNil)
-
-		_, err = PredicatePushDown(p, []expression.Expression{})
+		_, err = builder.predicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
 		_, err = PruneColumnsAndResolveIndices(p, p.GetSchema())
 		c.Assert(err, IsNil)
 		check(p, c, ca.ans, comment)
 	}
 	UseNewPlanner = false
+}
+
+func (s *testPlanSuite) TestAllocID(c *C) {
+	bA := &planBuilder{}
+	pA := &NewTableScan{}
+
+	bB := &planBuilder{}
+	pB := &NewTableScan{}
+
+	pA.id = bA.allocID(pA)
+	pB.id = bB.allocID(pB)
+	c.Assert(pA.id, Equals, pB.id)
 }
 
 func check(p Plan, c *C, ans map[string][]string, comment CommentInterface) {

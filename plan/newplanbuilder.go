@@ -26,18 +26,15 @@ import (
 // UseNewPlanner means if use the new planner.
 var UseNewPlanner = false
 
-// GlobalID is the plan id.
-var GlobalID = 0
-
-func allocID(p Plan) string {
-	GlobalID++
-	return fmt.Sprintf("%T_%d", p, GlobalID)
+func (b *planBuilder) allocID(p Plan) string {
+	b.id++
+	return fmt.Sprintf("%T_%d", p, b.id)
 }
 
 func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncExpr, gby *ast.GroupByClause) Plan {
 	newAggFuncList := make([]expression.AggregationFunction, 0, len(aggFuncList))
 	agg := &Aggregation{}
-	agg.id = allocID(agg)
+	agg.id = b.allocID(agg)
 	addChild(agg, p)
 	schema := make([]*expression.Column, 0, len(aggFuncList))
 	for i, aggFunc := range aggFuncList {
@@ -217,7 +214,7 @@ func (b *planBuilder) buildSelection(p Plan, where ast.ExprNode, mapper map[*ast
 		expressions = append(expressions, expr)
 	}
 	selection := &Selection{Conditions: expressions}
-	selection.id = allocID(selection)
+	selection.id = b.allocID(selection)
 	selection.SetSchema(p.GetSchema().DeepCopy())
 	addChild(selection, p)
 	return selection
@@ -225,7 +222,7 @@ func (b *planBuilder) buildSelection(p Plan, where ast.ExprNode, mapper map[*ast
 
 func (b *planBuilder) buildProjection(src Plan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) Plan {
 	proj := &Projection{Exprs: make([]expression.Expression, 0, len(fields))}
-	proj.id = allocID(proj)
+	proj.id = b.allocID(proj)
 	schema := make(expression.Schema, 0, len(fields))
 	for _, field := range fields {
 		var tblName, colName model.CIStr
@@ -284,7 +281,7 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) (p Plan) {
 	u := &Union{
 		Selects: sels,
 	}
-	u.id = allocID(u)
+	u.id = b.allocID(u)
 	p = u
 	firstSchema := make(expression.Schema, 0, len(sels[0].GetSchema()))
 	firstSchema = append(firstSchema, sels[0].GetSchema()...)
@@ -359,7 +356,7 @@ func (b *planBuilder) buildNewSort(src Plan, byItems []*ast.ByItem, mapper map[*
 		ByItems: exprs,
 	}
 	addChild(sort, src)
-	sort.id = allocID(sort)
+	sort.id = b.allocID(sort)
 	sort.SetSchema(src.GetSchema().DeepCopy())
 	return sort
 }
@@ -511,7 +508,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	}
 	if oldLen != len(sel.Fields.Fields) {
 		proj := &Projection{}
-		proj.id = allocID(proj)
+		proj.id = b.allocID(proj)
 		var newSchema expression.Schema
 		oldSchema := p.GetSchema()
 		proj.Exprs = make([]expression.Expression, 0, oldLen)
@@ -534,7 +531,7 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
 	p := &NewTableScan{
 		Table: tn.TableInfo,
 	}
-	p.id = allocID(p)
+	p.id = b.allocID(p)
 	// Equal condition contains a column from previous joined table.
 	p.RefAccess = false
 	rfs := tn.GetResultFields()
