@@ -84,7 +84,7 @@ func (c *txnCommitter) primary() []byte {
 	return c.keys[0]
 }
 
-// iterKeys groups keys into batches, then applies `f` to the them. If the flag
+// iterKeys groups keys into batches, then applies `f` to them. If the flag
 // asyncNonPrimary is set, it will return as soon as the primary batch is
 // processed.
 func (c *txnCommitter) iterKeys(keys [][]byte, f func(batchKeys) error, sizeFn func([]byte) int, asyncNonPrimary bool) error {
@@ -133,7 +133,7 @@ func (c *txnCommitter) doBatches(batches []batchKeys, f func(batchKeys) error) e
 			log.Warnf("txnCommitter doBatches failed: %v, tid: %d", err, c.startTS)
 		}
 	} else {
-		// TODO: Stop sending other requests after receiving first error.
+		// TODO: For prewrite, stop sending other requests after receiving first error.
 		ch := make(chan error)
 		for _, batch := range batches {
 			go func(batch batchKeys) {
