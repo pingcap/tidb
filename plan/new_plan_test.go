@@ -11,29 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer
+package plan
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testPlanSuite{})
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-type testPlanSuite struct{}
 
 func newMockResolve(node ast.Node) error {
 	indices := []*model.IndexInfo{
@@ -64,13 +55,21 @@ func newMockResolve(node ast.Node) error {
 		State: model.StatePublic,
 		Name:  model.NewCIStr("a"),
 	}
+	col0 := &model.ColumnInfo{
+		State: model.StatePublic,
+		Name:  model.NewCIStr("b"),
+	}
 	col1 := &model.ColumnInfo{
+		State: model.StatePublic,
+		Name:  model.NewCIStr("c"),
+	}
+	col2 := &model.ColumnInfo{
 		State: model.StatePublic,
 		Name:  model.NewCIStr("d"),
 	}
 	pkColumn.Flag = mysql.PriKeyFlag
 	table := &model.TableInfo{
-		Columns:    []*model.ColumnInfo{pkColumn, col1},
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2},
 		Indices:    indices,
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
@@ -80,7 +79,7 @@ func newMockResolve(node ast.Node) error {
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
-	plan.UseNewPlanner = true
+	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql   string
@@ -137,15 +136,107 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		err = newMockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		p, err := plan.BuildPlan(stmt, nil)
+		p, err := BuildPlan(stmt, nil)
 		c.Assert(err, IsNil)
-		c.Assert(plan.ToString(p), Equals, ca.first, Commentf("for %s", ca.sql))
+		c.Assert(ToString(p), Equals, ca.first, Commentf("for %s", ca.sql))
 
-		_, err = plan.PredicatePushDown(p, []expression.Expression{})
+		_, err = PredicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
-		err = plan.PruneColumnsAndResolveIndices(p)
+		_, err = PruneColumnsAndResolveIndices(p, p.GetSchema())
 		c.Assert(err, IsNil)
-		c.Assert(plan.ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
-	plan.UseNewPlanner = false
+	UseNewPlanner = false
+}
+
+func (s *testPlanSuite) TestColumnPruning(c *C) {
+	UseNewPlanner = true
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql string
+		ans map[string][]string
+	}{
+		{
+			sql: "select count(*) from t group by a",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a"},
+			},
+		},
+		{
+			sql: "select count(*) from t",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {},
+			},
+		},
+		{
+			sql: "select count(*) from t a join t b where a.a < 1",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a"},
+				"*plan.NewTableScan_2": {},
+			},
+		},
+		{
+			sql: "select count(*) from t a join t b on a.a = b.d",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a"},
+				"*plan.NewTableScan_2": {"d"},
+			},
+		},
+		{
+			sql: "select count(*) from t a join t b on a.a = b.d order by sum(a.d)",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a", "d"},
+				"*plan.NewTableScan_2": {"d"},
+			},
+		},
+		{
+			sql: "select count(b.a) from t a join t b on a.a = b.d group by b.b order by sum(a.d)",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a", "d"},
+				"*plan.NewTableScan_2": {"a", "b", "d"},
+			},
+		},
+		{
+			sql: "select * from (select count(b.a) from t a join t b on a.a = b.d group by b.b having sum(a.d) < 0) tt",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a", "d"},
+				"*plan.NewTableScan_2": {"a", "b", "d"},
+			},
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := parser.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		err = newMockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		GlobalID = 0
+
+		p, err := BuildPlan(stmt, nil)
+		c.Assert(err, IsNil)
+
+		_, err = PredicatePushDown(p, []expression.Expression{})
+		c.Assert(err, IsNil)
+		_, err = PruneColumnsAndResolveIndices(p, p.GetSchema())
+		c.Assert(err, IsNil)
+		check(p, c, ca.ans, comment)
+	}
+	UseNewPlanner = false
+}
+
+func check(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
+	switch p.(type) {
+	case *NewTableScan:
+		colList, ok := ans[p.GetID()]
+		c.Assert(ok, IsTrue, comment)
+		for i, colName := range colList {
+			c.Assert(colName, Equals, p.GetSchema()[i].ColName.L, comment)
+		}
+	}
+	for _, child := range p.GetChildren() {
+		check(child, c, ans, comment)
+	}
 }

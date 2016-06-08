@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -49,6 +50,11 @@ type UpdateExec struct {
 	newRowsData [][]types.Datum // The new values to be set.
 	fetched     bool
 	cursor      int
+}
+
+// Schema implements Executor Schema interface.
+func (e *UpdateExec) Schema() expression.Schema {
+	return nil
 }
 
 // Next implements Executor Next interface.
@@ -173,7 +179,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			newHandle = newData[i]
 		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
-			if newData[i].Kind() == types.KindNull {
+			if newData[i].IsNull() {
 				return errors.Errorf("Column '%v' cannot be null", col.Name.O)
 			}
 			val, err := newData[i].ToInt64()
@@ -226,7 +232,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	}
 
 	var err error
-	if newHandle.Kind() != types.KindNull {
+	if !newHandle.IsNull() {
 		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
 			return errors.Trace(err)
@@ -274,6 +280,11 @@ type DeleteExec struct {
 	IsMultiTable bool
 
 	finished bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *DeleteExec) Schema() expression.Schema {
+	return nil
 }
 
 // Next implements Executor Next interface.
@@ -418,6 +429,11 @@ type InsertExec struct {
 	Priority int
 
 	finished bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *InsertExec) Schema() expression.Schema {
+	return nil
 }
 
 // Next implements Executor Next interface.
@@ -685,7 +701,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 	var defaultValueCols []*table.Column
 	for i, c := range e.Table.Cols() {
 		// It's used for retry.
-		if mysql.HasAutoIncrementFlag(c.Flag) && row[i].Kind() == types.KindNull &&
+		if mysql.HasAutoIncrementFlag(c.Flag) && row[i].IsNull() &&
 			variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
 			id, err := variable.GetSessionVars(e.ctx).RetryInfo.GetCurrAutoIncrementID()
 			if err != nil {
@@ -693,7 +709,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			}
 			row[i].SetInt64(id)
 		}
-		if row[i].Kind() != types.KindNull {
+		if !row[i].IsNull() {
 			// Column value isn't nil and column isn't auto-increment, continue.
 			if !mysql.HasAutoIncrementFlag(c.Flag) {
 				continue
@@ -810,6 +826,11 @@ type ReplaceExec struct {
 	*InsertValues
 	Priority int
 	finished bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *ReplaceExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.

@@ -128,7 +128,7 @@ func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, d
 		// For all engines, a UNIQUE index permits multiple NULL values for columns that can contain NULL.
 		distinct = true
 		for _, cv := range indexedValues {
-			if cv.Kind() == types.KindNull {
+			if cv.IsNull() {
 				distinct = false
 				break
 			}

@@ -205,7 +205,7 @@ func (s *SessionVars) SetCurrentUser(user string) {
 // SetSystemVar sets a system variable.
 func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 	key = strings.ToLower(key)
-	if value.Kind() == types.KindNull {
+	if value.IsNull() {
 		if key != "character_set_results" {
 			return errCantSetToNull
 		}

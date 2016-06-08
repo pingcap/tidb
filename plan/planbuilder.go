@@ -56,7 +56,6 @@ type planBuilder struct {
 	hasAgg bool
 	sb     SubQueryBuilder
 	obj    interface{}
-	id     int32
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -91,7 +90,7 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
 		if UseNewPlanner {
-			return b.buildNewSelect(x, model.NewCIStr(""))
+			return b.buildNewSelect(x)
 		}
 		return b.buildSelect(x)
 	case *ast.UnionStmt:
@@ -619,6 +618,7 @@ func (b *planBuilder) buildLimit(src Plan, limit *ast.Limit) Plan {
 	}
 	addChild(li, src)
 	li.SetFields(src.Fields())
+	li.SetSchema(src.GetSchema().DeepCopy())
 	return li
 }
 

@@ -20,8 +20,8 @@ package evaluator
 import (
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -119,42 +119,37 @@ var Funcs = map[string]Func{
 	"nullif": {builtinNullIf, 2, 2},
 
 	// only used by new plan
-	"&&":         {builtinEmpty, 2, 2},
-	"<<":         {builtinEmpty, 2, 2},
-	">>":         {builtinEmpty, 2, 2},
-	"||":         {builtinEmpty, 2, 2},
-	">=":         {builtinEmpty, 2, 2},
-	"<=":         {builtinEmpty, 2, 2},
-	"=":          {builtinEmpty, 2, 2},
-	"!=":         {builtinEmpty, 2, 2},
-	"<":          {builtinEmpty, 2, 2},
-	">":          {builtinEmpty, 2, 2},
-	"+":          {builtinEmpty, 2, 2},
-	"-":          {builtinEmpty, 2, 2},
-	"&":          {builtinEmpty, 2, 2},
-	"|":          {builtinEmpty, 2, 2},
-	"%":          {builtinEmpty, 2, 2},
-	"^":          {builtinEmpty, 2, 2},
-	"/":          {builtinEmpty, 2, 2},
-	"*":          {builtinEmpty, 2, 2},
-	"DIV":        {builtinEmpty, 2, 2},
-	"XOR":        {builtinEmpty, 2, 2},
-	"<=>":        {builtinEmpty, 2, 2},
-	"not":        {builtinEmpty, 1, 1},
-	"bitneg":     {builtinEmpty, 1, 1},
-	"unaryplus":  {builtinEmpty, 1, 1},
-	"unaryminus": {builtinEmpty, 1, 1},
-}
-
-// TODO: remove this when implementing executor.
-func builtinEmpty(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	return d, errors.New("Not implemented yet.")
+	"&&":         {builtinAndAnd, 2, 2},
+	"||":         {builtinOrOr, 2, 2},
+	">=":         {compareFuncFactory(opcode.GE), 2, 2},
+	"<=":         {compareFuncFactory(opcode.LE), 2, 2},
+	"=":          {compareFuncFactory(opcode.EQ), 2, 2},
+	"!=":         {compareFuncFactory(opcode.NE), 2, 2},
+	"<":          {compareFuncFactory(opcode.LT), 2, 2},
+	">":          {compareFuncFactory(opcode.GT), 2, 2},
+	"<=>":        {compareFuncFactory(opcode.NullEQ), 2, 2},
+	"+":          {arithmeticFuncFactory(opcode.Plus), 2, 2},
+	"-":          {arithmeticFuncFactory(opcode.Minus), 2, 2},
+	"%":          {arithmeticFuncFactory(opcode.Mod), 2, 2},
+	"/":          {arithmeticFuncFactory(opcode.Div), 2, 2},
+	"*":          {arithmeticFuncFactory(opcode.Mul), 2, 2},
+	"DIV":        {arithmeticFuncFactory(opcode.IntDiv), 2, 2},
+	"<<":         {bitOpFactory(opcode.LeftShift), 2, 2},
+	">>":         {bitOpFactory(opcode.RightShift), 2, 2},
+	"&":          {bitOpFactory(opcode.And), 2, 2},
+	"|":          {bitOpFactory(opcode.Or), 2, 2},
+	"^":          {bitOpFactory(opcode.Xor), 2, 2},
+	"XOR":        {builtinLogicXor, 2, 2},
+	"not":        {unaryOpFactory(opcode.Not), 1, 1},
+	"bitneg":     {unaryOpFactory(opcode.BitNeg), 1, 1},
+	"unaryplus":  {unaryOpFactory(opcode.Plus), 1, 1},
+	"unaryminus": {unaryOpFactory(opcode.Minus), 1, 1},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	for _, d = range args {
-		if d.Kind() != types.KindNull {
+		if !d.IsNull() {
 			return d, nil
 		}
 	}
@@ -163,7 +158,7 @@ func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, er
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
 func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	if args[0].Kind() == types.KindNull {
+	if args[0].IsNull() {
 		d.SetInt64(1)
 	} else {
 		d.SetInt64(0)

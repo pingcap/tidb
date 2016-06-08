@@ -117,7 +117,7 @@ func DecodeValues(data []byte, fts []*types.FieldType, inIndex bool) ([]types.Da
 
 // unflatten converts a raw datum to a column datum.
 func unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
-	if datum.Kind() == types.KindNull {
+	if datum.IsNull() {
 		return datum, nil
 	}
 	switch ft.Tp {

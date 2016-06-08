@@ -20,10 +20,11 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
@@ -93,6 +94,7 @@ type Executor interface {
 	Fields() []*ast.ResultField
 	Next() (*Row, error)
 	Close() error
+	Schema() expression.Schema
 }
 
 // ShowDDLExec represents a show DDL executor.
@@ -100,6 +102,11 @@ type ShowDDLExec struct {
 	fields []*ast.ResultField
 	ctx    context.Context
 	done   bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *ShowDDLExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.
@@ -172,6 +179,11 @@ type CheckTableExec struct {
 	done   bool
 }
 
+// Schema implements Executor Schema interface.
+func (e *CheckTableExec) Schema() expression.Schema {
+	return nil
+}
+
 // Fields implements Executor Fields interface.
 func (e *CheckTableExec) Fields() []*ast.ResultField {
 	return nil
@@ -218,6 +230,11 @@ type TableDualExec struct {
 	executed bool
 }
 
+// Schema implements Executor Schema interface.
+func (e *TableDualExec) Schema() expression.Schema {
+	return nil
+}
+
 // Fields implements Executor Fields interface.
 func (e *TableDualExec) Fields() []*ast.ResultField {
 	return e.fields
@@ -247,6 +264,11 @@ type TableScanExec struct {
 	ranges      []plan.TableRange // Disjoint close handle ranges.
 	seekHandle  int64             // The handle to seek, should be initialized to math.MinInt64.
 	cursor      int               // The range cursor, used to locate to current range.
+}
+
+// Schema implements Executor Schema interface.
+func (e *TableScanExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.
@@ -368,6 +390,11 @@ type IndexRangeExec struct {
 	iter       table.IndexIterator
 	skipLowCmp bool
 	finished   bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *IndexRangeExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.
@@ -497,6 +524,11 @@ type IndexScanExec struct {
 	valueTypes  []*types.FieldType
 }
 
+// Schema implements Executor Schema interface.
+func (e *IndexScanExec) Schema() expression.Schema {
+	return nil
+}
+
 // Fields implements Executor Fields interface.
 func (e *IndexScanExec) Fields() []*ast.ResultField {
 	return e.fields
@@ -542,6 +574,11 @@ type JoinOuterExec struct {
 	fields    []*ast.ResultField
 	builder   *executorBuilder
 	gotRow    bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *JoinOuterExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.
@@ -607,6 +644,11 @@ func (e *JoinOuterExec) Close() error {
 		return errors.Trace(e.innerExec.Close())
 	}
 	return errors.Trace(err)
+}
+
+// Schema implements Executor Schema interface.
+func (e *JoinInnerExec) Schema() expression.Schema {
+	return nil
 }
 
 // JoinInnerExec represents an inner join executor.
@@ -714,6 +756,11 @@ type SelectFieldsExec struct {
 	ctx          context.Context
 }
 
+// Schema implements Executor Schema interface.
+func (e *SelectFieldsExec) Schema() expression.Schema {
+	return nil
+}
+
 // Fields implements Executor Fields interface.
 func (e *SelectFieldsExec) Fields() []*ast.ResultField {
 	return e.ResultFields
@@ -767,6 +814,11 @@ type FilterExec struct {
 	ctx       context.Context
 }
 
+// Schema implements Executor Schema interface.
+func (e *FilterExec) Schema() expression.Schema {
+	return nil
+}
+
 // Fields implements Executor Fields interface.
 func (e *FilterExec) Fields() []*ast.ResultField {
 	return e.Src.Fields()
@@ -802,6 +854,11 @@ type SelectLockExec struct {
 	Src  Executor
 	Lock ast.SelectLockType
 	ctx  context.Context
+}
+
+// Schema implements Executor Schema interface.
+func (e *SelectLockExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.
@@ -841,6 +898,12 @@ type LimitExec struct {
 	Offset uint64
 	Count  uint64
 	Idx    uint64
+	schema expression.Schema
+}
+
+// Schema implements Executor Schema interface.
+func (e *LimitExec) Schema() expression.Schema {
+	return e.schema
 }
 
 // Fields implements Executor Fields interface.
@@ -895,6 +958,11 @@ type SortExec struct {
 	Idx     int
 	fetched bool
 	err     error
+}
+
+// Schema implements Executor Schema interface.
+func (e *SortExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.
@@ -1022,6 +1090,11 @@ type AggregateExec struct {
 	GroupByItems      []*ast.ByItem
 }
 
+// Schema implements Executor Schema interface.
+func (e *AggregateExec) Schema() expression.Schema {
+	return nil
+}
+
 // Fields implements Executor Fields interface.
 func (e *AggregateExec) Fields() []*ast.ResultField {
 	return e.ResultFields
@@ -1134,8 +1207,14 @@ func (e *AggregateExec) Close() error {
 // UnionExec represents union executor.
 type UnionExec struct {
 	fields []*ast.ResultField
+	schema expression.Schema
 	Sels   []Executor
 	cursor int
+}
+
+// Schema implements Executor Schema interface.
+func (e *UnionExec) Schema() expression.Schema {
+	return e.schema
 }
 
 // Fields implements Executor Fields interface.
@@ -1193,6 +1272,12 @@ func (e *UnionExec) Close() error {
 type DistinctExec struct {
 	Src     Executor
 	checker *distinct.Checker
+	schema  expression.Schema
+}
+
+// Schema implements Executor Schema interface.
+func (e *DistinctExec) Schema() expression.Schema {
+	return e.schema
 }
 
 // Fields implements Executor Fields interface.
@@ -1235,6 +1320,11 @@ type ReverseExec struct {
 	rows   []*Row
 	cursor int
 	done   bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *ReverseExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.

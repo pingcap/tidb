@@ -20,13 +20,12 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -99,6 +98,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSimple(v)
 	case *plan.Sort:
 		return b.buildSort(v)
+	case *plan.NewSort:
+		return b.buildNewSort(v)
 	case *plan.TableDual:
 		return b.buildTableDual(v)
 	case *plan.TableScan:
@@ -109,81 +110,18 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildUpdate(v)
 	case *plan.Join:
 		return b.buildJoin(v)
+	case *plan.Selection:
+		return b.buildSelection(v)
+	case *plan.Aggregation:
+		return b.buildAggregation(v)
+	case *plan.Projection:
+		return b.buildProjection(v)
+	case *plan.NewTableScan:
+		return b.buildNewTableScan(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
 	}
-}
-
-// compose CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func composeCondition(conditions []expression.Expression) expression.Expression {
-	length := len(conditions)
-	if length == 0 {
-		return nil
-	} else if length == 1 {
-		return conditions[0]
-	} else {
-		eqStr, _ := opcode.Ops[opcode.EQ]
-		return expression.NewFunction(model.NewCIStr(eqStr), []expression.Expression{composeCondition(conditions[0 : length/2]), composeCondition(conditions[length/2:])})
-	}
-}
-
-//TODO: select join algorithm during cbo phase.
-func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
-	e := &HashJoinExec{
-		otherFilter: composeCondition(v.OtherConditions),
-		prepared:    false,
-		fields:      v.Fields(),
-		ctx:         b.ctx,
-	}
-	var leftHashKey, rightHashKey []*expression.Column
-	for _, eqCond := range v.EqualConditions {
-		if eqCond.FuncName.L == "eq" {
-			ln, lOK := eqCond.Args[0].(*expression.Column)
-			rn, rOK := eqCond.Args[1].(*expression.Column)
-			if lOK && rOK {
-				leftHashKey = append(leftHashKey, ln)
-				rightHashKey = append(rightHashKey, rn)
-				continue
-			}
-		}
-		b.err = ErrUnknownPlan.Gen("Invalid Join Equal Condition !!")
-	}
-	switch v.JoinType {
-	case plan.LeftOuterJoin:
-		e.outter = true
-		e.leftSmall = false
-		e.smallFilter = composeCondition(v.RightConditions)
-		e.bigFilter = composeCondition(v.LeftConditions)
-		e.smallHashKey = rightHashKey
-		e.bigHashKey = leftHashKey
-	case plan.RightOuterJoin:
-		e.outter = true
-		e.leftSmall = true
-		e.smallFilter = composeCondition(v.LeftConditions)
-		e.bigFilter = composeCondition(v.RightConditions)
-		e.smallHashKey = leftHashKey
-		e.bigHashKey = rightHashKey
-	case plan.InnerJoin:
-		//TODO: assume right table is the small one before cbo is realized.
-		e.outter = false
-		e.leftSmall = false
-		e.smallFilter = composeCondition(v.RightConditions)
-		e.bigFilter = composeCondition(v.LeftConditions)
-		e.smallHashKey = rightHashKey
-		e.bigHashKey = leftHashKey
-	default:
-		b.err = ErrUnknownPlan.Gen("Unknown Join Type !!")
-		return nil
-	}
-	if e.leftSmall {
-		e.smallExec = b.build(v.GetChildByIndex(0))
-		e.bigExec = b.build(v.GetChildByIndex(1))
-	} else {
-		e.smallExec = b.build(v.GetChildByIndex(1))
-		e.bigExec = b.build(v.GetChildByIndex(0))
-	}
-	return e
 }
 
 func (b *executorBuilder) buildFilter(src Executor, conditions []ast.ExprNode) Executor {
@@ -520,12 +458,14 @@ func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 		Src:    src,
 		Offset: v.Offset,
 		Count:  v.Count,
+		schema: v.GetSchema(),
 	}
 	return e
 }
 
 func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 	e := &UnionExec{
+		schema: v.GetSchema(),
 		fields: v.Fields(),
 		Sels:   make([]Executor, len(v.Selects)),
 	}
@@ -537,7 +477,7 @@ func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 }
 
 func (b *executorBuilder) buildDistinct(v *plan.Distinct) Executor {
-	return &DistinctExec{Src: b.build(v.GetChildByIndex(0))}
+	return &DistinctExec{Src: b.build(v.GetChildByIndex(0)), schema: v.GetSchema()}
 }
 
 func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {

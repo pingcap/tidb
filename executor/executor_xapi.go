@@ -26,11 +26,12 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -133,6 +134,11 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 // Fields implements Executor Fields interface.
 func (e *XSelectTableExec) Fields() []*ast.ResultField {
 	return e.tablePlan.Fields()
+}
+
+// Schema implements Executor Schema interface.
+func (e *XSelectTableExec) Schema() expression.Schema {
+	return nil
 }
 
 // Close implements Executor Close interface.
@@ -239,6 +245,11 @@ type lookupTableTask struct {
 	doneCh  chan error
 }
 
+// Schema implements Executor Schema interface.
+func (e *XSelectIndexExec) Schema() expression.Schema {
+	return nil
+}
+
 // AddAggregate implements XExecutor interface.
 func (e *XSelectIndexExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByItem, fields []*types.FieldType) {
 	e.aggFuncs = funcs
@@ -295,8 +306,10 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		if task.cursor < len(task.rows) {
 			row := task.rows[task.cursor]
-			for i, field := range e.indexPlan.Fields() {
-				field.Expr.SetDatum(row.Data[i])
+			if len(e.aggFuncs) == 0 {
+				for i, field := range e.indexPlan.Fields() {
+					field.Expr.SetDatum(row.Data[i])
+				}
 			}
 			task.cursor++
 			return row, nil
@@ -509,7 +522,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, 
 	// Aggregate Info
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
-	resp, err := xapi.Select(txn.GetClient(), selTableReq, 10)
+	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -707,6 +720,12 @@ func (e *XSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult *xa
 		}
 		if rowData == nil {
 			break
+		}
+		if len(e.aggFuncs) > 0 {
+			// compose aggreagte row
+			row := &Row{Data: rowData}
+			rows = append(rows, row)
+			continue
 		}
 		fullRowData := make([]types.Datum, len(e.indexPlan.Fields()))
 		var j int
@@ -1026,7 +1045,7 @@ func (b *executorBuilder) datumsToValueList(datums []types.Datum) *tipb.Expr {
 		if prevKind == types.KindNull {
 			prevKind = d.Kind()
 		}
-		if d.Kind() != types.KindNull && d.Kind() != prevKind {
+		if !d.IsNull() && d.Kind() != prevKind {
 			return nil
 		}
 	}

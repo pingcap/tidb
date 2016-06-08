@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer_test
+package plan_test
 
 import (
 	"testing"
@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/util/testkit"
@@ -97,7 +97,7 @@ func (ts *testNameResolverSuite) TestNameResolver(c *C) {
 	for _, tc := range resolverTestCases {
 		node, err := parser.ParseOneStmt(tc.src, "", "")
 		c.Assert(err, IsNil)
-		resolveErr := optimizer.ResolveName(node, domain.InfoSchema(), ctx)
+		resolveErr := plan.ResolveName(node, domain.InfoSchema(), ctx)
 		if tc.valid {
 			c.Assert(resolveErr, IsNil)
 			verifier := &resolverVerifier{c: c, src: tc.src}
