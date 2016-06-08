@@ -317,7 +317,7 @@ func (c *txnCommitter) Commit() error {
 	go func() {
 		c.wg.Wait()
 		c.txn.close()
-		log.Infof("txn closed, tid: %d", c.startTS)
+		log.Debugf("txn closed, tid: %d", c.startTS)
 	}()
 
 	err := c.prewriteKeys(c.keys)
