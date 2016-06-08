@@ -19,10 +19,10 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-func addSelection(p Plan, child Plan, conditions []expression.Expression) error {
+func (b *planBuilder) addSelection(p Plan, child Plan, conditions []expression.Expression) error {
 	selection := &Selection{Conditions: conditions}
 	selection.SetSchema(child.GetSchema().DeepCopy())
-	selection.id = allocID(selection)
+	selection.id = b.allocID(selection)
 	return InsertPlan(p, child, selection)
 }
 
@@ -41,14 +41,14 @@ func columnSubstitute(expr expression.Expression, schema expression.Schema, newE
 	return expr
 }
 
-// PredicatePushDown applies predicate push down to all kinds of plans, except aggregation and union.
-func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expression.Expression, err error) {
+// predicatePushDown applies predicate push down to all kinds of plans, except aggregation and union.
+func (b *planBuilder) predicatePushDown(p Plan, predicates []expression.Expression) (ret []expression.Expression, err error) {
 	switch v := p.(type) {
 	case *NewTableScan:
 		return predicates, nil
 	case *Selection:
 		conditions := v.Conditions
-		retConditions, err1 := PredicatePushDown(p.GetChildByIndex(0), append(conditions, predicates...))
+		retConditions, err1 := b.predicatePushDown(p.GetChildByIndex(0), append(conditions, predicates...))
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -84,22 +84,22 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 			leftCond = append(v.LeftConditions, leftPushCond...)
 			rightCond = append(v.RightConditions, rightPushCond...)
 		}
-		leftRet, err1 := PredicatePushDown(leftPlan, leftCond)
+		leftRet, err1 := b.predicatePushDown(leftPlan, leftCond)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		rightRet, err2 := PredicatePushDown(rightPlan, rightCond)
+		rightRet, err2 := b.predicatePushDown(rightPlan, rightCond)
 		if err2 != nil {
 			return nil, errors.Trace(err2)
 		}
 		if len(leftRet) > 0 {
-			err2 = addSelection(p, leftPlan, leftRet)
+			err2 = b.addSelection(p, leftPlan, leftRet)
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
 		}
 		if len(rightRet) > 0 {
-			err2 = addSelection(p, rightPlan, rightRet)
+			err2 = b.addSelection(p, rightPlan, rightRet)
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
@@ -130,24 +130,24 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 				ret = append(ret, cond)
 			}
 		}
-		restConds, err1 := PredicatePushDown(v.GetChildByIndex(0), push)
+		restConds, err1 := b.predicatePushDown(v.GetChildByIndex(0), push)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
 		if len(restConds) > 0 {
-			err1 = addSelection(v, v.GetChildByIndex(0), restConds)
+			err1 = b.addSelection(v, v.GetChildByIndex(0), restConds)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
 		}
 		return
 	case *NewSort, *Limit, *Distinct:
-		rest, err1 := PredicatePushDown(p.GetChildByIndex(0), predicates)
+		rest, err1 := b.predicatePushDown(p.GetChildByIndex(0), predicates)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
 		if len(rest) > 0 {
-			err1 = addSelection(p, p.GetChildByIndex(0), rest)
+			err1 = b.addSelection(p, p.GetChildByIndex(0), rest)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
@@ -160,12 +160,12 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 				newCond := columnSubstitute(cond.DeepCopy(), v.GetSchema(), expression.Schema2Exprs(proj.GetSchema()))
 				newExprs = append(newExprs, newCond)
 			}
-			retCond, err := PredicatePushDown(proj, newExprs)
+			retCond, err := b.predicatePushDown(proj, newExprs)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			if len(retCond) != 0 {
-				addSelection(v, proj, retCond)
+				b.addSelection(v, proj, retCond)
 			}
 		}
 		return
