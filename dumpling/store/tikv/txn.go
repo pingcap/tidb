@@ -40,7 +40,7 @@ type tikvTxn struct {
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
-	startTS, err := store.oracle.GetTimestamp()
+	startTS, err := store.getTimestampWithRetry()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
