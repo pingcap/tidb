@@ -542,16 +542,12 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
 	schema := make([]*expression.Column, 0, len(rfs))
 	for _, rf := range rfs {
 		p.DBName = &rf.DBName
-		var dbName, colName, tblName model.CIStr
-		tblName = rf.Table.Name
-		dbName = rf.DBName
 		p.Columns = append(p.Columns, rf.Column)
-		colName = rf.Column.Name
 		schema = append(schema, &expression.Column{
 			FromID:  p.id,
-			ColName: colName,
-			TblName: tblName,
-			DBName:  dbName,
+			ColName: rf.Column.Name,
+			TblName: rf.Table.Name,
+			DBName:  rf.DBName,
 			RetType: &rf.Column.FieldType})
 	}
 	p.SetSchema(schema)
