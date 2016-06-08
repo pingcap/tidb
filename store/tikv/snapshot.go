@@ -62,8 +62,8 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 			return
 		}
 		mu.Lock()
-		defer mu.Unlock()
 		m[string(k)] = v
+		mu.Unlock()
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -133,6 +133,8 @@ func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v 
 				collectF(pair.GetKey(), pair.GetValue())
 				continue
 			}
+			// This could be slow if we meet many expired locks.
+			// TODO: Find a way to do quick unlock.
 			val, err := s.handleKeyError(keyErr)
 			if err != nil {
 				if terror.ErrorNotEqual(err, errInnerRetryable) {
