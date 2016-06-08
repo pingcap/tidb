@@ -124,27 +124,30 @@ func (c *txnCommitter) iterKeys(keys [][]byte, f func(batchKeys) error, sizeFn f
 
 // doBatches applies f to batches parallelly.
 func (c *txnCommitter) doBatches(batches []batchKeys, f func(batchKeys) error) error {
-	var err error
 	if len(batches) == 0 {
 		return nil
-	} else if len(batches) == 1 {
-		err = errors.Trace(f(batches[0]))
+	}
+	if len(batches) == 1 {
+		err := errors.Trace(f(batches[0]))
 		if err != nil {
 			log.Warnf("txnCommitter doBatches failed: %v, tid: %d", err, c.startTS)
+			return errors.Trace(err)
 		}
-	} else {
-		// TODO: For prewrite, stop sending other requests after receiving first error.
-		ch := make(chan error)
-		for _, batch := range batches {
-			go func(batch batchKeys) {
-				ch <- f(batch)
-			}(batch)
-		}
-		for i := 0; i < len(batches); i++ {
-			if e := <-ch; e != nil {
-				log.Warnf("txnCommitter doBatches failed: %v, tid: %d", e, c.startTS)
-				err = errors.Trace(e)
-			}
+		return nil
+	}
+
+	// TODO: For prewrite, stop sending other requests after receiving first error.
+	ch := make(chan error)
+	for _, batch := range batches {
+		go func(batch batchKeys) {
+			ch <- f(batch)
+		}(batch)
+	}
+	var err error
+	for i := 0; i < len(batches); i++ {
+		if e := <-ch; e != nil {
+			log.Warnf("txnCommitter doBatches failed: %v, tid: %d", e, c.startTS)
+			err = errors.Trace(e)
 		}
 	}
 	return errors.Trace(err)
