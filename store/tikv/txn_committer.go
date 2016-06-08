@@ -128,12 +128,11 @@ func (c *txnCommitter) doBatches(batches []batchKeys, f func(batchKeys) error) e
 		return nil
 	}
 	if len(batches) == 1 {
-		err := errors.Trace(f(batches[0]))
-		if err != nil {
-			log.Warnf("txnCommitter doBatches failed: %v, tid: %d", err, c.startTS)
-			return errors.Trace(err)
+		e := f(batches[0])
+		if e != nil {
+			log.Warnf("txnCommitter doBatches failed: %v, tid: %d", e, c.startTS)
 		}
-		return nil
+		return errors.Trace(e)
 	}
 
 	// TODO: For prewrite, stop sending other requests after receiving first error.
@@ -147,7 +146,7 @@ func (c *txnCommitter) doBatches(batches []batchKeys, f func(batchKeys) error) e
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
 			log.Warnf("txnCommitter doBatches failed: %v, tid: %d", e, c.startTS)
-			err = errors.Trace(e)
+			err = e
 		}
 	}
 	return errors.Trace(err)

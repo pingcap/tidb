@@ -99,7 +99,7 @@ func (c *RegionCache) GroupKeysByRegion(keys [][]byte) (map[RegionVerID][][]byte
 	return groups, first, nil
 }
 
-// DropRegion remove some region cache.
+// DropRegion removes a cached Region.
 func (c *RegionCache) DropRegion(id RegionVerID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
