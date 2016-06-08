@@ -142,7 +142,7 @@ func (c *txnCommitter) doBatches(batches []batchKeys, f func(batchKeys) error) e
 		}
 		for i := 0; i < len(batches); i++ {
 			if e := <-ch; e != nil {
-				log.Warnf("txnCommitter doBatches failed: %v, tid: %d", err, c.startTS)
+				log.Warnf("txnCommitter doBatches failed: %v, tid: %d", e, c.startTS)
 				err = errors.Trace(e)
 			}
 		}
