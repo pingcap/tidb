@@ -104,7 +104,7 @@ func (o *mockOracle) GetTimestamp() (uint64, error) {
 	defer o.mu.RUnlock()
 
 	if o.stop {
-		return 0, errors.New("stopped.")
+		return 0, errors.New("stopped")
 	}
 	return o.Oracle.GetTimestamp()
 }
@@ -114,7 +114,7 @@ func (o *mockOracle) IsExpired(lockTimestamp uint64, TTL uint64) (bool, error) {
 	defer o.mu.RUnlock()
 
 	if o.stop {
-		return false, errors.New("stopped.")
+		return false, errors.New("stopped")
 	}
 	return o.Oracle.IsExpired(lockTimestamp, TTL)
 }
