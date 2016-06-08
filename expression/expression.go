@@ -80,7 +80,7 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 type Column struct {
 	FromID  string
 	ColName model.CIStr
-	DbName  model.CIStr
+	DBName  model.CIStr
 	TblName model.CIStr
 	RetType *types.FieldType
 
@@ -94,8 +94,8 @@ func (col *Column) ToString() string {
 	if col.TblName.L != "" {
 		result = col.TblName.L + "." + result
 	}
-	if col.DbName.L != "" {
-		result = col.DbName.L + "." + result
+	if col.DBName.L != "" {
+		result = col.DBName.L + "." + result
 	}
 	return result
 }
@@ -134,7 +134,9 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, col := range s {
-		if (dbName.L == "" || dbName.L == col.DbName.L) && (tblName.L == "" || tblName.L == col.TblName.L) && (colName.L == col.ColName.L) {
+		if (dbName.L == "" || dbName.L == col.DBName.L) &&
+			(tblName.L == "" || tblName.L == col.TblName.L) &&
+			(colName.L == col.ColName.L) {
 			if idx != -1 {
 				return nil, errors.Errorf("Column '%s' is ambiguous", colName.L)
 			}
