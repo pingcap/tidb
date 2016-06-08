@@ -235,12 +235,12 @@ func (e *ExecuteExec) Build() error {
 		prepared.SchemaVersion = e.IS.SchemaMetaVersion()
 	}
 	sb := &subqueryBuilder{is: e.IS}
-	plan, err := plan.Optimize(e.Ctx, prepared.Stmt, sb)
+	p, err := plan.Optimize(e.Ctx, prepared.Stmt, sb)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	b := newExecutorBuilder(e.Ctx, e.IS)
-	stmtExec := b.build(plan)
+	stmtExec := b.build(p)
 	if b.err != nil {
 		return errors.Trace(b.err)
 	}
