@@ -335,8 +335,8 @@ type batchKeys struct {
 	keys   [][]byte
 }
 
-// appendBatchBySize append keys to []batchKeys. It may split the keys to make
-// sure each batch's size not exceed the limit.
+// appendBatchBySize appends keys to []batchKeys. It may split the keys to make
+// sure each batch's size does not exceed the limit.
 func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn func([]byte) int) []batchKeys {
 	var start, end int
 	for start = 0; start < len(keys); start = end {
