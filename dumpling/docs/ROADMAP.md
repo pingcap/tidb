@@ -46,5 +46,5 @@ This document defines the roadmap for TiDB development.
 - [x] Homemade distributed KV ([pingcap/tikv](https://github.com/pingcap/tikv)):
     - [x] Transactions
     - [x] Replicate log using Paxos/Raft
-    - [x] Scale and Auto-Rebalance
+    - [x] Scale-out (Auto-rebalance)
     - [x] Geo replicated
