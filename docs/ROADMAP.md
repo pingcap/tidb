@@ -41,7 +41,6 @@ This document defines the roadmap for TiDB development.
 - [x] GoLevelDB
 - [x] RocksDB
 - [x] LMDB
-- [x] HBase
 - [x] Homemade distributed KV:
     - [ ] Transactions
     - [ ] Replicate log using Paxos/Raft
