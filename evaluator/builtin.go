@@ -20,8 +20,8 @@ package evaluator
 import (
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -58,11 +58,14 @@ var Funcs = map[string]Func{
 	"current_timestamp": {builtinNow, 0, 1},
 	"curtime":           {builtinCurrentTime, 0, 1},
 	"date":              {builtinDate, 1, 1},
+	"date_arith":        {builtinDateArith, 3, 3},
+	"date_format":       {builtinDateFormat, 2, 2},
 	"day":               {builtinDay, 1, 1},
 	"dayname":           {builtinDayName, 1, 1},
 	"dayofmonth":        {builtinDayOfMonth, 1, 1},
 	"dayofweek":         {builtinDayOfWeek, 1, 1},
 	"dayofyear":         {builtinDayOfYear, 1, 1},
+	"extract":           {builtinExtract, 2, 2},
 	"hour":              {builtinHour, 1, 1},
 	"microsecond":       {builtinMicroSecond, 1, 1},
 	"minute":            {builtinMinute, 1, 1},
@@ -78,38 +81,36 @@ var Funcs = map[string]Func{
 	"weekofyear":        {builtinWeekOfYear, 1, 1},
 	"year":              {builtinYear, 1, 1},
 	"yearweek":          {builtinYearWeek, 1, 2},
-	"extract":           {builtinExtract, 2, 2},
-	"date_arith":        {builtinDateArith, 3, 3},
 
 	// string functions
 	"ascii":           {builtinASCII, 1, 1},
 	"concat":          {builtinConcat, 1, -1},
 	"concat_ws":       {builtinConcatWS, 2, -1},
+	"convert":         {builtinConvert, 2, 2},
+	"lcase":           {builtinLower, 1, 1},
 	"left":            {builtinLeft, 2, 2},
 	"length":          {builtinLength, 1, 1},
+	"locate":          {builtinLocate, 2, 3},
 	"lower":           {builtinLower, 1, 1},
-	"lcase":           {builtinLower, 1, 1},
 	"ltrim":           {trimFn(strings.TrimLeft, spaceChars), 1, 1},
 	"repeat":          {builtinRepeat, 2, 2},
-	"upper":           {builtinUpper, 1, 1},
-	"ucase":           {builtinUpper, 1, 1},
 	"replace":         {builtinReplace, 3, 3},
+	"reverse":         {builtinReverse, 1, 1},
 	"rtrim":           {trimFn(strings.TrimRight, spaceChars), 1, 1},
 	"strcmp":          {builtinStrcmp, 2, 2},
-	"convert":         {builtinConvert, 2, 2},
 	"substring":       {builtinSubstring, 2, 3},
 	"substring_index": {builtinSubstringIndex, 3, 3},
-	"locate":          {builtinLocate, 2, 3},
 	"trim":            {builtinTrim, 1, 3},
-	"reverse":         {builtinReverse, 1, 1},
+	"upper":           {builtinUpper, 1, 1},
+	"ucase":           {builtinUpper, 1, 1},
 
 	// information functions
+	"connection_id":  {builtinConnectionID, 0, 0},
 	"current_user":   {builtinCurrentUser, 0, 0},
 	"database":       {builtinDatabase, 0, 0},
 	"found_rows":     {builtinFoundRows, 0, 0},
-	"user":           {builtinUser, 0, 0},
-	"connection_id":  {builtinConnectionID, 0, 0},
 	"last_insert_id": {builtinLastInsertID, 0, 1},
+	"user":           {builtinUser, 0, 0},
 	"version":        {builtinVersion, 0, 0},
 
 	// control functions
@@ -118,42 +119,37 @@ var Funcs = map[string]Func{
 	"nullif": {builtinNullIf, 2, 2},
 
 	// only used by new plan
-	"&&":         {builtinEmpty, 2, 2},
-	"<<":         {builtinEmpty, 2, 2},
-	">>":         {builtinEmpty, 2, 2},
-	"||":         {builtinEmpty, 2, 2},
-	">=":         {builtinEmpty, 2, 2},
-	"<=":         {builtinEmpty, 2, 2},
-	"=":          {builtinEmpty, 2, 2},
-	"!=":         {builtinEmpty, 2, 2},
-	"<":          {builtinEmpty, 2, 2},
-	">":          {builtinEmpty, 2, 2},
-	"+":          {builtinEmpty, 2, 2},
-	"-":          {builtinEmpty, 2, 2},
-	"&":          {builtinEmpty, 2, 2},
-	"|":          {builtinEmpty, 2, 2},
-	"%":          {builtinEmpty, 2, 2},
-	"^":          {builtinEmpty, 2, 2},
-	"/":          {builtinEmpty, 2, 2},
-	"*":          {builtinEmpty, 2, 2},
-	"DIV":        {builtinEmpty, 2, 2},
-	"XOR":        {builtinEmpty, 2, 2},
-	"<=>":        {builtinEmpty, 2, 2},
-	"not":        {builtinEmpty, 1, 1},
-	"bitneg":     {builtinEmpty, 1, 1},
-	"unaryplus":  {builtinEmpty, 1, 1},
-	"unaryminus": {builtinEmpty, 1, 1},
-}
-
-// TODO: remove this when implementing executor.
-func builtinEmpty(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	return d, errors.New("Not implemented yet.")
+	"&&":         {builtinAndAnd, 2, 2},
+	"||":         {builtinOrOr, 2, 2},
+	">=":         {compareFuncFactory(opcode.GE), 2, 2},
+	"<=":         {compareFuncFactory(opcode.LE), 2, 2},
+	"=":          {compareFuncFactory(opcode.EQ), 2, 2},
+	"!=":         {compareFuncFactory(opcode.NE), 2, 2},
+	"<":          {compareFuncFactory(opcode.LT), 2, 2},
+	">":          {compareFuncFactory(opcode.GT), 2, 2},
+	"<=>":        {compareFuncFactory(opcode.NullEQ), 2, 2},
+	"+":          {arithmeticFuncFactory(opcode.Plus), 2, 2},
+	"-":          {arithmeticFuncFactory(opcode.Minus), 2, 2},
+	"%":          {arithmeticFuncFactory(opcode.Mod), 2, 2},
+	"/":          {arithmeticFuncFactory(opcode.Div), 2, 2},
+	"*":          {arithmeticFuncFactory(opcode.Mul), 2, 2},
+	"DIV":        {arithmeticFuncFactory(opcode.IntDiv), 2, 2},
+	"<<":         {bitOpFactory(opcode.LeftShift), 2, 2},
+	">>":         {bitOpFactory(opcode.RightShift), 2, 2},
+	"&":          {bitOpFactory(opcode.And), 2, 2},
+	"|":          {bitOpFactory(opcode.Or), 2, 2},
+	"^":          {bitOpFactory(opcode.Xor), 2, 2},
+	"XOR":        {builtinLogicXor, 2, 2},
+	"not":        {unaryOpFactory(opcode.Not), 1, 1},
+	"bitneg":     {unaryOpFactory(opcode.BitNeg), 1, 1},
+	"unaryplus":  {unaryOpFactory(opcode.Plus), 1, 1},
+	"unaryminus": {unaryOpFactory(opcode.Minus), 1, 1},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	for _, d = range args {
-		if d.Kind() != types.KindNull {
+		if !d.IsNull() {
 			return d, nil
 		}
 	}
@@ -162,7 +158,7 @@ func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, er
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
 func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	if args[0].Kind() == types.KindNull {
+	if args[0].IsNull() {
 		d.SetInt64(1)
 	} else {
 		d.SetInt64(0)

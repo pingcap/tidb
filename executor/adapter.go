@@ -17,14 +17,16 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/plan"
 )
 
 // recordSet wraps an executor, implements ast.RecordSet interface
 type recordSet struct {
 	fields   []*ast.ResultField
 	executor Executor
+	schema   expression.Schema
 }
 
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
@@ -44,20 +46,23 @@ func (a *recordSet) Close() error {
 }
 
 type statement struct {
-	is   infoschema.InfoSchema
-	plan plan.Plan
+	is    infoschema.InfoSchema
+	plan  plan.Plan
+	text  string
+	isDDL bool
 }
 
 func (a *statement) OriginText() string {
-	return ""
+	return a.text
 }
 
 func (a *statement) SetText(text string) {
+	a.text = text
 	return
 }
 
 func (a *statement) IsDDL() bool {
-	return false
+	return a.isDDL
 }
 
 func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
@@ -75,7 +80,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		e = executorExec.StmtExec
 	}
 
-	if len(e.Fields()) == 0 {
+	if len(e.Fields()) == 0 && len(e.Schema()) == 0 {
 		// No result fields means no Recordset.
 		defer e.Close()
 		for {

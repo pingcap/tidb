@@ -381,7 +381,7 @@ func (h *rpcHandler) evalWhereForRow(ctx *selectContext, handle int64) (bool, er
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if result.Kind() == types.KindNull {
+	if result.IsNull() {
 		return false, nil
 	}
 	boolResult, err := result.ToBool()

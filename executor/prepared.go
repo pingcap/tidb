@@ -20,10 +20,10 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/optimizer"
-	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
@@ -85,6 +85,12 @@ type PrepareExec struct {
 	Err          error
 }
 
+// Schema implements Executor Schema interface.
+func (e *PrepareExec) Schema() expression.Schema {
+	// Will never be called.
+	return nil
+}
+
 // Fields implements Executor Fields interface.
 func (e *PrepareExec) Fields() []*ast.ResultField {
 	// returns nil to indicate prepare will not return Recordset.
@@ -140,7 +146,7 @@ func (e *PrepareExec) DoPrepare() {
 		SchemaVersion: e.IS.SchemaMetaVersion(),
 	}
 
-	err = optimizer.Prepare(e.IS, e.Ctx, stmt)
+	err = plan.PrepareStmt(e.IS, e.Ctx, stmt)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
@@ -168,6 +174,12 @@ type ExecuteExec struct {
 	ID        uint32
 	StmtExec  Executor
 	Stmt      ast.StmtNode
+}
+
+// Schema implements Executor Schema interface.
+func (e *ExecuteExec) Schema() expression.Schema {
+	// Will never be called.
+	return nil
 }
 
 // Fields implements Executor Fields interface.
@@ -216,19 +228,19 @@ func (e *ExecuteExec) Build() error {
 	if prepared.SchemaVersion != e.IS.SchemaMetaVersion() {
 		// If the schema version has changed we need to prepare it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		err := optimizer.Prepare(e.IS, e.Ctx, prepared.Stmt)
+		err := plan.PrepareStmt(e.IS, e.Ctx, prepared.Stmt)
 		if err != nil {
 			return ErrSchemaChanged.Gen("Schema change casued error: %s", err.Error())
 		}
 		prepared.SchemaVersion = e.IS.SchemaMetaVersion()
 	}
 	sb := &subqueryBuilder{is: e.IS}
-	plan, err := optimizer.Optimize(e.Ctx, prepared.Stmt, sb)
+	p, err := plan.Optimize(e.Ctx, prepared.Stmt, sb)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	b := newExecutorBuilder(e.Ctx, e.IS)
-	stmtExec := b.build(plan)
+	stmtExec := b.build(p)
 	if b.err != nil {
 		return errors.Trace(b.err)
 	}
@@ -241,6 +253,12 @@ func (e *ExecuteExec) Build() error {
 type DeallocateExec struct {
 	Name string
 	ctx  context.Context
+}
+
+// Schema implements Executor Schema interface.
+func (e *DeallocateExec) Schema() expression.Schema {
+	// Will never be called.
+	return nil
 }
 
 // Fields implements Executor Fields interface.

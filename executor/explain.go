@@ -18,8 +18,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -87,6 +88,11 @@ type ExplainExec struct {
 	fields   []*ast.ResultField
 	rows     []*Row
 	cursor   int
+}
+
+// Schema implements Executor Schema interface.
+func (e *ExplainExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.

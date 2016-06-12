@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -52,6 +53,11 @@ type ShowExec struct {
 	fetched bool
 	rows    []*Row
 	cursor  int
+}
+
+// Schema implements Executor Schema interface.
+func (e *ShowExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.
@@ -287,7 +293,7 @@ func (e *ShowExec) fetchShowVariables() error {
 		if !e.GlobalScope {
 			// Try to get Session Scope variable value first.
 			sv := sessionVars.GetSystemVar(v.Name)
-			if sv.Kind() == types.KindNull {
+			if sv.IsNull() {
 				value, err = globalVars.GetGlobalSysVar(e.ctx, v.Name)
 				if err != nil {
 					return errors.Trace(err)

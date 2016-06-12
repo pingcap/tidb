@@ -65,7 +65,7 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if data.Kind() == types.KindNull {
+	if data.IsNull() {
 		return false, nil
 	}
 
@@ -80,7 +80,7 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 type Column struct {
 	FromID  string
 	ColName model.CIStr
-	DbName  model.CIStr
+	DBName  model.CIStr
 	TblName model.CIStr
 	RetType *types.FieldType
 
@@ -94,8 +94,8 @@ func (col *Column) ToString() string {
 	if col.TblName.L != "" {
 		result = col.TblName.L + "." + result
 	}
-	if col.DbName.L != "" {
-		result = col.DbName.L + "." + result
+	if col.DBName.L != "" {
+		result = col.DBName.L + "." + result
 	}
 	return result
 }
@@ -119,12 +119,24 @@ func (col *Column) DeepCopy() Expression {
 // Schema stands for the row schema get from input.
 type Schema []*Column
 
+// DeepCopy copies the total schema.
+func (s Schema) DeepCopy() Schema {
+	result := make(Schema, 0, len(s))
+	for _, col := range s {
+		newCol := *col
+		result = append(result, &newCol)
+	}
+	return result
+}
+
 // FindColumn replaces an ast column with an expression column.
 func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, col := range s {
-		if (dbName.L == "" || dbName.L == col.DbName.L) && (tblName.L == "" || tblName.L == col.TblName.L) && (colName.L == col.ColName.L) {
+		if (dbName.L == "" || dbName.L == col.DBName.L) &&
+			(tblName.L == "" || tblName.L == col.TblName.L) &&
+			(colName.L == col.ColName.L) {
 			if idx != -1 {
 				return nil, errors.Errorf("Column '%s' is ambiguous", colName.L)
 			}
@@ -135,6 +147,23 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 		return nil, errors.Errorf("Unknown column %s %s %s.", dbName.L, tblName.L, colName.L)
 	}
 	return s[idx], nil
+}
+
+// InitIndices sets indices for columns in schema.
+func (s Schema) InitIndices() {
+	for i, c := range s {
+		c.Index = i
+	}
+}
+
+// RetrieveColumn replaces column in expression with column in schema.
+func (s Schema) RetrieveColumn(col *Column) *Column {
+	for _, c := range s {
+		if c.FromID == col.FromID && c.ColName.L == col.ColName.L {
+			return c
+		}
+	}
+	return nil
 }
 
 // GetIndex finds the index for a column.
@@ -206,10 +235,10 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Datum, error) {
-	args := make([]types.Datum, len(sf.Args))
+	args := make([]types.Datum, 0, len(sf.Args))
 	for _, arg := range sf.Args {
 		result, err := arg.Eval(row, ctx)
-		if err != nil {
+		if err == nil {
 			args = append(args, result)
 		} else {
 			return types.Datum{}, errors.Trace(err)
@@ -220,13 +249,13 @@ func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Da
 
 // Constant stands for a constant value.
 type Constant struct {
-	value   types.Datum
-	retType *types.FieldType
+	Value   types.Datum
+	RetType *types.FieldType
 }
 
 // ToString implements Expression interface.
 func (c *Constant) ToString() string {
-	return fmt.Sprintf("%v", c.value.GetValue())
+	return fmt.Sprintf("%v", c.Value.GetValue())
 }
 
 // DeepCopy implements Expression interface.
@@ -237,12 +266,12 @@ func (c *Constant) DeepCopy() Expression {
 
 // GetType implements Expression interface.
 func (c *Constant) GetType() *types.FieldType {
-	return c.retType
+	return c.RetType
 }
 
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error) {
-	return c.value, nil
+	return c.Value, nil
 }
 
 // Enter implements Visitor interface.
@@ -291,7 +320,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		er.ctxStack = append(er.ctxStack, column)
 	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause:
 	case *ast.ValueExpr:
-		value := &Constant{value: v.Datum, retType: v.Type}
+		value := &Constant{Value: v.Datum, RetType: v.Type}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.IsNullExpr:
 		function := &ScalarFunction{

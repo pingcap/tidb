@@ -347,7 +347,7 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 func (s *session) isAutocommit(ctx context.Context) bool {
 	sessionVar := variable.GetSessionVars(ctx)
 	autocommit := sessionVar.GetSystemVar("autocommit")
-	if autocommit.Kind() == types.KindNull {
+	if autocommit.IsNull() {
 		if s.initing {
 			return false
 		}

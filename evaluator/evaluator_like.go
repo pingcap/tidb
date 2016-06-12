@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/util/types"
 )
 
 const (
@@ -129,7 +128,7 @@ func doMatch(str string, patChars, patTypes []byte) bool {
 
 func (e *Evaluator) patternLike(p *ast.PatternLikeExpr) bool {
 	expr := p.Expr.GetDatum()
-	if expr.Kind() == types.KindNull {
+	if expr.IsNull() {
 		p.SetNull()
 		return true
 	}
@@ -144,7 +143,7 @@ func (e *Evaluator) patternLike(p *ast.PatternLikeExpr) bool {
 	var needCompile = len(p.PatChars) == 0 || !ast.IsConstant(p.Pattern)
 	if needCompile {
 		pattern := p.Pattern.GetDatum()
-		if pattern.Kind() == types.KindNull {
+		if pattern.IsNull() {
 			p.SetNull()
 			return true
 		}
@@ -169,7 +168,7 @@ func (e *Evaluator) patternRegexp(p *ast.PatternRegexpExpr) bool {
 		sexpr = *p.Sexpr
 	} else {
 		expr := p.Expr.GetDatum()
-		if expr.Kind() == types.KindNull {
+		if expr.IsNull() {
 			p.SetNull()
 			return true
 		}
@@ -189,7 +188,7 @@ func (e *Evaluator) patternRegexp(p *ast.PatternRegexpExpr) bool {
 	re := p.Re
 	if re == nil {
 		pattern := p.Pattern.GetDatum()
-		if pattern.Kind() == types.KindNull {
+		if pattern.IsNull() {
 			p.SetNull()
 			return true
 		}
