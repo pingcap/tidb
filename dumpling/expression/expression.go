@@ -25,8 +25,9 @@ import (
 )
 
 // Rewrite rewrites ast to Expression.
-func Rewrite(expr ast.ExprNode, schema Schema, AggrMapper map[*ast.AggregateFuncExpr]int) (newExpr Expression, err error) {
-	er := &expressionRewriter{schema: schema, aggrMap: AggrMapper}
+func Rewrite(expr ast.ExprNode, schema Schema, AggMapper map[*ast.AggregateFuncExpr]int) (
+	newExpr Expression, err error) {
+	er := &expressionRewriter{schema: schema, aggMap: AggMapper}
 	expr.Accept(er)
 	if er.err != nil {
 		return nil, errors.Trace(er.err)
@@ -41,7 +42,7 @@ type expressionRewriter struct {
 	ctxStack []Expression
 	schema   Schema
 	err      error
-	aggrMap  map[*ast.AggregateFuncExpr]int
+	aggMap   map[*ast.AggregateFuncExpr]int
 }
 
 // Expression represents all scalar expression in SQL.
@@ -279,8 +280,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr:
 		index, ok := -1, false
-		if er.aggrMap != nil {
-			index, ok = er.aggrMap[v]
+		if er.aggMap != nil {
+			index, ok = er.aggMap[v]
 		}
 		if !ok {
 			er.err = errors.New("Can't appear aggrFunctions")
