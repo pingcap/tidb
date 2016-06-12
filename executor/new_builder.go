@@ -77,18 +77,18 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 		return nil
 	}
 	if e.leftSmall {
-		e.smallExec = b.build(v.GetChildByIndex(0))
-		e.bigExec = b.build(v.GetChildByIndex(1))
+		e.smallExec, _ = b.build(v.GetChildByIndex(0)).(NewExecutor)
+		e.bigExec, _ = b.build(v.GetChildByIndex(1)).(NewExecutor)
 	} else {
-		e.smallExec = b.build(v.GetChildByIndex(1))
-		e.bigExec = b.build(v.GetChildByIndex(0))
+		e.smallExec, _ = b.build(v.GetChildByIndex(1)).(NewExecutor)
+		e.bigExec, _ = b.build(v.GetChildByIndex(0)).(NewExecutor)
 	}
 	return e
 }
 
 func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
 	return &AggregationExec{
-		Src:          b.build(v.GetChildByIndex(0)),
+		Src:          b.build(v.GetChildByIndex(0)).(NewExecutor),
 		schema:       v.GetSchema(),
 		ctx:          b.ctx,
 		AggFuncs:     v.AggFuncs,
@@ -98,7 +98,7 @@ func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	return &SelectionExec{
-		Src:       b.build(v.GetChildByIndex(0)),
+		Src:       b.build(v.GetChildByIndex(0)).(NewExecutor),
 		Condition: composeCondition(v.Conditions),
 		schema:    v.GetSchema(),
 		ctx:       b.ctx,
@@ -107,7 +107,7 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
 	return &ProjectionExec{
-		Src:    b.build(v.GetChildByIndex(0)),
+		Src:    b.build(v.GetChildByIndex(0)).(NewExecutor),
 		ctx:    b.ctx,
 		exprs:  v.Exprs,
 		schema: v.GetSchema(),
@@ -148,9 +148,33 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan) Executor {
 func (b *executorBuilder) buildNewSort(v *plan.NewSort) Executor {
 	src := b.build(v.GetChildByIndex(0))
 	return &NewSortExec{
-		Src:     src,
+		Src:     src.(NewExecutor),
 		ByItems: v.ByItems,
 		ctx:     b.ctx,
 		schema:  v.GetSchema(),
+	}
+}
+
+func (b *executorBuilder) buildApply(v *plan.Apply) Executor {
+	src := b.build(v.GetChildByIndex(0))
+	return &ApplyExec{
+		schema:      v.GetSchema(),
+		outerExec:   b.build(v.OuterPlan).(NewExecutor),
+		outerSchema: v.OuterSchema,
+		Src:         src.(NewExecutor),
+	}
+}
+
+func (b *executorBuilder) buildExists(v *plan.Exists) Executor {
+	return &ExistsExec{
+		schema: v.GetSchema(),
+		Src:    b.build(v.GetChildByIndex(0)).(NewExecutor),
+	}
+}
+
+func (b *executorBuilder) buildMax1Row(v *plan.Max1Row) Executor {
+	return &Max1RowExec{
+		schema: v.GetSchema(),
+		Src:    b.build(v.GetChildByIndex(0)).(NewExecutor),
 	}
 }

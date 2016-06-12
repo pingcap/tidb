@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -95,6 +96,12 @@ type Executor interface {
 	Next() (*Row, error)
 	Close() error
 	Schema() expression.Schema
+}
+
+// NewExecutor executes a query.
+type NewExecutor interface {
+	Executor
+	Init()
 }
 
 // ShowDDLExec represents a show DDL executor.
@@ -1362,4 +1369,19 @@ func (e *ReverseExec) Next() (*Row, error) {
 // Close implements Executor Close interface.
 func (e *ReverseExec) Close() error {
 	return e.Src.Close()
+}
+
+func init() {
+	plan.EvalSubquery = func(p plan.Plan, is infoschema.InfoSchema, ctx context.Context) (d types.Datum, err error) {
+		e := &executorBuilder{is: is, ctx: ctx}
+		exec := e.build(p)
+		row, err := exec.Next()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if row == nil {
+			return
+		}
+		return row.Data[0], nil
+	}
 }

@@ -20,6 +20,8 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -52,11 +54,14 @@ func BuildPlan(node ast.Node, sb SubQueryBuilder) (Plan, error) {
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
-	err    error
-	hasAgg bool
-	sb     SubQueryBuilder
-	obj    interface{}
-	id     int
+	err         error
+	hasAgg      bool
+	sb          SubQueryBuilder
+	obj         interface{}
+	id          int
+	ctx         context.Context
+	is          infoschema.InfoSchema
+	outerSchema expression.Schema
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {

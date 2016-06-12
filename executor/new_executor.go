@@ -38,8 +38,8 @@ type HashJoinExec struct {
 	hashTable    map[string][]*Row
 	smallHashKey []*expression.Column
 	bigHashKey   []*expression.Column
-	smallExec    Executor
-	bigExec      Executor
+	smallExec    NewExecutor
+	bigExec      NewExecutor
 	prepared     bool
 	ctx          context.Context
 	smallFilter  expression.Expression
@@ -52,6 +52,15 @@ type HashJoinExec struct {
 	leftSmall   bool
 	matchedRows []*Row
 	cursor      int
+}
+
+// Init implements NewExecutor Init interface.
+func (e *HashJoinExec) Init() {
+	e.smallExec.Init()
+	e.bigExec.Init()
+	e.prepared = false
+	e.cursor = 0
+	e.matchedRows = nil
 }
 
 func joinTwoRow(a *Row, b *Row) *Row {
@@ -248,17 +257,27 @@ func (e *HashJoinExec) Next() (*Row, error) {
 // AggregationExec deals with all the aggregate functions.
 // It is built from Aggregate Plan. When Next() is called, it reads all the data from Src and updates all the items in AggFuncs.
 type AggregationExec struct {
-	Src               Executor
+	Src               NewExecutor
 	schema            expression.Schema
 	ResultFields      []*ast.ResultField
 	executed          bool
 	ctx               context.Context
-	finish            bool
 	AggFuncs          []expression.AggregationFunction
 	groupMap          map[string]bool
 	groups            [][]byte
 	currentGroupIndex int
 	GroupByItems      []expression.Expression
+}
+
+// Init implements NewExecutor Init interface.
+func (e *AggregationExec) Init() {
+	e.Src.Init()
+	e.executed = false
+	e.groups = nil
+	e.currentGroupIndex = 0
+	for _, agg := range e.AggFuncs {
+		agg.Clear()
+	}
 }
 
 // Schema implements Executor Schema interface.
@@ -371,12 +390,17 @@ func (e *AggregationExec) Close() error {
 
 // ProjectionExec represents a select fields executor.
 type ProjectionExec struct {
-	Src          Executor
+	Src          NewExecutor
 	ResultFields []*ast.ResultField
 	schema       expression.Schema
 	executed     bool
 	ctx          context.Context
 	exprs        []expression.Expression
+}
+
+// Init implements NewExecutor Init interface.
+func (e *ProjectionExec) Init() {
+	e.Src.Init()
 }
 
 // Schema implements Executor Schema interface.
@@ -433,10 +457,15 @@ func (e *ProjectionExec) Close() error {
 
 // SelectionExec represents a filter executor.
 type SelectionExec struct {
-	Src       Executor
+	Src       NewExecutor
 	Condition expression.Expression
 	ctx       context.Context
 	schema    expression.Schema
+}
+
+// Init implements NewExecutor Init interface.
+func (e *SelectionExec) Init() {
+	e.Src.Init()
 }
 
 // Schema implements Executor Schema interface.
@@ -514,6 +543,12 @@ func (e *NewTableScanExec) doRequest() error {
 	return nil
 }
 
+// Init implements NewExecutor Init interface.
+func (e *NewTableScanExec) Init() {
+	e.result = nil
+	e.subResult = nil
+}
+
 // Next implements Executor interface.
 func (e *NewTableScanExec) Next() (*Row, error) {
 	if e.result == nil {
@@ -559,7 +594,7 @@ func (e *NewTableScanExec) Close() error {
 
 // NewSortExec represents sorting executor.
 type NewSortExec struct {
-	Src     Executor
+	Src     NewExecutor
 	ByItems []plan.ByItems
 	Rows    []*orderByRow
 	ctx     context.Context
@@ -568,6 +603,13 @@ type NewSortExec struct {
 	fetched bool
 	err     error
 	schema  expression.Schema
+}
+
+// Init implements NewExecutor Init interface.
+func (e *NewSortExec) Init() {
+	e.Src.Init()
+	e.fetched = false
+	e.Rows = nil
 }
 
 // Schema implements Executor Schema interface.
@@ -675,4 +717,146 @@ func (e *NewSortExec) Next() (*Row, error) {
 // Close implements Executor Close interface.
 func (e *NewSortExec) Close() error {
 	return e.Src.Close()
+}
+
+// ApplyExec represents apply executor.
+type ApplyExec struct {
+	schema      expression.Schema
+	Src         NewExecutor
+	outerSchema expression.Schema
+	outerExec   NewExecutor
+}
+
+// Init implements NewExecutor Init interface.
+func (e *ApplyExec) Init() {
+	e.Src.Init()
+}
+
+// Schema implements Executor Schema interface.
+func (e *ApplyExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Fields implements Executor Fields interface.
+func (e *ApplyExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Close implements NewExecutor Close interface.
+func (e *ApplyExec) Close() error {
+	return e.Src.Close()
+}
+
+// Next implements Executor Next interface.
+func (e *ApplyExec) Next() (*Row, error) {
+	srcRow, err := e.Src.Next()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if srcRow == nil {
+		return nil, nil
+	}
+	e.outerExec.Init()
+	for _, col := range e.outerSchema {
+		idx := col.Index
+		col.SetValue(&srcRow.Data[idx])
+	}
+	outerRow, err := e.outerExec.Next()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	srcRow.Data = append(srcRow.Data, outerRow.Data...)
+	return srcRow, nil
+}
+
+// ExistsExec represents exists executor.
+type ExistsExec struct {
+	schema    expression.Schema
+	Src       NewExecutor
+	evaluated bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *ExistsExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Fields implements Executor Fields interface.
+func (e *ExistsExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Close implements NewExecutor Close interface.
+func (e *ExistsExec) Close() error {
+	return e.Src.Close()
+}
+
+// Init implements NewExecutor Init interface.
+func (e *ExistsExec) Init() {
+	e.Src.Init()
+	e.evaluated = false
+}
+
+// Next implements Executor Next interface.
+func (e *ExistsExec) Next() (*Row, error) {
+	if !e.evaluated {
+		e.evaluated = true
+		srcRow, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &Row{Data: []types.Datum{types.NewDatum(srcRow != nil)}}, nil
+	}
+	return &Row{Data: []types.Datum{types.NewDatum(nil)}}, nil
+}
+
+// Max1RowExec represents max1row executor.
+type Max1RowExec struct {
+	schema    expression.Schema
+	Src       NewExecutor
+	evaluated bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *Max1RowExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Fields implements Executor Fields interface.
+func (e *Max1RowExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Init implements NewExecutor Init interface.
+func (e *Max1RowExec) Init() {
+	e.Src.Init()
+	e.evaluated = false
+}
+
+// Close implements NewExecutor Close interface.
+func (e *Max1RowExec) Close() error {
+	return e.Src.Close()
+}
+
+// Next implements Executor Next interface.
+func (e *Max1RowExec) Next() (*Row, error) {
+	if !e.evaluated {
+		e.evaluated = true
+		srcRow, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if srcRow == nil {
+			return &Row{Data: []types.Datum{types.NewDatum(nil)}}, nil
+		}
+		srcRow1, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if srcRow1 != nil {
+			return nil, errors.New("Subquery returns more than 1 row.")
+		}
+		return srcRow, nil
+	}
+	return &Row{Data: []types.Datum{types.NewDatum(nil)}}, nil
 }

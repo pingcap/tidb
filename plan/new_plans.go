@@ -69,6 +69,24 @@ type Selection struct {
 	Conditions []expression.Expression
 }
 
+// Apply means correlated execution.
+type Apply struct {
+	basePlan
+
+	OuterPlan   Plan
+	OuterSchema expression.Schema
+}
+
+// Exists check if a query returns result.
+type Exists struct {
+	basePlan
+}
+
+// Max1Row check if a query returns just one row.
+type Max1Row struct {
+	basePlan
+}
+
 // NewTableScan represents a tablescan without condition push down.
 type NewTableScan struct {
 	basePlan

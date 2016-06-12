@@ -73,7 +73,7 @@ type aggrFunction struct {
 }
 
 func (af *aggrFunction) Clear() {
-	af.resultMapper = nil
+	af.resultMapper = make(aggrCtxMapper, 0)
 }
 
 // GetArgs implements AggregationFunction interface.

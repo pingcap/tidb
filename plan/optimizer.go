@@ -25,7 +25,7 @@ import (
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder) (Plan, error) {
+func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infoschema.InfoSchema) (Plan, error) {
 	// We have to infer type again because after parameter is set, the expression type may change.
 	if err := InferType(node); err != nil {
 		return nil, errors.Trace(err)
@@ -33,7 +33,7 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder) (Plan, err
 	if err := logicOptimize(ctx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	builder := &planBuilder{sb: sb}
+	builder := &planBuilder{sb: sb, ctx: ctx, is: is}
 	p := builder.build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)
@@ -43,7 +43,7 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder) (Plan, err
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		_, err = PruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, _, err = PruneColumnsAndResolveIndices(p, p.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -64,7 +64,9 @@ type Column struct {
 	RetType *types.FieldType
 
 	// only used during execution
-	Index int
+	Index      int
+	Correlated bool
+	data       *types.Datum
 }
 
 // ToString implements Expression interface.
@@ -79,6 +81,11 @@ func (col *Column) ToString() string {
 	return result
 }
 
+// SetValue sets value for correlated columns.
+func (col *Column) SetValue(d *types.Datum) {
+	col.data = d
+}
+
 // GetType implements Expression interface.
 func (col *Column) GetType() *types.FieldType {
 	return col.RetType
@@ -86,6 +93,9 @@ func (col *Column) GetType() *types.FieldType {
 
 // Eval implements Expression interface.
 func (col *Column) Eval(row []types.Datum, _ context.Context) (d types.Datum, err error) {
+	if col.Correlated {
+		return *col.data, nil
+	}
 	return row[col.Index], nil
 }
 

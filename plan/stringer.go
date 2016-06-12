@@ -44,6 +44,12 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		if x.LimitCount != nil {
 			str += fmt.Sprintf(" + Limit(%v)", *x.LimitCount)
 		}
+	case *Apply:
+		str = fmt.Sprintf("Apply(%s)", ToString(x.OuterPlan))
+	case *Exists:
+		str = "Exists"
+	case *Max1Row:
+		str = "Max1Row"
 	case *Limit:
 		str = "Limit"
 	case *SelectFields:

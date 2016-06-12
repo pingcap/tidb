@@ -3,32 +3,58 @@ package plan
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/types"
 )
 
-func (b *planBuilder) rewrite(expr ast.ExprNode, schema expression.Schema, AggrMapper map[*ast.AggregateFuncExpr]int) (newExpr expression.Expression, err error) {
-	er := &expressionRewriter{aggrMap: AggrMapper, schema: schema}
+// EvalSubquery evaluates incorrelated subqueries once.
+var EvalSubquery func(p Plan, is infoschema.InfoSchema, ctx context.Context) (types.Datum, error)
+
+func (b *planBuilder) rewrite(expr ast.ExprNode, p Plan, AggrMapper map[*ast.AggregateFuncExpr]int) (newExpr expression.Expression, newPlan Plan, correlated bool, err error) {
+	er := &expressionRewriter{p: p, aggrMap: AggrMapper, schema: p.GetSchema(), b: b}
 	expr.Accept(er)
 	if er.err != nil {
-		return nil, errors.Trace(er.err)
+		return nil, nil, false, errors.Trace(er.err)
 	}
 	if len(er.ctxStack) != 1 {
-		return nil, errors.Errorf("context len %v is invalid", len(er.ctxStack))
+		return nil, nil, false, errors.Errorf("context len %v is invalid", len(er.ctxStack))
 	}
-	return er.ctxStack[0], nil
+	return er.ctxStack[0], er.p, er.correlated, nil
 }
 
 type expressionRewriter struct {
-	ctxStack []expression.Expression
-	p        Plan
-	schema   expression.Schema
-	err      error
-	aggrMap  map[*ast.AggregateFuncExpr]int
-	isSubq   bool
-	b        *planBuilder
+	ctxStack   []expression.Expression
+	p          Plan
+	schema     expression.Schema
+	err        error
+	aggrMap    map[*ast.AggregateFuncExpr]int
+	b          *planBuilder
+	correlated bool
+}
+
+func (er *expressionRewriter) buildSubqueries(subq *ast.SubqueryExpr) (Plan, expression.Schema) {
+	if len(er.b.outerSchema) > 0 {
+		er.err = errors.New("Nested subqueries is not supported.")
+		return nil, nil
+	}
+	outerSchema := er.schema.DeepCopy()
+	for _, s := range outerSchema {
+		s.Correlated = true
+	}
+	nb := &planBuilder{id: er.b.id, outerSchema: outerSchema}
+	np := nb.buildResultSetNode(subq.Query)
+	er.b.id = nb.id
+	if nb.err != nil {
+		er.err = errors.Trace(nb.err)
+		return nil, nil
+	}
+	nb.err = Refine(np)
+	return np, outerSchema
 }
 
 // Enter implements Visitor interface.
@@ -45,6 +71,48 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 		}
 		er.ctxStack = append(er.ctxStack, er.schema[index])
 		return inNode, true
+	case *ast.ExistsSubqueryExpr:
+		if subq, ok := v.Sel.(*ast.SubqueryExpr); ok {
+			np, outerSchema := er.buildSubqueries(subq)
+			if er.err != nil {
+				return retNode, true
+			}
+			if np.IsCorrelated() {
+				np = er.b.buildExists(np)
+				ap := er.b.buildApply(er.p, np, outerSchema)
+				er.p = ap
+				er.ctxStack = append(er.ctxStack, ap.GetSchema()[len(ap.GetSchema())-1])
+			} else {
+				d, err := EvalSubquery(np, er.b.is, er.b.ctx)
+				if err != nil {
+					er.err = errors.Trace(err)
+					return retNode, true
+				}
+				er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d, RetType: np.GetSchema()[0].GetType()})
+			}
+			return inNode, true
+		}
+		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
+		return inNode, true
+	case *ast.SubqueryExpr:
+		np, outerSchema := er.buildSubqueries(v)
+		if er.err != nil {
+			return retNode, true
+		}
+		if np.IsCorrelated() {
+			np = er.b.buildMax1Row(np)
+			ap := er.b.buildApply(er.p, np, outerSchema)
+			er.p = ap
+			er.ctxStack = append(er.ctxStack, ap.GetSchema()[len(ap.GetSchema())-1])
+		} else {
+			d, err := EvalSubquery(np, er.b.is, er.b.ctx)
+			if err != nil {
+				er.err = errors.Trace(err)
+				return retNode, true
+			}
+			er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d, RetType: np.GetSchema()[0].GetType()})
+		}
+		return inNode, true
 	}
 	return inNode, false
 }
@@ -52,6 +120,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool) {
 	length := len(er.ctxStack)
+	if er.err != nil {
+		return retNode, false
+	}
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr:
 	case *ast.FuncCallExpr:
@@ -74,8 +145,20 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			er.err = errors.Trace(err)
 			return retNode, false
 		}
+		if column == nil {
+			column, err = er.b.outerSchema.FindColumn(v)
+			if err != nil {
+				er.err = errors.Trace(err)
+				return retNode, false
+			}
+			er.correlated = true
+		}
+		if column == nil {
+			er.err = errors.Errorf("Unknown column %s %s %s.", v.Schema.L, v.Table.L, v.Name.L)
+			return retNode, false
+		}
 		er.ctxStack = append(er.ctxStack, column)
-	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause:
+	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause, *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
 	case *ast.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: v.Type}
 		er.ctxStack = append(er.ctxStack, value)
@@ -131,7 +214,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		er.ctxStack = append(er.ctxStack, function)
 
 	default:
-		er.err = errors.Errorf("UnkownType: %T", v)
+		er.err = errors.Errorf("UnknownType: %T", v)
 	}
 	return inNode, true
 }
