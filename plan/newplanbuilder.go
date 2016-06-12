@@ -93,7 +93,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) Plan {
 			schema := p.GetSchema()
 			for _, col := range schema {
 				col.TblName = x.AsName
-				col.DbName = model.NewCIStr("")
+				col.DBName = model.NewCIStr("")
 			}
 		}
 		return p
@@ -230,7 +230,8 @@ func (b *planBuilder) buildProjection(src Plan, fields []*ast.SelectField, mappe
 			dbName := field.WildCard.Schema
 			colTblName := field.WildCard.Table
 			for _, col := range src.GetSchema() {
-				if (dbName.L == "" || dbName.L == col.DbName.L) && (colTblName.L == "" || colTblName.L == col.TblName.L) {
+				if (dbName.L == "" || dbName.L == col.DBName.L) &&
+					(colTblName.L == "" || colTblName.L == col.TblName.L) {
 					newExpr := col.DeepCopy()
 					proj.Exprs = append(proj.Exprs, newExpr)
 					tblName = col.TblName
@@ -314,7 +315,7 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) (p Plan) {
 	}
 	for _, v := range firstSchema {
 		v.FromID = u.id
-		v.DbName = model.NewCIStr("")
+		v.DBName = model.NewCIStr("")
 	}
 
 	p.SetSchema(firstSchema)
@@ -392,7 +393,8 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) ([]*ast.AggregateFuncE
 	havingMapper := make(map[*ast.AggregateFuncExpr]int)
 	for _, agg := range havingAggFuncs {
 		havingMapper[agg] = len(sel.Fields.Fields)
-		field := &ast.SelectField{Expr: agg, AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields)))}
+		field := &ast.SelectField{Expr: agg,
+			AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields)))}
 		sel.Fields.Fields = append(sel.Fields.Fields, field)
 	}
 
@@ -412,7 +414,8 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) ([]*ast.AggregateFuncE
 	orderByMapper := make(map[*ast.AggregateFuncExpr]int)
 	for _, agg := range orderByAggFuncs {
 		orderByMapper[agg] = len(sel.Fields.Fields)
-		field := &ast.SelectField{Expr: agg, AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields)))}
+		field := &ast.SelectField{Expr: agg,
+			AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields)))}
 		sel.Fields.Fields = append(sel.Fields.Fields, field)
 	}
 
@@ -538,12 +541,13 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
 	schema := make([]*expression.Column, 0, len(rfs))
 	for _, rf := range rfs {
 		p.DBName = &rf.DBName
-		var dbName, colName, tblName model.CIStr
-		tblName = rf.Table.Name
-		dbName = rf.DBName
 		p.Columns = append(p.Columns, rf.Column)
-		colName = rf.Column.Name
-		schema = append(schema, &expression.Column{FromID: p.id, ColName: colName, TblName: tblName, DbName: dbName, RetType: &rf.Column.FieldType})
+		schema = append(schema, &expression.Column{
+			FromID:  p.id,
+			ColName: rf.Column.Name,
+			TblName: rf.Table.Name,
+			DBName:  rf.DBName,
+			RetType: &rf.Column.FieldType})
 	}
 	p.SetSchema(schema)
 	return p
