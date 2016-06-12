@@ -20,29 +20,8 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
-
-// Rewrite rewrites ast to Expression.
-func Rewrite(expr ast.ExprNode, schema Schema, AggrMapper map[*ast.AggregateFuncExpr]int) (newExpr Expression, err error) {
-	er := &expressionRewriter{schema: schema, aggrMap: AggrMapper}
-	expr.Accept(er)
-	if er.err != nil {
-		return nil, errors.Trace(er.err)
-	}
-	if len(er.ctxStack) != 1 {
-		return nil, errors.Errorf("context len %v is invalid", len(er.ctxStack))
-	}
-	return er.ctxStack[0], nil
-}
-
-type expressionRewriter struct {
-	ctxStack []Expression
-	schema   Schema
-	err      error
-	aggrMap  map[*ast.AggregateFuncExpr]int
-}
 
 // Expression represents all scalar expression in SQL.
 type Expression interface {
@@ -144,7 +123,7 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 		}
 	}
 	if idx == -1 {
-		return nil, errors.Errorf("Unknown column %s %s %s.", dbName.L, tblName.L, colName.L)
+		return nil, nil
 	}
 	return s[idx], nil
 }
@@ -181,8 +160,8 @@ type ScalarFunction struct {
 	Args     []Expression
 	FuncName model.CIStr
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
-	retType  *types.FieldType
-	function evaluator.BuiltinFunc
+	RetType  *types.FieldType
+	Function evaluator.BuiltinFunc
 }
 
 // ToString implements Expression interface.
@@ -198,7 +177,7 @@ func (sf *ScalarFunction) ToString() string {
 
 // NewFunction creates a new scalar function.
 func NewFunction(funcName model.CIStr, args []Expression) *ScalarFunction {
-	return &ScalarFunction{Args: args, FuncName: funcName, function: evaluator.Funcs[funcName.L].F}
+	return &ScalarFunction{Args: args, FuncName: funcName, Function: evaluator.Funcs[funcName.L].F}
 }
 
 //Schema2Exprs converts []*Column to []Expression.
@@ -221,7 +200,7 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 
 // DeepCopy implements Expression interface.
 func (sf *ScalarFunction) DeepCopy() Expression {
-	newFunc := &ScalarFunction{FuncName: sf.FuncName, function: sf.function, retType: sf.retType}
+	newFunc := &ScalarFunction{FuncName: sf.FuncName, Function: sf.Function, RetType: sf.RetType}
 	for _, arg := range sf.Args {
 		newFunc.Args = append(newFunc.Args, arg.DeepCopy())
 	}
@@ -230,7 +209,7 @@ func (sf *ScalarFunction) DeepCopy() Expression {
 
 // GetType implements Expression interface.
 func (sf *ScalarFunction) GetType() *types.FieldType {
-	return sf.retType
+	return sf.RetType
 }
 
 // Eval implements Expression interface.
@@ -244,7 +223,7 @@ func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Da
 			return types.Datum{}, errors.Trace(err)
 		}
 	}
-	return sf.function(args, ctx)
+	return sf.Function(args, ctx)
 }
 
 // Constant stands for a constant value.
@@ -272,108 +251,4 @@ func (c *Constant) GetType() *types.FieldType {
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error) {
 	return c.Value, nil
-}
-
-// Enter implements Visitor interface.
-func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChildren bool) {
-	switch v := inNode.(type) {
-	case *ast.AggregateFuncExpr:
-		index, ok := -1, false
-		if er.aggrMap != nil {
-			index, ok = er.aggrMap[v]
-		}
-		if !ok {
-			er.err = errors.New("Can't appear aggrFunctions")
-			return inNode, true
-		}
-		er.ctxStack = append(er.ctxStack, er.schema[index])
-		return inNode, true
-	}
-	return inNode, false
-}
-
-// Leave implements Visitor interface.
-func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool) {
-	length := len(er.ctxStack)
-	switch v := inNode.(type) {
-	case *ast.AggregateFuncExpr:
-	case *ast.FuncCallExpr:
-		function := &ScalarFunction{FuncName: v.FnName}
-		for i := length - len(v.Args); i < length; i++ {
-			function.Args = append(function.Args, er.ctxStack[i])
-		}
-		f := evaluator.Funcs[v.FnName.L]
-		if len(function.Args) < f.MinArgs || (f.MaxArgs != -1 && len(function.Args) > f.MaxArgs) {
-			er.err = evaluator.ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].", f.MinArgs, f.MaxArgs)
-			return retNode, false
-		}
-		function.function = f.F
-		function.retType = v.Type
-		er.ctxStack = er.ctxStack[:length-len(v.Args)]
-		er.ctxStack = append(er.ctxStack, function)
-	case *ast.ColumnName:
-		column, err := er.schema.FindColumn(v)
-		if err != nil {
-			er.err = errors.Trace(err)
-			return retNode, false
-		}
-		er.ctxStack = append(er.ctxStack, column)
-	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause:
-	case *ast.ValueExpr:
-		value := &Constant{Value: v.Datum, RetType: v.Type}
-		er.ctxStack = append(er.ctxStack, value)
-	case *ast.IsNullExpr:
-		function := &ScalarFunction{
-			Args:     []Expression{er.ctxStack[length-1]},
-			FuncName: model.NewCIStr("isnull"),
-			retType:  v.Type,
-		}
-		f, ok := evaluator.Funcs[function.FuncName.L]
-		if !ok {
-			er.err = errors.New("Can't find function!")
-			return retNode, false
-		}
-		function.function = f.F
-		er.ctxStack = er.ctxStack[:length-1]
-		er.ctxStack = append(er.ctxStack, function)
-	case *ast.BinaryOperationExpr:
-		function := &ScalarFunction{Args: []Expression{er.ctxStack[length-2], er.ctxStack[length-1]}, retType: v.Type}
-		funcName, ok := opcode.Ops[v.Op]
-		if !ok {
-			er.err = errors.Errorf("Unknown opcode %v", v.Op)
-			return retNode, false
-		}
-		function.FuncName = model.NewCIStr(funcName)
-		f, ok := evaluator.Funcs[function.FuncName.L]
-		if !ok {
-			er.err = errors.New("Can't find function!")
-			return retNode, false
-		}
-		function.function = f.F
-		er.ctxStack = er.ctxStack[:length-2]
-		er.ctxStack = append(er.ctxStack, function)
-	case *ast.UnaryOperationExpr:
-		function := &ScalarFunction{Args: []Expression{er.ctxStack[length-1]}, retType: v.Type}
-		switch v.Op {
-		case opcode.Not:
-			function.FuncName = model.NewCIStr("not")
-		case opcode.BitNeg:
-			function.FuncName = model.NewCIStr("bitneg")
-		case opcode.Plus:
-			function.FuncName = model.NewCIStr("unaryplus")
-		case opcode.Minus:
-			function.FuncName = model.NewCIStr("unaryminus")
-		}
-		f, ok := evaluator.Funcs[function.FuncName.L]
-		if !ok {
-			er.err = errors.New("Can't find function!")
-			return retNode, false
-		}
-		function.function = f.F
-		er.ctxStack = er.ctxStack[:length-1]
-		er.ctxStack = append(er.ctxStack, function)
-	default:
-		er.err = errors.Errorf("UnkownType: %T", v)
-	}
-	return inNode, true
 }

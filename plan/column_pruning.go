@@ -18,7 +18,8 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-func retrieveColumnsInExpression(expr expression.Expression, schema expression.Schema) (expression.Expression, error) {
+func retrieveColumnsInExpression(expr expression.Expression, schema expression.Schema) (
+	expression.Expression, error) {
 	switch v := expr.(type) {
 	case *expression.ScalarFunction:
 		for i, arg := range v.Args {
@@ -76,13 +77,16 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 				return nil, errors.Trace(err)
 			}
 		}
-		return used, err
+		return used, nil
 	case *Selection:
 		cols = usedCols
 		for _, cond := range v.Conditions {
 			cols = extractColumn(cond, cols)
 		}
 		used, err := PruneColumnsAndResolveIndices(p.GetChildByIndex(0), cols)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		for i := len(used) - 1; i >= 0; i-- {
 			if !used[i] {
 				v.schema = append(v.schema[:i], v.schema[i+1:]...)
@@ -90,13 +94,13 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 		}
 		for i, cond := range v.Conditions {
 			v.Conditions[i], err = retrieveColumnsInExpression(cond, p.GetChildByIndex(0).GetSchema())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		v.schema.InitIndices()
-		return used, err
+		return used, nil
 	case *Aggregation:
 		used := makeUsedList(usedCols, p.GetSchema())
 		for i := len(used) - 1; i >= 0; i-- {
@@ -128,7 +132,7 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 			}
 		}
 		v.schema.InitIndices()
-		return used, err
+		return used, nil
 	case *NewSort:
 		cols = usedCols
 		for _, item := range v.ByItems {
@@ -170,7 +174,6 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 		return used, nil
 	case *NewTableScan:
 		used := makeUsedList(usedCols, p.GetSchema())
-
 		for i := len(used) - 1; i >= 0; i-- {
 			if !used[i] {
 				v.schema = append(v.schema[:i], v.schema[i+1:]...)
@@ -181,10 +184,7 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 		return used, nil
 	case *Limit:
 		used, err := PruneColumnsAndResolveIndices(p.GetChildByIndex(0), usedCols)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return used, nil
+		return used, errors.Trace(err)
 	case *Join:
 		cols = usedCols
 		for _, eqCond := range v.EqualConditions {
