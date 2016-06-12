@@ -564,7 +564,7 @@ func (e *Evaluator) evalArithmetic(expr *tipb.Expr) (types.Datum, error) {
 	}
 	a, b = types.CoerceDatum(a, b)
 	if a.IsNull() || b.IsNull() {
-		return result, errors.Trace(err)
+		return result, nil
 	}
 
 	switch expr.GetTp() {
