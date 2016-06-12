@@ -393,7 +393,8 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) ([]*ast.AggregateFuncE
 	havingMapper := make(map[*ast.AggregateFuncExpr]int)
 	for _, agg := range havingAggFuncs {
 		havingMapper[agg] = len(sel.Fields.Fields)
-		field := &ast.SelectField{Expr: agg, AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields)))}
+		field := &ast.SelectField{Expr: agg,
+			AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields)))}
 		sel.Fields.Fields = append(sel.Fields.Fields, field)
 	}
 
@@ -413,7 +414,8 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) ([]*ast.AggregateFuncE
 	orderByMapper := make(map[*ast.AggregateFuncExpr]int)
 	for _, agg := range orderByAggFuncs {
 		orderByMapper[agg] = len(sel.Fields.Fields)
-		field := &ast.SelectField{Expr: agg, AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields)))}
+		field := &ast.SelectField{Expr: agg,
+			AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields)))}
 		sel.Fields.Fields = append(sel.Fields.Fields, field)
 	}
 
