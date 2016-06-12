@@ -909,6 +909,8 @@ func (b *executorBuilder) binopToPBExpr(client kv.Client, expr *ast.BinaryOperat
 		tp = tipb.ExprType_Or
 	case opcode.Plus:
 		tp = tipb.ExprType_Plus
+	case opcode.Div:
+		tp = tipb.ExprType_Div
 	default:
 		return nil
 	}
