@@ -38,7 +38,7 @@ func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
 	switch reqType {
 	case kv.ReqTypeSelect:
 		switch subType {
-		case kv.ReqSubTypeAgg:
+		case kv.ReqSubTypeGroupBy:
 			return true
 		default:
 			return supportExpr(tipb.ExprType(subType))
