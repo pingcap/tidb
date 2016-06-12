@@ -40,7 +40,7 @@ func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncE
 	for i, aggFunc := range aggFuncList {
 		var newArgList []expression.Expression
 		for _, arg := range aggFunc.Args {
-			newArg, err := expression.Rewrite(arg, p.GetSchema(), nil)
+			newArg, err := b.rewrite(arg, p.GetSchema(), nil)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
@@ -54,7 +54,7 @@ func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncE
 	if gby != nil {
 		gbyExprList = make([]expression.Expression, 0, len(gby.Items))
 		for _, gbyItem := range gby.Items {
-			gbyExpr, err := expression.Rewrite(gbyItem.Expr, p.GetSchema(), nil)
+			gbyExpr, err := b.rewrite(gbyItem.Expr, p.GetSchema(), nil)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
@@ -180,7 +180,7 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) Plan {
 	var eqCond []*expression.ScalarFunction
 	var leftCond, rightCond, otherCond []expression.Expression
 	if join.On != nil {
-		onExpr, err := expression.Rewrite(join.On.Expr, newSchema, nil)
+		onExpr, err := b.rewrite(join.On.Expr, newSchema, nil)
 		if err != nil {
 			b.err = err
 			return nil
@@ -206,7 +206,7 @@ func (b *planBuilder) buildSelection(p Plan, where ast.ExprNode, mapper map[*ast
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
 	for _, cond := range conditions {
-		expr, err := expression.Rewrite(cond, p.GetSchema(), mapper)
+		expr, err := b.rewrite(cond, p.GetSchema(), mapper)
 		if err != nil {
 			b.err = err
 			return nil
@@ -239,7 +239,7 @@ func (b *planBuilder) buildProjection(src Plan, fields []*ast.SelectField, mappe
 				}
 			}
 		} else {
-			newExpr, err := expression.Rewrite(field.Expr, src.GetSchema(), mapper)
+			newExpr, err := b.rewrite(field.Expr, src.GetSchema(), mapper)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
@@ -346,7 +346,7 @@ type NewSort struct {
 func (b *planBuilder) buildNewSort(src Plan, byItems []*ast.ByItem, mapper map[*ast.AggregateFuncExpr]int) Plan {
 	var exprs []ByItems
 	for _, item := range byItems {
-		it, err := expression.Rewrite(item.Expr, src.GetSchema(), mapper)
+		it, err := b.rewrite(item.Expr, src.GetSchema(), mapper)
 		if err != nil {
 			b.err = err
 		}
