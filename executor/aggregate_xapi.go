@@ -169,13 +169,12 @@ func (e *XAggregateExec) innerNext() (bool, error) {
 	for _, agg := range e.aggregaters {
 		var count uint64
 		var value types.Datum
-		if agg.name == ast.AggFuncCount || agg.name == ast.AggFuncAvg {
+		if needCount(agg.name) {
 			// count partial result field
 			count = row.Data[cursor].GetUint64()
 			cursor++
 		}
-		if agg.name == ast.AggFuncSum || agg.name == ast.AggFuncAvg || agg.name == ast.AggFuncFirstRow ||
-			agg.name == ast.AggFuncMax || agg.name == ast.AggFuncMin || agg.name == ast.AggFuncGroupConcat {
+		if needValue(agg.name) {
 			// value partial result field
 			value = row.Data[cursor]
 			cursor++
@@ -195,4 +194,17 @@ func (e *XAggregateExec) Close() error {
 		return e.Src.Close()
 	}
 	return nil
+}
+
+// The argument if the name of a aggregate function.
+// This function will check if the aggregate function need count in partial result.
+func needCount(name string) bool {
+	return name == ast.AggFuncCount || name == ast.AggFuncAvg
+}
+
+// The argument if the name of a aggregate function.
+// This function will check if the aggregate function need value in partial result.
+func needValue(name string) bool {
+	return name == ast.AggFuncSum || name == ast.AggFuncAvg || name == ast.AggFuncFirstRow ||
+		name == ast.AggFuncMax || name == ast.AggFuncMin || name == ast.AggFuncGroupConcat
 }

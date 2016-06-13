@@ -50,7 +50,7 @@ func (s *testAggFuncSuite) TestXAPICount(c *C) {
 		Args: []ast.ExprNode{col2},
 	}
 	// Return row:
-	// GroupKey, Count, Value
+	// GroupKey, Count
 	// Partial result from region1
 	row1 := types.MakeDatums([]byte{1}, 2)
 	row2 := types.MakeDatums([]byte{2}, 1)

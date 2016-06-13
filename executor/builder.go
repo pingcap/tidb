@@ -419,7 +419,7 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 	// Avg needs both count and value partial result field.
 	for _, agg := range v.AggFuncs {
 		name := strings.ToLower(agg.F)
-		if name == ast.AggFuncCount || name == ast.AggFuncAvg {
+		if needCount(name) {
 			// count partial result field
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen = 21
@@ -427,8 +427,7 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 			ft.Collate = charset.CollationBin
 			fields = append(fields, ft)
 		}
-		if name == ast.AggFuncSum || name == ast.AggFuncAvg || name == ast.AggFuncFirstRow ||
-			name == ast.AggFuncMax || name == ast.AggFuncMin || name == ast.AggFuncGroupConcat {
+		if needValue(name) {
 			// value partial result field
 			fields = append(fields, agg.GetType())
 		}
