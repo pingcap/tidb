@@ -2296,7 +2296,7 @@ func (s *testSessionSuite) TestXAggregateWithoutAggFunc(c *C) {
 	initSQL := `
 		drop table IF EXISTS t;
 		CREATE TABLE t (c INT);
-		INSERT INTO t VALUES(1), (2), (3);`
+		INSERT INTO t VALUES(1), (2), (3), (3);`
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecMultiSQL(c, se, initSQL)
@@ -2307,7 +2307,7 @@ func (s *testSessionSuite) TestXAggregateWithoutAggFunc(c *C) {
 	initSQL = `
 		drop table IF EXISTS t;
 		CREATE TABLE t(c INT, index cidx (c));
-		INSERT INTO t VALUES(1), (2), (3);`
+		INSERT INTO t VALUES(1), (2), (3), (3);`
 	mustExecMultiSQL(c, se, initSQL)
 	sql = "SELECT 18 FROM t where c > 1 group by c;"
 	mustExecMatch(c, se, sql, [][]interface{}{{"18"}, {"18"}})
