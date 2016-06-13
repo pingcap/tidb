@@ -156,14 +156,30 @@ func (e *XAggregateExec) innerNext() (bool, error) {
 		}
 	}
 	e.executed = true
-	groupKey := row.Data[0].GetBytes()
+	// cursor is used to traverse the row.
+	var cursor int
+	// The first column is groupkey.
+	groupKey := row.Data[cursor].GetBytes()
 	if _, ok := e.groupMap[string(groupKey)]; !ok {
 		e.groupMap[string(groupKey)] = true
 		e.groups = append(e.groups, string(groupKey))
 	}
-	for i, agg := range e.aggregaters {
-		count := row.Data[2*i+1].GetUint64()
-		value := row.Data[2*i+2]
+	cursor++
+	// The rest columns are partial result for aggregate function.
+	for _, agg := range e.aggregaters {
+		var count uint64
+		var value types.Datum
+		if agg.name == ast.AggFuncCount || agg.name == ast.AggFuncAvg {
+			// count partial result field
+			count = row.Data[cursor].GetUint64()
+			cursor++
+		}
+		if agg.name == ast.AggFuncSum || agg.name == ast.AggFuncAvg || agg.name == ast.AggFuncFirstRow ||
+			agg.name == ast.AggFuncMax || agg.name == ast.AggFuncMin || agg.name == ast.AggFuncGroupConcat {
+			// value partial result field
+			value = row.Data[cursor]
+			cursor++
+		}
 		agg.currentGroup = groupKey
 		agg.update(count, value)
 	}
