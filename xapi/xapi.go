@@ -142,7 +142,7 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (*Select
 	}
 	result := &SelectResult{resp: resp}
 	// If Aggregates is not nil, we should set result fields latter.
-	if len(req.Aggregates) == 0 {
+	if len(req.Aggregates) == 0 && len(req.GroupBy) == 0 {
 		if req.TableInfo != nil {
 			result.fields = tablecodec.ProtoColumnsToFieldTypes(req.TableInfo.Columns)
 		} else {

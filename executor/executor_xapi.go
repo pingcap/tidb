@@ -71,6 +71,8 @@ type XSelectTableExec struct {
 	aggFuncs         []*tipb.Expr
 	byItems          []*tipb.ByItem
 	aggFields        []*types.FieldType
+	// Indicate if the exec is handling aggregate result.
+	aggregate bool
 }
 
 // AddAggregate implements XExecutor interface.
@@ -78,6 +80,7 @@ func (e *XSelectTableExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByIt
 	e.aggFuncs = funcs
 	e.byItems = byItems
 	e.aggFields = fields
+	e.aggregate = true
 }
 
 // GetTableName implements XExecutor interface.
@@ -114,7 +117,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			e.subResult = nil
 			continue
 		}
-		if len(e.aggFuncs) > 0 {
+		if e.aggregate {
 			// compose aggreagte row
 			return &Row{Data: rowData}, nil
 		}
@@ -195,7 +198,7 @@ func (e *XSelectTableExec) doRequest() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(selReq.Aggregates) > 0 {
+	if len(selReq.Aggregates) > 0 || len(selReq.GroupBy) > 0 {
 		// The returned rows should be aggregate partial result.
 		e.result.SetFields(e.aggFields)
 	}
@@ -216,6 +219,8 @@ type XSelectIndexExec struct {
 	aggFuncs []*tipb.Expr
 	// Aggregate function result fields.
 	aggFields []*types.FieldType
+	// Indicate if the exec is handling aggregate result.
+	aggregate bool
 
 	tasks      []*lookupTableTask
 	taskCursor int
@@ -255,6 +260,7 @@ func (e *XSelectIndexExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByIt
 	e.aggFuncs = funcs
 	e.byItems = byItems
 	e.aggFields = fields
+	e.aggregate = true
 }
 
 // GetTableName implements XExecutor interface.
@@ -306,7 +312,7 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		if task.cursor < len(task.rows) {
 			row := task.rows[task.cursor]
-			if len(e.aggFuncs) == 0 {
+			if !e.aggregate {
 				for i, field := range e.indexPlan.Fields() {
 					field.Expr.SetDatum(row.Data[i])
 				}
@@ -360,7 +366,8 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !e.indexPlan.OutOfOrder {
+	// TODO: check this
+	if !e.indexPlan.OutOfOrder && !e.aggregate {
 		// Restore the index order.
 		sorter := &rowsSorter{order: e.indexOrder, rows: task.rows}
 		if e.indexPlan.Desc && !e.supportDesc {
@@ -388,7 +395,8 @@ func (e *XSelectIndexExec) fetchHandles() ([]int64, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !e.indexPlan.OutOfOrder {
+	// TODO: check this
+	if !e.indexPlan.OutOfOrder && !e.aggregate {
 		// Save the index order.
 		e.indexOrder = make(map[int64]int)
 		for i, h := range handles {
@@ -526,7 +534,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if len(selTableReq.Aggregates) > 0 {
+	if e.aggregate {
 		// The returned rows should be aggregate partial result.
 		resp.SetFields(e.aggFields)
 	}
@@ -721,7 +729,7 @@ func (e *XSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult *xa
 		if rowData == nil {
 			break
 		}
-		if len(e.aggFuncs) > 0 {
+		if e.aggregate {
 			// compose aggreagte row
 			row := &Row{Data: rowData}
 			rows = append(rows, row)
@@ -774,7 +782,6 @@ func (b *executorBuilder) exprToPBExpr(client kv.Client, expr ast.ExprNode, tn *
 }
 
 func (b *executorBuilder) groupByItemToPB(client kv.Client, item *ast.ByItem, tn *ast.TableName) *tipb.ByItem {
-	// TODO: support groupby
 	expr := b.exprToPBExpr(client, item.Expr, tn)
 	if expr == nil {
 		return nil
