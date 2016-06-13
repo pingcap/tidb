@@ -2289,3 +2289,26 @@ func (s *testSessionSuite) TestXAggregateWithIndexScan(c *C) {
 	sql = "SELECT DISTINCT + - COUNT( col3 ) AS col1 FROM tab1 AS cor0 WHERE col3 IS NOT NULL;"
 	mustExecMatch(c, se, sql, [][]interface{}{{"-1"}})
 }
+
+// Select with groupby but without aggregate function.
+func (s *testSessionSuite) TestXAggregateWithoutAggFunc(c *C) {
+	// TableScan
+	initSQL := `
+		drop table IF EXISTS t;
+		CREATE TABLE t (c INT);
+		INSERT INTO t VALUES(1), (2), (3);`
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecMultiSQL(c, se, initSQL)
+	sql := "SELECT 18 FROM t group by c;"
+	mustExecMatch(c, se, sql, [][]interface{}{{"18"}, {"18"}, {"18"}})
+
+	// IndexScan
+	initSQL = `
+		drop table IF EXISTS t;
+		CREATE TABLE t(c INT, index cidx (c));
+		INSERT INTO t VALUES(1), (2), (3);`
+	mustExecMultiSQL(c, se, initSQL)
+	sql = "SELECT 18 FROM t where c > 1 group by c;"
+	mustExecMatch(c, se, sql, [][]interface{}{{"18"}, {"18"}})
+}
