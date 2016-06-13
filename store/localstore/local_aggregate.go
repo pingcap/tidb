@@ -114,14 +114,7 @@ func (n *aggregateFuncExpr) toDatums() []types.Datum {
 // Convert count and value to datum list.
 func (n *aggregateFuncExpr) getCountValue() []types.Datum {
 	item := n.getAggItem()
-	if item == nil {
-		// TODO: should this happen?
-		return nil
-	}
-	ds := make([]types.Datum, 2)
-	ds[0] = types.NewUintDatum(item.count)
-	ds[1] = item.value
-	return ds
+	return []types.Datum{types.NewUintDatum(item.count)}
 }
 
 var singleGroupKey = []byte("SingleGroup")
