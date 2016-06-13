@@ -41,6 +41,8 @@ func (n *finalAggregater) update(count uint64, value types.Datum) error {
 	switch n.name {
 	case ast.AggFuncCount:
 		return n.updateCount(count)
+	case ast.AggFuncFirstRow:
+		return n.updateFirst(value)
 	}
 	return nil
 }
@@ -60,6 +62,16 @@ func (n *finalAggregater) getContext() *ast.AggEvaluateContext {
 func (n *finalAggregater) updateCount(count uint64) error {
 	ctx := n.getContext()
 	ctx.Count += int64(count)
+	return nil
+}
+
+func (n *finalAggregater) updateFirst(val types.Datum) error {
+	ctx := n.getContext()
+	if ctx.Evaluated {
+		return nil
+	}
+	ctx.Value = val.GetValue()
+	ctx.Evaluated = true
 	return nil
 }
 
