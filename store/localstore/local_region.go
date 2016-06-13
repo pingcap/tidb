@@ -173,7 +173,7 @@ func (rs *localRegion) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
 	rows := make([]*tipb.Row, 0, len(ctx.groupKeys))
 	for _, gk := range ctx.groupKeys {
 		row := new(tipb.Row)
-		// Each aggregate partial result will be converted to two datum.
+		// Each aggregate partial result will be converted to one or two datums.
 		rowData := make([]types.Datum, 0, 1+2*len(ctx.aggregates))
 		// The first column is group key.
 		rowData = append(rowData, types.NewBytesDatum(gk))
