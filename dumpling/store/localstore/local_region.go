@@ -48,6 +48,7 @@ type selectContext struct {
 	groups       map[string]bool
 	groupKeys    [][]byte
 	aggregates   []*aggregateFuncExpr
+	aggregate    bool
 }
 
 func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
@@ -70,7 +71,8 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
 			collectColumnsInWhere(sel.Where, ctx)
 		}
-		if len(sel.Aggregates) > 0 {
+		ctx.aggregate = len(sel.Aggregates) > 0 || len(sel.GetGroupBy()) > 0
+		if ctx.aggregate {
 			// compose aggregateFuncExpr
 			ctx.aggregates = make([]*aggregateFuncExpr, 0, len(sel.Aggregates))
 			for _, agg := range sel.Aggregates {
@@ -155,7 +157,7 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, er
 		rows = append(rows, ranRows...)
 		limit -= int64(len(ranRows))
 	}
-	if len(ctx.aggregates) > 0 {
+	if ctx.aggregate {
 		return rs.getRowsFromAgg(ctx)
 	}
 	return rows, nil
@@ -390,7 +392,7 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.R
 		}
 		rowData = append(rowData, colVal)
 	}
-	if len(ctx.aggregates) > 0 {
+	if ctx.aggregate {
 		// Update aggregate functions.
 		err = rs.aggregate(ctx, rowData)
 		if err != nil {
