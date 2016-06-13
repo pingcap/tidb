@@ -98,6 +98,8 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		return e.evalNot(expr)
 	case tipb.ExprType_In:
 		return e.evalIn(expr)
+	case tipb.ExprType_Plus, tipb.ExprType_Div:
+		return e.evalArithmetic(expr)
 	}
 	return types.Datum{}, nil
 }
@@ -543,4 +545,34 @@ func (e *Evaluator) decodeValueList(valueListExpr *tipb.Expr) (*decodedValueList
 	decoded = &decodedValueList{values: list, hasNull: hasNull}
 	e.valueLists[valueListExpr] = decoded
 	return decoded, nil
+}
+
+func (e *Evaluator) evalArithmetic(expr *tipb.Expr) (types.Datum, error) {
+	var result types.Datum
+	left, right, err := e.evalTwoChildren(expr)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	a, err := types.CoerceArithmetic(left)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+
+	b, err := types.CoerceArithmetic(right)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	a, b = types.CoerceDatum(a, b)
+	if a.IsNull() || b.IsNull() {
+		return result, nil
+	}
+
+	switch expr.GetTp() {
+	case tipb.ExprType_Plus:
+		return types.ComputePlus(a, b)
+	case tipb.ExprType_Div:
+		return types.ComputeDiv(a, b)
+	default:
+		return result, errors.Errorf("Unknown binop type: %v", expr.GetTp())
+	}
 }
