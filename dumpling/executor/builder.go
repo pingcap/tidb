@@ -377,9 +377,6 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 		return nil
 	}
 	client := txn.GetClient()
-	if !client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeAgg) {
-		return e
-	}
 	if len(v.GroupByItems) > 0 && !client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy) {
 		return e
 	}
