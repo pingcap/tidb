@@ -48,6 +48,7 @@ type selectContext struct {
 	groups       map[string]bool
 	groupKeys    [][]byte
 	aggregates   []*aggregateFuncExpr
+	aggregate    bool
 }
 
 func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
@@ -70,7 +71,8 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
 			collectColumnsInWhere(sel.Where, ctx)
 		}
-		if len(sel.Aggregates) > 0 {
+		ctx.aggregate = len(sel.Aggregates) > 0 || len(sel.GetGroupBy()) > 0
+		if ctx.aggregate {
 			// compose aggregateFuncExpr
 			ctx.aggregates = make([]*aggregateFuncExpr, 0, len(sel.Aggregates))
 			for _, agg := range sel.Aggregates {
@@ -155,7 +157,7 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, er
 		rows = append(rows, ranRows...)
 		limit -= int64(len(ranRows))
 	}
-	if len(ctx.aggregates) > 0 {
+	if ctx.aggregate {
 		return rs.getRowsFromAgg(ctx)
 	}
 	return rows, nil
@@ -164,27 +166,22 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, er
 /*
  * Convert aggregate partial result to rows.
  * Data layout example:
- *	SQL:	select count(c1), sum(c2) from t;
- *	Aggs:	count(c1), sum(c2)
- *	Rows:	groupKey1, count1, value1, count2, value2
- *		groupKey2, count1, value1, count2, value2
+ *	SQL:	select count(c1), sum(c2), avg(c3) from t;
+ *	Aggs:	count(c1), sum(c2), avg(c3)
+ *	Rows:	groupKey1, count1, value2, count3, value3
+ *		groupKey2, count1, value2, count3, value3
  */
 func (rs *localRegion) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
 	rows := make([]*tipb.Row, 0, len(ctx.groupKeys))
 	for _, gk := range ctx.groupKeys {
 		row := new(tipb.Row)
-		// Each aggregate partial result will be converted to two datum.
-		rowData := make([]types.Datum, 1+2*len(ctx.aggregates))
+		// Each aggregate partial result will be converted to one or two datums.
+		rowData := make([]types.Datum, 0, 1+2*len(ctx.aggregates))
 		// The first column is group key.
-		rowData[0] = types.NewBytesDatum(gk)
-		for i, agg := range ctx.aggregates {
+		rowData = append(rowData, types.NewBytesDatum(gk))
+		for _, agg := range ctx.aggregates {
 			agg.currentGroup = gk
-			ds := agg.toDatums()
-			if ds == nil {
-				return nil, errors.Errorf("Aggregate partial result is nil. This should not happend!")
-			}
-			rowData[2*i+1] = ds[0]
-			rowData[2*i+2] = ds[1]
+			rowData = append(rowData, agg.toDatums()...)
 		}
 		var err error
 		row.Data, err = codec.EncodeValue(nil, rowData...)
@@ -390,7 +387,7 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.R
 		}
 		rowData = append(rowData, colVal)
 	}
-	if len(ctx.aggregates) > 0 {
+	if ctx.aggregate {
 		// Update aggregate functions.
 		err = rs.aggregate(ctx, rowData)
 		if err != nil {

@@ -39,7 +39,7 @@ func (c *dbClient) SupportRequestType(reqType, subType int64) bool {
 	switch reqType {
 	case kv.ReqTypeSelect:
 		switch subType {
-		case kv.ReqSubTypeAgg:
+		case kv.ReqSubTypeGroupBy:
 			return true
 		default:
 			return supportExpr(tipb.ExprType(subType))
@@ -65,6 +65,8 @@ func supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_In, tipb.ExprType_ValueList,
 		tipb.ExprType_Not,
 		tipb.ExprType_Like:
+		return true
+	case tipb.ExprType_Plus, tipb.ExprType_Div:
 		return true
 	case tipb.ExprType_Count:
 		return true

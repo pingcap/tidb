@@ -190,12 +190,12 @@ func bitOpFactory(op opcode.Op) BuiltinFunc {
 
 func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		a, err := coerceArithmetic(args[0])
+		a, err := types.CoerceArithmetic(args[0])
 		if err != nil {
 			return d, errors.Trace(err)
 		}
 
-		b, err := coerceArithmetic(args[1])
+		b, err := types.CoerceArithmetic(args[1])
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -207,17 +207,17 @@ func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 
 		switch op {
 		case opcode.Plus:
-			return computePlus(a, b)
+			return types.ComputePlus(a, b)
 		case opcode.Minus:
-			return computeMinus(a, b)
+			return types.ComputeMinus(a, b)
 		case opcode.Mul:
-			return computeMul(a, b)
+			return types.ComputeMul(a, b)
 		case opcode.Div:
-			return computeDiv(a, b)
+			return types.ComputeDiv(a, b)
 		case opcode.Mod:
-			return computeMod(a, b)
+			return types.ComputeMod(a, b)
 		case opcode.IntDiv:
-			return computeIntDiv(a, b)
+			return types.ComputeIntDiv(a, b)
 		default:
 			return d, ErrInvalidOperation.Gen("invalid op %v in arithmetic operation", op)
 		}
