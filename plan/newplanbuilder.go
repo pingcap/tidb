@@ -48,7 +48,8 @@ func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncE
 			newArgList = append(newArgList, newArg)
 		}
 		newAggFuncList = append(newAggFuncList, expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct))
-		schema = append(schema, &expression.Column{FromID: agg.id, ColName: model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, i))})
+		schema = append(schema, &expression.Column{FromID: agg.id,
+			ColName: model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, i))})
 	}
 	var gbyExprList []expression.Expression
 	if gby != nil {
@@ -116,7 +117,9 @@ func extractColumn(expr expression.Expression, cols []*expression.Column) (resul
 	return cols
 }
 
-func extractOnCondition(conditions []expression.Expression, left Plan, right Plan) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression, otherCond []expression.Expression) {
+func extractOnCondition(conditions []expression.Expression, left Plan, right Plan) (
+	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
+	otherCond []expression.Expression) {
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
 		eqStr, _ := opcode.Ops[opcode.EQ]
@@ -127,7 +130,8 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 				if left.GetSchema().GetIndex(ln) != -1 && right.GetSchema().GetIndex(rn) != -1 {
 					eqCond = append(eqCond, binop)
 					continue
-				} else if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
+				}
+				if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
 					newEq := expression.NewFunction(model.NewCIStr(eqStr), []expression.Expression{rn, ln})
 					eqCond = append(eqCond, newEq)
 					continue
@@ -230,14 +234,18 @@ func (b *planBuilder) buildProjection(src Plan, fields []*ast.SelectField, mappe
 			dbName := field.WildCard.Schema
 			colTblName := field.WildCard.Table
 			for _, col := range src.GetSchema() {
-				if (dbName.L == "" || dbName.L == col.DBName.L) &&
-					(colTblName.L == "" || colTblName.L == col.TblName.L) {
-					newExpr := col.DeepCopy()
-					proj.Exprs = append(proj.Exprs, newExpr)
-					tblName = col.TblName
-					schemaCol := &expression.Column{FromID: col.FromID, TblName: tblName, ColName: col.ColName, RetType: newExpr.GetType()}
-					schema = append(schema, schemaCol)
+				if (dbName.L != "" && dbName.L != col.DBName.L) ||
+					(colTblName.L != "" && colTblName.L != col.TblName.L) {
+					continue
 				}
+				newExpr := col.DeepCopy()
+				proj.Exprs = append(proj.Exprs, newExpr)
+				schemaCol := &expression.Column{
+					FromID:  col.FromID,
+					TblName: col.TblName,
+					ColName: col.ColName,
+					RetType: newExpr.GetType()}
+				schema = append(schema, schemaCol)
 			}
 		} else {
 			newExpr, err := b.rewrite(field.Expr, src.GetSchema(), mapper)
@@ -258,7 +266,11 @@ func (b *planBuilder) buildProjection(src Plan, fields []*ast.SelectField, mappe
 				colName = model.NewCIStr(field.Expr.Text())
 				fromID = proj.id
 			}
-			schemaCol := &expression.Column{FromID: fromID, TblName: tblName, ColName: colName, RetType: newExpr.GetType()}
+			schemaCol := &expression.Column{
+				FromID:  fromID,
+				TblName: tblName,
+				ColName: colName,
+				RetType: newExpr.GetType()}
 			schema = append(schema, schemaCol)
 		}
 	}
@@ -376,7 +388,9 @@ func (b *planBuilder) buildNewLimit(src Plan, limit *ast.Limit) Plan {
 	return li
 }
 
-func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int) {
+func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) (
+	[]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int,
+	map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int) {
 	extractor := &ast.AggregateFuncExtractor{AggFuncs: make([]*ast.AggregateFuncExpr, 0)}
 	// Extract agg funcs from having clause.
 	if sel.Having != nil {
@@ -389,7 +403,6 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) ([]*ast.AggregateFuncE
 	}
 	havingAggFuncs := extractor.AggFuncs
 	extractor.AggFuncs = make([]*ast.AggregateFuncExpr, 0)
-
 	havingMapper := make(map[*ast.AggregateFuncExpr]int)
 	for _, agg := range havingAggFuncs {
 		havingMapper[agg] = len(sel.Fields.Fields)

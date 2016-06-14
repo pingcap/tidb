@@ -29,13 +29,14 @@ func Refine(p Plan) error {
 }
 
 func refine(in Plan) error {
-	var err error
 	for _, c := range in.GetChildren() {
 		e := refine(c)
 		if e != nil {
-			err = errors.Trace(e)
+			return errors.Trace(e)
 		}
 	}
+
+	var err error
 	switch x := in.(type) {
 	case *IndexScan:
 		err = buildIndexRange(x)
@@ -47,7 +48,7 @@ func refine(in Plan) error {
 		x.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
 		return nil
 	}
-	return err
+	return errors.Trace(err)
 }
 
 var fullRange = []rangePoint{
@@ -91,6 +92,23 @@ func buildTableRange(p *TableScan) error {
 	}
 	p.Ranges = rb.buildTableRanges(rangePoints)
 	return rb.err
+}
+
+func buildNewTableRange(p *NewTableScan) error {
+	if len(p.AccessConditions) == 0 {
+		p.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
+		return nil
+	}
+	rb := rangeBuilder{}
+	rangePoints := fullRange
+	for _, cond := range p.AccessConditions {
+		rangePoints = rb.intersection(rangePoints, rb.newBuild(cond))
+		if rb.err != nil {
+			return errors.Trace(rb.err)
+		}
+	}
+	p.Ranges = rb.buildTableRanges(rangePoints)
+	return errors.Trace(rb.err)
 }
 
 // conditionChecker checks if this condition can be pushed to index plan.

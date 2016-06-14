@@ -47,46 +47,53 @@ type AggregationFunction interface {
 func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) AggregationFunction {
 	switch strings.ToLower(funcType) {
 	case ast.AggFuncSum:
-		return &sumFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCtxMapper, 0), Distinct: distinct}}
+		return &sumFunction{aggFunction: newAggFunc(funcArgs, distinct)}
 	case ast.AggFuncCount:
-		return &countFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCtxMapper, 0), Distinct: distinct}}
+		return &countFunction{aggFunction: newAggFunc(funcArgs, distinct)}
 	case ast.AggFuncAvg:
-		return &avgFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCtxMapper, 0), Distinct: distinct}}
+		return &avgFunction{aggFunction: newAggFunc(funcArgs, distinct)}
 	case ast.AggFuncGroupConcat:
-		return &concatFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCtxMapper, 0), Distinct: distinct}}
+		return &concatFunction{aggFunction: newAggFunc(funcArgs, distinct)}
 	case ast.AggFuncMax:
-		return &maxMinFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCtxMapper, 0), Distinct: distinct}, isMax: true}
+		return &maxMinFunction{aggFunction: newAggFunc(funcArgs, distinct), isMax: true}
 	case ast.AggFuncMin:
-		return &maxMinFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCtxMapper, 0), Distinct: distinct}, isMax: false}
+		return &maxMinFunction{aggFunction: newAggFunc(funcArgs, distinct), isMax: false}
 	case ast.AggFuncFirstRow:
-		return &firstRowFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCtxMapper, 0), Distinct: distinct}}
+		return &firstRowFunction{aggFunction: newAggFunc(funcArgs, distinct)}
 	}
 	return nil
 }
 
-type aggrCtxMapper map[string]*ast.AggEvaluateContext
+type aggCtxMapper map[string]*ast.AggEvaluateContext
 
-type aggrFunction struct {
+type aggFunction struct {
 	Args         []Expression
 	Distinct     bool
-	resultMapper aggrCtxMapper
+	resultMapper aggCtxMapper
 }
 
-func (af *aggrFunction) Clear() {
+func newAggFunc(args []Expression, dist bool) aggFunction {
+	return aggFunction{
+		Args:         args,
+		resultMapper: make(aggCtxMapper, 0),
+		Distinct:     dist}
+}
+
+func (af *aggFunction) Clear() {
 	af.resultMapper = nil
 }
 
 // GetArgs implements AggregationFunction interface.
-func (af *aggrFunction) GetArgs() []Expression {
+func (af *aggFunction) GetArgs() []Expression {
 	return af.Args
 }
 
 // SetArgs implements AggregationFunction interface.
-func (af *aggrFunction) SetArgs(idx int, expr Expression) {
+func (af *aggFunction) SetArgs(idx int, expr Expression) {
 	af.Args[idx] = expr
 }
 
-func (af *aggrFunction) getContext(groupKey []byte) *ast.AggEvaluateContext {
+func (af *aggFunction) getContext(groupKey []byte) *ast.AggEvaluateContext {
 	ctx, ok := af.resultMapper[string(groupKey)]
 	if !ok {
 		ctx = &ast.AggEvaluateContext{}
@@ -98,7 +105,7 @@ func (af *aggrFunction) getContext(groupKey []byte) *ast.AggEvaluateContext {
 	return ctx
 }
 
-func (af *aggrFunction) updateSum(row []types.Datum, groupKey []byte, ectx context.Context) error {
+func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := af.getContext(groupKey)
 	a := af.Args[0]
 	value, err := a.Eval(row, ectx)
@@ -126,7 +133,7 @@ func (af *aggrFunction) updateSum(row []types.Datum, groupKey []byte, ectx conte
 }
 
 type sumFunction struct {
-	aggrFunction
+	aggFunction
 }
 
 // Update implements AggregationFunction interface.
@@ -141,7 +148,7 @@ func (sf *sumFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 }
 
 type countFunction struct {
-	aggrFunction
+	aggFunction
 }
 
 // Update implements AggregationFunction interface.
@@ -183,7 +190,7 @@ func (cf *countFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 }
 
 type avgFunction struct {
-	aggrFunction
+	aggFunction
 }
 
 // Update implements AggregationFunction interface.
@@ -208,7 +215,7 @@ func (af *avgFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 }
 
 type concatFunction struct {
-	aggrFunction
+	aggFunction
 }
 
 // Update implements AggregationFunction interface.
@@ -259,7 +266,7 @@ func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 }
 
 type maxMinFunction struct {
-	aggrFunction
+	aggFunction
 	isMax bool
 }
 
@@ -299,7 +306,7 @@ func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte, ectx conte
 }
 
 type firstRowFunction struct {
-	aggrFunction
+	aggFunction
 }
 
 // Update implements AggregationFunction interface.
