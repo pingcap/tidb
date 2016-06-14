@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -93,9 +94,24 @@ type NewTableScan struct {
 	LimitCount *int64
 }
 
-func (ts *NewTableScan) attachCondition(conditions []expression.Expression) {
+func (ts *NewTableScan) attachConditions(conditions []expression.Expression) {
+	var pkName model.CIStr
+	if ts.Table.PKIsHandle {
+		for _, colInfo := range ts.Table.Columns {
+			if mysql.HasPriKeyFlag(colInfo.Flag) {
+				pkName = colInfo.Name
+				break
+			}
+		}
+	}
 	for _, con := range conditions {
-		//TODO: implement refiner for expression.
+		if pkName.L != "" {
+			checker := conditionChecker{tableName: ts.Table.Name, pkName: pkName}
+			if checker.newCheck(con) {
+				ts.AccessConditions = append(ts.AccessConditions, con)
+				continue
+			}
+		}
 		ts.FilterConditions = append(ts.FilterConditions, con)
 	}
 }

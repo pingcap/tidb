@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
@@ -94,10 +95,20 @@ func buildTableRange(p *TableScan) error {
 }
 
 func buildNewTableRange(p *NewTableScan) error {
-	if len(p.AccessConditions) == 0 {
+	// Convert selection plan's conditions to newTableScan plan's AccessConditions or FilterConditions.
+	var ok bool
+	var selection *Selection
+	for _, parent := range p.GetParents() {
+		if selection, ok = parent.(*Selection); ok {
+			break
+		}
+	}
+	if !ok || len(selection.Conditions) == 0 {
 		p.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
 		return nil
 	}
+	p.attachConditions(selection.Conditions)
+
 	rb := rangeBuilder{}
 	rangePoints := fullRange
 	for _, cond := range p.AccessConditions {
@@ -205,6 +216,53 @@ func (c *conditionChecker) checkColumnExpr(expr ast.ExprNode) bool {
 	}
 	if c.idx != nil {
 		return cn.Refer.Column.Name.L == c.idx.Columns[c.columnOffset].Name.L
+	}
+	return true
+}
+
+func (c *conditionChecker) newCheck(condition expression.Expression) bool {
+	switch x := condition.(type) {
+	case *expression.ScalarFunction:
+		return c.checkScalarFunction(x)
+	case *expression.Column:
+		return c.checkColumn(x)
+	}
+	return false
+}
+
+func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
+	// TODO: Implement istrue, between, parentheses, patternin and patternlike.
+	switch scalar.FuncName.L {
+	case "||":
+		return c.newCheck(scalar.Args[0]) && c.newCheck(scalar.Args[1])
+	case "&&":
+		return c.newCheck(scalar.Args[0]) && c.newCheck(scalar.Args[1])
+	case "=", "!=", ">=", ">", "<", "<=":
+		if _, ok := scalar.Args[0].(*expression.Constant); ok {
+			return c.checkColumn(scalar.Args[1])
+		}
+		if _, ok := scalar.Args[1].(*expression.Constant); ok {
+			return c.checkColumn(scalar.Args[0])
+		}
+	case "isnull":
+		return c.checkColumn(scalar.Args[0])
+	}
+	return false
+}
+
+func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
+	col, ok := expr.(*expression.Column)
+	if !ok {
+		return false
+	}
+	if col.TblName.L != c.tableName.L {
+		return false
+	}
+	if c.pkName.L != "" {
+		return c.pkName.L == col.ColName.L
+	}
+	if c.idx != nil {
+		return col.ColName.L == c.idx.Columns[c.columnOffset].Name.L
 	}
 	return true
 }
