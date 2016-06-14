@@ -76,6 +76,8 @@ type aggItem struct {
 	value types.Datum
 	// TODO: support group_concat
 	buffer *bytes.Buffer // Buffer is used for group_concat.
+	// Used by FirstRow aggregate function.
+	evaluated bool
 }
 
 // This is similar to ast.AggregateFuncExpr but use tipb.Expr.
@@ -98,6 +100,8 @@ func (n *aggregateFuncExpr) update(ctx *selectContext, args []types.Datum) error
 	switch n.expr.GetTp() {
 	case tipb.ExprType_Count:
 		return n.updateCount(ctx, args)
+	case tipb.ExprType_First:
+		return n.updateFirst(ctx, args)
 	}
 	return errors.Errorf("Unknown AggExpr: %v", n.expr.GetTp())
 }
@@ -105,16 +109,23 @@ func (n *aggregateFuncExpr) update(ctx *selectContext, args []types.Datum) error
 func (n *aggregateFuncExpr) toDatums() []types.Datum {
 	switch n.expr.GetTp() {
 	case tipb.ExprType_Count:
-		return n.getCountValue()
+		return n.getCountDatum()
+	case tipb.ExprType_First:
+		return n.getValueDatum()
 	}
-	// TODO: return error
 	return nil
 }
 
-// Convert count and value to datum list.
-func (n *aggregateFuncExpr) getCountValue() []types.Datum {
+// Convert count to datum list.
+func (n *aggregateFuncExpr) getCountDatum() []types.Datum {
 	item := n.getAggItem()
 	return []types.Datum{types.NewUintDatum(item.count)}
+}
+
+// Convert value to datum list.
+func (n *aggregateFuncExpr) getValueDatum() []types.Datum {
+	item := n.getAggItem()
+	return []types.Datum{item.value}
 }
 
 var singleGroupKey = []byte("SingleGroup")
@@ -142,5 +153,18 @@ func (n *aggregateFuncExpr) updateCount(ctx *selectContext, args []types.Datum) 
 	}
 	aggItem := n.getAggItem()
 	aggItem.count++
+	return nil
+}
+
+func (n *aggregateFuncExpr) updateFirst(ctx *selectContext, args []types.Datum) error {
+	aggItem := n.getAggItem()
+	if aggItem.evaluated {
+		return nil
+	}
+	if len(args) != 1 {
+		return errors.New("Wrong number of args for AggFuncFirstRow")
+	}
+	aggItem.value = args[0]
+	aggItem.evaluated = true
 	return nil
 }
