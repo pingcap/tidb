@@ -45,8 +45,7 @@ func refine(in Plan) error {
 	case *TableScan:
 		err = buildTableRange(x)
 	case *NewTableScan:
-		x.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
-		return nil
+		err = buildNewTableRange(x)
 	}
 	return errors.Trace(err)
 }

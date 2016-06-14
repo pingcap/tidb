@@ -20,6 +20,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -114,6 +115,94 @@ func (r *rangeBuilder) build(expr ast.ExprNode) []rangePoint {
 		return r.buildFromColumnName(x)
 	}
 	return fullRange
+}
+
+func (r *rangeBuilder) newBuild(expr expression.Expression) []rangePoint {
+	switch x := expr.(type) {
+	case *expression.Column:
+		return r.buildFromColumn(x)
+	case *expression.ScalarFunction:
+		return r.buildFromScalarFunc(x)
+	}
+
+	return fullRange
+}
+
+func (r *rangeBuilder) buildFromColumn(expr *expression.Column) []rangePoint {
+	// column name expression is equivalent to column name is true.
+	startPoint1 := rangePoint{value: types.MinNotNullDatum(), start: true}
+	endPoint1 := rangePoint{excl: true}
+	endPoint1.value.SetInt64(0)
+	startPoint2 := rangePoint{excl: true, start: true}
+	startPoint2.value.SetInt64(0)
+	endPoint2 := rangePoint{value: types.MaxValueDatum()}
+	return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+}
+
+// TODO: It only implements the binary operation range building. And it needs to implement other scalar functions.
+func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []rangePoint {
+	if expr.FuncName.L == opcode.Ops[opcode.OrOr] {
+		return r.union(r.newBuild(expr.Args[0]), r.newBuild(expr.Args[1]))
+	}
+	if expr.FuncName.L == opcode.Ops[opcode.AndAnd] {
+		return r.intersection(r.newBuild(expr.Args[0]), r.newBuild(expr.Args[1]))
+	}
+
+	// This has been checked that the binary operation is comparison operation, and one of
+	// the operand is column name expression.
+	var value types.Datum
+	var op string
+	if v, ok := expr.Args[0].(*expression.Constant); ok {
+		value = v.Value
+		switch expr.FuncName.L {
+		case ">=":
+			op = "<="
+		case ">":
+			op = "<"
+		case "<":
+			op = ">"
+		case "<=":
+			op = ">="
+		default:
+			op = expr.FuncName.L
+		}
+	} else {
+		value = expr.Args[1].(*expression.Constant).Value
+		op = expr.FuncName.L
+	}
+	if value.IsNull() {
+		return nil
+	}
+
+	switch op {
+	case "=":
+		startPoint := rangePoint{value: value, start: true}
+		endPoint := rangePoint{value: value}
+		return []rangePoint{startPoint, endPoint}
+	case "!=":
+		startPoint1 := rangePoint{value: types.MinNotNullDatum(), start: true}
+		endPoint1 := rangePoint{value: value, excl: true}
+		startPoint2 := rangePoint{value: value, start: true, excl: true}
+		endPoint2 := rangePoint{value: types.MaxValueDatum()}
+		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+	case "<":
+		startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
+		endPoint := rangePoint{value: value, excl: true}
+		return []rangePoint{startPoint, endPoint}
+	case "<=":
+		startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
+		endPoint := rangePoint{value: value}
+		return []rangePoint{startPoint, endPoint}
+	case ">":
+		startPoint := rangePoint{value: value, start: true, excl: true}
+		endPoint := rangePoint{value: types.MaxValueDatum()}
+		return []rangePoint{startPoint, endPoint}
+	case ">=":
+		startPoint := rangePoint{value: value, start: true}
+		endPoint := rangePoint{value: types.MaxValueDatum()}
+		return []rangePoint{startPoint, endPoint}
+	}
+	return nil
 }
 
 func (r *rangeBuilder) buildFromBinop(x *ast.BinaryOperationExpr) []rangePoint {
