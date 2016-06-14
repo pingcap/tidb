@@ -711,23 +711,6 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 	tk.MustExec("drop table select_distinct_test")
 }
 
-func (s *testSuite) TestSelectHaving(c *C) {
-	defer testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	s.fillData(tk, "select_having_test")
-
-	tk.MustExec("begin")
-	r := tk.MustQuery("select id, name from select_having_test where id in (1,3) having name like 'he%';")
-	rowStr := fmt.Sprintf("%v %v", 1, []byte("hello"))
-	r.Check(testkit.Rows(rowStr))
-	tk.MustExec("commit")
-
-	r = tk.MustQuery("select * from select_having_test group by id having null is not null;")
-
-	tk.MustExec("drop table select_having_test")
-}
-
 func (s *testSuite) TestSelectErrorRow(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)

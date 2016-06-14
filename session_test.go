@@ -2312,3 +2312,23 @@ func (s *testSessionSuite) TestXAggregateWithoutAggFunc(c *C) {
 	sql = "SELECT 18 FROM t where c > 1 group by c;"
 	mustExecMatch(c, se, sql, [][]interface{}{{"18"}, {"18"}})
 }
+
+// Test select with having.
+// Move from executor to prevent from using mock-tikv.
+func (s *testSessionSuite) TestSelectHaving(c *C) {
+	defer testleak.AfterTest(c)()
+	table := "select_having_test"
+	initSQL := fmt.Sprintf(`use test; 
+		drop table if exists %s; 
+		create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));
+		insert INTO %s VALUES (1, "hello");
+		insert into %s VALUES (2, "hello");`,
+		table, table, table, table)
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecMultiSQL(c, se, initSQL)
+	sql := "select id, name from select_having_test where id in (1,3) having name like 'he%';"
+	mustExecMatch(c, se, sql, [][]interface{}{{"1", fmt.Sprintf("%v", []byte("hello"))}})
+	mustExecMultiSQL(c, se, "select * from select_having_test group by id having null is not null;")
+	mustExecMultiSQL(c, se, "drop table select_having_test")
+}
