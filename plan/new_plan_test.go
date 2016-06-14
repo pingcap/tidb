@@ -128,8 +128,8 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:   "select (select count(*) from t where t.a = k.a) from t k",
-			first: "DataScan(t)->Apply(DataScan(t)->Selection->Aggr->Projection->Max1Row)->Projection",
-			best:  "DataScan(t)->Apply(DataScan(t)->Selection->Aggr->Projection->Max1Row)->Projection",
+			first: "DataScan(t)->Apply(DataScan(t)->Selection->Aggr->Projection->MaxOneRow)->Projection",
+			best:  "DataScan(t)->Apply(DataScan(t)->Selection->Aggr->Projection->MaxOneRow)->Projection",
 		},
 		{
 			sql:   "select a from t where exists(select 1 from t as x where x.a < t.a)",

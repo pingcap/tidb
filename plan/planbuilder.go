@@ -54,14 +54,14 @@ func BuildPlan(node ast.Node, sb SubQueryBuilder) (Plan, error) {
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
-	err         error
-	hasAgg      bool
-	sb          SubQueryBuilder
-	obj         interface{}
-	id          int
-	ctx         context.Context
-	is          infoschema.InfoSchema
-	outerSchema expression.Schema
+	err          error
+	hasAgg       bool
+	sb           SubQueryBuilder
+	obj          interface{}
+	id           int
+	ctx          context.Context
+	is           infoschema.InfoSchema
+	outerSchemas []expression.Schema
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {

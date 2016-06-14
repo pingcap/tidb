@@ -123,8 +123,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildApply(v)
 	case *plan.Exists:
 		return b.buildExists(v)
-	case *plan.Max1Row:
-		return b.buildMax1Row(v)
+	case *plan.MaxOneRow:
+		return b.buildMaxOneRow(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil

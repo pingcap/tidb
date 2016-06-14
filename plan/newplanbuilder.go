@@ -581,7 +581,7 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
 
 func (b *planBuilder) buildApply(p, outer Plan, schema expression.Schema) Plan {
 	ap := &Apply{
-		OuterPlan:   outer,
+		InnerPlan:   outer,
 		OuterSchema: schema,
 	}
 	ap.id = b.allocID(ap)
@@ -601,11 +601,11 @@ func (b *planBuilder) buildExists(p Plan) Plan {
 	return exists
 }
 
-func (b *planBuilder) buildMax1Row(p Plan) Plan {
-	max1row := &Max1Row{}
-	max1row.id = b.allocID(max1row)
-	addChild(max1row, p)
-	max1row.SetSchema(p.GetSchema().DeepCopy())
-	max1row.correlated = p.IsCorrelated()
-	return max1row
+func (b *planBuilder) buildMaxOneRow(p Plan) Plan {
+	maxOnerow := &MaxOneRow{}
+	maxOnerow.id = b.allocID(maxOnerow)
+	addChild(maxOnerow, p)
+	maxOnerow.SetSchema(p.GetSchema().DeepCopy())
+	maxOnerow.correlated = p.IsCorrelated()
+	return maxOnerow
 }

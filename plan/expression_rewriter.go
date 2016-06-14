@@ -38,22 +38,22 @@ type expressionRewriter struct {
 }
 
 func (er *expressionRewriter) buildSubqueries(subq *ast.SubqueryExpr) (Plan, expression.Schema) {
-	if len(er.b.outerSchema) > 0 {
+	if len(er.b.outerSchemas) > 0 {
 		er.err = errors.New("Nested subqueries is not supported.")
 		return nil, nil
 	}
 	outerSchema := er.schema.DeepCopy()
-	for _, s := range outerSchema {
-		s.Correlated = true
+	for _, col := range outerSchema {
+		col.Correlated = true
 	}
-	nb := &planBuilder{id: er.b.id, outerSchema: outerSchema}
-	np := nb.buildResultSetNode(subq.Query)
-	er.b.id = nb.id
-	if nb.err != nil {
-		er.err = errors.Trace(nb.err)
+	er.b.outerSchemas = append(er.b.outerSchemas, outerSchema)
+	np := er.b.buildResultSetNode(subq.Query)
+	er.b.outerSchemas = er.b.outerSchemas[0 : len(er.b.outerSchemas)-1]
+	if er.b.err != nil {
+		er.err = errors.Trace(er.b.err)
 		return nil, nil
 	}
-	nb.err = Refine(np)
+	er.b.err = Refine(np)
 	return np, outerSchema
 }
 
@@ -99,8 +99,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 		if er.err != nil {
 			return retNode, true
 		}
+		np = er.b.buildMaxOneRow(np)
 		if np.IsCorrelated() {
-			np = er.b.buildMax1Row(np)
 			ap := er.b.buildApply(er.p, np, outerSchema)
 			er.p = ap
 			er.ctxStack = append(er.ctxStack, ap.GetSchema()[len(ap.GetSchema())-1])
@@ -146,12 +146,17 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			return retNode, false
 		}
 		if column == nil {
-			column, err = er.b.outerSchema.FindColumn(v)
-			if err != nil {
-				er.err = errors.Trace(err)
-				return retNode, false
+			for _, outer := range er.b.outerSchemas {
+				column, err = outer.FindColumn(v)
+				if err != nil {
+					er.err = errors.Trace(err)
+					return retNode, false
+				}
+				if column != nil {
+					er.correlated = true
+					break
+				}
 			}
-			er.correlated = true
 		}
 		if column == nil {
 			er.err = errors.Errorf("Unknown column %s %s %s.", v.Schema.L, v.Table.L, v.Name.L)

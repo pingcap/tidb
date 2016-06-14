@@ -51,6 +51,7 @@ func makeUsedList(usedCols []*expression.Column, schema expression.Schema) []boo
 }
 
 // PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
+// This function returns a bool slice representing used columns, a column slice representing outer columns and an error.
 func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]bool, []*expression.Column, error) {
 	//TODO: Currently we only implement index resolving, column pruning will be implemented later.
 	var cols, outerCols []*expression.Column
@@ -104,7 +105,7 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 		v.schema.InitIndices()
 		return used, append(outer, outerCols...), nil
 	case *Apply:
-		_, outer, err := PruneColumnsAndResolveIndices(v.OuterPlan, v.OuterPlan.GetSchema())
+		_, outer, err := PruneColumnsAndResolveIndices(v.InnerPlan, v.InnerPlan.GetSchema())
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -216,7 +217,7 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 		}
 		v.schema.InitIndices()
 		return used, nil, nil
-	case *Limit, *Max1Row:
+	case *Limit, *MaxOneRow:
 		used, outer, err := PruneColumnsAndResolveIndices(p.GetChildByIndex(0), usedCols)
 		return used, outer, errors.Trace(err)
 	case *Exists:

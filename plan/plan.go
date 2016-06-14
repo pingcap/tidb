@@ -58,7 +58,7 @@ type Plan interface {
 	GetSchema() expression.Schema
 	// Get ID.
 	GetID() string
-	// Judge weather this plan is correlated or not.
+	// Check weather this plan is correlated or not.
 	IsCorrelated() bool
 }
 

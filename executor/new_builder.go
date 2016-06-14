@@ -159,7 +159,7 @@ func (b *executorBuilder) buildApply(v *plan.Apply) Executor {
 	src := b.build(v.GetChildByIndex(0))
 	return &ApplyExec{
 		schema:      v.GetSchema(),
-		outerExec:   b.build(v.OuterPlan).(NewExecutor),
+		innerExec:   b.build(v.InnerPlan).(NewExecutor),
 		outerSchema: v.OuterSchema,
 		Src:         src.(NewExecutor),
 	}
@@ -172,8 +172,8 @@ func (b *executorBuilder) buildExists(v *plan.Exists) Executor {
 	}
 }
 
-func (b *executorBuilder) buildMax1Row(v *plan.Max1Row) Executor {
-	return &Max1RowExec{
+func (b *executorBuilder) buildMaxOneRow(v *plan.MaxOneRow) Executor {
+	return &MaxOneRowExec{
 		schema: v.GetSchema(),
 		Src:    b.build(v.GetChildByIndex(0)).(NewExecutor),
 	}

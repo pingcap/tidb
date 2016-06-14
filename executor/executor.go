@@ -101,6 +101,8 @@ type Executor interface {
 // NewExecutor executes a query.
 type NewExecutor interface {
 	Executor
+
+	// Init means initialize executor.
 	Init()
 }
 

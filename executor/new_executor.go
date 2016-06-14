@@ -720,11 +720,12 @@ func (e *NewSortExec) Close() error {
 }
 
 // ApplyExec represents apply executor.
+// Apply gets one row from outer executor and gets one row from inner executor according to outer row.
 type ApplyExec struct {
 	schema      expression.Schema
 	Src         NewExecutor
 	outerSchema expression.Schema
-	outerExec   NewExecutor
+	innerExec   NewExecutor
 }
 
 // Init implements NewExecutor Init interface.
@@ -756,12 +757,12 @@ func (e *ApplyExec) Next() (*Row, error) {
 	if srcRow == nil {
 		return nil, nil
 	}
-	e.outerExec.Init()
+	e.innerExec.Init()
 	for _, col := range e.outerSchema {
 		idx := col.Index
 		col.SetValue(&srcRow.Data[idx])
 	}
-	outerRow, err := e.outerExec.Next()
+	outerRow, err := e.innerExec.Next()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -807,39 +808,39 @@ func (e *ExistsExec) Next() (*Row, error) {
 		}
 		return &Row{Data: []types.Datum{types.NewDatum(srcRow != nil)}}, nil
 	}
-	return &Row{Data: []types.Datum{types.NewDatum(nil)}}, nil
+	return nil, nil
 }
 
-// Max1RowExec represents max1row executor.
-type Max1RowExec struct {
+// MaxOneRowExec checks if a query returns no more than one row.
+type MaxOneRowExec struct {
 	schema    expression.Schema
 	Src       NewExecutor
 	evaluated bool
 }
 
 // Schema implements Executor Schema interface.
-func (e *Max1RowExec) Schema() expression.Schema {
+func (e *MaxOneRowExec) Schema() expression.Schema {
 	return e.schema
 }
 
 // Fields implements Executor Fields interface.
-func (e *Max1RowExec) Fields() []*ast.ResultField {
+func (e *MaxOneRowExec) Fields() []*ast.ResultField {
 	return nil
 }
 
 // Init implements NewExecutor Init interface.
-func (e *Max1RowExec) Init() {
+func (e *MaxOneRowExec) Init() {
 	e.Src.Init()
 	e.evaluated = false
 }
 
 // Close implements NewExecutor Close interface.
-func (e *Max1RowExec) Close() error {
+func (e *MaxOneRowExec) Close() error {
 	return e.Src.Close()
 }
 
 // Next implements Executor Next interface.
-func (e *Max1RowExec) Next() (*Row, error) {
+func (e *MaxOneRowExec) Next() (*Row, error) {
 	if !e.evaluated {
 		e.evaluated = true
 		srcRow, err := e.Src.Next()
@@ -858,5 +859,5 @@ func (e *Max1RowExec) Next() (*Row, error) {
 		}
 		return srcRow, nil
 	}
-	return &Row{Data: []types.Datum{types.NewDatum(nil)}}, nil
+	return nil, nil
 }

@@ -73,7 +73,7 @@ type Selection struct {
 type Apply struct {
 	basePlan
 
-	OuterPlan   Plan
+	InnerPlan   Plan
 	OuterSchema expression.Schema
 }
 
@@ -82,8 +82,8 @@ type Exists struct {
 	basePlan
 }
 
-// Max1Row check if a query returns just one row.
-type Max1Row struct {
+// MaxOneRow checks if a query returns no more than one row.
+type MaxOneRow struct {
 	basePlan
 }
 
