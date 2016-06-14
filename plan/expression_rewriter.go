@@ -13,7 +13,7 @@ import (
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
-var EvalSubquery func(p Plan, is infoschema.InfoSchema, ctx context.Context) (types.Datum, error)
+var EvalSubquery func(p Plan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
 
 func (b *planBuilder) rewrite(expr ast.ExprNode, p Plan, aggMapper map[*ast.AggregateFuncExpr]int) (newExpr expression.Expression, newPlan Plan, correlated bool, err error) {
 	er := &expressionRewriter{p: p, aggrMap: aggMapper, schema: p.GetSchema(), b: b}
@@ -77,8 +77,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 			if er.err != nil {
 				return retNode, true
 			}
+			np = er.b.buildExists(np)
 			if np.IsCorrelated() {
-				np = er.b.buildExists(np)
 				ap := er.b.buildApply(er.p, np, outerSchema)
 				er.p = ap
 				er.ctxStack = append(er.ctxStack, ap.GetSchema()[len(ap.GetSchema())-1])
@@ -88,7 +88,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 					er.err = errors.Trace(err)
 					return retNode, true
 				}
-				er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d, RetType: np.GetSchema()[0].GetType()})
+				er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d[0], RetType: np.GetSchema()[0].GetType()})
 			}
 			return inNode, true
 		}
@@ -110,7 +110,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 				er.err = errors.Trace(err)
 				return retNode, true
 			}
-			er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d, RetType: np.GetSchema()[0].GetType()})
+			er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d[0], RetType: np.GetSchema()[0].GetType()})
 		}
 		return inNode, true
 	}
@@ -146,7 +146,8 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			return retNode, false
 		}
 		if column == nil {
-			for _, outer := range er.b.outerSchemas {
+			for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
+				outer := er.b.outerSchemas[i]
 				column, err = outer.FindColumn(v)
 				if err != nil {
 					er.err = errors.Trace(err)

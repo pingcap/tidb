@@ -52,14 +52,14 @@ func makeUsedList(usedCols []*expression.Column, schema expression.Schema) []boo
 
 // PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
 // This function returns a bool slice representing used columns, a column slice representing outer columns and an error.
-func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]bool, []*expression.Column, error) {
+func pruneColumnsAndResolveIndices(p Plan, parentUsedCols []*expression.Column) ([]bool, []*expression.Column, error) {
 	//TODO: Currently we only implement index resolving, column pruning will be implemented later.
 	var cols, outerCols []*expression.Column
 	switch v := p.(type) {
 	case *Projection:
 		// Prune
 		var used []bool
-		used = makeUsedList(usedCols, p.GetSchema())
+		used = makeUsedList(parentUsedCols, p.GetSchema())
 		for i := len(used) - 1; i >= 0; i-- {
 			if !used[i] {
 				v.schema = append(v.schema[:i], v.schema[i+1:]...)
@@ -70,7 +70,7 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 		for _, expr := range v.Exprs {
 			cols, outerCols = extractColumn(expr, cols, outerCols)
 		}
-		_, outer, err := PruneColumnsAndResolveIndices(p.GetChildByIndex(0), cols)
+		_, outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), cols)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -82,11 +82,11 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 		}
 		return used, append(outer, outerCols...), nil
 	case *Selection:
-		cols = usedCols
+		cols = parentUsedCols
 		for _, cond := range v.Conditions {
 			cols, outerCols = extractColumn(cond, cols, outerCols)
 		}
-		used, outer, err := PruneColumnsAndResolveIndices(p.GetChildByIndex(0), cols)
+		used, outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), cols)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -105,38 +105,9 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 		v.schema.InitIndices()
 		return used, append(outer, outerCols...), nil
 	case *Apply:
-		_, outer, err := PruneColumnsAndResolveIndices(v.InnerPlan, v.InnerPlan.GetSchema())
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		used := makeUsedList(outer, v.OuterSchema)
-		for i := len(used) - 1; i >= 0; i-- {
-			if !used[i] {
-				v.OuterSchema = append(v.OuterSchema[:i], v.OuterSchema[i+1:]...)
-			}
-		}
-		newUsedCols := v.OuterSchema
-		for _, used := range usedCols {
-			if p.GetChildByIndex(0).GetSchema().GetIndex(used) != -1 {
-				newUsedCols = append(newUsedCols, used)
-			}
-		}
-		used, outer, err = PruneColumnsAndResolveIndices(p.GetChildByIndex(0), newUsedCols)
-		for _, col := range v.OuterSchema {
-			col.Index = p.GetChildByIndex(0).GetSchema().GetIndex(col)
-		}
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		for i := len(used) - 1; i >= 0; i-- {
-			if !used[i] {
-				v.schema = append(v.schema[:i], v.schema[i+1:]...)
-			}
-		}
-		v.schema.InitIndices()
-		return used, outer, nil
+		return pruneApply(v, parentUsedCols)
 	case *Aggregation:
-		used := makeUsedList(usedCols, p.GetSchema())
+		used := makeUsedList(parentUsedCols, p.GetSchema())
 		for i := len(used) - 1; i >= 0; i-- {
 			if !used[i] {
 				v.schema = append(v.schema[:i], v.schema[i+1:]...)
@@ -151,7 +122,7 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 		for _, expr := range v.GroupByItems {
 			cols, outerCols = extractColumn(expr, cols, outerCols)
 		}
-		_, outer, err := PruneColumnsAndResolveIndices(p.GetChildByIndex(0), cols)
+		_, outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), cols)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -168,11 +139,11 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 		v.schema.InitIndices()
 		return used, append(outer, outerCols...), nil
 	case *NewSort:
-		cols = usedCols
+		cols = parentUsedCols
 		for _, item := range v.ByItems {
 			cols, outerCols = extractColumn(item.Expr, cols, outerCols)
 		}
-		used, outer, err := PruneColumnsAndResolveIndices(p.GetChildByIndex(0), cols)
+		used, outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), cols)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -190,7 +161,7 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 		v.schema.InitIndices()
 		return used, append(outer, outerCols...), nil
 	case *Union:
-		used := makeUsedList(usedCols, p.GetSchema())
+		used := makeUsedList(parentUsedCols, p.GetSchema())
 		for _, child := range p.GetChildren() {
 			schema := child.GetSchema()
 			var newSchema []*expression.Column
@@ -199,7 +170,7 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 					newSchema = append(newSchema, schema[i])
 				}
 			}
-			_, outer, err := PruneColumnsAndResolveIndices(child, newSchema)
+			_, outer, err := pruneColumnsAndResolveIndices(child, newSchema)
 			outerCols = append(outerCols, outer...)
 			if err != nil {
 				return used, nil, errors.Trace(err)
@@ -208,7 +179,7 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 		v.schema.InitIndices()
 		return used, outerCols, nil
 	case *NewTableScan:
-		used := makeUsedList(usedCols, p.GetSchema())
+		used := makeUsedList(parentUsedCols, p.GetSchema())
 		for i := len(used) - 1; i >= 0; i-- {
 			if !used[i] {
 				v.schema = append(v.schema[:i], v.schema[i+1:]...)
@@ -218,13 +189,13 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 		v.schema.InitIndices()
 		return used, nil, nil
 	case *Limit, *MaxOneRow:
-		used, outer, err := PruneColumnsAndResolveIndices(p.GetChildByIndex(0), usedCols)
+		used, outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), parentUsedCols)
 		return used, outer, errors.Trace(err)
 	case *Exists:
-		used, outer, err := PruneColumnsAndResolveIndices(p.GetChildByIndex(0), p.GetChildByIndex(0).GetSchema())
+		used, outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), p.GetChildByIndex(0).GetSchema())
 		return used, outer, errors.Trace(err)
 	case *Join:
-		cols = usedCols
+		cols = parentUsedCols
 		for _, eqCond := range v.EqualConditions {
 			cols, outerCols = extractColumn(eqCond, cols, outerCols)
 		}
@@ -245,7 +216,7 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 				rightCols = append(rightCols, col)
 			}
 		}
-		usedLeft, outerLeft, err := PruneColumnsAndResolveIndices(p.GetChildByIndex(0), leftCols)
+		usedLeft, outerLeft, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), leftCols)
 		outerCols = append(outerCols, outerLeft...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -256,7 +227,7 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 				return nil, nil, errors.Trace(err)
 			}
 		}
-		usedRight, outerRight, err := PruneColumnsAndResolveIndices(p.GetChildByIndex(1), rightCols)
+		usedRight, outerRight, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(1), rightCols)
 		outerCols = append(outerCols, outerRight...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -294,4 +265,42 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 	default:
 		return nil, nil, nil
 	}
+}
+
+// e.g. For query select b.c ,(select count(*) from a where a.id = b.id) from b. Its plan is Projection->Apply->TableScan.
+// The schema of b is (a,b,c,id).When Pruning Apply, the parentUsedCols is (c, extra), outerSchema is (a,b,c,id).
+// Then after pruning inner plan, the outer schema in apply becomes (id).
+// Now there're two columns in parentUsedCols, c is the column from Apply's child ---- TableScan, but extra isn't.
+// So only c in parentUsedCols and extra in outerSchema can be passed to TableScan.
+func pruneApply(v *Apply, parentUsedCols []*expression.Column) ([]bool, []*expression.Column, error) {
+	_, outer, err := pruneColumnsAndResolveIndices(v.InnerPlan, v.InnerPlan.GetSchema())
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	used := makeUsedList(outer, v.OuterSchema)
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] {
+			v.OuterSchema = append(v.OuterSchema[:i], v.OuterSchema[i+1:]...)
+		}
+	}
+	newUsedCols := v.OuterSchema
+	for _, used := range parentUsedCols {
+		if v.GetChildByIndex(0).GetSchema().GetIndex(used) != -1 {
+			newUsedCols = append(newUsedCols, used)
+		}
+	}
+	used, outer, err = pruneColumnsAndResolveIndices(v.GetChildByIndex(0), newUsedCols)
+	for _, col := range v.OuterSchema {
+		col.Index = v.GetChildByIndex(0).GetSchema().GetIndex(col)
+	}
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] {
+			v.schema = append(v.schema[:i], v.schema[i+1:]...)
+		}
+	}
+	v.schema.InitIndices()
+	return used, outer, nil
 }

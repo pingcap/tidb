@@ -579,14 +579,14 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
 	return p
 }
 
-func (b *planBuilder) buildApply(p, outer Plan, schema expression.Schema) Plan {
+func (b *planBuilder) buildApply(p, innter Plan, schema expression.Schema) Plan {
 	ap := &Apply{
-		InnerPlan:   outer,
+		InnerPlan:   innter,
 		OuterSchema: schema,
 	}
 	ap.id = b.allocID(ap)
 	addChild(ap, p)
-	ap.SetSchema(append(p.GetSchema().DeepCopy(), outer.GetSchema().DeepCopy()...))
+	ap.SetSchema(append(p.GetSchema().DeepCopy(), innter.GetSchema().DeepCopy()...))
 	ap.correlated = p.IsCorrelated()
 	return ap
 }

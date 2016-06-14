@@ -69,7 +69,7 @@ type Selection struct {
 	Conditions []expression.Expression
 }
 
-// Apply means correlated execution.
+// Apply gets one row from outer executor and gets one row from inner executor according to outer row.
 type Apply struct {
 	basePlan
 
@@ -77,7 +77,7 @@ type Apply struct {
 	OuterSchema expression.Schema
 }
 
-// Exists check if a query returns result.
+// Exists checks if a query returns result.
 type Exists struct {
 	basePlan
 }

@@ -1374,7 +1374,7 @@ func (e *ReverseExec) Close() error {
 }
 
 func init() {
-	plan.EvalSubquery = func(p plan.Plan, is infoschema.InfoSchema, ctx context.Context) (d types.Datum, err error) {
+	plan.EvalSubquery = func(p plan.Plan, is infoschema.InfoSchema, ctx context.Context) (d []types.Datum, err error) {
 		e := &executorBuilder{is: is, ctx: ctx}
 		exec := e.build(p)
 		row, err := exec.Next()
@@ -1384,6 +1384,6 @@ func init() {
 		if row == nil {
 			return
 		}
-		return row.Data[0], nil
+		return row.Data, nil
 	}
 }

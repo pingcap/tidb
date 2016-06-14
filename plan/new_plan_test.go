@@ -153,7 +153,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 
 		_, err = builder.predicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
-		_, _, err = PruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, _, err = pruneColumnsAndResolveIndices(p, p.GetSchema())
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
@@ -251,7 +251,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		_, err = builder.predicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
-		_, _, err = PruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, _, err = pruneColumnsAndResolveIndices(p, p.GetSchema())
 		c.Assert(err, IsNil)
 		check(p, c, ca.ans, comment)
 	}
