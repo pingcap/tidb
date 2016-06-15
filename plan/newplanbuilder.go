@@ -256,8 +256,9 @@ func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper 
 			dbName := field.WildCard.Schema
 			colTblName := field.WildCard.Table
 			for _, col := range p.GetSchema() {
-				if (dbName.L != "" && dbName.L != col.DBName.L) ||
-					(colTblName.L != "" && colTblName.L != col.TblName.L) {
+				matchTable := (dbName.L == "" || dbName.L == col.DBName.L) &&
+					(colTblName.L == "" || colTblName.L == col.TblName.L)
+				if !matchTable {
 					continue
 				}
 				newExpr := col.DeepCopy()

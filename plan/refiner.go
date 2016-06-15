@@ -272,9 +272,7 @@ func (c *conditionChecker) newCheck(condition expression.Expression) bool {
 func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
 	// TODO: Implement istrue, between, parentheses, patternin and patternlike.
 	switch scalar.FuncName.L {
-	case ast.OrOr:
-		return c.newCheck(scalar.Args[0]) && c.newCheck(scalar.Args[1])
-	case ast.AndAnd:
+	case ast.OrOr, ast.AndAnd:
 		return c.newCheck(scalar.Args[0]) && c.newCheck(scalar.Args[1])
 	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT:
 		if _, ok := scalar.Args[0].(*expression.Constant); ok {
