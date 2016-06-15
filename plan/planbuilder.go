@@ -172,6 +172,7 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 				F:    ast.AggFuncFirstRow,
 				Args: []ast.ExprNode{ve},
 			}
+			agg.SetType(ve.GetType())
 			extractor.AggFuncs = append(extractor.AggFuncs, agg)
 			n = agg
 		}
