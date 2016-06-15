@@ -330,7 +330,7 @@ func (h *rpcHandler) getRowByHandle(ctx *selectContext, handle int64) (*tipb.Row
 				if err1 != nil {
 					return nil, errors.Trace(err1)
 				}
-				if data[0] == nil {
+				if len(data) == 0 || data[0] == nil {
 					if mysql.HasNotNullFlag(uint(col.GetFlag())) {
 						return nil, errors.Trace(kv.ErrNotExist)
 					}
@@ -362,7 +362,7 @@ func (h *rpcHandler) evalWhereForRow(ctx *selectContext, handle int64) (bool, er
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if data[0] == nil {
+			if len(data) == 0 || data[0] == nil {
 				if mysql.HasNotNullFlag(uint(col.GetFlag())) {
 					return false, errors.Trace(kv.ErrNotExist)
 				}
