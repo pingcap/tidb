@@ -187,3 +187,9 @@ func (s *testSuite) TestSetPwd(c *C) {
 	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("password")))
 	result.Check(testkit.Rows(rowStr))
 }
+
+func (s *testSuite) TestAnalyzeTable(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`ANALYZE TABLE mysql.User`)
+}
