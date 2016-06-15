@@ -131,6 +131,10 @@ func (r *rangeBuilder) newBuild(expr expression.Expression) []rangePoint {
 }
 
 func (r *rangeBuilder) buildFromConstant(expr *expression.Constant) []rangePoint {
+	if expr.Value.IsNull() {
+		return nil
+	}
+
 	val, err := expr.Value.ToBool()
 	if err != nil {
 		r.err = err
