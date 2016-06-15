@@ -58,6 +58,8 @@ type Plan interface {
 	GetSchema() expression.Schema
 	// Get ID.
 	GetID() string
+	// Check weather this plan is correlated or not.
+	IsCorrelated() bool
 }
 
 // basePlan implements base Plan interface.
@@ -68,6 +70,7 @@ type basePlan struct {
 	totalCost   float64
 	rowCount    float64
 	limit       float64
+	correlated  bool
 
 	parents  []Plan
 	children []Plan
@@ -76,14 +79,22 @@ type basePlan struct {
 	id     string
 }
 
+// IsCorrelated implements Plan IsCorrelated interface.
+func (p *basePlan) IsCorrelated() bool {
+	return p.correlated
+}
+
+// GetID implements Plan GetID interface.
 func (p *basePlan) GetID() string {
 	return p.id
 }
 
+// SetSchema implements Plan SetSchema interface.
 func (p *basePlan) SetSchema(schema expression.Schema) {
 	p.schema = schema
 }
 
+// GetSchema implements Plan GetSchema interface.
 func (p *basePlan) GetSchema() expression.Schema {
 	return p.schema
 }

@@ -69,6 +69,24 @@ type Selection struct {
 	Conditions []expression.Expression
 }
 
+// Apply gets one row from outer executor and gets one row from inner executor according to outer row.
+type Apply struct {
+	basePlan
+
+	InnerPlan   Plan
+	OuterSchema expression.Schema
+}
+
+// Exists checks if a query returns result.
+type Exists struct {
+	basePlan
+}
+
+// MaxOneRow checks if a query returns no more than one row.
+type MaxOneRow struct {
+	basePlan
+}
+
 // NewTableScan represents a tablescan without condition push down.
 type NewTableScan struct {
 	basePlan

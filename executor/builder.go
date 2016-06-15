@@ -119,6 +119,12 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildProjection(v)
 	case *plan.NewTableScan:
 		return b.buildNewTableScan(v)
+	case *plan.Apply:
+		return b.buildApply(v)
+	case *plan.Exists:
+		return b.buildExists(v)
+	case *plan.MaxOneRow:
+		return b.buildMaxOneRow(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil

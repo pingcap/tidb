@@ -126,6 +126,16 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			first: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Selection->Projection",
 			best:  "UnionAll{DataScan(t)->Selection->Projection->DataScan(t)->Selection->Projection->DataScan(t)->Selection->Projection}->Projection",
 		},
+		{
+			sql:   "select (select count(*) from t where t.a = k.a) from t k",
+			first: "DataScan(t)->Apply(DataScan(t)->Selection->Aggr->Projection->MaxOneRow)->Projection",
+			best:  "DataScan(t)->Apply(DataScan(t)->Selection->Aggr->Projection->MaxOneRow)->Projection",
+		},
+		{
+			sql:   "select a from t where exists(select 1 from t as x where x.a < t.a)",
+			first: "DataScan(t)->Apply(DataScan(t)->Selection->Projection->Exists)->Selection->Projection",
+			best:  "DataScan(t)->Apply(DataScan(t)->Selection->Projection->Exists)->Selection->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -143,7 +153,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 
 		_, err = builder.predicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
-		_, err = PruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, _, err = pruneColumnsAndResolveIndices(p, p.GetSchema())
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
@@ -204,6 +214,34 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 				"*plan.NewTableScan_2": {"a", "b", "d"},
 			},
 		},
+		{
+			sql: "select (select count(a) from t where b = k.a) from t k",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a"},
+				"*plan.NewTableScan_2": {"a", "b"},
+			},
+		},
+		{
+			sql: "select exists (select count(*) from t where b = k.a) from t k",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a"},
+				"*plan.NewTableScan_2": {"b"},
+			},
+		},
+		{
+			sql: "select b = (select count(*) from t where b = k.a) from t k",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a", "b"},
+				"*plan.NewTableScan_2": {"b"},
+			},
+		},
+		{
+			sql: "select exists (select count(a) from t where b = k.a) from t k",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a"},
+				"*plan.NewTableScan_2": {"b"},
+			},
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -220,7 +258,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		_, err = builder.predicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
-		_, err = PruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, _, err = pruneColumnsAndResolveIndices(p, p.GetSchema())
 		c.Assert(err, IsNil)
 		check(p, c, ca.ans, comment)
 	}

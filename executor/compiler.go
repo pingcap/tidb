@@ -42,7 +42,7 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 		return nil, errors.Trace(err)
 	}
 	sb := NewSubQueryBuilder(is)
-	p, err := plan.Optimize(ctx, node, sb)
+	p, err := plan.Optimize(ctx, node, sb, is)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

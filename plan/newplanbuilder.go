@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // UseNewPlanner means if use the new planner.
@@ -35,16 +36,19 @@ func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncE
 	newAggFuncList := make([]expression.AggregationFunction, 0, len(aggFuncList))
 	agg := &Aggregation{}
 	agg.id = b.allocID(agg)
+	agg.correlated = p.IsCorrelated()
 	addChild(agg, p)
 	schema := make([]*expression.Column, 0, len(aggFuncList))
 	for i, aggFunc := range aggFuncList {
 		var newArgList []expression.Expression
 		for _, arg := range aggFunc.Args {
-			newArg, err := b.rewrite(arg, p.GetSchema(), nil)
+			newArg, np, correlated, err := b.rewrite(arg, p, nil)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
 			}
+			p = np
+			agg.correlated = correlated || agg.correlated
 			newArgList = append(newArgList, newArg)
 		}
 		newAggFuncList = append(newAggFuncList, expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct))
@@ -54,11 +58,13 @@ func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncE
 	if gby != nil {
 		gbyExprList = make([]expression.Expression, 0, len(gby.Items))
 		for _, gbyItem := range gby.Items {
-			gbyExpr, err := b.rewrite(gbyItem.Expr, p.GetSchema(), nil)
+			gbyExpr, np, correlated, err := b.rewrite(gbyItem.Expr, p, nil)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
 			}
+			p = np
+			agg.correlated = correlated || agg.correlated
 			gbyExprList = append(gbyExprList, gbyExpr)
 		}
 	}
@@ -97,30 +103,36 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) Plan {
 			}
 		}
 		return p
+	case *ast.SelectStmt:
+		return b.buildNewSelect(x)
+	case *ast.UnionStmt:
+		return b.buildNewUnion(x)
 	default:
 		b.err = ErrUnsupportedType.Gen("unsupported table source type %T", x)
 		return nil
 	}
 }
 
-func extractColumn(expr expression.Expression, cols []*expression.Column) (result []*expression.Column) {
+func extractColumn(expr expression.Expression, cols []*expression.Column, outerCols []*expression.Column) (result []*expression.Column, outer []*expression.Column) {
 	switch v := expr.(type) {
 	case *expression.Column:
-		return append(cols, v)
+		if v.Correlated {
+			return cols, append(outerCols, v)
+		}
+		return append(cols, v), outerCols
 	case *expression.ScalarFunction:
 		for _, arg := range v.Args {
-			cols = extractColumn(arg, cols)
+			cols, outerCols = extractColumn(arg, cols, outerCols)
 		}
-		return cols
+		return cols, outerCols
 	}
-	return cols
+	return cols, outerCols
 }
 
 func extractOnCondition(conditions []expression.Expression, left Plan, right Plan) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression, otherCond []expression.Expression) {
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
-		eqStr, _ := opcode.Ops[opcode.EQ]
-		if ok && binop.FuncName.L == eqStr {
+		if ok && binop.FuncName.L == opcode.Ops[opcode.EQ] {
 			ln, lOK := binop.Args[0].(*expression.Column)
 			rn, rOK := binop.Args[1].(*expression.Column)
 			if lOK && rOK {
@@ -128,13 +140,13 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 					eqCond = append(eqCond, binop)
 					continue
 				} else if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
-					newEq := expression.NewFunction(model.NewCIStr(eqStr), []expression.Expression{rn, ln})
+					newEq := expression.NewFunction(model.NewCIStr(opcode.Ops[opcode.EQ]), []expression.Expression{rn, ln})
 					eqCond = append(eqCond, newEq)
 					continue
 				}
 			}
 		}
-		columns := extractColumn(expr, make([]*expression.Column, 0))
+		columns, _ := extractColumn(expr, nil, nil)
 		allFromLeft, allFromRight := true, true
 		for _, col := range columns {
 			if left.GetSchema().GetIndex(col) != -1 {
@@ -158,8 +170,7 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 func splitCNFItems(onExpr expression.Expression) []expression.Expression {
 	switch v := onExpr.(type) {
 	case *expression.ScalarFunction:
-		andandStr, _ := opcode.Ops[opcode.AndAnd]
-		if v.FuncName.L == andandStr {
+		if v.FuncName.L == opcode.Ops[opcode.AndAnd] {
 			var ret []expression.Expression
 			for _, arg := range v.Args {
 				ret = append(ret, splitCNFItems(arg)...)
@@ -177,18 +188,25 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) Plan {
 	leftPlan := b.buildResultSetNode(join.Left)
 	rightPlan := b.buildResultSetNode(join.Right)
 	newSchema := append(leftPlan.GetSchema().DeepCopy(), rightPlan.GetSchema().DeepCopy()...)
-	var eqCond []*expression.ScalarFunction
-	var leftCond, rightCond, otherCond []expression.Expression
+	joinPlan := &Join{}
+	joinPlan.SetSchema(newSchema)
+	joinPlan.correlated = leftPlan.IsCorrelated() || rightPlan.IsCorrelated()
 	if join.On != nil {
-		onExpr, err := b.rewrite(join.On.Expr, newSchema, nil)
+		onExpr, _, correlated, err := b.rewrite(join.On.Expr, joinPlan, nil)
 		if err != nil {
 			b.err = err
 			return nil
 		}
+		if correlated {
+			b.err = errors.New("On condition doesn't support subqueries yet.")
+		}
 		onCondition := splitCNFItems(onExpr)
-		eqCond, leftCond, rightCond, otherCond = extractOnCondition(onCondition, leftPlan, rightPlan)
+		eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, leftPlan, rightPlan)
+		joinPlan.EqualConditions = eqCond
+		joinPlan.LeftConditions = leftCond
+		joinPlan.RightConditions = rightCond
+		joinPlan.OtherConditions = otherCond
 	}
-	joinPlan := &Join{EqualConditions: eqCond, LeftConditions: leftCond, RightConditions: rightCond, OtherConditions: otherCond}
 	if join.Tp == ast.LeftJoin {
 		joinPlan.JoinType = LeftOuterJoin
 	} else if join.Tp == ast.RightJoin {
@@ -198,38 +216,42 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) Plan {
 	}
 	addChild(joinPlan, leftPlan)
 	addChild(joinPlan, rightPlan)
-	joinPlan.SetSchema(newSchema)
 	return joinPlan
 }
 
 func (b *planBuilder) buildSelection(p Plan, where ast.ExprNode, mapper map[*ast.AggregateFuncExpr]int) Plan {
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
+	selection := &Selection{}
+	selection.correlated = p.IsCorrelated()
 	for _, cond := range conditions {
-		expr, err := b.rewrite(cond, p.GetSchema(), mapper)
+		expr, np, correlated, err := b.rewrite(cond, p, mapper)
 		if err != nil {
 			b.err = err
 			return nil
 		}
+		p = np
+		selection.correlated = selection.correlated || correlated
 		expressions = append(expressions, expr)
 	}
-	selection := &Selection{Conditions: expressions}
+	selection.Conditions = expressions
 	selection.id = b.allocID(selection)
 	selection.SetSchema(p.GetSchema().DeepCopy())
 	addChild(selection, p)
 	return selection
 }
 
-func (b *planBuilder) buildProjection(src Plan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) Plan {
+func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) Plan {
 	proj := &Projection{Exprs: make([]expression.Expression, 0, len(fields))}
 	proj.id = b.allocID(proj)
+	proj.correlated = p.IsCorrelated()
 	schema := make(expression.Schema, 0, len(fields))
 	for _, field := range fields {
 		var tblName, colName model.CIStr
 		if field.WildCard != nil {
 			dbName := field.WildCard.Schema
 			colTblName := field.WildCard.Table
-			for _, col := range src.GetSchema() {
+			for _, col := range p.GetSchema() {
 				if (dbName.L == "" || dbName.L == col.DBName.L) &&
 					(colTblName.L == "" || colTblName.L == col.TblName.L) {
 					newExpr := col.DeepCopy()
@@ -240,11 +262,13 @@ func (b *planBuilder) buildProjection(src Plan, fields []*ast.SelectField, mappe
 				}
 			}
 		} else {
-			newExpr, err := b.rewrite(field.Expr, src.GetSchema(), mapper)
+			newExpr, np, correlated, err := b.rewrite(field.Expr, p, mapper)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
 			}
+			p = np
+			proj.correlated = proj.correlated || correlated
 			proj.Exprs = append(proj.Exprs, newExpr)
 			var fromID string
 			if field.AsName.L != "" {
@@ -263,7 +287,7 @@ func (b *planBuilder) buildProjection(src Plan, fields []*ast.SelectField, mappe
 		}
 	}
 	proj.SetSchema(schema)
-	addChild(proj, src)
+	addChild(proj, p)
 	return proj
 }
 
@@ -344,21 +368,22 @@ type NewSort struct {
 	ByItems []ByItems
 }
 
-func (b *planBuilder) buildNewSort(src Plan, byItems []*ast.ByItem, mapper map[*ast.AggregateFuncExpr]int) Plan {
+func (b *planBuilder) buildNewSort(p Plan, byItems []*ast.ByItem, mapper map[*ast.AggregateFuncExpr]int) Plan {
 	var exprs []ByItems
+	sort := &NewSort{}
 	for _, item := range byItems {
-		it, err := b.rewrite(item.Expr, src.GetSchema(), mapper)
+		it, np, correlated, err := b.rewrite(item.Expr, p, mapper)
 		if err != nil {
 			b.err = err
 		}
+		p = np
+		sort.correlated = sort.correlated || correlated
 		exprs = append(exprs, ByItems{Expr: it, Desc: item.Desc})
 	}
-	sort := &NewSort{
-		ByItems: exprs,
-	}
-	addChild(sort, src)
+	sort.ByItems = exprs
+	addChild(sort, p)
 	sort.id = b.allocID(sort)
-	sort.SetSchema(src.GetSchema().DeepCopy())
+	sort.SetSchema(p.GetSchema().DeepCopy())
 	return sort
 }
 
@@ -525,6 +550,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 		}
 		proj.SetSchema(newSchema)
 		addChild(proj, p)
+		proj.correlated = p.IsCorrelated()
 		return proj
 	}
 	return p
@@ -551,4 +577,35 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
 	}
 	p.SetSchema(schema)
 	return p
+}
+
+func (b *planBuilder) buildApply(p, innter Plan, schema expression.Schema) Plan {
+	ap := &Apply{
+		InnerPlan:   innter,
+		OuterSchema: schema,
+	}
+	ap.id = b.allocID(ap)
+	addChild(ap, p)
+	ap.SetSchema(append(p.GetSchema().DeepCopy(), innter.GetSchema().DeepCopy()...))
+	ap.correlated = p.IsCorrelated()
+	return ap
+}
+
+func (b *planBuilder) buildExists(p Plan) Plan {
+	exists := &Exists{}
+	exists.id = b.allocID(exists)
+	addChild(exists, p)
+	newCol := &expression.Column{FromID: exists.id, RetType: types.NewFieldType(mysql.TypeTiny), ColName: model.NewCIStr("exists_col")}
+	exists.SetSchema([]*expression.Column{newCol})
+	exists.correlated = p.IsCorrelated()
+	return exists
+}
+
+func (b *planBuilder) buildMaxOneRow(p Plan) Plan {
+	maxOnerow := &MaxOneRow{}
+	maxOnerow.id = b.allocID(maxOnerow)
+	addChild(maxOnerow, p)
+	maxOnerow.SetSchema(p.GetSchema().DeepCopy())
+	maxOnerow.correlated = p.IsCorrelated()
+	return maxOnerow
 }
