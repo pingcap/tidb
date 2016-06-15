@@ -20,6 +20,7 @@ package evaluator
 import (
 	"strings"
 
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
@@ -119,31 +120,31 @@ var Funcs = map[string]Func{
 	"nullif": {builtinNullIf, 2, 2},
 
 	// only used by new plan
-	"&&":         {builtinAndAnd, 2, 2},
-	"||":         {builtinOrOr, 2, 2},
-	">=":         {compareFuncFactory(opcode.GE), 2, 2},
-	"<=":         {compareFuncFactory(opcode.LE), 2, 2},
-	"=":          {compareFuncFactory(opcode.EQ), 2, 2},
-	"!=":         {compareFuncFactory(opcode.NE), 2, 2},
-	"<":          {compareFuncFactory(opcode.LT), 2, 2},
-	">":          {compareFuncFactory(opcode.GT), 2, 2},
-	"<=>":        {compareFuncFactory(opcode.NullEQ), 2, 2},
-	"+":          {arithmeticFuncFactory(opcode.Plus), 2, 2},
-	"-":          {arithmeticFuncFactory(opcode.Minus), 2, 2},
-	"%":          {arithmeticFuncFactory(opcode.Mod), 2, 2},
-	"/":          {arithmeticFuncFactory(opcode.Div), 2, 2},
-	"*":          {arithmeticFuncFactory(opcode.Mul), 2, 2},
-	"DIV":        {arithmeticFuncFactory(opcode.IntDiv), 2, 2},
-	"<<":         {bitOpFactory(opcode.LeftShift), 2, 2},
-	">>":         {bitOpFactory(opcode.RightShift), 2, 2},
-	"&":          {bitOpFactory(opcode.And), 2, 2},
-	"|":          {bitOpFactory(opcode.Or), 2, 2},
-	"^":          {bitOpFactory(opcode.Xor), 2, 2},
-	"XOR":        {builtinLogicXor, 2, 2},
-	"not":        {unaryOpFactory(opcode.Not), 1, 1},
-	"bitneg":     {unaryOpFactory(opcode.BitNeg), 1, 1},
-	"unaryplus":  {unaryOpFactory(opcode.Plus), 1, 1},
-	"unaryminus": {unaryOpFactory(opcode.Minus), 1, 1},
+	ast.AndAnd:     {builtinAndAnd, 2, 2},
+	ast.OrOr:       {builtinOrOr, 2, 2},
+	ast.GE:         {compareFuncFactory(opcode.GE), 2, 2},
+	ast.LE:         {compareFuncFactory(opcode.LE), 2, 2},
+	ast.EQ:         {compareFuncFactory(opcode.EQ), 2, 2},
+	ast.NE:         {compareFuncFactory(opcode.NE), 2, 2},
+	ast.LT:         {compareFuncFactory(opcode.LT), 2, 2},
+	ast.GT:         {compareFuncFactory(opcode.GT), 2, 2},
+	ast.NullEQ:     {compareFuncFactory(opcode.NullEQ), 2, 2},
+	ast.Plus:       {arithmeticFuncFactory(opcode.Plus), 2, 2},
+	ast.Minus:      {arithmeticFuncFactory(opcode.Minus), 2, 2},
+	ast.Mod:        {arithmeticFuncFactory(opcode.Mod), 2, 2},
+	ast.Div:        {arithmeticFuncFactory(opcode.Div), 2, 2},
+	ast.Mul:        {arithmeticFuncFactory(opcode.Mul), 2, 2},
+	ast.IntDiv:     {arithmeticFuncFactory(opcode.IntDiv), 2, 2},
+	ast.LeftShift:  {bitOpFactory(opcode.LeftShift), 2, 2},
+	ast.RightShift: {bitOpFactory(opcode.RightShift), 2, 2},
+	ast.And:        {bitOpFactory(opcode.And), 2, 2},
+	ast.Or:         {bitOpFactory(opcode.Or), 2, 2},
+	ast.Xor:        {bitOpFactory(opcode.Xor), 2, 2},
+	ast.LogicXor:   {builtinLogicXor, 2, 2},
+	ast.UnaryNot:   {unaryOpFactory(opcode.Not), 1, 1},
+	ast.BitNeg:     {unaryOpFactory(opcode.BitNeg), 1, 1},
+	ast.UnaryPlus:  {unaryOpFactory(opcode.Plus), 1, 1},
+	ast.UnaryMinus: {unaryOpFactory(opcode.Minus), 1, 1},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
