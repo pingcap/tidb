@@ -23,7 +23,9 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
@@ -510,8 +512,10 @@ type NewTableScanExec struct {
 	asName      *model.CIStr
 	ctx         context.Context
 	supportDesc bool
+	isMemDB     bool
 	result      *xapi.SelectResult
 	subResult   *xapi.SubResult
+	where       *tipb.Expr
 	Columns     []*model.ColumnInfo
 	schema      expression.Schema
 	ranges      []plan.TableRange
@@ -530,6 +534,7 @@ func (e *NewTableScanExec) doRequest() error {
 	selReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
 	selReq.StartTs = &startTs
+	selReq.Where = e.where
 	selReq.Ranges = tableRangesToPBRanges(e.ranges)
 	columns := e.Columns
 	selReq.TableInfo = &tipb.TableInfo{
@@ -717,6 +722,126 @@ func (e *NewSortExec) Next() (*Row, error) {
 // Close implements Executor Close interface.
 func (e *NewSortExec) Close() error {
 	return e.Src.Close()
+}
+
+func (b *executorBuilder) newConditionExprToPBExpr(client kv.Client, exprs []expression.Expression,
+	tbl *model.TableInfo) (pbExpr *tipb.Expr, remained []expression.Expression) {
+	for _, expr := range exprs {
+		v := b.newExprToPBExpr(client, expr, tbl)
+		if v == nil {
+			remained = append(remained, expr)
+			continue
+		}
+		if pbExpr == nil {
+			pbExpr = v
+		} else {
+			// merge multiple converted pb expression into an AND expression.
+			pbExpr = &tipb.Expr{
+				Tp:       tipb.ExprType_And.Enum(),
+				Children: []*tipb.Expr{pbExpr, v}}
+		}
+	}
+	return
+}
+
+// newExprToPBExpr converts an expression.Expression to a tipb.Expr, if not supported, nil will be returned.
+func (b *executorBuilder) newExprToPBExpr(client kv.Client, expr expression.Expression, tbl *model.TableInfo) *tipb.Expr {
+	switch x := expr.(type) {
+	case *expression.Column:
+		return b.columnToPBExpr(client, x, tbl)
+	case *expression.ScalarFunction:
+		return b.scalarFuncToPBExpr(client, x, tbl)
+	}
+
+	return nil
+}
+
+func (b *executorBuilder) columnToPBExpr(client kv.Client, column *expression.Column, tbl *model.TableInfo) *tipb.Expr {
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
+		return nil
+	}
+	switch column.GetType().Tp {
+	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeDecimal, mysql.TypeGeometry,
+		mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeYear:
+		return nil
+	}
+
+	id := int64(-1)
+	for _, col := range tbl.Columns {
+		if tbl.Name == column.TblName && col.Name == column.ColName {
+			id = col.ID
+			break
+		}
+	}
+	// Zero Column ID is not a column from table, can not support for now.
+	if id == 0 {
+		return nil
+	}
+	// TODO：If the column ID isn't in fields, it means the column is from an outer table,
+	// its value is available to use.
+	if id == -1 {
+		return nil
+	}
+
+	return &tipb.Expr{
+		Tp:  tipb.ExprType_ColumnRef.Enum(),
+		Val: codec.EncodeInt(nil, id)}
+}
+
+func (b *executorBuilder) scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction,
+	tbl *model.TableInfo) *tipb.Expr {
+	var tp tipb.ExprType
+	switch expr.FuncName.L {
+	case ast.LT:
+		tp = tipb.ExprType_LT
+	case ast.LE:
+		tp = tipb.ExprType_LE
+	case ast.EQ:
+		tp = tipb.ExprType_EQ
+	case ast.NE:
+		tp = tipb.ExprType_NE
+	case ast.GE:
+		tp = tipb.ExprType_GE
+	case ast.GT:
+		tp = tipb.ExprType_GT
+	case ast.NullEQ:
+		tp = tipb.ExprType_NullEQ
+	case ast.And:
+		tp = tipb.ExprType_And
+	case ast.Or:
+		tp = tipb.ExprType_Or
+	// It's the operation for unary operator.
+	case ast.UnaryNot:
+		tp = tipb.ExprType_Not
+	default:
+		return nil
+	}
+
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+
+	if len(expr.Args) == 1 {
+		child := b.newExprToPBExpr(client, expr.Args[0], tbl)
+		if child == nil {
+			return nil
+		}
+		return &tipb.Expr{
+			Tp:       tp.Enum(),
+			Children: []*tipb.Expr{child}}
+	}
+
+	leftExpr := b.newExprToPBExpr(client, expr.Args[0], tbl)
+	if leftExpr == nil {
+		return nil
+	}
+	rightExpr := b.newExprToPBExpr(client, expr.Args[1], tbl)
+	if rightExpr == nil {
+		return nil
+	}
+	return &tipb.Expr{
+		Tp:       tp.Enum(),
+		Children: []*tipb.Expr{leftExpr, rightExpr}}
 }
 
 // ApplyExec represents apply executor.

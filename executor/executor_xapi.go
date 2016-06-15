@@ -849,7 +849,7 @@ func (b *executorBuilder) columnNameToPBExpr(client kv.Client, column *ast.Colum
 		pbExpr.Val = codec.EncodeInt(nil, column.Refer.Column.ID)
 		return pbExpr
 	}
-	// If the column ID is in fields, it means the column is from an outer table,
+	// If the column ID isn't in fields, it means the column is from an outer table,
 	// its value is available to use.
 	return b.datumToPBExpr(client, *column.Refer.Expr.GetDatum())
 }

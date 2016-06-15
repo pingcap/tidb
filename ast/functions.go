@@ -30,6 +30,36 @@ var (
 	_ FuncNode = &FuncCastExpr{}
 )
 
+// List scalar function names.
+const (
+	AndAnd     = "&&"
+	LeftShift  = "<<"
+	RightShift = ">>"
+	OrOr       = "||"
+	GE         = ">="
+	LE         = "<="
+	EQ         = "="
+	NE         = "!="
+	LT         = "<"
+	GT         = ">"
+	Plus       = "+"
+	Minus      = "-"
+	And        = "&"
+	Or         = "|"
+	Mod        = "%"
+	Xor        = "^"
+	Div        = "/"
+	Mul        = "*"
+	UnaryNot   = "!" // It distinguishs from the Not in github/pingcap/check.
+	BitNeg     = "~"
+	IntDiv     = "DIV"
+	LogicXor   = "XOR"
+	NullEQ     = "<=>"
+	IsNull     = "isnull"
+	UnaryPlus  = "unaryplus"
+	UnaryMinus = "unaryminus"
+)
+
 // UnquoteString is not quoted when printed.
 type UnquoteString string
 
