@@ -76,7 +76,8 @@ func (t *Table) String() string {
 	return strings.Join(strs, "\n")
 }
 
-func (t *Table) toPB() (*TablePB, error) {
+// ToPB converts Table to TablePB.
+func (t *Table) ToPB() (*TablePB, error) {
 	tblPB := &TablePB{
 		Id:      proto.Int64(t.info.ID),
 		Ts:      proto.Int64(t.TS),
@@ -134,7 +135,7 @@ func (t *Table) buildColumn(offset int, samples []types.Datum) error {
 			// valuesPerBucket.
 			col.Numbers[bucketIdx] = i * sampleFactor
 			col.Repeats[bucketIdx] += sampleFactor
-		} else if i*sampleFactor-lastNumber < valuesPerBucket {
+		} else if i*sampleFactor-lastNumber <= valuesPerBucket {
 			// The bucket still have room to store a new item, update the bucket.
 			col.Numbers[bucketIdx] = i * sampleFactor
 			col.Values[bucketIdx] = samples[i]

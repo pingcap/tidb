@@ -15,7 +15,9 @@ package executor
 
 import (
 	"fmt"
+	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -23,8 +25,11 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -310,6 +315,117 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 }
 
 func (e *SimpleExec) executeAnalyzeTable(s *ast.AnalyzeTableStmt) error {
-	// TODO: implement analyze table.
+	for _, table := range s.TableNames {
+		err := e.createStatisticsForTable(table)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
+}
+
+const (
+	maxSampleCount     = 10000
+	defaultBucketCount = 256
+)
+
+func (e *SimpleExec) createStatisticsForTable(tn *ast.TableName) error {
+	result, err := e.selectTable(tn)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	count, samples, err := e.collectSamples(result)
+	result.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = e.buildStatisticsAndSaveToKV(tn, count, samples)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (e *SimpleExec) selectTable(tn *ast.TableName) (ast.RecordSet, error) {
+	var tableName string
+	if tn.Schema.L == "" {
+		tableName = tn.Name.L
+	} else {
+		tableName = tn.Schema.L + "." + tn.Name.L
+	}
+	st, err := parser.ParseOneStmt("select * from "+tableName, "", "")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	compiler := &Compiler{}
+	stmt, err := compiler.Compile(e.ctx, st)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	result, err := stmt.Exec(e.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return result, nil
+}
+
+func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples []*ast.Row, err error) {
+	ran := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for {
+		var row *ast.Row
+		row, err = result.Next()
+		if err != nil {
+			return count, samples, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		if len(samples) < maxSampleCount {
+			samples = append(samples, row)
+		} else {
+			// Reservoir sampling, replace a random old item with new item.
+			idx := ran.Intn(maxSampleCount)
+			samples[idx] = row
+		}
+		count++
+	}
+	return count, samples, nil
+}
+
+func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, sampleRows []*ast.Row) error {
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	columnSamples := rowsToColumnSamples(sampleRows)
+	t, err := statistics.NewTable(tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tpb, err := t.ToPB()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	m := meta.NewMeta(txn)
+	err = m.SetTableStats(tn.TableInfo.ID, tpb)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func rowsToColumnSamples(rows []*ast.Row) [][]types.Datum {
+	if len(rows) == 0 {
+		return nil
+	}
+	columnSamples := make([][]types.Datum, len(rows[0].Data))
+	for i := range columnSamples {
+		columnSamples[i] = make([]types.Datum, len(rows))
+	}
+	for j, row := range rows {
+		for i, val := range row.Data {
+			columnSamples[i][j] = val
+		}
+	}
+	return columnSamples
 }
