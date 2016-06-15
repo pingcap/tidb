@@ -70,6 +70,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildAdmin(x)
 	case *ast.AlterTableStmt:
 		return b.buildDDL(x)
+	case *ast.AnalyzeTableStmt:
+		return b.buildSimple(x)
 	case *ast.CreateDatabaseStmt:
 		return b.buildDDL(x)
 	case *ast.CreateIndexStmt:
