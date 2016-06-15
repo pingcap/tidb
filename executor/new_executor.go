@@ -861,3 +861,43 @@ func (e *MaxOneRowExec) Next() (*Row, error) {
 	}
 	return nil, nil
 }
+
+// TruncateExec truncates src rows.
+type TruncateExec struct {
+	schema expression.Schema
+	Src    NewExecutor
+	len    int
+}
+
+// Schema implements Executor Schema interface.
+func (e *TruncateExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Fields implements Executor Fields interface.
+func (e *TruncateExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Init implements NewExecutor Init interface.
+func (e *TruncateExec) Init() {
+	e.Src.Init()
+}
+
+// Close implements NewExecutor Close interface.
+func (e *TruncateExec) Close() error {
+	return e.Src.Close()
+}
+
+// Next implements Executor Next interface.
+func (e *TruncateExec) Next() (*Row, error) {
+	row, err := e.Src.Next()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if row == nil {
+		return nil, nil
+	}
+	row.Data = row.Data[:e.len]
+	return row, nil
+}

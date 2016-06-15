@@ -178,3 +178,11 @@ func (b *executorBuilder) buildMaxOneRow(v *plan.MaxOneRow) Executor {
 		Src:    b.build(v.GetChildByIndex(0)).(NewExecutor),
 	}
 }
+
+func (b *executorBuilder) buildTruncate(v *plan.Truncate) Executor {
+	return &TruncateExec{
+		schema: v.GetSchema(),
+		Src:    b.build(v.GetChildByIndex(0)).(NewExecutor),
+		len:    len(v.GetSchema()),
+	}
+}

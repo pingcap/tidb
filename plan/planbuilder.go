@@ -904,6 +904,7 @@ func (b *planBuilder) buildDistinct(src Plan) Plan {
 	d := &Distinct{}
 	addChild(d, src)
 	d.SetFields(src.Fields())
+	d.SetSchema(src.GetSchema())
 	return d
 }
 

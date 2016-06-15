@@ -43,7 +43,7 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		_, _, err = pruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, err = pruneColumnsAndResolveIndices(p, p.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -472,10 +472,6 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	if hasAgg {
 		aggFuncs, havingMap, orderMap, totalMap = b.extractAggFunc(sel)
 	}
-	// Build subquery
-	// Convert subquery to expr with plan
-	// TODO: add subquery support.
-	//b.buildSubquery(sel)
 	var p Plan
 	if sel.From != nil {
 		p = b.buildResultSetNode(sel.From.TableRefs)
@@ -535,25 +531,18 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 		}
 	}
 	if oldLen != len(sel.Fields.Fields) {
-		proj := &Projection{}
-		proj.id = b.allocID(proj)
-		var newSchema expression.Schema
-		oldSchema := p.GetSchema()
-		proj.Exprs = make([]expression.Expression, 0, oldLen)
-		for _, col := range oldSchema[:oldLen] {
-			proj.Exprs = append(proj.Exprs, col)
-		}
-		newSchema = oldSchema[:oldLen]
-		newSchema = newSchema.DeepCopy()
-		for _, s := range newSchema {
-			s.FromID = proj.id
-		}
-		proj.SetSchema(newSchema)
-		addChild(proj, p)
-		proj.correlated = p.IsCorrelated()
-		return proj
+		return b.buildTruncate(p, oldLen)
 	}
 	return p
+}
+
+func (b *planBuilder) buildTruncate(p Plan, len int) Plan {
+	trunc := &Truncate{}
+	trunc.id = b.allocID(trunc)
+	addChild(trunc, p)
+	trunc.SetSchema(p.GetSchema().DeepCopy()[:len])
+	trunc.correlated = p.IsCorrelated()
+	return trunc
 }
 
 func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
@@ -602,10 +591,10 @@ func (b *planBuilder) buildExists(p Plan) Plan {
 }
 
 func (b *planBuilder) buildMaxOneRow(p Plan) Plan {
-	maxOnerow := &MaxOneRow{}
-	maxOnerow.id = b.allocID(maxOnerow)
-	addChild(maxOnerow, p)
-	maxOnerow.SetSchema(p.GetSchema().DeepCopy())
-	maxOnerow.correlated = p.IsCorrelated()
-	return maxOnerow
+	MaxOneRow := &MaxOneRow{}
+	MaxOneRow.id = b.allocID(MaxOneRow)
+	addChild(MaxOneRow, p)
+	MaxOneRow.SetSchema(p.GetSchema().DeepCopy())
+	MaxOneRow.correlated = p.IsCorrelated()
+	return MaxOneRow
 }

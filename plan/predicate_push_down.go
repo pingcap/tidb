@@ -141,7 +141,7 @@ func (b *planBuilder) predicatePushDown(p Plan, predicates []expression.Expressi
 			}
 		}
 		return
-	case *NewSort, *Limit, *Distinct:
+	case *NewSort, *Limit, *Distinct, *Truncate:
 		rest, err1 := b.predicatePushDown(p.GetChildByIndex(0), predicates)
 		if err1 != nil {
 			return nil, errors.Trace(err1)

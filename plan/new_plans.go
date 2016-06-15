@@ -111,6 +111,11 @@ type NewTableScan struct {
 	LimitCount *int64
 }
 
+// Truncate truncates child's rows.
+type Truncate struct {
+	basePlan
+}
+
 func (ts *NewTableScan) attachCondition(conditions []expression.Expression) {
 	for _, con := range conditions {
 		//TODO: implement refiner for expression.
