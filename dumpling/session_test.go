@@ -2204,7 +2204,7 @@ func checkPlan(c *C, se Session, sql, explain string) {
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	err = plan.PrepareStmt(is, ctx, stmt)
 	c.Assert(err, IsNil)
-	p, err := plan.Optimize(ctx, stmt, executor.NewSubQueryBuilder(is))
+	p, err := plan.Optimize(ctx, stmt, executor.NewSubQueryBuilder(is), is)
 	c.Assert(err, IsNil)
 	c.Assert(plan.ToString(p), Equals, explain)
 }

@@ -1166,6 +1166,7 @@ func (s *testSuite) TestIndexScan(c *C) {
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1174,6 +1175,7 @@ func (s *testSuite) TestSubquerySameTable(c *C) {
 	tk.MustExec("insert t values (1), (2)")
 	result := tk.MustQuery("select a from t where exists(select 1 from t as x where x.a < t.a)")
 	result.Check(testkit.Rows("2"))
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {
@@ -1357,6 +1359,24 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("insert t values ()")
 	tk.MustExec("insert t values (1000)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0", "127"))
+}
+
+func (s *testSuite) TestNewSubquery(c *C) {
+	plan.UseNewPlanner = true
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int, d int)")
+	tk.MustExec("insert t values (1, 1)")
+	tk.MustExec("insert t values (2, 2)")
+	tk.MustExec("insert t values (3, 4)")
+	tk.MustExec("commit")
+	result := tk.MustQuery("select 1 = (select count(*) from t where t.c = k.d) from t k")
+	result.Check(testkit.Rows("1", "1", "0"))
+	result = tk.MustQuery("select (select count(*) from t where t.c = k.d) from t k")
+	result.Check(testkit.Rows("1", "1", "0"))
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestAggregation(c *C) {
