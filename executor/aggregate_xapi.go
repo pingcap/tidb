@@ -41,6 +41,8 @@ func (n *finalAggregater) update(count uint64, value types.Datum) error {
 	switch n.name {
 	case ast.AggFuncCount:
 		return n.updateCount(count)
+	case ast.AggFuncFirstRow:
+		return n.updateFirst(value)
 	}
 	return nil
 }
@@ -60,6 +62,16 @@ func (n *finalAggregater) getContext() *ast.AggEvaluateContext {
 func (n *finalAggregater) updateCount(count uint64) error {
 	ctx := n.getContext()
 	ctx.Count += int64(count)
+	return nil
+}
+
+func (n *finalAggregater) updateFirst(val types.Datum) error {
+	ctx := n.getContext()
+	if ctx.Evaluated {
+		return nil
+	}
+	ctx.Value = val.GetValue()
+	ctx.Evaluated = true
 	return nil
 }
 
@@ -156,14 +168,29 @@ func (e *XAggregateExec) innerNext() (bool, error) {
 		}
 	}
 	e.executed = true
-	groupKey := row.Data[0].GetBytes()
+	// cursor is used to traverse the row.
+	var cursor int
+	// The first column is groupkey.
+	groupKey := row.Data[cursor].GetBytes()
 	if _, ok := e.groupMap[string(groupKey)]; !ok {
 		e.groupMap[string(groupKey)] = true
 		e.groups = append(e.groups, string(groupKey))
 	}
-	for i, agg := range e.aggregaters {
-		count := row.Data[2*i+1].GetUint64()
-		value := row.Data[2*i+2]
+	cursor++
+	// The rest columns are partial result for aggregate function.
+	for _, agg := range e.aggregaters {
+		var count uint64
+		var value types.Datum
+		if needCount(agg.name) {
+			// count partial result field
+			count = row.Data[cursor].GetUint64()
+			cursor++
+		}
+		if needValue(agg.name) {
+			// value partial result field
+			value = row.Data[cursor]
+			cursor++
+		}
 		agg.currentGroup = groupKey
 		agg.update(count, value)
 	}
@@ -179,4 +206,17 @@ func (e *XAggregateExec) Close() error {
 		return e.Src.Close()
 	}
 	return nil
+}
+
+// The argument if the name of a aggregate function.
+// This function will check if the aggregate function need count in partial result.
+func needCount(name string) bool {
+	return name == ast.AggFuncCount || name == ast.AggFuncAvg
+}
+
+// The argument if the name of a aggregate function.
+// This function will check if the aggregate function need value in partial result.
+func needValue(name string) bool {
+	return name == ast.AggFuncSum || name == ast.AggFuncAvg || name == ast.AggFuncFirstRow ||
+		name == ast.AggFuncMax || name == ast.AggFuncMin || name == ast.AggFuncGroupConcat
 }

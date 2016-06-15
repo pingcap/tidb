@@ -116,7 +116,7 @@ func (b *planBuilder) predicatePushDown(p Plan, predicates []expression.Expressi
 		var push []expression.Expression
 		for _, cond := range predicates {
 			canSubstitute := true
-			extractedCols := extractColumn(cond, make([]*expression.Column, 0))
+			extractedCols, _ := extractColumn(cond, nil, nil)
 			for _, col := range extractedCols {
 				id := v.GetSchema().GetIndex(col)
 				if _, ok := v.Exprs[id].(*expression.ScalarFunction); ok {
@@ -169,8 +169,8 @@ func (b *planBuilder) predicatePushDown(p Plan, predicates []expression.Expressi
 			}
 		}
 		return
-	//TODO: support aggregation.
-	case *Aggregation, *Simple:
+	//TODO: support aggregation, apply.
+	case *Aggregation, *Simple, *Apply:
 		return predicates, nil
 	default:
 		log.Warnf("Unknown Type %T in Predicate Pushdown", v)

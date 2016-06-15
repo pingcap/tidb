@@ -15,6 +15,7 @@ package executor
 
 import (
 	"math"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -118,6 +119,12 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildProjection(v)
 	case *plan.NewTableScan:
 		return b.buildNewTableScan(v)
+	case *plan.Apply:
+		return b.buildApply(v)
+	case *plan.Exists:
+		return b.buildExists(v)
+	case *plan.MaxOneRow:
+		return b.buildMaxOneRow(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -377,9 +384,6 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 		return nil
 	}
 	client := txn.GetClient()
-	if !client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeAgg) {
-		return e
-	}
 	if len(v.GroupByItems) > 0 && !client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy) {
 		return e
 	}
@@ -410,19 +414,29 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 	// We should infer fields type.
 	// Each agg item will be splitted into two datums: count and value
 	// The first field should be group key.
-	fields := make([]*types.FieldType, 1+2*len(v.AggFuncs))
+	fields := make([]*types.FieldType, 0, 1+2*len(v.AggFuncs))
 	gk := types.NewFieldType(mysql.TypeBlob)
 	gk.Charset = charset.CharsetBin
 	gk.Collate = charset.CollationBin
-	fields[0] = gk
-	// There will be two fields in the result row for each AggregateFuncExpr.
-	for i, agg := range v.AggFuncs {
-		ft := types.NewFieldType(mysql.TypeLonglong)
-		ft.Flen = 21
-		ft.Charset = charset.CharsetBin
-		ft.Collate = charset.CollationBin
-		fields[2*i+1] = ft
-		fields[2*i+2] = agg.GetType()
+	fields = append(fields, gk)
+	// There will be one or two fields in the result row for each AggregateFuncExpr.
+	// Count needs count partial result field.
+	// Sum, FirstRow, Max, Min, GroupConcat need value partial result field.
+	// Avg needs both count and value partial result field.
+	for _, agg := range v.AggFuncs {
+		name := strings.ToLower(agg.F)
+		if needCount(name) {
+			// count partial result field
+			ft := types.NewFieldType(mysql.TypeLonglong)
+			ft.Flen = 21
+			ft.Charset = charset.CharsetBin
+			ft.Collate = charset.CollationBin
+			fields = append(fields, ft)
+		}
+		if needValue(name) {
+			// value partial result field
+			fields = append(fields, agg.GetType())
+		}
 	}
 	xSrc.AddAggregate(pbAggFuncs, pbByItems, fields)
 	hasGroupBy := len(v.GroupByItems) > 0

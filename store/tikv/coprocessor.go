@@ -37,7 +37,12 @@ type CopClient struct {
 func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
 	switch reqType {
 	case kv.ReqTypeSelect:
-		return supportExpr(tipb.ExprType(subType))
+		switch subType {
+		case kv.ReqSubTypeGroupBy:
+			return true
+		default:
+			return supportExpr(tipb.ExprType(subType))
+		}
 	case kv.ReqTypeIndex:
 		switch subType {
 		case kv.ReqSubTypeDesc, kv.ReqSubTypeBasic:
@@ -57,6 +62,8 @@ func supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
 		tipb.ExprType_In, tipb.ExprType_ValueList,
 		tipb.ExprType_Like, tipb.ExprType_Not:
+		return true
+	case tipb.ExprType_Count, tipb.ExprType_First:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
