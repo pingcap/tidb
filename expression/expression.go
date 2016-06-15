@@ -145,7 +145,7 @@ func (s Schema) InitIndices() {
 	}
 }
 
-// RetrieveColumn replaces column in expression with column in schema.
+// RetrieveColumn retrieves column in expression from the columns in schema.
 func (s Schema) RetrieveColumn(col *Column) *Column {
 	for _, c := range s {
 		if c.FromID == col.FromID && c.ColName.L == col.ColName.L {

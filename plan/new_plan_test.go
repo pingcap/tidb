@@ -235,6 +235,13 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 				"*plan.NewTableScan_2": {"b"},
 			},
 		},
+		{
+			sql: "select exists (select count(a) from t where b = k.a) from t k",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a"},
+				"*plan.NewTableScan_2": {"b"},
+			},
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)

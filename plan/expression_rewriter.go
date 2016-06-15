@@ -37,7 +37,7 @@ type expressionRewriter struct {
 	correlated bool
 }
 
-func (er *expressionRewriter) buildSubqueries(subq *ast.SubqueryExpr) (Plan, expression.Schema) {
+func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (Plan, expression.Schema) {
 	if len(er.b.outerSchemas) > 0 {
 		er.err = errors.New("Nested subqueries is not supported.")
 		return nil, nil
@@ -73,7 +73,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 		return inNode, true
 	case *ast.ExistsSubqueryExpr:
 		if subq, ok := v.Sel.(*ast.SubqueryExpr); ok {
-			np, outerSchema := er.buildSubqueries(subq)
+			np, outerSchema := er.buildSubquery(subq)
 			if er.err != nil {
 				return retNode, true
 			}
@@ -95,7 +95,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
 		return inNode, true
 	case *ast.SubqueryExpr:
-		np, outerSchema := er.buildSubqueries(v)
+		np, outerSchema := er.buildSubquery(v)
 		if er.err != nil {
 			return retNode, true
 		}

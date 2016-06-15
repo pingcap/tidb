@@ -53,7 +53,6 @@ func makeUsedList(usedCols []*expression.Column, schema expression.Schema) []boo
 // PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
 // This function returns a bool slice representing used columns, a column slice representing outer columns and an error.
 func pruneColumnsAndResolveIndices(p Plan, parentUsedCols []*expression.Column) ([]bool, []*expression.Column, error) {
-	//TODO: Currently we only implement index resolving, column pruning will be implemented later.
 	var cols, outerCols []*expression.Column
 	switch v := p.(type) {
 	case *Projection:
@@ -192,7 +191,7 @@ func pruneColumnsAndResolveIndices(p Plan, parentUsedCols []*expression.Column) 
 		used, outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), parentUsedCols)
 		return used, outer, errors.Trace(err)
 	case *Exists:
-		used, outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), p.GetChildByIndex(0).GetSchema())
+		used, outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), nil)
 		return used, outer, errors.Trace(err)
 	case *Join:
 		cols = parentUsedCols
@@ -268,10 +267,10 @@ func pruneColumnsAndResolveIndices(p Plan, parentUsedCols []*expression.Column) 
 }
 
 // e.g. For query select b.c ,(select count(*) from a where a.id = b.id) from b. Its plan is Projection->Apply->TableScan.
-// The schema of b is (a,b,c,id).When Pruning Apply, the parentUsedCols is (c, extra), outerSchema is (a,b,c,id).
+// The schema of b is (a,b,c,id). When Pruning Apply, the parentUsedCols is (c, extra), outerSchema is (a,b,c,id).
 // Then after pruning inner plan, the outer schema in apply becomes (id).
 // Now there're two columns in parentUsedCols, c is the column from Apply's child ---- TableScan, but extra isn't.
-// So only c in parentUsedCols and extra in outerSchema can be passed to TableScan.
+// So only c in parentUsedCols and id in outerSchema can be passed to TableScan.
 func pruneApply(v *Apply, parentUsedCols []*expression.Column) ([]bool, []*expression.Column, error) {
 	_, outer, err := pruneColumnsAndResolveIndices(v.InnerPlan, v.InnerPlan.GetSchema())
 	if err != nil {
