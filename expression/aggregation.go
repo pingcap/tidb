@@ -80,7 +80,7 @@ func newAggFunc(args []Expression, dist bool) aggFunction {
 }
 
 func (af *aggFunction) Clear() {
-	af.resultMapper = nil
+	af.resultMapper = make(aggCtxMapper, 0)
 }
 
 // GetArgs implements AggregationFunction interface.

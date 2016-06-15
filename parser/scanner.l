@@ -287,6 +287,7 @@ admin		{a}{d}{m}{i}{n}
 after		{a}{f}{t}{e}{r}
 all		{a}{l}{l}
 alter		{a}{l}{t}{e}{r}
+analyze		{a}{n}{a}{l}{y}{z}{e}
 and		{a}{n}{d}
 any 		{a}{n}{y}
 as		{a}{s}
@@ -679,6 +680,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return after
 {all}			return all
 {alter}			return alter
+{analyze}		return analyze
 {and}			return and
 {any}			lval.item = string(l.val)
 			return any

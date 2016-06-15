@@ -337,6 +337,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// For https://github.com/pingcap/tidb/issues/1050
 		{`SELECT /*!40001 SQL_NO_CACHE */ * FROM test WHERE 1 limit 0, 2000;`, true},
+
+		{`ANALYZE TABLE t`, true},
 	}
 	s.RunTest(c, table)
 }

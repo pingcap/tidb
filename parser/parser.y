@@ -63,6 +63,7 @@ import (
 	after		"AFTER"
 	all 		"ALL"
 	alter		"ALTER"
+	analyze		"ANALYZE"
 	and		"AND"
 	andand		"&&"
 	andnot		"&^"
@@ -400,6 +401,7 @@ import (
 	AlterTableStmt		"Alter table statement"
 	AlterTableSpec		"Alter table specification"
 	AlterTableSpecList	"Alter table specification list"
+	AnalyzeTableStmt	"Analyze table statement"
 	AnyOrAll		"Any or All for subquery"
 	Assignment		"assignment"
 	AssignmentList		"assignment list"
@@ -824,6 +826,14 @@ ConstraintKeywordOpt:
 
 Symbol:
 	Identifier
+
+/*******************************************************************************************/
+
+AnalyzeTableStmt:
+	"ANALYZE" "TABLE" TableNameList
+	 {
+		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName)}
+	 }
 
 /*******************************************************************************************/
 Assignment:
@@ -4005,6 +4015,7 @@ Statement:
 	EmptyStmt
 |	AdminStmt
 |	AlterTableStmt
+|	AnalyzeTableStmt
 |	BeginTransactionStmt
 |	CommitStmt
 |	DeallocateStmt

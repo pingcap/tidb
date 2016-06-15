@@ -315,4 +315,5 @@ func (ps *perfSchema) registerStatements() {
 	ps.RegisterStatement("sql", "union", (*ast.UnionStmt)(nil))
 	ps.RegisterStatement("sql", "update", (*ast.UpdateStmt)(nil))
 	ps.RegisterStatement("sql", "use", (*ast.UseStmt)(nil))
+	ps.RegisterStatement("sql", "analyze", (*ast.AnalyzeTableStmt)(nil))
 }
