@@ -123,8 +123,23 @@ func (r *rangeBuilder) newBuild(expr expression.Expression) []rangePoint {
 		return r.buildFromColumn(x)
 	case *expression.ScalarFunction:
 		return r.buildFromScalarFunc(x)
+	case *expression.Constant:
+		return r.buildFromConstant(x)
 	}
 
+	return fullRange
+}
+
+func (r *rangeBuilder) buildFromConstant(expr *expression.Constant) []rangePoint {
+	val, err := expr.Value.ToBool()
+	if err != nil {
+		r.err = err
+		return nil
+	}
+
+	if val == 0 {
+		return nil
+	}
 	return fullRange
 }
 
