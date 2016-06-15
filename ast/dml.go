@@ -276,6 +276,8 @@ type SelectField struct {
 	Expr ExprNode
 	// Alias name for Expr.
 	AsName model.CIStr
+	// Extra stands for if this field is extra.
+	Extra bool
 }
 
 // Accept implements Node Accept interface.

@@ -80,6 +80,8 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeCreateUser(x)
 	case *ast.SetPwdStmt:
 		err = e.executeSetPwd(x)
+	case *ast.AnalyzeTableStmt:
+		err = e.executeAnalyzeTable(x)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -305,4 +307,9 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, util.EncodePassword(s.Password), userName, host)
 	_, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
+}
+
+func (e *SimpleExec) executeAnalyzeTable(s *ast.AnalyzeTableStmt) error {
+	// TODO: implement analyze table.
+	return nil
 }

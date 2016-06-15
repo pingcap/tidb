@@ -155,6 +155,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		}
 	case *ast.AlterTableStmt:
 		nr.pushContext()
+	case *ast.AnalyzeTableStmt:
+		nr.pushContext()
 	case *ast.ByItem:
 		if _, ok := v.Expr.(*ast.ColumnNameExpr); !ok {
 			// If ByItem is not a single column name expression,
@@ -235,6 +237,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 			ctx.inHavingAgg = false
 		}
 	case *ast.AlterTableStmt:
+		nr.popContext()
+	case *ast.AnalyzeTableStmt:
 		nr.popContext()
 	case *ast.TableName:
 		nr.handleTableName(v)

@@ -15,12 +15,12 @@ package plan
 
 import (
 	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -52,7 +52,8 @@ func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncE
 			newArgList = append(newArgList, newArg)
 		}
 		newAggFuncList = append(newAggFuncList, expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct))
-		schema = append(schema, &expression.Column{FromID: agg.id, ColName: model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, i))})
+		schema = append(schema, &expression.Column{FromID: agg.id,
+			ColName: model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, i))})
 	}
 	var gbyExprList []expression.Expression
 	if gby != nil {
@@ -129,18 +130,21 @@ func extractColumn(expr expression.Expression, cols []*expression.Column, outerC
 	return cols, outerCols
 }
 
-func extractOnCondition(conditions []expression.Expression, left Plan, right Plan) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression, otherCond []expression.Expression) {
+func extractOnCondition(conditions []expression.Expression, left Plan, right Plan) (
+	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
+	otherCond []expression.Expression) {
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
-		if ok && binop.FuncName.L == opcode.Ops[opcode.EQ] {
+		if ok && binop.FuncName.L == ast.EQ {
 			ln, lOK := binop.Args[0].(*expression.Column)
 			rn, rOK := binop.Args[1].(*expression.Column)
 			if lOK && rOK {
 				if left.GetSchema().GetIndex(ln) != -1 && right.GetSchema().GetIndex(rn) != -1 {
 					eqCond = append(eqCond, binop)
 					continue
-				} else if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
-					newEq := expression.NewFunction(model.NewCIStr(opcode.Ops[opcode.EQ]), []expression.Expression{rn, ln})
+				}
+				if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
+					newEq := expression.NewFunction(model.NewCIStr(ast.EQ), []expression.Expression{rn, ln})
 					eqCond = append(eqCond, newEq)
 					continue
 				}
@@ -170,7 +174,7 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 func splitCNFItems(onExpr expression.Expression) []expression.Expression {
 	switch v := onExpr.(type) {
 	case *expression.ScalarFunction:
-		if v.FuncName.L == opcode.Ops[opcode.AndAnd] {
+		if v.FuncName.L == ast.AndAnd {
 			var ret []expression.Expression
 			for _, arg := range v.Args {
 				ret = append(ret, splitCNFItems(arg)...)
@@ -252,14 +256,19 @@ func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper 
 			dbName := field.WildCard.Schema
 			colTblName := field.WildCard.Table
 			for _, col := range p.GetSchema() {
-				if (dbName.L == "" || dbName.L == col.DBName.L) &&
-					(colTblName.L == "" || colTblName.L == col.TblName.L) {
-					newExpr := col.DeepCopy()
-					proj.Exprs = append(proj.Exprs, newExpr)
-					tblName = col.TblName
-					schemaCol := &expression.Column{FromID: col.FromID, TblName: tblName, ColName: col.ColName, RetType: newExpr.GetType()}
-					schema = append(schema, schemaCol)
+				matchTable := (dbName.L == "" || dbName.L == col.DBName.L) &&
+					(colTblName.L == "" || colTblName.L == col.TblName.L)
+				if !matchTable {
+					continue
 				}
+				newExpr := col.DeepCopy()
+				proj.Exprs = append(proj.Exprs, newExpr)
+				schemaCol := &expression.Column{
+					FromID:  col.FromID,
+					TblName: col.TblName,
+					ColName: col.ColName,
+					RetType: newExpr.GetType()}
+				schema = append(schema, schemaCol)
 			}
 		} else {
 			newExpr, np, correlated, err := b.rewrite(field.Expr, p, mapper)
@@ -282,7 +291,11 @@ func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper 
 				colName = model.NewCIStr(field.Expr.Text())
 				fromID = proj.id
 			}
-			schemaCol := &expression.Column{FromID: fromID, TblName: tblName, ColName: colName, RetType: newExpr.GetType()}
+			schemaCol := &expression.Column{
+				FromID:  fromID,
+				TblName: tblName,
+				ColName: colName,
+				RetType: newExpr.GetType()}
 			schema = append(schema, schemaCol)
 		}
 	}
@@ -401,7 +414,9 @@ func (b *planBuilder) buildNewLimit(src Plan, limit *ast.Limit) Plan {
 	return li
 }
 
-func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int) {
+func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) (
+	[]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int,
+	map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int) {
 	extractor := &ast.AggregateFuncExtractor{AggFuncs: make([]*ast.AggregateFuncExpr, 0)}
 	// Extract agg funcs from having clause.
 	if sel.Having != nil {
@@ -414,12 +429,12 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) ([]*ast.AggregateFuncE
 	}
 	havingAggFuncs := extractor.AggFuncs
 	extractor.AggFuncs = make([]*ast.AggregateFuncExpr, 0)
-
 	havingMapper := make(map[*ast.AggregateFuncExpr]int)
 	for _, agg := range havingAggFuncs {
 		havingMapper[agg] = len(sel.Fields.Fields)
 		field := &ast.SelectField{Expr: agg,
-			AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields)))}
+			AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields))),
+			Extra:  true}
 		sel.Fields.Fields = append(sel.Fields.Fields, field)
 	}
 
@@ -431,7 +446,6 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) ([]*ast.AggregateFuncE
 				b.err = errors.New("Failed to extract agg expr from orderby clause")
 				return nil, nil, nil, nil
 			}
-			// TODO: support position expression.
 		}
 	}
 	orderByAggFuncs := extractor.AggFuncs
@@ -440,7 +454,8 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) ([]*ast.AggregateFuncE
 	for _, agg := range orderByAggFuncs {
 		orderByMapper[agg] = len(sel.Fields.Fields)
 		field := &ast.SelectField{Expr: agg,
-			AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields)))}
+			AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields))),
+			Extra:  true}
 		sel.Fields.Fields = append(sel.Fields.Fields, field)
 	}
 
@@ -465,7 +480,6 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) ([]*ast.AggregateFuncE
 }
 
 func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
-	oldLen := len(sel.Fields.Fields)
 	hasAgg := b.detectSelectAgg(sel)
 	var aggFuncs []*ast.AggregateFuncExpr
 	var havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
@@ -530,8 +544,14 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 			return nil
 		}
 	}
-	if oldLen != len(sel.Fields.Fields) {
-		return b.buildTruncate(p, oldLen)
+	extraLen := 0
+	for _, field := range sel.Fields.Fields {
+		if field.Extra {
+			extraLen++
+		}
+	}
+	if extraLen > 0 {
+		return b.buildTruncate(p, len(p.GetSchema())-extraLen)
 	}
 	return p
 }

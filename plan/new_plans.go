@@ -100,12 +100,6 @@ type NewTableScan struct {
 	// RefAccess indicates it references a previous joined table, used in explain.
 	RefAccess bool
 
-	// AccessConditions can be used to build index range.
-	AccessConditions []expression.Expression
-
-	// FilterConditions can be used to filter result.
-	FilterConditions []expression.Expression
-
 	TableAsName *model.CIStr
 
 	LimitCount *int64
@@ -114,13 +108,6 @@ type NewTableScan struct {
 // Truncate truncates child's rows.
 type Truncate struct {
 	basePlan
-}
-
-func (ts *NewTableScan) attachCondition(conditions []expression.Expression) {
-	for _, con := range conditions {
-		//TODO: implement refiner for expression.
-		ts.FilterConditions = append(ts.FilterConditions, con)
-	}
 }
 
 // AddChild for parent.
