@@ -81,7 +81,7 @@ func Reverse(s string) string {
 // If set to a single quote, it permits the sequence \' and disallows unescaped '.
 // If set to a double quote, it permits \" and disallows unescaped ".
 // If set to zero, it does not permit either escape and allows both quote characters to appear unescaped.
-// Diffrent with strconv.UnquoteChar, it permits unnecessary backslash.
+// Different with strconv.UnquoteChar, it permits unnecessary backslash.
 func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string, err error) {
 	// easy cases
 	switch c := s[0]; {
