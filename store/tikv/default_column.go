@@ -13,21 +13,21 @@
 
 package tikv
 
-import "github.com/pingcap/kvproto/pkg/kvrpcpb"
+import "github.com/pingcap/kvproto/pkg/kvpb"
 
 // This file contains utilities for compatibility with old KV interface (no columns).
 // TODO: Remove this file after migrating old KV interface.
 
 var defaultColumn = [][]byte{nil}
 
-func defaultRow(rowKey []byte) *kvrpcpb.Row {
-	return &kvrpcpb.Row{
+func defaultRow(rowKey []byte) *kvpb.Row {
+	return &kvpb.Row{
 		RowKey:  rowKey,
 		Columns: defaultColumn,
 	}
 }
 
-func defaultRowValue(rowVal *kvrpcpb.RowValue) []byte {
+func defaultRowValue(rowVal *kvpb.RowValue) []byte {
 	if rowVal == nil || len(rowVal.GetValues()) == 0 {
 		return nil
 	}

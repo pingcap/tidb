@@ -17,7 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvpb"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -43,12 +43,12 @@ func encodeKeys(ss []string) [][]byte {
 	return keys
 }
 
-func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
-	var mutations []*kvrpcpb.Mutation
+func putMutations(kvpairs ...string) []*kvpb.Mutation {
+	var mutations []*kvpb.Mutation
 	for i := 0; i < len(kvpairs); i += 2 {
-		mutations = append(mutations, &kvrpcpb.Mutation{
+		mutations = append(mutations, &kvpb.Mutation{
 			RowKey:  encodeKey(kvpairs[i]),
-			Ops:     []kvrpcpb.Op{kvrpcpb.Op_Put},
+			Ops:     []kvpb.Op{kvpb.Op_Put},
 			Columns: defaultColumn,
 			Values:  [][]byte{[]byte(kvpairs[i+1])},
 		})
@@ -92,10 +92,10 @@ func (s *testMockTiKVSuite) mustPutOK(c *C, key, value string, startTS, commitTS
 }
 
 func (s *testMockTiKVSuite) mustDeleteOK(c *C, key string, startTS, commitTS uint64) {
-	mutations := []*kvrpcpb.Mutation{
+	mutations := []*kvpb.Mutation{
 		{
 			RowKey:  encodeKey(key),
-			Ops:     []kvrpcpb.Op{kvrpcpb.Op_Del},
+			Ops:     []kvpb.Op{kvpb.Op_Del},
 			Columns: defaultColumn,
 			Values:  [][]byte{nil},
 		},
@@ -118,7 +118,7 @@ func (s *testMockTiKVSuite) mustScanOK(c *C, start string, limit int, ts uint64,
 	}
 }
 
-func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64) {
+func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvpb.Mutation, primary string, startTS uint64) {
 	errs := s.store.Prewrite(mutations, encodeKey(primary), startTS)
 	for _, err := range errs {
 		c.Assert(err, IsNil)

@@ -20,6 +20,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/kvproto/pkg/kvpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
@@ -107,7 +108,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v 
 	pending := batch.keys
 	var backoffErr error
 	for backoff := txnLockBackoff(); backoffErr == nil; backoffErr = backoff() {
-		rows := make([]*pb.Row, len(pending))
+		rows := make([]*kvpb.Row, len(pending))
 		for i := range pending {
 			rows[i] = defaultRow(pending[i])
 		}
@@ -230,7 +231,7 @@ func (s *tikvSnapshot) SeekReverse(k kv.Key) (kv.Iterator, error) {
 func (s *tikvSnapshot) Release() {
 }
 
-func extractLockInfoFromKeyErr(keyErr *pb.KeyError) (*pb.LockInfo, error) {
+func extractLockInfoFromKeyErr(keyErr *kvpb.KeyError) (*kvpb.LockInfo, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
 		return locked, nil
 	}
@@ -248,7 +249,7 @@ func extractLockInfoFromKeyErr(keyErr *pb.KeyError) (*pb.LockInfo, error) {
 }
 
 // handleKeyError tries to resolve locks then retry to get value.
-func (s *tikvSnapshot) handleKeyError(keyErr *pb.KeyError) ([]byte, error) {
+func (s *tikvSnapshot) handleKeyError(keyErr *kvpb.KeyError) ([]byte, error) {
 	lockInfo, err := extractLockInfoFromKeyErr(keyErr)
 	if err != nil {
 		return nil, errors.Trace(err)

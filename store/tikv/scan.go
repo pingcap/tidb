@@ -17,6 +17,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/kvproto/pkg/kvpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
@@ -27,7 +28,7 @@ type Scanner struct {
 	snapshot     *tikvSnapshot
 	batchSize    int
 	valid        bool
-	cache        []*pb.RowValue
+	cache        []*kvpb.RowValue
 	idx          int
 	nextStartKey []byte
 	eof          bool

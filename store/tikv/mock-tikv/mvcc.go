@@ -19,7 +19,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/petar/GoLLRB/llrb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvpb"
 	"github.com/pingcap/kvproto/pkg/mvccpb"
 )
 
@@ -83,10 +83,10 @@ func (e *mvccEntry) Get(col []byte, ts uint64) ([]byte, error) {
 		if item.GetCommitTs() <= ts {
 			for _, c := range item.GetColumns() {
 				if bytes.Equal(c.Name, col) {
-					switch c.GetOpType() {
-					case mvccpb.MetaOpType_Put:
+					switch c.GetOp() {
+					case kvpb.Op_Put:
 						return e.getValue(col, item.GetStartTs()), nil
-					case mvccpb.MetaOpType_Delete:
+					case kvpb.Op_Del:
 						return nil, nil
 					}
 				}
@@ -109,7 +109,7 @@ func (e *mvccEntry) GetColumns(cols [][]byte, ts uint64) ([][]byte, error) {
 	return vals, nil
 }
 
-func (e *mvccEntry) Prewrite(mut *kvrpcpb.Mutation, startTS uint64, primary []byte) error {
+func (e *mvccEntry) Prewrite(mut *kvpb.Mutation, startTS uint64, primary []byte) error {
 	if len(mut.Ops) != len(mut.Columns) || len(mut.Ops) != len(mut.Values) {
 		panic("invalid rowMutation: fields len not match")
 	}
@@ -139,21 +139,15 @@ func (e *mvccEntry) Prewrite(mut *kvrpcpb.Mutation, startTS uint64, primary []by
 	}
 	for i, op := range mut.GetOps() {
 		col, val := mut.GetColumns()[i], mut.GetValues()[i]
-		if op == kvrpcpb.Op_Put {
+		if op == kvpb.Op_Put {
 			e.putValue(col, startTS, val)
 		}
 		e.meta.Lock.Columns = append(e.meta.Lock.Columns, &mvccpb.MetaColumn{
-			Name:   col,
-			OpType: opMap[op].Enum(),
+			Name: col,
+			Op:   op.Enum(),
 		})
 	}
 	return nil
-}
-
-var opMap map[kvrpcpb.Op]mvccpb.MetaOpType = map[kvrpcpb.Op]mvccpb.MetaOpType{
-	kvrpcpb.Op_Put:  mvccpb.MetaOpType_Put,
-	kvrpcpb.Op_Del:  mvccpb.MetaOpType_Delete,
-	kvrpcpb.Op_Lock: mvccpb.MetaOpType_Lock,
 }
 
 func (e *mvccEntry) checkTxnCommitted(startTS uint64) (uint64, bool) {
@@ -181,7 +175,7 @@ func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 		CommitTs: proto.Uint64(commitTS),
 	}
 	for _, col := range e.meta.GetLock().GetColumns() {
-		if col.GetOpType() != mvccpb.MetaOpType_Lock {
+		if col.GetOp() != kvpb.Op_Lock {
 			newItem.Columns = append(newItem.Columns, col)
 		}
 	}
@@ -199,7 +193,7 @@ func (e *mvccEntry) Rollback(startTS uint64) error {
 	}
 	if lock := e.meta.GetLock(); lock != nil {
 		for _, col := range lock.GetColumns() {
-			if col.GetOpType() == mvccpb.MetaOpType_Put {
+			if col.GetOp() == kvpb.Op_Put {
 				e.delValue(col.GetName(), startTS)
 			}
 		}
@@ -361,7 +355,7 @@ func (s *MvccStore) submit(ents ...*mvccEntry) {
 }
 
 // Prewrite acquires a lock on a key. (1st phase of 2PC).
-func (s *MvccStore) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64) []error {
+func (s *MvccStore) Prewrite(mutations []*kvpb.Mutation, primary []byte, startTS uint64) []error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

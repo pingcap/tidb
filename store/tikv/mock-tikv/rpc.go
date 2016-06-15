@@ -18,6 +18,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 )
@@ -138,13 +139,13 @@ func (h *rpcHandler) onGet(req *kvrpcpb.CmdGetRequest) *kvrpcpb.CmdGetResponse {
 	vals, err := h.mvccStore.Get(req.GetRow().GetRowKey(), req.GetRow().GetColumns(), req.GetTs())
 	if err != nil {
 		return &kvrpcpb.CmdGetResponse{
-			Row: &kvrpcpb.RowValue{
+			Row: &kvpb.RowValue{
 				Error: convertToKeyError(err),
 			},
 		}
 	}
 	return &kvrpcpb.CmdGetResponse{
-		Row: &kvrpcpb.RowValue{
+		Row: &kvpb.RowValue{
 			Values: vals,
 		},
 	}
@@ -209,13 +210,13 @@ func (h *rpcHandler) onCommitThenGet(req *kvrpcpb.CmdCommitThenGetRequest) *kvrp
 	vals, err := h.mvccStore.CommitThenGet(req.GetRow().GetRowKey(), req.GetRow().GetColumns(), req.GetStartTs(), req.GetCommitTs(), req.GetGetTs())
 	if err != nil {
 		return &kvrpcpb.CmdCommitThenGetResponse{
-			RowValue: &kvrpcpb.RowValue{
+			RowValue: &kvpb.RowValue{
 				Error: convertToKeyError(err),
 			},
 		}
 	}
 	return &kvrpcpb.CmdCommitThenGetResponse{
-		RowValue: &kvrpcpb.RowValue{
+		RowValue: &kvpb.RowValue{
 			Values: vals,
 		},
 	}
@@ -228,13 +229,13 @@ func (h *rpcHandler) onRollbackThenGet(req *kvrpcpb.CmdRollbackThenGetRequest) *
 	vals, err := h.mvccStore.RollbackThenGet(req.GetRow().GetRowKey(), req.GetRow().GetColumns(), req.GetTs())
 	if err != nil {
 		return &kvrpcpb.CmdRollbackThenGetResponse{
-			RowValue: &kvrpcpb.RowValue{
+			RowValue: &kvpb.RowValue{
 				Error: convertToKeyError(err),
 			},
 		}
 	}
 	return &kvrpcpb.CmdRollbackThenGetResponse{
-		RowValue: &kvrpcpb.RowValue{
+		RowValue: &kvpb.RowValue{
 			Values: vals,
 		},
 	}
@@ -256,10 +257,10 @@ func (h *rpcHandler) onBatchGet(req *kvrpcpb.CmdBatchGetRequest) *kvrpcpb.CmdBat
 	}
 }
 
-func convertToKeyError(err error) *kvrpcpb.KeyError {
+func convertToKeyError(err error) *kvpb.KeyError {
 	if locked, ok := err.(*ErrLocked); ok {
-		return &kvrpcpb.KeyError{
-			Locked: &kvrpcpb.LockInfo{
+		return &kvpb.KeyError{
+			Locked: &kvpb.LockInfo{
 				Row:     locked.Key,
 				Primary: locked.Primary,
 				Ts:      proto.Uint64(locked.StartTS),
@@ -267,17 +268,17 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 		}
 	}
 	if retryable, ok := err.(ErrRetryable); ok {
-		return &kvrpcpb.KeyError{
+		return &kvpb.KeyError{
 			Retryable: proto.String(retryable.Error()),
 		}
 	}
-	return &kvrpcpb.KeyError{
+	return &kvpb.KeyError{
 		Abort: proto.String(err.Error()),
 	}
 }
 
-func convertToKeyErrors(errs []error) []*kvrpcpb.KeyError {
-	var errors []*kvrpcpb.KeyError
+func convertToKeyErrors(errs []error) []*kvpb.KeyError {
+	var errors []*kvpb.KeyError
 	for _, err := range errs {
 		if err != nil {
 			errors = append(errors, convertToKeyError(err))
@@ -286,18 +287,18 @@ func convertToKeyErrors(errs []error) []*kvrpcpb.KeyError {
 	return errors
 }
 
-func convertToPbRows(rows []Row) []*kvrpcpb.RowValue {
-	pbRows := make([]*kvrpcpb.RowValue, len(rows))
+func convertToPbRows(rows []Row) []*kvpb.RowValue {
+	pbRows := make([]*kvpb.RowValue, len(rows))
 	for i, r := range rows {
-		var pbRow *kvrpcpb.RowValue
+		var pbRow *kvpb.RowValue
 		if r.Err == nil {
-			pbRow = &kvrpcpb.RowValue{
+			pbRow = &kvpb.RowValue{
 				RowKey:  r.RowKey,
 				Columns: r.Columns,
 				Values:  r.Values,
 			}
 		} else {
-			pbRow = &kvrpcpb.RowValue{
+			pbRow = &kvpb.RowValue{
 				Error: convertToKeyError(r.Err),
 			}
 		}

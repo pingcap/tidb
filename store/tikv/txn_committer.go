@@ -20,6 +20,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/kvproto/pkg/kvpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
@@ -30,7 +31,7 @@ type txnCommitter struct {
 	txn         *tikvTxn
 	startTS     uint64
 	keys        [][]byte
-	mutations   map[string]*pb.Mutation
+	mutations   map[string]*kvpb.Mutation
 	commitTS    uint64
 	mu          sync.RWMutex
 	writtenKeys [][]byte
@@ -40,19 +41,19 @@ type txnCommitter struct {
 
 func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	var keys [][]byte
-	mutations := make(map[string]*pb.Mutation)
+	mutations := make(map[string]*kvpb.Mutation)
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
-			mutations[string(k)] = &pb.Mutation{
+			mutations[string(k)] = &kvpb.Mutation{
 				RowKey:  k,
-				Ops:     []pb.Op{pb.Op_Put},
+				Ops:     []kvpb.Op{kvpb.Op_Put},
 				Columns: defaultColumn,
 				Values:  [][]byte{v},
 			}
 		} else {
-			mutations[string(k)] = &pb.Mutation{
+			mutations[string(k)] = &kvpb.Mutation{
 				RowKey:  k,
-				Ops:     []pb.Op{pb.Op_Del},
+				Ops:     []kvpb.Op{kvpb.Op_Del},
 				Columns: defaultColumn,
 				Values:  [][]byte{nil},
 			}
@@ -70,9 +71,9 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	}
 	for _, lockKey := range txn.lockKeys {
 		if _, ok := mutations[string(lockKey)]; !ok {
-			mutations[string(lockKey)] = &pb.Mutation{
+			mutations[string(lockKey)] = &kvpb.Mutation{
 				RowKey:  lockKey,
-				Ops:     []pb.Op{pb.Op_Lock},
+				Ops:     []kvpb.Op{kvpb.Op_Lock},
 				Columns: defaultColumn,
 				Values:  [][]byte{nil},
 			}
@@ -179,7 +180,7 @@ func (c *txnCommitter) keySize(key []byte) int {
 }
 
 func (c *txnCommitter) prewriteSingleRegion(batch batchKeys) error {
-	mutations := make([]*pb.Mutation, len(batch.keys))
+	mutations := make([]*kvpb.Mutation, len(batch.keys))
 	for i, k := range batch.keys {
 		mutations[i] = c.mutations[string(k)]
 	}
