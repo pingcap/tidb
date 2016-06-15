@@ -141,10 +141,10 @@ func (r *rangeBuilder) buildFromColumn(expr *expression.Column) []rangePoint {
 
 // TODO: It only implements the binary operation range building. And it needs to implement other scalar functions.
 func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []rangePoint {
-	if expr.FuncName.L == opcode.Ops[opcode.OrOr] {
+	if expr.FuncName.L == ast.OrOr {
 		return r.union(r.newBuild(expr.Args[0]), r.newBuild(expr.Args[1]))
 	}
-	if expr.FuncName.L == opcode.Ops[opcode.AndAnd] {
+	if expr.FuncName.L == ast.AndAnd {
 		return r.intersection(r.newBuild(expr.Args[0]), r.newBuild(expr.Args[1]))
 	}
 
@@ -155,14 +155,14 @@ func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []ra
 	if v, ok := expr.Args[0].(*expression.Constant); ok {
 		value = v.Value
 		switch expr.FuncName.L {
-		case ">=":
-			op = "<="
-		case ">":
-			op = "<"
-		case "<":
-			op = ">"
-		case "<=":
-			op = ">="
+		case ast.GE:
+			op = ast.LE
+		case ast.GT:
+			op = ast.LT
+		case ast.LT:
+			op = ast.GT
+		case ast.LE:
+			op = ast.GE
 		default:
 			op = expr.FuncName.L
 		}
@@ -175,29 +175,29 @@ func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []ra
 	}
 
 	switch op {
-	case "=":
+	case ast.EQ:
 		startPoint := rangePoint{value: value, start: true}
 		endPoint := rangePoint{value: value}
 		return []rangePoint{startPoint, endPoint}
-	case "!=":
+	case ast.NE:
 		startPoint1 := rangePoint{value: types.MinNotNullDatum(), start: true}
 		endPoint1 := rangePoint{value: value, excl: true}
 		startPoint2 := rangePoint{value: value, start: true, excl: true}
 		endPoint2 := rangePoint{value: types.MaxValueDatum()}
 		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
-	case "<":
+	case ast.LT:
 		startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
 		endPoint := rangePoint{value: value, excl: true}
 		return []rangePoint{startPoint, endPoint}
-	case "<=":
+	case ast.LE:
 		startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
 		endPoint := rangePoint{value: value}
 		return []rangePoint{startPoint, endPoint}
-	case ">":
+	case ast.GT:
 		startPoint := rangePoint{value: value, start: true, excl: true}
 		endPoint := rangePoint{value: types.MaxValueDatum()}
 		return []rangePoint{startPoint, endPoint}
-	case ">=":
+	case ast.GE:
 		startPoint := rangePoint{value: value, start: true}
 		endPoint := rangePoint{value: types.MaxValueDatum()}
 		return []rangePoint{startPoint, endPoint}

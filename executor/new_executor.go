@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
@@ -484,6 +483,7 @@ type NewTableScanExec struct {
 	asName      *model.CIStr
 	ctx         context.Context
 	supportDesc bool
+	isMemDB     bool
 	result      *xapi.SelectResult
 	subResult   *xapi.SubResult
 	where       *tipb.Expr
@@ -750,26 +750,26 @@ func (b *executorBuilder) scalarFuncToPBExpr(client kv.Client, expr *expression.
 	tbl *model.TableInfo) *tipb.Expr {
 	var tp tipb.ExprType
 	switch expr.FuncName.L {
-	case "<":
+	case ast.LT:
 		tp = tipb.ExprType_LT
-	case "<=":
+	case ast.LE:
 		tp = tipb.ExprType_LE
-	case "=":
+	case ast.EQ:
 		tp = tipb.ExprType_EQ
-	case "!= ":
+	case ast.NE:
 		tp = tipb.ExprType_NE
-	case ">=":
+	case ast.GE:
 		tp = tipb.ExprType_GE
-	case ">":
+	case ast.GT:
 		tp = tipb.ExprType_GT
-	case "<=>":
+	case ast.NullEQ:
 		tp = tipb.ExprType_NullEQ
-	case "&&":
+	case ast.And:
 		tp = tipb.ExprType_And
-	case "||":
+	case ast.Or:
 		tp = tipb.ExprType_Or
 	// It's the operation for unary operator.
-	case opcode.Ops[opcode.Not]:
+	case ast.UnaryNot:
 		tp = tipb.ExprType_Not
 	default:
 		return nil

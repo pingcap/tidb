@@ -82,7 +82,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	case *ast.IsNullExpr:
 		function := &expression.ScalarFunction{
 			Args:     []expression.Expression{er.ctxStack[length-1]},
-			FuncName: model.NewCIStr("isnull"),
+			FuncName: model.NewCIStr(ast.IsNull),
 			RetType:  v.Type,
 		}
 		f, ok := evaluator.Funcs[function.FuncName.L]
@@ -113,13 +113,13 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		function := &expression.ScalarFunction{Args: []expression.Expression{er.ctxStack[length-1]}, RetType: v.Type}
 		switch v.Op {
 		case opcode.Not:
-			function.FuncName = model.NewCIStr("not")
+			function.FuncName = model.NewCIStr(ast.UnaryNot)
 		case opcode.BitNeg:
-			function.FuncName = model.NewCIStr("bitneg")
+			function.FuncName = model.NewCIStr(ast.BitNeg)
 		case opcode.Plus:
-			function.FuncName = model.NewCIStr("unaryplus")
+			function.FuncName = model.NewCIStr(ast.UnaryPlus)
 		case opcode.Minus:
-			function.FuncName = model.NewCIStr("unaryminus")
+			function.FuncName = model.NewCIStr(ast.UnaryMinus)
 		}
 		f, ok := evaluator.Funcs[function.FuncName.L]
 		if !ok {

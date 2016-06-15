@@ -15,12 +15,12 @@ package plan
 
 import (
 	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 )
 
 // UseNewPlanner means if use the new planner.
@@ -122,8 +122,7 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 	otherCond []expression.Expression) {
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
-		eqStr, _ := opcode.Ops[opcode.EQ]
-		if ok && binop.FuncName.L == eqStr {
+		if ok && binop.FuncName.L == ast.EQ {
 			ln, lOK := binop.Args[0].(*expression.Column)
 			rn, rOK := binop.Args[1].(*expression.Column)
 			if lOK && rOK {
@@ -132,7 +131,7 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 					continue
 				}
 				if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
-					newEq := expression.NewFunction(model.NewCIStr(eqStr), []expression.Expression{rn, ln})
+					newEq := expression.NewFunction(model.NewCIStr(ast.EQ), []expression.Expression{rn, ln})
 					eqCond = append(eqCond, newEq)
 					continue
 				}
@@ -162,8 +161,7 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 func splitCNFItems(onExpr expression.Expression) []expression.Expression {
 	switch v := onExpr.(type) {
 	case *expression.ScalarFunction:
-		andandStr, _ := opcode.Ops[opcode.AndAnd]
-		if v.FuncName.L == andandStr {
+		if v.FuncName.L == ast.AndAnd {
 			var ret []expression.Expression
 			for _, arg := range v.Args {
 				ret = append(ret, splitCNFItems(arg)...)

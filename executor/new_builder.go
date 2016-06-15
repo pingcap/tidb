@@ -15,11 +15,12 @@ package executor
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // compose CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
@@ -31,7 +32,7 @@ func composeCondition(conditions []expression.Expression) expression.Expression 
 	if length == 1 {
 		return conditions[0]
 	}
-	return expression.NewFunction(model.NewCIStr(opcode.Ops[opcode.AndAnd]),
+	return expression.NewFunction(model.NewCIStr(ast.AndAnd),
 		[]expression.Expression{composeCondition(conditions[0 : length/2]),
 			composeCondition(conditions[length/2:])})
 }
@@ -98,9 +99,32 @@ func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
 	}
 }
 
+func (b *executorBuilder) toPBExpr(conditions []expression.Expression, tbl *model.TableInfo) (
+	*tipb.Expr, []expression.Expression) {
+	txn, err := b.ctx.GetTxn(false)
+	if err != nil {
+		b.err = err
+		return nil, nil
+	}
+	client := txn.GetClient()
+	return b.newConditionExprToPBExpr(client, conditions, tbl)
+}
+
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
+	exec := b.build(v.GetChildByIndex(0))
+	switch exec.(type) {
+	case *NewTableScanExec:
+		tableScan := exec.(*NewTableScanExec)
+		tableScan.where, v.Conditions = b.toPBExpr(v.Conditions, tableScan.tableInfo)
+		// TODO: Implement NewIndexScan
+	}
+
+	if len(v.Conditions) == 0 {
+		return exec
+	}
+
 	return &SelectionExec{
-		Src:       b.build(v.GetChildByIndex(0)),
+		Src:       exec,
 		Condition: composeCondition(v.Conditions),
 		schema:    v.GetSchema(),
 		ctx:       b.ctx,
@@ -131,8 +155,8 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan) Executor {
 	}
 	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-		// TODO: support condition pushdown and union scan exec.
-		e := &NewTableScanExec{
+		// TODO: support union scan exec.
+		return &NewTableScanExec{
 			tableInfo:   v.Table,
 			ctx:         b.ctx,
 			supportDesc: supportDesc,
@@ -141,18 +165,6 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan) Executor {
 			schema:      v.GetSchema(),
 			Columns:     v.Columns,
 			ranges:      v.Ranges,
-		}
-		var remained []expression.Expression
-		e.where, remained = b.newConditionExprToPBExpr(client, v.FilterConditions, v.Table)
-		if len(remained) == 0 {
-			return e
-		}
-
-		return &SelectionExec{
-			Src:       e,
-			Condition: composeCondition(remained),
-			schema:    v.GetSchema(),
-			ctx:       b.ctx,
 		}
 	}
 	b.err = errors.New("Not implement yet.")

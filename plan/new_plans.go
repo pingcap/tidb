@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -83,37 +82,9 @@ type NewTableScan struct {
 	// RefAccess indicates it references a previous joined table, used in explain.
 	RefAccess bool
 
-	// AccessConditions can be used to build index range.
-	AccessConditions []expression.Expression
-
-	// FilterConditions can be used to filter result.
-	FilterConditions []expression.Expression
-
 	TableAsName *model.CIStr
 
 	LimitCount *int64
-}
-
-func (ts *NewTableScan) attachConditions(conditions []expression.Expression) {
-	var pkName model.CIStr
-	if ts.Table.PKIsHandle {
-		for _, colInfo := range ts.Table.Columns {
-			if mysql.HasPriKeyFlag(colInfo.Flag) {
-				pkName = colInfo.Name
-				break
-			}
-		}
-	}
-	for _, con := range conditions {
-		if pkName.L != "" {
-			checker := conditionChecker{tableName: ts.Table.Name, pkName: pkName}
-			if checker.newCheck(con) {
-				ts.AccessConditions = append(ts.AccessConditions, con)
-				continue
-			}
-		}
-		ts.FilterConditions = append(ts.FilterConditions, con)
-	}
 }
 
 // AddChild for parent.

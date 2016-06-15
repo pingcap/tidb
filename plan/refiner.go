@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -46,7 +47,9 @@ func refine(in Plan) error {
 	case *TableScan:
 		err = buildTableRange(x)
 	case *NewTableScan:
-		err = buildNewTableRange(x)
+		x.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
+	case *Selection:
+		err = buildSelection(x)
 	}
 	return errors.Trace(err)
 }
@@ -91,27 +94,63 @@ func buildTableRange(p *TableScan) error {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 	}
 	p.Ranges = rb.buildTableRanges(rangePoints)
-	return rb.err
+	return errors.Trace(rb.err)
 }
 
-func buildNewTableRange(p *NewTableScan) error {
-	// Convert selection plan's conditions to newTableScan plan's AccessConditions or FilterConditions.
-	var ok bool
-	var selection *Selection
-	for _, parent := range p.GetParents() {
-		if selection, ok = parent.(*Selection); ok {
-			break
+func buildSelection(p *Selection) error {
+	var err error
+	var accessConditions []expression.Expression
+	switch p.GetChildByIndex(0).(type) {
+	case *NewTableScan:
+		tableScan := p.GetChildByIndex(0).(*NewTableScan)
+		accessConditions, p.Conditions = detachConditions(p.Conditions, tableScan.Table, nil, 0)
+		err = buildNewTableRange(tableScan, accessConditions)
+		// TODO: Implement NewIndexScan
+	}
+
+	return errors.Trace(err)
+}
+
+// detachConditions distinguishs between access conditions and filter conditions from conditions.
+func detachConditions(conditions []expression.Expression, table *model.TableInfo,
+	idx *model.IndexInfo, colOffset int) ([]expression.Expression, []expression.Expression) {
+	var pkName model.CIStr
+	var accessConditions, filterConditions []expression.Expression
+	if table.PKIsHandle {
+		for _, colInfo := range table.Columns {
+			if mysql.HasPriKeyFlag(colInfo.Flag) {
+				pkName = colInfo.Name
+				break
+			}
 		}
 	}
-	if !ok || len(selection.Conditions) == 0 {
+	for _, con := range conditions {
+		if pkName.L != "" {
+			checker := conditionChecker{
+				tableName:    table.Name,
+				pkName:       pkName,
+				idx:          idx,
+				columnOffset: colOffset}
+			if checker.newCheck(con) {
+				accessConditions = append(accessConditions, con)
+				continue
+			}
+		}
+		filterConditions = append(filterConditions, con)
+	}
+
+	return accessConditions, filterConditions
+}
+
+func buildNewTableRange(p *NewTableScan, accessConditions []expression.Expression) error {
+	if len(accessConditions) == 0 {
 		p.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
 		return nil
 	}
-	p.attachConditions(selection.Conditions)
 
 	rb := rangeBuilder{}
 	rangePoints := fullRange
-	for _, cond := range p.AccessConditions {
+	for _, cond := range accessConditions {
 		rangePoints = rb.intersection(rangePoints, rb.newBuild(cond))
 		if rb.err != nil {
 			return errors.Trace(rb.err)
@@ -233,18 +272,18 @@ func (c *conditionChecker) newCheck(condition expression.Expression) bool {
 func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
 	// TODO: Implement istrue, between, parentheses, patternin and patternlike.
 	switch scalar.FuncName.L {
-	case "||":
+	case ast.OrOr:
 		return c.newCheck(scalar.Args[0]) && c.newCheck(scalar.Args[1])
-	case "&&":
+	case ast.AndAnd:
 		return c.newCheck(scalar.Args[0]) && c.newCheck(scalar.Args[1])
-	case "=", "!=", ">=", ">", "<", "<=":
+	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT:
 		if _, ok := scalar.Args[0].(*expression.Constant); ok {
 			return c.checkColumn(scalar.Args[1])
 		}
 		if _, ok := scalar.Args[1].(*expression.Constant); ok {
 			return c.checkColumn(scalar.Args[0])
 		}
-	case "isnull":
+	case ast.IsNull:
 		return c.checkColumn(scalar.Args[0])
 	}
 	return false
