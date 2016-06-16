@@ -129,7 +129,7 @@ func (t *Table) buildColumn(offset int, samples []types.Datum) error {
 			return errors.Trace(err)
 		}
 		if cmp == 0 {
-			// The new item has the same value as current bucket value, to ensures that
+			// The new item has the same value as current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 			// valuesPerBucket.
 			col.Numbers[bucketIdx] = i * sampleFactor
@@ -153,30 +153,30 @@ func (t *Table) buildColumn(offset int, samples []types.Datum) error {
 }
 
 // estimateNDV estimates the number of distinct value given a count and samples.
-// using simplified Good–Turing frequency estimation
+// It implements a simplified Good–Turing frequency estimation algorithm.
 // See https://en.wikipedia.org/wiki/Good%E2%80%93Turing_frequency_estimation
 func estimateNDV(count int64, samples []types.Datum) (int64, error) {
 	lastValue := samples[0]
-	ocurrance := 1
+	occurrence := 1
 	sampleDistinct := 1
-	ocurredOnceCount := 0
+	occurredOnceCount := 0
 	for i := 1; i < len(samples); i++ {
 		cmp, err := lastValue.CompareDatum(samples[i])
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		if cmp == 0 {
-			ocurrance++
+			occurrence++
 		} else {
-			if ocurrance == 1 {
-				ocurredOnceCount++
+			if occurrence == 1 {
+				occurredOnceCount++
 			}
 			sampleDistinct++
-			ocurrance = 1
+			occurrence = 1
 		}
 		lastValue = samples[i]
 	}
-	newValueProbability := float64(ocurredOnceCount) / float64(len(samples))
+	newValueProbability := float64(occurredOnceCount) / float64(len(samples))
 	unsampledCount := float64(count) - float64(len(samples))
 	estimatedDistinct := float64(sampleDistinct) + unsampledCount*newValueProbability
 	return int64(estimatedDistinct), nil
