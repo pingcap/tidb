@@ -119,8 +119,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Aggregate"
 	case *Distinct:
 		str = "Distinct"
-	case *Truncate:
-		str = "Truncate"
+	case *Trim:
+		str = "Trim"
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

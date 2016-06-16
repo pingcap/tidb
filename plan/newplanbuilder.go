@@ -32,11 +32,11 @@ func (b *planBuilder) allocID(p Plan) string {
 	return fmt.Sprintf("%T_%d", p, b.id)
 }
 
-func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncExpr, gby *ast.GroupByClause) Plan {
+func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncExpr, gby []expression.Expression, correlated bool) Plan {
 	newAggFuncList := make([]expression.AggregationFunction, 0, len(aggFuncList))
 	agg := &Aggregation{}
 	agg.id = b.allocID(agg)
-	agg.correlated = p.IsCorrelated()
+	agg.correlated = p.IsCorrelated() || correlated
 	addChild(agg, p)
 	schema := make([]*expression.Column, 0, len(aggFuncList))
 	for i, aggFunc := range aggFuncList {
@@ -55,22 +55,8 @@ func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncE
 		schema = append(schema, &expression.Column{FromID: agg.id,
 			ColName: model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, i))})
 	}
-	var gbyExprList []expression.Expression
-	if gby != nil {
-		gbyExprList = make([]expression.Expression, 0, len(gby.Items))
-		for _, gbyItem := range gby.Items {
-			gbyExpr, np, correlated, err := b.rewrite(gbyItem.Expr, p, nil)
-			if err != nil {
-				b.err = errors.Trace(err)
-				return nil
-			}
-			p = np
-			agg.correlated = correlated || agg.correlated
-			gbyExprList = append(gbyExprList, gbyExpr)
-		}
-	}
 	agg.AggFuncs = newAggFuncList
-	agg.GroupByItems = gbyExprList
+	agg.GroupByItems = gby
 	agg.SetSchema(schema)
 	return agg
 }
@@ -91,6 +77,9 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) Plan {
 			p = b.buildNewTableScanPlan(v)
 		default:
 			b.err = ErrUnsupportedType.Gen("unsupported table source type %T", v)
+			return nil
+		}
+		if b.err != nil {
 			return nil
 		}
 		if v, ok := p.(*NewTableScan); ok {
@@ -245,11 +234,12 @@ func (b *planBuilder) buildSelection(p Plan, where ast.ExprNode, mapper map[*ast
 	return selection
 }
 
-func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) Plan {
+func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (Plan, int) {
 	proj := &Projection{Exprs: make([]expression.Expression, 0, len(fields))}
 	proj.id = b.allocID(proj)
 	proj.correlated = p.IsCorrelated()
 	schema := make(expression.Schema, 0, len(fields))
+	oldLen := 0
 	for _, field := range fields {
 		var tblName, colName model.CIStr
 		if field.WildCard != nil {
@@ -269,12 +259,18 @@ func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper 
 					ColName: col.ColName,
 					RetType: newExpr.GetType()}
 				schema = append(schema, schemaCol)
+				if !field.Auxiliary {
+					oldLen++
+				}
 			}
 		} else {
 			newExpr, np, correlated, err := b.rewrite(field.Expr, p, mapper)
 			if err != nil {
 				b.err = errors.Trace(err)
-				return nil
+				return nil, oldLen
+			}
+			if !field.Auxiliary {
+				oldLen++
 			}
 			p = np
 			proj.correlated = proj.correlated || correlated
@@ -292,16 +288,18 @@ func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper 
 				fromID = proj.id
 			}
 			schemaCol := &expression.Column{
-				FromID:  fromID,
-				TblName: tblName,
-				ColName: colName,
-				RetType: newExpr.GetType()}
+				FromID:    fromID,
+				TblName:   tblName,
+				ColName:   colName,
+				RetType:   newExpr.GetType(),
+				Auxiliary: field.Auxiliary,
+			}
 			schema = append(schema, schemaCol)
 		}
 	}
 	proj.SetSchema(schema)
 	addChild(proj, p)
-	return proj
+	return proj, oldLen
 }
 
 func (b *planBuilder) buildNewDistinct(src Plan) Plan {
@@ -388,6 +386,7 @@ func (b *planBuilder) buildNewSort(p Plan, byItems []*ast.ByItem, mapper map[*as
 		it, np, correlated, err := b.rewrite(item.Expr, p, mapper)
 		if err != nil {
 			b.err = err
+			return nil
 		}
 		p = np
 		sort.correlated = sort.correlated || correlated
@@ -433,8 +432,8 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) (
 	for _, agg := range havingAggFuncs {
 		havingMapper[agg] = len(sel.Fields.Fields)
 		field := &ast.SelectField{Expr: agg,
-			AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields))),
-			Extra:  true}
+			AsName:    model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields))),
+			Auxiliary: true}
 		sel.Fields.Fields = append(sel.Fields.Fields, field)
 	}
 
@@ -454,8 +453,8 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) (
 	for _, agg := range orderByAggFuncs {
 		orderByMapper[agg] = len(sel.Fields.Fields)
 		field := &ast.SelectField{Expr: agg,
-			AsName: model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields))),
-			Extra:  true}
+			AsName:    model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields))),
+			Auxiliary: true}
 		sel.Fields.Fields = append(sel.Fields.Fields, field)
 	}
 
@@ -479,15 +478,126 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) (
 	return aggList, havingMapper, orderByMapper, totalAggMapper
 }
 
+type astColsReplacer struct {
+	proj    *Projection
+	inExpr  bool
+	orderBy bool
+	err     error
+}
+
+func (e *astColsReplacer) addProjectionExpr(projCol *expression.Column) {
+	e.proj.Exprs = append(e.proj.Exprs, projCol)
+	schemaCols, _ := projCol.DeepCopy().(*expression.Column)
+	schemaCols.Auxiliary = true
+	e.proj.schema = append(e.proj.schema, schemaCols)
+}
+
+func (e *astColsReplacer) Enter(inNode ast.Node) (ast.Node, bool) {
+	switch v := inNode.(type) {
+	case *ast.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr:
+	case *ast.ColumnName:
+		var first, second expression.Schema
+		fromSchema := e.proj.GetChildByIndex(0).GetSchema()
+		if e.orderBy && e.inExpr {
+			second, first = e.proj.GetSchema(), fromSchema
+		} else {
+			first, second = e.proj.GetSchema(), fromSchema
+		}
+		projCol, err := first.FindColumn(v)
+		if err != nil {
+			e.err = errors.Trace(err)
+			return inNode, true
+		}
+		if projCol == nil {
+			projCol, err = second.FindColumn(v)
+			if err != nil {
+				e.err = errors.Trace(err)
+				return inNode, true
+			}
+			if projCol == nil {
+				e.err = errors.Errorf("Can't find Column %s", v.Name)
+				return inNode, true
+			}
+			if !e.orderBy || !e.inExpr {
+				e.addProjectionExpr(projCol)
+			}
+		} else if e.orderBy && e.inExpr {
+			v.Table = projCol.TblName
+			e.addProjectionExpr(projCol)
+		}
+	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
+		return inNode, true
+	default:
+		e.inExpr = true
+	}
+	return inNode, false
+}
+
+func (e *astColsReplacer) Leave(inNode ast.Node) (ast.Node, bool) {
+	return inNode, true
+}
+
+type gbyColsReplacer struct {
+	fields []*ast.SelectField
+	schema expression.Schema
+	err    error
+}
+
+func (g *gbyColsReplacer) Enter(inNode ast.Node) (ast.Node, bool) {
+	switch inNode.(type) {
+	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
+		return inNode, true
+	}
+	return inNode, false
+}
+
+func (g *gbyColsReplacer) Leave(inNode ast.Node) (ast.Node, bool) {
+	switch v := inNode.(type) {
+	case *ast.ColumnNameExpr:
+		if col, err := g.schema.FindColumn(v.Name); err != nil {
+			g.err = errors.Trace(err)
+		} else if col == nil {
+			for _, field := range g.fields {
+				if field.WildCard == nil && v.Name.Table.L == "" && field.AsName.L == v.Name.Name.L {
+					return field.Expr, true
+				}
+			}
+			return inNode, false
+		}
+	}
+	return inNode, true
+}
+
+func (b *planBuilder) rewriteGbyExprs(p Plan, gby *ast.GroupByClause, fields []*ast.SelectField) (Plan, bool, []expression.Expression) {
+	exprs := make([]expression.Expression, 0, len(gby.Items))
+	correlated := false
+	for _, item := range gby.Items {
+		g := &gbyColsReplacer{fields: fields, schema: p.GetSchema()}
+		if g.err != nil {
+			b.err = errors.Trace(g.err)
+			return nil, false, nil
+		}
+		retExpr, _ := item.Expr.Accept(g)
+		expr, np, cor, err := b.rewrite(retExpr.(ast.ExprNode), p, nil)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil, false, nil
+		}
+		exprs = append(exprs, expr)
+		correlated = correlated || cor
+		p = np
+	}
+	return p, correlated, exprs
+}
+
 func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	hasAgg := b.detectSelectAgg(sel)
 	var aggFuncs []*ast.AggregateFuncExpr
 	var havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
-	if hasAgg {
-		aggFuncs, havingMap, orderMap, totalMap = b.extractAggFunc(sel)
-	}
 	var p Plan
 	if sel.From != nil {
+		var gbyCols []expression.Expression
+		var correlated bool
 		p = b.buildResultSetNode(sel.From.TableRefs)
 		if b.err != nil {
 			return nil
@@ -505,19 +615,51 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 			}
 		}
 		if hasAgg {
-			p = b.buildAggregation(p, aggFuncs, sel.GroupBy)
+			if sel.GroupBy != nil {
+				p, correlated, gbyCols = b.rewriteGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
+				if b.err != nil {
+					return nil
+				}
+			}
+			aggFuncs, havingMap, orderMap, totalMap = b.extractAggFunc(sel)
+		}
+		if hasAgg {
+			p = b.buildAggregation(p, aggFuncs, gbyCols, correlated)
 		}
 	} else {
+		if hasAgg {
+			aggFuncs, havingMap, orderMap, totalMap = b.extractAggFunc(sel)
+		}
 		if sel.Where != nil {
 			p = b.buildTableDual(sel)
 		}
 		if hasAgg {
-			p = b.buildAggregation(p, aggFuncs, nil)
+			p = b.buildAggregation(p, aggFuncs, nil, false)
 		}
 	}
-	p = b.buildProjection(p, sel.Fields.Fields, totalMap)
+	var oldLen int
+	p, oldLen = b.buildProjection(p, sel.Fields.Fields, totalMap)
 	if b.err != nil {
 		return nil
+	}
+	if sel.Having != nil && !hasAgg {
+		replacer := &astColsReplacer{proj: p.(*Projection)}
+		sel.Having.Expr.Accept(replacer)
+		if replacer.err != nil {
+			b.err = errors.Trace(replacer.err)
+			return nil
+		}
+	}
+	if sel.OrderBy != nil && !hasAgg {
+		replacer := &astColsReplacer{proj: p.(*Projection), orderBy: true}
+		for _, item := range sel.OrderBy.Items {
+			replacer.inExpr = false
+			item.Expr.Accept(replacer)
+			if replacer.err != nil {
+				b.err = errors.Trace(replacer.err)
+				return nil
+			}
+		}
 	}
 	if sel.Having != nil {
 		p = b.buildSelection(p, sel.Having.Expr, havingMap)
@@ -544,20 +686,14 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 			return nil
 		}
 	}
-	extraLen := 0
-	for _, field := range sel.Fields.Fields {
-		if field.Extra {
-			extraLen++
-		}
-	}
-	if extraLen > 0 {
-		return b.buildTruncate(p, len(p.GetSchema())-extraLen)
+	if oldLen != len(p.GetSchema()) {
+		return b.buildTrim(p, oldLen)
 	}
 	return p
 }
 
-func (b *planBuilder) buildTruncate(p Plan, len int) Plan {
-	trunc := &Truncate{}
+func (b *planBuilder) buildTrim(p Plan, len int) Plan {
+	trunc := &Trim{}
 	trunc.id = b.allocID(trunc)
 	addChild(trunc, p)
 	trunc.SetSchema(p.GetSchema().DeepCopy()[:len])
@@ -588,14 +724,18 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
 	return p
 }
 
-func (b *planBuilder) buildApply(p, innter Plan, schema expression.Schema) Plan {
+func (b *planBuilder) buildApply(p, inner Plan, schema expression.Schema) Plan {
 	ap := &Apply{
-		InnerPlan:   innter,
+		InnerPlan:   inner,
 		OuterSchema: schema,
 	}
 	ap.id = b.allocID(ap)
 	addChild(ap, p)
-	ap.SetSchema(append(p.GetSchema().DeepCopy(), innter.GetSchema().DeepCopy()...))
+	innerSchema := inner.GetSchema().DeepCopy()
+	for _, col := range innerSchema {
+		col.Auxiliary = true
+	}
+	ap.SetSchema(append(p.GetSchema().DeepCopy(), innerSchema...))
 	ap.correlated = p.IsCorrelated()
 	return ap
 }
@@ -611,10 +751,10 @@ func (b *planBuilder) buildExists(p Plan) Plan {
 }
 
 func (b *planBuilder) buildMaxOneRow(p Plan) Plan {
-	MaxOneRow := &MaxOneRow{}
-	MaxOneRow.id = b.allocID(MaxOneRow)
-	addChild(MaxOneRow, p)
-	MaxOneRow.SetSchema(p.GetSchema().DeepCopy())
-	MaxOneRow.correlated = p.IsCorrelated()
-	return MaxOneRow
+	maxOneRow := &MaxOneRow{}
+	maxOneRow.id = b.allocID(maxOneRow)
+	addChild(maxOneRow, p)
+	maxOneRow.SetSchema(p.GetSchema().DeepCopy())
+	maxOneRow.correlated = p.IsCorrelated()
+	return maxOneRow
 }

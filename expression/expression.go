@@ -57,11 +57,12 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 
 // Column represents a column.
 type Column struct {
-	FromID  string
-	ColName model.CIStr
-	DBName  model.CIStr
-	TblName model.CIStr
-	RetType *types.FieldType
+	FromID    string
+	ColName   model.CIStr
+	DBName    model.CIStr
+	TblName   model.CIStr
+	RetType   *types.FieldType
+	Auxiliary bool
 
 	// only used during execution
 	Index      int
@@ -126,10 +127,15 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 		if (dbName.L == "" || dbName.L == col.DBName.L) &&
 			(tblName.L == "" || tblName.L == col.TblName.L) &&
 			(colName.L == col.ColName.L) {
-			if idx != -1 {
+			// For SELECT 1-d as d FROM T having d + 1 < 0 order by d + 1 .
+			// having d + 1 resolve by 1-d as d, order by d + 1 resolve by T.d.
+			// Then the Select fields will become SELECT 1-d as d, t.d(aux) , there are two columns named d.
+			// For having d + 1, it's confused. So if we find a non-aux column named d, the aux one is ignored.
+			if idx != -1 && !col.Auxiliary {
 				return nil, errors.Errorf("Column '%s' is ambiguous", colName.L)
+			} else if idx == -1 {
+				idx = i
 			}
-			idx = i
 		}
 	}
 	if idx == -1 {

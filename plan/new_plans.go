@@ -105,8 +105,8 @@ type NewTableScan struct {
 	LimitCount *int64
 }
 
-// Truncate truncates child's rows.
-type Truncate struct {
+// Trim trims child's rows.
+type Trim struct {
 	basePlan
 }
 

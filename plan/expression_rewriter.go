@@ -139,6 +139,12 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		function.RetType = v.Type
 		er.ctxStack = er.ctxStack[:length-len(v.Args)]
 		er.ctxStack = append(er.ctxStack, function)
+	case *ast.PositionExpr:
+		if v.N > 0 && v.N <= len(er.schema) {
+			er.ctxStack = append(er.ctxStack, er.schema[v.N-1])
+		} else {
+			er.err = errors.Errorf("Position %d is out of range", v.N)
+		}
 	case *ast.ColumnName:
 		column, err := er.schema.FindColumn(v)
 		if err != nil {

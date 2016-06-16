@@ -183,8 +183,10 @@ func pruneColumnsAndResolveIndices(p Plan, parentUsedCols []*expression.Column) 
 		v.schema.InitIndices()
 		return nil, nil
 	case *Limit, *MaxOneRow:
-		return pruneColumnsAndResolveIndices(p.GetChildByIndex(0), parentUsedCols)
-	case *Truncate:
+		outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), parentUsedCols)
+		p.SetSchema(p.GetChildByIndex(0).GetSchema())
+		return outer, errors.Trace(err)
+	case *Trim:
 		used := makeUsedList(parentUsedCols, v.schema)
 		for i := len(used) - 1; i >= 0; i-- {
 			if !used[i] {
@@ -192,10 +194,7 @@ func pruneColumnsAndResolveIndices(p Plan, parentUsedCols []*expression.Column) 
 			}
 		}
 		outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), parentUsedCols)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return outer, err
+		return outer, errors.Trace(err)
 	case *Exists:
 		return pruneColumnsAndResolveIndices(p.GetChildByIndex(0), nil)
 	case *Join:
