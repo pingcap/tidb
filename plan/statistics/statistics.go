@@ -31,6 +31,17 @@ type Column struct {
 	NDV int64 // Number of distinct values.
 
 	// Histogram elements.
+	//
+	// A bucket number is the number of items stored in all previous buckets and the current bucket.
+	// bucket numbers are always in increasing order.
+	//
+	// A bucket value is the greatest item value stored in the bucket.
+	//
+	// Repeat is the number of repeats of the bucket value, it can be used to find popular values.
+	//
+	// We could have make a bucket struct contains number, value and repeat, but that would be harder to
+	// serialize, so we store every bucket field in its own slice instead. those slices all have
+	// the bucket count length.
 	Numbers []int64
 	Values  []types.Datum
 	Repeats []int64
@@ -51,8 +62,8 @@ type Table struct {
 	info        *model.TableInfo
 	TS          int64 // build timestamp.
 	Columns     []*Column
-	Count       int64
-	BucketCount int64
+	Count       int64 // Total row count in a table.
+	BucketCount int64 // Number of histogram bucket.
 }
 
 // String implements Stringer interface.
@@ -107,6 +118,8 @@ func (t *Table) buildColumn(offset int, samples []types.Datum) error {
 		Repeats: make([]int64, 1, t.BucketCount),
 	}
 	valuesPerBucket := t.Count/t.BucketCount + 1
+
+	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := t.Count / int64(len(samples))
 	bucketIdx := 0
 	var lastNumber int64
@@ -116,13 +129,18 @@ func (t *Table) buildColumn(offset int, samples []types.Datum) error {
 			return errors.Trace(err)
 		}
 		if cmp == 0 {
+			// The new item has the same value as current bucket value, to ensures that
+			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
+			// valuesPerBucket.
 			col.Numbers[bucketIdx] = i * sampleFactor
 			col.Repeats[bucketIdx] += sampleFactor
 		} else if i*sampleFactor-lastNumber < valuesPerBucket {
+			// The bucket still have room to store a new item, update the bucket.
 			col.Numbers[bucketIdx] = i * sampleFactor
 			col.Values[bucketIdx] = samples[i]
 			col.Repeats[bucketIdx] = 0
 		} else {
+			// The bucket is full, store the item in the next bucket.
 			lastNumber = col.Numbers[bucketIdx]
 			bucketIdx++
 			col.Numbers = append(col.Numbers, i*sampleFactor)
@@ -135,6 +153,8 @@ func (t *Table) buildColumn(offset int, samples []types.Datum) error {
 }
 
 // estimateNDV estimates the number of distinct value given a count and samples.
+// using simplified Good–Turing frequency estimation
+// See https://en.wikipedia.org/wiki/Good%E2%80%93Turing_frequency_estimation
 func estimateNDV(count int64, samples []types.Datum) (int64, error) {
 	lastValue := samples[0]
 	ocurrance := 1
