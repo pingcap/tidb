@@ -265,6 +265,8 @@ func (c *conditionChecker) newCheck(condition expression.Expression) bool {
 		return c.checkScalarFunction(x)
 	case *expression.Column:
 		return c.checkColumn(x)
+	case *expression.Constant:
+		return true
 	}
 	return false
 }
