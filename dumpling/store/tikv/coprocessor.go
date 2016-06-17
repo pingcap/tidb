@@ -299,17 +299,13 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) {
 	var backoffErr error
 	for backoff := rpcBackoff(); backoffErr == nil; backoffErr = backoff() {
-		client, err := it.store.getClient(task.region.GetAddress())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		req := &coprocessor.Request{
 			Context: task.region.GetContext(),
 			Tp:      proto.Int64(it.req.Tp),
 			Data:    it.req.Data,
 			Ranges:  task.pbRanges(),
 		}
-		resp, err := client.SendCopReq(req)
+		resp, err := it.store.client.SendCopReq(task.region.GetAddress(), req)
 		if err != nil {
 			it.store.regionCache.NextPeer(task.region.VerID())
 			err1 := it.rebuildCurrentTask(task)
