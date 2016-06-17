@@ -25,11 +25,9 @@ import (
 	"github.com/ngaut/deadline"
 )
 
-const (
-	DefaultBufSize = 4 * 1024
-)
+const defaultBufSize = 4 * 1024
 
-//not thread-safe
+// Conn is a simple wrapper of net.Conn.
 type Conn struct {
 	addr       string
 	nc         net.Conn
@@ -39,10 +37,12 @@ type Conn struct {
 	netTimeout int //second
 }
 
+// NetConnection creates a Conn with network timeout..
 func NewConnection(addr string, netTimeout int) (*Conn, error) {
-	return NewConnectionWithSize(addr, netTimeout, DefaultBufSize, DefaultBufSize)
+	return NewConnectionWithSize(addr, netTimeout, defaultBufSize, defaultBufSize)
 }
 
+// NewConnectionWithSize creates a Conn with network timeout and read/write buffer size.
 func NewConnectionWithSize(addr string, netTimeout int, readSize int, writeSize int) (*Conn, error) {
 	conn, err := net.DialTimeout("tcp", addr, time.Duration(netTimeout)*time.Second)
 	if err != nil {
@@ -53,41 +53,28 @@ func NewConnectionWithSize(addr string, netTimeout int, readSize int, writeSize 
 		addr:       addr,
 		nc:         conn,
 		closed:     false,
-		r:          bufio.NewReaderSize(conn, readSize),
+		r:          bufio.NewReaderSize(deadline.NewDeadlineReader(conn, time.Duration(netTimeout)*time.Second), readSize),
 		w:          bufio.NewWriterSize(deadline.NewDeadlineWriter(conn, time.Duration(netTimeout)*time.Second), writeSize),
 		netTimeout: netTimeout,
 	}, nil
 }
 
-//require read to use bufio
-func (c *Conn) Read(p []byte) (int, error) {
-	panic("not allowed")
-}
-
+// Flush writes buffered data to net.Conn.
 func (c *Conn) Flush() error {
 	return c.w.Flush()
 }
 
+// Write writes data to the bufio.Writer.
 func (c *Conn) Write(p []byte) (int, error) {
 	return c.w.Write(p)
 }
 
+// BufioReader returns a bufio.Reader for writing.
 func (c *Conn) BufioReader() *bufio.Reader {
 	return c.r
 }
 
-func (c *Conn) SetWriteDeadline(t time.Time) error {
-	return c.nc.SetWriteDeadline(t)
-}
-
-func (c *Conn) SetReadDeadline(t time.Time) error {
-	return c.nc.SetReadDeadline(t)
-}
-
-func (c *Conn) SetDeadline(t time.Time) error {
-	return c.nc.SetDeadline(t)
-}
-
+// Close closes the net.Conn.
 func (c *Conn) Close() {
 	if c.closed {
 		return

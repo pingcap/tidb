@@ -24,15 +24,17 @@ import (
 	"github.com/ngaut/pools"
 )
 
-const PoolIdleTimeoutSecond = 120
+const poolIdleTimeoutSeconds = 120
 
-type CreateConnFunc func(addr string) (*Conn, error)
+type cerateConnFunc func(addr string) (*Conn, error)
 
+// Pool is a TCP connection pool that maintains connections with a specific addr.
 type Pool struct {
 	p *pools.ResourcePool
 }
 
-func NewPool(addr string, capability int, f CreateConnFunc) *Pool {
+// NewPool creates a Pool.
+func NewPool(addr string, capability int, f cerateConnFunc) *Pool {
 	poolFunc := func() (pools.Resource, error) {
 		r, err := f(addr)
 		if err == nil && r == nil {
@@ -42,10 +44,11 @@ func NewPool(addr string, capability int, f CreateConnFunc) *Pool {
 	}
 
 	p := new(Pool)
-	p.p = pools.NewResourcePool(poolFunc, capability, capability, PoolIdleTimeoutSecond*time.Second)
+	p.p = pools.NewResourcePool(poolFunc, capability, capability, poolIdleTimeoutSeconds*time.Second)
 	return p
 }
 
+// GetConn takes a connection out of the pool.
 func (p *Pool) GetConn() (*Conn, error) {
 	conn, err := p.p.Get()
 	if err != nil {
@@ -55,6 +58,7 @@ func (p *Pool) GetConn() (*Conn, error) {
 	}
 }
 
+// PutConn puts a connection back to the pool.
 func (p *Pool) PutConn(c *Conn) {
 	if c == nil {
 		return
@@ -66,10 +70,12 @@ func (p *Pool) PutConn(c *Conn) {
 	}
 }
 
+// Close closes the pool.
 func (p *Pool) Close() {
 	p.p.Close()
 }
 
+// Pools maintains connections with multiple addrs.
 type Pools struct {
 	m sync.Mutex
 
@@ -77,10 +83,11 @@ type Pools struct {
 
 	mpools map[string]*Pool
 
-	f CreateConnFunc
+	f cerateConnFunc
 }
 
-func NewPools(capability int, f CreateConnFunc) *Pools {
+// NewPools creates a Pools.
+func NewPools(capability int, f cerateConnFunc) *Pools {
 	p := new(Pools)
 	p.f = f
 	p.capability = capability
@@ -88,6 +95,7 @@ func NewPools(capability int, f CreateConnFunc) *Pools {
 	return p
 }
 
+// GetConn takes a connection out of the pool by addr.
 func (p *Pools) GetConn(addr string) (*Conn, error) {
 	p.m.Lock()
 	pool, ok := p.mpools[addr]
@@ -100,6 +108,7 @@ func (p *Pools) GetConn(addr string) (*Conn, error) {
 	return pool.GetConn()
 }
 
+// PutConn puts a connection back to the pool.
 func (p *Pools) PutConn(c *Conn) {
 	if c == nil {
 		return
@@ -115,6 +124,7 @@ func (p *Pools) PutConn(c *Conn) {
 	}
 }
 
+// Close closes the pool.
 func (p *Pools) Close() {
 	p.m.Lock()
 	defer p.m.Unlock()
