@@ -85,7 +85,8 @@ type Pools struct {
 	f createConnFunc
 }
 
-// NewPools creates a Pools.
+// NewPools creates a Pools. It maintains a Pool for each address, and each Pool
+// has the same capability.
 func NewPools(capability int, f createConnFunc) *Pools {
 	p := new(Pools)
 	p.f = f
