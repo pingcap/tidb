@@ -158,8 +158,12 @@ func (r *rangeBuilder) buildFromColumn(expr *expression.Column) []rangePoint {
 	return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
-// TODO: It only implements the binary operation range building. And it needs to implement other scalar functions.
 func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []rangePoint {
+	// TODO: It only implements the binary operation range building. And it needs to implement other scalar functions.
+	if len(expr.Args) != 2 {
+		return nil
+	}
+
 	if expr.FuncName.L == ast.OrOr {
 		return r.union(r.newBuild(expr.Args[0]), r.newBuild(expr.Args[1]))
 	}
