@@ -1379,6 +1379,20 @@ func (s *testSuite) TestNewSubquery(c *C) {
 	plan.UseNewPlanner = false
 }
 
+func (s *testSuite) TestNewTableDual(c *C) {
+	plan.UseNewPlanner = true
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	result := tk.MustQuery("Select 1 from dual")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("Select count(*) from dual")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("Select 1 from dual where 1")
+	result.Check(testkit.Rows("1"))
+	plan.UseNewPlanner = false
+}
+
 func (s *testSuite) TestAggregation(c *C) {
 	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()

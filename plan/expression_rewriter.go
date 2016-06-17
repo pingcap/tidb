@@ -15,8 +15,13 @@ import (
 // EvalSubquery evaluates incorrelated subqueries once.
 var EvalSubquery func(p Plan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
 
-func (b *planBuilder) rewrite(expr ast.ExprNode, p Plan, aggMapper map[*ast.AggregateFuncExpr]int) (newExpr expression.Expression, newPlan Plan, correlated bool, err error) {
-	er := &expressionRewriter{p: p, aggrMap: aggMapper, schema: p.GetSchema(), b: b}
+func (b *planBuilder) rewrite(expr ast.ExprNode, p Plan, aggMapper map[*ast.AggregateFuncExpr]int) (
+	newExpr expression.Expression, newPlan Plan, correlated bool, err error) {
+	var schema expression.Schema
+	if p != nil {
+		schema = p.GetSchema()
+	}
+	er := &expressionRewriter{p: p, aggrMap: aggMapper, schema: schema, b: b}
 	expr.Accept(er)
 	if er.err != nil {
 		return nil, nil, false, errors.Trace(er.err)

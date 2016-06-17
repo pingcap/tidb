@@ -90,8 +90,13 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 }
 
 func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
+	var src NewExecutor
+	if v.GetChildByIndex(0) != nil {
+		src = b.build(v.GetChildByIndex(0)).(NewExecutor)
+	}
+
 	return &AggregationExec{
-		Src:          b.build(v.GetChildByIndex(0)).(NewExecutor),
+		Src:          src,
 		schema:       v.GetSchema(),
 		ctx:          b.ctx,
 		AggFuncs:     v.AggFuncs,
@@ -111,6 +116,14 @@ func (b *executorBuilder) toPBExpr(conditions []expression.Expression, tbl *mode
 }
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
+	if v.GetChildByIndex(0) == nil {
+		return &SelectionExec{
+			Condition: composeCondition(v.Conditions),
+			schema:    v.GetSchema(),
+			ctx:       b.ctx,
+		}
+	}
+
 	exec := b.build(v.GetChildByIndex(0))
 	switch exec.(type) {
 	case *NewTableScanExec:
@@ -132,12 +145,20 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 }
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
+	var src NewExecutor
+	if v.GetChildByIndex(0) != nil {
+		src = b.build(v.GetChildByIndex(0)).(NewExecutor)
+	}
 	return &ProjectionExec{
-		Src:    b.build(v.GetChildByIndex(0)).(NewExecutor),
+		Src:    src,
 		ctx:    b.ctx,
 		exprs:  v.Exprs,
 		schema: v.GetSchema(),
 	}
+}
+
+func (b *executorBuilder) buildNewTableDual(v *plan.NewTableDual) Executor {
+	return &NewTableDualExec{schema: v.GetSchema()}
 }
 
 func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan) Executor {

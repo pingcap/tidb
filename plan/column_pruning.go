@@ -69,6 +69,10 @@ func pruneColumnsAndResolveIndices(p Plan, parentUsedCols []*expression.Column) 
 		for _, expr := range v.Exprs {
 			cols, outerCols = extractColumn(expr, cols, outerCols)
 		}
+		if p.GetChildByIndex(0) == nil {
+			return used, outerCols, nil
+		}
+
 		_, outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), cols)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -121,6 +125,10 @@ func pruneColumnsAndResolveIndices(p Plan, parentUsedCols []*expression.Column) 
 		for _, expr := range v.GroupByItems {
 			cols, outerCols = extractColumn(expr, cols, outerCols)
 		}
+		if p.GetChildByIndex(0) == nil {
+			return used, outerCols, nil
+		}
+
 		_, outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), cols)
 		if err != nil {
 			return nil, nil, errors.Trace(err)

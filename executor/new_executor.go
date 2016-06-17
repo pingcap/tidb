@@ -373,8 +373,12 @@ func (e *AggregationExec) innerNext() (ret bool, err error) {
 		e.groupMap[string(groupKey)] = true
 		e.groups = append(e.groups, groupKey)
 	}
+	var srcRowData []types.Datum
+	if srcRow != nil {
+		srcRowData = srcRow.Data
+	}
 	for _, af := range e.AggFuncs {
-		af.Update(srcRow.Data, groupKey, e.ctx)
+		af.Update(srcRowData, groupKey, e.ctx)
 	}
 	return true, nil
 }
@@ -439,8 +443,12 @@ func (e *ProjectionExec) Next() (retRow *Row, err error) {
 		RowKeys: rowKeys,
 		Data:    make([]types.Datum, 0, len(e.exprs)),
 	}
+	var srcRowData []types.Datum
+	if srcRow != nil {
+		srcRowData = srcRow.Data
+	}
 	for _, expr := range e.exprs {
-		val, err := expr.Eval(srcRow.Data, e.ctx)
+		val, err := expr.Eval(srcRowData, e.ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -454,6 +462,41 @@ func (e *ProjectionExec) Close() error {
 	if e.Src != nil {
 		return e.Src.Close()
 	}
+	return nil
+}
+
+// NewTableDualExec represents a dual table executor.
+type NewTableDualExec struct {
+	schema   expression.Schema
+	executed bool
+}
+
+// Init implements NewExecutor Init interface.
+func (e *NewTableDualExec) Init() {
+	e.executed = false
+}
+
+// Schema implements Executor Schema interface.
+func (e *NewTableDualExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Fields implements Executor Fields interface.
+func (e *NewTableDualExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Next implements Executor Next interface.
+func (e *NewTableDualExec) Next() (*Row, error) {
+	if e.executed {
+		return nil, nil
+	}
+	e.executed = true
+	return &Row{}, nil
+}
+
+// Close implements Executor interface.
+func (e *NewTableDualExec) Close() error {
 	return nil
 }
 
