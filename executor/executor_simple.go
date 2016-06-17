@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
@@ -330,7 +329,14 @@ const (
 )
 
 func (e *SimpleExec) createStatisticsForTable(tn *ast.TableName) error {
-	result, err := e.selectTable(tn)
+	var tableName string
+	if tn.Schema.L == "" {
+		tableName = tn.Name.L
+	} else {
+		tableName = tn.Schema.L + "." + tn.Name.L
+	}
+	sql := "select * from " + tableName
+	result, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -346,29 +352,8 @@ func (e *SimpleExec) createStatisticsForTable(tn *ast.TableName) error {
 	return nil
 }
 
-func (e *SimpleExec) selectTable(tn *ast.TableName) (ast.RecordSet, error) {
-	var tableName string
-	if tn.Schema.L == "" {
-		tableName = tn.Name.L
-	} else {
-		tableName = tn.Schema.L + "." + tn.Name.L
-	}
-	st, err := parser.ParseOneStmt("select * from "+tableName, "", "")
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	compiler := &Compiler{}
-	stmt, err := compiler.Compile(e.ctx, st)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	result, err := stmt.Exec(e.ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return result, nil
-}
-
+// collectSamples collects sample from the result set, use Reservoir Sampling algorithm.
+// See https://en.wikipedia.org/wiki/Reservoir_sampling
 func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples []*ast.Row, err error) {
 	ran := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for {
@@ -383,7 +368,6 @@ func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples 
 		if len(samples) < maxSampleCount {
 			samples = append(samples, row)
 		} else {
-			// Reservoir sampling, replace a random old item with new item.
 			idx := ran.Intn(maxSampleCount)
 			samples[idx] = row
 		}
