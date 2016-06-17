@@ -26,7 +26,7 @@ import (
 
 const poolIdleTimeoutSeconds = 120
 
-type cerateConnFunc func(addr string) (*Conn, error)
+type createConnFunc func(addr string) (*Conn, error)
 
 // Pool is a TCP connection pool that maintains connections with a specific addr.
 type Pool struct {
@@ -34,7 +34,7 @@ type Pool struct {
 }
 
 // NewPool creates a Pool.
-func NewPool(addr string, capability int, f cerateConnFunc) *Pool {
+func NewPool(addr string, capability int, f createConnFunc) *Pool {
 	poolFunc := func() (pools.Resource, error) {
 		r, err := f(addr)
 		if err == nil && r == nil {
@@ -82,11 +82,11 @@ type Pools struct {
 
 	mpools map[string]*Pool
 
-	f cerateConnFunc
+	f createConnFunc
 }
 
 // NewPools creates a Pools.
-func NewPools(capability int, f cerateConnFunc) *Pools {
+func NewPools(capability int, f createConnFunc) *Pools {
 	p := new(Pools)
 	p.f = f
 	p.capability = capability
