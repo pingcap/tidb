@@ -53,9 +53,8 @@ func (p *Pool) GetConn() (*Conn, error) {
 	conn, err := p.p.Get()
 	if err != nil {
 		return nil, errors.Trace(err)
-	} else {
-		return conn.(*Conn), nil
 	}
+	return conn.(*Conn), nil
 }
 
 // PutConn puts a connection back to the pool.

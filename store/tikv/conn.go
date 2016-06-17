@@ -37,7 +37,7 @@ type Conn struct {
 	netTimeout int //second
 }
 
-// NetConnection creates a Conn with network timeout..
+// NewConnection creates a Conn with network timeout..
 func NewConnection(addr string, netTimeout int) (*Conn, error) {
 	return NewConnectionWithSize(addr, netTimeout, defaultBufSize, defaultBufSize)
 }

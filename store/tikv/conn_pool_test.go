@@ -77,8 +77,8 @@ func (s *testPoolSuite) TestPool(c *C) {
 
 	// get all connections again, now only one needs to be created
 	for i := 0; i < capability; i++ {
-		conn, err := p.GetConn()
-		c.Assert(err, IsNil)
+		conn, err1 := p.GetConn()
+		c.Assert(err1, IsNil)
 		conns = append(conns, conn)
 	}
 
