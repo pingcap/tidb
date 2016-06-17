@@ -1,7 +1,7 @@
 {
 	"ImportPath": "github.com/pingcap/tidb",
 	"GoVersion": "go1.6",
-	"GodepVersion": "v62",
+	"GodepVersion": "v73",
 	"Packages": [
 		"./..."
 	],
@@ -93,47 +93,51 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/coprocessor",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/errorpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/kvrpcpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/metapb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
+		},
+		{
+			"ImportPath": "github.com/pingcap/kvproto/pkg/mvccpb",
+			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/msgpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/pdpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_cmdpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_serverpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raftpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/util",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/pd/pd-client",
-			"Rev": "0845734139d16f5f15e10514e5c70a6705223120"
+			"Rev": "b90d5110f92c2357992afb280b864af8b3cd2353"
 		},
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-tipb",
@@ -294,6 +298,10 @@
 		{
 			"ImportPath": "gopkg.in/fatih/pool.v2",
 			"Rev": "cba550ebf9bce999a02e963296d4bc7a486cb715"
+		},
+		{
+			"ImportPath": "github.com/pingcap/kvproto/pkg/kvpb",
+			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
 		}
 	]
 }

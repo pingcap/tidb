@@ -20,6 +20,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/kvproto/pkg/kvpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
@@ -107,11 +108,15 @@ func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v 
 	pending := batch.keys
 	var backoffErr error
 	for backoff := txnLockBackoff(); backoffErr == nil; backoffErr = backoff() {
+		rows := make([]*kvpb.Row, len(pending))
+		for i := range pending {
+			rows[i] = defaultRow(pending[i])
+		}
 		req := &pb.Request{
 			Type: pb.MessageType_CmdBatchGet.Enum(),
 			CmdBatchGetReq: &pb.CmdBatchGetRequest{
-				Keys:    pending,
-				Version: proto.Uint64(s.version.Ver),
+				Rows: rows,
+				Ts:   proto.Uint64(s.version.Ver),
 			},
 		}
 		resp, err := s.store.SendKVReq(req, batch.region)
@@ -127,10 +132,10 @@ func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v 
 			return errors.Trace(errBodyMissing)
 		}
 		var lockedKeys [][]byte
-		for _, pair := range batchGetResp.Pairs {
-			keyErr := pair.GetError()
+		for _, rowValue := range batchGetResp.GetRowValues() {
+			keyErr := rowValue.GetError()
 			if keyErr == nil {
-				collectF(pair.GetKey(), pair.GetValue())
+				collectF(rowValue.GetRowKey(), defaultRowValue(rowValue))
 				continue
 			}
 			// This could be slow if we meet many expired locks.
@@ -140,10 +145,10 @@ func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v 
 				if terror.ErrorNotEqual(err, errInnerRetryable) {
 					return errors.Trace(err)
 				}
-				lockedKeys = append(lockedKeys, pair.GetKey())
+				lockedKeys = append(lockedKeys, rowValue.GetRowKey())
 				continue
 			}
-			collectF(pair.GetKey(), val)
+			collectF(rowValue.GetRowKey(), val)
 		}
 		if len(lockedKeys) > 0 {
 			pending = lockedKeys
@@ -159,8 +164,8 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdGet.Enum(),
 		CmdGetReq: &pb.CmdGetRequest{
-			Key:     k,
-			Version: proto.Uint64(s.version.Ver),
+			Row: defaultRow(k),
+			Ts:  proto.Uint64(s.version.Ver),
 		},
 	}
 
@@ -186,8 +191,12 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 		if cmdGetResp == nil {
 			return nil, errors.Trace(errBodyMissing)
 		}
-		val := cmdGetResp.GetValue()
-		if keyErr := cmdGetResp.GetError(); keyErr != nil {
+		rowVal := cmdGetResp.GetRow()
+		if rowVal == nil {
+			return nil, errors.Trace(errBodyMissing)
+		}
+		var val []byte
+		if keyErr := rowVal.GetError(); keyErr != nil {
 			val, err = s.handleKeyError(keyErr)
 			if err != nil {
 				if terror.ErrorEqual(err, errInnerRetryable) {
@@ -196,6 +205,8 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 				}
 				return nil, errors.Trace(err)
 			}
+		} else {
+			val = defaultRowValue(rowVal)
 		}
 		if len(val) == 0 {
 			return nil, kv.ErrNotExist
@@ -220,7 +231,7 @@ func (s *tikvSnapshot) SeekReverse(k kv.Key) (kv.Iterator, error) {
 func (s *tikvSnapshot) Release() {
 }
 
-func extractLockInfoFromKeyErr(keyErr *pb.KeyError) (*pb.LockInfo, error) {
+func extractLockInfoFromKeyErr(keyErr *kvpb.KeyError) (*kvpb.LockInfo, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
 		return locked, nil
 	}
@@ -238,12 +249,12 @@ func extractLockInfoFromKeyErr(keyErr *pb.KeyError) (*pb.LockInfo, error) {
 }
 
 // handleKeyError tries to resolve locks then retry to get value.
-func (s *tikvSnapshot) handleKeyError(keyErr *pb.KeyError) ([]byte, error) {
+func (s *tikvSnapshot) handleKeyError(keyErr *kvpb.KeyError) ([]byte, error) {
 	lockInfo, err := extractLockInfoFromKeyErr(keyErr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	lock := newLock(s.store, lockInfo.GetPrimaryLock(), lockInfo.GetLockVersion(), lockInfo.GetKey(), s.version.Ver)
+	lock := newLock(s.store, lockInfo.GetPrimary(), lockInfo.GetTs(), lockInfo.GetRow(), s.version.Ver)
 	val, err := lock.cleanup()
 	if err != nil {
 		return nil, errors.Trace(err)

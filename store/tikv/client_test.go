@@ -64,9 +64,9 @@ func (s *testClientSuite) TestSendBySelf(c *C) {
 	req := new(pb.Request)
 	req.Type = pb.MessageType_CmdGet.Enum()
 	getReq := new(pb.CmdGetRequest)
-	getReq.Key = []byte("a")
+	getReq.Row = defaultRow([]byte("a"))
 	ver := uint64(0)
-	getReq.Version = &ver
+	getReq.Ts = &ver
 	req.CmdGetReq = getReq
 	resp, err := cli.SendKVReq(req)
 	c.Assert(err, IsNil)

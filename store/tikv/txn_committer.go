@@ -20,6 +20,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/kvproto/pkg/kvpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
@@ -30,7 +31,7 @@ type txnCommitter struct {
 	txn         *tikvTxn
 	startTS     uint64
 	keys        [][]byte
-	mutations   map[string]*pb.Mutation
+	mutations   map[string]*kvpb.Mutation
 	commitTS    uint64
 	mu          sync.RWMutex
 	writtenKeys [][]byte
@@ -40,18 +41,21 @@ type txnCommitter struct {
 
 func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	var keys [][]byte
-	mutations := make(map[string]*pb.Mutation)
+	mutations := make(map[string]*kvpb.Mutation)
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
-			mutations[string(k)] = &pb.Mutation{
-				Op:    pb.Op_Put.Enum(),
-				Key:   k,
-				Value: v,
+			mutations[string(k)] = &kvpb.Mutation{
+				RowKey:  k,
+				Ops:     []kvpb.Op{kvpb.Op_Put},
+				Columns: defaultColumn,
+				Values:  [][]byte{v},
 			}
 		} else {
-			mutations[string(k)] = &pb.Mutation{
-				Op:  pb.Op_Del.Enum(),
-				Key: k,
+			mutations[string(k)] = &kvpb.Mutation{
+				RowKey:  k,
+				Ops:     []kvpb.Op{kvpb.Op_Del},
+				Columns: defaultColumn,
+				Values:  [][]byte{nil},
 			}
 		}
 		keys = append(keys, k)
@@ -67,9 +71,11 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	}
 	for _, lockKey := range txn.lockKeys {
 		if _, ok := mutations[string(lockKey)]; !ok {
-			mutations[string(lockKey)] = &pb.Mutation{
-				Op:  pb.Op_Lock.Enum(),
-				Key: lockKey,
+			mutations[string(lockKey)] = &kvpb.Mutation{
+				RowKey:  lockKey,
+				Ops:     []kvpb.Op{kvpb.Op_Lock},
+				Columns: defaultColumn,
+				Values:  [][]byte{nil},
 			}
 			keys = append(keys, lockKey)
 		}
@@ -162,7 +168,9 @@ func (c *txnCommitter) doBatches(batches []batchKeys, f func(batchKeys) error) e
 func (c *txnCommitter) keyValueSize(key []byte) int {
 	size := c.keySize(key)
 	if mutation := c.mutations[string(key)]; mutation != nil {
-		size += len(mutation.Value)
+		for _, val := range mutation.Values {
+			size += len(val)
+		}
 	}
 	return size
 }
@@ -172,16 +180,16 @@ func (c *txnCommitter) keySize(key []byte) int {
 }
 
 func (c *txnCommitter) prewriteSingleRegion(batch batchKeys) error {
-	mutations := make([]*pb.Mutation, len(batch.keys))
+	mutations := make([]*kvpb.Mutation, len(batch.keys))
 	for i, k := range batch.keys {
 		mutations[i] = c.mutations[string(k)]
 	}
 	req := &pb.Request{
 		Type: pb.MessageType_CmdPrewrite.Enum(),
 		CmdPrewriteReq: &pb.CmdPrewriteRequest{
-			Mutations:    mutations,
-			PrimaryLock:  c.primary(),
-			StartVersion: proto.Uint64(c.startTS),
+			Mutations: mutations,
+			Primary:   c.primary(),
+			Ts:        proto.Uint64(c.startTS),
 		},
 	}
 
@@ -217,7 +225,7 @@ func (c *txnCommitter) prewriteSingleRegion(batch batchKeys) error {
 				// It could be `Retryable` or `Abort`.
 				return errors.Trace(err)
 			}
-			lock := newLock(c.store, lockInfo.GetPrimaryLock(), lockInfo.GetLockVersion(), lockInfo.GetKey(), c.startTS)
+			lock := newLock(c.store, lockInfo.GetPrimary(), lockInfo.GetTs(), lockInfo.GetRow(), c.startTS)
 			_, err = lock.cleanup()
 			if err != nil && terror.ErrorNotEqual(err, errInnerRetryable) {
 				return errors.Trace(err)
@@ -231,9 +239,9 @@ func (c *txnCommitter) commitSingleRegion(batch batchKeys) error {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdCommit.Enum(),
 		CmdCommitReq: &pb.CmdCommitRequest{
-			StartVersion:  proto.Uint64(c.startTS),
-			Keys:          batch.keys,
-			CommitVersion: proto.Uint64(c.commitTS),
+			StartTs:  proto.Uint64(c.startTS),
+			Rows:     batch.keys,
+			CommitTs: proto.Uint64(c.commitTS),
 		},
 	}
 
@@ -277,8 +285,8 @@ func (c *txnCommitter) cleanupSingleRegion(batch batchKeys) error {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdBatchRollback.Enum(),
 		CmdBatchRollbackReq: &pb.CmdBatchRollbackRequest{
-			Keys:         batch.keys,
-			StartVersion: proto.Uint64(c.startTS),
+			Ts:   proto.Uint64(c.startTS),
+			Rows: batch.keys,
 		},
 	}
 	resp, err := c.store.SendKVReq(req, batch.region)

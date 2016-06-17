@@ -18,6 +18,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 )
@@ -131,51 +132,55 @@ func (h *rpcHandler) keyInRegion(key []byte) bool {
 }
 
 func (h *rpcHandler) onGet(req *kvrpcpb.CmdGetRequest) *kvrpcpb.CmdGetResponse {
-	if !h.keyInRegion(req.Key) {
+	if !h.keyInRegion(req.GetRow().GetRowKey()) {
 		panic("onGet: key not in region")
 	}
 
-	val, err := h.mvccStore.Get(req.Key, req.GetVersion())
+	vals, err := h.mvccStore.Get(req.GetRow().GetRowKey(), req.GetRow().GetColumns(), req.GetTs())
 	if err != nil {
 		return &kvrpcpb.CmdGetResponse{
-			Error: convertToKeyError(err),
+			Row: &kvpb.RowValue{
+				Error: convertToKeyError(err),
+			},
 		}
 	}
 	return &kvrpcpb.CmdGetResponse{
-		Value: val,
+		Row: &kvpb.RowValue{
+			Values: vals,
+		},
 	}
 }
 
 func (h *rpcHandler) onScan(req *kvrpcpb.CmdScanRequest) *kvrpcpb.CmdScanResponse {
-	if !h.keyInRegion(req.GetStartKey()) {
+	if !h.keyInRegion(req.GetStartRow().GetRowKey()) {
 		panic("onScan: startKey not in region")
 	}
-	pairs := h.mvccStore.Scan(req.GetStartKey(), h.endKey, int(req.GetLimit()), req.GetVersion())
+	rows := h.mvccStore.Scan(req.GetStartRow().GetRowKey(), h.endKey, req.GetStartRow().GetColumns(), int(req.GetLimit()), req.GetTs())
 	return &kvrpcpb.CmdScanResponse{
-		Pairs: convertToPbPairs(pairs),
+		Rows: convertToPbRows(rows),
 	}
 }
 
 func (h *rpcHandler) onPrewrite(req *kvrpcpb.CmdPrewriteRequest) *kvrpcpb.CmdPrewriteResponse {
 	for _, m := range req.Mutations {
-		if !h.keyInRegion(m.Key) {
+		if !h.keyInRegion(m.GetRowKey()) {
 			panic("onPrewrite: key not in region")
 		}
 	}
-	errors := h.mvccStore.Prewrite(req.Mutations, req.PrimaryLock, req.GetStartVersion())
+	errors := h.mvccStore.Prewrite(req.GetMutations(), req.GetPrimary(), req.GetTs())
 	return &kvrpcpb.CmdPrewriteResponse{
 		Errors: convertToKeyErrors(errors),
 	}
 }
 
 func (h *rpcHandler) onCommit(req *kvrpcpb.CmdCommitRequest) *kvrpcpb.CmdCommitResponse {
-	for _, k := range req.Keys {
-		if !h.keyInRegion(k) {
+	for _, rowKey := range req.GetRows() {
+		if !h.keyInRegion(rowKey) {
 			panic("onCommit: key not in region")
 		}
 	}
 	var resp kvrpcpb.CmdCommitResponse
-	err := h.mvccStore.Commit(req.Keys, req.GetStartVersion(), req.GetCommitVersion())
+	err := h.mvccStore.Commit(req.GetRows(), req.GetStartTs(), req.GetCommitTs())
 	if err != nil {
 		resp.Error = convertToKeyError(err)
 	}
@@ -183,14 +188,14 @@ func (h *rpcHandler) onCommit(req *kvrpcpb.CmdCommitRequest) *kvrpcpb.CmdCommitR
 }
 
 func (h *rpcHandler) onCleanup(req *kvrpcpb.CmdCleanupRequest) *kvrpcpb.CmdCleanupResponse {
-	if !h.keyInRegion(req.Key) {
+	if !h.keyInRegion(req.GetRow()) {
 		panic("onCleanup: key not in region")
 	}
 	var resp kvrpcpb.CmdCleanupResponse
-	err := h.mvccStore.Cleanup(req.Key, req.GetStartVersion())
+	err := h.mvccStore.Cleanup(req.GetRow(), req.GetTs())
 	if err != nil {
 		if commitTS, ok := err.(ErrAlreadyCommitted); ok {
-			resp.CommitVersion = proto.Uint64(uint64(commitTS))
+			resp.CommitTs = proto.Uint64(uint64(commitTS))
 		} else {
 			resp.Error = convertToKeyError(err)
 		}
@@ -199,69 +204,81 @@ func (h *rpcHandler) onCleanup(req *kvrpcpb.CmdCleanupRequest) *kvrpcpb.CmdClean
 }
 
 func (h *rpcHandler) onCommitThenGet(req *kvrpcpb.CmdCommitThenGetRequest) *kvrpcpb.CmdCommitThenGetResponse {
-	if !h.keyInRegion(req.Key) {
+	if !h.keyInRegion(req.GetRow().GetRowKey()) {
 		panic("onCommitThenGet: key not in region")
 	}
-	val, err := h.mvccStore.CommitThenGet(req.Key, req.GetLockVersion(), req.GetCommitVersion(), req.GetGetVersion())
+	vals, err := h.mvccStore.CommitThenGet(req.GetRow().GetRowKey(), req.GetRow().GetColumns(), req.GetStartTs(), req.GetCommitTs(), req.GetGetTs())
 	if err != nil {
 		return &kvrpcpb.CmdCommitThenGetResponse{
-			Error: convertToKeyError(err),
+			RowValue: &kvpb.RowValue{
+				Error: convertToKeyError(err),
+			},
 		}
 	}
 	return &kvrpcpb.CmdCommitThenGetResponse{
-		Value: val,
+		RowValue: &kvpb.RowValue{
+			Values: vals,
+		},
 	}
 }
 
 func (h *rpcHandler) onRollbackThenGet(req *kvrpcpb.CmdRollbackThenGetRequest) *kvrpcpb.CmdRollbackThenGetResponse {
-	if !h.keyInRegion(req.Key) {
+	if !h.keyInRegion(req.GetRow().GetRowKey()) {
 		panic("onRollbackThenGet: key not in region")
 	}
-	val, err := h.mvccStore.RollbackThenGet(req.Key, req.GetLockVersion())
+	vals, err := h.mvccStore.RollbackThenGet(req.GetRow().GetRowKey(), req.GetRow().GetColumns(), req.GetTs())
 	if err != nil {
 		return &kvrpcpb.CmdRollbackThenGetResponse{
-			Error: convertToKeyError(err),
+			RowValue: &kvpb.RowValue{
+				Error: convertToKeyError(err),
+			},
 		}
 	}
 	return &kvrpcpb.CmdRollbackThenGetResponse{
-		Value: val,
+		RowValue: &kvpb.RowValue{
+			Values: vals,
+		},
 	}
 }
 
 func (h *rpcHandler) onBatchGet(req *kvrpcpb.CmdBatchGetRequest) *kvrpcpb.CmdBatchGetResponse {
-	for _, k := range req.Keys {
-		if !h.keyInRegion(k) {
+	rowKeys := make([][]byte, len(req.GetRows()))
+	cols := make([][][]byte, len(req.GetRows()))
+	for i, row := range req.GetRows() {
+		if !h.keyInRegion(row.GetRowKey()) {
 			panic("onBatchGet: key not in region")
 		}
+		rowKeys[i] = row.GetRowKey()
+		cols[i] = row.GetColumns()
 	}
-	pairs := h.mvccStore.BatchGet(req.Keys, req.GetVersion())
+	rows := h.mvccStore.BatchGet(rowKeys, cols, req.GetTs())
 	return &kvrpcpb.CmdBatchGetResponse{
-		Pairs: convertToPbPairs(pairs),
+		RowValues: convertToPbRows(rows),
 	}
 }
 
-func convertToKeyError(err error) *kvrpcpb.KeyError {
+func convertToKeyError(err error) *kvpb.KeyError {
 	if locked, ok := err.(*ErrLocked); ok {
-		return &kvrpcpb.KeyError{
-			Locked: &kvrpcpb.LockInfo{
-				Key:         locked.Key,
-				PrimaryLock: locked.Primary,
-				LockVersion: proto.Uint64(locked.StartTS),
+		return &kvpb.KeyError{
+			Locked: &kvpb.LockInfo{
+				Row:     locked.Key,
+				Primary: locked.Primary,
+				Ts:      proto.Uint64(locked.StartTS),
 			},
 		}
 	}
 	if retryable, ok := err.(ErrRetryable); ok {
-		return &kvrpcpb.KeyError{
+		return &kvpb.KeyError{
 			Retryable: proto.String(retryable.Error()),
 		}
 	}
-	return &kvrpcpb.KeyError{
+	return &kvpb.KeyError{
 		Abort: proto.String(err.Error()),
 	}
 }
 
-func convertToKeyErrors(errs []error) []*kvrpcpb.KeyError {
-	var errors []*kvrpcpb.KeyError
+func convertToKeyErrors(errs []error) []*kvpb.KeyError {
+	var errors []*kvpb.KeyError
 	for _, err := range errs {
 		if err != nil {
 			errors = append(errors, convertToKeyError(err))
@@ -270,23 +287,24 @@ func convertToKeyErrors(errs []error) []*kvrpcpb.KeyError {
 	return errors
 }
 
-func convertToPbPairs(pairs []Pair) []*kvrpcpb.KvPair {
-	var kvPairs []*kvrpcpb.KvPair
-	for _, p := range pairs {
-		var kvPair *kvrpcpb.KvPair
-		if p.Err == nil {
-			kvPair = &kvrpcpb.KvPair{
-				Key:   p.Key,
-				Value: p.Value,
+func convertToPbRows(rows []Row) []*kvpb.RowValue {
+	pbRows := make([]*kvpb.RowValue, len(rows))
+	for i, r := range rows {
+		var pbRow *kvpb.RowValue
+		if r.Err == nil {
+			pbRow = &kvpb.RowValue{
+				RowKey:  r.RowKey,
+				Columns: r.Columns,
+				Values:  r.Values,
 			}
 		} else {
-			kvPair = &kvrpcpb.KvPair{
-				Error: convertToKeyError(p.Err),
+			pbRow = &kvpb.RowValue{
+				Error: convertToKeyError(r.Err),
 			}
 		}
-		kvPairs = append(kvPairs, kvPair)
+		pbRows[i] = pbRow
 	}
-	return kvPairs
+	return pbRows
 }
 
 // RPCClient sends kv RPC calls to mock cluster.
@@ -303,7 +321,7 @@ func (c *RPCClient) SendKVReq(req *kvrpcpb.Request) (*kvrpcpb.Response, error) {
 		return nil, errors.New("connect fail")
 	}
 	handler := newRPCHandler(c.cluster, c.mvccStore, store.GetId())
-	return handler.handleRequest(req), nil
+	return handler.handleRequest(proto.Clone(req).(*kvrpcpb.Request)), nil
 }
 
 // SendCopReq sends a coprocessor request to mock cluster.
@@ -313,7 +331,7 @@ func (c *RPCClient) SendCopReq(req *coprocessor.Request) (*coprocessor.Response,
 		return nil, errors.New("connect fail")
 	}
 	handler := newRPCHandler(c.cluster, c.mvccStore, store.GetId())
-	return handler.handleCopRequest(req)
+	return handler.handleCopRequest(proto.Clone(req).(*coprocessor.Request))
 }
 
 // Close closes the client.

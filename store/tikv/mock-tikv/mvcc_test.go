@@ -17,7 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvpb"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -43,13 +43,14 @@ func encodeKeys(ss []string) [][]byte {
 	return keys
 }
 
-func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
-	var mutations []*kvrpcpb.Mutation
+func putMutations(kvpairs ...string) []*kvpb.Mutation {
+	var mutations []*kvpb.Mutation
 	for i := 0; i < len(kvpairs); i += 2 {
-		mutations = append(mutations, &kvrpcpb.Mutation{
-			Op:    kvrpcpb.Op_Put.Enum(),
-			Key:   encodeKey(kvpairs[i]),
-			Value: []byte(kvpairs[i+1]),
+		mutations = append(mutations, &kvpb.Mutation{
+			RowKey:  encodeKey(kvpairs[i]),
+			Ops:     []kvpb.Op{kvpb.Op_Put},
+			Columns: defaultColumn,
+			Values:  [][]byte{[]byte(kvpairs[i+1])},
 		})
 	}
 	return mutations
@@ -60,21 +61,25 @@ func (s *testMockTiKVSuite) SetUpTest(c *C) {
 }
 
 func (s *testMockTiKVSuite) mustGetNone(c *C, key string, ts uint64) {
-	val, err := s.store.Get(encodeKey(key), ts)
+	vals, err := s.store.Get(encodeKey(key), defaultColumn, ts)
 	c.Assert(err, IsNil)
-	c.Assert(val, IsNil)
+	if vals == nil {
+		return
+	}
+	c.Assert(vals, HasLen, 1)
+	c.Assert(vals[0], IsNil)
 }
 
 func (s *testMockTiKVSuite) mustGetErr(c *C, key string, ts uint64) {
-	val, err := s.store.Get(encodeKey(key), ts)
+	val, err := s.store.Get(encodeKey(key), defaultColumn, ts)
 	c.Assert(err, NotNil)
 	c.Assert(val, IsNil)
 }
 
 func (s *testMockTiKVSuite) mustGetOK(c *C, key string, ts uint64, expect string) {
-	val, err := s.store.Get(encodeKey(key), ts)
+	vals, err := s.store.Get(encodeKey(key), defaultColumn, ts)
 	c.Assert(err, IsNil)
-	c.Assert(string(val), Equals, expect)
+	c.Assert(string(vals[0]), Equals, expect)
 }
 
 func (s *testMockTiKVSuite) mustPutOK(c *C, key, value string, startTS, commitTS uint64) {
@@ -87,10 +92,12 @@ func (s *testMockTiKVSuite) mustPutOK(c *C, key, value string, startTS, commitTS
 }
 
 func (s *testMockTiKVSuite) mustDeleteOK(c *C, key string, startTS, commitTS uint64) {
-	mutations := []*kvrpcpb.Mutation{
+	mutations := []*kvpb.Mutation{
 		{
-			Op:  kvrpcpb.Op_Del.Enum(),
-			Key: encodeKey(key),
+			RowKey:  encodeKey(key),
+			Ops:     []kvpb.Op{kvpb.Op_Del},
+			Columns: defaultColumn,
+			Values:  [][]byte{nil},
 		},
 	}
 	errs := s.store.Prewrite(mutations, encodeKey(key), startTS)
@@ -102,16 +109,16 @@ func (s *testMockTiKVSuite) mustDeleteOK(c *C, key string, startTS, commitTS uin
 }
 
 func (s *testMockTiKVSuite) mustScanOK(c *C, start string, limit int, ts uint64, expect ...string) {
-	pairs := s.store.Scan(encodeKey(start), nil, limit, ts)
-	c.Assert(len(pairs)*2, Equals, len(expect))
-	for i := 0; i < len(pairs); i++ {
-		c.Assert(pairs[i].Err, IsNil)
-		c.Assert(pairs[i].Key, BytesEquals, encodeKey(expect[i*2]))
-		c.Assert(string(pairs[i].Value), Equals, expect[i*2+1])
+	rows := s.store.Scan(encodeKey(start), nil, defaultColumn, limit, ts)
+	c.Assert(len(rows)*2, Equals, len(expect))
+	for i := 0; i < len(rows); i++ {
+		c.Assert(rows[i].Err, IsNil)
+		c.Assert(rows[i].RowKey, BytesEquals, encodeKey(expect[i*2]))
+		c.Assert(string(rows[i].Values[0]), Equals, expect[i*2+1])
 	}
 }
 
-func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64) {
+func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvpb.Mutation, primary string, startTS uint64) {
 	errs := s.store.Prewrite(mutations, encodeKey(primary), startTS)
 	for _, err := range errs {
 		c.Assert(err, IsNil)
@@ -139,15 +146,15 @@ func (s *testMockTiKVSuite) mustRollbackErr(c *C, keys []string, startTS uint64)
 }
 
 func (s *testMockTiKVSuite) mustCommitThenGetOK(c *C, key string, lockTS, commitTS, getTS uint64, expect string) {
-	val, err := s.store.CommitThenGet(encodeKey(key), lockTS, commitTS, getTS)
+	vals, err := s.store.CommitThenGet(encodeKey(key), defaultColumn, lockTS, commitTS, getTS)
 	c.Assert(err, IsNil)
-	c.Assert(string(val), Equals, expect)
+	c.Assert(string(vals[0]), Equals, expect)
 }
 
 func (s *testMockTiKVSuite) mustRollbackThenGetOK(c *C, key string, lockTS uint64, expect string) {
-	val, err := s.store.RollbackThenGet(encodeKey(key), lockTS)
+	vals, err := s.store.RollbackThenGet(encodeKey(key), defaultColumn, lockTS)
 	c.Assert(err, IsNil)
-	c.Assert(string(val), Equals, expect)
+	c.Assert(string(vals[0]), Equals, expect)
 }
 
 func (s *testMockTiKVSuite) TestGet(c *C) {
