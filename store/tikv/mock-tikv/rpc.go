@@ -291,14 +291,13 @@ func convertToPbPairs(pairs []Pair) []*kvrpcpb.KvPair {
 
 // RPCClient sends kv RPC calls to mock cluster.
 type RPCClient struct {
-	addr      string
 	cluster   *Cluster
 	mvccStore *MvccStore
 }
 
 // SendKVReq sends a kv request to mock cluster.
-func (c *RPCClient) SendKVReq(req *kvrpcpb.Request) (*kvrpcpb.Response, error) {
-	store := c.cluster.GetStoreByAddr(c.addr)
+func (c *RPCClient) SendKVReq(addr string, req *kvrpcpb.Request) (*kvrpcpb.Response, error) {
+	store := c.cluster.GetStoreByAddr(addr)
 	if store == nil {
 		return nil, errors.New("connect fail")
 	}
@@ -307,8 +306,8 @@ func (c *RPCClient) SendKVReq(req *kvrpcpb.Request) (*kvrpcpb.Response, error) {
 }
 
 // SendCopReq sends a coprocessor request to mock cluster.
-func (c *RPCClient) SendCopReq(req *coprocessor.Request) (*coprocessor.Response, error) {
-	store := c.cluster.GetStoreByAddr(c.addr)
+func (c *RPCClient) SendCopReq(addr string, req *coprocessor.Request) (*coprocessor.Response, error) {
+	store := c.cluster.GetStoreByAddr(addr)
 	if store == nil {
 		return nil, errors.New("connect fail")
 	}
@@ -322,9 +321,8 @@ func (c *RPCClient) Close() error {
 }
 
 // NewRPCClient creates an RPCClient.
-func NewRPCClient(cluster *Cluster, mvccStore *MvccStore, addr string) *RPCClient {
+func NewRPCClient(cluster *Cluster, mvccStore *MvccStore) *RPCClient {
 	return &RPCClient{
-		addr:      addr,
 		cluster:   cluster,
 		mvccStore: mvccStore,
 	}
