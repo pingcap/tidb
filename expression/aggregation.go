@@ -117,9 +117,9 @@ func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx contex
 		return nil
 	}
 	if af.Distinct {
-		d, err2 := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
-		if err2 != nil {
-			return errors.Trace(err2)
+		d, err1 := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 		if !d {
 			return nil
