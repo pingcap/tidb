@@ -98,14 +98,14 @@ func (e *GrantExec) Next() (*Row, error) {
 			if len(priv.Cols) > 0 {
 				// Check column scope privilege entry.
 				// TODO: Check validity before insert new entry.
-				err1 := e.checkAndInitColumnPriv(userName, host, priv.Cols)
-				if err1 != nil {
-					return nil, errors.Trace(err1)
+				err := e.checkAndInitColumnPriv(userName, host, priv.Cols)
+				if err != nil {
+					return nil, errors.Trace(err)
 				}
 			}
-			err2 := e.grantPriv(priv, user)
-			if err2 != nil {
-				return nil, errors.Trace(err2)
+			err := e.grantPriv(priv, user)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 	}
