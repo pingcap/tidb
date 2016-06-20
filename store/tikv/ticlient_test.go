@@ -143,11 +143,11 @@ func (s *testTiclientSuite) TestCleanLock(c *C) {
 
 	txn2 := s.beginTxn(c)
 	for i := 0; i < keyNum; i++ {
-		err2 := txn2.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i+1))
-		c.Assert(err2, IsNil)
+		err := txn2.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i+1))
+		c.Assert(err, IsNil)
 	}
-	err2 := txn2.Commit()
-	c.Assert(err2, IsNil)
+	err1 := txn2.Commit()
+	c.Assert(err1, IsNil)
 }
 
 func (s *testTiclientSuite) TestNotExist(c *C) {

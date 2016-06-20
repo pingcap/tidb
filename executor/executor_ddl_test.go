@@ -58,8 +58,8 @@ func (s *testSuite) TestCreateTable(c *C) {
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
 	for {
-		row, err2 := rs.Next()
-		c.Assert(err2, IsNil)
+		row, err1 := rs.Next()
+		c.Assert(err1, IsNil)
 		if row == nil {
 			break
 		}
@@ -68,8 +68,8 @@ func (s *testSuite) TestCreateTable(c *C) {
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
 	for {
-		row, err2 := rs.Next()
-		c.Assert(err2, IsNil)
+		row, err1 := rs.Next()
+		c.Assert(err1, IsNil)
 		if row == nil {
 			break
 		}

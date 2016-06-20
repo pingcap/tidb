@@ -14,6 +14,8 @@
 package plan
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -281,6 +283,107 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 	pA.id = bA.allocID(pA)
 	pB.id = bB.allocID(pB)
 	c.Assert(pA.id, Equals, pB.id)
+}
+
+func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
+	UseNewPlanner = true
+	defer testleak.AfterTest(c)()
+	rb := &rangeBuilder{}
+
+	cases := []struct {
+		exprStr   string
+		resultStr string
+	}{
+		{
+			exprStr:   "a = 1",
+			resultStr: "[[1 1]]",
+		},
+		{
+			exprStr:   "1 = a",
+			resultStr: "[[1 1]]",
+		},
+		{
+			exprStr:   "a != 1",
+			resultStr: "[[-inf 1) (1 +inf]]",
+		},
+		{
+			exprStr:   "1 != a",
+			resultStr: "[[-inf 1) (1 +inf]]",
+		},
+		{
+			exprStr:   "a > 1",
+			resultStr: "[(1 +inf]]",
+		},
+		{
+			exprStr:   "1 < a",
+			resultStr: "[(1 +inf]]",
+		},
+		{
+			exprStr:   "a >= 1",
+			resultStr: "[[1 +inf]]",
+		},
+		{
+			exprStr:   "1 <= a",
+			resultStr: "[[1 +inf]]",
+		},
+		{
+			exprStr:   "a < 1",
+			resultStr: "[[-inf 1)]",
+		},
+		{
+			exprStr:   "1 > a",
+			resultStr: "[[-inf 1)]",
+		},
+		{
+			exprStr:   "a <= 1",
+			resultStr: "[[-inf 1]]",
+		},
+		{
+			exprStr:   "1 >= a",
+			resultStr: "[[-inf 1]]",
+		},
+		{
+			exprStr:   "(a)",
+			resultStr: "[[-inf 0) (0 +inf]]",
+		},
+		{
+			exprStr:   `0.4`,
+			resultStr: `[]`,
+		},
+		{
+			exprStr:   `a > NULL`,
+			resultStr: `[]`,
+		},
+	}
+
+	for _, ca := range cases {
+		sql := "select 1 from t where " + ca.exprStr
+		stmts, err := parser.Parse(sql, "", "")
+		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
+		stmt := stmts[0].(*ast.SelectStmt)
+
+		err = newMockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		p, err := BuildPlan(stmt, nil)
+		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, ca.exprStr))
+		var selection *Selection
+		for _, child := range p.GetChildren() {
+			plan, ok := child.(*Selection)
+			if ok {
+				selection = plan
+				break
+			}
+		}
+		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
+		c.Assert(selection.Conditions, HasLen, 1, Commentf("conditions:%v, expr:%v",
+			selection.Conditions, ca.exprStr))
+		result := rb.newBuild(selection.Conditions[0])
+		c.Assert(rb.err, IsNil)
+		got := fmt.Sprintf("%v", result)
+		c.Assert(got, Equals, ca.resultStr, Commentf("differen for expr %s", ca.exprStr))
+	}
+	UseNewPlanner = false
 }
 
 func check(p Plan, c *C, ans map[string][]string, comment CommentInterface) {

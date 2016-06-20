@@ -107,7 +107,7 @@ func DecodeValues(data []byte, fts []*types.FieldType, inIndex bool) ([]types.Da
 	}
 
 	for i := range values {
-		values[i], err = unflatten(values[i], fts[i])
+		values[i], err = Unflatten(values[i], fts[i])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -115,8 +115,8 @@ func DecodeValues(data []byte, fts []*types.FieldType, inIndex bool) ([]types.Da
 	return values, nil
 }
 
-// unflatten converts a raw datum to a column datum.
-func unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
+// Unflatten converts a raw datum to a column datum.
+func Unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 	if datum.IsNull() {
 		return datum, nil
 	}
@@ -195,7 +195,7 @@ func DecodeColumnValue(data []byte, col *tipb.ColumnInfo) (types.Datum, error) {
 		Elems:   col.Elems,
 		Collate: mysql.Collations[uint8(col.GetCollation())],
 	}
-	colDatum, err := unflatten(d, ft)
+	colDatum, err := Unflatten(d, ft)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}

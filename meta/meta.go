@@ -22,10 +22,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/terror"
 )
@@ -57,6 +59,7 @@ var (
 	mTablePrefix      = "Table"
 	mTableIDPrefix    = "TID"
 	mBootstrapKey     = []byte("BootstrapKey")
+	mTableStatsPrefix = "TStats"
 )
 
 var (
@@ -652,6 +655,39 @@ func (m *Meta) GetBgJobOwner() (*model.Owner, error) {
 // SetBgJobOwner sets the current background job owner.
 func (m *Meta) SetBgJobOwner(o *model.Owner) error {
 	return m.setJobOwner(mBgJobOwnerKey, o)
+}
+
+func (m *Meta) tableStatsKey(tableID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mTableStatsPrefix, tableID))
+}
+
+// SetTableStats sets table statistics.
+func (m *Meta) SetTableStats(tableID int64, tpb *statistics.TablePB) error {
+	key := m.tableStatsKey(tableID)
+	data, err := proto.Marshal(tpb)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = m.txn.Set(key, data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// GetTableStats gets table statistics.
+func (m *Meta) GetTableStats(tableID int64) (*statistics.TablePB, error) {
+	key := m.tableStatsKey(tableID)
+	data, err := m.txn.Get(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tpb := &statistics.TablePB{}
+	err = proto.Unmarshal(data, tpb)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return tpb, nil
 }
 
 // meta error codes.

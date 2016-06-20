@@ -63,7 +63,7 @@ func (e *HashJoinExec) Close() error {
 	e.matchedRows = nil
 	err := e.smallExec.Close()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	return e.bigExec.Close()
 }
@@ -434,6 +434,41 @@ func (e *ProjectionExec) Close() error {
 	if e.Src != nil {
 		return e.Src.Close()
 	}
+	return nil
+}
+
+// NewTableDualExec represents a dual table executor.
+type NewTableDualExec struct {
+	schema   expression.Schema
+	executed bool
+}
+
+// Init implements NewExecutor Init interface.
+func (e *NewTableDualExec) Init() {
+	e.executed = false
+}
+
+// Schema implements Executor Schema interface.
+func (e *NewTableDualExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Fields implements Executor Fields interface.
+func (e *NewTableDualExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Next implements Executor Next interface.
+func (e *NewTableDualExec) Next() (*Row, error) {
+	if e.executed {
+		return nil, nil
+	}
+	e.executed = true
+	return &Row{}, nil
+}
+
+// Close implements Executor interface.
+func (e *NewTableDualExec) Close() error {
 	return nil
 }
 

@@ -87,6 +87,11 @@ type MaxOneRow struct {
 	basePlan
 }
 
+// NewTableDual represents a dual table plan.
+type NewTableDual struct {
+	basePlan
+}
+
 // NewTableScan represents a tablescan without condition push down.
 type NewTableScan struct {
 	basePlan

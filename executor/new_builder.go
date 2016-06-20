@@ -140,6 +140,10 @@ func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
 	}
 }
 
+func (b *executorBuilder) buildNewTableDual(v *plan.NewTableDual) Executor {
+	return &NewTableDualExec{schema: v.GetSchema()}
+}
+
 func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan) Executor {
 	txn, err := b.ctx.GetTxn(false)
 	if err != nil {

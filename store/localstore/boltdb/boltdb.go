@@ -115,17 +115,16 @@ func (d *db) Commit(b engine.Batch) error {
 	}
 	err := d.DB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketName)
-		// err1 is used for passing `go tool vet --shadow` check.
-		var err1 error
+		var err error
 		for _, w := range bt.writes {
 			if !w.isDelete {
-				err1 = b.Put(w.key, w.value)
+				err = b.Put(w.key, w.value)
 			} else {
-				err1 = b.Delete(w.key)
+				err = b.Delete(w.key)
 			}
 
-			if err1 != nil {
-				return errors.Trace(err1)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 

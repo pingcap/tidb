@@ -16,13 +16,14 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
-	"strings"
 )
 
 // AggregationFunction stands for aggregate functions.
@@ -116,9 +117,9 @@ func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx contex
 		return nil
 	}
 	if af.Distinct {
-		d, err := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
-		if err != nil {
-			return errors.Trace(err)
+		d, err1 := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 		if !d {
 			return nil

@@ -30,8 +30,8 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	mvccStore := mocktikv.NewMvccStore()
-	clientFactory := mockClientFactory(s.cluster, mvccStore)
-	s.store = newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), clientFactory)
+	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
+	s.store = newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), client)
 }
 
 func (s *testSplitSuite) begin(c *C) *tikvTxn {
