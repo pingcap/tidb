@@ -373,12 +373,8 @@ func (e *AggregationExec) innerNext() (ret bool, err error) {
 		e.groupMap[string(groupKey)] = true
 		e.groups = append(e.groups, groupKey)
 	}
-	var srcRowData []types.Datum
-	if srcRow != nil {
-		srcRowData = srcRow.Data
-	}
 	for _, af := range e.AggFuncs {
-		af.Update(srcRowData, groupKey, e.ctx)
+		af.Update(srcRow.Data, groupKey, e.ctx)
 	}
 	return true, nil
 }
@@ -443,12 +439,8 @@ func (e *ProjectionExec) Next() (retRow *Row, err error) {
 		RowKeys: rowKeys,
 		Data:    make([]types.Datum, 0, len(e.exprs)),
 	}
-	var srcRowData []types.Datum
-	if srcRow != nil {
-		srcRowData = srcRow.Data
-	}
 	for _, expr := range e.exprs {
-		val, err := expr.Eval(srcRowData, e.ctx)
+		val, err := expr.Eval(srcRow.Data, e.ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

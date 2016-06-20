@@ -90,13 +90,8 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 }
 
 func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
-	var src NewExecutor
-	if v.GetChildByIndex(0) != nil {
-		src = b.build(v.GetChildByIndex(0)).(NewExecutor)
-	}
-
 	return &AggregationExec{
-		Src:          src,
+		Src:          b.build(v.GetChildByIndex(0)).(NewExecutor),
 		schema:       v.GetSchema(),
 		ctx:          b.ctx,
 		AggFuncs:     v.AggFuncs,
@@ -145,12 +140,8 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 }
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
-	var src NewExecutor
-	if v.GetChildByIndex(0) != nil {
-		src = b.build(v.GetChildByIndex(0)).(NewExecutor)
-	}
 	return &ProjectionExec{
-		Src:    src,
+		Src:    b.build(v.GetChildByIndex(0)).(NewExecutor),
 		ctx:    b.ctx,
 		exprs:  v.Exprs,
 		schema: v.GetSchema(),
