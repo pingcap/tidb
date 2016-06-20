@@ -36,9 +36,7 @@ func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncE
 	newAggFuncList := make([]expression.AggregationFunction, 0, len(aggFuncList))
 	agg := &Aggregation{}
 	agg.id = b.allocID(agg)
-	if p != nil {
-		agg.correlated = p.IsCorrelated()
-	}
+	agg.correlated = p.IsCorrelated()
 	addChild(agg, p)
 	schema := make([]*expression.Column, 0, len(aggFuncList))
 	for i, aggFunc := range aggFuncList {
@@ -250,9 +248,7 @@ func (b *planBuilder) buildSelection(p Plan, where ast.ExprNode, mapper map[*ast
 func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) Plan {
 	proj := &Projection{Exprs: make([]expression.Expression, 0, len(fields))}
 	proj.id = b.allocID(proj)
-	if p != nil {
-		proj.correlated = p.IsCorrelated()
-	}
+	proj.correlated = p.IsCorrelated()
 	schema := make(expression.Schema, 0, len(fields))
 	for _, field := range fields {
 		if field.WildCard != nil {
@@ -305,9 +301,7 @@ func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper 
 		schema = append(schema, schemaCol)
 	}
 	proj.SetSchema(schema)
-	if p != nil {
-		addChild(proj, p)
-	}
+	addChild(proj, p)
 	return proj
 }
 
@@ -522,11 +516,12 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 			}
 		}
 	} else {
+		p = b.buildNewTableDual()
+		if b.err != nil {
+			return nil
+		}
 		if sel.Where != nil {
-			p = b.buildNewTableDual(sel.Where)
-			if b.err != nil {
-				return nil
-			}
+			b.buildSelection(p, sel.Where, nil)
 		}
 		if hasAgg {
 			p = b.buildAggregation(p, aggFuncs, nil)
@@ -586,12 +581,12 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	return p
 }
 
-func (b *planBuilder) buildNewTableDual(where ast.ExprNode) Plan {
+func (b *planBuilder) buildNewTableDual() Plan {
 	dual := new(NewTableDual)
 	dual.id = b.allocID(dual)
 	schema := []*expression.Column{{FromID: dual.id}}
 	dual.SetSchema(schema)
-	return b.buildSelection(dual, where, nil)
+	return dual
 }
 
 func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
