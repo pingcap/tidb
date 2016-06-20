@@ -596,61 +596,42 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	var aggFuncs []*ast.AggregateFuncExpr
 	var havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
 	var p Plan
+	var gbyCols []expression.Expression
+	var correlated bool
 	if sel.From != nil {
-		var gbyCols []expression.Expression
-		var correlated bool
 		p = b.buildResultSetNode(sel.From.TableRefs)
-		if b.err != nil {
-			return nil
-		}
-		if sel.Where != nil {
-			p = b.buildSelection(p, sel.Where, nil)
-			if b.err != nil {
-				return nil
-			}
-		}
-		if sel.LockTp != ast.SelectLockNone {
-			p = b.buildSelectLock(p, sel.LockTp)
-			if b.err != nil {
-				return nil
-			}
-		}
-		if hasAgg {
-			if sel.GroupBy != nil {
-				p, correlated, gbyCols = b.rewriteGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
-				if b.err != nil {
-					return nil
-				}
-			}
-			aggFuncs, havingMap, orderMap, totalMap = b.extractAggFunc(sel)
-			if b.err != nil {
-				return nil
-			}
-			p = b.buildAggregation(p, aggFuncs, gbyCols, correlated)
-			if b.err != nil {
-				return nil
-			}
-		}
 	} else {
 		p = b.buildNewTableDual()
+	}
+	if b.err != nil {
+		return nil
+	}
+	if sel.Where != nil {
+		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
 			return nil
 		}
-		if sel.Where != nil {
-			b.buildSelection(p, sel.Where, nil)
+	}
+	if sel.LockTp != ast.SelectLockNone {
+		p = b.buildSelectLock(p, sel.LockTp)
+		if b.err != nil {
+			return nil
+		}
+	}
+	if hasAgg {
+		if sel.GroupBy != nil {
+			p, correlated, gbyCols = b.rewriteGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 			if b.err != nil {
 				return nil
 			}
 		}
-		if hasAgg {
-			aggFuncs, havingMap, orderMap, totalMap = b.extractAggFunc(sel)
-			if b.err != nil {
-				return nil
-			}
-			p = b.buildAggregation(p, aggFuncs, nil, false)
-			if b.err != nil {
-				return nil
-			}
+		aggFuncs, havingMap, orderMap, totalMap = b.extractAggFunc(sel)
+		if b.err != nil {
+			return nil
+		}
+		p = b.buildAggregation(p, aggFuncs, gbyCols, correlated)
+		if b.err != nil {
+			return nil
 		}
 	}
 	var oldLen int
