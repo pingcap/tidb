@@ -498,9 +498,9 @@ func (e *astColsReplacer) Enter(inNode ast.Node) (ast.Node, bool) {
 	case *ast.ColumnName:
 		var first, second expression.Schema
 		fromSchema := e.proj.GetChildByIndex(0).GetSchema()
-		secondIsProjection := e.orderBy && e.inExpr
-		if secondIsProjection {
-			second, first = e.proj.GetSchema(), fromSchema
+		fromSchemaFirst := e.orderBy && e.inExpr
+		if fromSchemaFirst {
+			first, second = fromSchema, e.proj.GetSchema()
 		} else {
 			first, second = e.proj.GetSchema(), fromSchema
 		}
@@ -519,10 +519,10 @@ func (e *astColsReplacer) Enter(inNode ast.Node) (ast.Node, bool) {
 				e.err = errors.Errorf("Can't find Column %s", v.Name)
 				return inNode, true
 			}
-			if !secondIsProjection {
+			if !fromSchemaFirst {
 				e.addProjectionExpr(projCol)
 			}
-		} else if secondIsProjection {
+		} else if fromSchemaFirst {
 			v.Table = projCol.TblName
 			e.addProjectionExpr(projCol)
 		}
