@@ -83,7 +83,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	log.Debug(str)
 	c.Check(len(str), Greater, 0)
 
-	tpb, err := t.toPB()
+	tpb, err := t.ToPB()
 	c.Check(err, IsNil)
 	data, err := proto.Marshal(tpb)
 	c.Check(err, IsNil)
