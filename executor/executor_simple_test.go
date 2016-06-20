@@ -18,7 +18,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan/statistics"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
@@ -191,5 +195,20 @@ func (s *testSuite) TestSetPwd(c *C) {
 func (s *testSuite) TestAnalyzeTable(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`ANALYZE TABLE mysql.User`)
+	tk.MustExec(`ANALYZE TABLE mysql.GLOBAL_VARIABLES`)
+	ctx := tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("mysql"), model.NewCIStr("GLOBAL_VARIABLES"))
+	c.Check(err, IsNil)
+	tableID := t.Meta().ID
+
+	txn, err := ctx.GetTxn(true)
+	c.Check(err, IsNil)
+	meta := meta.NewMeta(txn)
+	tpb, err := meta.GetTableStats(tableID)
+	c.Check(err, IsNil)
+	c.Check(tpb, NotNil)
+	tStats, err := statistics.TableFromPB(t.Meta(), tpb)
+	c.Check(err, IsNil)
+	c.Check(tStats, NotNil)
 }
