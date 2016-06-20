@@ -111,14 +111,6 @@ func (b *executorBuilder) toPBExpr(conditions []expression.Expression, tbl *mode
 }
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
-	if v.GetChildByIndex(0) == nil {
-		return &SelectionExec{
-			Condition: composeCondition(v.Conditions),
-			schema:    v.GetSchema(),
-			ctx:       b.ctx,
-		}
-	}
-
 	exec := b.build(v.GetChildByIndex(0))
 	switch exec.(type) {
 	case *NewTableScanExec:
