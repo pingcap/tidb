@@ -234,6 +234,7 @@ func (b *planBuilder) buildSelection(p Plan, where ast.ExprNode, mapper map[*ast
 	return selection
 }
 
+// buildProjection returns a Projection plan and non-aux columns length.
 func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (Plan, int) {
 	proj := &Projection{Exprs: make([]expression.Expression, 0, len(fields))}
 	proj.id = b.allocID(proj)
@@ -476,6 +477,7 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) (
 	return aggList, havingMapper, orderByMapper, totalAggMapper
 }
 
+// astColsReplacer replace having/orderby's ast expression to expression.Expression
 type astColsReplacer struct {
 	proj    *Projection
 	inExpr  bool
