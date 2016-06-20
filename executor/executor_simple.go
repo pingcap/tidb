@@ -368,7 +368,7 @@ func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples 
 		if len(samples) < maxSampleCount {
 			samples = append(samples, row)
 		} else {
-			shouldAdd := ran.Float64() < float64(maxSampleCount)/float64(count)
+			shouldAdd := ran.Int63n(count) < maxSampleCount
 			if shouldAdd {
 				idx := ran.Intn(maxSampleCount)
 				samples[idx] = row
