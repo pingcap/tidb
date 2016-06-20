@@ -472,6 +472,38 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestSpace(c *C) {
+	defer testleak.AfterTest(c)()
+	d, err := builtinSpace(types.MakeDatums([]interface{}{nil}...), nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
+
+	d, err = builtinSpace(types.MakeDatums([]interface{}{8888888888}...), nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
+
+	tbl := []struct {
+		Input  interface{}
+		Expect string
+	}{
+		{5, "     "},
+		{0, ""},
+		{-1, ""},
+		{"", ""},
+		{"5", "     "},
+		{"3.3", "   "},
+		{"abc", ""},
+	}
+
+	dtbl := tblToDtbl(tbl)
+
+	for _, t := range dtbl {
+		d, err = builtinSpace(t["Input"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
+	}
+}
+
 func (s *testEvaluatorSuite) TestLocate(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
