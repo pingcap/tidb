@@ -352,7 +352,7 @@ func (e *SimpleExec) createStatisticsForTable(tn *ast.TableName) error {
 	return nil
 }
 
-// collectSamples collects sample from the result set, use Reservoir Sampling algorithm.
+// collectSamples collects sample from the result set, using Reservoir Sampling algorithm.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
 func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples []*ast.Row, err error) {
 	ran := rand.New(rand.NewSource(time.Now().UnixNano()))
