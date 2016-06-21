@@ -217,6 +217,22 @@ func DecodeIndexKey(key kv.Key) ([]types.Datum, error) {
 	return codec.Decode(b)
 }
 
+// EncodeTableIndexPrefix encodes index prefix with tableID and idxID.
+func EncodeTableIndexPrefix(tableID, idxID int64) kv.Key {
+	key := make([]byte, 0, prefixLen)
+	key = appendTableIndexPrefix(key, tableID)
+	key = codec.EncodeInt(key, idxID)
+	return key
+}
+
+// EncodeTablePrefix encodes table prefix with table ID.
+func EncodeTablePrefix(tableID int64) kv.Key {
+	var key kv.Key
+	key = append(key, tablePrefix...)
+	key = codec.EncodeInt(key, tableID)
+	return key
+}
+
 // Record prefix is "t[tableID]_r".
 func appendTableRecordPrefix(buf []byte, tableID int64) []byte {
 	buf = append(buf, tablePrefix...)

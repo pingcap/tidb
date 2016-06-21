@@ -258,9 +258,9 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		return b.buildFilter(ex, remained)
 	}
 
-	var idx *table.IndexedColumn
+	var idx table.Index
 	for _, val := range tbl.Indices() {
-		if val.IndexInfo.Name.L == v.Index.Name.L {
+		if val.Meta().Name.L == v.Index.Name.L {
 			idx = val
 			break
 		}
@@ -272,10 +272,10 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		fields:      v.Fields(),
 		ctx:         b.ctx,
 		Desc:        v.Desc,
-		valueTypes:  make([]*types.FieldType, len(idx.Columns)),
+		valueTypes:  make([]*types.FieldType, len(idx.Meta().Columns)),
 	}
 
-	for i, ic := range idx.Columns {
+	for i, ic := range idx.Meta().Columns {
 		col := tbl.Cols()[ic.Offset]
 		e.valueTypes[i] = &col.FieldType
 	}

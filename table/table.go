@@ -36,8 +36,9 @@ var (
 	errDuplicateColumn = terror.ClassTable.New(codeDuplicateColumn, "duplicate column")
 
 	errGetDefaultFailed = terror.ClassTable.New(codeGetDefaultFailed, "get default value fail")
-	errIndexOutBound    = terror.ClassTable.New(codeIndexOutBound, "index column offset out of bound")
 
+	// ErrIndexOutBound returns for index column offset out of bound.
+	ErrIndexOutBound = terror.ClassTable.New(codeIndexOutBound, "index column offset out of bound")
 	// ErrUnsupportedOp returns for unsupported operation.
 	ErrUnsupportedOp = terror.ClassTable.New(codeUnsupportedOp, "operation not supported")
 	// ErrRowNotFound returns for row not found.
@@ -72,7 +73,7 @@ type Table interface {
 	Cols() []*Column
 
 	// Indices returns the indices of the table.
-	Indices() []*IndexedColumn
+	Indices() []Index
 
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key

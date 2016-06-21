@@ -130,7 +130,7 @@ func (t *BoundedTable) Seek(ctx context.Context, handle int64) (int64, bool, err
 }
 
 // Indices implements table.Table Indices interface.
-func (t *BoundedTable) Indices() []*table.IndexedColumn {
+func (t *BoundedTable) Indices() []table.Index {
 	return nil
 }
 
