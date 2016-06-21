@@ -76,7 +76,7 @@ type Column struct {
 // Equal checks if two columns is equal
 func (col *Column) Equal(expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
-		return col.FromID == newCol.FromID && col.ColName == newCol.TblName
+		return col.FromID == newCol.FromID && col.ColName == newCol.ColName
 	}
 	return false
 }
