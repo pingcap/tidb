@@ -361,7 +361,7 @@ func (s *MvccStore) Prewrite(mutations []*kvpb.Mutation, primary []byte, startTS
 
 	var errs []error
 	for _, m := range mutations {
-		entry := s.getOrNewEntry(m.GetRow())
+		entry := s.getOrNewEntry(m.GetRowKey())
 		err := entry.Prewrite(m, startTS, primary)
 		s.submit(entry)
 		errs = append(errs, err)

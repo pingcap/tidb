@@ -148,10 +148,10 @@ func (s *Scanner) getData() error {
 		req := &pb.Request{
 			Type: pb.MessageType_CmdScan.Enum(),
 			CmdScanReq: &pb.CmdScanRequest{
-				StartRow: s.nextStartKey,
-				Columns:  defaultColumn,
-				Limit:    proto.Uint32(uint32(s.batchSize)),
-				Ts:       proto.Uint64(s.startTS()),
+				StartRowKey: s.nextStartKey,
+				Columns:     defaultColumn,
+				Limit:       proto.Uint32(uint32(s.batchSize)),
+				Ts:          proto.Uint64(s.startTS()),
 			},
 		}
 		resp, err := s.snapshot.store.SendKVReq(req, region.VerID())

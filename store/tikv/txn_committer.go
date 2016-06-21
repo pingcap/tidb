@@ -45,13 +45,13 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
 			mutations[string(k)] = &kvpb.Mutation{
-				Row:     k,
+				RowKey:  k,
 				Ops:     []kvpb.Op{kvpb.Op_Put},
 				Columns: []*kvpb.Column{{Value: v}},
 			}
 		} else {
 			mutations[string(k)] = &kvpb.Mutation{
-				Row:     k,
+				RowKey:  k,
 				Ops:     []kvpb.Op{kvpb.Op_Del},
 				Columns: []*kvpb.Column{{Value: nil}},
 			}
@@ -70,7 +70,7 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	for _, lockKey := range txn.lockKeys {
 		if _, ok := mutations[string(lockKey)]; !ok {
 			mutations[string(lockKey)] = &kvpb.Mutation{
-				Row:     lockKey,
+				RowKey:  lockKey,
 				Ops:     []kvpb.Op{kvpb.Op_Lock},
 				Columns: []*kvpb.Column{{Value: nil}},
 			}
@@ -237,7 +237,7 @@ func (c *txnCommitter) commitSingleRegion(batch batchKeys) error {
 		Type: pb.MessageType_CmdCommit.Enum(),
 		CmdCommitReq: &pb.CmdCommitRequest{
 			StartTs:  proto.Uint64(c.startTS),
-			Rows:     batch.keys,
+			RowKeys:  batch.keys,
 			CommitTs: proto.Uint64(c.commitTS),
 		},
 	}
@@ -282,8 +282,8 @@ func (c *txnCommitter) cleanupSingleRegion(batch batchKeys) error {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdBatchRollback.Enum(),
 		CmdBatchRollbackReq: &pb.CmdBatchRollbackRequest{
-			Ts:   proto.Uint64(c.startTS),
-			Rows: batch.keys,
+			Ts:      proto.Uint64(c.startTS),
+			RowKeys: batch.keys,
 		},
 	}
 	resp, err := c.store.SendKVReq(req, batch.region)

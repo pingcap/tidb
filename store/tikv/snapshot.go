@@ -115,7 +115,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v 
 		req := &pb.Request{
 			Type: pb.MessageType_CmdBatchGet.Enum(),
 			CmdBatchGetReq: &pb.CmdBatchGetRequest{
-				Rows:    pending,
+				RowKeys: pending,
 				Columns: columns,
 				Ts:      proto.Uint64(s.version.Ver),
 			},
@@ -165,7 +165,7 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdGet.Enum(),
 		CmdGetReq: &pb.CmdGetRequest{
-			Row:     k,
+			RowKey:  k,
 			Columns: defaultColumn,
 			Ts:      proto.Uint64(s.version.Ver),
 		},

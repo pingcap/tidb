@@ -149,33 +149,33 @@ func makeColumns(colNames, colVals [][]byte) []*kvpb.Column {
 }
 
 func (h *rpcHandler) onGet(req *kvrpcpb.CmdGetRequest) *kvrpcpb.CmdGetResponse {
-	if !h.keyInRegion(req.GetRow()) {
+	if !h.keyInRegion(req.GetRowKey()) {
 		panic("onGet: key not in region")
 	}
 
-	vals, err := h.mvccStore.Get(req.GetRow(), req.GetColumns(), req.GetTs())
+	vals, err := h.mvccStore.Get(req.GetRowKey(), req.GetColumns(), req.GetTs())
 	if err != nil {
 		return &kvrpcpb.CmdGetResponse{
 			Row: &kvpb.Row{
 				Error:  convertToKeyError(err),
-				RowKey: req.GetRow(),
+				RowKey: req.GetRowKey(),
 			},
 		}
 	}
 
 	return &kvrpcpb.CmdGetResponse{
 		Row: &kvpb.Row{
-			RowKey:  req.GetRow(),
+			RowKey:  req.GetRowKey(),
 			Columns: makeColumns(req.GetColumns(), vals),
 		},
 	}
 }
 
 func (h *rpcHandler) onScan(req *kvrpcpb.CmdScanRequest) *kvrpcpb.CmdScanResponse {
-	if !h.keyInRegion(req.GetStartRow()) {
+	if !h.keyInRegion(req.GetStartRowKey()) {
 		panic("onScan: startKey not in region")
 	}
-	rows := h.mvccStore.Scan(req.GetStartRow(), h.endKey, req.GetColumns(), int(req.GetLimit()), req.GetTs())
+	rows := h.mvccStore.Scan(req.GetStartRowKey(), h.endKey, req.GetColumns(), int(req.GetLimit()), req.GetTs())
 	return &kvrpcpb.CmdScanResponse{
 		Rows: convertToPbRows(rows),
 	}
@@ -183,7 +183,7 @@ func (h *rpcHandler) onScan(req *kvrpcpb.CmdScanRequest) *kvrpcpb.CmdScanRespons
 
 func (h *rpcHandler) onPrewrite(req *kvrpcpb.CmdPrewriteRequest) *kvrpcpb.CmdPrewriteResponse {
 	for _, m := range req.Mutations {
-		if !h.keyInRegion(m.GetRow()) {
+		if !h.keyInRegion(m.GetRowKey()) {
 			panic("onPrewrite: key not in region")
 		}
 	}
@@ -194,13 +194,13 @@ func (h *rpcHandler) onPrewrite(req *kvrpcpb.CmdPrewriteRequest) *kvrpcpb.CmdPre
 }
 
 func (h *rpcHandler) onCommit(req *kvrpcpb.CmdCommitRequest) *kvrpcpb.CmdCommitResponse {
-	for _, rowKey := range req.GetRows() {
+	for _, rowKey := range req.GetRowKeys() {
 		if !h.keyInRegion(rowKey) {
 			panic("onCommit: key not in region")
 		}
 	}
 	var resp kvrpcpb.CmdCommitResponse
-	err := h.mvccStore.Commit(req.GetRows(), req.GetStartTs(), req.GetCommitTs())
+	err := h.mvccStore.Commit(req.GetRowKeys(), req.GetStartTs(), req.GetCommitTs())
 	if err != nil {
 		resp.Error = convertToKeyError(err)
 	}
@@ -208,11 +208,11 @@ func (h *rpcHandler) onCommit(req *kvrpcpb.CmdCommitRequest) *kvrpcpb.CmdCommitR
 }
 
 func (h *rpcHandler) onCleanup(req *kvrpcpb.CmdCleanupRequest) *kvrpcpb.CmdCleanupResponse {
-	if !h.keyInRegion(req.GetRow()) {
+	if !h.keyInRegion(req.GetRowKey()) {
 		panic("onCleanup: key not in region")
 	}
 	var resp kvrpcpb.CmdCleanupResponse
-	err := h.mvccStore.Cleanup(req.GetRow(), req.GetTs())
+	err := h.mvccStore.Cleanup(req.GetRowKey(), req.GetTs())
 	if err != nil {
 		if commitTS, ok := err.(ErrAlreadyCommitted); ok {
 			resp.CommitTs = proto.Uint64(uint64(commitTS))
@@ -224,56 +224,56 @@ func (h *rpcHandler) onCleanup(req *kvrpcpb.CmdCleanupRequest) *kvrpcpb.CmdClean
 }
 
 func (h *rpcHandler) onCommitThenGet(req *kvrpcpb.CmdCommitThenGetRequest) *kvrpcpb.CmdCommitThenGetResponse {
-	if !h.keyInRegion(req.GetRow()) {
+	if !h.keyInRegion(req.GetRowKey()) {
 		panic("onCommitThenGet: key not in region")
 	}
-	vals, err := h.mvccStore.CommitThenGet(req.GetRow(), req.GetColumns(), req.GetStartTs(), req.GetCommitTs(), req.GetGetTs())
+	vals, err := h.mvccStore.CommitThenGet(req.GetRowKey(), req.GetColumns(), req.GetStartTs(), req.GetCommitTs(), req.GetGetTs())
 	if err != nil {
 		return &kvrpcpb.CmdCommitThenGetResponse{
 			Row: &kvpb.Row{
 				Error:  convertToKeyError(err),
-				RowKey: req.GetRow(),
+				RowKey: req.GetRowKey(),
 			},
 		}
 	}
 	return &kvrpcpb.CmdCommitThenGetResponse{
 		Row: &kvpb.Row{
-			RowKey:  req.GetRow(),
+			RowKey:  req.GetRowKey(),
 			Columns: makeColumns(req.GetColumns(), vals),
 		},
 	}
 }
 
 func (h *rpcHandler) onRollbackThenGet(req *kvrpcpb.CmdRollbackThenGetRequest) *kvrpcpb.CmdRollbackThenGetResponse {
-	if !h.keyInRegion(req.GetRow()) {
+	if !h.keyInRegion(req.GetRowKey()) {
 		panic("onRollbackThenGet: key not in region")
 	}
-	vals, err := h.mvccStore.RollbackThenGet(req.GetRow(), req.GetColumns(), req.GetTs())
+	vals, err := h.mvccStore.RollbackThenGet(req.GetRowKey(), req.GetColumns(), req.GetTs())
 	if err != nil {
 		return &kvrpcpb.CmdRollbackThenGetResponse{
 			Row: &kvpb.Row{
 				Error:  convertToKeyError(err),
-				RowKey: req.GetRow(),
+				RowKey: req.GetRowKey(),
 			},
 		}
 	}
 	return &kvrpcpb.CmdRollbackThenGetResponse{
 		Row: &kvpb.Row{
-			RowKey:  req.GetRow(),
+			RowKey:  req.GetRowKey(),
 			Columns: makeColumns(req.GetColumns(), vals),
 		},
 	}
 }
 
 func (h *rpcHandler) onBatchGet(req *kvrpcpb.CmdBatchGetRequest) *kvrpcpb.CmdBatchGetResponse {
-	cols := make([][][]byte, len(req.GetRows()))
-	for i, row := range req.GetRows() {
+	cols := make([][][]byte, len(req.GetRowKeys()))
+	for i, row := range req.GetRowKeys() {
 		if !h.keyInRegion(row) {
 			panic("onBatchGet: key not in region")
 		}
 		cols[i] = req.GetColumns()[i].GetColumns()
 	}
-	rows := h.mvccStore.BatchGet(req.GetRows(), cols, req.GetTs())
+	rows := h.mvccStore.BatchGet(req.GetRowKeys(), cols, req.GetTs())
 	return &kvrpcpb.CmdBatchGetResponse{
 		Rows: convertToPbRows(rows),
 	}

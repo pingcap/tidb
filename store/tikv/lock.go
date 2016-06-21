@@ -63,8 +63,8 @@ func (l *txnLock) cleanup() ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdCleanup.Enum(),
 		CmdCleanupReq: &pb.CmdCleanupRequest{
-			Row: l.pl.key,
-			Ts:  proto.Uint64(l.pl.version),
+			RowKey: l.pl.key,
+			Ts:     proto.Uint64(l.pl.version),
 		},
 	}
 	var backoffErr error
@@ -102,7 +102,7 @@ func (l *txnLock) rollbackThenGet() ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdRollbackThenGet.Enum(),
 		CmdRbGetReq: &pb.CmdRollbackThenGetRequest{
-			Row:     l.key,
+			RowKey:  l.key,
 			Columns: defaultColumn,
 			Ts:      proto.Uint64(l.pl.version),
 		},
@@ -141,7 +141,7 @@ func (l *txnLock) commitThenGet(commitVersion uint64) ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdCommitThenGet.Enum(),
 		CmdCommitGetReq: &pb.CmdCommitThenGetRequest{
-			Row:      l.key,
+			RowKey:   l.key,
 			Columns:  defaultColumn,
 			StartTs:  proto.Uint64(l.pl.version),
 			CommitTs: proto.Uint64(commitVersion),
