@@ -196,8 +196,8 @@ func builtinSpace(args []types.Datum, _ context.Context) (d types.Datum, err err
 	}
 
 	if x.Kind() == types.KindString {
-		if _, err := strconv.ParseInt(x.GetString(), 10, 64); err != nil {
-			return d, errors.Trace(err)
+		if _, e := strconv.ParseInt(x.GetString(), 10, 64); err != nil {
+			return d, errors.Trace(e)
 		}
 	}
 
