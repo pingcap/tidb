@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/xapi/tablecodec"
 )
 
 func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
@@ -181,14 +182,6 @@ func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, erro
 }
 
 func (d *ddl) dropTableData(t table.Table) error {
-	// delete table data
-	err := d.delKeysWithPrefix(t.RecordPrefix())
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// delete table index
-	err = d.delKeysWithPrefix(t.IndexPrefix())
-
+	err := d.delKeysWithPrefix(tablecodec.EncodeTablePrefix(t.Meta().ID))
 	return errors.Trace(err)
 }

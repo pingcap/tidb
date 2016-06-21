@@ -15,6 +15,7 @@ package table
 
 import (
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -26,6 +27,8 @@ type IndexIterator interface {
 
 // Index is the interface for index data on KV store.
 type Index interface {
+	// Meta returns IndexInfo.
+	Meta() *model.IndexInfo
 	// Create supports insert into statement.
 	Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) error
 	// Delete supports delete from statement.
@@ -40,4 +43,6 @@ type Index interface {
 	Seek(r kv.Retriever, indexedValues []types.Datum) (iter IndexIterator, hit bool, err error)
 	// SeekFirst supports aggregate min and ascend order by.
 	SeekFirst(r kv.Retriever) (iter IndexIterator, err error)
+	// FetchValues fetched index column values in a row.
+	FetchValues(row []types.Datum) (columns []types.Datum, err error)
 }

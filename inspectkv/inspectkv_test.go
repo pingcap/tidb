@@ -215,7 +215,7 @@ func (s *testSuite) TestScan(c *C) {
 
 	idxRow1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(10))}
 	idxRow2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(20))}
-	kvIndex := tables.NewIndex(tb.IndexPrefix(), indices[0].Name.L, indices[0].ID, indices[0].Unique)
+	kvIndex := tables.NewIndex(tb.Meta(), indices[0].Meta())
 	idxRows, nextVals, err := ScanIndexData(txn, kvIndex, idxRow1.Values, 2)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1, idxRow2})
@@ -294,23 +294,23 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 	c.Assert(err.Error(), DeepEquals, "[inspectkv:2]handle:1 is repeated in data")
 }
 
-func (s *testSuite) testIndex(c *C, tb table.Table, idx *table.IndexedColumn) {
+func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
 	err = CompareIndexData(txn, tb, idx)
 	c.Assert(err, IsNil)
 
-	cnt, err := GetIndexRecordsCount(txn, idx.X, nil)
+	cnt, err := GetIndexRecordsCount(txn, idx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(cnt, Equals, int64(2))
 
 	// current index data:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// index col data (handle, data): (1, 10), (2, 20), (4, 40)
-	err = idx.X.Create(txn, types.MakeDatums(int64(30)), 3)
+	err = idx.Create(txn, types.MakeDatums(int64(30)), 3)
 	c.Assert(err, IsNil)
-	col := tb.Cols()[idx.Columns[0].Offset]
+	col := tb.Cols()[idx.Meta().Columns[0].Offset]
 	key := tb.RecordKey(4, col)
 	err = tables.SetColValue(txn, key, types.NewDatum(int64(40)))
 	c.Assert(err, IsNil)
@@ -328,7 +328,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *table.IndexedColumn) {
 	// current index data:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
 	// index col data (handle, data): (1, 10), (2, 20), (4, 40), (3, 31)
-	err = idx.X.Create(txn, types.MakeDatums(int64(40)), 4)
+	err = idx.Create(txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	key = tb.RecordKey(3, col)
 	err = tables.SetColValue(txn, key, types.NewDatum(int64(31)))
@@ -385,7 +385,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *table.IndexedColumn) {
 	// current index data:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// index col data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
-	err = idx.X.Delete(txn, types.MakeDatums(int64(40)), 4)
+	err = idx.Delete(txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	key = tb.RecordKey(4, col)
 	err = tables.SetColValue(txn, key, types.NewDatum(int64(40)))

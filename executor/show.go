@@ -237,9 +237,9 @@ func (e *ShowExec) fetchShowIndex() error {
 		return errors.Trace(err)
 	}
 	for _, idx := range tb.Indices() {
-		for i, col := range idx.Columns {
+		for i, col := range idx.Meta().Columns {
 			nonUniq := 1
-			if idx.Unique {
+			if idx.Meta().Unique {
 				nonUniq = 0
 			}
 			var subPart interface{}
@@ -247,19 +247,19 @@ func (e *ShowExec) fetchShowIndex() error {
 				subPart = col.Length
 			}
 			data := types.MakeDatums(
-				tb.Meta().Name.O, // Table
-				nonUniq,          // Non_unique
-				idx.Name.O,       // Key_name
-				i+1,              // Seq_in_index
-				col.Name.O,       // Column_name
-				"utf8_bin",       // Colation
-				0,                // Cardinality
-				subPart,          // Sub_part
-				nil,              // Packed
-				"YES",            // Null
-				idx.Tp.String(),  // Index_type
-				"",               // Comment
-				idx.Comment,      // Index_comment
+				tb.Meta().Name.O,  // Table
+				nonUniq,           // Non_unique
+				idx.Meta().Name.O, // Key_name
+				i+1,               // Seq_in_index
+				col.Name.O,        // Column_name
+				"utf8_bin",        // Colation
+				0,                 // Cardinality
+				subPart,           // Sub_part
+				nil,               // Packed
+				"YES",             // Null
+				idx.Meta().Tp.String(), // Index_type
+				"",                 // Comment
+				idx.Meta().Comment, // Index_comment
 			)
 			e.rows = append(e.rows, &Row{Data: data})
 		}
@@ -394,16 +394,17 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	for i, idx := range tb.Indices() {
-		if idx.Primary {
+		idxInfo := idx.Meta()
+		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
-		} else if idx.Unique {
-			buf.WriteString(fmt.Sprintf("  UNIQUE KEY `%s` ", idx.Name.O))
+		} else if idxInfo.Unique {
+			buf.WriteString(fmt.Sprintf("  UNIQUE KEY `%s` ", idxInfo.Name.O))
 		} else {
-			buf.WriteString(fmt.Sprintf("  KEY `%s` ", idx.Name.O))
+			buf.WriteString(fmt.Sprintf("  KEY `%s` ", idxInfo.Name.O))
 		}
 
-		cols := make([]string, 0, len(idx.Columns))
-		for _, c := range idx.Columns {
+		cols := make([]string, 0, len(idxInfo.Columns))
+		for _, c := range idxInfo.Columns {
 			cols = append(cols, c.Name.O)
 		}
 		buf.WriteString(fmt.Sprintf("(`%s`)", strings.Join(cols, "`,`")))

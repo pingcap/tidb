@@ -414,7 +414,7 @@ func (e *IndexRangeExec) Fields() []*ast.ResultField {
 // Next implements Executor Next interface.
 func (e *IndexRangeExec) Next() (*Row, error) {
 	if e.iter == nil {
-		seekVals := make([]types.Datum, len(e.scan.idx.Columns))
+		seekVals := make([]types.Datum, len(e.scan.idx.Meta().Columns))
 		for i := 0; i < len(e.lowVals); i++ {
 			if e.lowVals[i].Kind() == types.KindMinNotNull {
 				seekVals[i].SetBytes([]byte{})
@@ -430,7 +430,7 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.iter, _, err = e.scan.idx.X.Seek(txn, seekVals)
+		e.iter, _, err = e.scan.idx.Seek(txn, seekVals)
 		if err != nil {
 			return nil, types.EOFAsNil(err)
 		}
@@ -524,7 +524,7 @@ func (e *IndexRangeExec) Close() error {
 type IndexScanExec struct {
 	tbl         table.Table
 	tableAsName *model.CIStr
-	idx         *table.IndexedColumn
+	idx         table.Index
 	fields      []*ast.ResultField
 	Ranges      []*IndexRangeExec
 	Desc        bool

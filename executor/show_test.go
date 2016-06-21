@@ -67,19 +67,19 @@ func (s *testSuite) TestShow(c *C) {
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
 
-	var ss statistics
+	var ss stats
 	variable.RegisterStatistics(ss)
 	testSQL = "show status like 'character_set_results';"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), NotNil)
 }
 
-type statistics struct {
+type stats struct {
 }
 
-func (s statistics) GetScope(status string) variable.ScopeFlag { return variable.DefaultScopeFlag }
+func (s stats) GetScope(status string) variable.ScopeFlag { return variable.DefaultScopeFlag }
 
-func (s statistics) Stats() (map[string]interface{}, error) {
+func (s stats) Stats() (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	var a, b interface{}
 	b = "123"

@@ -118,7 +118,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Indices(), HasLen, 1)
-	err = tb.Indices()[0].X.Create(txn, types.MakeDatums(int64(10)), 1)
+	err = tb.Indices()[0].Create(txn, types.MakeDatums(int64(10)), 1)
 	c.Assert(err, IsNil)
 	err = txn.Commit()
 	c.Assert(err, IsNil)
@@ -1376,6 +1376,22 @@ func (s *testSuite) TestNewSubquery(c *C) {
 	result.Check(testkit.Rows("1", "1", "0"))
 	result = tk.MustQuery("select (select count(*) from t where t.c = k.d) from t k")
 	result.Check(testkit.Rows("1", "1", "0"))
+	plan.UseNewPlanner = false
+}
+
+func (s *testSuite) TestNewTableDual(c *C) {
+	plan.UseNewPlanner = true
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	result := tk.MustQuery("Select 1")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("Select 1 from dual")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("Select count(*) from dual")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("Select 1 from dual where 1")
+	result.Check(testkit.Rows("1"))
 	plan.UseNewPlanner = false
 }
 
