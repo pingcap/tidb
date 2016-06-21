@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/table/tables"
@@ -47,7 +48,16 @@ func (s *testIndexSuite) TearDownSuite(c *C) {
 
 func (s *testIndexSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
-	index := tables.NewIndex([]byte("i"), "test", 0, false)
+	tblInfo := &model.TableInfo{
+		ID: 1,
+		Indices: []*model.IndexInfo{
+			{
+				ID:   2,
+				Name: model.NewCIStr("test"),
+			},
+		},
+	}
+	index := tables.NewIndex(tblInfo, tblInfo.Indices[0])
 
 	// Test ununiq index.
 	txn, err := s.s.Begin()
@@ -117,7 +127,17 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
-	index = tables.NewIndex([]byte("j"), "test", 1, true)
+	tblInfo = &model.TableInfo{
+		ID: 2,
+		Indices: []*model.IndexInfo{
+			{
+				ID:     3,
+				Name:   model.NewCIStr("test"),
+				Unique: true,
+			},
+		},
+	}
+	index = tables.NewIndex(tblInfo, tblInfo.Indices[0])
 
 	// Test uniq index.
 	txn, err = s.s.Begin()
@@ -145,7 +165,16 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	defer testleak.AfterTest(c)()
-	index := tables.NewIndex([]byte("i"), "test", 1, false)
+	tblInfo := &model.TableInfo{
+		ID: 1,
+		Indices: []*model.IndexInfo{
+			{
+				ID:   2,
+				Name: model.NewCIStr("test"),
+			},
+		},
+	}
+	index := tables.NewIndex(tblInfo, tblInfo.Indices[0])
 
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
@@ -154,7 +183,7 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	err = index.Create(txn, values, 1)
 	c.Assert(err, IsNil)
 
-	index2 := tables.NewIndex([]byte("i"), "test", 1, false)
+	index2 := tables.NewIndex(tblInfo, tblInfo.Indices[0])
 	iter, hit, err := index2.Seek(txn, types.MakeDatums("abc", nil))
 	c.Assert(err, IsNil)
 	defer iter.Close()

@@ -117,7 +117,7 @@ func (t *MemoryTable) Seek(ctx context.Context, handle int64) (int64, bool, erro
 }
 
 // Indices implements table.Table Indices interface.
-func (t *MemoryTable) Indices() []*table.IndexedColumn {
+func (t *MemoryTable) Indices() []table.Index {
 	return nil
 }
 
