@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/xapi/tablecodec"
 )
 
 func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, indexID int64,
@@ -416,7 +417,7 @@ func lockRow(txn kv.Transaction, t table.Table, h int64) error {
 }
 
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
-	kvX := tables.NewIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.ID, indexInfo.Unique)
+	kvX := tables.NewIndex(t.Meta(), indexInfo)
 
 	for _, handle := range handles {
 		log.Debug("[ddl] building index...", handle)
@@ -473,7 +474,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 }
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
-	prefix := tables.GenIndexPrefix(t.IndexPrefix(), indexInfo.ID)
+	prefix := tablecodec.EncodeTableIndexPrefix(t.Meta().ID, indexInfo.ID)
 	err := d.delKeysWithPrefix(prefix)
 
 	return errors.Trace(err)

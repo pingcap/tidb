@@ -163,7 +163,7 @@ func ScanIndexData(txn kv.Transaction, kvIndex table.Index, startVals []types.Da
 // CompareIndexData compares index data one by one.
 // It returns nil if the data from the index is equal to the data from the table columns,
 // otherwise it returns an error with a different set of records.
-func CompareIndexData(txn kv.Transaction, t table.Table, idx *table.IndexedColumn) error {
+func CompareIndexData(txn kv.Transaction, t table.Table, idx table.Index) error {
 	err := checkIndexAndRecord(txn, t, idx)
 	if err != nil {
 		return errors.Trace(err)
@@ -172,16 +172,15 @@ func CompareIndexData(txn kv.Transaction, t table.Table, idx *table.IndexedColum
 	return checkRecordAndIndex(txn, t, idx)
 }
 
-func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *table.IndexedColumn) error {
-	kvIndex := tables.NewIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
-	it, err := kvIndex.SeekFirst(txn)
+func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx table.Index) error {
+	it, err := idx.SeekFirst(txn)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer it.Close()
 
-	cols := make([]*table.Column, len(idx.Columns))
-	for i, col := range idx.Columns {
+	cols := make([]*table.Column, len(idx.Meta().Columns))
+	for i, col := range idx.Meta().Columns {
 		cols[i] = t.Cols()[col.Offset]
 	}
 
@@ -211,16 +210,15 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *table.IndexedCo
 	return nil
 }
 
-func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *table.IndexedColumn) error {
-	cols := make([]*table.Column, len(idx.Columns))
-	for i, col := range idx.Columns {
+func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx table.Index) error {
+	cols := make([]*table.Column, len(idx.Meta().Columns))
+	for i, col := range idx.Meta().Columns {
 		cols[i] = t.Cols()[col.Offset]
 	}
 
 	startKey := t.RecordKey(0, nil)
-	kvIndex := tables.NewIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
-		isExist, h2, err := kvIndex.Exist(txn, vals1, h1)
+		isExist, h2, err := idx.Exist(txn, vals1, h1)
 		if terror.ErrorEqual(err, kv.ErrKeyExists) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
