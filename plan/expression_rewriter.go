@@ -15,9 +15,9 @@ import (
 // EvalSubquery evaluates incorrelated subqueries once.
 var EvalSubquery func(p Plan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
 
-func (b *planBuilder) rewrite(expr ast.ExprNode, p Plan, aggMapper map[*ast.AggregateFuncExpr]int) (
+func (b *planBuilder) rewrite(expr ast.ExprNode, p Plan, aggMapper map[*ast.AggregateFuncExpr]int, columnMap map[*ast.ColumnNameExpr]expression.Expression) (
 	newExpr expression.Expression, newPlan Plan, correlated bool, err error) {
-	er := &expressionRewriter{p: p, aggrMap: aggMapper, schema: p.GetSchema(), b: b}
+	er := &expressionRewriter{p: p, aggrMap: aggMapper, schema: p.GetSchema(), b: b, columnMap: columnMap}
 	expr.Accept(er)
 	if er.err != nil {
 		return nil, nil, false, errors.Trace(er.err)
@@ -34,6 +34,7 @@ type expressionRewriter struct {
 	schema     expression.Schema
 	err        error
 	aggrMap    map[*ast.AggregateFuncExpr]int
+	columnMap  map[*ast.ColumnNameExpr]expression.Expression
 	b          *planBuilder
 	correlated bool
 }
@@ -72,6 +73,14 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 		}
 		er.ctxStack = append(er.ctxStack, er.schema[index])
 		return inNode, true
+	case *ast.ColumnNameExpr:
+		if er.columnMap != nil {
+			col, ok := er.columnMap[v]
+			if ok {
+				er.ctxStack = append(er.ctxStack, col)
+				return inNode, true
+			}
+		}
 	case *ast.ExistsSubqueryExpr:
 		if subq, ok := v.Sel.(*ast.SubqueryExpr); ok {
 			np, outerSchema := er.buildSubquery(subq)

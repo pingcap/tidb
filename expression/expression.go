@@ -57,17 +57,28 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 
 // Column represents a column.
 type Column struct {
-	FromID    string
-	ColName   model.CIStr
-	DBName    model.CIStr
-	TblName   model.CIStr
-	RetType   *types.FieldType
-	Auxiliary bool
+	FromID  string
+	ColName model.CIStr
+	DBName  model.CIStr
+	TblName model.CIStr
+	RetType *types.FieldType
+	// Position means the position this column appear in the select fields.
+	// e.g. SELECT name as id , 1 - id as id , 1 + name as id, name as id from src having id = 1;
+	// There are four ids in the same schema, so you can't identify the column through the FromID and ColName.
+	Position int
 
 	// only used during execution
 	Index      int
 	Correlated bool
 	data       *types.Datum
+}
+
+// Equal checks if two columns is equal
+func (col *Column) Equal(expr Expression) bool {
+	if newCol, ok := expr.(*Column); ok {
+		return col.FromID == newCol.FromID && col.ColName == newCol.TblName
+	}
+	return false
 }
 
 // ToString implements Expression interface.
@@ -127,14 +138,33 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 		if (dbName.L == "" || dbName.L == col.DBName.L) &&
 			(tblName.L == "" || tblName.L == col.TblName.L) &&
 			(colName.L == col.ColName.L) {
-			// For SELECT 1-d as d FROM T having d + 1 < 0 order by d + 1 .
-			// having d + 1 resolve by 1-d as d, order by d + 1 resolve by T.d.
-			// Then the Select fields will become SELECT 1-d as d, t.d(aux) , there are two columns named d.
-			// For having d + 1, it's confused. So if we find a non-aux column named d, the aux one is ignored.
-			if idx != -1 && !col.Auxiliary {
-				return nil, errors.Errorf("Column '%s' is ambiguous", colName.L)
+			if idx == -1 {
+				idx = i
+			} else {
+				return nil, errors.Errorf("Column %s is ambiguous", col.ToString())
+			}
+		}
+	}
+	if idx == -1 {
+		return nil, nil
+	}
+	return s[idx], nil
+}
+
+// FindSelectFieldColumn finds a column from select fields.
+func (s Schema) FindSelectFieldColumn(astCol *ast.ColumnName, selectFields []Expression) (*Column, error) {
+	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
+	idx := -1
+	for i, col := range s {
+		if (dbName.L == "" || dbName.L == col.DBName.L) &&
+			(tblName.L == "" || tblName.L == col.TblName.L) &&
+			(colName.L == col.ColName.L) {
+			if expr, ok := selectFields[i].(*Column); !ok {
+				return s[i], nil
 			} else if idx == -1 {
 				idx = i
+			} else if !expr.Equal(selectFields[idx]) {
+				return nil, errors.Errorf("Column %s is ambiguous", s[i].ToString())
 			}
 		}
 	}
@@ -154,7 +184,7 @@ func (s Schema) InitIndices() {
 // RetrieveColumn retrieves column in expression from the columns in schema.
 func (s Schema) RetrieveColumn(col *Column) *Column {
 	for _, c := range s {
-		if c.FromID == col.FromID && c.ColName.L == col.ColName.L {
+		if c.FromID == col.FromID && c.Position == col.Position {
 			return c
 		}
 	}
@@ -164,7 +194,7 @@ func (s Schema) RetrieveColumn(col *Column) *Column {
 // GetIndex finds the index for a column.
 func (s Schema) GetIndex(col *Column) int {
 	for i, c := range s {
-		if c.FromID == col.FromID && c.ColName.L == col.ColName.L {
+		if c.FromID == col.FromID && c.Position == col.Position {
 			return i
 		}
 	}
