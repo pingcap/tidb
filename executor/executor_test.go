@@ -1480,7 +1480,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("-1 2 1", "0 1 1", "1 0 1"))
 	result = tk.MustQuery("select d, 1-d as d, c as d from t group by d")
 	result.Check(testkit.Rows("-1 2 1", "0 1 1", "1 0 1"))
-	result = tk.MustQuery("select d, d, 1-d as d, c as d from t group by d")
+	result = tk.MustQuery("select d as d1, t.d as d1, 1-d as d1, c as d1 from t having d1 < 10")
 	result.Check(testkit.Rows("-1 -1 2 1", "0 0 1 1", "1 1 0 1"))
 	result = tk.MustQuery("select d*d as d1, c as d1 from t group by d1")
 	result.Check(testkit.Rows("1 1", "0 1"))

@@ -260,7 +260,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		err = newMockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{}
+		builder := &planBuilder{colMapper: make(map[*ast.ColumnNameExpr]expression.Expression)}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 

@@ -33,7 +33,7 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 	if err := logicOptimize(ctx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	builder := &planBuilder{sb: sb, ctx: ctx, is: is}
+	builder := &planBuilder{sb: sb, ctx: ctx, is: is, colMapper: make(map[*ast.ColumnNameExpr]expression.Expression)}
 	p := builder.build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)

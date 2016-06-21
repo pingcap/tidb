@@ -42,7 +42,7 @@ func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncE
 	for i, aggFunc := range aggFuncList {
 		var newArgList []expression.Expression
 		for _, arg := range aggFunc.Args {
-			newArg, np, correlated, err := b.rewrite(arg, p, nil, nil)
+			newArg, np, correlated, err := b.rewrite(arg, p, nil)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
@@ -187,7 +187,7 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) Plan {
 	joinPlan.SetSchema(newSchema)
 	joinPlan.correlated = leftPlan.IsCorrelated() || rightPlan.IsCorrelated()
 	if join.On != nil {
-		onExpr, _, correlated, err := b.rewrite(join.On.Expr, joinPlan, nil, nil)
+		onExpr, _, correlated, err := b.rewrite(join.On.Expr, joinPlan, nil)
 		if err != nil {
 			b.err = err
 			return nil
@@ -214,13 +214,13 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) Plan {
 	return joinPlan
 }
 
-func (b *planBuilder) buildSelection(p Plan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int, colMapper map[*ast.ColumnNameExpr]expression.Expression) Plan {
+func (b *planBuilder) buildSelection(p Plan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) Plan {
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := &Selection{}
 	selection.correlated = p.IsCorrelated()
 	for _, cond := range conditions {
-		expr, np, correlated, err := b.rewrite(cond, p, AggMapper, colMapper)
+		expr, np, correlated, err := b.rewrite(cond, p, AggMapper)
 		if err != nil {
 			b.err = err
 			return nil
@@ -266,7 +266,7 @@ func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper 
 			}
 			continue
 		}
-		newExpr, np, correlated, err := b.rewrite(field.Expr, p, mapper, nil)
+		newExpr, np, correlated, err := b.rewrite(field.Expr, p, mapper)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, oldLen
@@ -357,7 +357,7 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) (p Plan) {
 		p = b.buildNewDistinct(p)
 	}
 	if union.OrderBy != nil {
-		p = b.buildNewSort(p, union.OrderBy.Items, nil, nil)
+		p = b.buildNewSort(p, union.OrderBy.Items, nil)
 	}
 	if union.Limit != nil {
 		p = b.buildNewLimit(p, union.Limit)
@@ -378,11 +378,11 @@ type NewSort struct {
 	ByItems []ByItems
 }
 
-func (b *planBuilder) buildNewSort(p Plan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, colMapper map[*ast.ColumnNameExpr]expression.Expression) Plan {
+func (b *planBuilder) buildNewSort(p Plan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) Plan {
 	var exprs []ByItems
 	sort := &NewSort{}
 	for _, item := range byItems {
-		it, np, correlated, err := b.rewrite(item.Expr, p, aggMapper, colMapper)
+		it, np, correlated, err := b.rewrite(item.Expr, p, aggMapper)
 		if err != nil {
 			b.err = err
 			return nil
@@ -477,8 +477,8 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) (
 	return aggList, havingMapper, orderByMapper, totalAggMapper
 }
 
-// astColsReplacer replace having/orderby's ast expression to expression.Expression
-type astColsReplacer struct {
+// selectFilelsResolver resolves having/orderby's ast expression to expression.Expression
+type selectFieldsResolver struct {
 	proj    *Projection
 	inExpr  bool
 	orderBy bool
@@ -486,14 +486,14 @@ type astColsReplacer struct {
 	mapper  map[*ast.ColumnNameExpr]expression.Expression
 }
 
-func (e *astColsReplacer) addProjectionExpr(v *ast.ColumnNameExpr, projCol *expression.Column) {
+func (e *selectFieldsResolver) addProjectionExpr(v *ast.ColumnNameExpr, projCol *expression.Column) {
 	e.proj.Exprs = append(e.proj.Exprs, projCol)
 	schemaCols, _ := projCol.DeepCopy().(*expression.Column)
 	e.mapper[v] = schemaCols
 	e.proj.schema = append(e.proj.schema, schemaCols)
 }
 
-func (e *astColsReplacer) Enter(inNode ast.Node) (ast.Node, bool) {
+func (e *selectFieldsResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	switch v := inNode.(type) {
 	case *ast.ValueExpr, *ast.ColumnName, *ast.ParenthesesExpr:
 	case *ast.ColumnNameExpr:
@@ -543,7 +543,7 @@ func (e *astColsReplacer) Enter(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
-func (e *astColsReplacer) Leave(inNode ast.Node) (ast.Node, bool) {
+func (e *selectFieldsResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
@@ -618,7 +618,7 @@ func (b *planBuilder) rewriteGbyExprs(p Plan, gby *ast.GroupByClause, fields []*
 			return nil, false, nil
 		}
 		retExpr, _ := item.Expr.Accept(g)
-		expr, np, cor, err := b.rewrite(retExpr.(ast.ExprNode), p, nil, nil)
+		expr, np, cor, err := b.rewrite(retExpr.(ast.ExprNode), p, nil)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, false, nil
@@ -646,7 +646,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 		return nil
 	}
 	if sel.Where != nil {
-		p = b.buildSelection(p, sel.Where, nil, nil)
+		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
 			return nil
 		}
@@ -678,7 +678,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
-	replacer := &astColsReplacer{proj: p.(*Projection), mapper: make(map[*ast.ColumnNameExpr]expression.Expression)}
+	replacer := &selectFieldsResolver{proj: p.(*Projection), mapper: b.colMapper}
 	if sel.Having != nil && !hasAgg {
 		sel.Having.Expr.Accept(replacer)
 		if replacer.err != nil {
@@ -698,7 +698,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 		}
 	}
 	if sel.Having != nil {
-		p = b.buildSelection(p, sel.Having.Expr, havingMap, replacer.mapper)
+		p = b.buildSelection(p, sel.Having.Expr, havingMap)
 		if b.err != nil {
 			return nil
 		}
@@ -711,7 +711,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	}
 	// TODO: implement push order during cbo
 	if sel.OrderBy != nil {
-		p = b.buildNewSort(p, sel.OrderBy.Items, orderMap, replacer.mapper)
+		p = b.buildNewSort(p, sel.OrderBy.Items, orderMap)
 		if b.err != nil {
 			return nil
 		}
