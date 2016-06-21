@@ -470,6 +470,7 @@ set		{s}{e}{t}
 share		{s}{h}{a}{r}{e}
 show		{s}{h}{o}{w}
 some		{s}{o}{m}{e}
+space		{s}{p}{a}{c}{e}
 start		{s}{t}{a}{r}{t}
 status          {s}{t}{a}{t}{u}{s}
 subdate		{s}{u}{b}{d}{a}{t}{e}
@@ -972,6 +973,8 @@ redundant		lval.item = string(l.val)
 			return session
 {some}			lval.item = string(l.val)
 			return some
+{space}			lval.item = string(l.val)
+			return space
 {start}			lval.item = string(l.val)
 			return start
 {status}		lval.item = string(l.val)
