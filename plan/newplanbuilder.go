@@ -610,14 +610,14 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 func (b *planBuilder) resolveGbyExprs(p Plan, gby *ast.GroupByClause, fields []*ast.SelectField) (Plan, bool, []expression.Expression) {
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 	correlated := false
-	g := &gbyResolver{fields: fields, schema: p.GetSchema()}
+	resolver := &gbyResolver{fields: fields, schema: p.GetSchema()}
 	for _, item := range gby.Items {
-		g.inExpr = false
-		if g.err != nil {
-			b.err = errors.Trace(g.err)
+		resolver.inExpr = false
+		if resolver.err != nil {
+			b.err = errors.Trace(resolver.err)
 			return nil, false, nil
 		}
-		retExpr, _ := item.Expr.Accept(g)
+		retExpr, _ := item.Expr.Accept(resolver)
 		expr, np, cor, err := b.rewrite(retExpr.(ast.ExprNode), p, nil)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -678,21 +678,21 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
-	replacer := &havingAndOrderbyResolver{proj: p.(*Projection), mapper: b.colMapper}
+	resolver := &havingAndOrderbyResolver{proj: p.(*Projection), mapper: b.colMapper}
 	if sel.Having != nil && !hasAgg {
-		sel.Having.Expr.Accept(replacer)
-		if replacer.err != nil {
-			b.err = errors.Trace(replacer.err)
+		sel.Having.Expr.Accept(resolver)
+		if resolver.err != nil {
+			b.err = errors.Trace(resolver.err)
 			return nil
 		}
 	}
-	replacer.orderBy = true
+	resolver.orderBy = true
 	if sel.OrderBy != nil && !hasAgg {
 		for _, item := range sel.OrderBy.Items {
-			replacer.inExpr = false
-			item.Expr.Accept(replacer)
-			if replacer.err != nil {
-				b.err = errors.Trace(replacer.err)
+			resolver.inExpr = false
+			item.Expr.Accept(resolver)
+			if resolver.err != nil {
+				b.err = errors.Trace(resolver.err)
 				return nil
 			}
 		}
