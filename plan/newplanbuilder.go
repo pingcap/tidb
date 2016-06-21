@@ -477,8 +477,8 @@ func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) (
 	return aggList, havingMapper, orderByMapper, totalAggMapper
 }
 
-// selectFilelsResolver resolves having/orderby's ast expression to expression.Expression
-type selectFieldsResolver struct {
+// havingAndOrderbyResolver resolves having/orderby's ast expression to expression.Expression
+type havingAndOrderbyResolver struct {
 	proj    *Projection
 	inExpr  bool
 	orderBy bool
@@ -486,14 +486,14 @@ type selectFieldsResolver struct {
 	mapper  map[*ast.ColumnNameExpr]expression.Expression
 }
 
-func (e *selectFieldsResolver) addProjectionExpr(v *ast.ColumnNameExpr, projCol *expression.Column) {
+func (e *havingAndOrderbyResolver) addProjectionExpr(v *ast.ColumnNameExpr, projCol *expression.Column) {
 	e.proj.Exprs = append(e.proj.Exprs, projCol)
 	schemaCols, _ := projCol.DeepCopy().(*expression.Column)
 	e.mapper[v] = schemaCols
 	e.proj.schema = append(e.proj.schema, schemaCols)
 }
 
-func (e *selectFieldsResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+func (e *havingAndOrderbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	switch v := inNode.(type) {
 	case *ast.ValueExpr, *ast.ColumnName, *ast.ParenthesesExpr:
 	case *ast.ColumnNameExpr:
@@ -543,18 +543,18 @@ func (e *selectFieldsResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
-func (e *selectFieldsResolver) Leave(inNode ast.Node) (ast.Node, bool) {
+func (e *havingAndOrderbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
-type gbyColsReplacer struct {
+type gbyResolver struct {
 	fields []*ast.SelectField
 	schema expression.Schema
 	err    error
 	inExpr bool
 }
 
-func (g *gbyColsReplacer) Enter(inNode ast.Node) (ast.Node, bool) {
+func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	switch inNode.(type) {
 	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
 		return inNode, true
@@ -565,7 +565,7 @@ func (g *gbyColsReplacer) Enter(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
-func (g *gbyColsReplacer) match(a *ast.ColumnName, b *ast.ColumnName) bool {
+func (g *gbyResolver) match(a *ast.ColumnName, b *ast.ColumnName) bool {
 	if a.Schema.L == "" || a.Schema.L == b.Schema.L {
 		if a.Table.L == "" || a.Table.L == b.Table.L {
 			return a.Name.L == b.Name.L
@@ -574,7 +574,7 @@ func (g *gbyColsReplacer) match(a *ast.ColumnName, b *ast.ColumnName) bool {
 	return false
 }
 
-func (g *gbyColsReplacer) Leave(inNode ast.Node) (ast.Node, bool) {
+func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
 		if col, err := g.schema.FindColumn(v.Name); err != nil {
@@ -607,10 +607,10 @@ func (g *gbyColsReplacer) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
-func (b *planBuilder) rewriteGbyExprs(p Plan, gby *ast.GroupByClause, fields []*ast.SelectField) (Plan, bool, []expression.Expression) {
+func (b *planBuilder) resolveGbyExprs(p Plan, gby *ast.GroupByClause, fields []*ast.SelectField) (Plan, bool, []expression.Expression) {
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 	correlated := false
-	g := &gbyColsReplacer{fields: fields, schema: p.GetSchema()}
+	g := &gbyResolver{fields: fields, schema: p.GetSchema()}
 	for _, item := range gby.Items {
 		g.inExpr = false
 		if g.err != nil {
@@ -659,7 +659,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	}
 	if hasAgg {
 		if sel.GroupBy != nil {
-			p, correlated, gbyCols = b.rewriteGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
+			p, correlated, gbyCols = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 			if b.err != nil {
 				return nil
 			}
@@ -678,7 +678,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
-	replacer := &selectFieldsResolver{proj: p.(*Projection), mapper: b.colMapper}
+	replacer := &havingAndOrderbyResolver{proj: p.(*Projection), mapper: b.colMapper}
 	if sel.Having != nil && !hasAgg {
 		sel.Having.Expr.Accept(replacer)
 		if replacer.err != nil {
