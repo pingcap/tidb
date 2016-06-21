@@ -109,7 +109,7 @@ func NewIndex(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Inde
 	return index
 }
 
-// Meta return index info.
+// Meta returns index info.
 func (c *index) Meta() *model.IndexInfo {
 	return c.idxInfo
 }
