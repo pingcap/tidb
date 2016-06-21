@@ -277,6 +277,8 @@ type SelectField struct {
 	// Alias name for Expr.
 	AsName model.CIStr
 	// Auxiliary stands for if this field is auxiliary.
+	// When we add a Field into SelectField list which is used for having/orderby clause but the field is not in select clause,
+	// we should set its Auxiliary to true. Then the TrimExec will trim the field.
 	Auxiliary bool
 }
 

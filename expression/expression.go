@@ -62,7 +62,7 @@ type Column struct {
 	DBName  model.CIStr
 	TblName model.CIStr
 	RetType *types.FieldType
-	// Position means the position this column appear in the select fields.
+	// Position means the position of this column that appears in the select fields.
 	// e.g. SELECT name as id , 1 - id as id , 1 + name as id, name as id from src having id = 1;
 	// There are four ids in the same schema, so you can't identify the column through the FromID and ColName.
 	Position int
@@ -73,7 +73,7 @@ type Column struct {
 	data       *types.Datum
 }
 
-// Equal checks if two columns is equal
+// Equal checks if two columns are equal
 func (col *Column) Equal(expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		return col.FromID == newCol.FromID && col.ColName == newCol.ColName
