@@ -20,6 +20,7 @@ package evaluator
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -190,21 +191,31 @@ func builtinReverse(args []types.Datum, _ context.Context) (d types.Datum, err e
 // See: http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_space
 func builtinSpace(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	x := args[0]
-	switch x.Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		v, err := x.ToInt64()
-		if err != nil || v < 0 {
-			v = 0
-		}
-		if v > math.MaxInt32 {
-			d.SetNull()
-		} else {
-			d.SetString(strings.Repeat(" ", int(v)))
-		}
+	if x.IsNull() {
 		return d, nil
 	}
+
+	if x.Kind() == types.KindString {
+		if _, err := strconv.ParseInt(x.GetString(), 10, 64); err != nil {
+			return d, errors.Trace(err)
+		}
+	}
+
+	v, err := x.ToInt64()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if v < 0 {
+		v = 0
+	}
+
+	if v > math.MaxInt32 {
+		d.SetNull()
+	} else {
+		d.SetString(strings.Repeat(" ", int(v)))
+	}
+	return d, nil
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper

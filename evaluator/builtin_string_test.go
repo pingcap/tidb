@@ -489,10 +489,7 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 		{5, "     "},
 		{0, ""},
 		{-1, ""},
-		{"", ""},
 		{"5", "     "},
-		{"3.3", "   "},
-		{"abc", ""},
 	}
 
 	dtbl := tblToDtbl(tbl)
@@ -501,6 +498,20 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 		d, err = builtinSpace(t["Input"], nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
+	}
+
+	wrong := []struct {
+		Input string
+	}{
+		{"abc"},
+		{"3.3"},
+		{""},
+	}
+
+	dwrong := tblToDtbl(wrong)
+	for _, t := range dwrong {
+		_, err = builtinSpace(t["Input"], nil)
+		c.Assert(err, NotNil)
 	}
 }
 
