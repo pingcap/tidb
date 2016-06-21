@@ -131,31 +131,51 @@ func (h *rpcHandler) keyInRegion(key []byte) bool {
 	return regionContains(h.startKey, h.endKey, key)
 }
 
+func makeColumns(colNames, colVals [][]byte) []*kvpb.Column {
+	if colVals == nil {
+		return nil
+	}
+	if len(colNames) != len(colVals) {
+		panic("makeColumns: len(colNames) != len(colVals)")
+	}
+	cols := make([]*kvpb.Column, len(colNames))
+	for i := range cols {
+		cols[i] = &kvpb.Column{
+			Name:  colNames[i],
+			Value: colVals[i],
+		}
+	}
+	return cols
+}
+
 func (h *rpcHandler) onGet(req *kvrpcpb.CmdGetRequest) *kvrpcpb.CmdGetResponse {
-	if !h.keyInRegion(req.GetRow().GetRowKey()) {
+	if !h.keyInRegion(req.GetRow()) {
 		panic("onGet: key not in region")
 	}
 
-	vals, err := h.mvccStore.Get(req.GetRow().GetRowKey(), req.GetRow().GetColumns(), req.GetTs())
+	vals, err := h.mvccStore.Get(req.GetRow(), req.GetColumns(), req.GetTs())
 	if err != nil {
 		return &kvrpcpb.CmdGetResponse{
-			Row: &kvpb.RowValue{
-				Error: convertToKeyError(err),
+			Row: &kvpb.Row{
+				Error:  convertToKeyError(err),
+				RowKey: req.GetRow(),
 			},
 		}
 	}
+
 	return &kvrpcpb.CmdGetResponse{
-		Row: &kvpb.RowValue{
-			Values: vals,
+		Row: &kvpb.Row{
+			RowKey:  req.GetRow(),
+			Columns: makeColumns(req.GetColumns(), vals),
 		},
 	}
 }
 
 func (h *rpcHandler) onScan(req *kvrpcpb.CmdScanRequest) *kvrpcpb.CmdScanResponse {
-	if !h.keyInRegion(req.GetStartRow().GetRowKey()) {
+	if !h.keyInRegion(req.GetStartRow()) {
 		panic("onScan: startKey not in region")
 	}
-	rows := h.mvccStore.Scan(req.GetStartRow().GetRowKey(), h.endKey, req.GetStartRow().GetColumns(), int(req.GetLimit()), req.GetTs())
+	rows := h.mvccStore.Scan(req.GetStartRow(), h.endKey, req.GetColumns(), int(req.GetLimit()), req.GetTs())
 	return &kvrpcpb.CmdScanResponse{
 		Rows: convertToPbRows(rows),
 	}
@@ -163,7 +183,7 @@ func (h *rpcHandler) onScan(req *kvrpcpb.CmdScanRequest) *kvrpcpb.CmdScanRespons
 
 func (h *rpcHandler) onPrewrite(req *kvrpcpb.CmdPrewriteRequest) *kvrpcpb.CmdPrewriteResponse {
 	for _, m := range req.Mutations {
-		if !h.keyInRegion(m.GetRowKey()) {
+		if !h.keyInRegion(m.GetRow()) {
 			panic("onPrewrite: key not in region")
 		}
 	}
@@ -204,56 +224,58 @@ func (h *rpcHandler) onCleanup(req *kvrpcpb.CmdCleanupRequest) *kvrpcpb.CmdClean
 }
 
 func (h *rpcHandler) onCommitThenGet(req *kvrpcpb.CmdCommitThenGetRequest) *kvrpcpb.CmdCommitThenGetResponse {
-	if !h.keyInRegion(req.GetRow().GetRowKey()) {
+	if !h.keyInRegion(req.GetRow()) {
 		panic("onCommitThenGet: key not in region")
 	}
-	vals, err := h.mvccStore.CommitThenGet(req.GetRow().GetRowKey(), req.GetRow().GetColumns(), req.GetStartTs(), req.GetCommitTs(), req.GetGetTs())
+	vals, err := h.mvccStore.CommitThenGet(req.GetRow(), req.GetColumns(), req.GetStartTs(), req.GetCommitTs(), req.GetGetTs())
 	if err != nil {
 		return &kvrpcpb.CmdCommitThenGetResponse{
-			RowValue: &kvpb.RowValue{
-				Error: convertToKeyError(err),
+			Row: &kvpb.Row{
+				Error:  convertToKeyError(err),
+				RowKey: req.GetRow(),
 			},
 		}
 	}
 	return &kvrpcpb.CmdCommitThenGetResponse{
-		RowValue: &kvpb.RowValue{
-			Values: vals,
+		Row: &kvpb.Row{
+			RowKey:  req.GetRow(),
+			Columns: makeColumns(req.GetColumns(), vals),
 		},
 	}
 }
 
 func (h *rpcHandler) onRollbackThenGet(req *kvrpcpb.CmdRollbackThenGetRequest) *kvrpcpb.CmdRollbackThenGetResponse {
-	if !h.keyInRegion(req.GetRow().GetRowKey()) {
+	if !h.keyInRegion(req.GetRow()) {
 		panic("onRollbackThenGet: key not in region")
 	}
-	vals, err := h.mvccStore.RollbackThenGet(req.GetRow().GetRowKey(), req.GetRow().GetColumns(), req.GetTs())
+	vals, err := h.mvccStore.RollbackThenGet(req.GetRow(), req.GetColumns(), req.GetTs())
 	if err != nil {
 		return &kvrpcpb.CmdRollbackThenGetResponse{
-			RowValue: &kvpb.RowValue{
-				Error: convertToKeyError(err),
+			Row: &kvpb.Row{
+				Error:  convertToKeyError(err),
+				RowKey: req.GetRow(),
 			},
 		}
 	}
 	return &kvrpcpb.CmdRollbackThenGetResponse{
-		RowValue: &kvpb.RowValue{
-			Values: vals,
+		Row: &kvpb.Row{
+			RowKey:  req.GetRow(),
+			Columns: makeColumns(req.GetColumns(), vals),
 		},
 	}
 }
 
 func (h *rpcHandler) onBatchGet(req *kvrpcpb.CmdBatchGetRequest) *kvrpcpb.CmdBatchGetResponse {
-	rowKeys := make([][]byte, len(req.GetRows()))
 	cols := make([][][]byte, len(req.GetRows()))
 	for i, row := range req.GetRows() {
-		if !h.keyInRegion(row.GetRowKey()) {
+		if !h.keyInRegion(row) {
 			panic("onBatchGet: key not in region")
 		}
-		rowKeys[i] = row.GetRowKey()
-		cols[i] = row.GetColumns()
+		cols[i] = req.GetColumns()[i].GetColumns()
 	}
-	rows := h.mvccStore.BatchGet(rowKeys, cols, req.GetTs())
+	rows := h.mvccStore.BatchGet(req.GetRows(), cols, req.GetTs())
 	return &kvrpcpb.CmdBatchGetResponse{
-		RowValues: convertToPbRows(rows),
+		Rows: convertToPbRows(rows),
 	}
 }
 
@@ -287,18 +309,17 @@ func convertToKeyErrors(errs []error) []*kvpb.KeyError {
 	return errors
 }
 
-func convertToPbRows(rows []Row) []*kvpb.RowValue {
-	pbRows := make([]*kvpb.RowValue, len(rows))
+func convertToPbRows(rows []Row) []*kvpb.Row {
+	pbRows := make([]*kvpb.Row, len(rows))
 	for i, r := range rows {
-		var pbRow *kvpb.RowValue
+		var pbRow *kvpb.Row
 		if r.Err == nil {
-			pbRow = &kvpb.RowValue{
+			pbRow = &kvpb.Row{
 				RowKey:  r.RowKey,
-				Columns: r.Columns,
-				Values:  r.Values,
+				Columns: makeColumns(r.Columns, r.Values),
 			}
 		} else {
-			pbRow = &kvpb.RowValue{
+			pbRow = &kvpb.Row{
 				Error: convertToKeyError(r.Err),
 			}
 		}

@@ -93,47 +93,47 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/coprocessor",
-			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
+			"Rev": "4a54a8b546c90a9b94cf22a7c1cfe72546303750"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/errorpb",
-			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
+			"Rev": "4a54a8b546c90a9b94cf22a7c1cfe72546303750"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/kvrpcpb",
-			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
+			"Rev": "4a54a8b546c90a9b94cf22a7c1cfe72546303750"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/metapb",
-			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
+			"Rev": "4a54a8b546c90a9b94cf22a7c1cfe72546303750"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/mvccpb",
-			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
+			"Rev": "4a54a8b546c90a9b94cf22a7c1cfe72546303750"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/msgpb",
-			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
+			"Rev": "4a54a8b546c90a9b94cf22a7c1cfe72546303750"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/pdpb",
-			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
+			"Rev": "4a54a8b546c90a9b94cf22a7c1cfe72546303750"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_cmdpb",
-			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
+			"Rev": "4a54a8b546c90a9b94cf22a7c1cfe72546303750"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_serverpb",
-			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
+			"Rev": "4a54a8b546c90a9b94cf22a7c1cfe72546303750"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raftpb",
-			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
+			"Rev": "4a54a8b546c90a9b94cf22a7c1cfe72546303750"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/util",
-			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
+			"Rev": "4a54a8b546c90a9b94cf22a7c1cfe72546303750"
 		},
 		{
 			"ImportPath": "github.com/pingcap/pd/pd-client",
@@ -301,7 +301,7 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/kvpb",
-			"Rev": "41cbb516e4a29972b9592b2c266b57945f8e4ec4"
+			"Rev": "4a54a8b546c90a9b94cf22a7c1cfe72546303750"
 		}
 	]
 }

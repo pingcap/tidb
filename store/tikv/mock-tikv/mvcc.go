@@ -110,7 +110,7 @@ func (e *mvccEntry) GetColumns(cols [][]byte, ts uint64) ([][]byte, error) {
 }
 
 func (e *mvccEntry) Prewrite(mut *kvpb.Mutation, startTS uint64, primary []byte) error {
-	if len(mut.Ops) != len(mut.Columns) || len(mut.Ops) != len(mut.Values) {
+	if len(mut.Ops) != len(mut.Columns) {
 		panic("invalid rowMutation: fields len not match")
 	}
 	if l := len(e.meta.Items); l > 0 {
@@ -138,12 +138,12 @@ func (e *mvccEntry) Prewrite(mut *kvpb.Mutation, startTS uint64, primary []byte)
 		PrimaryKey: primary,
 	}
 	for i, op := range mut.GetOps() {
-		col, val := mut.GetColumns()[i], mut.GetValues()[i]
+		col := mut.GetColumns()[i]
 		if op == kvpb.Op_Put {
-			e.putValue(col, startTS, val)
+			e.putValue(col.GetName(), startTS, col.GetValue())
 		}
 		e.meta.Lock.Columns = append(e.meta.Lock.Columns, &mvccpb.MetaColumn{
-			Name: col,
+			Name: col.GetName(),
 			Op:   op.Enum(),
 		})
 	}
@@ -361,7 +361,7 @@ func (s *MvccStore) Prewrite(mutations []*kvpb.Mutation, primary []byte, startTS
 
 	var errs []error
 	for _, m := range mutations {
-		entry := s.getOrNewEntry(m.GetRowKey())
+		entry := s.getOrNewEntry(m.GetRow())
 		err := entry.Prewrite(m, startTS, primary)
 		s.submit(entry)
 		errs = append(errs, err)

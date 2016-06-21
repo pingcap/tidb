@@ -45,17 +45,15 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
 			mutations[string(k)] = &kvpb.Mutation{
-				RowKey:  k,
+				Row:     k,
 				Ops:     []kvpb.Op{kvpb.Op_Put},
-				Columns: defaultColumn,
-				Values:  [][]byte{v},
+				Columns: []*kvpb.Column{{Value: v}},
 			}
 		} else {
 			mutations[string(k)] = &kvpb.Mutation{
-				RowKey:  k,
+				Row:     k,
 				Ops:     []kvpb.Op{kvpb.Op_Del},
-				Columns: defaultColumn,
-				Values:  [][]byte{nil},
+				Columns: []*kvpb.Column{{Value: nil}},
 			}
 		}
 		keys = append(keys, k)
@@ -72,10 +70,9 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	for _, lockKey := range txn.lockKeys {
 		if _, ok := mutations[string(lockKey)]; !ok {
 			mutations[string(lockKey)] = &kvpb.Mutation{
-				RowKey:  lockKey,
+				Row:     lockKey,
 				Ops:     []kvpb.Op{kvpb.Op_Lock},
-				Columns: defaultColumn,
-				Values:  [][]byte{nil},
+				Columns: []*kvpb.Column{{Value: nil}},
 			}
 			keys = append(keys, lockKey)
 		}
@@ -168,8 +165,8 @@ func (c *txnCommitter) doBatches(batches []batchKeys, f func(batchKeys) error) e
 func (c *txnCommitter) keyValueSize(key []byte) int {
 	size := c.keySize(key)
 	if mutation := c.mutations[string(key)]; mutation != nil {
-		for _, val := range mutation.Values {
-			size += len(val)
+		for _, mut := range mutation.GetColumns() {
+			size += len(mut.GetValue())
 		}
 	}
 	return size

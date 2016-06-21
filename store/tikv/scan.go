@@ -28,7 +28,7 @@ type Scanner struct {
 	snapshot     *tikvSnapshot
 	batchSize    int
 	valid        bool
-	cache        []*kvpb.RowValue
+	cache        []*kvpb.Row
 	idx          int
 	nextStartKey []byte
 	eof          bool
@@ -130,8 +130,7 @@ func (s *Scanner) resolveCurrentLock() error {
 			return errors.Trace(err)
 		}
 		current.Error = nil
-		current.Columns = defaultColumn
-		current.Values = [][]byte{val}
+		current.Columns = []*kvpb.Column{{Value: val}}
 		return nil
 	}
 	return errors.Annotate(backoffErr, txnRetryableMark)
@@ -149,7 +148,8 @@ func (s *Scanner) getData() error {
 		req := &pb.Request{
 			Type: pb.MessageType_CmdScan.Enum(),
 			CmdScanReq: &pb.CmdScanRequest{
-				StartRow: defaultRow(s.nextStartKey),
+				StartRow: s.nextStartKey,
+				Columns:  defaultColumn,
 				Limit:    proto.Uint32(uint32(s.batchSize)),
 				Ts:       proto.Uint64(s.startTS()),
 			},

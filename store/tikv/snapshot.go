@@ -108,15 +108,16 @@ func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v 
 	pending := batch.keys
 	var backoffErr error
 	for backoff := txnLockBackoff(); backoffErr == nil; backoffErr = backoff() {
-		rows := make([]*kvpb.Row, len(pending))
-		for i := range pending {
-			rows[i] = defaultRow(pending[i])
+		columns := make([]*pb.Columns, len(pending))
+		for i := range columns {
+			columns[i] = &pb.Columns{Columns: defaultColumn}
 		}
 		req := &pb.Request{
 			Type: pb.MessageType_CmdBatchGet.Enum(),
 			CmdBatchGetReq: &pb.CmdBatchGetRequest{
-				Rows: rows,
-				Ts:   proto.Uint64(s.version.Ver),
+				Rows:    pending,
+				Columns: columns,
+				Ts:      proto.Uint64(s.version.Ver),
 			},
 		}
 		resp, err := s.store.SendKVReq(req, batch.region)
@@ -132,10 +133,10 @@ func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v 
 			return errors.Trace(errBodyMissing)
 		}
 		var lockedKeys [][]byte
-		for _, rowValue := range batchGetResp.GetRowValues() {
-			keyErr := rowValue.GetError()
+		for _, row := range batchGetResp.GetRows() {
+			keyErr := row.GetError()
 			if keyErr == nil {
-				collectF(rowValue.GetRowKey(), defaultRowValue(rowValue))
+				collectF(row.GetRowKey(), defaultRowValue(row))
 				continue
 			}
 			// This could be slow if we meet many expired locks.
@@ -145,10 +146,10 @@ func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v 
 				if terror.ErrorNotEqual(err, errInnerRetryable) {
 					return errors.Trace(err)
 				}
-				lockedKeys = append(lockedKeys, rowValue.GetRowKey())
+				lockedKeys = append(lockedKeys, row.GetRowKey())
 				continue
 			}
-			collectF(rowValue.GetRowKey(), val)
+			collectF(row.GetRowKey(), val)
 		}
 		if len(lockedKeys) > 0 {
 			pending = lockedKeys
@@ -164,8 +165,9 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdGet.Enum(),
 		CmdGetReq: &pb.CmdGetRequest{
-			Row: defaultRow(k),
-			Ts:  proto.Uint64(s.version.Ver),
+			Row:     k,
+			Columns: defaultColumn,
+			Ts:      proto.Uint64(s.version.Ver),
 		},
 	}
 

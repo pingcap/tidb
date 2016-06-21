@@ -20,16 +20,9 @@ import "github.com/pingcap/kvproto/pkg/kvpb"
 
 var defaultColumn = [][]byte{nil}
 
-func defaultRow(rowKey []byte) *kvpb.Row {
-	return &kvpb.Row{
-		RowKey:  rowKey,
-		Columns: defaultColumn,
-	}
-}
-
-func defaultRowValue(rowVal *kvpb.RowValue) []byte {
-	if rowVal == nil || len(rowVal.GetValues()) == 0 {
+func defaultRowValue(row *kvpb.Row) []byte {
+	if row == nil || len(row.GetColumns()) == 0 {
 		return nil
 	}
-	return rowVal.GetValues()[0]
+	return row.GetColumns()[0].GetValue()
 }

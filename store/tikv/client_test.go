@@ -64,7 +64,8 @@ func (s *testClientSuite) TestSendBySelf(c *C) {
 	req := new(pb.Request)
 	req.Type = pb.MessageType_CmdGet.Enum()
 	getReq := new(pb.CmdGetRequest)
-	getReq.Row = defaultRow([]byte("a"))
+	getReq.Row = []byte("a")
+	getReq.Columns = defaultColumn
 	ver := uint64(0)
 	getReq.Ts = &ver
 	req.CmdGetReq = getReq

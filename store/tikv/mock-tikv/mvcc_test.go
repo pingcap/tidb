@@ -47,10 +47,9 @@ func putMutations(kvpairs ...string) []*kvpb.Mutation {
 	var mutations []*kvpb.Mutation
 	for i := 0; i < len(kvpairs); i += 2 {
 		mutations = append(mutations, &kvpb.Mutation{
-			RowKey:  encodeKey(kvpairs[i]),
+			Row:     encodeKey(kvpairs[i]),
 			Ops:     []kvpb.Op{kvpb.Op_Put},
-			Columns: defaultColumn,
-			Values:  [][]byte{[]byte(kvpairs[i+1])},
+			Columns: []*kvpb.Column{{Value: []byte(kvpairs[i+1])}},
 		})
 	}
 	return mutations
@@ -94,10 +93,9 @@ func (s *testMockTiKVSuite) mustPutOK(c *C, key, value string, startTS, commitTS
 func (s *testMockTiKVSuite) mustDeleteOK(c *C, key string, startTS, commitTS uint64) {
 	mutations := []*kvpb.Mutation{
 		{
-			RowKey:  encodeKey(key),
+			Row:     encodeKey(key),
 			Ops:     []kvpb.Op{kvpb.Op_Del},
-			Columns: defaultColumn,
-			Values:  [][]byte{nil},
+			Columns: []*kvpb.Column{{Value: nil}},
 		},
 	}
 	errs := s.store.Prewrite(mutations, encodeKey(key), startTS)

@@ -102,8 +102,9 @@ func (l *txnLock) rollbackThenGet() ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdRollbackThenGet.Enum(),
 		CmdRbGetReq: &pb.CmdRollbackThenGetRequest{
-			Row: defaultRow(l.key),
-			Ts:  proto.Uint64(l.pl.version),
+			Row:     l.key,
+			Columns: defaultColumn,
+			Ts:      proto.Uint64(l.pl.version),
 		},
 	}
 	var backoffErr error
@@ -123,14 +124,14 @@ func (l *txnLock) rollbackThenGet() ([]byte, error) {
 		if cmdRbGResp == nil {
 			return nil, errors.Trace(errBodyMissing)
 		}
-		rowVal := cmdRbGResp.GetRowValue()
-		if rowVal == nil {
+		row := cmdRbGResp.GetRow()
+		if row == nil {
 			return nil, errors.Trace(errBodyMissing)
 		}
-		if keyErr := rowVal.GetError(); keyErr != nil {
+		if keyErr := row.GetError(); keyErr != nil {
 			return nil, errors.Errorf("unexpected rollback err: %s", keyErr.String())
 		}
-		return defaultRowValue(rowVal), nil
+		return defaultRowValue(row), nil
 	}
 	return nil, errors.Annotate(backoffErr, txnRetryableMark)
 }
@@ -140,7 +141,8 @@ func (l *txnLock) commitThenGet(commitVersion uint64) ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdCommitThenGet.Enum(),
 		CmdCommitGetReq: &pb.CmdCommitThenGetRequest{
-			Row:      defaultRow(l.key),
+			Row:      l.key,
+			Columns:  defaultColumn,
 			StartTs:  proto.Uint64(l.pl.version),
 			CommitTs: proto.Uint64(commitVersion),
 			GetTs:    proto.Uint64(l.ver),
@@ -163,14 +165,14 @@ func (l *txnLock) commitThenGet(commitVersion uint64) ([]byte, error) {
 		if cmdCommitGetResp == nil {
 			return nil, errors.Trace(errBodyMissing)
 		}
-		rowVal := cmdCommitGetResp.GetRowValue()
-		if rowVal == nil {
+		row := cmdCommitGetResp.GetRow()
+		if row == nil {
 			return nil, errors.Trace(errBodyMissing)
 		}
-		if keyErr := rowVal.GetError(); keyErr != nil {
+		if keyErr := row.GetError(); keyErr != nil {
 			return nil, errors.Errorf("unexpected commit err: %s", keyErr.String())
 		}
-		return defaultRowValue(rowVal), nil
+		return defaultRowValue(row), nil
 	}
 	return nil, errors.Annotate(backoffErr, txnRetryableMark)
 }
