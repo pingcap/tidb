@@ -98,6 +98,7 @@ var Funcs = map[string]Func{
 	"replace":         {builtinReplace, 3, 3},
 	"reverse":         {builtinReverse, 1, 1},
 	"rtrim":           {trimFn(strings.TrimRight, spaceChars), 1, 1},
+	"space":           {builtinSpace, 1, 1},
 	"strcmp":          {builtinStrcmp, 2, 2},
 	"substring":       {builtinSubstring, 2, 3},
 	"substring_index": {builtinSubstringIndex, 3, 3},
