@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/xapi/tablecodec"
 )
 
 func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {

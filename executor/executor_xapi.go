@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xapi"
-	"github.com/pingcap/tidb/xapi/tablecodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -190,7 +189,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.TableInfo = &tipb.TableInfo{
 		TableId: proto.Int64(e.table.Meta().ID),
 	}
-	selReq.TableInfo.Columns = tablecodec.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
+	selReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
 	// Aggregate Info
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
@@ -473,7 +472,7 @@ func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
 	selIdxReq.StartTs = &startTs
-	selIdxReq.IndexInfo = tablecodec.IndexToProto(e.table.Meta(), e.indexPlan.Index)
+	selIdxReq.IndexInfo = xapi.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	if len(e.indexPlan.FilterConditions) == 0 {
 		// Push limit to index request only if there is not filter conditions.
 		selIdxReq.Limit = e.indexPlan.LimitCount
@@ -514,7 +513,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, 
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: proto.Int64(e.table.Meta().ID),
 	}
-	selTableReq.TableInfo.Columns = tablecodec.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
+	selTableReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
 	selTableReq.Fields = resultFieldsToPBExpression(e.indexPlan.Fields())
 	for _, h := range handles {
 		if h == math.MaxInt64 {

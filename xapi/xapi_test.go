@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tablecodec
+package xapi
 
 import (
 	"testing"
@@ -19,7 +19,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -33,19 +32,6 @@ var _ = Suite(&testTableCodecSuite{})
 type testTableCodecSuite struct{}
 
 // TODO: add more tests.
-func (s *testTableCodecSuite) TestTableCodec(c *C) {
-	defer testleak.AfterTest(c)()
-	key := EncodeRowKey(1, codec.EncodeInt(nil, 2))
-	h, err := DecodeRowKey(key)
-	c.Assert(err, IsNil)
-	c.Assert(h, Equals, int64(2))
-
-	key = EncodeColumnKey(1, 2, 3)
-	h, err = DecodeRowKey(key)
-	c.Assert(err, IsNil)
-	c.Assert(h, Equals, int64(2))
-}
-
 func (s *testTableCodecSuite) TestColumnToProto(c *C) {
 	defer testleak.AfterTest(c)()
 	// Make sure the Flag is set in tipb.ColumnInfo

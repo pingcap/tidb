@@ -17,15 +17,12 @@ import (
 	"bytes"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -115,6 +112,19 @@ func DecodeValues(data []byte, fts []*types.FieldType, inIndex bool) ([]types.Da
 	return values, nil
 }
 
+// DecodeColumnValue decodes data to a Datum according to the column info.
+func DecodeColumnValue(data []byte, ft *types.FieldType) (types.Datum, error) {
+	_, d, err := codec.DecodeOne(data)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	colDatum, err := Unflatten(d, ft)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return colDatum, nil
+}
+
 // Unflatten converts a raw datum to a column datum.
 func Unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 	if datum.IsNull() {
@@ -182,26 +192,6 @@ func Unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 	return datum, nil
 }
 
-// DecodeColumnValue decodes data to a Datum according to the column info.
-func DecodeColumnValue(data []byte, col *tipb.ColumnInfo) (types.Datum, error) {
-	_, d, err := codec.DecodeOne(data)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	ft := &types.FieldType{
-		Tp:      byte(col.GetTp()),
-		Flen:    int(col.GetColumnLen()),
-		Decimal: int(col.GetDecimal()),
-		Elems:   col.Elems,
-		Collate: mysql.Collations[uint8(col.GetCollation())],
-	}
-	colDatum, err := Unflatten(d, ft)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return colDatum, nil
-}
-
 // EncodeIndexSeekKey encodes an index value to kv.Key.
 func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key {
 	key := make([]byte, 0, prefixLen+len(encodedValue))
@@ -247,105 +237,6 @@ func appendTableIndexPrefix(buf []byte, tableID int64) []byte {
 	buf = codec.EncodeInt(buf, tableID)
 	buf = append(buf, indexPrefixSep...)
 	return buf
-}
-
-func columnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
-	pc := &tipb.ColumnInfo{
-		ColumnId:  proto.Int64(c.ID),
-		Collation: proto.Int32(collationToProto(c.FieldType.Collate)),
-		ColumnLen: proto.Int32(int32(c.FieldType.Flen)),
-		Decimal:   proto.Int32(int32(c.FieldType.Decimal)),
-		Flag:      proto.Int32(int32(c.Flag)),
-		Elems:     c.Elems,
-	}
-	t := int32(c.FieldType.Tp)
-	pc.Tp = &t
-	return pc
-}
-
-func collationToProto(c string) int32 {
-	v, ok := mysql.CollationNames[c]
-	if ok {
-		return int32(v)
-	}
-	return int32(mysql.DefaultCollationID)
-}
-
-// ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
-func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
-	cols := make([]*tipb.ColumnInfo, 0, len(columns))
-	for _, c := range columns {
-		col := columnToProto(c)
-		if pkIsHandle && mysql.HasPriKeyFlag(c.Flag) {
-			col.PkHandle = proto.Bool(true)
-		} else {
-			col.PkHandle = proto.Bool(false)
-		}
-		cols = append(cols, col)
-	}
-	return cols
-}
-
-// ProtoColumnsToFieldTypes converts tipb column info slice to FieldTyps slice.
-func ProtoColumnsToFieldTypes(pColumns []*tipb.ColumnInfo) []*types.FieldType {
-	fields := make([]*types.FieldType, len(pColumns))
-	for i, v := range pColumns {
-		field := new(types.FieldType)
-		field.Tp = byte(v.GetTp())
-		field.Collate = mysql.Collations[byte(v.GetCollation())]
-		field.Decimal = int(v.GetDecimal())
-		field.Flen = int(v.GetColumnLen())
-		field.Flag = uint(v.GetFlag())
-		field.Elems = v.GetElems()
-		fields[i] = field
-	}
-	return fields
-}
-
-// IndexToProto converts a model.IndexInfo to a tipb.IndexInfo.
-func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
-	pi := &tipb.IndexInfo{
-		TableId: proto.Int64(t.ID),
-		IndexId: proto.Int64(idx.ID),
-		Unique:  proto.Bool(idx.Unique),
-	}
-	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns))
-	for _, c := range idx.Columns {
-		cols = append(cols, columnToProto(t.Columns[c.Offset]))
-	}
-	pi.Columns = cols
-	return pi
-}
-
-// EncodeTableRanges encodes table ranges into kv.KeyRanges.
-func EncodeTableRanges(tid int64, rans []*tipb.KeyRange) []kv.KeyRange {
-	keyRanges := make([]kv.KeyRange, 0, len(rans))
-	for _, r := range rans {
-		start := EncodeRowKey(tid, r.Low)
-		end := EncodeRowKey(tid, r.High)
-		nr := kv.KeyRange{
-			StartKey: start,
-			EndKey:   end,
-		}
-		keyRanges = append(keyRanges, nr)
-	}
-	return keyRanges
-}
-
-// EncodeIndexRanges encodes index ranges into kv.KeyRanges.
-func EncodeIndexRanges(tid, idxID int64, rans []*tipb.KeyRange) []kv.KeyRange {
-	keyRanges := make([]kv.KeyRange, 0, len(rans))
-	for _, r := range rans {
-		// Convert range to kv.KeyRange
-		start := EncodeIndexSeekKey(tid, idxID, r.Low)
-		end := EncodeIndexSeekKey(tid, idxID, r.High)
-		nr := kv.KeyRange{
-			StartKey: start,
-			EndKey:   end,
-		}
-		keyRanges = append(keyRanges, nr)
-	}
-	return keyRanges
 }
 
 // TruncateToRowKeyLen truncates the key to row key length if the key is longer than row key.
