@@ -151,7 +151,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		}
 		if column != nil {
 			er.ctxStack = append(er.ctxStack, column)
-			break
+			return inNode, true
 		}
 
 		for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
