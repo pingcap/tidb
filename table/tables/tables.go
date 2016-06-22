@@ -37,9 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// TablePrefix is the prefix for table record and index key.
-var TablePrefix = []byte{'t'}
-
 // Table implements table.Table interface.
 type Table struct {
 	ID      int64
@@ -95,8 +92,8 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 func newTable(tableID int64, cols []*table.Column, alloc autoid.Allocator) *Table {
 	t := &Table{
 		ID:           tableID,
-		recordPrefix: genTableRecordPrefix(tableID),
-		indexPrefix:  genTableIndexPrefix(tableID),
+		recordPrefix: tablecodec.GenTableRecordPrefix(tableID),
+		indexPrefix:  tablecodec.GenTableIndexPrefix(tableID),
 		alloc:        alloc,
 		Columns:      cols,
 	}
@@ -614,7 +611,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 		// first kv pair is row lock information.
 		// TODO: check valid lock
 		// get row handle
-		handle, err := DecodeRecordKeyHandle(it.Key())
+		handle, err := tablecodec.DecodeRowKey(it.Key())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -650,7 +647,7 @@ func (t *Table) RebaseAutoID(newBase int64, isSetStep bool) error {
 
 // Seek implements table.Table Seek interface.
 func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
-	seekKey := EncodeRecordKey(t.ID, h, 0)
+	seekKey := tablecodec.EncodeColumnKey(t.ID, h, 0)
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return 0, false, errors.Trace(err)
@@ -660,7 +657,7 @@ func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 		// No more records in the table, skip to the end.
 		return 0, false, nil
 	}
-	handle, err := DecodeRecordKeyHandle(iter.Key())
+	handle, err := tablecodec.DecodeRowKey(iter.Key())
 	if err != nil {
 		return 0, false, errors.Trace(err)
 	}
@@ -672,24 +669,6 @@ var (
 	indexPrefixSep  = []byte("_i")
 )
 
-// record prefix is "t[tableID]_r"
-func genTableRecordPrefix(tableID int64) kv.Key {
-	buf := make([]byte, 0, len(TablePrefix)+8+len(recordPrefixSep))
-	buf = append(buf, TablePrefix...)
-	buf = codec.EncodeInt(buf, tableID)
-	buf = append(buf, recordPrefixSep...)
-	return buf
-}
-
-// index prefix is "t[tableID]_i"
-func genTableIndexPrefix(tableID int64) kv.Key {
-	buf := make([]byte, 0, len(TablePrefix)+8+len(indexPrefixSep))
-	buf = append(buf, TablePrefix...)
-	buf = codec.EncodeInt(buf, tableID)
-	buf = append(buf, indexPrefixSep...)
-	return buf
-}
-
 func encodeRecordKey(recordPrefix kv.Key, h int64, columnID int64) kv.Key {
 	buf := make([]byte, 0, len(recordPrefix)+16)
 	buf = append(buf, recordPrefix...)
@@ -699,47 +678,6 @@ func encodeRecordKey(recordPrefix kv.Key, h int64, columnID int64) kv.Key {
 		buf = codec.EncodeInt(buf, columnID)
 	}
 	return buf
-}
-
-// EncodeRecordKey encodes the record key for a table column.
-func EncodeRecordKey(tableID int64, h int64, columnID int64) kv.Key {
-	prefix := genTableRecordPrefix(tableID)
-	return encodeRecordKey(prefix, h, columnID)
-}
-
-// DecodeRecordKey decodes the key and gets the tableID, handle and columnID.
-func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, columnID int64, err error) {
-	k := key
-	if !key.HasPrefix(TablePrefix) {
-		return 0, 0, 0, table.ErrInvalidRecordKey.Gen("invalid record key - %q", k)
-	}
-
-	key = key[len(TablePrefix):]
-	key, tableID, err = codec.DecodeInt(key)
-	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
-	}
-
-	if !key.HasPrefix(recordPrefixSep) {
-		return 0, 0, 0, table.ErrInvalidRecordKey.Gen("invalid record key - %q", k)
-	}
-
-	key = key[len(recordPrefixSep):]
-
-	key, handle, err = codec.DecodeInt(key)
-	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
-	}
-	if len(key) == 0 {
-		return
-	}
-
-	key, columnID, err = codec.DecodeInt(key)
-	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
-	}
-
-	return
 }
 
 // EncodeValue encodes a go value to bytes.
@@ -804,12 +742,6 @@ func SetColValue(rm kv.RetrieverMutator, key []byte, data types.Datum) error {
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-// DecodeRecordKeyHandle decodes the key and gets the record handle.
-func DecodeRecordKeyHandle(key kv.Key) (int64, error) {
-	_, handle, _, err := DecodeRecordKey(key)
-	return handle, errors.Trace(err)
 }
 
 // FindIndexByColName implements table.Table FindIndexByColName interface.
