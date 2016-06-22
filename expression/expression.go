@@ -130,7 +130,8 @@ func (s Schema) DeepCopy() Schema {
 	return result
 }
 
-// FindColumn replaces an ast column with an expression column.
+// FindColumn find an expression.Column from schema for a ast.ColumnName. It compares the db/table/column names.
+// If there are more than one result, it will raise ambiguous error.
 func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
@@ -183,10 +184,9 @@ func (s Schema) InitIndices() {
 
 // RetrieveColumn retrieves column in expression from the columns in schema.
 func (s Schema) RetrieveColumn(col *Column) *Column {
-	for _, c := range s {
-		if c.FromID == col.FromID && c.Position == col.Position {
-			return c
-		}
+	index := s.GetIndex(col)
+	if index != -1 {
+		return s[index]
 	}
 	return nil
 }

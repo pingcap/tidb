@@ -547,6 +547,7 @@ func (e *havingAndOrderbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
+// gbyResolver resolves group by items from select fields.
 type gbyResolver struct {
 	fields []*ast.SelectField
 	schema expression.Schema
