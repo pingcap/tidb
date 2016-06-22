@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -82,7 +83,7 @@ func newBoundedTable(tableID int64, tableName string, cols []*table.Column, allo
 		Name:         name,
 		alloc:        alloc,
 		Columns:      cols,
-		recordPrefix: genTableRecordPrefix(tableID),
+		recordPrefix: tablecodec.GenTableRecordPrefix(tableID),
 		records:      make([]unsafe.Pointer, capacity),
 		capacity:     capacity,
 		cursor:       0,

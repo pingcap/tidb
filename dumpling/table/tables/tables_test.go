@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -222,14 +223,14 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 	}
 
 	for _, t := range table {
-		b := tables.EncodeRecordKey(t.tableID, t.h, t.ID)
-		tableID, handle, columnID, err := tables.DecodeRecordKey(b)
+		b := tablecodec.EncodeColumnKey(t.tableID, t.h, t.ID)
+		tableID, handle, columnID, err := tablecodec.DecodeRecordKey(b)
 		c.Assert(err, IsNil)
 		c.Assert(tableID, Equals, t.tableID)
 		c.Assert(handle, Equals, t.h)
 		c.Assert(columnID, Equals, t.ID)
 
-		handle, err = tables.DecodeRecordKeyHandle(b)
+		handle, err = tablecodec.DecodeRowKey(b)
 		c.Assert(err, IsNil)
 		c.Assert(handle, Equals, t.h)
 	}
@@ -247,7 +248,7 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 	}
 
 	for _, t := range tbl {
-		_, err := tables.DecodeRecordKeyHandle(kv.Key(t))
+		_, err := tablecodec.DecodeRowKey(kv.Key(t))
 		c.Assert(err, NotNil)
 	}
 }

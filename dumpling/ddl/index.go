@@ -385,7 +385,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 		}
 
 		var handle int64
-		handle, err = tables.DecodeRecordKeyHandle(it.Key())
+		handle, err = tablecodec.DecodeRowKey(it.Key())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
