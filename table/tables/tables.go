@@ -19,7 +19,6 @@ package tables
 
 import (
 	"strings"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
@@ -758,7 +758,7 @@ func DecodeValue(data []byte, tp *types.FieldType) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return unflatten(values[0], tp)
+	return tablecodec.Unflatten(values[0], tp)
 }
 
 func flatten(data types.Datum) (types.Datum, error) {
@@ -792,65 +792,6 @@ func flatten(data types.Datum) (types.Datum, error) {
 	default:
 		return data, nil
 	}
-}
-
-func unflatten(datum types.Datum, tp *types.FieldType) (types.Datum, error) {
-	if datum.IsNull() {
-		return datum, nil
-	}
-	switch tp.Tp {
-	case mysql.TypeFloat:
-		datum.SetFloat32(float32(datum.GetFloat64()))
-		return datum, nil
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeDouble, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob,
-		mysql.TypeVarchar, mysql.TypeString:
-		return datum, nil
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		var t mysql.Time
-		t.Type = tp.Tp
-		t.Fsp = tp.Decimal
-		err := t.Unmarshal(datum.GetBytes())
-		if err != nil {
-			return datum, errors.Trace(err)
-		}
-		datum.SetValue(t)
-		return datum, nil
-	case mysql.TypeDuration:
-		dur := mysql.Duration{Duration: time.Duration(datum.GetInt64())}
-		datum.SetValue(dur)
-		return datum, nil
-	case mysql.TypeNewDecimal, mysql.TypeDecimal:
-		dec, err := mysql.ParseDecimal(datum.GetString())
-		if err != nil {
-			return datum, errors.Trace(err)
-		}
-		if tp.Decimal >= 0 {
-			dec = dec.Truncate(int32(tp.Decimal))
-		}
-		datum.SetValue(dec)
-		return datum, nil
-	case mysql.TypeEnum:
-		enum, err := mysql.ParseEnumValue(tp.Elems, datum.GetUint64())
-		if err != nil {
-			return datum, errors.Trace(err)
-		}
-		datum.SetValue(enum)
-		return datum, nil
-	case mysql.TypeSet:
-		set, err := mysql.ParseSetValue(tp.Elems, datum.GetUint64())
-		if err != nil {
-			return datum, errors.Trace(err)
-		}
-		datum.SetValue(set)
-		return datum, nil
-	case mysql.TypeBit:
-		bit := mysql.Bit{Value: datum.GetUint64(), Width: tp.Flen}
-		datum.SetValue(bit)
-		return datum, nil
-	}
-	log.Error(tp.Tp, datum)
-	return datum, nil
 }
 
 // SetColValue implements table.Table SetColValue interface.
