@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
@@ -360,7 +361,7 @@ func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) 
 	var cnt int64
 	prefix := t.RecordPrefix()
 	for it.Valid() && it.Key().HasPrefix(prefix) {
-		handle, err := tables.DecodeRecordKeyHandle(it.Key())
+		handle, err := tablecodec.DecodeRowKey(it.Key())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -427,7 +428,7 @@ func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []
 		// first kv pair is row lock information.
 		// TODO: check valid lock
 		// get row handle
-		handle, err := tables.DecodeRecordKeyHandle(it.Key())
+		handle, err := tablecodec.DecodeRowKey(it.Key())
 		if err != nil {
 			return errors.Trace(err)
 		}
