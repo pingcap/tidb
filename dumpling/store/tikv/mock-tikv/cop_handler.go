@@ -22,10 +22,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi/tablecodec"
+	"github.com/pingcap/tidb/xapi"
 	"github.com/pingcap/tidb/xapi/xeval"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -369,7 +370,8 @@ func (h *rpcHandler) evalWhereForRow(ctx *selectContext, handle int64) (bool, er
 				ctx.eval.Row[colID] = types.Datum{}
 			} else {
 				var d types.Datum
-				d, err = tablecodec.DecodeColumnValue(data, col)
+				ft := xapi.FieldTypeFromPBColumn(col)
+				d, err = tablecodec.DecodeColumnValue(data, ft)
 				if err != nil {
 					return false, errors.Trace(err)
 				}

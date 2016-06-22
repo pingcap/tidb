@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xapi"
-	"github.com/pingcap/tidb/xapi/tablecodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -550,7 +549,7 @@ func (e *NewTableScanExec) doRequest() error {
 	selReq.TableInfo = &tipb.TableInfo{
 		TableId: proto.Int64(e.tableInfo.ID),
 	}
-	selReq.TableInfo.Columns = tablecodec.ColumnsToProto(columns, e.tableInfo.PKIsHandle)
+	selReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.tableInfo.PKIsHandle)
 	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency)
 	if err != nil {
 		return errors.Trace(err)
