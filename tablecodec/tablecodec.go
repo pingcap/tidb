@@ -241,30 +241,30 @@ func EncodeTablePrefix(tableID int64) kv.Key {
 
 // Record prefix is "t[tableID]_r".
 func appendTableRecordPrefix(buf []byte, tableID int64) []byte {
-	return append(buf, GenTableRecordPrefix(tableID)...)
-}
-
-// Index prefix is "t[tableID]_i".
-func appendTableIndexPrefix(buf []byte, tableID int64) []byte {
-	return append(buf, GenTableIndexPrefix(tableID)...)
-}
-
-// GenTableRecordPrefix composes record prefix with tableID: "t[tableID]_r".
-func GenTableRecordPrefix(tableID int64) kv.Key {
-	buf := make([]byte, 0, len(tablePrefix)+8+len(recordPrefixSep))
 	buf = append(buf, tablePrefix...)
 	buf = codec.EncodeInt(buf, tableID)
 	buf = append(buf, recordPrefixSep...)
 	return buf
 }
 
-// GenTableIndexPrefix composes index prefix with tableID: "t[tableID]_i".
-func GenTableIndexPrefix(tableID int64) kv.Key {
-	buf := make([]byte, 0, len(tablePrefix)+8+len(indexPrefixSep))
+// Index prefix is "t[tableID]_i".
+func appendTableIndexPrefix(buf []byte, tableID int64) []byte {
 	buf = append(buf, tablePrefix...)
 	buf = codec.EncodeInt(buf, tableID)
 	buf = append(buf, indexPrefixSep...)
 	return buf
+}
+
+// GenTableRecordPrefix composes record prefix with tableID: "t[tableID]_r".
+func GenTableRecordPrefix(tableID int64) kv.Key {
+	buf := make([]byte, 0, len(tablePrefix)+8+len(recordPrefixSep))
+	return appendTableRecordPrefix(buf, tableID)
+}
+
+// GenTableIndexPrefix composes index prefix with tableID: "t[tableID]_i".
+func GenTableIndexPrefix(tableID int64) kv.Key {
+	buf := make([]byte, 0, len(tablePrefix)+8+len(indexPrefixSep))
+	return appendTableIndexPrefix(buf, tableID)
 }
 
 // TruncateToRowKeyLen truncates the key to row key length if the key is longer than row key.
