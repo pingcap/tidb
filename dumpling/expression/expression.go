@@ -63,11 +63,23 @@ type Column struct {
 	DBName  model.CIStr
 	TblName model.CIStr
 	RetType *types.FieldType
+	// Position means the position of this column that appears in the select fields.
+	// e.g. SELECT name as id , 1 - id as id , 1 + name as id, name as id from src having id = 1;
+	// There are four ids in the same schema, so you can't identify the column through the FromID and ColName.
+	Position int
 
 	// only used during execution
 	Index      int
 	Correlated bool
 	data       *types.Datum
+}
+
+// Equal checks if two columns are equal
+func (col *Column) Equal(expr Expression) bool {
+	if newCol, ok := expr.(*Column); ok {
+		return col.FromID == newCol.FromID && col.ColName == newCol.ColName
+	}
+	return false
 }
 
 // ToString implements Expression interface.
@@ -119,7 +131,8 @@ func (s Schema) DeepCopy() Schema {
 	return result
 }
 
-// FindColumn replaces an ast column with an expression column.
+// FindColumn find an expression.Column from schema for a ast.ColumnName. It compares the db/table/column names.
+// If there are more than one result, it will raise ambiguous error.
 func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
@@ -127,10 +140,34 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 		if (dbName.L == "" || dbName.L == col.DBName.L) &&
 			(tblName.L == "" || tblName.L == col.TblName.L) &&
 			(colName.L == col.ColName.L) {
-			if idx != -1 {
-				return nil, errors.Errorf("Column '%s' is ambiguous", colName.L)
+			if idx == -1 {
+				idx = i
+			} else {
+				return nil, errors.Errorf("Column %s is ambiguous", col.ToString())
 			}
-			idx = i
+		}
+	}
+	if idx == -1 {
+		return nil, nil
+	}
+	return s[idx], nil
+}
+
+// FindSelectFieldColumn finds a column from select fields.
+func (s Schema) FindSelectFieldColumn(astCol *ast.ColumnName, selectFields []Expression) (*Column, error) {
+	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
+	idx := -1
+	for i, col := range s {
+		if (dbName.L == "" || dbName.L == col.DBName.L) &&
+			(tblName.L == "" || tblName.L == col.TblName.L) &&
+			(colName.L == col.ColName.L) {
+			if expr, ok := selectFields[i].(*Column); !ok {
+				return s[i], nil
+			} else if idx == -1 {
+				idx = i
+			} else if !expr.Equal(selectFields[idx]) {
+				return nil, errors.Errorf("Column %s is ambiguous", s[i].ToString())
+			}
 		}
 	}
 	if idx == -1 {
@@ -148,10 +185,9 @@ func (s Schema) InitIndices() {
 
 // RetrieveColumn retrieves column in expression from the columns in schema.
 func (s Schema) RetrieveColumn(col *Column) *Column {
-	for _, c := range s {
-		if c.FromID == col.FromID && c.ColName.L == col.ColName.L {
-			return c
-		}
+	index := s.GetIndex(col)
+	if index != -1 {
+		return s[index]
 	}
 	return nil
 }
@@ -159,7 +195,7 @@ func (s Schema) RetrieveColumn(col *Column) *Column {
 // GetIndex finds the index for a column.
 func (s Schema) GetIndex(col *Column) int {
 	for i, c := range s {
-		if c.FromID == col.FromID && c.ColName.L == col.ColName.L {
+		if c.FromID == col.FromID && c.Position == col.Position {
 			return i
 		}
 	}

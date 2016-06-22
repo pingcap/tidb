@@ -98,14 +98,6 @@ type Executor interface {
 	Schema() expression.Schema
 }
 
-// NewExecutor executes a query.
-type NewExecutor interface {
-	Executor
-
-	// Init means initialize executor.
-	Init()
-}
-
 // ShowDDLExec represents a show DDL executor.
 type ShowDDLExec struct {
 	fields []*ast.ResultField
