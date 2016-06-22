@@ -20,10 +20,12 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi/tablecodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -144,9 +146,9 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (*Select
 	// If Aggregates is not nil, we should set result fields latter.
 	if len(req.Aggregates) == 0 && len(req.GroupBy) == 0 {
 		if req.TableInfo != nil {
-			result.fields = tablecodec.ProtoColumnsToFieldTypes(req.TableInfo.Columns)
+			result.fields = ProtoColumnsToFieldTypes(req.TableInfo.Columns)
 		} else {
-			result.fields = tablecodec.ProtoColumnsToFieldTypes(req.IndexInfo.Columns)
+			result.fields = ProtoColumnsToFieldTypes(req.IndexInfo.Columns)
 			result.index = true
 		}
 	} else {
@@ -165,11 +167,11 @@ func composeRequest(req *tipb.SelectRequest, concurrency int) (*kv.Request, erro
 		kvReq.Tp = kv.ReqTypeIndex
 		tid := req.IndexInfo.GetTableId()
 		idxID := req.IndexInfo.GetIndexId()
-		kvReq.KeyRanges = tablecodec.EncodeIndexRanges(tid, idxID, req.Ranges)
+		kvReq.KeyRanges = EncodeIndexRanges(tid, idxID, req.Ranges)
 	} else {
 		kvReq.Tp = kv.ReqTypeSelect
 		tid := req.GetTableInfo().GetTableId()
-		kvReq.KeyRanges = tablecodec.EncodeTableRanges(tid, req.Ranges)
+		kvReq.KeyRanges = EncodeTableRanges(tid, req.Ranges)
 	}
 	if req.OrderBy != nil {
 		kvReq.Desc = *req.OrderBy[0].Desc
@@ -192,3 +194,113 @@ const (
 	codeInvalidResp = 1
 	codeNilResp     = 2
 )
+
+// FieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
+func FieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
+	return &types.FieldType{
+		Tp:      byte(col.GetTp()),
+		Flen:    int(col.GetColumnLen()),
+		Decimal: int(col.GetDecimal()),
+		Elems:   col.Elems,
+		Collate: mysql.Collations[uint8(col.GetCollation())],
+	}
+}
+
+func columnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
+	pc := &tipb.ColumnInfo{
+		ColumnId:  proto.Int64(c.ID),
+		Collation: proto.Int32(collationToProto(c.FieldType.Collate)),
+		ColumnLen: proto.Int32(int32(c.FieldType.Flen)),
+		Decimal:   proto.Int32(int32(c.FieldType.Decimal)),
+		Flag:      proto.Int32(int32(c.Flag)),
+		Elems:     c.Elems,
+	}
+	t := int32(c.FieldType.Tp)
+	pc.Tp = &t
+	return pc
+}
+
+func collationToProto(c string) int32 {
+	v, ok := mysql.CollationNames[c]
+	if ok {
+		return int32(v)
+	}
+	return int32(mysql.DefaultCollationID)
+}
+
+// ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
+func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
+	cols := make([]*tipb.ColumnInfo, 0, len(columns))
+	for _, c := range columns {
+		col := columnToProto(c)
+		if pkIsHandle && mysql.HasPriKeyFlag(c.Flag) {
+			col.PkHandle = proto.Bool(true)
+		} else {
+			col.PkHandle = proto.Bool(false)
+		}
+		cols = append(cols, col)
+	}
+	return cols
+}
+
+// ProtoColumnsToFieldTypes converts tipb column info slice to FieldTyps slice.
+func ProtoColumnsToFieldTypes(pColumns []*tipb.ColumnInfo) []*types.FieldType {
+	fields := make([]*types.FieldType, len(pColumns))
+	for i, v := range pColumns {
+		field := new(types.FieldType)
+		field.Tp = byte(v.GetTp())
+		field.Collate = mysql.Collations[byte(v.GetCollation())]
+		field.Decimal = int(v.GetDecimal())
+		field.Flen = int(v.GetColumnLen())
+		field.Flag = uint(v.GetFlag())
+		field.Elems = v.GetElems()
+		fields[i] = field
+	}
+	return fields
+}
+
+// IndexToProto converts a model.IndexInfo to a tipb.IndexInfo.
+func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
+	pi := &tipb.IndexInfo{
+		TableId: proto.Int64(t.ID),
+		IndexId: proto.Int64(idx.ID),
+		Unique:  proto.Bool(idx.Unique),
+	}
+	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns))
+	for _, c := range idx.Columns {
+		cols = append(cols, columnToProto(t.Columns[c.Offset]))
+	}
+	pi.Columns = cols
+	return pi
+}
+
+// EncodeTableRanges encodes table ranges into kv.KeyRanges.
+func EncodeTableRanges(tid int64, rans []*tipb.KeyRange) []kv.KeyRange {
+	keyRanges := make([]kv.KeyRange, 0, len(rans))
+	for _, r := range rans {
+		start := tablecodec.EncodeRowKey(tid, r.Low)
+		end := tablecodec.EncodeRowKey(tid, r.High)
+		nr := kv.KeyRange{
+			StartKey: start,
+			EndKey:   end,
+		}
+		keyRanges = append(keyRanges, nr)
+	}
+	return keyRanges
+}
+
+// EncodeIndexRanges encodes index ranges into kv.KeyRanges.
+func EncodeIndexRanges(tid, idxID int64, rans []*tipb.KeyRange) []kv.KeyRange {
+	keyRanges := make([]kv.KeyRange, 0, len(rans))
+	for _, r := range rans {
+		// Convert range to kv.KeyRange
+		start := tablecodec.EncodeIndexSeekKey(tid, idxID, r.Low)
+		end := tablecodec.EncodeIndexSeekKey(tid, idxID, r.High)
+		nr := kv.KeyRange{
+			StartKey: start,
+			EndKey:   end,
+		}
+		keyRanges = append(keyRanges, nr)
+	}
+	return keyRanges
+}

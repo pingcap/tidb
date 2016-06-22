@@ -8,10 +8,11 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi/tablecodec"
+	"github.com/pingcap/tidb/xapi"
 	"github.com/pingcap/tidb/xapi/xeval"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -419,7 +420,8 @@ func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64) (bool, error
 			} else if err != nil {
 				return false, errors.Trace(err)
 			}
-			datum, err := tablecodec.DecodeColumnValue(data, col)
+			ft := xapi.FieldTypeFromPBColumn(col)
+			datum, err := tablecodec.DecodeColumnValue(data, ft)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
