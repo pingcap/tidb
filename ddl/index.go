@@ -321,7 +321,7 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 			}
 			return nil, errors.Trace(err)
 		}
-		val, err := tables.DecodeValue(data, &col.FieldType)
+		val, err := tablecodec.DecodeColumnValue(data, &col.FieldType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

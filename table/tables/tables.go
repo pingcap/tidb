@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -162,7 +161,7 @@ func (t *Table) RecordKey(h int64, col *table.Column) kv.Key {
 	if col != nil {
 		colID = col.ID
 	}
-	return encodeRecordKey(t.recordPrefix, h, colID)
+	return tablecodec.EncodeRecordKey(t.recordPrefix, h, colID)
 }
 
 // FirstKey implements table.Table FirstKey interface.
@@ -461,7 +460,7 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 			return nil, errors.Trace(err)
 		}
 
-		v[i], err = DecodeValue(data, &col.FieldType)
+		v[i], err = tablecodec.DecodeColumnValue(data, &col.FieldType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -666,75 +665,11 @@ func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 
 var (
 	recordPrefixSep = []byte("_r")
-	indexPrefixSep  = []byte("_i")
 )
-
-func encodeRecordKey(recordPrefix kv.Key, h int64, columnID int64) kv.Key {
-	buf := make([]byte, 0, len(recordPrefix)+16)
-	buf = append(buf, recordPrefix...)
-	buf = codec.EncodeInt(buf, h)
-
-	if columnID != 0 {
-		buf = codec.EncodeInt(buf, columnID)
-	}
-	return buf
-}
-
-// EncodeValue encodes a go value to bytes.
-func EncodeValue(raw types.Datum) ([]byte, error) {
-	v, err := flatten(raw)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	b, err := codec.EncodeValue(nil, v)
-	return b, errors.Trace(err)
-}
-
-// DecodeValue implements table.Table DecodeValue interface.
-func DecodeValue(data []byte, tp *types.FieldType) (types.Datum, error) {
-	values, err := codec.Decode(data)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return tablecodec.Unflatten(values[0], tp)
-}
-
-func flatten(data types.Datum) (types.Datum, error) {
-	switch data.Kind() {
-	case types.KindMysqlTime:
-		// for mysql datetime, timestamp and date type
-		b, err := data.GetMysqlTime().Marshal()
-		if err != nil {
-			return types.NewDatum(nil), errors.Trace(err)
-		}
-		return types.NewDatum(b), nil
-	case types.KindMysqlDuration:
-		// for mysql time type
-		data.SetInt64(int64(data.GetMysqlDuration().Duration))
-		return data, nil
-	case types.KindMysqlDecimal:
-		data.SetString(data.GetMysqlDecimal().String())
-		return data, nil
-	case types.KindMysqlEnum:
-		data.SetUint64(data.GetMysqlEnum().Value)
-		return data, nil
-	case types.KindMysqlSet:
-		data.SetUint64(data.GetMysqlSet().Value)
-		return data, nil
-	case types.KindMysqlBit:
-		data.SetUint64(data.GetMysqlBit().Value)
-		return data, nil
-	case types.KindMysqlHex:
-		data.SetInt64(data.GetMysqlHex().Value)
-		return data, nil
-	default:
-		return data, nil
-	}
-}
 
 // SetColValue implements table.Table SetColValue interface.
 func SetColValue(rm kv.RetrieverMutator, key []byte, data types.Datum) error {
-	v, err := EncodeValue(data)
+	v, err := tablecodec.EncodeValue(data)
 	if err != nil {
 		return errors.Trace(err)
 	}

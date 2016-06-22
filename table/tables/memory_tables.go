@@ -148,7 +148,7 @@ func (t *MemoryTable) RecordKey(h int64, col *table.Column) kv.Key {
 	if col != nil {
 		colID = col.ID
 	}
-	return encodeRecordKey(t.recordPrefix, h, colID)
+	return tablecodec.EncodeRecordKey(t.recordPrefix, h, colID)
 }
 
 // FirstKey implements table.Table FirstKey interface.

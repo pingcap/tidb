@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -400,7 +399,7 @@ func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*table.Column)
 			return nil, errors.Trace(err)
 		}
 
-		val, err := tables.DecodeValue(data, &col.FieldType)
+		val, err := tablecodec.DecodeColumnValue(data, &col.FieldType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
