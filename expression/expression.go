@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -222,8 +223,17 @@ func (sf *ScalarFunction) ToString() string {
 }
 
 // NewFunction creates a new scalar function.
-func NewFunction(funcName model.CIStr, args []Expression) *ScalarFunction {
-	return &ScalarFunction{Args: args, FuncName: funcName, Function: evaluator.Funcs[funcName.L].F}
+func NewFunction(funcName string, args []Expression, retType *types.FieldType) (*ScalarFunction, error) {
+	f, ok := evaluator.Funcs[funcName]
+	if !ok {
+		return nil, errors.New("Can't find function!")
+	}
+
+	return &ScalarFunction{
+		Args:     args,
+		FuncName: model.NewCIStr(funcName),
+		RetType:  retType,
+		Function: f.F}, nil
 }
 
 //Schema2Exprs converts []*Column to []Expression.

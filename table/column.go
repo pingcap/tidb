@@ -38,12 +38,6 @@ type Column struct {
 // PrimaryKeyName defines primary key name.
 const PrimaryKeyName = "PRIMARY"
 
-// IndexedColumn defines an index with info.
-type IndexedColumn struct {
-	model.IndexInfo
-	X Index
-}
-
 // String implements fmt.Stringer interface.
 func (c *Column) String() string {
 	ans := []string{c.Name.O, types.TypeToStr(c.Tp, c.Charset)}
@@ -232,18 +226,6 @@ func CheckNotNull(cols []*Column, row []types.Datum) error {
 		}
 	}
 	return nil
-}
-
-// FetchValues fetches indexed values from a row.
-func (idx *IndexedColumn) FetchValues(r []types.Datum) ([]types.Datum, error) {
-	vals := make([]types.Datum, len(idx.Columns))
-	for i, ic := range idx.Columns {
-		if ic.Offset < 0 || ic.Offset > len(r) {
-			return nil, errIndexOutBound.Gen("Index column offset out of bound")
-		}
-		vals[i] = r[ic.Offset]
-	}
-	return vals, nil
 }
 
 // GetColDefaultValue gets default value of the column.

@@ -33,8 +33,7 @@ func (b *planBuilder) allocID(p Plan) string {
 }
 
 func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncExpr, gby []expression.Expression, correlated bool) Plan {
-	newAggFuncList := make([]expression.AggregationFunction, 0, len(aggFuncList))
-	agg := &Aggregation{}
+	agg := &Aggregation{AggFuncs: make([]expression.AggregationFunction, 0, len(aggFuncList))}
 	agg.id = b.allocID(agg)
 	agg.correlated = p.IsCorrelated() || correlated
 	addChild(agg, p)
@@ -51,12 +50,11 @@ func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncE
 			agg.correlated = correlated || agg.correlated
 			newArgList = append(newArgList, newArg)
 		}
-		newAggFuncList = append(newAggFuncList, expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct))
+		agg.AggFuncs = append(agg.AggFuncs, expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct))
 		schema = append(schema, &expression.Column{FromID: agg.id,
 			ColName:  model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, i)),
 			Position: i})
 	}
-	agg.AggFuncs = newAggFuncList
 	agg.GroupByItems = gby
 	agg.SetSchema(schema)
 	return agg
@@ -134,7 +132,7 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 					continue
 				}
 				if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
-					newEq := expression.NewFunction(model.NewCIStr(ast.EQ), []expression.Expression{rn, ln})
+					newEq, _ := expression.NewFunction(ast.EQ, []expression.Expression{rn, ln}, nil)
 					eqCond = append(eqCond, newEq)
 					continue
 				}
@@ -308,18 +306,14 @@ func (b *planBuilder) buildNewDistinct(src Plan) Plan {
 	return d
 }
 
-func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) (p Plan) {
+func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) Plan {
 	sels := make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
 		sels[i] = b.buildNewSelect(sel)
 	}
-	u := &Union{
-		Selects: sels,
-	}
+	u := &Union{Selects: sels}
 	u.id = b.allocID(u)
-	p = u
-	firstSchema := make(expression.Schema, 0, len(sels[0].GetSchema()))
-	firstSchema = append(firstSchema, sels[0].GetSchema()...)
+	firstSchema := sels[0].GetSchema().DeepCopy()
 	for _, sel := range sels {
 		if len(firstSchema) != len(sel.GetSchema()) {
 			b.err = errors.New("The used SELECT statements have a different number of columns")
@@ -345,24 +339,24 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) (p Plan) {
 				firstSchema[i].RetType.Tp = col.RetType.Tp
 			}
 		}
-		addChild(p, sel)
+		addChild(u, sel)
 	}
 	for _, v := range firstSchema {
 		v.FromID = u.id
 		v.DBName = model.NewCIStr("")
 	}
 
-	p.SetSchema(firstSchema)
+	u.SetSchema(firstSchema)
 	if union.Distinct {
-		p = b.buildNewDistinct(p)
+		return b.buildNewDistinct(u)
 	}
 	if union.OrderBy != nil {
-		p = b.buildNewSort(p, union.OrderBy.Items, nil)
+		return b.buildNewSort(u, union.OrderBy.Items, nil)
 	}
 	if union.Limit != nil {
-		p = b.buildNewLimit(p, union.Limit)
+		return b.buildNewLimit(u, union.Limit)
 	}
-	return p
+	return u
 }
 
 // ByItems wraps a "by" item.
@@ -747,9 +741,7 @@ func (b *planBuilder) buildNewTableDual() Plan {
 }
 
 func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
-	p := &NewTableScan{
-		Table: tn.TableInfo,
-	}
+	p := &NewTableScan{Table: tn.TableInfo}
 	p.id = b.allocID(p)
 	// Equal condition contains a column from previous joined table.
 	p.RefAccess = false
@@ -787,7 +779,10 @@ func (b *planBuilder) buildExists(p Plan) Plan {
 	exists := &Exists{}
 	exists.id = b.allocID(exists)
 	addChild(exists, p)
-	newCol := &expression.Column{FromID: exists.id, RetType: types.NewFieldType(mysql.TypeTiny), ColName: model.NewCIStr("exists_col")}
+	newCol := &expression.Column{
+		FromID:  exists.id,
+		RetType: types.NewFieldType(mysql.TypeTiny),
+		ColName: model.NewCIStr("exists_col")}
 	exists.SetSchema([]*expression.Column{newCol})
 	exists.correlated = p.IsCorrelated()
 	return exists

@@ -7,7 +7,6 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -41,7 +40,7 @@ type expressionRewriter struct {
 
 func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (Plan, expression.Schema) {
 	if len(er.b.outerSchemas) > 0 {
-		er.err = errors.New("Nested subqueries is not supported.")
+		er.err = errors.New("Nested subqueries is not currently supported.")
 		return nil, nil
 	}
 	outerSchema := er.schema.DeepCopy()
@@ -79,27 +78,27 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 			return inNode, true
 		}
 	case *ast.ExistsSubqueryExpr:
-		if subq, ok := v.Sel.(*ast.SubqueryExpr); ok {
-			np, outerSchema := er.buildSubquery(subq)
-			if er.err != nil {
-				return retNode, true
-			}
-			np = er.b.buildExists(np)
-			if np.IsCorrelated() {
-				ap := er.b.buildApply(er.p, np, outerSchema)
-				er.p = ap
-				er.ctxStack = append(er.ctxStack, ap.GetSchema()[len(ap.GetSchema())-1])
-			} else {
-				d, err := EvalSubquery(np, er.b.is, er.b.ctx)
-				if err != nil {
-					er.err = errors.Trace(err)
-					return retNode, true
-				}
-				er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d[0], RetType: np.GetSchema()[0].GetType()})
-			}
+		subq, ok := v.Sel.(*ast.SubqueryExpr)
+		if !ok {
+			er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
 			return inNode, true
 		}
-		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
+		np, outerSchema := er.buildSubquery(subq)
+		if er.err != nil {
+			return retNode, true
+		}
+		np = er.b.buildExists(np)
+		if np.IsCorrelated() {
+			er.p = er.b.buildApply(er.p, np, outerSchema)
+			er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
+		} else {
+			d, err := EvalSubquery(np, er.b.is, er.b.ctx)
+			if err != nil {
+				er.err = errors.Trace(err)
+				return retNode, true
+			}
+			er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d[0], RetType: np.GetSchema()[0].GetType()})
+		}
 		return inNode, true
 	case *ast.SubqueryExpr:
 		np, outerSchema := er.buildSubquery(v)
@@ -108,9 +107,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 		}
 		np = er.b.buildMaxOneRow(np)
 		if np.IsCorrelated() {
-			ap := er.b.buildApply(er.p, np, outerSchema)
-			er.p = ap
-			er.ctxStack = append(er.ctxStack, ap.GetSchema()[len(ap.GetSchema())-1])
+			er.p = er.b.buildApply(er.p, np, outerSchema)
+			er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
 		} else {
 			d, err := EvalSubquery(np, er.b.is, er.b.ctx)
 			if err != nil {
@@ -137,9 +135,14 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		for i := length - len(v.Args); i < length; i++ {
 			function.Args = append(function.Args, er.ctxStack[i])
 		}
-		f := evaluator.Funcs[v.FnName.L]
+		f, ok := evaluator.Funcs[v.FnName.L]
+		if !ok {
+			er.err = errors.New("Can't find function!")
+			return retNode, false
+		}
 		if len(function.Args) < f.MinArgs || (f.MaxArgs != -1 && len(function.Args) > f.MaxArgs) {
-			er.err = evaluator.ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].", f.MinArgs, f.MaxArgs)
+			er.err = evaluator.ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].",
+				f.MinArgs, f.MaxArgs)
 			return retNode, false
 		}
 		function.Function = f.F
@@ -158,18 +161,21 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			er.err = errors.Trace(err)
 			return retNode, false
 		}
-		if column == nil {
-			for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
-				outer := er.b.outerSchemas[i]
-				column, err = outer.FindColumn(v)
-				if err != nil {
-					er.err = errors.Trace(err)
-					return retNode, false
-				}
-				if column != nil {
-					er.correlated = true
-					break
-				}
+		if column != nil {
+			er.ctxStack = append(er.ctxStack, column)
+			return inNode, true
+		}
+
+		for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
+			outer := er.b.outerSchemas[i]
+			column, err = outer.FindColumn(v)
+			if err != nil {
+				er.err = errors.Trace(err)
+				return retNode, false
+			}
+			if column != nil {
+				er.correlated = true
+				break
 			}
 		}
 		if column == nil {
@@ -182,58 +188,44 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		value := &expression.Constant{Value: v.Datum, RetType: v.Type}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.IsNullExpr:
-		function := &expression.ScalarFunction{
-			Args:     []expression.Expression{er.ctxStack[length-1]},
-			FuncName: model.NewCIStr(ast.IsNull),
-			RetType:  v.Type,
-		}
-		f, ok := evaluator.Funcs[function.FuncName.L]
-		if !ok {
-			er.err = errors.New("Can't find function!")
+		function, err := expression.NewFunction(ast.IsNull, []expression.Expression{er.ctxStack[length-1]}, v.Type)
+		if err != nil {
+			er.err = errors.Trace(err)
 			return retNode, false
 		}
-		function.Function = f.F
 		er.ctxStack = er.ctxStack[:length-1]
 		er.ctxStack = append(er.ctxStack, function)
 	case *ast.BinaryOperationExpr:
-		function := &expression.ScalarFunction{Args: []expression.Expression{er.ctxStack[length-2], er.ctxStack[length-1]}, RetType: v.Type}
 		funcName, ok := opcode.Ops[v.Op]
 		if !ok {
 			er.err = errors.Errorf("Unknown opcode %v", v.Op)
 			return retNode, false
 		}
-		function.FuncName = model.NewCIStr(funcName)
-		f, ok := evaluator.Funcs[function.FuncName.L]
-		if !ok {
-			er.err = errors.New("Can't find function!")
+		function, err := expression.NewFunction(funcName,
+			[]expression.Expression{er.ctxStack[length-2], er.ctxStack[length-1]}, v.Type)
+		if err != nil {
+			er.err = errors.Trace(err)
 			return retNode, false
 		}
-		function.Function = f.F
 		er.ctxStack = er.ctxStack[:length-2]
 		er.ctxStack = append(er.ctxStack, function)
 	case *ast.UnaryOperationExpr:
-		function := &expression.ScalarFunction{Args: []expression.Expression{er.ctxStack[length-1]}, RetType: v.Type}
-		switch v.Op {
-		case opcode.Not:
-			function.FuncName = model.NewCIStr(ast.UnaryNot)
-		case opcode.BitNeg:
-			function.FuncName = model.NewCIStr(ast.BitNeg)
-		case opcode.Plus:
-			function.FuncName = model.NewCIStr(ast.UnaryPlus)
-		case opcode.Minus:
-			function.FuncName = model.NewCIStr(ast.UnaryMinus)
-		}
-		f, ok := evaluator.Funcs[function.FuncName.L]
+		funcName, ok := opcode.Ops[v.Op]
 		if !ok {
-			er.err = errors.New("Can't find function!")
+			er.err = errors.Errorf("Unknown opcode %v", v.Op)
 			return retNode, false
 		}
-		function.Function = f.F
+		function, err := expression.NewFunction(funcName, []expression.Expression{er.ctxStack[length-1]}, v.Type)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return retNode, false
+		}
 		er.ctxStack = er.ctxStack[:length-1]
 		er.ctxStack = append(er.ctxStack, function)
 
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
+		return retNode, false
 	}
 	return inNode, true
 }

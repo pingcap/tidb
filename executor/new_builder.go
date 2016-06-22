@@ -32,9 +32,9 @@ func composeCondition(conditions []expression.Expression) expression.Expression 
 	if length == 1 {
 		return conditions[0]
 	}
-	return expression.NewFunction(model.NewCIStr(ast.AndAnd),
-		[]expression.Expression{composeCondition(conditions[0 : length/2]),
-			composeCondition(conditions[length/2:])})
+	expr, _ := expression.NewFunction(ast.AndAnd, []expression.Expression{composeCondition(conditions[0 : length/2]),
+		composeCondition(conditions[length/2:])}, nil)
+	return expr
 }
 
 //TODO: select join algorithm during cbo phase.

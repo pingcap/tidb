@@ -48,7 +48,7 @@ type Table struct {
 
 	publicColumns   []*table.Column
 	writableColumns []*table.Column
-	indices         []*table.IndexedColumn
+	indices         []table.Index
 	recordPrefix    kv.Key
 	indexPrefix     kv.Key
 	alloc           autoid.Allocator
@@ -83,12 +83,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 			return nil, table.ErrIndexStateCantNone.Gen("index %s can't be in none state", idxInfo.Name)
 		}
 
-		idx := &table.IndexedColumn{
-			IndexInfo: *idxInfo,
-		}
-
-		idx.X = NewIndex(t.IndexPrefix(), idxInfo.Name.L, idxInfo.ID, idxInfo.Unique)
-
+		idx := NewIndex(tblInfo, idxInfo)
 		t.indices = append(t.indices, idx)
 	}
 
@@ -112,7 +107,7 @@ func newTable(tableID int64, cols []*table.Column, alloc autoid.Allocator) *Tabl
 }
 
 // Indices implements table.Table Indices interface.
-func (t *Table) Indices() []*table.IndexedColumn {
+func (t *Table) Indices() []table.Index {
 	return t.indices
 }
 
@@ -262,7 +257,7 @@ func (t *Table) setNewData(rm kv.RetrieverMutator, h int64, touched map[int]bool
 func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched map[int]bool, oldData []types.Datum, newData []types.Datum) error {
 	for _, idx := range t.Indices() {
 		idxTouched := false
-		for _, ic := range idx.Columns {
+		for _, ic := range idx.Meta().Columns {
 			if touched[ic.Offset] {
 				idxTouched = true
 				break
@@ -403,25 +398,25 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 	}
 
 	for _, v := range t.indices {
-		if v == nil || v.State == model.StateDeleteOnly || v.State == model.StateDeleteReorganization {
+		if v == nil || v.Meta().State == model.StateDeleteOnly || v.Meta().State == model.StateDeleteReorganization {
 			// if index is in delete only or delete reorganization state, we can't add it.
 			continue
 		}
 		colVals, _ := v.FetchValues(r)
 		var dupKeyErr error
-		if v.Unique || v.Primary {
+		if v.Meta().Unique || v.Meta().Primary {
 			entryKey, err1 := t.genIndexKeyStr(colVals)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
 			}
-			dupKeyErr = kv.ErrKeyExists.Gen("Duplicate entry '%s' for key '%s'", entryKey, v.Name)
+			dupKeyErr = kv.ErrKeyExists.Gen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if err = v.X.Create(bs, colVals, recordID); err != nil {
+		if err = v.Create(bs, colVals, recordID); err != nil {
 			if terror.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
 				// For insert on duplicate syntax, we should update the row
-				iter, _, err1 := v.X.Seek(bs, colVals)
+				iter, _, err1 := v.Seek(bs, colVals)
 				if err1 != nil {
 					return 0, errors.Trace(err1)
 				}
@@ -561,8 +556,8 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err = v.X.Delete(txn, vals, h); err != nil {
-			if v.State != model.StatePublic && terror.ErrorEqual(err, kv.ErrNotExist) {
+		if err = v.Delete(txn, vals, h); err != nil {
+			if v.Meta().State != model.StatePublic && terror.ErrorEqual(err, kv.ErrNotExist) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
 				continue
@@ -575,21 +570,21 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 }
 
 // RemoveRowIndex implements table.Table RemoveRowIndex interface.
-func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx *table.IndexedColumn) error {
-	if err := idx.X.Delete(rm, vals, h); err != nil {
+func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
+	if err := idx.Delete(rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
 // BuildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *Table) buildIndexForRow(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx *table.IndexedColumn) error {
-	if idx.State == model.StateDeleteOnly || idx.State == model.StateDeleteReorganization {
+func (t *Table) buildIndexForRow(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
+	if idx.Meta().State == model.StateDeleteOnly || idx.Meta().State == model.StateDeleteReorganization {
 		// If the index is in delete only or write reorganization state, we can not add index.
 		return nil
 	}
 
-	if err := idx.X.Create(rm, vals, h); err != nil {
+	if err := idx.Create(rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -877,14 +872,14 @@ func DecodeRecordKeyHandle(key kv.Key) (int64, error) {
 }
 
 // FindIndexByColName implements table.Table FindIndexByColName interface.
-func FindIndexByColName(t table.Table, name string) *table.IndexedColumn {
+func FindIndexByColName(t table.Table, name string) table.Index {
 	for _, idx := range t.Indices() {
 		// only public index can be read.
-		if idx.State != model.StatePublic {
+		if idx.Meta().State != model.StatePublic {
 			continue
 		}
 
-		if len(idx.Columns) == 1 && strings.EqualFold(idx.Columns[0].Name.L, name) {
+		if len(idx.Meta().Columns) == 1 && strings.EqualFold(idx.Meta().Columns[0].Name.L, name) {
 			return idx
 		}
 	}

@@ -184,22 +184,21 @@ LOOP:
 	c.Assert(err, IsNil)
 
 	// check in index
-	var nidx *table.IndexedColumn
+	var nidx table.Index
 	for _, tidx := range t.Indices() {
-		if tidx.Name.L == "c3_index" {
+		if tidx.Meta().Name.L == "c3_index" {
 			nidx = tidx
 			break
 		}
 	}
 	// Make sure there is index with name c3_index
 	c.Assert(nidx, NotNil)
-	c.Assert(nidx.ID, Greater, int64(0))
-	idx := tables.NewIndex(t.IndexPrefix(), "c3_index", nidx.ID, false)
+	c.Assert(nidx.Meta().ID, Greater, int64(0))
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 	defer ctx.RollbackTxn()
 
-	it, err := idx.SeekFirst(txn)
+	it, err := nidx.SeekFirst(txn)
 	c.Assert(err, IsNil)
 	defer it.Close()
 
@@ -229,9 +228,9 @@ func (s *testDBSuite) testDropIndex(c *C) {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
 	}
 	t := s.testGetTable(c, "t1")
-	var c3idx *table.IndexedColumn
+	var c3idx table.Index
 	for _, tidx := range t.Indices() {
-		if tidx.Name.L == "c3_index" {
+		if tidx.Meta().Name.L == "c3_index" {
 			c3idx = tidx
 			break
 		}
@@ -273,16 +272,16 @@ LOOP:
 	handles := make(map[int64]struct{})
 
 	t = s.testGetTable(c, "t1")
-	var nidx *table.IndexedColumn
+	var nidx table.Index
 	for _, tidx := range t.Indices() {
-		if tidx.Name.L == "c3_index" {
+		if tidx.Meta().Name.L == "c3_index" {
 			nidx = tidx
 			break
 		}
 	}
 	// Make sure there is no index with name c3_index
 	c.Assert(nidx, IsNil)
-	idx := tables.NewIndex(t.IndexPrefix(), "c3_index", c3idx.ID, false)
+	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 	defer ctx.RollbackTxn()
