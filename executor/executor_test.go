@@ -653,6 +653,13 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustExec("begin")
+	// Test limit
+	r = tk.MustQuery("select id as c1, name from select_order_test order by 2, id limit 1 offset 0;")
+	rowStr = fmt.Sprintf("%v %v", 1, []byte("hello"))
+	r.Check(testkit.Rows(rowStr))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
 	// Test limit overflow
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 100 offset 0;")
 	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("hello"))
@@ -693,6 +700,19 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r.Check(testkit.Rows(rowStr))
 	executor.SortBufferSize = 500
 	tk.MustExec("drop table select_order_test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int, d int)")
+	tk.MustExec("insert t values (1, 1)")
+	tk.MustExec("insert t values (1, 2)")
+	tk.MustExec("insert t values (1, 3)")
+	tk.MustExec("commit")
+	r = tk.MustQuery("select 1-d as d from t order by d;")
+	r.Check(testkit.Rows("-2", "-1", "0"))
+	r = tk.MustQuery("select 1-d as d from t order by d + 1;")
+	r.Check(testkit.Rows("0", "-1", "-2"))
+	r = tk.MustQuery("select t.d from t order by d;")
+	r.Check(testkit.Rows("1", "2", "3"))
+
 	plan.UseNewPlanner = false
 }
 
@@ -1416,6 +1436,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("1", "2", "2"))
 	result = tk.MustQuery("select sum(c) from t group by d")
 	result.Check(testkit.Rows("2", "4", "5"))
+	result = tk.MustQuery("select d*2 as ee, sum(c) from t group by ee")
+	result.Check(testkit.Rows("2 2", "4 4", "6 5"))
 	result = tk.MustQuery("select sum(distinct c) from t group by d")
 	result.Check(testkit.Rows("1", "4", "5"))
 	result = tk.MustQuery("select min(c) from t group by d")
@@ -1440,6 +1462,32 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select count(*) from t a join t b where a.c < 0")
 	result.Check(testkit.Rows("0"))
+	// This two cases prove that having always resolve name from field list firstly.
+	result = tk.MustQuery("select 1-d as d from t having d < 0 order by d desc")
+	result.Check(testkit.Rows("-1", "-1", "-2", "-2"))
+	result = tk.MustQuery("select 1-d as d from t having d + 1 < 0 order by d + 1")
+	result.Check(testkit.Rows("-2", "-2"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int, d int)")
+	tk.MustExec("insert t values (1, -1)")
+	tk.MustExec("insert t values (1, 0)")
+	tk.MustExec("insert t values (1, 1)")
+	result = tk.MustQuery("select d, d*d as d from t having d = -1")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select d, 1-d as d, c as d from t order by d")
+	result.Check(testkit.Rows("1 0 1", "0 1 1", "-1 2 1"))
+	result = tk.MustQuery("select d, 1-d as d, c as d from t order by d+1")
+	result.Check(testkit.Rows("-1 2 1", "0 1 1", "1 0 1"))
+	result = tk.MustQuery("select d, 1-d as d, c as d from t group by d")
+	result.Check(testkit.Rows("-1 2 1", "0 1 1", "1 0 1"))
+	result = tk.MustQuery("select d as d1, t.d as d1, 1-d as d1, c as d1 from t having d1 < 10")
+	result.Check(testkit.Rows("-1 -1 2 1", "0 0 1 1", "1 1 0 1"))
+	result = tk.MustQuery("select d*d as d1, c as d1 from t group by d1")
+	result.Check(testkit.Rows("1 1", "0 1"))
+	result = tk.MustQuery("select d as d, c as d from t group by d + 1")
+	result.Check(testkit.Rows("-1 1", "0 1", "1 1"))
+	_, err := tk.Exec("select d as d, c as d from t group by d")
+	c.Assert(err, NotNil)
 	plan.UseNewPlanner = false
 }
 

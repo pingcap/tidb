@@ -155,7 +155,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 
 		_, err = builder.predicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
-		_, _, err = pruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, err = pruneColumnsAndResolveIndices(p, p.GetSchema())
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
@@ -244,6 +244,12 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 				"*plan.NewTableScan_2": {"b"},
 			},
 		},
+		{
+			sql: "select a as c1, b as c2 from t order by 1, c1 + c2 + c",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a", "b", "c"},
+			},
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -254,13 +260,13 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		err = newMockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{}
+		builder := &planBuilder{colMapper: make(map[*ast.ColumnNameExpr]expression.Expression)}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 
 		_, err = builder.predicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
-		_, _, err = pruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, err = pruneColumnsAndResolveIndices(p, p.GetSchema())
 		c.Assert(err, IsNil)
 		check(p, c, ca.ans, comment)
 	}

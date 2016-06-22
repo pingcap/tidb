@@ -33,6 +33,7 @@ type expressionRewriter struct {
 	schema     expression.Schema
 	err        error
 	aggrMap    map[*ast.AggregateFuncExpr]int
+	columnMap  map[*ast.ColumnNameExpr]expression.Expression
 	b          *planBuilder
 	correlated bool
 }
@@ -71,6 +72,11 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 		}
 		er.ctxStack = append(er.ctxStack, er.schema[index])
 		return inNode, true
+	case *ast.ColumnNameExpr:
+		if col, ok := er.b.colMapper[v]; ok {
+			er.ctxStack = append(er.ctxStack, col)
+			return inNode, true
+		}
 	case *ast.ExistsSubqueryExpr:
 		subq, ok := v.Sel.(*ast.SubqueryExpr)
 		if !ok {
@@ -143,6 +149,12 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		function.RetType = v.Type
 		er.ctxStack = er.ctxStack[:length-len(v.Args)]
 		er.ctxStack = append(er.ctxStack, function)
+	case *ast.PositionExpr:
+		if v.N > 0 && v.N <= len(er.schema) {
+			er.ctxStack = append(er.ctxStack, er.schema[v.N-1])
+		} else {
+			er.err = errors.Errorf("Position %d is out of range", v.N)
+		}
 	case *ast.ColumnName:
 		column, err := er.schema.FindColumn(v)
 		if err != nil {

@@ -110,6 +110,11 @@ type NewTableScan struct {
 	LimitCount *int64
 }
 
+// Trim trims child's rows.
+type Trim struct {
+	basePlan
+}
+
 // AddChild for parent.
 func addChild(parent Plan, child Plan) {
 	if child == nil || parent == nil {
