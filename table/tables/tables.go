@@ -19,7 +19,6 @@ package tables
 
 import (
 	"strings"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
