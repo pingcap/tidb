@@ -392,7 +392,7 @@ func (n *DefaultExpr) Accept(v Visitor) (Node, bool) {
 }
 
 // ExistsSubqueryExpr is the expression for "exists (select ...)".
-// https://dev.mysql.com/doc/refman/5.7/en/exists-and-not-exists-subqueries.html
+// See: https://dev.mysql.com/doc/refman/5.7/en/exists-and-not-exists-subqueries.html
 type ExistsSubqueryExpr struct {
 	exprNode
 	// Sel is the subquery, may be rewritten to other type of expression.
