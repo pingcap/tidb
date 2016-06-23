@@ -55,7 +55,12 @@ const (
 	IntDiv     = "DIV"
 	LogicXor   = "XOR"
 	NullEQ     = "<=>"
+	In         = "in"
+	Like       = "like"
+	Case       = "case"
+	Regexp     = "regexp"
 	IsNull     = "isnull"
+	IsTruth    = "istrue" // It distinguishs from the Not in github/pingcap/check.
 	UnaryPlus  = "unaryplus"
 	UnaryMinus = "unaryminus"
 )

@@ -158,19 +158,7 @@ func (r *rangeBuilder) buildFromColumn(expr *expression.Column) []rangePoint {
 	return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
-func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []rangePoint {
-	// TODO: It only implements the binary operation range building. And it needs to implement other scalar functions.
-	if len(expr.Args) != 2 {
-		return nil
-	}
-
-	if expr.FuncName.L == ast.OrOr {
-		return r.union(r.newBuild(expr.Args[0]), r.newBuild(expr.Args[1]))
-	}
-	if expr.FuncName.L == ast.AndAnd {
-		return r.intersection(r.newBuild(expr.Args[0]), r.newBuild(expr.Args[1]))
-	}
-
+func (r *rangeBuilder) buildFormBinOp(expr *expression.ScalarFunction) []rangePoint {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
 	var value types.Datum
@@ -225,6 +213,197 @@ func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []ra
 		endPoint := rangePoint{value: types.MaxValueDatum()}
 		return []rangePoint{startPoint, endPoint}
 	}
+	return nil
+}
+
+func (r *rangeBuilder) newBuildFromIsTruth(expr *expression.ScalarFunction) []rangePoint {
+	isTrue := expr.Args[1].(*expression.Constant).Value.GetInt64()
+	isNot := expr.Args[2].(*expression.Constant).Value.GetInt64()
+	if isTrue == 1 {
+		if isNot == 1 {
+			// NOT TRUE range is {[null null] [0, 0]}
+			startPoint1 := rangePoint{start: true}
+			endPoint1 := rangePoint{}
+			startPoint2 := rangePoint{start: true}
+			startPoint2.value.SetInt64(0)
+			endPoint2 := rangePoint{}
+			endPoint2.value.SetInt64(0)
+			return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+		}
+		// TRUE range is {[-inf 0) (0 +inf]}
+		startPoint1 := rangePoint{value: types.MinNotNullDatum(), start: true}
+		endPoint1 := rangePoint{excl: true}
+		endPoint1.value.SetInt64(0)
+		startPoint2 := rangePoint{excl: true, start: true}
+		startPoint2.value.SetInt64(0)
+		endPoint2 := rangePoint{value: types.MaxValueDatum()}
+		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+	}
+	if isNot == 1 {
+		// NOT FALSE range is {[null 0) (0 +inf]}
+		startPoint1 := rangePoint{start: true}
+		endPoint1 := rangePoint{excl: true}
+		endPoint1.value.SetInt64(0)
+		startPoint2 := rangePoint{start: true, excl: true}
+		startPoint2.value.SetInt64(0)
+		endPoint2 := rangePoint{value: types.MaxValueDatum()}
+		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+	}
+	// FALSE range is {[0, 0]}
+	startPoint := rangePoint{start: true}
+	startPoint.value.SetInt64(0)
+	endPoint := rangePoint{}
+	endPoint.value.SetInt64(0)
+	return []rangePoint{startPoint, endPoint}
+}
+
+func (r *rangeBuilder) newBuildFromIn(expr *expression.ScalarFunction) []rangePoint {
+	isNot := expr.Args[1].(*expression.Constant).Value.GetInt64()
+	if isNot == 1 {
+		r.err = ErrUnsupportedType.Gen("NOT IN is not supported")
+		return fullRange
+	}
+	var rangePoints []rangePoint
+	list := expr.Args[2:]
+	for _, e := range list {
+		v, ok := e.(*expression.Constant)
+		if !ok {
+			r.err = ErrUnsupportedType.Gen("expr:%v is not constant", e)
+			return fullRange
+		}
+		startPoint := rangePoint{value: types.NewDatum(v.Value.GetValue()), start: true}
+		endPoint := rangePoint{value: types.NewDatum(v.Value.GetValue())}
+		rangePoints = append(rangePoints, startPoint, endPoint)
+	}
+	sorter := rangePointSorter{points: rangePoints}
+	sort.Sort(&sorter)
+	if sorter.err != nil {
+		r.err = sorter.err
+	}
+	// check duplicates
+	hasDuplicate := false
+	isStart := false
+	for _, v := range rangePoints {
+		if isStart == v.start {
+			hasDuplicate = true
+			break
+		}
+		isStart = v.start
+	}
+	if !hasDuplicate {
+		return rangePoints
+	}
+	// remove duplicates
+	distinctRangePoints := make([]rangePoint, 0, len(rangePoints))
+	isStart = false
+	for i := 0; i < len(rangePoints); i++ {
+		current := rangePoints[i]
+		if isStart == current.start {
+			continue
+		}
+		distinctRangePoints = append(distinctRangePoints, current)
+		isStart = current.start
+	}
+	return distinctRangePoints
+}
+
+func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) []rangePoint {
+	isNot := expr.Args[2].(*expression.Constant).Value.GetInt64()
+	if isNot == 1 {
+		// Pattern not like is not supported.
+		r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
+		return fullRange
+	}
+	pattern, err := expr.Args[1].(*expression.Constant).Value.ToString()
+	if err != nil {
+		r.err = errors.Trace(err)
+		return fullRange
+	}
+	lowValue := make([]byte, 0, len(pattern))
+	escape := byte(expr.Args[3].(*expression.Constant).Value.GetInt64())
+	// unscape the pattern
+	var exclude bool
+	for i := 0; i < len(pattern); i++ {
+		if pattern[i] == escape {
+			i++
+			if i < len(pattern) {
+				lowValue = append(lowValue, pattern[i])
+			} else {
+				lowValue = append(lowValue, escape)
+			}
+			continue
+		}
+		if pattern[i] == '%' {
+			break
+		} else if pattern[i] == '_' {
+			exclude = true
+			break
+		}
+		lowValue = append(lowValue, pattern[i])
+	}
+	if len(lowValue) == 0 {
+		return []rangePoint{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
+	}
+	startPoint := rangePoint{start: true, excl: exclude}
+	startPoint.value.SetBytesAsString(lowValue)
+	highValue := make([]byte, len(lowValue))
+	copy(highValue, lowValue)
+	endPoint := rangePoint{excl: true}
+	for i := len(highValue) - 1; i >= 0; i-- {
+		highValue[i]++
+		if highValue[i] != 0 {
+			endPoint.value.SetBytesAsString(highValue)
+			break
+		}
+		if i == 0 {
+			endPoint.value = types.MaxValueDatum()
+			break
+		}
+	}
+	ranges := make([]rangePoint, 2)
+	ranges[0] = startPoint
+	ranges[1] = endPoint
+	return ranges
+}
+
+func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []rangePoint {
+	switch op := expr.FuncName.L; op {
+	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE:
+		return r.buildFormBinOp(expr)
+	case ast.IsTruth:
+		return r.newBuildFromIsTruth(expr)
+	case ast.In:
+		return r.newBuildFromIn(expr)
+	case ast.Like:
+		return r.newBuildFromPatternLike(expr)
+	case ast.IsNull:
+		not := expr.Args[1].(*expression.Constant).Value.GetInt64()
+		if not == 1 {
+			startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
+			endPoint := rangePoint{value: types.MaxValueDatum()}
+			return []rangePoint{startPoint, endPoint}
+		}
+		startPoint := rangePoint{start: true}
+		endPoint := rangePoint{}
+		return []rangePoint{startPoint, endPoint}
+	case ast.OrOr:
+		e1 := expr.Args[0]
+		e2 := expr.Args[1]
+		if len(expr.Args) == 3 {
+			e1, _ = expression.NewFunction(opcode.LT, []expression.Expression{expr.Args[0], expr.Args[1]}, expr.RetType)
+			e2, _ = expression.NewFunction(opcode.GT, []expression.Expression{expr.Args[0], expr.Args[2]}, expr.RetType)
+		}
+		return r.union(r.newBuild(e1), r.newBuild(e2))
+	case ast.AndAnd:
+		e1 := expr.Args[0]
+		e2 := expr.Args[1]
+		if len(expr.Args) == 3 {
+			e1, _ = expression.NewFunction(opcode.GE, []expression.Expression{expr.Args[0], expr.Args[1]}, expr.RetType)
+			e2, _ = expression.NewFunction(opcode.LE, []expression.Expression{expr.Args[0], expr.Args[2]}, expr.RetType)
+		}
+		return r.intersection(r.newBuild(e1), r.newBuild(e2))
+	}
+
 	return nil
 }
 
