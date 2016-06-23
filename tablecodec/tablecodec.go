@@ -54,7 +54,16 @@ func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 func EncodeColumnKey(tableID int64, handle int64, columnID int64) kv.Key {
 	buf := make([]byte, 0, recordRowKeyLen+idLen)
 	buf = appendTableRecordPrefix(buf, tableID)
-	buf = codec.EncodeInt(buf, handle)
+	buf = EncodeRecordKey(buf, handle, columnID)
+	return buf
+}
+
+// EncodeRecordKey encodes the recordPrefix, row handle and columnID into a kv.Key.
+// TODO: Remove this function
+func EncodeRecordKey(recordPrefix kv.Key, h int64, columnID int64) kv.Key {
+	buf := make([]byte, 0, len(recordPrefix)+16)
+	buf = append(buf, recordPrefix...)
+	buf = codec.EncodeInt(buf, h)
 	if columnID != 0 {
 		buf = codec.EncodeInt(buf, columnID)
 	}
@@ -100,6 +109,49 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, columnID int64, e
 func DecodeRowKey(key kv.Key) (int64, error) {
 	_, handle, _, err := DecodeRecordKey(key)
 	return handle, errors.Trace(err)
+}
+
+// EncodeValue encodes a go value to bytes.
+func EncodeValue(raw types.Datum) ([]byte, error) {
+	v, err := flatten(raw)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	b, err := codec.EncodeValue(nil, v)
+	return b, errors.Trace(err)
+}
+
+func flatten(data types.Datum) (types.Datum, error) {
+	switch data.Kind() {
+	case types.KindMysqlTime:
+		// for mysql datetime, timestamp and date type
+		b, err := data.GetMysqlTime().Marshal()
+		if err != nil {
+			return types.NewDatum(nil), errors.Trace(err)
+		}
+		return types.NewDatum(b), nil
+	case types.KindMysqlDuration:
+		// for mysql time type
+		data.SetInt64(int64(data.GetMysqlDuration().Duration))
+		return data, nil
+	case types.KindMysqlDecimal:
+		data.SetString(data.GetMysqlDecimal().String())
+		return data, nil
+	case types.KindMysqlEnum:
+		data.SetUint64(data.GetMysqlEnum().Value)
+		return data, nil
+	case types.KindMysqlSet:
+		data.SetUint64(data.GetMysqlSet().Value)
+		return data, nil
+	case types.KindMysqlBit:
+		data.SetUint64(data.GetMysqlBit().Value)
+		return data, nil
+	case types.KindMysqlHex:
+		data.SetInt64(data.GetMysqlHex().Value)
+		return data, nil
+	default:
+		return data, nil
+	}
 }
 
 // DecodeValues decodes a byte slice into datums with column types.

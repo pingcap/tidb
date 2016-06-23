@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -266,7 +267,7 @@ func (s *testColumnSuite) checkColumnKVExist(c *C, ctx context.Context, t table.
 
 	if isExist {
 		c.Assert(err, IsNil)
-		v, err1 := tables.DecodeValue(data, &col.FieldType)
+		v, err1 := tablecodec.DecodeColumnValue(data, &col.FieldType)
 		c.Assert(err1, IsNil)
 		value, err1 := v.ConvertTo(&col.FieldType)
 		c.Assert(err1, IsNil)
