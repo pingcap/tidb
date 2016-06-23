@@ -90,14 +90,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 		c.Assert(equal, Equals, 0)
 	}
 
-	// colMap may contains more columns that encoded row.
-	colMap[4] = types.NewFieldType(mysql.TypeFloat)
-	r, err = DecodeRow(bs, colMap)
-	c.Assert(err, IsNil)
-	c.Assert(r, NotNil)
-	c.Assert(r, HasLen, 3)
-
-	// colMap may contains more columns that encoded row.
+	// colMap may contains more columns than encoded row.
 	colMap[4] = types.NewFieldType(mysql.TypeFloat)
 	r, err = DecodeRow(bs, colMap)
 	c.Assert(err, IsNil)
@@ -111,7 +104,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 		c.Assert(equal, Equals, 0)
 	}
 
-	// colMap may contains less columns that encoded row.
+	// colMap may contains less columns than encoded row.
 	delete(colMap, 3)
 	delete(colMap, 4)
 	r, err = DecodeRow(bs, colMap)
