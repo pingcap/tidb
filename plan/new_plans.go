@@ -102,8 +102,7 @@ type NewTableScan struct {
 	Desc    bool
 	Ranges  []TableRange
 
-	// RefAccess indicates it references a previous joined table, used in explain.
-	RefAccess bool
+	AccessCondition []expression.Expression
 
 	TableAsName *model.CIStr
 
