@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/db"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -358,9 +359,13 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 	tn.DBInfo = dbInfo
 
 	rfs := make([]*ast.ResultField, 0, len(tn.TableInfo.Columns))
+	sVars := variable.GetSessionVars(nr.Ctx)
 	for _, v := range tn.TableInfo.Columns {
 		if v.State != model.StatePublic {
-			continue
+			if !sVars.InUpdateStmt || v.State != model.StateWriteReorganization {
+				// TODO: check this
+				continue
+			}
 		}
 		expr := &ast.ValueExpr{}
 		expr.SetType(&v.FieldType)

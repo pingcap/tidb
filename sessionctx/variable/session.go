@@ -104,6 +104,9 @@ type SessionVars struct {
 
 	// Strict SQL mode
 	StrictSQLMode bool
+
+	// InUpdateStmt indicates if the session is handling update stmt.
+	InUpdateStmt bool
 }
 
 // sessionVarsKeyType is a dummy type to avoid naming collision in context.

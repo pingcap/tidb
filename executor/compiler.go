@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 // Compiler compiles an ast.StmtNode to a stmt.Statement.
@@ -42,6 +43,14 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 		return nil, errors.Trace(err)
 	}
 	sb := NewSubQueryBuilder(is)
+
+	if _, ok := node.(*ast.UpdateStmt); ok {
+		sVars := variable.GetSessionVars(ctx)
+		sVars.InUpdateStmt = true
+		defer func() {
+			sVars.InUpdateStmt = false
+		}()
+	}
 	p, err := plan.Optimize(ctx, node, sb, is)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -262,17 +262,11 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		match, err := rs.evalWhereForRow(ctx, h)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !match {
-			return nil, nil
-		}
 		row, err := rs.getRowByHandle(ctx, h)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+
 		if row != nil {
 			rows = append(rows, row)
 		}
@@ -318,13 +312,6 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		match, err := rs.evalWhereForRow(ctx, h)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !match {
-			continue
-		}
 		row, err := rs.getRowByHandle(ctx, h)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -348,8 +335,9 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.R
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rowData := make([][]byte, 0, len(columns))
-	for _, col := range columns {
+	rowData := make([][]byte, len(columns))
+	colTps := make(map[int64]*types.FieldType, len(columns))
+	for i, col := range columns {
 		var colVal []byte
 		if *col.PkHandle {
 			if mysql.HasUnsignedFlag(uint(*col.Flag)) {
@@ -364,30 +352,43 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.R
 			} else {
 				colVal = row.Handle
 			}
+			rowData[i] = colVal
 		} else {
-			colID := col.GetColumnId()
-			if ctx.whereColumns[colID] != nil {
-				// The column is saved in evaluator, use it directly.
-				datum := ctx.eval.Row[colID]
-				var err1 error
-				colVal, err1 = codec.EncodeValue(nil, datum)
-				if err1 != nil {
-					return nil, errors.Trace(err1)
-				}
-			} else {
-				key := tablecodec.EncodeColumnKey(tid, handle, colID)
-				var err1 error
-				colVal, err1 = ctx.txn.Get(key)
-				if err1 != nil {
-					if !isDefaultNull(err1, col) {
-						return nil, errors.Trace(err1)
-					}
-					colVal = []byte{codec.NilFlag}
-				}
-			}
+			colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
 		}
-		rowData = append(rowData, colVal)
 	}
+	key := tablecodec.EncodeColumnKey(tid, handle, 0)
+	value, err := ctx.txn.Get(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	values, err := rs.getRowData(value, colTps)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, col := range columns {
+		if *col.PkHandle {
+			continue
+		}
+		v, ok := values[col.GetColumnId()]
+		if !ok {
+			if !mysql.HasNotNullFlag(uint(col.GetFlag())) {
+				return nil, errors.New("Miss column")
+			}
+			v = []byte{codec.NilFlag}
+			values[col.GetColumnId()] = v
+		}
+		rowData[i] = v
+	}
+	// Evalue where
+	match, err := rs.evalWhereForRow(ctx, handle, values)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !match {
+		return nil, nil
+	}
+
 	if ctx.aggregate {
 		// Update aggregate functions.
 		err = rs.aggregate(ctx, rowData)
@@ -403,23 +404,32 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.R
 	return row, nil
 }
 
-func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64) (bool, error) {
+// TODO: find a better way to decode row data.
+func (rs *localRegion) getRowData(value []byte, colTps map[int64]*types.FieldType) (map[int64][]byte, error) {
+	values, err := tablecodec.DecodeRow(value, colTps)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ret := make(map[int64][]byte, len(colTps))
+	for id, value := range values {
+		v, err1 := codec.EncodeValue(nil, value)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		ret[id] = v
+	}
+	return ret, nil
+}
+
+func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64, row map[int64][]byte) (bool, error) {
 	if ctx.sel.Where == nil {
 		return true, nil
 	}
-	tid := ctx.sel.TableInfo.GetTableId()
 	for colID, col := range ctx.whereColumns {
 		if col.GetPkHandle() {
 			ctx.eval.Row[colID] = types.NewIntDatum(h)
 		} else {
-			key := tablecodec.EncodeColumnKey(tid, h, colID)
-			data, err := ctx.txn.Get(key)
-			if isDefaultNull(err, col) {
-				ctx.eval.Row[colID] = types.Datum{}
-				continue
-			} else if err != nil {
-				return false, errors.Trace(err)
-			}
+			data := row[colID]
 			ft := xapi.FieldTypeFromPBColumn(col)
 			datum, err := tablecodec.DecodeColumnValue(data, ft)
 			if err != nil {

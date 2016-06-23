@@ -202,8 +202,19 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	bs := kv.NewBufferStore(txn)
 	defer bs.Release()
 
-	// set new value
-	if err = t.setNewData(bs, h, touched, currentData); err != nil {
+	// Compose new row
+	t.composeNewData(touched, currentData, oldData)
+	colIDs := make([]int64, 0, len(t.writableCols()))
+	for _, col := range t.writableCols() {
+		colIDs = append(colIDs, col.ID)
+	}
+	// Set new row data into KV.
+	key := t.RecordKey(h, nil)
+	value, err := tablecodec.EncodeRow(currentData, colIDs)
+	if err = txn.Set(key, value); err != nil {
+		return errors.Trace(err)
+	}
+	if err = bs.SaveTo(txn); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -228,7 +239,6 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data 
 			if err != nil {
 				return errors.Trace(err)
 			}
-
 			data[col.Offset] = value
 			touched[col.Offset] = true
 		}
@@ -236,19 +246,16 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data 
 	return nil
 }
 
-func (t *Table) setNewData(rm kv.RetrieverMutator, h int64, touched map[int]bool, data []types.Datum) error {
-	for _, col := range t.Cols() {
-		if !touched[col.Offset] {
+// Fill untouched columns with original values.
+// TODO: consider col state
+func (t *Table) composeNewData(touched map[int]bool, newData []types.Datum, oldData []types.Datum) {
+	for i, od := range oldData {
+		if touched[i] {
 			continue
 		}
-
-		k := t.RecordKey(h, col)
-		if err := SetColValue(rm, k, data[col.Offset]); err != nil {
-			return errors.Trace(err)
-		}
+		newData[i] = od
 	}
-
-	return nil
+	return
 }
 
 func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched map[int]bool, oldData []types.Datum, newData []types.Datum) error {
@@ -471,6 +478,7 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 			continue
 		}
 		if col.State != model.StatePublic {
+			// TODO: check this
 			return nil, table.ErrColumnStateNonPublic.Gen("Cannot use none public column - %v", cols)
 		}
 		if col.IsPKHandleColumn(t.meta) {
