@@ -173,7 +173,7 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan, s *plan.Select
 		ret = ts
 		if !txn.IsReadOnly() {
 			if s != nil {
-				ret = b.buildNewUnionScanExec(ret, composeCondition(s.Conditions))
+				ret = b.buildNewUnionScanExec(ret, composeCondition(append(s.Conditions, v.AccessCondition...)))
 			} else {
 				ret = b.buildNewUnionScanExec(ret, nil)
 			}

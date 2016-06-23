@@ -744,7 +744,6 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
 	p := &NewTableScan{Table: tn.TableInfo}
 	p.id = b.allocID(p)
 	// Equal condition contains a column from previous joined table.
-	p.RefAccess = false
 	rfs := tn.GetResultFields()
 	schema := make([]*expression.Column, 0, len(rfs))
 	for i, rf := range rfs {

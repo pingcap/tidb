@@ -148,6 +148,7 @@ func buildNewTableRange(p *NewTableScan, accessConditions []expression.Expressio
 		return nil
 	}
 
+	p.AccessCondition = accessConditions
 	rb := rangeBuilder{}
 	rangePoints := fullRange
 	for _, cond := range accessConditions {
