@@ -313,9 +313,6 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		return h, errors.Trace(err)
 	}
 
-	if err = t.LockRow(ctx, recordID, false); err != nil {
-		return 0, errors.Trace(err)
-	}
 	colIDs := make([]int64, 0, len(r))
 	row := make([]types.Datum, 0, len(r))
 	// Set public and write only column value.
@@ -498,6 +495,7 @@ func (t *Table) Row(ctx context.Context, h int64) ([]types.Datum, error) {
 }
 
 // LockRow implements table.Table LockRow interface.
+// TODO: remove forRead parameter, it should always be true now.
 func (t *Table) LockRow(ctx context.Context, h int64, forRead bool) error {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
@@ -530,26 +528,9 @@ func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) erro
 }
 
 func (t *Table) removeRowData(ctx context.Context, h int64) error {
-	if err := t.LockRow(ctx, h, false); err != nil {
-		return errors.Trace(err)
-	}
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	// Remove row's colume one by one
-	for _, col := range t.Columns {
-		k := t.RecordKey(h, col)
-		err = txn.Delete([]byte(k))
-		if err != nil {
-			if col.State != model.StatePublic && terror.ErrorEqual(err, kv.ErrNotExist) {
-				// If the column is not in public state, we may have not added the column,
-				// or already deleted the column, so skip ErrNotExist error.
-				continue
-			}
-
-			return errors.Trace(err)
-		}
 	}
 	// Remove row lock
 	err = txn.Delete([]byte(t.RecordKey(h, nil)))
