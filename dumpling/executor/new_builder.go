@@ -111,20 +111,20 @@ func (b *executorBuilder) toPBExpr(conditions []expression.Expression, tbl *mode
 }
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
-	exec := b.build(v.GetChildByIndex(0))
-	switch exec.(type) {
-	case *NewTableScanExec:
-		tableScan := exec.(*NewTableScanExec)
-		tableScan.where, v.Conditions = b.toPBExpr(v.Conditions, tableScan.tableInfo)
-		// TODO: Implement NewIndexScan
+	ts, ok := v.GetChildByIndex(0).(*plan.NewTableScan)
+	var src Executor
+	if ok {
+		src = b.buildNewTableScan(ts, v)
+	} else {
+		src = b.build(v.GetChildByIndex(0))
 	}
 
 	if len(v.Conditions) == 0 {
-		return exec
+		return src
 	}
 
 	return &SelectionExec{
-		Src:       exec,
+		Src:       src,
 		Condition: composeCondition(v.Conditions),
 		schema:    v.GetSchema(),
 		ctx:       b.ctx,
@@ -144,7 +144,7 @@ func (b *executorBuilder) buildNewTableDual(v *plan.NewTableDual) Executor {
 	return &NewTableDualExec{schema: v.GetSchema()}
 }
 
-func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan) Executor {
+func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan, s *plan.Selection) Executor {
 	txn, err := b.ctx.GetTxn(false)
 	if err != nil {
 		b.err = err
@@ -159,8 +159,8 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan) Executor {
 	}
 	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-		// TODO: support union scan exec.
-		return &NewTableScanExec{
+		var ret Executor
+		ts := &NewTableScanExec{
 			tableInfo:   v.Table,
 			ctx:         b.ctx,
 			supportDesc: supportDesc,
@@ -170,6 +170,18 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan) Executor {
 			Columns:     v.Columns,
 			ranges:      v.Ranges,
 		}
+		ret = ts
+		if !txn.IsReadOnly() {
+			if s != nil {
+				ret = b.buildNewUnionScanExec(ret, composeCondition(append(s.Conditions, v.AccessCondition...)))
+			} else {
+				ret = b.buildNewUnionScanExec(ret, nil)
+			}
+		}
+		if s != nil {
+			ts.where, s.Conditions = b.toPBExpr(s.Conditions, ts.tableInfo)
+		}
+		return ret
 	}
 	b.err = errors.New("Not implement yet.")
 	return nil

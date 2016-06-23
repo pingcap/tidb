@@ -694,7 +694,6 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 		tk.MustExec(fmt.Sprintf("insert INTO select_order_test VALUES (%d, \"zz\");", i))
 	}
 	tk.MustExec("insert INTO select_order_test VALUES (1501, \"aa\");")
-	tk.MustExec("commit")
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 3;")
 	rowStr = fmt.Sprintf("%v %v", 11, []byte("hh"))
 	r.Check(testkit.Rows(rowStr))
@@ -705,7 +704,6 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	tk.MustExec("insert t values (1, 1)")
 	tk.MustExec("insert t values (1, 2)")
 	tk.MustExec("insert t values (1, 3)")
-	tk.MustExec("commit")
 	r = tk.MustQuery("select 1-d as d from t order by d;")
 	r.Check(testkit.Rows("-2", "-1", "0"))
 	r = tk.MustQuery("select 1-d as d from t order by d + 1;")
@@ -1290,6 +1288,7 @@ func (s *testSuite) TestUsignedPKColumn(c *C) {
 }
 
 func (s *testSuite) TestDirtyTransaction(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1300,21 +1299,23 @@ func (s *testSuite) TestDirtyTransaction(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 3", "4 8", "6 8"))
 	tk.MustExec("insert t values (1, 5), (3, 4), (7, 6)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 5", "2 3", "3 4", "4 8", "6 8", "7 6"))
+	tk.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 5"))
 	tk.MustQuery("select * from t order by a desc").Check(testkit.Rows("7 6", "6 8", "4 8", "3 4", "2 3", "1 5"))
-	tk.MustQuery("select * from t order by b").Check(testkit.Rows("2 3", "3 4", "1 5", "7 6", "4 8", "6 8"))
-	tk.MustQuery("select * from t order by b desc").Check(testkit.Rows("6 8", "4 8", "7 6", "1 5", "3 4", "2 3"))
+	tk.MustQuery("select * from t order by b, a").Check(testkit.Rows("2 3", "3 4", "1 5", "7 6", "4 8", "6 8"))
+	tk.MustQuery("select * from t order by b desc, a desc").Check(testkit.Rows("6 8", "4 8", "7 6", "1 5", "3 4", "2 3"))
+	tk.MustQuery("select b from t where b = 8 order by b desc").Check(testkit.Rows("8", "8"))
 	// Delete a snapshot row and a dirty row.
 	tk.MustExec("delete from t where a = 2 or a = 3")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 5", "4 8", "6 8", "7 6"))
 	tk.MustQuery("select * from t order by a desc").Check(testkit.Rows("7 6", "6 8", "4 8", "1 5"))
-	tk.MustQuery("select * from t order by b").Check(testkit.Rows("1 5", "7 6", "4 8", "6 8"))
-	tk.MustQuery("select * from t order by b desc").Check(testkit.Rows("6 8", "4 8", "7 6", "1 5"))
+	tk.MustQuery("select * from t order by b, a").Check(testkit.Rows("1 5", "7 6", "4 8", "6 8"))
+	tk.MustQuery("select * from t order by b desc, a desc").Check(testkit.Rows("6 8", "4 8", "7 6", "1 5"))
 	// Add deleted row back.
 	tk.MustExec("insert t values (2, 3), (3, 4)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 5", "2 3", "3 4", "4 8", "6 8", "7 6"))
 	tk.MustQuery("select * from t order by a desc").Check(testkit.Rows("7 6", "6 8", "4 8", "3 4", "2 3", "1 5"))
-	tk.MustQuery("select * from t order by b").Check(testkit.Rows("2 3", "3 4", "1 5", "7 6", "4 8", "6 8"))
-	tk.MustQuery("select * from t order by b desc").Check(testkit.Rows("6 8", "4 8", "7 6", "1 5", "3 4", "2 3"))
+	tk.MustQuery("select * from t order by b, a").Check(testkit.Rows("2 3", "3 4", "1 5", "7 6", "4 8", "6 8"))
+	tk.MustQuery("select * from t order by b desc, a desc").Check(testkit.Rows("6 8", "4 8", "7 6", "1 5", "3 4", "2 3"))
 	// Truncate Table
 	tk.MustExec("truncate table t")
 	tk.MustQuery("select * from t").Check(testkit.Rows())
@@ -1324,6 +1325,7 @@ func (s *testSuite) TestDirtyTransaction(c *C) {
 	tk.MustExec("insert t values (3, 4)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("3 4"))
 	tk.Exec("abort")
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestDatumXAPI(c *C) {
@@ -1429,7 +1431,6 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert t values (1, 1)")
 	tk.MustExec("insert t values (3, 2)")
 	tk.MustExec("insert t values (4, 3)")
-	tk.MustExec("commit")
 	result := tk.MustQuery("select count(*) from t group by d")
 	result.Check(testkit.Rows("3", "2", "2"))
 	result = tk.MustQuery("select count(distinct c) from t group by d")

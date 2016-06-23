@@ -21,6 +21,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -118,7 +119,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	case *plan.Projection:
 		return b.buildProjection(v)
 	case *plan.NewTableScan:
-		return b.buildNewTableScan(v)
+		return b.buildNewTableScan(v, nil)
 	case *plan.NewTableDual:
 		return b.buildNewTableDual(v)
 	case *plan.Apply:
@@ -646,6 +647,19 @@ func (b *executorBuilder) buildUnionScanExec(src Executor) *UnionScanExec {
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.condition = b.joinConditions(append(x.indexPlan.AccessConditions, x.indexPlan.FilterConditions...))
 		us.buildAndSortAddedRows(x.table, x.indexPlan.TableAsName)
+	default:
+		b.err = ErrUnknownPlan
+	}
+	return us
+}
+
+func (b *executorBuilder) buildNewUnionScanExec(src Executor, condition expression.Expression) *UnionScanExec {
+	us := &UnionScanExec{ctx: b.ctx, Src: src}
+	switch x := src.(type) {
+	case *NewTableScanExec:
+		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
+		us.newCondition = condition
+		us.newBuildAndSortAddedRows(x.table, x.asName)
 	default:
 		b.err = ErrUnknownPlan
 	}
