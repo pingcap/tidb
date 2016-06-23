@@ -15,10 +15,10 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -32,7 +32,7 @@ func composeCondition(conditions []expression.Expression) expression.Expression 
 	if length == 1 {
 		return conditions[0]
 	}
-	expr, _ := expression.NewFunction(ast.AndAnd, []expression.Expression{composeCondition(conditions[0 : length/2]),
+	expr, _ := expression.NewFunction(opcode.AndAnd, []expression.Expression{composeCondition(conditions[0 : length/2]),
 		composeCondition(conditions[length/2:])}, nil)
 	return expr
 }
