@@ -220,25 +220,22 @@ func DecodeRow(data []byte, cols map[int64]*types.FieldType) (map[int64]types.Da
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if len(values) != 2*len(cols) {
-		return nil, errInvalidColumnCount.Gen("invalid column count %d is less than value count %d", len(cols), len(values))
+	if len(values)%2 != 0 {
+		return nil, errors.New("Decoded row value length is not even number!")
 	}
-	i := 0
 	row := make(map[int64]types.Datum, len(cols))
-	for i < len(values) {
+	for i := 0; i < len(values); i += 2 {
 		cid := values[i]
-		i++
 		id := cid.GetInt64()
 		ft, ok := cols[id]
 		if ok {
-			v := values[i]
+			v := values[i+1]
 			v, err = Unflatten(v, ft)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			row[id] = v
 		}
-		i++
 	}
 	return row, nil
 }

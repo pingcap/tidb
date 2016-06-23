@@ -89,4 +89,43 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(equal, Equals, 0)
 	}
+
+	// colMap may contains more columns that encoded row.
+	colMap[4] = types.NewFieldType(mysql.TypeFloat)
+	r, err = DecodeRow(bs, colMap)
+	c.Assert(err, IsNil)
+	c.Assert(r, NotNil)
+	c.Assert(r, HasLen, 3)
+
+	// colMap may contains more columns that encoded row.
+	colMap[4] = types.NewFieldType(mysql.TypeFloat)
+	r, err = DecodeRow(bs, colMap)
+	c.Assert(err, IsNil)
+	c.Assert(r, NotNil)
+	c.Assert(r, HasLen, 3)
+	for i, col := range cols {
+		v, ok := r[col.id]
+		c.Assert(ok, IsTrue)
+		equal, err1 := v.CompareDatum(row[i])
+		c.Assert(err1, IsNil)
+		c.Assert(equal, Equals, 0)
+	}
+
+	// colMap may contains less columns that encoded row.
+	delete(colMap, 3)
+	delete(colMap, 4)
+	r, err = DecodeRow(bs, colMap)
+	c.Assert(err, IsNil)
+	c.Assert(r, NotNil)
+	c.Assert(r, HasLen, 2)
+	for i, col := range cols {
+		if i > 1 {
+			break
+		}
+		v, ok := r[col.id]
+		c.Assert(ok, IsTrue)
+		equal, err1 := v.CompareDatum(row[i])
+		c.Assert(err1, IsNil)
+		c.Assert(equal, Equals, 0)
+	}
 }
