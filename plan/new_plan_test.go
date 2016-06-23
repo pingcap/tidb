@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -75,7 +77,9 @@ func newMockResolve(node ast.Node) error {
 		PKIsHandle: true,
 	}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{table})
-	return MockResolveName(node, is, "test")
+	ctx := mock.NewContext()
+	variable.BindSessionVars(ctx)
+	return MockResolveName(node, is, "test", ctx)
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {

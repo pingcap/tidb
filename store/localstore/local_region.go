@@ -372,7 +372,7 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.R
 		}
 		v, ok := values[col.GetColumnId()]
 		if !ok {
-			if !mysql.HasNotNullFlag(uint(col.GetFlag())) {
+			if mysql.HasNotNullFlag(uint(col.GetFlag())) {
 				return nil, errors.New("Miss column")
 			}
 			v = []byte{codec.NilFlag}
@@ -412,7 +412,7 @@ func (rs *localRegion) getRowData(value []byte, colTps map[int64]*types.FieldTyp
 	}
 	ret := make(map[int64][]byte, len(colTps))
 	for id, value := range values {
-		v, err1 := codec.EncodeValue(nil, value)
+		v, err1 := tablecodec.EncodeValue(value)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}

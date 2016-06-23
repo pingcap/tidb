@@ -122,3 +122,45 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 		c.Assert(equal, Equals, 0)
 	}
 }
+
+func (s *testTableCodecSuite) TestTimeCodec(c *C) {
+	defer testleak.AfterTest(c)()
+
+	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
+	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
+	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeTimestamp)}
+	cols := []*column{c1, c2, c3}
+
+	row := make([]types.Datum, 3)
+	row[0] = types.NewIntDatum(100)
+	row[1] = types.NewBytesDatum([]byte("abc"))
+	ts, err := mysql.ParseTimestamp("2016-06-23 11:30:45")
+	c.Assert(err, IsNil)
+	row[2] = types.NewDatum(ts)
+	// Encode
+	colIDs := make([]int64, 0, 3)
+	for _, col := range cols {
+		colIDs = append(colIDs, col.id)
+	}
+	bs, err := EncodeRow(row, colIDs)
+	c.Assert(err, IsNil)
+	c.Assert(bs, NotNil)
+
+	// Decode
+	colMap := make(map[int64]*types.FieldType, 3)
+	for _, col := range cols {
+		colMap[col.id] = col.tp
+	}
+	r, err := DecodeRow(bs, colMap)
+	c.Assert(err, IsNil)
+	c.Assert(r, NotNil)
+	c.Assert(r, HasLen, 3)
+	// Compare decoded row and original row
+	for i, col := range cols {
+		v, ok := r[col.id]
+		c.Assert(ok, IsTrue)
+		equal, err1 := v.CompareDatum(row[i])
+		c.Assert(err1, IsNil)
+		c.Assert(equal, Equals, 0)
+	}
+}

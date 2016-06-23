@@ -138,6 +138,10 @@ func EncodeRow(row []types.Datum, colIDs []int64) ([]byte, error) {
 		}
 		values[2*i+1] = fc
 	}
+	if len(values) == 0 {
+		// We could not set nil value into kv.
+		return []byte{codec.NilFlag}, nil
+	}
 	return codec.EncodeValue(nil, values...)
 }
 
@@ -224,6 +228,9 @@ func DecodeRow(data []byte, cols map[int64]*types.FieldType) (map[int64]types.Da
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if len(values) == 1 && values[0].IsNull() {
+		return make(map[int64]types.Datum, 0), nil
+	}
 	if len(values)%2 != 0 {
 		return nil, errors.New("Decoded row value length is not even number!")
 	}
@@ -240,7 +247,6 @@ func DecodeRow(data []byte, cols map[int64]*types.FieldType) (map[int64]types.Da
 			}
 			row[id] = v
 		}
-		i++
 	}
 	return row, nil
 }
