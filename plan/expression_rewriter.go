@@ -100,6 +100,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 			er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d[0], RetType: np.GetSchema()[0].GetType()})
 		}
 		return inNode, true
+	case *ast.PatternInExpr:
+		// TODO: support in subquery
+		if v.Sel != nil {
+			er.err = errors.New("In subquery doesn't currently supported.")
+			return inNode, true
+		}
 	case *ast.SubqueryExpr:
 		np, outerSchema := er.buildSubquery(v)
 		if er.err != nil {
@@ -122,86 +128,47 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 	return inNode, false
 }
 
+func boolToExprConstant(b bool, tp *types.FieldType) *expression.Constant {
+	v := 0
+	if b {
+		v = 1
+	}
+	return &expression.Constant{Value: types.NewIntDatum(int64(v)), RetType: tp}
+}
+
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool) {
 	length := len(er.ctxStack)
 	if er.err != nil {
 		return retNode, false
 	}
+
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr:
 	case *ast.FuncCallExpr:
-		function := &expression.ScalarFunction{FuncName: v.FnName}
-		for i := length - len(v.Args); i < length; i++ {
-			function.Args = append(function.Args, er.ctxStack[i])
-		}
-		f, ok := evaluator.Funcs[v.FnName.L]
-		if !ok {
-			er.err = errors.New("Can't find function!")
-			return retNode, false
-		}
-		if len(function.Args) < f.MinArgs || (f.MaxArgs != -1 && len(function.Args) > f.MaxArgs) {
-			er.err = evaluator.ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].",
-				f.MinArgs, f.MaxArgs)
-			return retNode, false
-		}
-		function.Function = f.F
-		function.RetType = v.Type
-		er.ctxStack = er.ctxStack[:length-len(v.Args)]
-		er.ctxStack = append(er.ctxStack, function)
+		er.funcCallToScalarFunc(v, length)
+	case *ast.ColumnName:
+		er.toColumn(v)
+	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause, *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
+	case *ast.ValueExpr:
+		value := &expression.Constant{Value: v.Datum, RetType: v.Type}
+		er.ctxStack = append(er.ctxStack, value)
+	case *ast.IsNullExpr, *ast.IsTruthExpr, *ast.UnaryOperationExpr:
+		er.toOneArgScalarFunc(inNode, length)
+	case *ast.BetweenExpr:
+		er.betweenToScalarFunc(v, length)
+	case *ast.PatternLikeExpr:
+		er.likeToScalarFunc(v, length)
+	case *ast.PatternInExpr:
+		er.inToScalarFunc(v, length)
 	case *ast.PositionExpr:
 		if v.N > 0 && v.N <= len(er.schema) {
 			er.ctxStack = append(er.ctxStack, er.schema[v.N-1])
 		} else {
 			er.err = errors.Errorf("Position %d is out of range", v.N)
 		}
-	case *ast.ColumnName:
-		column, err := er.schema.FindColumn(v)
-		if err != nil {
-			er.err = errors.Trace(err)
-			return retNode, false
-		}
-		if column != nil {
-			er.ctxStack = append(er.ctxStack, column)
-			return inNode, true
-		}
-
-		for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
-			outer := er.b.outerSchemas[i]
-			column, err = outer.FindColumn(v)
-			if err != nil {
-				er.err = errors.Trace(err)
-				return retNode, false
-			}
-			if column != nil {
-				er.correlated = true
-				break
-			}
-		}
-		if column == nil {
-			er.err = errors.Errorf("Unknown column %s %s %s.", v.Schema.L, v.Table.L, v.Name.L)
-			return retNode, false
-		}
-		er.ctxStack = append(er.ctxStack, column)
-	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause, *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
-	case *ast.ValueExpr:
-		value := &expression.Constant{Value: v.Datum, RetType: v.Type}
-		er.ctxStack = append(er.ctxStack, value)
-	case *ast.IsNullExpr:
-		function, err := expression.NewFunction(ast.IsNull, []expression.Expression{er.ctxStack[length-1]}, v.Type)
-		if err != nil {
-			er.err = errors.Trace(err)
-			return retNode, false
-		}
-		er.ctxStack = er.ctxStack[:length-1]
-		er.ctxStack = append(er.ctxStack, function)
 	case *ast.BinaryOperationExpr:
-		funcName, ok := opcode.Ops[v.Op]
-		if !ok {
-			er.err = errors.Errorf("Unknown opcode %v", v.Op)
-			return retNode, false
-		}
-		function, err := expression.NewFunction(funcName,
+		function, err := expression.NewFunction(v.Op,
 			[]expression.Expression{er.ctxStack[length-2], er.ctxStack[length-1]}, v.Type)
 		if err != nil {
 			er.err = errors.Trace(err)
@@ -209,23 +176,135 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		}
 		er.ctxStack = er.ctxStack[:length-2]
 		er.ctxStack = append(er.ctxStack, function)
-	case *ast.UnaryOperationExpr:
-		funcName, ok := opcode.Ops[v.Op]
-		if !ok {
-			er.err = errors.Errorf("Unknown opcode %v", v.Op)
-			return retNode, false
-		}
-		function, err := expression.NewFunction(funcName, []expression.Expression{er.ctxStack[length-1]}, v.Type)
-		if err != nil {
-			er.err = errors.Trace(err)
-			return retNode, false
-		}
-		er.ctxStack = er.ctxStack[:length-1]
-		er.ctxStack = append(er.ctxStack, function)
-
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
 	}
+
+	if er.err != nil {
+		return retNode, false
+	}
 	return inNode, true
+}
+
+func (er *expressionRewriter) inToScalarFunc(v *ast.PatternInExpr, length int) {
+	l := len(v.List)
+	args := make([]expression.Expression, 0, l+2)
+	args = append(args, er.ctxStack[length-l-1])
+	args = append(args, boolToExprConstant(v.Not, v.Type))
+	args = append(args, er.ctxStack[length-l:length]...)
+	function, err := expression.NewFunction(opcode.In, args, v.Type)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return
+	}
+	er.ctxStack = er.ctxStack[:length-l-1]
+	er.ctxStack = append(er.ctxStack, function)
+}
+
+func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr, length int) {
+	args := make([]expression.Expression, 0, 4)
+	args = append(args, er.ctxStack[length-2], er.ctxStack[length-1])
+	args = append(args, boolToExprConstant(v.Not, v.Type),
+		&expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: v.Type})
+	function, err := expression.NewFunction(opcode.Like, args, v.Type)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return
+	}
+	er.ctxStack = er.ctxStack[:length-2]
+	er.ctxStack = append(er.ctxStack, function)
+}
+
+func (er *expressionRewriter) betweenToScalarFunc(v *ast.BetweenExpr, length int) {
+	retOp := opcode.AndAnd
+	if v.Not {
+		retOp = opcode.OrOr
+	}
+	function, err := expression.NewFunction(retOp,
+		[]expression.Expression{er.ctxStack[length-3], er.ctxStack[length-2], er.ctxStack[length-1]}, v.Type)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return
+	}
+	er.ctxStack = er.ctxStack[:length-3]
+	er.ctxStack = append(er.ctxStack, function)
+}
+
+func (er *expressionRewriter) funcCallToScalarFunc(v *ast.FuncCallExpr, length int) {
+	function := &expression.ScalarFunction{FuncName: v.FnName}
+	for i := length - len(v.Args); i < length; i++ {
+		function.Args = append(function.Args, er.ctxStack[i])
+	}
+	f, ok := evaluator.Funcs[v.FnName.L]
+	if !ok {
+		er.err = errors.New("Can't find function!")
+		return
+	}
+	if len(function.Args) < f.MinArgs || (f.MaxArgs != -1 && len(function.Args) > f.MaxArgs) {
+		er.err = evaluator.ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].",
+			f.MinArgs, f.MaxArgs)
+		return
+	}
+	function.Function = f.F
+	function.RetType = v.Type
+	er.ctxStack = er.ctxStack[:length-len(v.Args)]
+	er.ctxStack = append(er.ctxStack, function)
+}
+
+func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
+	column, err := er.schema.FindColumn(v)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return
+	}
+	if column != nil {
+		er.ctxStack = append(er.ctxStack, column)
+		return
+	}
+
+	for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
+		outer := er.b.outerSchemas[i]
+		column, err = outer.FindColumn(v)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
+		}
+		if column != nil {
+			er.correlated = true
+			break
+		}
+	}
+	if column == nil {
+		er.err = errors.Errorf("Unknown column %s %s %s.", v.Schema.L, v.Table.L, v.Name.L)
+		return
+	}
+	er.ctxStack = append(er.ctxStack, column)
+}
+
+func (er *expressionRewriter) toOneArgScalarFunc(n ast.Node, length int) {
+	var retOp opcode.Op
+	var retType *types.FieldType
+	args := []expression.Expression{er.ctxStack[length-1]}
+	switch n := n.(type) {
+	case *ast.IsNullExpr:
+		retOp = opcode.IsNull
+		retType = n.Type
+		args = append(args, boolToExprConstant(n.Not, n.Type))
+	case *ast.IsTruthExpr:
+		retOp = opcode.IsTruth
+		retType = n.Type
+		args = append(args, &expression.Constant{Value: types.NewIntDatum(n.True), RetType: n.Type},
+			boolToExprConstant(n.Not, n.Type))
+	case *ast.UnaryOperationExpr:
+		retOp = n.Op
+		retType = n.Type
+	}
+	function, err := expression.NewFunction(retOp, args, retType)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return
+	}
+	er.ctxStack = er.ctxStack[:length-1]
+	er.ctxStack = append(er.ctxStack, function)
 }

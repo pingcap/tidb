@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -132,7 +133,7 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 					continue
 				}
 				if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
-					newEq, _ := expression.NewFunction(ast.EQ, []expression.Expression{rn, ln}, nil)
+					newEq, _ := expression.NewFunction(opcode.EQ, []expression.Expression{rn, ln}, nil)
 					eqCond = append(eqCond, newEq)
 					continue
 				}

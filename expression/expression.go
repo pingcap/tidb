@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -223,7 +224,11 @@ func (sf *ScalarFunction) ToString() string {
 }
 
 // NewFunction creates a new scalar function.
-func NewFunction(funcName string, args []Expression, retType *types.FieldType) (*ScalarFunction, error) {
+func NewFunction(op opcode.Op, args []Expression, retType *types.FieldType) (*ScalarFunction, error) {
+	funcName, ok := opcode.Ops[op]
+	if !ok {
+		return nil, errors.Errorf("Unknown opcode %v", op)
+	}
 	f, ok := evaluator.Funcs[funcName]
 	if !ok {
 		return nil, errors.New("Can't find function!")
