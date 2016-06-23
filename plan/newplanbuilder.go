@@ -459,6 +459,13 @@ type havingAndOrderbyResolver struct {
 }
 
 func (e *havingAndOrderbyResolver) addProjectionExpr(v *ast.ColumnNameExpr, projCol *expression.Column) {
+	// avoid to append same column repeatly.
+	for i, expr := range e.proj.Exprs {
+		if expr == projCol {
+			e.mapper[v] = e.proj.schema[i]
+			return
+		}
+	}
 	e.proj.Exprs = append(e.proj.Exprs, projCol)
 	schemaCols, _ := projCol.DeepCopy().(*expression.Column)
 	e.mapper[v] = schemaCols
@@ -663,6 +670,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
+	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
@@ -675,7 +683,6 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 			return nil
 		}
 	}
-	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
 	if hasAgg {
 		if sel.GroupBy != nil {
 			p, correlated, gbyCols = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
