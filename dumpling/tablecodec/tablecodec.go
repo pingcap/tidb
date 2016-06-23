@@ -121,6 +121,26 @@ func EncodeValue(raw types.Datum) ([]byte, error) {
 	return b, errors.Trace(err)
 }
 
+// EncodeRow encode row data and column ids into a slice of byte.
+// Row layout: colID1, value1, colID2, value2, .....
+func EncodeRow(row []types.Datum, colIDs []int64) ([]byte, error) {
+	if len(row) != len(colIDs) {
+		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
+	}
+	values := make([]types.Datum, 2*len(row))
+	for i, c := range row {
+		id := colIDs[i]
+		idv := types.NewIntDatum(id)
+		values[2*i] = idv
+		fc, err := flatten(c)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		values[2*i+1] = fc
+	}
+	return codec.EncodeValue(nil, values...)
+}
+
 func flatten(data types.Datum) (types.Datum, error) {
 	switch data.Kind() {
 	case types.KindMysqlTime:
@@ -191,6 +211,37 @@ func DecodeColumnValue(data []byte, ft *types.FieldType) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	return colDatum, nil
+}
+
+// DecodeRow decodes a byte slice into datums.
+// TODO: We should only decode columns in the cols map.
+// Row layout: colID1, value1, colID2, value2, .....
+func DecodeRow(data []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum, error) {
+	if data == nil {
+		return nil, nil
+	}
+	values, err := codec.Decode(data)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(values)%2 != 0 {
+		return nil, errors.New("Decoded row value length is not even number!")
+	}
+	row := make(map[int64]types.Datum, len(cols))
+	for i := 0; i < len(values); i += 2 {
+		cid := values[i]
+		id := cid.GetInt64()
+		ft, ok := cols[id]
+		if ok {
+			v := values[i+1]
+			v, err = Unflatten(v, ft)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			row[id] = v
+		}
+	}
+	return row, nil
 }
 
 // Unflatten converts a raw datum to a column datum.
