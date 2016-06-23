@@ -240,6 +240,7 @@ func DecodeRow(data []byte, cols map[int64]*types.FieldType) (map[int64]types.Da
 			}
 			row[id] = v
 		}
+		i++
 	}
 	return row, nil
 }

@@ -235,6 +235,7 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data 
 	}
 	return nil
 }
+
 func (t *Table) setNewData(rm kv.RetrieverMutator, h int64, touched map[int]bool, data []types.Datum) error {
 	for _, col := range t.Cols() {
 		if !touched[col.Offset] {
@@ -315,6 +316,8 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 	if err = t.LockRow(ctx, recordID, false); err != nil {
 		return 0, errors.Trace(err)
 	}
+	colIDs := make([]int64, 0, len(r))
+	row := make([]types.Datum, 0, len(r))
 	// Set public and write only column value.
 	for _, col := range t.writableCols() {
 		if col.IsPKHandleColumn(t.meta) {
@@ -338,12 +341,16 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		} else {
 			value = r[col.Offset]
 		}
-
-		key := t.RecordKey(recordID, col)
-		err = SetColValue(txn, key, value)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
+		colIDs = append(colIDs, col.ID)
+		row = append(row, value)
+	}
+	key := t.RecordKey(recordID, nil)
+	value, err := tablecodec.EncodeRow(row, colIDs)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if err = txn.Set(key, value); err != nil {
+		return 0, errors.Trace(err)
 	}
 	if err = bs.SaveTo(txn); err != nil {
 		return 0, errors.Trace(err)
@@ -435,7 +442,15 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Get raw row data from kv.
+	key := t.RecordKey(h, nil)
+	value, err := txn.Get(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Decode raw row data.
 	v := make([]types.Datum, len(cols))
+	colTps := make(map[int64]*types.FieldType, len(cols))
 	for i, col := range cols {
 		if col == nil {
 			continue
@@ -451,26 +466,30 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 			}
 			continue
 		}
-
-		k := t.RecordKey(h, col)
-		data, err := txn.Get(k)
-		if terror.ErrorEqual(err, kv.ErrNotExist) && !mysql.HasNotNullFlag(col.Flag) {
+		colTps[col.ID] = &col.FieldType
+	}
+	row, err := tablecodec.DecodeRow(value, colTps)
+	for i, col := range cols {
+		if col == nil {
 			continue
-		} else if err != nil {
-			return nil, errors.Trace(err)
 		}
-
-		v[i], err = tablecodec.DecodeColumnValue(data, &col.FieldType)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if col.State != model.StatePublic {
+			return nil, table.ErrColumnStateNonPublic.Gen("Cannot use none public column - %v", cols)
 		}
+		if col.IsPKHandleColumn(t.meta) {
+			continue
+		}
+		ri, ok := row[col.ID]
+		if !ok && mysql.HasNotNullFlag(col.Flag) {
+			return nil, errors.New("Miss column")
+		}
+		v[i] = ri
 	}
 	return v, nil
 }
 
 // Row implements table.Table Row interface.
 func (t *Table) Row(ctx context.Context, h int64) ([]types.Datum, error) {
-	// TODO: we only interested in mentioned cols
 	r, err := t.RowWithCols(ctx, h, t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -36,6 +36,7 @@ func (c *dbClient) Send(req *kv.Request) kv.Response {
 }
 
 func (c *dbClient) SupportRequestType(reqType, subType int64) bool {
+	return false
 	switch reqType {
 	case kv.ReqTypeSelect:
 		switch subType {
