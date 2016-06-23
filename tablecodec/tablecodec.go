@@ -132,7 +132,11 @@ func EncodeRow(row []types.Datum, colIDs []int64) ([]byte, error) {
 		id := colIDs[i]
 		idv := types.NewIntDatum(id)
 		values[2*i] = idv
-		values[2*i+1] = c
+		fc, err := flatten(c)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		values[2*i+1] = fc
 	}
 	return codec.EncodeValue(nil, values...)
 }

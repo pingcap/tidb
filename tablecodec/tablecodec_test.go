@@ -56,13 +56,13 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 
 	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
-	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeFloat)}
+	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeNewDecimal)}
 	cols := []*column{c1, c2, c3}
 
 	row := make([]types.Datum, 3)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
-	row[2] = types.NewFloat32Datum(1.1)
+	row[2] = types.NewDecimalDatum(mysql.NewDecimalFromInt(1, 1))
 	// Encode
 	colIDs := make([]int64, 0, 3)
 	for _, col := range cols {
