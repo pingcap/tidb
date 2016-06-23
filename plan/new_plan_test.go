@@ -26,8 +26,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testPlanSuite{})
-
 func newMockResolve(node ast.Node) error {
 	indices := []*model.IndexInfo{
 		{
