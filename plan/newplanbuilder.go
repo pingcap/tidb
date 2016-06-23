@@ -311,7 +311,7 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) Plan {
 	for i, sel := range union.SelectList.Selects {
 		sels[i] = b.buildNewSelect(sel)
 	}
-	u := &Union{Selects: sels}
+	u := &NewUnion{Selects: sels}
 	u.id = b.allocID(u)
 	firstSchema := sels[0].GetSchema().DeepCopy()
 	for _, sel := range sels {
