@@ -238,8 +238,8 @@ func (cc *clientConn) Run() {
 			if terror.ErrorEqual(err, io.EOF) {
 				return
 			}
-			log.Errorf("dispatch error %s, %s", errors.ErrorStack(err), cc)
-			log.Errorf("cmd: %s", string(data[1:]))
+			log.Warnf("dispatch error %s, %s", errors.ErrorStack(err), cc)
+			log.Warnf("cmd: %s", string(data[1:]))
 			cc.writeError(err)
 		}
 
