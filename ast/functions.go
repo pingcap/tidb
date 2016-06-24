@@ -55,14 +55,22 @@ const (
 	IntDiv     = "DIV"
 	LogicXor   = "XOR"
 	NullEQ     = "<=>"
-	In         = "in"
-	Like       = "like"
-	Case       = "case"
-	Regexp     = "regexp"
-	IsNull     = "isnull"
-	IsTruth    = "istrue" // Avoid name conflict with IsTrue in github/pingcap/check.
 	UnaryPlus  = "unaryplus"
 	UnaryMinus = "unaryminus"
+	In         = "in"
+	NotIn      = "notin"
+	Like       = "like"
+	NotLike    = "notlike"
+	Case       = "case"
+	Regexp     = "regexp"
+	Null       = "null"
+	NotNull    = "notnull"
+	True       = "true"
+	NotTrue    = "nottrue"
+	False      = "false"
+	NotFalse   = "notfalse"
+	Between    = "between"
+	NotBetween = "notbetween"
 )
 
 // UnquoteString is not quoted when printed.

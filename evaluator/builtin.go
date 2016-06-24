@@ -43,7 +43,6 @@ type Func struct {
 var Funcs = map[string]Func{
 	// common functions
 	"coalesce": {builtinCoalesce, 1, -1},
-	ast.IsNull: {builtinIsNull, 1, 1},
 
 	// math functions
 	"abs":   {builtinAbs, 1, 1},
@@ -146,9 +145,18 @@ var Funcs = map[string]Func{
 	ast.BitNeg:     {unaryOpFactory(opcode.BitNeg), 1, 1},
 	ast.UnaryPlus:  {unaryOpFactory(opcode.Plus), 1, 1},
 	ast.UnaryMinus: {unaryOpFactory(opcode.Minus), 1, 1},
-	ast.IsTruth:    {builtinScalarFunc, 2, 2},
-	ast.Like:       {builtinScalarFunc, 1, 4},
+	ast.Null:       {isNullOpFactory(opcode.Null), 1, 1},
+	ast.NotNull:    {isNullOpFactory(opcode.NotNull), 1, 1},
 	ast.In:         {builtinScalarFunc, 1, -1},
+	ast.NotIn:      {builtinScalarFunc, 1, -1},
+	ast.True:       {builtinScalarFunc, 1, 1},
+	ast.NotTrue:    {builtinScalarFunc, 1, 1},
+	ast.False:      {builtinScalarFunc, 1, 1},
+	ast.NotFalse:   {builtinScalarFunc, 1, 1},
+	ast.Like:       {builtinScalarFunc, 1, 3},
+	ast.NotLike:    {builtinScalarFunc, 1, 3},
+	ast.Between:    {builtinScalarFunc, 1, 3},
+	ast.NotBetween: {builtinScalarFunc, 1, 3},
 }
 
 // TODO: implement it
