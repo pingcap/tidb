@@ -384,7 +384,6 @@ func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*table.Column)
 	key := t.RecordKey(h, nil)
 	value, err := txn.Get(key)
 	if err != nil {
-		log.Warnf("err:%v", err)
 		return nil, errors.Trace(err)
 	}
 	v := make([]types.Datum, len(cols))
