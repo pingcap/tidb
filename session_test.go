@@ -2116,6 +2116,41 @@ func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 int, c2 blob, c3 varchar(64));")
+	_, err := exec(c, se, "create index idx_c1 on t (c2)")
+	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
+	c.Assert(err, NotNil)
+
+	// TODO
+	// _, err := exec(c, se, "create index idx_c1 on t (c1(5))")
+	// ERROR 1089 (HY000): Incorrect prefix key;
+	// the used key part isn't a string, the used length is longer than the key part,
+	// or the storage engine doesn't support unique prefix keys
+
+	mustExecSQL(c, se, "create index idx_c1 on t (c1)")
+	mustExecSQL(c, se, "create index idx_c2 on t (c2(5))")
+	mustExecSQL(c, se, "create unique index idx_c3 on t (c3(5))")
+
+	mustExecSQL(c, se, "insert into t values (3, 'abc', 'def')")
+	sql := "select c2 from t where c2 = 'abc'"
+	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}})
+
+	mustExecSQL(c, se, "insert into t values (4, 'xxxx', 'abcdeXXX')")
+	_, err = exec(c, se, "insert into t values (5, 'ignore', 'abcdeYYY')")
+	// ERROR 1062 (23000): Duplicate entry 'abcde' for key 'idx_c3'
+	c.Assert(err, NotNil)
+
+	err = se.Close()
+	c.Assert(err, IsNil)
+	err = store.Close()
+	c.Assert(err, IsNil)
+}
+
 func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
 	c.Skip("skip panic")
 	defer testleak.AfterTest(c)()

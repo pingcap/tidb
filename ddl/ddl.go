@@ -58,6 +58,8 @@ var (
 	errCantDropColWithIndex = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
 
+	errCreateIndexSyntax = terror.ClassDDL.New(codeCreateIndexSyntax, "index for BLOB/TEXT column must specificate a key length")
+
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
 	// ErrInvalidTableState returns for invalid Table state.
@@ -1209,6 +1211,8 @@ const (
 	codeCantRemoveAllFields = 1090
 	codeCantDropFieldOrKey  = 1091
 	codeInvalidOnUpdate     = 1294
+
+	codeCreateIndexSyntax = 1170
 )
 
 func init() {
@@ -1217,6 +1221,7 @@ func init() {
 		codeCantRemoveAllFields: mysql.ErrCantRemoveAllFields,
 		codeCantDropFieldOrKey:  mysql.ErrCantDropFieldOrKey,
 		codeInvalidOnUpdate:     mysql.ErrInvalidOnUpdate,
+		codeCreateIndexSyntax:   mysql.ErrBlobKeyWithoutLength,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLERrCodes
 }

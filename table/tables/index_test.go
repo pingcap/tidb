@@ -54,6 +54,10 @@ func (s *testIndexSuite) TestIndex(c *C) {
 			{
 				ID:   2,
 				Name: model.NewCIStr("test"),
+				Columns: []*model.IndexColumn{
+					{},
+					{},
+				},
 			},
 		},
 	}
@@ -134,6 +138,10 @@ func (s *testIndexSuite) TestIndex(c *C) {
 				ID:     3,
 				Name:   model.NewCIStr("test"),
 				Unique: true,
+				Columns: []*model.IndexColumn{
+					{},
+					{},
+				},
 			},
 		},
 	}
@@ -171,6 +179,10 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 			{
 				ID:   2,
 				Name: model.NewCIStr("test"),
+				Columns: []*model.IndexColumn{
+					{},
+					{},
+				},
 			},
 		},
 	}
