@@ -613,6 +613,10 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 
 	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
 
+	colMap := make(map[int64]*types.FieldType)
+	for _, col := range cols {
+		colMap[col.ID] = &col.FieldType
+	}
 	prefix := t.RecordPrefix()
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
@@ -622,10 +626,13 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		data, err := t.RowWithCols(ctx, handle, cols)
+		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		data := make([]types.Datum, 0, len(cols))
+		for _, col := range cols {
+			data = append(data, rowMap[col.ID])
 		}
 		more, err := fn(handle, data, cols)
 		if !more || err != nil {

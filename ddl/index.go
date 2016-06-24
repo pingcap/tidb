@@ -293,41 +293,28 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 	}
 }
 
-func checkRowExist(txn kv.Transaction, t table.Table, handle int64) (bool, error) {
-	_, err := txn.Get(t.RecordKey(handle, nil))
-	if terror.ErrorEqual(err, kv.ErrNotExist) {
-		// If row doesn't exist, we may have deleted the row already,
-		// no need to add index again.
-		return false, nil
-	} else if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	return true, nil
-}
-
 func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo *model.IndexInfo) ([]types.Datum, error) {
 	// fetch datas
 	cols := t.Cols()
+	colMap := make(map[int64]*types.FieldType)
+	for _, v := range indexInfo.Columns {
+		col := cols[v.Offset]
+		colMap[col.ID] = &col.FieldType
+	}
+	rowKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle, 0)
+	rowVal, err := txn.Get(rowKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	row, err := tablecodec.DecodeRow(rowVal, colMap)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	vals := make([]types.Datum, 0, len(indexInfo.Columns))
 	for _, v := range indexInfo.Columns {
 		col := cols[v.Offset]
-		k := t.RecordKey(handle, col)
-		data, err := txn.Get(k)
-		if err != nil {
-			if terror.ErrorEqual(err, kv.ErrNotExist) && !mysql.HasNotNullFlag(col.Flag) {
-				vals = append(vals, types.Datum{})
-				continue
-			}
-			return nil, errors.Trace(err)
-		}
-		val, err := tablecodec.DecodeColumnValue(data, &col.FieldType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		vals = append(vals, val)
+		vals = append(vals, row[col.ID])
 	}
-
 	return vals, nil
 }
 
@@ -408,14 +395,6 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 	return handles, nil
 }
 
-func lockRow(txn kv.Transaction, t table.Table, h int64) error {
-	// Get row lock key
-	lockKey := t.RecordKey(h, nil)
-	// set row lock key to current txn
-	err := txn.Set(lockKey, []byte(txn.String()))
-	return errors.Trace(err)
-}
-
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
 	kvX := tables.NewIndex(t.Meta(), indexInfo)
 
@@ -427,30 +406,25 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 				return errors.Trace(err)
 			}
 
-			// first check row exists
-			exist, err := checkRowExist(txn, t, handle)
-			if err != nil {
-				return errors.Trace(err)
-			} else if !exist {
+			var vals []types.Datum
+			vals, err := fetchRowColVals(txn, t, handle, indexInfo)
+			if terror.ErrorEqual(err, kv.ErrNotExist) {
 				// row doesn't exist, skip it.
 				return nil
 			}
-
-			var vals []types.Datum
-			vals, err = fetchRowColVals(txn, t, handle, indexInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			exist, _, err = kvX.Exist(txn, vals, handle)
+			exist, _, err := kvX.Exist(txn, vals, handle)
 			if err != nil {
 				return errors.Trace(err)
 			} else if exist {
 				// index already exists, skip it.
 				return nil
 			}
-
-			err = lockRow(txn, t, handle)
+			rowKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle, 0)
+			err = txn.LockKeys(rowKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
