@@ -49,7 +49,7 @@ func txnLockBackoff() func() error {
 // locks after 3000ms is considered unusual (the client created the lock might
 // be dead). Other client may cleanup this kind of lock.
 // For locks created recently, we will do backoff and retry.
-const lockTTL = 3000
+var lockTTL uint64 = 3000
 
 // cleanup cleanup the lock
 func (l *txnLock) cleanup() ([]byte, error) {
