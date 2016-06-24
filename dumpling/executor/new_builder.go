@@ -228,3 +228,16 @@ func (b *executorBuilder) buildTrim(v *plan.Trim) Executor {
 		len:    len(v.GetSchema()),
 	}
 }
+
+func (b *executorBuilder) buildNewUnion(v *plan.NewUnion) Executor {
+	e := &NewUnionExec{
+		schema: v.GetSchema(),
+		fields: v.Fields(),
+		Srcs:   make([]Executor, len(v.Selects)),
+	}
+	for i, sel := range v.Selects {
+		selExec := b.build(sel)
+		e.Srcs[i] = selExec
+	}
+	return e
+}
