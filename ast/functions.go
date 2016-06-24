@@ -50,7 +50,7 @@ const (
 	Xor        = "^"
 	Div        = "/"
 	Mul        = "*"
-	UnaryNot   = "!" // It distinguishs from the Not in github/pingcap/check.
+	UnaryNot   = "!" // Avoid name conflict with Not in github/pingcap/check.
 	BitNeg     = "~"
 	IntDiv     = "DIV"
 	LogicXor   = "XOR"
@@ -60,7 +60,7 @@ const (
 	Case       = "case"
 	Regexp     = "regexp"
 	IsNull     = "isnull"
-	IsTruth    = "istrue" // It distinguishs from the Not in github/pingcap/check.
+	IsTruth    = "istrue" // Avoid name conflict with IsTrue in github/pingcap/check.
 	UnaryPlus  = "unaryplus"
 	UnaryMinus = "unaryminus"
 )
