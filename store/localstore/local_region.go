@@ -252,7 +252,7 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 	}
 	var rows []*tipb.Row
 	if ran.IsPoint() {
-		_, err := ctx.txn.Get(ran.StartKey)
+		value, err := ctx.txn.Get(ran.StartKey)
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			return nil, nil
 		} else if err != nil {
@@ -262,7 +262,7 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row, err := rs.getRowByHandle(ctx, h)
+		row, err := rs.getRowByHandle(ctx, h, value)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -312,7 +312,7 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row, err := rs.getRowByHandle(ctx, h)
+		row, err := rs.getRowByHandle(ctx, h, it.Value())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -324,8 +324,7 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 	return rows, nil
 }
 
-func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.Row, error) {
-	tid := ctx.sel.TableInfo.GetTableId()
+func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64, value []byte) (*tipb.Row, error) {
 	columns := ctx.sel.TableInfo.Columns
 	row := new(tipb.Row)
 	var d types.Datum
@@ -356,11 +355,6 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.R
 		} else {
 			colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
 		}
-	}
-	key := tablecodec.EncodeColumnKey(tid, handle, 0)
-	value, err := ctx.txn.Get(key)
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 	values, err := rs.getRowData(value, colTps)
 	if err != nil {
