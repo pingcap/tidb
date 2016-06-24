@@ -121,6 +121,15 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(equal, Equals, 0)
 	}
+
+	// Make sure empty row return not nil value.
+	bs, err = EncodeRow([]types.Datum{}, []int64{})
+	c.Assert(err, IsNil)
+	c.Assert(bs, HasLen, 1)
+
+	r, err = DecodeRow(bs, colMap)
+	c.Assert(err, IsNil)
+	c.Assert(r, IsNil)
 }
 
 func (s *testTableCodecSuite) TestTimeCodec(c *C) {

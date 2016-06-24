@@ -229,7 +229,7 @@ func DecodeRow(data []byte, cols map[int64]*types.FieldType) (map[int64]types.Da
 		return nil, errors.Trace(err)
 	}
 	if len(values) == 1 && values[0].IsNull() {
-		return make(map[int64]types.Datum, 0), nil
+		return nil, nil
 	}
 	if len(values)%2 != 0 {
 		return nil, errors.New("Decoded row value length is not even number!")

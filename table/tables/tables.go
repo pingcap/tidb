@@ -543,7 +543,7 @@ func (t *Table) removeRowData(ctx context.Context, h int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Remove row lock
+	// Remove row data.
 	err = txn.Delete([]byte(t.RecordKey(h, nil)))
 	if err != nil {
 		return errors.Trace(err)
