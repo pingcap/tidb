@@ -345,6 +345,9 @@ func (h *rpcHandler) getRowByHandle(ctx *selectContext, handle int64) (*tipb.Row
 	if !match {
 		return nil, nil
 	}
+	for _, d := range rowData {
+		row.Data = append(row.Data, d...)
+	}
 	return row, nil
 }
 
