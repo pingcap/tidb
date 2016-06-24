@@ -1042,7 +1042,7 @@ func (e *NewUnionExec) Next() (*Row, error) {
 		}
 		if e.cursor != 0 {
 			for i := range row.Data {
-				// The column value should be casted as the same type of the first select statement in corresponding position
+				// The column value should be casted as the same type of the first select statement in corresponding position.
 				col := e.schema[i]
 				var val types.Datum
 				val, err = row.Data[i].ConvertTo(col.RetType)
@@ -1058,13 +1058,12 @@ func (e *NewUnionExec) Next() (*Row, error) {
 
 // Close implements Executor Close interface.
 func (e *NewUnionExec) Close() error {
-	var err error
 	e.cursor = 0
 	for _, sel := range e.Srcs {
 		er := sel.Close()
 		if er != nil {
-			err = errors.Trace(er)
+			return errors.Trace(er)
 		}
 	}
-	return err
+	return nil
 }
