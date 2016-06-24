@@ -14,8 +14,6 @@
 package plan_test
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
@@ -26,12 +24,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/util/testkit"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testNameResolverSuite{})
 
 type testNameResolverSuite struct {
 }

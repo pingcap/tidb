@@ -1489,10 +1489,22 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("-1 -1 2 1", "0 0 1 1", "1 1 0 1"))
 	result = tk.MustQuery("select d*d as d1, c as d1 from t group by d1")
 	result.Check(testkit.Rows("1 1", "0 1"))
+	result = tk.MustQuery("select d*d as d1, c as d1 from t group by 2")
+	result.Check(testkit.Rows("1 1"))
+	result = tk.MustQuery("select * from t group by 2")
+	result.Check(testkit.Rows("1 -1", "1 0", "1 1"))
+	result = tk.MustQuery("select * , sum(d) from t group by 1")
+	result.Check(testkit.Rows("1 -1 0"))
+	result = tk.MustQuery("select sum(d), t.* from t group by 2")
+	result.Check(testkit.Rows("0 1 -1"))
 	result = tk.MustQuery("select d as d, c as d from t group by d + 1")
 	result.Check(testkit.Rows("-1 1", "0 1", "1 1"))
 	_, err := tk.Exec("select d as d, c as d from t group by d")
 	c.Assert(err, NotNil)
+	_, err = tk.Exec("select t.d, c as d from t group by d")
+	c.Assert(err, NotNil)
+	result = tk.MustQuery("select *, c+1 as d from t group by 3")
+	result.Check(testkit.Rows("1 -1 2"))
 	plan.UseNewPlanner = false
 }
 
