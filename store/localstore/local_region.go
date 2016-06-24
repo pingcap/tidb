@@ -50,6 +50,9 @@ type selectContext struct {
 	groupKeys    [][]byte
 	aggregates   []*aggregateFuncExpr
 	aggregate    bool
+
+	// Use for DecodeRow.
+	colTps map[int64]*types.FieldType
 }
 
 func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
@@ -141,6 +144,16 @@ func collectColumnsInWhere(expr *tipb.Expr, ctx *selectContext) error {
 }
 
 func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, error) {
+	// Init ctx.colTps and use it to decode all the rows.
+	columns := ctx.sel.TableInfo.Columns
+	ctx.colTps = make(map[int64]*types.FieldType, len(columns))
+	for _, col := range columns {
+		if *col.PkHandle {
+			continue
+		}
+		ctx.colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
+	}
+
 	kvRanges, desc := rs.extractKVRanges(ctx.sel)
 	var rows []*tipb.Row
 	limit := int64(-1)
@@ -262,7 +275,7 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row, err := rs.getRowByHandle(ctx, h, value)
+		row, err := rs.handleRowData(ctx, h, value)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -312,7 +325,7 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row, err := rs.getRowByHandle(ctx, h, it.Value())
+		row, err := rs.handleRowData(ctx, h, it.Value())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -324,7 +337,11 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 	return rows, nil
 }
 
-func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64, value []byte) (*tipb.Row, error) {
+// handleRowData deals with raw row data:
+//	1. Decodes row from raw byte slice.
+//	2. Checks if it fit where condition.
+//	3. Update aggregate functions.
+func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []byte) (*tipb.Row, error) {
 	columns := ctx.sel.TableInfo.Columns
 	row := new(tipb.Row)
 	var d types.Datum
@@ -335,10 +352,16 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64, value []
 		return nil, errors.Trace(err)
 	}
 	rowData := make([][]byte, len(columns))
-	colTps := make(map[int64]*types.FieldType, len(columns))
+	values, err := rs.getRowData(value, ctx.colTps)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	for i, col := range columns {
-		var colVal []byte
 		if *col.PkHandle {
+			var colVal []byte
+			if !*col.PkHandle {
+				continue
+			}
 			if mysql.HasUnsignedFlag(uint(*col.Flag)) {
 				// PK column is Unsigned
 				var ud types.Datum
@@ -352,16 +375,6 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64, value []
 				colVal = row.Handle
 			}
 			rowData[i] = colVal
-		} else {
-			colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
-		}
-	}
-	values, err := rs.getRowData(value, colTps)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for i, col := range columns {
-		if *col.PkHandle {
 			continue
 		}
 		v, ok := values[col.GetColumnId()]
