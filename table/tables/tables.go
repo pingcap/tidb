@@ -473,6 +473,9 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 		colTps[col.ID] = &col.FieldType
 	}
 	row, err := tablecodec.DecodeRow(value, colTps)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	for i, col := range cols {
 		if col == nil {
 			continue
@@ -681,18 +684,6 @@ func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 var (
 	recordPrefixSep = []byte("_r")
 )
-
-// SetColValue implements table.Table SetColValue interface.
-func SetColValue(rm kv.RetrieverMutator, key []byte, data types.Datum) error {
-	v, err := tablecodec.EncodeValue(data)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err := rm.Set(key, v); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
 
 // FindIndexByColName implements table.Table FindIndexByColName interface.
 func FindIndexByColName(t table.Table, name string) table.Index {

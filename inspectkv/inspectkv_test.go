@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -312,8 +313,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	c.Assert(err, IsNil)
 	col := tb.Cols()[idx.Meta().Columns[0].Offset]
 	key := tb.RecordKey(4, col)
-	err = tables.SetColValue(txn, key, types.NewDatum(int64(40)))
-	c.Assert(err, IsNil)
+	setColValue(c, txn, key, types.NewDatum(int64(40)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
@@ -322,7 +322,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	err = CompareIndexData(txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(30))}
-	diffMsg := newDiffRetError("index", record1, &RecordData{Handle: int64(3), Values: types.MakeDatums(nil)})
+	diffMsg := newDiffRetError("index", record1, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	// current index data:
@@ -331,8 +331,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	err = idx.Create(txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	key = tb.RecordKey(3, col)
-	err = tables.SetColValue(txn, key, types.NewDatum(int64(31)))
-	c.Assert(err, IsNil)
+	setColValue(c, txn, key, types.NewDatum(int64(31)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
@@ -350,8 +349,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	key = tb.RecordKey(3, col)
 	txn.Delete(key)
 	key = tb.RecordKey(5, col)
-	err = tables.SetColValue(txn, key, types.NewDatum(int64(30)))
-	c.Assert(err, IsNil)
+	setColValue(c, txn, key, types.NewDatum(int64(30)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
@@ -369,8 +367,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	key = tb.RecordKey(4, col)
 	txn.Delete(key)
 	key = tb.RecordKey(3, col)
-	err = tables.SetColValue(txn, key, types.NewDatum(int64(30)))
-	c.Assert(err, IsNil)
+	setColValue(c, txn, key, types.NewDatum(int64(30)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
@@ -379,7 +376,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	err = CompareIndexData(txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 = &RecordData{Handle: int64(4), Values: types.MakeDatums(int64(40))}
-	diffMsg = newDiffRetError("index", record1, &RecordData{Handle: int64(4), Values: types.MakeDatums(nil)})
+	diffMsg = newDiffRetError("index", record1, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	// current index data:
@@ -388,8 +385,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	err = idx.Delete(txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	key = tb.RecordKey(4, col)
-	err = tables.SetColValue(txn, key, types.NewDatum(int64(40)))
-	c.Assert(err, IsNil)
+	setColValue(c, txn, key, types.NewDatum(int64(40)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
@@ -399,4 +395,13 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("index", nil, record1)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
+}
+
+func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
+	row := []types.Datum{v, {}}
+	colIDs := []int64{0, 1}
+	value, err := tablecodec.EncodeRow(row, colIDs)
+	c.Assert(err, IsNil)
+	err = txn.Set(key, value)
+	c.Assert(err, IsNil)
 }
