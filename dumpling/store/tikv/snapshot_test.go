@@ -110,37 +110,6 @@ func (s *testSnapshotSuite) TestBatchGet(c *C) {
 	}
 }
 
-func (s *testSnapshotSuite) TestBatchGetLock(c *C) {
-	for _, rowNum := range s.rowNums {
-		log.Debugf("Test BatchGetLock with length[%d]", rowNum)
-		txn := s.beginTxn(c)
-		for i := 0; i < rowNum; i++ {
-			k := encodeKey(s.prefix, s08d("key", i))
-			err := txn.Set(k, valueBytes(i))
-			c.Assert(err, IsNil)
-		}
-		err := txn.Commit()
-		c.Assert(err, IsNil)
-
-		txn2 := s.beginTxn(c)
-		txn2.DONOTCOMMIT = true
-		lockKey := encodeKey(s.prefix, s08d("key", rowNum/2))
-		err = txn2.Set(lockKey, []byte("lock"))
-		c.Assert(err, IsNil)
-		err = txn2.Commit()
-		c.Assert(err, IsNil)
-
-		keys := makeKeys(rowNum, s.prefix)
-		txn3 := s.beginTxn(c)
-		snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn3.StartTS()})
-		_, err = snapshot.BatchGet(keys)
-		c.Assert(err, IsNil)
-
-		s.checkAll(keys, c)
-		s.deleteKeys(keys, c)
-	}
-}
-
 func (s *testSnapshotSuite) TestBatchGetNotExist(c *C) {
 	for _, rowNum := range s.rowNums {
 		log.Debugf("Test BatchGetNotExist with length[%d]", rowNum)
