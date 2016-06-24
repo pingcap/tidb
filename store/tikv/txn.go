@@ -34,9 +34,6 @@ type tikvTxn struct {
 	valid    bool
 	lockKeys [][]byte
 	dirty    bool
-	// FIXME: only doPrewrite, this variable only for lock key test.
-	// If find better way to test lock then delete it.
-	DONOTCOMMIT bool
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
