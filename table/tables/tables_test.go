@@ -223,12 +223,11 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 	}
 
 	for _, t := range table {
-		b := tablecodec.EncodeColumnKey(t.tableID, t.h, t.ID)
-		tableID, handle, columnID, err := tablecodec.DecodeRecordKey(b)
+		b := tablecodec.EncodeRowKeyWithHandle(t.tableID, t.h)
+		tableID, handle, err := tablecodec.DecodeRecordKey(b)
 		c.Assert(err, IsNil)
 		c.Assert(tableID, Equals, t.tableID)
 		c.Assert(handle, Equals, t.h)
-		c.Assert(columnID, Equals, t.ID)
 
 		handle, err = tablecodec.DecodeRowKey(b)
 		c.Assert(err, IsNil)
@@ -244,7 +243,6 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 		"t12345678_i",
 		"t12345678_r1",
 		"t12345678_r1234567",
-		"t12345678_r123456781",
 	}
 
 	for _, t := range tbl {

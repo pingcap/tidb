@@ -50,64 +50,51 @@ func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 	return buf
 }
 
-// EncodeColumnKey encodes the table id, row handle and columnID into a kv.Key
-func EncodeColumnKey(tableID int64, handle int64, columnID int64) kv.Key {
+// EncodeRowKeyWithHandle encodes the table id, row handle into a kv.Key
+func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
 	buf := make([]byte, 0, recordRowKeyLen+idLen)
 	buf = appendTableRecordPrefix(buf, tableID)
-	buf = EncodeRecordKey(buf, handle, columnID)
+	buf = EncodeRecordKey(buf, handle)
 	return buf
 }
 
-// EncodeRecordKey encodes the recordPrefix, row handle and columnID into a kv.Key.
-// TODO: Remove this function
-func EncodeRecordKey(recordPrefix kv.Key, h int64, columnID int64) kv.Key {
+// EncodeRecordKey encodes the recordPrefix, row handle into a kv.Key.
+func EncodeRecordKey(recordPrefix kv.Key, h int64) kv.Key {
 	buf := make([]byte, 0, len(recordPrefix)+16)
 	buf = append(buf, recordPrefix...)
 	buf = codec.EncodeInt(buf, h)
-	if columnID != 0 {
-		buf = codec.EncodeInt(buf, columnID)
-	}
 	return buf
 }
 
-// DecodeRecordKey decodes the key and gets the tableID, handle and columnID.
-func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, columnID int64, err error) {
+// DecodeRecordKey decodes the key and gets the tableID, handle.
+func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 	k := key
 	if !key.HasPrefix(tablePrefix) {
-		return 0, 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
+		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
 	}
 
 	key = key[len(tablePrefix):]
 	key, tableID, err = codec.DecodeInt(key)
 	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 
 	if !key.HasPrefix(recordPrefixSep) {
-		return 0, 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
+		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
 	}
 
 	key = key[len(recordPrefixSep):]
 
 	key, handle, err = codec.DecodeInt(key)
 	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
-	if len(key) == 0 {
-		return
-	}
-
-	key, columnID, err = codec.DecodeInt(key)
-	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
-	}
-
 	return
 }
 
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (int64, error) {
-	_, handle, _, err := DecodeRecordKey(key)
+	_, handle, err := DecodeRecordKey(key)
 	return handle, errors.Trace(err)
 }
 

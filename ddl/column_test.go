@@ -262,7 +262,7 @@ func (s *testColumnSuite) checkColumnKVExist(c *C, ctx context.Context, t table.
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	key := t.RecordKey(handle, col)
+	key := t.RecordKey(handle)
 	data, err := txn.Get(key)
 	c.Assert(err, IsNil)
 	colMap := make(map[int64]*types.FieldType)

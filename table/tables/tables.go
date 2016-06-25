@@ -156,17 +156,13 @@ func (t *Table) IndexPrefix() kv.Key {
 }
 
 // RecordKey implements table.Table RecordKey interface.
-func (t *Table) RecordKey(h int64, col *table.Column) kv.Key {
-	colID := int64(0)
-	if col != nil {
-		colID = col.ID
-	}
-	return tablecodec.EncodeRecordKey(t.recordPrefix, h, colID)
+func (t *Table) RecordKey(h int64) kv.Key {
+	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
 }
 
 // FirstKey implements table.Table FirstKey interface.
 func (t *Table) FirstKey() kv.Key {
-	return t.RecordKey(0, nil)
+	return t.RecordKey(0)
 }
 
 // Truncate implements table.Table Truncate interface.
@@ -209,7 +205,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 		colIDs = append(colIDs, col.ID)
 	}
 	// Set new row data into KV.
-	key := t.RecordKey(h, nil)
+	key := t.RecordKey(h)
 	value, err := tablecodec.EncodeRow(currentData, colIDs)
 	if err = txn.Set(key, value); err != nil {
 		return errors.Trace(err)
@@ -348,7 +344,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		colIDs = append(colIDs, col.ID)
 		row = append(row, value)
 	}
-	key := t.RecordKey(recordID, nil)
+	key := t.RecordKey(recordID)
 	value, err := tablecodec.EncodeRow(row, colIDs)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -392,7 +388,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	if t.meta.PKIsHandle {
 		// Check key exists.
-		recordKey := t.RecordKey(recordID, nil)
+		recordKey := t.RecordKey(recordID)
 		e := kv.ErrKeyExists.Gen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
 		txn.SetOption(kv.PresumeKeyNotExistsError, e)
 		_, err = txn.Get(recordKey)
@@ -447,7 +443,7 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 		return nil, errors.Trace(err)
 	}
 	// Get raw row data from kv.
-	key := t.RecordKey(h, nil)
+	key := t.RecordKey(h)
 	value, err := txn.Get(key)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -513,7 +509,7 @@ func (t *Table) LockRow(ctx context.Context, h int64, forRead bool) error {
 		return errors.Trace(err)
 	}
 	// Get row lock key
-	lockKey := t.RecordKey(h, nil)
+	lockKey := t.RecordKey(h)
 	if forRead {
 		err = txn.LockKeys(lockKey)
 	} else {
@@ -544,7 +540,7 @@ func (t *Table) removeRowData(ctx context.Context, h int64) error {
 		return errors.Trace(err)
 	}
 	// Remove row data.
-	err = txn.Delete([]byte(t.RecordKey(h, nil)))
+	err = txn.Delete([]byte(t.RecordKey(h)))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -642,7 +638,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 			return errors.Trace(err)
 		}
 
-		rk := t.RecordKey(handle, nil)
+		rk := t.RecordKey(handle)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)
@@ -664,7 +660,7 @@ func (t *Table) RebaseAutoID(newBase int64, isSetStep bool) error {
 
 // Seek implements table.Table Seek interface.
 func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
-	seekKey := tablecodec.EncodeColumnKey(t.ID, h, 0)
+	seekKey := tablecodec.EncodeRowKeyWithHandle(t.ID, h)
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return 0, false, errors.Trace(err)

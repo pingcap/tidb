@@ -156,17 +156,13 @@ func (t *BoundedTable) IndexPrefix() kv.Key {
 }
 
 // RecordKey implements table.Table RecordKey interface.
-func (t *BoundedTable) RecordKey(h int64, col *table.Column) kv.Key {
-	colID := int64(0)
-	if col != nil {
-		colID = col.ID
-	}
-	return tablecodec.EncodeRecordKey(t.recordPrefix, h, colID)
+func (t *BoundedTable) RecordKey(h int64) kv.Key {
+	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
 }
 
 // FirstKey implements table.Table FirstKey interface.
 func (t *BoundedTable) FirstKey() kv.Key {
-	return t.RecordKey(0, nil)
+	return t.RecordKey(0)
 }
 
 // Truncate implements table.Table Truncate interface.

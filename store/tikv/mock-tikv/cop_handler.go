@@ -314,7 +314,7 @@ func (h *rpcHandler) getRowByHandle(ctx *selectContext, handle int64) (*tipb.Row
 			colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
 		}
 	}
-	key := tablecodec.EncodeColumnKey(tid, handle, 0)
+	key := tablecodec.EncodeRowKeyWithHandle(tid, handle)
 	value, err := h.mvccStore.Get(key, ctx.sel.GetStartTs())
 	if err != nil {
 		return nil, errors.Trace(err)

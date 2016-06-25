@@ -39,7 +39,7 @@ func (s *testTableCodecSuite) TestTableCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(h, Equals, int64(2))
 
-	key = EncodeColumnKey(1, 2, 3)
+	key = EncodeRowKeyWithHandle(1, 2)
 	h, err = DecodeRowKey(key)
 	c.Assert(err, IsNil)
 	c.Assert(h, Equals, int64(2))

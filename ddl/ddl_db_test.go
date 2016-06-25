@@ -411,8 +411,6 @@ func (s *testDBSuite) testDropColumn(c *C) {
 
 	// get c4 column id
 	ctx := s.s.(context.Context)
-	t := s.testGetTable(c, "t2")
-	col := t.Cols()[3]
 
 	go func() {
 		s.mustExec(c, "alter table t2 drop column c4")
@@ -454,23 +452,9 @@ LOOP:
 	c.Assert(ok, IsTrue)
 	c.Assert(count, Greater, int64(0))
 
-	txn, err := ctx.GetTxn(true)
+	_, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
-	defer ctx.CommitTxn()
-
-	i := 0
-	t = s.testGetTable(c, "t2")
-	// check c4 does not exist
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		i++
-		k := t.RecordKey(h, col)
-		_, err1 := txn.Get(k)
-		c.Assert(terror.ErrorEqual(err1, kv.ErrNotExist), IsTrue)
-		return true, nil
-	})
-	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int(count))
-	c.Assert(i, LessEqual, num+step)
+	ctx.CommitTxn()
 }
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) sql.Result {

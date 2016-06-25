@@ -301,7 +301,7 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 		col := cols[v.Offset]
 		colMap[col.ID] = &col.FieldType
 	}
-	rowKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle, 0)
+	rowKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 	rowVal, err := txn.Get(rowKey)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -356,7 +356,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 
 	defer snap.Release()
 
-	firstKey := t.RecordKey(seekHandle, nil)
+	firstKey := t.RecordKey(seekHandle)
 
 	it, err := snap.Seek(firstKey)
 	if err != nil {
@@ -377,7 +377,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 			return nil, errors.Trace(err)
 		}
 
-		rk := t.RecordKey(handle, nil)
+		rk := t.RecordKey(handle)
 
 		handles = append(handles, handle)
 		if len(handles) == maxBatchSize {
@@ -423,7 +423,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 				// index already exists, skip it.
 				return nil
 			}
-			rowKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle, 0)
+			rowKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 			err = txn.LockKeys(rowKey)
 			if err != nil {
 				return errors.Trace(err)

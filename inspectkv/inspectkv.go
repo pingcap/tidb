@@ -216,7 +216,7 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx table.Index) err
 		cols[i] = t.Cols()[col.Offset]
 	}
 
-	startKey := t.RecordKey(0, nil)
+	startKey := t.RecordKey(0)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		isExist, h2, err := idx.Exist(txn, vals1, h1)
 		if terror.ErrorEqual(err, kv.ErrKeyExists) {
@@ -247,7 +247,7 @@ func scanTableData(retriever kv.Retriever, t table.Table, cols []*table.Column, 
 	[]*RecordData, int64, error) {
 	var records []*RecordData
 
-	startKey := t.RecordKey(startHandle, nil)
+	startKey := t.RecordKey(startHandle)
 	filterFunc := func(h int64, d []types.Datum, cols []*table.Column) (bool, error) {
 		if limit != 0 {
 			r := &RecordData{
@@ -313,7 +313,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 		m[r.Handle] = r.Values
 	}
 
-	startKey := t.RecordKey(0, nil)
+	startKey := t.RecordKey(0)
 	filterFunc := func(h int64, vals []types.Datum, cols []*table.Column) (bool, error) {
 		vals2, ok := m[h]
 		if !ok {
@@ -351,7 +351,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 // GetTableRecordsCount returns the total number of table records from startHandle.
 // If startHandle = 0, returns the total number of table records.
 func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) (int64, error) {
-	startKey := t.RecordKey(startHandle, nil)
+	startKey := t.RecordKey(startHandle)
 	it, err := txn.Seek(startKey)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -366,7 +366,7 @@ func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) 
 		}
 
 		it.Close()
-		rk := t.RecordKey(handle+1, nil)
+		rk := t.RecordKey(handle + 1)
 		it, err = txn.Seek(rk)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -381,7 +381,7 @@ func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) 
 }
 
 func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*table.Column) ([]types.Datum, error) {
-	key := t.RecordKey(h, nil)
+	key := t.RecordKey(h)
 	value, err := txn.Get(key)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -470,7 +470,7 @@ func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []
 			return errors.Trace(err)
 		}
 
-		rk := t.RecordKey(handle, nil)
+		rk := t.RecordKey(handle)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)
