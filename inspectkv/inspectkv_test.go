@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -311,8 +312,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	// index col data (handle, data): (1, 10), (2, 20), (4, 40)
 	err = idx.Create(txn, types.MakeDatums(int64(30)), 3)
 	c.Assert(err, IsNil)
-	col := tb.Cols()[idx.Meta().Columns[0].Offset]
-	key := tb.RecordKey(4, col)
+	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
@@ -330,7 +330,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	// index col data (handle, data): (1, 10), (2, 20), (4, 40), (3, 31)
 	err = idx.Create(txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
-	key = tb.RecordKey(3, col)
+	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	setColValue(c, txn, key, types.NewDatum(int64(31)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
@@ -346,9 +346,9 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	// current index data:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
 	// index col data (handle, data): (1, 10), (2, 20), (4, 40), (5, 30)
-	key = tb.RecordKey(3, col)
+	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	txn.Delete(key)
-	key = tb.RecordKey(5, col)
+	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 5))
 	setColValue(c, txn, key, types.NewDatum(int64(30)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
@@ -364,9 +364,9 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	// current index data:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
 	// index col data (handle, data): (1, 10), (2, 20), (3, 30)
-	key = tb.RecordKey(4, col)
+	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	txn.Delete(key)
-	key = tb.RecordKey(3, col)
+	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	setColValue(c, txn, key, types.NewDatum(int64(30)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
@@ -384,7 +384,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	// index col data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
 	err = idx.Delete(txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
-	key = tb.RecordKey(4, col)
+	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
