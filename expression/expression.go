@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -131,7 +132,7 @@ func (s Schema) DeepCopy() Schema {
 	return result
 }
 
-// FindColumn find an expression.Column from schema for a ast.ColumnName. It compares the db/table/column names.
+// FindColumn find an Column from schema for a ast.ColumnName. It compares the db/table/column names.
 // If there are more than one result, it will raise ambiguous error.
 func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
@@ -223,7 +224,7 @@ func (sf *ScalarFunction) ToString() string {
 }
 
 // NewFunction creates a new scalar function.
-func NewFunction(funcName string, args []Expression, retType *types.FieldType) (*ScalarFunction, error) {
+func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (*ScalarFunction, error) {
 	f, ok := evaluator.Funcs[funcName]
 	if !ok {
 		return nil, errors.New("Can't find function!")
@@ -307,4 +308,20 @@ func (c *Constant) GetType() *types.FieldType {
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error) {
 	return c.Value, nil
+}
+
+// ComposeCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
+func ComposeCondition(conditions []Expression, op string) Expression {
+	length := len(conditions)
+	if length == 0 {
+		return nil
+	}
+	if length == 1 {
+		return conditions[0]
+	}
+	expr, _ := NewFunction(op,
+		types.NewFieldType(mysql.TypeTiny),
+		ComposeCondition(conditions[length/2:], op),
+		ComposeCondition(conditions[:length/2], op))
+	return expr
 }

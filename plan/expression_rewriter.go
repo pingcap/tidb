@@ -47,56 +47,46 @@ type expressionRewriter struct {
 	correlated bool
 }
 
-func constructBinaryOpFunction(l *rowExpr, r *rowExpr, op opcode.Op) (*expression.ScalarFunction, error) {
+func constructBinaryOpFunction(l *rowExpr, r *rowExpr, op string) (ret *expression.ScalarFunction, err error) {
 	if l.expr != nil && r.expr != nil {
-		return expression.NewFunction(opcode.Ops[op], []expression.Expression{l.expr, r.expr}, types.NewFieldType(mysql.TypeTiny))
+		return expression.NewFunction(op, types.NewFieldType(mysql.TypeTiny), l.expr, r.expr)
 	} else if l.expr != nil {
 		return nil, errors.New("Operand should contain 1 column(s)")
 	} else if r.expr != nil || len(l.rows) != len(r.rows) {
 		return nil, errors.Errorf("Operand should contain %d column(s)", len(l.rows))
 	}
-	result, err := constructBinaryOpFunction(l.rows[0], r.rows[0], op)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if op == opcode.EQ || op == opcode.NullEQ {
-		for i := 1; i < len(l.rows); i++ {
-			item, err := constructBinaryOpFunction(l.rows[i], r.rows[i], op)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			result, err = expression.NewFunction(opcode.Ops[opcode.AndAnd],
-				[]expression.Expression{result, item},
-				types.NewFieldType(mysql.TypeTiny))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-	} else {
-		for i := 1; i < len(l.rows); i++ {
-			eq, err := constructBinaryOpFunction(l.rows[i-1], r.rows[i-1], opcode.EQ)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			item, err := constructBinaryOpFunction(l.rows[i], r.rows[i], op)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			and, err := expression.NewFunction(opcode.Ops[opcode.AndAnd],
-				[]expression.Expression{eq, item},
-				types.NewFieldType(mysql.TypeTiny))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			result, err = expression.NewFunction(opcode.Ops[opcode.OrOr],
-				[]expression.Expression{result, and},
-				types.NewFieldType(mysql.TypeTiny))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+	funcs := make([]expression.Expression, len(l.rows))
+	for i := 0; i < len(l.rows); i++ {
+		funcs[i], err = constructBinaryOpFunction(l.rows[i], r.rows[i], op)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
-	return result, nil
+	if op == ast.EQ || op == ast.NullEQ {
+		ret, _ = expression.ComposeCondition(funcs, ast.AndAnd).(*expression.ScalarFunction)
+		return
+	}
+	eqs := make([]expression.Expression, 0, len(l.rows)-1)
+	for i := 1; i < len(l.rows); i++ {
+		eqExpr, err := constructBinaryOpFunction(l.rows[i-1], r.rows[i-1], ast.EQ)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		eqs = append(eqs, eqExpr)
+		expr, err := constructBinaryOpFunction(l.rows[i], r.rows[i], op)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		funcs[i], err = expression.NewFunction(ast.AndAnd,
+			types.NewFieldType(mysql.TypeTiny),
+			expression.ComposeCondition(eqs, ast.EQ),
+			expr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	ret, _ = expression.ComposeCondition(funcs, ast.OrOr).(*expression.ScalarFunction)
+	return
 }
 
 func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (Plan, expression.Schema) {
@@ -177,14 +167,14 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 		np = er.b.buildMaxOneRow(np)
 		if np.IsCorrelated() {
 			er.p = er.b.buildApply(er.p, np, outerSchema)
-			newExpr := make([]*rowExpr, 0, len(np.GetSchema()))
+			newCols := make([]*rowExpr, 0, len(np.GetSchema()))
 			for _, col := range np.GetSchema() {
-				newExpr = append(newExpr, &rowExpr{expr: col.DeepCopy()})
+				newCols = append(newCols, &rowExpr{expr: col.DeepCopy()})
 			}
-			if len(newExpr) > 1 {
-				er.ctxStack = append(er.ctxStack, &rowExpr{rows: newExpr})
+			if len(newCols) > 1 {
+				er.ctxStack = append(er.ctxStack, &rowExpr{rows: newCols})
 			} else {
-				er.ctxStack = append(er.ctxStack, &rowExpr{expr: newExpr[0].expr})
+				er.ctxStack = append(er.ctxStack, &rowExpr{expr: newCols[0].expr})
 			}
 		} else {
 			_, err := pruneColumnsAndResolveIndices(np, np.GetSchema())
@@ -197,16 +187,16 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 				er.err = errors.Trace(err)
 				return retNode, true
 			}
-			newExpr := make([]*rowExpr, 0, len(np.GetSchema()))
+			newCols := make([]*rowExpr, 0, len(np.GetSchema()))
 			for i, data := range d {
-				newExpr = append(newExpr, &rowExpr{expr: &expression.Constant{
+				newCols = append(newCols, &rowExpr{expr: &expression.Constant{
 					Value:   data,
 					RetType: np.GetSchema()[i].GetType()}})
 			}
-			if len(newExpr) > 1 {
-				er.ctxStack = append(er.ctxStack, &rowExpr{rows: newExpr})
+			if len(newCols) > 1 {
+				er.ctxStack = append(er.ctxStack, &rowExpr{rows: newCols})
 			} else {
-				er.ctxStack = append(er.ctxStack, &rowExpr{expr: newExpr[0].expr})
+				er.ctxStack = append(er.ctxStack, &rowExpr{expr: newCols[0].expr})
 			}
 		}
 		return inNode, true
@@ -310,7 +300,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			er.err = errors.New("Operand should contain 1 column(s)")
 			return retNode, false
 		}
-		function, err := expression.NewFunction(ast.IsNull, []expression.Expression{er.ctxStack[stkLen-1].expr}, v.Type)
+		function, err := expression.NewFunction(ast.IsNull, v.Type, er.ctxStack[stkLen-1].expr)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return retNode, false
@@ -327,10 +317,9 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		var err error
 		switch v.Op {
 		case opcode.EQ, opcode.LE, opcode.GE, opcode.LT, opcode.GT, opcode.NE, opcode.NullEQ:
-			function, err = constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1], v.Op)
+			function, err = constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1], funcName)
 		default:
-			function, err = expression.NewFunction(funcName,
-				[]expression.Expression{er.ctxStack[stkLen-2].expr, er.ctxStack[stkLen-1].expr}, v.Type)
+			function, err = expression.NewFunction(funcName, v.Type, er.ctxStack[stkLen-2].expr, er.ctxStack[stkLen-1].expr)
 		}
 		if err != nil {
 			er.err = errors.Trace(err)
@@ -348,7 +337,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			er.err = errors.New("Operand should contain 1 column(s)")
 			return retNode, false
 		}
-		function, err := expression.NewFunction(funcName, []expression.Expression{er.ctxStack[stkLen-1].expr}, v.Type)
+		function, err := expression.NewFunction(funcName, v.Type, er.ctxStack[stkLen-1].expr)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return retNode, false

@@ -23,25 +23,11 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// compose CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func composeCondition(conditions []expression.Expression) expression.Expression {
-	length := len(conditions)
-	if length == 0 {
-		return nil
-	}
-	if length == 1 {
-		return conditions[0]
-	}
-	expr, _ := expression.NewFunction(ast.AndAnd, []expression.Expression{composeCondition(conditions[0 : length/2]),
-		composeCondition(conditions[length/2:])}, nil)
-	return expr
-}
-
 //TODO: select join algorithm during cbo phase.
 func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 	e := &HashJoinExec{
 		schema:      v.GetSchema(),
-		otherFilter: composeCondition(v.OtherConditions),
+		otherFilter: expression.ComposeCondition(v.OtherConditions, ast.AndAnd),
 		prepared:    false,
 		ctx:         b.ctx,
 	}
@@ -56,23 +42,23 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 	case plan.LeftOuterJoin:
 		e.outter = true
 		e.leftSmall = false
-		e.smallFilter = composeCondition(v.RightConditions)
-		e.bigFilter = composeCondition(v.LeftConditions)
+		e.smallFilter = expression.ComposeCondition(v.RightConditions, ast.AndAnd)
+		e.bigFilter = expression.ComposeCondition(v.LeftConditions, ast.AndAnd)
 		e.smallHashKey = rightHashKey
 		e.bigHashKey = leftHashKey
 	case plan.RightOuterJoin:
 		e.outter = true
 		e.leftSmall = true
-		e.smallFilter = composeCondition(v.LeftConditions)
-		e.bigFilter = composeCondition(v.RightConditions)
+		e.smallFilter = expression.ComposeCondition(v.LeftConditions, ast.AndAnd)
+		e.bigFilter = expression.ComposeCondition(v.RightConditions, ast.AndAnd)
 		e.smallHashKey = leftHashKey
 		e.bigHashKey = rightHashKey
 	case plan.InnerJoin:
 		//TODO: assume right table is the small one before cbo is realized.
 		e.outter = false
 		e.leftSmall = false
-		e.smallFilter = composeCondition(v.RightConditions)
-		e.bigFilter = composeCondition(v.LeftConditions)
+		e.smallFilter = expression.ComposeCondition(v.RightConditions, ast.AndAnd)
+		e.bigFilter = expression.ComposeCondition(v.LeftConditions, ast.AndAnd)
 		e.smallHashKey = rightHashKey
 		e.bigHashKey = leftHashKey
 	default:
@@ -125,7 +111,7 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 
 	return &SelectionExec{
 		Src:       src,
-		Condition: composeCondition(v.Conditions),
+		Condition: expression.ComposeCondition(v.Conditions, ast.AndAnd),
 		schema:    v.GetSchema(),
 		ctx:       b.ctx,
 	}
@@ -173,7 +159,7 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan, s *plan.Select
 		ret = ts
 		if !txn.IsReadOnly() {
 			if s != nil {
-				ret = b.buildNewUnionScanExec(ret, composeCondition(append(s.Conditions, v.AccessCondition...)))
+				ret = b.buildNewUnionScanExec(ret, expression.ComposeCondition(append(s.Conditions, v.AccessCondition...), ast.AndAnd))
 			} else {
 				ret = b.buildNewUnionScanExec(ret, nil)
 			}
