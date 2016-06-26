@@ -14,6 +14,7 @@
 package codec
 
 import (
+	"encoding/binary"
 	"time"
 
 	"github.com/juju/errors"
@@ -179,4 +180,90 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		return b, d, errors.Trace(err)
 	}
 	return b, d, nil
+}
+
+// CutOne cuts the first encoded value from b.
+// It will return the first encoded item and the remains as byte slice.
+func CutOne(b []byte) (first []byte, remain []byte, err error) {
+	if len(b) < 1 {
+		return nil, nil, errors.New("invalid encoded key")
+	}
+	flag := b[0]
+	first = b[:1]
+	b = b[1:]
+	var d []byte
+	switch flag {
+	case NilFlag:
+		remain = b
+	case intFlag, uintFlag, floatFlag, durationFlag:
+		d = b[:8]
+		remain = b[8:]
+	case bytesFlag:
+		d, remain, err = cutBytes(b, false)
+	case compactBytesFlag:
+		d, remain, err = cutCompactBytes(b)
+	case decimalFlag:
+		d, remain, err = cutDecimal(b)
+	default:
+		return b, d, errors.Errorf("invalid encoded key flag %v", flag)
+	}
+	if err != nil {
+		return b, d, errors.Trace(err)
+	}
+	// Append encoded data after type flag.
+	first = append(first, d...)
+	return
+}
+
+func cutBytes(b []byte, reverse bool) (data []byte, remain []byte, err error) {
+	offset := 0
+	for {
+		if len(b) < offset+encGroupSize+1 {
+			return nil, nil, errors.New("insufficient bytes to decode value")
+		}
+		marker := b[offset+encGroupSize]
+		var padCount byte
+		if reverse {
+			padCount = marker
+		} else {
+			padCount = encMarker - marker
+		}
+		offset += encGroupSize + 1
+		if padCount != 0 {
+			break
+		}
+	}
+	data = b[:offset]
+	remain = b[offset:]
+	return
+}
+
+func cutCompactBytes(b []byte) (data []byte, remain []byte, err error) {
+	v, n := binary.Varint(b)
+	ni := int64(n)
+	if n < 0 {
+		return nil, nil, errors.New("value larger than 64 bits")
+	} else if n == 0 {
+		return nil, nil, errors.New("insufficient bytes to decode value")
+	}
+	if int64(len(b)) < ni+v {
+		return nil, nil, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
+	}
+	return b[:ni+v], b[ni+v:], nil
+}
+
+func cutDecimal(b []byte) (data []byte, remain []byte, err error) {
+	if len(b) < 9 {
+		return nil, nil, errors.New("cutDecimal error: Invalid decimal data")
+	}
+	data = append(data, b[:9]...) // value sign
+	b = b[9:]
+	desc := int64(data[0]) == negativeSign
+	var d []byte
+	d, remain, err = cutBytes(remain, desc)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	data = append(data, d...)
+	return
 }

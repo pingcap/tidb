@@ -411,21 +411,15 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 	return row, nil
 }
 
-// TODO: find a better way to decode row data.
 func (rs *localRegion) getRowData(value []byte, colTps map[int64]*types.FieldType) (map[int64][]byte, error) {
-	values, err := tablecodec.DecodeRow(value, colTps)
+	res, err := tablecodec.CutRow(value, colTps)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ret := make(map[int64][]byte, len(colTps))
-	for id, value := range values {
-		v, err1 := tablecodec.EncodeValue(value)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
-		}
-		ret[id] = v
+	if res == nil {
+		res = make(map[int64][]byte, len(colTps))
 	}
-	return ret, nil
+	return res, nil
 }
 
 func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64, row map[int64][]byte) (bool, error) {

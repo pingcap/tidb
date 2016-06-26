@@ -91,7 +91,6 @@ func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 // DecodeFloat decodes a float from a byte slice
 // Decimal decoding:
 // Byte -> value sign
-// Byte -> exp sign
 // DecodeInt -> exp value
 // DecodeBytes -> abs value bytes
 func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {

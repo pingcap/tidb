@@ -205,34 +205,95 @@ func DecodeColumnValue(data []byte, ft *types.FieldType) (types.Datum, error) {
 }
 
 // DecodeRow decodes a byte slice into datums.
-// TODO: We should only decode columns in the cols map.
 // Row layout: colID1, value1, colID2, value2, .....
 func DecodeRow(data []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum, error) {
 	if data == nil {
 		return nil, nil
 	}
-	values, err := codec.Decode(data)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(values) == 1 && values[0].IsNull() {
+	if len(data) == 1 && data[0] == codec.NilFlag {
 		return nil, nil
 	}
-	if len(values)%2 != 0 {
-		return nil, errors.New("Decoded row value length is not even number!")
-	}
 	row := make(map[int64]types.Datum, len(cols))
-	for i := 0; i < len(values); i += 2 {
-		cid := values[i]
+	cnt := 0
+	var (
+		b   []byte
+		err error
+	)
+	for len(data) > 0 {
+		// Get col id.
+		b, data, err = codec.CutOne(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		_, cid, err := codec.DecodeOne(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Get col value.
+		b, data, err = codec.CutOne(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		id := cid.GetInt64()
 		ft, ok := cols[id]
 		if ok {
-			v := values[i+1]
+			_, v, err := codec.DecodeOne(b)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			v, err = Unflatten(v, ft)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			row[id] = v
+			cnt++
+			if cnt == len(cols) {
+				// Get enough data.
+				break
+			}
+		}
+	}
+	return row, nil
+}
+
+// CutRow cut encoded row into byte slices and return interested columns' byte slice.
+// Row layout: colID1, value1, colID2, value2, .....
+func CutRow(data []byte, cols map[int64]*types.FieldType) (map[int64][]byte, error) {
+	if data == nil {
+		return nil, nil
+	}
+	if len(data) == 1 && data[0] == codec.NilFlag {
+		return nil, nil
+	}
+	row := make(map[int64][]byte, len(cols))
+	cnt := 0
+	var (
+		b   []byte
+		err error
+	)
+	for len(data) > 0 {
+		// Get col id.
+		b, data, err = codec.CutOne(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		_, cid, err := codec.DecodeOne(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Get col value.
+		b, data, err = codec.CutOne(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		id := cid.GetInt64()
+		_, ok := cols[id]
+		if ok {
+			row[id] = b
+			cnt++
+			if cnt == len(cols) {
+				break
+			}
 		}
 	}
 	return row, nil
