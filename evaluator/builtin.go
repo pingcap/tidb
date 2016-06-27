@@ -43,6 +43,7 @@ type Func struct {
 var Funcs = map[string]Func{
 	// common functions
 	"coalesce": {builtinCoalesce, 1, -1},
+	"isNull":   {builtinCoalesce, 1, 1},
 
 	// math functions
 	"abs":   {builtinAbs, 1, 1},
