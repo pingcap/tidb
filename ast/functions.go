@@ -64,7 +64,6 @@ const (
 	IsNull     = "isnull"
 	IsTruth    = "istrue"  // Avoid name conflict with IsTrue in github/pingcap/check.
 	IsFalsity  = "isfalse" // Avoid name conflict with IsFalse in github/pingcap/check.
-	Between    = "between"
 	RowFunc    = "row"
 )
 

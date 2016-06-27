@@ -50,7 +50,6 @@ const (
 	IsNull
 	IsTruth
 	IsFalsity
-	Between
 )
 
 // Ops maps opcode to string.
@@ -85,7 +84,6 @@ var Ops = map[Op]string{
 	IsNull:     "isnull",
 	IsTruth:    "istrue",
 	IsFalsity:  "isfalse",
-	Between:    "between",
 }
 
 // String implements Stringer interface.

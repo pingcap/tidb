@@ -357,6 +357,28 @@ func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) 
 	return []rangePoint{startPoint, endPoint}
 }
 
+func (r *rangeBuilder) buildFromNot(expr *expression.ScalarFunction) []rangePoint {
+	switch n := expr.FuncName.L; n {
+	case ast.IsTruth:
+		return r.buildFromIsTrue(expr, 1)
+	case ast.IsFalsity:
+		return r.buildFromIsFalse(expr, 1)
+	case ast.In:
+		// Pattern not in is not supported.
+		r.err = ErrUnsupportedType.Gen("NOT IN is not supported")
+		return fullRange
+	case ast.Like:
+		// Pattern not like is not supported.
+		r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
+		return fullRange
+	case ast.IsNull:
+		startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
+		endPoint := rangePoint{value: types.MaxValueDatum()}
+		return []rangePoint{startPoint, endPoint}
+	}
+	return nil
+}
+
 func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []rangePoint {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE:
@@ -365,46 +387,20 @@ func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []ra
 		return r.intersection(r.newBuild(expr.Args[0]), r.newBuild(expr.Args[1]))
 	case ast.OrOr:
 		return r.union(r.newBuild(expr.Args[0]), r.newBuild(expr.Args[1]))
+	case ast.IsTruth:
+		return r.buildFromIsTrue(expr, 0)
+	case ast.IsFalsity:
+		return r.buildFromIsFalse(expr, 0)
+	case ast.In:
+		return r.newBuildFromIn(expr)
+	case ast.Like:
+		return r.newBuildFromPatternLike(expr)
+	case ast.IsNull:
+		startPoint := rangePoint{start: true}
+		endPoint := rangePoint{}
+		return []rangePoint{startPoint, endPoint}
 	case ast.UnaryNot:
-		isNot := expr.Args[0].(*expression.Constant).Value.GetInt64()
-		e := expr.Args[1].(*expression.ScalarFunction)
-		switch n := e.FuncName.L; n {
-		case ast.IsTruth:
-			return r.buildFromIsTrue(e, int(isNot))
-		case ast.IsFalsity:
-			return r.buildFromIsFalse(e, int(isNot))
-		case ast.In:
-			if isNot == 0 {
-				return r.newBuildFromIn(e)
-			}
-			r.err = ErrUnsupportedType.Gen("NOT IN is not supported")
-			return fullRange
-		case ast.Like:
-			if isNot == 0 {
-				return r.newBuildFromPatternLike(e)
-			}
-			// Pattern not like is not supported.
-			r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
-			return fullRange
-		case ast.IsNull:
-			if isNot == 0 {
-				startPoint := rangePoint{start: true}
-				endPoint := rangePoint{}
-				return []rangePoint{startPoint, endPoint}
-			}
-			startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
-			endPoint := rangePoint{value: types.MaxValueDatum()}
-			return []rangePoint{startPoint, endPoint}
-		case ast.Between:
-			if isNot == 0 {
-				e1 := expression.NewFunction(ast.GE, e.RetType, e.Args[0], e.Args[1])
-				e2 := expression.NewFunction(ast.LE, e.RetType, e.Args[0], e.Args[2])
-				return r.intersection(r.newBuild(e1), r.newBuild(e2))
-			}
-			e1 := expression.NewFunction(ast.LT, e.RetType, e.Args[0], e.Args[1])
-			e2 := expression.NewFunction(ast.GT, e.RetType, e.Args[0], e.Args[2])
-			return r.union(r.newBuild(e1), r.newBuild(e2))
-		}
+		return r.buildFromNot(expr.Args[0].(*expression.ScalarFunction))
 	}
 
 	return nil

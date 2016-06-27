@@ -15,26 +15,12 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tipb/go-tipb"
 )
-
-// compose CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func composeCondition(conditions []expression.Expression) expression.Expression {
-	length := len(conditions)
-	if length == 0 {
-		return nil
-	}
-	if length == 1 {
-		return conditions[0]
-	}
-	return expression.NewFunction(ast.AndAnd, nil, composeCondition(conditions[0:length/2]),
-		composeCondition(conditions[length/2:]))
-}
 
 //TODO: select join algorithm during cbo phase.
 func (b *executorBuilder) buildJoin(v *plan.Join) Executor {

@@ -43,7 +43,7 @@ type Func struct {
 var Funcs = map[string]Func{
 	// common functions
 	"coalesce": {builtinCoalesce, 1, -1},
-	ast.IsNull: {builtinCoalesce, 1, 1},
+	ast.IsNull: {builtinIsNull, 1, 1},
 
 	// math functions
 	"abs":   {builtinAbs, 1, 1},
@@ -150,7 +150,6 @@ var Funcs = map[string]Func{
 	ast.IsTruth:    {builtinScalarFunc, 1, 1},
 	ast.IsFalsity:  {builtinScalarFunc, 1, 1},
 	ast.Like:       {builtinScalarFunc, 1, 3},
-	ast.Between:    {builtinScalarFunc, 1, 3},
 	ast.RowFunc:    {builtinRow, 2, -1},
 }
 
