@@ -260,7 +260,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		builder := &planBuilder{colMapper: make(map[*ast.ColumnNameExpr]expression.Expression)}
 		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
+		c.Assert(builder.err, IsNil, comment)
 
 		_, err = builder.predicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)

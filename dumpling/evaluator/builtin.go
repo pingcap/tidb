@@ -146,6 +146,7 @@ var Funcs = map[string]Func{
 	ast.BitNeg:     {unaryOpFactory(opcode.BitNeg), 1, 1},
 	ast.UnaryPlus:  {unaryOpFactory(opcode.Plus), 1, 1},
 	ast.UnaryMinus: {unaryOpFactory(opcode.Minus), 1, 1},
+	ast.RowFunc:    {builtinRow, 2, -1},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce

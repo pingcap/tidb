@@ -1528,3 +1528,27 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "create table t (a int)")
 }
+
+func (s *testSuite) TestRow(c *C) {
+	plan.UseNewPlanner = true
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int, d int)")
+	tk.MustExec("insert t values (1, 1)")
+	tk.MustExec("insert t values (1, 3)")
+	tk.MustExec("insert t values (2, 1)")
+	tk.MustExec("insert t values (2, 3)")
+	result := tk.MustQuery("select * from t where (c, d) < (2,2)")
+	result.Check(testkit.Rows("1 1", "1 3", "2 1"))
+	result = tk.MustQuery("select * from t where (1,2,3) > (3,2,1)")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select * from t where row(1,2,3) > (3,2,1)")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select * from t where (c, d) = (select * from t where (c,d) = (1,1))")
+	result.Check(testkit.Rows("1 1"))
+	result = tk.MustQuery("select * from t where (c, d) = (select * from t k where (t.c,t.d) = (c,d))")
+	result.Check(testkit.Rows("1 1", "1 3", "2 1", "2 3"))
+	plan.UseNewPlanner = false
+}

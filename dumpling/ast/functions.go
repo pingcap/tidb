@@ -58,6 +58,7 @@ const (
 	IsNull     = "isnull"
 	UnaryPlus  = "unaryplus"
 	UnaryMinus = "unaryminus"
+	RowFunc    = "row"
 )
 
 // UnquoteString is not quoted when printed.
