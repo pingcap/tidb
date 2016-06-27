@@ -114,7 +114,6 @@ func (s *testClientSuite) TestRetryReadThenClose(c *C) {
 }
 
 func (s *testClientSuite) TestWrongMessageID(c *C) {
-	first := true
 	l := startServer(clientTestPort, c, func(conn net.Conn, c *C) {
 		var msg msgpb.Message
 		msgID, err := util.ReadMessage(conn, &msg)
@@ -127,9 +126,8 @@ func (s *testClientSuite) TestWrongMessageID(c *C) {
 		}
 		// Send the request back to client, set wrong msgID for the 1st
 		// request.
-		if first {
+		if msgID == 1 {
 			err = util.WriteMessage(conn, msgID+100, &resp)
-			first = false
 		} else {
 			err = util.WriteMessage(conn, msgID, &resp)
 		}
