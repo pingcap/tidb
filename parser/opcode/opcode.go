@@ -43,6 +43,13 @@ const (
 	IntDiv
 	LogicXor
 	NullEQ
+	In
+	Like
+	Case
+	Regexp
+	IsNull
+	IsTruth
+	IsFalsity
 )
 
 // Ops maps opcode to string.
@@ -70,6 +77,13 @@ var Ops = map[Op]string{
 	IntDiv:     "DIV",
 	LogicXor:   "XOR",
 	NullEQ:     "<=>",
+	In:         "in",
+	Like:       "like",
+	Case:       "case",
+	Regexp:     "regexp",
+	IsNull:     "isnull",
+	IsTruth:    "istrue",
+	IsFalsity:  "isfalse",
 }
 
 // String implements Stringer interface.
