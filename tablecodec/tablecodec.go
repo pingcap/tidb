@@ -206,38 +206,38 @@ func DecodeColumnValue(data []byte, ft *types.FieldType) (types.Datum, error) {
 
 // DecodeRow decodes a byte slice into datums.
 // Row layout: colID1, value1, colID2, value2, .....
-func DecodeRow(data []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum, error) {
-	if data == nil {
+func DecodeRow(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum, error) {
+	if b == nil {
 		return nil, nil
 	}
-	if len(data) == 1 && data[0] == codec.NilFlag {
+	if len(b) == 1 && b[0] == codec.NilFlag {
 		return nil, nil
 	}
 	row := make(map[int64]types.Datum, len(cols))
 	cnt := 0
 	var (
-		b   []byte
-		err error
+		data []byte
+		err  error
 	)
-	for len(data) > 0 {
+	for len(b) > 0 {
 		// Get col id.
-		b, data, err = codec.CutOne(data)
+		data, b, err = codec.CutOne(b)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		_, cid, err := codec.DecodeOne(b)
+		_, cid, err := codec.DecodeOne(data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		// Get col value.
-		b, data, err = codec.CutOne(data)
+		data, b, err = codec.CutOne(b)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		id := cid.GetInt64()
 		ft, ok := cols[id]
 		if ok {
-			_, v, err := codec.DecodeOne(b)
+			_, v, err := codec.DecodeOne(data)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

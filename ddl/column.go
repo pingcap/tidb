@@ -322,15 +322,15 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 
 func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, handles []int64, reorgInfo *reorgInfo) error {
 	defaultVal, _, err := table.GetColDefaultValue(nil, columnInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	colMap := make(map[int64]*types.FieldType)
 	for _, col := range t.Meta().Columns {
 		colMap[col.ID] = &col.FieldType
 	}
 	for _, handle := range handles {
 		log.Info("[ddl] backfill column...", handle)
-		if err != nil {
-			return errors.Trace(err)
-		}
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err := d.isReorgRunnable(txn); err != nil {
 				return errors.Trace(err)

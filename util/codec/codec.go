@@ -240,16 +240,17 @@ func cutBytes(b []byte, reverse bool) (data []byte, remain []byte, err error) {
 
 func cutCompactBytes(b []byte) (data []byte, remain []byte, err error) {
 	v, n := binary.Varint(b)
-	ni := int64(n)
 	if n < 0 {
 		return nil, nil, errors.New("value larger than 64 bits")
 	} else if n == 0 {
 		return nil, nil, errors.New("insufficient bytes to decode value")
 	}
-	if int64(len(b)) < ni+v {
+	data = append(data, b[:n]...)
+	b = b[n:]
+	if int64(len(b)) < v {
 		return nil, nil, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
 	}
-	return b[:ni+v], b[ni+v:], nil
+	return append(data, b[:v]...), b[v:], nil
 }
 
 func cutDecimal(b []byte) (data []byte, remain []byte, err error) {

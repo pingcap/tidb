@@ -406,33 +406,32 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 				return errors.Trace(err)
 			}
 
-			var vals []types.Datum
-			vals, err := fetchRowColVals(txn, t, handle, indexInfo)
-			if terror.ErrorEqual(err, kv.ErrNotExist) {
+			vals, err1 := fetchRowColVals(txn, t, handle, indexInfo)
+			if terror.ErrorEqual(err1, kv.ErrNotExist) {
 				// row doesn't exist, skip it.
 				return nil
 			}
-			if err != nil {
-				return errors.Trace(err)
+			if err1 != nil {
+				return errors.Trace(err1)
 			}
 
-			exist, _, err := kvX.Exist(txn, vals, handle)
-			if err != nil {
-				return errors.Trace(err)
+			exist, _, err1 := kvX.Exist(txn, vals, handle)
+			if err1 != nil {
+				return errors.Trace(err1)
 			} else if exist {
 				// index already exists, skip it.
 				return nil
 			}
 			rowKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
-			err = txn.LockKeys(rowKey)
-			if err != nil {
-				return errors.Trace(err)
+			err1 = txn.LockKeys(rowKey)
+			if err1 != nil {
+				return errors.Trace(err1)
 			}
 
 			// create the index.
-			err = kvX.Create(txn, vals, handle)
-			if err != nil {
-				return errors.Trace(err)
+			err1 = kvX.Create(txn, vals, handle)
+			if err1 != nil {
+				return errors.Trace(err1)
 			}
 
 			// update reorg next handle
