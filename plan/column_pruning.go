@@ -182,7 +182,7 @@ func pruneColumnsAndResolveIndices(p Plan, parentUsedCols []*expression.Column) 
 		}
 		v.schema.InitIndices()
 		return nil, nil
-	case *Limit, *MaxOneRow:
+	case *Limit, *MaxOneRow, *Distinct:
 		outer, err := pruneColumnsAndResolveIndices(p.GetChildByIndex(0), parentUsedCols)
 		p.SetSchema(p.GetChildByIndex(0).GetSchema())
 		return outer, errors.Trace(err)

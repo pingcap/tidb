@@ -224,24 +224,9 @@ func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 	}
 }
 
-// See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#operator_is-null
-func isNullOpFactory(op opcode.Op) BuiltinFunc {
-	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		if op == opcode.IsNull {
-			if args[0].IsNull() {
-				d.SetInt64(1)
-			} else {
-				d.SetInt64(0)
-			}
-			return
-		}
-		if args[0].IsNull() {
-			d.SetInt64(0)
-		} else {
-			d.SetInt64(1)
-		}
-		return
-	}
+func builtinRow(row []types.Datum, _ context.Context) (d types.Datum, err error) {
+	d.SetRow(row)
+	return
 }
 
 func unaryOpFactory(op opcode.Op) BuiltinFunc {

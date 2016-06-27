@@ -153,7 +153,7 @@ func (b *planBuilder) predicatePushDown(p Plan, predicates []expression.Expressi
 			}
 		}
 		return
-	case *Union:
+	case *NewUnion:
 		for _, proj := range v.Selects {
 			newExprs := make([]expression.Expression, 0, len(predicates))
 			for _, cond := range predicates {

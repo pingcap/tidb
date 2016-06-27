@@ -66,11 +66,15 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestDropStore(c *C) {
-	s.cluster.RemoveStore(s.store1)
-	r, err := s.cache.GetRegion([]byte("a"))
-	c.Assert(err, NotNil)
-	c.Assert(r, IsNil)
-	s.checkCache(c, 0)
+	// This test is disabled since it costs too much time due to the retry
+	// mechanism.
+	// TODO: Find a way to change retry timeout in test then uncomment it.
+	//
+	//	s.cluster.RemoveStore(s.store1)
+	//	r, err := s.cache.GetRegion([]byte("a"))
+	//	c.Assert(err, NotNil)
+	//	c.Assert(r, IsNil)
+	//	s.checkCache(c, 0)
 }
 
 func (s *testRegionCacheSuite) TestDropStoreRetry(c *C) {

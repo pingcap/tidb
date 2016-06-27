@@ -151,6 +151,7 @@ var Funcs = map[string]Func{
 	ast.IsFalsity:  {builtinScalarFunc, 1, 1},
 	ast.Like:       {builtinScalarFunc, 1, 3},
 	ast.Between:    {builtinScalarFunc, 1, 3},
+	ast.RowFunc:    {builtinRow, 2, -1},
 }
 
 // TODO: implement it

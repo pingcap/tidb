@@ -15,6 +15,7 @@ package tikv
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 )
 
 type testLockSuite struct {
@@ -91,4 +92,38 @@ func (s *testLockSuite) TestScanLockResolve(c *C) {
 		c.Assert([]byte(iter.Value()), BytesEquals, []byte{ch})
 		c.Assert(iter.Next(), IsNil)
 	}
+}
+
+func (s *testLockSuite) TestCleanLock(c *C) {
+	for ch := byte('a'); ch <= byte('z'); ch++ {
+		k := []byte{ch}
+		s.lockKey(c, k, k, k, k, false)
+	}
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	for ch := byte('a'); ch <= byte('z'); ch++ {
+		err = txn.Set([]byte{ch}, []byte{ch + 1})
+		c.Assert(err, IsNil)
+	}
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+}
+
+func (s *testLockSuite) TestBatchGetLock(c *C) {
+	var allKeys []kv.Key
+	for ch := byte('a'); ch <= byte('z'); ch++ {
+		k := []byte{ch}
+		s.lockKey(c, k, k, k, k, false)
+		allKeys = append(allKeys, kv.Key(k))
+	}
+	ver, err := s.store.CurrentVersion()
+	c.Assert(err, IsNil)
+	snapshot := newTiKVSnapshot(s.store, ver)
+	_, err = snapshot.BatchGet(allKeys)
+	c.Assert(err, IsNil)
+}
+
+func init() {
+	// Set lockTTL to 3(ms) to speed up tests.
+	lockTTL = 3
 }

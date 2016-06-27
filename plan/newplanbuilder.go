@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -54,7 +53,8 @@ func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncE
 		agg.AggFuncs = append(agg.AggFuncs, expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct))
 		schema = append(schema, &expression.Column{FromID: agg.id,
 			ColName:  model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, i)),
-			Position: i})
+			Position: i,
+			RetType:  aggFunc.GetType()})
 	}
 	agg.GroupByItems = gby
 	agg.SetSchema(schema)
@@ -133,8 +133,7 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 					continue
 				}
 				if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
-					newEq, _ := expression.NewFunction(opcode.EQ, []expression.Expression{rn, ln}, nil)
-					eqCond = append(eqCond, newEq)
+					eqCond = append(eqCond, expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln))
 					continue
 				}
 			}
@@ -290,7 +289,7 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) Plan {
 	for i, sel := range union.SelectList.Selects {
 		sels[i] = b.buildNewSelect(sel)
 	}
-	u := &Union{Selects: sels}
+	u := &NewUnion{Selects: sels}
 	u.id = b.allocID(u)
 	firstSchema := sels[0].GetSchema().DeepCopy()
 	for _, sel := range sels {
@@ -460,6 +459,13 @@ type havingAndOrderbyResolver struct {
 }
 
 func (e *havingAndOrderbyResolver) addProjectionExpr(v *ast.ColumnNameExpr, projCol *expression.Column) {
+	// Avoid to append same column repeatly.
+	for i, expr := range e.proj.Exprs {
+		if expr == projCol {
+			e.mapper[v] = e.proj.schema[i]
+			return
+		}
+	}
 	e.proj.Exprs = append(e.proj.Exprs, projCol)
 	schemaCols, _ := projCol.DeepCopy().(*expression.Column)
 	e.mapper[v] = schemaCols
@@ -664,6 +670,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
+	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
@@ -676,7 +683,6 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 			return nil
 		}
 	}
-	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
 	if hasAgg {
 		if sel.GroupBy != nil {
 			p, correlated, gbyCols = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)

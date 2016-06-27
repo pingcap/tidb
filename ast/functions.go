@@ -65,6 +65,7 @@ const (
 	IsTruth    = "istrue"  // Avoid name conflict with IsTrue in github/pingcap/check.
 	IsFalsity  = "isfalse" // Avoid name conflict with IsFalse in github/pingcap/check.
 	Between    = "between"
+	RowFunc    = "row"
 )
 
 // UnquoteString is not quoted when printed.

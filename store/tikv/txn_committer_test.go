@@ -76,7 +76,7 @@ func randKV(keyLen, valLen int) (string, string) {
 
 func (s *testCommitterSuite) TestCommitMultipleRegions(c *C) {
 	m := make(map[string]string)
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 100; i++ {
 		k, v := randKV(10, 10)
 		m[k] = v
 	}
@@ -84,7 +84,7 @@ func (s *testCommitterSuite) TestCommitMultipleRegions(c *C) {
 
 	// Test big values.
 	m = make(map[string]string)
-	for i := 0; i < 500; i++ {
+	for i := 0; i < 50; i++ {
 		k, v := randKV(11, txnCommitBatchSize/7)
 		m[k] = v
 	}

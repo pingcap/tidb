@@ -374,36 +374,36 @@ func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []ra
 		case ast.IsFalsity:
 			return r.buildFromIsFalse(e, int(isNot))
 		case ast.In:
-			if isNot == 1 {
-				r.err = ErrUnsupportedType.Gen("NOT IN is not supported")
-				return fullRange
+			if isNot == 0 {
+				return r.newBuildFromIn(e)
 			}
-			return r.newBuildFromIn(e)
+			r.err = ErrUnsupportedType.Gen("NOT IN is not supported")
+			return fullRange
 		case ast.Like:
-			if isNot == 1 {
-				// Pattern not like is not supported.
-				r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
-				return fullRange
+			if isNot == 0 {
+				return r.newBuildFromPatternLike(e)
 			}
-			return r.newBuildFromPatternLike(e)
+			// Pattern not like is not supported.
+			r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
+			return fullRange
 		case ast.IsNull:
-			if isNot == 1 {
-				startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
-				endPoint := rangePoint{value: types.MaxValueDatum()}
+			if isNot == 0 {
+				startPoint := rangePoint{start: true}
+				endPoint := rangePoint{}
 				return []rangePoint{startPoint, endPoint}
 			}
-			startPoint := rangePoint{start: true}
-			endPoint := rangePoint{}
+			startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
+			endPoint := rangePoint{value: types.MaxValueDatum()}
 			return []rangePoint{startPoint, endPoint}
 		case ast.Between:
-			if isNot == 1 {
-				e1, _ := expression.NewFunction(opcode.LT, []expression.Expression{e.Args[0], e.Args[1]}, e.RetType)
-				e2, _ := expression.NewFunction(opcode.GT, []expression.Expression{e.Args[0], e.Args[2]}, e.RetType)
-				return r.union(r.newBuild(e1), r.newBuild(e2))
+			if isNot == 0 {
+				e1 := expression.NewFunction(ast.GE, e.RetType, e.Args[0], e.Args[1])
+				e2 := expression.NewFunction(ast.LE, e.RetType, e.Args[0], e.Args[2])
+				return r.intersection(r.newBuild(e1), r.newBuild(e2))
 			}
-			e1, _ := expression.NewFunction(opcode.GE, []expression.Expression{e.Args[0], e.Args[1]}, e.RetType)
-			e2, _ := expression.NewFunction(opcode.LE, []expression.Expression{e.Args[0], e.Args[2]}, e.RetType)
-			return r.intersection(r.newBuild(e1), r.newBuild(e2))
+			e1 := expression.NewFunction(ast.LT, e.RetType, e.Args[0], e.Args[1])
+			e2 := expression.NewFunction(ast.GT, e.RetType, e.Args[0], e.Args[2])
+			return r.union(r.newBuild(e1), r.newBuild(e2))
 		}
 	}
 
