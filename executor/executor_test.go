@@ -1540,6 +1540,8 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("1 1", "1 3", "2 1"))
 	result = tk.MustQuery("select * from t where (1,2,3) > (3,2,1)")
 	result.Check(testkit.Rows())
+	result = tk.MustQuery("select * from t where row(1,2,3) > (3,2,1)")
+	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t where (c, d) = (select * from t where (c,d) = (1,1))")
 	result.Check(testkit.Rows("1 1"))
 	result = tk.MustQuery("select * from t where (c, d) = (select * from t k where (t.c,t.d) = (c,d))")

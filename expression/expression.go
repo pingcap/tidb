@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
@@ -224,17 +225,18 @@ func (sf *ScalarFunction) ToString() string {
 }
 
 // NewFunction creates a new scalar function.
-func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (*ScalarFunction, error) {
+func NewFunction(funcName string, retType *types.FieldType, args ...Expression) *ScalarFunction {
 	f, ok := evaluator.Funcs[funcName]
 	if !ok {
-		return nil, errors.New("Can't find function!")
+		log.Errorf("Function %s is not implemented.", funcName)
+		return nil
 	}
 
 	return &ScalarFunction{
 		Args:     args,
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
-		Function: f.F}, nil
+		Function: f.F}
 }
 
 //Schema2Exprs converts []*Column to []Expression.
@@ -319,9 +321,8 @@ func ComposeCondition(conditions []Expression, op string) Expression {
 	if length == 1 {
 		return conditions[0]
 	}
-	expr, _ := NewFunction(op,
+	return NewFunction(op,
 		types.NewFieldType(mysql.TypeTiny),
 		ComposeCondition(conditions[length/2:], op),
 		ComposeCondition(conditions[:length/2], op))
-	return expr
 }
