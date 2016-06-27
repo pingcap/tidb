@@ -184,43 +184,52 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 
 // CutOne cuts the first encoded value from b.
 // It will return the first encoded item and the remains as byte slice.
-func CutOne(b []byte) (first []byte, remain []byte, err error) {
+func CutOne(b []byte) (data []byte, remain []byte, err error) {
+	l, err := peek(b)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return b[:l], b[l:], nil
+}
+
+// peeks the first encoded value from b and returns its length.
+func peek(b []byte) (length int, err error) {
 	if len(b) < 1 {
-		return nil, nil, errors.New("invalid encoded key")
+		return 0, errors.New("invalid encoded key")
 	}
 	flag := b[0]
-	first = b[:1]
+	length++
 	b = b[1:]
-	var d []byte
+	var l int
 	switch flag {
 	case NilFlag:
-		remain = b
 	case intFlag, uintFlag, floatFlag, durationFlag:
-		d = b[:8]
-		remain = b[8:]
+		// Those types are stored in 8 bytes.
+		l = 8
 	case bytesFlag:
-		d, remain, err = cutBytes(b, false)
+		l, err = peekBytes(b, false)
 	case compactBytesFlag:
-		d, remain, err = cutCompactBytes(b)
+		l, err = peekCompactBytes(b)
 	case decimalFlag:
-		d, remain, err = cutDecimal(b)
+		l, err = peekDecimal(b)
 	default:
-		return b, d, errors.Errorf("invalid encoded key flag %v", flag)
+		return 0, errors.Errorf("invalid encoded key flag %v", flag)
 	}
 	if err != nil {
-		return b, d, errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-	// Append encoded data after type flag.
-	first = append(first, d...)
+	length += l
 	return
 }
 
-func cutBytes(b []byte, reverse bool) (data []byte, remain []byte, err error) {
+func peekBytes(b []byte, reverse bool) (int, error) {
 	offset := 0
 	for {
 		if len(b) < offset+encGroupSize+1 {
-			return nil, nil, errors.New("insufficient bytes to decode value")
+			return 0, errors.New("insufficient bytes to decode value")
 		}
+		// The byte slice is encoded into many groups.
+		// For each group, there are 8 bytes for data and 1 byte for marker.
 		marker := b[offset+encGroupSize]
 		var padCount byte
 		if reverse {
@@ -229,42 +238,41 @@ func cutBytes(b []byte, reverse bool) (data []byte, remain []byte, err error) {
 			padCount = encMarker - marker
 		}
 		offset += encGroupSize + 1
+		// When padCount is not zero, it means we get the end of the byte slice.
 		if padCount != 0 {
 			break
 		}
 	}
-	data = b[:offset]
-	remain = b[offset:]
-	return
+	return offset, nil
 }
 
-func cutCompactBytes(b []byte) (data []byte, remain []byte, err error) {
+func peekCompactBytes(b []byte) (int, error) {
+	// Get length.
 	v, n := binary.Varint(b)
+	vi := int(v)
 	if n < 0 {
-		return nil, nil, errors.New("value larger than 64 bits")
+		return 0, errors.New("value larger than 64 bits")
 	} else if n == 0 {
-		return nil, nil, errors.New("insufficient bytes to decode value")
+		return 0, errors.New("insufficient bytes to decode value")
 	}
-	data = append(data, b[:n]...)
-	b = b[n:]
-	if int64(len(b)) < v {
-		return nil, nil, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
+	if len(b) < vi+n {
+		return 0, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
 	}
-	return append(data, b[:v]...), b[v:], nil
+	return n + vi, nil
 }
 
-func cutDecimal(b []byte) (data []byte, remain []byte, err error) {
+func peekDecimal(b []byte) (int, error) {
 	if len(b) < 9 {
-		return nil, nil, errors.New("cutDecimal error: Invalid decimal data")
+		return 0, errors.New("cutDecimal error: Invalid decimal data")
 	}
-	data = append(data, b[:9]...) // value sign
-	b = b[9:]
-	desc := int64(data[0]) == negativeSign
-	var d []byte
-	d, remain, err = cutBytes(remain, desc)
+	// The first byte is value sign.
+	// The following 8 bytes are exp value.
+	l := 9
+	desc := int64(b[l]) == negativeSign
+	// Abs value bytes
+	bl, err := peekBytes(b[l:], desc)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-	data = append(data, d...)
-	return
+	return l + bl, nil
 }
