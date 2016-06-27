@@ -335,7 +335,6 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 			if err := d.isReorgRunnable(txn); err != nil {
 				return errors.Trace(err)
 			}
-			tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 			rowKey := t.RecordKey(handle)
 			rowVal, err := txn.Get(rowKey)
 			if terror.ErrorEqual(err, kv.ErrNotExist) {

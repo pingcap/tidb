@@ -359,9 +359,6 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 	for i, col := range columns {
 		if *col.PkHandle {
 			var colVal []byte
-			if !*col.PkHandle {
-				continue
-			}
 			if mysql.HasUnsignedFlag(uint(*col.Flag)) {
 				// PK column is Unsigned
 				var ud types.Datum
