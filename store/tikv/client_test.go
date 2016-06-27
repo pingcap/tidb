@@ -55,11 +55,9 @@ func handleRequest(conn net.Conn, c *C) {
 	c.Assert(err, IsNil)
 }
 
-const clientTestPort = ":61234"
-
 // One normally `Send`.
 func (s *testClientSuite) TestSendBySelf(c *C) {
-	l := startServer(clientTestPort, c, handleRequest)
+	l := startServer(":61234", c, handleRequest)
 	defer l.Close()
 	cli := newRPCClient()
 	req := new(pb.Request)
@@ -69,7 +67,7 @@ func (s *testClientSuite) TestSendBySelf(c *C) {
 	ver := uint64(0)
 	getReq.Version = &ver
 	req.CmdGetReq = getReq
-	resp, err := cli.SendKVReq(clientTestPort, req)
+	resp, err := cli.SendKVReq(":61234", req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetType(), Equals, resp.GetType())
 }
@@ -82,11 +80,11 @@ func closeRequest(conn net.Conn, c *C) {
 
 // Server close connection directly if new connection is comming.
 func (s *testClientSuite) TestRetryClose(c *C) {
-	l := startServer(clientTestPort, c, closeRequest)
+	l := startServer(":61235", c, closeRequest)
 	defer l.Close()
 	cli := newRPCClient()
 	req := new(pb.Request)
-	resp, err := cli.SendKVReq(clientTestPort, req)
+	resp, err := cli.SendKVReq(":61235", req)
 	c.Assert(err, NotNil)
 	c.Assert(resp, IsNil)
 }
@@ -103,19 +101,18 @@ func readThenCloseRequest(conn net.Conn, c *C) {
 
 // Server read message then close, so `Send` will return retry error.
 func (s *testClientSuite) TestRetryReadThenClose(c *C) {
-	l := startServer(clientTestPort, c, readThenCloseRequest)
+	l := startServer(":61236", c, readThenCloseRequest)
 	defer l.Close()
 	cli := newRPCClient()
 	req := new(pb.Request)
 	req.Type = pb.MessageType_CmdGet.Enum()
-	resp, err := cli.SendKVReq(clientTestPort, req)
+	resp, err := cli.SendKVReq(":61236", req)
 	c.Assert(err, NotNil)
 	c.Assert(resp, IsNil)
 }
 
 func (s *testClientSuite) TestWrongMessageID(c *C) {
-	first := true
-	l := startServer(clientTestPort, c, func(conn net.Conn, c *C) {
+	l := startServer(":61237", c, func(conn net.Conn, c *C) {
 		var msg msgpb.Message
 		msgID, err := util.ReadMessage(conn, &msg)
 		c.Assert(err, IsNil)
@@ -127,9 +124,8 @@ func (s *testClientSuite) TestWrongMessageID(c *C) {
 		}
 		// Send the request back to client, set wrong msgID for the 1st
 		// request.
-		if first {
+		if msgID == 1 {
 			err = util.WriteMessage(conn, msgID+100, &resp)
-			first = false
 		} else {
 			err = util.WriteMessage(conn, msgID, &resp)
 		}
@@ -141,9 +137,9 @@ func (s *testClientSuite) TestWrongMessageID(c *C) {
 		Type: pb.MessageType_CmdGet.Enum(),
 	}
 	// Wrong ID for the first request, correct for the rests.
-	_, err := cli.SendKVReq(clientTestPort, req)
+	_, err := cli.SendKVReq(":61237", req)
 	c.Assert(err, NotNil)
-	resp, err := cli.SendKVReq(clientTestPort, req)
+	resp, err := cli.SendKVReq(":61237", req)
 	c.Assert(err, IsNil)
 	c.Assert(resp.GetType(), Equals, req.GetType())
 }
