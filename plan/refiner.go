@@ -284,7 +284,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		if _, ok := scalar.Args[1].(*expression.Constant); ok {
 			return c.checkColumn(scalar.Args[0])
 		}
-	case ast.Null, ast.NotNull:
+	case ast.IsNull:
 		return c.checkColumn(scalar.Args[0])
 	}
 	return false

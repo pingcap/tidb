@@ -58,19 +58,13 @@ const (
 	UnaryPlus  = "unaryplus"
 	UnaryMinus = "unaryminus"
 	In         = "in"
-	NotIn      = "notin"
 	Like       = "like"
-	NotLike    = "notlike"
 	Case       = "case"
 	Regexp     = "regexp"
-	Null       = "null"
-	NotNull    = "notnull"
-	True       = "true"
-	NotTrue    = "nottrue"
-	False      = "false"
-	NotFalse   = "notfalse"
+	IsNull     = "isnull"
+	IsTruth    = "istrue"  // Avoid name conflict with IsTrue in github/pingcap/check.
+	IsFalsity  = "isfalse" // Avoid name conflict with IsFalse in github/pingcap/check.
 	Between    = "between"
-	NotBetween = "notbetween"
 )
 
 // UnquoteString is not quoted when printed.

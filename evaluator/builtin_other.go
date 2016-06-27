@@ -227,7 +227,7 @@ func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#operator_is-null
 func isNullOpFactory(op opcode.Op) BuiltinFunc {
 	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		if op == opcode.Null {
+		if op == opcode.IsNull {
 			if args[0].IsNull() {
 				d.SetInt64(1)
 			} else {

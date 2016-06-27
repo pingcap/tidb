@@ -216,28 +216,29 @@ func (r *rangeBuilder) buildFormBinOp(expr *expression.ScalarFunction) []rangePo
 	return nil
 }
 
-func (r *rangeBuilder) newBuildFromIsTruth(expr *expression.ScalarFunction, isTrue, isNot bool) []rangePoint {
-	if isTrue {
-		if isNot {
-			// NOT TRUE range is {[null null] [0, 0]}
-			startPoint1 := rangePoint{start: true}
-			endPoint1 := rangePoint{}
-			startPoint2 := rangePoint{start: true}
-			startPoint2.value.SetInt64(0)
-			endPoint2 := rangePoint{}
-			endPoint2.value.SetInt64(0)
-			return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
-		}
-		// TRUE range is {[-inf 0) (0 +inf]}
-		startPoint1 := rangePoint{value: types.MinNotNullDatum(), start: true}
-		endPoint1 := rangePoint{excl: true}
-		endPoint1.value.SetInt64(0)
-		startPoint2 := rangePoint{excl: true, start: true}
+func (r *rangeBuilder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []rangePoint {
+	if isNot == 1 {
+		// NOT TRUE range is {[null null] [0, 0]}
+		startPoint1 := rangePoint{start: true}
+		endPoint1 := rangePoint{}
+		startPoint2 := rangePoint{start: true}
 		startPoint2.value.SetInt64(0)
-		endPoint2 := rangePoint{value: types.MaxValueDatum()}
+		endPoint2 := rangePoint{}
+		endPoint2.value.SetInt64(0)
 		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
 	}
-	if isNot {
+	// TRUE range is {[-inf 0) (0 +inf]}
+	startPoint1 := rangePoint{value: types.MinNotNullDatum(), start: true}
+	endPoint1 := rangePoint{excl: true}
+	endPoint1.value.SetInt64(0)
+	startPoint2 := rangePoint{excl: true, start: true}
+	startPoint2.value.SetInt64(0)
+	endPoint2 := rangePoint{value: types.MaxValueDatum()}
+	return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+}
+
+func (r *rangeBuilder) buildFromIsFalse(expr *expression.ScalarFunction, isNot int) []rangePoint {
+	if isNot == 1 {
 		// NOT FALSE range is {[-inf, 0), (0, +inf], [null, null]}
 		startPoint1 := rangePoint{start: true}
 		endPoint1 := rangePoint{excl: true}
@@ -360,45 +361,50 @@ func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []ra
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE:
 		return r.buildFormBinOp(expr)
-	case ast.True:
-		return r.newBuildFromIsTruth(expr, true, false)
-	case ast.NotTrue:
-		return r.newBuildFromIsTruth(expr, true, true)
-	case ast.False:
-		return r.newBuildFromIsTruth(expr, false, false)
-	case ast.NotFalse:
-		return r.newBuildFromIsTruth(expr, false, true)
-	case ast.In:
-		return r.newBuildFromIn(expr)
-	case ast.NotIn:
-		r.err = ErrUnsupportedType.Gen("NOT IN is not supported")
-		return fullRange
-	case ast.Like:
-		return r.newBuildFromPatternLike(expr)
-	case ast.NotLike:
-		// Pattern not like is not supported.
-		r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
-		return fullRange
-	case ast.Null:
-		startPoint := rangePoint{start: true}
-		endPoint := rangePoint{}
-		return []rangePoint{startPoint, endPoint}
-	case ast.NotNull:
-		startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
-		endPoint := rangePoint{value: types.MaxValueDatum()}
-		return []rangePoint{startPoint, endPoint}
 	case ast.AndAnd:
 		return r.intersection(r.newBuild(expr.Args[0]), r.newBuild(expr.Args[1]))
 	case ast.OrOr:
 		return r.union(r.newBuild(expr.Args[0]), r.newBuild(expr.Args[1]))
-	case ast.Between:
-		e1, _ := expression.NewFunction(opcode.GE, []expression.Expression{expr.Args[0], expr.Args[1]}, expr.RetType)
-		e2, _ := expression.NewFunction(opcode.LE, []expression.Expression{expr.Args[0], expr.Args[2]}, expr.RetType)
-		return r.intersection(r.newBuild(e1), r.newBuild(e2))
-	case ast.NotBetween:
-		e1, _ := expression.NewFunction(opcode.LT, []expression.Expression{expr.Args[0], expr.Args[1]}, expr.RetType)
-		e2, _ := expression.NewFunction(opcode.GT, []expression.Expression{expr.Args[0], expr.Args[2]}, expr.RetType)
-		return r.union(r.newBuild(e1), r.newBuild(e2))
+	case ast.UnaryNot:
+		isNot := expr.Args[0].(*expression.Constant).Value.GetInt64()
+		e := expr.Args[1].(*expression.ScalarFunction)
+		switch n := e.FuncName.L; n {
+		case ast.IsTruth:
+			return r.buildFromIsTrue(e, int(isNot))
+		case ast.IsFalsity:
+			return r.buildFromIsFalse(e, int(isNot))
+		case ast.In:
+			if isNot == 1 {
+				r.err = ErrUnsupportedType.Gen("NOT IN is not supported")
+				return fullRange
+			}
+			return r.newBuildFromIn(e)
+		case ast.Like:
+			if isNot == 1 {
+				// Pattern not like is not supported.
+				r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
+				return fullRange
+			}
+			return r.newBuildFromPatternLike(e)
+		case ast.IsNull:
+			if isNot == 1 {
+				startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
+				endPoint := rangePoint{value: types.MaxValueDatum()}
+				return []rangePoint{startPoint, endPoint}
+			}
+			startPoint := rangePoint{start: true}
+			endPoint := rangePoint{}
+			return []rangePoint{startPoint, endPoint}
+		case ast.Between:
+			if isNot == 1 {
+				e1, _ := expression.NewFunction(opcode.LT, []expression.Expression{e.Args[0], e.Args[1]}, e.RetType)
+				e2, _ := expression.NewFunction(opcode.GT, []expression.Expression{e.Args[0], e.Args[2]}, e.RetType)
+				return r.union(r.newBuild(e1), r.newBuild(e2))
+			}
+			e1, _ := expression.NewFunction(opcode.GE, []expression.Expression{e.Args[0], e.Args[1]}, e.RetType)
+			e2, _ := expression.NewFunction(opcode.LE, []expression.Expression{e.Args[0], e.Args[2]}, e.RetType)
+			return r.intersection(r.newBuild(e1), r.newBuild(e2))
+		}
 	}
 
 	return nil

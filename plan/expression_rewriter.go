@@ -138,6 +138,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		return retNode, false
 	}
 
+	sLen := len(er.ctxStack)
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr:
 	case *ast.FuncCallExpr:
@@ -148,8 +149,32 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	case *ast.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: v.Type}
 		er.ctxStack = append(er.ctxStack, value)
-	case *ast.IsNullExpr, *ast.IsTruthExpr, *ast.UnaryOperationExpr:
-		er.toOneArgScalarFunc(inNode)
+	case *ast.IsNullExpr:
+		function := er.notToScalarFunc(v.Not, opcode.IsNull, v.Type, []expression.Expression{er.ctxStack[sLen-1]})
+		if er.err != nil {
+			return
+		}
+		er.ctxStack = er.ctxStack[:sLen-1]
+		er.ctxStack = append(er.ctxStack, function)
+	case *ast.IsTruthExpr:
+		op := opcode.IsTruth
+		if v.True == 0 {
+			op = opcode.IsFalsity
+		}
+		function := er.notToScalarFunc(v.Not, op, v.Type, []expression.Expression{er.ctxStack[sLen-1]})
+		if er.err != nil {
+			return
+		}
+		er.ctxStack = er.ctxStack[:sLen-1]
+		er.ctxStack = append(er.ctxStack, function)
+	case *ast.UnaryOperationExpr:
+		function, err := expression.NewFunction(v.Op, []expression.Expression{er.ctxStack[sLen-1]}, v.Type)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
+		}
+		er.ctxStack = er.ctxStack[:sLen-1]
+		er.ctxStack = append(er.ctxStack, function)
 	case *ast.BetweenExpr:
 		er.betweenToScalarFunc(v)
 	case *ast.PatternLikeExpr:
@@ -163,14 +188,13 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			er.err = errors.Errorf("Position %d is out of range", v.N)
 		}
 	case *ast.BinaryOperationExpr:
-		l := len(er.ctxStack)
 		function, err := expression.NewFunction(v.Op,
-			[]expression.Expression{er.ctxStack[l-2], er.ctxStack[l-1]}, v.Type)
+			[]expression.Expression{er.ctxStack[sLen-2], er.ctxStack[sLen-1]}, v.Type)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return retNode, false
 		}
-		er.ctxStack = er.ctxStack[:l-2]
+		er.ctxStack = er.ctxStack[:sLen-2]
 		er.ctxStack = append(er.ctxStack, function)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
@@ -183,16 +207,28 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	return inNode, true
 }
 
+func (er *expressionRewriter) notToScalarFunc(b bool, op opcode.Op, tp *types.FieldType, args []expression.Expression) *expression.ScalarFunction {
+	opFunc, err := expression.NewFunction(op, args, tp)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return nil
+	}
+	v := int64(1)
+	if !b {
+		v = int64(0)
+	}
+	notFunc, err := expression.NewFunction(opcode.Not, []expression.Expression{intToExprConstant(v), opFunc}, tp)
+	if err != nil {
+		er.err = errors.Trace(err)
+	}
+	return notFunc
+}
+
 func (er *expressionRewriter) inToScalarFunc(v *ast.PatternInExpr) {
 	sLen := len(er.ctxStack)
 	lLen := len(v.List)
-	op := opcode.In
-	if v.Not {
-		op = opcode.NotIn
-	}
-	function, err := expression.NewFunction(op, er.ctxStack[sLen-lLen-1:sLen], v.Type)
-	if err != nil {
-		er.err = errors.Trace(err)
+	function := er.notToScalarFunc(v.Not, opcode.In, v.Type, er.ctxStack[sLen-lLen-1:sLen])
+	if er.err != nil {
 		return
 	}
 	er.ctxStack = er.ctxStack[:sLen-lLen-1]
@@ -201,14 +237,9 @@ func (er *expressionRewriter) inToScalarFunc(v *ast.PatternInExpr) {
 
 func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 	l := len(er.ctxStack)
-	op := opcode.Like
-	if v.Not {
-		op = opcode.NotLike
-	}
-	function, err := expression.NewFunction(op,
-		[]expression.Expression{er.ctxStack[l-2], er.ctxStack[l-1], intToExprConstant(int64(v.Escape))}, v.Type)
-	if err != nil {
-		er.err = errors.Trace(err)
+	function := er.notToScalarFunc(v.Not, opcode.Like, v.Type,
+		[]expression.Expression{er.ctxStack[l-2], er.ctxStack[l-1], intToExprConstant(int64(v.Escape))})
+	if er.err != nil {
 		return
 	}
 	er.ctxStack = er.ctxStack[:l-2]
@@ -217,14 +248,9 @@ func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 
 func (er *expressionRewriter) betweenToScalarFunc(v *ast.BetweenExpr) {
 	l := len(er.ctxStack)
-	retOp := opcode.Between
-	if v.Not {
-		retOp = opcode.NotBetween
-	}
-	function, err := expression.NewFunction(retOp,
-		[]expression.Expression{er.ctxStack[l-3], er.ctxStack[l-2], er.ctxStack[l-1]}, v.Type)
-	if err != nil {
-		er.err = errors.Trace(err)
+	function := er.notToScalarFunc(v.Not, opcode.Between, v.Type,
+		[]expression.Expression{er.ctxStack[l-3], er.ctxStack[l-2], er.ctxStack[l-1]})
+	if er.err != nil {
 		return
 	}
 	er.ctxStack = er.ctxStack[:l-3]
@@ -239,7 +265,7 @@ func (er *expressionRewriter) funcCallToScalarFunc(v *ast.FuncCallExpr) {
 	}
 	f, ok := evaluator.Funcs[v.FnName.L]
 	if !ok {
-		er.err = errors.New("Can't find function!")
+		er.err = errors.Errorf("Can't find %v function!", v.FnName.L)
 		return
 	}
 	if len(function.Args) < f.MinArgs || (f.MaxArgs != -1 && len(function.Args) > f.MaxArgs) {
@@ -281,39 +307,4 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		return
 	}
 	er.ctxStack = append(er.ctxStack, column)
-}
-
-func (er *expressionRewriter) toOneArgScalarFunc(n ast.Node) {
-	l := len(er.ctxStack)
-	var retOp opcode.Op
-	var retType *types.FieldType
-	switch n := n.(type) {
-	case *ast.IsNullExpr:
-		retOp = opcode.Null
-		if n.Not {
-			retOp = opcode.NotNull
-		}
-		retType = n.Type
-	case *ast.IsTruthExpr:
-		retOp = opcode.True
-		if n.True == 1 && n.Not {
-			retOp = opcode.NotTrue
-		} else if n.True == 0 && !n.Not {
-			retOp = opcode.False
-		} else if n.True == 0 && n.Not {
-			retOp = opcode.NotFalse
-		}
-		retType = n.Type
-	case *ast.UnaryOperationExpr:
-		retOp = n.Op
-		retType = n.Type
-	}
-
-	function, err := expression.NewFunction(retOp, []expression.Expression{er.ctxStack[l-1]}, retType)
-	if err != nil {
-		er.err = errors.Trace(err)
-		return
-	}
-	er.ctxStack = er.ctxStack[:l-1]
-	er.ctxStack = append(er.ctxStack, function)
 }

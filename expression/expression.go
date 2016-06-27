@@ -231,7 +231,7 @@ func NewFunction(op opcode.Op, args []Expression, retType *types.FieldType) (*Sc
 	}
 	f, ok := evaluator.Funcs[funcName]
 	if !ok {
-		return nil, errors.New("Can't find function!")
+		return nil, errors.Errorf("Can't find %v function!", funcName)
 	}
 
 	return &ScalarFunction{

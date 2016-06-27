@@ -44,19 +44,13 @@ const (
 	LogicXor
 	NullEQ
 	In
-	NotIn
 	Like
-	NotLike
 	Case
 	Regexp
-	Null
-	NotNull
-	True
-	NotTrue
-	False
-	NotFalse
+	IsNull
+	IsTruth
+	IsFalsity
 	Between
-	NotBetween
 )
 
 // Ops maps opcode to string.
@@ -85,19 +79,13 @@ var Ops = map[Op]string{
 	LogicXor:   "XOR",
 	NullEQ:     "<=>",
 	In:         "in",
-	NotIn:      "notin",
 	Like:       "like",
-	NotLike:    "Notlike",
 	Case:       "case",
 	Regexp:     "regexp",
-	Null:       "null",
-	NotNull:    "notnull",
-	True:       "true",
-	NotTrue:    "nottrue",
-	False:      "false",
-	NotFalse:   "notfalse",
+	IsNull:     "isnull",
+	IsTruth:    "istrue",
+	IsFalsity:  "isfalse",
 	Between:    "between",
-	NotBetween: "notbetween",
 }
 
 // String implements Stringer interface.
