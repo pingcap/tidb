@@ -25,7 +25,7 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p Plan, aggMapper map[*ast.Aggr
 	if len(er.ctxStack) != 1 {
 		return nil, nil, false, errors.Errorf("context len %v is invalid", len(er.ctxStack))
 	}
-	if checkRowLen(er.ctxStack[0]) != 1 {
+	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, false, errors.New("Operand should contain 1 column(s)")
 	}
 	return er.ctxStack[0], er.p, er.correlated, nil
@@ -42,7 +42,7 @@ type expressionRewriter struct {
 	correlated bool
 }
 
-func checkRowLen(e expression.Expression) int {
+func getRowLen(e expression.Expression) int {
 	if f, ok := e.(*expression.ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
 		return len(f.Args)
 	}
@@ -62,7 +62,7 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 }
 
 func constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (*expression.ScalarFunction, error) {
-	lLen, rLen := checkRowLen(l), checkRowLen(r)
+	lLen, rLen := getRowLen(l), getRowLen(r)
 	if lLen == 1 && rLen == 1 {
 		return expression.NewFunction(op, types.NewFieldType(mysql.TypeTiny), l, r), nil
 	} else if rLen != lLen {
@@ -157,16 +157,16 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		np = er.b.buildMaxOneRow(np)
 		if np.IsCorrelated() {
 			er.p = er.b.buildApply(er.p, np, outerSchema)
-			newCols := make([]expression.Expression, 0, len(np.GetSchema()))
-			for _, col := range np.GetSchema() {
-				newCols = append(newCols, col.DeepCopy())
-			}
-			if len(newCols) > 1 {
+			if len(np.GetSchema()) > 1 {
+				newCols := make([]expression.Expression, 0, len(np.GetSchema()))
+				for _, col := range np.GetSchema() {
+					newCols = append(newCols, col.DeepCopy())
+				}
 				er.ctxStack = append(er.ctxStack, expression.NewFunction(ast.RowFunc,
 					types.NewFieldType(types.KindRow),
 					newCols...))
 			} else {
-				er.ctxStack = append(er.ctxStack, newCols[0])
+				er.ctxStack = append(er.ctxStack, np.GetSchema()[0])
 			}
 		} else {
 			_, err := pruneColumnsAndResolveIndices(np, np.GetSchema())
@@ -179,16 +179,18 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 				er.err = errors.Trace(err)
 				return inNode, true
 			}
-			newCols := make([]expression.Expression, 0, len(np.GetSchema()))
-			for i, data := range d {
-				newCols = append(newCols, &expression.Constant{
-					Value:   data,
-					RetType: np.GetSchema()[i].GetType()})
-			}
-			if len(newCols) > 1 {
-				er.ctxStack = append(er.ctxStack, expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), newCols...))
+			if len(np.GetSchema()) > 1 {
+				newCols := make([]expression.Expression, 0, len(np.GetSchema()))
+				for i, data := range d {
+					newCols = append(newCols, &expression.Constant{
+						Value:   data,
+						RetType: np.GetSchema()[i].GetType()})
+				}
+				er.ctxStack = append(er.ctxStack, expression.NewFunction(ast.RowFunc,
+					types.NewFieldType(types.KindRow),
+					newCols...))
 			} else {
-				er.ctxStack = append(er.ctxStack, newCols[0])
+				er.ctxStack = append(er.ctxStack, np.GetSchema()[0])
 			}
 		}
 		return inNode, true
@@ -216,7 +218,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	case *ast.FuncCallExpr:
 		function := &expression.ScalarFunction{FuncName: v.FnName}
 		for i := stkLen - len(v.Args); i < stkLen; i++ {
-			if checkRowLen(er.ctxStack[i]) != 1 {
+			if getRowLen(er.ctxStack[i]) != 1 {
 				er.err = errors.New("Operand should contain 1 column(s)")
 				return retNode, false
 			}
@@ -275,7 +277,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		value := &expression.Constant{Value: v.Datum, RetType: types.NewFieldType(v.Datum.Kind())}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.IsNullExpr:
-		if checkRowLen(er.ctxStack[stkLen-1]) != 1 {
+		if getRowLen(er.ctxStack[stkLen-1]) != 1 {
 			er.err = errors.New("Operand should contain 1 column(s)")
 			return retNode, false
 		}
@@ -308,7 +310,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			er.err = errors.Errorf("Unknown opcode %v", v.Op)
 			return retNode, false
 		}
-		if checkRowLen(er.ctxStack[stkLen-1]) != 1 {
+		if getRowLen(er.ctxStack[stkLen-1]) != 1 {
 			er.err = errors.New("Operand should contain 1 column(s)")
 			return retNode, false
 		}
