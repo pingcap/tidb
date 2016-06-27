@@ -312,7 +312,7 @@ func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error)
 	return c.Value, nil
 }
 
-// ComposeCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
+// ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
 func ComposeCNFCondition(conditions []Expression) Expression {
 	length := len(conditions)
 	if length == 0 {
