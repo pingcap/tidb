@@ -238,7 +238,7 @@ func (r *rangeBuilder) newBuildFromIsTruth(expr *expression.ScalarFunction, isTr
 		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
 	}
 	if isNot {
-		// NOT FALSE range is {[null 0) (0 +inf]}
+		// NOT FALSE range is {[-inf, 0), (0, +inf], [null, null]}
 		startPoint1 := rangePoint{start: true}
 		endPoint1 := rangePoint{excl: true}
 		endPoint1.value.SetInt64(0)
@@ -308,7 +308,6 @@ func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) 
 	}
 	lowValue := make([]byte, 0, len(pattern))
 	escape := byte(expr.Args[2].(*expression.Constant).Value.GetInt64())
-	// unscape the pattern
 	var exclude bool
 	for i := 0; i < len(pattern); i++ {
 		if pattern[i] == escape {
@@ -321,8 +320,12 @@ func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) 
 			continue
 		}
 		if pattern[i] == '%' {
+			// Get the prefix.
 			break
 		} else if pattern[i] == '_' {
+			// Get the prefix, but exclude the prefix.
+			// e.g "abc_x", the start point exclude "abc",
+			// because the string length is more than 3.
 			exclude = true
 			break
 		}
@@ -337,20 +340,20 @@ func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) 
 	copy(highValue, lowValue)
 	endPoint := rangePoint{excl: true}
 	for i := len(highValue) - 1; i >= 0; i-- {
+		// Make the end point value more than the start point value,
+		// and the length of the end point value is the same as the length of the start point value.
+		// e.g., the start point value is "abc", so the end point value is "abd".
 		highValue[i]++
 		if highValue[i] != 0 {
 			endPoint.value.SetBytesAsString(highValue)
 			break
 		}
+		// If highValue[i] is 255 and highValue[i]++ is 0, then the end point value is max value.
 		if i == 0 {
 			endPoint.value = types.MaxValueDatum()
-			break
 		}
 	}
-	ranges := make([]rangePoint, 2)
-	ranges[0] = startPoint
-	ranges[1] = endPoint
-	return ranges
+	return []rangePoint{startPoint, endPoint}
 }
 
 func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []rangePoint {
@@ -581,7 +584,7 @@ func (r *rangeBuilder) buildFromPatternLike(x *ast.PatternLikeExpr) []rangePoint
 		return fullRange
 	}
 	lowValue := make([]byte, 0, len(pattern))
-	// unscape the pattern
+	// escape the pattern
 	var exclude bool
 	for i := 0; i < len(pattern); i++ {
 		if pattern[i] == x.Escape {
