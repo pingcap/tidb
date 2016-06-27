@@ -23,19 +23,19 @@ import (
 func (s *testEvaluatorSuite) TestIsNullOpFactory(c *C) {
 	defer testleak.AfterTest(c)()
 
-	nullOpFactory := isNullOpFactory(opcode.Null)
-	v, err := nullOpFactory(types.MakeDatums(1), nil)
+	nullOp := isNullOpFactory(opcode.Null)
+	v, err := nullOp(types.MakeDatums(1), nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(0))
-	v, err = nullOpFactory(types.MakeDatums(nil), nil)
+	v, err = nullOp(types.MakeDatums(nil), nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 
-	notNullOpFactory := isNullOpFactory(opcode.NotNull)
-	v, err = notNullOpFactory(types.MakeDatums(1), nil)
+	notNullOp := isNullOpFactory(opcode.NotNull)
+	v, err = notNullOp(types.MakeDatums(1), nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
-	v, err = notNullOpFactory(types.MakeDatums(nil), nil)
+	v, err = notNullOp(types.MakeDatums(nil), nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(0))
 }
