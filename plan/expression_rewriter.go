@@ -218,18 +218,17 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		for i := stkLen - length; i < stkLen; i++ {
 			rows = append(rows, er.ctxStack[i])
 		}
-		er.ctxStack = er.ctxStack[:len(er.ctxStack)-length]
+		er.ctxStack = er.ctxStack[:stkLen-length]
 		er.ctxStack = append(er.ctxStack, &rowExpr{rows: rows})
 
 	case *ast.FuncCallExpr:
 		function := &expression.ScalarFunction{FuncName: v.FnName}
 		for i := stkLen - len(v.Args); i < stkLen; i++ {
-			if er.ctxStack[i].expr != nil {
-				function.Args = append(function.Args, er.ctxStack[i].expr)
-			} else {
+			if er.ctxStack[i].expr == nil {
 				er.err = errors.New("Operand should contain 1 column(s)")
 				return retNode, false
 			}
+			function.Args = append(function.Args, er.ctxStack[i].expr)
 		}
 		f, ok := evaluator.Funcs[v.FnName.L]
 		if !ok {

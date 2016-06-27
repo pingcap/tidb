@@ -459,7 +459,7 @@ type havingAndOrderbyResolver struct {
 }
 
 func (e *havingAndOrderbyResolver) addProjectionExpr(v *ast.ColumnNameExpr, projCol *expression.Column) {
-	// avoid to append same column repeatly.
+	// Avoid to append same column repeatly.
 	for i, expr := range e.proj.Exprs {
 		if expr == projCol {
 			e.mapper[v] = e.proj.schema[i]
