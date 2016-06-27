@@ -313,7 +313,7 @@ func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error)
 }
 
 // ComposeCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeCondition(conditions []Expression, op string) Expression {
+func ComposeCNFCondition(conditions []Expression) Expression {
 	length := len(conditions)
 	if length == 0 {
 		return nil
@@ -321,8 +321,8 @@ func ComposeCondition(conditions []Expression, op string) Expression {
 	if length == 1 {
 		return conditions[0]
 	}
-	return NewFunction(op,
+	return NewFunction(ast.AndAnd,
 		types.NewFieldType(mysql.TypeTiny),
-		ComposeCondition(conditions[length/2:], op),
-		ComposeCondition(conditions[:length/2], op))
+		ComposeCNFCondition(conditions[length/2:]),
+		ComposeCNFCondition(conditions[:length/2]))
 }

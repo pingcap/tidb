@@ -15,7 +15,6 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -27,7 +26,7 @@ import (
 func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 	e := &HashJoinExec{
 		schema:      v.GetSchema(),
-		otherFilter: expression.ComposeCondition(v.OtherConditions, ast.AndAnd),
+		otherFilter: expression.ComposeCNFCondition(v.OtherConditions),
 		prepared:    false,
 		ctx:         b.ctx,
 	}
@@ -42,23 +41,23 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 	case plan.LeftOuterJoin:
 		e.outter = true
 		e.leftSmall = false
-		e.smallFilter = expression.ComposeCondition(v.RightConditions, ast.AndAnd)
-		e.bigFilter = expression.ComposeCondition(v.LeftConditions, ast.AndAnd)
+		e.smallFilter = expression.ComposeCNFCondition(v.RightConditions)
+		e.bigFilter = expression.ComposeCNFCondition(v.LeftConditions)
 		e.smallHashKey = rightHashKey
 		e.bigHashKey = leftHashKey
 	case plan.RightOuterJoin:
 		e.outter = true
 		e.leftSmall = true
-		e.smallFilter = expression.ComposeCondition(v.LeftConditions, ast.AndAnd)
-		e.bigFilter = expression.ComposeCondition(v.RightConditions, ast.AndAnd)
+		e.smallFilter = expression.ComposeCNFCondition(v.LeftConditions)
+		e.bigFilter = expression.ComposeCNFCondition(v.RightConditions)
 		e.smallHashKey = leftHashKey
 		e.bigHashKey = rightHashKey
 	case plan.InnerJoin:
 		//TODO: assume right table is the small one before cbo is realized.
 		e.outter = false
 		e.leftSmall = false
-		e.smallFilter = expression.ComposeCondition(v.RightConditions, ast.AndAnd)
-		e.bigFilter = expression.ComposeCondition(v.LeftConditions, ast.AndAnd)
+		e.smallFilter = expression.ComposeCNFCondition(v.RightConditions)
+		e.bigFilter = expression.ComposeCNFCondition(v.LeftConditions)
 		e.smallHashKey = rightHashKey
 		e.bigHashKey = leftHashKey
 	default:
@@ -111,7 +110,7 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 
 	return &SelectionExec{
 		Src:       src,
-		Condition: expression.ComposeCondition(v.Conditions, ast.AndAnd),
+		Condition: expression.ComposeCNFCondition(v.Conditions),
 		schema:    v.GetSchema(),
 		ctx:       b.ctx,
 	}
@@ -159,7 +158,7 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan, s *plan.Select
 		ret = ts
 		if !txn.IsReadOnly() {
 			if s != nil {
-				ret = b.buildNewUnionScanExec(ret, expression.ComposeCondition(append(s.Conditions, v.AccessCondition...), ast.AndAnd))
+				ret = b.buildNewUnionScanExec(ret, expression.ComposeCNFCondition(append(s.Conditions, v.AccessCondition...)))
 			} else {
 				ret = b.buildNewUnionScanExec(ret, nil)
 			}

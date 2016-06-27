@@ -61,7 +61,7 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 	return &expression.Constant{Value: d, RetType: types.NewFieldType(d.Kind())}
 }
 
-func constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (*expression.ScalarFunction, error) {
+func constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := getRowLen(l), getRowLen(r)
 	if lLen == 1 && rLen == 1 {
 		return expression.NewFunction(op, types.NewFieldType(mysql.TypeTiny), l, r), nil
@@ -76,7 +76,7 @@ func constructBinaryOpFunction(l expression.Expression, r expression.Expression,
 			return nil, err
 		}
 	}
-	return expression.ComposeCondition(funcs, ast.AndAnd).(*expression.ScalarFunction), nil
+	return expression.ComposeCNFCondition(funcs), nil
 }
 
 func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (Plan, expression.Schema) {
@@ -290,7 +290,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			er.err = errors.Errorf("Unknown opcode %v", v.Op)
 			return retNode, false
 		}
-		var function *expression.ScalarFunction
+		var function expression.Expression
 		switch v.Op {
 		case opcode.EQ, opcode.NE, opcode.NullEQ:
 			var err error
