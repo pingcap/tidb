@@ -2133,14 +2133,21 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	// or the storage engine doesn't support unique prefix keys
 
 	mustExecSQL(c, se, "create index idx_c1 on t (c1)")
-	mustExecSQL(c, se, "create index idx_c2 on t (c2(5))")
+	mustExecSQL(c, se, "create index idx_c2 on t (c2(3))")
 	mustExecSQL(c, se, "create unique index idx_c3 on t (c3(5))")
 
 	mustExecSQL(c, se, "insert into t values (3, 'abc', 'def')")
 	sql := "select c2 from t where c2 = 'abc'"
 	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}})
 
-	mustExecSQL(c, se, "insert into t values (4, 'xxxx', 'abcdeXXX')")
+	mustExecSQL(c, se, "insert into t values (4, 'abcd', 'xxx')")
+	mustExecSQL(c, se, "insert into t values (4, 'abcf', 'yyy')")
+	sql = "select c2 from t where c2 = 'abcf'"
+	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abcf")}})
+	sql = "select c2 from t where c2 = 'abcd'"
+	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abcd")}})
+
+	mustExecSQL(c, se, "insert into t values (4, 'ignore', 'abcdeXXX')")
 	_, err = exec(c, se, "insert into t values (5, 'ignore', 'abcdeYYY')")
 	// ERROR 1062 (23000): Duplicate entry 'abcde' for key 'idx_c3'
 	c.Assert(err, NotNil)

@@ -281,11 +281,20 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	for i, ic := range idx.Meta().Columns {
 		col := tbl.Cols()[ic.Offset]
 		e.valueTypes[i] = &col.FieldType
+		// if ic.Length != types.UnspecifiedLength {
+		// 	conds = append(conds, ast.BinaryOperationExpr{
+		// 		Op: opcode.EQ,
+		// 		L: ast.ColumnNameExpr{
+		// 			Name: ic.Name,
+		// 		}
+		// 		R:
+		// 	}
+		// }
 	}
 
 	e.Ranges = make([]*IndexRangeExec, len(v.Ranges))
 	for i, val := range v.Ranges {
-		e.Ranges[i] = b.buildIndexRange(e, val)
+		e.Ranges[i] = b.buildIndexRange(e, val, idx.Meta().Columns)
 	}
 	x := b.buildFilter(e, v.FilterConditions)
 	if v.Desc {
@@ -294,7 +303,27 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	return x
 }
 
-func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange) *IndexRangeExec {
+func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange, ics []*model.IndexColumn) *IndexRangeExec {
+	for i, ic := range ics {
+		if ic.Length == types.UnspecifiedLength {
+			continue
+		}
+		// if index prefix length is used, change scan range
+		lowVal := &v.LowVal[i]
+		if lowVal.Kind() == types.KindBytes || lowVal.Kind() == types.KindString {
+			if ic.Length < len(lowVal.GetBytes()) {
+				lowVal.SetBytes(lowVal.GetBytes()[:ic.Length])
+			}
+		}
+
+		highVal := &v.HighVal[i]
+		if highVal.Kind() == types.KindBytes || highVal.Kind() == types.KindString {
+			if ic.Length < len(highVal.GetBytes()) {
+				highVal.SetBytes(highVal.GetBytes()[:ic.Length])
+			}
+		}
+	}
+
 	ran := &IndexRangeExec{
 		scan:        scan,
 		lowVals:     v.LowVal,

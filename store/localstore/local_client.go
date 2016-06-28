@@ -47,7 +47,7 @@ func (c *dbClient) SupportRequestType(reqType, subType int64) bool {
 	case kv.ReqTypeIndex:
 		switch subType {
 		case kv.ReqSubTypeDesc, kv.ReqSubTypeBasic:
-			return true
+			return false
 		}
 	}
 	return false

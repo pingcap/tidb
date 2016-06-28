@@ -452,7 +452,7 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if cmp > 0 || (cmp == 0 && e.highExclude) {
-			// This span has finished iteration.
+			// This scan has finished iteration.
 			e.finished = true
 			continue
 		}
