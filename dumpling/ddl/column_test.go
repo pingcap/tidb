@@ -262,20 +262,19 @@ func (s *testColumnSuite) checkColumnKVExist(c *C, ctx context.Context, t table.
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	key := t.RecordKey(handle, col)
+	key := t.RecordKey(handle)
 	data, err := txn.Get(key)
-
+	c.Assert(err, IsNil)
+	colMap := make(map[int64]*types.FieldType)
+	colMap[col.ID] = &col.FieldType
+	rowMap, err := tablecodec.DecodeRow(data, colMap)
+	c.Assert(err, IsNil)
+	val := rowMap[col.ID]
 	if isExist {
-		c.Assert(err, IsNil)
-		v, err1 := tablecodec.DecodeColumnValue(data, &col.FieldType)
-		c.Assert(err1, IsNil)
-		value, err1 := v.ConvertTo(&col.FieldType)
-		c.Assert(err1, IsNil)
-		c.Assert(value.GetValue(), Equals, columnValue)
+		c.Assert(val.GetValue(), Equals, columnValue)
 	} else {
-		c.Assert(err, NotNil)
+		c.Assert(val.IsNull(), IsTrue)
 	}
-
 	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 }
@@ -286,9 +285,8 @@ func (s *testColumnSuite) checkNoneColumn(c *C, ctx context.Context, d *ddl, tbl
 	s.testGetColumn(c, t, col.Name.L, false)
 }
 
-func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}, isDropped bool) {
+func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
 	_, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
@@ -300,9 +298,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	})
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(1))
-
-	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, isDropped)
-
+	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, false)
 	// Test add a new row.
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
@@ -335,7 +331,6 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
-
 	i = int64(0)
 	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
@@ -347,7 +342,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	s.testGetColumn(c, t, col.Name.L, false)
 }
 
-func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}, isDropped bool) {
+func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	_, err := ctx.GetTxn(true)
@@ -362,7 +357,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(1))
 
-	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, isDropped)
+	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, false)
 
 	// Test add a new row.
 	_, err = ctx.GetTxn(true)
@@ -408,7 +403,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	s.testGetColumn(c, t, col.Name.L, false)
 }
 
-func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}, isDropped bool) {
+func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	_, err := ctx.GetTxn(true)
@@ -444,7 +439,7 @@ func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d
 	})
 	c.Assert(i, Equals, int64(2))
 
-	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, !isDropped)
+	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, true)
 
 	// Test remove a row.
 	_, err = ctx.GetTxn(true)
@@ -526,18 +521,17 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 	s.testGetColumn(c, t, col.Name.L, true)
 }
 
-func (s *testColumnSuite) checkAddOrDropColumn(c *C, state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}, isDropped bool) {
+func (s *testColumnSuite) checkAddColumn(c *C, state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) {
 	ctx := testNewContext(c, d)
-
 	switch state {
 	case model.StateNone:
 		s.checkNoneColumn(c, ctx, d, tblInfo, handle, col, columnValue)
 	case model.StateDeleteOnly:
-		s.checkDeleteOnlyColumn(c, ctx, d, tblInfo, handle, col, row, columnValue, isDropped)
+		s.checkDeleteOnlyColumn(c, ctx, d, tblInfo, handle, col, row, columnValue)
 	case model.StateWriteOnly:
-		s.checkWriteOnlyColumn(c, ctx, d, tblInfo, handle, col, row, columnValue, isDropped)
+		s.checkWriteOnlyColumn(c, ctx, d, tblInfo, handle, col, row, columnValue)
 	case model.StateWriteReorganization, model.StateDeleteReorganization:
-		s.checkReorganizationColumn(c, ctx, d, tblInfo, handle, col, row, columnValue, isDropped)
+		s.checkReorganizationColumn(c, ctx, d, tblInfo, handle, col, row, columnValue)
 	case model.StatePublic:
 		s.checkPublicColumn(c, ctx, d, tblInfo, handle, col, row, columnValue)
 	}
@@ -588,7 +582,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 			return
 		}
 
-		s.checkAddOrDropColumn(c, col.State, d, tblInfo, handle, col, row, defaultColValue, false)
+		s.checkAddColumn(c, col.State, d, tblInfo, handle, col, row, defaultColValue)
 
 		if col.State == model.StatePublic {
 			checkOK = true
@@ -635,7 +629,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	colName := "c4"
 	defaultColValue := int64(4)
 	row := types.MakeDatums(int64(1), int64(2), int64(3))
-	handle, err := t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
+	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
 	c.Assert(err, IsNil)
 
 	err = ctx.CommitTxn()
@@ -649,16 +643,12 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 		if checkOK {
 			return
 		}
-
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID).(*tables.Table)
 		col := table.FindCol(t.Columns, colName)
 		if col == nil {
-			s.checkAddOrDropColumn(c, model.StateNone, d, tblInfo, handle, oldCol, row, defaultColValue, true)
 			checkOK = true
 			return
 		}
-
-		s.checkAddOrDropColumn(c, col.State, d, tblInfo, handle, col, row, defaultColValue, true)
 		oldCol = col
 	}
 
@@ -672,6 +662,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 
 	job := testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, false)
 	testCheckJobDone(c, d, job, false)
+	c.Assert(checkOK, IsTrue)
 
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)

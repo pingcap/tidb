@@ -46,5 +46,5 @@ func (ts *testSuite) SetUpSuite(c *C) {
 }
 
 func init() {
-	log.SetLevelByString("error")
+	log.SetLevelByString("warn")
 }

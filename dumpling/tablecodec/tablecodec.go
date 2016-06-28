@@ -50,64 +50,51 @@ func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 	return buf
 }
 
-// EncodeColumnKey encodes the table id, row handle and columnID into a kv.Key
-func EncodeColumnKey(tableID int64, handle int64, columnID int64) kv.Key {
+// EncodeRowKeyWithHandle encodes the table id, row handle into a kv.Key
+func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
 	buf := make([]byte, 0, recordRowKeyLen+idLen)
 	buf = appendTableRecordPrefix(buf, tableID)
-	buf = EncodeRecordKey(buf, handle, columnID)
+	buf = EncodeRecordKey(buf, handle)
 	return buf
 }
 
-// EncodeRecordKey encodes the recordPrefix, row handle and columnID into a kv.Key.
-// TODO: Remove this function
-func EncodeRecordKey(recordPrefix kv.Key, h int64, columnID int64) kv.Key {
+// EncodeRecordKey encodes the recordPrefix, row handle into a kv.Key.
+func EncodeRecordKey(recordPrefix kv.Key, h int64) kv.Key {
 	buf := make([]byte, 0, len(recordPrefix)+16)
 	buf = append(buf, recordPrefix...)
 	buf = codec.EncodeInt(buf, h)
-	if columnID != 0 {
-		buf = codec.EncodeInt(buf, columnID)
-	}
 	return buf
 }
 
-// DecodeRecordKey decodes the key and gets the tableID, handle and columnID.
-func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, columnID int64, err error) {
+// DecodeRecordKey decodes the key and gets the tableID, handle.
+func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 	k := key
 	if !key.HasPrefix(tablePrefix) {
-		return 0, 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
+		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
 	}
 
 	key = key[len(tablePrefix):]
 	key, tableID, err = codec.DecodeInt(key)
 	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 
 	if !key.HasPrefix(recordPrefixSep) {
-		return 0, 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
+		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
 	}
 
 	key = key[len(recordPrefixSep):]
 
 	key, handle, err = codec.DecodeInt(key)
 	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
-	if len(key) == 0 {
-		return
-	}
-
-	key, columnID, err = codec.DecodeInt(key)
-	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
-	}
-
 	return
 }
 
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (int64, error) {
-	_, handle, _, err := DecodeRecordKey(key)
+	_, handle, err := DecodeRecordKey(key)
 	return handle, errors.Trace(err)
 }
 
@@ -137,6 +124,10 @@ func EncodeRow(row []types.Datum, colIDs []int64) ([]byte, error) {
 			return nil, errors.Trace(err)
 		}
 		values[2*i+1] = fc
+	}
+	if len(values) == 0 {
+		// We could not set nil value into kv.
+		return []byte{codec.NilFlag}, nil
 	}
 	return codec.EncodeValue(nil, values...)
 }
@@ -214,31 +205,95 @@ func DecodeColumnValue(data []byte, ft *types.FieldType) (types.Datum, error) {
 }
 
 // DecodeRow decodes a byte slice into datums.
-// TODO: We should only decode columns in the cols map.
 // Row layout: colID1, value1, colID2, value2, .....
-func DecodeRow(data []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum, error) {
-	if data == nil {
+func DecodeRow(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum, error) {
+	if b == nil {
 		return nil, nil
 	}
-	values, err := codec.Decode(data)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(values)%2 != 0 {
-		return nil, errors.New("Decoded row value length is not even number!")
+	if len(b) == 1 && b[0] == codec.NilFlag {
+		return nil, nil
 	}
 	row := make(map[int64]types.Datum, len(cols))
-	for i := 0; i < len(values); i += 2 {
-		cid := values[i]
+	cnt := 0
+	var (
+		data []byte
+		err  error
+	)
+	for len(b) > 0 {
+		// Get col id.
+		data, b, err = codec.CutOne(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		_, cid, err := codec.DecodeOne(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Get col value.
+		data, b, err = codec.CutOne(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		id := cid.GetInt64()
 		ft, ok := cols[id]
 		if ok {
-			v := values[i+1]
+			_, v, err := codec.DecodeOne(data)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			v, err = Unflatten(v, ft)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			row[id] = v
+			cnt++
+			if cnt == len(cols) {
+				// Get enough data.
+				break
+			}
+		}
+	}
+	return row, nil
+}
+
+// CutRow cut encoded row into byte slices and return interested columns' byte slice.
+// Row layout: colID1, value1, colID2, value2, .....
+func CutRow(data []byte, cols map[int64]*types.FieldType) (map[int64][]byte, error) {
+	if data == nil {
+		return nil, nil
+	}
+	if len(data) == 1 && data[0] == codec.NilFlag {
+		return nil, nil
+	}
+	row := make(map[int64][]byte, len(cols))
+	cnt := 0
+	var (
+		b   []byte
+		err error
+	)
+	for len(data) > 0 {
+		// Get col id.
+		b, data, err = codec.CutOne(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		_, cid, err := codec.DecodeOne(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Get col value.
+		b, data, err = codec.CutOne(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		id := cid.GetInt64()
+		_, ok := cols[id]
+		if ok {
+			row[id] = b
+			cnt++
+			if cnt == len(cols) {
+				break
+			}
 		}
 	}
 	return row, nil

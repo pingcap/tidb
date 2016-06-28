@@ -14,6 +14,7 @@
 package codec
 
 import (
+	"encoding/binary"
 	"time"
 
 	"github.com/juju/errors"
@@ -179,4 +180,99 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		return b, d, errors.Trace(err)
 	}
 	return b, d, nil
+}
+
+// CutOne cuts the first encoded value from b.
+// It will return the first encoded item and the remains as byte slice.
+func CutOne(b []byte) (data []byte, remain []byte, err error) {
+	l, err := peek(b)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return b[:l], b[l:], nil
+}
+
+// peeks the first encoded value from b and returns its length.
+func peek(b []byte) (length int, err error) {
+	if len(b) < 1 {
+		return 0, errors.New("invalid encoded key")
+	}
+	flag := b[0]
+	length++
+	b = b[1:]
+	var l int
+	switch flag {
+	case NilFlag:
+	case intFlag, uintFlag, floatFlag, durationFlag:
+		// Those types are stored in 8 bytes.
+		l = 8
+	case bytesFlag:
+		l, err = peekBytes(b, false)
+	case compactBytesFlag:
+		l, err = peekCompactBytes(b)
+	case decimalFlag:
+		l, err = peekDecimal(b)
+	default:
+		return 0, errors.Errorf("invalid encoded key flag %v", flag)
+	}
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	length += l
+	return
+}
+
+func peekBytes(b []byte, reverse bool) (int, error) {
+	offset := 0
+	for {
+		if len(b) < offset+encGroupSize+1 {
+			return 0, errors.New("insufficient bytes to decode value")
+		}
+		// The byte slice is encoded into many groups.
+		// For each group, there are 8 bytes for data and 1 byte for marker.
+		marker := b[offset+encGroupSize]
+		var padCount byte
+		if reverse {
+			padCount = marker
+		} else {
+			padCount = encMarker - marker
+		}
+		offset += encGroupSize + 1
+		// When padCount is not zero, it means we get the end of the byte slice.
+		if padCount != 0 {
+			break
+		}
+	}
+	return offset, nil
+}
+
+func peekCompactBytes(b []byte) (int, error) {
+	// Get length.
+	v, n := binary.Varint(b)
+	vi := int(v)
+	if n < 0 {
+		return 0, errors.New("value larger than 64 bits")
+	} else if n == 0 {
+		return 0, errors.New("insufficient bytes to decode value")
+	}
+	if len(b) < vi+n {
+		return 0, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
+	}
+	return n + vi, nil
+}
+
+func peekDecimal(b []byte) (int, error) {
+	if len(b) < 9 {
+		return 0, errors.New("cutDecimal error: Invalid decimal data")
+	}
+	// The first byte is value sign.
+	// The following 8 bytes are exp value.
+	l := 9
+	desc := int64(b[l]) == negativeSign
+	// Abs value bytes
+	bl, err := peekBytes(b[l:], desc)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return l + bl, nil
 }
