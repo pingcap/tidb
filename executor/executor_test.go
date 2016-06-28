@@ -1412,6 +1412,10 @@ func (s *testSuite) TestNewSubquery(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select (select count(*) from t where t.c = k.d) from t k")
 	result.Check(testkit.Rows("1", "1", "0"))
+	result = tk.MustQuery("select t.c from t where (t.c, t.d) in (select * from t)")
+	result.Check(testkit.Rows("1", "2", "3"))
+	result = tk.MustQuery("select t.c from t where (t.c, t.d) not in (select * from t)")
+	result.Check(testkit.Rows())
 	plan.UseNewPlanner = false
 }
 

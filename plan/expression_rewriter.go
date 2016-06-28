@@ -199,9 +199,47 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 		return inNode, true
 	case *ast.PatternInExpr:
-		// TODO: support in subquery
 		if v.Sel != nil {
-			er.err = errors.New("In subquery doesn't currently supported.")
+			v.Expr.Accept(er)
+			if er.err != nil {
+				return inNode, true
+			}
+			lexpr := er.ctxStack[len(er.ctxStack)-1]
+			subq, ok := v.Sel.(*ast.SubqueryExpr)
+			if !ok {
+				er.err = errors.Errorf("Unknown compare type %T.", v.Sel)
+				return inNode, true
+			}
+			np, outerSchema := er.buildSubquery(subq)
+			if er.err != nil {
+				return inNode, true
+			}
+			if getRowLen(lexpr) != len(np.GetSchema()) {
+				er.err = errors.Errorf("Operand should contain %d column(s)", getRowLen(lexpr))
+				return inNode, true
+			}
+			var checkCondition expression.Expression
+			var rexpr expression.Expression
+			if len(np.GetSchema()) == 1 {
+				rexpr = np.GetSchema()[0].DeepCopy()
+			} else {
+				args := make([]expression.Expression, 0, len(np.GetSchema()))
+				for _, col := range np.GetSchema() {
+					args = append(args, col.DeepCopy())
+				}
+				rexpr = expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), args...)
+			}
+			op, all := ast.EQ, false
+			if v.Not {
+				op, all = ast.NE, true
+			}
+			checkCondition, err := constructBinaryOpFunction(lexpr, rexpr, op)
+			if err != nil {
+				er.err = errors.Trace(err)
+				return inNode, true
+			}
+			er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: all})
+			er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
 			return inNode, true
 		}
 	case *ast.SubqueryExpr:
@@ -320,7 +358,9 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	case *ast.PatternLikeExpr:
 		er.likeToScalarFunc(v)
 	case *ast.PatternInExpr:
-		er.inToScalarFunc(v)
+		if v.Sel == nil {
+			er.inToScalarFunc(v)
+		}
 	case *ast.UnaryOperationExpr:
 		if getRowLen(er.ctxStack[stkLen-1]) != 1 {
 			er.err = errors.New("Operand should contain 1 column(s)")
