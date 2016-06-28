@@ -792,15 +792,30 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
 	return p
 }
 
-func (b *planBuilder) buildApply(p, inner Plan, schema expression.Schema) Plan {
+// ApplyConditionChecker checks whether all the/ any output of apply matches a condition.
+type ApplyConditionChecker struct {
+	Condition expression.Expression
+	All       bool
+}
+
+func (b *planBuilder) buildApply(p, inner Plan, schema expression.Schema, checker *ApplyConditionChecker) Plan {
 	ap := &Apply{
 		InnerPlan:   inner,
 		OuterSchema: schema,
+		Checker:     checker,
 	}
 	ap.id = b.allocID(ap)
 	addChild(ap, p)
 	innerSchema := inner.GetSchema().DeepCopy()
-	ap.SetSchema(append(p.GetSchema().DeepCopy(), innerSchema...))
+	if checker == nil {
+		ap.SetSchema(append(p.GetSchema().DeepCopy(), innerSchema...))
+	} else {
+		ap.SetSchema(append(p.GetSchema().DeepCopy(), &expression.Column{
+			FromID:  ap.id,
+			ColName: model.NewCIStr("exists_row"),
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		}))
+	}
 	ap.correlated = p.IsCorrelated()
 	return ap
 }

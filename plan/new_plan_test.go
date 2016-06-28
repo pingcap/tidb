@@ -248,6 +248,20 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 				"*plan.NewTableScan_1": {"a", "b", "c"},
 			},
 		},
+		{
+			sql: "select a from t where b < any (select c from t)",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a", "b"},
+				"*plan.NewTableScan_2": {"c"},
+			},
+		},
+		{
+			sql: "select a from t where (b,a) = all (select c,d from t)",
+			ans: map[string][]string{
+				"*plan.NewTableScan_1": {"a", "b"},
+				"*plan.NewTableScan_2": {"c", "d"},
+			},
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)

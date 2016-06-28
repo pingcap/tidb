@@ -119,6 +119,55 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.ctxStack = append(er.ctxStack, col)
 			return inNode, true
 		}
+	case *ast.CompareSubqueryExpr:
+		v.L.Accept(er)
+		if er.err != nil {
+			return inNode, true
+		}
+		lexpr := er.ctxStack[len(er.ctxStack)-1]
+		subq, ok := v.R.(*ast.SubqueryExpr)
+		if !ok {
+			er.err = errors.Errorf("Unknown compare type %T.", v.R)
+			return inNode, true
+		}
+		np, outerSchema := er.buildSubquery(subq)
+		if er.err != nil {
+			return inNode, true
+		}
+		canMultiCol := (v.All && v.Op == opcode.EQ) || (!v.All && v.Op == opcode.NE)
+		if !canMultiCol && (getRowLen(lexpr) != 1 || len(np.GetSchema()) != 1) {
+			er.err = errors.New("Operand should contain 1 column(s)")
+			return inNode, true
+		}
+		if getRowLen(lexpr) != len(np.GetSchema()) {
+			er.err = errors.Errorf("Operand should contain %d column(s)", getRowLen(lexpr))
+			return inNode, true
+		}
+		var checkCondition expression.Expression
+		var rexpr expression.Expression
+		if len(np.GetSchema()) == 1 {
+			rexpr = np.GetSchema()[0].DeepCopy()
+		} else {
+			args := make([]expression.Expression, 0, len(np.GetSchema()))
+			for _, col := range np.GetSchema() {
+				args = append(args, col.DeepCopy())
+			}
+			rexpr = expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), args...)
+		}
+		switch v.Op {
+		case opcode.EQ, opcode.NE, opcode.NullEQ:
+			var err error
+			checkCondition, err = constructBinaryOpFunction(lexpr, rexpr, opcode.Ops[v.Op])
+			if err != nil {
+				er.err = errors.Trace(err)
+				return inNode, true
+			}
+		default:
+			checkCondition = expression.NewFunction(opcode.Ops[v.Op], types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
+		}
+		er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: v.All})
+		er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
+		return inNode, true
 	case *ast.ExistsSubqueryExpr:
 		subq, ok := v.Sel.(*ast.SubqueryExpr)
 		if !ok {
@@ -131,7 +180,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 		np = er.b.buildExists(np)
 		if np.IsCorrelated() {
-			er.p = er.b.buildApply(er.p, np, outerSchema)
+			er.p = er.b.buildApply(er.p, np, outerSchema, nil)
 			er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
 		} else {
 			_, err := pruneColumnsAndResolveIndices(np, np.GetSchema())
@@ -156,7 +205,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 		np = er.b.buildMaxOneRow(np)
 		if np.IsCorrelated() {
-			er.p = er.b.buildApply(er.p, np, outerSchema)
+			er.p = er.b.buildApply(er.p, np, outerSchema, nil)
 			if len(np.GetSchema()) > 1 {
 				newCols := make([]expression.Expression, 0, len(np.GetSchema()))
 				for _, col := range np.GetSchema() {
@@ -272,7 +321,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			return retNode, false
 		}
 		er.ctxStack = append(er.ctxStack, column)
-	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause, *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
+	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause, *ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr:
 	case *ast.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: types.NewFieldType(v.Datum.Kind())}
 		er.ctxStack = append(er.ctxStack, value)
