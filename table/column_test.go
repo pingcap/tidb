@@ -183,6 +183,19 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 	}
 }
 
+func (s *testColumnSuite) TestGetDefaultValue(c *C) {
+	colInfo := &model.ColumnInfo{
+		FieldType: *types.NewFieldType(mysql.TypeLong),
+		State:     model.StatePublic,
+		DefaultValue: 1.0,
+	}
+	val, ok, err := GetColDefaultValue(nil, colInfo)
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+	c.Assert(val.Kind(), Equals, types.KindInt64)
+	c.Assert(val.GetInt64(), Equals, int64(1))
+}
+
 func newCol(name string) *Column {
 	return &Column{
 		model.ColumnInfo{
