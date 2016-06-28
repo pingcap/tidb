@@ -84,8 +84,8 @@ type Table interface {
 	// FirstKey returns the first key.
 	FirstKey() kv.Key
 
-	// RecordKey returns the key in KV storage for the column.
-	RecordKey(h int64, col *Column) kv.Key
+	// RecordKey returns the key in KV storage for the row.
+	RecordKey(h int64) kv.Key
 
 	// Truncate truncates the table.
 	Truncate(ctx context.Context) (err error)

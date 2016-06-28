@@ -687,3 +687,79 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		c.Assert(cmp, LessEqual, 0)
 	}
 }
+
+func (s *testCodecSuite) TestCut(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []struct {
+		Input  []types.Datum
+		Expect []types.Datum
+	}{
+		{
+			types.MakeDatums(int64(1)),
+			types.MakeDatums(int64(1)),
+		},
+
+		{
+			types.MakeDatums(float32(1), float64(3.15), []byte("123"), "123"),
+			types.MakeDatums(float64(1), float64(3.15), []byte("123"), []byte("123")),
+		},
+		{
+			types.MakeDatums(uint64(1), float64(3.15), []byte("123"), int64(-1)),
+			types.MakeDatums(uint64(1), float64(3.15), []byte("123"), int64(-1)),
+		},
+
+		{
+			types.MakeDatums(true, false),
+			types.MakeDatums(int64(1), int64(0)),
+		},
+
+		{
+			types.MakeDatums(nil),
+			types.MakeDatums(nil),
+		},
+
+		{
+			types.MakeDatums(mysql.Hex{Value: 100}, mysql.Bit{Value: 100, Width: 8}),
+			types.MakeDatums(int64(100), uint64(100)),
+		},
+
+		{
+			types.MakeDatums(mysql.Enum{Name: "a", Value: 1}, mysql.Set{Name: "a", Value: 1}),
+			types.MakeDatums(uint64(1), uint64(1)),
+		},
+		{
+			types.MakeDatums(float32(1), float64(3.15), []byte("123456789012345")),
+			types.MakeDatums(float64(1), float64(3.15), []byte("123456789012345")),
+		},
+	}
+	for i, t := range table {
+		comment := Commentf("%d %v", i, t)
+		b, err := EncodeKey(nil, t.Input...)
+		c.Assert(err, IsNil, comment)
+		var d []byte
+		for j, e := range t.Expect {
+			d, b, err = CutOne(b)
+			c.Assert(err, IsNil)
+			c.Assert(d, NotNil)
+			ed, err1 := EncodeKey(nil, e)
+			c.Assert(err1, IsNil)
+			c.Assert(d, DeepEquals, ed, Commentf("%d:%d %#v", i, j, e))
+		}
+		c.Assert(b, HasLen, 0)
+	}
+	for i, t := range table {
+		comment := Commentf("%d %v", i, t)
+		b, err := EncodeValue(nil, t.Input...)
+		c.Assert(err, IsNil, comment)
+		var d []byte
+		for j, e := range t.Expect {
+			d, b, err = CutOne(b)
+			c.Assert(err, IsNil)
+			c.Assert(d, NotNil)
+			ed, err1 := EncodeValue(nil, e)
+			c.Assert(err1, IsNil)
+			c.Assert(d, DeepEquals, ed, Commentf("%d:%d %#v", i, j, e))
+		}
+		c.Assert(b, HasLen, 0)
+	}
+}

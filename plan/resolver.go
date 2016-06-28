@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/db"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -37,8 +38,8 @@ func ResolveName(node ast.Node, info infoschema.InfoSchema, ctx context.Context)
 }
 
 // MockResolveName only serves for test.
-func MockResolveName(node ast.Node, info infoschema.InfoSchema, defaultSchema string) error {
-	resolver := nameResolver{Info: info, Ctx: nil, DefaultSchema: model.NewCIStr(defaultSchema)}
+func MockResolveName(node ast.Node, info infoschema.InfoSchema, defaultSchema string, ctx context.Context) error {
+	resolver := nameResolver{Info: info, Ctx: ctx, DefaultSchema: model.NewCIStr(defaultSchema)}
 	node.Accept(&resolver)
 	return resolver.Err
 }
@@ -358,9 +359,13 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 	tn.DBInfo = dbInfo
 
 	rfs := make([]*ast.ResultField, 0, len(tn.TableInfo.Columns))
+	sVars := variable.GetSessionVars(nr.Ctx)
 	for _, v := range tn.TableInfo.Columns {
 		if v.State != model.StatePublic {
-			continue
+			if !sVars.InUpdateStmt || v.State != model.StateWriteReorganization {
+				// TODO: check this
+				continue
+			}
 		}
 		expr := &ast.ValueExpr{}
 		expr.SetType(&v.FieldType)
