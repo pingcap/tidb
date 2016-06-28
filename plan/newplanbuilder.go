@@ -250,7 +250,6 @@ func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper 
 		p = np
 		proj.correlated = proj.correlated || correlated
 		proj.Exprs = append(proj.Exprs, newExpr)
-		fromID := proj.id
 		var tblName, colName model.CIStr
 		if field.AsName.L != "" {
 			colName = field.AsName
@@ -261,7 +260,7 @@ func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper 
 			colName = model.NewCIStr(field.Expr.Text())
 		}
 		schemaCol := &expression.Column{
-			FromID:  fromID,
+			FromID:  proj.id,
 			TblName: tblName,
 			ColName: colName,
 			RetType: newExpr.GetType(),
@@ -636,19 +635,20 @@ func (b *planBuilder) unfoldWildStar(p Plan, selectFields []*ast.SelectField) (r
 	for _, field := range selectFields {
 		if field.WildCard == nil {
 			resultList = append(resultList, field)
-		} else {
-			dbName := field.WildCard.Schema
-			tblName := field.WildCard.Table
-			for _, col := range p.GetSchema() {
-				if (dbName.L == "" || dbName.L == col.DBName.L) &&
-					(tblName.L == "" || tblName.L == col.TblName.L) {
-					resultList = append(resultList, &ast.SelectField{
-						Expr: &ast.ColumnNameExpr{Name: &ast.ColumnName{
+			continue
+		}
+		dbName := field.WildCard.Schema
+		tblName := field.WildCard.Table
+		for _, col := range p.GetSchema() {
+			if (dbName.L == "" || dbName.L == col.DBName.L) &&
+				(tblName.L == "" || tblName.L == col.TblName.L) {
+				resultList = append(resultList, &ast.SelectField{
+					Expr: &ast.ColumnNameExpr{
+						Name: &ast.ColumnName{
 							Schema: col.DBName,
 							Table:  col.TblName,
 							Name:   col.ColName,
 						}}})
-				}
 			}
 		}
 	}
@@ -657,11 +657,13 @@ func (b *planBuilder) unfoldWildStar(p Plan, selectFields []*ast.SelectField) (r
 
 func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	hasAgg := b.detectSelectAgg(sel)
-	var aggFuncs []*ast.AggregateFuncExpr
-	var havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
-	var p Plan
-	var gbyCols []expression.Expression
-	var correlated bool
+	var (
+		p                             Plan
+		correlated                    bool
+		aggFuncs                      []*ast.AggregateFuncExpr
+		havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
+		gbyCols                       []expression.Expression
+	)
 	if sel.From != nil {
 		p = b.buildResultSetNode(sel.From.TableRefs)
 	} else {

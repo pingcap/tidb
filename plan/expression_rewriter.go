@@ -219,7 +219,6 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		}
 		er.ctxStack = er.ctxStack[:stkLen-length]
 		er.ctxStack = append(er.ctxStack, expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), rows...))
-
 	case *ast.FuncCallExpr:
 		er.funcCallToScalarFunc(v)
 	case *ast.PositionExpr:
