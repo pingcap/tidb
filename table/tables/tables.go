@@ -334,10 +334,6 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			value, err = table.CastValue(ctx, value, col)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
 		} else {
 			value = r[col.Offset]
 		}
