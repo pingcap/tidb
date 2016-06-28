@@ -627,7 +627,11 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 		}
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
-			data = append(data, rowMap[col.ID])
+			if col.IsPKHandleColumn(t.Meta()) {
+				data = append(data, types.NewIntDatum(handle))
+			} else {
+				data = append(data, rowMap[col.ID])
+			}
 		}
 		more, err := fn(handle, data, cols)
 		if !more || err != nil {
