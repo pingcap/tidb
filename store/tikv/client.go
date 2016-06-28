@@ -68,9 +68,11 @@ func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request) (*coproces
 	}
 	err = c.doSend(conn, &msg)
 	if err != nil {
+		conn.Close()
 		return nil, errors.Trace(err)
 	}
 	if msg.GetMsgType() != msgpb.MessageType_CopResp || msg.GetCopResp() == nil {
+		conn.Close()
 		return nil, errors.Trace(errInvalidResponse)
 	}
 	return msg.GetCopResp(), nil
@@ -89,9 +91,11 @@ func (c *rpcClient) SendKVReq(addr string, req *kvrpcpb.Request) (*kvrpcpb.Respo
 	}
 	err = c.doSend(conn, &msg)
 	if err != nil {
+		conn.Close()
 		return nil, errors.Trace(err)
 	}
 	if msg.GetMsgType() != msgpb.MessageType_KvResp || msg.GetKvResp() == nil {
+		conn.Close()
 		return nil, errors.Trace(errInvalidResponse)
 	}
 	return msg.GetKvResp(), nil
@@ -112,6 +116,7 @@ func (c *rpcClient) doSend(conn *Conn, msg *msgpb.Message) error {
 	}
 	if curMsgID != msgID {
 		log.Errorf("Sent msgID[%d] mismatches recv msgID[%d]", curMsgID, msgID)
+		return errors.Trace(errInvalidResponse)
 	}
 	log.Debugf("Receive response msgID[%d] type[%v]", msgID, msg.GetMsgType())
 	return nil

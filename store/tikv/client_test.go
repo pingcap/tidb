@@ -111,6 +111,39 @@ func (s *testClientSuite) TestRetryReadThenClose(c *C) {
 	c.Assert(resp, IsNil)
 }
 
+func (s *testClientSuite) TestWrongMessageID(c *C) {
+	l := startServer(":61237", c, func(conn net.Conn, c *C) {
+		var msg msgpb.Message
+		msgID, err := util.ReadMessage(conn, &msg)
+		c.Assert(err, IsNil)
+		resp := msgpb.Message{
+			MsgType: msgpb.MessageType_KvResp.Enum(),
+			KvResp: &pb.Response{
+				Type: msg.GetKvReq().GetType().Enum(),
+			},
+		}
+		// Send the request back to client, set wrong msgID for the 1st
+		// request.
+		if msgID == 1 {
+			err = util.WriteMessage(conn, msgID+100, &resp)
+		} else {
+			err = util.WriteMessage(conn, msgID, &resp)
+		}
+		c.Assert(err, IsNil)
+	})
+	defer l.Close()
+	cli := newRPCClient()
+	req := &pb.Request{
+		Type: pb.MessageType_CmdGet.Enum(),
+	}
+	// Wrong ID for the first request, correct for the rests.
+	_, err := cli.SendKVReq(":61237", req)
+	c.Assert(err, NotNil)
+	resp, err := cli.SendKVReq(":61237", req)
+	c.Assert(err, IsNil)
+	c.Assert(resp.GetType(), Equals, req.GetType())
+}
+
 func startServer(host string, c *C, handleFunc func(net.Conn, *C)) net.Listener {
 	l, err := net.Listen("tcp", host)
 	c.Assert(err, IsNil)

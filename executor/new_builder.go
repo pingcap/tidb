@@ -15,7 +15,6 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -23,25 +22,11 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// compose CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func composeCondition(conditions []expression.Expression) expression.Expression {
-	length := len(conditions)
-	if length == 0 {
-		return nil
-	}
-	if length == 1 {
-		return conditions[0]
-	}
-	expr, _ := expression.NewFunction(ast.AndAnd, []expression.Expression{composeCondition(conditions[0 : length/2]),
-		composeCondition(conditions[length/2:])}, nil)
-	return expr
-}
-
 //TODO: select join algorithm during cbo phase.
 func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 	e := &HashJoinExec{
 		schema:      v.GetSchema(),
-		otherFilter: composeCondition(v.OtherConditions),
+		otherFilter: expression.ComposeCNFCondition(v.OtherConditions),
 		prepared:    false,
 		ctx:         b.ctx,
 	}
@@ -56,23 +41,23 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 	case plan.LeftOuterJoin:
 		e.outter = true
 		e.leftSmall = false
-		e.smallFilter = composeCondition(v.RightConditions)
-		e.bigFilter = composeCondition(v.LeftConditions)
+		e.smallFilter = expression.ComposeCNFCondition(v.RightConditions)
+		e.bigFilter = expression.ComposeCNFCondition(v.LeftConditions)
 		e.smallHashKey = rightHashKey
 		e.bigHashKey = leftHashKey
 	case plan.RightOuterJoin:
 		e.outter = true
 		e.leftSmall = true
-		e.smallFilter = composeCondition(v.LeftConditions)
-		e.bigFilter = composeCondition(v.RightConditions)
+		e.smallFilter = expression.ComposeCNFCondition(v.LeftConditions)
+		e.bigFilter = expression.ComposeCNFCondition(v.RightConditions)
 		e.smallHashKey = leftHashKey
 		e.bigHashKey = rightHashKey
 	case plan.InnerJoin:
 		//TODO: assume right table is the small one before cbo is realized.
 		e.outter = false
 		e.leftSmall = false
-		e.smallFilter = composeCondition(v.RightConditions)
-		e.bigFilter = composeCondition(v.LeftConditions)
+		e.smallFilter = expression.ComposeCNFCondition(v.RightConditions)
+		e.bigFilter = expression.ComposeCNFCondition(v.LeftConditions)
 		e.smallHashKey = rightHashKey
 		e.bigHashKey = leftHashKey
 	default:
@@ -125,7 +110,7 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 
 	return &SelectionExec{
 		Src:       src,
-		Condition: composeCondition(v.Conditions),
+		Condition: expression.ComposeCNFCondition(v.Conditions),
 		schema:    v.GetSchema(),
 		ctx:       b.ctx,
 	}
@@ -173,7 +158,7 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan, s *plan.Select
 		ret = ts
 		if !txn.IsReadOnly() {
 			if s != nil {
-				ret = b.buildNewUnionScanExec(ret, composeCondition(append(s.Conditions, v.AccessCondition...)))
+				ret = b.buildNewUnionScanExec(ret, expression.ComposeCNFCondition(append(s.Conditions, v.AccessCondition...)))
 			} else {
 				ret = b.buildNewUnionScanExec(ret, nil)
 			}
@@ -227,4 +212,17 @@ func (b *executorBuilder) buildTrim(v *plan.Trim) Executor {
 		Src:    b.build(v.GetChildByIndex(0)),
 		len:    len(v.GetSchema()),
 	}
+}
+
+func (b *executorBuilder) buildNewUnion(v *plan.NewUnion) Executor {
+	e := &NewUnionExec{
+		schema: v.GetSchema(),
+		fields: v.Fields(),
+		Srcs:   make([]Executor, len(v.Selects)),
+	}
+	for i, sel := range v.Selects {
+		selExec := b.build(sel)
+		e.Srcs[i] = selExec
+	}
+	return e
 }

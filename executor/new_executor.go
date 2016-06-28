@@ -1006,3 +1006,64 @@ func (e *TrimExec) Next() (*Row, error) {
 	row.Data = row.Data[:e.len]
 	return row, nil
 }
+
+// NewUnionExec represents union executor.
+type NewUnionExec struct {
+	fields []*ast.ResultField
+	schema expression.Schema
+	Srcs   []Executor
+	cursor int
+}
+
+// Schema implements Executor Schema interface.
+func (e *NewUnionExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Fields implements Executor Fields interface.
+func (e *NewUnionExec) Fields() []*ast.ResultField {
+	return e.fields
+}
+
+// Next implements Executor Next interface.
+func (e *NewUnionExec) Next() (*Row, error) {
+	for {
+		if e.cursor >= len(e.Srcs) {
+			return nil, nil
+		}
+		sel := e.Srcs[e.cursor]
+		row, err := sel.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			e.cursor++
+			continue
+		}
+		if e.cursor != 0 {
+			for i := range row.Data {
+				// The column value should be casted as the same type of the first select statement in corresponding position.
+				col := e.schema[i]
+				var val types.Datum
+				val, err = row.Data[i].ConvertTo(col.RetType)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				row.Data[i] = val
+			}
+		}
+		return row, nil
+	}
+}
+
+// Close implements Executor Close interface.
+func (e *NewUnionExec) Close() error {
+	e.cursor = 0
+	for _, sel := range e.Srcs {
+		er := sel.Close()
+		if er != nil {
+			return errors.Trace(er)
+		}
+	}
+	return nil
+}
