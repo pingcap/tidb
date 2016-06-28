@@ -22,8 +22,9 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int, added bool) {
@@ -164,17 +165,17 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		err = d.runReorgJob(func() error {
-			return d.backfillColumn(tbl, columnInfo, reorgInfo)
-		})
-
-		if terror.ErrorEqual(err, errWaitReorgTimeout) {
-			// if timeout, we should return, check for the owner and re-wait job done.
-			return nil
-		}
-		if err != nil {
-			return errors.Trace(err)
+		if columnInfo.DefaultValue != nil {
+			err = d.runReorgJob(func() error {
+				return d.backfillColumn(tbl, columnInfo, reorgInfo)
+			})
+			if terror.ErrorEqual(err, errWaitReorgTimeout) {
+				// if timeout, we should return, check for the owner and re-wait job done.
+				return nil
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		// Adjust column offset.
@@ -272,23 +273,6 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		tbl, err := d.getTable(schemaID, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = d.runReorgJob(func() error {
-			return d.dropTableColumn(tbl, colInfo, reorgInfo)
-		})
-
-		if terror.ErrorEqual(err, errWaitReorgTimeout) {
-			// if timeout, we should return, check for the owner and re-wait job done.
-			return nil
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-
 		// all reorganization jobs done, drop this column
 		newColumns := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
 		for _, col := range tblInfo.Columns {
@@ -337,53 +321,53 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 }
 
 func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, handles []int64, reorgInfo *reorgInfo) error {
+	defaultVal, _, err := table.GetColDefaultValue(nil, columnInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	colMap := make(map[int64]*types.FieldType)
+	for _, col := range t.Meta().Columns {
+		colMap[col.ID] = &col.FieldType
+	}
 	for _, handle := range handles {
 		log.Info("[ddl] backfill column...", handle)
-
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err := d.isReorgRunnable(txn); err != nil {
 				return errors.Trace(err)
 			}
-
-			// First check if row exists.
-			exist, err := checkRowExist(txn, t, handle)
-			if err != nil {
-				return errors.Trace(err)
-			} else if !exist {
+			rowKey := t.RecordKey(handle)
+			rowVal, err := txn.Get(rowKey)
+			if terror.ErrorEqual(err, kv.ErrNotExist) {
 				// If row doesn't exist, skip it.
 				return nil
 			}
-
-			backfillKey := t.RecordKey(handle, &table.Column{ColumnInfo: *columnInfo})
-			backfillValue, err := txn.Get(backfillKey)
-			if err != nil && !kv.IsErrNotFound(err) {
+			if err != nil {
 				return errors.Trace(err)
 			}
-			if backfillValue != nil {
+			rowColumns, err := tablecodec.DecodeRow(rowVal, colMap)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if _, ok := rowColumns[columnInfo.ID]; ok {
+				// The column is already added by update or insert statement, skip it.
 				return nil
 			}
-
-			value, _, err := table.GetColDefaultValue(nil, columnInfo)
+			newColumnIDs := make([]int64, 0, len(rowColumns)+1)
+			newRow := make([]types.Datum, 0, len(rowColumns)+1)
+			for colID, val := range rowColumns {
+				newColumnIDs = append(newColumnIDs, colID)
+				newRow = append(newRow, val)
+			}
+			newColumnIDs = append(newColumnIDs, columnInfo.ID)
+			newRow = append(newRow, defaultVal)
+			newRowVal, err := tablecodec.EncodeRow(newRow, newColumnIDs)
 			if err != nil {
 				return errors.Trace(err)
 			}
-
-			// must convert to the column field type.
-			v, err := value.ConvertTo(&columnInfo.FieldType)
+			err = txn.Set(rowKey, newRowVal)
 			if err != nil {
 				return errors.Trace(err)
 			}
-
-			err = lockRow(txn, t, handle)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			err = tables.SetColValue(txn, backfillKey, v)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
 			return errors.Trace(reorgInfo.UpdateHandle(txn, handle))
 		})
 
@@ -393,40 +377,4 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 	}
 
 	return nil
-}
-
-func (d *ddl) dropTableColumn(t table.Table, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
-	version := reorgInfo.SnapshotVer
-	seekHandle := reorgInfo.Handle
-
-	col := &table.Column{ColumnInfo: *colInfo}
-	for {
-		handles, err := d.getSnapshotRows(t, version, seekHandle)
-		if err != nil {
-			return errors.Trace(err)
-		} else if len(handles) == 0 {
-			return nil
-		}
-
-		seekHandle = handles[len(handles)-1] + 1
-
-		err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err1 := d.isReorgRunnable(txn); err1 != nil {
-				return errors.Trace(err1)
-			}
-
-			var h int64
-			for _, h = range handles {
-				key := t.RecordKey(h, col)
-				err1 := txn.Delete(key)
-				if err1 != nil && !terror.ErrorEqual(err1, kv.ErrNotExist) {
-					return errors.Trace(err1)
-				}
-			}
-			return errors.Trace(reorgInfo.UpdateHandle(txn, h))
-		})
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 }

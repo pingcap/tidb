@@ -155,10 +155,6 @@ func (e *UpdateExec) getTableOffset(t table.Table) int {
 }
 
 func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, updateColumns map[int]*ast.Assignment, t table.Table, offset int, onDuplicateUpdate bool) error {
-	if err := t.LockRow(ctx, h, false); err != nil {
-		return errors.Trace(err)
-	}
-
 	cols := t.Cols()
 	touched := make(map[int]bool, len(cols))
 
