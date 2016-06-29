@@ -285,19 +285,11 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		e.valueTypes[i] = &col.FieldType
 	}
 
-	var prefixIndex bool
 	e.Ranges = make([]*IndexRangeExec, len(v.Ranges))
 	for i, val := range v.Ranges {
-		var pi bool
-		e.Ranges[i], pi = b.buildIndexRange(e, val, idx.Meta().Columns)
-		if pi {
-			prefixIndex = true
-		}
+		e.Ranges[i], _ = b.buildIndexRange(e, val, idx.Meta().Columns)
 	}
-	x := Executor(e)
-	if prefixIndex {
-		x = b.buildFilter(x, v.AccessConditions)
-	}
+	x := b.buildFilter(e, v.AccessConditions)
 	x = b.buildFilter(x, v.FilterConditions)
 	if v.Desc {
 		x = &ReverseExec{Src: x}

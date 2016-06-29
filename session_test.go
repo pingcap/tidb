@@ -2153,7 +2153,7 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	c.Assert(err, NotNil)
 
 	sql = "select c3 from t where c3 = 'abcde';"
-	mustExecMatch(c, se, sql, [][]interface{}{{}})
+	mustExecMatch(c, se, sql, [][]interface{}{})
 
 	err = se.Close()
 	c.Assert(err, IsNil)

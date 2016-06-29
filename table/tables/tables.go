@@ -203,9 +203,9 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	colIDs := make([]int64, 0, len(t.writableCols()))
 	for i, col := range t.writableCols() {
 		if col.State != model.StatePublic && currentData[i].IsNull() {
-			defaultVal, _, err := table.GetColDefaultValue(ctx, &col.ColumnInfo)
-			if err != nil {
-				return errors.Trace(err)
+			defaultVal, _, e := table.GetColDefaultValue(ctx, &col.ColumnInfo)
+			if e != nil {
+				return errors.Trace(e)
 			}
 			currentData[i] = defaultVal
 		}
