@@ -587,17 +587,6 @@ func indexRangesToPBRanges(ranges []*plan.IndexRange, fieldTypes []*types.FieldT
 			return nil, errors.Trace(err)
 		}
 
-		for i := 0; i < len(ran.LowVal); i++ {
-			v := &ran.LowVal[i]
-			c := indexColumns[i]
-			if v.Kind() == types.KindBytes || v.Kind() == types.KindString {
-				if c.Length != types.UnspecifiedLength && len(v.GetBytes()) > c.Length {
-					// truncate value and limit it's length
-					v.SetBytes(v.GetBytes()[:c.Length])
-				}
-			}
-		}
-
 		low, err := codec.EncodeKey(nil, ran.LowVal...)
 		if err != nil {
 			return nil, errors.Trace(err)

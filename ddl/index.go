@@ -41,7 +41,7 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 				ic.Column.Name.O)
 		}
 
-		// Length must be specified for BLOB and TEXT column indexes
+		// Length must be specified for BLOB and TEXT column indexes.
 		if types.IsTypeBlob(col.FieldType.Tp) && ic.Length == types.UnspecifiedLength {
 			return nil, errors.Trace(errCreateIndexSyntax)
 		}

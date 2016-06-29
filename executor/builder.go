@@ -235,6 +235,15 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		return nil
 	}
 	tbl, _ := b.is.TableByID(v.Table.ID)
+
+	var idx table.Index
+	for _, val := range tbl.Indices() {
+		if val.Meta().Name.L == v.Index.Name.L {
+			idx = val
+			break
+		}
+	}
+
 	client := txn.GetClient()
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	var memDB bool
@@ -244,6 +253,9 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	}
 	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
 		log.Debug("xapi select index")
+		for i := 0; i < len(v.Ranges); i++ {
+			refineRange(v.Ranges[i], idx.Meta().Columns)
+		}
 		e := &XSelectIndexExec{
 			table:       tbl,
 			ctx:         b.ctx,
@@ -260,16 +272,10 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		} else {
 			ex = b.buildUnionScanExec(e)
 		}
+		ex = b.buildFilter(ex, v.AccessConditions)
 		return b.buildFilter(ex, remained)
 	}
 
-	var idx table.Index
-	for _, val := range tbl.Indices() {
-		if val.Meta().Name.L == v.Index.Name.L {
-			idx = val
-			break
-		}
-	}
 	e := &IndexScanExec{
 		tbl:         tbl,
 		tableAsName: v.TableAsName,
@@ -297,7 +303,8 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	return x
 }
 
-func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange, ics []*model.IndexColumn) (*IndexRangeExec, bool) {
+// refineRange may change the IndexRange taking prefix index length into consideration
+func refineRange(v *plan.IndexRange, ics []*model.IndexColumn) bool {
 	var prefixIndex bool
 	for i, ic := range ics {
 		if ic.Length == types.UnspecifiedLength {
@@ -321,6 +328,11 @@ func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRang
 		}
 	}
 
+	return prefixIndex
+}
+
+func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange, ics []*model.IndexColumn) (*IndexRangeExec, bool) {
+	prefixIndex := refineRange(v, ics)
 	ran := &IndexRangeExec{
 		scan:        scan,
 		lowVals:     v.LowVal,
