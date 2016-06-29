@@ -876,7 +876,7 @@ func (c *conditionChecker) Exec(row *Row, lastRow bool) (*Row, bool, error) {
 	} else if c.all {
 		matched = c.matched
 	}
-	if (matched && !c.all) || (!matched && c.all) || lastRow {
+	if matched != c.all || lastRow {
 		row.Data = append(row.Data[:c.trimLen], types.NewDatum(matched))
 		return row, true, nil
 	}
@@ -916,18 +916,18 @@ func (e *ApplyExec) Next() (*Row, error) {
 			idx := col.Index
 			col.SetValue(&srcRow.Data[idx])
 		}
-		outerRow, err := e.innerExec.Next()
+		innerRow, err := e.innerExec.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if outerRow != nil {
-			srcRow.Data = append(srcRow.Data, outerRow.Data...)
+		if innerRow != nil {
+			srcRow.Data = append(srcRow.Data, innerRow.Data...)
 		}
 		if e.checker == nil {
 			e.innerExec.Close()
 			return srcRow, nil
 		}
-		resultRow, finished, err := e.checker.Exec(srcRow, outerRow == nil)
+		resultRow, finished, err := e.checker.Exec(srcRow, innerRow == nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
