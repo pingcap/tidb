@@ -218,7 +218,6 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 				er.err = errors.Errorf("Operand should contain %d column(s)", getRowLen(lexpr))
 				return inNode, true
 			}
-			var checkCondition expression.Expression
 			var rexpr expression.Expression
 			if len(np.GetSchema()) == 1 {
 				rexpr = np.GetSchema()[0].DeepCopy()

@@ -792,7 +792,7 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
 	return p
 }
 
-// ApplyConditionChecker checks whether all the/ any output of apply matches a condition.
+// ApplyConditionChecker checks whether all or any output of apply matches a condition.
 type ApplyConditionChecker struct {
 	Condition expression.Expression
 	All       bool
