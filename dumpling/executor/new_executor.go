@@ -851,6 +851,30 @@ type ApplyExec struct {
 	Src         Executor
 	outerSchema expression.Schema
 	innerExec   Executor
+	checker     *conditionChecker
+}
+
+// conditionChecker checks if all or any of the row match this condition.
+type conditionChecker struct {
+	cond    expression.Expression
+	trimLen int
+	ctx     context.Context
+	all     bool
+	matched bool
+}
+
+func (c *conditionChecker) Exec(row *Row) (*Row, error) {
+	var err error
+	c.matched, err = expression.EvalBool(c.cond, row.Data, c.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	row.Data = row.Data[:c.trimLen]
+	if c.matched != c.all {
+		row.Data = append(row.Data, types.NewDatum(c.matched))
+		return row, nil
+	}
+	return nil, nil
 }
 
 // Schema implements Executor Schema interface.
@@ -865,6 +889,9 @@ func (e *ApplyExec) Fields() []*ast.ResultField {
 
 // Close implements Executor Close interface.
 func (e *ApplyExec) Close() error {
+	if e.checker != nil {
+		e.checker.matched = false
+	}
 	return e.Src.Close()
 }
 
@@ -877,17 +904,36 @@ func (e *ApplyExec) Next() (*Row, error) {
 	if srcRow == nil {
 		return nil, nil
 	}
-	for _, col := range e.outerSchema {
-		idx := col.Index
-		col.SetValue(&srcRow.Data[idx])
+	for {
+		for _, col := range e.outerSchema {
+			idx := col.Index
+			col.SetValue(&srcRow.Data[idx])
+		}
+		innerRow, err := e.innerExec.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if innerRow != nil {
+			srcRow.Data = append(srcRow.Data, innerRow.Data...)
+		}
+		if e.checker == nil {
+			e.innerExec.Close()
+			return srcRow, nil
+		}
+		if innerRow == nil {
+			srcRow.Data = append(srcRow.Data, types.NewDatum(e.checker.matched))
+			e.innerExec.Close()
+			return srcRow, nil
+		}
+		resultRow, err := e.checker.Exec(srcRow)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if resultRow != nil {
+			e.innerExec.Close()
+			return resultRow, nil
+		}
 	}
-	outerRow, err := e.innerExec.Next()
-	e.innerExec.Close()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	srcRow.Data = append(srcRow.Data, outerRow.Data...)
-	return srcRow, nil
 }
 
 // ExistsExec represents exists executor.
