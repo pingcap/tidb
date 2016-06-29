@@ -108,6 +108,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildTableScan(v)
 	case *plan.Union:
 		return b.buildUnion(v)
+	case *plan.NewUnion:
+		return b.buildNewUnion(v)
 	case *plan.Update:
 		return b.buildUpdate(v)
 	case *plan.Join:

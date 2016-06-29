@@ -53,7 +53,8 @@ func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncE
 		agg.AggFuncs = append(agg.AggFuncs, expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct))
 		schema = append(schema, &expression.Column{FromID: agg.id,
 			ColName:  model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, i)),
-			Position: i})
+			Position: i,
+			RetType:  aggFunc.GetType()})
 	}
 	agg.GroupByItems = gby
 	agg.SetSchema(schema)
@@ -132,8 +133,7 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 					continue
 				}
 				if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
-					newEq, _ := expression.NewFunction(ast.EQ, []expression.Expression{rn, ln}, nil)
-					eqCond = append(eqCond, newEq)
+					eqCond = append(eqCond, expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln))
 					continue
 				}
 			}
@@ -242,28 +242,6 @@ func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper 
 	schema := make(expression.Schema, 0, len(fields))
 	oldLen := 0
 	for _, field := range fields {
-		if field.WildCard != nil {
-			dbName := field.WildCard.Schema
-			colTblName := field.WildCard.Table
-			for _, col := range p.GetSchema() {
-				matchTable := (dbName.L == "" || dbName.L == col.DBName.L) &&
-					(colTblName.L == "" || colTblName.L == col.TblName.L)
-				if !matchTable {
-					continue
-				}
-				newExpr := col.DeepCopy()
-				proj.Exprs = append(proj.Exprs, newExpr)
-				schemaCol := &expression.Column{
-					FromID:  col.FromID,
-					TblName: col.TblName,
-					ColName: col.ColName,
-					RetType: newExpr.GetType()}
-				schema = append(schema, schemaCol)
-				schemaCol.Position = len(schema)
-				oldLen++
-			}
-			continue
-		}
 		newExpr, np, correlated, err := b.rewrite(field.Expr, p, mapper)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -311,7 +289,7 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) Plan {
 	for i, sel := range union.SelectList.Selects {
 		sels[i] = b.buildNewSelect(sel)
 	}
-	u := &Union{Selects: sels}
+	u := &NewUnion{Selects: sels}
 	u.id = b.allocID(u)
 	firstSchema := sels[0].GetSchema().DeepCopy()
 	for _, sel := range sels {
@@ -481,6 +459,13 @@ type havingAndOrderbyResolver struct {
 }
 
 func (e *havingAndOrderbyResolver) addProjectionExpr(v *ast.ColumnNameExpr, projCol *expression.Column) {
+	// Avoid to append same column repeatly.
+	for i, expr := range e.proj.Exprs {
+		if expr == projCol {
+			e.mapper[v] = e.proj.schema[i]
+			return
+		}
+	}
 	e.proj.Exprs = append(e.proj.Exprs, projCol)
 	schemaCols, _ := projCol.DeepCopy().(*expression.Column)
 	e.mapper[v] = schemaCols
@@ -569,6 +554,21 @@ func (g *gbyResolver) match(a *ast.ColumnName, b *ast.ColumnName) bool {
 	return false
 }
 
+func (g *gbyResolver) matchField(f *ast.SelectField, col *ast.ColumnNameExpr) bool {
+	// if col specify a table name, resolve from table source directly.
+	if col.Name.Table.L == "" {
+		if f.AsName.L == "" {
+			if curCol, isCol := f.Expr.(*ast.ColumnNameExpr); isCol {
+				return curCol.Name.Name.L == col.Name.Name.L
+			}
+			// a expression without as name can't be matched.
+			return false
+		}
+		return f.AsName.L == col.Name.Name.L
+	}
+	return false
+}
+
 func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
@@ -577,7 +577,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		} else if col == nil || !g.inExpr {
 			var matchedCol ast.ExprNode
 			for _, field := range g.fields {
-				if field.WildCard == nil && v.Name.Table.L == "" && field.AsName.L == v.Name.Name.L {
+				if g.matchField(field, v) {
 					curCol, isCol := field.Expr.(*ast.ColumnNameExpr)
 					if !isCol {
 						matchedCol = field.Expr
@@ -587,17 +587,24 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 						matchedCol = curCol
 					} else if g.match(matchedCol.(*ast.ColumnNameExpr).Name, curCol.Name) {
 						g.err = errors.Errorf("Column '%s' in field list is ambiguous", curCol.Name.Name.L)
+						return inNode, false
 					}
 				}
 			}
 			if matchedCol != nil {
 				if col != nil {
-					return inNode, false
+					return inNode, true
 				}
 				return matchedCol, true
 			}
 			return inNode, false
 		}
+	case *ast.PositionExpr:
+		if v.N >= 1 && v.N <= len(g.fields) {
+			return g.fields[v.N-1].Expr, true
+		}
+		g.err = errors.Errorf("Unknown column '%d' in 'group statement'", v.N)
+		return inNode, false
 	}
 	return inNode, true
 }
@@ -608,11 +615,11 @@ func (b *planBuilder) resolveGbyExprs(p Plan, gby *ast.GroupByClause, fields []*
 	resolver := &gbyResolver{fields: fields, schema: p.GetSchema()}
 	for _, item := range gby.Items {
 		resolver.inExpr = false
+		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
 			b.err = errors.Trace(resolver.err)
 			return nil, false, nil
 		}
-		retExpr, _ := item.Expr.Accept(resolver)
 		expr, np, cor, err := b.rewrite(retExpr.(ast.ExprNode), p, nil)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -623,6 +630,29 @@ func (b *planBuilder) resolveGbyExprs(p Plan, gby *ast.GroupByClause, fields []*
 		p = np
 	}
 	return p, correlated, exprs
+}
+
+func (b *planBuilder) unfoldWildStar(p Plan, selectFields []*ast.SelectField) (resultList []*ast.SelectField) {
+	for _, field := range selectFields {
+		if field.WildCard == nil {
+			resultList = append(resultList, field)
+		} else {
+			dbName := field.WildCard.Schema
+			tblName := field.WildCard.Table
+			for _, col := range p.GetSchema() {
+				if (dbName.L == "" || dbName.L == col.DBName.L) &&
+					(tblName.L == "" || tblName.L == col.TblName.L) {
+					resultList = append(resultList, &ast.SelectField{
+						Expr: &ast.ColumnNameExpr{Name: &ast.ColumnName{
+							Schema: col.DBName,
+							Table:  col.TblName,
+							Name:   col.ColName,
+						}}})
+				}
+			}
+		}
+	}
+	return
 }
 
 func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
@@ -640,6 +670,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
+	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {

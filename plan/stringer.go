@@ -27,7 +27,7 @@ func ToString(p Plan) string {
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch in.(type) {
-	case *JoinOuter, *JoinInner, *Join, *Union:
+	case *JoinOuter, *JoinInner, *Join, *Union, *NewUnion:
 		idxs = append(idxs, len(strs))
 	}
 
@@ -100,7 +100,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		str = "Join{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
-	case *Union:
+	case *Union, *NewUnion:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]

@@ -216,7 +216,7 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx table.Index) err
 		cols[i] = t.Cols()[col.Offset]
 	}
 
-	startKey := t.RecordKey(0, nil)
+	startKey := t.RecordKey(0)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		isExist, h2, err := idx.Exist(txn, vals1, h1)
 		if terror.ErrorEqual(err, kv.ErrKeyExists) {
@@ -247,7 +247,7 @@ func scanTableData(retriever kv.Retriever, t table.Table, cols []*table.Column, 
 	[]*RecordData, int64, error) {
 	var records []*RecordData
 
-	startKey := t.RecordKey(startHandle, nil)
+	startKey := t.RecordKey(startHandle)
 	filterFunc := func(h int64, d []types.Datum, cols []*table.Column) (bool, error) {
 		if limit != 0 {
 			r := &RecordData{
@@ -313,7 +313,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 		m[r.Handle] = r.Values
 	}
 
-	startKey := t.RecordKey(0, nil)
+	startKey := t.RecordKey(0)
 	filterFunc := func(h int64, vals []types.Datum, cols []*table.Column) (bool, error) {
 		vals2, ok := m[h]
 		if !ok {
@@ -351,7 +351,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 // GetTableRecordsCount returns the total number of table records from startHandle.
 // If startHandle = 0, returns the total number of table records.
 func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) (int64, error) {
-	startKey := t.RecordKey(startHandle, nil)
+	startKey := t.RecordKey(startHandle)
 	it, err := txn.Seek(startKey)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -366,7 +366,7 @@ func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) 
 		}
 
 		it.Close()
-		rk := t.RecordKey(handle+1, nil)
+		rk := t.RecordKey(handle + 1)
 		it, err = txn.Seek(rk)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -381,29 +381,50 @@ func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) 
 }
 
 func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*table.Column) ([]types.Datum, error) {
+	key := t.RecordKey(h)
+	value, err := txn.Get(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	v := make([]types.Datum, len(cols))
+	colTps := make(map[int64]*types.FieldType, len(cols))
 	for i, col := range cols {
+		if col == nil {
+			continue
+		}
 		if col.State != model.StatePublic {
 			return nil, errInvalidColumnState.Gen("Cannot use none public column - %v", cols)
 		}
 		if col.IsPKHandleColumn(t.Meta()) {
-			v[i].SetInt64(h)
+			if mysql.HasUnsignedFlag(col.Flag) {
+				v[i].SetUint64(uint64(h))
+			} else {
+				v[i].SetInt64(h)
+			}
 			continue
 		}
-
-		k := t.RecordKey(h, col)
-		data, err := txn.Get(k)
-		if terror.ErrorEqual(err, kv.ErrNotExist) && !mysql.HasNotNullFlag(col.Flag) {
+		colTps[col.ID] = &col.FieldType
+	}
+	row, err := tablecodec.DecodeRow(value, colTps)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, col := range cols {
+		if col == nil {
 			continue
-		} else if err != nil {
-			return nil, errors.Trace(err)
 		}
-
-		val, err := tablecodec.DecodeColumnValue(data, &col.FieldType)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if col.State != model.StatePublic {
+			// TODO: check this
+			return nil, errInvalidColumnState.Gen("Cannot use none public column - %v", cols)
 		}
-		v[i] = val
+		if col.IsPKHandleColumn(t.Meta()) {
+			continue
+		}
+		ri, ok := row[col.ID]
+		if !ok && mysql.HasNotNullFlag(col.Flag) {
+			return nil, errors.New("Miss")
+		}
+		v[i] = ri
 	}
 	return v, nil
 }
@@ -422,6 +443,10 @@ func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []
 
 	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
 
+	colMap := make(map[int64]*types.FieldType, len(cols))
+	for _, col := range cols {
+		colMap[col.ID] = &col.FieldType
+	}
 	prefix := t.RecordPrefix()
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
@@ -432,16 +457,24 @@ func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []
 			return errors.Trace(err)
 		}
 
-		data, err := rowWithCols(retriever, t, handle, cols)
+		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		data := make([]types.Datum, 0, len(cols))
+		for _, col := range cols {
+			if col.IsPKHandleColumn(t.Meta()) {
+				data = append(data, types.NewIntDatum(handle))
+			} else {
+				data = append(data, rowMap[col.ID])
+			}
 		}
 		more, err := fn(handle, data, cols)
 		if !more || err != nil {
 			return errors.Trace(err)
 		}
 
-		rk := t.RecordKey(handle, nil)
+		rk := t.RecordKey(handle)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)

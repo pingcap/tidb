@@ -50,14 +50,21 @@ const (
 	Xor        = "^"
 	Div        = "/"
 	Mul        = "*"
-	UnaryNot   = "!" // It distinguishs from the Not in github/pingcap/check.
+	UnaryNot   = "!" // Avoid name conflict with Not in github/pingcap/check.
 	BitNeg     = "~"
 	IntDiv     = "DIV"
 	LogicXor   = "XOR"
 	NullEQ     = "<=>"
-	IsNull     = "isnull"
 	UnaryPlus  = "unaryplus"
 	UnaryMinus = "unaryminus"
+	In         = "in"
+	Like       = "like"
+	Case       = "case"
+	Regexp     = "regexp"
+	IsNull     = "isnull"
+	IsTruth    = "istrue"  // Avoid name conflict with IsTrue in github/pingcap/check.
+	IsFalsity  = "isfalse" // Avoid name conflict with IsFalse in github/pingcap/check.
+	RowFunc    = "row"
 )
 
 // UnquoteString is not quoted when printed.

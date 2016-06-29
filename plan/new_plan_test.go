@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -75,7 +77,9 @@ func newMockResolve(node ast.Node) error {
 		PKIsHandle: true,
 	}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{table})
-	return MockResolveName(node, is, "test")
+	ctx := mock.NewContext()
+	variable.BindSessionVars(ctx)
+	return MockResolveName(node, is, "test", ctx)
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
@@ -260,7 +264,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		builder := &planBuilder{colMapper: make(map[*ast.ColumnNameExpr]expression.Expression)}
 		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
+		c.Assert(builder.err, IsNil, comment)
 
 		_, err = builder.predicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
@@ -343,6 +347,82 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 		{
 			exprStr:   "(a)",
 			resultStr: "[[-inf 0) (0 +inf]]",
+		},
+		{
+			exprStr:   "a in (1, 3, NULL, 2)",
+			resultStr: "[[<nil> <nil>] [1 1] [2 2] [3 3]]",
+		},
+		{
+			exprStr:   `a IN (8,8,81,45)`,
+			resultStr: `[[8 8] [45 45] [81 81]]`,
+		},
+		{
+			exprStr:   "a between 1 and 2",
+			resultStr: "[[1 2]]",
+		},
+		{
+			exprStr:   "a not between 1 and 2",
+			resultStr: "[[-inf 1) (2 +inf]]",
+		},
+		{
+			exprStr:   "a not between null and 0",
+			resultStr: "[(0 +inf]]",
+		},
+		{
+			exprStr:   "a between 2 and 1",
+			resultStr: "[]",
+		},
+		{
+			exprStr:   "a not between 2 and 1",
+			resultStr: "[[-inf +inf]]",
+		},
+		{
+			exprStr:   "a IS NULL",
+			resultStr: "[[<nil> <nil>]]",
+		},
+		{
+			exprStr:   "a IS NOT NULL",
+			resultStr: "[[-inf +inf]]",
+		},
+		{
+			exprStr:   "a IS TRUE",
+			resultStr: "[[-inf 0) (0 +inf]]",
+		},
+		{
+			exprStr:   "a IS NOT TRUE",
+			resultStr: "[[<nil> <nil>] [0 0]]",
+		},
+		{
+			exprStr:   "a IS FALSE",
+			resultStr: "[[0 0]]",
+		},
+		{
+			exprStr:   "a IS NOT FALSE",
+			resultStr: "[[<nil> 0) (0 +inf]]",
+		},
+		{
+			exprStr:   "a LIKE 'abc%'",
+			resultStr: "[[abc abd)]",
+		},
+		{
+			exprStr:   "a LIKE 'abc_'",
+			resultStr: "[(abc abd)]",
+		},
+		{
+			exprStr:   "a LIKE '%'",
+			resultStr: "[[-inf +inf]]",
+		},
+		{
+			exprStr:   `a LIKE '\%a'`,
+			resultStr: `[[%a %b)]`,
+		},
+		{
+			exprStr:   `a LIKE "\\"`,
+			resultStr: `[[\ ])]`,
+		},
+		{
+			exprStr:   `a LIKE "\\\\a%"`,
+			resultStr: `[[\a \b)]`,
 		},
 		{
 			exprStr:   `0.4`,

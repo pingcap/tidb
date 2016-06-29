@@ -224,6 +224,11 @@ func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 	}
 }
 
+func builtinRow(row []types.Datum, _ context.Context) (d types.Datum, err error) {
+	d.SetRow(row)
+	return
+}
+
 func unaryOpFactory(op opcode.Op) BuiltinFunc {
 	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 		defer func() {

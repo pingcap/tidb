@@ -114,6 +114,13 @@ type Trim struct {
 	basePlan
 }
 
+// NewUnion represents Union plan.
+type NewUnion struct {
+	basePlan
+
+	Selects []Plan
+}
+
 // AddChild for parent.
 func addChild(parent Plan, child Plan) {
 	if child == nil || parent == nil {
