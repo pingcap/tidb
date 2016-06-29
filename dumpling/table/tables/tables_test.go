@@ -267,3 +267,23 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
 }
+
+func (ts *testSuite) TestIterRecords(c *C) {
+	defer testleak.AfterTest(c)()
+	_, err := ts.se.Execute("CREATE TABLE test.tIter (a int primary key, b int)")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute("INSERT test.tIter VALUES (1, 2), (2, NULL)")
+	c.Assert(err, IsNil)
+	ctx := ts.se.(context.Context)
+	dom := sessionctx.GetDomain(ctx)
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
+	c.Assert(err, IsNil)
+	totalCount := 0
+	err = tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+		totalCount++
+		c.Assert(rec[0].IsNull(), IsFalse)
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(totalCount, Equals, 2)
+}
