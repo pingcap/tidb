@@ -64,6 +64,7 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 	return &expression.Constant{Value: d, RetType: types.NewFieldType(d.Kind())}
 }
 
+// constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2).
 func constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := getRowLen(l), getRowLen(r)
 	if lLen == 1 && rLen == 1 {
@@ -137,6 +138,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if er.err != nil {
 			return inNode, true
 		}
+		// Only (a,b,c) = all (...) and (a,b,c) != any () can use row expression.
 		canMultiCol := (v.All && v.Op == opcode.EQ) || (!v.All && v.Op == opcode.NE)
 		if !canMultiCol && (getRowLen(lexpr) != 1 || len(np.GetSchema()) != 1) {
 			er.err = errors.New("Operand should contain 1 column(s)")
@@ -155,9 +157,10 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			for _, col := range np.GetSchema() {
 				args = append(args, col.DeepCopy())
 			}
-			rexpr = expression.NewFunction(ast.RowFunc, nil, args...)
+			rexpr = expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), args...)
 		}
 		switch v.Op {
+		// Only EQ, NE and NullEQ can be composed with and.
 		case opcode.EQ, opcode.NE, opcode.NullEQ:
 			var err error
 			checkCondition, err = constructBinaryOpFunction(lexpr, rexpr, opcode.Ops[v.Op])
@@ -165,10 +168,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 				er.err = errors.Trace(err)
 				return inNode, true
 			}
+		// If op is not EQ, NE, NullEQ, say LT, it will remain as row(a,b) < row(c,d), and be compared as row datum.
 		default:
 			checkCondition = expression.NewFunction(opcode.Ops[v.Op], types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
 		}
 		er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: v.All})
+		// The parent expression only use the last column in schema, which represents whether the condition is matched.
 		er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
 		return inNode, true
 	case *ast.ExistsSubqueryExpr:
@@ -221,7 +226,6 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 				er.err = errors.Errorf("Operand should contain %d column(s)", getRowLen(lexpr))
 				return inNode, true
 			}
-			var checkCondition expression.Expression
 			var rexpr expression.Expression
 			if len(np.GetSchema()) == 1 {
 				rexpr = np.GetSchema()[0].DeepCopy()
@@ -232,6 +236,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 				}
 				rexpr = expression.NewFunction(ast.RowFunc, nil, args...)
 			}
+			// a in (subq) will be rewrited as a = any(subq).
+			// a not in (subq) will be rewrited as a != all(subq).
 			op, all := ast.EQ, false
 			if v.Not {
 				op, all = ast.NE, true
@@ -242,6 +248,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 				return inNode, true
 			}
 			er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: all})
+			// The parent expression only use the last column in schema, which represents whether the condition is matched.
 			er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
 			return inNode, true
 		}

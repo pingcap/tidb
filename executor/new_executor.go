@@ -854,6 +854,7 @@ type ApplyExec struct {
 	checker     *conditionChecker
 }
 
+// conditionChecker checks if all or any of the row match this condition.
 type conditionChecker struct {
 	cond    expression.Expression
 	trimLen int
@@ -862,26 +863,18 @@ type conditionChecker struct {
 	matched bool
 }
 
-func (c *conditionChecker) Exec(row *Row, lastRow bool) (*Row, bool, error) {
-	matched := false
-	if !lastRow {
-		var err error
-		matched, err = expression.EvalBool(c.cond, row.Data, c.ctx)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		if matched {
-			c.matched = true
-		}
-	} else if c.all {
-		matched = c.matched
-	}
-	if (matched && !c.all) || (!matched && c.all) || lastRow {
-		row.Data = append(row.Data[:c.trimLen], types.NewDatum(matched))
-		return row, true, nil
+func (c *conditionChecker) Exec(row *Row) (*Row, error) {
+	var err error
+	c.matched, err = expression.EvalBool(c.cond, row.Data, c.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	row.Data = row.Data[:c.trimLen]
-	return nil, false, nil
+	if c.matched != c.all {
+		row.Data = append(row.Data, types.NewDatum(c.matched))
+		return row, nil
+	}
+	return nil, nil
 }
 
 // Schema implements Executor Schema interface.
@@ -916,22 +909,27 @@ func (e *ApplyExec) Next() (*Row, error) {
 			idx := col.Index
 			col.SetValue(&srcRow.Data[idx])
 		}
-		outerRow, err := e.innerExec.Next()
+		innerRow, err := e.innerExec.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if outerRow != nil {
-			srcRow.Data = append(srcRow.Data, outerRow.Data...)
+		if innerRow != nil {
+			srcRow.Data = append(srcRow.Data, innerRow.Data...)
 		}
 		if e.checker == nil {
 			e.innerExec.Close()
 			return srcRow, nil
 		}
-		resultRow, finished, err := e.checker.Exec(srcRow, outerRow == nil)
+		if innerRow == nil {
+			srcRow.Data = append(srcRow.Data, types.NewDatum(e.checker.matched))
+			e.innerExec.Close()
+			return srcRow, nil
+		}
+		resultRow, err := e.checker.Exec(srcRow)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if finished {
+		if resultRow != nil {
 			e.innerExec.Close()
 			return resultRow, nil
 		}

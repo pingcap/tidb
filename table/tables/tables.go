@@ -201,7 +201,14 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	// Compose new row
 	t.composeNewData(touched, currentData, oldData)
 	colIDs := make([]int64, 0, len(t.writableCols()))
-	for _, col := range t.writableCols() {
+	for i, col := range t.writableCols() {
+		if col.State != model.StatePublic && currentData[i].IsNull() {
+			defaultVal, _, err := table.GetColDefaultValue(ctx, &col.ColumnInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			currentData[i] = defaultVal
+		}
 		colIDs = append(colIDs, col.ID)
 	}
 	// Set new row data into KV.
@@ -627,7 +634,11 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 		}
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
-			data = append(data, rowMap[col.ID])
+			if col.IsPKHandleColumn(t.Meta()) {
+				data = append(data, types.NewIntDatum(handle))
+			} else {
+				data = append(data, rowMap[col.ID])
+			}
 		}
 		more, err := fn(handle, data, cols)
 		if !more || err != nil {
