@@ -75,6 +75,7 @@ type Apply struct {
 
 	InnerPlan   Plan
 	OuterSchema expression.Schema
+	Checker     *ApplyConditionChecker
 }
 
 // Exists checks if a query returns result.

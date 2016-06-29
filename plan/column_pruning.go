@@ -287,6 +287,14 @@ func pruneApply(v *Apply, parentUsedCols []*expression.Column) ([]*expression.Co
 			newUsedCols = append(newUsedCols, used)
 		}
 	}
+	if v.Checker != nil {
+		condUsedCols, _ := extractColumn(v.Checker.Condition, nil, nil)
+		for _, used := range condUsedCols {
+			if v.GetChildByIndex(0).GetSchema().GetIndex(used) != -1 {
+				newUsedCols = append(newUsedCols, used)
+			}
+		}
+	}
 	outer, err = pruneColumnsAndResolveIndices(v.GetChildByIndex(0), newUsedCols)
 	for _, col := range v.OuterSchema {
 		col.Index = v.GetChildByIndex(0).GetSchema().GetIndex(col)
@@ -294,7 +302,17 @@ func pruneApply(v *Apply, parentUsedCols []*expression.Column) ([]*expression.Co
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	v.schema = append(v.GetChildByIndex(0).GetSchema().DeepCopy(), v.InnerPlan.GetSchema().DeepCopy()...)
+	combinedSchema := append(v.GetChildByIndex(0).GetSchema().DeepCopy(), v.InnerPlan.GetSchema().DeepCopy()...)
+	if v.Checker == nil {
+		v.schema = combinedSchema
+	} else {
+		combinedSchema.InitIndices()
+		v.Checker.Condition, err = retrieveColumnsInExpression(v.Checker.Condition, combinedSchema)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		v.schema = append(v.GetChildByIndex(0).GetSchema().DeepCopy(), v.schema[len(v.schema)-1])
+	}
 	v.schema.InitIndices()
 	return outer, nil
 }
