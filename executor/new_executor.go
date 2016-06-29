@@ -834,7 +834,7 @@ func (b *executorBuilder) inToPBExpr(client kv.Client, expr *expression.ScalarFu
 		return nil
 	}
 	var listExpr *tipb.Expr
-	if len(expr.Args[1:]) == 1 {
+	if len(expr.Args) == 2 {
 		// Args[1] is a select subquery, or it's a list and its length is 1.
 		listExpr = b.newExprToPBExpr(client, expr.Args[1], tbl)
 	} else {
@@ -908,8 +908,8 @@ func (b *executorBuilder) scalarFuncToPBExpr(client kv.Client, expr *expression.
 		return b.notToPBExpr(client, expr, tbl)
 	case ast.In:
 		return b.inToPBExpr(client, expr, tbl)
-	// Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
 	case ast.Like:
+		// Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
 		escape := expr.Args[2].(*expression.Constant).Value
 		if escape.IsNull() || byte(escape.GetInt64()) != '\\' {
 			return nil
