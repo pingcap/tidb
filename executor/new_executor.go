@@ -833,13 +833,7 @@ func (b *executorBuilder) inToPBExpr(client kv.Client, expr *expression.ScalarFu
 	if pbExpr == nil {
 		return nil
 	}
-	var listExpr *tipb.Expr
-	if len(expr.Args) == 2 {
-		// Args[1] is a select subquery, or it's a list and its length is 1.
-		listExpr = b.newExprToPBExpr(client, expr.Args[1], tbl)
-	} else {
-		listExpr = b.constListToPBExpr(client, expr.Args[1:], tbl)
-	}
+	listExpr := b.constListToPBExpr(client, expr.Args[1:], tbl)
 	if listExpr == nil {
 		return nil
 	}
