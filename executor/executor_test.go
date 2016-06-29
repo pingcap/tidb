@@ -127,6 +127,7 @@ func (s *testSuite) TestAdmin(c *C) {
 }
 
 func (s *testSuite) TestPrepared(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -182,6 +183,7 @@ func (s *testSuite) TestPrepared(c *C) {
 	exec.Fields()
 	exec.Next()
 	exec.Close()
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
