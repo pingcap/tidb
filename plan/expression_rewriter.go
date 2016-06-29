@@ -317,79 +317,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		er.ctxStack = er.ctxStack[:stkLen-length]
 		er.ctxStack = append(er.ctxStack, expression.NewFunction(ast.RowFunc, nil, rows...))
 	case *ast.VariableExpr:
-		name := strings.ToLower(v.Name)
-		sessionVars := variable.GetSessionVars(er.b.ctx)
-		globalVars := variable.GetGlobalVarAccessor(er.b.ctx)
-		if !v.IsSystem {
-			var d types.Datum
-			var err error
-			if v.Value != nil {
-				d, err = er.ctxStack[stkLen-1].Eval(nil, er.b.ctx)
-				if err != nil {
-					er.err = errors.Trace(err)
-					return retNode, false
-				}
-				er.ctxStack = er.ctxStack[:stkLen-1]
-			}
-			if !d.IsNull() {
-
-				strVal, err := d.ToString()
-				if err != nil {
-					er.err = errors.Trace(err)
-					return retNode, false
-				}
-				sessionVars.Users[name] = strings.ToLower(strVal)
-				er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d, RetType: types.NewFieldType(mysql.TypeString)})
-			} else if value, ok := sessionVars.Users[name]; ok {
-				er.ctxStack = append(er.ctxStack, &expression.Constant{Value: types.NewDatum(value), RetType: types.NewFieldType(mysql.TypeString)})
-			} else {
-				// select null user vars is permitted.
-				er.ctxStack = append(er.ctxStack, &expression.Constant{RetType: types.NewFieldType(mysql.TypeNull)})
-			}
-			return inNode, true
-		}
-
-		sysVar, ok := variable.SysVars[name]
-		if !ok {
-			// select null sys vars is not permitted
-			er.err = variable.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
-			return retNode, false
-		}
-		if sysVar.Scope == variable.ScopeNone {
-			er.ctxStack = append(er.ctxStack, &expression.Constant{Value: types.NewDatum(sysVar.Value), RetType: types.NewFieldType(mysql.TypeString)})
-			return inNode, true
-		}
-
-		if !v.IsGlobal {
-			d := sessionVars.GetSystemVar(name)
-			if d.IsNull() {
-				if sysVar.Scope&variable.ScopeGlobal == 0 {
-					d.SetString(sysVar.Value)
-				} else {
-					// Get global system variable and fill it in session.
-					globalVal, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
-					if err != nil {
-						er.err = errors.Trace(err)
-						return retNode, false
-					}
-					d.SetString(globalVal)
-					err = sessionVars.SetSystemVar(name, d)
-					if err != nil {
-						er.err = errors.Trace(err)
-						return retNode, false
-					}
-				}
-			}
-			er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d, RetType: types.NewFieldType(mysql.TypeString)})
-			return inNode, true
-		}
-		value, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
-		if err != nil {
-			er.err = errors.Trace(err)
-			return retNode, false
-		}
-		er.ctxStack = append(er.ctxStack, &expression.Constant{Value: types.NewDatum(value), RetType: types.NewFieldType(mysql.TypeString)})
-		return inNode, true
+		return inNode, er.rewriteVariable(v)
 	case *ast.FuncCallExpr:
 		er.funcCallToScalarFunc(v)
 	case *ast.PositionExpr:
@@ -464,6 +392,83 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		return retNode, false
 	}
 	return inNode, true
+}
+
+func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) bool {
+	stkLen := len(er.ctxStack)
+	name := strings.ToLower(v.Name)
+	sessionVars := variable.GetSessionVars(er.b.ctx)
+	globalVars := variable.GetGlobalVarAccessor(er.b.ctx)
+	if !v.IsSystem {
+		var d types.Datum
+		var err error
+		if v.Value != nil {
+			d, err = er.ctxStack[stkLen-1].Eval(nil, er.b.ctx)
+			if err != nil {
+				er.err = errors.Trace(err)
+				return false
+			}
+			er.ctxStack = er.ctxStack[:stkLen-1]
+		}
+		if !d.IsNull() {
+
+			strVal, err := d.ToString()
+			if err != nil {
+				er.err = errors.Trace(err)
+				return false
+			}
+			sessionVars.Users[name] = strings.ToLower(strVal)
+			er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d, RetType: types.NewFieldType(mysql.TypeString)})
+		} else if value, ok := sessionVars.Users[name]; ok {
+			er.ctxStack = append(er.ctxStack, &expression.Constant{Value: types.NewDatum(value), RetType: types.NewFieldType(mysql.TypeString)})
+		} else {
+			// select null user vars is permitted.
+			er.ctxStack = append(er.ctxStack, &expression.Constant{RetType: types.NewFieldType(mysql.TypeNull)})
+		}
+		return true
+	}
+
+	sysVar, ok := variable.SysVars[name]
+	if !ok {
+		// select null sys vars is not permitted
+		er.err = variable.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
+		return false
+	}
+	if sysVar.Scope == variable.ScopeNone {
+		er.ctxStack = append(er.ctxStack, &expression.Constant{Value: types.NewDatum(sysVar.Value), RetType: types.NewFieldType(mysql.TypeString)})
+		return true
+	}
+
+	if !v.IsGlobal {
+		d := sessionVars.GetSystemVar(name)
+		if d.IsNull() {
+			if sysVar.Scope&variable.ScopeGlobal == 0 {
+				d.SetString(sysVar.Value)
+			} else {
+				// Get global system variable and fill it in session.
+				globalVal, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
+				if err != nil {
+					er.err = errors.Trace(err)
+					return false
+				}
+				d.SetString(globalVal)
+				err = sessionVars.SetSystemVar(name, d)
+				if err != nil {
+					er.err = errors.Trace(err)
+					return false
+				}
+			}
+		}
+		er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d, RetType: types.NewFieldType(mysql.TypeString)})
+		return true
+	}
+	value, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return false
+	}
+	er.ctxStack = append(er.ctxStack, &expression.Constant{Value: types.NewDatum(value), RetType: types.NewFieldType(mysql.TypeString)})
+	return true
 }
 
 func (er *expressionRewriter) notToScalarFunc(b bool, op string, tp *types.FieldType,
