@@ -854,6 +854,7 @@ type ApplyExec struct {
 	checker     *conditionChecker
 }
 
+// conditionChecker checks if all or any of the row match this condition.
 type conditionChecker struct {
 	cond    expression.Expression
 	trimLen int
