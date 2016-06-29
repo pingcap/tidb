@@ -281,29 +281,30 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	for i, ic := range idx.Meta().Columns {
 		col := tbl.Cols()[ic.Offset]
 		e.valueTypes[i] = &col.FieldType
-		// if ic.Length != types.UnspecifiedLength {
-		// 	conds = append(conds, ast.BinaryOperationExpr{
-		// 		Op: opcode.EQ,
-		// 		L: ast.ColumnNameExpr{
-		// 			Name: ic.Name,
-		// 		}
-		// 		R:
-		// 	}
-		// }
 	}
 
+	var prefixIndex bool
 	e.Ranges = make([]*IndexRangeExec, len(v.Ranges))
 	for i, val := range v.Ranges {
-		e.Ranges[i] = b.buildIndexRange(e, val, idx.Meta().Columns)
+		var pi bool
+		e.Ranges[i], pi = b.buildIndexRange(e, val, idx.Meta().Columns)
+		if pi {
+			prefixIndex = true
+		}
 	}
-	x := b.buildFilter(e, v.FilterConditions)
+	x := Executor(e)
+	if prefixIndex {
+		x = b.buildFilter(x, v.AccessConditions)
+	}
+	x = b.buildFilter(x, v.FilterConditions)
 	if v.Desc {
 		x = &ReverseExec{Src: x}
 	}
 	return x
 }
 
-func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange, ics []*model.IndexColumn) *IndexRangeExec {
+func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange, ics []*model.IndexColumn) (*IndexRangeExec, bool) {
+	var prefixIndex bool
 	for i, ic := range ics {
 		if ic.Length == types.UnspecifiedLength {
 			continue
@@ -313,6 +314,7 @@ func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRang
 		if lowVal.Kind() == types.KindBytes || lowVal.Kind() == types.KindString {
 			if ic.Length < len(lowVal.GetBytes()) {
 				lowVal.SetBytes(lowVal.GetBytes()[:ic.Length])
+				prefixIndex = true
 			}
 		}
 
@@ -320,6 +322,7 @@ func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRang
 		if highVal.Kind() == types.KindBytes || highVal.Kind() == types.KindString {
 			if ic.Length < len(highVal.GetBytes()) {
 				highVal.SetBytes(highVal.GetBytes()[:ic.Length])
+				prefixIndex = true
 			}
 		}
 	}
@@ -331,7 +334,7 @@ func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRang
 		highVals:    v.HighVal,
 		highExclude: v.HighExclude,
 	}
-	return ran
+	return ran, prefixIndex
 }
 
 func (b *executorBuilder) buildJoinOuter(v *plan.JoinOuter) *JoinOuterExec {
