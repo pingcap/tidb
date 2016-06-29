@@ -1,6 +1,8 @@
 package plan
 
 import (
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -9,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -46,8 +49,8 @@ func getRowLen(e expression.Expression) int {
 	if f, ok := e.(*expression.ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
 		return len(f.Args)
 	}
-	if f, ok := e.(*expression.Constant); ok && f.RetType.Tp == types.KindRow {
-		return len(f.Value.GetRow())
+	if c, ok := e.(*expression.Constant); ok && c.Value.Kind() == types.KindRow {
+		return len(c.Value.GetRow())
 	}
 	return 1
 }
@@ -231,7 +234,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 				for _, col := range np.GetSchema() {
 					args = append(args, col.DeepCopy())
 				}
-				rexpr = expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), args...)
+				rexpr = expression.NewFunction(ast.RowFunc, nil, args...)
 			}
 			// a in (subq) will be rewrited as a = any(subq).
 			// a not in (subq) will be rewrited as a != all(subq).
@@ -263,7 +266,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 					newCols = append(newCols, col.DeepCopy())
 				}
 				er.ctxStack = append(er.ctxStack,
-					expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), newCols...))
+					expression.NewFunction(ast.RowFunc, nil, newCols...))
 			} else {
 				er.ctxStack = append(er.ctxStack, np.GetSchema()[0])
 			}
@@ -287,7 +290,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 					RetType: np.GetSchema()[i].GetType()})
 			}
 			er.ctxStack = append(er.ctxStack,
-				expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), newCols...))
+				expression.NewFunction(ast.RowFunc, nil, newCols...))
 		} else {
 			er.ctxStack = append(er.ctxStack, np.GetSchema()[0])
 		}
@@ -312,8 +315,9 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			rows = append(rows, er.ctxStack[i])
 		}
 		er.ctxStack = er.ctxStack[:stkLen-length]
-		er.ctxStack = append(er.ctxStack, expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), rows...))
-
+		er.ctxStack = append(er.ctxStack, expression.NewFunction(ast.RowFunc, nil, rows...))
+	case *ast.VariableExpr:
+		return inNode, er.rewriteVariable(v)
 	case *ast.FuncCallExpr:
 		er.funcCallToScalarFunc(v)
 	case *ast.PositionExpr:
@@ -326,7 +330,10 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		er.toColumn(v)
 	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause, *ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr:
 	case *ast.ValueExpr:
-		value := &expression.Constant{Value: v.Datum, RetType: types.NewFieldType(v.Datum.Kind())}
+		value := &expression.Constant{Value: v.Datum, RetType: v.Type}
+		er.ctxStack = append(er.ctxStack, value)
+	case *ast.ParamMarkerExpr:
+		value := &expression.Constant{Value: v.Datum, RetType: v.Type}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.IsNullExpr:
 		if getRowLen(er.ctxStack[stkLen-1]) != 1 {
@@ -356,7 +363,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 				return retNode, false
 			}
 		default:
-			function = expression.NewFunction(opcode.Ops[v.Op], v.Type, er.ctxStack[stkLen-2], er.ctxStack[stkLen-1])
+			function = expression.NewFunction(opcode.Ops[v.Op], v.Type, er.ctxStack[stkLen-2:]...)
 		}
 		er.ctxStack = er.ctxStack[:stkLen-2]
 		er.ctxStack = append(er.ctxStack, function)
@@ -385,6 +392,83 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		return retNode, false
 	}
 	return inNode, true
+}
+
+func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) bool {
+	stkLen := len(er.ctxStack)
+	name := strings.ToLower(v.Name)
+	sessionVars := variable.GetSessionVars(er.b.ctx)
+	globalVars := variable.GetGlobalVarAccessor(er.b.ctx)
+	if !v.IsSystem {
+		var d types.Datum
+		var err error
+		if v.Value != nil {
+			d, err = er.ctxStack[stkLen-1].Eval(nil, er.b.ctx)
+			if err != nil {
+				er.err = errors.Trace(err)
+				return false
+			}
+			er.ctxStack = er.ctxStack[:stkLen-1]
+		}
+		if !d.IsNull() {
+
+			strVal, err := d.ToString()
+			if err != nil {
+				er.err = errors.Trace(err)
+				return false
+			}
+			sessionVars.Users[name] = strings.ToLower(strVal)
+			er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d, RetType: types.NewFieldType(mysql.TypeString)})
+		} else if value, ok := sessionVars.Users[name]; ok {
+			er.ctxStack = append(er.ctxStack, &expression.Constant{Value: types.NewDatum(value), RetType: types.NewFieldType(mysql.TypeString)})
+		} else {
+			// select null user vars is permitted.
+			er.ctxStack = append(er.ctxStack, &expression.Constant{RetType: types.NewFieldType(mysql.TypeNull)})
+		}
+		return true
+	}
+
+	sysVar, ok := variable.SysVars[name]
+	if !ok {
+		// select null sys vars is not permitted
+		er.err = variable.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
+		return false
+	}
+	if sysVar.Scope == variable.ScopeNone {
+		er.ctxStack = append(er.ctxStack, &expression.Constant{Value: types.NewDatum(sysVar.Value), RetType: types.NewFieldType(mysql.TypeString)})
+		return true
+	}
+
+	if !v.IsGlobal {
+		d := sessionVars.GetSystemVar(name)
+		if d.IsNull() {
+			if sysVar.Scope&variable.ScopeGlobal == 0 {
+				d.SetString(sysVar.Value)
+			} else {
+				// Get global system variable and fill it in session.
+				globalVal, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
+				if err != nil {
+					er.err = errors.Trace(err)
+					return false
+				}
+				d.SetString(globalVal)
+				err = sessionVars.SetSystemVar(name, d)
+				if err != nil {
+					er.err = errors.Trace(err)
+					return false
+				}
+			}
+		}
+		er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d, RetType: types.NewFieldType(mysql.TypeString)})
+		return true
+	}
+	value, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return false
+	}
+	er.ctxStack = append(er.ctxStack, &expression.Constant{Value: types.NewDatum(value), RetType: types.NewFieldType(mysql.TypeString)})
+	return true
 }
 
 func (er *expressionRewriter) notToScalarFunc(b bool, op string, tp *types.FieldType,
