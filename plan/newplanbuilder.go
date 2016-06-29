@@ -325,16 +325,18 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) Plan {
 	}
 
 	u.SetSchema(firstSchema)
+	var p Plan
+	p = u
 	if union.Distinct {
-		return b.buildNewDistinct(u)
+		p = b.buildNewDistinct(u)
 	}
 	if union.OrderBy != nil {
-		return b.buildNewSort(u, union.OrderBy.Items, nil)
+		p = b.buildNewSort(p, union.OrderBy.Items, nil)
 	}
 	if union.Limit != nil {
-		return b.buildNewLimit(u, union.Limit)
+		p = b.buildNewLimit(p, union.Limit)
 	}
-	return u
+	return p
 }
 
 // ByItems wraps a "by" item.

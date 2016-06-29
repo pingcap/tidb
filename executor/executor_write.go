@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -650,7 +651,7 @@ func (e *InsertValues) getRow(cols []*table.Column, list []ast.ExprNode, default
 
 func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
-	if len(e.SelectExec.Fields()) != len(cols) {
+	if (!plan.UseNewPlanner && len(e.SelectExec.Fields()) != len(cols)) || (plan.UseNewPlanner && len(e.SelectExec.Schema()) != len(cols)) {
 		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Fields()))
 	}
 	var rows [][]types.Datum
