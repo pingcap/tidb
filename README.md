@@ -2,6 +2,8 @@
 
 [![Build Status](https://travis-ci.org/pingcap/tidb.svg?branch=master)](https://travis-ci.org/pingcap/tidb)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/tidb)](https://goreportcard.com/report/github.com/pingcap/tidb)
+![Project Status](https://img.shields.io/badge/status-beta-yellow.svg)
+
 ## What is TiDB?
 
 TiDB is a distributed SQL database.
