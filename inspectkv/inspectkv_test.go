@@ -237,7 +237,9 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow2})
 	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, nextVals, 1)
-	c.Assert(err, NotNil)
+	c.Assert(idxRows, IsNil)
+	c.Assert(nextVals, DeepEquals, types.MakeDatums(nil))
+	c.Assert(err, IsNil)
 
 	s.testTableData(c, tb, []*RecordData{record1, record2})
 

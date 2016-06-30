@@ -2151,14 +2151,24 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	_, err = exec(c, se, "insert into t values (5, 'ignore', 'abcdeYYY');")
 	// ERROR 1062 (23000): Duplicate entry 'abcde' for key 'idx_c3'
 	c.Assert(err, NotNil)
-
 	sql = "select c3 from t where c3 = 'abcde';"
 	mustExecMatch(c, se, sql, [][]interface{}{})
+
+	mustExecSQL(c, se, "delete from t where c3 = 'abcdeXXX';")
+	mustExecSQL(c, se, "delete from t where c2 = 'abc';")
+
+	mustExecMatch(c, se, "select c2 from t where c2 > 'abcd';", [][]interface{}{{[]byte("abcf")}})
+	mustExecMatch(c, se, "select c2 from t where c2 < 'abcf';", [][]interface{}{{[]byte("abcd")}})
+	mustExecMatch(c, se, "select c2 from t where c2 >= 'abcd';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
+	mustExecMatch(c, se, "select c2 from t where c2 <= 'abcf';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
+	mustExecMatch(c, se, "select c2 from t where c2 != 'abc';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
+	mustExecMatch(c, se, "select c2 from t where c2 != 'abcd';", [][]interface{}{{[]byte("abcf")}})
 
 	mustExecSQL(c, se, "drop table if exists t1;")
 	mustExecSQL(c, se, "create table t1 (a int, b char(255), key(a, b(20)));")
 	mustExecSQL(c, se, "insert into t1 values (0, '1');")
 	mustExecSQL(c, se, "update t1 set b = b + 1 where a = 0;")
+	mustExecMatch(c, se, "select b from t1 where a = 0;", [][]interface{}{{[]byte("2")}})
 
 	err = se.Close()
 	c.Assert(err, IsNil)

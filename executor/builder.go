@@ -306,20 +306,26 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 
 // refineRange may change the IndexRange taking prefix index length into consideration.
 func refineRange(v *plan.IndexRange, fts []*types.FieldType, ics []*model.IndexColumn) bool {
-	var prefixIndex bool
+	var lowPrefixIndex, highPrefixIndex bool
 	for i := 0; i < len(v.LowVal); i++ {
 		if refineRangeDatum(&v.LowVal[i], fts[i], ics[i]) {
-			prefixIndex = true
+			lowPrefixIndex = true
 		}
+	}
+	if lowPrefixIndex {
+		v.LowExclude = false
 	}
 
 	for i := 0; i < len(v.HighVal); i++ {
 		if refineRangeDatum(&v.HighVal[i], fts[i], ics[i]) {
-			prefixIndex = true
+			highPrefixIndex = true
 		}
 	}
+	if highPrefixIndex {
+		v.HighExclude = false
+	}
 
-	return prefixIndex
+	return lowPrefixIndex || highPrefixIndex
 }
 
 func refineRangeDatum(v *types.Datum, ft *types.FieldType, ic *model.IndexColumn) bool {
