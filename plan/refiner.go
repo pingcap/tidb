@@ -273,7 +273,8 @@ func (c *conditionChecker) newCheck(condition expression.Expression) bool {
 }
 
 func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
-	// TODO: Implement istrue, between, parentheses, patternin and patternlike.
+	// TODO: Implement parentheses, patternin and patternlike.
+	// Expression needs to implement IsPreEvaluable function.
 	switch scalar.FuncName.L {
 	case ast.OrOr, ast.AndAnd:
 		return c.newCheck(scalar.Args[0]) && c.newCheck(scalar.Args[1])
@@ -284,8 +285,10 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		if _, ok := scalar.Args[1].(*expression.Constant); ok {
 			return c.checkColumn(scalar.Args[0])
 		}
-	case ast.IsNull:
+	case ast.IsNull, ast.IsTruth, ast.IsFalsity:
 		return c.checkColumn(scalar.Args[0])
+	case ast.UnaryNot:
+		return c.newCheck(scalar.Args[0])
 	}
 	return false
 }

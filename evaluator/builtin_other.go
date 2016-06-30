@@ -83,6 +83,63 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	return
 }
 
+func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return
+	}
+
+	valStr, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	// TODO: We don't need to compile pattern if it has been compiled or it is static.
+	if args[1].IsNull() {
+		return
+	}
+	patternStr, err := args[1].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	escape := byte(args[2].GetInt64())
+	patChars, patTypes := compilePattern(patternStr, escape)
+	match := doMatch(valStr, patChars, patTypes)
+	d.SetInt64(boolToInt64(match))
+	return
+}
+
+func builtinIn(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return
+	}
+
+	var hasNull bool
+	for _, v := range args[1:] {
+		if v.IsNull() {
+			hasNull = true
+			continue
+		}
+
+		a, b := types.CoerceDatum(args[0], v)
+		ret, err := a.CompareDatum(b)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if ret == 0 {
+			d.SetInt64(1)
+			return d, nil
+		}
+	}
+
+	if hasNull {
+		// If it's no matched but we get null in In, returns null.
+		// e.g 1 in (null, 2, 3) returns null.
+		return
+	}
+	d.SetInt64(0)
+	return
+}
+
 func builtinLogicXor(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	leftDatum := args[0]
 	righDatum := args[1]
@@ -227,6 +284,23 @@ func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 func builtinRow(row []types.Datum, _ context.Context) (d types.Datum, err error) {
 	d.SetRow(row)
 	return
+}
+
+func isTrueOpFactory(op opcode.Op) BuiltinFunc {
+	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+		var boolVal bool
+		if !args[0].IsNull() {
+			iVal, err := args[0].ToBool()
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			if (op == opcode.IsTruth && iVal == 1) || (op == opcode.IsFalsity && iVal == 0) {
+				boolVal = true
+			}
+		}
+		d.SetInt64(boolToInt64(boolVal))
+		return
+	}
 }
 
 func unaryOpFactory(op opcode.Op) BuiltinFunc {

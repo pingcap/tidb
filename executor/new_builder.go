@@ -184,12 +184,21 @@ func (b *executorBuilder) buildNewSort(v *plan.NewSort) Executor {
 
 func (b *executorBuilder) buildApply(v *plan.Apply) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	return &ApplyExec{
+	apply := &ApplyExec{
 		schema:      v.GetSchema(),
 		innerExec:   b.build(v.InnerPlan),
 		outerSchema: v.OuterSchema,
 		Src:         src,
 	}
+	if v.Checker != nil {
+		apply.checker = &conditionChecker{
+			all:     v.Checker.All,
+			cond:    v.Checker.Condition,
+			trimLen: len(src.Schema()),
+			ctx:     b.ctx,
+		}
+	}
+	return apply
 }
 
 func (b *executorBuilder) buildExists(v *plan.Exists) Executor {

@@ -250,7 +250,6 @@ func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper 
 		p = np
 		proj.correlated = proj.correlated || correlated
 		proj.Exprs = append(proj.Exprs, newExpr)
-		fromID := proj.id
 		var tblName, colName model.CIStr
 		if field.AsName.L != "" {
 			colName = field.AsName
@@ -261,7 +260,7 @@ func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper 
 			colName = model.NewCIStr(field.Expr.Text())
 		}
 		schemaCol := &expression.Column{
-			FromID:  fromID,
+			FromID:  proj.id,
 			TblName: tblName,
 			ColName: colName,
 			RetType: newExpr.GetType(),
@@ -325,16 +324,18 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) Plan {
 	}
 
 	u.SetSchema(firstSchema)
+	var p Plan
+	p = u
 	if union.Distinct {
-		return b.buildNewDistinct(u)
+		p = b.buildNewDistinct(u)
 	}
 	if union.OrderBy != nil {
-		return b.buildNewSort(u, union.OrderBy.Items, nil)
+		p = b.buildNewSort(p, union.OrderBy.Items, nil)
 	}
 	if union.Limit != nil {
-		return b.buildNewLimit(u, union.Limit)
+		p = b.buildNewLimit(p, union.Limit)
 	}
-	return u
+	return p
 }
 
 // ByItems wraps a "by" item.
@@ -636,19 +637,20 @@ func (b *planBuilder) unfoldWildStar(p Plan, selectFields []*ast.SelectField) (r
 	for _, field := range selectFields {
 		if field.WildCard == nil {
 			resultList = append(resultList, field)
-		} else {
-			dbName := field.WildCard.Schema
-			tblName := field.WildCard.Table
-			for _, col := range p.GetSchema() {
-				if (dbName.L == "" || dbName.L == col.DBName.L) &&
-					(tblName.L == "" || tblName.L == col.TblName.L) {
-					resultList = append(resultList, &ast.SelectField{
-						Expr: &ast.ColumnNameExpr{Name: &ast.ColumnName{
+			continue
+		}
+		dbName := field.WildCard.Schema
+		tblName := field.WildCard.Table
+		for _, col := range p.GetSchema() {
+			if (dbName.L == "" || dbName.L == col.DBName.L) &&
+				(tblName.L == "" || tblName.L == col.TblName.L) {
+				resultList = append(resultList, &ast.SelectField{
+					Expr: &ast.ColumnNameExpr{
+						Name: &ast.ColumnName{
 							Schema: col.DBName,
 							Table:  col.TblName,
 							Name:   col.ColName,
 						}}})
-				}
 			}
 		}
 	}
@@ -657,11 +659,13 @@ func (b *planBuilder) unfoldWildStar(p Plan, selectFields []*ast.SelectField) (r
 
 func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	hasAgg := b.detectSelectAgg(sel)
-	var aggFuncs []*ast.AggregateFuncExpr
-	var havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
-	var p Plan
-	var gbyCols []expression.Expression
-	var correlated bool
+	var (
+		p                             Plan
+		correlated                    bool
+		aggFuncs                      []*ast.AggregateFuncExpr
+		havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
+		gbyCols                       []expression.Expression
+	)
 	if sel.From != nil {
 		p = b.buildResultSetNode(sel.From.TableRefs)
 	} else {
@@ -792,15 +796,30 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
 	return p
 }
 
-func (b *planBuilder) buildApply(p, inner Plan, schema expression.Schema) Plan {
+// ApplyConditionChecker checks whether all or any output of apply matches a condition.
+type ApplyConditionChecker struct {
+	Condition expression.Expression
+	All       bool
+}
+
+func (b *planBuilder) buildApply(p, inner Plan, schema expression.Schema, checker *ApplyConditionChecker) Plan {
 	ap := &Apply{
 		InnerPlan:   inner,
 		OuterSchema: schema,
+		Checker:     checker,
 	}
 	ap.id = b.allocID(ap)
 	addChild(ap, p)
 	innerSchema := inner.GetSchema().DeepCopy()
-	ap.SetSchema(append(p.GetSchema().DeepCopy(), innerSchema...))
+	if checker == nil {
+		ap.SetSchema(append(p.GetSchema().DeepCopy(), innerSchema...))
+	} else {
+		ap.SetSchema(append(p.GetSchema().DeepCopy(), &expression.Column{
+			FromID:  ap.id,
+			ColName: model.NewCIStr("exists_row"),
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		}))
+	}
 	ap.correlated = p.IsCorrelated()
 	return ap
 }

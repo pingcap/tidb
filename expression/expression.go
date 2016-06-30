@@ -231,9 +231,10 @@ func NewFunction(funcName string, retType *types.FieldType, args ...Expression) 
 		log.Errorf("Function %s is not implemented.", funcName)
 		return nil
 	}
-
+	funcArgs := make([]Expression, len(args))
+	copy(funcArgs, args)
 	return &ScalarFunction{
-		Args:     args,
+		Args:     funcArgs,
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f.F}
