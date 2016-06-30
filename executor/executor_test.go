@@ -1332,6 +1332,36 @@ func (s *testSuite) TestDirtyTransaction(c *C) {
 	plan.UseNewPlanner = false
 }
 
+func (s *testSuite) TestToPBExpr(c *C) {
+	plan.UseNewPlanner = true
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a decimal(10,6), b decimal, index idx_b (b))")
+	tk.MustExec("insert t values (1.1, 1.1)")
+	tk.MustExec("insert t values (2.4, 2.4)")
+	tk.MustExec("insert t values (3.3, 2.7)")
+	result := tk.MustQuery("select * from t where a < 2.399999")
+	result.Check(testkit.Rows("1.100000 1"))
+	result = tk.MustQuery("select * from t where a > 1.5")
+	result.Check(testkit.Rows("2.400000 2", "3.300000 3"))
+	result = tk.MustQuery("select * from t where a <= 1.1")
+	result.Check(testkit.Rows("1.100000 1"))
+	result = tk.MustQuery("select * from t where b >= 3")
+	result.Check(testkit.Rows("3.300000 3"))
+	result = tk.MustQuery("select * from t where b&1 = a|1")
+	result.Check(testkit.Rows("1.100000 1", "2.400000 2", "3.300000 3"))
+	result = tk.MustQuery("select * from t where b != 2 and b <=> 3")
+	result.Check(testkit.Rows("3.300000 3"))
+	result = tk.MustQuery("select * from t where a in (1, 3.3)")
+	result.Check(testkit.Rows("3.300000 3"))
+	result = tk.MustQuery("select * from t where a not in (1.1, 2.2)")
+	result.Check(testkit.Rows("3.300000 3"))
+
+	plan.UseNewPlanner = false
+}
+
 func (s *testSuite) TestDatumXAPI(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
