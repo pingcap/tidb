@@ -244,6 +244,12 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		}
 	}
 
+	valueTypes := make([]*types.FieldType, len(idx.Meta().Columns))
+	for i, ic := range idx.Meta().Columns {
+		col := tbl.Cols()[ic.Offset]
+		valueTypes[i] = &col.FieldType
+	}
+
 	client := txn.GetClient()
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	var memDB bool
@@ -254,7 +260,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
 		log.Debug("xapi select index")
 		for i := 0; i < len(v.Ranges); i++ {
-			refineRange(v.Ranges[i], v.Index.Columns)
+			refineRange(v.Ranges[i], valueTypes, v.Index.Columns)
 		}
 		e := &XSelectIndexExec{
 			table:       tbl,
@@ -283,12 +289,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		fields:      v.Fields(),
 		ctx:         b.ctx,
 		Desc:        v.Desc,
-		valueTypes:  make([]*types.FieldType, len(idx.Meta().Columns)),
-	}
-
-	for i, ic := range idx.Meta().Columns {
-		col := tbl.Cols()[ic.Offset]
-		e.valueTypes[i] = &col.FieldType
+		valueTypes:  valueTypes,
 	}
 
 	e.Ranges = make([]*IndexRangeExec, len(v.Ranges))
@@ -303,43 +304,39 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	return x
 }
 
-// refineRange may change the IndexRange taking prefix index length into consideration
-func refineRange(v *plan.IndexRange, ics []*model.IndexColumn) bool {
+// refineRange may change the IndexRange taking prefix index length into consideration.
+func refineRange(v *plan.IndexRange, fts []*types.FieldType, ics []*model.IndexColumn) bool {
 	var prefixIndex bool
 	for i := 0; i < len(v.LowVal); i++ {
-		ic := ics[i]
-		if ic.Length == types.UnspecifiedLength {
-			continue
-		}
-		// if index prefix length is used, change scan range
-		lowVal := &v.LowVal[i]
-		if lowVal.Kind() == types.KindBytes || lowVal.Kind() == types.KindString {
-			if ic.Length < len(lowVal.GetBytes()) {
-				lowVal.SetBytes(lowVal.GetBytes()[:ic.Length])
-				prefixIndex = true
-			}
+		if refineRangeDatum(&v.LowVal[i], fts[i], ics[i]) {
+			prefixIndex = true
 		}
 	}
 
 	for i := 0; i < len(v.HighVal); i++ {
-		ic := ics[i]
-		if ic.Length == types.UnspecifiedLength {
-			continue
-		}
-		highVal := &v.HighVal[i]
-		if highVal.Kind() == types.KindBytes || highVal.Kind() == types.KindString {
-			if ic.Length < len(highVal.GetBytes()) {
-				highVal.SetBytes(highVal.GetBytes()[:ic.Length])
-				prefixIndex = true
-			}
+		if refineRangeDatum(&v.HighVal[i], fts[i], ics[i]) {
+			prefixIndex = true
 		}
 	}
 
 	return prefixIndex
 }
 
+func refineRangeDatum(v *types.Datum, ft *types.FieldType, ic *model.IndexColumn) bool {
+	var prefixIndex bool
+	if (types.IsTypeBlob(ft.Tp) || types.IsTypeChar(ft.Tp)) &&
+		ic.Length != types.UnspecifiedLength {
+		// if index prefix length is used, change scan range.
+		if ic.Length < len(v.GetBytes()) {
+			v.SetBytes(v.GetBytes()[:ic.Length])
+			prefixIndex = true
+		}
+	}
+	return prefixIndex
+}
+
 func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange, ics []*model.IndexColumn) (*IndexRangeExec, bool) {
-	prefixIndex := refineRange(v, ics)
+	prefixIndex := refineRange(v, scan.valueTypes, ics)
 	ran := &IndexRangeExec{
 		scan:        scan,
 		lowVals:     v.LowVal,
