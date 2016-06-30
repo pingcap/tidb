@@ -213,7 +213,7 @@ func (p *Sort) SetLimit(limit float64) {
 
 // Limit represents offset and limit plan.
 type Limit struct {
-	basePlan
+	logicalPlan
 
 	Offset uint64
 	Count  uint64
@@ -236,7 +236,7 @@ type Union struct {
 
 // Distinct represents Distinct plan.
 type Distinct struct {
-	basePlan
+	logicalPlan
 }
 
 // SetLimit implements Plan SetLimit interface.

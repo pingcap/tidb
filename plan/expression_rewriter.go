@@ -18,8 +18,8 @@ import (
 // EvalSubquery evaluates incorrelated subqueries once.
 var EvalSubquery func(p Plan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
 
-func (b *planBuilder) rewrite(expr ast.ExprNode, p Plan, aggMapper map[*ast.AggregateFuncExpr]int) (
-	newExpr expression.Expression, newPlan Plan, correlated bool, err error) {
+func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int) (
+	newExpr expression.Expression, newPlan LogicalPlan, correlated bool, err error) {
 	er := &expressionRewriter{p: p, aggrMap: aggMapper, schema: p.GetSchema(), b: b}
 	expr.Accept(er)
 	if er.err != nil {
@@ -36,7 +36,7 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p Plan, aggMapper map[*ast.Aggr
 
 type expressionRewriter struct {
 	ctxStack   []expression.Expression
-	p          Plan
+	p          LogicalPlan
 	schema     expression.Schema
 	err        error
 	aggrMap    map[*ast.AggregateFuncExpr]int
@@ -83,7 +83,7 @@ func constructBinaryOpFunction(l expression.Expression, r expression.Expression,
 	return expression.ComposeCNFCondition(funcs), nil
 }
 
-func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (Plan, expression.Schema) {
+func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (LogicalPlan, expression.Schema) {
 	outerSchema := er.schema.DeepCopy()
 	for _, col := range outerSchema {
 		col.Correlated = true
@@ -95,7 +95,7 @@ func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (Plan, expre
 		er.err = errors.Trace(er.b.err)
 		return nil, nil
 	}
-	_, err := er.b.predicatePushDown(np, nil)
+	_, err := np.PredicatePushDown(nil)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return np, outerSchema
@@ -191,7 +191,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.p = er.b.buildApply(er.p, np, outerSchema, nil)
 			er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
 		} else {
-			_, err := pruneColumnsAndResolveIndices(np, np.GetSchema())
+			_, err := np.PruneColumnsAndResolveIndices(np.GetSchema())
 			if err != nil {
 				er.err = errors.Trace(err)
 				return inNode, true
@@ -272,7 +272,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			}
 			return inNode, true
 		}
-		_, err := pruneColumnsAndResolveIndices(np, np.GetSchema())
+		_, err := np.PruneColumnsAndResolveIndices(np.GetSchema())
 		if err != nil {
 			er.err = errors.Trace(err)
 			return inNode, true

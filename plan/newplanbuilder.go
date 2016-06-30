@@ -27,14 +27,20 @@ import (
 // UseNewPlanner means if use the new planner.
 var UseNewPlanner = false
 
-func (b *planBuilder) allocID(p Plan) string {
-	b.id++
-	return fmt.Sprintf("%T_%d", p, b.id)
+type idAllocer struct {
+	id int
 }
 
-func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncExpr, gby []expression.Expression, correlated bool) Plan {
-	agg := &Aggregation{AggFuncs: make([]expression.AggregationFunction, 0, len(aggFuncList))}
-	agg.id = b.allocID(agg)
+func (a *idAllocer) allocID() string {
+	a.id++
+	return fmt.Sprintf("_%d", a.id)
+}
+
+func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gby []expression.Expression, correlated bool) LogicalPlan {
+	agg := &Aggregation{
+		AggFuncs:    make([]expression.AggregationFunction, 0, len(aggFuncList)),
+		logicalPlan: newLogicalPlan(Agg, b.allocer)}
+	agg.initID()
 	agg.correlated = p.IsCorrelated() || correlated
 	addChild(agg, p)
 	schema := make([]*expression.Column, 0, len(aggFuncList))
@@ -61,12 +67,12 @@ func (b *planBuilder) buildAggregation(p Plan, aggFuncList []*ast.AggregateFuncE
 	return agg
 }
 
-func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) Plan {
+func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 	switch x := node.(type) {
 	case *ast.Join:
 		return b.buildNewJoin(x)
 	case *ast.TableSource:
-		var p Plan
+		var p LogicalPlan
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
 			p = b.buildNewSelect(v)
@@ -119,7 +125,7 @@ func extractColumn(expr expression.Expression, cols []*expression.Column, outerC
 	return cols, outerCols
 }
 
-func extractOnCondition(conditions []expression.Expression, left Plan, right Plan) (
+func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
 	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
 	otherCond []expression.Expression) {
 	for _, expr := range conditions {
@@ -173,15 +179,15 @@ func splitCNFItems(onExpr expression.Expression) []expression.Expression {
 	return []expression.Expression{onExpr}
 }
 
-func (b *planBuilder) buildNewJoin(join *ast.Join) Plan {
+func (b *planBuilder) buildNewJoin(join *ast.Join) LogicalPlan {
 	if join.Right == nil {
 		return b.buildResultSetNode(join.Left)
 	}
 	leftPlan := b.buildResultSetNode(join.Left)
 	rightPlan := b.buildResultSetNode(join.Right)
 	newSchema := append(leftPlan.GetSchema().DeepCopy(), rightPlan.GetSchema().DeepCopy()...)
-	joinPlan := &Join{}
-	joinPlan.id = b.allocID(joinPlan)
+	joinPlan := &Join{logicalPlan: newLogicalPlan(Jn, b.allocer)}
+	joinPlan.initID()
 	joinPlan.SetSchema(newSchema)
 	joinPlan.correlated = leftPlan.IsCorrelated() || rightPlan.IsCorrelated()
 	if join.On != nil {
@@ -212,10 +218,11 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) Plan {
 	return joinPlan
 }
 
-func (b *planBuilder) buildSelection(p Plan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) Plan {
+func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
-	selection := &Selection{}
+	selection := &Selection{logicalPlan: newLogicalPlan(Sel, b.allocer)}
+	selection.initID()
 	selection.correlated = p.IsCorrelated()
 	for _, cond := range conditions {
 		expr, np, correlated, err := b.rewrite(cond, p, AggMapper)
@@ -228,16 +235,18 @@ func (b *planBuilder) buildSelection(p Plan, where ast.ExprNode, AggMapper map[*
 		expressions = append(expressions, expr)
 	}
 	selection.Conditions = expressions
-	selection.id = b.allocID(selection)
 	selection.SetSchema(p.GetSchema().DeepCopy())
 	addChild(selection, p)
 	return selection
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
-func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (Plan, int) {
-	proj := &Projection{Exprs: make([]expression.Expression, 0, len(fields))}
-	proj.id = b.allocID(proj)
+func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
+	proj := &Projection{
+		Exprs:       make([]expression.Expression, 0, len(fields)),
+		logicalPlan: newLogicalPlan(Proj, b.allocer),
+	}
+	proj.initID()
 	proj.correlated = p.IsCorrelated()
 	schema := make(expression.Schema, 0, len(fields))
 	oldLen := 0
@@ -277,20 +286,21 @@ func (b *planBuilder) buildProjection(p Plan, fields []*ast.SelectField, mapper 
 	return proj, oldLen
 }
 
-func (b *planBuilder) buildNewDistinct(src Plan) Plan {
-	d := &Distinct{}
+func (b *planBuilder) buildNewDistinct(src LogicalPlan) LogicalPlan {
+	d := &Distinct{logicalPlan: newLogicalPlan(Dis, b.allocer)}
+	d.initID()
 	addChild(d, src)
 	d.SetSchema(src.GetSchema())
 	return d
 }
 
-func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) Plan {
-	sels := make([]Plan, len(union.SelectList.Selects))
+func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) LogicalPlan {
+	sels := make([]LogicalPlan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
 		sels[i] = b.buildNewSelect(sel)
 	}
-	u := &NewUnion{Selects: sels}
-	u.id = b.allocID(u)
+	u := &NewUnion{Selects: sels, logicalPlan: newLogicalPlan(Un, b.allocer)}
+	u.initID()
 	firstSchema := sels[0].GetSchema().DeepCopy()
 	for _, sel := range sels {
 		if len(firstSchema) != len(sel.GetSchema()) {
@@ -325,7 +335,7 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) Plan {
 	}
 
 	u.SetSchema(firstSchema)
-	var p Plan
+	var p LogicalPlan
 	p = u
 	if union.Distinct {
 		p = b.buildNewDistinct(u)
@@ -345,16 +355,10 @@ type ByItems struct {
 	Desc bool
 }
 
-// NewSort stands for the order by plan.
-type NewSort struct {
-	basePlan
-
-	ByItems []ByItems
-}
-
-func (b *planBuilder) buildNewSort(p Plan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) Plan {
+func (b *planBuilder) buildNewSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	var exprs []ByItems
-	sort := &NewSort{}
+	sort := &NewSort{logicalPlan: newLogicalPlan(Srt, b.allocer)}
+	sort.initID()
 	for _, item := range byItems {
 		it, np, correlated, err := b.rewrite(item.Expr, p, aggMapper)
 		if err != nil {
@@ -367,17 +371,18 @@ func (b *planBuilder) buildNewSort(p Plan, byItems []*ast.ByItem, aggMapper map[
 	}
 	sort.ByItems = exprs
 	addChild(sort, p)
-	sort.id = b.allocID(sort)
 	sort.SetSchema(p.GetSchema().DeepCopy())
 	return sort
 }
 
-func (b *planBuilder) buildNewLimit(src Plan, limit *ast.Limit) Plan {
+func (b *planBuilder) buildNewLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
 	li := &Limit{
-		Offset: limit.Offset,
-		Count:  limit.Count,
+		Offset:      limit.Offset,
+		Count:       limit.Count,
+		logicalPlan: newLogicalPlan(Lim, b.allocer),
 	}
-	if s, ok := src.(*Sort); ok {
+	li.initID()
+	if s, ok := src.(*NewSort); ok {
 		s.ExecLimit = li
 		return s
 	}
@@ -611,7 +616,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
-func (b *planBuilder) resolveGbyExprs(p Plan, gby *ast.GroupByClause, fields []*ast.SelectField) (Plan, bool, []expression.Expression) {
+func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, bool, []expression.Expression) {
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 	correlated := false
 	resolver := &gbyResolver{fields: fields, schema: p.GetSchema()}
@@ -634,7 +639,7 @@ func (b *planBuilder) resolveGbyExprs(p Plan, gby *ast.GroupByClause, fields []*
 	return p, correlated, exprs
 }
 
-func (b *planBuilder) unfoldWildStar(p Plan, selectFields []*ast.SelectField) (resultList []*ast.SelectField) {
+func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectField) (resultList []*ast.SelectField) {
 	for _, field := range selectFields {
 		if field.WildCard == nil {
 			resultList = append(resultList, field)
@@ -657,11 +662,11 @@ func (b *planBuilder) unfoldWildStar(p Plan, selectFields []*ast.SelectField) (r
 	return
 }
 
-func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
+func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 	hasAgg := b.detectSelectAgg(sel)
 	var aggFuncs []*ast.AggregateFuncExpr
 	var havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
-	var p Plan
+	var p LogicalPlan
 	var gbyCols []expression.Expression
 	var correlated bool
 	if sel.From != nil {
@@ -680,10 +685,10 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 		}
 	}
 	if sel.LockTp != ast.SelectLockNone {
-		p = b.buildSelectLock(p, sel.LockTp)
-		if b.err != nil {
-			return nil
-		}
+		// TODO: support it !
+		//p = b.buildSelectLock(p, sel.LockTp)
+		b.err = errors.New("SelectLocal have not been supported!")
+		return nil
 	}
 	if hasAgg {
 		if sel.GroupBy != nil {
@@ -732,7 +737,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 		}
 	}
 	if sel.Distinct {
-		p = b.buildDistinct(p)
+		p = b.buildNewDistinct(p)
 		if b.err != nil {
 			return nil
 		}
@@ -745,7 +750,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 		}
 	}
 	if sel.Limit != nil {
-		p = b.buildLimit(p, sel.Limit)
+		p = b.buildNewLimit(p, sel.Limit)
 		if b.err != nil {
 			return nil
 		}
@@ -756,26 +761,26 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) Plan {
 	return p
 }
 
-func (b *planBuilder) buildTrim(p Plan, len int) Plan {
-	trunc := &Trim{}
-	trunc.id = b.allocID(trunc)
+func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
+	trunc := &Trim{logicalPlan: newLogicalPlan(Trm, b.allocer)}
+	trunc.initID()
 	addChild(trunc, p)
 	trunc.SetSchema(p.GetSchema().DeepCopy()[:len])
 	trunc.correlated = p.IsCorrelated()
 	return trunc
 }
 
-func (b *planBuilder) buildNewTableDual() Plan {
-	dual := new(NewTableDual)
-	dual.id = b.allocID(dual)
+func (b *planBuilder) buildNewTableDual() LogicalPlan {
+	dual := &NewTableDual{logicalPlan: newLogicalPlan(Dual, b.allocer)}
+	dual.initID()
 	schema := []*expression.Column{{FromID: dual.id}}
 	dual.SetSchema(schema)
 	return dual
 }
 
-func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
-	p := &NewTableScan{Table: tn.TableInfo}
-	p.id = b.allocID(p)
+func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) LogicalPlan {
+	p := &NewTableScan{Table: tn.TableInfo, logicalPlan: newLogicalPlan(Ts, b.allocer)}
+	p.initID()
 	// Equal condition contains a column from previous joined table.
 	rfs := tn.GetResultFields()
 	schema := make([]*expression.Column, 0, len(rfs))
@@ -800,13 +805,14 @@ type ApplyConditionChecker struct {
 	All       bool
 }
 
-func (b *planBuilder) buildApply(p, inner Plan, schema expression.Schema, checker *ApplyConditionChecker) Plan {
+func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema, checker *ApplyConditionChecker) LogicalPlan {
 	ap := &Apply{
 		InnerPlan:   inner,
 		OuterSchema: schema,
 		Checker:     checker,
+		logicalPlan: newLogicalPlan(App, b.allocer),
 	}
-	ap.id = b.allocID(ap)
+	ap.initID()
 	addChild(ap, p)
 	innerSchema := inner.GetSchema().DeepCopy()
 	if checker == nil {
@@ -822,9 +828,9 @@ func (b *planBuilder) buildApply(p, inner Plan, schema expression.Schema, checke
 	return ap
 }
 
-func (b *planBuilder) buildExists(p Plan) Plan {
-	exists := &Exists{}
-	exists.id = b.allocID(exists)
+func (b *planBuilder) buildExists(p LogicalPlan) LogicalPlan {
+	exists := &Exists{logicalPlan: newLogicalPlan(Ext, b.allocer)}
+	exists.initID()
 	addChild(exists, p)
 	newCol := &expression.Column{
 		FromID:  exists.id,
@@ -835,9 +841,9 @@ func (b *planBuilder) buildExists(p Plan) Plan {
 	return exists
 }
 
-func (b *planBuilder) buildMaxOneRow(p Plan) Plan {
-	maxOneRow := &MaxOneRow{}
-	maxOneRow.id = b.allocID(maxOneRow)
+func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
+	maxOneRow := &MaxOneRow{logicalPlan: newLogicalPlan(MOR, b.allocer)}
+	maxOneRow.initID()
 	addChild(maxOneRow, p)
 	maxOneRow.SetSchema(p.GetSchema().DeepCopy())
 	maxOneRow.correlated = p.IsCorrelated()

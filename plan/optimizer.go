@@ -33,17 +33,22 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 	if err := logicOptimize(ctx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	builder := &planBuilder{sb: sb, ctx: ctx, is: is, colMapper: make(map[*ast.ColumnNameExpr]expression.Expression)}
+	builder := &planBuilder{
+		sb:        sb,
+		ctx:       ctx,
+		is:        is,
+		colMapper: make(map[*ast.ColumnNameExpr]expression.Expression),
+		allocer:   new(idAllocer)}
 	p := builder.build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)
 	}
-	if UseNewPlanner {
-		_, err := builder.predicatePushDown(p, []expression.Expression{})
+	if logic, ok := p.(LogicalPlan); UseNewPlanner && ok {
+		_, err := logic.PredicatePushDown(nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		_, err = pruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, err = logic.PruneColumnsAndResolveIndices(p.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

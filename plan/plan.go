@@ -16,8 +16,42 @@ package plan
 import (
 	"math"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+)
+
+const (
+	// Sel is the type of Selection.
+	Sel = "Selection"
+	// Proj is the type of Projection.
+	Proj = "Projection"
+	// Agg is the type of Aggregation.
+	Agg = "Aggregation"
+	// Jn is the type of Join.
+	Jn = "Join"
+	// Un is the type of Union.
+	Un = "Union"
+	// Ts is the type of TableScan.
+	Ts = "TableScan"
+	// Idx is the type of IndexScan.
+	Idx = "IndexScan"
+	// Srt is the type of Sort.
+	Srt = "Sort"
+	// Lim is the type of Limit.
+	Lim = "Limit"
+	// App is the type of Apply.
+	App = "Apply"
+	// Dis is the type of Distinct.
+	Dis = "Distinct"
+	// Trm is the type of Trim.
+	Trm = "Trim"
+	// MOR is the type of MaxOneRow.
+	MOR = "MaxOneRow"
+	// Ext is the type of Exists.
+	Ext = "Exists"
+	// Dual is the type of TableDual.
+	Dual = "TableDual"
 )
 
 // Plan is a description of an execution flow.
@@ -62,6 +96,60 @@ type Plan interface {
 	IsCorrelated() bool
 }
 
+// LogicalPlan is a tree of logical operators.
+// We can do a lot of logical optimization to it, like predicate push down and column pruning.
+type LogicalPlan interface {
+	Plan
+
+	PredicatePushDown([]expression.Expression) ([]expression.Expression, error)
+
+	// PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
+	// This function returns a column slice representing outer columns and an error.
+	PruneColumnsAndResolveIndices([]*expression.Column) ([]*expression.Column, error)
+	// TODO: implement Convert2PhysicalPlan()
+}
+
+// TODO: implement PhysicalPlan
+
+type logicalPlan struct {
+	basePlan
+}
+
+func newLogicalPlan(tp string, a *idAllocer) logicalPlan {
+	return logicalPlan{
+		basePlan: basePlan{
+			tp:      tp,
+			allocer: a,
+		},
+	}
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *logicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, error) {
+	rest, err1 := p.GetChildByIndex(0).(LogicalPlan).PredicatePushDown(predicates)
+	if err1 != nil {
+		return nil, errors.Trace(err1)
+	}
+	if len(rest) > 0 {
+		err1 = addSelection(p, p.GetChildByIndex(0).(LogicalPlan), rest, p.allocer)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+	}
+	return nil, nil
+}
+
+// PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
+func (p *logicalPlan) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
+	outer, err := p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(parentUsedCols)
+	p.SetSchema(p.GetChildByIndex(0).GetSchema())
+	return outer, errors.Trace(err)
+}
+
+func (p *logicalPlan) initID() {
+	p.id = p.tp + p.allocer.allocID()
+}
+
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
@@ -75,8 +163,10 @@ type basePlan struct {
 	parents  []Plan
 	children []Plan
 
-	schema expression.Schema
-	id     string
+	schema  expression.Schema
+	tp      string
+	id      string
+	allocer *idAllocer
 }
 
 // IsCorrelated implements Plan IsCorrelated interface.

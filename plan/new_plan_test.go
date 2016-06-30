@@ -150,14 +150,16 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		err = newMockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{}
-		p := builder.build(stmt)
+		builder := &planBuilder{
+			allocer: new(idAllocer),
+		}
+		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
 		c.Assert(ToString(p), Equals, ca.first, Commentf("for %s", ca.sql))
 
-		_, err = builder.predicatePushDown(p, []expression.Expression{})
+		_, err = p.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		_, err = pruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, err = p.PruneColumnsAndResolveIndices(p.GetSchema())
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
@@ -174,103 +176,103 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		{
 			sql: "select count(*) from t group by a",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a"},
+				"TableScan_1": {"a"},
 			},
 		},
 		{
 			sql: "select count(*) from t",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {},
+				"TableScan_1": {},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b where a.a < 1",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a"},
-				"*plan.NewTableScan_2": {},
+				"TableScan_1": {"a"},
+				"TableScan_2": {},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b on a.a = b.d",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a"},
-				"*plan.NewTableScan_2": {"d"},
+				"TableScan_1": {"a"},
+				"TableScan_2": {"d"},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b on a.a = b.d order by sum(a.d)",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a", "d"},
-				"*plan.NewTableScan_2": {"d"},
+				"TableScan_1": {"a", "d"},
+				"TableScan_2": {"d"},
 			},
 		},
 		{
 			sql: "select count(b.a) from t a join t b on a.a = b.d group by b.b order by sum(a.d)",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a", "d"},
-				"*plan.NewTableScan_2": {"a", "b", "d"},
+				"TableScan_1": {"a", "d"},
+				"TableScan_2": {"a", "b", "d"},
 			},
 		},
 		{
 			sql: "select * from (select count(b.a) from t a join t b on a.a = b.d group by b.b having sum(a.d) < 0) tt",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a", "d"},
-				"*plan.NewTableScan_2": {"a", "b", "d"},
+				"TableScan_1": {"a", "d"},
+				"TableScan_2": {"a", "b", "d"},
 			},
 		},
 		{
 			sql: "select (select count(a) from t where b = k.a) from t k",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a"},
-				"*plan.NewTableScan_2": {"a", "b"},
+				"TableScan_1": {"a"},
+				"TableScan_2": {"a", "b"},
 			},
 		},
 		{
 			sql: "select exists (select count(*) from t where b = k.a) from t k",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a"},
-				"*plan.NewTableScan_2": {"b"},
+				"TableScan_1": {"a"},
+				"TableScan_2": {"b"},
 			},
 		},
 		{
 			sql: "select b = (select count(*) from t where b = k.a) from t k",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a", "b"},
-				"*plan.NewTableScan_2": {"b"},
+				"TableScan_1": {"a", "b"},
+				"TableScan_2": {"b"},
 			},
 		},
 		{
 			sql: "select exists (select count(a) from t where b = k.a) from t k",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a"},
-				"*plan.NewTableScan_2": {"b"},
+				"TableScan_1": {"a"},
+				"TableScan_2": {"b"},
 			},
 		},
 		{
 			sql: "select a as c1, b as c2 from t order by 1, c1 + c2 + c",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a", "b", "c"},
+				"TableScan_1": {"a", "b", "c"},
 			},
 		},
 		{
 			sql: "select a from t where b < any (select c from t)",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a", "b"},
-				"*plan.NewTableScan_2": {"c"},
+				"TableScan_1": {"a", "b"},
+				"TableScan_2": {"c"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) = all (select c,d from t)",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a", "b"},
-				"*plan.NewTableScan_2": {"c", "d"},
+				"TableScan_1": {"a", "b"},
+				"TableScan_2": {"c", "d"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) in (select c,d from t)",
 			ans: map[string][]string{
-				"*plan.NewTableScan_1": {"a", "b"},
-				"*plan.NewTableScan_2": {"c", "d"},
+				"TableScan_1": {"a", "b"},
+				"TableScan_2": {"c", "d"},
 			},
 		},
 	}
@@ -283,13 +285,15 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		err = newMockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{colMapper: make(map[*ast.ColumnNameExpr]expression.Expression)}
-		p := builder.build(stmt)
+		builder := &planBuilder{
+			colMapper: make(map[*ast.ColumnNameExpr]expression.Expression),
+			allocer:   new(idAllocer)}
+		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
 
-		_, err = builder.predicatePushDown(p, []expression.Expression{})
+		_, err = p.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		_, err = pruneColumnsAndResolveIndices(p, p.GetSchema())
+		_, err = p.PruneColumnsAndResolveIndices(p.GetSchema())
 		c.Assert(err, IsNil)
 		check(p, c, ca.ans, comment)
 	}
@@ -297,14 +301,12 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
-	bA := &planBuilder{}
-	pA := &NewTableScan{}
+	pA := &NewTableScan{logicalPlan: newLogicalPlan(Ts, new(idAllocer))}
 
-	bB := &planBuilder{}
-	pB := &NewTableScan{}
+	pB := &NewTableScan{logicalPlan: newLogicalPlan(Ts, new(idAllocer))}
 
-	pA.id = bA.allocID(pA)
-	pB.id = bB.allocID(pB)
+	pA.initID()
+	pB.initID()
 	c.Assert(pA.id, Equals, pB.id)
 }
 
