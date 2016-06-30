@@ -37,6 +37,9 @@ type AggregationFunction interface {
 	// GetArgs stands for getting all arguments.
 	GetArgs() []Expression
 
+	// GetName gets the aggregation function name.
+	GetName() string
+
 	// SetArgs set argument by index.
 	SetArgs(idx int, expr Expression)
 
@@ -46,21 +49,21 @@ type AggregationFunction interface {
 
 // NewAggFunction creates a new AggregationFunction.
 func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) AggregationFunction {
-	switch strings.ToLower(funcType) {
+	switch tp := strings.ToLower(funcType); tp {
 	case ast.AggFuncSum:
-		return &sumFunction{aggFunction: newAggFunc(funcArgs, distinct)}
+		return &sumFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
 	case ast.AggFuncCount:
-		return &countFunction{aggFunction: newAggFunc(funcArgs, distinct)}
+		return &countFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
 	case ast.AggFuncAvg:
-		return &avgFunction{aggFunction: newAggFunc(funcArgs, distinct)}
+		return &avgFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
 	case ast.AggFuncGroupConcat:
-		return &concatFunction{aggFunction: newAggFunc(funcArgs, distinct)}
+		return &concatFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
 	case ast.AggFuncMax:
-		return &maxMinFunction{aggFunction: newAggFunc(funcArgs, distinct), isMax: true}
+		return &maxMinFunction{aggFunction: newAggFunc(tp, funcArgs, distinct), isMax: true}
 	case ast.AggFuncMin:
-		return &maxMinFunction{aggFunction: newAggFunc(funcArgs, distinct), isMax: false}
+		return &maxMinFunction{aggFunction: newAggFunc(tp, funcArgs, distinct), isMax: false}
 	case ast.AggFuncFirstRow:
-		return &firstRowFunction{aggFunction: newAggFunc(funcArgs, distinct)}
+		return &firstRowFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
 	}
 	return nil
 }
@@ -68,13 +71,15 @@ func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) Aggre
 type aggCtxMapper map[string]*ast.AggEvaluateContext
 
 type aggFunction struct {
+	name         string
 	Args         []Expression
 	Distinct     bool
 	resultMapper aggCtxMapper
 }
 
-func newAggFunc(args []Expression, dist bool) aggFunction {
+func newAggFunc(name string, args []Expression, dist bool) aggFunction {
 	return aggFunction{
+		name:         name,
 		Args:         args,
 		resultMapper: make(aggCtxMapper, 0),
 		Distinct:     dist}
@@ -82,6 +87,11 @@ func newAggFunc(args []Expression, dist bool) aggFunction {
 
 func (af *aggFunction) Clear() {
 	af.resultMapper = make(aggCtxMapper, 0)
+}
+
+// GetName implements AggregationFunction interface.
+func (af *aggFunction) GetName() string {
+	return af.name
 }
 
 // GetArgs implements AggregationFunction interface.

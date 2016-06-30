@@ -383,8 +383,8 @@ func (e *Evaluator) checkInList(not bool, in types.Datum, list []types.Datum) (d
 	}
 
 	if hasNull {
-		// if no matched but we got null in In, return null
-		// e.g 1 in (null, 2, 3) returns null
+		// If no matched but we got null in In, return null.
+		// e.g 1 in (null, 2, 3) returns null.
 		return d
 	}
 	if not {
