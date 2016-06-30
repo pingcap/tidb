@@ -744,9 +744,45 @@ func (b *executorBuilder) newConditionExprToPBExpr(client kv.Client, exprs []exp
 	return
 }
 
+func (b *executorBuilder) newAggFuncToPBExpr(client kv.Client, aggFunc expression.AggregationFunction,
+	tbl *model.TableInfo) *tipb.Expr {
+	var tp tipb.ExprType
+	switch aggFunc.GetName() {
+	case ast.AggFuncCount:
+		tp = tipb.ExprType_Count
+	case ast.AggFuncFirstRow:
+		tp = tipb.ExprType_First
+	case ast.AggFuncGroupConcat:
+		tp = tipb.ExprType_GroupConcat
+	case ast.AggFuncMax:
+		tp = tipb.ExprType_Max
+	case ast.AggFuncMin:
+		tp = tipb.ExprType_Min
+	case ast.AggFuncSum:
+		tp = tipb.ExprType_Sum
+	case ast.AggFuncAvg:
+		tp = tipb.ExprType_Avg
+	}
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+
+	children := make([]*tipb.Expr, 0, len(aggFunc.GetArgs()))
+	for _, arg := range aggFunc.GetArgs() {
+		pbArg := b.newExprToPBExpr(client, arg, tbl)
+		if pbArg == nil {
+			return nil
+		}
+		children = append(children, pbArg)
+	}
+	return &tipb.Expr{Tp: tp.Enum(), Children: children}
+}
+
 // newExprToPBExpr converts an expression.Expression to a tipb.Expr, if not supported, nil will be returned.
 func (b *executorBuilder) newExprToPBExpr(client kv.Client, expr expression.Expression, tbl *model.TableInfo) *tipb.Expr {
 	switch x := expr.(type) {
+	case *expression.Constant:
+		return b.datumToPBExpr(client, expr.(*expression.Constant).Value)
 	case *expression.Column:
 		return b.columnToPBExpr(client, x, tbl)
 	case *expression.ScalarFunction:
@@ -788,6 +824,58 @@ func (b *executorBuilder) columnToPBExpr(client kv.Client, column *expression.Co
 		Val: codec.EncodeInt(nil, id)}
 }
 
+func (b *executorBuilder) inToPBExpr(client kv.Client, expr *expression.ScalarFunction, tbl *model.TableInfo) *tipb.Expr {
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_In)) {
+		return nil
+	}
+
+	pbExpr := b.newExprToPBExpr(client, expr.Args[0], tbl)
+	if pbExpr == nil {
+		return nil
+	}
+	listExpr := b.constListToPBExpr(client, expr.Args[1:], tbl)
+	if listExpr == nil {
+		return nil
+	}
+	return &tipb.Expr{
+		Tp:       tipb.ExprType_In.Enum(),
+		Children: []*tipb.Expr{pbExpr, listExpr}}
+}
+
+func (b *executorBuilder) constListToPBExpr(client kv.Client, list []expression.Expression, tbl *model.TableInfo) *tipb.Expr {
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ValueList)) {
+		return nil
+	}
+
+	// Only list of *expression.Constant can be push down.
+	datums := make([]types.Datum, 0, len(list))
+	for _, expr := range list {
+		v, ok := expr.(*expression.Constant)
+		if !ok {
+			return nil
+		}
+		if b.datumToPBExpr(client, v.Value) == nil {
+			return nil
+		}
+		datums = append(datums, v.Value)
+	}
+	return b.datumsToValueList(datums)
+}
+
+func (b *executorBuilder) notToPBExpr(client kv.Client, expr *expression.ScalarFunction, tbl *model.TableInfo) *tipb.Expr {
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_Not)) {
+		return nil
+	}
+
+	child := b.newExprToPBExpr(client, expr.Args[0], tbl)
+	if child == nil {
+		return nil
+	}
+	return &tipb.Expr{
+		Tp:       tipb.ExprType_Not.Enum(),
+		Children: []*tipb.Expr{child}}
+}
+
 func (b *executorBuilder) scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction,
 	tbl *model.TableInfo) *tipb.Expr {
 	var tp tipb.ExprType
@@ -810,9 +898,31 @@ func (b *executorBuilder) scalarFuncToPBExpr(client kv.Client, expr *expression.
 		tp = tipb.ExprType_And
 	case ast.Or:
 		tp = tipb.ExprType_Or
-	// It's the operation for unary operator.
 	case ast.UnaryNot:
-		tp = tipb.ExprType_Not
+		return b.notToPBExpr(client, expr, tbl)
+	case ast.In:
+		return b.inToPBExpr(client, expr, tbl)
+	case ast.Like:
+		// Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
+		escape := expr.Args[2].(*expression.Constant).Value
+		if escape.IsNull() || byte(escape.GetInt64()) != '\\' {
+			return nil
+		}
+		pattern := expr.Args[1].(*expression.Constant).Value
+		if pattern.Kind() != types.KindString {
+			return nil
+		}
+		for i, b := range pattern.GetString() {
+			switch b {
+			case '\\', '_':
+				return nil
+			case '%':
+				if i != 0 && i != len(pattern.GetString())-1 {
+					return nil
+				}
+			}
+		}
+		tp = tipb.ExprType_Like
 	default:
 		return nil
 	}
@@ -821,27 +931,17 @@ func (b *executorBuilder) scalarFuncToPBExpr(client kv.Client, expr *expression.
 		return nil
 	}
 
-	if len(expr.Args) == 1 {
-		child := b.newExprToPBExpr(client, expr.Args[0], tbl)
-		if child == nil {
-			return nil
-		}
-		return &tipb.Expr{
-			Tp:       tp.Enum(),
-			Children: []*tipb.Expr{child}}
-	}
-
-	leftExpr := b.newExprToPBExpr(client, expr.Args[0], tbl)
-	if leftExpr == nil {
+	expr0 := b.newExprToPBExpr(client, expr.Args[0], tbl)
+	if expr0 == nil {
 		return nil
 	}
-	rightExpr := b.newExprToPBExpr(client, expr.Args[1], tbl)
-	if rightExpr == nil {
+	expr1 := b.newExprToPBExpr(client, expr.Args[1], tbl)
+	if expr1 == nil {
 		return nil
 	}
 	return &tipb.Expr{
 		Tp:       tp.Enum(),
-		Children: []*tipb.Expr{leftExpr, rightExpr}}
+		Children: []*tipb.Expr{expr0, expr1}}
 }
 
 // ApplyExec represents apply executor.

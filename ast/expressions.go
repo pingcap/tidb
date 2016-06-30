@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -62,12 +61,6 @@ func NewValueExpr(value interface{}) *ValueExpr {
 	}
 	ve := &ValueExpr{}
 	ve.SetValue(value)
-	if _, ok := value.(UnquoteString); ok {
-		ve.Type = types.NewFieldType(mysql.TypeVarchar)
-		ve.Type.Charset = mysql.DefaultCharset
-		ve.Type.Collate = mysql.DefaultCollationName
-		return ve
-	}
 	ve.Type = types.DefaultTypeForValue(value)
 	return ve
 }

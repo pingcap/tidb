@@ -23,9 +23,9 @@ mysql -h 127.0.0.1 -P 4000 -u root -D test
 
 Notice: OS X user may use `docker-machine ip` to connect it.
 
-#### __Run TiDB on HBase__
+#### __Run TiDB on TiKV__
 
-Read this [doc](https://github.com/pingcap/tidb/blob/master/docs/HBASE_QUICKSTART.md).
+Read this [doc](https://github.com/pingcap/tikv/blob/master/USAGE.md).
 
 #### __Pre-requirement__
 

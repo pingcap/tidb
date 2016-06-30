@@ -26,7 +26,7 @@ const (
 	patAny
 )
 
-// handle escapes and wild cards convert pattern characters and pattern types,
+// Handle escapes and wild cards convert pattern characters and pattern types.
 func compilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 	var lastAny bool
 	patChars = make([]byte, len(pattern))
