@@ -2155,6 +2155,11 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	sql = "select c3 from t where c3 = 'abcde';"
 	mustExecMatch(c, se, sql, [][]interface{}{})
 
+	mustExecSQL(c, se, "drop table if exists t1;")
+	mustExecSQL(c, se, "create table t1 (a int, b char(255), key(a, b(20)));")
+	mustExecSQL(c, se, "insert into t1 values (0, '1');")
+	mustExecSQL(c, se, "update t1 set b = b + 1 where a = 0;")
+
 	err = se.Close()
 	c.Assert(err, IsNil)
 	err = store.Close()

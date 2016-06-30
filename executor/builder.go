@@ -254,7 +254,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
 		log.Debug("xapi select index")
 		for i := 0; i < len(v.Ranges); i++ {
-			refineRange(v.Ranges[i], idx.Meta().Columns)
+			refineRange(v.Ranges[i], v.Index.Columns)
 		}
 		e := &XSelectIndexExec{
 			table:       tbl,
@@ -306,7 +306,8 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 // refineRange may change the IndexRange taking prefix index length into consideration
 func refineRange(v *plan.IndexRange, ics []*model.IndexColumn) bool {
 	var prefixIndex bool
-	for i, ic := range ics {
+	for i := 0; i < len(v.LowVal); i++ {
+		ic := ics[i]
 		if ic.Length == types.UnspecifiedLength {
 			continue
 		}
@@ -318,7 +319,13 @@ func refineRange(v *plan.IndexRange, ics []*model.IndexColumn) bool {
 				prefixIndex = true
 			}
 		}
+	}
 
+	for i := 0; i < len(v.HighVal); i++ {
+		ic := ics[i]
+		if ic.Length == types.UnspecifiedLength {
+			continue
+		}
 		highVal := &v.HighVal[i]
 		if highVal.Kind() == types.KindBytes || highVal.Kind() == types.KindString {
 			if ic.Length < len(highVal.GetBytes()) {
