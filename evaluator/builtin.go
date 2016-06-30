@@ -146,16 +146,11 @@ var Funcs = map[string]Func{
 	ast.BitNeg:     {unaryOpFactory(opcode.BitNeg), 1, 1},
 	ast.UnaryPlus:  {unaryOpFactory(opcode.Plus), 1, 1},
 	ast.UnaryMinus: {unaryOpFactory(opcode.Minus), 1, 1},
-	ast.In:         {builtinScalarFunc, 1, -1},
+	ast.In:         {builtinIn, 1, -1},
 	ast.IsTruth:    {isTrueOpFactory(opcode.IsTruth), 1, 1},
 	ast.IsFalsity:  {isTrueOpFactory(opcode.IsFalsity), 1, 1},
-	ast.Like:       {builtinScalarFunc, 1, 3},
+	ast.Like:       {builtinLike, 1, 3},
 	ast.RowFunc:    {builtinRow, 2, -1},
-}
-
-// TODO: implement it
-func builtinScalarFunc(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	return
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce

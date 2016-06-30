@@ -294,7 +294,7 @@ func isTrueOpFactory(op opcode.Op) BuiltinFunc {
 			if err != nil {
 				return d, errors.Trace(err)
 			}
-			if int64(op)^iVal == 1 {
+			if (op == opcode.IsTruth && iVal == 1) || (op == opcode.IsFalsity && iVal == 0) {
 				boolVal = true
 			}
 		}

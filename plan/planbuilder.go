@@ -104,6 +104,9 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		}
 		return b.buildSelect(x)
 	case *ast.UnionStmt:
+		if UseNewPlanner {
+			return b.buildNewUnion(x)
+		}
 		return b.buildUnion(x)
 	case *ast.UpdateStmt:
 		return b.buildUpdate(x)

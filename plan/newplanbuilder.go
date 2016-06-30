@@ -324,16 +324,18 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) Plan {
 	}
 
 	u.SetSchema(firstSchema)
+	var p Plan
+	p = u
 	if union.Distinct {
-		return b.buildNewDistinct(u)
+		p = b.buildNewDistinct(u)
 	}
 	if union.OrderBy != nil {
-		return b.buildNewSort(u, union.OrderBy.Items, nil)
+		p = b.buildNewSort(p, union.OrderBy.Items, nil)
 	}
 	if union.Limit != nil {
-		return b.buildNewLimit(u, union.Limit)
+		p = b.buildNewLimit(p, union.Limit)
 	}
-	return u
+	return p
 }
 
 // ByItems wraps a "by" item.
@@ -794,15 +796,30 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) Plan {
 	return p
 }
 
-func (b *planBuilder) buildApply(p, inner Plan, schema expression.Schema) Plan {
+// ApplyConditionChecker checks whether all or any output of apply matches a condition.
+type ApplyConditionChecker struct {
+	Condition expression.Expression
+	All       bool
+}
+
+func (b *planBuilder) buildApply(p, inner Plan, schema expression.Schema, checker *ApplyConditionChecker) Plan {
 	ap := &Apply{
 		InnerPlan:   inner,
 		OuterSchema: schema,
+		Checker:     checker,
 	}
 	ap.id = b.allocID(ap)
 	addChild(ap, p)
 	innerSchema := inner.GetSchema().DeepCopy()
-	ap.SetSchema(append(p.GetSchema().DeepCopy(), innerSchema...))
+	if checker == nil {
+		ap.SetSchema(append(p.GetSchema().DeepCopy(), innerSchema...))
+	} else {
+		ap.SetSchema(append(p.GetSchema().DeepCopy(), &expression.Column{
+			FromID:  ap.id,
+			ColName: model.NewCIStr("exists_row"),
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		}))
+	}
 	ap.correlated = p.IsCorrelated()
 	return ap
 }

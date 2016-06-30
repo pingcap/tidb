@@ -91,7 +91,7 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 func CastValues(ctx context.Context, rec []types.Datum, cols []*Column) (err error) {
 	for _, c := range cols {
 		var converted types.Datum
-		converted, err = CastValue(ctx, rec[c.Offset], c)
+		converted, err = CastValue(ctx, rec[c.Offset], &c.ColumnInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -101,7 +101,7 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column) (err err
 }
 
 // CastValue casts a value based on column type.
-func CastValue(ctx context.Context, val types.Datum, col *Column) (casted types.Datum, err error) {
+func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
 	casted, err = val.ConvertTo(&col.FieldType)
 	if err != nil {
 		if variable.GetSessionVars(ctx).StrictSQLMode {
@@ -262,8 +262,11 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum
 			return types.NewDatum(col.FieldType.Elems[0]), true, nil
 		}
 	}
-
-	return types.NewDatum(col.DefaultValue), true, nil
+	value, err := CastValue(ctx, types.NewDatum(col.DefaultValue), col)
+	if err != nil {
+		return types.Datum{}, false, errors.Trace(err)
+	}
+	return value, true, nil
 }
 
 func getZeroValue(col *model.ColumnInfo) types.Datum {

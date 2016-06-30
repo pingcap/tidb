@@ -463,7 +463,11 @@ func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []
 		}
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
-			data = append(data, rowMap[col.ID])
+			if col.IsPKHandleColumn(t.Meta()) {
+				data = append(data, types.NewIntDatum(handle))
+			} else {
+				data = append(data, rowMap[col.ID])
+			}
 		}
 		more, err := fn(handle, data, cols)
 		if !more || err != nil {
