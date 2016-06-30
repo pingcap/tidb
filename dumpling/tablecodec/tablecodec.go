@@ -271,7 +271,7 @@ func CutRow(data []byte, cols map[int64]*types.FieldType) (map[int64][]byte, err
 		b   []byte
 		err error
 	)
-	for len(data) > 0 {
+	for len(data) > 0 && cnt < len(cols) {
 		// Get col id.
 		b, data, err = codec.CutOne(data)
 		if err != nil {
@@ -291,9 +291,6 @@ func CutRow(data []byte, cols map[int64]*types.FieldType) (map[int64][]byte, err
 		if ok {
 			row[id] = b
 			cnt++
-			if cnt == len(cols) {
-				break
-			}
 		}
 	}
 	return row, nil
