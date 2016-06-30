@@ -2126,7 +2126,7 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
 	c.Assert(err, NotNil)
 
-	// TODO
+	// TODO:
 	// _, err := exec(c, se, "create index idx_c1 on t (c1(5))")
 	// ERROR 1089 (HY000): Incorrect prefix key;
 	// the used key part isn't a string, the used length is longer than the key part,
