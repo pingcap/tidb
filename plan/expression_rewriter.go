@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -371,6 +372,8 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		er.betweenToScalarFunc(v)
 	case *ast.PatternLikeExpr:
 		er.likeToScalarFunc(v)
+	case *ast.FuncCastExpr:
+		er.castToScalarFunc(v)
 	case *ast.PatternInExpr:
 		if v.Sel == nil {
 			er.inToScalarFunc(v)
@@ -566,4 +569,18 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		return
 	}
 	er.ctxStack = append(er.ctxStack, column)
+}
+
+func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
+	bt, err := evaluator.CastFuncFactory(v.Tp)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return
+	}
+	function := &expression.ScalarFunction{
+		Args:     []expression.Expression{er.ctxStack[len(er.ctxStack)-1]},
+		FuncName: model.NewCIStr("cast"),
+		RetType:  v.Tp,
+		Function: bt}
+	er.ctxStack[len(er.ctxStack)-1] = function
 }
