@@ -145,6 +145,11 @@ func (t *BoundedTable) Cols() []*table.Column {
 	return t.Columns
 }
 
+// WritableCols implements table.Table WritableCols interface.
+func (t *BoundedTable) WritableCols() []*table.Column {
+	return t.Columns
+}
+
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (t *BoundedTable) RecordPrefix() kv.Key {
 	return t.recordPrefix

@@ -21,7 +21,6 @@ This document defines the roadmap for TiDB development.
 
 
 ##### __API__  
-- [x] Embedded Go library
 - [x] MySQL protocol server
 - [ ] PostgreSQL protocol server
 - [ ] JSON support
@@ -45,6 +44,6 @@ This document defines the roadmap for TiDB development.
 - [x] LMDB
 - [x] Homemade distributed KV ([pingcap/tikv](https://github.com/pingcap/tikv)):
     - [x] Transactions
-    - [x] Replicate log using Paxos/Raft
+    - [x] Replicate log using Raft
     - [x] Scale-out (Auto-rebalance)
     - [x] Geo replicated
