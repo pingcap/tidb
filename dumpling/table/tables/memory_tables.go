@@ -132,6 +132,11 @@ func (t *MemoryTable) Cols() []*table.Column {
 	return t.Columns
 }
 
+// WritableCols implements table.Table WritableCols interface.
+func (t *MemoryTable) WritableCols() []*table.Column {
+	return t.Columns
+}
+
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (t *MemoryTable) RecordPrefix() kv.Key {
 	return t.recordPrefix
