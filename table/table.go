@@ -72,6 +72,9 @@ type Table interface {
 	// Cols returns the columns of the table which is used in select.
 	Cols() []*Column
 
+	// WritableCols returns the writable columns of the table.
+	WritableCols() []*Column
+
 	// Indices returns the indices of the table.
 	Indices() []Index
 
