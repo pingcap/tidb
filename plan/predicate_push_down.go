@@ -17,10 +17,10 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expression, allocer *idAllocer) error {
+func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) error {
 	selection := &Selection{
-		Conditions:  conditions,
-		logicalPlan: newLogicalPlan(Sel, allocer)}
+		Conditions:      conditions,
+		baseLogicalPlan: newLogicalPlan(Sel, allocator)}
 	selection.initID()
 	selection.SetSchema(child.GetSchema().DeepCopy())
 	return InsertPlan(p, child, selection)
@@ -102,13 +102,13 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 		return nil, errors.Trace(err2)
 	}
 	if len(leftRet) > 0 {
-		err2 = addSelection(p, leftPlan, leftRet, p.allocer)
+		err2 = addSelection(p, leftPlan, leftRet, p.allocator)
 		if err2 != nil {
 			return nil, errors.Trace(err2)
 		}
 	}
 	if len(rightRet) > 0 {
-		err2 = addSelection(p, rightPlan, rightRet, p.allocer)
+		err2 = addSelection(p, rightPlan, rightRet, p.allocator)
 		if err2 != nil {
 			return nil, errors.Trace(err2)
 		}
@@ -148,7 +148,7 @@ func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret 
 		return nil, errors.Trace(err1)
 	}
 	if len(restConds) > 0 {
-		err1 = addSelection(p, child, restConds, p.allocer)
+		err1 = addSelection(p, child, restConds, p.allocator)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -169,7 +169,7 @@ func (p *NewUnion) PredicatePushDown(predicates []expression.Expression) (ret []
 			return nil, errors.Trace(err)
 		}
 		if len(retCond) != 0 {
-			addSelection(p, proj, retCond, p.allocer)
+			addSelection(p, proj, retCond, p.allocator)
 		}
 	}
 	return

@@ -36,7 +36,7 @@ const (
 
 // Join is the logical join plan.
 type Join struct {
-	logicalPlan
+	baseLogicalPlan
 
 	JoinType JoinType
 
@@ -48,20 +48,20 @@ type Join struct {
 
 // Projection represents a select fields plan.
 type Projection struct {
-	logicalPlan
+	baseLogicalPlan
 	Exprs []expression.Expression
 }
 
 // Aggregation represents an aggregate plan.
 type Aggregation struct {
-	logicalPlan
+	baseLogicalPlan
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
 }
 
 // Selection means a filter.
 type Selection struct {
-	logicalPlan
+	baseLogicalPlan
 
 	// Originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
@@ -71,7 +71,7 @@ type Selection struct {
 
 // Apply gets one row from outer executor and gets one row from inner executor according to outer row.
 type Apply struct {
-	logicalPlan
+	baseLogicalPlan
 
 	InnerPlan   LogicalPlan
 	OuterSchema expression.Schema
@@ -80,22 +80,22 @@ type Apply struct {
 
 // Exists checks if a query returns result.
 type Exists struct {
-	logicalPlan
+	baseLogicalPlan
 }
 
 // MaxOneRow checks if a query returns no more than one row.
 type MaxOneRow struct {
-	logicalPlan
+	baseLogicalPlan
 }
 
 // NewTableDual represents a dual table plan.
 type NewTableDual struct {
-	logicalPlan
+	baseLogicalPlan
 }
 
 // NewTableScan represents a tablescan without condition push down.
 type NewTableScan struct {
-	logicalPlan
+	baseLogicalPlan
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
@@ -112,19 +112,19 @@ type NewTableScan struct {
 
 // Trim trims child's rows.
 type Trim struct {
-	logicalPlan
+	baseLogicalPlan
 }
 
 // NewUnion represents Union plan.
 type NewUnion struct {
-	logicalPlan
+	baseLogicalPlan
 
 	Selects []LogicalPlan
 }
 
 // NewSort stands for the order by plan.
 type NewSort struct {
-	logicalPlan
+	baseLogicalPlan
 
 	ByItems []ByItems
 

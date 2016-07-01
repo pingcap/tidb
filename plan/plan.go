@@ -111,27 +111,27 @@ type LogicalPlan interface {
 
 // TODO: implement PhysicalPlan
 
-type logicalPlan struct {
+type baseLogicalPlan struct {
 	basePlan
 }
 
-func newLogicalPlan(tp string, a *idAllocer) logicalPlan {
-	return logicalPlan{
+func newLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
+	return baseLogicalPlan{
 		basePlan: basePlan{
-			tp:      tp,
-			allocer: a,
+			tp:        tp,
+			allocator: a,
 		},
 	}
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *logicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, error) {
+func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, error) {
 	rest, err1 := p.GetChildByIndex(0).(LogicalPlan).PredicatePushDown(predicates)
 	if err1 != nil {
 		return nil, errors.Trace(err1)
 	}
 	if len(rest) > 0 {
-		err1 = addSelection(p, p.GetChildByIndex(0).(LogicalPlan), rest, p.allocer)
+		err1 = addSelection(p, p.GetChildByIndex(0).(LogicalPlan), rest, p.allocator)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -140,14 +140,14 @@ func (p *logicalPlan) PredicatePushDown(predicates []expression.Expression) ([]e
 }
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
-func (p *logicalPlan) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
+func (p *baseLogicalPlan) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
 	outer, err := p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(parentUsedCols)
 	p.SetSchema(p.GetChildByIndex(0).GetSchema())
 	return outer, errors.Trace(err)
 }
 
-func (p *logicalPlan) initID() {
-	p.id = p.tp + p.allocer.allocID()
+func (p *baseLogicalPlan) initID() {
+	p.id = p.tp + p.allocator.allocID()
 }
 
 // basePlan implements base Plan interface.
@@ -163,10 +163,10 @@ type basePlan struct {
 	parents  []Plan
 	children []Plan
 
-	schema  expression.Schema
-	tp      string
-	id      string
-	allocer *idAllocer
+	schema    expression.Schema
+	tp        string
+	id        string
+	allocator *idAllocator
 }
 
 // IsCorrelated implements Plan IsCorrelated interface.

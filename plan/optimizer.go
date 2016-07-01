@@ -38,7 +38,7 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]expression.Expression),
-		allocer:   new(idAllocer)}
+		allocator: new(idAllocator)}
 	p := builder.build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)

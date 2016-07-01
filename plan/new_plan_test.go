@@ -151,7 +151,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
-			allocer: new(idAllocer),
+			allocator: new(idAllocator),
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
@@ -287,7 +287,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]expression.Expression),
-			allocer:   new(idAllocer)}
+			allocator: new(idAllocator)}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
 
@@ -301,9 +301,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
-	pA := &NewTableScan{logicalPlan: newLogicalPlan(Ts, new(idAllocer))}
+	pA := &NewTableScan{baseLogicalPlan: newLogicalPlan(Ts, new(idAllocator))}
 
-	pB := &NewTableScan{logicalPlan: newLogicalPlan(Ts, new(idAllocer))}
+	pB := &NewTableScan{baseLogicalPlan: newLogicalPlan(Ts, new(idAllocator))}
 
 	pA.initID()
 	pB.initID()
