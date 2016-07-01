@@ -40,7 +40,11 @@ func (s *testDDLSuite) TestDropSchemaError(c *C) {
 			Name: model.CIStr{O: "test"},
 		}},
 	}
-	d.prepareBgJob(job)
+	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return d.prepareBgJob(t, job)
+	})
+	c.Check(err, IsNil)
 	d.startBgJob(job.Type)
 
 	time.Sleep(lease)
@@ -79,7 +83,11 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 			Name: model.CIStr{O: "t"},
 		}},
 	}
-	d.prepareBgJob(job)
+	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return d.prepareBgJob(t, job)
+	})
+	c.Check(err, IsNil)
 	d.startBgJob(job.Type)
 
 	time.Sleep(lease)
@@ -100,7 +108,11 @@ func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
 		TableID:  1,
 		Type:     model.ActionCreateTable,
 	}
-	d.prepareBgJob(job)
+	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return d.prepareBgJob(t, job)
+	})
+	c.Check(err, IsNil)
 	d.startBgJob(model.ActionDropTable)
 
 	time.Sleep(lease)
