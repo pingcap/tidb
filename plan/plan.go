@@ -101,6 +101,7 @@ type Plan interface {
 type LogicalPlan interface {
 	Plan
 
+	// PredicatePushDown push down predicates in where/on/having clause as deeply as possible.
 	PredicatePushDown([]expression.Expression) ([]expression.Expression, error)
 
 	// PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
