@@ -310,6 +310,7 @@ func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) 
 	lowValue := make([]byte, 0, len(pattern))
 	escape := byte(expr.Args[2].(*expression.Constant).Value.GetInt64())
 	var exclude bool
+	isExactMatch := true
 	for i := 0; i < len(pattern); i++ {
 		if pattern[i] == escape {
 			i++
@@ -322,18 +323,24 @@ func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) 
 		}
 		if pattern[i] == '%' {
 			// Get the prefix.
+			isExactMatch = false
 			break
 		} else if pattern[i] == '_' {
 			// Get the prefix, but exclude the prefix.
 			// e.g., "abc_x", the start point exclude "abc",
 			// because the string length is more than 3.
 			exclude = true
+			isExactMatch = false
 			break
 		}
 		lowValue = append(lowValue, pattern[i])
 	}
 	if len(lowValue) == 0 {
 		return []rangePoint{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
+	}
+	if isExactMatch {
+		val := types.NewStringDatum(string(lowValue))
+		return []rangePoint{{value: val, start: true}, {value: val}}
 	}
 	startPoint := rangePoint{start: true, excl: exclude}
 	startPoint.value.SetBytesAsString(lowValue)
