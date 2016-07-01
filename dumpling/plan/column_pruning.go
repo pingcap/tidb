@@ -50,7 +50,7 @@ func makeUsedList(usedCols []*expression.Column, schema expression.Schema) []boo
 	return used
 }
 
-// PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
+// pruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
 // This function returns a column slice representing outer columns and an error.
 func pruneColumnsAndResolveIndices(p Plan, parentUsedCols []*expression.Column) ([]*expression.Column, error) {
 	switch v := p.(type) {
