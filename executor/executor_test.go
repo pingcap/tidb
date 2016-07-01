@@ -1345,6 +1345,8 @@ func (s *testSuite) TestBuiltin(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+
+	// for is true
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, index idx_b (b))")
 	tk.MustExec("insert t values (1, 1)")
@@ -1356,11 +1358,13 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(nil)
 	result = tk.MustQuery("select * from t where a is not true")
 	result.Check(nil)
+	// for in
 	result = tk.MustQuery("select * from t where b in (a)")
 	result.Check(testkit.Rows("1 1", "2 2"))
 	result = tk.MustQuery("select * from t where b not in (a)")
 	result.Check(testkit.Rows("3 2"))
 
+	// for like
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(255), b int)")
 	tk.MustExec("insert t values ('abc123', 1)")
@@ -1368,6 +1372,27 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select * from t where a like 'ab_123'")
 	rowStr := fmt.Sprintf("%v %v", []byte("abc123"), "1")
 	result.Check(testkit.Rows(rowStr))
+
+	// case
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(255), b int)")
+	tk.MustExec("insert t values ('str1', 1)")
+	result = tk.MustQuery("select * from t where a = case b when 1 then 'str1' when 2 then 'str2' end")
+	rowStr1 := fmt.Sprintf("%v %v", []byte("str1"), "1")
+	result.Check(testkit.Rows(rowStr1))
+	result = tk.MustQuery("select * from t where a = case b when 1 then 'str2' when 2 then 'str3' end")
+	result.Check(nil)
+	tk.MustExec("insert t values ('str2', 2)")
+	result = tk.MustQuery("select * from t where a = case b when 2 then 'str2' when 3 then 'str3' end")
+	rowStr2 := fmt.Sprintf("%v %v", []byte("str2"), "2")
+	result.Check(testkit.Rows(rowStr2))
+	tk.MustExec("insert t values ('str3', 3)")
+	result = tk.MustQuery("select * from t where a = case b when 4 then 'str4' when 5 then 'str5' else 'str3' end")
+	rowStr3 := fmt.Sprintf("%v %v", []byte("str3"), "3")
+	result.Check(testkit.Rows(rowStr3))
+	result = tk.MustQuery("select * from t where a = case b when 4 then 'str4' when 5 then 'str5' else 'str6' end")
+	result.Check(nil)
+
 	plan.UseNewPlanner = false
 }
 
