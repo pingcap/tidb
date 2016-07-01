@@ -430,16 +430,24 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 			resultStr: "[(abc abd)]",
 		},
 		{
+			exprStr:   "a LIKE 'abc'",
+			resultStr: "[[abc abc]]",
+		},
+		{
+			exprStr:   `a LIKE "ab\_c"`,
+			resultStr: "[[ab_c ab_c]]",
+		},
+		{
 			exprStr:   "a LIKE '%'",
 			resultStr: "[[-inf +inf]]",
 		},
 		{
 			exprStr:   `a LIKE '\%a'`,
-			resultStr: `[[%a %b)]`,
+			resultStr: `[[%a %a]]`,
 		},
 		{
 			exprStr:   `a LIKE "\\"`,
-			resultStr: `[[\ ])]`,
+			resultStr: `[[\ \]]`,
 		},
 		{
 			exprStr:   `a LIKE "\\\\a%"`,
