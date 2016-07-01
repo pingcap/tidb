@@ -2184,8 +2184,7 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	mustExecMatch(c, se, "select c from t where a < 'cbc' and b > 'abcd';", [][]interface{}{{2}, {3}})
 	mustExecMatch(c, se, "select c from t where a <= 'abd' and b > 'abc';", [][]interface{}{{1}, {2}, {3}})
 	mustExecMatch(c, se, "select c from t where a < 'bbcc' and b = 'abcd';", [][]interface{}{{1}, {4}})
-	mustExecMatch(c, se, "select c from t where a > 'bbcf' or b < 'abcd';", [][]interface{}{{5}, {6}})
-	mustExecMatch(c, se, "select c from t where a > 'hello' or b < 'world';", [][]interface{}{{1}, {2}, {3}, {4}, {5}, {6}})
+	mustExecMatch(c, se, "select c from t where a > 'bbcf';", [][]interface{}{{5}, {6}})
 
 	err = se.Close()
 	c.Assert(err, IsNil)
