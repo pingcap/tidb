@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -47,6 +48,11 @@ type GrantExec struct {
 
 	ctx  context.Context
 	done bool
+}
+
+// Schema implements Executor Schema interface.
+func (e *GrantExec) Schema() expression.Schema {
+	return nil
 }
 
 // Fields implements Executor Fields interface.
@@ -92,14 +98,14 @@ func (e *GrantExec) Next() (*Row, error) {
 			if len(priv.Cols) > 0 {
 				// Check column scope privilege entry.
 				// TODO: Check validity before insert new entry.
-				err1 := e.checkAndInitColumnPriv(userName, host, priv.Cols)
-				if err1 != nil {
-					return nil, errors.Trace(err1)
+				err := e.checkAndInitColumnPriv(userName, host, priv.Cols)
+				if err != nil {
+					return nil, errors.Trace(err)
 				}
 			}
-			err2 := e.grantPriv(priv, user)
-			if err2 != nil {
-				return nil, errors.Trace(err2)
+			err := e.grantPriv(priv, user)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 	}

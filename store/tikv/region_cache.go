@@ -71,7 +71,35 @@ func (c *RegionCache) GetRegion(key []byte) (*Region, error) {
 	return c.insertRegionToCache(r), nil
 }
 
-// DropRegion remove some region cache.
+// GroupKeysByRegion separates keys into groups by their belonging Regions.
+// Specially it also returns the first key's region which may be used as the
+// 'PrimaryLockKey' and should be committed ahead of others.
+func (c *RegionCache) GroupKeysByRegion(keys [][]byte) (map[RegionVerID][][]byte, RegionVerID, error) {
+	groups := make(map[RegionVerID][][]byte)
+	var first RegionVerID
+	var lastRegion *Region
+	for i, k := range keys {
+		var region *Region
+		if lastRegion != nil && lastRegion.Contains(k) {
+			region = lastRegion
+		} else {
+			var err error
+			region, err = c.GetRegion(k)
+			if err != nil {
+				return nil, first, errors.Trace(err)
+			}
+			lastRegion = region
+		}
+		id := region.VerID()
+		if i == 0 {
+			first = id
+		}
+		groups[id] = append(groups[id], k)
+	}
+	return groups, first, nil
+}
+
+// DropRegion removes a cached Region.
 func (c *RegionCache) DropRegion(id RegionVerID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -319,9 +347,9 @@ func regionMissBackoff() func() error {
 // pdBackoff is for PD RPC retry.
 func pdBackoff() func() error {
 	const (
-		maxRetry  = 5
+		maxRetry  = 10
 		sleepBase = 500
-		sleepCap  = 1000
+		sleepCap  = 3000
 	)
 	return NewBackoff(maxRetry, sleepBase, sleepCap, EqualJitter)
 }

@@ -38,12 +38,6 @@ type Column struct {
 // PrimaryKeyName defines primary key name.
 const PrimaryKeyName = "PRIMARY"
 
-// IndexedColumn defines an index with info.
-type IndexedColumn struct {
-	model.IndexInfo
-	X Index
-}
-
 // String implements fmt.Stringer interface.
 func (c *Column) String() string {
 	ans := []string{c.Name.O, types.TypeToStr(c.Tp, c.Charset)}
@@ -97,7 +91,7 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 func CastValues(ctx context.Context, rec []types.Datum, cols []*Column) (err error) {
 	for _, c := range cols {
 		var converted types.Datum
-		converted, err = CastValue(ctx, rec[c.Offset], c)
+		converted, err = CastValue(ctx, rec[c.Offset], &c.ColumnInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -107,7 +101,7 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column) (err err
 }
 
 // CastValue casts a value based on column type.
-func CastValue(ctx context.Context, val types.Datum, col *Column) (casted types.Datum, err error) {
+func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
 	casted, err = val.ConvertTo(&col.FieldType)
 	if err != nil {
 		if variable.GetSessionVars(ctx).StrictSQLMode {
@@ -213,7 +207,7 @@ func CheckOnce(cols []*Column) error {
 
 // CheckNotNull checks if nil value set to a column with NotNull flag is set.
 func (c *Column) CheckNotNull(data types.Datum) error {
-	if mysql.HasNotNullFlag(c.Flag) && data.Kind() == types.KindNull {
+	if mysql.HasNotNullFlag(c.Flag) && data.IsNull() {
 		return errColumnCantNull.Gen("Column %s can't be null.", c.Name)
 	}
 	return nil
@@ -232,18 +226,6 @@ func CheckNotNull(cols []*Column, row []types.Datum) error {
 		}
 	}
 	return nil
-}
-
-// FetchValues fetches indexed values from a row.
-func (idx *IndexedColumn) FetchValues(r []types.Datum) ([]types.Datum, error) {
-	vals := make([]types.Datum, len(idx.Columns))
-	for i, ic := range idx.Columns {
-		if ic.Offset < 0 || ic.Offset > len(r) {
-			return nil, errIndexOutBound.Gen("Index column offset out of bound")
-		}
-		vals[i] = r[ic.Offset]
-	}
-	return vals, nil
 }
 
 // GetColDefaultValue gets default value of the column.
@@ -280,8 +262,11 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum
 			return types.NewDatum(col.FieldType.Elems[0]), true, nil
 		}
 	}
-
-	return types.NewDatum(col.DefaultValue), true, nil
+	value, err := CastValue(ctx, types.NewDatum(col.DefaultValue), col)
+	if err != nil {
+		return types.Datum{}, false, errors.Trace(err)
+	}
+	return value, true, nil
 }
 
 func getZeroValue(col *model.ColumnInfo) types.Datum {

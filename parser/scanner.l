@@ -287,6 +287,7 @@ admin		{a}{d}{m}{i}{n}
 after		{a}{f}{t}{e}{r}
 all		{a}{l}{l}
 alter		{a}{l}{t}{e}{r}
+analyze		{a}{n}{a}{l}{y}{z}{e}
 and		{a}{n}{d}
 any 		{a}{n}{y}
 as		{a}{s}
@@ -469,6 +470,7 @@ set		{s}{e}{t}
 share		{s}{h}{a}{r}{e}
 show		{s}{h}{o}{w}
 some		{s}{o}{m}{e}
+space		{s}{p}{a}{c}{e}
 start		{s}{t}{a}{r}{t}
 status          {s}{t}{a}{t}{u}{s}
 subdate		{s}{u}{b}{d}{a}{t}{e}
@@ -679,6 +681,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return after
 {all}			return all
 {alter}			return alter
+{analyze}		return analyze
 {and}			return and
 {any}			lval.item = string(l.val)
 			return any
@@ -970,6 +973,8 @@ redundant		lval.item = string(l.val)
 			return session
 {some}			lval.item = string(l.val)
 			return some
+{space}			lval.item = string(l.val)
+			return space
 {start}			lval.item = string(l.val)
 			return start
 {status}		lval.item = string(l.val)

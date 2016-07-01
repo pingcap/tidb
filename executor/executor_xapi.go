@@ -16,6 +16,7 @@ package executor
 import (
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,23 +26,39 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xapi"
-	"github.com/pingcap/tidb/xapi/tablecodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 const defaultConcurrency int = 10
 
+var (
+	_ Executor  = &XSelectTableExec{}
+	_ Executor  = &XSelectIndexExec{}
+	_ XExecutor = &XSelectTableExec{}
+	_ XExecutor = &XSelectIndexExec{}
+)
+
+// XExecutor defines some interfaces used by dist-sql.
+type XExecutor interface {
+	// AddAggregate adds aggregate info into an executor.
+	AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByItem, fields []*types.FieldType)
+	// GetTableName gets the table name of this XExecutor.
+	GetTableName() *ast.TableName
+}
+
 // XSelectTableExec represents XAPI select executor.
 type XSelectTableExec struct {
+	XExecutor
 	table            table.Table
 	tablePlan        *plan.TableScan
 	where            *tipb.Expr
@@ -50,6 +67,24 @@ type XSelectTableExec struct {
 	subResult        *xapi.SubResult
 	supportDesc      bool
 	allFiltersPushed bool
+	aggFuncs         []*tipb.Expr
+	byItems          []*tipb.ByItem
+	aggFields        []*types.FieldType
+	// Indicate if the exec is handling aggregate result.
+	aggregate bool
+}
+
+// AddAggregate implements XExecutor interface.
+func (e *XSelectTableExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByItem, fields []*types.FieldType) {
+	e.aggFuncs = funcs
+	e.byItems = byItems
+	e.aggFields = fields
+	e.aggregate = true
+}
+
+// GetTableName implements XExecutor interface.
+func (e *XSelectTableExec) GetTableName() *ast.TableName {
+	return e.tablePlan.TableName
 }
 
 // Next implements Executor Next interface.
@@ -81,6 +116,10 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			e.subResult = nil
 			continue
 		}
+		if e.aggregate {
+			// compose aggreagte row
+			return &Row{Data: rowData}, nil
+		}
 		fullRowData := make([]types.Datum, len(e.tablePlan.Fields()))
 		var j int
 		for i, field := range e.tablePlan.Fields() {
@@ -97,6 +136,11 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 // Fields implements Executor Fields interface.
 func (e *XSelectTableExec) Fields() []*ast.ResultField {
 	return e.tablePlan.Fields()
+}
+
+// Schema implements Executor Schema interface.
+func (e *XSelectTableExec) Schema() expression.Schema {
+	return nil
 }
 
 // Close implements Executor Close interface.
@@ -145,21 +189,37 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.TableInfo = &tipb.TableInfo{
 		TableId: proto.Int64(e.table.Meta().ID),
 	}
-	selReq.TableInfo.Columns = tablecodec.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
+	selReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
+	// Aggregate Info
+	selReq.Aggregates = e.aggFuncs
+	selReq.GroupBy = e.byItems
 	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if len(selReq.Aggregates) > 0 || len(selReq.GroupBy) > 0 {
+		// The returned rows should be aggregate partial result.
+		e.result.SetFields(e.aggFields)
 	}
 	return nil
 }
 
 // XSelectIndexExec represents XAPI select index executor.
 type XSelectIndexExec struct {
+	XExecutor
 	table       table.Table
 	indexPlan   *plan.IndexScan
 	ctx         context.Context
 	where       *tipb.Expr
 	supportDesc bool
+
+	byItems []*tipb.ByItem
+	// Aggregate functions.
+	aggFuncs []*tipb.Expr
+	// Aggregate function result fields.
+	aggFields []*types.FieldType
+	// Indicate if the exec is handling aggregate result.
+	aggregate bool
 
 	tasks      []*lookupTableTask
 	taskCursor int
@@ -187,6 +247,24 @@ type lookupTableTask struct {
 	status  int
 	done    bool
 	doneCh  chan error
+}
+
+// Schema implements Executor Schema interface.
+func (e *XSelectIndexExec) Schema() expression.Schema {
+	return nil
+}
+
+// AddAggregate implements XExecutor interface.
+func (e *XSelectIndexExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByItem, fields []*types.FieldType) {
+	e.aggFuncs = funcs
+	e.byItems = byItems
+	e.aggFields = fields
+	e.aggregate = true
+}
+
+// GetTableName implements XExecutor interface.
+func (e *XSelectIndexExec) GetTableName() *ast.TableName {
+	return e.indexPlan.TableName
 }
 
 // Fields implements Executor Fields interface.
@@ -233,8 +311,10 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		if task.cursor < len(task.rows) {
 			row := task.rows[task.cursor]
-			for i, field := range e.indexPlan.Fields() {
-				field.Expr.SetDatum(row.Data[i])
+			if !e.aggregate {
+				for i, field := range e.indexPlan.Fields() {
+					field.Expr.SetDatum(row.Data[i])
+				}
 			}
 			task.cursor++
 			return row, nil
@@ -285,7 +365,8 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !e.indexPlan.OutOfOrder {
+	// TODO: check this
+	if !e.indexPlan.OutOfOrder && !e.aggregate {
 		// Restore the index order.
 		sorter := &rowsSorter{order: e.indexOrder, rows: task.rows}
 		if e.indexPlan.Desc && !e.supportDesc {
@@ -313,7 +394,8 @@ func (e *XSelectIndexExec) fetchHandles() ([]int64, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !e.indexPlan.OutOfOrder {
+	// TODO: check this
+	if !e.indexPlan.OutOfOrder && !e.aggregate {
 		// Save the index order.
 		e.indexOrder = make(map[int64]int)
 		for i, h := range handles {
@@ -390,7 +472,7 @@ func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
 	selIdxReq.StartTs = &startTs
-	selIdxReq.IndexInfo = tablecodec.IndexToProto(e.table.Meta(), e.indexPlan.Index)
+	selIdxReq.IndexInfo = xapi.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	if len(e.indexPlan.FilterConditions) == 0 {
 		// Push limit to index request only if there is not filter conditions.
 		selIdxReq.Limit = e.indexPlan.LimitCount
@@ -431,7 +513,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, 
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: proto.Int64(e.table.Meta().ID),
 	}
-	selTableReq.TableInfo.Columns = tablecodec.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
+	selTableReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
 	selTableReq.Fields = resultFieldsToPBExpression(e.indexPlan.Fields())
 	for _, h := range handles {
 		if h == math.MaxInt64 {
@@ -444,7 +526,18 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, 
 		selTableReq.Ranges = append(selTableReq.Ranges, pbRange)
 	}
 	selTableReq.Where = e.where
-	return xapi.Select(txn.GetClient(), selTableReq, 10)
+	// Aggregate Info
+	selTableReq.Aggregates = e.aggFuncs
+	selTableReq.GroupBy = e.byItems
+	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if e.aggregate {
+		// The returned rows should be aggregate partial result.
+		resp.SetFields(e.aggFields)
+	}
+	return resp, nil
 }
 
 // conditionsToPBExpr tries to convert filter conditions to a tipb.Expr.
@@ -635,6 +728,12 @@ func (e *XSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult *xa
 		if rowData == nil {
 			break
 		}
+		if e.aggregate {
+			// compose aggreagte row
+			row := &Row{Data: rowData}
+			rows = append(rows, row)
+			continue
+		}
 		fullRowData := make([]types.Datum, len(e.indexPlan.Fields()))
 		var j int
 		for i, field := range e.indexPlan.Fields() {
@@ -674,9 +773,53 @@ func (b *executorBuilder) exprToPBExpr(client kv.Client, expr ast.ExprNode, tn *
 		return b.patternInToPBExpr(client, x, tn)
 	case *ast.SubqueryExpr:
 		return b.subqueryToPBExpr(client, x)
+	case *ast.AggregateFuncExpr:
+		return b.aggFuncToPBExpr(client, x, tn)
 	default:
 		return nil
 	}
+}
+
+func (b *executorBuilder) groupByItemToPB(client kv.Client, item *ast.ByItem, tn *ast.TableName) *tipb.ByItem {
+	expr := b.exprToPBExpr(client, item.Expr, tn)
+	if expr == nil {
+		return nil
+	}
+	return &tipb.ByItem{Expr: expr}
+}
+
+func (b *executorBuilder) aggFuncToPBExpr(client kv.Client, af *ast.AggregateFuncExpr, tn *ast.TableName) *tipb.Expr {
+	name := strings.ToLower(af.F)
+	var tp tipb.ExprType
+	switch name {
+	case ast.AggFuncCount:
+		tp = tipb.ExprType_Count
+	case ast.AggFuncFirstRow:
+		tp = tipb.ExprType_First
+	case ast.AggFuncGroupConcat:
+		tp = tipb.ExprType_GroupConcat
+	case ast.AggFuncMax:
+		tp = tipb.ExprType_Max
+	case ast.AggFuncMin:
+		tp = tipb.ExprType_Min
+	case ast.AggFuncSum:
+		tp = tipb.ExprType_Sum
+	case ast.AggFuncAvg:
+		tp = tipb.ExprType_Avg
+	}
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+	// convert it to pb
+	children := make([]*tipb.Expr, 0, len(af.Args))
+	for _, arg := range af.Args {
+		pbArg := b.exprToPBExpr(client, arg, tn)
+		if pbArg == nil {
+			return nil
+		}
+		children = append(children, pbArg)
+	}
+	return &tipb.Expr{Tp: tp.Enum(), Children: children}
 }
 
 func (b *executorBuilder) columnNameToPBExpr(client kv.Client, column *ast.ColumnNameExpr, tn *ast.TableName) *tipb.Expr {
@@ -705,7 +848,7 @@ func (b *executorBuilder) columnNameToPBExpr(client kv.Client, column *ast.Colum
 		pbExpr.Val = codec.EncodeInt(nil, column.Refer.Column.ID)
 		return pbExpr
 	}
-	// If the column ID is in fields, it means the column is from an outer table,
+	// If the column ID isn't in fields, it means the column is from an outer table,
 	// its value is available to use.
 	return b.datumToPBExpr(client, *column.Refer.Expr.GetDatum())
 }
@@ -770,6 +913,10 @@ func (b *executorBuilder) binopToPBExpr(client kv.Client, expr *ast.BinaryOperat
 		tp = tipb.ExprType_And
 	case opcode.OrOr:
 		tp = tipb.ExprType_Or
+	case opcode.Plus:
+		tp = tipb.ExprType_Plus
+	case opcode.Div:
+		tp = tipb.ExprType_Div
 	default:
 		return nil
 	}
@@ -908,7 +1055,7 @@ func (b *executorBuilder) datumsToValueList(datums []types.Datum) *tipb.Expr {
 		if prevKind == types.KindNull {
 			prevKind = d.Kind()
 		}
-		if d.Kind() != types.KindNull && d.Kind() != prevKind {
+		if !d.IsNull() && d.Kind() != prevKind {
 			return nil
 		}
 	}

@@ -18,9 +18,9 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/optimizer"
-	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 // Compiler compiles an ast.StmtNode to a stmt.Statement.
@@ -35,15 +35,23 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 	ast.SetFlag(node)
 
 	is := sessionctx.GetDomain(ctx).InfoSchema()
-	if err := optimizer.Preprocess(node, is, ctx); err != nil {
+	if err := plan.Preprocess(node, is, ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Validate should be after NameResolve.
-	if err := optimizer.Validate(node, false); err != nil {
+	if err := plan.Validate(node, false); err != nil {
 		return nil, errors.Trace(err)
 	}
 	sb := NewSubQueryBuilder(is)
-	p, err := optimizer.Optimize(ctx, node, sb)
+
+	if _, ok := node.(*ast.UpdateStmt); ok {
+		sVars := variable.GetSessionVars(ctx)
+		sVars.InUpdateStmt = true
+		defer func() {
+			sVars.InUpdateStmt = false
+		}()
+	}
+	p, err := plan.Optimize(ctx, node, sb, is)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

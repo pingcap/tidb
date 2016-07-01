@@ -20,8 +20,9 @@ package evaluator
 import (
 	"strings"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -42,7 +43,7 @@ type Func struct {
 var Funcs = map[string]Func{
 	// common functions
 	"coalesce": {builtinCoalesce, 1, -1},
-	"isnull":   {builtinIsNull, 1, 1},
+	ast.IsNull: {builtinIsNull, 1, 1},
 
 	// math functions
 	"abs":   {builtinAbs, 1, 1},
@@ -97,6 +98,7 @@ var Funcs = map[string]Func{
 	"replace":         {builtinReplace, 3, 3},
 	"reverse":         {builtinReverse, 1, 1},
 	"rtrim":           {trimFn(strings.TrimRight, spaceChars), 1, 1},
+	"space":           {builtinSpace, 1, 1},
 	"strcmp":          {builtinStrcmp, 2, 2},
 	"substring":       {builtinSubstring, 2, 3},
 	"substring_index": {builtinSubstringIndex, 3, 3},
@@ -119,42 +121,42 @@ var Funcs = map[string]Func{
 	"nullif": {builtinNullIf, 2, 2},
 
 	// only used by new plan
-	"&&":         {builtinEmpty, 2, 2},
-	"<<":         {builtinEmpty, 2, 2},
-	">>":         {builtinEmpty, 2, 2},
-	"||":         {builtinEmpty, 2, 2},
-	">=":         {builtinEmpty, 2, 2},
-	"<=":         {builtinEmpty, 2, 2},
-	"=":          {builtinEmpty, 2, 2},
-	"!=":         {builtinEmpty, 2, 2},
-	"<":          {builtinEmpty, 2, 2},
-	">":          {builtinEmpty, 2, 2},
-	"+":          {builtinEmpty, 2, 2},
-	"-":          {builtinEmpty, 2, 2},
-	"&":          {builtinEmpty, 2, 2},
-	"|":          {builtinEmpty, 2, 2},
-	"%":          {builtinEmpty, 2, 2},
-	"^":          {builtinEmpty, 2, 2},
-	"/":          {builtinEmpty, 2, 2},
-	"*":          {builtinEmpty, 2, 2},
-	"DIV":        {builtinEmpty, 2, 2},
-	"XOR":        {builtinEmpty, 2, 2},
-	"<=>":        {builtinEmpty, 2, 2},
-	"not":        {builtinEmpty, 1, 1},
-	"bitneg":     {builtinEmpty, 1, 1},
-	"unaryplus":  {builtinEmpty, 1, 1},
-	"unaryminus": {builtinEmpty, 1, 1},
-}
-
-// TODO: remove this when implementing executor.
-func builtinEmpty(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	return d, errors.New("Not implemented yet.")
+	ast.AndAnd:     {builtinAndAnd, 2, 2},
+	ast.OrOr:       {builtinOrOr, 2, 2},
+	ast.GE:         {compareFuncFactory(opcode.GE), 2, 2},
+	ast.LE:         {compareFuncFactory(opcode.LE), 2, 2},
+	ast.EQ:         {compareFuncFactory(opcode.EQ), 2, 2},
+	ast.NE:         {compareFuncFactory(opcode.NE), 2, 2},
+	ast.LT:         {compareFuncFactory(opcode.LT), 2, 2},
+	ast.GT:         {compareFuncFactory(opcode.GT), 2, 2},
+	ast.NullEQ:     {compareFuncFactory(opcode.NullEQ), 2, 2},
+	ast.Plus:       {arithmeticFuncFactory(opcode.Plus), 2, 2},
+	ast.Minus:      {arithmeticFuncFactory(opcode.Minus), 2, 2},
+	ast.Mod:        {arithmeticFuncFactory(opcode.Mod), 2, 2},
+	ast.Div:        {arithmeticFuncFactory(opcode.Div), 2, 2},
+	ast.Mul:        {arithmeticFuncFactory(opcode.Mul), 2, 2},
+	ast.IntDiv:     {arithmeticFuncFactory(opcode.IntDiv), 2, 2},
+	ast.LeftShift:  {bitOpFactory(opcode.LeftShift), 2, 2},
+	ast.RightShift: {bitOpFactory(opcode.RightShift), 2, 2},
+	ast.And:        {bitOpFactory(opcode.And), 2, 2},
+	ast.Or:         {bitOpFactory(opcode.Or), 2, 2},
+	ast.Xor:        {bitOpFactory(opcode.Xor), 2, 2},
+	ast.LogicXor:   {builtinLogicXor, 2, 2},
+	ast.UnaryNot:   {unaryOpFactory(opcode.Not), 1, 1},
+	ast.BitNeg:     {unaryOpFactory(opcode.BitNeg), 1, 1},
+	ast.UnaryPlus:  {unaryOpFactory(opcode.Plus), 1, 1},
+	ast.UnaryMinus: {unaryOpFactory(opcode.Minus), 1, 1},
+	ast.In:         {builtinIn, 1, -1},
+	ast.IsTruth:    {isTrueOpFactory(opcode.IsTruth), 1, 1},
+	ast.IsFalsity:  {isTrueOpFactory(opcode.IsFalsity), 1, 1},
+	ast.Like:       {builtinLike, 1, 3},
+	ast.RowFunc:    {builtinRow, 2, -1},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	for _, d = range args {
-		if d.Kind() != types.KindNull {
+		if !d.IsNull() {
 			return d, nil
 		}
 	}
@@ -163,7 +165,7 @@ func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, er
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
 func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	if args[0].Kind() == types.KindNull {
+	if args[0].IsNull() {
 		d.SetInt64(1)
 	} else {
 		d.SetInt64(0)

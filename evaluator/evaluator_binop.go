@@ -14,8 +14,6 @@
 package evaluator
 
 import (
-	"math"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -60,7 +58,7 @@ func (e *Evaluator) handleLogicOperation(o *ast.BinaryOperationExpr) bool {
 func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 	leftDatum := o.L.GetDatum()
 	rightDatum := o.R.GetDatum()
-	if leftDatum.Kind() != types.KindNull {
+	if !leftDatum.IsNull() {
 		x, err := leftDatum.ToBool()
 		if err != nil {
 			e.err = errors.Trace(err)
@@ -71,7 +69,7 @@ func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 			return true
 		}
 	}
-	if rightDatum.Kind() != types.KindNull {
+	if !rightDatum.IsNull() {
 		y, err := rightDatum.ToBool()
 		if err != nil {
 			e.err = errors.Trace(err)
@@ -81,7 +79,7 @@ func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 			return true
 		}
 	}
-	if leftDatum.Kind() == types.KindNull || rightDatum.Kind() == types.KindNull {
+	if leftDatum.IsNull() || rightDatum.IsNull() {
 		o.SetNull()
 		return true
 	}
@@ -91,7 +89,7 @@ func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 
 func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 	leftDatum := o.L.GetDatum()
-	if leftDatum.Kind() != types.KindNull {
+	if !leftDatum.IsNull() {
 		x, err := leftDatum.ToBool()
 		if err != nil {
 			e.err = errors.Trace(err)
@@ -103,7 +101,7 @@ func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 		}
 	}
 	righDatum := o.R.GetDatum()
-	if righDatum.Kind() != types.KindNull {
+	if !righDatum.IsNull() {
 		y, err := righDatum.ToBool()
 		if err != nil {
 			e.err = errors.Trace(err)
@@ -113,7 +111,7 @@ func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 			return true
 		}
 	}
-	if leftDatum.Kind() == types.KindNull || righDatum.Kind() == types.KindNull {
+	if leftDatum.IsNull() || righDatum.IsNull() {
 		o.SetNull()
 		return true
 	}
@@ -124,7 +122,7 @@ func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 func (e *Evaluator) handleXor(o *ast.BinaryOperationExpr) bool {
 	leftDatum := o.L.GetDatum()
 	righDatum := o.R.GetDatum()
-	if leftDatum.Kind() == types.KindNull || righDatum.Kind() == types.KindNull {
+	if leftDatum.IsNull() || righDatum.IsNull() {
 		o.SetNull()
 		return true
 	}
@@ -149,11 +147,11 @@ func (e *Evaluator) handleXor(o *ast.BinaryOperationExpr) bool {
 
 func (e *Evaluator) handleComparisonOp(o *ast.BinaryOperationExpr) bool {
 	a, b := types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum())
-	if a.Kind() == types.KindNull || b.Kind() == types.KindNull {
+	if a.IsNull() || b.IsNull() {
 		// for <=>, if a and b are both nil, return true.
 		// if a or b is nil, return false.
 		if o.Op == opcode.NullEQ {
-			if a.Kind() == types.KindNull && b.Kind() == types.KindNull {
+			if a.IsNull() && b.IsNull() {
 				o.SetInt64(oneI64)
 			} else {
 				o.SetInt64(zeroI64)
@@ -208,7 +206,7 @@ func getCompResult(op opcode.Op, value int) (bool, error) {
 func (e *Evaluator) handleBitOp(o *ast.BinaryOperationExpr) bool {
 	a, b := types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum())
 
-	if a.Kind() == types.KindNull || b.Kind() == types.KindNull {
+	if a.IsNull() || b.IsNull() {
 		o.SetNull()
 		return true
 	}
@@ -245,20 +243,20 @@ func (e *Evaluator) handleBitOp(o *ast.BinaryOperationExpr) bool {
 }
 
 func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
-	a, err := coerceArithmetic(*o.L.GetDatum())
+	a, err := types.CoerceArithmetic(*o.L.GetDatum())
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
 	}
 
-	b, err := coerceArithmetic(*o.R.GetDatum())
+	b, err := types.CoerceArithmetic(*o.R.GetDatum())
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
 	}
 
 	a, b = types.CoerceDatum(a, b)
-	if a.Kind() == types.KindNull || b.Kind() == types.KindNull {
+	if a.IsNull() || b.IsNull() {
 		o.SetNull()
 		return true
 	}
@@ -266,376 +264,21 @@ func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
 	var result types.Datum
 	switch o.Op {
 	case opcode.Plus:
-		result, e.err = computePlus(a, b)
+		result, e.err = types.ComputePlus(a, b)
 	case opcode.Minus:
-		result, e.err = computeMinus(a, b)
+		result, e.err = types.ComputeMinus(a, b)
 	case opcode.Mul:
-		result, e.err = computeMul(a, b)
+		result, e.err = types.ComputeMul(a, b)
 	case opcode.Div:
-		result, e.err = computeDiv(a, b)
+		result, e.err = types.ComputeDiv(a, b)
 	case opcode.Mod:
-		result, e.err = computeMod(a, b)
+		result, e.err = types.ComputeMod(a, b)
 	case opcode.IntDiv:
-		result, e.err = computeIntDiv(a, b)
+		result, e.err = types.ComputeIntDiv(a, b)
 	default:
 		e.err = ErrInvalidOperation.Gen("invalid op %v in arithmetic operation", o.Op)
 		return false
 	}
 	o.SetDatum(result)
 	return e.err == nil
-}
-
-func computePlus(a, b types.Datum) (d types.Datum, err error) {
-	switch a.Kind() {
-	case types.KindInt64:
-		switch b.Kind() {
-		case types.KindInt64:
-			r, err1 := types.AddInt64(a.GetInt64(), b.GetInt64())
-			d.SetInt64(r)
-			return d, errors.Trace(err1)
-		case types.KindUint64:
-			r, err1 := types.AddInteger(b.GetUint64(), a.GetInt64())
-			d.SetUint64(r)
-			return d, errors.Trace(err1)
-		}
-	case types.KindUint64:
-		switch b.Kind() {
-		case types.KindInt64:
-			r, err1 := types.AddInteger(a.GetUint64(), b.GetInt64())
-			d.SetUint64(r)
-			return d, errors.Trace(err1)
-		case types.KindUint64:
-			r, err1 := types.AddUint64(a.GetUint64(), b.GetUint64())
-			d.SetUint64(r)
-			return d, errors.Trace(err1)
-		}
-	case types.KindFloat64:
-		switch b.Kind() {
-		case types.KindFloat64:
-			r := a.GetFloat64() + b.GetFloat64()
-			d.SetFloat64(r)
-			return d, nil
-		}
-	case types.KindMysqlDecimal:
-		switch b.Kind() {
-		case types.KindMysqlDecimal:
-			r := a.GetMysqlDecimal().Add(b.GetMysqlDecimal())
-			d.SetMysqlDecimal(r)
-			return d, nil
-		}
-	}
-	_, err = types.InvOp2(a.GetValue(), b.GetValue(), opcode.Plus)
-	return d, err
-}
-
-func computeMinus(a, b types.Datum) (d types.Datum, err error) {
-	switch a.Kind() {
-	case types.KindInt64:
-		switch b.Kind() {
-		case types.KindInt64:
-			r, err1 := types.SubInt64(a.GetInt64(), b.GetInt64())
-			d.SetInt64(r)
-			return d, errors.Trace(err1)
-		case types.KindUint64:
-			r, err1 := types.SubIntWithUint(a.GetInt64(), b.GetUint64())
-			d.SetUint64(r)
-			return d, errors.Trace(err1)
-		}
-	case types.KindUint64:
-		switch b.Kind() {
-		case types.KindInt64:
-			r, err1 := types.SubUintWithInt(a.GetUint64(), b.GetInt64())
-			d.SetUint64(r)
-			return d, errors.Trace(err1)
-		case types.KindUint64:
-			r, err1 := types.SubUint64(a.GetUint64(), b.GetUint64())
-			d.SetUint64(r)
-			return d, errors.Trace(err1)
-		}
-	case types.KindFloat64:
-		switch b.Kind() {
-		case types.KindFloat64:
-			r := a.GetFloat64() - b.GetFloat64()
-			d.SetFloat64(r)
-			return d, nil
-		}
-	case types.KindMysqlDecimal:
-		switch b.Kind() {
-		case types.KindMysqlDecimal:
-			r := a.GetMysqlDecimal().Sub(b.GetMysqlDecimal())
-			d.SetMysqlDecimal(r)
-			return d, nil
-		}
-	}
-	_, err = types.InvOp2(a.GetValue(), b.GetValue(), opcode.Minus)
-	return d, errors.Trace(err)
-}
-
-func computeMul(a, b types.Datum) (d types.Datum, err error) {
-	switch a.Kind() {
-	case types.KindInt64:
-		switch b.Kind() {
-		case types.KindInt64:
-			r, err1 := types.MulInt64(a.GetInt64(), b.GetInt64())
-			d.SetInt64(r)
-			return d, errors.Trace(err1)
-		case types.KindUint64:
-			r, err1 := types.MulInteger(b.GetUint64(), a.GetInt64())
-			d.SetUint64(r)
-			return d, errors.Trace(err1)
-		}
-	case types.KindUint64:
-		switch b.Kind() {
-		case types.KindInt64:
-			r, err1 := types.MulInteger(a.GetUint64(), b.GetInt64())
-			d.SetUint64(r)
-			return d, errors.Trace(err1)
-		case types.KindUint64:
-			r, err1 := types.MulUint64(a.GetUint64(), b.GetUint64())
-			d.SetUint64(r)
-			return d, errors.Trace(err1)
-		}
-	case types.KindFloat64:
-		switch b.Kind() {
-		case types.KindFloat64:
-			r := a.GetFloat64() * b.GetFloat64()
-			d.SetFloat64(r)
-			return d, nil
-		}
-	case types.KindMysqlDecimal:
-		switch b.Kind() {
-		case types.KindMysqlDecimal:
-			r := a.GetMysqlDecimal().Mul(b.GetMysqlDecimal())
-			d.SetMysqlDecimal(r)
-			return d, nil
-		}
-	}
-
-	_, err = types.InvOp2(a.GetValue(), b.GetValue(), opcode.Mul)
-	return d, errors.Trace(err)
-}
-
-func computeDiv(a, b types.Datum) (d types.Datum, err error) {
-	// MySQL support integer division Div and division operator /
-	// we use opcode.Div for division operator and will use another for integer division later.
-	// for division operator, we will use float64 for calculation.
-	switch a.Kind() {
-	case types.KindFloat64:
-		y, err1 := b.ToFloat64()
-		if err1 != nil {
-			return d, errors.Trace(err1)
-		}
-
-		if y == 0 {
-			return d, nil
-		}
-
-		x := a.GetFloat64()
-		d.SetFloat64(x / y)
-		return d, nil
-	default:
-		// the scale of the result is the scale of the first operand plus
-		// the value of the div_precision_increment system variable (which is 4 by default)
-		// we will use 4 here
-		xa, err1 := a.ToDecimal()
-		if err != nil {
-			return d, errors.Trace(err1)
-		}
-
-		xb, err1 := b.ToDecimal()
-		if err1 != nil {
-			return d, errors.Trace(err1)
-		}
-		if f, _ := xb.Float64(); f == 0 {
-			// division by zero return null
-			return d, nil
-		}
-
-		d.SetMysqlDecimal(xa.Div(xb))
-		return d, nil
-	}
-}
-
-func computeMod(a, b types.Datum) (d types.Datum, err error) {
-	switch a.Kind() {
-	case types.KindInt64:
-		x := a.GetInt64()
-		switch b.Kind() {
-		case types.KindInt64:
-			y := b.GetInt64()
-			if y == 0 {
-				return d, nil
-			}
-			d.SetInt64(x % y)
-			return d, nil
-		case types.KindUint64:
-			y := b.GetUint64()
-			if y == 0 {
-				return d, nil
-			} else if x < 0 {
-				d.SetInt64(-int64(uint64(-x) % y))
-				// first is int64, return int64.
-				return d, nil
-			}
-			d.SetInt64(int64(uint64(x) % y))
-			return d, nil
-		}
-	case types.KindUint64:
-		x := a.GetUint64()
-		switch b.Kind() {
-		case types.KindInt64:
-			y := b.GetInt64()
-			if y == 0 {
-				return d, nil
-			} else if y < 0 {
-				// first is uint64, return uint64.
-				d.SetUint64(uint64(x % uint64(-y)))
-				return d, nil
-			}
-			d.SetUint64(x % uint64(y))
-			return d, nil
-		case types.KindUint64:
-			y := b.GetUint64()
-			if y == 0 {
-				return d, nil
-			}
-			d.SetUint64(x % y)
-			return d, nil
-		}
-	case types.KindFloat64:
-		x := a.GetFloat64()
-		switch b.Kind() {
-		case types.KindFloat64:
-			y := b.GetFloat64()
-			if y == 0 {
-				return d, nil
-			}
-			d.SetFloat64(math.Mod(x, y))
-			return d, nil
-		}
-	case types.KindMysqlDecimal:
-		x := a.GetMysqlDecimal()
-		switch b.Kind() {
-		case types.KindMysqlDecimal:
-			y := b.GetMysqlDecimal()
-			xf, _ := x.Float64()
-			yf, _ := y.Float64()
-			if yf == 0 {
-				return d, nil
-			}
-			d.SetFloat64(math.Mod(xf, yf))
-			return d, nil
-		}
-	}
-	_, err = types.InvOp2(a.GetValue(), b.GetValue(), opcode.Mod)
-	return d, errors.Trace(err)
-}
-
-func computeIntDiv(a, b types.Datum) (d types.Datum, err error) {
-	switch a.Kind() {
-	case types.KindInt64:
-		x := a.GetInt64()
-		switch b.Kind() {
-		case types.KindInt64:
-			y := b.GetInt64()
-			if y == 0 {
-				return d, nil
-			}
-			r, err1 := types.DivInt64(x, y)
-			d.SetInt64(r)
-			return d, errors.Trace(err1)
-		case types.KindUint64:
-			y := b.GetUint64()
-			if y == 0 {
-				return d, nil
-			}
-			r, err1 := types.DivIntWithUint(x, y)
-			d.SetUint64(r)
-			return d, errors.Trace(err1)
-		}
-	case types.KindUint64:
-		x := a.GetUint64()
-		switch b.Kind() {
-		case types.KindInt64:
-			y := b.GetInt64()
-			if y == 0 {
-				return d, nil
-			}
-			r, err1 := types.DivUintWithInt(x, y)
-			d.SetUint64(r)
-			return d, errors.Trace(err1)
-		case types.KindUint64:
-			y := b.GetUint64()
-			if y == 0 {
-				return d, nil
-			}
-			d.SetUint64(x / y)
-			return d, nil
-		}
-	}
-
-	// if any is none integer, use decimal to calculate
-	x, err := a.ToDecimal()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	y, err := b.ToDecimal()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	if f, _ := y.Float64(); f == 0 {
-		return d, nil
-	}
-
-	d.SetInt64(x.Div(y).IntPart())
-	return d, nil
-}
-
-func coerceArithmetic(a types.Datum) (d types.Datum, err error) {
-	switch a.Kind() {
-	case types.KindString, types.KindBytes:
-		// MySQL will convert string to float for arithmetic operation
-		f, err := types.StrToFloat(a.GetString())
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetFloat64(f)
-		return d, errors.Trace(err)
-	case types.KindMysqlTime:
-		// if time has no precision, return int64
-		t := a.GetMysqlTime()
-		de := t.ToNumber()
-		if t.Fsp == 0 {
-			d.SetInt64(de.IntPart())
-			return d, nil
-		}
-		d.SetMysqlDecimal(de)
-		return d, nil
-	case types.KindMysqlDuration:
-		// if duration has no precision, return int64
-		du := a.GetMysqlDuration()
-		de := du.ToNumber()
-		if du.Fsp == 0 {
-			d.SetInt64(de.IntPart())
-			return d, nil
-		}
-		d.SetMysqlDecimal(de)
-		return d, nil
-	case types.KindMysqlHex:
-		d.SetFloat64(a.GetMysqlHex().ToNumber())
-		return d, nil
-	case types.KindMysqlBit:
-		d.SetFloat64(a.GetMysqlBit().ToNumber())
-		return d, nil
-	case types.KindMysqlEnum:
-		d.SetFloat64(a.GetMysqlEnum().ToNumber())
-		return d, nil
-	case types.KindMysqlSet:
-		d.SetFloat64(a.GetMysqlSet().ToNumber())
-		return d, nil
-	default:
-		return a, nil
-	}
 }

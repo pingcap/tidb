@@ -2,6 +2,8 @@
 
 [![Build Status](https://travis-ci.org/pingcap/tidb.svg?branch=master)](https://travis-ci.org/pingcap/tidb)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/tidb)](https://goreportcard.com/report/github.com/pingcap/tidb)
+![Project Status](https://img.shields.io/badge/status-beta-yellow.svg)
+
 ## What is TiDB?
 
 TiDB is a distributed SQL database.
@@ -55,5 +57,4 @@ TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSES/LICENSE) file
 
 ## Acknowledgments
 - Thanks [cznic](https://github.com/cznic) for providing some great open source tools.
-- Thanks [Xiaomi](https://github.com/XiaoMi/themis) for providing the great open source project.
-- Thanks [HBase](https://hbase.apache.org), [GolevelDB](https://github.com/syndtr/goleveldb), [LMDB](https://github.com/LMDB/lmdb), [BoltDB](https://github.com/boltdb/bolt) and [RocksDB](https://github.com/facebook/rocksdb) for their powerful storage engines.
+- Thanks [GolevelDB](https://github.com/syndtr/goleveldb), [LMDB](https://github.com/LMDB/lmdb), [BoltDB](https://github.com/boltdb/bolt) and [RocksDB](https://github.com/facebook/rocksdb) for their powerful storage engines.

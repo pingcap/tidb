@@ -18,7 +18,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/plan/statistics"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
@@ -26,6 +31,7 @@ import (
 )
 
 func (s *testSuite) TestCharsetDatabase(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
@@ -43,9 +49,11 @@ func (s *testSuite) TestCharsetDatabase(c *C) {
 	tk.MustExec(testSQL)
 	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestSetVar(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := "SET @a = 1;"
@@ -102,6 +110,7 @@ func (s *testSuite) TestSetVar(c *C) {
 	testSQL = "SET @@global.autocommit=1, @issue998b=6;"
 	tk.MustExec(testSQL)
 	tk.MustQuery(`select @issue998b, @@global.autocommit;`).Check(testkit.Rows("6 1"))
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
@@ -186,4 +195,25 @@ func (s *testSuite) TestSetPwd(c *C) {
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("password")))
 	result.Check(testkit.Rows(rowStr))
+}
+
+func (s *testSuite) TestAnalyzeTable(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`ANALYZE TABLE mysql.GLOBAL_VARIABLES`)
+	ctx := tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("mysql"), model.NewCIStr("GLOBAL_VARIABLES"))
+	c.Check(err, IsNil)
+	tableID := t.Meta().ID
+
+	txn, err := ctx.GetTxn(true)
+	c.Check(err, IsNil)
+	meta := meta.NewMeta(txn)
+	tpb, err := meta.GetTableStats(tableID)
+	c.Check(err, IsNil)
+	c.Check(tpb, NotNil)
+	tStats, err := statistics.TableFromPB(t.Meta(), tpb)
+	c.Check(err, IsNil)
+	c.Check(tStats, NotNil)
 }

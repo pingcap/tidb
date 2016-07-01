@@ -63,6 +63,7 @@ import (
 	after		"AFTER"
 	all 		"ALL"
 	alter		"ALTER"
+	analyze		"ANALYZE"
 	and		"AND"
 	andand		"&&"
 	andnot		"&^"
@@ -268,6 +269,7 @@ import (
 	show		"SHOW"
 	signed		"SIGNED"
 	some 		"SOME"
+	space 		"SPACE"
 	start		"START"
 	status		"STATUS"
 	stringType	"string"
@@ -400,6 +402,7 @@ import (
 	AlterTableStmt		"Alter table statement"
 	AlterTableSpec		"Alter table specification"
 	AlterTableSpecList	"Alter table specification list"
+	AnalyzeTableStmt	"Analyze table statement"
 	AnyOrAll		"Any or All for subquery"
 	Assignment		"assignment"
 	AssignmentList		"assignment list"
@@ -824,6 +827,14 @@ ConstraintKeywordOpt:
 
 Symbol:
 	Identifier
+
+/*******************************************************************************************/
+
+AnalyzeTableStmt:
+	"ANALYZE" "TABLE" TableNameList
+	 {
+		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName)}
+	 }
 
 /*******************************************************************************************/
 Assignment:
@@ -1944,7 +1955,7 @@ UnReservedKeyword:
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 |	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE"
 |	"ISOLATION" |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
-|	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE"
+|	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE" | "SPACE"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
@@ -2637,6 +2648,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"SPACE" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"STRCMP" '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
@@ -2806,7 +2821,7 @@ FunctionCallAgg:
 	}
 |	"COUNT" '(' DistinctOpt '*' ')'
 	{
-		args := []ast.ExprNode{ast.NewValueExpr(ast.UnquoteString("*"))}
+		args := []ast.ExprNode{ast.NewValueExpr(1)}
 		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: args, Distinct: $3.(bool)}
 	}
 |	"GROUP_CONCAT" '(' DistinctOpt ExpressionList ')'
@@ -4005,6 +4020,7 @@ Statement:
 	EmptyStmt
 |	AdminStmt
 |	AlterTableStmt
+|	AnalyzeTableStmt
 |	BeginTransactionStmt
 |	CommitStmt
 |	DeallocateStmt

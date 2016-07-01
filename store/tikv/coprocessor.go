@@ -37,7 +37,12 @@ type CopClient struct {
 func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
 	switch reqType {
 	case kv.ReqTypeSelect:
-		return supportExpr(tipb.ExprType(subType))
+		switch subType {
+		case kv.ReqSubTypeGroupBy:
+			return true
+		default:
+			return supportExpr(tipb.ExprType(subType))
+		}
 	case kv.ReqTypeIndex:
 		switch subType {
 		case kv.ReqSubTypeDesc, kv.ReqSubTypeBasic:
@@ -57,6 +62,8 @@ func supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
 		tipb.ExprType_In, tipb.ExprType_ValueList,
 		tipb.ExprType_Like, tipb.ExprType_Not:
+		return true
+	case tipb.ExprType_Count, tipb.ExprType_First:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
@@ -292,17 +299,13 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) {
 	var backoffErr error
 	for backoff := rpcBackoff(); backoffErr == nil; backoffErr = backoff() {
-		client, err := it.store.getClient(task.region.GetAddress())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		req := &coprocessor.Request{
 			Context: task.region.GetContext(),
 			Tp:      proto.Int64(it.req.Tp),
 			Data:    it.req.Data,
 			Ranges:  task.pbRanges(),
 		}
-		resp, err := client.SendCopReq(req)
+		resp, err := it.store.client.SendCopReq(task.region.GetAddress(), req)
 		if err != nil {
 			it.store.regionCache.NextPeer(task.region.VerID())
 			err1 := it.rebuildCurrentTask(task)

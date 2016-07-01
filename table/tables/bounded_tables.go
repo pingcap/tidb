@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -82,7 +83,7 @@ func newBoundedTable(tableID int64, tableName string, cols []*table.Column, allo
 		Name:         name,
 		alloc:        alloc,
 		Columns:      cols,
-		recordPrefix: genTableRecordPrefix(tableID),
+		recordPrefix: tablecodec.GenTableRecordPrefix(tableID),
 		records:      make([]unsafe.Pointer, capacity),
 		capacity:     capacity,
 		cursor:       0,
@@ -130,7 +131,7 @@ func (t *BoundedTable) Seek(ctx context.Context, handle int64) (int64, bool, err
 }
 
 // Indices implements table.Table Indices interface.
-func (t *BoundedTable) Indices() []*table.IndexedColumn {
+func (t *BoundedTable) Indices() []table.Index {
 	return nil
 }
 
@@ -141,6 +142,11 @@ func (t *BoundedTable) Meta() *model.TableInfo {
 
 // Cols implements table.Table Cols interface.
 func (t *BoundedTable) Cols() []*table.Column {
+	return t.Columns
+}
+
+// WritableCols implements table.Table WritableCols interface.
+func (t *BoundedTable) WritableCols() []*table.Column {
 	return t.Columns
 }
 
@@ -155,17 +161,13 @@ func (t *BoundedTable) IndexPrefix() kv.Key {
 }
 
 // RecordKey implements table.Table RecordKey interface.
-func (t *BoundedTable) RecordKey(h int64, col *table.Column) kv.Key {
-	colID := int64(0)
-	if col != nil {
-		colID = col.ID
-	}
-	return encodeRecordKey(t.recordPrefix, h, colID)
+func (t *BoundedTable) RecordKey(h int64) kv.Key {
+	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
 }
 
 // FirstKey implements table.Table FirstKey interface.
 func (t *BoundedTable) FirstKey() kv.Key {
-	return t.RecordKey(0, nil)
+	return t.RecordKey(0)
 }
 
 // Truncate implements table.Table Truncate interface.

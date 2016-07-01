@@ -19,6 +19,8 @@ package evaluator
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -70,7 +72,7 @@ func builtinASCII(args []types.Datum, _ context.Context) (d types.Datum, err err
 func builtinConcat(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	var s []byte
 	for _, a := range args {
-		if a.Kind() == types.KindNull {
+		if a.IsNull() {
 			return d, nil
 		}
 		var ss string
@@ -89,7 +91,7 @@ func builtinConcatWS(args []types.Datum, _ context.Context) (d types.Datum, err 
 	var sep string
 	s := make([]string, 0, len(args))
 	for i, a := range args {
-		if a.Kind() == types.KindNull {
+		if a.IsNull() {
 			if i == 0 {
 				return d, nil
 			}
@@ -186,6 +188,36 @@ func builtinReverse(args []types.Datum, _ context.Context) (d types.Datum, err e
 	}
 }
 
+// See: http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_space
+func builtinSpace(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	x := args[0]
+	if x.IsNull() {
+		return d, nil
+	}
+
+	if x.Kind() == types.KindString || x.Kind() == types.KindBytes {
+		if _, e := strconv.ParseInt(x.GetString(), 10, 64); e != nil {
+			return d, errors.Trace(e)
+		}
+	}
+
+	v, err := x.ToInt64()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if v < 0 {
+		v = 0
+	}
+
+	if v > math.MaxInt32 {
+		d.SetNull()
+	} else {
+		d.SetString(strings.Repeat(" ", int(v)))
+	}
+	return d, nil
+}
+
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
 func builtinUpper(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	x := args[0]
@@ -204,7 +236,7 @@ func builtinUpper(args []types.Datum, _ context.Context) (d types.Datum, err err
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
 func builtinStrcmp(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	if args[0].Kind() == types.KindNull || args[1].Kind() == types.KindNull {
+	if args[0].IsNull() || args[1].IsNull() {
 		return d, nil
 	}
 	left, err := args[0].ToString()
@@ -223,7 +255,7 @@ func builtinStrcmp(args []types.Datum, _ context.Context) (d types.Datum, err er
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
 func builtinReplace(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	for _, arg := range args {
-		if arg.Kind() == types.KindNull {
+		if arg.IsNull() {
 			return d, nil
 		}
 	}
@@ -380,7 +412,7 @@ func builtinLocate(args []types.Datum, _ context.Context) (d types.Datum, err er
 	// args[1] -> Str
 	// args[2] -> Pos
 	// eval str
-	if args[1].Kind() == types.KindNull {
+	if args[1].IsNull() {
 		return d, nil
 	}
 	str, err := args[1].ToString()
@@ -388,7 +420,7 @@ func builtinLocate(args []types.Datum, _ context.Context) (d types.Datum, err er
 		return d, errors.Trace(err)
 	}
 	// eval substr
-	if args[0].Kind() == types.KindNull {
+	if args[0].IsNull() {
 		return d, nil
 	}
 	subStr, err := args[0].ToString()
@@ -433,7 +465,7 @@ func builtinTrim(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	// args[1] -> RemStr
 	// args[2] -> Direction
 	// eval str
-	if args[0].Kind() == types.KindNull {
+	if args[0].IsNull() {
 		return d, nil
 	}
 	str, err := args[0].ToString()
@@ -485,7 +517,7 @@ func builtinTrim(args []types.Datum, _ context.Context) (d types.Datum, err erro
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rtrim
 func trimFn(fn func(string, string) string, cutset string) BuiltinFunc {
 	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-		if args[0].Kind() == types.KindNull {
+		if args[0].IsNull() {
 			return d, nil
 		}
 		str, err := args[0].ToString()

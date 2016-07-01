@@ -15,15 +15,20 @@ package executor
 
 import (
 	"fmt"
+	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -46,6 +51,11 @@ type SimpleExec struct {
 
 // Fields implements Executor Fields interface.
 func (e *SimpleExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Schema implements Executor Schema interface.
+func (e *SimpleExec) Schema() expression.Schema {
 	return nil
 }
 
@@ -74,6 +84,8 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeCreateUser(x)
 	case *ast.SetPwdStmt:
 		err = e.executeSetPwd(x)
+	case *ast.AnalyzeTableStmt:
+		err = e.executeAnalyzeTable(x)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -122,7 +134,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 				return errors.Trace(err)
 			}
 
-			if value.Kind() == types.KindNull {
+			if value.IsNull() {
 				delete(sessionVars.Users, name)
 			} else {
 				svalue, err1 := value.ToString()
@@ -151,7 +163,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if value.Kind() == types.KindNull {
+			if value.IsNull() {
 				value.SetString("")
 			}
 			svalue, err := value.ToString()
@@ -299,4 +311,108 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, util.EncodePassword(s.Password), userName, host)
 	_, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
+}
+
+func (e *SimpleExec) executeAnalyzeTable(s *ast.AnalyzeTableStmt) error {
+	for _, table := range s.TableNames {
+		err := e.createStatisticsForTable(table)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+const (
+	maxSampleCount     = 10000
+	defaultBucketCount = 256
+)
+
+func (e *SimpleExec) createStatisticsForTable(tn *ast.TableName) error {
+	var tableName string
+	if tn.Schema.L == "" {
+		tableName = tn.Name.L
+	} else {
+		tableName = tn.Schema.L + "." + tn.Name.L
+	}
+	sql := "select * from " + tableName
+	result, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	count, samples, err := e.collectSamples(result)
+	result.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = e.buildStatisticsAndSaveToKV(tn, count, samples)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// collectSamples collects sample from the result set, using Reservoir Sampling algorithm.
+// See https://en.wikipedia.org/wiki/Reservoir_sampling
+func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples []*ast.Row, err error) {
+	ran := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for {
+		var row *ast.Row
+		row, err = result.Next()
+		if err != nil {
+			return count, samples, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		if len(samples) < maxSampleCount {
+			samples = append(samples, row)
+		} else {
+			shouldAdd := ran.Int63n(count) < maxSampleCount
+			if shouldAdd {
+				idx := ran.Intn(maxSampleCount)
+				samples[idx] = row
+			}
+		}
+		count++
+	}
+	return count, samples, nil
+}
+
+func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, sampleRows []*ast.Row) error {
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	columnSamples := rowsToColumnSamples(sampleRows)
+	t, err := statistics.NewTable(tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tpb, err := t.ToPB()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	m := meta.NewMeta(txn)
+	err = m.SetTableStats(tn.TableInfo.ID, tpb)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func rowsToColumnSamples(rows []*ast.Row) [][]types.Datum {
+	if len(rows) == 0 {
+		return nil
+	}
+	columnSamples := make([][]types.Datum, len(rows[0].Data))
+	for i := range columnSamples {
+		columnSamples[i] = make([]types.Datum, len(rows))
+	}
+	for j, row := range rows {
+		for i, val := range row.Data {
+			columnSamples[i][j] = val
+		}
+	}
+	return columnSamples
 }

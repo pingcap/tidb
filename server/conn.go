@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
@@ -239,8 +238,8 @@ func (cc *clientConn) Run() {
 			if terror.ErrorEqual(err, io.EOF) {
 				return
 			}
-			log.Errorf("dispatch error %s, %s", errors.ErrorStack(err), cc)
-			log.Errorf("cmd: %s", string(data[1:]))
+			log.Warnf("dispatch error %s, %s", errors.ErrorStack(err), cc)
+			log.Warnf("cmd: %s", string(data[1:]))
 			cc.writeError(err)
 		}
 
@@ -454,7 +453,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool) error {
 			data = append(data, rowData...)
 		} else {
 			for i, value := range row {
-				if value.Kind() == types.KindNull {
+				if value.IsNull() {
 					data = append(data, 0xfb)
 					continue
 				}

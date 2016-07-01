@@ -1,7 +1,7 @@
 {
 	"ImportPath": "github.com/pingcap/tidb",
 	"GoVersion": "go1.6",
-	"GodepVersion": "v63",
+	"GodepVersion": "v62",
 	"Packages": [
 		"./..."
 	],
@@ -80,6 +80,14 @@
 			"Rev": "37d3e0f43b4fe05429e1adb75e835bf31fc1bba6"
 		},
 		{
+			"ImportPath": "github.com/ngaut/pools",
+			"Rev": "6352e005618615ffaf1cb1c6622b8e91435751fe"
+		},
+		{
+			"ImportPath": "github.com/ngaut/sync2",
+			"Rev": "7a24ed77b2efb460c1468b7dc917821c66e80e55"
+		},
+		{
 			"ImportPath": "github.com/petar/GoLLRB/llrb",
 			"Rev": "53be0d36a84c2a886ca057d34b6aa4468df9ccb4"
 		},
@@ -137,7 +145,7 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-tipb",
-			"Rev": "43df921cf58fd09a530e7f043c9e3a71eef65dc2"
+			"Rev": "dc302227931df1e204b537d318ef9f8f6f8e46dd"
 		},
 		{
 			"ImportPath": "github.com/rcrowley/go-metrics",
@@ -290,10 +298,6 @@
 		{
 			"ImportPath": "google.golang.org/grpc/transport",
 			"Rev": "b062a3c003c22bfef58fa99d689e6a892b408f9d"
-		},
-		{
-			"ImportPath": "gopkg.in/fatih/pool.v2",
-			"Rev": "cba550ebf9bce999a02e963296d4bc7a486cb715"
 		}
 	]
 }

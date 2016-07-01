@@ -196,9 +196,9 @@ func StrToFloat(str string) (float64, error) {
 	if validStr != str {
 		err = ErrValueTruncated
 	}
-	f, err2 := strconv.ParseFloat(validStr, 64)
+	f, err1 := strconv.ParseFloat(validStr, 64)
 	if err == nil {
-		err = err2
+		err = err1
 	}
 	return f, errors.Trace(err)
 }

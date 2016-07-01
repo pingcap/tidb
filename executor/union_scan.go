@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
@@ -100,14 +101,21 @@ type UnionScanExec struct {
 	Src   Executor
 	dirty *dirtyTable
 	// srcUsedIndex is the column offsets of the index which Src executor has used.
-	usedIndex []int
-	desc      bool
-	condition ast.ExprNode
+	usedIndex    []int
+	desc         bool
+	condition    ast.ExprNode
+	newCondition expression.Expression
 
 	addedRows   []*Row
 	cursor      int
 	sortErr     error
 	snapshotRow *Row
+}
+
+// Schema implements Executor Schema interface.
+func (us *UnionScanExec) Schema() expression.Schema {
+	return nil
+
 }
 
 // Fields implements Executor Fields interface.
@@ -259,6 +267,42 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 		}
 		rowKeyEntry := &RowKeyEntry{Handle: h, Tbl: t, TableAsName: asName}
 		row := &Row{Data: data, RowKeys: []*RowKeyEntry{rowKeyEntry}}
+		us.addedRows = append(us.addedRows, row)
+	}
+	if us.desc {
+		sort.Sort(sort.Reverse(us))
+	} else {
+		sort.Sort(us)
+	}
+	if us.sortErr != nil {
+		return errors.Trace(us.sortErr)
+	}
+	return nil
+}
+
+func (us *UnionScanExec) newBuildAndSortAddedRows(t table.Table, asName *model.CIStr) error {
+	us.addedRows = make([]*Row, 0, len(us.dirty.addedRows))
+	for h, data := range us.dirty.addedRows {
+		var newData []types.Datum
+		if len(us.Src.Schema()) == len(data) {
+			newData = data
+		} else {
+			newData = make([]types.Datum, 0, len(us.Src.Schema()))
+			for _, col := range us.Src.(*NewTableScanExec).Columns {
+				newData = append(newData, data[col.Offset])
+			}
+		}
+		if us.newCondition != nil {
+			matched, err := expression.EvalBool(us.newCondition, newData, us.ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !matched {
+				continue
+			}
+		}
+		rowKeyEntry := &RowKeyEntry{Handle: h, Tbl: t, TableAsName: asName}
+		row := &Row{Data: newData, RowKeys: []*RowKeyEntry{rowKeyEntry}}
 		us.addedRows = append(us.addedRows, row)
 	}
 	if us.desc {

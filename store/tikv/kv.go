@@ -64,29 +64,25 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	s := newTikvStore(uuid, &codecPDClient{pdCli}, NewRPCClient)
+	s := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient())
 	mc.cache[uuid] = s
 	return s, nil
 }
 
 type tikvStore struct {
-	mu     sync.Mutex
-	uuid   string
-	oracle oracle.Oracle
-	// addr => *Client
-	clients       map[string]Client
-	clientFactory ClientFactory
-	clientLock    sync.RWMutex
-	regionCache   *RegionCache
+	mu          sync.Mutex
+	uuid        string
+	oracle      oracle.Oracle
+	client      Client
+	regionCache *RegionCache
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, factory ClientFactory) *tikvStore {
+func newTikvStore(uuid string, pdClient pd.Client, client Client) *tikvStore {
 	return &tikvStore{
-		uuid:          uuid,
-		oracle:        oracles.NewPdOracle(pdClient),
-		clients:       make(map[string]Client),
-		clientFactory: factory,
-		regionCache:   NewRegionCache(pdClient),
+		uuid:        uuid,
+		oracle:      oracles.NewPdOracle(pdClient),
+		client:      client,
+		regionCache: NewRegionCache(pdClient),
 	}
 }
 
@@ -95,35 +91,9 @@ func NewMockTikvStore() kv.Storage {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.NewMvccStore()
-	clientFactory := mockClientFactory(cluster, mvccStore)
+	client := mocktikv.NewRPCClient(cluster, mvccStore)
 	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
-	return newTikvStore(uuid, mocktikv.NewPDClient(cluster), clientFactory)
-}
-
-func mockClientFactory(cluster *mocktikv.Cluster, mvccStore *mocktikv.MvccStore) ClientFactory {
-	return func(addr string) (Client, error) {
-		return mocktikv.NewRPCClient(cluster, mvccStore, addr), nil
-	}
-}
-
-func (s *tikvStore) getClient(addr string) (Client, error) {
-	s.clientLock.RLock()
-	client, ok := s.clients[addr]
-	s.clientLock.RUnlock()
-	if ok {
-		return client, nil
-	}
-
-	s.clientLock.Lock()
-	defer s.clientLock.Unlock()
-
-	client, err := s.clientFactory(addr)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	s.clients[addr] = client
-	return client, nil
+	return newTikvStore(uuid, mocktikv.NewPDClient(cluster), client)
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {
@@ -147,17 +117,10 @@ func (s *tikvStore) Close() error {
 	defer mc.mu.Unlock()
 
 	delete(mc.cache, s.uuid)
-
-	var lastErr error
-	for addr, client := range s.clients {
-		err := client.Close()
-		if err != nil {
-			log.Errorf("Close client error[%s]", err)
-			lastErr = err
-		}
-		delete(s.clients, addr)
+	if err := s.client.Close(); err != nil {
+		return errors.Trace(err)
 	}
-	return lastErr
+	return nil
 }
 
 func (s *tikvStore) UUID() string {
@@ -165,12 +128,38 @@ func (s *tikvStore) UUID() string {
 }
 
 func (s *tikvStore) CurrentVersion() (kv.Version, error) {
-	startTS, err := s.oracle.GetTimestamp()
+	startTS, err := s.getTimestampWithRetry()
 	if err != nil {
 		return kv.NewVersion(0), errors.Trace(err)
 	}
 
 	return kv.NewVersion(startTS), nil
+}
+
+func (s *tikvStore) getTimestampWithRetry() (uint64, error) {
+	var backoffErr error
+	for backoff := pdBackoff(); backoffErr == nil; backoffErr = backoff() {
+		startTS, err := s.oracle.GetTimestamp()
+		if err != nil {
+			log.Warnf("get timestamp failed: %v, retry later", err)
+			continue
+		}
+		return startTS, nil
+	}
+	return 0, errors.Annotate(backoffErr, txnRetryableMark)
+}
+
+func (s *tikvStore) checkTimestampExpiredWithRetry(ts uint64, TTL uint64) (bool, error) {
+	var backoffErr error
+	for backoff := pdBackoff(); backoffErr == nil; backoffErr = backoff() {
+		expired, err := s.oracle.IsExpired(ts, TTL)
+		if err != nil {
+			log.Warnf("check expired failed: %v, retry later", err)
+			continue
+		}
+		return expired, nil
+	}
+	return false, errors.Annotate(backoffErr, txnRetryableMark)
 }
 
 // sendKVReq sends req to tikv server. It will retry internally to find the right
@@ -189,12 +178,8 @@ func (s *tikvStore) SendKVReq(req *pb.Request, regionID RegionVerID) (*pb.Respon
 				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
 			}, nil
 		}
-		client, err := s.getClient(region.GetAddress())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		req.Context = region.GetContext()
-		resp, err := client.SendKVReq(req)
+		resp, err := s.client.SendKVReq(region.GetAddress(), req)
 		if err != nil {
 			log.Warnf("send tikv request error: %v, ctx: %s, try next peer later", err, req.Context)
 			s.regionCache.NextPeer(region.VerID())

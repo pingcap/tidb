@@ -98,6 +98,8 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		return e.evalNot(expr)
 	case tipb.ExprType_In:
 		return e.evalIn(expr)
+	case tipb.ExprType_Plus, tipb.ExprType_Div:
+		return e.evalArithmetic(expr)
 	}
 	return types.Datum{}, nil
 }
@@ -279,7 +281,7 @@ func (e *Evaluator) compareTwoChildren(expr *tipb.Expr) (int, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if left.Kind() == types.KindNull || right.Kind() == types.KindNull {
+	if left.IsNull() || right.IsNull() {
 		return compareResultNull, nil
 	}
 	return left.CompareDatum(right)
@@ -326,7 +328,7 @@ func (e *Evaluator) evalTwoBoolChildren(expr *tipb.Expr) (leftBool, rightBool in
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	if left.Kind() == types.KindNull {
+	if left.IsNull() {
 		leftBool = compareResultNull
 	} else {
 		leftBool, err = left.ToBool()
@@ -334,7 +336,7 @@ func (e *Evaluator) evalTwoBoolChildren(expr *tipb.Expr) (leftBool, rightBool in
 			return 0, 0, errors.Trace(err)
 		}
 	}
-	if right.Kind() == types.KindNull {
+	if right.IsNull() {
 		rightBool = compareResultNull
 	} else {
 		rightBool, err = right.ToBool()
@@ -366,7 +368,7 @@ func (e *Evaluator) evalLike(expr *tipb.Expr) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	if target.Kind() == types.KindNull || pattern.Kind() == types.KindNull {
+	if target.IsNull() || pattern.IsNull() {
 		return types.Datum{}, nil
 	}
 	targetStr, err := target.ToString()
@@ -448,7 +450,7 @@ func (e *Evaluator) evalNot(expr *tipb.Expr) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	if d.Kind() == types.KindNull {
+	if d.IsNull() {
 		return d, nil
 	}
 	boolVal, err := d.ToBool()
@@ -469,7 +471,7 @@ func (e *Evaluator) evalIn(expr *tipb.Expr) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	if target.Kind() == types.KindNull {
+	if target.IsNull() {
 		return types.Datum{}, nil
 	}
 	valueListExpr := expr.Children[1]
@@ -536,11 +538,41 @@ func (e *Evaluator) decodeValueList(valueListExpr *tipb.Expr) (*decodedValueList
 	}
 	var hasNull bool
 	for _, v := range list {
-		if v.Kind() == types.KindNull {
+		if v.IsNull() {
 			hasNull = true
 		}
 	}
 	decoded = &decodedValueList{values: list, hasNull: hasNull}
 	e.valueLists[valueListExpr] = decoded
 	return decoded, nil
+}
+
+func (e *Evaluator) evalArithmetic(expr *tipb.Expr) (types.Datum, error) {
+	var result types.Datum
+	left, right, err := e.evalTwoChildren(expr)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	a, err := types.CoerceArithmetic(left)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+
+	b, err := types.CoerceArithmetic(right)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	a, b = types.CoerceDatum(a, b)
+	if a.IsNull() || b.IsNull() {
+		return result, nil
+	}
+
+	switch expr.GetTp() {
+	case tipb.ExprType_Plus:
+		return types.ComputePlus(a, b)
+	case tipb.ExprType_Div:
+		return types.ComputeDiv(a, b)
+	default:
+		return result, errors.Errorf("Unknown binop type: %v", expr.GetTp())
+	}
 }

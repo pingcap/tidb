@@ -26,10 +26,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi/tablecodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -191,17 +191,14 @@ func prepareTableData(store kv.Storage, tbl *simpleTableInfo, count int64, gen g
 
 func setRow(txn kv.Transaction, handle int64, tbl *simpleTableInfo, gen genValueFunc) error {
 	rowKey := tablecodec.EncodeRowKey(tbl.tID, codec.EncodeInt(nil, handle))
-	txn.Set(rowKey, []byte(txn.String()))
 	columnValues := gen(handle, tbl)
-	for i, v := range columnValues {
-		cKey, cVal, err := encodeColumnKV(tbl.tID, handle, tbl.cIDs[i], v)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = txn.Set(cKey, cVal)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	value, err := tablecodec.EncodeRow(columnValues, tbl.cIDs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = txn.Set(rowKey, value)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	for i, idxCol := range tbl.indices {
 		idxVal := columnValues[idxCol]
@@ -216,15 +213,6 @@ func setRow(txn kv.Transaction, handle int64, tbl *simpleTableInfo, gen genValue
 		}
 	}
 	return nil
-}
-
-func encodeColumnKV(tid, handle, cid int64, value types.Datum) (kv.Key, []byte, error) {
-	key := tablecodec.EncodeColumnKey(tid, handle, cid)
-	val, err := codec.EncodeValue(nil, value)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	return key, val, nil
 }
 
 func prepareSelectRequest(simpleInfo *simpleTableInfo, startTs uint64) (*kv.Request, error) {

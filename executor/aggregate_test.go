@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -38,6 +39,10 @@ type mockExec struct {
 	fields    []*ast.ResultField
 	rows      []*Row
 	curRowIdx int
+}
+
+func (m *mockExec) Schema() expression.Schema {
+	return nil
 }
 
 func (m *mockExec) Fields() []*ast.ResultField {

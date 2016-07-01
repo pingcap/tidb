@@ -129,27 +129,6 @@ func (s *testTiclientSuite) TestMultiKeys(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testTiclientSuite) TestCleanLock(c *C) {
-	const keyNum = 10
-
-	txn := s.beginTxn(c)
-	for i := 0; i < keyNum; i++ {
-		err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
-		c.Assert(err, IsNil)
-	}
-	txn.DONOTCOMMIT = true
-	err := txn.Commit()
-	c.Assert(err, IsNil)
-
-	txn2 := s.beginTxn(c)
-	for i := 0; i < keyNum; i++ {
-		err2 := txn2.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i+1))
-		c.Assert(err2, IsNil)
-	}
-	err2 := txn2.Commit()
-	c.Assert(err2, IsNil)
-}
-
 func (s *testTiclientSuite) TestNotExist(c *C) {
 	txn := s.beginTxn(c)
 	_, err := txn.Get(encodeKey(s.prefix, "noSuchKey"))

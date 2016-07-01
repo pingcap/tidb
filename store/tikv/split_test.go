@@ -30,8 +30,8 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	mvccStore := mocktikv.NewMvccStore()
-	clientFactory := mockClientFactory(s.cluster, mvccStore)
-	s.store = newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), clientFactory)
+	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
+	s.store = newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), client)
 }
 
 func (s *testSplitSuite) begin(c *C) *tikvTxn {
@@ -51,14 +51,19 @@ func (s *testSplitSuite) TestSplitBatchGet(c *C) {
 
 	txn := s.begin(c)
 	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn.StartTS()})
-	multiGets, err := snapshot.makeBatchGetReqs([]kv.Key{kv.Key("a"), kv.Key("b"), kv.Key("c")})
+
+	keys := [][]byte{{'a'}, {'b'}, {'c'}}
+	_, region, err := s.store.regionCache.GroupKeysByRegion(keys)
 	c.Assert(err, IsNil)
+	batch := batchKeys{
+		region: region,
+		keys:   keys,
+	}
 
 	s.split(c, firstRegion.GetID(), []byte("b"))
 	s.store.regionCache.DropRegion(firstRegion.VerID())
 
-	for _, g := range multiGets {
-		// mock-tikv will panic if it meets a not-in-region key.
-		snapshot.doBatchGet(g)
-	}
+	// mock-tikv will panic if it meets a not-in-region key.
+	err = snapshot.batchGetSingleRegion(batch, func([]byte, []byte) {})
+	c.Assert(err, IsNil)
 }

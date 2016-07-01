@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -96,7 +97,7 @@ func newMemoryTable(tableID int64, tableName string, cols []*table.Column, alloc
 		Name:         name,
 		alloc:        alloc,
 		Columns:      cols,
-		recordPrefix: genTableRecordPrefix(tableID),
+		recordPrefix: tablecodec.GenTableRecordPrefix(tableID),
 		tree:         llrb.New(),
 	}
 	return t
@@ -117,7 +118,7 @@ func (t *MemoryTable) Seek(ctx context.Context, handle int64) (int64, bool, erro
 }
 
 // Indices implements table.Table Indices interface.
-func (t *MemoryTable) Indices() []*table.IndexedColumn {
+func (t *MemoryTable) Indices() []table.Index {
 	return nil
 }
 
@@ -128,6 +129,11 @@ func (t *MemoryTable) Meta() *model.TableInfo {
 
 // Cols implements table.Table Cols interface.
 func (t *MemoryTable) Cols() []*table.Column {
+	return t.Columns
+}
+
+// WritableCols implements table.Table WritableCols interface.
+func (t *MemoryTable) WritableCols() []*table.Column {
 	return t.Columns
 }
 
@@ -142,17 +148,13 @@ func (t *MemoryTable) IndexPrefix() kv.Key {
 }
 
 // RecordKey implements table.Table RecordKey interface.
-func (t *MemoryTable) RecordKey(h int64, col *table.Column) kv.Key {
-	colID := int64(0)
-	if col != nil {
-		colID = col.ID
-	}
-	return encodeRecordKey(t.recordPrefix, h, colID)
+func (t *MemoryTable) RecordKey(h int64) kv.Key {
+	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
 }
 
 // FirstKey implements table.Table FirstKey interface.
 func (t *MemoryTable) FirstKey() kv.Key {
-	return t.RecordKey(0, nil)
+	return t.RecordKey(0)
 }
 
 // Truncate implements table.Table Truncate interface.

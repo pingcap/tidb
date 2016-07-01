@@ -30,8 +30,42 @@ var (
 	_ FuncNode = &FuncCastExpr{}
 )
 
-// UnquoteString is not quoted when printed.
-type UnquoteString string
+// List scalar function names.
+const (
+	AndAnd     = "&&"
+	LeftShift  = "<<"
+	RightShift = ">>"
+	OrOr       = "||"
+	GE         = ">="
+	LE         = "<="
+	EQ         = "="
+	NE         = "!="
+	LT         = "<"
+	GT         = ">"
+	Plus       = "+"
+	Minus      = "-"
+	And        = "&"
+	Or         = "|"
+	Mod        = "%"
+	Xor        = "^"
+	Div        = "/"
+	Mul        = "*"
+	UnaryNot   = "!" // Avoid name conflict with Not in github/pingcap/check.
+	BitNeg     = "~"
+	IntDiv     = "DIV"
+	LogicXor   = "XOR"
+	NullEQ     = "<=>"
+	UnaryPlus  = "unaryplus"
+	UnaryMinus = "unaryminus"
+	In         = "in"
+	Like       = "like"
+	Case       = "case"
+	Regexp     = "regexp"
+	IsNull     = "isnull"
+	IsTruth    = "istrue"  // Avoid name conflict with IsTrue in github/pingcap/check.
+	IsFalsity  = "isfalse" // Avoid name conflict with IsFalse in github/pingcap/check.
+	RowFunc    = "row"
+)
 
 // FuncCallExpr is for function expression.
 type FuncCallExpr struct {
@@ -224,6 +258,11 @@ func (n *AggregateFuncExpr) GetContext() *AggEvaluateContext {
 	return n.contextPerGroupMap[n.CurrentGroup]
 }
 
+// SetContext sets the aggregate expr evaluation context.
+func (n *AggregateFuncExpr) SetContext(ctx map[string](*AggEvaluateContext)) {
+	n.contextPerGroupMap = ctx
+}
+
 func (n *AggregateFuncExpr) updateCount() error {
 	ctx := n.GetContext()
 	vals := make([]interface{}, 0, len(n.Args))
@@ -387,6 +426,7 @@ func (a *AggregateFuncExtractor) Leave(n Node) (node Node, ok bool) {
 				Args: []ExprNode{v},
 			}
 			agg.SetFlag((v.GetFlag() | FlagHasAggregateFunc))
+			agg.SetType(v.GetType())
 			a.AggFuncs = append(a.AggFuncs, agg)
 			return agg, true
 		}

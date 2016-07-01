@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -92,8 +93,8 @@ func (ts *testSuite) TestBasic(c *C) {
 	})
 
 	indexCnt := func() int {
-		cnt, err2 := countEntriesWithPrefix(ctx, tb.IndexPrefix())
-		c.Assert(err2, IsNil)
+		cnt, err1 := countEntriesWithPrefix(ctx, tb.IndexPrefix())
+		c.Assert(err1, IsNil)
 		return cnt
 	}
 
@@ -222,14 +223,13 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 	}
 
 	for _, t := range table {
-		b := tables.EncodeRecordKey(t.tableID, t.h, t.ID)
-		tableID, handle, columnID, err := tables.DecodeRecordKey(b)
+		b := tablecodec.EncodeRowKeyWithHandle(t.tableID, t.h)
+		tableID, handle, err := tablecodec.DecodeRecordKey(b)
 		c.Assert(err, IsNil)
 		c.Assert(tableID, Equals, t.tableID)
 		c.Assert(handle, Equals, t.h)
-		c.Assert(columnID, Equals, t.ID)
 
-		handle, err = tables.DecodeRecordKeyHandle(b)
+		handle, err = tablecodec.DecodeRowKey(b)
 		c.Assert(err, IsNil)
 		c.Assert(handle, Equals, t.h)
 	}
@@ -243,11 +243,10 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 		"t12345678_i",
 		"t12345678_r1",
 		"t12345678_r1234567",
-		"t12345678_r123456781",
 	}
 
 	for _, t := range tbl {
-		_, err := tables.DecodeRecordKeyHandle(kv.Key(t))
+		_, err := tablecodec.DecodeRowKey(kv.Key(t))
 		c.Assert(err, NotNil)
 	}
 }
@@ -267,4 +266,24 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
+}
+
+func (ts *testSuite) TestIterRecords(c *C) {
+	defer testleak.AfterTest(c)()
+	_, err := ts.se.Execute("CREATE TABLE test.tIter (a int primary key, b int)")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute("INSERT test.tIter VALUES (1, 2), (2, NULL)")
+	c.Assert(err, IsNil)
+	ctx := ts.se.(context.Context)
+	dom := sessionctx.GetDomain(ctx)
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
+	c.Assert(err, IsNil)
+	totalCount := 0
+	err = tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+		totalCount++
+		c.Assert(rec[0].IsNull(), IsFalse)
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(totalCount, Equals, 2)
 }

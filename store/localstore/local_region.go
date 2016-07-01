@@ -8,10 +8,11 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi/tablecodec"
+	"github.com/pingcap/tidb/xapi"
 	"github.com/pingcap/tidb/xapi/xeval"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -45,6 +46,13 @@ type selectContext struct {
 	txn          kv.Transaction
 	eval         *xeval.Evaluator
 	whereColumns map[int64]*tipb.ColumnInfo
+	groups       map[string]bool
+	groupKeys    [][]byte
+	aggregates   []*aggregateFuncExpr
+	aggregate    bool
+
+	// Use for DecodeRow.
+	colTps map[int64]*types.FieldType
 }
 
 func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
@@ -62,17 +70,30 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			sel: sel,
 			txn: txn,
 		}
+		ctx.eval = &xeval.Evaluator{Row: make(map[int64]types.Datum)}
 		if sel.Where != nil {
-			ctx.eval = &xeval.Evaluator{Row: make(map[int64]types.Datum)}
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
 			collectColumnsInWhere(sel.Where, ctx)
 		}
+		ctx.aggregate = len(sel.Aggregates) > 0 || len(sel.GetGroupBy()) > 0
+		if ctx.aggregate {
+			// compose aggregateFuncExpr
+			ctx.aggregates = make([]*aggregateFuncExpr, 0, len(sel.Aggregates))
+			for _, agg := range sel.Aggregates {
+				aggExpr := &aggregateFuncExpr{expr: agg}
+				ctx.aggregates = append(ctx.aggregates, aggExpr)
+			}
+			ctx.groups = make(map[string]bool)
+			ctx.groupKeys = make([][]byte, 0)
+		}
+
 		var rows []*tipb.Row
 		if req.Tp == kv.ReqTypeSelect {
 			rows, err = rs.getRowsFromSelectReq(ctx)
 		} else {
 			rows, err = rs.getRowsFromIndexReq(txn, sel)
 		}
+
 		selResp := new(tipb.SelectResponse)
 		selResp.Error = toPBError(err)
 		selResp.Rows = rows
@@ -123,6 +144,16 @@ func collectColumnsInWhere(expr *tipb.Expr, ctx *selectContext) error {
 }
 
 func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, error) {
+	// Init ctx.colTps and use it to decode all the rows.
+	columns := ctx.sel.TableInfo.Columns
+	ctx.colTps = make(map[int64]*types.FieldType, len(columns))
+	for _, col := range columns {
+		if *col.PkHandle {
+			continue
+		}
+		ctx.colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
+	}
+
 	kvRanges, desc := rs.extractKVRanges(ctx.sel)
 	var rows []*tipb.Row
 	limit := int64(-1)
@@ -139,6 +170,39 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, er
 		}
 		rows = append(rows, ranRows...)
 		limit -= int64(len(ranRows))
+	}
+	if ctx.aggregate {
+		return rs.getRowsFromAgg(ctx)
+	}
+	return rows, nil
+}
+
+/*
+ * Convert aggregate partial result to rows.
+ * Data layout example:
+ *	SQL:	select count(c1), sum(c2), avg(c3) from t;
+ *	Aggs:	count(c1), sum(c2), avg(c3)
+ *	Rows:	groupKey1, count1, value2, count3, value3
+ *		groupKey2, count1, value2, count3, value3
+ */
+func (rs *localRegion) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
+	rows := make([]*tipb.Row, 0, len(ctx.groupKeys))
+	for _, gk := range ctx.groupKeys {
+		row := new(tipb.Row)
+		// Each aggregate partial result will be converted to one or two datums.
+		rowData := make([]types.Datum, 0, 1+2*len(ctx.aggregates))
+		// The first column is group key.
+		rowData = append(rowData, types.NewBytesDatum(gk))
+		for _, agg := range ctx.aggregates {
+			agg.currentGroup = gk
+			rowData = append(rowData, agg.toDatums()...)
+		}
+		var err error
+		row.Data, err = codec.EncodeValue(nil, rowData...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rows = append(rows, row)
 	}
 	return rows, nil
 }
@@ -201,7 +265,7 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 	}
 	var rows []*tipb.Row
 	if ran.IsPoint() {
-		_, err := ctx.txn.Get(ran.StartKey)
+		value, err := ctx.txn.Get(ran.StartKey)
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			return nil, nil
 		} else if err != nil {
@@ -211,17 +275,11 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		match, err := rs.evalWhereForRow(ctx, h)
+		row, err := rs.handleRowData(ctx, h, value)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if !match {
-			return nil, nil
-		}
-		row, err := rs.getRowByHandle(ctx, h)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+
 		if row != nil {
 			rows = append(rows, row)
 		}
@@ -267,14 +325,7 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		match, err := rs.evalWhereForRow(ctx, h)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !match {
-			continue
-		}
-		row, err := rs.getRowByHandle(ctx, h)
+		row, err := rs.handleRowData(ctx, h, it.Value())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -286,8 +337,11 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 	return rows, nil
 }
 
-func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.Row, error) {
-	tid := ctx.sel.TableInfo.GetTableId()
+// handleRowData deals with raw row data:
+//	1. Decodes row from raw byte slice.
+//	2. Checks if it fit where condition.
+//	3. Update aggregate functions.
+func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []byte) (*tipb.Row, error) {
 	columns := ctx.sel.TableInfo.Columns
 	row := new(tipb.Row)
 	var d types.Datum
@@ -297,63 +351,85 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.R
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, col := range columns {
+	rowData := make([][]byte, len(columns))
+	values, err := rs.getRowData(value, ctx.colTps)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, col := range columns {
 		if *col.PkHandle {
+			var colVal []byte
 			if mysql.HasUnsignedFlag(uint(*col.Flag)) {
 				// PK column is Unsigned
 				var ud types.Datum
 				ud.SetUint64(uint64(handle))
-				uHandle, err1 := codec.EncodeValue(nil, ud)
+				var err1 error
+				colVal, err1 = codec.EncodeValue(nil, ud)
 				if err1 != nil {
 					return nil, errors.Trace(err1)
 				}
-				row.Data = append(row.Data, uHandle...)
 			} else {
-				row.Data = append(row.Data, row.Handle...)
+				colVal = row.Handle
 			}
-		} else {
-			colID := col.GetColumnId()
-			if ctx.whereColumns[colID] != nil {
-				// The column is saved in evaluator, use it directly.
-				datum := ctx.eval.Row[colID]
-				row.Data, err = codec.EncodeValue(row.Data, datum)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			} else {
-				key := tablecodec.EncodeColumnKey(tid, handle, colID)
-				data, err1 := ctx.txn.Get(key)
-				if isDefaultNull(err1, col) {
-					row.Data = append(row.Data, codec.NilFlag)
-					continue
-				} else if err1 != nil {
-					return nil, errors.Trace(err1)
-				}
-				row.Data = append(row.Data, data...)
+			rowData[i] = colVal
+			continue
+		}
+		v, ok := values[col.GetColumnId()]
+		if !ok {
+			if mysql.HasNotNullFlag(uint(col.GetFlag())) {
+				return nil, errors.New("Miss column")
 			}
+			v = []byte{codec.NilFlag}
+			values[col.GetColumnId()] = v
+		}
+		rowData[i] = v
+	}
+	// Evalue where
+	match, err := rs.evalWhereForRow(ctx, handle, values)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !match {
+		return nil, nil
+	}
+
+	if ctx.aggregate {
+		// Update aggregate functions.
+		err = rs.aggregate(ctx, rowData)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		// If without aggregate functions, just return raw row data.
+		for _, d := range rowData {
+			row.Data = append(row.Data, d...)
 		}
 	}
 	return row, nil
 }
 
-func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64) (bool, error) {
+func (rs *localRegion) getRowData(value []byte, colTps map[int64]*types.FieldType) (map[int64][]byte, error) {
+	res, err := tablecodec.CutRow(value, colTps)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if res == nil {
+		res = make(map[int64][]byte, len(colTps))
+	}
+	return res, nil
+}
+
+func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64, row map[int64][]byte) (bool, error) {
 	if ctx.sel.Where == nil {
 		return true, nil
 	}
-	tid := ctx.sel.TableInfo.GetTableId()
 	for colID, col := range ctx.whereColumns {
 		if col.GetPkHandle() {
 			ctx.eval.Row[colID] = types.NewIntDatum(h)
 		} else {
-			key := tablecodec.EncodeColumnKey(tid, h, colID)
-			data, err := ctx.txn.Get(key)
-			if isDefaultNull(err, col) {
-				ctx.eval.Row[colID] = types.Datum{}
-				continue
-			} else if err != nil {
-				return false, errors.Trace(err)
-			}
-			datum, err := tablecodec.DecodeColumnValue(data, col)
+			data := row[colID]
+			ft := xapi.FieldTypeFromPBColumn(col)
+			datum, err := tablecodec.DecodeColumnValue(data, ft)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -364,7 +440,7 @@ func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64) (bool, error
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if result.Kind() == types.KindNull {
+	if result.IsNull() {
 		return false, nil
 	}
 	boolResult, err := result.ToBool()

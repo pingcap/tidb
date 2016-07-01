@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -66,40 +68,49 @@ func (s *testSuite) SetUpSuite(c *C) {
 	}
 	err = t.CreateDatabase(s.dbInfo)
 	c.Assert(err, IsNil)
-
+	pkFieldType := types.NewFieldType(mysql.TypeLong)
+	pkFieldType.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
+	pkCol := &model.ColumnInfo{
+		Name:      model.NewCIStr("pk"),
+		ID:        1,
+		Offset:    0,
+		State:     model.StatePublic,
+		FieldType: *pkFieldType,
+	}
 	col := &model.ColumnInfo{
 		Name:         model.NewCIStr("c"),
-		ID:           0,
-		Offset:       0,
+		ID:           2,
+		Offset:       1,
 		DefaultValue: 1,
 		State:        model.StatePublic,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
 	}
 	col1 := &model.ColumnInfo{
 		Name:         model.NewCIStr("c1"),
-		ID:           1,
-		Offset:       1,
+		ID:           3,
+		Offset:       2,
 		DefaultValue: 1,
 		State:        model.StatePublic,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
 	}
 	idx := &model.IndexInfo{
 		Name:   model.NewCIStr("c"),
-		ID:     1,
+		ID:     4,
 		Unique: true,
 		Columns: []*model.IndexColumn{{
 			Name:   model.NewCIStr("c"),
-			Offset: 0,
+			Offset: 1,
 			Length: 255,
 		}},
 		State: model.StatePublic,
 	}
 	s.tbInfo = &model.TableInfo{
-		ID:      1,
-		Name:    model.NewCIStr("t"),
-		State:   model.StatePublic,
-		Columns: []*model.ColumnInfo{col, col1},
-		Indices: []*model.IndexInfo{idx},
+		ID:         5,
+		Name:       model.NewCIStr("t"),
+		State:      model.StatePublic,
+		Columns:    []*model.ColumnInfo{pkCol, col, col1},
+		Indices:    []*model.IndexInfo{idx},
+		PKIsHandle: true,
 	}
 	err = t.CreateTable(s.dbInfo.ID, s.tbInfo)
 	c.Assert(err, IsNil)
@@ -183,12 +194,12 @@ func (s *testSuite) TestScan(c *C) {
 	tb, err := tables.TableFromMeta(alloc, s.tbInfo)
 	c.Assert(err, IsNil)
 	indices := tb.Indices()
-	_, err = tb.AddRecord(s.ctx, types.MakeDatums(10, 11))
+	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11))
 	c.Assert(err, IsNil)
 	s.ctx.CommitTxn()
 
-	record1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(10), int64(11))}
-	record2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(20), int64(21))}
+	record1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(1), int64(10), int64(11))}
+	record2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(2), int64(20), int64(21))}
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	records, _, err := ScanSnapshotTableRecord(s.store, ver, tb, int64(1), 1)
@@ -215,7 +226,7 @@ func (s *testSuite) TestScan(c *C) {
 
 	idxRow1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(10))}
 	idxRow2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(20))}
-	kvIndex := tables.NewIndex(tb.IndexPrefix(), indices[0].Name.L, indices[0].ID, indices[0].Unique)
+	kvIndex := tables.NewIndex(tb.Meta(), indices[0].Meta())
 	idxRows, nextVals, err := ScanIndexData(txn, kvIndex, idxRow1.Values, 2)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1, idxRow2})
@@ -294,26 +305,24 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 	c.Assert(err.Error(), DeepEquals, "[inspectkv:2]handle:1 is repeated in data")
 }
 
-func (s *testSuite) testIndex(c *C, tb table.Table, idx *table.IndexedColumn) {
+func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
 	err = CompareIndexData(txn, tb, idx)
 	c.Assert(err, IsNil)
 
-	cnt, err := GetIndexRecordsCount(txn, idx.X, nil)
+	cnt, err := GetIndexRecordsCount(txn, idx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(cnt, Equals, int64(2))
 
-	// current index data:
+	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
-	// index col data (handle, data): (1, 10), (2, 20), (4, 40)
-	err = idx.X.Create(txn, types.MakeDatums(int64(30)), 3)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
+	err = idx.Create(txn, types.MakeDatums(int64(30)), 3)
 	c.Assert(err, IsNil)
-	col := tb.Cols()[idx.Columns[0].Offset]
-	key := tb.RecordKey(4, col)
-	err = tables.SetColValue(txn, key, types.NewDatum(int64(40)))
-	c.Assert(err, IsNil)
+	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
+	setColValue(c, txn, key, types.NewDatum(int64(40)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
@@ -322,17 +331,16 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *table.IndexedColumn) {
 	err = CompareIndexData(txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(30))}
-	diffMsg := newDiffRetError("index", record1, &RecordData{Handle: int64(3), Values: types.MakeDatums(nil)})
+	diffMsg := newDiffRetError("index", record1, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	// current index data:
+	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
-	// index col data (handle, data): (1, 10), (2, 20), (4, 40), (3, 31)
-	err = idx.X.Create(txn, types.MakeDatums(int64(40)), 4)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40), (3, 31)
+	err = idx.Create(txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
-	key = tb.RecordKey(3, col)
-	err = tables.SetColValue(txn, key, types.NewDatum(int64(31)))
-	c.Assert(err, IsNil)
+	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
+	setColValue(c, txn, key, types.NewDatum(int64(31)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
@@ -344,14 +352,13 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *table.IndexedColumn) {
 	diffMsg = newDiffRetError("index", record1, record2)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	// current index data:
+	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
-	// index col data (handle, data): (1, 10), (2, 20), (4, 40), (5, 30)
-	key = tb.RecordKey(3, col)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40), (5, 30)
+	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	txn.Delete(key)
-	key = tb.RecordKey(5, col)
-	err = tables.SetColValue(txn, key, types.NewDatum(int64(30)))
-	c.Assert(err, IsNil)
+	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 5))
+	setColValue(c, txn, key, types.NewDatum(int64(30)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
@@ -363,14 +370,13 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *table.IndexedColumn) {
 	diffMsg = newDiffRetError("index", record1, record2)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	// current index data:
+	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
-	// index col data (handle, data): (1, 10), (2, 20), (3, 30)
-	key = tb.RecordKey(4, col)
+	// table     data (handle, data): (1, 10), (2, 20), (3, 30)
+	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	txn.Delete(key)
-	key = tb.RecordKey(3, col)
-	err = tables.SetColValue(txn, key, types.NewDatum(int64(30)))
-	c.Assert(err, IsNil)
+	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
+	setColValue(c, txn, key, types.NewDatum(int64(30)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
@@ -379,17 +385,16 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *table.IndexedColumn) {
 	err = CompareIndexData(txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 = &RecordData{Handle: int64(4), Values: types.MakeDatums(int64(40))}
-	diffMsg = newDiffRetError("index", record1, &RecordData{Handle: int64(4), Values: types.MakeDatums(nil)})
+	diffMsg = newDiffRetError("index", record1, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	// current index data:
+	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
-	// index col data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
-	err = idx.X.Delete(txn, types.MakeDatums(int64(40)), 4)
+	// table     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
+	err = idx.Delete(txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
-	key = tb.RecordKey(4, col)
-	err = tables.SetColValue(txn, key, types.NewDatum(int64(40)))
-	c.Assert(err, IsNil)
+	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
+	setColValue(c, txn, key, types.NewDatum(int64(40)))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
@@ -399,4 +404,13 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *table.IndexedColumn) {
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("index", nil, record1)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
+}
+
+func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
+	row := []types.Datum{v, {}}
+	colIDs := []int64{2, 3}
+	value, err := tablecodec.EncodeRow(row, colIDs)
+	c.Assert(err, IsNil)
+	err = txn.Set(key, value)
+	c.Assert(err, IsNil)
 }

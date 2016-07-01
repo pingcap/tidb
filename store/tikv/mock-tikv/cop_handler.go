@@ -22,10 +22,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi/tablecodec"
+	"github.com/pingcap/tidb/xapi"
 	"github.com/pingcap/tidb/xapi/xeval"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -214,13 +215,6 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		match, err := h.evalWhereForRow(ctx, handle)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !match {
-			return nil, nil
-		}
 		row, err := h.getRowByHandle(ctx, handle)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -275,13 +269,6 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		match, err := h.evalWhereForRow(ctx, handle)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !match {
-			continue
-		}
 		row, err := h.getRowByHandle(ctx, handle)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -305,83 +292,103 @@ func (h *rpcHandler) getRowByHandle(ctx *selectContext, handle int64) (*tipb.Row
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, col := range columns {
+	rowData := make([][]byte, len(columns))
+	colTps := make(map[int64]*types.FieldType, len(columns))
+	for i, col := range columns {
+		var colVal []byte
 		if col.GetPkHandle() {
-			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
-				row.Data, err = codec.EncodeValue(row.Data, types.NewUintDatum(uint64(handle)))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			} else {
-				row.Data = append(row.Data, row.Handle...)
-			}
-		} else {
-			colID := col.GetColumnId()
-			if ctx.whereColumns[colID] != nil {
-				// The column is saved in evaluator, use it directly.
-				datum := ctx.eval.Row[colID]
-				row.Data, err = codec.EncodeValue(row.Data, datum)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			} else {
-				key := tablecodec.EncodeColumnKey(tid, handle, colID)
-				data, err1 := h.mvccStore.Get(key, ctx.sel.GetStartTs())
+			if mysql.HasUnsignedFlag(uint(*col.Flag)) {
+				// PK column is Unsigned
+				var ud types.Datum
+				ud.SetUint64(uint64(handle))
+				var err1 error
+				colVal, err1 = codec.EncodeValue(nil, ud)
 				if err1 != nil {
 					return nil, errors.Trace(err1)
 				}
-				if data == nil {
-					if mysql.HasNotNullFlag(uint(col.GetFlag())) {
-						return nil, errors.Trace(kv.ErrNotExist)
-					}
-					row.Data = append(row.Data, codec.NilFlag)
-				} else {
-					row.Data = append(row.Data, data...)
-				}
+			} else {
+				colVal = row.Handle
 			}
+			rowData[i] = colVal
+		} else {
+			colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
 		}
+	}
+	key := tablecodec.EncodeRowKeyWithHandle(tid, handle)
+	value, err := h.mvccStore.Get(key, ctx.sel.GetStartTs())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	values, err := h.getRowData(value, colTps)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, col := range columns {
+		if col.GetPkHandle() {
+			continue
+		}
+		v, ok := values[col.GetColumnId()]
+		if !ok {
+			if mysql.HasNotNullFlag(uint(col.GetFlag())) {
+				return nil, errors.New("Miss column")
+			}
+			v = []byte{codec.NilFlag}
+			values[col.GetColumnId()] = v
+		}
+		rowData[i] = v
+	}
+	// Evalue where
+	match, err := h.evalWhereForRow(ctx, handle, values)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !match {
+		return nil, nil
+	}
+	for _, d := range rowData {
+		row.Data = append(row.Data, d...)
 	}
 	return row, nil
 }
 
-func (h *rpcHandler) evalWhereForRow(ctx *selectContext, handle int64) (bool, error) {
+func (h *rpcHandler) getRowData(value []byte, colTps map[int64]*types.FieldType) (map[int64][]byte, error) {
+	values, err := tablecodec.DecodeRow(value, colTps)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ret := make(map[int64][]byte, len(colTps))
+	for id, value := range values {
+		v, err1 := tablecodec.EncodeValue(value)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		ret[id] = v
+	}
+	return ret, nil
+}
+
+func (h *rpcHandler) evalWhereForRow(ctx *selectContext, handle int64, row map[int64][]byte) (bool, error) {
 	if ctx.sel.Where == nil {
 		return true, nil
 	}
-	tid := ctx.sel.TableInfo.GetTableId()
 	for colID, col := range ctx.whereColumns {
 		if col.GetPkHandle() {
-			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
-				ctx.eval.Row[colID] = types.NewUintDatum(uint64(handle))
-			} else {
-				ctx.eval.Row[colID] = types.NewIntDatum(handle)
-			}
+			ctx.eval.Row[colID] = types.NewIntDatum(handle)
 		} else {
-			key := tablecodec.EncodeColumnKey(tid, handle, colID)
-			data, err := h.mvccStore.Get(key, ctx.sel.GetStartTs())
+			data := row[colID]
+			ft := xapi.FieldTypeFromPBColumn(col)
+			datum, err := tablecodec.DecodeColumnValue(data, ft)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if data == nil {
-				if mysql.HasNotNullFlag(uint(col.GetFlag())) {
-					return false, errors.Trace(kv.ErrNotExist)
-				}
-				ctx.eval.Row[colID] = types.Datum{}
-			} else {
-				var d types.Datum
-				d, err = tablecodec.DecodeColumnValue(data, col)
-				if err != nil {
-					return false, errors.Trace(err)
-				}
-				ctx.eval.Row[colID] = d
-			}
+			ctx.eval.Row[colID] = datum
 		}
 	}
 	result, err := ctx.eval.Eval(ctx.sel.Where)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if result.Kind() == types.KindNull {
+	if result.IsNull() {
 		return false, nil
 	}
 	boolResult, err := result.ToBool()
