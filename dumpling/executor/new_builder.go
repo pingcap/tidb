@@ -179,6 +179,7 @@ func (b *executorBuilder) buildNewSort(v *plan.NewSort) Executor {
 		ByItems: v.ByItems,
 		ctx:     b.ctx,
 		schema:  v.GetSchema(),
+		Limit:   v.ExecLimit,
 	}
 }
 
