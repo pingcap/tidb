@@ -46,7 +46,7 @@ const (
 // BuildPlan builds a plan from a node.
 // It returns ErrUnsupportedType if ast.Node type is not supported yet.
 func BuildPlan(node ast.Node, sb SubQueryBuilder) (Plan, error) {
-	builder := planBuilder{sb: sb}
+	builder := planBuilder{sb: sb, allocator: new(idAllocator)}
 	p := builder.build(node)
 	return p, builder.err
 }
@@ -58,7 +58,7 @@ type planBuilder struct {
 	hasAgg       bool
 	sb           SubQueryBuilder
 	obj          interface{}
-	id           int
+	allocator    *idAllocator
 	ctx          context.Context
 	is           infoschema.InfoSchema
 	outerSchemas []expression.Schema
@@ -911,7 +911,6 @@ func (b *planBuilder) buildDistinct(src Plan) Plan {
 	d := &Distinct{}
 	addChild(d, src)
 	d.SetFields(src.Fields())
-	d.SetSchema(src.GetSchema())
 	return d
 }
 
