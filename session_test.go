@@ -2170,6 +2170,20 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	mustExecSQL(c, se, "update t1 set b = b + 1 where a = 0;")
 	mustExecMatch(c, se, "select b from t1 where a = 0;", [][]interface{}{{[]byte("2")}})
 
+	// test union index.
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (a text, b text, c int, index (a(3), b(3), c));")
+	mustExecSQL(c, se, "insert into t values ('abc', 'abcd', 1);")
+	mustExecSQL(c, se, "insert into t values ('abc', 'abcf', 2);")
+	mustExecSQL(c, se, "insert into t values ('bbc', 'abcd', 3);")
+	mustExecSQL(c, se, "insert into t values ('cbc', 'abd', 4);")
+	mustExecMatch(c, se, "select c from t where a = 'abc' and b <= 'abc';", [][]interface{}{})
+	mustExecMatch(c, se, "select c from t where a = 'abc' and b <= 'abd';", [][]interface{}{{1}, {2}})
+	mustExecMatch(c, se, "select c from t where a < 'cbc' and b > 'abcd';", [][]interface{}{{2}})
+	mustExecMatch(c, se, "select c from t where a <= 'abc' and b > 'abc';", [][]interface{}{{1}, {2}})
+	mustExecMatch(c, se, "select c from t where a < 'bbc' and b = 'abcd';", [][]interface{}{{1}})
+	mustExecMatch(c, se, "select c from t where a = 'cbc' and b < 'abcd';", [][]interface{}{})
+
 	err = se.Close()
 	c.Assert(err, IsNil)
 	err = store.Close()

@@ -297,9 +297,10 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	}
 	x := Executor(e)
 	if v.Index.HasPrefixIndex() {
-		x = b.buildFilter(x, v.AccessConditions)
+		x = b.buildFilter(x, append(v.AccessConditions, v.FilterConditions...))
+	} else {
+		x = b.buildFilter(x, v.FilterConditions)
 	}
-	x = b.buildFilter(x, v.FilterConditions)
 	if v.Desc {
 		x = &ReverseExec{Src: x}
 	}
