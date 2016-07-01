@@ -301,9 +301,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
-	pA := &NewTableScan{baseLogicalPlan: newLogicalPlan(Ts, new(idAllocator))}
+	pA := &NewTableScan{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
 
-	pB := &NewTableScan{baseLogicalPlan: newLogicalPlan(Ts, new(idAllocator))}
+	pB := &NewTableScan{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
 
 	pA.initID()
 	pB.initID()
