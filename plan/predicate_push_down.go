@@ -20,7 +20,7 @@ import (
 func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) error {
 	selection := &Selection{
 		Conditions:      conditions,
-		baseLogicalPlan: newLogicalPlan(Sel, allocator)}
+		baseLogicalPlan: newBaseLogicalPlan(Sel, allocator)}
 	selection.initID()
 	selection.SetSchema(child.GetSchema().DeepCopy())
 	return InsertPlan(p, child, selection)

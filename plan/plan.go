@@ -116,7 +116,7 @@ type baseLogicalPlan struct {
 	basePlan
 }
 
-func newLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
+func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
 	return baseLogicalPlan{
 		basePlan: basePlan{
 			tp:        tp,

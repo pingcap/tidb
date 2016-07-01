@@ -39,7 +39,7 @@ func (a *idAllocator) allocID() string {
 func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gby []expression.Expression, correlated bool) LogicalPlan {
 	agg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(aggFuncList)),
-		baseLogicalPlan: newLogicalPlan(Agg, b.allocator)}
+		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator)}
 	agg.initID()
 	agg.correlated = p.IsCorrelated() || correlated
 	addChild(agg, p)
@@ -186,7 +186,7 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) LogicalPlan {
 	leftPlan := b.buildResultSetNode(join.Left)
 	rightPlan := b.buildResultSetNode(join.Right)
 	newSchema := append(leftPlan.GetSchema().DeepCopy(), rightPlan.GetSchema().DeepCopy()...)
-	joinPlan := &Join{baseLogicalPlan: newLogicalPlan(Jn, b.allocator)}
+	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
 	joinPlan.initID()
 	joinPlan.SetSchema(newSchema)
 	joinPlan.correlated = leftPlan.IsCorrelated() || rightPlan.IsCorrelated()
@@ -221,7 +221,7 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) LogicalPlan {
 func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
-	selection := &Selection{baseLogicalPlan: newLogicalPlan(Sel, b.allocator)}
+	selection := &Selection{baseLogicalPlan: newBaseLogicalPlan(Sel, b.allocator)}
 	selection.initID()
 	selection.correlated = p.IsCorrelated()
 	for _, cond := range conditions {
@@ -244,7 +244,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
 	proj := &Projection{
 		Exprs:           make([]expression.Expression, 0, len(fields)),
-		baseLogicalPlan: newLogicalPlan(Proj, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
 	}
 	proj.initID()
 	proj.correlated = p.IsCorrelated()
@@ -286,7 +286,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 }
 
 func (b *planBuilder) buildNewDistinct(src LogicalPlan) LogicalPlan {
-	d := &Distinct{baseLogicalPlan: newLogicalPlan(Dis, b.allocator)}
+	d := &Distinct{baseLogicalPlan: newBaseLogicalPlan(Dis, b.allocator)}
 	d.initID()
 	addChild(d, src)
 	d.SetSchema(src.GetSchema())
@@ -298,7 +298,7 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) LogicalPlan {
 	for i, sel := range union.SelectList.Selects {
 		sels[i] = b.buildNewSelect(sel)
 	}
-	u := &NewUnion{Selects: sels, baseLogicalPlan: newLogicalPlan(Un, b.allocator)}
+	u := &NewUnion{Selects: sels, baseLogicalPlan: newBaseLogicalPlan(Un, b.allocator)}
 	u.initID()
 	firstSchema := sels[0].GetSchema().DeepCopy()
 	for _, sel := range sels {
@@ -356,7 +356,7 @@ type ByItems struct {
 
 func (b *planBuilder) buildNewSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	var exprs []ByItems
-	sort := &NewSort{baseLogicalPlan: newLogicalPlan(Srt, b.allocator)}
+	sort := &NewSort{baseLogicalPlan: newBaseLogicalPlan(Srt, b.allocator)}
 	sort.initID()
 	for _, item := range byItems {
 		it, np, correlated, err := b.rewrite(item.Expr, p, aggMapper)
@@ -378,7 +378,7 @@ func (b *planBuilder) buildNewLimit(src LogicalPlan, limit *ast.Limit) LogicalPl
 	li := &Limit{
 		Offset:          limit.Offset,
 		Count:           limit.Count,
-		baseLogicalPlan: newLogicalPlan(Lim, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(Lim, b.allocator),
 	}
 	li.initID()
 	if s, ok := src.(*NewSort); ok {
@@ -764,7 +764,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
-	trunc := &Trim{baseLogicalPlan: newLogicalPlan(Trm, b.allocator)}
+	trunc := &Trim{baseLogicalPlan: newBaseLogicalPlan(Trm, b.allocator)}
 	trunc.initID()
 	addChild(trunc, p)
 	trunc.SetSchema(p.GetSchema().DeepCopy()[:len])
@@ -773,7 +773,7 @@ func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
 }
 
 func (b *planBuilder) buildNewTableDual() LogicalPlan {
-	dual := &NewTableDual{baseLogicalPlan: newLogicalPlan(Dual, b.allocator)}
+	dual := &NewTableDual{baseLogicalPlan: newBaseLogicalPlan(Dual, b.allocator)}
 	dual.initID()
 	schema := []*expression.Column{{FromID: dual.id}}
 	dual.SetSchema(schema)
@@ -781,7 +781,7 @@ func (b *planBuilder) buildNewTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) LogicalPlan {
-	p := &NewTableScan{Table: tn.TableInfo, baseLogicalPlan: newLogicalPlan(Ts, b.allocator)}
+	p := &NewTableScan{Table: tn.TableInfo, baseLogicalPlan: newBaseLogicalPlan(Ts, b.allocator)}
 	p.initID()
 	// Equal condition contains a column from previous joined table.
 	rfs := tn.GetResultFields()
@@ -812,7 +812,7 @@ func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema,
 		InnerPlan:       inner,
 		OuterSchema:     schema,
 		Checker:         checker,
-		baseLogicalPlan: newLogicalPlan(App, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(App, b.allocator),
 	}
 	ap.initID()
 	addChild(ap, p)
@@ -831,7 +831,7 @@ func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema,
 }
 
 func (b *planBuilder) buildExists(p LogicalPlan) LogicalPlan {
-	exists := &Exists{baseLogicalPlan: newLogicalPlan(Ext, b.allocator)}
+	exists := &Exists{baseLogicalPlan: newBaseLogicalPlan(Ext, b.allocator)}
 	exists.initID()
 	addChild(exists, p)
 	newCol := &expression.Column{
@@ -844,7 +844,7 @@ func (b *planBuilder) buildExists(p LogicalPlan) LogicalPlan {
 }
 
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
-	maxOneRow := &MaxOneRow{baseLogicalPlan: newLogicalPlan(MOR, b.allocator)}
+	maxOneRow := &MaxOneRow{baseLogicalPlan: newBaseLogicalPlan(MOR, b.allocator)}
 	maxOneRow.initID()
 	addChild(maxOneRow, p)
 	maxOneRow.SetSchema(p.GetSchema().DeepCopy())
