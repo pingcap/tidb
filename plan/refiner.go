@@ -80,7 +80,36 @@ func buildIndexRange(p *IndexScan) error {
 	} else if p.AccessEqualCount < len(p.AccessConditions) {
 		p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints)
 	}
+
+	// Take prefix index into consideration.
+	if p.Index.HasPrefixIndex() {
+		for i := 0; i < len(p.Ranges); i++ {
+			refineRange(p.Ranges[i], p.Index)
+		}
+	}
 	return errors.Trace(rb.err)
+}
+
+// refineRange change the IndexRange taking prefix index length into consideration.
+func refineRange(v *IndexRange, idxInfo *model.IndexInfo) {
+	for i := 0; i < len(v.LowVal); i++ {
+		refineRangeDatum(&v.LowVal[i], idxInfo.Columns[i])
+		v.LowExclude = false
+	}
+
+	for i := 0; i < len(v.HighVal); i++ {
+		refineRangeDatum(&v.HighVal[i], idxInfo.Columns[i])
+		v.HighExclude = false
+	}
+}
+
+func refineRangeDatum(v *types.Datum, ic *model.IndexColumn) {
+	if ic.Length != types.UnspecifiedLength {
+		// if index prefix length is used, change scan range.
+		if ic.Length < len(v.GetBytes()) {
+			v.SetBytes(v.GetBytes()[:ic.Length])
+		}
+	}
 }
 
 func buildTableRange(p *TableScan) error {

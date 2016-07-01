@@ -236,20 +236,6 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	}
 	tbl, _ := b.is.TableByID(v.Table.ID)
 
-	var idx table.Index
-	for _, val := range tbl.Indices() {
-		if val.Meta().Name.L == v.Index.Name.L {
-			idx = val
-			break
-		}
-	}
-
-	valueTypes := make([]*types.FieldType, len(idx.Meta().Columns))
-	for i, ic := range idx.Meta().Columns {
-		col := tbl.Cols()[ic.Offset]
-		valueTypes[i] = &col.FieldType
-	}
-
 	client := txn.GetClient()
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	var memDB bool
@@ -259,9 +245,6 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	}
 	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
 		log.Debug("xapi select index")
-		for i := 0; i < len(v.Ranges); i++ {
-			refineRange(v.Ranges[i], valueTypes, v.Index.Columns)
-		}
 		e := &XSelectIndexExec{
 			table:       tbl,
 			ctx:         b.ctx,
@@ -278,8 +261,24 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		} else {
 			ex = b.buildUnionScanExec(e)
 		}
-		ex = b.buildFilter(ex, v.AccessConditions)
+		if v.Index.HasPrefixIndex() {
+			ex = b.buildFilter(ex, v.AccessConditions)
+		}
 		return b.buildFilter(ex, remained)
+	}
+
+	var idx table.Index
+	for _, val := range tbl.Indices() {
+		if val.Meta().Name.L == v.Index.Name.L {
+			idx = val
+			break
+		}
+	}
+
+	valueTypes := make([]*types.FieldType, len(idx.Meta().Columns))
+	for i, ic := range idx.Meta().Columns {
+		col := tbl.Cols()[ic.Offset]
+		valueTypes[i] = &col.FieldType
 	}
 
 	e := &IndexScanExec{
@@ -294,9 +293,12 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 
 	e.Ranges = make([]*IndexRangeExec, len(v.Ranges))
 	for i, val := range v.Ranges {
-		e.Ranges[i], _ = b.buildIndexRange(e, val, idx.Meta().Columns)
+		e.Ranges[i] = b.buildIndexRange(e, val, idx.Meta().Columns)
 	}
-	x := b.buildFilter(e, v.AccessConditions)
+	x := Executor(e)
+	if v.Index.HasPrefixIndex() {
+		x = b.buildFilter(x, v.AccessConditions)
+	}
 	x = b.buildFilter(x, v.FilterConditions)
 	if v.Desc {
 		x = &ReverseExec{Src: x}
@@ -304,45 +306,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	return x
 }
 
-// refineRange may change the IndexRange taking prefix index length into consideration.
-func refineRange(v *plan.IndexRange, fts []*types.FieldType, ics []*model.IndexColumn) bool {
-	var lowPrefixIndex, highPrefixIndex bool
-	for i := 0; i < len(v.LowVal); i++ {
-		if refineRangeDatum(&v.LowVal[i], fts[i], ics[i]) {
-			lowPrefixIndex = true
-		}
-	}
-	if lowPrefixIndex {
-		v.LowExclude = false
-	}
-
-	for i := 0; i < len(v.HighVal); i++ {
-		if refineRangeDatum(&v.HighVal[i], fts[i], ics[i]) {
-			highPrefixIndex = true
-		}
-	}
-	if highPrefixIndex {
-		v.HighExclude = false
-	}
-
-	return lowPrefixIndex || highPrefixIndex
-}
-
-func refineRangeDatum(v *types.Datum, ft *types.FieldType, ic *model.IndexColumn) bool {
-	var prefixIndex bool
-	if (types.IsTypeBlob(ft.Tp) || types.IsTypeChar(ft.Tp)) &&
-		ic.Length != types.UnspecifiedLength {
-		// if index prefix length is used, change scan range.
-		if ic.Length < len(v.GetBytes()) {
-			v.SetBytes(v.GetBytes()[:ic.Length])
-			prefixIndex = true
-		}
-	}
-	return prefixIndex
-}
-
-func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange, ics []*model.IndexColumn) (*IndexRangeExec, bool) {
-	prefixIndex := refineRange(v, scan.valueTypes, ics)
+func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange, ics []*model.IndexColumn) *IndexRangeExec {
 	ran := &IndexRangeExec{
 		scan:        scan,
 		lowVals:     v.LowVal,
@@ -350,7 +314,7 @@ func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRang
 		highVals:    v.HighVal,
 		highExclude: v.HighExclude,
 	}
-	return ran, prefixIndex
+	return ran
 }
 
 func (b *executorBuilder) buildJoinOuter(v *plan.JoinOuter) *JoinOuterExec {

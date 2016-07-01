@@ -58,7 +58,8 @@ var (
 	errCantDropColWithIndex = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
 
-	errCreateIndexSyntax = terror.ClassDDL.New(codeCreateIndexSyntax, "index for BLOB/TEXT column must specificate a key length")
+	errCreateIndexSyntax  = terror.ClassDDL.New(codeCreateIndexSyntax, "index for BLOB/TEXT column must specificate a key length")
+	errCreateIndexSyntax1 = terror.ClassDDL.New(codeCreateIndexSyntax1, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -1212,7 +1213,8 @@ const (
 	codeCantDropFieldOrKey  = 1091
 	codeInvalidOnUpdate     = 1294
 
-	codeCreateIndexSyntax = 1170
+	codeCreateIndexSyntax  = 1170
+	codeCreateIndexSyntax1 = 1089
 )
 
 func init() {
@@ -1222,6 +1224,7 @@ func init() {
 		codeCantDropFieldOrKey:  mysql.ErrCantDropFieldOrKey,
 		codeInvalidOnUpdate:     mysql.ErrInvalidOnUpdate,
 		codeCreateIndexSyntax:   mysql.ErrBlobKeyWithoutLength,
+		codeCreateIndexSyntax1:  mysql.ErrWrongSubKey,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLERrCodes
 }

@@ -46,6 +46,12 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 			return nil, errors.Trace(errCreateIndexSyntax)
 		}
 
+		if ic.Length != types.UnspecifiedLength &&
+			!types.IsTypeChar(col.FieldType.Tp) &&
+			!types.IsTypeBlob(col.FieldType.Tp) {
+			return nil, errors.Trace(errCreateIndexSyntax1)
+		}
+
 		idxColumns = append(idxColumns, &model.IndexColumn{
 			Name:   col.Name,
 			Offset: col.Offset,
