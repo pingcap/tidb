@@ -17,11 +17,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
-	"github.com/juju/errors"
 )
 
 // TestKit is a utility to run sql test.
