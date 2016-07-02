@@ -86,6 +86,9 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 func builtinCaseWhen(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	l := len(args)
 	for i := 0; i < l-1; i += 2 {
+		if args[i].IsNull() {
+			continue
+		}
 		b, err1 := args[i].ToBool()
 		if err1 != nil {
 			return d, errors.Trace(err1)

@@ -1399,6 +1399,11 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select * from t where a = case  when b then 'str3' when 0 then 'str1' else 'str2' end")
 	rowStr2 = fmt.Sprintf("%v %v", []byte("str2"), "0")
 	result.Check(testkit.Rows(rowStr2))
+	tk.MustExec("insert t values ('str1', null)")
+	result = tk.MustQuery("select * from t where a = case b when null then 'str3' when 10 then 'str1' else 'str2' end")
+	result.Check(testkit.Rows(rowStr2))
+	result = tk.MustQuery("select * from t where a = case null when b then 'str3' when 10 then 'str1' else 'str2' end")
+	result.Check(testkit.Rows(rowStr2))
 
 	plan.UseNewPlanner = false
 }
