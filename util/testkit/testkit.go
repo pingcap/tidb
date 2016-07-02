@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
+	"github.com/juju/errors"
 )
 
 // TestKit is a utility to run sql test.
@@ -104,10 +105,10 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	comment := check.Commentf("sql:%s, %v", sql, args)
 	rs, err := tk.Exec(sql, args...)
-	tk.c.Assert(err, check.IsNil, comment)
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	tk.c.Assert(rs, check.NotNil, comment)
 	rows, err := tidb.GetRows(rs)
-	tk.c.Assert(err, check.IsNil, comment)
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	iRows := make([][]interface{}, len(rows))
 	for i := range rows {
 		row := rows[i]
