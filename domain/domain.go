@@ -154,7 +154,7 @@ func (do *Domain) tryReload() {
 
 	// if lease is 0, we use the local store, so no need to reload.
 	if lease > 0 && time.Now().UnixNano()-last > lease.Nanoseconds() {
-		do.mustReload()
+		do.reload()
 	}
 }
 
@@ -211,6 +211,7 @@ func (do *Domain) mustReload() {
 	if err != nil {
 		log.Fatalf("[ddl] reload schema err %v", errors.ErrorStack(err))
 	}
+	setSchemaValidity(true)
 }
 
 // check schema every 300 seconds default.
@@ -229,7 +230,10 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if terror.ErrorEqual(err, localstore.ErrDBClosed) {
 				return
 			} else if err != nil {
-				log.Fatalf("[ddl] reload schema err %v", errors.ErrorStack(err))
+				log.Errorf("[ddl] reload schema err %v", errors.ErrorStack(err))
+				setSchemaValidity(false)
+			} else {
+				setSchemaValidity(true)
 			}
 		case newLease := <-do.leaseCh:
 			if lease == newLease {
@@ -257,6 +261,27 @@ func (c *ddlCallback) OnChanged(err error) error {
 	log.Warnf("[ddl] on DDL change")
 
 	c.do.mustReload()
+	return nil
+}
+
+var (
+	schemaValidity     bool
+	schemaValidityLock sync.Mutex
+)
+
+func setSchemaValidity(v bool) {
+	schemaValidityLock.Lock()
+	schemaValidity = v
+	schemaValidityLock.Unlock()
+}
+
+// CheckSchemaValidity checks if schema info is out of date.
+func CheckSchemaValidity() error {
+	schemaValidityLock.Lock()
+	defer schemaValidityLock.Unlock()
+	if !schemaValidity {
+		return errLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
+	}
 	return nil
 }
 

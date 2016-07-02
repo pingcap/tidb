@@ -30,6 +30,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -130,6 +131,10 @@ func (s *session) cleanRetryInfo() {
 	if !variable.GetSessionVars(s).RetryInfo.Retrying {
 		variable.GetSessionVars(s).RetryInfo.Clean()
 	}
+}
+
+func (s *session) checkServerStatus() error {
+	return domain.CheckSchemaValidity()
 }
 
 func (s *session) Status() uint16 {
@@ -389,6 +394,9 @@ func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, erro
 }
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
+	if err := s.checkServerStatus(); err != nil {
+		return nil, errors.Trace(err)
+	}
 	charset, collation := getCtxCharsetInfo(s)
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
@@ -422,6 +430,9 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 
 // For execute prepare statement in binary protocol
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
+	if err := s.checkServerStatus(); err != nil {
+		return 0, 0, nil, errors.Trace(err)
+	}
 	prepareExec := &executor.PrepareExec{
 		IS:      sessionctx.GetDomain(s).InfoSchema(),
 		Ctx:     s,
@@ -479,6 +490,9 @@ func checkArgs(args ...interface{}) error {
 
 // Execute a prepared statement
 func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.RecordSet, error) {
+	if err := s.checkServerStatus(); err != nil {
+		return nil, errors.Trace(err)
+	}
 	err := checkArgs(args...)
 	if err != nil {
 		return nil, err
@@ -489,6 +503,9 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
+	if err := s.checkServerStatus(); err != nil {
+		return errors.Trace(err)
+	}
 	vars := variable.GetSessionVars(s)
 	if _, ok := vars.PreparedStmts[stmtID]; !ok {
 		return executor.ErrStmtNotFound
