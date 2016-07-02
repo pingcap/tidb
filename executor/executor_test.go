@@ -1368,6 +1368,16 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select * from t where a like 'ab_123'")
 	rowStr := fmt.Sprintf("%v %v", []byte("abc123"), "1")
 	result.Check(testkit.Rows(rowStr))
+
+	// test cast
+	result = tk.MustQuery("select cast(1 as decimal(1,2))")
+	result.Check(testkit.Rows("1.00"))
+	result = tk.MustQuery("select cast('1991-09-05 11:11:11' as datetime)")
+	result.Check(testkit.Rows("1991-09-05 11:11:11"))
+	result = tk.MustQuery("select cast(cast('1991-09-05 11:11:11' as datetime) as char)")
+	result.Check(testkit.Rows("1991-09-05 11:11:11"))
+	result = tk.MustQuery("select cast('11:11:11' as time)")
+	result.Check(testkit.Rows("11:11:11"))
 	plan.UseNewPlanner = false
 }
 
