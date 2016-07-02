@@ -90,7 +90,7 @@ func buildIndexRange(p *IndexScan) error {
 	return errors.Trace(rb.err)
 }
 
-// refineRange change the IndexRange taking prefix index length into consideration.
+// refineRange changes the IndexRange taking prefix index length into consideration.
 func refineRange(v *IndexRange, idxInfo *model.IndexInfo) {
 	for i := 0; i < len(v.LowVal); i++ {
 		refineRangeDatum(&v.LowVal[i], idxInfo.Columns[i])

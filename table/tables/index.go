@@ -138,7 +138,7 @@ func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, d
 		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
 			ic := c.idxInfo.Columns[i]
 			if ic.Length != types.UnspecifiedLength && len(v.GetBytes()) > ic.Length {
-				// truncate value and limit it's length
+				// truncate value and limit its length
 				v.SetBytes(v.GetBytes()[:ic.Length])
 			}
 		}
