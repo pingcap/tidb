@@ -53,7 +53,7 @@ for details on submitting patches and the contribution workflow.
 Twitter: [@PingCAP](https://twitter.com/PingCAP)
 
 ## License
-TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSES/LICENSE) file for details.
+TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
 
 ## Acknowledgments
 - Thanks [cznic](https://github.com/cznic) for providing some great open source tools.
