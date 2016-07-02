@@ -1392,6 +1392,13 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(rowStr3))
 	result = tk.MustQuery("select * from t where a = case b when 4 then 'str4' when 5 then 'str5' else 'str6' end")
 	result.Check(nil)
+	result = tk.MustQuery("select * from t where a = case  when b then 'str3' when 1 then 'str1' else 'str2' end")
+	result.Check(testkit.Rows(rowStr3))
+	tk.MustExec("delete from t")
+	tk.MustExec("insert t values ('str2', 0)")
+	result = tk.MustQuery("select * from t where a = case  when b then 'str3' when 0 then 'str1' else 'str2' end")
+	rowStr2 = fmt.Sprintf("%v %v", []byte("str2"), "0")
+	result.Check(testkit.Rows(rowStr2))
 
 	plan.UseNewPlanner = false
 }

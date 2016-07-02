@@ -504,8 +504,36 @@ func (er *expressionRewriter) caseToScalarFunc(v *ast.CaseExpr) {
 	if v.ElseClause != nil {
 		argsLen++
 	}
-	function := expression.NewFunction(ast.Case, v.Type, er.ctxStack[stkLen-argsLen-1:stkLen]...)
-	er.ctxStack = er.ctxStack[:stkLen-argsLen-1]
+
+	// value                          -> ctxStack[stkLen-argsLen-1]
+	// when clause(condition, result) -> ctxStack[stkLen-argsLen:stkLen-1];
+	// else clause                    -> ctxStack[stkLen-1]
+	var args []expression.Expression
+	if v.Value != nil {
+		// args:  eq scalar func(args: value, condition1), result1,
+		//        eq scalar func(args: value, condition2), result2,
+		//        ...
+		//        else clasue
+		value := er.ctxStack[stkLen-argsLen-1]
+		args = make([]expression.Expression, 0, argsLen)
+		for i := stkLen - argsLen; i < stkLen-1; i += 2 {
+			arg := expression.NewFunction(ast.EQ, value.GetType(), value, er.ctxStack[i])
+			args = append(args, arg)
+			args = append(args, er.ctxStack[i+1])
+		}
+		if v.ElseClause != nil {
+			args = append(args, er.ctxStack[stkLen-1])
+		}
+		argsLen++
+	} else {
+		// args:  condition1, result1,
+		//        condition2, result2,
+		//        ...
+		//        else clasue
+		args = er.ctxStack[stkLen-argsLen : stkLen]
+	}
+	function := expression.NewFunction(ast.Case, v.Type, args...)
+	er.ctxStack = er.ctxStack[:stkLen-argsLen]
 	er.ctxStack = append(er.ctxStack, function)
 }
 

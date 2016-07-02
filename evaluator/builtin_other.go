@@ -85,25 +85,20 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 
 func builtinCaseWhen(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	l := len(args)
-	target := args[0]
-	if !target.IsNull() {
-		for i := 1; i < l-1; i++ {
-			cmp, err1 := target.CompareDatum(args[i])
-			if err1 != nil {
-				return d, errors.Trace(err1)
-			}
-			i++
-			if cmp == 0 {
-				d = args[i]
-				return
-			}
+	for i := 0; i < l-1; i += 2 {
+		b, err1 := args[i].ToBool()
+		if err1 != nil {
+			return d, errors.Trace(err1)
+		}
+		if b == 1 {
+			d = args[i+1]
+			return
 		}
 	}
-	// target -> args[0]
-	// when clause(condition, result) -> args[i], args[i+1]; (i > 0 && i+1 < l-1)
+	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
-	// If case clasue has else clause, l%2 == 0.
-	if l%2 == 0 {
+	// If case clasue has else clause, l%2 == 1.
+	if l%2 == 1 {
 		d = args[l-1]
 	}
 	return
