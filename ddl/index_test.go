@@ -66,7 +66,7 @@ func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 		SchemaID: dbInfo.ID,
 		TableID:  tblInfo.ID,
 		Type:     model.ActionAddIndex,
-		Args:     []interface{}{unique, model.NewCIStr(indexName), id, []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr(colName)}, Length: 256}}},
+		Args:     []interface{}{unique, model.NewCIStr(indexName), id, []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr(colName)}, Length: types.UnspecifiedLength}}},
 	}
 
 	err = d.doDDLJob(ctx, job)
