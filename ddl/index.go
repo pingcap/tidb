@@ -43,13 +43,13 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 
 		// Length must be specified for BLOB and TEXT column indexes.
 		if types.IsTypeBlob(col.FieldType.Tp) && ic.Length == types.UnspecifiedLength {
-			return nil, errors.Trace(errCreateIndexSyntax)
+			return nil, errors.Trace(errBlobKeyWithoutLength)
 		}
 
 		if ic.Length != types.UnspecifiedLength &&
 			!types.IsTypeChar(col.FieldType.Tp) &&
 			!types.IsTypeBlob(col.FieldType.Tp) {
-			return nil, errors.Trace(errCreateIndexSyntax1)
+			return nil, errors.Trace(errIncorrectPrefixKey)
 		}
 
 		idxColumns = append(idxColumns, &model.IndexColumn{
