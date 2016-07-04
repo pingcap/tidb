@@ -414,3 +414,21 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 		return
 	}
 }
+
+// CastFuncFactory produces builtin function according to field types.
+// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
+func CastFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
+	switch tp.Tp {
+	// Parser has restricted this.
+	case mysql.TypeString, mysql.TypeDuration, mysql.TypeDatetime,
+		mysql.TypeDate, mysql.TypeLonglong, mysql.TypeNewDecimal:
+		return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+			d = args[0]
+			if d.IsNull() {
+				return
+			}
+			return d.ConvertTo(tp)
+		}, nil
+	}
+	return nil, errors.Errorf("unknown cast type - %v", tp)
+}

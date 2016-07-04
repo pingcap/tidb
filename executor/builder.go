@@ -235,6 +235,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		return nil
 	}
 	tbl, _ := b.is.TableByID(v.Table.ID)
+
 	client := txn.GetClient()
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	var memDB bool
@@ -260,6 +261,9 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		} else {
 			ex = b.buildUnionScanExec(e)
 		}
+		if v.Index.HasPrefixIndex() {
+			ex = b.buildFilter(ex, v.AccessConditions)
+		}
 		return b.buildFilter(ex, remained)
 	}
 
@@ -270,6 +274,13 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 			break
 		}
 	}
+
+	valueTypes := make([]*types.FieldType, len(idx.Meta().Columns))
+	for i, ic := range idx.Meta().Columns {
+		col := tbl.Cols()[ic.Offset]
+		valueTypes[i] = &col.FieldType
+	}
+
 	e := &IndexScanExec{
 		tbl:         tbl,
 		tableAsName: v.TableAsName,
@@ -277,26 +288,26 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		fields:      v.Fields(),
 		ctx:         b.ctx,
 		Desc:        v.Desc,
-		valueTypes:  make([]*types.FieldType, len(idx.Meta().Columns)),
-	}
-
-	for i, ic := range idx.Meta().Columns {
-		col := tbl.Cols()[ic.Offset]
-		e.valueTypes[i] = &col.FieldType
+		valueTypes:  valueTypes,
 	}
 
 	e.Ranges = make([]*IndexRangeExec, len(v.Ranges))
 	for i, val := range v.Ranges {
-		e.Ranges[i] = b.buildIndexRange(e, val)
+		e.Ranges[i] = b.buildIndexRange(e, val, idx.Meta().Columns)
 	}
-	x := b.buildFilter(e, v.FilterConditions)
+	x := Executor(e)
+	if v.Index.HasPrefixIndex() {
+		x = b.buildFilter(x, append(v.AccessConditions, v.FilterConditions...))
+	} else {
+		x = b.buildFilter(x, v.FilterConditions)
+	}
 	if v.Desc {
 		x = &ReverseExec{Src: x}
 	}
 	return x
 }
 
-func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange) *IndexRangeExec {
+func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange, ics []*model.IndexColumn) *IndexRangeExec {
 	ran := &IndexRangeExec{
 		scan:        scan,
 		lowVals:     v.LowVal,

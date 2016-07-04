@@ -130,6 +130,20 @@ func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, d
 			}
 		}
 	}
+
+	// For string columns, indexes can be created that use only the leading part of column values,
+	// using col_name(length) syntax to specify an index prefix length
+	for i := 0; i < len(indexedValues); i++ {
+		v := &indexedValues[i]
+		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+			ic := c.idxInfo.Columns[i]
+			if ic.Length != types.UnspecifiedLength && len(v.GetBytes()) > ic.Length {
+				// truncate value and limit its length
+				v.SetBytes(v.GetBytes()[:ic.Length])
+			}
+		}
+	}
+
 	key = append(key, []byte(c.prefix)...)
 	if distinct {
 		key, err = codec.EncodeKey(key, indexedValues...)

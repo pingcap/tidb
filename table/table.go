@@ -72,6 +72,10 @@ type Table interface {
 	// Cols returns the columns of the table which is used in select.
 	Cols() []*Column
 
+	// WritableCols returns columns of the table in writable states.
+	// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
+	WritableCols() []*Column
+
 	// Indices returns the indices of the table.
 	Indices() []Index
 

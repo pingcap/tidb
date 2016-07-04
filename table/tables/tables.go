@@ -98,7 +98,7 @@ func newTable(tableID int64, cols []*table.Column, alloc autoid.Allocator) *Tabl
 	}
 
 	t.publicColumns = t.Cols()
-	t.writableColumns = t.writableCols()
+	t.writableColumns = t.WritableCols()
 	return t
 }
 
@@ -128,7 +128,8 @@ func (t *Table) Cols() []*table.Column {
 	return t.publicColumns
 }
 
-func (t *Table) writableCols() []*table.Column {
+// WritableCols implements table WritableCols interface.
+func (t *Table) WritableCols() []*table.Column {
 	if len(t.writableColumns) > 0 {
 		return t.writableColumns
 	}
@@ -181,7 +182,7 @@ func (t *Table) Truncate(ctx context.Context) error {
 // UpdateRecord implements table.Table UpdateRecord interface.
 func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum, newData []types.Datum, touched map[int]bool) error {
 	// We should check whether this table has on update column which state is write only.
-	currentData := make([]types.Datum, len(t.writableCols()))
+	currentData := make([]types.Datum, len(t.WritableCols()))
 	copy(currentData, newData)
 
 	// If they are not set, and other data are changed, they will be updated by current timestamp too.
@@ -200,8 +201,8 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 
 	// Compose new row
 	t.composeNewData(touched, currentData, oldData)
-	colIDs := make([]int64, 0, len(t.writableCols()))
-	for i, col := range t.writableCols() {
+	colIDs := make([]int64, 0, len(t.WritableCols()))
+	for i, col := range t.WritableCols() {
 		if col.State != model.StatePublic && currentData[i].IsNull() {
 			defaultVal, _, err1 := table.GetColDefaultValue(ctx, &col.ColumnInfo)
 			if err1 != nil {
@@ -235,7 +236,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 }
 
 func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data []types.Datum) error {
-	ucols := table.FindOnUpdateCols(t.writableCols())
+	ucols := table.FindOnUpdateCols(t.WritableCols())
 	for _, col := range ucols {
 		if !touched[col.Offset] {
 			value, err := evaluator.GetTimeValue(ctx, evaluator.CurrentTimestamp, col.Tp, col.Decimal)
@@ -326,7 +327,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 	colIDs := make([]int64, 0, len(r))
 	row := make([]types.Datum, 0, len(r))
 	// Set public and write only column value.
-	for _, col := range t.writableCols() {
+	for _, col := range t.WritableCols() {
 		if col.IsPKHandleColumn(t.meta) {
 			continue
 		}

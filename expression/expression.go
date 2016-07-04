@@ -69,6 +69,7 @@ type Column struct {
 	// e.g. SELECT name as id , 1 - id as id , 1 + name as id, name as id from src having id = 1;
 	// There are four ids in the same schema, so you can't identify the column through the FromID and ColName.
 	Position int
+	IsAgg    bool
 
 	// only used during execution
 	Index      int
