@@ -100,7 +100,7 @@ func builtinCaseWhen(args []types.Datum, _ context.Context) (d types.Datum, err 
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
-	// If case clasue has else clause, l%2 == 1.
+	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
 		d = args[l-1]
 	}

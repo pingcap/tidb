@@ -517,7 +517,7 @@ func (er *expressionRewriter) caseToScalarFunc(v *ast.CaseExpr) {
 		value := er.ctxStack[stkLen-argsLen-1]
 		args = make([]expression.Expression, 0, argsLen)
 		for i := stkLen - argsLen; i < stkLen-1; i += 2 {
-			arg := expression.NewFunction(ast.EQ, value.GetType(), value, er.ctxStack[i])
+			arg := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), value, er.ctxStack[i])
 			args = append(args, arg)
 			args = append(args, er.ctxStack[i+1])
 		}
