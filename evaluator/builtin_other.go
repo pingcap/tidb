@@ -14,6 +14,8 @@
 package evaluator
 
 import (
+	"regexp"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -129,6 +131,28 @@ func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	patChars, patTypes := compilePattern(patternStr, escape)
 	match := doMatch(valStr, patChars, patTypes)
 	d.SetInt64(boolToInt64(match))
+	return
+}
+
+func builtinRegexp(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	// TODO: We don't need to compile pattern if it has been compiled or it is static.
+	if args[0].IsNull() || args[1].IsNull() {
+		return
+	}
+
+	targetStr, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", args[0], args[0])
+	}
+	patternStr, err := args[1].ToString()
+	if err != nil {
+		return d, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", args[1], args[1])
+	}
+	re, err := regexp.Compile(patternStr)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetInt64(boolToInt64(re.MatchString(targetStr)))
 	return
 }
 

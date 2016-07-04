@@ -1374,16 +1374,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast('11:11:11' as time)")
 	result.Check(testkit.Rows("11:11:11"))
 
-	// for like
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a varchar(255), b int)")
-	tk.MustExec("insert t values ('abc123', 1)")
-	tk.MustExec("insert t values ('ab123', 2)")
-	result = tk.MustQuery("select * from t where a like 'ab_123'")
-	rowStr := fmt.Sprintf("%v %v", []byte("abc123"), "1")
-	result.Check(testkit.Rows(rowStr))
-
-	// case
+	// for case
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(255), b int)")
 	tk.MustExec("insert t values ('str1', 1)")
@@ -1414,6 +1405,51 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(rowStr2))
 	result = tk.MustQuery("select * from t where a = case null when b then 'str3' when 10 then 'str1' else 'str2' end")
 	result.Check(testkit.Rows(rowStr2))
+
+	// for like and regexp
+	type testCase struct {
+		pattern string
+		val     string
+		result  int
+	}
+	patternMatching := func(c *C, tk *testkit.TestKit, queryOp string, data []testCase) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a varchar(255), b int)")
+		for i, d := range data {
+			tk.MustExec(fmt.Sprintf("insert into t values('%s', %d)", d.val, i))
+			result := tk.MustQuery(fmt.Sprintf("select * from t where a %s '%s'", queryOp, d.pattern))
+			if d.result == 1 {
+				rowStr := fmt.Sprintf("%v %d", []byte(d.val), i)
+				result.Check(testkit.Rows(rowStr))
+			} else {
+				result.Check(nil)
+			}
+			tk.MustExec(fmt.Sprintf("delete from t where b = %d", i))
+		}
+	}
+	// for like
+	testCases := []testCase{
+		{"a", "a", 1},
+		{"a", "b", 0},
+		{"aA", "Aa", 1},
+		{"aA%", "aAab", 1},
+		{"aA_", "Aaab", 0},
+		{"aA_", "Aab", 1},
+	}
+	patternMatching(c, tk, "like", testCases)
+	// for regexp
+	testCases = []testCase{
+		{"^$", "a", 0},
+		{"a", "a", 1},
+		{"a", "b", 0},
+		{"aA", "aA", 1},
+		{".", "a", 1},
+		{"^.$", "ab", 0},
+		{"..", "b", 0},
+		{".ab", "aab", 1},
+		{".*", "abcd", 1},
+	}
+	patternMatching(c, tk, "regexp", testCases)
 
 	plan.UseNewPlanner = false
 }
