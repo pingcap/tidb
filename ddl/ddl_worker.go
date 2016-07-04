@@ -176,7 +176,7 @@ func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) error {
 	}
 	switch job.Type {
 	case model.ActionDropSchema, model.ActionDropTable:
-		if err = d.prepareBgJob(job); err != nil {
+		if err = d.prepareBgJob(t, job); err != nil {
 			return errors.Trace(err)
 		}
 	}

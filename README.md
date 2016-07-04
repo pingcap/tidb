@@ -16,7 +16,7 @@ Grow TiDB as your business grows. You can increase the capacity simply by adding
 Evolve TiDB schemas as your requirement evolves. You can add new columns and indices without stopping or affecting the on-going operations.
 
 - __Consistent distributed transactions__  
-Think TiDB as a single-machine RDBMS. You can start a transaction that crosses multiple machines without worrying about consistency. TiDB makes your application code simple and robust.
+Think of TiDB as a single-machine RDBMS. You can start a transaction that crosses multiple machines without worrying about consistency. TiDB makes your application code simple and robust.
 
 - __Compatible with MySQL protocol__  
 Use TiDB as MySQL. You can replace MySQL with TiDB to power your application without changing a single line of code in most cases.
@@ -26,7 +26,7 @@ Enjoy TiDB as much as we love Go. We believe Go code is both easy and enjoyable 
 
 
 - __NewSQL over TiKV__  
-  Turn [TiKV](https://github.com/pingcap/tikv) into NewSQL database
+  Turn [TiKV](https://github.com/pingcap/tikv) into NewSQL database.
 
 - __Multiple storage engine support__  
 Power TiDB with your most favorite engines. TiDB supports many popular storage engines in single-machine mode. You can choose from GolevelDB, LevelDB, RocksDB, LMDB, BoltDB and even more to come.
@@ -38,7 +38,7 @@ Read the [Roadmap](./docs/ROADMAP.md).
 
 ## Quick start
 
-Read the [Quick Start](./docs/QUICKSTART.md)
+Read the [Quick Start](./docs/QUICKSTART.md).
 
 ## Architecture
 
@@ -53,7 +53,7 @@ for details on submitting patches and the contribution workflow.
 Twitter: [@PingCAP](https://twitter.com/PingCAP)
 
 ## License
-TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSES/LICENSE) file for details.
+TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
 
 ## Acknowledgments
 - Thanks [cznic](https://github.com/cznic) for providing some great open source tools.

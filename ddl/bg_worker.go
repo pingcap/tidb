@@ -99,7 +99,7 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 }
 
 // prepareBgJob prepares a background job.
-func (d *ddl) prepareBgJob(ddlJob *model.Job) error {
+func (d *ddl) prepareBgJob(t *meta.Meta, ddlJob *model.Job) error {
 	job := &model.Job{
 		ID:       ddlJob.ID,
 		SchemaID: ddlJob.SchemaID,
@@ -107,14 +107,7 @@ func (d *ddl) prepareBgJob(ddlJob *model.Job) error {
 		Type:     ddlJob.Type,
 		Args:     ddlJob.Args,
 	}
-
-	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		err1 := t.EnQueueBgJob(job)
-
-		return errors.Trace(err1)
-	})
-
+	err := t.EnQueueBgJob(job)
 	return errors.Trace(err)
 }
 
