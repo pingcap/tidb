@@ -1655,3 +1655,19 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("1 1", "1 3", "2 1", "2 3"))
 	plan.UseNewPlanner = false
 }
+
+func (s *testSuite) TestColumnName(c *C) {
+	plan.UseNewPlanner = true
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int, d int)")
+	rs, err := tk.Exec("select 1 + c, count(*) from t")
+	c.Check(err, IsNil)
+	fields, err := rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 2)
+	c.Check(fields[0].Column.Name.L, Equals, "1 + c")
+	c.Check(fields[1].Column.Name.L, Equals, "count(*)")
+	plan.UseNewPlanner = false
+}
