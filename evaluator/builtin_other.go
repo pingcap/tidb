@@ -394,6 +394,7 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 // CastFuncFactory produces builtin function according to field types.
 func CastFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
 	switch tp.Tp {
+	// Parser has restricted this.
 	case mysql.TypeString, mysql.TypeDuration, mysql.TypeDatetime,
 		mysql.TypeDate, mysql.TypeLonglong, mysql.TypeNewDecimal:
 		return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
