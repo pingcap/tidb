@@ -50,7 +50,6 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 }
 
 func (s *testColumnSuite) TearDownSuite(c *C) {
-	//trySkipTest(c)
 	testDropSchema(c, mock.NewContext(), s.d, s.dbInfo)
 	s.d.close()
 
