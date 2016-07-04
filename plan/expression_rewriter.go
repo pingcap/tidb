@@ -61,7 +61,7 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 	}
 	c, _ := e.(*expression.Constant)
 	d := c.Value.GetRow()[idx]
-	return datumToConstant(d, d.Kind())
+	return &expression.Constant{Value: d, RetType: c.GetType()}
 }
 
 // constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2).
