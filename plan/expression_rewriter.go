@@ -62,7 +62,7 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 	}
 	c, _ := e.(*expression.Constant)
 	d := c.Value.GetRow()[idx]
-	return &expression.Constant{Value: d, RetType: types.NewFieldType(d.Kind())}
+	return &expression.Constant{Value: d, RetType: c.GetType()}
 }
 
 // constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2).
@@ -308,7 +308,48 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 
 	stkLen := len(er.ctxStack)
 	switch v := inNode.(type) {
-	case *ast.AggregateFuncExpr:
+	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
+		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr:
+	case *ast.ValueExpr:
+		value := &expression.Constant{Value: v.Datum, RetType: v.Type}
+		er.ctxStack = append(er.ctxStack, value)
+	case *ast.ParamMarkerExpr:
+		value := &expression.Constant{Value: v.Datum, RetType: v.Type}
+		er.ctxStack = append(er.ctxStack, value)
+	case *ast.VariableExpr:
+		return inNode, er.rewriteVariable(v)
+	case *ast.FuncCallExpr:
+		er.funcCallToScalarFunc(v)
+	case *ast.ColumnName:
+		er.toColumn(v)
+	case *ast.BinaryOperationExpr:
+		er.binaryOpToScalarFunc(v)
+	case *ast.BetweenExpr:
+		er.betweenToScalarFunc(v)
+	case *ast.CaseExpr:
+		er.caseToScalarFunc(v)
+	case *ast.FuncCastExpr:
+		er.castToScalarFunc(v)
+	case *ast.PatternLikeExpr:
+		er.likeToScalarFunc(v)
+	case *ast.PatternInExpr:
+		if v.Sel == nil {
+			er.inToScalarFunc(v)
+		}
+	case *ast.UnaryOperationExpr:
+		if getRowLen(er.ctxStack[stkLen-1]) != 1 {
+			er.err = errors.New("Operand should contain 1 column(s)")
+			return retNode, false
+		}
+		function := expression.NewFunction(opcode.Ops[v.Op], v.Type, er.ctxStack[stkLen-1])
+		er.ctxStack = er.ctxStack[:stkLen-1]
+		er.ctxStack = append(er.ctxStack, function)
+	case *ast.PositionExpr:
+		if v.N > 0 && v.N <= len(er.schema) {
+			er.ctxStack = append(er.ctxStack, er.schema[v.N-1])
+		} else {
+			er.err = errors.Errorf("Position %d is out of range", v.N)
+		}
 	case *ast.RowExpr:
 		length := len(v.Values)
 		rows := make([]expression.Expression, 0, length)
@@ -317,25 +358,6 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		}
 		er.ctxStack = er.ctxStack[:stkLen-length]
 		er.ctxStack = append(er.ctxStack, expression.NewFunction(ast.RowFunc, nil, rows...))
-	case *ast.VariableExpr:
-		return inNode, er.rewriteVariable(v)
-	case *ast.FuncCallExpr:
-		er.funcCallToScalarFunc(v)
-	case *ast.PositionExpr:
-		if v.N > 0 && v.N <= len(er.schema) {
-			er.ctxStack = append(er.ctxStack, er.schema[v.N-1])
-		} else {
-			er.err = errors.Errorf("Position %d is out of range", v.N)
-		}
-	case *ast.ColumnName:
-		er.toColumn(v)
-	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause, *ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr:
-	case *ast.ValueExpr:
-		value := &expression.Constant{Value: v.Datum, RetType: v.Type}
-		er.ctxStack = append(er.ctxStack, value)
-	case *ast.ParamMarkerExpr:
-		value := &expression.Constant{Value: v.Datum, RetType: v.Type}
-		er.ctxStack = append(er.ctxStack, value)
 	case *ast.IsNullExpr:
 		if getRowLen(er.ctxStack[stkLen-1]) != 1 {
 			er.err = errors.New("Operand should contain 1 column(s)")
@@ -352,40 +374,6 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		function := er.notToScalarFunc(v.Not, op, v.Type, er.ctxStack[stkLen-1])
 		er.ctxStack = er.ctxStack[:stkLen-1]
 		er.ctxStack = append(er.ctxStack, function)
-	case *ast.BinaryOperationExpr:
-		var function expression.Expression
-		switch v.Op {
-		case opcode.EQ, opcode.NE, opcode.NullEQ:
-			var err error
-			function, err = constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
-				opcode.Ops[v.Op])
-			if err != nil {
-				er.err = errors.Trace(err)
-				return retNode, false
-			}
-		default:
-			function = expression.NewFunction(opcode.Ops[v.Op], v.Type, er.ctxStack[stkLen-2:]...)
-		}
-		er.ctxStack = er.ctxStack[:stkLen-2]
-		er.ctxStack = append(er.ctxStack, function)
-	case *ast.BetweenExpr:
-		er.betweenToScalarFunc(v)
-	case *ast.PatternLikeExpr:
-		er.likeToScalarFunc(v)
-	case *ast.FuncCastExpr:
-		er.castToScalarFunc(v)
-	case *ast.PatternInExpr:
-		if v.Sel == nil {
-			er.inToScalarFunc(v)
-		}
-	case *ast.UnaryOperationExpr:
-		if getRowLen(er.ctxStack[stkLen-1]) != 1 {
-			er.err = errors.New("Operand should contain 1 column(s)")
-			return retNode, false
-		}
-		function := expression.NewFunction(opcode.Ops[v.Op], v.Type, er.ctxStack[stkLen-1])
-		er.ctxStack = er.ctxStack[:stkLen-1]
-		er.ctxStack = append(er.ctxStack, function)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -395,6 +383,10 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		return retNode, false
 	}
 	return inNode, true
+}
+
+func datumToConstant(d types.Datum, tp byte) *expression.Constant {
+	return &expression.Constant{Value: d, RetType: types.NewFieldType(tp)}
 }
 
 func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) bool {
@@ -414,16 +406,15 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) bool {
 			er.ctxStack = er.ctxStack[:stkLen-1]
 		}
 		if !d.IsNull() {
-
 			strVal, err := d.ToString()
 			if err != nil {
 				er.err = errors.Trace(err)
 				return false
 			}
 			sessionVars.Users[name] = strings.ToLower(strVal)
-			er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d, RetType: types.NewFieldType(mysql.TypeString)})
+			er.ctxStack = append(er.ctxStack, datumToConstant(d, mysql.TypeString))
 		} else if value, ok := sessionVars.Users[name]; ok {
-			er.ctxStack = append(er.ctxStack, &expression.Constant{Value: types.NewDatum(value), RetType: types.NewFieldType(mysql.TypeString)})
+			er.ctxStack = append(er.ctxStack, datumToConstant(types.NewStringDatum(value), mysql.TypeString))
 		} else {
 			// select null user vars is permitted.
 			er.ctxStack = append(er.ctxStack, &expression.Constant{RetType: types.NewFieldType(mysql.TypeNull)})
@@ -438,40 +429,59 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) bool {
 		return false
 	}
 	if sysVar.Scope == variable.ScopeNone {
-		er.ctxStack = append(er.ctxStack, &expression.Constant{Value: types.NewDatum(sysVar.Value), RetType: types.NewFieldType(mysql.TypeString)})
+		er.ctxStack = append(er.ctxStack, datumToConstant(types.NewDatum(sysVar.Value), mysql.TypeString))
 		return true
 	}
 
-	if !v.IsGlobal {
-		d := sessionVars.GetSystemVar(name)
-		if d.IsNull() {
-			if sysVar.Scope&variable.ScopeGlobal == 0 {
-				d.SetString(sysVar.Value)
-			} else {
-				// Get global system variable and fill it in session.
-				globalVal, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
-				if err != nil {
-					er.err = errors.Trace(err)
-					return false
-				}
-				d.SetString(globalVal)
-				err = sessionVars.SetSystemVar(name, d)
-				if err != nil {
-					er.err = errors.Trace(err)
-					return false
-				}
-			}
+	if v.IsGlobal {
+		value, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return false
 		}
-		er.ctxStack = append(er.ctxStack, &expression.Constant{Value: d, RetType: types.NewFieldType(mysql.TypeString)})
+		er.ctxStack = append(er.ctxStack, datumToConstant(types.NewDatum(value), mysql.TypeString))
 		return true
 	}
-	value, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
-	if err != nil {
-		er.err = errors.Trace(err)
-		return false
+	d := sessionVars.GetSystemVar(name)
+	if d.IsNull() {
+		if sysVar.Scope&variable.ScopeGlobal == 0 {
+			d.SetString(sysVar.Value)
+		} else {
+			// Get global system variable and fill it in session.
+			globalVal, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
+			if err != nil {
+				er.err = errors.Trace(err)
+				return false
+			}
+			d.SetString(globalVal)
+			err = sessionVars.SetSystemVar(name, d)
+			if err != nil {
+				er.err = errors.Trace(err)
+				return false
+			}
+		}
 	}
-	er.ctxStack = append(er.ctxStack, &expression.Constant{Value: types.NewDatum(value), RetType: types.NewFieldType(mysql.TypeString)})
+	er.ctxStack = append(er.ctxStack, datumToConstant(d, mysql.TypeString))
 	return true
+}
+
+func (er *expressionRewriter) binaryOpToScalarFunc(v *ast.BinaryOperationExpr) {
+	stkLen := len(er.ctxStack)
+	var function expression.Expression
+	switch v.Op {
+	case opcode.EQ, opcode.NE, opcode.NullEQ:
+		var err error
+		function, err = constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
+			opcode.Ops[v.Op])
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
+		}
+	default:
+		function = expression.NewFunction(opcode.Ops[v.Op], v.Type, er.ctxStack[stkLen-2:]...)
+	}
+	er.ctxStack = er.ctxStack[:stkLen-2]
+	er.ctxStack = append(er.ctxStack, function)
 }
 
 func (er *expressionRewriter) notToScalarFunc(b bool, op string, tp *types.FieldType,
@@ -488,6 +498,45 @@ func (er *expressionRewriter) inToScalarFunc(v *ast.PatternInExpr) {
 	lLen := len(v.List)
 	function := er.notToScalarFunc(v.Not, ast.In, v.Type, er.ctxStack[stkLen-lLen-1:stkLen]...)
 	er.ctxStack = er.ctxStack[:stkLen-lLen-1]
+	er.ctxStack = append(er.ctxStack, function)
+}
+
+func (er *expressionRewriter) caseToScalarFunc(v *ast.CaseExpr) {
+	stkLen := len(er.ctxStack)
+	argsLen := 2 * len(v.WhenClauses)
+	if v.ElseClause != nil {
+		argsLen++
+	}
+
+	// value                          -> ctxStack[stkLen-argsLen-1]
+	// when clause(condition, result) -> ctxStack[stkLen-argsLen:stkLen-1];
+	// else clause                    -> ctxStack[stkLen-1]
+	var args []expression.Expression
+	if v.Value != nil {
+		// args:  eq scalar func(args: value, condition1), result1,
+		//        eq scalar func(args: value, condition2), result2,
+		//        ...
+		//        else clasue
+		value := er.ctxStack[stkLen-argsLen-1]
+		args = make([]expression.Expression, 0, argsLen)
+		for i := stkLen - argsLen; i < stkLen-1; i += 2 {
+			arg := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), value, er.ctxStack[i])
+			args = append(args, arg)
+			args = append(args, er.ctxStack[i+1])
+		}
+		if v.ElseClause != nil {
+			args = append(args, er.ctxStack[stkLen-1])
+		}
+		argsLen++
+	} else {
+		// args:  condition1, result1,
+		//        condition2, result2,
+		//        ...
+		//        else clasue
+		args = er.ctxStack[stkLen-argsLen : stkLen]
+	}
+	function := expression.NewFunction(ast.Case, v.Type, args...)
+	er.ctxStack = er.ctxStack[:stkLen-argsLen]
 	er.ctxStack = append(er.ctxStack, function)
 }
 
