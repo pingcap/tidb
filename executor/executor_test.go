@@ -1447,6 +1447,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 		{"^.$", "ab", 0},
 		{"..", "b", 0},
 		{".ab", "aab", 1},
+		{"ab.", "abcd", 1},
 		{".*", "abcd", 1},
 	}
 	patternMatching(c, tk, "regexp", testCases)

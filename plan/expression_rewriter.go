@@ -509,14 +509,14 @@ func (er *expressionRewriter) binaryOpToScalarFunc(v *ast.BinaryOperationExpr) {
 	er.ctxStack = append(er.ctxStack, function)
 }
 
-func (er *expressionRewriter) notToScalarFunc(b bool, op string, tp *types.FieldType,
+func (er *expressionRewriter) notToScalarFunc(hasNot bool, op string, tp *types.FieldType,
 	args ...expression.Expression) *expression.ScalarFunction {
 	opFunc, err := expression.NewFunction(op, tp, args...)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return nil
 	}
-	if !b {
+	if !hasNot {
 		return opFunc
 	}
 
