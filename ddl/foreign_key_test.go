@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"strings"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -36,14 +35,10 @@ type testForeighKeySuite struct {
 }
 
 func (s *testForeighKeySuite) SetUpSuite(c *C) {
-	trySkipTest(c)
-
 	s.store = testCreateStore(c, "test_foreign")
 }
 
 func (s *testForeighKeySuite) TearDownSuite(c *C) {
-	trySkipTest(c)
-
 	err := s.store.Close()
 	c.Assert(err, IsNil)
 }
@@ -121,7 +116,7 @@ func (s *testForeighKeySuite) testForeignKeyExist(c *C, t table.Table, name stri
 
 func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	d := newDDL(s.store, nil, nil, testLease)
 	s.d = d
 	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
 	ctx := testNewContext(c, d)
