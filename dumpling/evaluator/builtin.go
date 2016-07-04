@@ -150,6 +150,7 @@ var Funcs = map[string]Func{
 	ast.IsTruth:    {isTrueOpFactory(opcode.IsTruth), 1, 1},
 	ast.IsFalsity:  {isTrueOpFactory(opcode.IsFalsity), 1, 1},
 	ast.Like:       {builtinLike, 1, 3},
+	ast.Case:       {builtinCaseWhen, 1, -1},
 	ast.RowFunc:    {builtinRow, 2, -1},
 }
 
