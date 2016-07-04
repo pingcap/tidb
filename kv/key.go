@@ -26,6 +26,18 @@ func (k Key) Next() Key {
 	return buf
 }
 
+// Prev returns the prev ken in byte-order.
+func (k Key) Prev() Key {
+	buf := make([]byte, len([]byte(k)))
+	copy(buf, []byte(k))
+	if buf[len(buf)-1] == 0 {
+		buf = buf[:len(buf)-1]
+	} else {
+		buf[len(buf)-1]--
+	}
+	return buf
+}
+
 // PrefixNext returns the next prefix key.
 //
 // Assume there are keys like:
