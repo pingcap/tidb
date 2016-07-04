@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 )
 
@@ -30,6 +31,20 @@ type recordSet struct {
 }
 
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
+	if plan.UseNewPlanner {
+		for _, col := range a.schema {
+			rf := &ast.ResultField{
+				ColumnAsName: col.ColName,
+				TableAsName:  col.TblName,
+				DBName:       col.DBName,
+				Column: &model.ColumnInfo{
+					FieldType: *col.RetType,
+					Name:      col.ColName,
+				},
+			}
+			a.fields = append(a.fields, rf)
+		}
+	}
 	return a.fields, nil
 }
 
@@ -103,5 +118,6 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	return &recordSet{
 		executor: e,
 		fields:   fs,
+		schema:   e.Schema(),
 	}, nil
 }

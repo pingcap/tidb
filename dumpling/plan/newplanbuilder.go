@@ -60,6 +60,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		schema = append(schema, &expression.Column{FromID: agg.id,
 			ColName:  model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, i)),
 			Position: i,
+			IsAgg:    true,
 			RetType:  aggFunc.GetType()})
 	}
 	agg.GroupByItems = gby
@@ -262,11 +263,11 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		var tblName, colName model.CIStr
 		if field.AsName.L != "" {
 			colName = field.AsName
-		} else if c, ok := newExpr.(*expression.Column); ok {
+		} else if c, ok := newExpr.(*expression.Column); ok && !c.IsAgg {
 			colName = c.ColName
 			tblName = c.TblName
 		} else {
-			colName = model.NewCIStr(field.Expr.Text())
+			colName = model.NewCIStr(field.Text())
 		}
 		schemaCol := &expression.Column{
 			FromID:  proj.id,

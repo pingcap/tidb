@@ -1368,6 +1368,16 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select * from t where a like 'ab_123'")
 	rowStr := fmt.Sprintf("%v %v", []byte("abc123"), "1")
 	result.Check(testkit.Rows(rowStr))
+
+	// test cast
+	result = tk.MustQuery("select cast(1 as decimal(1,2))")
+	result.Check(testkit.Rows("1.00"))
+	result = tk.MustQuery("select cast('1991-09-05 11:11:11' as datetime)")
+	result.Check(testkit.Rows("1991-09-05 11:11:11"))
+	result = tk.MustQuery("select cast(cast('1991-09-05 11:11:11' as datetime) as char)")
+	result.Check(testkit.Rows("1991-09-05 11:11:11"))
+	result = tk.MustQuery("select cast('11:11:11' as time)")
+	result.Check(testkit.Rows("11:11:11"))
 	plan.UseNewPlanner = false
 }
 
@@ -1643,5 +1653,21 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("1 1"))
 	result = tk.MustQuery("select * from t where (c, d) = (select * from t k where (t.c,t.d) = (c,d))")
 	result.Check(testkit.Rows("1 1", "1 3", "2 1", "2 3"))
+	plan.UseNewPlanner = false
+}
+
+func (s *testSuite) TestColumnName(c *C) {
+	plan.UseNewPlanner = true
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int, d int)")
+	rs, err := tk.Exec("select 1 + c, count(*) from t")
+	c.Check(err, IsNil)
+	fields, err := rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 2)
+	c.Check(fields[0].Column.Name.L, Equals, "1 + c")
+	c.Check(fields[1].Column.Name.L, Equals, "count(*)")
 	plan.UseNewPlanner = false
 }
