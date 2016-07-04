@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -27,7 +26,6 @@ type testColumnChangeSuite struct {
 
 func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_column_change")
-	log.Errorf("test column change store %s", s.store.UUID())
 	s.dbInfo = &model.DBInfo{
 		Name: model.NewCIStr("test_column_change"),
 		ID:   1,
