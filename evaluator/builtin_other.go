@@ -392,6 +392,7 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 }
 
 // CastFuncFactory produces builtin function according to field types.
+// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
 func CastFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
 	switch tp.Tp {
 	// Parser has restricted this.
