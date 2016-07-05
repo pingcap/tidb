@@ -86,6 +86,7 @@ func (ts *testNameResolverSuite) TestNameResolver(c *C) {
 	ctx := testKit.Se.(context.Context)
 	domain := sessionctx.GetDomain(ctx)
 	db.BindCurrentSchema(ctx, "test")
+	parser := parser.New()
 	for _, tc := range resolverTestCases {
 		node, err := parser.ParseOneStmt(tc.src, "", "")
 		c.Assert(err, IsNil)

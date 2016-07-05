@@ -195,6 +195,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		},
 	}
 
+	parser := parser.New()
 	for _, ca := range cases {
 		sql := "select 1 from dual where " + ca.exprStr
 		stmts, err := parser.Parse(sql, "", "")
@@ -230,9 +231,10 @@ func (s *testPlanSuite) TestFilterRate(c *C) {
 		{expr: "a = 1 or a = 2", rate: rateEqual + rateEqual - rateEqual*rateEqual},
 		{expr: "a != 1", rate: rateNotEqual},
 	}
+	p := parser.New()
 	for _, ca := range cases {
 		sql := "select 1 from dual where " + ca.expr
-		s, err := parser.ParseOneStmt(sql, "", "")
+		s, err := p.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, Commentf("for expr %s", ca.expr))
 		stmt := s.(*ast.SelectStmt)
 		rate := guesstimateFilterRate(stmt.Where)
@@ -335,9 +337,10 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 			best: "CheckTable",
 		},
 	}
+	p := parser.New()
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
-		stmt, err := parser.ParseOneStmt(ca.sql, "", "")
+		stmt, err := p.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 		mockResolve(stmt)
@@ -363,10 +366,11 @@ func (s *testPlanSuite) TestSplitWhere(c *C) {
 		{"a = 1 and (b = 2 or c = 3) and d = 4", 3},
 		{"(a = 1 and b = 2) and (c = 3 and d = 4)", 4},
 	}
+	p := parser.New()
 	for _, ca := range cases {
 		sql := "select 1 from dual where " + ca.expr
 		comment := Commentf("for expr %s", ca.expr)
-		s, err := parser.ParseOneStmt(sql, "", "")
+		s, err := p.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
 		stmt := s.(*ast.SelectStmt)
 		conditions := splitWhere(stmt.Where)
@@ -391,10 +395,11 @@ func (s *testPlanSuite) TestNullRejectFinder(c *C) {
 		{"a != 0 and a is not false", true},
 		{"a > 0 or true", false},
 	}
+	p := parser.New()
 	for _, ca := range cases {
 		sql := "select * from t where " + ca.expr
 		comment := Commentf("for expr %s", ca.expr)
-		s, err := parser.ParseOneStmt(sql, "", "")
+		s, err := p.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
 		finder := &nullRejectFinder{nullRejectTables: map[*ast.TableName]bool{}}
 		stmt := s.(*ast.SelectStmt)
@@ -653,9 +658,10 @@ func (s *testPlanSuite) TestJoinPath(c *C) {
 			"InnerJoin{Index(t1.i1)->Index(t2.i2)->Index(t3.i3)}->Fields",
 		},
 	}
+	p := parser.New()
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
-		s, err := parser.ParseOneStmt(ca.sql, "", "")
+		s, err := p.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		stmt := s.(*ast.SelectStmt)
 		mockJoinResolve(c, stmt)
@@ -677,9 +683,10 @@ func (s *testPlanSuite) TestMultiColumnIndex(c *C) {
 		{"select * from t where c = 0 and d = 0 and e > 0", 2, 3},
 		{"select * from t where d > 0 and e = 0 and c = 0", 1, 2},
 	}
+	p := parser.New()
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
-		s, err := parser.ParseOneStmt(ca.sql, "", "")
+		s, err := p.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		stmt := s.(*ast.SelectStmt)
 		ast.SetFlag(stmt)
@@ -730,9 +737,10 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 			"Table(t1)->Fields",
 		},
 	}
+	p := parser.New()
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
-		s, err := parser.ParseOneStmt(ca.sql, "", "")
+		s, err := p.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		stmt := s.(*ast.SelectStmt)
 		mockJoinResolve(c, stmt)

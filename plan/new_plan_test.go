@@ -141,6 +141,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			best:  "DataScan(t)->Apply(DataScan(t)->Selection->Projection->Exists)->Selection->Projection",
 		},
 	}
+	parser := parser.New()
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := parser.ParseOneStmt(ca.sql, "", "")
@@ -276,9 +277,10 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			},
 		},
 	}
+	p := parser.New()
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
-		stmt, err := parser.ParseOneStmt(ca.sql, "", "")
+		stmt, err := p.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
@@ -465,9 +467,10 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 		},
 	}
 
+	p := parser.New()
 	for _, ca := range cases {
 		sql := "select 1 from t where " + ca.exprStr
-		stmts, err := parser.Parse(sql, "", "")
+		stmts, err := p.Parse(sql, "", "")
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
 		stmt := stmts[0].(*ast.SelectStmt)
 

@@ -1608,6 +1608,7 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	compiler := &executor.Compiler{}
 	ctx := se.(context.Context)
 
+	parser := parser.New()
 	stmtNode, err := parser.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
 	stmt, err := compiler.Compile(ctx, stmtNode)
