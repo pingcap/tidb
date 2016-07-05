@@ -628,13 +628,13 @@ func (er *expressionRewriter) betweenToScalarFunc(v *ast.BetweenExpr) {
 	if v.Not {
 		l, er.err = expression.NewFunction(ast.LT, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
 		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.GT, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-1])
+			r, er.err = expression.NewFunction(ast.GT, v.Type, er.ctxStack[stkLen-3].DeepCopy(), er.ctxStack[stkLen-1])
 		}
 		op = ast.OrOr
 	} else {
 		l, er.err = expression.NewFunction(ast.GE, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
 		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.LE, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-1])
+			r, er.err = expression.NewFunction(ast.LE, v.Type, er.ctxStack[stkLen-3].DeepCopy(), er.ctxStack[stkLen-1])
 		}
 		op = ast.AndAnd
 	}
@@ -652,22 +652,10 @@ func (er *expressionRewriter) betweenToScalarFunc(v *ast.BetweenExpr) {
 }
 
 func (er *expressionRewriter) funcCallToScalarFunc(v *ast.FuncCallExpr) {
-	l := len(er.ctxStack)
-	function := &expression.ScalarFunction{FuncName: v.FnName}
-	function.Args = er.ctxStack[l-len(v.Args):]
-	f, ok := evaluator.Funcs[v.FnName.L]
-	if !ok {
-		er.err = errors.Errorf("Can't find %v function!", v.FnName.L)
-		return
-	}
-	if len(function.Args) < f.MinArgs || (f.MaxArgs != -1 && len(function.Args) > f.MaxArgs) {
-		er.err = evaluator.ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].",
-			f.MinArgs, f.MaxArgs)
-		return
-	}
-	function.Function = f.F
-	function.RetType = v.Type
-	er.ctxStack = er.ctxStack[:l-len(v.Args)]
+	stackLen := len(er.ctxStack)
+	var function *expression.ScalarFunction
+	function, er.err = expression.NewFunction(v.FnName.L, v.Type, er.ctxStack[stackLen-len(v.Args):]...)
+	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
 	er.ctxStack = append(er.ctxStack, function)
 }
 

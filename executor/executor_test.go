@@ -1662,6 +1662,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert t values (1, 1)")
 	result = tk.MustQuery("select d, d*d as d from t having d = -1")
 	result.Check(testkit.Rows())
+	result = tk.MustQuery("select d*d as d from t group by d having d = -1")
+	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select d, 1-d as d, c as d from t order by d")
 	result.Check(testkit.Rows("1 0 1", "0 1 1", "-1 2 1"))
 	result = tk.MustQuery("select d, 1-d as d, c as d from t order by d+1")

@@ -48,7 +48,6 @@ func makeUsedList(usedCols []*expression.Column, schema expression.Schema) []boo
 		idx := schema.GetIndex(col)
 		if idx == -1 {
 			log.Errorf("Can't find column %s from schema %s.", col.ToString(), schema.ToString())
-			panic("internal error!")
 		}
 		used[idx] = true
 	}
@@ -85,9 +84,7 @@ func (p *Projection) PruneColumnsAndResolveIndices(parentUsedCols []*expression.
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
 func (p *Selection) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
 	var outerCols []*expression.Column
-	log.Warnf("selection schema %s", p.GetSchema().ToString())
 	for _, cond := range p.Conditions {
-		log.Warnf("selection cond %s", cond.ToString())
 		parentUsedCols, outerCols = extractColumn(cond, parentUsedCols, outerCols)
 	}
 	outer, err := p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(parentUsedCols)

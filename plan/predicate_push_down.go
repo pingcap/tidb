@@ -14,6 +14,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -32,6 +33,9 @@ func columnSubstitute(expr expression.Expression, schema expression.Schema, newE
 	switch v := expr.(type) {
 	case *expression.Column:
 		id := schema.GetIndex(v)
+		if id == -1 {
+			log.Errorf("Can't find columns %s in schema %s", v.ToString(), schema.ToString())
+		}
 		return newExprs[id]
 	case *expression.ScalarFunction:
 		for i, arg := range v.Args {
@@ -207,31 +211,37 @@ func (p *Apply) PredicatePushDown(predicates []expression.Expression) (ret []exp
 
 }
 
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Limit) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, err
 }
 
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *NewSort) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, err
 }
 
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Trim) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, err
 }
 
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *MaxOneRow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, err
 }
 
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Exists) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, err
 }
 
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Distinct) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, err

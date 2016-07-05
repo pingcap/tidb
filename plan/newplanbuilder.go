@@ -454,6 +454,7 @@ type AggregateFuncExtractor struct {
 	selectFields []*ast.SelectField
 	aggMapper    map[*ast.AggregateFuncExpr]int
 	colMapper    map[*ast.ColumnNameExpr]int
+	gbyItems     []*ast.ByItem
 }
 
 // Enter implements Visitor interface.
@@ -513,6 +514,14 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (node ast.Node, ok bool) {
 		if a.inAggFunc || (a.orderBy && a.inExpr) {
 			resolveFieldsFirst = false
 		}
+		if !a.inAggFunc && !a.orderBy {
+			for _, item := range a.gbyItems {
+				if col, ok := item.Expr.(*ast.ColumnNameExpr); ok && colMatch(v.Name, col.Name) {
+					resolveFieldsFirst = false
+					break
+				}
+			}
+		}
 		index := -1
 		if resolveFieldsFirst {
 			index, a.err = resolveFromSelectFields(v, a.selectFields)
@@ -553,6 +562,9 @@ func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 		selectFields: sel.Fields.Fields,
 		aggMapper:    make(map[*ast.AggregateFuncExpr]int),
 		colMapper:    b.colMapper,
+	}
+	if sel.GroupBy != nil {
+		extractor.gbyItems = sel.GroupBy.Items
 	}
 	// Extract agg funcs from having clause.
 	if sel.Having != nil {
@@ -656,7 +668,8 @@ func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 			b.err = errors.Trace(resolver.err)
 			return nil, false, nil
 		}
-		expr, np, cor, err := b.rewrite(retExpr.(ast.ExprNode), p, nil)
+		item.Expr = retExpr.(ast.ExprNode)
+		expr, np, cor, err := b.rewrite(item.Expr, p, nil)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, false, nil
