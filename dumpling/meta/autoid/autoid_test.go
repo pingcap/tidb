@@ -92,7 +92,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(alloc, NotNil)
 	id, err = alloc.Alloc(1)
 	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(4011))
+	c.Assert(id, Equals, int64(autoid.GetStep()+1))
 
 	alloc = autoid.NewAllocator(store, 1)
 	c.Assert(alloc, NotNil)

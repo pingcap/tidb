@@ -1,7 +1,7 @@
 {
 	"ImportPath": "github.com/pingcap/tidb",
 	"GoVersion": "go1.6",
-	"GodepVersion": "v62",
+	"GodepVersion": "v63",
 	"Packages": [
 		"./..."
 	],
@@ -101,47 +101,47 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/coprocessor",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "a37ee257820bff6a3af846356ff22729e6cb9618"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/errorpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "a37ee257820bff6a3af846356ff22729e6cb9618"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/kvrpcpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "a37ee257820bff6a3af846356ff22729e6cb9618"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/metapb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "a37ee257820bff6a3af846356ff22729e6cb9618"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/msgpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "a37ee257820bff6a3af846356ff22729e6cb9618"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/pdpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "a37ee257820bff6a3af846356ff22729e6cb9618"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_cmdpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "a37ee257820bff6a3af846356ff22729e6cb9618"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_serverpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "a37ee257820bff6a3af846356ff22729e6cb9618"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raftpb",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "a37ee257820bff6a3af846356ff22729e6cb9618"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/util",
-			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
+			"Rev": "a37ee257820bff6a3af846356ff22729e6cb9618"
 		},
 		{
 			"ImportPath": "github.com/pingcap/pd/pd-client",
-			"Rev": "0845734139d16f5f15e10514e5c70a6705223120"
+			"Rev": "c5acad88aa2462463d90dbfa9c01517f1592b64f"
 		},
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-tipb",
