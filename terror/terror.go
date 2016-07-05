@@ -173,12 +173,14 @@ func (e *Error) Location() (file string, line int) {
 
 // Error implements error interface.
 func (e *Error) Error() string {
+	return fmt.Sprintf("[%s:%d]%s", e.class, e.code, e.getMsg())
+}
+
+func (e *Error) getMsg() string {
 	if len(e.args) > 0 {
-		msg := fmt.Sprintf(e.message, e.args...)
-		return fmt.Sprintf("[%s:%d]%s", e.class, e.code, msg)
+		return fmt.Sprintf(e.message, e.args...)
 	}
 	return e.message
-
 }
 
 // Gen generates a new *Error with the same class and code, and a new formatted message.
@@ -217,7 +219,7 @@ func (e *Error) NotEqual(err error) bool {
 // ToSQLError convert Error to mysql.SQLError.
 func (e *Error) ToSQLError() *mysql.SQLError {
 	code := e.getMySQLErrorCode()
-	return mysql.NewErrf(code, e.message)
+	return mysql.NewErrf(code, e.getMsg())
 }
 
 var defaultMySQLErrorCode uint16
