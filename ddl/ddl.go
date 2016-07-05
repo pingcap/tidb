@@ -817,6 +817,9 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	if is.TableExists(ident.Schema, ident.Name) {
 		return errors.Trace(infoschema.ErrTableExists)
 	}
+	if is.TableNameTooLong(ident.Schema, ident.Name) {
+		return errors.Trace(infoschema.ErrTooLongIdent)
+	}
 	if err = checkDuplicateColumn(colDefs); err != nil {
 		return errors.Trace(err)
 	}
