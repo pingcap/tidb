@@ -41,8 +41,7 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 	}
 	err := kv.RunInNewTxn(s.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err1 := errors.Trace(t.CreateDatabase(s.dbInfo))
-		return errors.Trace(err1)
+		return errors.Trace(t.CreateDatabase(s.dbInfo))
 	})
 	c.Check(err, IsNil)
 }
@@ -93,7 +92,6 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 				checkErr = errors.Trace(err)
 			}
 		case model.StateWriteOnly:
-
 			writeOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
 				checkErr = errors.Trace(err)
@@ -151,7 +149,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 				checkErr = errors.Trace(err)
 			}
 			if len(noneTable.Indices()) != 0 {
-				checkErr = errors.Errorf("index should have been dropped.")
+				checkErr = errors.New("index should have been dropped.")
 			}
 		}
 	}
@@ -172,9 +170,9 @@ func checkIndexExists(ctx context.Context, tbl table.Table, indexValue interface
 	}
 	if exists != doesExist {
 		if exists {
-			return errors.Errorf("index should exists")
+			return errors.New("index should exists")
 		}
-		return errors.Errorf("index should not exists")
+		return errors.New("index should not exists")
 	}
 	return nil
 }
