@@ -69,7 +69,7 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 func constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := getRowLen(l), getRowLen(r)
 	if lLen == 1 && rLen == 1 {
-		return expression.NewFunction(op, types.NewFieldType(mysql.TypeTiny), l, r), nil
+		return expression.NewFunction(op, types.NewFieldType(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
 		return nil, errors.Errorf("Operand should contain %d column(s)", lLen)
 	}
@@ -159,20 +159,28 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			for _, col := range np.GetSchema() {
 				args = append(args, col.DeepCopy())
 			}
-			rexpr = expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), args...)
+			rexpr, er.err = expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), args...)
+			if er.err != nil {
+				er.err = errors.Trace(er.err)
+				return inNode, true
+			}
 		}
 		switch v.Op {
 		// Only EQ, NE and NullEQ can be composed with and.
 		case opcode.EQ, opcode.NE, opcode.NullEQ:
-			var err error
-			checkCondition, err = constructBinaryOpFunction(lexpr, rexpr, opcode.Ops[v.Op])
-			if err != nil {
-				er.err = errors.Trace(err)
+			checkCondition, er.err = constructBinaryOpFunction(lexpr, rexpr, opcode.Ops[v.Op])
+			if er.err != nil {
+				er.err = errors.Trace(er.err)
 				return inNode, true
 			}
 		// If op is not EQ, NE, NullEQ, say LT, it will remain as row(a,b) < row(c,d), and be compared as row datum.
 		default:
-			checkCondition = expression.NewFunction(opcode.Ops[v.Op], types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
+			checkCondition, er.err = expression.NewFunction(opcode.Ops[v.Op],
+				types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
+			if er.err != nil {
+				er.err = errors.Trace(er.err)
+				return inNode, true
+			}
 		}
 		er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: v.All})
 		// The parent expression only use the last column in schema, which represents whether the condition is matched.
@@ -236,7 +244,11 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 				for _, col := range np.GetSchema() {
 					args = append(args, col.DeepCopy())
 				}
-				rexpr = expression.NewFunction(ast.RowFunc, nil, args...)
+				rexpr, er.err = expression.NewFunction(ast.RowFunc, nil, args...)
+				if er.err != nil {
+					er.err = errors.Trace(er.err)
+					return inNode, true
+				}
 			}
 			// a in (subq) will be rewrited as a = any(subq).
 			// a not in (subq) will be rewrited as a != all(subq).
@@ -267,8 +279,13 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 				for _, col := range np.GetSchema() {
 					newCols = append(newCols, col.DeepCopy())
 				}
-				er.ctxStack = append(er.ctxStack,
-					expression.NewFunction(ast.RowFunc, nil, newCols...))
+				expr, err := expression.NewFunction(ast.RowFunc, nil, newCols...)
+				if err != nil {
+					er.err = errors.Trace(err)
+					return inNode, true
+				}
+				er.ctxStack = append(er.ctxStack, expr)
+
 			} else {
 				er.ctxStack = append(er.ctxStack, np.GetSchema()[0])
 			}
@@ -291,8 +308,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 					Value:   data,
 					RetType: np.GetSchema()[i].GetType()})
 			}
-			er.ctxStack = append(er.ctxStack,
-				expression.NewFunction(ast.RowFunc, nil, newCols...))
+			expr, err1 := expression.NewFunction(ast.RowFunc, nil, newCols...)
+			if err1 != nil {
+				er.err = errors.Trace(err1)
+				return inNode, true
+			}
+			er.ctxStack = append(er.ctxStack, expr)
 		} else {
 			er.ctxStack = append(er.ctxStack, np.GetSchema()[0])
 		}
@@ -323,6 +344,8 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		er.funcCallToScalarFunc(v)
 	case *ast.ColumnName:
 		er.toColumn(v)
+	case *ast.UnaryOperationExpr:
+		er.unaryOpToScalarFunc(v)
 	case *ast.BinaryOperationExpr:
 		er.binaryOpToScalarFunc(v)
 	case *ast.BetweenExpr:
@@ -333,45 +356,20 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		er.castToScalarFunc(v)
 	case *ast.PatternLikeExpr:
 		er.likeToScalarFunc(v)
+	case *ast.PatternRegexpExpr:
+		er.regexpToScalarFunc(v)
+	case *ast.RowExpr:
+		er.rowToScalarFunc(v)
 	case *ast.PatternInExpr:
 		if v.Sel == nil {
 			er.inToScalarFunc(v)
 		}
-	case *ast.UnaryOperationExpr:
-		if getRowLen(er.ctxStack[stkLen-1]) != 1 {
-			er.err = errors.New("Operand should contain 1 column(s)")
-			return retNode, false
-		}
-		var op string
-		switch v.Op {
-		case opcode.Plus:
-			op = ast.UnaryPlus
-		case opcode.Minus:
-			op = ast.UnaryMinus
-		case opcode.BitNeg:
-			op = ast.BitNeg
-		case opcode.Not:
-			op = ast.UnaryNot
-		default:
-			er.err = errors.Errorf("Unknown Unary Op %T", v.Op)
-		}
-		function := expression.NewFunction(op, v.Type, er.ctxStack[stkLen-1])
-		er.ctxStack = er.ctxStack[:stkLen-1]
-		er.ctxStack = append(er.ctxStack, function)
 	case *ast.PositionExpr:
 		if v.N > 0 && v.N <= len(er.schema) {
 			er.ctxStack = append(er.ctxStack, er.schema[v.N-1])
 		} else {
 			er.err = errors.Errorf("Position %d is out of range", v.N)
 		}
-	case *ast.RowExpr:
-		length := len(v.Values)
-		rows := make([]expression.Expression, 0, length)
-		for i := stkLen - length; i < stkLen; i++ {
-			rows = append(rows, er.ctxStack[i])
-		}
-		er.ctxStack = er.ctxStack[:stkLen-length]
-		er.ctxStack = append(er.ctxStack, expression.NewFunction(ast.RowFunc, nil, rows...))
 	case *ast.IsNullExpr:
 		if getRowLen(er.ctxStack[stkLen-1]) != 1 {
 			er.err = errors.New("Operand should contain 1 column(s)")
@@ -479,32 +477,62 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) bool {
 	return true
 }
 
+func (er *expressionRewriter) unaryOpToScalarFunc(v *ast.UnaryOperationExpr) {
+	stkLen := len(er.ctxStack)
+	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
+		er.err = errors.New("Operand should contain 1 column(s)")
+	}
+	var op string
+	switch v.Op {
+	case opcode.Plus:
+		op = ast.UnaryPlus
+	case opcode.Minus:
+		op = ast.UnaryMinus
+	case opcode.BitNeg:
+		op = ast.BitNeg
+	case opcode.Not:
+		op = ast.UnaryNot
+	default:
+		er.err = errors.Errorf("Unknown Unary Op %T", v.Op)
+	}
+	er.ctxStack[stkLen-1], er.err = expression.NewFunction(op, v.Type, er.ctxStack[stkLen-1])
+}
+
 func (er *expressionRewriter) binaryOpToScalarFunc(v *ast.BinaryOperationExpr) {
 	stkLen := len(er.ctxStack)
 	var function expression.Expression
 	switch v.Op {
 	case opcode.EQ, opcode.NE, opcode.NullEQ:
-		var err error
-		function, err = constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
+		function, er.err = constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
 			opcode.Ops[v.Op])
-		if err != nil {
-			er.err = errors.Trace(err)
-			return
-		}
 	default:
-		function = expression.NewFunction(opcode.Ops[v.Op], v.Type, er.ctxStack[stkLen-2:]...)
+		function, er.err = expression.NewFunction(opcode.Ops[v.Op], v.Type, er.ctxStack[stkLen-2:]...)
+	}
+	if er.err != nil {
+		er.err = errors.Trace(er.err)
+		return
 	}
 	er.ctxStack = er.ctxStack[:stkLen-2]
 	er.ctxStack = append(er.ctxStack, function)
 }
 
-func (er *expressionRewriter) notToScalarFunc(b bool, op string, tp *types.FieldType,
+func (er *expressionRewriter) notToScalarFunc(hasNot bool, op string, tp *types.FieldType,
 	args ...expression.Expression) *expression.ScalarFunction {
-	opFunc := expression.NewFunction(op, tp, args...)
-	if !b {
+	opFunc, err := expression.NewFunction(op, tp, args...)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return nil
+	}
+	if !hasNot {
 		return opFunc
 	}
-	return expression.NewFunction(ast.UnaryNot, tp, opFunc)
+
+	opFunc, err = expression.NewFunction(ast.UnaryNot, tp, opFunc)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return nil
+	}
+	return opFunc
 }
 
 func (er *expressionRewriter) inToScalarFunc(v *ast.PatternInExpr) {
@@ -534,7 +562,11 @@ func (er *expressionRewriter) caseToScalarFunc(v *ast.CaseExpr) {
 		value := er.ctxStack[stkLen-argsLen-1]
 		args = make([]expression.Expression, 0, argsLen)
 		for i := stkLen - argsLen; i < stkLen-1; i += 2 {
-			arg := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), value, er.ctxStack[i])
+			arg, err := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), value, er.ctxStack[i])
+			if err != nil {
+				er.err = errors.Trace(err)
+				return
+			}
 			args = append(args, arg)
 			args = append(args, er.ctxStack[i+1])
 		}
@@ -549,7 +581,11 @@ func (er *expressionRewriter) caseToScalarFunc(v *ast.CaseExpr) {
 		//        else clasue
 		args = er.ctxStack[stkLen-argsLen : stkLen]
 	}
-	function := expression.NewFunction(ast.Case, v.Type, args...)
+	function, err := expression.NewFunction(ast.Case, v.Type, args...)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return
+	}
 	er.ctxStack = er.ctxStack[:stkLen-argsLen]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -557,10 +593,31 @@ func (er *expressionRewriter) caseToScalarFunc(v *ast.CaseExpr) {
 func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 	l := len(er.ctxStack)
 	function := er.notToScalarFunc(v.Not, ast.Like, v.Type,
-		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape))},
-		&expression.Constant{Value: types.NewBytesDatum(v.PatChars)},
-		&expression.Constant{Value: types.NewBytesDatum(v.PatTypes)})
+		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape))})
 	er.ctxStack = er.ctxStack[:l-2]
+	er.ctxStack = append(er.ctxStack, function)
+}
+
+func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
+	l := len(er.ctxStack)
+	function := er.notToScalarFunc(v.Not, ast.Regexp, v.Type, er.ctxStack[l-2], er.ctxStack[l-1])
+	er.ctxStack = er.ctxStack[:l-2]
+	er.ctxStack = append(er.ctxStack, function)
+}
+
+func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
+	stkLen := len(er.ctxStack)
+	length := len(v.Values)
+	rows := make([]expression.Expression, 0, length)
+	for i := stkLen - length; i < stkLen; i++ {
+		rows = append(rows, er.ctxStack[i])
+	}
+	er.ctxStack = er.ctxStack[:stkLen-length]
+	function, err := expression.NewFunction(ast.RowFunc, nil, rows...)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return
+	}
 	er.ctxStack = append(er.ctxStack, function)
 }
 
@@ -569,15 +626,27 @@ func (er *expressionRewriter) betweenToScalarFunc(v *ast.BetweenExpr) {
 	var op string
 	var l, r *expression.ScalarFunction
 	if v.Not {
-		l = expression.NewFunction(ast.LT, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
-		r = expression.NewFunction(ast.GT, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-1])
+		l, er.err = expression.NewFunction(ast.LT, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
+		if er.err == nil {
+			r, er.err = expression.NewFunction(ast.GT, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-1])
+		}
 		op = ast.OrOr
 	} else {
-		l = expression.NewFunction(ast.GE, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
-		r = expression.NewFunction(ast.LE, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-1])
+		l, er.err = expression.NewFunction(ast.GE, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
+		if er.err == nil {
+			r, er.err = expression.NewFunction(ast.LE, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-1])
+		}
 		op = ast.AndAnd
 	}
-	function := expression.NewFunction(op, v.Type, l, r)
+	if er.err != nil {
+		er.err = errors.Trace(er.err)
+		return
+	}
+	function, err := expression.NewFunction(op, v.Type, l, r)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return
+	}
 	er.ctxStack = er.ctxStack[:stkLen-3]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -585,9 +654,7 @@ func (er *expressionRewriter) betweenToScalarFunc(v *ast.BetweenExpr) {
 func (er *expressionRewriter) funcCallToScalarFunc(v *ast.FuncCallExpr) {
 	l := len(er.ctxStack)
 	function := &expression.ScalarFunction{FuncName: v.FnName}
-	for i := l - len(v.Args); i < l; i++ {
-		function.Args = append(function.Args, er.ctxStack[i])
-	}
+	function.Args = er.ctxStack[l-len(v.Args):]
 	f, ok := evaluator.Funcs[v.FnName.L]
 	if !ok {
 		er.err = errors.Errorf("Can't find %v function!", v.FnName.L)

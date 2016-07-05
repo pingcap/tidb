@@ -37,11 +37,10 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	store := testCreateStore(c, "test_reorg")
 	defer store.Close()
 
-	lease := 50 * time.Millisecond
-	d := newDDL(store, nil, nil, lease)
+	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
 
-	time.Sleep(lease)
+	time.Sleep(testLease)
 
 	ctx := testNewContext(c, d)
 
@@ -63,7 +62,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 
 	done := make(chan struct{})
 	f := func() error {
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(4 * testLease)
 		close(done)
 		return nil
 	}
@@ -76,7 +75,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 
 	d.close()
 	err = d.runReorgJob(func() error {
-		time.Sleep(1 * time.Second)
+		time.Sleep(4 * testLease)
 		return nil
 	})
 	c.Assert(err, NotNil)
@@ -118,16 +117,14 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	store := testCreateStore(c, "test_reorg_owner")
 	defer store.Close()
 
-	lease := 50 * time.Millisecond
-
-	d1 := newDDL(store, nil, nil, lease)
+	d1 := newDDL(store, nil, nil, testLease)
 	defer d1.close()
 
 	ctx := testNewContext(c, d1)
 
 	testCheckOwner(c, d1, true, ddlJobFlag)
 
-	d2 := newDDL(store, nil, nil, lease)
+	d2 := newDDL(store, nil, nil, testLease)
 	defer d2.close()
 
 	dbInfo := testSchemaInfo(c, d1, "test")
