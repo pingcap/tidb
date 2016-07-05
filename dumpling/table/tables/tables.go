@@ -393,7 +393,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 	if t.meta.PKIsHandle {
 		// Check key exists.
 		recordKey := t.RecordKey(recordID)
-		e := kv.ErrKeyExists.Gen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
+		e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
 		txn.SetOption(kv.PresumeKeyNotExistsError, e)
 		_, err = txn.Get(recordKey)
 		if err == nil {
@@ -416,7 +416,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			if err1 != nil {
 				return 0, errors.Trace(err1)
 			}
-			dupKeyErr = kv.ErrKeyExists.Gen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
+			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
 		if err = v.Create(bs, colVals, recordID); err != nil {
