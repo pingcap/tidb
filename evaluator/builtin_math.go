@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// see https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html
 func builtinAbs(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	d = args[0]
 	switch d.Kind() {
