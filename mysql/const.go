@@ -44,6 +44,11 @@ const (
 	ServerPSOutParams              uint16 = 0x1000
 )
 
+// Server limitations
+const (
+	ServerTableNameLength int = 64
+)
+
 // Command informations.
 const (
 	ComSleep byte = iota
