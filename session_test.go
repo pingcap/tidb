@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
@@ -1350,6 +1351,7 @@ func (s *testSessionSuite) bootstrapWithError(store kv.Storage, c *C) {
 		values: make(map[fmt.Stringer]interface{}),
 		store:  store,
 		sid:    atomic.AddInt64(&sessionID, 1),
+		parser: parser.New(),
 	}
 	domain, err := domap.Get(store)
 	c.Assert(err, IsNil)

@@ -121,7 +121,7 @@ func (e *PrepareExec) DoPrepare() {
 		}
 	}
 	charset, collation := variable.GetCharsetInfo(e.Ctx)
-	stmts, err := parser.Parse(e.SQLText, charset, collation)
+	stmts, err := parser.New().Parse(e.SQLText, charset, collation)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
