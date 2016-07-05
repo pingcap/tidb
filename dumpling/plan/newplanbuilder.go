@@ -140,7 +140,8 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 					continue
 				}
 				if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
-					eqCond = append(eqCond, expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln))
+					cond, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
+					eqCond = append(eqCond, cond)
 					continue
 				}
 			}
