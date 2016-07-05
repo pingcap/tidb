@@ -166,13 +166,13 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	defer store.Close()
 
 	ctx := mock.NewContext()
-
-	d1 := newDDL(store, nil, nil, testLease)
+	lease := testLease * 3
+	d1 := newDDL(store, nil, nil, lease)
 	defer d1.close()
 
 	testCheckOwner(c, d1, true, ddlJobFlag)
 
-	d2 := newDDL(store, nil, nil, testLease)
+	d2 := newDDL(store, nil, nil, lease)
 	defer d2.close()
 
 	// d2 must not be owner.
