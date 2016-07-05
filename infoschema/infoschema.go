@@ -66,6 +66,7 @@ type InfoSchema interface {
 	SchemaExists(schema model.CIStr) bool
 	TableByName(schema, table model.CIStr) (table.Table, error)
 	TableExists(schema, table model.CIStr) bool
+	TableNameTooLong(schema, table model.CIStr) bool
 	ColumnByName(schema, table, column model.CIStr) (*model.ColumnInfo, bool)
 	ColumnExists(schema, table, column model.CIStr) bool
 	IndexByName(schema, table, index model.CIStr) (*model.IndexInfo, bool)
@@ -165,6 +166,10 @@ func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err
 func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
 	_, ok := is.tableNameToID[tableName{schema: schema.L, table: table.L}]
 	return ok
+}
+
+func (is *infoSchema) TableNameTooLong(schema, table model.CIStr) bool {
+	return len(table.L) > mysql.ServerTableNameLength
 }
 
 func (is *infoSchema) ColumnByName(schema, table, column model.CIStr) (val *model.ColumnInfo, ok bool) {
