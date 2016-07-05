@@ -171,7 +171,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 
 	testCheckOwner(c, d1, true, ddlJobFlag)
 
-	d2 := newDDL(store, nil, nil, testLease * 4)
+	d2 := newDDL(store, nil, nil, testLease*4)
 	defer d2.close()
 
 	// d2 must not be owner.
