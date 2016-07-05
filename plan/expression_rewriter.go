@@ -647,7 +647,7 @@ func (er *expressionRewriter) betweenToScalarFunc(v *ast.BetweenExpr) {
 func (er *expressionRewriter) funcCallToScalarFunc(v *ast.FuncCallExpr) {
 	l := len(er.ctxStack)
 	function := &expression.ScalarFunction{FuncName: v.FnName}
-	function.Args = er.ctxStack[l-len(v.Args)-1:]
+	function.Args = er.ctxStack[l-len(v.Args):]
 	f, ok := evaluator.Funcs[v.FnName.L]
 	if !ok {
 		er.err = errors.Errorf("Can't find %v function!", v.FnName.L)
