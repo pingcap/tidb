@@ -32,8 +32,7 @@ func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 	}
 	err := kv.RunInNewTxn(s.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err1 := errors.Trace(t.CreateDatabase(s.dbInfo))
-		return errors.Trace(err1)
+		return errors.Trace(t.CreateDatabase(s.dbInfo))
 	})
 	c.Check(err, IsNil)
 }
