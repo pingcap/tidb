@@ -54,7 +54,7 @@ install:
 TEMP_FILE = temp_parser_file
 
 parser:
-	go get github.com/qiuyesuifeng/goyacc
+	go get github.com/tiancaiamao/goyacc
 	go get github.com/qiuyesuifeng/golex
 	$(GOYACC) -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
 	$(GOYACC) -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}'
