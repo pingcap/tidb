@@ -58,7 +58,17 @@ type perfSchema struct {
 	stmtInfos   map[reflect.Type]*statementInfo
 }
 
-var _ PerfSchema = (*perfSchema)(nil)
+var (
+	_ PerfSchema = (*perfSchema)(nil)
+
+	// perfschema is disabled by default to avoid performance consuming.
+	enablePerfSchema = false
+)
+
+// EnablePerfSchema enables perfschema.
+func EnablePerfSchema() {
+	enablePerfSchema = true
+}
 
 // NewPerfHandle creates a new perfSchema on store.
 func NewPerfHandle() (PerfSchema, error) {

@@ -43,7 +43,8 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 		return nil, errors.Trace(builder.err)
 	}
 	if logic, ok := p.(LogicalPlan); UseNewPlanner && ok {
-		_, logic, err := logic.PredicatePushDown(nil)
+		var err error
+		_, logic, err = logic.PredicatePushDown(nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

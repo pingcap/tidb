@@ -577,7 +577,7 @@ user		{u}{s}{e}{r}
 using		{u}{s}{i}{n}{g}
 
 idchar0		[a-zA-Z_]
-idchars		{idchar0}|[0-9$] // See: https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+idchars		{idchar0}|[0-9$] // See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 ident		{idchar0}{idchars}*
 
 user_var	"@"{ident}
@@ -1285,7 +1285,7 @@ func (l *lexer) float(lval *yySymType) int {
 	return floatLit
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
+// See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
 func (l *lexer) hex(lval *yySymType) int {
 	s := string(l.val)
 	h, err := mysql.ParseHex(s)
@@ -1303,7 +1303,7 @@ func (l *lexer) hex(lval *yySymType) int {
 	return hexLit
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
+// See https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
 func (l *lexer) bit(lval *yySymType) int {
 	s := string(l.val)
 	b, err := mysql.ParseBit(s, -1)
@@ -1319,7 +1319,7 @@ func (l *lexer) handleIdent(lval *yySymType) int {
 	s := lval.item.(string)
 	// A character string literal may have an optional character set introducer and COLLATE clause:
 	// [_charset_name]'string' [COLLATE collation_name]
-	// See: https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
+	// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
 	if !strings.HasPrefix(s, "_") {
 		return identifier	
 	}

@@ -367,7 +367,7 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 				// Only the first column can be set
 				// if unique index has multi columns,
 				// the flag should be MultipleKeyFlag.
-				// See: https://dev.mysql.com/doc/refman/5.7/en/show-columns.html
+				// See https://dev.mysql.com/doc/refman/5.7/en/show-columns.html
 				if len(v.Keys) > 1 {
 					c.Flag |= mysql.MultipleKeyFlag
 				} else {

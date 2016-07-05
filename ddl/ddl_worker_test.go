@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"flag"
 	"fmt"
 	"time"
 
@@ -31,19 +30,13 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-var skipDDL = flag.Bool("skip_ddl", true, "only run simple DDL test")
-
-func trySkipTest(c *C) {
-	if *skipDDL {
-		c.Skip("skip, only run simple tests")
-	}
-}
-
 var _ = Suite(&testDDLSuite{})
+
+const testLease = 5 * time.Millisecond
 
 func testCreateStore(c *C, name string) kv.Storage {
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open(fmt.Sprintf("memory:%s", name))
+	store, err := driver.Open(fmt.Sprintf("memory://%s", name))
 	c.Assert(err, IsNil)
 	return store
 }
@@ -70,23 +63,22 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
-	lease := 100 * time.Millisecond
-	d1 := newDDL(store, nil, nil, lease)
+	d1 := newDDL(store, nil, nil, testLease)
 	defer d1.close()
 
-	time.Sleep(lease)
+	time.Sleep(testLease)
 
 	testCheckOwner(c, d1, true, ddlJobFlag)
 	testCheckOwner(c, d1, true, bgJobFlag)
 
-	d2 := newDDL(store, nil, nil, lease)
+	d2 := newDDL(store, nil, nil, testLease)
 	defer d2.close()
 
 	testCheckOwner(c, d2, false, ddlJobFlag)
 	testCheckOwner(c, d2, false, bgJobFlag)
 	d1.close()
 
-	time.Sleep(6 * lease)
+	time.Sleep(6 * testLease)
 
 	testCheckOwner(c, d2, true, ddlJobFlag)
 	testCheckOwner(c, d2, true, bgJobFlag)
@@ -115,9 +107,7 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 	store := testCreateStore(c, "test_schema_error")
 	defer store.Close()
 
-	lease := 50 * time.Millisecond
-
-	d := newDDL(store, nil, nil, lease)
+	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
 
 	job := &model.Job{
@@ -138,9 +128,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	store := testCreateStore(c, "test_table_error")
 	defer store.Close()
 
-	lease := 50 * time.Millisecond
-
-	d := newDDL(store, nil, nil, lease)
+	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
 
 	job := &model.Job{
@@ -209,9 +197,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 	store := testCreateStore(c, "test_index_error")
 	defer store.Close()
 
-	lease := 50 * time.Millisecond
-
-	d := newDDL(store, nil, nil, lease)
+	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
 
 	ctx := testNewContext(c, d)
@@ -312,9 +298,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	store := testCreateStore(c, "test_column_error")
 	defer store.Close()
 
-	lease := 50 * time.Millisecond
-
-	d := newDDL(store, nil, nil, lease)
+	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
 
 	ctx := testNewContext(c, d)
