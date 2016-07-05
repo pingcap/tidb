@@ -197,7 +197,7 @@ var collationsCols = []columnInfo{
 	{"SORTLEN", mysql.TypeLonglong, 3, 0, nil, nil},
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/partitions-table.html
+// See https://dev.mysql.com/doc/refman/5.7/en/partitions-table.html
 var partitionsCols = []columnInfo{
 	{"TABLE_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
 	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},

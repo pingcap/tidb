@@ -221,7 +221,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		}
 	}
 	if !rowChanged {
-		// See: https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
+		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
 		if variable.GetSessionVars(ctx).ClientCapability&mysql.ClientFoundRows > 0 {
 			variable.GetSessionVars(ctx).AddAffectedRows(1)
 		}
@@ -268,7 +268,7 @@ func (e *UpdateExec) Close() error {
 }
 
 // DeleteExec represents a delete executor.
-// See: https://dev.mysql.com/doc/refman/5.7/en/delete.html
+// See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteExec struct {
 	SelectExec Executor
 
@@ -505,7 +505,7 @@ func (e *InsertExec) Close() error {
 // 1 insert ... values(...)  --> name type column
 // 2 insert ... set x=y...   --> set type column
 // 3 insert ... (select ..)  --> name type column
-// See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
+// See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, error) {
 	var cols []*table.Column
 	var err error
@@ -870,11 +870,11 @@ func (e *ReplaceExec) Next() (*Row, error) {
 	 *  2. While the insertion fails because a duplicate-key error occurs for a primary key or unique index:
 	 *  3. Delete from the table the conflicting row that has the duplicate key value
 	 *  4. Try again to insert the new row into the table
-	 * See: http://dev.mysql.com/doc/refman/5.7/en/replace.html
+	 * See http://dev.mysql.com/doc/refman/5.7/en/replace.html
 	 *
 	 * For REPLACE statements, the affected-rows value is 2 if the new row replaced an old row,
 	 * because in this case, one row was inserted after the duplicate was deleted.
-	 * See: http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
+	 * See http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
 	 */
 	idx := 0
 	rowsLen := len(rows)
