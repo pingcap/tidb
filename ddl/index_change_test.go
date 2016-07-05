@@ -285,6 +285,24 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx context.Context, write
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 6, 6, false)
+
+	var rows [][]types.Datum
+	publicTbl.IterRecords(ctx, publicTbl.FirstKey(), publicTbl.Cols(),
+		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+			rows = append(rows, data)
+			return true, nil
+		})
+	if len(rows) == 0 {
+		return errors.New("table is empty")
+	}
+	for _, row := range rows {
+		idxVal := row[1].GetInt64()
+		handle := row[0].GetInt64()
+		err = checkIndexExists(ctx, publicTbl, idxVal, handle, true)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
