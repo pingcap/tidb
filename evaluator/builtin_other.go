@@ -85,7 +85,7 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	return
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/case.html
+// See https://dev.mysql.com/doc/refman/5.7/en/case.html
 func builtinCaseWhen(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	l := len(args)
 	for i := 0; i < l-1; i += 2 {
@@ -110,7 +110,7 @@ func builtinCaseWhen(args []types.Datum, _ context.Context) (d types.Datum, err 
 	return
 }
 
-// See: http://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
+// See http://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
 func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		return
@@ -136,7 +136,7 @@ func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	return
 }
 
-// See: http://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
+// See http://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
 func builtinRegexp(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
 	if args[0].IsNull() || args[1].IsNull() {
@@ -159,7 +159,7 @@ func builtinRegexp(args []types.Datum, _ context.Context) (d types.Datum, err er
 	return
 }
 
-// See: http://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
+// See http://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
 func builtinIn(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		return
@@ -444,7 +444,7 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 }
 
 // CastFuncFactory produces builtin function according to field types.
-// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
+// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
 func CastFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
 	switch tp.Tp {
 	// Parser has restricted this.

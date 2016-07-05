@@ -586,17 +586,14 @@ func (er *expressionRewriter) caseToScalarFunc(v *ast.CaseExpr) {
 func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 	l := len(er.ctxStack)
 	function := er.notToScalarFunc(v.Not, ast.Like, v.Type,
-		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape))},
-		&expression.Constant{Value: types.NewBytesDatum(v.PatChars)},
-		&expression.Constant{Value: types.NewBytesDatum(v.PatTypes)})
+		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape))})
 	er.ctxStack = er.ctxStack[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
 }
 
 func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
 	l := len(er.ctxStack)
-	function := er.notToScalarFunc(v.Not, ast.Regexp, v.Type, er.ctxStack[l-2], er.ctxStack[l-1],
-		&expression.Constant{Value: types.NewDatum(v.Re)}, &expression.Constant{Value: types.NewDatum(v.Sexpr)})
+	function := er.notToScalarFunc(v.Not, ast.Regexp, v.Type, er.ctxStack[l-2], er.ctxStack[l-1])
 	er.ctxStack = er.ctxStack[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
 }

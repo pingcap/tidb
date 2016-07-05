@@ -149,8 +149,8 @@ var Funcs = map[string]Func{
 	ast.In:         {builtinIn, 1, -1},
 	ast.IsTruth:    {isTrueOpFactory(opcode.IsTruth), 1, 1},
 	ast.IsFalsity:  {isTrueOpFactory(opcode.IsFalsity), 1, 1},
-	ast.Like:       {builtinLike, 5, 5},
-	ast.Regexp:     {builtinRegexp, 4, 4},
+	ast.Like:       {builtinLike, 3, 3},
+	ast.Regexp:     {builtinRegexp, 2, 2},
 	ast.Case:       {builtinCaseWhen, 1, -1},
 	ast.RowFunc:    {builtinRow, 2, -1},
 }
