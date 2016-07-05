@@ -362,7 +362,7 @@ func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
-		// See: https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
+		// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 		return src
 	}
 	e := &SelectLockExec{

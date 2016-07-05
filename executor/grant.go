@@ -33,7 +33,7 @@ import (
 
 /***
  * Grant Statement
- * See: https://dev.mysql.com/doc/refman/5.7/en/grant.html
+ * See https://dev.mysql.com/doc/refman/5.7/en/grant.html
  ************************************************************************************/
 var (
 	_ Executor = (*GrantExec)(nil)

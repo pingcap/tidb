@@ -267,8 +267,8 @@ func (e *ShowExec) fetchShowIndex() error {
 	return nil
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
 func (e *ShowExec) fetchShowCharset() error {
-	// See: http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
 	descs := charset.GetAllCharsets()
 	for _, desc := range descs {
 		row := &Row{

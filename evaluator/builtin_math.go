@@ -27,7 +27,6 @@ import (
 )
 
 // see https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html
-
 func builtinAbs(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	d = args[0]
 	switch d.Kind() {
@@ -78,7 +77,7 @@ func builtinPow(args []types.Datum, _ context.Context) (d types.Datum, err error
 	return d, nil
 }
 
-// See: http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
 func builtinRound(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	x, err := args[0].ToFloat64()
 	if err != nil {

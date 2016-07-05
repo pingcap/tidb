@@ -67,7 +67,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	c.Assert(stmts, HasLen, 2)
 
 	// Testcase for /*! xx */
-	// See: http://dev.mysql.com/doc/refman/5.7/en/comments.html
+	// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
 	// Fix: https://github.com/pingcap/tidb/issues/971
 	src = "/*!40101 SET character_set_client = utf8 */;"
 	stmts, err = Parse(src, "", "")
