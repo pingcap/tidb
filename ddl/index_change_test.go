@@ -149,7 +149,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 				checkErr = errors.Trace(err)
 			}
 			if len(noneTable.Indices()) != 0 {
-				checkErr = errors.New("index should have been dropped.")
+				checkErr = errors.New("index should have been dropped")
 			}
 		}
 	}
