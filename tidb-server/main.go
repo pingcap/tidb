@@ -26,6 +26,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/metric"
+	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
@@ -40,6 +41,7 @@ var (
 	statusPort = flag.String("status", "10080", "tidb server status port")
 	lease      = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
 	socket     = flag.String("socket", "", "The socket file to use for connection.")
+	enablePS   = flag.Int("perfschema", 0, "If enable performance schema.")
 )
 
 func main() {
@@ -70,6 +72,11 @@ func main() {
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
+
+	if *enablePS == 1 {
+		perfschema.EnablePerfSchema()
+	}
+
 	// Create a session to load information schema.
 	se, err := tidb.CreateSession(store)
 	if err != nil {

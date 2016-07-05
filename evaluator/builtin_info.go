@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
 func builtinDatabase(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	s := db.GetCurrentSchema(ctx)
 	if s == "" {
@@ -46,7 +46,7 @@ func builtinFoundRows(arg []types.Datum, ctx context.Context) (d types.Datum, er
 	return d, nil
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 // TODO: The value of CURRENT_USER() can differ from the value of USER(). We will finish this after we support grant tables.
 func builtinCurrentUser(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	data := variable.GetSessionVars(ctx)
@@ -78,7 +78,7 @@ func builtinConnectionID(args []types.Datum, ctx context.Context) (d types.Datum
 	return d, nil
 }
 
-// See: http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
+// See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
 func builtinLastInsertID(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if len(args) == 1 {
 		id, err := args[0].ToInt64()

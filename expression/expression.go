@@ -69,6 +69,7 @@ type Column struct {
 	// e.g. SELECT name as id , 1 - id as id , 1 + name as id, name as id from src having id = 1;
 	// There are four ids in the same schema, so you can't identify the column through the FromID and ColName.
 	Position int
+	IsAgg    bool
 
 	// only used during execution
 	Index      int
@@ -225,11 +226,15 @@ func (sf *ScalarFunction) ToString() string {
 }
 
 // NewFunction creates a new scalar function.
-func NewFunction(funcName string, retType *types.FieldType, args ...Expression) *ScalarFunction {
+func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (*ScalarFunction, error) {
 	f, ok := evaluator.Funcs[funcName]
 	if !ok {
 		log.Errorf("Function %s is not implemented.", funcName)
-		return nil
+		return nil, nil
+	}
+	if len(args) < f.MinArgs || (f.MaxArgs != -1 && len(args) > f.MaxArgs) {
+		return nil, evaluator.ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].",
+			f.MinArgs, f.MaxArgs)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
@@ -237,7 +242,7 @@ func NewFunction(funcName string, retType *types.FieldType, args ...Expression) 
 		Args:     funcArgs,
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
-		Function: f.F}
+		Function: f.F}, nil
 }
 
 //Schema2Exprs converts []*Column to []Expression.
@@ -322,8 +327,9 @@ func ComposeCNFCondition(conditions []Expression) Expression {
 	if length == 1 {
 		return conditions[0]
 	}
-	return NewFunction(ast.AndAnd,
+	expr, _ := NewFunction(ast.AndAnd,
 		types.NewFieldType(mysql.TypeTiny),
 		ComposeCNFCondition(conditions[length/2:]),
 		ComposeCNFCondition(conditions[:length/2]))
+	return expr
 }

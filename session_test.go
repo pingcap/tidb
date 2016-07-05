@@ -279,7 +279,7 @@ func checkAutocommit(c *C, se Session, expect uint16) {
 	c.Assert(ret, Equals, expect)
 }
 
-// See: https://dev.mysql.com/doc/internals/en/status-flags.html
+// See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestAutocommit(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
@@ -321,7 +321,7 @@ func checkInTrans(c *C, se Session, stmt string, expect uint16) {
 	c.Assert(ret, Equals, expect)
 }
 
-// See: https://dev.mysql.com/doc/internals/en/status-flags.html
+// See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestInTrans(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
@@ -356,7 +356,7 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	c.Assert(err, IsNil)
 }
 
-// See: http://dev.mysql.com/doc/refman/5.7/en/commit.html
+// See http://dev.mysql.com/doc/refman/5.7/en/commit.html
 func (s *testSessionSuite) TestRowLock(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
@@ -2113,6 +2113,82 @@ func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
 	mustExecMatch(c, se, "SELECT DISTINCT SUBSTRING_INDEX(c, '.', 2) from t;", [][]interface{}{{"www.pingcap"}})
 
 	err := store.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 int, c2 blob, c3 varchar(64));")
+	_, err := exec(c, se, "create index idx_c1 on t (c2);")
+	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
+	c.Assert(err, NotNil)
+
+	_, err = exec(c, se, "create index idx_c1 on t (c1(5))")
+	// ERROR 1089 (HY000): Incorrect prefix key;
+	// the used key part isn't a string, the used length is longer than the key part,
+	// or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "create index idx_c1 on t (c1);")
+	mustExecSQL(c, se, "create index idx_c2 on t (c2(3));")
+	mustExecSQL(c, se, "create unique index idx_c3 on t (c3(5));")
+
+	mustExecSQL(c, se, "insert into t values (3, 'abc', 'def');")
+	sql := "select c2 from t where c2 = 'abc';"
+	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}})
+
+	mustExecSQL(c, se, "insert into t values (4, 'abcd', 'xxx');")
+	mustExecSQL(c, se, "insert into t values (4, 'abcf', 'yyy');")
+	sql = "select c2 from t where c2 = 'abcf';"
+	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abcf")}})
+	sql = "select c2 from t where c2 = 'abcd';"
+	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abcd")}})
+
+	mustExecSQL(c, se, "insert into t values (4, 'ignore', 'abcdeXXX');")
+	_, err = exec(c, se, "insert into t values (5, 'ignore', 'abcdeYYY');")
+	// ERROR 1062 (23000): Duplicate entry 'abcde' for key 'idx_c3'
+	c.Assert(err, NotNil)
+	sql = "select c3 from t where c3 = 'abcde';"
+	mustExecMatch(c, se, sql, [][]interface{}{})
+
+	mustExecSQL(c, se, "delete from t where c3 = 'abcdeXXX';")
+	mustExecSQL(c, se, "delete from t where c2 = 'abc';")
+
+	mustExecMatch(c, se, "select c2 from t where c2 > 'abcd';", [][]interface{}{{[]byte("abcf")}})
+	mustExecMatch(c, se, "select c2 from t where c2 < 'abcf';", [][]interface{}{{[]byte("abcd")}})
+	mustExecMatch(c, se, "select c2 from t where c2 >= 'abcd';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
+	mustExecMatch(c, se, "select c2 from t where c2 <= 'abcf';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
+	mustExecMatch(c, se, "select c2 from t where c2 != 'abc';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
+	mustExecMatch(c, se, "select c2 from t where c2 != 'abcd';", [][]interface{}{{[]byte("abcf")}})
+
+	mustExecSQL(c, se, "drop table if exists t1;")
+	mustExecSQL(c, se, "create table t1 (a int, b char(255), key(a, b(20)));")
+	mustExecSQL(c, se, "insert into t1 values (0, '1');")
+	mustExecSQL(c, se, "update t1 set b = b + 1 where a = 0;")
+	mustExecMatch(c, se, "select b from t1 where a = 0;", [][]interface{}{{[]byte("2")}})
+
+	// test union index.
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (a text, b text, c int, index (a(3), b(3), c));")
+	mustExecSQL(c, se, "insert into t values ('abc', 'abcd', 1);")
+	mustExecSQL(c, se, "insert into t values ('abcx', 'abcf', 2);")
+	mustExecSQL(c, se, "insert into t values ('abcy', 'abcf', 3);")
+	mustExecSQL(c, se, "insert into t values ('bbc', 'abcd', 4);")
+	mustExecSQL(c, se, "insert into t values ('bbcz', 'abcd', 5);")
+	mustExecSQL(c, se, "insert into t values ('cbck', 'abd', 6);")
+	mustExecMatch(c, se, "select c from t where a = 'abc' and b <= 'abc';", [][]interface{}{})
+	mustExecMatch(c, se, "select c from t where a = 'abc' and b <= 'abd';", [][]interface{}{{1}})
+	mustExecMatch(c, se, "select c from t where a < 'cbc' and b > 'abcd';", [][]interface{}{{2}, {3}})
+	mustExecMatch(c, se, "select c from t where a <= 'abd' and b > 'abc';", [][]interface{}{{1}, {2}, {3}})
+	mustExecMatch(c, se, "select c from t where a < 'bbcc' and b = 'abcd';", [][]interface{}{{1}, {4}})
+	mustExecMatch(c, se, "select c from t where a > 'bbcf';", [][]interface{}{{5}, {6}})
+
+	err = se.Close()
+	c.Assert(err, IsNil)
+	err = store.Close()
 	c.Assert(err, IsNil)
 }
 

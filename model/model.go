@@ -146,7 +146,7 @@ const (
 
 // IndexInfo provides meta data describing a DB index.
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
-// See: https://dev.mysql.com/doc/refman/5.7/en/create-index.html
+// See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
 	ID      int64          `json:"id"`
 	Name    CIStr          `json:"idx_name"`   // Index name.
@@ -167,6 +167,16 @@ func (index *IndexInfo) Clone() *IndexInfo {
 		ni.Columns[i] = index.Columns[i].Clone()
 	}
 	return &ni
+}
+
+// HasPrefixIndex return whether any columns of this index uses prefix length.
+func (index *IndexInfo) HasPrefixIndex() bool {
+	for _, ic := range index.Columns {
+		if ic.Length != types.UnspecifiedLength {
+			return true
+		}
+	}
+	return false
 }
 
 // FKInfo provides meta data describing a foreign key constraint.

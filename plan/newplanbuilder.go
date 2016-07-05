@@ -60,6 +60,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		schema = append(schema, &expression.Column{FromID: agg.id,
 			ColName:  model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, i)),
 			Position: i,
+			IsAgg:    true,
 			RetType:  aggFunc.GetType()})
 	}
 	agg.GroupByItems = gby
@@ -139,7 +140,8 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 					continue
 				}
 				if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
-					eqCond = append(eqCond, expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln))
+					cond, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
+					eqCond = append(eqCond, cond)
 					continue
 				}
 			}
@@ -262,11 +264,11 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		var tblName, colName model.CIStr
 		if field.AsName.L != "" {
 			colName = field.AsName
-		} else if c, ok := newExpr.(*expression.Column); ok {
+		} else if c, ok := newExpr.(*expression.Column); ok && !c.IsAgg {
 			colName = c.ColName
 			tblName = c.TblName
 		} else {
-			colName = model.NewCIStr(field.Expr.Text())
+			colName = model.NewCIStr(field.Text())
 		}
 		schemaCol := &expression.Column{
 			FromID:  proj.id,

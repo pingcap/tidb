@@ -58,6 +58,9 @@ var (
 	errCantDropColWithIndex = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
 
+	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specificate a key length")
+	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
+
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
 	// ErrInvalidTableState returns for invalid Table state.
@@ -364,7 +367,7 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 				// Only the first column can be set
 				// if unique index has multi columns,
 				// the flag should be MultipleKeyFlag.
-				// See: https://dev.mysql.com/doc/refman/5.7/en/show-columns.html
+				// See https://dev.mysql.com/doc/refman/5.7/en/show-columns.html
 				if len(v.Keys) > 1 {
 					c.Flag |= mysql.MultipleKeyFlag
 				} else {
@@ -1209,14 +1212,19 @@ const (
 	codeCantRemoveAllFields = 1090
 	codeCantDropFieldOrKey  = 1091
 	codeInvalidOnUpdate     = 1294
+
+	codeBlobKeyWithoutLength = 1170
+	codeIncorrectPrefixKey   = 1089
 )
 
 func init() {
 	ddlMySQLERrCodes := map[terror.ErrCode]uint16{
-		codeBadNull:             mysql.ErrBadNull,
-		codeCantRemoveAllFields: mysql.ErrCantRemoveAllFields,
-		codeCantDropFieldOrKey:  mysql.ErrCantDropFieldOrKey,
-		codeInvalidOnUpdate:     mysql.ErrInvalidOnUpdate,
+		codeBadNull:              mysql.ErrBadNull,
+		codeCantRemoveAllFields:  mysql.ErrCantRemoveAllFields,
+		codeCantDropFieldOrKey:   mysql.ErrCantDropFieldOrKey,
+		codeInvalidOnUpdate:      mysql.ErrInvalidOnUpdate,
+		codeBlobKeyWithoutLength: mysql.ErrBlobKeyWithoutLength,
+		codeIncorrectPrefixKey:   mysql.ErrWrongSubKey,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLERrCodes
 }

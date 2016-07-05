@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -35,6 +36,10 @@ type testPerfSchemaSuit struct {
 var _ = Suite(&testPerfSchemaSuit{
 	vars: make(map[string]interface{}),
 })
+
+func (s *testPerfSchemaSuit) SetUpSuite(c *C) {
+	perfschema.EnablePerfSchema()
+}
 
 func mustBegin(c *C, currDB *sql.DB) *sql.Tx {
 	tx, err := currDB.Begin()

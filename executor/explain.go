@@ -82,7 +82,7 @@ func (e *explainEntry) setJoinTypeForIndexScan(p *plan.IndexScan) {
 }
 
 // ExplainExec represents an explain executor.
-// See: https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
+// See https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
 type ExplainExec struct {
 	StmtPlan plan.Plan
 	fields   []*ast.ResultField
