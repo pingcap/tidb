@@ -249,6 +249,8 @@ func runTestErrorCode(c *C) {
 		checkErrorCode(c, err, tmysql.ErrBadTable)
 		_, err = txn2.Exec("drop database unknown_db;")
 		checkErrorCode(c, err, tmysql.ErrDBDropExists)
+		_, err = txn2.Exec("create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (a int);")
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent)
 
 		// Optimizer errors
 		_, err = txn2.Exec("select *, * from test;")
