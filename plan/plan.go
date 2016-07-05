@@ -102,7 +102,7 @@ type LogicalPlan interface {
 	Plan
 
 	// PredicatePushDown push down predicates in where/on/having clause as deeply as possible.
-	PredicatePushDown([]expression.Expression) ([]expression.Expression, error)
+	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan, error)
 
 	// PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
 	// This function returns a column slice representing outer columns and an error.
@@ -126,18 +126,18 @@ func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, error) {
-	rest, err1 := p.GetChildByIndex(0).(LogicalPlan).PredicatePushDown(predicates)
+func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	rest, _, err1 := p.GetChildByIndex(0).(LogicalPlan).PredicatePushDown(predicates)
 	if err1 != nil {
-		return nil, errors.Trace(err1)
+		return nil, nil, errors.Trace(err1)
 	}
 	if len(rest) > 0 {
 		err1 = addSelection(p, p.GetChildByIndex(0).(LogicalPlan), rest, p.allocator)
 		if err1 != nil {
-			return nil, errors.Trace(err1)
+			return nil, nil, errors.Trace(err1)
 		}
 	}
-	return nil, nil
+	return nil, p, nil
 }
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.

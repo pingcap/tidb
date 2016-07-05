@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -37,14 +36,14 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 		sb:        sb,
 		ctx:       ctx,
 		is:        is,
-		colMapper: make(map[*ast.ColumnNameExpr]expression.Expression),
+		colMapper: make(map[*ast.ColumnNameExpr]int),
 		allocator: new(idAllocator)}
 	p := builder.build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)
 	}
 	if logic, ok := p.(LogicalPlan); UseNewPlanner && ok {
-		_, err := logic.PredicatePushDown(nil)
+		_, logic, err := logic.PredicatePushDown(nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -52,6 +51,7 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		p = logic
 	}
 	err := Refine(p)
 	if err != nil {

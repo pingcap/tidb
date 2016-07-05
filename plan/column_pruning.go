@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -45,6 +46,10 @@ func makeUsedList(usedCols []*expression.Column, schema expression.Schema) []boo
 	used := make([]bool, len(schema))
 	for _, col := range usedCols {
 		idx := schema.GetIndex(col)
+		if idx == -1 {
+			log.Errorf("Can't find column %s from schema %s.", col.ToString(), schema.ToString())
+			panic("internal error!")
+		}
 		used[idx] = true
 	}
 	return used
@@ -80,7 +85,9 @@ func (p *Projection) PruneColumnsAndResolveIndices(parentUsedCols []*expression.
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
 func (p *Selection) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
 	var outerCols []*expression.Column
+	log.Warnf("selection schema %s", p.GetSchema().ToString())
 	for _, cond := range p.Conditions {
+		log.Warnf("selection cond %s", cond.ToString())
 		parentUsedCols, outerCols = extractColumn(cond, parentUsedCols, outerCols)
 	}
 	outer, err := p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(parentUsedCols)
@@ -99,6 +106,7 @@ func (p *Selection) PruneColumnsAndResolveIndices(parentUsedCols []*expression.C
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
 func (p *Aggregation) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
+	child := p.GetChildByIndex(0).(LogicalPlan)
 	used := makeUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -115,18 +123,24 @@ func (p *Aggregation) PruneColumnsAndResolveIndices(parentUsedCols []*expression
 	for _, expr := range p.GroupByItems {
 		cols, outerCols = extractColumn(expr, cols, outerCols)
 	}
-	outer, err := p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(cols)
+	outer, err := child.PruneColumnsAndResolveIndices(cols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	for _, aggrFunc := range p.AggFuncs {
 		for i, arg := range aggrFunc.GetArgs() {
 			var newArg expression.Expression
-			newArg, err = retrieveColumnsInExpression(arg, p.GetChildByIndex(0).GetSchema())
+			newArg, err = retrieveColumnsInExpression(arg, child.GetSchema())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			aggrFunc.SetArgs(i, newArg)
+		}
+	}
+	for i, expr := range p.GroupByItems {
+		p.GroupByItems[i], err = retrieveColumnsInExpression(expr, child.GetSchema())
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	p.schema.InitIndices()

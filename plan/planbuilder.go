@@ -63,7 +63,7 @@ type planBuilder struct {
 	is           infoschema.InfoSchema
 	outerSchemas []expression.Schema
 	// colMapper stores the column that must be pre-resolved.
-	colMapper map[*ast.ColumnNameExpr]expression.Expression
+	colMapper map[*ast.ColumnNameExpr]int
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {

@@ -96,7 +96,8 @@ func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (LogicalPlan
 		er.err = errors.Trace(er.b.err)
 		return nil, nil
 	}
-	_, err := np.PredicatePushDown(nil)
+	var err error
+	_, np, err = np.PredicatePushDown(nil)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return np, outerSchema
@@ -120,8 +121,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		er.ctxStack = append(er.ctxStack, er.schema[index])
 		return inNode, true
 	case *ast.ColumnNameExpr:
-		if col, ok := er.b.colMapper[v]; ok {
-			er.ctxStack = append(er.ctxStack, col)
+		if index, ok := er.b.colMapper[v]; ok {
+			er.ctxStack = append(er.ctxStack, er.schema[index])
 			return inNode, true
 		}
 	case *ast.CompareSubqueryExpr:
@@ -341,7 +342,20 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			er.err = errors.New("Operand should contain 1 column(s)")
 			return retNode, false
 		}
-		function := expression.NewFunction(opcode.Ops[v.Op], v.Type, er.ctxStack[stkLen-1])
+		var op string
+		switch v.Op {
+		case opcode.Plus:
+			op = ast.UnaryPlus
+		case opcode.Minus:
+			op = ast.UnaryMinus
+		case opcode.BitNeg:
+			op = ast.BitNeg
+		case opcode.Not:
+			op = ast.UnaryNot
+		default:
+			er.err = errors.Errorf("Unknown Unary Op %T", v.Op)
+		}
+		function := expression.NewFunction(op, v.Type, er.ctxStack[stkLen-1])
 		er.ctxStack = er.ctxStack[:stkLen-1]
 		er.ctxStack = append(er.ctxStack, function)
 	case *ast.PositionExpr:

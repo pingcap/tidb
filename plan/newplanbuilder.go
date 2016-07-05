@@ -267,7 +267,14 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 			colName = c.ColName
 			tblName = c.TblName
 		} else {
-			colName = model.NewCIStr(field.Text())
+			// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
+			if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
+				if col, ok := agg.Args[0].(*ast.ColumnNameExpr); ok {
+					colName = col.Name.Name
+				}
+			} else {
+				colName = model.NewCIStr(field.Text())
+			}
 		}
 		schemaCol := &expression.Column{
 			FromID:  proj.id,
@@ -391,146 +398,202 @@ func (b *planBuilder) buildNewLimit(src LogicalPlan, limit *ast.Limit) LogicalPl
 	return li
 }
 
-func (b *planBuilder) extractAggFunc(sel *ast.SelectStmt) (
-	[]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int,
+func colMatch(a *ast.ColumnName, b *ast.ColumnName) bool {
+	if a.Schema.L == "" || a.Schema.L == b.Schema.L {
+		if a.Table.L == "" || a.Table.L == b.Table.L {
+			return a.Name.L == b.Name.L
+		}
+	}
+	return false
+}
+
+func matchField(f *ast.SelectField, col *ast.ColumnNameExpr) bool {
+	// if col specify a table name, resolve from table source directly.
+	if col.Name.Table.L == "" {
+		if f.AsName.L == "" {
+			if curCol, isCol := f.Expr.(*ast.ColumnNameExpr); isCol {
+				return curCol.Name.Name.L == col.Name.Name.L
+			}
+			// a expression without as name can't be matched.
+			return false
+		}
+		return f.AsName.L == col.Name.Name.L
+	}
+	return false
+}
+
+func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField) (index int, err error) {
+	var matchedExpr ast.ExprNode
+	index = -1
+	for i, field := range fields {
+		if matchField(field, v) {
+			curCol, isCol := field.Expr.(*ast.ColumnNameExpr)
+			if !isCol {
+				return i, nil
+			}
+			if matchedExpr == nil {
+				matchedExpr = curCol
+				index = i
+			} else if !colMatch(matchedExpr.(*ast.ColumnNameExpr).Name, curCol.Name) {
+				return -1, errors.Errorf("Column '%s' in field list is ambiguous", curCol.Name.Name.L)
+			}
+		}
+	}
+	return
+}
+
+// AggregateFuncExtractor visits Expr tree.
+// It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
+type AggregateFuncExtractor struct {
+	inAggFunc    bool
+	inExpr       bool
+	orderBy      bool
+	err          error
+	p            LogicalPlan
+	selectFields []*ast.SelectField
+	aggMapper    map[*ast.AggregateFuncExpr]int
+	colMapper    map[*ast.ColumnNameExpr]int
+}
+
+// Enter implements Visitor interface.
+func (a *AggregateFuncExtractor) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
+	switch n.(type) {
+	case *ast.AggregateFuncExpr:
+		a.inAggFunc = true
+	case *ast.ParamMarkerExpr, *ast.ColumnNameExpr, *ast.ColumnName:
+	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
+		// Enter a new context, skip it.
+		// For example: select sum(c) + c + exists(select c from t) from t;
+		return n, true
+	default:
+		a.inExpr = true
+	}
+	return n, false
+}
+
+func (a *AggregateFuncExtractor) resolveFromSchema(v *ast.ColumnNameExpr, schema expression.Schema) (int, error) {
+	col, err := schema.FindColumn(v.Name)
+	if err != nil {
+		return -1, errors.Trace(err)
+	}
+	if col == nil {
+		return -1, nil
+	}
+	newColName := &ast.ColumnName{
+		Schema: col.DBName,
+		Table:  col.TblName,
+		Name:   col.ColName,
+	}
+	for i, field := range a.selectFields {
+		if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && colMatch(newColName, c.Name) {
+			return i, nil
+		}
+	}
+	a.selectFields = append(a.selectFields, &ast.SelectField{
+		Expr:      &ast.ColumnNameExpr{Name: newColName},
+		Auxiliary: true,
+	})
+	return len(a.selectFields) - 1, nil
+}
+
+// Leave implements Visitor interface.
+func (a *AggregateFuncExtractor) Leave(n ast.Node) (node ast.Node, ok bool) {
+	switch v := n.(type) {
+	case *ast.AggregateFuncExpr:
+		a.inAggFunc = false
+		a.aggMapper[v] = len(a.selectFields)
+		a.selectFields = append(a.selectFields, &ast.SelectField{
+			Auxiliary: true,
+			Expr:      v,
+			AsName:    model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(a.selectFields))),
+		})
+	case *ast.ColumnNameExpr:
+		resolveFieldsFirst := true
+		if a.inAggFunc || (a.orderBy && a.inExpr) {
+			resolveFieldsFirst = false
+		}
+		index := -1
+		if resolveFieldsFirst {
+			index, a.err = resolveFromSelectFields(v, a.selectFields)
+			if a.err != nil {
+				return node, false
+			}
+			if index == -1 {
+				index, a.err = a.resolveFromSchema(v, a.p.GetSchema())
+			}
+		} else {
+			index, a.err = a.resolveFromSchema(v, a.p.GetSchema())
+			if a.err != nil {
+				return node, false
+			}
+			if index == -1 {
+				index, a.err = resolveFromSelectFields(v, a.selectFields)
+			}
+		}
+		if a.err != nil {
+			return node, false
+		}
+		if index == -1 {
+			a.err = errors.Errorf("Unknown Column %s", v.Name.Name.L)
+			return node, false
+		}
+		if a.inAggFunc {
+			return a.selectFields[index].Expr, true
+		}
+		a.colMapper[v] = index
+	}
+	return n, true
+}
+
+func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan) (
 	map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int) {
-	extractor := &ast.AggregateFuncExtractor{AggFuncs: make([]*ast.AggregateFuncExpr, 0)}
+	extractor := &AggregateFuncExtractor{
+		p:            p,
+		selectFields: sel.Fields.Fields,
+		aggMapper:    make(map[*ast.AggregateFuncExpr]int),
+		colMapper:    b.colMapper,
+	}
 	// Extract agg funcs from having clause.
 	if sel.Having != nil {
 		n, ok := sel.Having.Expr.Accept(extractor)
 		if !ok {
-			b.err = errors.New("Failed to extract agg expr from having clause")
-			return nil, nil, nil, nil
+			b.err = errors.Trace(extractor.err)
+			return nil, nil
 		}
 		sel.Having.Expr = n.(ast.ExprNode)
 	}
-	havingAggFuncs := extractor.AggFuncs
-	extractor.AggFuncs = make([]*ast.AggregateFuncExpr, 0)
-	havingMapper := make(map[*ast.AggregateFuncExpr]int)
-	for _, agg := range havingAggFuncs {
-		havingMapper[agg] = len(sel.Fields.Fields)
-		field := &ast.SelectField{Expr: agg,
-			AsName:    model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields))),
-			Auxiliary: true}
-		sel.Fields.Fields = append(sel.Fields.Fields, field)
-	}
-
+	havingAggMapper := extractor.aggMapper
+	extractor.aggMapper = make(map[*ast.AggregateFuncExpr]int)
+	extractor.orderBy = true
 	// Extract agg funcs from order by clause.
 	if sel.OrderBy != nil {
 		for _, item := range sel.OrderBy.Items {
-			_, ok := item.Expr.Accept(extractor)
+			n, ok := item.Expr.Accept(extractor)
 			if !ok {
-				b.err = errors.New("Failed to extract agg expr from orderby clause")
-				return nil, nil, nil, nil
+				b.err = errors.Trace(extractor.err)
+				return nil, nil
 			}
+			item.Expr = n.(ast.ExprNode)
 		}
 	}
-	orderByAggFuncs := extractor.AggFuncs
-	extractor.AggFuncs = make([]*ast.AggregateFuncExpr, 0)
-	orderByMapper := make(map[*ast.AggregateFuncExpr]int)
-	for _, agg := range orderByAggFuncs {
-		orderByMapper[agg] = len(sel.Fields.Fields)
-		field := &ast.SelectField{Expr: agg,
-			AsName:    model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(sel.Fields.Fields))),
-			Auxiliary: true}
-		sel.Fields.Fields = append(sel.Fields.Fields, field)
-	}
+	sel.Fields.Fields = extractor.selectFields
+	return havingAggMapper, extractor.aggMapper
+}
 
-	for i, f := range sel.Fields.Fields {
-		n, ok := f.Expr.Accept(extractor)
-		if !ok {
-			b.err = errors.New("Failed to extract agg expr!")
-			return nil, nil, nil, nil
-		}
+func (b *planBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
+	extractor := &ast.AggregateFuncExtractor{}
+	for _, f := range fields {
+		n, _ := f.Expr.Accept(extractor)
 		expr, _ := n.(ast.ExprNode)
-		sel.Fields.Fields[i].Expr = expr
+		f.Expr = expr
 	}
 	aggList := extractor.AggFuncs
-	aggList = append(aggList, havingAggFuncs...)
-	aggList = append(aggList, orderByAggFuncs...)
 	totalAggMapper := make(map[*ast.AggregateFuncExpr]int)
 
 	for i, agg := range aggList {
 		totalAggMapper[agg] = i
 	}
-	return aggList, havingMapper, orderByMapper, totalAggMapper
-}
-
-// havingAndOrderbyResolver resolves having/orderby's ast expression to expression.Expression
-type havingAndOrderbyResolver struct {
-	proj    *Projection
-	inExpr  bool
-	orderBy bool
-	err     error
-	mapper  map[*ast.ColumnNameExpr]expression.Expression
-}
-
-func (e *havingAndOrderbyResolver) addProjectionExpr(v *ast.ColumnNameExpr, projCol *expression.Column) {
-	// Avoid to append same column repeatly.
-	for i, expr := range e.proj.Exprs {
-		if expr == projCol {
-			e.mapper[v] = e.proj.schema[i]
-			return
-		}
-	}
-	e.proj.Exprs = append(e.proj.Exprs, projCol)
-	schemaCols, _ := projCol.DeepCopy().(*expression.Column)
-	e.mapper[v] = schemaCols
-	e.proj.schema = append(e.proj.schema, schemaCols)
-}
-
-func (e *havingAndOrderbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
-	switch v := inNode.(type) {
-	case *ast.ValueExpr, *ast.ColumnName, *ast.ParenthesesExpr:
-	case *ast.ColumnNameExpr:
-		var first, second expression.Schema
-		var col *expression.Column
-		fromSchema := e.proj.GetChildByIndex(0).GetSchema()
-		fromSchemaFirst := e.orderBy && e.inExpr
-		if fromSchemaFirst {
-			first, second = fromSchema, e.proj.GetSchema()
-			col, e.err = first.FindColumn(v.Name)
-		} else {
-			first, second = e.proj.GetSchema(), fromSchema
-			col, e.err = first.FindSelectFieldColumn(v.Name, e.proj.Exprs)
-		}
-		if e.err != nil {
-			return inNode, true
-		}
-		if col == nil {
-			if fromSchemaFirst {
-				col, e.err = second.FindSelectFieldColumn(v.Name, e.proj.Exprs)
-			} else {
-				col, e.err = second.FindColumn(v.Name)
-			}
-
-			if e.err != nil {
-				return inNode, true
-			}
-			if col == nil {
-				e.err = errors.Errorf("Can't find Column %s", v.Name.Name)
-				return inNode, true
-			}
-			if !fromSchemaFirst {
-				e.addProjectionExpr(v, col)
-			} else {
-				e.mapper[v] = col
-			}
-		} else if fromSchemaFirst {
-			e.addProjectionExpr(v, col)
-		} else {
-			e.mapper[v] = col
-		}
-	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
-		return inNode, true
-	default:
-		e.inExpr = true
-	}
-	return inNode, false
-}
-
-func (e *havingAndOrderbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
-	return inNode, true
+	return aggList, totalAggMapper
 }
 
 // gbyResolver resolves group by items from select fields.
@@ -552,57 +615,22 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
-func (g *gbyResolver) match(a *ast.ColumnName, b *ast.ColumnName) bool {
-	if a.Schema.L == "" || a.Schema.L == b.Schema.L {
-		if a.Table.L == "" || a.Table.L == b.Table.L {
-			return a.Name.L == b.Name.L
-		}
-	}
-	return false
-}
-
-func (g *gbyResolver) matchField(f *ast.SelectField, col *ast.ColumnNameExpr) bool {
-	// if col specify a table name, resolve from table source directly.
-	if col.Name.Table.L == "" {
-		if f.AsName.L == "" {
-			if curCol, isCol := f.Expr.(*ast.ColumnNameExpr); isCol {
-				return curCol.Name.Name.L == col.Name.Name.L
-			}
-			// a expression without as name can't be matched.
-			return false
-		}
-		return f.AsName.L == col.Name.Name.L
-	}
-	return false
-}
-
 func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
 		if col, err := g.schema.FindColumn(v.Name); err != nil {
 			g.err = errors.Trace(err)
 		} else if col == nil || !g.inExpr {
-			var matchedCol ast.ExprNode
-			for _, field := range g.fields {
-				if g.matchField(field, v) {
-					curCol, isCol := field.Expr.(*ast.ColumnNameExpr)
-					if !isCol {
-						matchedCol = field.Expr
-						break
-					}
-					if matchedCol == nil {
-						matchedCol = curCol
-					} else if g.match(matchedCol.(*ast.ColumnNameExpr).Name, curCol.Name) {
-						g.err = errors.Errorf("Column '%s' in field list is ambiguous", curCol.Name.Name.L)
-						return inNode, false
-					}
-				}
+			var index = -1
+			index, g.err = resolveFromSelectFields(v, g.fields)
+			if g.err != nil {
+				return inNode, false
 			}
-			if matchedCol != nil {
-				if col != nil {
-					return inNode, true
-				}
-				return matchedCol, true
+			if col != nil {
+				return inNode, true
+			}
+			if index != -1 {
+				return g.fields[index].Expr, true
 			}
 			return inNode, false
 		}
@@ -650,13 +678,16 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		for _, col := range p.GetSchema() {
 			if (dbName.L == "" || dbName.L == col.DBName.L) &&
 				(tblName.L == "" || tblName.L == col.TblName.L) {
-				resultList = append(resultList, &ast.SelectField{
-					Expr: &ast.ColumnNameExpr{
-						Name: &ast.ColumnName{
-							Schema: col.DBName,
-							Table:  col.TblName,
-							Name:   col.ColName,
-						}}})
+				colName := &ast.ColumnNameExpr{
+					Name: &ast.ColumnName{
+						Schema: col.DBName,
+						Table:  col.TblName,
+						Name:   col.ColName,
+					}}
+				colName.SetType(col.GetType())
+				field := &ast.SelectField{Expr: colName}
+				field.SetText(col.ColName.O)
+				resultList = append(resultList, field)
 			}
 		}
 	}
@@ -693,14 +724,16 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 		b.err = errors.New("SelectLocal have not been supported!")
 		return nil
 	}
-	if hasAgg {
-		if sel.GroupBy != nil {
-			p, correlated, gbyCols = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
-			if b.err != nil {
-				return nil
-			}
+	if sel.GroupBy != nil {
+		p, correlated, gbyCols = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
+		if b.err != nil {
+			return nil
 		}
-		aggFuncs, havingMap, orderMap, totalMap = b.extractAggFunc(sel)
+	}
+
+	havingMap, orderMap = b.resolveHavingAndOrderBy(sel, p)
+	if hasAgg {
+		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
 		if b.err != nil {
 			return nil
 		}
@@ -713,25 +746,6 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 	p, oldLen = b.buildProjection(p, sel.Fields.Fields, totalMap)
 	if b.err != nil {
 		return nil
-	}
-	resolver := &havingAndOrderbyResolver{proj: p.(*Projection), mapper: b.colMapper}
-	if sel.Having != nil && !hasAgg {
-		sel.Having.Expr.Accept(resolver)
-		if resolver.err != nil {
-			b.err = errors.Trace(resolver.err)
-			return nil
-		}
-	}
-	resolver.orderBy = true
-	if sel.OrderBy != nil && !hasAgg {
-		for _, item := range sel.OrderBy.Items {
-			resolver.inExpr = false
-			item.Expr.Accept(resolver)
-			if resolver.err != nil {
-				b.err = errors.Trace(resolver.err)
-				return nil
-			}
-		}
 	}
 	if sel.Having != nil {
 		p = b.buildSelection(p, sel.Having.Expr, havingMap)

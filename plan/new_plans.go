@@ -159,8 +159,14 @@ func InsertPlan(parent Plan, child Plan, insert Plan) error {
 func RemovePlan(p Plan) error {
 	parents := p.GetParents()
 	children := p.GetChildren()
-	if len(parents) != 1 || len(children) != 1 {
+	if len(parents) > 1 || len(children) != 1 {
 		return SystemInternalErrorType.Gen("can't remove this plan")
+	}
+	if len(parents) == 0 {
+		child := children[0]
+		pars := child.GetParents()
+		pars = pars[:0]
+		return nil
 	}
 	parent, child := parents[0], children[0]
 	err := parent.ReplaceChild(p, child)

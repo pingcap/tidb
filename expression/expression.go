@@ -124,6 +124,16 @@ func (col *Column) DeepCopy() Expression {
 // Schema stands for the row schema get from input.
 type Schema []*Column
 
+// ToString output the contents of schema, for debug.
+func (s Schema) ToString() string {
+	str := "["
+	for _, col := range s {
+		str += col.ToString() + ", "
+	}
+	str += "]"
+	return str
+}
+
 // DeepCopy copies the total schema.
 func (s Schema) DeepCopy() Schema {
 	result := make(Schema, 0, len(s))
@@ -147,29 +157,6 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 				idx = i
 			} else {
 				return nil, errors.Errorf("Column %s is ambiguous", col.ToString())
-			}
-		}
-	}
-	if idx == -1 {
-		return nil, nil
-	}
-	return s[idx], nil
-}
-
-// FindSelectFieldColumn finds a column from select fields.
-func (s Schema) FindSelectFieldColumn(astCol *ast.ColumnName, selectFields []Expression) (*Column, error) {
-	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
-	idx := -1
-	for i, col := range s {
-		if (dbName.L == "" || dbName.L == col.DBName.L) &&
-			(tblName.L == "" || tblName.L == col.TblName.L) &&
-			(colName.L == col.ColName.L) {
-			if expr, ok := selectFields[i].(*Column); !ok {
-				return s[i], nil
-			} else if idx == -1 {
-				idx = i
-			} else if !expr.Equal(selectFields[idx]) {
-				return nil, errors.Errorf("Column %s is ambiguous", s[i].ToString())
 			}
 		}
 	}
