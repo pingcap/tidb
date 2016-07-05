@@ -50,6 +50,10 @@ func (s *testTErrorSuite) TestTError(c *C) {
 	c.Assert(optimizerErr.Equal(optimizerErr.Gen("def")), IsTrue)
 	c.Assert(optimizerErr.Equal(nil), IsFalse)
 	c.Assert(optimizerErr.Equal(errors.New("abc")), IsFalse)
+
+	// Test case for FastGen.
+	c.Assert(optimizerErr.Equal(optimizerErr.FastGen("def")), IsTrue)
+	c.Assert(optimizerErr.Equal(optimizerErr.FastGen("def: %s", "def")), IsTrue)
 }
 
 var predefinedErr = ClassExecutor.New(ErrCode(123), "predefiend error")
