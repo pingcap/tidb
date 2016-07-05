@@ -118,7 +118,7 @@ func (c *index) Meta() *model.IndexInfo {
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
 func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, distinct bool, err error) {
 	if c.idxInfo.Unique {
-		// See: https://dev.mysql.com/doc/refman/5.7/en/create-index.html
+		// See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 		// A UNIQUE index creates a constraint such that all values in the index must be distinct.
 		// An error occurs if you try to add a new row with a key value that matches an existing row.
 		// For all engines, a UNIQUE index permits multiple NULL values for columns that can contain NULL.

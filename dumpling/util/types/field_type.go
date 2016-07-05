@@ -183,7 +183,7 @@ func DefaultCharsetForType(tp byte) (string, string) {
 // This is used in hybrid field type expression.
 // For example "select case c when 1 then 2 when 2 then 'tidb' from t;"
 // The resule field type of the case expression is the merged type of the two when clause.
-// See: https://github.com/mysql/mysql-server/blob/5.7/sql/field.cc#L1042
+// See https://github.com/mysql/mysql-server/blob/5.7/sql/field.cc#L1042
 func MergeFieldType(a byte, b byte) byte {
 	ia := getFieldTypeIndex(a)
 	ib := getFieldTypeIndex(b)

@@ -710,7 +710,7 @@ Start:
 	}
 
 /**************************************AlterTableStmt***************************************
- * See: https://dev.mysql.com/doc/refman/5.7/en/alter-table.html
+ * See https://dev.mysql.com/doc/refman/5.7/en/alter-table.html
  *******************************************************************************************/
 AlterTableStmt:
 	"ALTER" IgnoreOptional "TABLE" TableName AlterTableSpecList
@@ -936,7 +936,7 @@ ColumnOption:
 	{
 		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY 
 		// can also be specified as just KEY when given in a column definition. 
-		// See: http://dev.mysql.com/doc/refman/5.7/en/create-table.html
+		// See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey}
 	}
 |	"UNIQUE" %prec lowerThanKey
@@ -962,7 +962,7 @@ ColumnOption:
 	}
 |	"CHECK" '(' Expression ')'
 	{
-		// See: https://dev.mysql.com/doc/refman/5.7/en/create-table.html
+		// See https://dev.mysql.com/doc/refman/5.7/en/create-table.html
 		// The CHECK clause is parsed but ignored by all storage engines.
 		$$ = &ast.ColumnOption{}
 	}
@@ -1179,7 +1179,7 @@ ReferOpt:
  * a function such as NOW() or CURRENT_DATE. The exception is that you 
  * can specify CURRENT_TIMESTAMP as the default for a TIMESTAMP or DATETIME column.
  *
- * See: http://dev.mysql.com/doc/refman/5.7/en/create-table.html
+ * See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
  *      https://github.com/mysql/mysql-server/blob/5.7/sql/sql_yacc.yy#L6832
  */
 DefaultValueExpr:
@@ -1378,7 +1378,7 @@ DefaultKwdOpt:
 
 /******************************************************************
  * Do statement
- * See: https://dev.mysql.com/doc/refman/5.7/en/do.html
+ * See https://dev.mysql.com/doc/refman/5.7/en/do.html
  ******************************************************************/
 DoStmt:
 	"DO" ExpressionList
@@ -2072,7 +2072,7 @@ ColumnSetValueList:
 
 /* 
  * ON DUPLICATE KEY UPDATE col_name=expr [, col_name=expr] ... 
- * See: https://dev.mysql.com/doc/refman/5.7/en/insert-on-duplicate.html
+ * See https://dev.mysql.com/doc/refman/5.7/en/insert-on-duplicate.html
  */ 
 OnDuplicateKeyUpdate:
 	{
@@ -2087,7 +2087,7 @@ OnDuplicateKeyUpdate:
 
 /************************************************************************************
  *  Replace Statements
- *  See: https://dev.mysql.com/doc/refman/5.7/en/replace.html
+ *  See https://dev.mysql.com/doc/refman/5.7/en/replace.html
  *
  *  TODO: support PARTITION
  **********************************************************************************/
@@ -2140,7 +2140,7 @@ Literal:
 	}
 |	"UNDERSCORE_CHARSET" stringLit
 	{
-		// See: https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
+		// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
 		tp := types.NewFieldType(mysql.TypeString)
 		tp.Charset = $1.(string)
 		co, err := charset.GetDefaultCollation(tp.Charset)
@@ -2285,7 +2285,7 @@ PrimaryExpression:
 	}
 |	"BINARY" PrimaryExpression %prec neg
 	{
-		// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#operator_binary
+		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#operator_binary
 		x := types.NewFieldType(mysql.TypeString)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
@@ -2317,7 +2317,7 @@ FunctionCallConflict:
 	}
 |	"CURRENT_USER"
 	{
-		// See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
+		// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}
 |	"CURRENT_DATE"
@@ -2353,7 +2353,7 @@ DistinctOpt:
 FunctionCallKeyword:
 	"CAST" '(' Expression "AS" CastType ')'
 	{
-		/* See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
+		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
 		$$ = &ast.FuncCastExpr{
 			Expr: $3.(ast.ExprNode), 
 			Tp: $5.(*types.FieldType),
@@ -2373,7 +2373,7 @@ FunctionCallKeyword:
 	}
 |	"CONVERT" '(' Expression "USING" StringName ')' 
 	{
-		// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
+		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 		charset := ast.NewValueExpr($5)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1.(string)),
@@ -2382,7 +2382,7 @@ FunctionCallKeyword:
 	}
 |	"CONVERT" '(' Expression ',' CastType ')'
 	{
-		// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
+		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 		$$ = &ast.FuncCastExpr{
 			Expr: $3.(ast.ExprNode), 
 			Tp: $5.(*types.FieldType),
@@ -3065,7 +3065,7 @@ QuickOptional:
 	}
 
 /***************************Prepared Statement Start******************************
- * See: https://dev.mysql.com/doc/refman/5.7/en/prepare.html
+ * See https://dev.mysql.com/doc/refman/5.7/en/prepare.html
  * Example:
  * PREPARE stmt_name FROM 'SELECT SQRT(POW(?,2) + POW(?,2)) AS hypotenuse';
  * OR
@@ -3097,7 +3097,7 @@ PrepareSQL:
 
 
 /*
- * See: https://dev.mysql.com/doc/refman/5.7/en/execute.html
+ * See https://dev.mysql.com/doc/refman/5.7/en/execute.html
  * Example:
  * EXECUTE stmt1 USING @a, @b;
  * OR
@@ -3127,7 +3127,7 @@ UserVariableList:
 	}
 
 /*
- * See: https://dev.mysql.com/doc/refman/5.0/en/deallocate-prepare.html
+ * See https://dev.mysql.com/doc/refman/5.0/en/deallocate-prepare.html
  */
 
 DeallocateStmt:
@@ -3531,7 +3531,7 @@ SelectStmtGroup:
 	}
 |	GroupByClause
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/subqueries.html
+// See https://dev.mysql.com/doc/refman/5.7/en/subqueries.html
 SubSelect:
 	'(' SelectStmt ')'
 	{
@@ -3553,7 +3553,7 @@ SubSelect:
 		$$ = &ast.SubqueryExpr{Query: s}
 	}
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
+// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 SelectLockOpt:
 	/* empty */
 	{
@@ -3568,7 +3568,7 @@ SelectLockOpt:
 		$$ = ast.SelectLockInShareMode
 	}
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/union.html
+// See https://dev.mysql.com/doc/refman/5.7/en/union.html
 UnionStmt:
 	UnionClauseList "UNION" UnionOpt SelectStmt
 	{
@@ -3847,12 +3847,12 @@ ShowStmt:
 	}
 |	"SHOW" "GRANTS"
 	{
-		// See: https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
+		// See https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
 		$$ = &ast.ShowStmt{Tp: ast.ShowGrants}
 	}
 |	"SHOW" "GRANTS" "FOR" Username
 	{
-		// See: https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
+		// See https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
 		$$ = &ast.ShowStmt{
 			Tp:	ast.ShowGrants,
 			User:	$4.(string),
@@ -4711,7 +4711,7 @@ StringName:
 
 /***********************************************************************************
  * Update Statement
- * See: https://dev.mysql.com/doc/refman/5.7/en/update.html
+ * See https://dev.mysql.com/doc/refman/5.7/en/update.html
  ***********************************************************************************/
 UpdateStmt:
 	"UPDATE" LowPriorityOptional IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
@@ -4795,7 +4795,7 @@ CommaOpt:
 CreateUserStmt:
 	"CREATE" "USER" IfNotExists UserSpecList
 	{
- 		// See: https://dev.mysql.com/doc/refman/5.7/en/create-user.html
+ 		// See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 		$$ = &ast.CreateUserStmt{
 			IfNotExists: $3.(bool),
 			Specs: $4.([]*ast.UserSpec),
@@ -4847,7 +4847,7 @@ HashString:
 
 /*************************************************************************************
  * Grant statement
- * See: https://dev.mysql.com/doc/refman/5.7/en/grant.html
+ * See https://dev.mysql.com/doc/refman/5.7/en/grant.html
  *************************************************************************************/
 GrantStmt:
 	 "GRANT" PrivElemList "ON" ObjectType PrivLevel "TO" UserSpecList
@@ -4986,7 +4986,7 @@ PrivLevel:
 
 /*********************************************************************
  * Lock/Unlock Tables
- * See: http://dev.mysql.com/doc/refman/5.7/en/lock-tables.html
+ * See http://dev.mysql.com/doc/refman/5.7/en/lock-tables.html
  * All the statement leaves empty. This is used to prevent mysqldump error.
  *********************************************************************/
 

@@ -280,9 +280,9 @@ func (n *SubqueryExpr) GetResultFields() []*ResultField {
 }
 
 // CompareSubqueryExpr is the expression for "expr cmp (select ...)".
-// See: https://dev.mysql.com/doc/refman/5.7/en/comparisons-using-subqueries.html
-// See: https://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
-// See: https://dev.mysql.com/doc/refman/5.7/en/all-subqueries.html
+// See https://dev.mysql.com/doc/refman/5.7/en/comparisons-using-subqueries.html
+// See https://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
+// See https://dev.mysql.com/doc/refman/5.7/en/all-subqueries.html
 type CompareSubqueryExpr struct {
 	exprNode
 	// L is the left expression
@@ -385,7 +385,7 @@ func (n *DefaultExpr) Accept(v Visitor) (Node, bool) {
 }
 
 // ExistsSubqueryExpr is the expression for "exists (select ...)".
-// See: https://dev.mysql.com/doc/refman/5.7/en/exists-and-not-exists-subqueries.html
+// See https://dev.mysql.com/doc/refman/5.7/en/exists-and-not-exists-subqueries.html
 type ExistsSubqueryExpr struct {
 	exprNode
 	// Sel is the subquery, may be rewritten to other type of expression.

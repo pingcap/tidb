@@ -93,7 +93,7 @@ func ParseHex(s string) (Hex, error) {
 }
 
 // ParseHexStr parses hexadecimal literal as string.
-// See: https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
+// See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
 func ParseHexStr(s string) (string, error) {
 	var err error
 	s, err = uniformHexStrLit(s)
