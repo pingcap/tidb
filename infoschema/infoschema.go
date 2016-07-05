@@ -49,6 +49,8 @@ var (
 	ErrDatabaseExists = terror.ClassSchema.New(codeDatabaseExists, "database already exists")
 	// ErrTableExists returns for table already exists.
 	ErrTableExists = terror.ClassSchema.New(codeTableExists, "table already exists")
+	// ErrTooLongIdent returns for table already name too long.
+	ErrTooLongIdent = terror.ClassSchema.New(codeTooLongIdent, "table name too long")
 	// ErrTableDropExists returns for dropping a non-existent table.
 	ErrTableDropExists = terror.ClassSchema.New(codeBadTable, "unknown table")
 	// ErrColumnExists returns for column already exists.
@@ -512,6 +514,7 @@ const (
 	codeBadTable       = 1051
 	codeColumnExists   = 1060
 	codeIndexExists    = 1831
+	codeTooLongIdent   = 1059
 )
 
 func init() {
@@ -527,6 +530,7 @@ func init() {
 		codeBadTable:            mysql.ErrBadTable,
 		codeColumnExists:        mysql.ErrDupFieldName,
 		codeIndexExists:         mysql.ErrDupIndex,
+		codeTooLongIdent:        mysql.ErrTooLongIdent,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 }
