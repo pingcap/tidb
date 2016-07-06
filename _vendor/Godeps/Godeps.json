@@ -46,6 +46,18 @@
 			"Rev": "234c30c061a9bf03d4378dd37aad25922c85d62b"
 		},
 		{
+			"ImportPath": "github.com/gengo/grpc-gateway/runtime",
+			"Rev": "04d03d2c0176f9060cc3da4945a71abc759648bc"
+		},
+		{
+			"ImportPath": "github.com/gengo/grpc-gateway/runtime/internal",
+			"Rev": "04d03d2c0176f9060cc3da4945a71abc759648bc"
+		},
+		{
+			"ImportPath": "github.com/gengo/grpc-gateway/utilities",
+			"Rev": "04d03d2c0176f9060cc3da4945a71abc759648bc"
+		},
+		{
 			"ImportPath": "github.com/ghodss/yaml",
 			"Rev": "1a6f069841556a7bcaff4a397ca6e8328d266c2f"
 		},
@@ -61,7 +73,7 @@
 		},
 		{
 			"ImportPath": "github.com/golang/protobuf/proto",
-			"Rev": "7cc19b78d562895b13596ddce7aafb59dd789318"
+			"Rev": "3852dcfda249c2097355a6aabb199a28d97b30df"
 		},
 		{
 			"ImportPath": "github.com/golang/snappy",
