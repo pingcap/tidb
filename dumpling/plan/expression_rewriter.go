@@ -96,7 +96,8 @@ func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (LogicalPlan
 		er.err = errors.Trace(er.b.err)
 		return nil, nil
 	}
-	_, err := np.PredicatePushDown(nil)
+	var err error
+	_, np, err = np.PredicatePushDown(nil)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return np, outerSchema
@@ -120,8 +121,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		er.ctxStack = append(er.ctxStack, er.schema[index])
 		return inNode, true
 	case *ast.ColumnNameExpr:
-		if col, ok := er.b.colMapper[v]; ok {
-			er.ctxStack = append(er.ctxStack, col)
+		if index, ok := er.b.colMapper[v]; ok {
+			er.ctxStack = append(er.ctxStack, er.schema[index])
 			return inNode, true
 		}
 	case *ast.CompareSubqueryExpr:
@@ -480,15 +481,22 @@ func (er *expressionRewriter) unaryOpToScalarFunc(v *ast.UnaryOperationExpr) {
 	stkLen := len(er.ctxStack)
 	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
 		er.err = errors.New("Operand should contain 1 column(s)")
+	}
+	var op string
+	switch v.Op {
+	case opcode.Plus:
+		op = ast.UnaryPlus
+	case opcode.Minus:
+		op = ast.UnaryMinus
+	case opcode.BitNeg:
+		op = ast.BitNeg
+	case opcode.Not:
+		op = ast.UnaryNot
+	default:
+		er.err = errors.Errorf("Unknown Unary Op %T", v.Op)
 		return
 	}
-	function, err := expression.NewFunction(opcode.Ops[v.Op], v.Type, er.ctxStack[stkLen-1])
-	if err != nil {
-		er.err = errors.Trace(err)
-		return
-	}
-	er.ctxStack = er.ctxStack[:stkLen-1]
-	er.ctxStack = append(er.ctxStack, function)
+	er.ctxStack[stkLen-1], er.err = expression.NewFunction(op, v.Type, er.ctxStack[stkLen-1])
 }
 
 func (er *expressionRewriter) binaryOpToScalarFunc(v *ast.BinaryOperationExpr) {
@@ -621,13 +629,13 @@ func (er *expressionRewriter) betweenToScalarFunc(v *ast.BetweenExpr) {
 	if v.Not {
 		l, er.err = expression.NewFunction(ast.LT, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
 		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.GT, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-1])
+			r, er.err = expression.NewFunction(ast.GT, v.Type, er.ctxStack[stkLen-3].DeepCopy(), er.ctxStack[stkLen-1])
 		}
 		op = ast.OrOr
 	} else {
 		l, er.err = expression.NewFunction(ast.GE, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
 		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.LE, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-1])
+			r, er.err = expression.NewFunction(ast.LE, v.Type, er.ctxStack[stkLen-3].DeepCopy(), er.ctxStack[stkLen-1])
 		}
 		op = ast.AndAnd
 	}
@@ -645,22 +653,10 @@ func (er *expressionRewriter) betweenToScalarFunc(v *ast.BetweenExpr) {
 }
 
 func (er *expressionRewriter) funcCallToScalarFunc(v *ast.FuncCallExpr) {
-	l := len(er.ctxStack)
-	function := &expression.ScalarFunction{FuncName: v.FnName}
-	function.Args = er.ctxStack[l-len(v.Args):]
-	f, ok := evaluator.Funcs[v.FnName.L]
-	if !ok {
-		er.err = errors.Errorf("Can't find %v function!", v.FnName.L)
-		return
-	}
-	if len(function.Args) < f.MinArgs || (f.MaxArgs != -1 && len(function.Args) > f.MaxArgs) {
-		er.err = evaluator.ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].",
-			f.MinArgs, f.MaxArgs)
-		return
-	}
-	function.Function = f.F
-	function.RetType = v.Type
-	er.ctxStack = er.ctxStack[:l-len(v.Args)]
+	stackLen := len(er.ctxStack)
+	var function *expression.ScalarFunction
+	function, er.err = expression.NewFunction(v.FnName.L, v.Type, er.ctxStack[stackLen-len(v.Args):]...)
+	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
 	er.ctxStack = append(er.ctxStack, function)
 }
 
