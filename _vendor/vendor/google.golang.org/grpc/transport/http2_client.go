@@ -35,7 +35,6 @@ package transport
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"math"
 	"net"
@@ -89,7 +88,7 @@ type http2Client struct {
 	// The scheme used: https if TLS is on, http otherwise.
 	scheme string
 
-	authCreds []credentials.Credentials
+	creds []credentials.PerRPCCredentials
 
 	mu            sync.Mutex     // guard the following variables
 	state         transportState // the state of underlying connection
@@ -118,19 +117,12 @@ func newHTTP2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err e
 		return nil, ConnectionErrorf("transport: %v", connErr)
 	}
 	var authInfo credentials.AuthInfo
-	for _, c := range opts.AuthOptions {
-		if ccreds, ok := c.(credentials.TransportAuthenticator); ok {
-			scheme = "https"
-			// TODO(zhaoq): Now the first TransportAuthenticator is used if there are
-			// multiple ones provided. Revisit this if it is not appropriate. Probably
-			// place the ClientTransport construction into a separate function to make
-			// things clear.
-			if timeout > 0 {
-				timeout -= time.Since(startT)
-			}
-			conn, authInfo, connErr = ccreds.ClientHandshake(addr, conn, timeout)
-			break
+	if opts.TransportCredentials != nil {
+		scheme = "https"
+		if timeout > 0 {
+			timeout -= time.Since(startT)
 		}
+		conn, authInfo, connErr = opts.TransportCredentials.ClientHandshake(addr, conn, timeout)
 	}
 	if connErr != nil {
 		return nil, ConnectionErrorf("transport: %v", connErr)
@@ -164,7 +156,7 @@ func newHTTP2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err e
 		scheme:          scheme,
 		state:           reachable,
 		activeStreams:   make(map[uint32]*Stream),
-		authCreds:       opts.AuthOptions,
+		creds:           opts.PerRPCCredentials,
 		maxStreams:      math.MaxInt32,
 		streamSendQuota: defaultWindowSize,
 	}
@@ -183,7 +175,10 @@ func newHTTP2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err e
 		return nil, ConnectionErrorf("transport: preface mismatch, wrote %d bytes; want %d", n, len(clientPreface))
 	}
 	if initialWindowSize != defaultWindowSize {
-		err = t.framer.writeSettings(true, http2.Setting{http2.SettingInitialWindowSize, uint32(initialWindowSize)})
+		err = t.framer.writeSettings(true, http2.Setting{
+			ID:  http2.SettingInitialWindowSize,
+			Val: uint32(initialWindowSize),
+		})
 	} else {
 		err = t.framer.writeSettings(true)
 	}
@@ -249,7 +244,7 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 	}
 	ctx = peer.NewContext(ctx, pr)
 	authData := make(map[string]string)
-	for _, c := range t.authCreds {
+	for _, c := range t.creds {
 		// Construct URI required to get auth request metadata.
 		var port string
 		if pos := strings.LastIndex(t.target, ":"); pos != -1 {
@@ -272,6 +267,10 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 		}
 	}
 	t.mu.Lock()
+	if t.activeStreams == nil {
+		t.mu.Unlock()
+		return nil, ErrConnClosing
+	}
 	if t.state != reachable {
 		t.mu.Unlock()
 		return nil, ErrConnClosing
@@ -289,7 +288,10 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 		}
 	}
 	if _, err := wait(ctx, t.shutdownChan, t.writableChan); err != nil {
-		// t.streamsQuota will be updated when t.CloseStream is invoked.
+		// Return the quota back now because there is no stream returned to the caller.
+		if _, ok := err.(StreamError); ok && checkStreamsQuota {
+			t.streamsQuota.add(1)
+		}
 		return nil, err
 	}
 	t.mu.Lock()
@@ -341,6 +343,10 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 	if md, ok := metadata.FromContext(ctx); ok {
 		hasMD = true
 		for k, v := range md {
+			// HTTP doesn't allow you to set pseudoheaders after non pseudoheaders were set.
+			if isReservedHeader(k) {
+				continue
+			}
 			for _, entry := range v {
 				t.hEnc.WriteField(hpack.HeaderField{Name: k, Value: entry})
 			}
@@ -390,8 +396,18 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 func (t *http2Client) CloseStream(s *Stream, err error) {
 	var updateStreams bool
 	t.mu.Lock()
+	if t.activeStreams == nil {
+		t.mu.Unlock()
+		return
+	}
 	if t.streamsQuota != nil {
 		updateStreams = true
+	}
+	if t.state == draining && len(t.activeStreams) == 1 {
+		// The transport is draining and s is the last live stream on t.
+		t.mu.Unlock()
+		t.Close()
+		return
 	}
 	delete(t.activeStreams, s.id)
 	t.mu.Unlock()
@@ -434,7 +450,7 @@ func (t *http2Client) Close() (err error) {
 	}
 	if t.state == closing {
 		t.mu.Unlock()
-		return errors.New("transport: Close() was already called")
+		return
 	}
 	t.state = closing
 	t.mu.Unlock()
@@ -455,6 +471,25 @@ func (t *http2Client) Close() (err error) {
 		s.write(recvMsg{err: ErrConnClosing})
 	}
 	return
+}
+
+func (t *http2Client) GracefulClose() error {
+	t.mu.Lock()
+	if t.state == closing {
+		t.mu.Unlock()
+		return nil
+	}
+	if t.state == draining {
+		t.mu.Unlock()
+		return nil
+	}
+	t.state = draining
+	active := len(t.activeStreams)
+	t.mu.Unlock()
+	if active == 0 {
+		return t.Close()
+	}
+	return nil
 }
 
 // Write formats the data into HTTP2 data frame(s) and sends it out. The caller
@@ -579,6 +614,11 @@ func (t *http2Client) getStream(f http2.Frame) (*Stream, bool) {
 // Window updates will deliver to the controller for sending when
 // the cumulative quota exceeds the corresponding threshold.
 func (t *http2Client) updateWindow(s *Stream, n uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == streamDone {
+		return
+	}
 	if w := t.fc.onRead(n); w > 0 {
 		t.controlBuf.put(&windowUpdate{0, w})
 	}
