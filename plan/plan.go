@@ -94,8 +94,10 @@ type Plan interface {
 	GetID() string
 	// Check weather this plan is correlated or not.
 	IsCorrelated() bool
-	// Remove all the parents, which used by ppd.
-	RemoveAllParents()
+	// SetParents set parents for plan.
+	SetParents([]Plan)
+	// SetParents set children for plan.
+	SetChildren([]Plan)
 }
 
 // LogicalPlan is a tree of logical operators.
@@ -289,6 +291,11 @@ func (p *basePlan) GetChildren() []Plan {
 }
 
 // RemoveAllParents implements Plan RemoveAllParents interface.
-func (p *basePlan) RemoveAllParents() {
-	p.parents = nil
+func (p *basePlan) SetParents(pars []Plan) {
+	p.parents = pars
+}
+
+// RemoveAllParents implements Plan RemoveAllParents interface.
+func (p *basePlan) SetChildren(children []Plan) {
+	p.parents = children
 }
