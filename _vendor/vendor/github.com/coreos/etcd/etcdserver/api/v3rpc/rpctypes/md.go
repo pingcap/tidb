@@ -12,26 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package clientv3
+package rpctypes
 
-type SortTarget int
-type SortOrder int
-
-const (
-	SortNone SortOrder = iota
-	SortAscend
-	SortDescend
+var (
+	MetadataRequireLeaderKey = "hasleader"
+	MetadataHasLeader        = "true"
 )
-
-const (
-	SortByKey SortTarget = iota
-	SortByVersion
-	SortByCreateRevision
-	SortByModRevision
-	SortByValue
-)
-
-type SortOption struct {
-	Target SortTarget
-	Order  SortOrder
-}

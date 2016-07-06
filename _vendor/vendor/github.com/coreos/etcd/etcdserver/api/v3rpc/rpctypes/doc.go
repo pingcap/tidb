@@ -12,26 +12,5 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package clientv3
-
-type SortTarget int
-type SortOrder int
-
-const (
-	SortNone SortOrder = iota
-	SortAscend
-	SortDescend
-)
-
-const (
-	SortByKey SortTarget = iota
-	SortByVersion
-	SortByCreateRevision
-	SortByModRevision
-	SortByValue
-)
-
-type SortOption struct {
-	Target SortTarget
-	Order  SortOrder
-}
+// Package rpctypes has types and values shared by the etcd server and client for v3 RPC interaction.
+package rpctypes
