@@ -18,7 +18,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -157,7 +156,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(builder.err, IsNil)
 		c.Assert(ToString(p), Equals, ca.first, Commentf("for %s", ca.sql))
 
-		_, err = p.PredicatePushDown(nil)
+		_, p, err = p.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		_, err = p.PruneColumnsAndResolveIndices(p.GetSchema())
 		c.Assert(err, IsNil)
@@ -286,12 +285,12 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
-			colMapper: make(map[*ast.ColumnNameExpr]expression.Expression),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
 			allocator: new(idAllocator)}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
 
-		_, err = p.PredicatePushDown(nil)
+		_, p, err = p.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		_, err = p.PruneColumnsAndResolveIndices(p.GetSchema())
 		c.Assert(err, IsNil)
