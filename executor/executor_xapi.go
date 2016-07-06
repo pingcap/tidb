@@ -484,7 +484,7 @@ func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	for i, v := range e.indexPlan.Index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
-	selIdxReq.Ranges, err = indexRangesToPBRanges(e.indexPlan.Ranges, fieldTypes, e.indexPlan.Index.Columns)
+	selIdxReq.Ranges, err = indexRangesToPBRanges(e.indexPlan.Ranges, fieldTypes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -579,7 +579,7 @@ func tableRangesToPBRanges(tableRanges []plan.TableRange) []*tipb.KeyRange {
 	return hrs
 }
 
-func indexRangesToPBRanges(ranges []*plan.IndexRange, fieldTypes []*types.FieldType, indexColumns []*model.IndexColumn) ([]*tipb.KeyRange, error) {
+func indexRangesToPBRanges(ranges []*plan.IndexRange, fieldTypes []*types.FieldType) ([]*tipb.KeyRange, error) {
 	keyRanges := make([]*tipb.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		err := convertIndexRangeTypes(ran, fieldTypes)
