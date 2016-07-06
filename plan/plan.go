@@ -104,6 +104,8 @@ type LogicalPlan interface {
 	Plan
 
 	// PredicatePushDown push down predicates in where/on/having clause as deeply as possible.
+	// It will accept a predicate that is a expression slice, and return the expressions that can't be pushed.
+	// Because it may change the root, we need return a plan that representing a new root.
 	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan, error)
 
 	// PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.

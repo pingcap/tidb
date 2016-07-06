@@ -1620,6 +1620,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("3", "2", "2"))
 	result = tk.MustQuery("select c as a from t group by d having a < 0")
 	result.Check(testkit.Rows())
+	result = tk.MustQuery("select c as a from t group by d having sum(a) = 2")
+	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select count(distinct c) from t group by d")
 	result.Check(testkit.Rows("1", "2", "2"))
 	result = tk.MustQuery("select sum(c) from t group by d")
