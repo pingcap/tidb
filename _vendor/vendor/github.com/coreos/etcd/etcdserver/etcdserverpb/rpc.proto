@@ -5,19 +5,32 @@ import "gogoproto/gogo.proto";
 import "etcd/mvcc/mvccpb/kv.proto";
 import "etcd/auth/authpb/auth.proto";
 
+// for grpc-gateway
+import "google/api/annotations.proto";
+
 option (gogoproto.marshaler_all) = true;
 option (gogoproto.unmarshaler_all) = true;
 
 service KV {
   // Range gets the keys in the range from the key-value store.
-  rpc Range(RangeRequest) returns (RangeResponse) {}
+  rpc Range(RangeRequest) returns (RangeResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/kv/range"
+        body: "*"
+    };
+  }
 
   // Put puts the given key into the key-value store.
   // A put request increments the revision of the key-value store
   // and generates one event in the event history.
-  rpc Put(PutRequest) returns (PutResponse) {}
+  rpc Put(PutRequest) returns (PutResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/kv/put"
+        body: "*"
+    };
+  }
 
-  // Delete deletes the given range from the key-value store.
+  // DeleteRange deletes the given range from the key-value store.
   // A delete request increments the revision of the key-value store
   // and generates a delete event in the event history for every deleted key.
   rpc DeleteRange(DeleteRangeRequest) returns (DeleteRangeResponse) {}
@@ -26,12 +39,22 @@ service KV {
   // A txn request increments the revision of the key-value store
   // and generates events with the same revision for every completed request.
   // It is not allowed to modify the same key several times within one txn.
-  rpc Txn(TxnRequest) returns (TxnResponse) {}
+  rpc Txn(TxnRequest) returns (TxnResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/kv/txn"
+        body: "*"
+    };
+  }
 
   // Compact compacts the event history in the etcd key-value store. The key-value
   // store should be periodically compacted or the event history will continue to grow
   // indefinitely.
-  rpc Compact(CompactionRequest) returns (CompactionResponse) {}
+  rpc Compact(CompactionRequest) returns (CompactionResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/kv/compaction"
+        body: "*"
+    };
+  }
 }
 
 service Watch {
@@ -40,21 +63,41 @@ service Watch {
   // stream sends events. One watch RPC can watch on multiple key ranges, streaming events
   // for several watches at once. The entire event history can be watched starting from the
   // last compaction revision.
-  rpc Watch(stream WatchRequest) returns (stream WatchResponse) {}
+  rpc Watch(stream WatchRequest) returns (stream WatchResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/watch"
+        body: "*"
+    };
+  }
 }
 
 service Lease {
   // LeaseGrant creates a lease which expires if the server does not receive a keepAlive
   // within a given time to live period. All keys attached to the lease will be expired and
   // deleted if the lease expires. Each expired key generates a delete event in the event history.
-  rpc LeaseGrant(LeaseGrantRequest) returns (LeaseGrantResponse) {}
+  rpc LeaseGrant(LeaseGrantRequest) returns (LeaseGrantResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/lease/grant"
+        body: "*"
+    };
+  }
 
   // LeaseRevoke revokes a lease. All keys attached to the lease will expire and be deleted.
-  rpc LeaseRevoke(LeaseRevokeRequest) returns (LeaseRevokeResponse) {}
+  rpc LeaseRevoke(LeaseRevokeRequest) returns (LeaseRevokeResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/kv/lease/revoke"
+        body: "*"
+    };
+  }
 
   // LeaseKeepAlive keeps the lease alive by streaming keep alive requests from the client
   // to the server and streaming keep alive responses from the server to the client.
-  rpc LeaseKeepAlive(stream LeaseKeepAliveRequest) returns (stream LeaseKeepAliveResponse) {}
+  rpc LeaseKeepAlive(stream LeaseKeepAliveRequest) returns (stream LeaseKeepAliveResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/lease/keepalive"
+        body: "*"
+    };
+  }
 
   // TODO(xiangli) List all existing Leases?
   // TODO(xiangli) Get details information (expirations, leased keys, etc.) of a lease?
@@ -62,79 +105,210 @@ service Lease {
 
 service Cluster {
   // MemberAdd adds a member into the cluster.
-  rpc MemberAdd(MemberAddRequest) returns (MemberAddResponse) {}
+  rpc MemberAdd(MemberAddRequest) returns (MemberAddResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/cluster/member/add"
+        body: "*"
+    };
+  }
 
   // MemberRemove removes an existing member from the cluster.
-  rpc MemberRemove(MemberRemoveRequest) returns (MemberRemoveResponse) {}
+  rpc MemberRemove(MemberRemoveRequest) returns (MemberRemoveResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/cluster/member/remove"
+        body: "*"
+    };
+  }
 
   // MemberUpdate updates the member configuration.
-  rpc MemberUpdate(MemberUpdateRequest) returns (MemberUpdateResponse) {}
+  rpc MemberUpdate(MemberUpdateRequest) returns (MemberUpdateResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/cluster/member/update"
+        body: "*"
+    };
+  }
 
   // MemberList lists all the members in the cluster.
-  rpc MemberList(MemberListRequest) returns (MemberListResponse) {}
+  rpc MemberList(MemberListRequest) returns (MemberListResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/cluster/member/list"
+        body: "*"
+    };
+  }
 }
 
 service Maintenance {
   // Alarm activates, deactivates, and queries alarms regarding cluster health.
-  rpc Alarm(AlarmRequest) returns (AlarmResponse) {}
+  rpc Alarm(AlarmRequest) returns (AlarmResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/maintenance/alarm"
+        body: "*"
+    };
+  }
 
   // Status gets the status of the member.
-  rpc Status(StatusRequest) returns (StatusResponse) {}
+  rpc Status(StatusRequest) returns (StatusResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/maintenance/status"
+        body: "*"
+    };
+  }
 
   // Defragment defragments a member's backend database to recover storage space.
-  rpc Defragment(DefragmentRequest) returns (DefragmentResponse) {}
+  rpc Defragment(DefragmentRequest) returns (DefragmentResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/maintenance/defragment"
+        body: "*"
+    };
+  }
 
   // Hash returns the hash of the local KV state for consistency checking purpose.
   // This is designed for testing; do not use this in production when there
   // are ongoing transactions.
-  rpc Hash(HashRequest) returns (HashResponse) {}
+  rpc Hash(HashRequest) returns (HashResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/maintenance/hash"
+        body: "*"
+    };
+  }
 
   // Snapshot sends a snapshot of the entire backend from a member over a stream to a client.
-  rpc Snapshot(SnapshotRequest) returns (stream SnapshotResponse) {}
+  rpc Snapshot(SnapshotRequest) returns (stream SnapshotResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/maintenance/snapshot"
+        body: "*"
+    };
+  }
 }
 
 service Auth {
   // AuthEnable enables authentication.
-  rpc AuthEnable(AuthEnableRequest) returns (AuthEnableResponse) {}
+  rpc AuthEnable(AuthEnableRequest) returns (AuthEnableResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/enable"
+        body: "*"
+    };
+  }
 
   // AuthDisable disables authentication.
-  rpc AuthDisable(AuthDisableRequest) returns (AuthDisableResponse) {}
+  rpc AuthDisable(AuthDisableRequest) returns (AuthDisableResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/disable"
+        body: "*"
+    };
+  }
 
   // Authenticate processes an authenticate request.
-  rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse) {}
+  rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/authenticate"
+        body: "*"
+    };
+  }
 
   // UserAdd adds a new user.
-  rpc UserAdd(AuthUserAddRequest) returns (AuthUserAddResponse) {}
+  rpc UserAdd(AuthUserAddRequest) returns (AuthUserAddResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/user/add"
+        body: "*"
+    };
+  }
 
-  // UserGet gets detailed user information or lists all users.
-  rpc UserGet(AuthUserGetRequest) returns (AuthUserGetResponse) {}
+  // UserGet gets detailed user information.
+  rpc UserGet(AuthUserGetRequest) returns (AuthUserGetResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/user/get"
+        body: "*"
+    };
+  }
+
+  // UserList gets a list of all users.
+  rpc UserList(AuthUserListRequest) returns (AuthUserListResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/user/list"
+        body: "*"
+    };
+  }
 
   // UserDelete deletes a specified user.
-  rpc UserDelete(AuthUserDeleteRequest) returns (AuthUserDeleteResponse) {}
+  rpc UserDelete(AuthUserDeleteRequest) returns (AuthUserDeleteResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/user/delete"
+        body: "*"
+    };
+  }
 
   // UserChangePassword changes the password of a specified user.
-  rpc UserChangePassword(AuthUserChangePasswordRequest) returns (AuthUserChangePasswordResponse) {}
+  rpc UserChangePassword(AuthUserChangePasswordRequest) returns (AuthUserChangePasswordResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/user/changepw"
+        body: "*"
+    };
+  }
 
   // UserGrant grants a role to a specified user.
-  rpc UserGrant(AuthUserGrantRequest) returns (AuthUserGrantResponse) {}
+  rpc UserGrantRole(AuthUserGrantRoleRequest) returns (AuthUserGrantRoleResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/user/grant"
+        body: "*"
+    };
+  }
 
-  // UserRevoke revokes a role of specified user.
-  rpc UserRevoke(AuthUserRevokeRequest) returns (AuthUserRevokeResponse) {}
+  // UserRevokeRole revokes a role of specified user.
+  rpc UserRevokeRole(AuthUserRevokeRoleRequest) returns (AuthUserRevokeRoleResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/user/revoke"
+        body: "*"
+    };
+  }
 
   // RoleAdd adds a new role.
-  rpc RoleAdd(AuthRoleAddRequest) returns (AuthRoleAddResponse) {}
+  rpc RoleAdd(AuthRoleAddRequest) returns (AuthRoleAddResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/role/add"
+        body: "*"
+    };
+  }
 
-  // RoleGet gets detailed role information or lists all roles.
-  rpc RoleGet(AuthRoleGetRequest) returns (AuthRoleGetResponse) {}
+  // RoleGet gets detailed role information.
+  rpc RoleGet(AuthRoleGetRequest) returns (AuthRoleGetResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/role/get"
+        body: "*"
+    };
+  }
+
+  // RoleList gets lists of all roles.
+  rpc RoleList(AuthRoleListRequest) returns (AuthRoleListResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/role/list"
+        body: "*"
+    };
+  }
 
   // RoleDelete deletes a specified role.
-  rpc RoleDelete(AuthRoleDeleteRequest) returns (AuthRoleDeleteResponse) {}
+  rpc RoleDelete(AuthRoleDeleteRequest) returns (AuthRoleDeleteResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/role/delete"
+        body: "*"
+    };
+  }
 
-  // RoleGrant grants a permission of a specified key or range to a specified role.
-  rpc RoleGrant(AuthRoleGrantRequest) returns (AuthRoleGrantResponse) {}
+  // RoleGrantPermission grants a permission of a specified key or range to a specified role.
+  rpc RoleGrantPermission(AuthRoleGrantPermissionRequest) returns (AuthRoleGrantPermissionResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/role/grant"
+        body: "*"
+    };
+  }
 
-  // RoleRevoke revokes a key or range permission of a specified role.
-  rpc RoleRevoke(AuthRoleRevokeRequest) returns (AuthRoleRevokeResponse) {}
+  // RoleRevokePermission revokes a key or range permission of a specified role.
+  rpc RoleRevokePermission(AuthRoleRevokePermissionRequest) returns (AuthRoleRevokePermissionResponse) {
+      option (google.api.http) = {
+        post: "/v3alpha/auth/role/revoke"
+        body: "*"
+    };
+  }
 }
 
 message ResponseHeader {
@@ -166,12 +340,15 @@ message RangeRequest {
   bytes key = 1;
   // range_end is the upper bound on the requested range [key, range_end).
   // If range_end is '\0', the range is all keys >= key.
+  // If the range_end is one bit larger than the given key,
+  // then the range requests get the all keys with the prefix (the given key).
+  // If both key and range_end are '\0', then range requests returns all keys.
   bytes range_end = 2;
   // limit is a limit on the number of keys returned for the request.
   int64 limit = 3;
   // revision is the point-in-time of the key-value store to use for the range.
   // If revision is less or equal to zero, the range is over the newest key-value store.
-  // If the revision has been compacted, ErrCompaction is returned as a response.
+  // If the revision has been compacted, ErrCompacted is returned as a response.
   int64 revision = 4;
 
   // sort_order is the order for returned sorted results.
@@ -187,14 +364,23 @@ message RangeRequest {
   // a serializable range request is served locally without needing to reach consensus
   // with other nodes in the cluster.
   bool serializable = 7;
+
+  // keys_only when set returns only the keys and not the values.
+  bool keys_only = 8;
+ 
+  // count_only when set returns only the count of the keys in the range.
+  bool count_only = 9;
 }
 
 message RangeResponse {
   ResponseHeader header = 1;
   // kvs is the list of key-value pairs matched by the range request.
+  // kvs is empty when count is requested.
   repeated mvccpb.KeyValue kvs = 2;
   // more indicates if there are more keys to return in the requested range.
   bool more = 3;
+  // count is set to the number of keys within the range when requested.
+  int64 count = 4;
 }
 
 message PutRequest {
@@ -205,10 +391,16 @@ message PutRequest {
   // lease is the lease ID to associate with the key in the key-value store. A lease
   // value of 0 indicates no lease.
   int64 lease = 3;
+
+  // If prev_kv is set, etcd gets the previous key-value pair before changing it.
+  // The previous key-value pair will be returned in the put response.
+  bool prev_kv = 4;
 }
 
 message PutResponse {
   ResponseHeader header = 1;
+  // if prev_kv is set in the request, the previous key-value pair will be returned.
+  mvccpb.KeyValue prev_kv = 2;
 }
 
 message DeleteRangeRequest {
@@ -218,15 +410,21 @@ message DeleteRangeRequest {
   // If range_end is not given, the range is defined to contain only the key argument.
   // If range_end is '\0', the range is all keys greater than or equal to the key argument.
   bytes range_end = 2;
+
+  // If prev_kv is set, etcd gets the previous key-value pairs before deleting it.
+  // The previous key-value pairs will be returned in the delte response.
+  bool prev_kv = 3;
 }
 
 message DeleteRangeResponse {
   ResponseHeader header = 1;
-  // Deleted is the number of keys deleted by the delete range request.
+  // deleted is the number of keys deleted by the delete range request.
   int64 deleted = 2;
+  // if prev_kv is set in the request, the previous key-value pairs will be returned.
+  repeated mvccpb.KeyValue prev_kvs = 3;
 }
 
-message RequestUnion {
+message RequestOp {
   // request is a union of request types accepted by a transaction.
   oneof request {
     RangeRequest request_range = 1;
@@ -235,7 +433,7 @@ message RequestUnion {
   }
 }
 
-message ResponseUnion {
+message ResponseOp {
   // response is a union of response types returned by a transaction.
   oneof response {
     RangeResponse response_range = 1;
@@ -290,16 +488,16 @@ message Compare {
 // true.
 // 3. A list of database operations called f op. Like t op, but executed if guard evaluates to false.
 message TxnRequest {
-  // Compare is a list of predicates representing a conjunction of terms.
+  // compare is a list of predicates representing a conjunction of terms.
   // If the comparisons succeed, then the success requests will be processed in order,
   // and the response will contain their respective responses in order.
   // If the comparisons fail, then the failure requests will be processed in order,
   // and the response will contain their respective responses in order.
   repeated Compare compare = 1;
   // success is a list of requests which will be applied when compare evaluates to true.
-  repeated RequestUnion success = 2;
+  repeated RequestOp success = 2;
   // failure is a list of requests which will be applied when compare evaluates to false.
-  repeated RequestUnion failure = 3;
+  repeated RequestOp failure = 3;
 }
 
 message TxnResponse {
@@ -308,13 +506,13 @@ message TxnResponse {
   bool succeeded = 2;
   // responses is a list of responses corresponding to the results from applying
   // success if succeeded is true or failure if succeeded is false.
-  repeated ResponseUnion responses = 3;
+  repeated ResponseOp responses = 3;
 }
 
-// CompactionRequest compacts the key-value store upto a given revision. All superseded keys
+// CompactionRequest compacts the key-value store up to a given revision. All superseded keys
 // with a revision less than the compaction revision will be removed.
 message CompactionRequest {
-  // revision is the key-value store revision for the compation operation. 
+  // revision is the key-value store revision for the compaction operation. 
   int64 revision = 1;
   // physical is set so the RPC will wait until the compaction is physically
   // applied to the local database such that compacted entries are totally
@@ -372,6 +570,19 @@ message WatchCreateRequest {
   // wish to recover a disconnected watcher starting from a recent known revision.
   // The etcd server may decide how often it will send notifications based on current load.
   bool progress_notify = 4;
+
+  enum FilterType {
+  // filter out put event.
+  NOPUT = 0;
+  // filter out delete event.
+  NODELETE = 1;
+  }
+  // filters filter the events at server side before it sends back to the watcher.
+  repeated FilterType filters = 5;
+
+  // If prev_kv is set, created watcher gets the previous KV before the event happens.
+  // If the previous KV is already compacted, nothing will be returned.
+  bool prev_kv = 6;
 }
 
 message WatchCancelRequest {
@@ -569,6 +780,7 @@ message AuthUserAddRequest {
 }
 
 message AuthUserGetRequest {
+  string name = 1;
 }
 
 message AuthUserDeleteRequest {
@@ -583,14 +795,16 @@ message AuthUserChangePasswordRequest {
   string password = 2;
 }
 
-message AuthUserGrantRequest {
+message AuthUserGrantRoleRequest {
   // user is the name of the user which should be granted a given role.
   string user = 1;
   // role is the name of the role to grant to the user.
   string role = 2;
 }
 
-message AuthUserRevokeRequest {
+message AuthUserRevokeRoleRequest {
+  string name = 1;
+  string role = 2;
 }
 
 message AuthRoleAddRequest {
@@ -599,19 +813,30 @@ message AuthRoleAddRequest {
 }
 
 message AuthRoleGetRequest {
+  string role = 1;
+}
+
+message AuthUserListRequest {
+}
+
+message AuthRoleListRequest {
 }
 
 message AuthRoleDeleteRequest {
+  string role = 1;
 }
 
-message AuthRoleGrantRequest {
+message AuthRoleGrantPermissionRequest {
   // name is the name of the role which will be granted the permission.
   string name = 1;
   // perm is the permission to grant to the role.
   authpb.Permission perm = 2;
 }
 
-message AuthRoleRevokeRequest {
+message AuthRoleRevokePermissionRequest {
+  string role = 1;
+  string key = 2;
+  string range_end = 3;
 }
 
 message AuthEnableResponse {
@@ -634,6 +859,8 @@ message AuthUserAddResponse {
 
 message AuthUserGetResponse {
   ResponseHeader header = 1;
+
+  repeated string roles = 2;
 }
 
 message AuthUserDeleteResponse {
@@ -644,11 +871,11 @@ message AuthUserChangePasswordResponse {
   ResponseHeader header = 1;
 }
 
-message AuthUserGrantResponse {
+message AuthUserGrantRoleResponse {
   ResponseHeader header = 1;
 }
 
-message AuthUserRevokeResponse {
+message AuthUserRevokeRoleResponse {
   ResponseHeader header = 1;
 }
 
@@ -658,16 +885,30 @@ message AuthRoleAddResponse {
 
 message AuthRoleGetResponse {
   ResponseHeader header = 1;
+
+  repeated authpb.Permission perm = 2;
+}
+
+message AuthRoleListResponse {
+  ResponseHeader header = 1;
+
+  repeated string roles = 2;
+}
+
+message AuthUserListResponse {
+  ResponseHeader header = 1;
+
+  repeated string users = 2;
 }
 
 message AuthRoleDeleteResponse {
   ResponseHeader header = 1;
 }
 
-message AuthRoleGrantResponse {
+message AuthRoleGrantPermissionResponse {
   ResponseHeader header = 1;
 }
 
-message AuthRoleRevokeResponse {
+message AuthRoleRevokePermissionResponse {
   ResponseHeader header = 1;
 }
