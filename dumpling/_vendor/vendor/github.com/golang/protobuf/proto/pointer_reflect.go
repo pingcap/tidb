@@ -139,6 +139,11 @@ func structPointer_StringSlice(p structPointer, f field) *[]string {
 	return structPointer_ifield(p, f).(*[]string)
 }
 
+// Extensions returns the address of an extension map field in the struct.
+func structPointer_Extensions(p structPointer, f field) *XXX_InternalExtensions {
+	return structPointer_ifield(p, f).(*XXX_InternalExtensions)
+}
+
 // ExtMap returns the address of an extension map field in the struct.
 func structPointer_ExtMap(p structPointer, f field) *map[int32]Extension {
 	return structPointer_ifield(p, f).(*map[int32]Extension)
