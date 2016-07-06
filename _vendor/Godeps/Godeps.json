@@ -72,6 +72,10 @@
 			"Rev": "c3995ae437bb78d1189f4f147dfe5f87ad3596e4"
 		},
 		{
+			"ImportPath": "github.com/golang/protobuf/jsonpb",
+			"Rev": "3852dcfda249c2097355a6aabb199a28d97b30df"
+		},
+		{
 			"ImportPath": "github.com/golang/protobuf/proto",
 			"Rev": "3852dcfda249c2097355a6aabb199a28d97b30df"
 		},
