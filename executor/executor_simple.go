@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -354,6 +355,7 @@ func (e *SimpleExec) createStatisticsForTable(tn *ast.TableName) error {
 // collectSamples collects sample from the result set, using Reservoir Sampling algorithm.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
 func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples []*ast.Row, err error) {
+	ran := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for {
 		var row *ast.Row
 		row, err = result.Next()
@@ -366,9 +368,9 @@ func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples 
 		if len(samples) < maxSampleCount {
 			samples = append(samples, row)
 		} else {
-			shouldAdd := rand.Int63n(count) < maxSampleCount
+			shouldAdd := ran.Int63n(count) < maxSampleCount
 			if shouldAdd {
-				idx := rand.Intn(maxSampleCount)
+				idx := ran.Intn(maxSampleCount)
 				samples[idx] = row
 			}
 		}

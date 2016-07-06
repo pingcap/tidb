@@ -15,6 +15,7 @@ func TestT(t *testing.T) {
 var _ = Suite(&testFlagSuite{})
 
 type testFlagSuite struct {
+	*parser.Parser
 }
 
 func (ts *testFlagSuite) TestHasAggFlag(c *C) {
@@ -95,9 +96,8 @@ func (ts *testFlagSuite) TestFlag(c *C) {
 			ast.FlagHasDefault,
 		},
 	}
-	parser := parser.New()
 	for _, ca := range cases {
-		stmt, err := parser.ParseOneStmt("select "+ca.expr, "", "")
+		stmt, err := ts.ParseOneStmt("select "+ca.expr, "", "")
 		c.Assert(err, IsNil)
 		selectStmt := stmt.(*ast.SelectStmt)
 		ast.SetFlag(selectStmt)

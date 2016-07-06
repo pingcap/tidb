@@ -58,12 +58,12 @@ func handleMySQLSpecificCode(sql string) string {
 	return specCodePattern.ReplaceAllStringFunc(sql, trimComment)
 }
 
-// Parser provide the parser instance
+// Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
 type Parser struct {
 	cache []yySymType
 }
 
-// New return a Parser object
+// New returns a Parser object.
 func New() *Parser {
 	return &Parser{
 		cache: make([]yySymType, 200),

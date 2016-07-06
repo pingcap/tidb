@@ -39,12 +39,13 @@ func TestT(t *testing.T) {
 }
 
 type testEvaluatorSuite struct {
+	*parser.Parser
 }
 
-func parseExpr(c *C, expr string) ast.ExprNode {
-	s, err := parser.New().ParseOneStmt("select "+expr, "", "")
+func (s *testEvaluatorSuite) parseExpr(c *C, expr string) ast.ExprNode {
+	st, err := s.ParseOneStmt("select "+expr, "", "")
 	c.Assert(err, IsNil)
-	stmt := s.(*ast.SelectStmt)
+	stmt := st.(*ast.SelectStmt)
 	return stmt.Fields.Fields[0].Expr
 }
 
@@ -56,7 +57,7 @@ type testCase struct {
 func (s *testEvaluatorSuite) runTests(c *C, cases []testCase) {
 	ctx := mock.NewContext()
 	for _, ca := range cases {
-		expr := parseExpr(c, ca.exprStr)
+		expr := s.parseExpr(c, ca.exprStr)
 		val, err := Eval(ctx, expr)
 		c.Assert(err, IsNil)
 		valStr := fmt.Sprintf("%v", val.GetValue())

@@ -383,6 +383,10 @@ func (s *session) ShouldAutocommit(ctx context.Context) bool {
 	return false
 }
 
+func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
+	return s.parser.Parse(sql, charset, collation)
+}
+
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	charset, collation := getCtxCharsetInfo(s)
 	rawStmts, err := s.parser.Parse(sql, charset, collation)
