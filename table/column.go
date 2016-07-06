@@ -90,27 +90,25 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 // CastValues casts values based on columns type.
 func CastValues(ctx context.Context, rec []types.Datum, cols []*Column) (err error) {
 	for _, c := range cols {
-		var converted types.Datum
-		converted, err = CastValue(ctx, rec[c.Offset], &c.ColumnInfo)
+		err = CastValue(ctx, &rec[c.Offset], &c.ColumnInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rec[c.Offset] = converted
 	}
 	return nil
 }
 
 // CastValue casts a value based on column type.
-func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
-	err = val.ConvertTo(&col.FieldType)
+func CastValue(ctx context.Context, val *types.Datum, col *model.ColumnInfo) error {
+	err := val.ConvertTo(&col.FieldType)
 	if err != nil {
 		if variable.GetSessionVars(ctx).StrictSQLMode {
-			return val, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		// TODO: add warnings.
 		log.Warnf("cast value error %v", err)
 	}
-	return val, nil
+	return nil
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.
@@ -262,7 +260,8 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum
 			return types.NewDatum(col.FieldType.Elems[0]), true, nil
 		}
 	}
-	value, err := CastValue(ctx, types.NewDatum(col.DefaultValue), col)
+	value := types.NewDatum(col.DefaultValue)
+	err := CastValue(ctx, &value, col)
 	if err != nil {
 		return types.Datum{}, false, errors.Trace(err)
 	}
