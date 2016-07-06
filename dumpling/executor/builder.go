@@ -669,7 +669,7 @@ func (b *executorBuilder) buildUnionScanExec(src Executor) *UnionScanExec {
 func (b *executorBuilder) buildNewUnionScanExec(src Executor, condition expression.Expression) *UnionScanExec {
 	us := &UnionScanExec{ctx: b.ctx, Src: src}
 	switch x := src.(type) {
-	case *NewTableScanExec:
+	case *NewXSelectTableExec:
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.newCondition = condition
 		us.newBuildAndSortAddedRows(x.table, x.asName)

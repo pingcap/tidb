@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"math"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -145,7 +147,7 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan, s *plan.Select
 	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
 		var ret Executor
-		ts := &NewTableScanExec{
+		st := &NewXSelectTableExec{
 			tableInfo:   v.Table,
 			ctx:         b.ctx,
 			supportDesc: supportDesc,
@@ -155,21 +157,35 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan, s *plan.Select
 			Columns:     v.Columns,
 			ranges:      v.Ranges,
 		}
-		ret = ts
+		ret = st
 		if !txn.IsReadOnly() {
 			if s != nil {
-				ret = b.buildNewUnionScanExec(ret, expression.ComposeCNFCondition(append(s.Conditions, v.AccessCondition...)))
+				ret = b.buildNewUnionScanExec(ret,
+					expression.ComposeCNFCondition(append(s.Conditions, v.AccessCondition...)))
 			} else {
 				ret = b.buildNewUnionScanExec(ret, nil)
 			}
 		}
 		if s != nil {
-			ts.where, s.Conditions = b.toPBExpr(s.Conditions, ts.tableInfo)
+			st.where, s.Conditions = b.toPBExpr(s.Conditions, st.tableInfo)
 		}
 		return ret
 	}
-	b.err = errors.New("Not implement yet.")
-	return nil
+
+	ts := &NewTableScanExec{
+		t:          table,
+		asName:     v.TableAsName,
+		ctx:        b.ctx,
+		columns:    v.Columns,
+		schema:     v.GetSchema(),
+		seekHandle: math.MinInt64,
+		ranges:     v.Ranges,
+	}
+	if v.Desc {
+		b.err = errors.New("Not implement yet.")
+		return nil
+	}
+	return ts
 }
 
 func (b *executorBuilder) buildNewSort(v *plan.NewSort) Executor {
