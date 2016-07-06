@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
+	"strings"
 )
 
 // Expression represents all scalar expression in SQL.
@@ -126,12 +127,11 @@ type Schema []*Column
 
 // ToString output the contents of schema, for debug.
 func (s Schema) ToString() string {
-	str := "["
+	strs := make([]string, 0, len(s))
 	for _, col := range s {
-		str += col.ToString() + ", "
+		strs = append(strs, col.ToString())
 	}
-	str += "]"
-	return str
+	return "[" + strings.Join(strs, ",") + "]"
 }
 
 // DeepCopy copies the total schema.

@@ -164,8 +164,7 @@ func RemovePlan(p Plan) error {
 	}
 	if len(parents) == 0 {
 		child := children[0]
-		pars := child.GetParents()
-		pars = pars[:0]
+		child.RemoveAllParents()
 		return nil
 	}
 	parent, child := parents[0], children[0]

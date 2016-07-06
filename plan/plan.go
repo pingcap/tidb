@@ -94,6 +94,8 @@ type Plan interface {
 	GetID() string
 	// Check weather this plan is correlated or not.
 	IsCorrelated() bool
+	// Remove all the parents, which used by ppd.
+	RemoveAllParents()
 }
 
 // LogicalPlan is a tree of logical operators.
@@ -127,12 +129,13 @@ func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	rest, _, err1 := p.GetChildByIndex(0).(LogicalPlan).PredicatePushDown(predicates)
+	child := p.GetChildByIndex(0).(LogicalPlan)
+	rest, _, err1 := child.PredicatePushDown(predicates)
 	if err1 != nil {
 		return nil, nil, errors.Trace(err1)
 	}
 	if len(rest) > 0 {
-		err1 = addSelection(p, p.GetChildByIndex(0).(LogicalPlan), rest, p.allocator)
+		err1 = addSelection(p, child, rest, p.allocator)
 		if err1 != nil {
 			return nil, nil, errors.Trace(err1)
 		}
@@ -241,7 +244,7 @@ func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
 			return nil
 		}
 	}
-	return SystemInternalErrorType.Gen("RemoveParent Failed!")
+	return SystemInternalErrorType.Gen("ReplaceParent Failed!")
 }
 
 // ReplaceChild means replace a child with another one.
@@ -252,7 +255,7 @@ func (p *basePlan) ReplaceChild(child, newChild Plan) error {
 			return nil
 		}
 	}
-	return SystemInternalErrorType.Gen("RemoveChildren Failed!")
+	return SystemInternalErrorType.Gen("ReplaceChildren Failed!")
 }
 
 // GetParentByIndex implements Plan GetParentByIndex interface.
@@ -279,4 +282,9 @@ func (p *basePlan) GetParents() []Plan {
 // GetChildren implements Plan GetChildren interface.
 func (p *basePlan) GetChildren() []Plan {
 	return p.children
+}
+
+// RemoveAllParents implements Plan RemoveAllParents interface.
+func (p *basePlan) RemoveAllParents() {
+	p.parents = nil
 }

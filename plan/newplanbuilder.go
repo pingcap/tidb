@@ -597,8 +597,7 @@ func (b *planBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.Aggrega
 	extractor := &ast.AggregateFuncExtractor{}
 	for _, f := range fields {
 		n, _ := f.Expr.Accept(extractor)
-		expr, _ := n.(ast.ExprNode)
-		f.Expr = expr
+		f.Expr = n.(ast.ExprNode)
 	}
 	aggList := extractor.AggFuncs
 	totalAggMapper := make(map[*ast.AggregateFuncExpr]int)

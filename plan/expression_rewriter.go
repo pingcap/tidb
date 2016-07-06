@@ -494,6 +494,7 @@ func (er *expressionRewriter) unaryOpToScalarFunc(v *ast.UnaryOperationExpr) {
 		op = ast.UnaryNot
 	default:
 		er.err = errors.Errorf("Unknown Unary Op %T", v.Op)
+		return
 	}
 	er.ctxStack[stkLen-1], er.err = expression.NewFunction(op, v.Type, er.ctxStack[stkLen-1])
 }
