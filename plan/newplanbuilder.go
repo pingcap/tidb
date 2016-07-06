@@ -399,6 +399,8 @@ func (b *planBuilder) buildNewLimit(src LogicalPlan, limit *ast.Limit) LogicalPl
 	return li
 }
 
+// colMatch(a,b) means that if a match b, e.g. t.a can match test.t.a bug test.t.a can't match t.a.
+// Because column a want column from database test exactly.
 func colMatch(a *ast.ColumnName, b *ast.ColumnName) bool {
 	if a.Schema.L == "" || a.Schema.L == b.Schema.L {
 		if a.Table.L == "" || a.Table.L == b.Table.L {
@@ -743,7 +745,9 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 			return nil
 		}
 	}
-
+	// We must resolve having and order by clause before build projection,
+	// because when the query is "select a+1 as b from t having sum(b) < 0", we must replace sum(b) to sum(a+1),
+	// which only can be done before building projection and extracting Agg functions.
 	havingMap, orderMap = b.resolveHavingAndOrderBy(sel, p)
 	if hasAgg {
 		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
