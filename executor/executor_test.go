@@ -995,6 +995,7 @@ func (s *testSuite) TestUnion(c *C) {
 }
 
 func (s *testSuite) TestTablePKisHandleScan(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1055,6 +1056,7 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 		result := tk.MustQuery(ca.sql)
 		result.Check(ca.result)
 	}
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestJoin(c *C) {
@@ -1558,6 +1560,26 @@ func (s *testSuite) TestNewTableDual(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("Select 1 from dual where 1")
 	result.Check(testkit.Rows("1"))
+	plan.UseNewPlanner = false
+}
+
+func (s *testSuite) TestNewTableScan(c *C) {
+	plan.UseNewPlanner = true
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use information_schema")
+	result := tk.MustQuery("select * from schemata")
+	// There must be these tables: information_schema, mysql, preformance_schema and test.
+	c.Assert(len(result.Rows()), GreaterEqual, 4)
+	tk.MustExec("use test")
+	tk.MustExec("create database mytest")
+	rowStr1 := fmt.Sprintf("%s %s %s %s %v", "def", "mysql", "utf8", "utf8_general_ci", nil)
+	rowStr2 := fmt.Sprintf("%s %s %s %s %v", "def", "mytest", "utf8", "utf8_general_ci", nil)
+	tk.MustExec("use information_schema")
+	result = tk.MustQuery("select * from schemata where schema_name = 'mysql'")
+	result.Check(testkit.Rows(rowStr1))
+	result = tk.MustQuery("select * from schemata where schema_name like 'my%'")
+	result.Check(testkit.Rows(rowStr1, rowStr2))
 	plan.UseNewPlanner = false
 }
 
