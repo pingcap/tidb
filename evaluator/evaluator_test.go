@@ -42,6 +42,10 @@ type testEvaluatorSuite struct {
 	*parser.Parser
 }
 
+func (s *testEvaluatorSuite) SetUpSuite(c *C) {
+	s.Parser = parser.New()
+}
+
 func (s *testEvaluatorSuite) parseExpr(c *C, expr string) ast.ExprNode {
 	st, err := s.ParseOneStmt("select "+expr, "", "")
 	c.Assert(err, IsNil)

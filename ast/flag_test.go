@@ -18,6 +18,10 @@ type testFlagSuite struct {
 	*parser.Parser
 }
 
+func (ts *testFlagSuite) SetUpSuite(c *C) {
+	ts.Parser = parser.New()
+}
+
 func (ts *testFlagSuite) TestHasAggFlag(c *C) {
 	expr := &ast.BetweenExpr{}
 	cases := []struct {
