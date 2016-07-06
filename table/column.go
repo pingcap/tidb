@@ -102,15 +102,15 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column) (err err
 
 // CastValue casts a value based on column type.
 func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
-	casted, err = val.ConvertTo(&col.FieldType)
+	err = val.ConvertTo(&col.FieldType)
 	if err != nil {
 		if variable.GetSessionVars(ctx).StrictSQLMode {
-			return casted, errors.Trace(err)
+			return val, errors.Trace(err)
 		}
 		// TODO: add warnings.
 		log.Warnf("cast value error %v", err)
 	}
-	return casted, nil
+	return val, nil
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.

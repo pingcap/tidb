@@ -149,11 +149,8 @@ func isCastType(tp byte) bool {
 // Convert converts the val with type tp.
 func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	d := NewDatum(val)
-	ret, err := d.ConvertTo(target)
-	if err != nil {
-		return ret.GetValue(), errors.Trace(err)
-	}
-	return ret.GetValue(), nil
+	err = d.ConvertTo(target)
+	return d.GetValue(), errors.Trace(err)
 }
 
 // StrToInt converts a string to an integer in best effort.

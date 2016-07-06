@@ -612,7 +612,8 @@ func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType)
 			ran.LowVal[i].SetBytes([]byte{})
 			continue
 		}
-		converted, err := ran.LowVal[i].ConvertTo(fieldTypes[i])
+		converted := ran.LowVal[i]
+		err := converted.ConvertTo(fieldTypes[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -641,7 +642,8 @@ func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType)
 		if ran.HighVal[i].Kind() == types.KindMaxValue {
 			continue
 		}
-		converted, err := ran.HighVal[i].ConvertTo(fieldTypes[i])
+		converted := ran.HighVal[i]
+		err := converted.ConvertTo(fieldTypes[i])
 		if err != nil {
 			return errors.Trace(err)
 		}

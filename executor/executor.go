@@ -411,7 +411,8 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 			if e.lowVals[i].Kind() == types.KindMinNotNull {
 				seekVals[i].SetBytes([]byte{})
 			} else {
-				val, err := e.lowVals[i].ConvertTo(e.scan.valueTypes[i])
+				val := e.lowVals[i]
+				err := val.ConvertTo(e.scan.valueTypes[i])
 				seekVals[i] = val
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -1242,8 +1243,8 @@ func (e *UnionExec) Next() (*Row, error) {
 			for i := range row.Data {
 				// The column value should be casted as the same type of the first select statement in corresponding position
 				rf := e.fields[i]
-				var val types.Datum
-				val, err = row.Data[i].ConvertTo(&rf.Column.FieldType)
+				val := row.Data[i]
+				err = val.ConvertTo(&rf.Column.FieldType)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}

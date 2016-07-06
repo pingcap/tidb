@@ -1190,12 +1190,9 @@ func (e *NewUnionExec) Next() (*Row, error) {
 			for i := range row.Data {
 				// The column value should be casted as the same type of the first select statement in corresponding position.
 				col := e.schema[i]
-				var val types.Datum
-				val, err = row.Data[i].ConvertTo(col.RetType)
-				if err != nil {
+				if err := row.Data[i].ConvertTo(col.RetType); err != nil {
 					return nil, errors.Trace(err)
 				}
-				row.Data[i] = val
 			}
 		}
 		return row, nil
