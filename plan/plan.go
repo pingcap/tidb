@@ -107,7 +107,9 @@ type LogicalPlan interface {
 	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan, error)
 
 	// PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
-	// This function returns a column slice representing outer columns and an error.
+	// This function returns a column slice representing columns from outer env and an error.
+	// We need return outer columns, because Apply plan will prune inner Planner and it will know
+	// how many columns referenced by inner plan exactly.
 	PruneColumnsAndResolveIndices([]*expression.Column) ([]*expression.Column, error)
 	// TODO: implement Convert2PhysicalPlan()
 }

@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
-	"strings"
 )
 
 // Expression represents all scalar expression in SQL.
