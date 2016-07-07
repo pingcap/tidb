@@ -34,7 +34,7 @@ func retrieveColumnsInExpression(expr expression.Expression, schema expression.S
 		if !v.Correlated {
 			newColumn := schema.RetrieveColumn(v)
 			if newColumn == nil {
-				return nil, errors.Errorf("Can't Find column %s.", expr.ToString())
+				return nil, errors.Errorf("Can't Find column %s from schema %s.", expr.ToString(), schema.ToString())
 			}
 			return newColumn, nil
 		}
@@ -225,6 +225,15 @@ func (p *Trim) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
 func (p *Exists) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
 	return p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(nil)
+}
+
+// PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
+func (p *Insert) PruneColumnsAndResolveIndices(_ []*expression.Column) ([]*expression.Column, error) {
+	if len(p.GetChildren()) == 0 {
+		return nil, nil
+	}
+	child := p.GetChildByIndex(0).(LogicalPlan)
+	return child.PruneColumnsAndResolveIndices(child.GetSchema())
 }
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.

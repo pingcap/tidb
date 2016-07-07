@@ -260,7 +260,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			},
 		},
 		{
-			sql: "select a from t where (b,a) = all (select c,d from t)",
+			sql: "select a from t where (b,a) != all (select c,d from t)",
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
 				"TableScan_2": {"c", "d"},

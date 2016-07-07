@@ -363,7 +363,7 @@ type Simple struct {
 
 // Insert represents an insert plan.
 type Insert struct {
-	basePlan
+	baseLogicalPlan
 
 	Table       *ast.TableRefsClause
 	Columns     []*ast.ColumnName
