@@ -46,7 +46,7 @@ type Options interface {
 
 var (
 	p = newCache("memdb pool", 100, func() MemBuffer {
-		return NewMemDbBuffer()
+		return NewBTreeBuffer()
 	})
 )
 
