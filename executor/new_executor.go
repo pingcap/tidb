@@ -516,6 +516,119 @@ func (e *SelectionExec) Close() error {
 
 // NewTableScanExec is a table scan executor without result fields.
 type NewTableScanExec struct {
+	t          table.Table
+	asName     *model.CIStr
+	ctx        context.Context
+	ranges     []plan.TableRange
+	seekHandle int64
+	iter       kv.Iterator
+	cursor     int
+	schema     expression.Schema
+	columns    []*model.ColumnInfo
+}
+
+// Schema implements Executor Schema interface.
+func (e *NewTableScanExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Fields implements Executor interface.
+func (e *NewTableScanExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Next implements Executor interface.
+func (e *NewTableScanExec) Next() (*Row, error) {
+	for {
+		if e.cursor >= len(e.ranges) {
+			return nil, nil
+		}
+		ran := e.ranges[e.cursor]
+		if e.seekHandle < ran.LowVal {
+			e.seekHandle = ran.LowVal
+		}
+		if e.seekHandle > ran.HighVal {
+			e.cursor++
+			continue
+		}
+		handle, found, err := e.t.Seek(e.ctx, e.seekHandle)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !found {
+			return nil, nil
+		}
+		if handle > ran.HighVal {
+			// The handle is out of the current range, but may be in following ranges.
+			// We seek to the range that may contains the handle, so we
+			// don't need to seek key again.
+			inRange := e.seekRange(handle)
+			if !inRange {
+				// The handle may be less than the current range low value, can not
+				// return directly.
+				continue
+			}
+		}
+		row, err := e.getRow(handle)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.seekHandle = handle + 1
+		return row, nil
+	}
+}
+
+// seekRange increments the range cursor to the range
+// with high value greater or equal to handle.
+func (e *NewTableScanExec) seekRange(handle int64) (inRange bool) {
+	for {
+		e.cursor++
+		if e.cursor >= len(e.ranges) {
+			return false
+		}
+		ran := e.ranges[e.cursor]
+		if handle < ran.LowVal {
+			return false
+		}
+		if handle > ran.HighVal {
+			continue
+		}
+		return true
+	}
+}
+
+func (e *NewTableScanExec) getRow(handle int64) (*Row, error) {
+	row := &Row{}
+	var err error
+
+	columns := make([]*table.Column, len(e.schema))
+	for i, v := range e.columns {
+		columns[i] = &table.Column{*v}
+	}
+	row.Data, err = e.t.RowWithCols(e.ctx, handle, columns)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Put rowKey to the tail of record row.
+	rke := &RowKeyEntry{
+		Tbl:         e.t,
+		Handle:      handle,
+		TableAsName: e.asName,
+	}
+	row.RowKeys = append(row.RowKeys, rke)
+	return row, nil
+}
+
+// Close implements Executor Close interface.
+func (e *NewTableScanExec) Close() error {
+	e.iter = nil
+	e.cursor = 0
+	return nil
+}
+
+// NewXSelectTableExec represents XAPI select executor without result fields.
+type NewXSelectTableExec struct {
 	tableInfo   *model.TableInfo
 	table       table.Table
 	asName      *model.CIStr
@@ -531,11 +644,11 @@ type NewTableScanExec struct {
 }
 
 // Schema implements Executor Schema interface.
-func (e *NewTableScanExec) Schema() expression.Schema {
+func (e *NewXSelectTableExec) Schema() expression.Schema {
 	return e.schema
 }
 
-func (e *NewTableScanExec) doRequest() error {
+func (e *NewXSelectTableExec) doRequest() error {
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
@@ -558,14 +671,14 @@ func (e *NewTableScanExec) doRequest() error {
 }
 
 // Close implements Executor Close interface.
-func (e *NewTableScanExec) Close() error {
+func (e *NewXSelectTableExec) Close() error {
 	e.result = nil
 	e.subResult = nil
 	return nil
 }
 
 // Next implements Executor interface.
-func (e *NewTableScanExec) Next() (*Row, error) {
+func (e *NewXSelectTableExec) Next() (*Row, error) {
 	if e.result == nil {
 		err := e.doRequest()
 		if err != nil {
@@ -598,7 +711,7 @@ func (e *NewTableScanExec) Next() (*Row, error) {
 }
 
 // Fields implements Executor interface.
-func (e *NewTableScanExec) Fields() []*ast.ResultField {
+func (e *NewXSelectTableExec) Fields() []*ast.ResultField {
 	return nil
 }
 

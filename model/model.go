@@ -169,7 +169,7 @@ func (index *IndexInfo) Clone() *IndexInfo {
 	return &ni
 }
 
-// HasPrefixIndex return whether any columns of this index uses prefix length.
+// HasPrefixIndex returns whether any columns of this index uses prefix length.
 func (index *IndexInfo) HasPrefixIndex() bool {
 	for _, ic := range index.Columns {
 		if ic.Length != types.UnspecifiedLength {

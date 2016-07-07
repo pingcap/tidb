@@ -46,7 +46,7 @@ func (s *testDDLSuite) TestDropSchemaError(c *C) {
 	c.Check(err, IsNil)
 	d.startBgJob(job.Type)
 
-	time.Sleep(testLease)
+	time.Sleep(testLease * 3)
 	verifyBgJobState(c, d, job, model.JobDone)
 }
 
@@ -88,7 +88,7 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	c.Check(err, IsNil)
 	d.startBgJob(job.Type)
 
-	time.Sleep(testLease)
+	time.Sleep(testLease * 3)
 	verifyBgJobState(c, d, job, model.JobDone)
 }
 
@@ -112,6 +112,6 @@ func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
 	c.Check(err, IsNil)
 	d.startBgJob(model.ActionDropTable)
 
-	time.Sleep(testLease)
+	time.Sleep(testLease * 3)
 	verifyBgJobState(c, d, job, model.JobCancelled)
 }
