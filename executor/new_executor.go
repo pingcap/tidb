@@ -1142,6 +1142,8 @@ func (e *ApplyExec) Next() (*Row, error) {
 		}
 		if innerRow == nil {
 			var d types.Datum
+			// If we can't determine the result until the last row comes, the all must be true and any must not be true.
+			// If the any have met a null, the result will be null.
 			if e.checker.dataHasNull && !e.checker.all {
 				d = types.NewDatum(nil)
 			} else {
