@@ -35,6 +35,7 @@ import (
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
 
 func TestT(t *testing.T) {
+	log.SetLevelByString("error")
 	TestingT(t)
 }
 
@@ -67,8 +68,6 @@ func (s *testMainSuite) SetUpSuite(c *C) {
     CREATE TABLE tbl_test2(id INT NOT NULL DEFAULT 3, name varchar(255), PRIMARY KEY(id));`
 	s.selectSQL = `SELECT * from tbl_test;`
 	runtime.GOMAXPROCS(runtime.NumCPU())
-
-	log.SetLevelByString("error")
 }
 
 func (s *testMainSuite) TearDownSuite(c *C) {
