@@ -275,7 +275,7 @@ func (s *session) Retry() error {
 // This is used for executing some restricted sql statements.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error) {
 	charset, collation := getCtxCharsetInfo(s)
-	rawStmts, err := s.parser.Parse(sql, charset, collation)
+	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -389,7 +389,7 @@ func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, erro
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	charset, collation := getCtxCharsetInfo(s)
-	rawStmts, err := s.parser.Parse(sql, charset, collation)
+	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", sql, err)
 		return nil, errors.Trace(err)
