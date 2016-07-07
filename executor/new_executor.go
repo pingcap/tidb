@@ -1076,7 +1076,7 @@ type conditionChecker struct {
 	data    *types.Datum
 }
 
-func (c *conditionChecker) Exec(row *Row) (*Row, error) {
+func (c *conditionChecker) Check(row *Row) (*Row, error) {
 	data, err := c.cond.Eval(row.Data, c.ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1157,7 +1157,7 @@ func (e *ApplyExec) Next() (*Row, error) {
 			e.innerExec.Close()
 			return srcRow, nil
 		}
-		resultRow, err := e.checker.Exec(srcRow)
+		resultRow, err := e.checker.Check(srcRow)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
