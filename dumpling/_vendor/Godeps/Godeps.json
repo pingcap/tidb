@@ -168,52 +168,52 @@
 			"Rev": "1ce93efbc8f9c568886b2ef85ce305b2217b3de3"
 		},
 		{
-			"ImportPath": "github.com/syndtr/goleveldb/leveldb",
-			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+			"ImportPath": "github.com/pingcap/goleveldb/leveldb",
+			"Rev": "0a4d8ac1a625fd94f0c561da420b71a12e88ef12"
 		},
 		{
-			"ImportPath": "github.com/syndtr/goleveldb/leveldb/cache",
-			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+			"ImportPath": "github.com/pingcap/goleveldb/leveldb/cache",
+			"Rev": "0a4d8ac1a625fd94f0c561da420b71a12e88ef12"
 		},
 		{
-			"ImportPath": "github.com/syndtr/goleveldb/leveldb/comparer",
-			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+			"ImportPath": "github.com/pingcap/goleveldb/leveldb/comparer",
+			"Rev": "0a4d8ac1a625fd94f0c561da420b71a12e88ef12"
 		},
 		{
-			"ImportPath": "github.com/syndtr/goleveldb/leveldb/errors",
-			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+			"ImportPath": "github.com/pingcap/goleveldb/leveldb/errors",
+			"Rev": "0a4d8ac1a625fd94f0c561da420b71a12e88ef12"
 		},
 		{
-			"ImportPath": "github.com/syndtr/goleveldb/leveldb/filter",
-			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+			"ImportPath": "github.com/pingcap/goleveldb/leveldb/filter",
+			"Rev": "0a4d8ac1a625fd94f0c561da420b71a12e88ef12"
 		},
 		{
-			"ImportPath": "github.com/syndtr/goleveldb/leveldb/iterator",
-			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+			"ImportPath": "github.com/pingcap/goleveldb/leveldb/iterator",
+			"Rev": "0a4d8ac1a625fd94f0c561da420b71a12e88ef12"
 		},
 		{
-			"ImportPath": "github.com/syndtr/goleveldb/leveldb/journal",
-			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+			"ImportPath": "github.com/pingcap/goleveldb/leveldb/journal",
+			"Rev": "0a4d8ac1a625fd94f0c561da420b71a12e88ef12"
 		},
 		{
-			"ImportPath": "github.com/syndtr/goleveldb/leveldb/memdb",
-			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+			"ImportPath": "github.com/pingcap/goleveldb/leveldb/memdb",
+			"Rev": "0a4d8ac1a625fd94f0c561da420b71a12e88ef12"
 		},
 		{
-			"ImportPath": "github.com/syndtr/goleveldb/leveldb/opt",
-			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+			"ImportPath": "github.com/pingcap/goleveldb/leveldb/opt",
+			"Rev": "0a4d8ac1a625fd94f0c561da420b71a12e88ef12"
 		},
 		{
-			"ImportPath": "github.com/syndtr/goleveldb/leveldb/storage",
-			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+			"ImportPath": "github.com/pingcap/goleveldb/leveldb/storage",
+			"Rev": "0a4d8ac1a625fd94f0c561da420b71a12e88ef12"
 		},
 		{
-			"ImportPath": "github.com/syndtr/goleveldb/leveldb/table",
-			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+			"ImportPath": "github.com/pingcap/goleveldb/leveldb/table",
+			"Rev": "0a4d8ac1a625fd94f0c561da420b71a12e88ef12"
 		},
 		{
-			"ImportPath": "github.com/syndtr/goleveldb/leveldb/util",
-			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+			"ImportPath": "github.com/pingcap/goleveldb/leveldb/util",
+			"Rev": "0a4d8ac1a625fd94f0c561da420b71a12e88ef12"
 		},
 		{
 			"ImportPath": "github.com/twinj/uuid",
