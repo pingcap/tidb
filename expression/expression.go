@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Expression represents all scalar expression in SQL.
@@ -46,7 +46,7 @@ type Expression interface {
 	SetVarName(string)
 }
 
-type expression struct{
+type expression struct {
 	varName string
 }
 

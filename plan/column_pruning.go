@@ -316,7 +316,7 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	var selfOuterUsedCols []*expression.Column
 	used := make([]bool, len(p.OuterSchema))
-	for i := len(childOuterUsedCols) -1; i>= 0; i-- {
+	for i := len(childOuterUsedCols) - 1; i >= 0; i-- {
 		// If the outer column can't be resolved from this outer schema, it should be resolved by outer schema.
 		if idx := p.OuterSchema.GetIndex(childOuterUsedCols[i]); idx == -1 {
 			selfOuterUsedCols = append(selfOuterUsedCols, childOuterUsedCols[i])
