@@ -444,6 +444,11 @@ func (d Decimal) FracDigits() int32 {
 	return d.fracDigits
 }
 
+// SetFracDigits set the fracDigits of the decimal.
+func (d *Decimal) SetFracDigits(f int32) {
+	d.fracDigits = f
+}
+
 // IntPart returns the integer component of the decimal.
 func (d Decimal) IntPart() int64 {
 	scaledD := d.rescale(0)

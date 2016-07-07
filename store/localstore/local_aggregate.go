@@ -118,11 +118,15 @@ func (n *aggregateFuncExpr) toDatums() (ds []types.Datum, err error) {
 		ds = n.getValueDatum()
 	case tipb.ExprType_Sum:
 		v := n.getAggItem().value
-		d, err1 := v.ToDecimal()
-		if err1 != nil {
-			return nil, errors.Trace(err1)
+		var d types.Datum
+		if !v.IsNull() {
+			de, err1 := v.ToDecimal()
+			if err1 != nil {
+				return nil, errors.Trace(err1)
+			}
+			d = types.NewDecimalDatum(de)
 		}
-		ds = []types.Datum{types.NewDecimalDatum(d)}
+		ds = []types.Datum{d}
 	}
 	return
 }

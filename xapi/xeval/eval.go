@@ -556,6 +556,7 @@ func (e *Evaluator) evalArithmetic(expr *tipb.Expr) (types.Datum, error) {
 	return ComputeArithmetic(expr.GetTp(), left, right)
 }
 
+// ComputeArithmetic computes the arithmetic operation on two datums.
 func ComputeArithmetic(op tipb.ExprType, left types.Datum, right types.Datum) (types.Datum, error) {
 	var result types.Datum
 	a, err := types.CoerceArithmetic(left)
