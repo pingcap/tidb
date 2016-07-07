@@ -29,6 +29,7 @@ type TidbTestSuite struct {
 var _ = Suite(new(TidbTestSuite))
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
+	log.SetLevelByString("error")
 	store, err := tidb.NewStore("memory:///tmp/tidb")
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
@@ -42,8 +43,6 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	ts.server = server
 	go ts.server.Run()
 	time.Sleep(time.Millisecond * 100)
-
-	log.SetLevelByString("error")
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {

@@ -96,7 +96,9 @@ func (c *CopClient) Send(req *kv.Request) kv.Response {
 	}
 	it.errChan = make(chan error, 1)
 	if len(it.tasks) == 0 {
+		it.mu.Lock()
 		it.Close()
+		it.mu.Unlock()
 	}
 	it.run()
 	return it
@@ -269,9 +271,11 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 				break
 			}
 		}
-		it.mu.Unlock()
 		if task == nil {
 			it.Close()
+		}
+		it.mu.Unlock()
+		if task == nil {
 			return nil, nil
 		}
 		select {
@@ -282,12 +286,13 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		task.status = taskDone
 		it.mu.Unlock()
 	}
+
+	it.mu.Lock()
+	defer it.mu.Unlock()
 	if err != nil {
 		it.Close()
 		return nil, err
 	}
-	it.mu.Lock()
-	defer it.mu.Unlock()
 	it.respGot++
 	if it.respGot == len(it.tasks) {
 		it.Close()
