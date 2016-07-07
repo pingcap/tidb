@@ -119,7 +119,6 @@ func (txn *dbTxn) Commit() error {
 }
 
 func (txn *dbTxn) close() error {
-	txn.us.Release()
 	txn.lockedKeys = nil
 	txn.valid = false
 	return nil

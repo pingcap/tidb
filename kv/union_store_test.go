@@ -32,10 +32,6 @@ func (s *testUnionStoreSuite) SetUpTest(c *C) {
 	s.us = NewUnionStore(&mockSnapshot{s.store})
 }
 
-func (s *testUnionStoreSuite) TearDownTest(c *C) {
-	s.us.Release()
-}
-
 func (s *testUnionStoreSuite) TestGetSet(c *C) {
 	defer testleak.AfterTest(c)()
 	s.store.Set([]byte("1"), []byte("1"))
@@ -174,6 +170,4 @@ func (s *mockSnapshot) SeekReverse(k Key) (Iterator, error) {
 	return s.store.SeekReverse(k)
 }
 
-func (s *mockSnapshot) Release() {
-	s.store.Release()
-}
+func (s *mockSnapshot) Release() {}

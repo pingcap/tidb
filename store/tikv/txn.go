@@ -125,7 +125,6 @@ func (txn *tikvTxn) Commit() error {
 }
 
 func (txn *tikvTxn) close() error {
-	txn.us.Release()
 	txn.valid = false
 	return nil
 }

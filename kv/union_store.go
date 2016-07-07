@@ -44,12 +44,6 @@ type Options interface {
 	Get(opt Option) (v interface{}, ok bool)
 }
 
-var (
-	p = newCache("memdb pool", 100, func() MemBuffer {
-		return NewMemDbBuffer()
-	})
-)
-
 // conditionPair is used to store lazy check condition.
 // If condition not match (value is not equal as expected one), returns err.
 type conditionPair struct {
@@ -77,6 +71,26 @@ func NewUnionStore(snapshot Snapshot) UnionStore {
 	}
 }
 
+type invalidIterator struct{}
+
+func (it invalidIterator) Valid() bool {
+	return false
+}
+
+func (it invalidIterator) Next() error {
+	return nil
+}
+
+func (it invalidIterator) Key() Key {
+	return nil
+}
+
+func (it invalidIterator) Value() []byte {
+	return nil
+}
+
+func (it invalidIterator) Close() {}
+
 type lazyMemBuffer struct {
 	mb MemBuffer
 }
@@ -91,7 +105,7 @@ func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
 
 func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	if lmb.mb == nil {
-		lmb.mb = p.get()
+		lmb.mb = NewMemDbBuffer()
 	}
 
 	return lmb.mb.Set(key, value)
@@ -99,7 +113,7 @@ func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 
 func (lmb *lazyMemBuffer) Delete(k Key) error {
 	if lmb.mb == nil {
-		lmb.mb = p.get()
+		lmb.mb = NewMemDbBuffer()
 	}
 
 	return lmb.mb.Delete(k)
@@ -107,28 +121,20 @@ func (lmb *lazyMemBuffer) Delete(k Key) error {
 
 func (lmb *lazyMemBuffer) Seek(k Key) (Iterator, error) {
 	if lmb.mb == nil {
-		lmb.mb = p.get()
+		return invalidIterator{}, nil
 	}
-
 	return lmb.mb.Seek(k)
 }
 
 func (lmb *lazyMemBuffer) SeekReverse(k Key) (Iterator, error) {
 	if lmb.mb == nil {
-		lmb.mb = p.get()
+		return invalidIterator{}, nil
 	}
 	return lmb.mb.SeekReverse(k)
 }
 
 func (lmb *lazyMemBuffer) Release() {
-	if lmb.mb == nil {
-		return
-	}
-
-	lmb.mb.Release()
-
-	p.put(lmb.mb)
-	lmb.mb = nil
+	return
 }
 
 // Get implements the Retriever interface.
@@ -208,7 +214,6 @@ func (us *unionStore) DelOption(opt Option) {
 // Release implements the UnionStore Release interface.
 func (us *unionStore) Release() {
 	us.snapshot.Release()
-	us.BufferStore.Release()
 }
 
 type options map[Option]interface{}

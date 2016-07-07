@@ -197,7 +197,6 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	}
 
 	bs := kv.NewBufferStore(txn)
-	defer bs.Release()
 
 	// Compose new row
 	t.composeNewData(touched, currentData, oldData)
@@ -317,7 +316,6 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		return 0, errors.Trace(err)
 	}
 	bs := kv.NewBufferStore(txn)
-	defer bs.Release()
 	// Insert new entries into indices.
 	h, err := t.addIndices(ctx, recordID, r, bs)
 	if err != nil {

@@ -64,11 +64,7 @@ type RetrieverMutator interface {
 }
 
 // MemBuffer is an in-memory kv collection. It should be released after use.
-type MemBuffer interface {
-	RetrieverMutator
-	// Release releases the buffer.
-	Release()
-}
+type MemBuffer RetrieverMutator
 
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
