@@ -58,9 +58,21 @@ func handleMySQLSpecificCode(sql string) string {
 	return specCodePattern.ReplaceAllStringFunc(sql, trimComment)
 }
 
+// Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
+type Parser struct {
+	cache []yySymType
+}
+
+// New returns a Parser object.
+func New() *Parser {
+	return &Parser{
+		cache: make([]yySymType, 200),
+	}
+}
+
 // Parse parses a query string to raw ast.StmtNode.
 // If charset or collation is "", default charset and collation will be used.
-func Parse(sql, charset, collation string) ([]ast.StmtNode, error) {
+func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, error) {
 	if charset == "" {
 		charset = mysql.DefaultCharset
 	}
@@ -70,7 +82,7 @@ func Parse(sql, charset, collation string) ([]ast.StmtNode, error) {
 	sql = handleMySQLSpecificCode(sql)
 	l := NewLexer(sql)
 	l.SetCharsetInfo(charset, collation)
-	yyParse(l)
+	yyParse(l, &parser.cache)
 	if len(l.Errors()) != 0 {
 		return nil, errors.Trace(l.Errors()[0])
 	}
@@ -79,8 +91,8 @@ func Parse(sql, charset, collation string) ([]ast.StmtNode, error) {
 
 // ParseOneStmt parses a query and returns an ast.StmtNode.
 // The query must have one statement, otherwise ErrSyntax is returned.
-func ParseOneStmt(sql, charset, collation string) (ast.StmtNode, error) {
-	stmts, err := Parse(sql, charset, collation)
+func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode, error) {
+	stmts, err := parser.Parse(sql, charset, collation)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
