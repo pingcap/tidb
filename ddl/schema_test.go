@@ -72,7 +72,7 @@ func checkDrop(c *C, t *meta.Meta) bool {
 		return true
 	}
 
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(testLease)
 	return false
 }
 
@@ -136,9 +136,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	store := testCreateStore(c, "test_schema")
 	defer store.Close()
 
-	lease := 100 * time.Millisecond
-
-	d1 := newDDL(store, nil, nil, lease)
+	d1 := newDDL(store, nil, nil, testLease)
 	defer d1.close()
 
 	ctx := mock.NewContext()
@@ -168,15 +166,12 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	defer store.Close()
 
 	ctx := mock.NewContext()
-
-	lease := 50 * time.Millisecond
-
-	d1 := newDDL(store, nil, nil, lease)
+	d1 := newDDL(store, nil, nil, testLease)
 	defer d1.close()
 
 	testCheckOwner(c, d1, true, ddlJobFlag)
 
-	d2 := newDDL(store, nil, nil, lease)
+	d2 := newDDL(store, nil, nil, testLease*4)
 	defer d2.close()
 
 	// d2 must not be owner.
@@ -234,9 +229,7 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	store := testCreateStore(c, "test_schema_resume")
 	defer store.Close()
 
-	lease := 50 * time.Millisecond
-
-	d1 := newDDL(store, nil, nil, lease)
+	d1 := newDDL(store, nil, nil, testLease)
 	defer d1.close()
 
 	testCheckOwner(c, d1, true, ddlJobFlag)

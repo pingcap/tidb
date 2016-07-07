@@ -154,7 +154,7 @@ func (w *textWriter) indent() { w.ind++ }
 
 func (w *textWriter) unindent() {
 	if w.ind == 0 {
-		log.Printf("proto: textWriter unindented too far")
+		log.Print("proto: textWriter unindented too far")
 		return
 	}
 	w.ind--
@@ -455,7 +455,7 @@ func (tm *TextMarshaler) writeStruct(w *textWriter, sv reflect.Value) error {
 
 	// Extensions (the XXX_extensions field).
 	pv := sv.Addr()
-	if pv.Type().Implements(extendableProtoType) {
+	if _, ok := extendable(pv.Interface()); ok {
 		if err := tm.writeExtensions(w, pv); err != nil {
 			return err
 		}
@@ -513,7 +513,7 @@ func (tm *TextMarshaler) writeAny(w *textWriter, v reflect.Value, props *Propert
 	switch v.Kind() {
 	case reflect.Slice:
 		// Should only be a []byte; repeated fields are handled in writeStruct.
-		if err := writeString(w, string(v.Interface().([]byte))); err != nil {
+		if err := writeString(w, string(v.Bytes())); err != nil {
 			return err
 		}
 	case reflect.String:
@@ -689,17 +689,22 @@ func (s int32Slice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 // pv is assumed to be a pointer to a protocol message struct that is extendable.
 func (tm *TextMarshaler) writeExtensions(w *textWriter, pv reflect.Value) error {
 	emap := extensionMaps[pv.Type().Elem()]
-	ep := pv.Interface().(extendableProto)
+	ep, _ := extendable(pv.Interface())
 
 	// Order the extensions by ID.
 	// This isn't strictly necessary, but it will give us
 	// canonical output, which will also make testing easier.
-	m := ep.ExtensionMap()
+	m, mu := ep.extensionsRead()
+	if m == nil {
+		return nil
+	}
+	mu.Lock()
 	ids := make([]int32, 0, len(m))
 	for id := range m {
 		ids = append(ids, id)
 	}
 	sort.Sort(int32Slice(ids))
+	mu.Unlock()
 
 	for _, extNum := range ids {
 		ext := m[extNum]

@@ -15,6 +15,7 @@ package perfschema
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -35,4 +36,15 @@ func (p *testStatementSuit) TestUninitPS(c *C) {
 	c.Assert(err, IsNil)
 	err = ps.appendEventsStmtsHistory([]types.Datum{})
 	c.Assert(err, IsNil)
+}
+
+func (p *testStatementSuit) TestDisablePS(c *C) {
+	defer testleak.AfterTest(c)()
+	ps, err := NewPerfHandle()
+	c.Assert(err, IsNil)
+	s := ps.StartStatement("select * from t", uint64(1), CallerNameSessionExecute, &ast.SelectStmt{})
+	c.Assert(s, IsNil)
+	EnablePerfSchema()
+	s = ps.StartStatement("select * from t", uint64(1), CallerNameSessionExecute, &ast.SelectStmt{})
+	c.Assert(s, NotNil)
 }

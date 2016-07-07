@@ -63,7 +63,7 @@ type planBuilder struct {
 	is           infoschema.InfoSchema
 	outerSchemas []expression.Schema
 	// colMapper stores the column that must be pre-resolved.
-	colMapper map[*ast.ColumnNameExpr]expression.Expression
+	colMapper map[*ast.ColumnNameExpr]int
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -838,7 +838,7 @@ func (se *subqueryVisitor) Enter(in ast.Node) (out ast.Node, skipChildren bool) 
 		p := se.builder.build(x.Query)
 		// The expr pointer is copied into ResultField when running name resolver.
 		// So we can not just replace the expr node in AST. We need to put SubQuery into the expr.
-		// See: optimizer.nameResolver.createResultFields()
+		// See optimizer.nameResolver.createResultFields()
 		x.SubqueryExec = se.builder.sb.Build(p)
 		return in, true
 	case *ast.Join:
@@ -1100,7 +1100,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	return p
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
+// See https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
 func buildExplainFields() []*ast.ResultField {
 	rfs := make([]*ast.ResultField, 0, 10)
 	rfs = append(rfs, buildResultField("", "id", mysql.TypeLonglong, 4))

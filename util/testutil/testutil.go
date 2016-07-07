@@ -15,6 +15,7 @@ package testutil
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/types"
@@ -90,4 +91,19 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 		panic(err)
 	}
 	return res == 0, ""
+}
+
+// RowsWithSep is a convenient function to wrap args to a slice of []interface.
+// The arg represents a row, split by sep.
+func RowsWithSep(sep string, args ...string) [][]interface{} {
+	rows := make([][]interface{}, len(args))
+	for i, v := range args {
+		strs := strings.Split(v, sep)
+		row := make([]interface{}, len(strs))
+		for j, s := range strs {
+			row[j] = s
+		}
+		rows[i] = row
+	}
+	return rows
 }

@@ -15,13 +15,13 @@ package testkit
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 // TestKit is a utility to run sql test.
@@ -121,22 +121,7 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	return &Result{rows: iRows, c: tk.c, comment: comment}
 }
 
-// RowsWithSep is a convenient function to wrap args to a slice of []interface.
-// The arg represents a row, split by sep.
-func RowsWithSep(sep string, args ...string) [][]interface{} {
-	rows := make([][]interface{}, len(args))
-	for i, v := range args {
-		strs := strings.Split(v, sep)
-		row := make([]interface{}, len(strs))
-		for j, s := range strs {
-			row[j] = s
-		}
-		rows[i] = row
-	}
-	return rows
-}
-
 // Rows is similar to RowsWithSep, use white space as separator string.
 func Rows(args ...string) [][]interface{} {
-	return RowsWithSep(" ", args...)
+	return testutil.RowsWithSep(" ", args...)
 }

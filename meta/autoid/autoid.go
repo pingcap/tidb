@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	step = 1000
+	step = 5000
 )
 
 var errInvalidTableID = terror.ClassAutoid.New(codeInvalidTableID, "invalid TableID")
@@ -49,6 +49,11 @@ type allocator struct {
 	end   int64
 	store kv.Storage
 	dbID  int64
+}
+
+// GetStep is only used by tests
+func GetStep() int64 {
+	return step
 }
 
 // Rebase implements autoid.Allocator Rebase interface.

@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"reflect"
-	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -43,19 +42,14 @@ type testColumnSuite struct {
 }
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
-	trySkipTest(c)
-
 	s.store = testCreateStore(c, "test_column")
-	lease := 50 * time.Millisecond
-	s.d = newDDL(s.store, nil, nil, lease)
+	s.d = newDDL(s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test_column")
 	testCreateSchema(c, mock.NewContext(), s.d, s.dbInfo)
 }
 
 func (s *testColumnSuite) TearDownSuite(c *C) {
-	trySkipTest(c)
-
 	testDropSchema(c, mock.NewContext(), s.d, s.dbInfo)
 	s.d.close()
 
@@ -96,14 +90,12 @@ func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tbl
 		Type:     model.ActionDropColumn,
 		Args:     []interface{}{model.NewCIStr(colName)},
 	}
-
 	err := d.doDDLJob(ctx, job)
 	if isError {
 		c.Assert(err, NotNil)
 		return nil
 	}
-
-	c.Assert(err, IsNil)
+	c.Assert(errors.ErrorStack(err), Equals, "")
 	return job
 }
 
@@ -736,7 +728,7 @@ func (s *testColumnSuite) testGetColumn(t table.Table, name string, isExist bool
 
 func (s *testColumnSuite) TestAddColumn(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	d := newDDL(s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(c, d)
 
@@ -808,7 +800,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	d := newDDL(s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 4)
 	ctx := testNewContext(c, d)
 

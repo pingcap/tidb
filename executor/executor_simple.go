@@ -107,7 +107,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	db.BindCurrentSchema(e.ctx, dbname.O)
 	// character_set_database is the character set used by the default database.
 	// The server sets this variable whenever the default database changes.
-	// See: http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
+	// See http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
 	sessionVars := variable.GetSessionVars(e.ctx)
 	err := sessionVars.SetSystemVar(variable.CharsetDatabase, types.NewStringDatum(dbinfo.Charset))
 	if err != nil {
