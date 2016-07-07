@@ -313,7 +313,18 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	used := makeUsedList(childOuterUsedCols, p.OuterSchema)
+	child := p.GetChildByIndex(0).(LogicalPlan)
+	var selfOuterUsedCols []*expression.Column
+	used := make([]bool, len(p.OuterSchema))
+	for i := len(childOuterUsedCols) -1; i>= 0; i-- {
+		// If the outer column can't be resolved from this outer schema, it should be resolved by outer schema.
+		if idx := p.OuterSchema.GetIndex(childOuterUsedCols[i]); idx == -1 {
+			selfOuterUsedCols = append(selfOuterUsedCols, childOuterUsedCols[i])
+			childOuterUsedCols = append(childOuterUsedCols[:i], childOuterUsedCols[i+1:]...)
+		} else {
+			used[idx] = true
+		}
+	}
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			p.OuterSchema = append(p.OuterSchema[:i], p.OuterSchema[i+1:]...)
@@ -333,7 +344,7 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 			}
 		}
 	}
-	childOuterUsedCols, err = p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(newUsedCols)
+	childOuterUsedCols, err = child.PruneColumnsAndResolveIndices(newUsedCols)
 	for _, col := range p.OuterSchema {
 		col.Index = p.GetChildByIndex(0).GetSchema().GetIndex(col)
 	}
@@ -352,5 +363,5 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 		p.schema = append(p.GetChildByIndex(0).GetSchema().DeepCopy(), p.schema[len(p.schema)-1])
 	}
 	p.schema.InitIndices()
-	return childOuterUsedCols, nil
+	return append(childOuterUsedCols, selfOuterUsedCols...), nil
 }

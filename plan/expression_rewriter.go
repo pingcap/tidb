@@ -411,14 +411,9 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) bool {
 	globalVars := variable.GetGlobalVarAccessor(er.b.ctx)
 	if !v.IsSystem {
 		var d types.Datum
-		var err error
 		if v.Value != nil {
-			d, err = er.ctxStack[stkLen-1].Eval(nil, er.b.ctx)
-			if err != nil {
-				er.err = errors.Trace(err)
-				return false
-			}
-			er.ctxStack = er.ctxStack[:stkLen-1]
+			er.ctxStack[stkLen-1].SetVarName(name)
+			return true
 		}
 		if !d.IsNull() {
 			strVal, err := d.ToString()
