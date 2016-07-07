@@ -1076,12 +1076,12 @@ type conditionChecker struct {
 	dataHasNull bool
 }
 
-// Check checks if the input row can determine the final result.
-// If so, it return the eval result for first result, and return true for second result.
-func (c *conditionChecker) Check(rowData []types.Datum) (*types.Datum, bool, error) {
-	data, err := c.cond.Eval(rowData, c.ctx)
+// Check returns finished for checking if the input row can determine the final result,
+// and returns data for the eval result.
+func (c *conditionChecker) Check(rowData []types.Datum) (finished bool, data types.Datum, err error) {
+	data, err = c.cond.Eval(rowData, c.ctx)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return false, data, errors.Trace(err)
 	}
 	var matched int64
 	if data.IsNull() {
@@ -1090,10 +1090,10 @@ func (c *conditionChecker) Check(rowData []types.Datum) (*types.Datum, bool, err
 	} else {
 		matched, err = data.ToBool()
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return false, data, errors.Trace(err)
 		}
 	}
-	return &data, (matched != 0) != c.all, nil
+	return (matched != 0) != c.all, data, nil
 }
 
 // Schema implements Executor Schema interface.
@@ -1152,7 +1152,7 @@ func (e *ApplyExec) Next() (*Row, error) {
 			e.innerExec.Close()
 			return srcRow, nil
 		}
-		data, finished, err := e.checker.Check(srcRow.Data)
+		finished, data, err := e.checker.Check(srcRow.Data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1160,7 +1160,7 @@ func (e *ApplyExec) Next() (*Row, error) {
 		if finished {
 			e.checker.dataHasNull = false
 			e.innerExec.Close()
-			srcRow.Data = append(srcRow.Data, *data)
+			srcRow.Data = append(srcRow.Data, data)
 			return srcRow, nil
 		}
 	}
