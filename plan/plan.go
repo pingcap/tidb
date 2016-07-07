@@ -135,6 +135,9 @@ func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	if len(p.GetChildren()) == 0 {
+		return predicates, p, nil
+	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	rest, _, err1 := child.PredicatePushDown(predicates)
 	if err1 != nil {

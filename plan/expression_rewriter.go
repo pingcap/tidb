@@ -141,7 +141,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			return inNode, true
 		}
 		// Only (a,b,c) = all (...) and (a,b,c) != any () can use row expression.
-		canMultiCol := (v.All && v.Op == opcode.EQ) || (!v.All && v.Op == opcode.NE)
+		canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
 		if !canMultiCol && (getRowLen(lexpr) != 1 || len(np.GetSchema()) != 1) {
 			er.err = errors.New("Operand should contain 1 column(s)")
 			return inNode, true
@@ -287,7 +287,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 				er.ctxStack = append(er.ctxStack, expr)
 
 			} else {
-				er.ctxStack = append(er.ctxStack, np.GetSchema()[0])
+				er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
 			}
 			return inNode, true
 		}
@@ -315,7 +315,10 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			}
 			er.ctxStack = append(er.ctxStack, expr)
 		} else {
-			er.ctxStack = append(er.ctxStack, np.GetSchema()[0])
+			er.ctxStack = append(er.ctxStack, &expression.Constant{
+				Value:   d[0],
+				RetType: np.GetSchema()[0].GetType(),
+			})
 		}
 		return inNode, true
 	}

@@ -651,8 +651,10 @@ func (e *InsertValues) getRow(cols []*table.Column, list []ast.ExprNode, default
 
 func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
-	if (!plan.UseNewPlanner && len(e.SelectExec.Fields()) != len(cols)) || (plan.UseNewPlanner && len(e.SelectExec.Schema()) != len(cols)) {
+	if !plan.UseNewPlanner && len(e.SelectExec.Fields()) != len(cols) {
 		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Fields()))
+	} else if plan.UseNewPlanner && len(e.SelectExec.Schema()) != len(cols) {
+		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Schema()))
 	}
 	var rows [][]types.Datum
 	for {

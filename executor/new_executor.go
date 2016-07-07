@@ -718,7 +718,7 @@ func (e *NewXSelectTableExec) Fields() []*ast.ResultField {
 // NewSortExec represents sorting executor.
 type NewSortExec struct {
 	Src     Executor
-	ByItems []plan.ByItems
+	ByItems []*plan.ByItems
 	Rows    []*orderByRow
 	ctx     context.Context
 	Limit   *plan.Limit
@@ -1069,25 +1069,31 @@ type ApplyExec struct {
 
 // conditionChecker checks if all or any of the row match this condition.
 type conditionChecker struct {
-	cond    expression.Expression
-	trimLen int
-	ctx     context.Context
-	all     bool
-	matched bool
+	cond        expression.Expression
+	trimLen     int
+	ctx         context.Context
+	all         bool
+	dataHasNull bool
 }
 
-func (c *conditionChecker) Exec(row *Row) (*Row, error) {
-	var err error
-	c.matched, err = expression.EvalBool(c.cond, row.Data, c.ctx)
+// Check returns finished for checking if the input row can determine the final result,
+// and returns data for the eval result.
+func (c *conditionChecker) Check(rowData []types.Datum) (finished bool, data types.Datum, err error) {
+	data, err = c.cond.Eval(rowData, c.ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return false, data, errors.Trace(err)
 	}
-	row.Data = row.Data[:c.trimLen]
-	if c.matched != c.all {
-		row.Data = append(row.Data, types.NewDatum(c.matched))
-		return row, nil
+	var matched int64
+	if data.IsNull() {
+		c.dataHasNull = true
+		matched = 0
+	} else {
+		matched, err = data.ToBool()
+		if err != nil {
+			return false, data, errors.Trace(err)
+		}
 	}
-	return nil, nil
+	return (matched != 0) != c.all, data, nil
 }
 
 // Schema implements Executor Schema interface.
@@ -1103,7 +1109,7 @@ func (e *ApplyExec) Fields() []*ast.ResultField {
 // Close implements Executor Close interface.
 func (e *ApplyExec) Close() error {
 	if e.checker != nil {
-		e.checker.matched = false
+		e.checker.dataHasNull = false
 	}
 	return e.Src.Close()
 }
@@ -1126,6 +1132,7 @@ func (e *ApplyExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		trimLen := len(srcRow.Data)
 		if innerRow != nil {
 			srcRow.Data = append(srcRow.Data, innerRow.Data...)
 		}
@@ -1134,17 +1141,29 @@ func (e *ApplyExec) Next() (*Row, error) {
 			return srcRow, nil
 		}
 		if innerRow == nil {
-			srcRow.Data = append(srcRow.Data, types.NewDatum(e.checker.matched))
+			var d types.Datum
+			// If we can't determine the result until the last row comes, the all must be true and any must not be true.
+			// If the any have met a null, the result will be null.
+			if e.checker.dataHasNull && !e.checker.all {
+				d = types.NewDatum(nil)
+			} else {
+				d = types.NewDatum(e.checker.all)
+			}
+			srcRow.Data = append(srcRow.Data, d)
+			e.checker.dataHasNull = false
 			e.innerExec.Close()
 			return srcRow, nil
 		}
-		resultRow, err := e.checker.Exec(srcRow)
+		finished, data, err := e.checker.Check(srcRow.Data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if resultRow != nil {
+		srcRow.Data = srcRow.Data[:trimLen]
+		if finished {
+			e.checker.dataHasNull = false
 			e.innerExec.Close()
-			return resultRow, nil
+			srcRow.Data = append(srcRow.Data, data)
+			return srcRow, nil
 		}
 	}
 }
