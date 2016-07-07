@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
@@ -279,7 +280,7 @@ func checkAutocommit(c *C, se Session, expect uint16) {
 	c.Assert(ret, Equals, expect)
 }
 
-// See: https://dev.mysql.com/doc/internals/en/status-flags.html
+// See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestAutocommit(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
@@ -321,7 +322,7 @@ func checkInTrans(c *C, se Session, stmt string, expect uint16) {
 	c.Assert(ret, Equals, expect)
 }
 
-// See: https://dev.mysql.com/doc/internals/en/status-flags.html
+// See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestInTrans(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
@@ -356,7 +357,7 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	c.Assert(err, IsNil)
 }
 
-// See: http://dev.mysql.com/doc/refman/5.7/en/commit.html
+// See http://dev.mysql.com/doc/refman/5.7/en/commit.html
 func (s *testSessionSuite) TestRowLock(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
@@ -1350,6 +1351,7 @@ func (s *testSessionSuite) bootstrapWithError(store kv.Storage, c *C) {
 		values: make(map[fmt.Stringer]interface{}),
 		store:  store,
 		sid:    atomic.AddInt64(&sessionID, 1),
+		parser: parser.New(),
 	}
 	domain, err := domap.Get(store)
 	c.Assert(err, IsNil)

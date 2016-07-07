@@ -29,8 +29,7 @@ func (s *testDDLSuite) TestDropSchemaError(c *C) {
 	store := testCreateStore(c, "test_drop_schema")
 	defer store.Close()
 
-	lease := 50 * time.Millisecond
-	d := newDDL(store, nil, nil, lease)
+	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
 
 	job := &model.Job{
@@ -47,7 +46,7 @@ func (s *testDDLSuite) TestDropSchemaError(c *C) {
 	c.Check(err, IsNil)
 	d.startBgJob(job.Type)
 
-	time.Sleep(lease)
+	time.Sleep(testLease * 3)
 	verifyBgJobState(c, d, job, model.JobDone)
 }
 
@@ -68,8 +67,7 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	store := testCreateStore(c, "test_drop_table")
 	defer store.Close()
 
-	lease := 50 * time.Millisecond
-	d := newDDL(store, nil, nil, lease)
+	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
 
 	dbInfo := testSchemaInfo(c, d, "test")
@@ -90,7 +88,7 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	c.Check(err, IsNil)
 	d.startBgJob(job.Type)
 
-	time.Sleep(lease)
+	time.Sleep(testLease * 3)
 	verifyBgJobState(c, d, job, model.JobDone)
 }
 
@@ -99,8 +97,7 @@ func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
 	store := testCreateStore(c, "test_invalid_bg_job_type")
 	defer store.Close()
 
-	lease := 50 * time.Millisecond
-	d := newDDL(store, nil, nil, lease)
+	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
 
 	job := &model.Job{
@@ -115,6 +112,6 @@ func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
 	c.Check(err, IsNil)
 	d.startBgJob(model.ActionDropTable)
 
-	time.Sleep(lease)
+	time.Sleep(testLease * 3)
 	verifyBgJobState(c, d, job, model.JobCancelled)
 }

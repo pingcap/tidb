@@ -113,6 +113,9 @@ func (ps *perfSchema) RegisterStatement(category, name string, elem interface{})
 }
 
 func (ps *perfSchema) StartStatement(sql string, connID uint64, callerName EnumCallerName, elem interface{}) *StatementState {
+	if !enablePerfSchema {
+		return nil
+	}
 	stmtType := reflect.TypeOf(elem)
 	info, ok := ps.stmtInfos[stmtType]
 	if !ok {
@@ -176,6 +179,9 @@ func (ps *perfSchema) StartStatement(sql string, connID uint64, callerName EnumC
 }
 
 func (ps *perfSchema) EndStatement(state *StatementState) {
+	if !enablePerfSchema {
+		return
+	}
 	if state == nil {
 		return
 	}
