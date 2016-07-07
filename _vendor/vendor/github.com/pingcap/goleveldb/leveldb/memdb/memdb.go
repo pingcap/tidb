@@ -20,6 +20,7 @@ import (
 var (
 	ErrNotFound     = errors.ErrNotFound
 	ErrIterReleased = errors.New("leveldb/memdb: iterator released")
+	rnd             = rand.New(rand.NewSource(0xdeadbeef))
 )
 
 const tMaxHeight = 12
@@ -460,7 +461,7 @@ func (p *DB) Reset() {
 func New(cmp comparer.BasicComparer, capacity int) *DB {
 	p := &DB{
 		cmp:       cmp,
-		rnd:       rand.New(rand.NewSource(0xdeadbeef)),
+		rnd:       rnd,
 		maxHeight: 1,
 		kvData:    make([]byte, 0, capacity),
 		nodeData:  make([]int, 4+tMaxHeight),
