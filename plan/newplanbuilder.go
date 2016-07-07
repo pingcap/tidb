@@ -58,10 +58,10 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		}
 		agg.AggFuncs = append(agg.AggFuncs, expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct))
 		schema = append(schema, &expression.Column{FromID: agg.id,
-			ColName:  model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, i)),
-			Position: i,
-			IsAgg:    true,
-			RetType:  aggFunc.GetType()})
+			ColName:     model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, i)),
+			Position:    i,
+			IsAggOrSubq: true,
+			RetType:     aggFunc.GetType()})
 	}
 	agg.GroupByItems = gby
 	agg.SetSchema(schema)
@@ -264,7 +264,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		var tblName, colName model.CIStr
 		if field.AsName.L != "" {
 			colName = field.AsName
-		} else if c, ok := newExpr.(*expression.Column); ok && !c.IsAgg {
+		} else if c, ok := newExpr.(*expression.Column); ok && !c.IsAggOrSubq {
 			colName = c.ColName
 			tblName = c.TblName
 		} else {
@@ -364,7 +364,7 @@ type ByItems struct {
 }
 
 func (b *planBuilder) buildNewSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
-	var exprs []ByItems
+	var exprs []*ByItems
 	sort := &NewSort{baseLogicalPlan: newBaseLogicalPlan(Srt, b.allocator)}
 	sort.initID()
 	for _, item := range byItems {
@@ -375,7 +375,7 @@ func (b *planBuilder) buildNewSort(p LogicalPlan, byItems []*ast.ByItem, aggMapp
 		}
 		p = np
 		sort.correlated = sort.correlated || correlated
-		exprs = append(exprs, ByItems{Expr: it, Desc: item.Desc})
+		exprs = append(exprs, &ByItems{Expr: it, Desc: item.Desc})
 	}
 	sort.ByItems = exprs
 	addChild(sort, p)
@@ -580,6 +580,7 @@ func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	havingAggMapper := extractor.aggMapper
 	extractor.aggMapper = make(map[*ast.AggregateFuncExpr]int)
 	extractor.orderBy = true
+	extractor.inExpr = false
 	// Extract agg funcs from order by clause.
 	if sel.OrderBy != nil {
 		for _, item := range sel.OrderBy.Items {
@@ -807,8 +808,6 @@ func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
 func (b *planBuilder) buildNewTableDual() LogicalPlan {
 	dual := &NewTableDual{baseLogicalPlan: newBaseLogicalPlan(Dual, b.allocator)}
 	dual.initID()
-	schema := []*expression.Column{{FromID: dual.id}}
-	dual.SetSchema(schema)
 	return dual
 }
 
@@ -850,12 +849,16 @@ func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema,
 	addChild(ap, p)
 	innerSchema := inner.GetSchema().DeepCopy()
 	if checker == nil {
+		for _, col := range innerSchema {
+			col.IsAggOrSubq = true
+		}
 		ap.SetSchema(append(p.GetSchema().DeepCopy(), innerSchema...))
 	} else {
 		ap.SetSchema(append(p.GetSchema().DeepCopy(), &expression.Column{
-			FromID:  ap.id,
-			ColName: model.NewCIStr("exists_row"),
-			RetType: types.NewFieldType(mysql.TypeTiny),
+			FromID:      ap.id,
+			ColName:     model.NewCIStr("exists_row"),
+			RetType:     types.NewFieldType(mysql.TypeTiny),
+			IsAggOrSubq: true,
 		}))
 	}
 	ap.correlated = p.IsCorrelated()

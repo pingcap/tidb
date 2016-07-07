@@ -245,3 +245,9 @@ func (p *Distinct) PredicatePushDown(predicates []expression.Expression) ([]expr
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, errors.Trace(err)
 }
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *Insert) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
+	return ret, p, errors.Trace(err)
+}

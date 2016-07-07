@@ -605,7 +605,7 @@ func (e *NewTableScanExec) Fields() []*ast.ResultField {
 // NewSortExec represents sorting executor.
 type NewSortExec struct {
 	Src     Executor
-	ByItems []plan.ByItems
+	ByItems []*plan.ByItems
 	Rows    []*orderByRow
 	ctx     context.Context
 	Limit   *plan.Limit
@@ -960,18 +960,30 @@ type conditionChecker struct {
 	trimLen int
 	ctx     context.Context
 	all     bool
-	matched bool
+	data    *types.Datum
 }
 
 func (c *conditionChecker) Exec(row *Row) (*Row, error) {
-	var err error
-	c.matched, err = expression.EvalBool(c.cond, row.Data, c.ctx)
+	data, err := c.cond.Eval(row.Data, c.ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	var matched int64
+	if data.IsNull() {
+		c.data = &data
+		matched = 0
+	} else {
+		matched, err = data.ToBool()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if c.data == nil {
+		c.data = &data
+	}
 	row.Data = row.Data[:c.trimLen]
-	if c.matched != c.all {
-		row.Data = append(row.Data, types.NewDatum(c.matched))
+	if (matched != 0) != c.all {
+		row.Data = append(row.Data, data)
 		return row, nil
 	}
 	return nil, nil
@@ -990,7 +1002,7 @@ func (e *ApplyExec) Fields() []*ast.ResultField {
 // Close implements Executor Close interface.
 func (e *ApplyExec) Close() error {
 	if e.checker != nil {
-		e.checker.matched = false
+		e.checker.data = nil
 	}
 	return e.Src.Close()
 }
@@ -1021,7 +1033,14 @@ func (e *ApplyExec) Next() (*Row, error) {
 			return srcRow, nil
 		}
 		if innerRow == nil {
-			srcRow.Data = append(srcRow.Data, types.NewDatum(e.checker.matched))
+			var d types.Datum
+			if e.checker.data == nil {
+				d = types.NewDatum(e.checker.all)
+			} else {
+				d = *e.checker.data
+			}
+			srcRow.Data = append(srcRow.Data, d)
+			e.checker.data = nil
 			e.innerExec.Close()
 			return srcRow, nil
 		}
@@ -1030,6 +1049,7 @@ func (e *ApplyExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if resultRow != nil {
+			e.checker.data = nil
 			e.innerExec.Close()
 			return resultRow, nil
 		}
