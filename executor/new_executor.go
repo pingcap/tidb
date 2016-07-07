@@ -1069,37 +1069,31 @@ type ApplyExec struct {
 
 // conditionChecker checks if all or any of the row match this condition.
 type conditionChecker struct {
-	cond    expression.Expression
-	trimLen int
-	ctx     context.Context
-	all     bool
-	data    *types.Datum
+	cond        expression.Expression
+	trimLen     int
+	ctx         context.Context
+	all         bool
+	dataHasNull bool
 }
 
-func (c *conditionChecker) Check(row *Row) (*Row, error) {
-	data, err := c.cond.Eval(row.Data, c.ctx)
+// Check checks if the input row can determine the final result.
+// If so, it return the eval result for first result, and return true for second result.
+func (c *conditionChecker) Check(rowData []types.Datum) (*types.Datum, bool, error) {
+	data, err := c.cond.Eval(rowData, c.ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 	var matched int64
 	if data.IsNull() {
-		c.data = &data
+		c.dataHasNull = true
 		matched = 0
 	} else {
 		matched, err = data.ToBool()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 	}
-	if c.data == nil {
-		c.data = &data
-	}
-	row.Data = row.Data[:c.trimLen]
-	if (matched != 0) != c.all {
-		row.Data = append(row.Data, data)
-		return row, nil
-	}
-	return nil, nil
+	return &data, (matched != 0) != c.all, nil
 }
 
 // Schema implements Executor Schema interface.
@@ -1115,7 +1109,7 @@ func (e *ApplyExec) Fields() []*ast.ResultField {
 // Close implements Executor Close interface.
 func (e *ApplyExec) Close() error {
 	if e.checker != nil {
-		e.checker.data = nil
+		e.checker.dataHasNull = false
 	}
 	return e.Src.Close()
 }
@@ -1138,6 +1132,7 @@ func (e *ApplyExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		trimLen := len(srcRow.Data)
 		if innerRow != nil {
 			srcRow.Data = append(srcRow.Data, innerRow.Data...)
 		}
@@ -1147,24 +1142,26 @@ func (e *ApplyExec) Next() (*Row, error) {
 		}
 		if innerRow == nil {
 			var d types.Datum
-			if e.checker.data == nil {
-				d = types.NewDatum(e.checker.all)
+			if e.checker.dataHasNull && !e.checker.all {
+				d = types.NewDatum(nil)
 			} else {
-				d = *e.checker.data
+				d = types.NewDatum(e.checker.all)
 			}
 			srcRow.Data = append(srcRow.Data, d)
-			e.checker.data = nil
+			e.checker.dataHasNull = false
 			e.innerExec.Close()
 			return srcRow, nil
 		}
-		resultRow, err := e.checker.Check(srcRow)
+		data, finished, err := e.checker.Check(srcRow.Data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if resultRow != nil {
-			e.checker.data = nil
+		srcRow.Data = srcRow.Data[:trimLen]
+		if finished {
+			e.checker.dataHasNull = false
 			e.innerExec.Close()
-			return resultRow, nil
+			srcRow.Data = append(srcRow.Data, *data)
+			return srcRow, nil
 		}
 	}
 }
