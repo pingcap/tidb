@@ -1589,6 +1589,18 @@ func (s *testSuite) TestNewSubquery(c *C) {
 	result.Check(testkit.Rows("1", "2", "3"))
 	result = tk.MustQuery("select t.c from t where (t.c, t.d) not in (select * from t)")
 	result.Check(testkit.Rows())
+	// = all empty set is true
+	result = tk.MustQuery("select t.c from t where (t.c, t.d) = all (select * from t where d > 1000)")
+	result.Check(testkit.Rows("1", "2", "3"))
+	result = tk.MustQuery("select t.c from t where (t.c) < any (select c from t where d > 1000)")
+	result.Check(testkit.Rows())
+	tk.MustExec("insert t values (NULL, NULL)")
+	result = tk.MustQuery("select (t.c) < any (select c from t) from t")
+	result.Check(testkit.Rows("1", "1", "<nil>", "<nil>"))
+	result = tk.MustQuery("select (10) > all (select c from t) from t")
+	result.Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
+	result = tk.MustQuery("select (c) > all (select c from t) from t")
+	result.Check(testkit.Rows("0", "0", "0", "<nil>"))
 	plan.UseNewPlanner = false
 }
 
@@ -1788,5 +1800,11 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(len(fields), Equals, 2)
 	c.Check(fields[0].Column.Name.L, Equals, "1 + c")
 	c.Check(fields[1].Column.Name.L, Equals, "count(*)")
+	rs, err = tk.Exec("select (c) > all (select c from t) from t")
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
 	plan.UseNewPlanner = false
 }
