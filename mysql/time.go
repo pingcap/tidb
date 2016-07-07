@@ -694,7 +694,7 @@ func (d Duration) MicroSecond() int {
 
 // ParseDuration parses the time form a formatted string with a fractional seconds part,
 // returns the duration type Time value.
-// See: http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
+// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
 func ParseDuration(str string, fsp int) (Duration, error) {
 	var (
 		day    int
@@ -770,7 +770,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		_, err = fmt.Sscanf(str, "%2d:%2d", &hour, &minute)
 	case 3:
 		// Time format maybe HH:MM:SS or HHH:MM:SS.
-		// See: https://dev.mysql.com/doc/refman/5.7/en/time.html
+		// See https://dev.mysql.com/doc/refman/5.7/en/time.html
 		if !dayExists && len(seps[0]) == 3 {
 			_, err = fmt.Sscanf(str, "%3d:%2d:%2d", &hour, &minute, &second)
 		} else {

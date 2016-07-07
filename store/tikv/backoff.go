@@ -34,7 +34,7 @@ const (
 
 // NewBackoff creates a backoff func which implements exponential backoff with
 // optional jitters.
-// See: http://www.awsarchitectureblog.com/2015/03/backoff.html
+// See http://www.awsarchitectureblog.com/2015/03/backoff.html
 func NewBackoff(retry, base, cap, jitter int) func() error {
 	attempts := 0
 	totalSleep := 0

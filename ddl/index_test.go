@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"strings"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -39,19 +38,14 @@ type testIndexSuite struct {
 }
 
 func (s *testIndexSuite) SetUpSuite(c *C) {
-	trySkipTest(c)
-
 	s.store = testCreateStore(c, "test_index")
-	lease := 50 * time.Millisecond
-	s.d = newDDL(s.store, nil, nil, lease)
+	s.d = newDDL(s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test_index")
 	testCreateSchema(c, mock.NewContext(), s.d, s.dbInfo)
 }
 
 func (s *testIndexSuite) TearDownSuite(c *C) {
-	trySkipTest(c)
-
 	testDropSchema(c, mock.NewContext(), s.d, s.dbInfo)
 	s.d.close()
 
@@ -564,7 +558,7 @@ func (s *testIndexSuite) checkAddOrDropIndex(c *C, state model.SchemaState, d *d
 
 func (s *testIndexSuite) TestAddIndex(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	d := newDDL(s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(c, d)
 
@@ -632,7 +626,7 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 
 func (s *testIndexSuite) TestDropIndex(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	d := newDDL(s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(c, d)
 
@@ -703,7 +697,7 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 
 func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	d := newDDL(s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	// Change c2.DefaultValue to nil
 	tblInfo.Columns[1].DefaultValue = nil

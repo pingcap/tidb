@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"fmt"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
@@ -130,8 +129,7 @@ func testGetTable(c *C, d *ddl, schemaID int64, tableID int64) table.Table {
 
 func (s *testTableSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_table")
-	lease := 50 * time.Millisecond
-	s.d = newDDL(s.store, nil, nil, lease)
+	s.d = newDDL(s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test")
 	testCreateSchema(c, mock.NewContext(), s.d, s.dbInfo)

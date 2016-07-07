@@ -280,7 +280,7 @@ func checkAutocommit(c *C, se Session, expect uint16) {
 	c.Assert(ret, Equals, expect)
 }
 
-// See: https://dev.mysql.com/doc/internals/en/status-flags.html
+// See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestAutocommit(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
@@ -322,7 +322,7 @@ func checkInTrans(c *C, se Session, stmt string, expect uint16) {
 	c.Assert(ret, Equals, expect)
 }
 
-// See: https://dev.mysql.com/doc/internals/en/status-flags.html
+// See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestInTrans(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
@@ -357,7 +357,7 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	c.Assert(err, IsNil)
 }
 
-// See: http://dev.mysql.com/doc/refman/5.7/en/commit.html
+// See http://dev.mysql.com/doc/refman/5.7/en/commit.html
 func (s *testSessionSuite) TestRowLock(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)

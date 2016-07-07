@@ -44,7 +44,7 @@ func trimComment(txt string) string {
 	return specCodeEnd.ReplaceAllString(txt, "")
 }
 
-// See: http://dev.mysql.com/doc/refman/5.7/en/comments.html
+// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
 // Convert "/*!VersionNumber MySQL-specific-code */" to "MySQL-specific-code".
 // TODO: Find a better way:
 // 1. RegExpr is slow.

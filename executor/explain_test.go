@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite) TestExplain(c *C) {
@@ -89,6 +90,6 @@ func (s *testSuite) TestExplain(c *C) {
 	}
 	for _, ca := range cases {
 		result := tk.MustQuery("explain " + ca.sql)
-		result.Check(testkit.RowsWithSep(" | ", ca.result...))
+		result.Check(testutil.RowsWithSep(" | ", ca.result...))
 	}
 }
