@@ -141,7 +141,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			return inNode, true
 		}
 		// Only (a,b,c) = all (...) and (a,b,c) != any () can use row expression.
-		canMultiCol := (v.All && v.Op == opcode.EQ) || (!v.All && v.Op == opcode.NE)
+		canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
 		if !canMultiCol && (getRowLen(lexpr) != 1 || len(np.GetSchema()) != 1) {
 			er.err = errors.New("Operand should contain 1 column(s)")
 			return inNode, true
