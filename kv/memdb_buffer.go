@@ -17,12 +17,12 @@ package kv
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/goleveldb/leveldb"
+	"github.com/pingcap/goleveldb/leveldb/comparer"
+	"github.com/pingcap/goleveldb/leveldb/iterator"
+	"github.com/pingcap/goleveldb/leveldb/memdb"
+	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/tidb/terror"
-	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/comparer"
-	"github.com/syndtr/goleveldb/leveldb/iterator"
-	"github.com/syndtr/goleveldb/leveldb/memdb"
-	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
 type memDbBuffer struct {
