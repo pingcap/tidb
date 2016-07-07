@@ -68,7 +68,11 @@ type Server struct {
 
 // ConnectionCount gets current connection count.
 func (s *Server) ConnectionCount() int {
-	return len(s.clients)
+	var cnt int
+	s.rwlock.RLock()
+	cnt = len(s.clients)
+	s.rwlock.RUnlock()
+	return cnt
 }
 
 func (s *Server) getToken() *Token {
