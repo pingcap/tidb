@@ -45,11 +45,13 @@ var _ = Suite(&testSuite{})
 
 type testSuite struct {
 	store kv.Storage
+	*parser.Parser
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
+	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
@@ -1731,14 +1733,14 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	compiler := &executor.Compiler{}
 	ctx := se.(context.Context)
 
-	stmtNode, err := parser.ParseOneStmt("select 1", "", "")
+	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
 	stmt, err := compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 	c.Check(stmt.IsDDL(), IsFalse)
 
-	stmtNode, err = parser.ParseOneStmt("create table t (a int)", "", "")
+	stmtNode, err = s.ParseOneStmt("create table t (a int)", "", "")
 	c.Check(err, IsNil)
 	stmt, err = compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
