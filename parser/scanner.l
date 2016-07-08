@@ -441,6 +441,7 @@ pow 		{p}{o}{w}
 power		{p}{o}{w}{e}{r}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
+privileges	{p}{r}{i}{v}{i}{l}{e}{g}{e}{s}
 procedure	{p}{r}{o}{c}{e}{d}{u}{r}{e}
 quarter		{q}{u}{a}{r}{t}{e}{r}
 quick		{q}{u}{i}{c}{k}
@@ -948,6 +949,8 @@ action		{a}{c}{t}{i}{o}{n}
 {prepare}		lval.item = string(l.val)
 			return prepare
 {primary}		return primary
+{privileges}		lval.item = string(l.val)
+			return privileges
 {procedure}		return procedure
 {quarter}		lval.item = string(l.val)
 			return quarter
