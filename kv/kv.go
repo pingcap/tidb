@@ -63,12 +63,8 @@ type RetrieverMutator interface {
 	Mutator
 }
 
-// MemBuffer is an in-memory kv collection. It should be released after use.
-type MemBuffer interface {
-	RetrieverMutator
-	// Release releases the buffer.
-	Release()
-}
+// MemBuffer is an in-memory kv collection, can be used to buffer write operations.
+type MemBuffer RetrieverMutator
 
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
@@ -156,8 +152,6 @@ type Snapshot interface {
 	Retriever
 	// BatchGet gets a batch of values from snapshot.
 	BatchGet(keys []Key) (map[string][]byte, error)
-	// Release releases the snapshot to store.
-	Release()
 }
 
 // Driver is the interface that must be implemented by a KV storage.
