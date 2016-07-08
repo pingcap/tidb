@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -41,32 +40,6 @@ type Expression interface {
 
 	// ToString converts an expression into a string.
 	ToString() string
-
-	// SetVarName set values for session variable.
-	SetVarName(string)
-}
-
-type expression struct {
-	varName string
-}
-
-func (e *expression) SetVarValue(d types.Datum, ctx context.Context) error {
-	if e.varName == "" {
-		return nil
-	}
-	sessionVars := variable.GetSessionVars(ctx)
-	if !d.IsNull() {
-		strVal, err := d.ToString()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		sessionVars.Users[e.varName] = strings.ToLower(strVal)
-	}
-	return nil
-}
-
-func (e *expression) SetVarName(name string) {
-	e.varName = name
 }
 
 // EvalBool evaluates expression to a boolean value.
@@ -88,8 +61,6 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 
 // Column represents a column.
 type Column struct {
-	expression
-
 	FromID  string
 	ColName model.CIStr
 	DBName  model.CIStr
@@ -140,12 +111,11 @@ func (col *Column) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (col *Column) Eval(row []types.Datum, ctx context.Context) (d types.Datum, err error) {
+func (col *Column) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
 	if col.Correlated {
 		return *col.data, nil
 	}
-	d = row[col.Index]
-	return d, errors.Trace(col.SetVarValue(d, ctx))
+	return row[col.Index], nil
 }
 
 // DeepCopy implements Expression interface.
@@ -226,8 +196,6 @@ func (s Schema) GetIndex(col *Column) int {
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
-	expression
-
 	Args     []Expression
 	FuncName model.CIStr
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
@@ -309,17 +277,11 @@ func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Da
 			return types.Datum{}, errors.Trace(err)
 		}
 	}
-	d, err := sf.Function(args, ctx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	return d, errors.Trace(sf.SetVarValue(d, ctx))
+	return sf.Function(args, ctx)
 }
 
 // Constant stands for a constant value.
 type Constant struct {
-	expression
-
 	Value   types.Datum
 	RetType *types.FieldType
 }
@@ -341,8 +303,8 @@ func (c *Constant) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (c *Constant) Eval(_ []types.Datum, ctx context.Context) (types.Datum, error) {
-	return c.Value, errors.Trace(c.SetVarValue(c.Value, ctx))
+func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error) {
+	return c.Value, nil
 }
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.

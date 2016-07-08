@@ -410,21 +410,23 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) bool {
 	sessionVars := variable.GetSessionVars(er.b.ctx)
 	globalVars := variable.GetGlobalVarAccessor(er.b.ctx)
 	if !v.IsSystem {
-		var d types.Datum
 		if v.Value != nil {
-			er.ctxStack[stkLen-1].SetVarName(name)
-			return true
+			er.ctxStack[stkLen-1], er.err = expression.NewFunction(ast.SetVar,
+				er.ctxStack[stkLen-1].GetType(),
+				er.ctxStack[stkLen-1],
+				datumToConstant(types.NewDatum(name), mysql.TypeString))
+			return er.err == nil
 		}
-		if !d.IsNull() {
-			strVal, err := d.ToString()
+		if _, ok := sessionVars.Users[name]; ok {
+			f, err := expression.NewFunction(ast.GetVar,
+				// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
+				types.NewFieldType(mysql.TypeString),
+				datumToConstant(types.NewStringDatum(name), mysql.TypeString))
 			if err != nil {
 				er.err = errors.Trace(err)
 				return false
 			}
-			sessionVars.Users[name] = strings.ToLower(strVal)
-			er.ctxStack = append(er.ctxStack, datumToConstant(d, mysql.TypeString))
-		} else if value, ok := sessionVars.Users[name]; ok {
-			er.ctxStack = append(er.ctxStack, datumToConstant(types.NewStringDatum(value), mysql.TypeString))
+			er.ctxStack = append(er.ctxStack, f)
 		} else {
 			// select null user vars is permitted.
 			er.ctxStack = append(er.ctxStack, &expression.Constant{RetType: types.NewFieldType(mysql.TypeNull)})

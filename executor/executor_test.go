@@ -1810,3 +1810,18 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
 	plan.UseNewPlanner = false
 }
+
+func (s *testSuite) TestSelectVar(c *C) {
+	plan.UseNewPlanner = true
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (d int)")
+	tk.MustExec("insert into t values(1), (2), (1)")
+	result := tk.MustQuery("select @a, @a := d+1 from t")
+	result.Check(testkit.Rows("<nil> 2", "<nil> 3", "<nil> 2"))
+	result = tk.MustQuery("select @a, @a := d+1 from t")
+	result.Check(testkit.Rows("2 2", "2 3", "3 2"))
+
+	plan.UseNewPlanner = false
+}
