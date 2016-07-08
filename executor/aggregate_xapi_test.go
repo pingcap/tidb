@@ -190,7 +190,7 @@ func (s *testAggFuncSuite) TestXAPISum(c *C) {
 	// 2	21
 	// 1    1
 	//
-	// Partial aggregate  result for region1:
+	// Partial aggregate result for region1:
 	// groupkey	sum
 	// 1		12
 	// 2		21
@@ -200,7 +200,7 @@ func (s *testAggFuncSuite) TestXAPISum(c *C) {
 	// 1    3
 	// 3    31
 	//
-	// Partial aggregate  result for region2:
+	// Partial aggregate result for region2:
 	// groupkey	sum
 	// 1		3
 	// 3		31
@@ -220,7 +220,7 @@ func (s *testAggFuncSuite) TestXAPISum(c *C) {
 		Args: []ast.ExprNode{col2},
 	}
 	// Return row:
-	// GroupKey, Count
+	// GroupKey, Sum
 	// Partial result from region1
 	row1 := types.MakeDatums([]byte{1}, 12)
 	row2 := types.MakeDatums([]byte{2}, 21)
@@ -246,7 +246,7 @@ func (s *testAggFuncSuite) TestXAPISum(c *C) {
 		row *Row
 		err error
 	)
-	// First Group: 15
+	// First row: 15
 	row, err = agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
