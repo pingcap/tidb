@@ -365,8 +365,6 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 		return nil, errors.Trace(err)
 	}
 
-	defer snap.Release()
-
 	firstKey := t.RecordKey(seekHandle)
 
 	it, err := snap.Seek(firstKey)

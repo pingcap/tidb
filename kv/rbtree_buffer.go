@@ -85,11 +85,6 @@ func (m *rbTreeBuffer) Delete(k Key) error {
 	return nil
 }
 
-// Release reset the buffer.
-func (m *rbTreeBuffer) Release() {
-	m.tree = llrb.New()
-}
-
 // Next implements the Iterator Next.
 func (i *rbTreeIter) Next() error {
 	i.pair = nil

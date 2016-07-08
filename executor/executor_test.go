@@ -45,11 +45,13 @@ var _ = Suite(&testSuite{})
 
 type testSuite struct {
 	store kv.Storage
+	*parser.Parser
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
+	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
@@ -297,6 +299,7 @@ func (s *testSuite) TestQualifedDelete(c *C) {
 }
 
 func (s *testSuite) TestInsert(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -368,9 +371,11 @@ func (s *testSuite) TestInsert(c *C) {
 
 	_, err = tk.Exec(`insert into insert_test (id, c2) values(1, 1) on duplicate key update t.c2 = 10`)
 	c.Assert(err, NotNil)
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -452,6 +457,7 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 	r = tk.MustQuery("select * from insert_autoinc_test;")
 	rowStr6 = fmt.Sprintf("%v %v", "6", "6")
 	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestReplace(c *C) {
@@ -1243,6 +1249,7 @@ func (s *testSuite) TestTableReverseOrder(c *C) {
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1268,6 +1275,7 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("create table t1 (a float)")
 	tk.MustExec("insert t1 values (281.37)")
 	tk.MustQuery("select a from t1 where (a in (select a from t1))").Check(testkit.Rows("281.37"))
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestDefaultNull(c *C) {
@@ -1569,13 +1577,13 @@ func (s *testSuite) TestNewSubquery(c *C) {
 	result.Check(testkit.Rows("1", "1", "0"))
 	result = tk.MustQuery("select t.c = any (select count(*) from t) from t")
 	result.Check(testkit.Rows("0", "0", "1"))
-	result = tk.MustQuery("select * from t where (t.c, 6) = all (select count(*), sum(t.c) from t)")
+	result = tk.MustQuery("select * from t where (t.c, 6) = any (select count(*), sum(t.c) from t)")
 	result.Check(testkit.Rows("3 4"))
 	result = tk.MustQuery("select t.c from t where (t.c) < all (select count(*) from t)")
 	result.Check(testkit.Rows("1", "2"))
-	result = tk.MustQuery("select t.c from t where (t.c, t.d) != any (select * from t)")
+	result = tk.MustQuery("select t.c from t where (t.c, t.d) = any (select * from t)")
 	result.Check(testkit.Rows("1", "2", "3"))
-	result = tk.MustQuery("select t.c from t where (t.c, t.d) = all (select * from t)")
+	result = tk.MustQuery("select t.c from t where (t.c, t.d) != all (select * from t)")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select (select count(*) from t where t.c = k.d) from t k")
 	result.Check(testkit.Rows("1", "1", "0"))
@@ -1583,6 +1591,18 @@ func (s *testSuite) TestNewSubquery(c *C) {
 	result.Check(testkit.Rows("1", "2", "3"))
 	result = tk.MustQuery("select t.c from t where (t.c, t.d) not in (select * from t)")
 	result.Check(testkit.Rows())
+	// = all empty set is true
+	result = tk.MustQuery("select t.c from t where (t.c, t.d) != all (select * from t where d > 1000)")
+	result.Check(testkit.Rows("1", "2", "3"))
+	result = tk.MustQuery("select t.c from t where (t.c) < any (select c from t where d > 1000)")
+	result.Check(testkit.Rows())
+	tk.MustExec("insert t values (NULL, NULL)")
+	result = tk.MustQuery("select (t.c) < any (select c from t) from t")
+	result.Check(testkit.Rows("1", "1", "<nil>", "<nil>"))
+	result = tk.MustQuery("select (10) > all (select c from t) from t")
+	result.Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
+	result = tk.MustQuery("select (c) > all (select c from t) from t")
+	result.Check(testkit.Rows("0", "0", "0", "<nil>"))
 	plan.UseNewPlanner = false
 }
 
@@ -1731,14 +1751,14 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	compiler := &executor.Compiler{}
 	ctx := se.(context.Context)
 
-	stmtNode, err := parser.ParseOneStmt("select 1", "", "")
+	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
 	stmt, err := compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 	c.Check(stmt.IsDDL(), IsFalse)
 
-	stmtNode, err = parser.ParseOneStmt("create table t (a int)", "", "")
+	stmtNode, err = s.ParseOneStmt("create table t (a int)", "", "")
 	c.Check(err, IsNil)
 	stmt, err = compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
@@ -1782,5 +1802,11 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(len(fields), Equals, 2)
 	c.Check(fields[0].Column.Name.L, Equals, "1 + c")
 	c.Check(fields[1].Column.Name.L, Equals, "count(*)")
+	rs, err = tk.Exec("select (c) > all (select c from t) from t")
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
 	plan.UseNewPlanner = false
 }

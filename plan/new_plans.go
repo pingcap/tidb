@@ -126,7 +126,7 @@ type NewUnion struct {
 type NewSort struct {
 	baseLogicalPlan
 
-	ByItems []ByItems
+	ByItems []*ByItems
 
 	ExecLimit *Limit
 }
