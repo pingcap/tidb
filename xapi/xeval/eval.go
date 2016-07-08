@@ -553,6 +553,12 @@ func (e *Evaluator) evalArithmetic(expr *tipb.Expr) (types.Datum, error) {
 	if err != nil {
 		return result, errors.Trace(err)
 	}
+	return ComputeArithmetic(expr.GetTp(), left, right)
+}
+
+// ComputeArithmetic computes the arithmetic operation on two datums.
+func ComputeArithmetic(op tipb.ExprType, left types.Datum, right types.Datum) (types.Datum, error) {
+	var result types.Datum
 	a, err := types.CoerceArithmetic(left)
 	if err != nil {
 		return result, errors.Trace(err)
@@ -567,12 +573,12 @@ func (e *Evaluator) evalArithmetic(expr *tipb.Expr) (types.Datum, error) {
 		return result, nil
 	}
 
-	switch expr.GetTp() {
+	switch op {
 	case tipb.ExprType_Plus:
 		return types.ComputePlus(a, b)
 	case tipb.ExprType_Div:
 		return types.ComputeDiv(a, b)
 	default:
-		return result, errors.Errorf("Unknown binop type: %v", expr.GetTp())
+		return result, errors.Errorf("Unknown binop type: %v", op)
 	}
 }

@@ -143,6 +143,7 @@ func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
 		ft := types.NewFieldType(mysql.TypeNewDecimal)
 		ft.Charset = charset.CharsetBin
 		ft.Collate = charset.CollationBin
+		ft.Decimal = x.Args[0].GetType().Decimal
 		x.SetType(ft)
 	case ast.AggFuncGroupConcat:
 		ft := types.NewFieldType(mysql.TypeVarString)
