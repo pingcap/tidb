@@ -690,6 +690,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) ROW_FORMAT = compact", true},
 		{"create table t (c int) ROW_FORMAT = redundant", true},
 		{"create table t (c int) ROW_FORMAT = dynamic", true},
+		{"create table t (c int) STATS_PERSISTENT = default", true},
+		{"create table t (c int) STATS_PERSISTENT = 0", true},
+		{"create table t (c int) STATS_PERSISTENT = 1", true},
 		// For check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
