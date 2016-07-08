@@ -141,5 +141,11 @@ func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {
 
 	expDecimal := mysql.NewDecimalFromInt(1, int32(expVal))
 	d = numberDecimal.Mul(expDecimal)
+	if expDecimal.Exponent() > 0 {
+		// For int64(3), it will be converted to value=0.3 and exp=1 when doing encode.
+		// Its frac will be changed after we run d = numberDecimal.Mul(expDecimal).
+		// So we try to get frac to the original one.
+		d.SetFracDigits(d.FracDigits() - expDecimal.Exponent())
+	}
 	return r, d, nil
 }
