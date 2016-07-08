@@ -294,6 +294,10 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 		return errors.Trace(infoschema.ErrDatabaseExists)
 	}
 
+	if is.SchemaNameTooLong(schema) {
+		return errors.Trace(infoschema.ErrTooLongIdent)
+	}
+
 	schemaID, err := d.genGlobalID()
 	if err != nil {
 		return errors.Trace(err)
