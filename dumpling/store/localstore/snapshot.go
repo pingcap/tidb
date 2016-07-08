@@ -157,9 +157,6 @@ func (s *dbSnapshot) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	return it, errors.Trace(err)
 }
 
-func (s *dbSnapshot) Release() {
-}
-
 type dbIter struct {
 	s       *dbSnapshot
 	valid   bool

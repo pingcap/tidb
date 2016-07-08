@@ -35,7 +35,6 @@ type txnCommitter struct {
 	mu          sync.RWMutex
 	writtenKeys [][]byte
 	committed   bool
-	wg          sync.WaitGroup
 }
 
 func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
@@ -118,10 +117,8 @@ func (c *txnCommitter) iterKeys(keys [][]byte, f func(batchKeys) error, sizeFn f
 		batches = batches[1:]
 	}
 	if asyncNonPrimary {
-		c.wg.Add(1)
 		go func() {
 			c.doBatches(batches, f)
-			c.wg.Done()
 		}()
 		return nil
 	}
@@ -310,23 +307,11 @@ func (c *txnCommitter) cleanupKeys(keys [][]byte) error {
 }
 
 func (c *txnCommitter) Commit() error {
-	c.wg.Add(1)
-	defer c.wg.Done()
-
-	// Close the txn after no goroutine uses it.
-	go func() {
-		c.wg.Wait()
-		c.txn.close()
-		log.Debugf("txn closed, tid: %d", c.startTS)
-	}()
-
 	err := c.prewriteKeys(c.keys)
 	if err != nil {
 		log.Warnf("txn commit failed on prewrite: %v, tid: %d", err, c.startTS)
-		c.wg.Add(1)
 		go func() {
 			c.cleanupKeys(c.writtenKeys)
-			c.wg.Done()
 		}()
 		return errors.Trace(err)
 	}
@@ -340,10 +325,8 @@ func (c *txnCommitter) Commit() error {
 	err = c.commitKeys(c.keys)
 	if err != nil {
 		if !c.committed {
-			c.wg.Add(1)
 			go func() {
 				c.cleanupKeys(c.writtenKeys)
-				c.wg.Done()
 			}()
 			return errors.Trace(err)
 		}

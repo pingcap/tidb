@@ -176,7 +176,6 @@ func (t *testMvccSuite) TestSnapshotGet(c *C) {
 	testKey := encodeTestDataKey(1)
 
 	snapshot, err := t.s.GetSnapshot(kv.MaxVersion)
-	defer snapshot.Release()
 	b, err = snapshot.Get(testKey)
 	c.Assert(err, IsNil)
 	c.Assert(string(b), Equals, "new")
