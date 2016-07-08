@@ -474,7 +474,6 @@ func builtinSetVar(args []types.Datum, ctx context.Context) (types.Datum, error)
 		sessionVars.Users[varName] = strings.ToLower(strVal)
 	}
 	return args[1], nil
-
 }
 
 func builtinGetVar(args []types.Datum, ctx context.Context) (types.Datum, error) {
@@ -484,5 +483,4 @@ func builtinGetVar(args []types.Datum, ctx context.Context) (types.Datum, error)
 		return types.NewDatum(v), nil
 	}
 	return types.Datum{}, nil
-
 }
