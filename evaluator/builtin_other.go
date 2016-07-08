@@ -465,15 +465,15 @@ func CastFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
 
 func builtinSetVar(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	sessionVars := variable.GetSessionVars(ctx)
-	varName, _ := args[1].ToString()
-	if !args[0].IsNull() {
-		strVal, err := args[0].ToString()
+	varName, _ := args[0].ToString()
+	if !args[1].IsNull() {
+		strVal, err := args[1].ToString()
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
 		sessionVars.Users[varName] = strings.ToLower(strVal)
 	}
-	return args[0], nil
+	return args[1], nil
 
 }
 

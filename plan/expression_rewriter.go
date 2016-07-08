@@ -425,8 +425,8 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) bool {
 		if v.Value != nil {
 			er.ctxStack[stkLen-1], er.err = expression.NewFunction(ast.SetVar,
 				er.ctxStack[stkLen-1].GetType(),
-				er.ctxStack[stkLen-1],
-				datumToConstant(types.NewDatum(name), mysql.TypeString))
+				datumToConstant(types.NewDatum(name), mysql.TypeString),
+				er.ctxStack[stkLen-1])
 			return er.err == nil
 		}
 		if _, ok := sessionVars.Users[name]; ok {
