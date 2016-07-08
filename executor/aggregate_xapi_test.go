@@ -254,14 +254,14 @@ func (s *testAggFuncSuite) TestXAPISum(c *C) {
 	val, err := evaluator.Eval(ctx, fc)
 	c.Assert(err, IsNil)
 	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(mysql.NewDecimalFromInt(int64(15), 0)))
-	// Second Row: 21
+	// Second row: 21
 	row, err = agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	val, err = evaluator.Eval(ctx, fc)
 	c.Assert(err, IsNil)
 	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(mysql.NewDecimalFromInt(int64(21), 0)))
-	// Third Row: 31
+	// Third row: 31
 	row, err = agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
