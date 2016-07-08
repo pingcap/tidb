@@ -17,10 +17,30 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/util"
 )
 
+type lockedSource struct {
+	lk  sync.Mutex
+	src rand.Source
+}
+
+func (r *lockedSource) Int63() (n int64) {
+	r.lk.Lock()
+	n = r.src.Int63()
+	r.lk.Unlock()
+	return
+}
+
+func (r *lockedSource) Seed(seed int64) {
+	r.lk.Lock()
+	r.src.Seed(seed)
+	r.lk.Unlock()
+}
+
 var (
 	ErrNotFound     = errors.ErrNotFound
 	ErrIterReleased = errors.New("leveldb/memdb: iterator released")
-	rnd             = rand.New(rand.NewSource(0xdeadbeef))
+	rnd             = rand.New(&lockedSource{
+		src: rand.NewSource(0xdeadbeef),
+	})
 )
 
 const tMaxHeight = 12

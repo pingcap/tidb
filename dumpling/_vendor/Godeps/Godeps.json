@@ -1,7 +1,7 @@
 {
 	"ImportPath": "github.com/pingcap/tidb",
 	"GoVersion": "go1.6",
-	"GodepVersion": "v62",
+	"GodepVersion": "v63",
 	"Packages": [
 		"./..."
 	],
@@ -117,51 +117,51 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/goleveldb/leveldb",
-			"Rev": "7895dfcdd7437ce917738a9f4aa8010f4a469f2f"
+			"Rev": "c131135d59a38f4212f627cde570dddfe5261c43"
 		},
 		{
 			"ImportPath": "github.com/pingcap/goleveldb/leveldb/cache",
-			"Rev": "7895dfcdd7437ce917738a9f4aa8010f4a469f2f"
+			"Rev": "c131135d59a38f4212f627cde570dddfe5261c43"
 		},
 		{
 			"ImportPath": "github.com/pingcap/goleveldb/leveldb/comparer",
-			"Rev": "7895dfcdd7437ce917738a9f4aa8010f4a469f2f"
+			"Rev": "c131135d59a38f4212f627cde570dddfe5261c43"
 		},
 		{
 			"ImportPath": "github.com/pingcap/goleveldb/leveldb/errors",
-			"Rev": "7895dfcdd7437ce917738a9f4aa8010f4a469f2f"
+			"Rev": "c131135d59a38f4212f627cde570dddfe5261c43"
 		},
 		{
 			"ImportPath": "github.com/pingcap/goleveldb/leveldb/filter",
-			"Rev": "7895dfcdd7437ce917738a9f4aa8010f4a469f2f"
+			"Rev": "c131135d59a38f4212f627cde570dddfe5261c43"
 		},
 		{
 			"ImportPath": "github.com/pingcap/goleveldb/leveldb/iterator",
-			"Rev": "7895dfcdd7437ce917738a9f4aa8010f4a469f2f"
+			"Rev": "c131135d59a38f4212f627cde570dddfe5261c43"
 		},
 		{
 			"ImportPath": "github.com/pingcap/goleveldb/leveldb/journal",
-			"Rev": "7895dfcdd7437ce917738a9f4aa8010f4a469f2f"
+			"Rev": "c131135d59a38f4212f627cde570dddfe5261c43"
 		},
 		{
 			"ImportPath": "github.com/pingcap/goleveldb/leveldb/memdb",
-			"Rev": "7895dfcdd7437ce917738a9f4aa8010f4a469f2f"
+			"Rev": "c131135d59a38f4212f627cde570dddfe5261c43"
 		},
 		{
 			"ImportPath": "github.com/pingcap/goleveldb/leveldb/opt",
-			"Rev": "7895dfcdd7437ce917738a9f4aa8010f4a469f2f"
+			"Rev": "c131135d59a38f4212f627cde570dddfe5261c43"
 		},
 		{
 			"ImportPath": "github.com/pingcap/goleveldb/leveldb/storage",
-			"Rev": "7895dfcdd7437ce917738a9f4aa8010f4a469f2f"
+			"Rev": "c131135d59a38f4212f627cde570dddfe5261c43"
 		},
 		{
 			"ImportPath": "github.com/pingcap/goleveldb/leveldb/table",
-			"Rev": "7895dfcdd7437ce917738a9f4aa8010f4a469f2f"
+			"Rev": "c131135d59a38f4212f627cde570dddfe5261c43"
 		},
 		{
 			"ImportPath": "github.com/pingcap/goleveldb/leveldb/util",
-			"Rev": "7895dfcdd7437ce917738a9f4aa8010f4a469f2f"
+			"Rev": "c131135d59a38f4212f627cde570dddfe5261c43"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/coprocessor",
