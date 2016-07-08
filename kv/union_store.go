@@ -135,10 +135,6 @@ func (lmb *lazyMemBuffer) SeekReverse(k Key) (Iterator, error) {
 	return lmb.mb.SeekReverse(k)
 }
 
-func (lmb *lazyMemBuffer) Release() {
-	return
-}
-
 // Get implements the Retriever interface.
 func (us *unionStore) Get(k Key) ([]byte, error) {
 	v, err := us.MemBuffer.Get(k)
@@ -211,11 +207,6 @@ func (us *unionStore) SetOption(opt Option, val interface{}) {
 // DelOption implements the UnionStore DelOption interface.
 func (us *unionStore) DelOption(opt Option) {
 	delete(us.opts, opt)
-}
-
-// Release implements the UnionStore Release interface.
-func (us *unionStore) Release() {
-	us.snapshot.Release()
 }
 
 type options map[Option]interface{}

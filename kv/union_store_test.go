@@ -169,5 +169,3 @@ func (s *mockSnapshot) Seek(k Key) (Iterator, error) {
 func (s *mockSnapshot) SeekReverse(k Key) (Iterator, error) {
 	return s.store.SeekReverse(k)
 }
-
-func (s *mockSnapshot) Release() {}

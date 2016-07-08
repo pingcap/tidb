@@ -216,10 +216,6 @@ func (s *tikvSnapshot) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	return nil, kv.ErrNotImplemented
 }
 
-// Release unimplement.
-func (s *tikvSnapshot) Release() {
-}
-
 func extractLockInfoFromKeyErr(keyErr *pb.KeyError) (*pb.LockInfo, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
 		return locked, nil

@@ -572,8 +572,6 @@ func (s *testKVSuite) TestDBClose(c *C) {
 
 	err = txn.Commit()
 	c.Assert(err, NotNil)
-
-	snap.Release()
 }
 
 func (s *testKVSuite) TestBoltDBDeadlock(c *C) {

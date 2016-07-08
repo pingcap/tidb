@@ -152,8 +152,6 @@ type Snapshot interface {
 	Retriever
 	// BatchGet gets a batch of values from snapshot.
 	BatchGet(keys []Key) (map[string][]byte, error)
-	// Release releases the snapshot to store.
-	Release()
 }
 
 // Driver is the interface that must be implemented by a KV storage.
