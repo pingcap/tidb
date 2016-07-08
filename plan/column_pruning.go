@@ -309,27 +309,7 @@ func (p *Join) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 // Now there're two columns in parentUsedCols, c is the column from Apply's child ---- TableScan, but extra isn't.
 // So only c in parentUsedCols and id in outerSchema can be passed to TableScan.
 func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
-	childOuterUsedCols, err := p.InnerPlan.PruneColumnsAndResolveIndices(p.InnerPlan.GetSchema())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
-	var selfOuterUsedCols []*expression.Column
-	used := make([]bool, len(p.OuterSchema))
-	for i := len(childOuterUsedCols) - 1; i >= 0; i-- {
-		// If the outer column can't be resolved from this outer schema, it should be resolved by outer schema.
-		if idx := p.OuterSchema.GetIndex(childOuterUsedCols[i]); idx == -1 {
-			selfOuterUsedCols = append(selfOuterUsedCols, childOuterUsedCols[i])
-			childOuterUsedCols = append(childOuterUsedCols[:i], childOuterUsedCols[i+1:]...)
-		} else {
-			used[idx] = true
-		}
-	}
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] {
-			p.OuterSchema = append(p.OuterSchema[:i], p.OuterSchema[i+1:]...)
-		}
-	}
 	newUsedCols := p.OuterSchema
 	for _, used := range parentUsedCols {
 		if p.GetChildByIndex(0).GetSchema().GetIndex(used) != -1 {
@@ -344,7 +324,7 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 			}
 		}
 	}
-	childOuterUsedCols, err = child.PruneColumnsAndResolveIndices(newUsedCols)
+	childOuterUsedCols, err := child.PruneColumnsAndResolveIndices(newUsedCols)
 	for _, col := range p.OuterSchema {
 		col.Index = p.GetChildByIndex(0).GetSchema().GetIndex(col)
 	}
@@ -363,5 +343,5 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 		p.schema = append(p.GetChildByIndex(0).GetSchema().DeepCopy(), p.schema[len(p.schema)-1])
 	}
 	p.schema.InitIndices()
-	return append(childOuterUsedCols, selfOuterUsedCols...), nil
+	return append(childOuterUsedCols, p.outerColumns...), nil
 }

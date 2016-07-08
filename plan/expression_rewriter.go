@@ -183,6 +183,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			}
 		}
 		er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: v.All})
+		if er.p.IsCorrelated() {
+			er.correlated = true
+		}
 		// The parent expression only use the last column in schema, which represents whether the condition is matched.
 		er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
 		return inNode, true
@@ -199,6 +202,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		np = er.b.buildExists(np)
 		if np.IsCorrelated() {
 			er.p = er.b.buildApply(er.p, np, outerSchema, nil)
+			if er.p.IsCorrelated() {
+				er.correlated = true
+			}
 			er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
 		} else {
 			_, err := np.PruneColumnsAndResolveIndices(np.GetSchema())
@@ -262,6 +268,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 				return inNode, true
 			}
 			er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: all})
+			if er.p.IsCorrelated() {
+				er.correlated = true
+			}
 			// The parent expression only use the last column in schema, which represents whether the condition is matched.
 			er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
 			return inNode, true
@@ -274,6 +283,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		np = er.b.buildMaxOneRow(np)
 		if np.IsCorrelated() {
 			er.p = er.b.buildApply(er.p, np, outerSchema, nil)
+			if er.p.IsCorrelated() {
+				er.correlated = true
+			}
 			if len(np.GetSchema()) > 1 {
 				newCols := make([]expression.Expression, 0, len(np.GetSchema()))
 				for _, col := range np.GetSchema() {

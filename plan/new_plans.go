@@ -76,6 +76,8 @@ type Apply struct {
 	InnerPlan   LogicalPlan
 	OuterSchema expression.Schema
 	Checker     *ApplyConditionChecker
+	// outerColumns is the columns that not belong to this plan.
+	outerColumns []*expression.Column
 }
 
 // Exists checks if a query returns result.

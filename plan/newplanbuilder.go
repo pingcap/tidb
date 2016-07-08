@@ -801,12 +801,12 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
-	trunc := &Trim{baseLogicalPlan: newBaseLogicalPlan(Trm, b.allocator)}
-	trunc.initID()
-	addChild(trunc, p)
-	trunc.SetSchema(p.GetSchema().DeepCopy()[:len])
-	trunc.correlated = p.IsCorrelated()
-	return trunc
+	trim := &Trim{baseLogicalPlan: newBaseLogicalPlan(Trm, b.allocator)}
+	trim.initID()
+	addChild(trim, p)
+	trim.SetSchema(p.GetSchema().DeepCopy()[:len])
+	trim.correlated = p.IsCorrelated()
+	return trim
 }
 
 func (b *planBuilder) buildNewTableDual() LogicalPlan {
@@ -851,6 +851,25 @@ func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema,
 	}
 	ap.initID()
 	addChild(ap, p)
+	outerColumns, err := inner.PruneColumnsAndResolveIndices(inner.GetSchema())
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	used := make([]bool, len(ap.OuterSchema))
+	for _, outerCol := range outerColumns {
+		// If the outer column can't be resolved from this outer schema, it should be resolved by outer schema.
+		if idx := ap.OuterSchema.GetIndex(outerCol); idx == -1 {
+			ap.outerColumns = append(ap.outerColumns, outerCol)
+		} else {
+			used[idx] = true
+		}
+	}
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] {
+			ap.OuterSchema = append(ap.OuterSchema[:i], ap.OuterSchema[i+1:]...)
+		}
+	}
 	innerSchema := inner.GetSchema().DeepCopy()
 	if checker == nil {
 		for _, col := range innerSchema {
@@ -865,7 +884,7 @@ func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema,
 			IsAggOrSubq: true,
 		}))
 	}
-	ap.correlated = p.IsCorrelated()
+	ap.correlated = p.IsCorrelated() || len(ap.outerColumns) > 0
 	return ap
 }
 

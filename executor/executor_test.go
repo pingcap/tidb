@@ -1575,6 +1575,8 @@ func (s *testSuite) TestNewSubquery(c *C) {
 	tk.MustExec("commit")
 	result := tk.MustQuery("select 1 = (select count(*) from t where t.c = k.d) from t k")
 	result.Check(testkit.Rows("1", "1", "0"))
+	result = tk.MustQuery("select 1 = (select count(*) from t where exists( select * from t m where t.c = k.d)) from t k")
+	result.Check(testkit.Rows("1", "1", "0"))
 	result = tk.MustQuery("select t.c = any (select count(*) from t) from t")
 	result.Check(testkit.Rows("0", "0", "1"))
 	result = tk.MustQuery("select * from t where (t.c, 6) = any (select count(*), sum(t.c) from t)")
