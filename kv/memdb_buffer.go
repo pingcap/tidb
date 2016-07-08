@@ -86,11 +86,6 @@ func (m *memDbBuffer) Delete(k Key) error {
 	return errors.Trace(err)
 }
 
-// Release reset the buffer.
-func (m *memDbBuffer) Release() {
-	m.db.Reset()
-}
-
 // Next implements the Iterator Next.
 func (i *memDbIter) Next() error {
 	if i.reverse {
