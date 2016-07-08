@@ -110,7 +110,6 @@ func (n *aggregateFuncExpr) update(ctx *selectContext, args []types.Datum) error
 }
 
 func (n *aggregateFuncExpr) toDatums() (ds []types.Datum, err error) {
-
 	switch n.expr.GetTp() {
 	case tipb.ExprType_Count:
 		ds = n.getCountDatum()
@@ -120,6 +119,7 @@ func (n *aggregateFuncExpr) toDatums() (ds []types.Datum, err error) {
 		v := n.getAggItem().value
 		var d types.Datum
 		if !v.IsNull() {
+			// For sum result, we should convert it to decimal.
 			de, err1 := v.ToDecimal()
 			if err1 != nil {
 				return nil, errors.Trace(err1)

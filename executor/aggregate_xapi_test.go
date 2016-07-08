@@ -182,18 +182,32 @@ func (s *testAggFuncSuite) TestXAPIFirstRow(c *C) {
 
 func (s *testAggFuncSuite) TestXAPISum(c *C) {
 	defer testleak.AfterTest(c)()
-	// Compose aggregate exec for "select c2 from t groupby c1";
-	// c1  c2
-	// 1	11	// region1
-	// 2	21	// region1
-	// 1    1	// region1
-	// 1    nil	// region2
-	// 1    3	// region2
-	// 3    31	// region2
+	// Compose aggregate exec for "select sum(c2) from t groupby c1";
 	//
-	// Expected result:
-	// c2
-	// 11
+	// Data in region1:
+	// c1  c2
+	// 1	11
+	// 2	21
+	// 1    1
+	//
+	// Partial aggregate  result for region1:
+	// groupkey	sum
+	// 1		12
+	// 2		21
+	//
+	// Data in region2:
+	// 1    nil
+	// 1    3
+	// 3    31
+	//
+	// Partial aggregate  result for region2:
+	// groupkey	sum
+	// 1		3
+	// 3		31
+	//
+	// Expected final aggregate result:
+	// sum(c2)
+	// 15
 	// 21
 	// 31
 	c1 := ast.NewValueExpr([]byte{0})
@@ -211,7 +225,7 @@ func (s *testAggFuncSuite) TestXAPISum(c *C) {
 	row1 := types.MakeDatums([]byte{1}, 12)
 	row2 := types.MakeDatums([]byte{2}, 21)
 	// Partial result from region2
-	row3 := types.MakeDatums([]byte{1}, nil)
+	row3 := types.MakeDatums([]byte{1}, 3)
 	row4 := types.MakeDatums([]byte{3}, 31)
 	data := []([]types.Datum){row1, row2, row3, row4}
 
@@ -232,14 +246,14 @@ func (s *testAggFuncSuite) TestXAPISum(c *C) {
 		row *Row
 		err error
 	)
-	// First Group: 12
+	// First Group: 15
 	row, err = agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	ctx := mock.NewContext()
 	val, err := evaluator.Eval(ctx, fc)
 	c.Assert(err, IsNil)
-	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(mysql.NewDecimalFromInt(int64(12), 0)))
+	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(mysql.NewDecimalFromInt(int64(15), 0)))
 	// Second Row: 21
 	row, err = agg.Next()
 	c.Assert(err, IsNil)
