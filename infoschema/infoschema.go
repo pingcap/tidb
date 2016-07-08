@@ -65,6 +65,7 @@ var (
 // TODO: add more methods to retrieve tables and columns.
 type InfoSchema interface {
 	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
+	SchemaNameTooLong(schema model.CIStr) bool
 	SchemaExists(schema model.CIStr) bool
 	TableByName(schema, table model.CIStr) (table.Table, error)
 	TableExists(schema, table model.CIStr) bool
@@ -154,6 +155,10 @@ func (is *infoSchema) SchemaMetaVersion() int64 {
 func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
 	_, ok := is.schemaNameToID[schema.L]
 	return ok
+}
+
+func (is *infoSchema) SchemaNameTooLong(schema model.CIStr) bool {
+	return len(schema.L) > mysql.ServerDatabaseNameLength
 }
 
 func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
