@@ -716,18 +716,18 @@ AlterTableStmt:
 	"ALTER" IgnoreOptional "TABLE" TableName AlterTableSpecList
 	{
 		$$ = &ast.AlterTableStmt{
-			Table: $4.(*ast.TableName),
-			Specs: $5.([]*ast.AlterTableSpec),
-		}
+      Table : $4.(*ast.TableName),
+      Specs : $5.([]*ast.AlterTableSpec),
+    }
 	}
 
 AlterTableSpec:
 	TableOptionListOpt
 	{
-		$$ = &ast.AlterTableSpec{
-			Tp:	ast.AlterTableOption,
-			Options:$1.([]*ast.TableOption),
-		}
+    $$ = &ast.AlterTableSpec{
+      Tp : ast.AlterTableOption,
+      Options : $1.([]*ast.TableOption),
+    }
 	}
 |	"ADD" ColumnKeywordOpt ColumnDef ColumnPosition
 	{
@@ -1998,34 +1998,62 @@ IntoOpt:
 InsertValues:
 	'(' ColumnNameListOpt ')' ValueSym ExpressionListList
 	{
-		$$ = &ast.InsertStmt{
-			Columns:   $2.([]*ast.ColumnName),
-			Lists:      $5.([][]ast.ExprNode),
-		}
+    tmp := ac.allocInsertStmt()
+    *tmp = ast.InsertStmt{
+    Columns : $2.([]*ast.ColumnName),
+    Lists : $5.([][]ast.ExprNode),
+    }
+    $$ = tmp
 	}
 |	'(' ColumnNameListOpt ')' SelectStmt
 	{
-		$$ = &ast.InsertStmt{Columns: $2.([]*ast.ColumnName), Select: $4.(*ast.SelectStmt)}
+    tmp := ac.allocInsertStmt()
+    *tmp = ast.InsertStmt {
+      Columns : $2.([]*ast.ColumnName),
+      Select : $4.(*ast.SelectStmt),
+    }
+    $$ = tmp
 	}
 |	'(' ColumnNameListOpt ')' UnionStmt
 	{
-		$$ = &ast.InsertStmt{Columns: $2.([]*ast.ColumnName), Select: $4.(*ast.UnionStmt)}
+    tmp := ac.allocInsertStmt()
+    *tmp = ast.InsertStmt {
+      Columns : $2.([]*ast.ColumnName),
+      Select : $4.(*ast.UnionStmt),
+    }
+    $$ = tmp
 	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
-		$$ = &ast.InsertStmt{Lists:  $2.([][]ast.ExprNode)}
+    tmp := ac.allocInsertStmt()
+    *tmp = ast.InsertStmt {
+      Lists : $2.([][]ast.ExprNode),
+    }
+    $$ = tmp
 	}
 |	SelectStmt
 	{
-		$$ = &ast.InsertStmt{Select: $1.(*ast.SelectStmt)}
+    tmp := ac.allocInsertStmt()
+    *tmp = ast.InsertStmt {
+      Select : $1.(*ast.SelectStmt),
+    }
+    $$ = tmp
 	}
 |	UnionStmt
 	{
-		$$ = &ast.InsertStmt{Select: $1.(*ast.UnionStmt)}
+    tmp := ac.allocInsertStmt()
+    *tmp = ast.InsertStmt {
+      Select : $1.(*ast.UnionStmt),
+    }
+    $$ = tmp
 	}
 |	"SET" ColumnSetValueList
 	{
-		$$ = &ast.InsertStmt{Setlist: $2.([]*ast.Assignment)}
+    tmp := ac.allocInsertStmt()
+    *tmp = ast.InsertStmt {
+      Setlist : $2.([]*ast.Assignment),
+    }
+    $$ = tmp
 	}
 
 ValueSym:

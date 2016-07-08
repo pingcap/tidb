@@ -60,14 +60,16 @@ func handleMySQLSpecificCode(sql string) string {
 
 // Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
 type Parser struct {
-	cache []yySymType
+	*allocator
 }
 
 // New returns a Parser object.
 func New() *Parser {
-	return &Parser{
-		cache: make([]yySymType, 200),
-	}
+	return &Parser{newAllocator()}
+}
+
+func (parser *Parser) Reset() {
+	parser.allocator.reset()
 }
 
 // Parse parses a query string to raw ast.StmtNode.
@@ -82,7 +84,7 @@ func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, err
 	sql = handleMySQLSpecificCode(sql)
 	l := NewLexer(sql)
 	l.SetCharsetInfo(charset, collation)
-	yyParse(l, &parser.cache)
+	yyParse(l, parser.allocator)
 	if len(l.Errors()) != 0 {
 		return nil, errors.Trace(l.Errors()[0])
 	}
