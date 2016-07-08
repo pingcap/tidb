@@ -99,20 +99,18 @@ func (txn *tikvTxn) Commit() error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
+	defer txn.close()
 
 	log.Debugf("[kv] start to commit txn %d", txn.StartTS())
 	if err := txn.us.CheckLazyConditionPairs(); err != nil {
-		txn.close()
 		return errors.Trace(err)
 	}
 
 	committer, err := newTxnCommitter(txn)
 	if err != nil {
-		txn.close()
 		return errors.Trace(err)
 	}
 	if committer == nil {
-		txn.close()
 		return nil
 	}
 	err = committer.Commit()

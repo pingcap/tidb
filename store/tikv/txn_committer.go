@@ -307,7 +307,6 @@ func (c *txnCommitter) cleanupKeys(keys [][]byte) error {
 }
 
 func (c *txnCommitter) Commit() error {
-	defer c.txn.close()
 	err := c.prewriteKeys(c.keys)
 	if err != nil {
 		log.Warnf("txn commit failed on prewrite: %v, tid: %d", err, c.startTS)

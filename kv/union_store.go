@@ -71,6 +71,8 @@ func NewUnionStore(snapshot Snapshot) UnionStore {
 	}
 }
 
+// invalidIterator implements Iterator interface.
+// It is used for read-only transaction which has no data written, the iterator is always invalid.
 type invalidIterator struct{}
 
 func (it invalidIterator) Valid() bool {
