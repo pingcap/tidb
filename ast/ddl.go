@@ -535,6 +535,7 @@ const (
 	TableOptionMinRows
 	TableOptionDelayKeyWrite
 	TableOptionRowFormat
+	TableOptionStatsPersistent
 )
 
 // RowFormat types

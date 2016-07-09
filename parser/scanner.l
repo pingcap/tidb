@@ -473,6 +473,7 @@ show		{s}{h}{o}{w}
 some		{s}{o}{m}{e}
 space		{s}{p}{a}{c}{e}
 start		{s}{t}{a}{r}{t}
+statsPersistent	{s}{t}{a}{t}{s}_{p}{e}{r}{s}{i}{s}{t}{e}{n}{t}
 status          {s}{t}{a}{t}{u}{s}
 subdate		{s}{u}{b}{d}{a}{t}{e}
 strcmp		{s}{t}{r}{c}{m}{p}
@@ -980,6 +981,8 @@ redundant		lval.item = string(l.val)
 			return space
 {start}			lval.item = string(l.val)
 			return start
+{statsPersistent}	lval.item = string(l.val)
+			return statsPersistent
 {status}		lval.item = string(l.val)
 			return status
 {global}		lval.item = string(l.val)
