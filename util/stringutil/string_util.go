@@ -82,6 +82,8 @@ func Unescape(s string) string {
 			buf.WriteByte('\r')
 		case 'b':
 			buf.WriteByte('\b')
+		case 'Z':
+			buf.WriteByte('\032')
 		case '0':
 			buf.WriteByte(0)
 		case '_':
@@ -90,6 +92,8 @@ func Unescape(s string) string {
 		case '%':
 			buf.WriteByte('\\')
 			buf.WriteByte(next)
+		case '\\':
+			buf.WriteByte('\\')
 		default:
 			buf.WriteByte(next)
 		}
