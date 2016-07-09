@@ -647,6 +647,15 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
+	for _, colDef := range colDefs {
+		if len(colDef.Name.Name.O) > mysql.ServerColumnNameLength {
+			return infoschema.ErrTooLongIdent.Gen("too long column %s", colDef.Name)
+		}
+	}
+	return nil
+}
+
 func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
 	if name == "" {
 		return nil
@@ -825,6 +834,9 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return errors.Trace(infoschema.ErrTooLongIdent)
 	}
 	if err = checkDuplicateColumn(colDefs); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkTooLongColumn(colDefs); err != nil {
 		return errors.Trace(err)
 	}
 
