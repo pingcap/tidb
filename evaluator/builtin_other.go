@@ -15,11 +15,13 @@ package evaluator
 
 import (
 	"regexp"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -459,4 +461,26 @@ func CastFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
 		}, nil
 	}
 	return nil, errors.Errorf("unknown cast type - %v", tp)
+}
+
+func builtinSetVar(args []types.Datum, ctx context.Context) (types.Datum, error) {
+	sessionVars := variable.GetSessionVars(ctx)
+	varName, _ := args[0].ToString()
+	if !args[1].IsNull() {
+		strVal, err := args[1].ToString()
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		sessionVars.Users[varName] = strings.ToLower(strVal)
+	}
+	return args[1], nil
+}
+
+func builtinGetVar(args []types.Datum, ctx context.Context) (types.Datum, error) {
+	sessionVars := variable.GetSessionVars(ctx)
+	varName, _ := args[0].ToString()
+	if v, ok := sessionVars.Users[varName]; ok {
+		return types.NewDatum(v), nil
+	}
+	return types.Datum{}, nil
 }
