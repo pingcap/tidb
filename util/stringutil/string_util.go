@@ -58,6 +58,49 @@ func RemoveUselessBackslash(s string) string {
 	return buf.String()
 }
 
+// Unescape unescape special chars and ignore invalid escape.
+// See: https://github.com/mysql/mysql-server/blob/5.7/sql/sql_lex.cc#L983
+//	https://dev.mysql.com/doc/refman/5.7/en/string-literals.html
+func Unescape(s string) string {
+	var (
+		buf bytes.Buffer
+		i   = 0
+	)
+	for i < len(s)-1 {
+		if s[i] != '\\' {
+			buf.WriteByte(s[i])
+			i++
+			continue
+		}
+		next := s[i+1]
+		switch next {
+		case 'n':
+			buf.WriteByte('\n')
+		case 't':
+			buf.WriteByte('\t')
+		case 'r':
+			buf.WriteByte('\r')
+		case 'b':
+			buf.WriteByte('\b')
+		case '0':
+			buf.WriteByte(0)
+		case '_':
+			buf.WriteByte('\\')
+			buf.WriteByte(next)
+		case '%':
+			buf.WriteByte('\\')
+			buf.WriteByte(next)
+		default:
+			buf.WriteByte(next)
+		}
+		i += 2
+	}
+	if i == len(s)-1 {
+		buf.WriteByte(s[i])
+	}
+	return buf.String()
+}
+
 // Reverse returns its argument string reversed rune-wise left to right.
 func Reverse(s string) string {
 	r := []rune(s)
