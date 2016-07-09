@@ -238,6 +238,7 @@ import (
 	power 		"POWER"
 	prepare		"PREPARE"
 	primary		"PRIMARY"
+	privileges	"PRIVILEGES"
 	procedure	"PROCEDURE"
 	quarter		"QUARTER"
 	quick		"QUICK"
@@ -1955,7 +1956,7 @@ UnReservedKeyword:
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 |	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE"
 |	"ISOLATION" |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
-|	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE" | "SPACE"
+|	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
@@ -4887,6 +4888,10 @@ PrivElemList:
 
 PrivType:
 	"ALL"
+	{
+		$$ = mysql.AllPriv
+	}
+|	"ALL" "PRIVILEGES"
 	{
 		$$ = mysql.AllPriv
 	}
