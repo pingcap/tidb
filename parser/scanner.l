@@ -441,6 +441,7 @@ pow 		{p}{o}{w}
 power		{p}{o}{w}{e}{r}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
+privileges	{p}{r}{i}{v}{i}{l}{e}{g}{e}{s}
 procedure	{p}{r}{o}{c}{e}{d}{u}{r}{e}
 quarter		{q}{u}{a}{r}{t}{e}{r}
 quick		{q}{u}{i}{c}{k}
@@ -472,6 +473,7 @@ show		{s}{h}{o}{w}
 some		{s}{o}{m}{e}
 space		{s}{p}{a}{c}{e}
 start		{s}{t}{a}{r}{t}
+statsPersistent	{s}{t}{a}{t}{s}_{p}{e}{r}{s}{i}{s}{t}{e}{n}{t}
 status          {s}{t}{a}{t}{u}{s}
 subdate		{s}{u}{b}{d}{a}{t}{e}
 strcmp		{s}{t}{r}{c}{m}{p}
@@ -948,6 +950,8 @@ action		{a}{c}{t}{i}{o}{n}
 {prepare}		lval.item = string(l.val)
 			return prepare
 {primary}		return primary
+{privileges}		lval.item = string(l.val)
+			return privileges
 {procedure}		return procedure
 {quarter}		lval.item = string(l.val)
 			return quarter
@@ -977,6 +981,8 @@ redundant		lval.item = string(l.val)
 			return space
 {start}			lval.item = string(l.val)
 			return start
+{statsPersistent}	lval.item = string(l.val)
+			return statsPersistent
 {status}		lval.item = string(l.val)
 			return status
 {global}		lval.item = string(l.val)

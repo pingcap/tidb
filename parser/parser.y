@@ -238,6 +238,7 @@ import (
 	power 		"POWER"
 	prepare		"PREPARE"
 	primary		"PRIMARY"
+	privileges	"PRIVILEGES"
 	procedure	"PROCEDURE"
 	quarter		"QUARTER"
 	quick		"QUICK"
@@ -271,6 +272,7 @@ import (
 	some 		"SOME"
 	space 		"SPACE"
 	start		"START"
+	statsPersistent	"STATS_PERSISTENT"
 	status		"STATUS"
 	stringType	"string"
 	subDate		"SUBDATE"
@@ -570,6 +572,7 @@ import (
 	SignedLiteral		"Literal or NumLiteral with sign"
 	Statement		"statement"
 	StatementList		"statement list"
+	StatsPersistentVal	"stats_persistent value"
 	StringName		"string literal or identifier"
 	StringList 		"string list"
 	ExplainableStmt		"explainable statement"
@@ -1955,7 +1958,7 @@ UnReservedKeyword:
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 |	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE"
 |	"ISOLATION" |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
-|	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE" | "SPACE"
+|	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
@@ -1963,7 +1966,7 @@ NotKeywordToken:
 |	"IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM" | "MAX" | "MICROSECOND" | "MIN"
 |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" | "SUBDATE"
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION"
-|	"WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
+|	"WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND" | "STATS_PERSISTENT"
 
 /************************************************************************************
  *
@@ -4189,7 +4192,16 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionRowFormat, UintValue: $1.(uint64)}
 	}
+|	"STATS_PERSISTENT" EqOpt StatsPersistentVal
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent} 
+	}
 
+StatsPersistentVal:
+	"DEFAULT"
+	{}
+|	LengthNum
+	{}
 
 TableOptionListOpt:
 	{
@@ -4887,6 +4899,10 @@ PrivElemList:
 
 PrivType:
 	"ALL"
+	{
+		$$ = mysql.AllPriv
+	}
+|	"ALL" "PRIVILEGES"
 	{
 		$$ = mysql.AllPriv
 	}

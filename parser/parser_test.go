@@ -48,7 +48,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
-		"enable", "disable", "reverse", "space",
+		"enable", "disable", "reverse", "space", "privileges",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -690,6 +690,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) ROW_FORMAT = compact", true},
 		{"create table t (c int) ROW_FORMAT = redundant", true},
 		{"create table t (c int) ROW_FORMAT = dynamic", true},
+		{"create table t (c int) STATS_PERSISTENT = default", true},
+		{"create table t (c int) STATS_PERSISTENT = 0", true},
+		{"create table t (c int) STATS_PERSISTENT = 1", true},
 		// For check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
@@ -854,6 +857,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"GRANT ALL ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
+		{"grant all privileges on zabbix.* to 'zabbix'@'localhost' identified by 'password';", true},
 	}
 	s.RunTest(c, table)
 }
