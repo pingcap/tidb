@@ -1998,61 +1998,47 @@ IntoOpt:
 InsertValues:
 	'(' ColumnNameListOpt ')' ValueSym ExpressionListList
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt{
-    Columns : $2.([]*ast.ColumnName),
-    Lists : $5.([][]ast.ExprNode),
-    }
+    tmp := (*ast.InsertStmt)(ac.alloc(sizeInsertStmt))
+    tmp.Columns = $2.([]*ast.ColumnName)
+    tmp.Lists = $5.([][]ast.ExprNode)
     $$ = tmp
 	}
 |	'(' ColumnNameListOpt ')' SelectStmt
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt {
-      Columns : $2.([]*ast.ColumnName),
-      Select : $4.(*ast.SelectStmt),
-    }
+    tmp := (*ast.InsertStmt)(ac.alloc(sizeInsertStmt))
+    tmp.Columns = $2.([]*ast.ColumnName)
+    tmp.Select = $4.(*ast.SelectStmt)
     $$ = tmp
 	}
 |	'(' ColumnNameListOpt ')' UnionStmt
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt {
-      Columns : $2.([]*ast.ColumnName),
-      Select : $4.(*ast.UnionStmt),
-    }
+    tmp := (*ast.InsertStmt)(ac.alloc(sizeInsertStmt))
+    tmp.Columns = $2.([]*ast.ColumnName)
+    tmp.Select = $4.(*ast.UnionStmt)
     $$ = tmp
 	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt {
-      Lists : $2.([][]ast.ExprNode),
-    }
+    tmp := (*ast.InsertStmt)(ac.alloc(sizeInsertStmt))
+    tmp.Lists = $2.([][]ast.ExprNode)
     $$ = tmp
 	}
 |	SelectStmt
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt {
-      Select : $1.(*ast.SelectStmt),
-    }
+    tmp := (*ast.InsertStmt)(ac.alloc(sizeInsertStmt))
+    tmp.Select = $1.(*ast.SelectStmt)
     $$ = tmp
 	}
 |	UnionStmt
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt {
-      Select : $1.(*ast.UnionStmt),
-    }
+    tmp := (*ast.InsertStmt)(ac.alloc(sizeInsertStmt))
+    tmp.Select = $1.(*ast.UnionStmt)
     $$ = tmp
 	}
 |	"SET" ColumnSetValueList
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt {
-      Setlist : $2.([]*ast.Assignment),
-    }
+    tmp := (*ast.InsertStmt)(ac.alloc(sizeInsertStmt))
+    tmp.Setlist = $2.([]*ast.Assignment)
     $$ = tmp
 	}
 
