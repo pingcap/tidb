@@ -272,6 +272,7 @@ import (
 	some 		"SOME"
 	space 		"SPACE"
 	start		"START"
+	statsPersistent	"STATS_PERSISTENT"
 	status		"STATUS"
 	stringType	"string"
 	subDate		"SUBDATE"
@@ -571,6 +572,7 @@ import (
 	SignedLiteral		"Literal or NumLiteral with sign"
 	Statement		"statement"
 	StatementList		"statement list"
+	StatsPersistentVal	"stats_persistent value"
 	StringName		"string literal or identifier"
 	StringList 		"string list"
 	ExplainableStmt		"explainable statement"
@@ -1964,7 +1966,7 @@ NotKeywordToken:
 |	"IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM" | "MAX" | "MICROSECOND" | "MIN"
 |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" | "SUBDATE"
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION"
-|	"WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
+|	"WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND" | "STATS_PERSISTENT"
 
 /************************************************************************************
  *
@@ -4190,7 +4192,16 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionRowFormat, UintValue: $1.(uint64)}
 	}
+|	"STATS_PERSISTENT" EqOpt StatsPersistentVal
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent} 
+	}
 
+StatsPersistentVal:
+	"DEFAULT"
+	{}
+|	LengthNum
+	{}
 
 TableOptionListOpt:
 	{
