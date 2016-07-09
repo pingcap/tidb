@@ -111,7 +111,7 @@ func (col *Column) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (col *Column) Eval(row []types.Datum, _ context.Context) (d types.Datum, err error) {
+func (col *Column) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
 	if col.Correlated {
 		return *col.data, nil
 	}

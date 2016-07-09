@@ -153,6 +153,8 @@ var Funcs = map[string]Func{
 	ast.Regexp:     {builtinRegexp, 2, 2},
 	ast.Case:       {builtinCaseWhen, 1, -1},
 	ast.RowFunc:    {builtinRow, 2, -1},
+	ast.SetVar:     {builtinSetVar, 2, 2},
+	ast.GetVar:     {builtinGetVar, 1, 1},
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
