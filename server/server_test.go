@@ -255,6 +255,8 @@ func runTestErrorCode(c *C) {
 		checkErrorCode(c, err, tmysql.ErrTooLongIdent)
 		_, err = txn2.Exec("create table long_column_table (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int);")
 		checkErrorCode(c, err, tmysql.ErrTooLongIdent)
+		_, err = txn2.Exec("alter table test add aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int;")
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent)
 
 		// Optimizer errors
 		_, err = txn2.Exec("select *, * from test;")
