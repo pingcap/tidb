@@ -65,6 +65,15 @@ func NewValueExpr(value interface{}) *ValueExpr {
 	return ve
 }
 
+func (n *ValueExpr) Init(value interface{}) {
+	if ve, ok := value.(*ValueExpr); ok {
+		*n = *ve
+		return
+	}
+	n.SetValue(value)
+	n.Type = types.DefaultTypeForValue(value)
+}
+
 // Accept implements Node interface.
 func (n *ValueExpr) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)

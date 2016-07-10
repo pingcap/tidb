@@ -14,9 +14,7 @@
 package parser
 
 import (
-	"runtime"
 	"testing"
-	"unsafe"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
@@ -33,54 +31,6 @@ type testAllocator struct {
 
 func (t *testAllocator) TestSimple(c *C) {
 	defer testleak.AfterTest(c)()
-	ac := newAllocator()
+	// ac := newAllocator()
 
-	// test allocated object is zero-initialized.
-	ptr := (*[100]byte)(ac.alloc(100))
-	c.Assert(*ptr, Equals, [100]byte{})
-	ac.reset()
-	ptr = (*[100]byte)(ac.alloc(100))
-	c.Assert(*ptr, Equals, [100]byte{})
-}
-
-type inCache struct {
-	x    byte
-	y    float64
-	z    int
-	next *inCache
-	ptr  *inHeap
-}
-
-type inHeap struct {
-	v int
-}
-
-func f(ac *allocator) *inCache {
-	size := int(unsafe.Sizeof(inCache{}))
-	head := (*inCache)(ac.alloc(size))
-	for i := 0; i < 2000; i++ {
-		p := (*inCache)(ac.alloc(size))
-		// p.ptr = (*inHeap)(ac.alloc(16))
-		p.ptr = &inHeap{v: i}
-		ac.protect(p.ptr)
-		p.next = head.next
-		head.next = p
-	}
-	return head
-}
-
-func testOnceGC(ac *allocator) {
-	n := f(ac)
-	runtime.GC()
-	for p := n.next; p != nil; p = p.next {
-		p.ptr.v = '7'
-	}
-	ac.reset()
-}
-
-func (t *testAllocator) TestGCSafe(c *C) {
-	ac := newAllocator()
-	for i := 0; i < 100; i++ {
-		testOnceGC(ac)
-	}
 }
