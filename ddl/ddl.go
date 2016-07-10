@@ -341,14 +341,14 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 }
 
 func checkTooLongSchema(schema model.CIStr) error {
-	if len(schema.L) > mysql.ServerDatabaseNameLength {
+	if len(schema.L) > mysql.MaxDatabaseNameLength {
 		return infoschema.ErrTooLongIdent.Gen("too long schema %s", schema.L)
 	}
 	return nil
 }
 
 func checkTooLongTable(table model.CIStr) error {
-	if len(table.L) > mysql.ServerTableNameLength {
+	if len(table.L) > mysql.MaxTableNameLength {
 		return infoschema.ErrTooLongIdent.Gen("too long table %s", table.L)
 	}
 	return nil
@@ -663,7 +663,7 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 
 func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
-		if len(colDef.Name.Name.O) > mysql.ServerColumnNameLength {
+		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
 			return infoschema.ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name.L)
 		}
 	}
@@ -1000,7 +1000,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		return infoschema.ErrColumnExists.Gen("column %s already exists", colName)
 	}
 
-	if len(colName) > mysql.ServerColumnNameLength {
+	if len(colName) > mysql.MaxColumnNameLength {
 		return infoschema.ErrTooLongIdent.Gen("too long column %s", colName)
 	}
 

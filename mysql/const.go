@@ -46,9 +46,9 @@ const (
 
 // Server limitations
 const (
-	ServerTableNameLength    int = 64
-	ServerDatabaseNameLength int = 64
-	ServerColumnNameLength   int = 64
+	MaxTableNameLength    int = 64
+	MaxDatabaseNameLength int = 64
+	MaxColumnNameLength   int = 64
 )
 
 // Command informations.
