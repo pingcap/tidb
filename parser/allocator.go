@@ -80,9 +80,9 @@ func (ac *allocator) allocFieldType() *types.FieldType {
 		capacity := cap(ac.fieldType)
 		switch {
 		case capacity == 0:
-			capacity = 128
+			capacity = 256
 		case capacity > 1024:
-			capacity += 512
+			capacity += 1024
 		default:
 			capacity *= 2
 		}
