@@ -986,6 +986,10 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		return infoschema.ErrColumnExists.Gen("column %s already exists", colName)
 	}
 
+	if len(colName) > mysql.ServerColumnNameLength {
+		return infoschema.ErrTooLongIdent.Gen("too long column %s", colName)
+	}
+
 	// ingore table constraints now, maybe return error later
 	// we use length(t.Cols()) as the default offset first, later we will change the
 	// column's offset later.
