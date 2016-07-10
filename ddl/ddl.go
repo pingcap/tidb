@@ -80,6 +80,8 @@ var (
 	ErrCantDropFieldOrKey = terror.ClassDDL.New(codeCantDropFieldOrKey, "can't drop field; check that column/key exists")
 	// ErrInvalidOnUpdate returns for invalid ON UPDATE clause.
 	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
+	// ErrTooLongIdent returns for too long name of database/table/column.
+	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, "Identifier name too long")
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -342,14 +344,14 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 
 func checkTooLongSchema(schema model.CIStr) error {
 	if len(schema.L) > mysql.MaxDatabaseNameLength {
-		return infoschema.ErrTooLongIdent.Gen("too long schema %s", schema.L)
+		return ErrTooLongIdent.Gen("too long schema %s", schema.L)
 	}
 	return nil
 }
 
 func checkTooLongTable(table model.CIStr) error {
 	if len(table.L) > mysql.MaxTableNameLength {
-		return infoschema.ErrTooLongIdent.Gen("too long table %s", table.L)
+		return ErrTooLongIdent.Gen("too long table %s", table.L)
 	}
 	return nil
 }
@@ -664,7 +666,7 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
-			return infoschema.ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name.L)
+			return ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name.L)
 		}
 	}
 	return nil
@@ -1001,7 +1003,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	}
 
 	if len(colName) > mysql.MaxColumnNameLength {
-		return infoschema.ErrTooLongIdent.Gen("too long column %s", colName)
+		return ErrTooLongIdent.Gen("too long column %s", colName)
 	}
 
 	// ingore table constraints now, maybe return error later
@@ -1249,6 +1251,7 @@ const (
 	codeCantRemoveAllFields = 1090
 	codeCantDropFieldOrKey  = 1091
 	codeInvalidOnUpdate     = 1294
+	codeTooLongIdent        = 1059
 
 	codeBlobKeyWithoutLength = 1170
 	codeIncorrectPrefixKey   = 1089
@@ -1262,6 +1265,7 @@ func init() {
 		codeInvalidOnUpdate:      mysql.ErrInvalidOnUpdate,
 		codeBlobKeyWithoutLength: mysql.ErrBlobKeyWithoutLength,
 		codeIncorrectPrefixKey:   mysql.ErrWrongSubKey,
+		codeTooLongIdent:         mysql.ErrTooLongIdent,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLERrCodes
 }
