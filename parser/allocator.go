@@ -34,6 +34,7 @@ type allocator struct {
 	cache []yySymType
 	head  *node
 	tail  *node
+	ref   []interface{}
 }
 
 func newAllocator() *allocator {
@@ -42,6 +43,7 @@ func newAllocator() *allocator {
 		cache: make([]yySymType, 140),
 		head:  n,
 		tail:  n,
+		ref:   make([]interface{}, 0, 256),
 	}
 }
 
@@ -51,6 +53,10 @@ func (ac *allocator) reset() {
 		p.off = 0
 	}
 	ac.tail = ac.head
+}
+
+func (ac *allocator) protect(v interface{}) {
+	ac.ref = append(ac.ref, v)
 }
 
 // alloc allocates an object and return its address.

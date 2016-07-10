@@ -60,8 +60,9 @@ func f(ac *allocator) *inCache {
 	head := (*inCache)(ac.alloc(size))
 	for i := 0; i < 2000; i++ {
 		p := (*inCache)(ac.alloc(size))
-		p.ptr = (*inHeap)(ac.alloc(16))
-		// p.ptr = &inHeap{v: i}
+		// p.ptr = (*inHeap)(ac.alloc(16))
+		p.ptr = &inHeap{v: i}
+		ac.protect(p.ptr)
 		p.next = head.next
 		head.next = p
 	}

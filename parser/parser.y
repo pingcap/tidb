@@ -715,68 +715,74 @@ Start:
 AlterTableStmt:
 	"ALTER" IgnoreOptional "TABLE" TableName AlterTableSpecList
 	{
-		$$ = &ast.AlterTableStmt{
-      Table : $4.(*ast.TableName),
-      Specs : $5.([]*ast.AlterTableSpec),
-    }
+    tmp := (*ast.AlterTableStmt)(ac.alloc(sizeAlterTableStmt))
+    tmp.Table = $4.(*ast.TableName)
+    tmp.Specs = $5.([]*ast.AlterTableSpec)
+		$$ = tmp
 	}
 
 AlterTableSpec:
 	TableOptionListOpt
 	{
-    $$ = &ast.AlterTableSpec{
-      Tp : ast.AlterTableOption,
-      Options : $1.([]*ast.TableOption),
-    }
-	}
+    tmp := (*ast.AlterTableSpec)(ac.alloc(sizeAlterTableSpec))
+    tmp.Tp = ast.AlterTableOption
+    tmp.Options = $1.([]*ast.TableOption)
+    $$ = tmp
+  }
 |	"ADD" ColumnKeywordOpt ColumnDef ColumnPosition
 	{
-		$$ = &ast.AlterTableSpec{
-			Tp: 		ast.AlterTableAddColumn,
-			Column:		$3.(*ast.ColumnDef),
-			Position:	$4.(*ast.ColumnPosition),
-		}
-	}	
+    tmp := (*ast.AlterTableSpec)(ac.alloc(sizeAlterTableSpec))
+    tmp.Tp= 		ast.AlterTableAddColumn
+    tmp.Column=		$3.(*ast.ColumnDef)
+    tmp.Position=	$4.(*ast.ColumnPosition)
+		$$ =tmp
+  }
 |	"ADD" Constraint
 	{
-		constraint := $2.(*ast.Constraint)
-		$$ = &ast.AlterTableSpec{
-			Tp: ast.AlterTableAddConstraint,
-			Constraint: constraint,
-		}
+      constraint := $2.(*ast.Constraint)
+      tmp := (*ast.AlterTableSpec)(ac.alloc(sizeAlterTableSpec))
+			tmp.Tp= ast.AlterTableAddConstraint
+			tmp.Constraint= constraint
+      $$ = tmp
 	}
 |	"DROP" ColumnKeywordOpt ColumnName
 	{
-		$$ = &ast.AlterTableSpec{
-			Tp: ast.AlterTableDropColumn,
-			DropColumn: $3.(*ast.ColumnName),
-		}
+      tmp := (*ast.AlterTableSpec)(ac.alloc(sizeAlterTableSpec))
+      tmp.Tp = ast.AlterTableDropColumn
+			tmp.DropColumn= $3.(*ast.ColumnName)
+      $$ = tmp
 	}
 |	"DROP" "PRIMARY" "KEY"
 	{
-		$$ = &ast.AlterTableSpec{Tp: ast.AlterTableDropPrimaryKey}
+    tmp := (*ast.AlterTableSpec)(ac.alloc(sizeAlterTableSpec))
+    tmp.Tp = ast.AlterTableDropPrimaryKey
+		$$ = tmp
 	}
 |	"DROP" KeyOrIndex IndexName
 	{
-		$$ = &ast.AlterTableSpec{
-			Tp: ast.AlterTableDropIndex,
-			Name: $3.(string),
-		}
+    tmp := (*ast.AlterTableSpec)(ac.alloc(sizeAlterTableSpec))
+    tmp.Tp = ast.AlterTableDropIndex
+    tmp.Name= $3.(string)
+    ac.protect(tmp.Name)
+		$$ = tmp
 	}
 |	"DROP" "FOREIGN" "KEY" Symbol
 	{
-		$$ = &ast.AlterTableSpec{
-			Tp: ast.AlterTableDropForeignKey,
-			Name: $4.(string),
-		}
+    tmp := (*ast.AlterTableSpec)(ac.alloc(sizeAlterTableSpec))
+    tmp.Tp= ast.AlterTableDropForeignKey
+    tmp.Name= $4.(string)
+    ac.protect(tmp.Name)
+    $$ = tmp
 	}
 |	"DISABLE" "KEYS"
 	{
-		$$ = &ast.AlterTableSpec{}
+    tmp := (*ast.AlterTableSpec)(ac.alloc(sizeAlterTableSpec))
+		$$ = tmp
 	}
 |	"ENABLE" "KEYS"
 	{
-		$$ = &ast.AlterTableSpec{}
+    tmp := (*ast.AlterTableSpec)(ac.alloc(sizeAlterTableSpec))
+		$$ = tmp
 	}
 
 KeyOrIndex:
@@ -788,18 +794,22 @@ ColumnKeywordOpt:
 
 ColumnPosition:
 	{
-		$$ = &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
-	}	
+    tmp := (*ast.ColumnPosition)(ac.alloc(sizeColumnPosition))
+    tmp.Tp = ast.ColumnPositionNone
+		$$ = tmp
+	}
 |	"FIRST"
 	{
-		$$ = &ast.ColumnPosition{Tp: ast.ColumnPositionFirst}
+    tmp := (*ast.ColumnPosition)(ac.alloc(sizeColumnPosition))
+    tmp.Tp = ast.ColumnPositionFirst
+		$$ = tmp
 	}
 |	"AFTER" ColumnName
 	{
-		$$ = &ast.ColumnPosition{
-			Tp: ast.ColumnPositionAfter,
-			RelativeColumn: $2.(*ast.ColumnName),
-		}
+    tmp := (*ast.ColumnPosition)(ac.alloc(sizeColumnPosition))
+    tmp.Tp = ast.ColumnPositionAfter
+    tmp.RelativeColumn= $2.(*ast.ColumnName)
+		$$ = tmp
 	}
 
 AlterTableSpecList:
