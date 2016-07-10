@@ -294,8 +294,8 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 		return errors.Trace(infoschema.ErrDatabaseExists)
 	}
 
-	if is.SchemaNameTooLong(schema) {
-		return errors.Trace(infoschema.ErrTooLongIdent.Gen("too long schema %s", schema.L))
+	if err = checkTooLongSchema(schema); err != nil {
+		return errors.Trace(err)
 	}
 
 	schemaID, err := d.genGlobalID()
@@ -338,6 +338,20 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 	err = d.doDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
+}
+
+func checkTooLongSchema(schema model.CIStr) error {
+	if len(schema.L) > mysql.ServerDatabaseNameLength {
+		return infoschema.ErrTooLongIdent.Gen("too long schema %s", schema.L)
+	}
+	return nil
+}
+
+func checkTooLongTable(table model.CIStr) error {
+	if len(table.L) > mysql.ServerTableNameLength {
+		return infoschema.ErrTooLongIdent.Gen("too long table %s", table.L)
+	}
+	return nil
 }
 
 func getDefaultCharsetAndCollate() (string, string) {
@@ -830,8 +844,8 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	if is.TableExists(ident.Schema, ident.Name) {
 		return errors.Trace(infoschema.ErrTableExists)
 	}
-	if is.TableNameTooLong(ident.Schema, ident.Name) {
-		return errors.Trace(infoschema.ErrTooLongIdent.Gen("too long table %s", ident.Name.L))
+	if err = checkTooLongTable(ident.Name); err != nil {
+		return errors.Trace(err)
 	}
 	if err = checkDuplicateColumn(colDefs); err != nil {
 		return errors.Trace(err)
