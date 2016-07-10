@@ -295,7 +295,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 	}
 
 	if is.SchemaNameTooLong(schema) {
-		return errors.Trace(infoschema.ErrTooLongIdent)
+		return errors.Trace(infoschema.ErrTooLongIdent.Gen("too long schema %s", schema.L))
 	}
 
 	schemaID, err := d.genGlobalID()
@@ -650,7 +650,7 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		if len(colDef.Name.Name.O) > mysql.ServerColumnNameLength {
-			return infoschema.ErrTooLongIdent.Gen("too long column %s", colDef.Name)
+			return infoschema.ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name.L)
 		}
 	}
 	return nil
@@ -831,7 +831,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return errors.Trace(infoschema.ErrTableExists)
 	}
 	if is.TableNameTooLong(ident.Schema, ident.Name) {
-		return errors.Trace(infoschema.ErrTooLongIdent)
+		return errors.Trace(infoschema.ErrTooLongIdent.Gen("too long table %s", ident.Name.L))
 	}
 	if err = checkDuplicateColumn(colDefs); err != nil {
 		return errors.Trace(err)
