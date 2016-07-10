@@ -1226,7 +1226,7 @@ CreateIndexStmt:
 		$$ = &ast.CreateIndexStmt{
 			Unique: $2.(bool),
 			IndexName: $4.(string),
-                	Table: $6.(*ast.TableName),
+      Table: $6.(*ast.TableName),
 			IndexColNames: $8.([]*ast.IndexColName),
 		}
 		if yylex.(*lexer).root {
@@ -1399,7 +1399,8 @@ DeleteFromStmt:
 		// Single Table
     ts := ac.allocTableSource()
     ts.Source = $6.(ast.ResultSetNode)
-		join := &ast.Join{Left: ts, Right: nil}
+    join := ac.allocJoin()
+    join.Left = ts
     tr := ac.allocTableRefsClause()
     tr.TableRefs = join
 		x := &ast.DeleteStmt{
@@ -1988,7 +1989,9 @@ InsertIntoStmt:
     ts := ac.allocTableSource()
     ts.Source = $5.(*ast.TableName)
     tr := ac.allocTableRefsClause()
-    tr.TableRefs = &ast.Join{Left: ts}
+    join := ac.allocJoin()
+    join.Left = ts
+    tr.TableRefs = join
 		x.Table = tr
 		if $7 != nil {
 			x.OnDuplicate = $7.([]*ast.Assignment)
@@ -2139,7 +2142,9 @@ ReplaceIntoStmt:
     ts := ac.allocTableSource()
     ts.Source = $4.(*ast.TableName)
     tr := ac.allocTableRefsClause()
-    tr.TableRefs = &ast.Join{Left: ts}
+    join := ac.allocJoin()
+    join.Left = ts
+    tr.TableRefs = join
 		x.Table = tr
 		$$ = x
 	}
@@ -3078,11 +3083,16 @@ LowPriorityOptional:
 TableName:
 	Identifier
 	{
-		$$ = &ast.TableName{Name:model.NewCIStr($1.(string))}
+    tmp := ac.allocTableName()
+    tmp.Name = model.NewCIStr($1.(string))
+		$$ = tmp
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.TableName{Schema:model.NewCIStr($1.(string)),	Name:model.NewCIStr($3.(string))}
+    tmp := ac.allocTableName()
+    tmp.Schema = model.NewCIStr($1.(string))
+    tmp.Name = model.NewCIStr($3.(string))
+		$$ = tmp
 	}
 
 TableNameList:
@@ -3298,13 +3308,19 @@ TableRefs:
 			// if $1 is Join, use it directly
 			$$ = j
 		} else {
-			$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: nil}
+      join := ac.allocJoin()
+      join.Left = $1.(ast.ResultSetNode)
+			$$ = join
 		}
 	}
 |	TableRefs ',' EscapedTableRef
 	{
 		/* from a, b is default cross join */
-		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin}
+    join := ac.allocJoin()
+    join.Left = $1.(ast.ResultSetNode)
+    join.Right = $3.(ast.ResultSetNode)
+    join.Tp = ast.CrossJoin
+		$$ = join
 	}
 
 EscapedTableRef:
@@ -3464,17 +3480,31 @@ JoinTable:
 	/* Use %prec to evaluate production TableRef before cross join */
 	TableRef CrossOpt TableRef %prec tableRefPriority
 	{
-		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin}
+      join := ac.allocJoin()
+      join.Left = $1.(ast.ResultSetNode)
+      join.Right = $3.(ast.ResultSetNode)
+      join.Tp = ast.CrossJoin
+      $$ = join
 	}
 |	TableRef CrossOpt TableRef "ON" Expression
 	{
 		on := &ast.OnCondition{Expr: $5.(ast.ExprNode)}
-		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin, On: on}
+    join := ac.allocJoin()
+    join.Left = $1.(ast.ResultSetNode)
+    join.Right = $3.(ast.ResultSetNode)
+    join.Tp = ast.CrossJoin
+    join.On = on
+		$$ = join
 	}
 |	TableRef JoinType OuterOpt "JOIN" TableRef "ON" Expression
 	{
 		on := &ast.OnCondition{Expr: $7.(ast.ExprNode)}
-		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $5.(ast.ResultSetNode), Tp: $2.(ast.JoinType), On: on}
+    join := ac.allocJoin()
+    join.Left = $1.(ast.ResultSetNode)
+    join.Right = $5.(ast.ResultSetNode)
+    join.Tp = $2.(ast.JoinType)
+    join.On = on
+		$$ = join
 	}
 	/* Support Using */
 
@@ -4773,7 +4803,9 @@ UpdateStmt:
 		if x, ok := $4.(*ast.Join); ok {
 			refs = x
 		} else {
-			refs = &ast.Join{Left: $4.(ast.ResultSetNode)}
+      join := ac.allocJoin()
+      join.Left = $4.(ast.ResultSetNode)
+			refs = join
 		}
     tr := ac.allocTableRefsClause()
     tr.TableRefs= refs

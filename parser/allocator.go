@@ -19,6 +19,8 @@ import (
 
 type allocator struct {
 	cache           []yySymType
+	yylval          yySymType
+	yyVAL           yySymType
 	fieldType       []types.FieldType
 	valueExpr       []ast.ValueExpr
 	deleteStmt      []ast.DeleteStmt
@@ -51,30 +53,43 @@ func newAllocator() *allocator {
 }
 
 func (ac *allocator) newValueExpr(v interface{}) *ast.ValueExpr {
+	if ve, ok := v.(*ast.ValueExpr); ok {
+		return ve
+	}
+
+	tp := ac.allocFieldType()
+	tp.Init(v)
+
 	ve := ac.allocValueExpr()
-	ve.Init(v)
+	ve.SetValue(v)
+	ve.Type = tp
+
 	return ve
 }
 
 func (ac *allocator) newFieldType(tp byte) *types.FieldType {
+	ret := ac.allocFieldType()
+	ret.Tp = tp
+	ret.Flen = types.UnspecifiedLength
+	ret.Decimal = types.UnspecifiedLength
+	return ret
+}
+
+func (ac *allocator) allocFieldType() *types.FieldType {
 	if len(ac.fieldType) == cap(ac.fieldType) {
 		capacity := cap(ac.fieldType)
 		switch {
 		case capacity == 0:
-			capacity = 32
+			capacity = 128
 		case capacity > 1024:
-			capacity += 256
+			capacity += 512
 		default:
 			capacity *= 2
 		}
 		ac.fieldType = make([]types.FieldType, 0, capacity)
 	}
 	ac.fieldType = ac.fieldType[:len(ac.fieldType)+1]
-	ret := &ac.fieldType[len(ac.fieldType)-1]
-	ret.Tp = tp
-	ret.Flen = types.UnspecifiedLength
-	ret.Decimal = types.UnspecifiedLength
-	return ret
+	return &ac.fieldType[len(ac.fieldType)-1]
 }
 
 func (ac *allocator) reset() {
@@ -228,9 +243,7 @@ func (ac *allocator) allocValueExpr() *ast.ValueExpr {
 		capacity := cap(ac.valueExpr)
 		switch {
 		case capacity == 0:
-			capacity = 32
-		case capacity > 1024:
-			capacity += 256
+			capacity = 512
 		default:
 			capacity *= 2
 		}
