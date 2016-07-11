@@ -79,13 +79,13 @@ func (parser *Parser) deferFunc() {
 func (parser *Parser) noneFunc() {
 }
 
+// Reset resets the parser's allocator.
 func (parser *Parser) Reset() func() {
-	if parser.refCount > 1 {
+	if parser.refCount > 0 {
 		log.Warn("cannot reset parser when allocator still being used")
 		return parser.noneFunc
 	}
 
-	log.Info("reset parser")
 	parser.allocator.reset()
 	parser.refCount++
 
