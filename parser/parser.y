@@ -3736,14 +3736,14 @@ VariableAssignment:
 |	"NAMES" StringName
 	{
 		$$ = &ast.VariableAssignment{
-			Name: ast.Names, 
+			Name: ast.SetNames, 
 			Value: ast.NewValueExpr($2.(string)),
 		}
 	}
 |	"NAMES" StringName "COLLATE" StringName
 	{
 		$$ = &ast.VariableAssignment{
-			Name: ast.Names, 
+			Name: ast.SetNames, 
 			Value: ast.NewValueExpr($2.(string)),
 			ExtendValue: ast.NewValueExpr($4.(string)),
 		}
@@ -3751,7 +3751,7 @@ VariableAssignment:
 |	CharsetKw StringName
 	{
 		$$ = &ast.VariableAssignment{
-			Name: ast.Names, 
+			Name: ast.SetNames, 
 			Value: ast.NewValueExpr($2.(string)),
 		}
 	}

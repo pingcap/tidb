@@ -123,8 +123,8 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 	globalVars := variable.GetGlobalVarAccessor(e.ctx)
 	for _, v := range s.Variables {
 		// Variable is case insensitive, we use lower case.
-		if v.Name == ast.Names {
-			// This is set charset stmt
+		if v.Name == ast.SetNames {
+			// This is set charset stmt.
 			cs := v.Value.GetValue().(string)
 			var co string
 			if v.ExtendValue != nil {

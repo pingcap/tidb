@@ -228,9 +228,9 @@ func (n *UseStmt) Accept(v Visitor) (Node, bool) {
 }
 
 const (
-	// Names is the const for set names/charset stmt.
+	// SetNames is the const for set names/charset stmt.
 	// If VariableAssignment.Name == Names, it should be set names/charset stmt.
-	Names = "NAMES"
+	SetNames = "SetNAMES"
 )
 
 // VariableAssignment is a variable assignment struct.
