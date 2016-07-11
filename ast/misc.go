@@ -34,7 +34,6 @@ var (
 	_ StmtNode = &GrantStmt{}
 	_ StmtNode = &PrepareStmt{}
 	_ StmtNode = &RollbackStmt{}
-	_ StmtNode = &SetCharsetStmt{}
 	_ StmtNode = &SetPwdStmt{}
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &UseStmt{}
@@ -228,6 +227,12 @@ func (n *UseStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+const (
+	// Names is the const for set names/charset stmt.
+	// If VariableAssignment.Name == Names, it should be set names/charset stmt.
+	Names = "NAMES"
+)
+
 // VariableAssignment is a variable assignment struct.
 type VariableAssignment struct {
 	node
@@ -235,6 +240,11 @@ type VariableAssignment struct {
 	Value    ExprNode
 	IsGlobal bool
 	IsSystem bool
+
+	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
+	// For SetCharsetStmt, Value is charset, ExtendValue is collation.
+	// TODO: Use SetStmt to implement set password statement.
+	ExtendValue ExprNode
 }
 
 // Accept implements Node interface.
@@ -276,6 +286,7 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+/*
 // SetCharsetStmt is a statement to assign values to character and collation variables.
 // See https://dev.mysql.com/doc/refman/5.7/en/set-statement.html
 type SetCharsetStmt struct {
@@ -294,6 +305,7 @@ func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
 	n = newNode.(*SetCharsetStmt)
 	return v.Leave(n)
 }
+*/
 
 // SetPwdStmt is a statement to assign a password to user account.
 // See https://dev.mysql.com/doc/refman/5.7/en/set-password.html

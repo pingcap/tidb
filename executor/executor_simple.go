@@ -39,8 +39,8 @@ import (
 
 // SimpleExec represents simple statement executor.
 // For statements do simple execution.
-// includes `UseStmt`, 'SetStmt`, `SetCharsetStmt`.
-// `DoStmt`, `BeginStmt`, `CommitStmt`, `RollbackStmt`.
+// includes `UseStmt`, 'SetStmt`, `DoStmt`,
+// `BeginStmt`, `CommitStmt`, `RollbackStmt`.
 // TODO: list all simple statements.
 type SimpleExec struct {
 	Statement ast.StmtNode
@@ -69,8 +69,6 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeUse(x)
 	case *ast.SetStmt:
 		err = e.executeSet(x)
-	case *ast.SetCharsetStmt:
-		err = e.executeSetCharset(x)
 	case *ast.DoStmt:
 		err = e.executeDo(x)
 	case *ast.BeginStmt:
@@ -125,6 +123,19 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 	globalVars := variable.GetGlobalVarAccessor(e.ctx)
 	for _, v := range s.Variables {
 		// Variable is case insensitive, we use lower case.
+		if v.Name == ast.Names {
+			// This is set charset stmt
+			cs := v.Value.GetValue().(string)
+			var co string
+			if v.ExtendValue != nil {
+				co = v.ExtendValue.GetValue().(string)
+			}
+			err := e.setCharset(cs, co)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
 		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
@@ -191,23 +202,22 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeSetCharset(s *ast.SetCharsetStmt) error {
-	collation := s.Collate
+func (e *SimpleExec) setCharset(cs, co string) error {
 	var err error
-	if len(collation) == 0 {
-		collation, err = charset.GetDefaultCollation(s.Charset)
+	if len(co) == 0 {
+		co, err = charset.GetDefaultCollation(cs)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	sessionVars := variable.GetSessionVars(e.ctx)
 	for _, v := range variable.SetNamesVariables {
-		err = sessionVars.SetSystemVar(v, types.NewStringDatum(s.Charset))
+		err = sessionVars.SetSystemVar(v, types.NewStringDatum(cs))
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	err = sessionVars.SetSystemVar(variable.CollationConnection, types.NewStringDatum(collation))
+	err = sessionVars.SetSystemVar(variable.CollationConnection, types.NewStringDatum(co))
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -3656,21 +3656,6 @@ SetStmt:
 	{
 		$$ = &ast.SetStmt{Variables: $2.([]*ast.VariableAssignment)}
 	}
-|	"SET" "NAMES" StringName
-	{
-		$$ = &ast.SetCharsetStmt{Charset: $3.(string)} 
-	}
-|	"SET" "NAMES" StringName "COLLATE" StringName
-	{
-		$$ = &ast.SetCharsetStmt{
-			Charset: $3.(string),
-			Collate: $5.(string),
-		} 
-	}
-|	"SET" CharsetKw StringName
-	{
-		$$ = &ast.SetCharsetStmt{Charset: $3.(string)} 
-	}
 |	"SET" "PASSWORD" eq PasswordOpt
 	{
 		$$ = &ast.SetPwdStmt{Password: $4.(string)}
@@ -3747,6 +3732,28 @@ VariableAssignment:
 		v := $1.(string)
 		v = strings.TrimPrefix(v, "@")
 		$$ = &ast.VariableAssignment{Name: v, Value: $3.(ast.ExprNode)}
+	}
+|	"NAMES" StringName
+	{
+		$$ = &ast.VariableAssignment{
+			Name: ast.Names, 
+			Value: ast.NewValueExpr($2.(string)),
+		}
+	}
+|	"NAMES" StringName "COLLATE" StringName
+	{
+		$$ = &ast.VariableAssignment{
+			Name: ast.Names, 
+			Value: ast.NewValueExpr($2.(string)),
+			ExtendValue: ast.NewValueExpr($4.(string)),
+		}
+	}
+|	CharsetKw StringName
+	{
+		$$ = &ast.VariableAssignment{
+			Name: ast.Names, 
+			Value: ast.NewValueExpr($2.(string)),
+		}
 	}
 
 VariableAssignmentList:
