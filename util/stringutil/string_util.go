@@ -68,21 +68,19 @@ func Unescape(s string) string {
 	)
 	for i < len(s)-1 {
 		// Consider multi-bytes character
-		// We only handle utf8 now.
-		/*
-			l := ismbchar(s[i])
-			if l > 0 {
-				if l+i < len(s) {
-					for l > 0 {
-						buf.WriteByte(s[i])
-						l--
-						i++
-					}
-					i--
-					continue
+		//We only handle utf8 now.
+		l := ismbchar(s[i])
+		if l > 0 {
+			if l+i < len(s) {
+				for l > 0 {
+					buf.WriteByte(s[i])
+					l--
+					i++
 				}
+				i--
+				continue
 			}
-		*/
+		}
 		if s[i] != '\\' {
 			buf.WriteByte(s[i])
 			i++
