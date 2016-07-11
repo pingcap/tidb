@@ -526,7 +526,6 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 		FieldType:    *types.NewFieldType(mysql.TypeLonglong),
 		State:        model.StateWriteOnly,
 	}
-	t1Tbl.Cols()
 	t1Info.Columns = append(t1Info.Columns, newColumn)
 
 	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
