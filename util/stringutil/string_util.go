@@ -121,31 +121,6 @@ func Unescape(s string) string {
 	return buf.String()
 }
 
-// Get multi-bytes char length
-// TODO: suppory more charset
-// See: https://github.com/pingcap/mysql-5.6.24/blob/master/strings/ctype-utf8.c#L6046
-func ismbchar(c byte) int {
-	r := validMBCharlenUtf8(c)
-	if r > 1 {
-		return r
-	}
-	return 0
-}
-
-func validMBCharlenUtf8(c byte) int {
-	if c < 0x80 {
-		return 1
-	} else if c < 0xc2 {
-		/* Illegal mb head */
-		return 0
-	} else if c < 0xe0 {
-		return 2
-	} else if c < 0xf0 {
-		return 3
-	}
-	return 0
-}
-
 // Reverse returns its argument string reversed rune-wise left to right.
 func Reverse(s string) string {
 	r := []rune(s)
@@ -193,84 +168,87 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 	c := s[1]
 	s = s[2:]
 	switch c {
+	case 'a':
+		value = '\a'
 	case 'b':
 		value = '\b'
-	case 'Z':
-		value = '\032'
-	case '0':
-		value = 0
+	case 'f':
+		value = '\f'
 	case 'n':
 		value = '\n'
 	case 'r':
 		value = '\r'
 	case 't':
 		value = '\t'
+	case 'v':
+		value = '\v'
+	case 'Z':
+		value = '\032'
 		/*
-			case 'x', 'u', 'U':
-				n := 0
-				switch c {
-				case 'x':
-					n = 2
-				case 'u':
-					n = 4
-				case 'U':
-					n = 8
-				}
-				var v rune
-				if len(s) < n {
-					err = errors.Trace(ErrSyntax)
-					return
-				}
-				for j := 0; j < n; j++ {
-					x, ok := unhex(s[j])
-					if !ok {
-						err = errors.Trace(ErrSyntax)
-						return
-					}
-					v = v<<4 | x
-				}
-				s = s[n:]
-				if c == 'x' {
-					// single-byte string, possibly not UTF-8
-					value = v
-					break
-				}
-				if v > utf8.MaxRune {
-					err = errors.Trace(ErrSyntax)
-					return
-				}
-				value = v
-				multibyte = true
+			case '0':
+				value = rune(0)
 		*/
-	/*
-		case '0', '1', '2', '3', '4', '5', '6', '7':
-			v := rune(c) - '0'
-			if len(s) < 2 {
+	case 'x', 'u', 'U':
+		n := 0
+		switch c {
+		case 'x':
+			n = 2
+		case 'u':
+			n = 4
+		case 'U':
+			n = 8
+		}
+		var v rune
+		if len(s) < n {
+			err = errors.Trace(ErrSyntax)
+			return
+		}
+		for j := 0; j < n; j++ {
+			x, ok := unhex(s[j])
+			if !ok {
 				err = errors.Trace(ErrSyntax)
 				return
 			}
-			for j := 0; j < 2; j++ { // one digit already; two more
-				x := rune(s[j]) - '0'
-				if x < 0 || x > 7 {
-					err = errors.Trace(ErrSyntax)
-					return
-				}
-				v = (v << 3) | x
-			}
-			s = s[2:]
-			if v > 255 {
-				err = errors.Trace(ErrSyntax)
-				return
-			}
+			v = v<<4 | x
+		}
+		s = s[n:]
+		if c == 'x' {
+			// single-byte string, possibly not UTF-8
 			value = v
-	*/
+			break
+		}
+		if v > utf8.MaxRune {
+			err = errors.Trace(ErrSyntax)
+			return
+		}
+		value = v
+		multibyte = true
+	case '0', '1', '2', '3', '4', '5', '6', '7':
+		v := rune(c) - '0'
+		if len(s) < 2 {
+			err = errors.Trace(ErrSyntax)
+			return
+		}
+		for j := 0; j < 2; j++ { // one digit already; two more
+			x := rune(s[j]) - '0'
+			if x < 0 || x > 7 {
+				err = errors.Trace(ErrSyntax)
+				return
+			}
+			v = (v << 3) | x
+		}
+		s = s[2:]
+		if v > 255 {
+			err = errors.Trace(ErrSyntax)
+			return
+		}
+		value = v
 	case '\\':
 		value = '\\'
 	case '\'', '"':
 		value = rune(c)
 	default:
-		value = rune(c)
-		//err = errors.Trace(ErrSyntax)
+		err = errors.Trace(ErrSyntax)
 		return
 	}
 	tail = s
