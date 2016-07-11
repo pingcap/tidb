@@ -716,18 +716,18 @@ AlterTableStmt:
 	"ALTER" IgnoreOptional "TABLE" TableName AlterTableSpecList
 	{
 		$$ = &ast.AlterTableStmt{
-      Table : $4.(*ast.TableName),
-      Specs : $5.([]*ast.AlterTableSpec),
-    }
+			Table : $4.(*ast.TableName),
+			Specs : $5.([]*ast.AlterTableSpec),
+		}
 	}
 
 AlterTableSpec:
 	TableOptionListOpt
 	{
-    $$ = &ast.AlterTableSpec{
-      Tp : ast.AlterTableOption,
-      Options : $1.([]*ast.TableOption),
-    }
+		$$ = &ast.AlterTableSpec{
+			Tp : ast.AlterTableOption,
+			Options : $1.([]*ast.TableOption),
+		}
 	}
 |	"ADD" ColumnKeywordOpt ColumnDef ColumnPosition
 	{
@@ -1226,7 +1226,7 @@ CreateIndexStmt:
 		$$ = &ast.CreateIndexStmt{
 			Unique: $2.(bool),
 			IndexName: $4.(string),
-      Table: $6.(*ast.TableName),
+			Table: $6.(*ast.TableName),
 			IndexColNames: $8.([]*ast.IndexColName),
 		}
 		if yylex.(*lexer).root {
@@ -1397,12 +1397,12 @@ DeleteFromStmt:
 	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableName WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
-    ts := ac.allocTableSource()
-    ts.Source = $6.(ast.ResultSetNode)
-    join := ac.allocJoin()
-    join.Left = ts
-    tr := ac.allocTableRefsClause()
-    tr.TableRefs = join
+		ts := ac.allocTableSource()
+		ts.Source = $6.(ast.ResultSetNode)
+		join := ac.allocJoin()
+		join.Left = ts
+		tr := ac.allocTableRefsClause()
+		tr.TableRefs = join
 		x := &ast.DeleteStmt{
 			TableRefs:	tr,
 			LowPriority:	$2.(bool),
@@ -1426,8 +1426,8 @@ DeleteFromStmt:
 	}
 |	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional TableNameList "FROM" TableRefs WhereClauseOptional
 	{
-    tr := ac.allocTableRefsClause()
-    tr.TableRefs= $7.(*ast.Join)
+		tr := ac.allocTableRefsClause()
+		tr.TableRefs= $7.(*ast.Join)
 		// Multiple Table
 		x := &ast.DeleteStmt{
 			LowPriority:	$2.(bool),
@@ -1448,8 +1448,8 @@ DeleteFromStmt:
 	}
 |	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableNameList "USING" TableRefs WhereClauseOptional
 	{
-    tr := ac.allocTableRefsClause()
-    tr.TableRefs = $8.(*ast.Join)
+		tr := ac.allocTableRefsClause()
+		tr.TableRefs = $8.(*ast.Join)
 		// Multiple Table
 		x := &ast.DeleteStmt{
 			LowPriority:	$2.(bool),
@@ -1986,12 +1986,12 @@ InsertIntoStmt:
 		x := $6.(*ast.InsertStmt)
 		x.Priority = $2.(int)
 		// Wraps many layers here so that it can be processed the same way as select statement.
-    ts := ac.allocTableSource()
-    ts.Source = $5.(*ast.TableName)
-    tr := ac.allocTableRefsClause()
-    join := ac.allocJoin()
-    join.Left = ts
-    tr.TableRefs = join
+		ts := ac.allocTableSource()
+		ts.Source = $5.(*ast.TableName)
+		tr := ac.allocTableRefsClause()
+		join := ac.allocJoin()
+		join.Left = ts
+		tr.TableRefs = join
 		x.Table = tr
 		if $7 != nil {
 			x.OnDuplicate = $7.([]*ast.Assignment)
@@ -2012,62 +2012,62 @@ IntoOpt:
 InsertValues:
 	'(' ColumnNameListOpt ')' ValueSym ExpressionListList
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt{
-      Columns : $2.([]*ast.ColumnName),
-      Lists : $5.([][]ast.ExprNode),
-    }
-    $$ = tmp
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt{
+			Columns : $2.([]*ast.ColumnName),
+			Lists : $5.([][]ast.ExprNode),
+		}
+		$$ = tmp
 	}
 |	'(' ColumnNameListOpt ')' SelectStmt
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt{
-      Columns : $2.([]*ast.ColumnName),
-      Select : $4.(*ast.SelectStmt),
-    }
-    $$ = tmp
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt{
+			Columns : $2.([]*ast.ColumnName),
+			Select : $4.(*ast.SelectStmt),
+		}
+		$$ = tmp
 	}
 |	'(' ColumnNameListOpt ')' UnionStmt
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt{
-        Columns : $2.([]*ast.ColumnName),
-        Select : $4.(*ast.UnionStmt),
-    }
-    $$ = tmp
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt{
+			Columns : $2.([]*ast.ColumnName),
+			Select : $4.(*ast.UnionStmt),
+		}
+		$$ = tmp
 	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt{
-      Lists : $2.([][]ast.ExprNode),
-    }
-    $$ = tmp
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt{
+			Lists : $2.([][]ast.ExprNode),
+		}
+		$$ = tmp
 	}
 |	SelectStmt
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt{
-      Select : $1.(*ast.SelectStmt),
-    }
-    $$ = tmp
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt{
+			Select : $1.(*ast.SelectStmt),
+		}
+		$$ = tmp
 	}
 |	UnionStmt
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt {
-      Select : $1.(*ast.UnionStmt),
-    }
-    $$ = tmp
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt {
+			Select : $1.(*ast.UnionStmt),
+		}
+		$$ = tmp
 	}
 |	"SET" ColumnSetValueList
 	{
-    tmp := ac.allocInsertStmt()
-    *tmp = ast.InsertStmt {
-      Setlist : $2.([]*ast.Assignment),
-    }
-    $$ = tmp
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt {
+			Setlist : $2.([]*ast.Assignment),
+		}
+		$$ = tmp
 	}
 
 ValueSym:
@@ -2139,12 +2139,12 @@ ReplaceIntoStmt:
 		x := $5.(*ast.InsertStmt)
 		x.IsReplace = true
 		x.Priority = $2.(int)
-    ts := ac.allocTableSource()
-    ts.Source = $4.(*ast.TableName)
-    tr := ac.allocTableRefsClause()
-    join := ac.allocJoin()
-    join.Left = ts
-    tr.TableRefs = join
+		ts := ac.allocTableSource()
+		ts.Source = $4.(*ast.TableName)
+		tr := ac.allocTableRefsClause()
+		join := ac.allocJoin()
+		join.Left = ts
+		tr.TableRefs = join
 		x.Table = tr
 		$$ = x
 	}
@@ -3083,15 +3083,15 @@ LowPriorityOptional:
 TableName:
 	Identifier
 	{
-    tmp := ac.allocTableName()
-    tmp.Name = model.NewCIStr($1.(string))
+		tmp := ac.allocTableName()
+		tmp.Name = model.NewCIStr($1.(string))
 		$$ = tmp
 	}
 |	Identifier '.' Identifier
 	{
-    tmp := ac.allocTableName()
-    tmp.Schema = model.NewCIStr($1.(string))
-    tmp.Name = model.NewCIStr($3.(string))
+		tmp := ac.allocTableName()
+		tmp.Schema = model.NewCIStr($1.(string))
+		tmp.Name = model.NewCIStr($3.(string))
 		$$ = tmp
 	}
 
@@ -3296,8 +3296,8 @@ FromDual:
 TableRefsClause:
 	TableRefs
 	{
-    tmp := ac.allocTableRefsClause()
-    tmp.TableRefs= $1.(*ast.Join)
+		tmp := ac.allocTableRefsClause()
+		tmp.TableRefs= $1.(*ast.Join)
 		$$ = tmp
 	}
 
@@ -3308,18 +3308,18 @@ TableRefs:
 			// if $1 is Join, use it directly
 			$$ = j
 		} else {
-      join := ac.allocJoin()
-      join.Left = $1.(ast.ResultSetNode)
+			join := ac.allocJoin()
+			join.Left = $1.(ast.ResultSetNode)
 			$$ = join
 		}
 	}
 |	TableRefs ',' EscapedTableRef
 	{
 		/* from a, b is default cross join */
-    join := ac.allocJoin()
-    join.Left = $1.(ast.ResultSetNode)
-    join.Right = $3.(ast.ResultSetNode)
-    join.Tp = ast.CrossJoin
+		join := ac.allocJoin()
+		join.Left = $1.(ast.ResultSetNode)
+		join.Right = $3.(ast.ResultSetNode)
+		join.Tp = ast.CrossJoin
 		$$ = join
 	}
 
@@ -3352,9 +3352,9 @@ TableFactor:
 	{
 		tn := $1.(*ast.TableName)
 		tn.IndexHints = $3.([]*ast.IndexHint)
-    tmp := ac.allocTableSource()
-    tmp.Source = tn
-    tmp.AsName = $2.(model.CIStr)
+		tmp := ac.allocTableSource()
+		tmp.Source = tn
+		tmp.AsName = $2.(model.CIStr)
 		$$ = tmp
 	}
 |	'(' SelectStmt ')' TableAsName
@@ -3363,16 +3363,16 @@ TableFactor:
 		l := yylex.(*lexer)
 		endOffset := l.endOffset(yyS[yypt-1].offset)
 		l.SetLastSelectFieldText(st, endOffset)
-    tmp := ac.allocTableSource()
-    tmp.Source = $2.(*ast.SelectStmt)
-    tmp.AsName = $4.(model.CIStr)
+		tmp := ac.allocTableSource()
+		tmp.Source = $2.(*ast.SelectStmt)
+		tmp.AsName = $4.(model.CIStr)
 		$$ = tmp
 	}
 |	'(' UnionStmt ')' TableAsName
 	{
-    tmp := ac.allocTableSource()
-    tmp.Source = $2.(*ast.UnionStmt)
-    tmp.AsName = $4.(model.CIStr)
+		tmp := ac.allocTableSource()
+		tmp.Source = $2.(*ast.UnionStmt)
+		tmp.AsName = $4.(model.CIStr)
 		$$ = tmp
 	}
 |	'(' TableRefs ')'
@@ -3489,21 +3489,21 @@ JoinTable:
 |	TableRef CrossOpt TableRef "ON" Expression
 	{
 		on := &ast.OnCondition{Expr: $5.(ast.ExprNode)}
-    join := ac.allocJoin()
-    join.Left = $1.(ast.ResultSetNode)
-    join.Right = $3.(ast.ResultSetNode)
-    join.Tp = ast.CrossJoin
-    join.On = on
+		join := ac.allocJoin()
+		join.Left = $1.(ast.ResultSetNode)
+		join.Right = $3.(ast.ResultSetNode)
+		join.Tp = ast.CrossJoin
+		join.On = on
 		$$ = join
 	}
 |	TableRef JoinType OuterOpt "JOIN" TableRef "ON" Expression
 	{
 		on := &ast.OnCondition{Expr: $7.(ast.ExprNode)}
-    join := ac.allocJoin()
-    join.Left = $1.(ast.ResultSetNode)
-    join.Right = $5.(ast.ResultSetNode)
-    join.Tp = $2.(ast.JoinType)
-    join.On = on
+		join := ac.allocJoin()
+		join.Left = $1.(ast.ResultSetNode)
+		join.Right = $5.(ast.ResultSetNode)
+		join.Tp = $2.(ast.JoinType)
+		join.On = on
 		$$ = join
 	}
 	/* Support Using */
@@ -4803,12 +4803,12 @@ UpdateStmt:
 		if x, ok := $4.(*ast.Join); ok {
 			refs = x
 		} else {
-      join := ac.allocJoin()
-      join.Left = $4.(ast.ResultSetNode)
+			join := ac.allocJoin()
+			join.Left = $4.(ast.ResultSetNode)
 			refs = join
 		}
-    tr := ac.allocTableRefsClause()
-    tr.TableRefs= refs
+		tr := ac.allocTableRefsClause()
+		tr.TableRefs= refs
 		st := &ast.UpdateStmt{
 			LowPriority:	$2.(bool),
 			TableRefs:	tr,
@@ -4830,8 +4830,8 @@ UpdateStmt:
 	}
 |	"UPDATE" LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
 	{
-    tr := ac.allocTableRefsClause()
-    tr.TableRefs= $4.(*ast.Join)
+		tr := ac.allocTableRefsClause()
+		tr.TableRefs= $4.(*ast.Join)
 		st := &ast.UpdateStmt{
 			LowPriority:	$2.(bool),
 			TableRefs:	tr,

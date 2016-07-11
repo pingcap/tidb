@@ -93,6 +93,13 @@ func (ac *allocator) allocFieldType() *types.FieldType {
 }
 
 func (ac *allocator) reset() {
+	ac.yylval = yySymType{}
+	ac.yyVAL = yySymType{}
+	for i := 0; i < len(ac.fieldType); i++ {
+		ac.fieldType[i] = types.FieldType{}
+	}
+	ac.fieldType = ac.fieldType[:0]
+
 	for i := 0; i < len(ac.valueExpr); i++ {
 		ac.valueExpr[i] = ast.ValueExpr{}
 	}
