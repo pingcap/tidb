@@ -497,7 +497,8 @@ func (er *expressionRewriter) unaryOpToScalarFunc(v *ast.UnaryOperationExpr) {
 	var op string
 	switch v.Op {
 	case opcode.Plus:
-		op = ast.UnaryPlus
+		// expression (+ a) is equal to a
+		return
 	case opcode.Minus:
 		op = ast.UnaryMinus
 	case opcode.BitNeg:
