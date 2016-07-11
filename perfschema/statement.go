@@ -314,7 +314,6 @@ func (ps *perfSchema) registerStatements() {
 	ps.RegisterStatement("sql", "rollback", (*ast.RollbackStmt)(nil))
 	ps.RegisterStatement("sql", "select", (*ast.SelectStmt)(nil))
 	ps.RegisterStatement("sql", "set", (*ast.SetStmt)(nil))
-	ps.RegisterStatement("sql", "set_charset", (*ast.SetCharsetStmt)(nil))
 	ps.RegisterStatement("sql", "set_password", (*ast.SetPwdStmt)(nil))
 	ps.RegisterStatement("sql", "show", (*ast.ShowStmt)(nil))
 	ps.RegisterStatement("sql", "truncate", (*ast.TruncateTableStmt)(nil))
