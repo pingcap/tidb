@@ -716,8 +716,8 @@ AlterTableStmt:
 	"ALTER" IgnoreOptional "TABLE" TableName AlterTableSpecList
 	{
 		$$ = &ast.AlterTableStmt{
-			Table : $4.(*ast.TableName),
-			Specs : $5.([]*ast.AlterTableSpec),
+			Table: $4.(*ast.TableName),
+			Specs: $5.([]*ast.AlterTableSpec),
 		}
 	}
 
@@ -725,8 +725,8 @@ AlterTableSpec:
 	TableOptionListOpt
 	{
 		$$ = &ast.AlterTableSpec{
-			Tp : ast.AlterTableOption,
-			Options : $1.([]*ast.TableOption),
+			Tp:	ast.AlterTableOption,
+			Options:$1.([]*ast.TableOption),
 		}
 	}
 |	"ADD" ColumnKeywordOpt ColumnDef ColumnPosition
@@ -958,7 +958,7 @@ ColumnOption:
 	}
 |	"COMMENT" stringLit
 	{
-      $$ =  &ast.ColumnOption{Tp: ast.ColumnOptionComment, Expr: ac.newValueExpr($2)}
+		$$ =  &ast.ColumnOption{Tp: ast.ColumnOptionComment, Expr: ac.newValueExpr($2)}
 	}
 |	"CHECK" '(' Expression ')'
 	{
@@ -1399,8 +1399,11 @@ DeleteFromStmt:
 		// Single Table
 		ts := ac.allocTableSource()
 		ts.Source = $6.(ast.ResultSetNode)
+
 		join := ac.allocJoin()
 		join.Left = ts
+		join.Right = nil
+
 		tr := ac.allocTableRefsClause()
 		tr.TableRefs = join
 		x := &ast.DeleteStmt{
@@ -1988,9 +1991,11 @@ InsertIntoStmt:
 		// Wraps many layers here so that it can be processed the same way as select statement.
 		ts := ac.allocTableSource()
 		ts.Source = $5.(*ast.TableName)
-		tr := ac.allocTableRefsClause()
+
 		join := ac.allocJoin()
 		join.Left = ts
+
+		tr := ac.allocTableRefsClause()
 		tr.TableRefs = join
 		x.Table = tr
 		if $7 != nil {
@@ -2014,8 +2019,8 @@ InsertValues:
 	{
 		tmp := ac.allocInsertStmt()
 		*tmp = ast.InsertStmt{
-			Columns : $2.([]*ast.ColumnName),
-			Lists : $5.([][]ast.ExprNode),
+			Columns: $2.([]*ast.ColumnName),
+			Lists: $5.([][]ast.ExprNode),
 		}
 		$$ = tmp
 	}
@@ -2023,8 +2028,8 @@ InsertValues:
 	{
 		tmp := ac.allocInsertStmt()
 		*tmp = ast.InsertStmt{
-			Columns : $2.([]*ast.ColumnName),
-			Select : $4.(*ast.SelectStmt),
+			Columns: $2.([]*ast.ColumnName),
+			Select: $4.(*ast.SelectStmt),
 		}
 		$$ = tmp
 	}
@@ -3480,11 +3485,11 @@ JoinTable:
 	/* Use %prec to evaluate production TableRef before cross join */
 	TableRef CrossOpt TableRef %prec tableRefPriority
 	{
-      join := ac.allocJoin()
-      join.Left = $1.(ast.ResultSetNode)
-      join.Right = $3.(ast.ResultSetNode)
-      join.Tp = ast.CrossJoin
-      $$ = join
+		join := ac.allocJoin()
+		join.Left = $1.(ast.ResultSetNode)
+		join.Right = $3.(ast.ResultSetNode)
+		join.Tp = ast.CrossJoin
+		$$ = join
 	}
 |	TableRef CrossOpt TableRef "ON" Expression
 	{

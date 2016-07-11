@@ -14,15 +14,10 @@
 package parser
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 var _ = Suite(&testAllocator{})
 
@@ -31,6 +26,14 @@ type testAllocator struct {
 
 func (t *testAllocator) TestSimple(c *C) {
 	defer testleak.AfterTest(c)()
-	// ac := newAllocator()
+	ac := newAllocator()
 
+	ac.newFieldType(mysql.TypeBlob)
+	ac.newFieldType(mysql.TypeDate)
+	ac.newFieldType(mysql.TypeEnum)
+	ac.reset()
+	for i := 0; i < 3; i++ {
+		ft := ac.allocFieldType()
+		c.Assert(ft.Tp, Equals, byte(0))
+	}
 }

@@ -388,7 +388,9 @@ func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, erro
 }
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
-	s.parser.Reset()
+	// if fn := s.parser.Reset(); fn != nil {
+	// 	defer fn()
+	// }
 	charset, collation := getCtxCharsetInfo(s)
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {

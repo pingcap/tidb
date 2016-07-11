@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -61,15 +62,34 @@ func handleMySQLSpecificCode(sql string) string {
 // Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
 type Parser struct {
 	*allocator
+	refCount int
 }
 
 // New returns a Parser object.
 func New() *Parser {
-	return &Parser{newAllocator()}
+	return &Parser{
+		allocator: newAllocator(),
+	}
 }
 
-func (parser *Parser) Reset() {
+func (parser *Parser) deferFunc() {
+	parser.refCount--
+}
+
+func (parser *Parser) noneFunc() {
+}
+
+func (parser *Parser) Reset() func() {
+	if parser.refCount > 1 {
+		log.Warn("cannot reset parser when allocator still being used")
+		return parser.noneFunc
+	}
+
+	log.Info("reset parser")
 	parser.allocator.reset()
+	parser.refCount++
+
+	return parser.deferFunc
 }
 
 // Parse parses a query string to raw ast.StmtNode.
