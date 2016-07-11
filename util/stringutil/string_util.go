@@ -67,6 +67,22 @@ func Unescape(s string) string {
 		i   = 0
 	)
 	for i < len(s)-1 {
+		// Consider multi-bytes character
+		// We only handle utf8 now.
+		/*
+			l := ismbchar(s[i])
+			if l > 0 {
+				if l+i < len(s) {
+					for l > 0 {
+						buf.WriteByte(s[i])
+						l--
+						i++
+					}
+					i--
+					continue
+				}
+			}
+		*/
 		if s[i] != '\\' {
 			buf.WriteByte(s[i])
 			i++
@@ -103,6 +119,31 @@ func Unescape(s string) string {
 		buf.WriteByte(s[i])
 	}
 	return buf.String()
+}
+
+// Get multi-bytes char length
+// TODO: suppory more charset
+// See: https://github.com/pingcap/mysql-5.6.24/blob/master/strings/ctype-utf8.c#L6046
+func ismbchar(c byte) int {
+	r := validMBCharlenUtf8(c)
+	if r > 1 {
+		return r
+	}
+	return 0
+}
+
+func validMBCharlenUtf8(c byte) int {
+	if c < 0x80 {
+		return 1
+	} else if c < 0xc2 {
+		/* Illegal mb head */
+		return 0
+	} else if c < 0xe0 {
+		return 2
+	} else if c < 0xf0 {
+		return 3
+	}
+	return 0
 }
 
 // Reverse returns its argument string reversed rune-wise left to right.
