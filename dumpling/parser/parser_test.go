@@ -268,6 +268,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"set names utf8", true},
 		{"set names utf8 collate utf8_unicode_ci", true},
 
+		// For set names and set vars
+		{"set names utf8, @@session.sql_mode=1;", true},
+		{"set @@session.sql_mode=1, names utf8, charset utf8;", true},
+
 		// For show character set
 		{"show character set;", true},
 		// For on duplicate key update
