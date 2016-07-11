@@ -15,11 +15,15 @@ package statistics
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -240,4 +244,90 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 		t.Columns[i] = c
 	}
 	return t, nil
+}
+
+const (
+	pseudoRowCount    = 10000
+	pseudoBucketCount = 5
+	pseudoTimestamp   = 1
+)
+
+// PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
+func PseudoTable(ti *model.TableInfo) *Table {
+	t := &Table{info: ti}
+	t.TS = pseudoTimestamp
+	t.Count = pseudoRowCount
+	t.BucketCount = pseudoBucketCount
+	t.Columns = make([]*Column, len(ti.Columns))
+	for i, v := range ti.Columns {
+		numbers := pseudoNumbers()
+		c := &Column{
+			ID:      v.ID,
+			NDV:     pseudoRowCount / 2,
+			Numbers: numbers,
+			Values:  pseudoValues(v, numbers),
+			Repeats: pseudoRepeats,
+		}
+		t.Columns[i] = c
+	}
+	return t
+}
+
+func pseudoNumbers() []int64 {
+	numbers := make([]int64, pseudoBucketCount)
+	for i := range numbers {
+		numbers[i] = int64(pseudoRowCount/pseudoBucketCount*(i+1) - 1)
+	}
+	return numbers
+}
+
+var pseudoStrValues = []types.Datum{
+	types.NewStringDatum("/"),
+	types.NewStringDatum("9"),
+	types.NewStringDatum("Z"),
+	types.NewStringDatum("z"),
+	types.NewStringDatum("~"),
+}
+
+var pseudoRepeats = []int64{2, 2, 2, 2, 2}
+
+func pseudoValues(col *model.ColumnInfo, numbers []int64) []types.Datum {
+	values := make([]types.Datum, len(numbers))
+	now := time.Now()
+	for i := range values {
+		number := numbers[i]
+		switch col.Tp {
+		case mysql.TypeTiny:
+			values[i] = types.NewIntDatum(int64(i))
+		case mysql.TypeLong, mysql.TypeLonglong, mysql.TypeShort, mysql.TypeInt24:
+			values[i] = types.NewIntDatum(number)
+		case mysql.TypeFloat:
+			values[i] = types.NewFloat32Datum(float32(number))
+		case mysql.TypeDouble:
+			values[i] = types.NewFloat64Datum(float64(number))
+		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+			values[i] = pseudoStrValues[i]
+		case mysql.TypeNewDecimal:
+			values[i] = types.NewDecimalDatum(mysql.NewDecimalFromInt(number, 0))
+		case mysql.TypeYear:
+			year := now.Year() + i - len(numbers) + 1
+			values[i] = types.NewIntDatum(int64(year))
+		case mysql.TypeDuration:
+			dur := time.Hour * time.Duration(i+1)
+			values[i] = types.NewDurationDatum(mysql.Duration{Duration: dur})
+		case mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			t := now.AddDate(0, 0, -i)
+			values[i] = types.NewDatum(mysql.Time{Time: t, Type: col.Tp})
+		case mysql.TypeBit:
+			val := uint64(1) << uint64(i)
+			values[i] = types.NewDatum(mysql.Bit{Value: val, Width: 8})
+		case mysql.TypeEnum:
+			values[i] = types.NewDatum(mysql.Enum{Name: strconv.Itoa(i), Value: uint64(i)})
+		case mysql.TypeSet:
+			values[i] = types.NewDatum(mysql.Set{Name: strconv.Itoa(i), Value: uint64(i)})
+		default:
+			log.Errorf("unknown type %d", col.Tp)
+		}
+	}
+	return values
 }

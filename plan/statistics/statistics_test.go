@@ -94,3 +94,38 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(err, IsNil)
 	c.Check(nt.String(), Equals, str)
 }
+
+func (s *testStatisticsSuite) TestDefaultTable(c *C) {
+	ti := &model.TableInfo{}
+	tps := []uint8{mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeFloat, mysql.TypeDouble,
+		mysql.TypeTimestamp, mysql.TypeLonglong, mysql.TypeInt24, mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime,
+		mysql.TypeYear, mysql.TypeNewDate, mysql.TypeVarchar, mysql.TypeBit, mysql.TypeNewDecimal, mysql.TypeEnum,
+		mysql.TypeSet, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob, mysql.TypeInt24}
+	for i, v := range tps {
+		ti.Columns = append(ti.Columns, &model.ColumnInfo{
+			ID:        int64(i + 1),
+			FieldType: *types.NewFieldType(v),
+		})
+	}
+	tbl := PseudoTable(ti)
+	c.Assert(tbl.Count, Greater, int64(0))
+	c.Assert(tbl.BucketCount, Greater, int64(0))
+	c.Assert(tbl.TS, Greater, int64(0))
+	for _, col := range tbl.Columns {
+		c.Assert(col.ID, Greater, int64(0))
+		c.Assert(col.NDV, Greater, int64(0))
+		c.Assert(len(col.Numbers), Greater, 0)
+		for i := 1; i < len(col.Numbers); i++ {
+			c.Assert(col.Numbers[i], Greater, col.Numbers[i-1])
+		}
+		c.Assert(len(col.Values), Greater, 0)
+		var allNull = true
+		for i := 0; i < len(col.Values); i++ {
+			if !col.Values[i].IsNull() {
+				allNull = false
+			}
+		}
+		c.Assert(allNull, IsFalse)
+		c.Assert(len(col.Repeats), Greater, 0)
+	}
+}
