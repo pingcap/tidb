@@ -1250,10 +1250,10 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 	s := string(l.stringLit)
 	l.stringLit = l.stringLit[0:0]
 	v := stringutil.RemoveUselessBackslash(pref+s)
-	//v, err := stringutil.Unquote(v)
-	//if err != nil {
-	v = strings.TrimSuffix(s, pref)
-	//}
+	v, err := stringutil.Unquote(v)
+	if err != nil {
+		v = strings.TrimSuffix(s, pref)
+	}
 	v = stringutil.Unescape(v)
 	lval.item = v
 	return stringLit

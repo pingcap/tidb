@@ -69,18 +69,20 @@ func Unescape(s string) string {
 	for i < len(s)-1 {
 		// Consider multi-bytes character
 		//We only handle utf8 now.
-		l := ismbchar(s[i])
-		if l > 0 {
-			if l+i < len(s) {
-				for l > 0 {
-					buf.WriteByte(s[i])
-					l--
-					i++
+		/*
+			l := ismbchar(s[i])
+			if l > 0 {
+				if l+i < len(s) {
+					for l > 0 {
+						buf.WriteByte(s[i])
+						l--
+						i++
+					}
+					i--
+					continue
 				}
-				i--
-				continue
 			}
-		}
+		*/
 		if s[i] != '\\' {
 			buf.WriteByte(s[i])
 			i++
@@ -176,6 +178,9 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 		return
 	case c >= utf8.RuneSelf:
 		r, size := utf8.DecodeRuneInString(s)
+		if r == utf8.RuneError {
+			return rune(s[0]), false, s[1:], nil
+		}
 		return r, true, s[size:], nil
 	case c != '\\':
 		return rune(s[0]), false, s[1:], nil
@@ -188,81 +193,84 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 	c := s[1]
 	s = s[2:]
 	switch c {
-	case 'a':
-		value = '\a'
 	case 'b':
 		value = '\b'
-	case 'f':
-		value = '\f'
+	case 'Z':
+		value = '\032'
+	case '0':
+		value = 0
 	case 'n':
 		value = '\n'
 	case 'r':
 		value = '\r'
 	case 't':
 		value = '\t'
-	case 'v':
-		value = '\v'
-	case 'x', 'u', 'U':
-		n := 0
-		switch c {
-		case 'x':
-			n = 2
-		case 'u':
-			n = 4
-		case 'U':
-			n = 8
-		}
-		var v rune
-		if len(s) < n {
-			err = errors.Trace(ErrSyntax)
-			return
-		}
-		for j := 0; j < n; j++ {
-			x, ok := unhex(s[j])
-			if !ok {
+		/*
+			case 'x', 'u', 'U':
+				n := 0
+				switch c {
+				case 'x':
+					n = 2
+				case 'u':
+					n = 4
+				case 'U':
+					n = 8
+				}
+				var v rune
+				if len(s) < n {
+					err = errors.Trace(ErrSyntax)
+					return
+				}
+				for j := 0; j < n; j++ {
+					x, ok := unhex(s[j])
+					if !ok {
+						err = errors.Trace(ErrSyntax)
+						return
+					}
+					v = v<<4 | x
+				}
+				s = s[n:]
+				if c == 'x' {
+					// single-byte string, possibly not UTF-8
+					value = v
+					break
+				}
+				if v > utf8.MaxRune {
+					err = errors.Trace(ErrSyntax)
+					return
+				}
+				value = v
+				multibyte = true
+		*/
+	/*
+		case '0', '1', '2', '3', '4', '5', '6', '7':
+			v := rune(c) - '0'
+			if len(s) < 2 {
 				err = errors.Trace(ErrSyntax)
 				return
 			}
-			v = v<<4 | x
-		}
-		s = s[n:]
-		if c == 'x' {
-			// single-byte string, possibly not UTF-8
+			for j := 0; j < 2; j++ { // one digit already; two more
+				x := rune(s[j]) - '0'
+				if x < 0 || x > 7 {
+					err = errors.Trace(ErrSyntax)
+					return
+				}
+				v = (v << 3) | x
+			}
+			s = s[2:]
+			if v > 255 {
+				err = errors.Trace(ErrSyntax)
+				return
+			}
 			value = v
-			break
-		}
-		if v > utf8.MaxRune {
-			err = errors.Trace(ErrSyntax)
-			return
-		}
-		value = v
-		multibyte = true
-	case '0', '1', '2', '3', '4', '5', '6', '7':
-		v := rune(c) - '0'
-		if len(s) < 2 {
-			err = errors.Trace(ErrSyntax)
-			return
-		}
-		for j := 0; j < 2; j++ { // one digit already; two more
-			x := rune(s[j]) - '0'
-			if x < 0 || x > 7 {
-				err = errors.Trace(ErrSyntax)
-				return
-			}
-			v = (v << 3) | x
-		}
-		s = s[2:]
-		if v > 255 {
-			err = errors.Trace(ErrSyntax)
-			return
-		}
-		value = v
+	*/
 	case '\\':
 		value = '\\'
 	case '\'', '"':
 		value = rune(c)
 	default:
-		err = errors.Trace(ErrSyntax)
+		value = rune(c)
+		//err = errors.Trace(ErrSyntax)
 		return
 	}
 	tail = s
