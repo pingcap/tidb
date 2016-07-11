@@ -44,7 +44,7 @@ const (
 	ServerPSOutParams              uint16 = 0x1000
 )
 
-// Server limitations
+// Identifier length limitations.
 const (
 	MaxTableNameLength    int = 64
 	MaxDatabaseNameLength int = 64
