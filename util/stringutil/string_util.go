@@ -25,7 +25,7 @@ import (
 var ErrSyntax = errors.New("invalid syntax")
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-literals.html#character-escape-sequences
-const validEscapeChars = `0'"bntrz\\%_`
+const validEscapeChars = `0'"bntrZ\\%_`
 
 // RemoveUselessBackslash removes backslashs which could be ignored in the string literal.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-literals.html

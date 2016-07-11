@@ -1254,7 +1254,7 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)
 	}
-	//v = stringutil.Unescape(v)
+	v = stringutil.Unescape(v)
 	lval.item = v
 	return stringLit
 }
