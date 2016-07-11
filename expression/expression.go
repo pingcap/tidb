@@ -146,7 +146,7 @@ func (s Schema) DeepCopy() Schema {
 	return result
 }
 
-// FindColumn find an Column from schema for a ast.ColumnName. It compares the db/table/column names.
+// FindColumn finds an Column from schema for a ast.ColumnName. It compares the db/table/column names.
 // If there are more than one result, it will raise ambiguous error.
 func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
