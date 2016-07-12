@@ -111,7 +111,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 }
 
 func extractColumn(expr expression.Expression, cols []*expression.Column, outerCols []*expression.Column) (
-	[]*expression.Column, []*expression.Column) {
+	result []*expression.Column, outer []*expression.Column) {
 	switch v := expr.(type) {
 	case *expression.Column:
 		if v.Correlated {
