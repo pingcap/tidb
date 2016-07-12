@@ -603,7 +603,7 @@ func (e *NewTableScanExec) getRow(handle int64) (*Row, error) {
 
 	columns := make([]*table.Column, len(e.schema))
 	for i, v := range e.columns {
-		columns[i] = &table.Column{*v}
+		columns[i] = &table.Column{ColumnInfo: *v}
 	}
 	row.Data, err = e.t.RowWithCols(e.ctx, handle, columns)
 	if err != nil {

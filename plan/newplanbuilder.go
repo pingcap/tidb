@@ -299,18 +299,20 @@ func (b *planBuilder) buildNewDistinct(src LogicalPlan) LogicalPlan {
 	d.initID()
 	addChild(d, src)
 	d.SetSchema(src.GetSchema())
+	d.correlated = src.IsCorrelated()
 	return d
 }
 
 func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) LogicalPlan {
-	sels := make([]LogicalPlan, len(union.SelectList.Selects))
-	for i, sel := range union.SelectList.Selects {
-		sels[i] = b.buildNewSelect(sel)
-	}
-	u := &NewUnion{Selects: sels, baseLogicalPlan: newBaseLogicalPlan(Un, b.allocator)}
+	u := &NewUnion{baseLogicalPlan: newBaseLogicalPlan(Un, b.allocator)}
 	u.initID()
-	firstSchema := sels[0].GetSchema().DeepCopy()
-	for _, sel := range sels {
+	u.Selects = make([]LogicalPlan, len(union.SelectList.Selects))
+	for i, sel := range union.SelectList.Selects {
+		u.Selects[i] = b.buildNewSelect(sel)
+		u.correlated = u.correlated || u.Selects[i].IsCorrelated()
+	}
+	firstSchema := u.Selects[0].GetSchema().DeepCopy()
+	for _, sel := range u.Selects {
 		if len(firstSchema) != len(sel.GetSchema()) {
 			b.err = errors.New("The used SELECT statements have a different number of columns")
 			return nil
@@ -367,6 +369,7 @@ func (b *planBuilder) buildNewSort(p LogicalPlan, byItems []*ast.ByItem, aggMapp
 	var exprs []*ByItems
 	sort := &NewSort{baseLogicalPlan: newBaseLogicalPlan(Srt, b.allocator)}
 	sort.initID()
+	sort.correlated = p.IsCorrelated()
 	for _, item := range byItems {
 		it, np, correlated, err := b.rewrite(item.Expr, p, aggMapper)
 		if err != nil {
@@ -390,6 +393,7 @@ func (b *planBuilder) buildNewLimit(src LogicalPlan, limit *ast.Limit) LogicalPl
 		baseLogicalPlan: newBaseLogicalPlan(Lim, b.allocator),
 	}
 	li.initID()
+	li.correlated = src.IsCorrelated()
 	if s, ok := src.(*NewSort); ok {
 		s.ExecLimit = li
 		return s
@@ -728,12 +732,6 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 		return nil
 	}
 	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
-	if sel.Where != nil {
-		p = b.buildSelection(p, sel.Where, nil)
-		if b.err != nil {
-			return nil
-		}
-	}
 	if sel.LockTp != ast.SelectLockNone {
 		// TODO: support it !
 		//p = b.buildSelectLock(p, sel.LockTp)
@@ -750,6 +748,12 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 	// because when the query is "select a+1 as b from t having sum(b) < 0", we must replace sum(b) to sum(a+1),
 	// which only can be done before building projection and extracting Agg functions.
 	havingMap, orderMap = b.resolveHavingAndOrderBy(sel, p)
+	if sel.Where != nil {
+		p = b.buildSelection(p, sel.Where, nil)
+		if b.err != nil {
+			return nil
+		}
+	}
 	if hasAgg {
 		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
 		if b.err != nil {
@@ -797,12 +801,12 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
-	trunc := &Trim{baseLogicalPlan: newBaseLogicalPlan(Trm, b.allocator)}
-	trunc.initID()
-	addChild(trunc, p)
-	trunc.SetSchema(p.GetSchema().DeepCopy()[:len])
-	trunc.correlated = p.IsCorrelated()
-	return trunc
+	trim := &Trim{baseLogicalPlan: newBaseLogicalPlan(Trm, b.allocator)}
+	trim.initID()
+	addChild(trim, p)
+	trim.SetSchema(p.GetSchema().DeepCopy()[:len])
+	trim.correlated = p.IsCorrelated()
+	return trim
 }
 
 func (b *planBuilder) buildNewTableDual() LogicalPlan {
@@ -847,6 +851,25 @@ func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema,
 	}
 	ap.initID()
 	addChild(ap, p)
+	outerColumns, err := inner.PruneColumnsAndResolveIndices(inner.GetSchema())
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	used := make([]bool, len(ap.OuterSchema))
+	for _, outerCol := range outerColumns {
+		// If the outer column can't be resolved from this outer schema, it should be resolved by outer schema.
+		if idx := ap.OuterSchema.GetIndex(outerCol); idx == -1 {
+			ap.outerColumns = append(ap.outerColumns, outerCol)
+		} else {
+			used[idx] = true
+		}
+	}
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] {
+			ap.OuterSchema = append(ap.OuterSchema[:i], ap.OuterSchema[i+1:]...)
+		}
+	}
 	innerSchema := inner.GetSchema().DeepCopy()
 	if checker == nil {
 		for _, col := range innerSchema {
@@ -861,7 +884,7 @@ func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema,
 			IsAggOrSubq: true,
 		}))
 	}
-	ap.correlated = p.IsCorrelated()
+	ap.correlated = p.IsCorrelated() || len(ap.outerColumns) > 0
 	return ap
 }
 

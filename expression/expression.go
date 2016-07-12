@@ -111,7 +111,7 @@ func (col *Column) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (col *Column) Eval(row []types.Datum, _ context.Context) (d types.Datum, err error) {
+func (col *Column) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
 	if col.Correlated {
 		return *col.data, nil
 	}
@@ -146,7 +146,7 @@ func (s Schema) DeepCopy() Schema {
 	return result
 }
 
-// FindColumn find an Column from schema for a ast.ColumnName. It compares the db/table/column names.
+// FindColumn finds an Column from schema for a ast.ColumnName. It compares the db/table/column names.
 // If there are more than one result, it will raise ambiguous error.
 func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name

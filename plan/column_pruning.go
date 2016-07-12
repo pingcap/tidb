@@ -309,16 +309,7 @@ func (p *Join) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 // Now there're two columns in parentUsedCols, c is the column from Apply's child ---- TableScan, but extra isn't.
 // So only c in parentUsedCols and id in outerSchema can be passed to TableScan.
 func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
-	childOuterUsedCols, err := p.InnerPlan.PruneColumnsAndResolveIndices(p.InnerPlan.GetSchema())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	used := makeUsedList(childOuterUsedCols, p.OuterSchema)
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] {
-			p.OuterSchema = append(p.OuterSchema[:i], p.OuterSchema[i+1:]...)
-		}
-	}
+	child := p.GetChildByIndex(0).(LogicalPlan)
 	newUsedCols := p.OuterSchema
 	for _, used := range parentUsedCols {
 		if p.GetChildByIndex(0).GetSchema().GetIndex(used) != -1 {
@@ -333,7 +324,7 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 			}
 		}
 	}
-	childOuterUsedCols, err = p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(newUsedCols)
+	childOuterUsedCols, err := child.PruneColumnsAndResolveIndices(newUsedCols)
 	for _, col := range p.OuterSchema {
 		col.Index = p.GetChildByIndex(0).GetSchema().GetIndex(col)
 	}
@@ -352,5 +343,5 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 		p.schema = append(p.GetChildByIndex(0).GetSchema().DeepCopy(), p.schema[len(p.schema)-1])
 	}
 	p.schema.InitIndices()
-	return childOuterUsedCols, nil
+	return append(childOuterUsedCols, p.outerColumns...), nil
 }
