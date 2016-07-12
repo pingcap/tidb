@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
@@ -84,9 +85,8 @@ func (e *UpdateExec) Next() (*Row, error) {
 		}
 		offset := e.getTableOffset(tbl)
 		handle := entry.Handle
-		oldData := row.Data[offset : offset+len(tbl.Cols())]
-		newTableData := newData[offset : offset+len(tbl.Cols())]
-
+		oldData := row.Data[offset : offset+len(tbl.WritableCols())]
+		newTableData := newData[offset : offset+len(tbl.WritableCols())]
 		_, ok := e.updatedRowKeys[tbl][handle]
 		if ok {
 			// Each matching row is updated once, even if it matches the conditions multiple times.
@@ -147,7 +147,12 @@ func (e *UpdateExec) getTableOffset(t table.Table) int {
 		if field.Table.Name.L == t.Meta().Name.L {
 			return i
 		}
-		i += len(field.Table.Columns)
+		for _, col := range field.Table.Columns {
+			if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+				continue
+			}
+			i++
+		}
 	}
 	return 0
 }
