@@ -108,7 +108,14 @@ func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, err
 	if len(l.Errors()) != 0 {
 		return nil, errors.Trace(l.Errors()[0])
 	}
-	return l.Stmts(), nil
+	ret := l.Stmts()
+	for i, v := range ret {
+		if _, ok := v.(*ast.PrepareStmt); ok {
+			c, _ := v.Accept(&ast.Cloner{})
+			ret[i] = c.(ast.StmtNode)
+		}
+	}
+	return ret, nil
 }
 
 // ParseOneStmt parses a query and returns an ast.StmtNode.

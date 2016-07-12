@@ -78,14 +78,45 @@ func (ac *allocator) allocFieldType() *types.FieldType {
 }
 
 func (ac *allocator) reset() {
-	ac.valueExpr = []ast.ValueExpr{}
-	ac.fieldType = []types.FieldType{}
-	ac.valueExpr = []ast.ValueExpr{}
-	ac.insertStmt = []ast.InsertStmt{}
-	ac.join = []ast.Join{}
-	ac.tableName = []ast.TableName{}
-	ac.tableSource = []ast.TableSource{}
-	ac.tableRefsClause = []ast.TableRefsClause{}
+	for i := 0; i < len(ac.valueExpr); i++ {
+		ac.valueExpr[i] = ast.ValueExpr{}
+	}
+	ac.valueExpr = ac.valueExpr[:0]
+
+	for i := 0; i < len(ac.fieldType); i++ {
+		ac.fieldType[i] = types.FieldType{}
+	}
+	ac.fieldType = ac.fieldType[:0]
+
+	for i := 0; i < len(ac.insertStmt); i++ {
+		ac.insertStmt[i] = ast.InsertStmt{}
+	}
+	ac.insertStmt = ac.insertStmt[:0]
+
+	for i := 0; i < len(ac.selectStmt); i++ {
+		ac.selectStmt[i] = ast.SelectStmt{}
+	}
+	ac.selectStmt = ac.selectStmt[:0]
+
+	for i := 0; i < len(ac.join); i++ {
+		ac.join[i] = ast.Join{}
+	}
+	ac.join = ac.join[:0]
+
+	for i := 0; i < len(ac.tableName); i++ {
+		ac.tableName[i] = ast.TableName{}
+	}
+	ac.tableName = ac.tableName[:0]
+
+	for i := 0; i < len(ac.tableSource); i++ {
+		ac.tableSource[i] = ast.TableSource{}
+	}
+	ac.tableSource = ac.tableSource[:0]
+
+	for i := 0; i < len(ac.tableRefsClause); i++ {
+		ac.tableRefsClause[i] = ast.TableRefsClause{}
+	}
+	ac.tableRefsClause = ac.tableRefsClause[:0]
 }
 
 func (ac *allocator) allocTableRefsClause() *ast.TableRefsClause {
