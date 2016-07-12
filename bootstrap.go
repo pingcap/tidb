@@ -100,6 +100,17 @@ const (
 		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
 		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null,
 		COMMENT VARCHAR(1024));`
+
+	CreateHelpTopic = `CREATE TABLE if not exists mysql.help_topic (
+  		help_topic_id int(10) unsigned NOT NULL,
+  		name char(64) NOT NULL,
+  		help_category_id smallint(5) unsigned NOT NULL,
+  		description text NOT NULL,
+  		example text NOT NULL,
+  		url text NOT NULL,
+  		PRIMARY KEY (help_topic_id),
+  		UNIQUE KEY name (name)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8 STATS_PERSISTENT=0 COMMENT='help topics';`
 )
 
 // Bootstrap initiates system DB for a store.
@@ -182,6 +193,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGloablVariablesTable)
 	// Create TiDB table.
 	mustExecute(s, CreateTiDBTable)
+	// Create help table
+	mustExecute(s, CreateHelpTopic)
 }
 
 // Execute DML statements in bootstrap stage.
