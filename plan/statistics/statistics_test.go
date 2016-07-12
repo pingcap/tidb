@@ -132,12 +132,11 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 
 func (s *testStatisticsSuite) TestRowCount(c *C) {
 	ti := &model.TableInfo{}
-	ti.Columns = []*model.ColumnInfo{
-		&model.ColumnInfo{
-			ID:        1,
-			FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		},
+	ci := &model.ColumnInfo{
+		ID:        1,
+		FieldType: *types.NewFieldType(mysql.TypeLonglong),
 	}
+	ti.Columns = []*model.ColumnInfo{ci}
 	tbl := PseudoTable(ti)
 	col := tbl.Columns[0]
 	count, err := col.EqualRowCount(types.NewIntDatum(1999))

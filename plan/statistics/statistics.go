@@ -62,6 +62,7 @@ func (c *Column) String() string {
 	return strings.Join(strs, "\n")
 }
 
+// EqualRowCount estimates the row count where the column equals to value.
 func (c *Column) EqualRowCount(value types.Datum) (int64, error) {
 	index, match, err := c.search(value)
 	if err != nil {
@@ -77,6 +78,7 @@ func (c *Column) EqualRowCount(value types.Datum) (int64, error) {
 	return totalCount / c.NDV, nil
 }
 
+// LessRowCount estimates the row count where the column less than value.
 func (c *Column) LessRowCount(value types.Datum) (int64, error) {
 	index, match, err := c.search(value)
 	if err != nil {
@@ -97,7 +99,7 @@ func (c *Column) LessRowCount(value types.Datum) (int64, error) {
 	return (prevNumber + lessThanBucketValueCount) / 2, nil
 }
 
-// Between Count estimate the row count where column value greater or equal to a, and less than b.
+// BetweenCount estimate the row count where column greater or equal to a and less than b.
 func (c *Column) BetweenCount(a, b types.Datum) (int64, error) {
 	lessCountA, err := c.LessRowCount(a)
 	if err != nil {
