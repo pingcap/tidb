@@ -484,3 +484,9 @@ func builtinGetVar(args []types.Datum, ctx context.Context) (types.Datum, error)
 	}
 	return types.Datum{}, nil
 }
+
+// The lock function will do nothing.
+func builtinLock(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	d.SetInt64(1)
+	return d, nil
+}
