@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 )
@@ -95,17 +96,15 @@ type NewTableDual struct {
 	baseLogicalPlan
 }
 
-// NewTableScan represents a tablescan without condition push down.
-type NewTableScan struct {
+// DataSource represents a tablescan without condition push down.
+type DataSource struct {
 	baseLogicalPlan
 
+	table   *ast.TableName
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
 	DBName  *model.CIStr
 	Desc    bool
-	Ranges  []TableRange
-
-	AccessCondition []expression.Expression
 
 	TableAsName *model.CIStr
 
@@ -166,7 +165,7 @@ func RemovePlan(p Plan) error {
 	}
 	if len(parents) == 0 {
 		child := children[0]
-		child.SetParents(nil)
+		child.SetParents()
 		return nil
 	}
 	parent, child := parents[0], children[0]

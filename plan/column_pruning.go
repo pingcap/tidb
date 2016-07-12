@@ -193,7 +193,7 @@ func (p *NewUnion) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Co
 }
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
-func (p *NewTableScan) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
+func (p *DataSource) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
 	used := makeUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {

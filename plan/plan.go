@@ -95,9 +95,9 @@ type Plan interface {
 	// Check weather this plan is correlated or not.
 	IsCorrelated() bool
 	// SetParents set parents for plan.
-	SetParents([]Plan)
+	SetParents(...Plan)
 	// SetParents set children for plan.
-	SetChildren([]Plan)
+	SetChildren(...Plan)
 }
 
 // LogicalPlan is a tree of logical operators.
@@ -115,12 +115,21 @@ type LogicalPlan interface {
 	// We need return outer columns, because Apply plan will prune inner Planner and it will know
 	// how many columns referenced by inner plan exactly.
 	PruneColumnsAndResolveIndices([]*expression.Column) ([]*expression.Column, error)
-	// TODO: implement Convert2PhysicalPlan()
+
+	// Convert2PhysicalPlan convert logical plan to physical plan.
+	Convert2PhysicalPlan() PhysicalPlan
 }
 
-// TODO: implement PhysicalPlan
+// PhysicalPlan is a tree of physical operators.
+type PhysicalPlan interface {
+	Plan
+}
 
 type baseLogicalPlan struct {
+	basePlan
+}
+
+type basePhysicalPlan struct {
 	basePlan
 }
 
@@ -150,6 +159,10 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 		}
 	}
 	return nil, p, nil
+}
+
+func (p *baseLogicalPlan) Convert2PhysicalPlan() PhysicalPlan {
+	return p
 }
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
@@ -294,11 +307,11 @@ func (p *basePlan) GetChildren() []Plan {
 }
 
 // RemoveAllParents implements Plan RemoveAllParents interface.
-func (p *basePlan) SetParents(pars []Plan) {
+func (p *basePlan) SetParents(pars ...Plan) {
 	p.parents = pars
 }
 
 // RemoveAllParents implements Plan RemoveAllParents interface.
-func (p *basePlan) SetChildren(children []Plan) {
-	p.parents = children
+func (p *basePlan) SetChildren(children ...Plan) {
+	p.children = children
 }

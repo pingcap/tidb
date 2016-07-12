@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -46,10 +47,15 @@ func refine(in Plan) error {
 		x.SetLimit(0)
 	case *TableScan:
 		err = buildTableRange(x)
-	case *NewTableScan:
+	case *PhysicalTableScan:
 		x.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
+	case *PhysicalIndexScan:
+		rb := rangeBuilder{}
+		x.Ranges = rb.buildIndexRanges(fullRange)
 	case *Selection:
 		err = buildSelection(x)
+	case *PhysicalApply:
+		err = refine(x.InnerPlan)
 	}
 	return errors.Trace(err)
 }
@@ -78,6 +84,37 @@ func buildIndexRange(p *IndexScan) error {
 	if p.AccessEqualCount == 0 {
 		p.Ranges = rb.buildIndexRanges(rangePoints)
 	} else if p.AccessEqualCount < len(p.AccessConditions) {
+		p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints)
+	}
+
+	// Take prefix index into consideration.
+	if p.Index.HasPrefixIndex() {
+		for i := 0; i < len(p.Ranges); i++ {
+			refineRange(p.Ranges[i], p.Index)
+		}
+	}
+	return errors.Trace(rb.err)
+}
+
+func buildNewIndexRange(p *PhysicalIndexScan) error {
+	rb := rangeBuilder{}
+	if p.accessEqualCount > 0 {
+		// Build ranges for equal access conditions.
+		point := rb.newBuild(p.AccessCondition[0])
+		p.Ranges = rb.buildIndexRanges(point)
+		for i := 1; i < p.accessEqualCount; i++ {
+			point = rb.newBuild(p.AccessCondition[i])
+			p.Ranges = rb.appendIndexRanges(p.Ranges, point)
+		}
+	}
+	rangePoints := fullRange
+	// Build rangePoints for non-equal access condtions.
+	for i := p.accessEqualCount; i < len(p.AccessCondition); i++ {
+		rangePoints = rb.intersection(rangePoints, rb.newBuild(p.AccessCondition[i]))
+	}
+	if p.accessEqualCount == 0 {
+		p.Ranges = rb.buildIndexRanges(rangePoints)
+	} else if p.accessEqualCount < len(p.AccessCondition) {
 		p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints)
 	}
 
@@ -128,21 +165,61 @@ func buildTableRange(p *TableScan) error {
 
 func buildSelection(p *Selection) error {
 	var err error
-	var accessConditions []expression.Expression
-	switch p.GetChildByIndex(0).(type) {
-	case *NewTableScan:
-		tableScan := p.GetChildByIndex(0).(*NewTableScan)
-		accessConditions, p.Conditions = detachConditions(p.Conditions, tableScan.Table, nil, 0)
-		err = buildNewTableRange(tableScan, accessConditions)
-		// TODO: Implement NewIndexScan
+	switch v := p.GetChildByIndex(0).(type) {
+	case *PhysicalTableScan:
+		v.AccessCondition, p.Conditions = detachTableScanConditions(p.Conditions, v.Table)
+		err = buildNewTableRange(v)
+	case *PhysicalIndexScan:
+		v.AccessCondition, p.Conditions = detachIndexScanConditions(p.Conditions, v)
+		log.Warnf("p cond %d %d", len(p.Conditions), len(v.AccessCondition))
+		err = buildNewIndexRange(v)
 	}
-
 	return errors.Trace(err)
 }
 
-// detachConditions distinguishs between access conditions and filter conditions from conditions.
-func detachConditions(conditions []expression.Expression, table *model.TableInfo,
-	idx *model.IndexInfo, colOffset int) ([]expression.Expression, []expression.Expression) {
+func detachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) (accessConds []expression.Expression, filterConds []expression.Expression) {
+	for i := len(conditions) - 1; i >= 0 && indexScan.accessEqualCount < len(indexScan.Index.Columns); i-- {
+		cond := conditions[i]
+		if f, ok := cond.(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
+			if c, ok := f.Args[0].(*expression.Column); ok && c.ColName.L == indexScan.Index.Columns[indexScan.accessEqualCount].Name.L {
+				if _, ok := f.Args[1].(*expression.Constant); ok {
+					accessConds = append(accessConds, cond)
+					indexScan.accessEqualCount++
+					conditions = append(conditions[:i], conditions[i+1:]...)
+					continue
+				}
+			} else if _, ok := f.Args[0].(*expression.Constant); ok {
+				if c, ok := f.Args[1].(*expression.Column); ok && c.ColName.L == indexScan.Index.Columns[indexScan.accessEqualCount].Name.L {
+					accessConds = append(accessConds, cond)
+					indexScan.accessEqualCount++
+					conditions = append(conditions[:i], conditions[i+1:]...)
+					continue
+				}
+			}
+		}
+	}
+	log.Warnf("eqc %d", indexScan.accessEqualCount)
+	for _, cond := range conditions {
+		if indexScan.accessEqualCount < len(indexScan.Index.Columns) {
+			checker := &conditionChecker{
+				tableName:    indexScan.Table.Name,
+				idx:          indexScan.Index,
+				columnOffset: indexScan.accessEqualCount,
+			}
+			if checker.newCheck(cond) {
+				accessConds = append(accessConds, cond)
+			} else {
+				filterConds = append(filterConds, cond)
+			}
+		} else {
+			filterConds = append(filterConds, cond)
+		}
+	}
+	return
+}
+
+// detachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
+func detachTableScanConditions(conditions []expression.Expression, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
 	var pkName model.CIStr
 	var accessConditions, filterConditions []expression.Expression
 	if table.PKIsHandle {
@@ -156,10 +233,8 @@ func detachConditions(conditions []expression.Expression, table *model.TableInfo
 	for _, con := range conditions {
 		if pkName.L != "" {
 			checker := conditionChecker{
-				tableName:    table.Name,
-				pkName:       pkName,
-				idx:          idx,
-				columnOffset: colOffset}
+				tableName: table.Name,
+				pkName:    pkName}
 			if checker.newCheck(con) {
 				accessConditions = append(accessConditions, con)
 				continue
@@ -171,16 +246,15 @@ func detachConditions(conditions []expression.Expression, table *model.TableInfo
 	return accessConditions, filterConditions
 }
 
-func buildNewTableRange(p *NewTableScan, accessConditions []expression.Expression) error {
-	if len(accessConditions) == 0 {
+func buildNewTableRange(p *PhysicalTableScan) error {
+	if len(p.AccessCondition) == 0 {
 		p.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
 		return nil
 	}
 
-	p.AccessCondition = accessConditions
 	rb := rangeBuilder{}
 	rangePoints := fullRange
-	for _, cond := range accessConditions {
+	for _, cond := range p.AccessCondition {
 		rangePoints = rb.intersection(rangePoints, rb.newBuild(cond))
 		if rb.err != nil {
 			return errors.Trace(rb.err)

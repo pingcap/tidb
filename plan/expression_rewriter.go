@@ -17,7 +17,7 @@ import (
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
-var EvalSubquery func(p Plan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
+var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
 
 func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int) (
 	newExpr expression.Expression, newPlan LogicalPlan, correlated bool, err error) {
@@ -102,7 +102,6 @@ func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (LogicalPlan
 		er.err = errors.Trace(err)
 		return np, outerSchema
 	}
-	er.err = Refine(np)
 	return np, outerSchema
 }
 
@@ -212,7 +211,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 				er.err = errors.Trace(err)
 				return inNode, true
 			}
-			d, err := EvalSubquery(np, er.b.is, er.b.ctx)
+			phyPlan := np.Convert2PhysicalPlan()
+			if err = refine(phyPlan); err != nil {
+				er.err = errors.Trace(err)
+				return inNode, true
+			}
+			d, err := EvalSubquery(phyPlan, er.b.is, er.b.ctx)
 			if err != nil {
 				er.err = errors.Trace(err)
 				return inNode, true
@@ -308,7 +312,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.err = errors.Trace(err)
 			return inNode, true
 		}
-		d, err := EvalSubquery(np, er.b.is, er.b.ctx)
+		phyPlan := np.Convert2PhysicalPlan()
+		if err = refine(phyPlan); err != nil {
+			er.err = errors.Trace(err)
+			return inNode, true
+		}
+		d, err := EvalSubquery(phyPlan, er.b.is, er.b.ctx)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return inNode, true

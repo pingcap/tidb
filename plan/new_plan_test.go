@@ -299,9 +299,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
-	pA := &NewTableScan{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
+	pA := &PhysicalTableScan{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
 
-	pB := &NewTableScan{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
+	pB := &PhysicalTableScan{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
 
 	pA.initID()
 	pB.initID()
@@ -495,7 +495,7 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 
 func check(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
 	switch p.(type) {
-	case *NewTableScan:
+	case *PhysicalTableScan:
 		colList, ok := ans[p.GetID()]
 		c.Assert(ok, IsTrue, comment)
 		for i, colName := range colList {

@@ -17,6 +17,7 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
@@ -288,12 +289,23 @@ func (us *UnionScanExec) newBuildAndSortAddedRows(t table.Table, asName *model.C
 			newData = data
 		} else {
 			newData = make([]types.Datum, 0, len(us.Src.Schema()))
-			for _, col := range us.Src.(*NewXSelectTableExec).Columns {
+			var columns []*model.ColumnInfo
+			if t, ok := us.Src.(*NewXSelectTableExec); ok {
+				columns = t.Columns
+			} else {
+				columns = us.Src.(*NewXSelectIndexExec).indexPlan.Columns
+			}
+			for _, col := range columns {
 				newData = append(newData, data[col.Offset])
 			}
 		}
 		if us.newCondition != nil {
+			log.Warnf("union scan")
 			matched, err := expression.EvalBool(us.newCondition, newData, us.ctx)
+			for _, d := range newData {
+				log.Warnf("d %v", d.GetValue())
+			}
+			log.Warnf("match %v", matched)
 			if err != nil {
 				return errors.Trace(err)
 			}

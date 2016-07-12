@@ -107,7 +107,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		str = "UnionAll{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
-	case *NewTableScan:
+	case *DataSource:
 		str = fmt.Sprintf("DataScan(%v)", x.Table.Name.L)
 	case *Selection:
 		str = "Selection"
