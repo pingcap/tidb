@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -59,52 +58,23 @@ func handleMySQLSpecificCode(sql string) string {
 	return specCodePattern.ReplaceAllStringFunc(sql, trimComment)
 }
 
-// Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
-type Parser struct {
-	*allocator
-	refCount int
-}
-
-// New returns a Parser object.
-func New() *Parser {
-	return &Parser{
-		allocator: newAllocator(),
-	}
-}
-
-func (parser *Parser) deferFunc() {
-	parser.refCount--
-}
-
-func (parser *Parser) noneFunc() {
-}
-
-// Reset resets the parser's allocator.
-func (parser *Parser) Reset() func() {
-	if parser.refCount > 0 {
-		log.Warn("cannot reset parser when allocator still being used")
-		return parser.noneFunc
-	}
-
-	parser.allocator.reset()
-	parser.refCount++
-
-	return parser.deferFunc
-}
-
 // Parse parses a query string to raw ast.StmtNode.
 // If charset or collation is "", default charset and collation will be used.
-func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, error) {
+// If allocator is nil, a temporal allocator will be used. It's recommended to pass a allocator and reuse it.
+func Parse(sql, charset, collation string, allocator *Allocator) ([]ast.StmtNode, error) {
 	if charset == "" {
 		charset = mysql.DefaultCharset
 	}
 	if collation == "" {
 		collation = mysql.DefaultCollationName
 	}
+	if allocator == nil {
+		allocator = NewAllocator()
+	}
 	sql = handleMySQLSpecificCode(sql)
 	l := NewLexer(sql)
 	l.SetCharsetInfo(charset, collation)
-	yyParse(l, parser.allocator)
+	yyParse(l, allocator)
 	if len(l.Errors()) != 0 {
 		return nil, errors.Trace(l.Errors()[0])
 	}
@@ -120,8 +90,8 @@ func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, err
 
 // ParseOneStmt parses a query and returns an ast.StmtNode.
 // The query must have one statement, otherwise ErrSyntax is returned.
-func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode, error) {
-	stmts, err := parser.Parse(sql, charset, collation)
+func ParseOneStmt(sql, charset, collation string, allocator *Allocator) (ast.StmtNode, error) {
+	stmts, err := Parse(sql, charset, collation, allocator)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

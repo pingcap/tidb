@@ -1346,10 +1346,10 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 // Create a new session on store but only do ddl works.
 func (s *testSessionSuite) bootstrapWithError(store kv.Storage, c *C) {
 	ss := &session{
-		values: make(map[fmt.Stringer]interface{}),
-		store:  store,
-		sid:    atomic.AddInt64(&sessionID, 1),
-		parser: parser.New(),
+		values:    make(map[fmt.Stringer]interface{}),
+		store:     store,
+		sid:       atomic.AddInt64(&sessionID, 1),
+		allocator: parser.NewAllocator(),
 	}
 	domain, err := domap.Get(store)
 	c.Assert(err, IsNil)

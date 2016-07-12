@@ -124,7 +124,7 @@ func getCtxCharsetInfo(ctx context.Context) (string, string) {
 func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
 	charset, collation := getCtxCharsetInfo(ctx)
-	stmts, err := parser.New().Parse(src, charset, collation)
+	stmts, err := parser.Parse(src, charset, collation, nil)
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", src, err)
 		return nil, errors.Trace(err)

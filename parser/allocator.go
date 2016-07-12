@@ -17,7 +17,11 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-type allocator struct {
+// Allocator is an object allocator for Parse.
+// It can reduce object allocation during parsing. You should call Reset to reuse memory.
+// Note that the returned ast.StmtNode is allocated from the allocator, so you MUST NOT
+// reset the allocator when you are still using them.
+type Allocator struct {
 	cache           []yySymType
 	yylval          yySymType
 	yyVAL           yySymType
@@ -31,13 +35,14 @@ type allocator struct {
 	tableRefsClause []ast.TableRefsClause
 }
 
-func newAllocator() *allocator {
-	return &allocator{
+// NewAllocator news an Allocator object, which can be used for Parse.
+func NewAllocator() *Allocator {
+	return &Allocator{
 		cache: make([]yySymType, 140),
 	}
 }
 
-func (ac *allocator) newValueExpr(v interface{}) *ast.ValueExpr {
+func (ac *Allocator) newValueExpr(v interface{}) *ast.ValueExpr {
 	if ve, ok := v.(*ast.ValueExpr); ok {
 		return ve
 	}
@@ -52,7 +57,7 @@ func (ac *allocator) newValueExpr(v interface{}) *ast.ValueExpr {
 	return ve
 }
 
-func (ac *allocator) newFieldType(tp byte) *types.FieldType {
+func (ac *Allocator) newFieldType(tp byte) *types.FieldType {
 	ret := ac.allocFieldType()
 	ret.Tp = tp
 	ret.Flen = types.UnspecifiedLength
@@ -60,7 +65,7 @@ func (ac *allocator) newFieldType(tp byte) *types.FieldType {
 	return ret
 }
 
-func (ac *allocator) allocFieldType() *types.FieldType {
+func (ac *Allocator) allocFieldType() *types.FieldType {
 	if len(ac.fieldType) == cap(ac.fieldType) {
 		capacity := cap(ac.fieldType)
 		switch {
@@ -77,7 +82,8 @@ func (ac *allocator) allocFieldType() *types.FieldType {
 	return &ac.fieldType[len(ac.fieldType)-1]
 }
 
-func (ac *allocator) reset() {
+// Reset resets the Allocator's inner field so the memory space can be reused.
+func (ac *Allocator) Reset() {
 	for i := 0; i < len(ac.valueExpr); i++ {
 		ac.valueExpr[i] = ast.ValueExpr{}
 	}
@@ -119,7 +125,7 @@ func (ac *allocator) reset() {
 	ac.tableRefsClause = ac.tableRefsClause[:0]
 }
 
-func (ac *allocator) allocTableRefsClause() *ast.TableRefsClause {
+func (ac *Allocator) allocTableRefsClause() *ast.TableRefsClause {
 	if len(ac.tableRefsClause) == cap(ac.tableRefsClause) {
 		capacity := cap(ac.tableRefsClause)
 		switch {
@@ -136,7 +142,7 @@ func (ac *allocator) allocTableRefsClause() *ast.TableRefsClause {
 	return &ac.tableRefsClause[len(ac.tableRefsClause)-1]
 }
 
-func (ac *allocator) allocTableSource() *ast.TableSource {
+func (ac *Allocator) allocTableSource() *ast.TableSource {
 	if len(ac.tableSource) == cap(ac.tableSource) {
 		capacity := cap(ac.tableSource)
 		switch {
@@ -153,7 +159,7 @@ func (ac *allocator) allocTableSource() *ast.TableSource {
 	return &ac.tableSource[len(ac.tableSource)-1]
 }
 
-func (ac *allocator) allocValueExpr() *ast.ValueExpr {
+func (ac *Allocator) allocValueExpr() *ast.ValueExpr {
 	if len(ac.valueExpr) == cap(ac.valueExpr) {
 		capacity := cap(ac.valueExpr)
 		switch {
@@ -168,7 +174,7 @@ func (ac *allocator) allocValueExpr() *ast.ValueExpr {
 	return &ac.valueExpr[len(ac.valueExpr)-1]
 }
 
-func (ac *allocator) allocInsertStmt() *ast.InsertStmt {
+func (ac *Allocator) allocInsertStmt() *ast.InsertStmt {
 	if len(ac.insertStmt) == cap(ac.insertStmt) {
 		capacity := cap(ac.insertStmt)
 		switch {
@@ -185,7 +191,7 @@ func (ac *allocator) allocInsertStmt() *ast.InsertStmt {
 	return &ac.insertStmt[len(ac.insertStmt)-1]
 }
 
-func (ac *allocator) allocSelectStmt() *ast.SelectStmt {
+func (ac *Allocator) allocSelectStmt() *ast.SelectStmt {
 	if len(ac.selectStmt) == cap(ac.selectStmt) {
 		capacity := cap(ac.selectStmt)
 		switch {
@@ -202,7 +208,7 @@ func (ac *allocator) allocSelectStmt() *ast.SelectStmt {
 	return &ac.selectStmt[len(ac.selectStmt)-1]
 }
 
-func (ac *allocator) allocJoin() *ast.Join {
+func (ac *Allocator) allocJoin() *ast.Join {
 	if len(ac.join) == cap(ac.join) {
 		capacity := cap(ac.join)
 		switch {
@@ -219,7 +225,7 @@ func (ac *allocator) allocJoin() *ast.Join {
 	return &ac.join[len(ac.join)-1]
 }
 
-func (ac *allocator) allocTableName() *ast.TableName {
+func (ac *Allocator) allocTableName() *ast.TableName {
 	if len(ac.tableName) == cap(ac.tableName) {
 		capacity := cap(ac.tableName)
 		switch {

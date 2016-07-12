@@ -39,15 +39,16 @@ func TestT(t *testing.T) {
 }
 
 type testEvaluatorSuite struct {
-	*parser.Parser
+	*parser.Allocator
 }
 
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
+	s.Allocator = parser.NewAllocator()
 }
 
 func (s *testEvaluatorSuite) parseExpr(c *C, expr string) ast.ExprNode {
-	st, err := s.ParseOneStmt("select "+expr, "", "")
+	s.Allocator.Reset()
+	st, err := parser.ParseOneStmt("select "+expr, "", "", s.Allocator)
 	c.Assert(err, IsNil)
 	stmt := st.(*ast.SelectStmt)
 	return stmt.Fields.Fields[0].Expr

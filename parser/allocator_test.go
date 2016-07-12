@@ -31,50 +31,50 @@ type testAllocator struct {
 
 func (t *testAllocator) TestSimple(c *C) {
 	defer testleak.AfterTest(c)()
-	ac := newAllocator()
+	ac := NewAllocator()
 
 	var table = []struct {
-		alloc func(*allocator) interface{}
+		alloc func(*Allocator) interface{}
 		zero  interface{}
 		use   func(interface{})
 	}{
 		{
-			func(ac *allocator) interface{} { return ac.allocFieldType() },
+			func(ac *Allocator) interface{} { return ac.allocFieldType() },
 			&types.FieldType{},
 			func(v interface{}) { r := v.(*types.FieldType); r.Tp = 7 },
 		},
 		{
-			func(ac *allocator) interface{} { return ac.allocValueExpr() },
+			func(ac *Allocator) interface{} { return ac.allocValueExpr() },
 			&ast.ValueExpr{},
 			func(v interface{}) { r := v.(*ast.ValueExpr); r.SetType(ac.newFieldType(23)) },
 		},
 		{
-			func(ac *allocator) interface{} { return ac.allocInsertStmt() },
+			func(ac *Allocator) interface{} { return ac.allocInsertStmt() },
 			&ast.InsertStmt{},
 			func(v interface{}) { r := v.(*ast.InsertStmt); r.Priority = 7 },
 		},
 		{
-			func(ac *allocator) interface{} { return ac.allocSelectStmt() },
+			func(ac *Allocator) interface{} { return ac.allocSelectStmt() },
 			&ast.SelectStmt{},
 			func(v interface{}) { r := v.(*ast.SelectStmt); r.LockTp = 42 },
 		},
 		{
-			func(ac *allocator) interface{} { return ac.allocJoin() },
+			func(ac *Allocator) interface{} { return ac.allocJoin() },
 			&ast.Join{},
 			func(v interface{}) { r := v.(*ast.Join); r.Tp = 54 },
 		},
 		{
-			func(ac *allocator) interface{} { return ac.allocTableName() },
+			func(ac *Allocator) interface{} { return ac.allocTableName() },
 			&ast.TableName{},
 			func(v interface{}) { r := v.(*ast.TableName); r.Name = model.NewCIStr("hello") },
 		},
 		{
-			func(ac *allocator) interface{} { return ac.allocTableSource() },
+			func(ac *Allocator) interface{} { return ac.allocTableSource() },
 			&ast.TableSource{},
 			func(v interface{}) { r := v.(*ast.TableSource); r.AsName = model.NewCIStr("world") },
 		},
 		{
-			func(ac *allocator) interface{} { return ac.allocTableRefsClause() },
+			func(ac *Allocator) interface{} { return ac.allocTableRefsClause() },
 			&ast.TableRefsClause{},
 			func(v interface{}) { r := v.(*ast.TableRefsClause); r.TableRefs = ac.allocJoin() },
 		},
@@ -83,7 +83,7 @@ func (t *testAllocator) TestSimple(c *C) {
 	for i := 0; i < 10000; i++ {
 		r := random.Intn(len(table))
 		if r == 0 {
-			ac.reset()
+			ac.Reset()
 		}
 
 		data := table[r].alloc(ac)
@@ -94,7 +94,7 @@ func (t *testAllocator) TestSimple(c *C) {
 
 func (t *testAllocator) TestSafeAfterGC(c *C) {
 	defer testleak.AfterTest(c)()
-	ac := newAllocator()
+	ac := NewAllocator()
 
 	ts := &ast.TableSource{}
 	ref := make([]*ast.TableRefsClause, 0, 10000)

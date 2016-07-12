@@ -123,7 +123,7 @@ type session struct {
 
 	// For performance_schema only.
 	stmtState *perfschema.StatementState
-	parser    *parser.Parser
+	allocator *parser.Allocator
 }
 
 func (s *session) cleanRetryInfo() {
@@ -384,14 +384,12 @@ func (s *session) ShouldAutocommit(ctx context.Context) bool {
 }
 
 func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
-	return s.parser.Parse(sql, charset, collation)
+	return parser.Parse(sql, charset, collation, s.allocator)
 }
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	if variable.GetSessionVars(s).Status&mysql.ServerStatusInTrans == 0 {
-		if fn := s.parser.Reset(); fn != nil {
-			defer fn()
-		}
+		s.allocator.Reset()
 	}
 	charset, collation := getCtxCharsetInfo(s)
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
@@ -625,7 +623,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 		sid:         atomic.AddInt64(&sessionID, 1),
 		debugInfos:  make(map[string]interface{}),
 		maxRetryCnt: 10,
-		parser:      parser.New(),
+		allocator:   parser.NewAllocator(),
 	}
 	domain, err := domap.Get(store)
 	if err != nil {

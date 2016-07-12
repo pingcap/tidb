@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -141,7 +142,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		stmt, err := parser.ParseOneStmt(ca.sql, "", "", s.Allocator)
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
@@ -276,7 +277,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		stmt, err := parser.ParseOneStmt(ca.sql, "", "", s.Allocator)
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
@@ -465,7 +466,7 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 
 	for _, ca := range cases {
 		sql := "select 1 from t where " + ca.exprStr
-		stmts, err := s.Parse(sql, "", "")
+		stmts, err := parser.Parse(sql, "", "", s.Allocator)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
 		stmt := stmts[0].(*ast.SelectStmt)
 
