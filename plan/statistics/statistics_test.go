@@ -95,7 +95,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(nt.String(), Equals, str)
 }
 
-func (s *testStatisticsSuite) TestDefaultTable(c *C) {
+func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	ti := &model.TableInfo{}
 	tps := []uint8{mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeFloat, mysql.TypeDouble,
 		mysql.TypeTimestamp, mysql.TypeLonglong, mysql.TypeInt24, mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime,
@@ -128,4 +128,28 @@ func (s *testStatisticsSuite) TestDefaultTable(c *C) {
 		c.Assert(allNull, IsFalse)
 		c.Assert(len(col.Repeats), Greater, 0)
 	}
+}
+
+func (s *testStatisticsSuite) TestRowCount(c *C) {
+	ti := &model.TableInfo{}
+	ti.Columns = []*model.ColumnInfo{
+		&model.ColumnInfo{
+			ID:        1,
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
+	}
+	tbl := PseudoTable(ti)
+	col := tbl.Columns[0]
+	count, err := col.EqualRowCount(types.NewIntDatum(1999))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, int64(3))
+	count, err = col.LessRowCount(types.NewIntDatum(5999))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, int64(5997))
+	count, err = col.BetweenCount(types.NewIntDatum(3500), types.NewDatum(5500))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, int64(2000))
+	count, err = col.BetweenCount(types.NewIntDatum(500), types.NewDatum(1500))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, int64(667))
 }

@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +60,84 @@ func (c *Column) String() string {
 		strs = append(strs, fmt.Sprintf("num: %d\tvalue: %s\trepeats: %d", c.Numbers[i], strVal, c.Repeats[i]))
 	}
 	return strings.Join(strs, "\n")
+}
+
+func (c *Column) EqualRowCount(value types.Datum) (int64, error) {
+	index, match, err := c.search(value)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if index == len(c.Numbers) {
+		return c.Numbers[index-1] + 1, nil
+	}
+	if match {
+		return c.Repeats[index] + 1, nil
+	}
+	totalCount := c.Numbers[len(c.Numbers)-1] + 1
+	return totalCount / c.NDV, nil
+}
+
+func (c *Column) LessRowCount(value types.Datum) (int64, error) {
+	index, match, err := c.search(value)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if index == len(c.Numbers) {
+		return c.totalRowCount(), nil
+	}
+	number := c.Numbers[index]
+	prevNumber := int64(0)
+	if index > 0 {
+		prevNumber = c.Numbers[index-1]
+	}
+	lessThanBucketValueCount := number - c.Repeats[index]
+	if match {
+		return lessThanBucketValueCount, nil
+	}
+	return (prevNumber + lessThanBucketValueCount) / 2, nil
+}
+
+// Between Count estimate the row count where column value greater or equal to a, and less than b.
+func (c *Column) BetweenCount(a, b types.Datum) (int64, error) {
+	lessCountA, err := c.LessRowCount(a)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	lessCountB, err := c.LessRowCount(b)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if lessCountA >= lessCountB {
+		return c.inBucketBetweenCount(), nil
+	}
+	return lessCountB - lessCountA, nil
+}
+
+func (c *Column) totalRowCount() int64 {
+	return c.Numbers[len(c.Numbers)-1] + 1
+}
+
+func (c *Column) bucketRowCount() int64 {
+	return c.totalRowCount() / int64(len(c.Numbers))
+}
+
+func (c *Column) inBucketBetweenCount() int64 {
+	return c.bucketRowCount()/3 + 1
+}
+
+func (c *Column) search(target types.Datum) (index int, match bool, err error) {
+	index = sort.Search(len(c.Values), func(i int) bool {
+		cmp, err1 := c.Values[i].CompareDatum(target)
+		if err1 != nil {
+			err = errors.Trace(err1)
+			return false
+		}
+		if cmp == 0 {
+			match = true
+		}
+		return cmp >= 0
+	})
+	return
 }
 
 // Table represents statistics for a table.
