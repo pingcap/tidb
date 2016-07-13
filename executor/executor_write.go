@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -377,10 +376,6 @@ func isMatchTableName(entry *RowKeyEntry, tblMap map[int64][]string) bool {
 	}
 
 	return false
-}
-
-func (e *DeleteExec) getTable(ctx context.Context, tableName *ast.TableName) (table.Table, error) {
-	return sessionctx.GetDomain(ctx).InfoSchema().TableByName(tableName.Schema, tableName.Name)
 }
 
 func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data []types.Datum) error {
