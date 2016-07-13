@@ -136,7 +136,7 @@ func (b *executorBuilder) buildNewTableDual(v *plan.NewTableDual) Executor {
 func (b *executorBuilder) buildNewTableScan(v *plan.PhysicalTableScan, s *plan.Selection) Executor {
 	txn, err := b.ctx.GetTxn(false)
 	if err != nil {
-		b.err = err
+		b.err = errors.Trace(err)
 		return nil
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
@@ -193,7 +193,7 @@ func (b *executorBuilder) buildNewTableScan(v *plan.PhysicalTableScan, s *plan.S
 func (b *executorBuilder) buildNewIndexScan(v *plan.PhysicalIndexScan, s *plan.Selection) Executor {
 	txn, err := b.ctx.GetTxn(false)
 	if err != nil {
-		b.err = err
+		b.err = errors.Trace(err)
 		return nil
 	}
 	table, _ := b.is.TableByID(v.Table.ID)

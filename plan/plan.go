@@ -94,9 +94,9 @@ type Plan interface {
 	GetID() string
 	// Check weather this plan is correlated or not.
 	IsCorrelated() bool
-	// SetParents set parents for plan.
+	// SetParents sets parents for plan.
 	SetParents(...Plan)
-	// SetParents set children for plan.
+	// SetParents sets children for plan.
 	SetChildren(...Plan)
 }
 
@@ -116,7 +116,7 @@ type LogicalPlan interface {
 	// how many columns referenced by inner plan exactly.
 	PruneColumnsAndResolveIndices([]*expression.Column) ([]*expression.Column, error)
 
-	// Convert2PhysicalPlan convert logical plan to physical plan.
+	// Convert2PhysicalPlan converts logical plan to physical plan.
 	Convert2PhysicalPlan() PhysicalPlan
 }
 

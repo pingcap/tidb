@@ -175,6 +175,22 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  "select a from t where d = 4 and c = 5",
 			best: "Index(t.c_d_e)[[5 4,5 4]]->Selection->Projection",
 		},
+		{
+			sql:  "select a from t where c = 4 and e < 5",
+			best: "Index(t.c_d_e)[[4,4]]->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c = 4 and d <= 5 and d > 3",
+			best: "Index(t.c_d_e)[[4 3,4 5]]->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where d <= 5 and d > 3",
+			best: "Index(t.c_d_e)[[<nil>,<nil>]]->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c <= 5 and c >= 3 and d = 1",
+			best: "Index(t.c_d_e)[[3,5]]->Selection->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)

@@ -13,7 +13,7 @@
 
 package plan
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *DataSource) Convert2PhysicalPlan() (np PhysicalPlan) {
 	indices, includeTableScan := availableIndices(p.table)
 	if includeTableScan && len(indices) == 0 {
@@ -37,7 +37,7 @@ func (p *DataSource) Convert2PhysicalPlan() (np PhysicalPlan) {
 	return np
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *Limit) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
@@ -45,7 +45,7 @@ func (p *Limit) Convert2PhysicalPlan() PhysicalPlan {
 	return p
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *Join) Convert2PhysicalPlan() PhysicalPlan {
 	l := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	r := p.GetChildByIndex(1).(LogicalPlan).Convert2PhysicalPlan()
@@ -55,7 +55,7 @@ func (p *Join) Convert2PhysicalPlan() PhysicalPlan {
 	return p
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *Aggregation) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
@@ -63,7 +63,7 @@ func (p *Aggregation) Convert2PhysicalPlan() PhysicalPlan {
 	return p
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *NewUnion) Convert2PhysicalPlan() PhysicalPlan {
 	newChildren := make([]Plan, len(p.GetChildren()))
 	for i, child := range p.GetChildren() {
@@ -74,7 +74,7 @@ func (p *NewUnion) Convert2PhysicalPlan() PhysicalPlan {
 	return p
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *Selection) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
@@ -82,7 +82,7 @@ func (p *Selection) Convert2PhysicalPlan() PhysicalPlan {
 	return p
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *Projection) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
@@ -90,7 +90,7 @@ func (p *Projection) Convert2PhysicalPlan() PhysicalPlan {
 	return p
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *NewSort) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
@@ -98,7 +98,7 @@ func (p *NewSort) Convert2PhysicalPlan() PhysicalPlan {
 	return p
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *Apply) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	np := &PhysicalApply{
@@ -112,7 +112,7 @@ func (p *Apply) Convert2PhysicalPlan() PhysicalPlan {
 	return np
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *Distinct) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
@@ -120,12 +120,12 @@ func (p *Distinct) Convert2PhysicalPlan() PhysicalPlan {
 	return p
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *NewTableDual) Convert2PhysicalPlan() PhysicalPlan {
 	return p
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *MaxOneRow) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
@@ -133,7 +133,7 @@ func (p *MaxOneRow) Convert2PhysicalPlan() PhysicalPlan {
 	return p
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *Exists) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
@@ -141,7 +141,7 @@ func (p *Exists) Convert2PhysicalPlan() PhysicalPlan {
 	return p
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *Trim) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
@@ -149,7 +149,7 @@ func (p *Trim) Convert2PhysicalPlan() PhysicalPlan {
 	return p
 }
 
-// Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *Insert) Convert2PhysicalPlan() PhysicalPlan {
 	if len(p.GetChildren()) == 0 {
 		return p
