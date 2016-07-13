@@ -27,8 +27,12 @@ import (
 )
 
 const (
+	// Default number of buckets a column histogram has.
 	defaultBucketCount = 256
 
+	// When we haven't analyzed a table, we use pseudo statistics to estimate costs.
+	// It has row count 10000, equal condition selects 1/10 of total rows, less condition selects 1/3 of total rows,
+	// between condition selects 1/4 of total rows.
 	pseudoRowCount    = 10000
 	pseudoEqualRate   = 10
 	pseudoLessRate    = 3
@@ -111,7 +115,7 @@ func (c *Column) LessRowCount(value types.Datum) (int64, error) {
 	return (prevNumber + lessThanBucketValueCount) / 2, nil
 }
 
-// BetweenRowCount estimate the row count where column greater or equal to a and less than b.
+// BetweenRowCount estimates the row count where column greater or equal to a and less than b.
 func (c *Column) BetweenRowCount(a, b types.Datum) (int64, error) {
 	if len(c.Numbers) == 0 {
 		return pseudoRowCount / pseudoBetweenRate, nil
