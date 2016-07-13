@@ -15,6 +15,7 @@ package tidb
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -58,6 +60,7 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.dropTableSQL = `Drop TABLE if exists t;`
 	s.createTableSQL = `CREATE TABLE t(id TEXT);`
 	s.selectSQL = `SELECT * from t;`
+	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
 func (s *testSessionSuite) TearDownSuite(c *C) {
@@ -2013,6 +2016,84 @@ func (s *testSessionSuite) TestIssue1265(c *C) {
 	mustExecSQL(c, se, "create table t (a decimal unique);")
 	mustExecSQL(c, se, "insert t values ('100');")
 	mustExecFailed(c, se, "insert t values ('1e2');")
+}
+
+func (s *testSessionSuite) TestIssue1435(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	se1 := newSession(c, store, s.dbName)
+	se2 := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (a int);")
+	mustExecSQL(c, se, "drop table if exists t1;")
+	mustExecSQL(c, se, "create table t1 (a int);")
+	mustExecSQL(c, se, "drop table if exists t2;")
+	mustExecSQL(c, se, "create table t2 (a int);")
+	startCh1 := make(chan struct{}, 0)
+	startCh2 := make(chan struct{}, 0)
+	endCh1 := make(chan struct{}, 0)
+	endCh2 := make(chan struct{}, 0)
+	execFailedFunc := func(c *C, s Session, tbl string, start, end chan struct{}) {
+		mustExecSQL(c, s, "begin;")
+		<-start
+		<-start
+		mustExecFailed(c, s, fmt.Sprintf("insert into %s values(1)", tbl))
+		mustExecFailed(c, s, "commit")
+		end <- struct{}{}
+	}
+
+	go execFailedFunc(c, se1, "t1", startCh1, endCh1)
+	go execFailedFunc(c, se2, "t2", startCh2, endCh2)
+	// Make sure two insert transactions are begin.
+	startCh1 <- struct{}{}
+	startCh2 <- struct{}{}
+
+	select {
+	case <-endCh1:
+		// Make sure the first insert statement isn't finish.
+		c.Error("The statement shouldn't be executed")
+		c.FailNow()
+	default:
+	}
+	// Make sure loading information schema is failed and server is invalid.
+	ctx := se.(context.Context)
+	sessionctx.GetDomain(ctx).IsMockFailed = true
+	sessionctx.GetDomain(ctx).MustReload()
+	// Make sure insert to table t1 transaction executes.
+	startCh1 <- struct{}{}
+	// Make sure executing insert statement is failed when server is invalid.
+	mustExecFailed(c, se, "insert t values (100);")
+	<-endCh1
+
+	// recover
+	select {
+	case <-endCh2:
+		// Make sure the second insert statement isn't finish.
+		c.Error("The statement shouldn't be executed")
+		c.FailNow()
+	default:
+	}
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	domain.SetSchemaValidity(true, txn.StartTS())
+	sessionctx.GetDomain(ctx).IsMockFailed = false
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (a int);")
+	mustExecSQL(c, se, "insert t values (100);")
+	// Make sure insert to table t2 transaction executes.
+	startCh2 <- struct{}{}
+	<-endCh2
+
+	err = se.Close()
+	c.Assert(err, IsNil)
+	err = se1.Close()
+	c.Assert(err, IsNil)
+	err = se2.Close()
+	c.Assert(err, IsNil)
+	err = store.Close()
+	c.Assert(err, IsNil)
 }
 
 // Testcase for session

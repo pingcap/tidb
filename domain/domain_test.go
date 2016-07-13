@@ -72,7 +72,19 @@ func (*testSuite) TestT(c *C) {
 	time.Sleep(20 * time.Millisecond)
 	atomic.StoreInt64(&dom.lastLeaseTS, 0)
 	dom.tryReload()
-
-	store.Close()
 	time.Sleep(1 * time.Second)
+
+	// for schemaValidity
+	err = CheckSchemaValidity(0)
+	c.Assert(err, IsNil)
+	dom.IsMockFailed = true
+	err = dom.MustReload()
+	c.Assert(err, NotNil)
+	err = CheckSchemaValidity(0)
+	c.Assert(err, NotNil)
+	dom.IsMockFailed = false
+	err = dom.MustReload()
+	c.Assert(err, IsNil)
+	err = CheckSchemaValidity(0)
+	c.Assert(err, IsNil)
 }

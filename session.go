@@ -134,7 +134,11 @@ func (s *session) cleanRetryInfo() {
 }
 
 func (s *session) checkServerStatus() error {
-	return domain.CheckSchemaValidity()
+	var ts uint64
+	if s.txn != nil {
+		ts = s.txn.StartTS()
+	}
+	return domain.CheckSchemaValidity(ts)
 }
 
 func (s *session) Status() uint16 {
@@ -200,6 +204,10 @@ func (s *session) finishTxn(rollback bool) error {
 }
 
 func (s *session) CommitTxn() error {
+	if err := s.checkServerStatus(); err != nil {
+		return s.RollbackTxn()
+	}
+
 	return s.finishTxn(false)
 }
 
