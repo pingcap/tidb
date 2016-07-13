@@ -29,14 +29,6 @@ import (
 func newMockResolve(node ast.Node) error {
 	indices := []*model.IndexInfo{
 		{
-			Name: model.NewCIStr("b"),
-			Columns: []*model.IndexColumn{
-				{
-					Name: model.NewCIStr("b"),
-				},
-			},
-		},
-		{
 			Name: model.NewCIStr("c_d_e"),
 			Columns: []*model.IndexColumn{
 				{
@@ -67,9 +59,13 @@ func newMockResolve(node ast.Node) error {
 		State: model.StatePublic,
 		Name:  model.NewCIStr("d"),
 	}
+	col3 := &model.ColumnInfo{
+		State: model.StatePublic,
+		Name:  model.NewCIStr("e"),
+	}
 	pkColumn.Flag = mysql.PriKeyFlag
 	table := &model.TableInfo{
-		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2},
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3},
 		Indices:    indices,
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
@@ -160,6 +156,65 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		_, err = p.PruneColumnsAndResolveIndices(p.GetSchema())
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+	}
+	UseNewPlanner = false
+}
+
+func (s *testPlanSuite) TestRefine(c *C) {
+	UseNewPlanner = true
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select a from t where c = 4 and d = 5 and e = 6",
+			best: "Index(t.c_d_e)[[4 5 6,4 5 6]]->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where d = 4 and c = 5",
+			best: "Index(t.c_d_e)[[5 4,5 4]]->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c = 4 and e < 5",
+			best: "Index(t.c_d_e)[[4,4]]->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c = 4 and d <= 5 and d > 3",
+			best: "Index(t.c_d_e)[[4 3,4 5]]->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where d <= 5 and d > 3",
+			best: "Index(t.c_d_e)[[<nil>,<nil>]]->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c <= 5 and c >= 3 and d = 1",
+			best: "Index(t.c_d_e)[[3,5]]->Selection->Projection",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		err = newMockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+		}
+		p := builder.build(stmt).(LogicalPlan)
+		c.Assert(builder.err, IsNil)
+
+		_, p, err = p.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		_, err = p.PruneColumnsAndResolveIndices(p.GetSchema())
+		c.Assert(err, IsNil)
+		np := p.Convert2PhysicalPlan()
+		err = refine(np)
+		c.Assert(err, IsNil)
+		c.Assert(ToString(np), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 	UseNewPlanner = false
 }
@@ -299,9 +354,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
-	pA := &NewTableScan{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
+	pA := &PhysicalTableScan{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
 
-	pB := &NewTableScan{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
+	pB := &PhysicalTableScan{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
 
 	pA.initID()
 	pB.initID()
@@ -495,7 +550,7 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 
 func check(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
 	switch p.(type) {
-	case *NewTableScan:
+	case *PhysicalTableScan:
 		colList, ok := ans[p.GetID()]
 		c.Assert(ok, IsTrue, comment)
 		for i, colName := range colList {

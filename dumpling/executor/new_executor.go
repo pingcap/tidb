@@ -15,11 +15,8 @@ package executor
 
 import (
 	"sort"
-	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -30,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -624,94 +620,6 @@ func (e *NewTableScanExec) getRow(handle int64) (*Row, error) {
 func (e *NewTableScanExec) Close() error {
 	e.iter = nil
 	e.cursor = 0
-	return nil
-}
-
-// NewXSelectTableExec represents XAPI select executor without result fields.
-type NewXSelectTableExec struct {
-	tableInfo   *model.TableInfo
-	table       table.Table
-	asName      *model.CIStr
-	ctx         context.Context
-	supportDesc bool
-	isMemDB     bool
-	result      *xapi.SelectResult
-	subResult   *xapi.SubResult
-	where       *tipb.Expr
-	Columns     []*model.ColumnInfo
-	schema      expression.Schema
-	ranges      []plan.TableRange
-}
-
-// Schema implements Executor Schema interface.
-func (e *NewXSelectTableExec) Schema() expression.Schema {
-	return e.schema
-}
-
-func (e *NewXSelectTableExec) doRequest() error {
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	selReq := new(tipb.SelectRequest)
-	startTs := txn.StartTS()
-	selReq.StartTs = &startTs
-	selReq.Where = e.where
-	selReq.Ranges = tableRangesToPBRanges(e.ranges)
-	columns := e.Columns
-	selReq.TableInfo = &tipb.TableInfo{
-		TableId: proto.Int64(e.tableInfo.ID),
-	}
-	selReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.tableInfo.PKIsHandle)
-	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-// Close implements Executor Close interface.
-func (e *NewXSelectTableExec) Close() error {
-	e.result = nil
-	e.subResult = nil
-	return nil
-}
-
-// Next implements Executor interface.
-func (e *NewXSelectTableExec) Next() (*Row, error) {
-	if e.result == nil {
-		err := e.doRequest()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	for {
-		if e.subResult == nil {
-			var err error
-			startTs := time.Now()
-			e.subResult, err = e.result.Next()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if e.subResult == nil {
-				return nil, nil
-			}
-			log.Debugf("[TIME_TABLE_SCAN] %v", time.Now().Sub(startTs))
-		}
-		h, rowData, err := e.subResult.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if rowData == nil {
-			e.subResult = nil
-			continue
-		}
-		return resultRowToRow(e.table, h, rowData, e.asName), nil
-	}
-}
-
-// Fields implements Executor interface.
-func (e *NewXSelectTableExec) Fields() []*ast.ResultField {
 	return nil
 }
 
