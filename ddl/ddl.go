@@ -1014,6 +1014,15 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		return errors.Trace(err)
 	}
 
+	if mysql.HasNotNullFlag(col.Flag) && col.DefaultValue == nil {
+		zeroValue := table.GetZeroValue(&col.ColumnInfo)
+		col.DefaultValue, err = zeroValue.ToString()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		col.Flag &= ^uint(mysql.NoDefaultValueFlag)
+	}
+
 	job := &model.Job{
 		SchemaID: schema.ID,
 		TableID:  t.Meta().ID,

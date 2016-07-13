@@ -141,3 +141,13 @@ func (s *testSuite) TestAlterTable(c *C) {
 	tk.MustExec("create table if not exists alter_test (c1 int)")
 	tk.MustExec("alter table alter_test add column c2 int")
 }
+
+func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table nn (c1 int)")
+	tk.MustExec("insert nn values (1), (2)")
+	tk.MustExec("alter table nn add column c2 int not null")
+	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0"))
+}
