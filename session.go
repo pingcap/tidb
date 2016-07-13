@@ -122,8 +122,9 @@ type session struct {
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
 
 	// For performance_schema only.
-	stmtState *perfschema.StatementState
-	allocator *parser.Allocator
+	stmtState    *perfschema.StatementState
+	allocator    *parser.Allocator
+	execRefCount int
 }
 
 func (s *session) cleanRetryInfo() {
@@ -388,7 +389,14 @@ func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, erro
 }
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
-	if variable.GetSessionVars(s).Status&mysql.ServerStatusInTrans == 0 {
+	s.execRefCount++
+	rs, err := s.execute(sql)
+	s.execRefCount--
+	return rs, err
+}
+
+func (s *session) execute(sql string) ([]ast.RecordSet, error) {
+	if variable.GetSessionVars(s).Status&mysql.ServerStatusInTrans == 0 && s.execRefCount <= 1 {
 		s.allocator.Reset()
 	}
 	charset, collation := getCtxCharsetInfo(s)
