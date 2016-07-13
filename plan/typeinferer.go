@@ -298,6 +298,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		// expr2 or expr3 returns a floating-point value	floating-point
 		// expr2 or expr3 returns an integer	integer
 		tp = x.Args[1].GetType()
+	case "get_lock", "release_lock":
+		tp = types.NewFieldType(mysql.TypeLonglong)
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
