@@ -297,7 +297,6 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 					return inNode, true
 				}
 				er.ctxStack = append(er.ctxStack, expr)
-
 			} else {
 				er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
 			}

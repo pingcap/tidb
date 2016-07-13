@@ -139,14 +139,14 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 		return predicates, p, nil
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
-	rest, _, err1 := child.PredicatePushDown(predicates)
-	if err1 != nil {
-		return nil, nil, errors.Trace(err1)
+	rest, _, err := child.PredicatePushDown(predicates)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 	if len(rest) > 0 {
-		err1 = addSelection(p, child, rest, p.allocator)
-		if err1 != nil {
-			return nil, nil, errors.Trace(err1)
+		err = addSelection(p, child, rest, p.allocator)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
 		}
 	}
 	return nil, p, nil
