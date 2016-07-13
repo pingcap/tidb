@@ -52,7 +52,7 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		p = logic
+		p = logic.Convert2PhysicalPlan()
 	}
 	err := Refine(p)
 	if err != nil {

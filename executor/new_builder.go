@@ -98,12 +98,15 @@ func (b *executorBuilder) toPBExpr(conditions []expression.Expression, tbl *mode
 }
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
-	ts, ok := v.GetChildByIndex(0).(*plan.NewTableScan)
+	child := v.GetChildByIndex(0)
 	var src Executor
-	if ok {
-		src = b.buildNewTableScan(ts, v)
-	} else {
-		src = b.build(v.GetChildByIndex(0))
+	switch x := child.(type) {
+	case *plan.PhysicalTableScan:
+		src = b.buildNewTableScan(x, v)
+	case *plan.PhysicalIndexScan:
+		src = b.buildNewIndexScan(x, v)
+	default:
+		src = b.build(x)
 	}
 
 	if len(v.Conditions) == 0 {
@@ -131,10 +134,10 @@ func (b *executorBuilder) buildNewTableDual(v *plan.NewTableDual) Executor {
 	return &NewTableDualExec{schema: v.GetSchema()}
 }
 
-func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan, s *plan.Selection) Executor {
+func (b *executorBuilder) buildNewTableScan(v *plan.PhysicalTableScan, s *plan.Selection) Executor {
 	txn, err := b.ctx.GetTxn(false)
 	if err != nil {
-		b.err = err
+		b.err = errors.Trace(err)
 		return nil
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
@@ -163,7 +166,7 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan, s *plan.Select
 				ret = b.buildNewUnionScanExec(ret,
 					expression.ComposeCNFCondition(append(s.Conditions, v.AccessCondition...)))
 			} else {
-				ret = b.buildNewUnionScanExec(ret, nil)
+				ret = b.buildNewUnionScanExec(ret, expression.ComposeCNFCondition(v.AccessCondition))
 			}
 		}
 		if s != nil {
@@ -188,6 +191,49 @@ func (b *executorBuilder) buildNewTableScan(v *plan.NewTableScan, s *plan.Select
 	return ts
 }
 
+func (b *executorBuilder) buildNewIndexScan(v *plan.PhysicalIndexScan, s *plan.Selection) Executor {
+	txn, err := b.ctx.GetTxn(false)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	table, _ := b.is.TableByID(v.Table.ID)
+	client := txn.GetClient()
+	var memDB bool
+	switch v.DBName.L {
+	case "information_schema", "performance_schema":
+		memDB = true
+	}
+	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
+	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
+		var ret Executor
+		st := &NewXSelectIndexExec{
+			tableInfo:   v.Table,
+			ctx:         b.ctx,
+			supportDesc: supportDesc,
+			asName:      v.TableAsName,
+			table:       table,
+			indexPlan:   v,
+		}
+		ret = st
+		if !txn.IsReadOnly() {
+			if s != nil {
+				ret = b.buildNewUnionScanExec(ret,
+					expression.ComposeCNFCondition(append(s.Conditions, v.AccessCondition...)))
+			} else {
+				ret = b.buildNewUnionScanExec(ret, expression.ComposeCNFCondition(v.AccessCondition))
+			}
+		}
+		if s != nil {
+			st.where, s.Conditions = b.toPBExpr(s.Conditions, st.tableInfo)
+		}
+		return ret
+	}
+
+	b.err = errors.New("Not implement yet.")
+	return nil
+}
+
 func (b *executorBuilder) buildNewSort(v *plan.NewSort) Executor {
 	src := b.build(v.GetChildByIndex(0))
 	return &NewSortExec{
@@ -199,7 +245,7 @@ func (b *executorBuilder) buildNewSort(v *plan.NewSort) Executor {
 	}
 }
 
-func (b *executorBuilder) buildApply(v *plan.Apply) Executor {
+func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 	src := b.build(v.GetChildByIndex(0))
 	apply := &ApplyExec{
 		schema:      v.GetSchema(),

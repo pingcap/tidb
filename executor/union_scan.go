@@ -288,7 +288,13 @@ func (us *UnionScanExec) newBuildAndSortAddedRows(t table.Table, asName *model.C
 			newData = data
 		} else {
 			newData = make([]types.Datum, 0, len(us.Src.Schema()))
-			for _, col := range us.Src.(*NewXSelectTableExec).Columns {
+			var columns []*model.ColumnInfo
+			if t, ok := us.Src.(*NewXSelectTableExec); ok {
+				columns = t.Columns
+			} else {
+				columns = us.Src.(*NewXSelectIndexExec).indexPlan.Columns
+			}
+			for _, col := range columns {
 				newData = append(newData, data[col.Offset])
 			}
 		}

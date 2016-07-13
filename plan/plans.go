@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
+	"strings"
 )
 
 // TableRange represents a range of row handle.
@@ -101,6 +102,25 @@ func (ir *IndexRange) IsPoint() bool {
 		}
 	}
 	return !ir.LowExclude && !ir.HighExclude
+}
+
+func (ir *IndexRange) String() string {
+	lowStrs := make([]string, 0, len(ir.LowVal))
+	for _, d := range ir.LowVal {
+		lowStrs = append(lowStrs, fmt.Sprintf("%v", d.GetValue()))
+	}
+	highStrs := make([]string, 0, len(ir.LowVal))
+	for _, d := range ir.HighVal {
+		highStrs = append(highStrs, fmt.Sprintf("%v", d.GetValue()))
+	}
+	l, r := "[", "]"
+	if ir.LowExclude {
+		l = "("
+	}
+	if ir.HighExclude {
+		r = ")"
+	}
+	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
 }
 
 // IndexScan represents an index scan plan.
