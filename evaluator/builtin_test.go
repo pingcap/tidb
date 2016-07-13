@@ -93,7 +93,7 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 
-	v, err := builtinReleaseLock(types.MakeDatums(1), nil)
+	v, err = builtinReleaseLock(types.MakeDatums(1), nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }
