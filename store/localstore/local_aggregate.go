@@ -103,7 +103,7 @@ func (n *aggregateFuncExpr) update(ctx *selectContext, args []types.Datum) error
 		return n.updateCount(ctx, args)
 	case tipb.ExprType_First:
 		return n.updateFirst(ctx, args)
-	case tipb.ExprType_Sum:
+	case tipb.ExprType_Sum, tipb.ExprType_Avg:
 		return n.updateSum(ctx, args)
 	}
 	return errors.Errorf("Unknown AggExpr: %v", n.expr.GetTp())
@@ -116,19 +116,35 @@ func (n *aggregateFuncExpr) toDatums() (ds []types.Datum, err error) {
 	case tipb.ExprType_First:
 		ds = n.getValueDatum()
 	case tipb.ExprType_Sum:
-		v := n.getAggItem().value
-		var d types.Datum
-		if !v.IsNull() {
-			// For sum result, we should convert it to decimal.
-			de, err1 := v.ToDecimal()
-			if err1 != nil {
-				return nil, errors.Trace(err1)
-			}
-			d = types.NewDecimalDatum(de)
+		d, err := getSumValue(n.getAggItem())
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		ds = []types.Datum{d}
+	case tipb.ExprType_Avg:
+		item := n.getAggItem()
+		sum, err := getSumValue(item)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		cnt := types.NewUintDatum(item.count)
+		ds = []types.Datum{cnt, sum}
 	}
 	return
+}
+
+func getSumValue(item *aggItem) (types.Datum, error) {
+	v := item.value
+	var d types.Datum
+	if !v.IsNull() {
+		// For sum result, we should convert it to decimal.
+		de, err1 := v.ToDecimal()
+		if err1 != nil {
+			return d, errors.Trace(err1)
+		}
+		d = types.NewDecimalDatum(de)
+	}
+	return d, nil
 }
 
 // Convert count to datum list.
