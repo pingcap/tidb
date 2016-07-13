@@ -101,6 +101,8 @@ const (
 		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null,
 		COMMENT VARCHAR(1024));`
 
+	// CreateHelpTopic is the SQL statement creates help_topic table in system db.
+	// See: https://dev.mysql.com/doc/refman/5.5/en/system-database.html#system-database-help-tables
 	CreateHelpTopic = `CREATE TABLE if not exists mysql.help_topic (
   		help_topic_id int(10) unsigned NOT NULL,
   		name char(64) NOT NULL,
