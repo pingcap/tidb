@@ -44,6 +44,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		if x.LimitCount != nil {
 			str += fmt.Sprintf(" + Limit(%v)", *x.LimitCount)
 		}
+	case *PhysicalIndexScan:
+		str = fmt.Sprintf("Index(%s.%s)%v", x.Table.Name.L, x.Index.Name.L, x.Ranges)
 	case *Apply:
 		str = fmt.Sprintf("Apply(%s)", ToString(x.InnerPlan))
 	case *Exists:

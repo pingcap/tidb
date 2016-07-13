@@ -175,25 +175,40 @@ func buildSelection(p *Selection) error {
 	return errors.Trace(err)
 }
 
-func detachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) (accessConds []expression.Expression, filterConds []expression.Expression) {
-	for i := len(conditions) - 1; i >= 0 && indexScan.accessEqualCount < len(indexScan.Index.Columns); i-- {
-		cond := conditions[i]
+func detachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
+	accessConds := make([]expression.Expression, len(indexScan.Index.Columns))
+	var filterConds []expression.Expression
+	for _, cond := range conditions {
 		if f, ok := cond.(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
-			if c, ok := f.Args[0].(*expression.Column); ok && c.ColName.L == indexScan.Index.Columns[indexScan.accessEqualCount].Name.L {
+			if c, ok := f.Args[0].(*expression.Column); ok {
 				if _, ok := f.Args[1].(*expression.Constant); ok {
-					accessConds = append(accessConds, cond)
-					indexScan.accessEqualCount++
-					conditions = append(conditions[:i], conditions[i+1:]...)
-					continue
+					for i, col := range indexScan.Index.Columns {
+						if col.Name.L == c.ColName.L {
+							accessConds[i] = cond
+							break
+						}
+					}
 				}
 			} else if _, ok := f.Args[0].(*expression.Constant); ok {
-				if c, ok := f.Args[1].(*expression.Column); ok && c.ColName.L == indexScan.Index.Columns[indexScan.accessEqualCount].Name.L {
-					accessConds = append(accessConds, cond)
-					indexScan.accessEqualCount++
-					conditions = append(conditions[:i], conditions[i+1:]...)
-					continue
+				if c, ok := f.Args[1].(*expression.Column); ok {
+					for i, col := range indexScan.Index.Columns {
+						if col.Name.L == c.ColName.L {
+							accessConds[i] = cond
+							break
+						}
+					}
 				}
 			}
+		}
+	}
+	for i, cond := range accessConds {
+		if cond == nil {
+			accessConds = accessConds[:i]
+			indexScan.accessEqualCount = i
+			break
+		}
+		if i == len(accessConds)-1 {
+			indexScan.accessEqualCount = len(accessConds)
 		}
 	}
 	for _, cond := range conditions {
@@ -212,7 +227,7 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 			filterConds = append(filterConds, cond)
 		}
 	}
-	return
+	return accessConds, filterConds
 }
 
 // detachTableScanConditions distinguishes between access conditions and filter conditions from conditions.

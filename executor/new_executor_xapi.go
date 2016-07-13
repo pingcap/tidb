@@ -308,9 +308,6 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResul
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: proto.Int64(e.table.Meta().ID),
 	}
-	for _, c := range e.indexPlan.Columns {
-		log.Warnf("cc %s %s", c.String(), c.Name.L)
-	}
 	selTableReq.TableInfo.Columns = xapi.ColumnsToProto(e.indexPlan.Columns, e.table.Meta().PKIsHandle)
 	for _, h := range handles {
 		if h == math.MaxInt64 {
