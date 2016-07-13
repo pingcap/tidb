@@ -164,6 +164,7 @@ import (
 	full		"FULL"
 	fulltext	"FULLTEXT"
 	ge		">="
+	getLock		"GET_LOCK"
 	global		"GLOBAL"
 	grant		"GRANT"
 	grants		"GRANTS"
@@ -247,6 +248,7 @@ import (
 	redundant	"REDUNDANT"
 	references	"REFERENCES"
 	regexpKwd	"REGEXP"
+	releaseLock	"RELEASE_LOCK"
 	repeat		"REPEAT"
 	repeatable	"REPEATABLE"
 	replace		"REPLACE"
@@ -1966,7 +1968,7 @@ NotKeywordToken:
 |	"IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM" | "MAX" | "MICROSECOND" | "MIN"
 |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" | "SUBDATE"
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION"
-|	"WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND" | "STATS_PERSISTENT"
+|	"WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND" | "STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK"
 
 /************************************************************************************
  *
@@ -2764,6 +2766,14 @@ FunctionCallNonKeyword:
 |	"ROUND" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+	}
+|	"GET_LOCK" '(' Expression ',' Expression ')' 
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
+	}
+|	"RELEASE_LOCK" '(' Expression ')' 
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 
 DateArithOpt:
@@ -3656,21 +3666,6 @@ SetStmt:
 	{
 		$$ = &ast.SetStmt{Variables: $2.([]*ast.VariableAssignment)}
 	}
-|	"SET" "NAMES" StringName
-	{
-		$$ = &ast.SetCharsetStmt{Charset: $3.(string)} 
-	}
-|	"SET" "NAMES" StringName "COLLATE" StringName
-	{
-		$$ = &ast.SetCharsetStmt{
-			Charset: $3.(string),
-			Collate: $5.(string),
-		} 
-	}
-|	"SET" CharsetKw StringName
-	{
-		$$ = &ast.SetCharsetStmt{Charset: $3.(string)} 
-	}
 |	"SET" "PASSWORD" eq PasswordOpt
 	{
 		$$ = &ast.SetPwdStmt{Password: $4.(string)}
@@ -3747,6 +3742,28 @@ VariableAssignment:
 		v := $1.(string)
 		v = strings.TrimPrefix(v, "@")
 		$$ = &ast.VariableAssignment{Name: v, Value: $3.(ast.ExprNode)}
+	}
+|	"NAMES" StringName
+	{
+		$$ = &ast.VariableAssignment{
+			Name: ast.SetNames, 
+			Value: ast.NewValueExpr($2.(string)),
+		}
+	}
+|	"NAMES" StringName "COLLATE" StringName
+	{
+		$$ = &ast.VariableAssignment{
+			Name: ast.SetNames, 
+			Value: ast.NewValueExpr($2.(string)),
+			ExtendValue: ast.NewValueExpr($4.(string)),
+		}
+	}
+|	CharsetKw StringName
+	{
+		$$ = &ast.VariableAssignment{
+			Name: ast.SetNames, 
+			Value: ast.NewValueExpr($2.(string)),
+		}
 	}
 
 VariableAssignmentList:

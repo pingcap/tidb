@@ -160,7 +160,8 @@ func (do *Domain) tryReload() {
 
 const minReloadTimeout = 20 * time.Second
 
-func (do *Domain) reload() error {
+// Reload reloads InfoSchema.
+func (do *Domain) Reload() error {
 	// lock here for only once at same time.
 	do.m.Lock()
 	defer do.m.Unlock()
@@ -206,7 +207,7 @@ func (do *Domain) reload() error {
 
 func (do *Domain) mustReload() {
 	// if reload error, we will terminate whole program to guarantee data safe.
-	err := do.reload()
+	err := do.Reload()
 	if err != nil {
 		log.Fatalf("[ddl] reload schema err %v", errors.ErrorStack(err))
 	}
@@ -222,7 +223,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	for {
 		select {
 		case <-ticker.C:
-			err := do.reload()
+			err := do.Reload()
 			// we may close store in test, but the domain load schema loop is still checking,
 			// so we can't panic for ErrDBClosed and just return here.
 			if terror.ErrorEqual(err, localstore.ErrDBClosed) {

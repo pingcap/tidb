@@ -185,20 +185,24 @@ func (n *aggregateFuncExpr) updateFirst(ctx *selectContext, args []types.Datum) 
 }
 
 func (n *aggregateFuncExpr) updateSum(ctx *selectContext, args []types.Datum) error {
-	for _, a := range args {
-		if a.IsNull() {
-			return nil
-		}
+	if len(args) != 1 {
+		// This should not happen. The length of argument list is already checked in the early stage.
+		// This is just in case of error.
+		return errors.Errorf("Wrong number of argument for sum, need 1 but get %d", len(args))
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return nil
 	}
 	aggItem := n.getAggItem()
 	if !aggItem.evaluated {
-		aggItem.value = args[0]
+		aggItem.value = arg
 		aggItem.evaluated = true
 		aggItem.count = 1
 		return nil
 	}
 	var err error
-	aggItem.value, err = xeval.ComputeArithmetic(tipb.ExprType_Plus, args[0], aggItem.value)
+	aggItem.value, err = xeval.ComputeArithmetic(tipb.ExprType_Plus, arg, aggItem.value)
 	if err != nil {
 		return errors.Trace(err)
 	}

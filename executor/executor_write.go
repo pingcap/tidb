@@ -14,18 +14,15 @@
 package executor
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -87,9 +84,8 @@ func (e *UpdateExec) Next() (*Row, error) {
 		}
 		offset := e.getTableOffset(tbl)
 		handle := entry.Handle
-		oldData := row.Data[offset : offset+len(tbl.Cols())]
-		newTableData := newData[offset : offset+len(tbl.Cols())]
-
+		oldData := row.Data[offset : offset+len(tbl.WritableCols())]
+		newTableData := newData[offset : offset+len(tbl.WritableCols())]
 		_, ok := e.updatedRowKeys[tbl][handle]
 		if ok {
 			// Each matching row is updated once, even if it matches the conditions multiple times.
@@ -150,7 +146,12 @@ func (e *UpdateExec) getTableOffset(t table.Table) int {
 		if field.Table.Name.L == t.Meta().Name.L {
 			return i
 		}
-		i += len(field.Table.Columns)
+		for _, col := range field.Table.Columns {
+			if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+				continue
+			}
+			i++
+		}
 	}
 	return 0
 }
@@ -375,10 +376,6 @@ func isMatchTableName(entry *RowKeyEntry, tblMap map[int64][]string) bool {
 	}
 
 	return false
-}
-
-func (e *DeleteExec) getTable(ctx context.Context, tableName *ast.TableName) (table.Table, error) {
-	return sessionctx.GetDomain(ctx).InfoSchema().TableByName(tableName.Schema, tableName.Name)
 }
 
 func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data []types.Datum) error {
@@ -780,10 +777,9 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 			newData[i] = c
 			continue
 		}
-		var val types.Datum
-		val, err = evaluator.Eval(e.ctx, asgn.Expr)
-		if err != nil {
-			return errors.Trace(err)
+		val, err1 := evaluator.Eval(e.ctx, asgn.Expr)
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 		newData[i] = val
 	}
@@ -793,8 +789,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 	return nil
 }
 
-func findColumnByName(t table.Table, name string) (*table.Column, error) {
-	_, tableName, colName := splitQualifiedName(name)
+func findColumnByName(t table.Table, tableName, colName string) (*table.Column, error) {
 	if len(tableName) > 0 && tableName != t.Meta().Name.O {
 		return nil, errors.Errorf("unknown field %s.%s", tableName, colName)
 	}
@@ -811,7 +806,7 @@ func getOnDuplicateUpdateColumns(assignList []*ast.Assignment, t table.Table) (m
 
 	for _, v := range assignList {
 		col := v.Column
-		c, err := findColumnByName(t, joinQualifiedName("", col.Table.L, col.Name.L))
+		c, err := findColumnByName(t, col.Table.L, col.Name.L)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -922,38 +917,4 @@ func (e *ReplaceExec) Next() (*Row, error) {
 	}
 	e.finished = true
 	return nil, nil
-}
-
-// SplitQualifiedName splits an identifier name to db, table and field name.
-func splitQualifiedName(name string) (db string, table string, field string) {
-	seps := strings.Split(name, ".")
-
-	l := len(seps)
-	switch l {
-	case 1:
-		// `name` is field.
-		field = seps[0]
-	case 2:
-		// `name` is `table.field`.
-		table, field = seps[0], seps[1]
-	case 3:
-		// `name` is `db.table.field`.
-		db, table, field = seps[0], seps[1], seps[2]
-	default:
-		// `name` is `db.table.field`.
-		db, table, field = seps[l-3], seps[l-2], seps[l-1]
-	}
-
-	return
-}
-
-// JoinQualifiedName converts db, table, field to a qualified name.
-func joinQualifiedName(db string, table string, field string) string {
-	if len(db) > 0 {
-		return fmt.Sprintf("%s.%s.%s", db, table, field)
-	} else if len(table) > 0 {
-		return fmt.Sprintf("%s.%s", table, field)
-	} else {
-		return field
-	}
 }

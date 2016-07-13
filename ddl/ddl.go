@@ -80,6 +80,8 @@ var (
 	ErrCantDropFieldOrKey = terror.ClassDDL.New(codeCantDropFieldOrKey, "can't drop field; check that column/key exists")
 	// ErrInvalidOnUpdate returns for invalid ON UPDATE clause.
 	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
+	// ErrTooLongIdent returns for too long name of database/table/column.
+	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, "Identifier name too long")
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -294,6 +296,10 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 		return errors.Trace(infoschema.ErrDatabaseExists)
 	}
 
+	if err = checkTooLongSchema(schema); err != nil {
+		return errors.Trace(err)
+	}
+
 	schemaID, err := d.genGlobalID()
 	if err != nil {
 		return errors.Trace(err)
@@ -334,6 +340,20 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 	err = d.doDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
+}
+
+func checkTooLongSchema(schema model.CIStr) error {
+	if len(schema.L) > mysql.MaxDatabaseNameLength {
+		return ErrTooLongIdent.Gen("too long schema %s", schema.L)
+	}
+	return nil
+}
+
+func checkTooLongTable(table model.CIStr) error {
+	if len(table.L) > mysql.MaxTableNameLength {
+		return ErrTooLongIdent.Gen("too long table %s", table.L)
+	}
+	return nil
 }
 
 func getDefaultCharsetAndCollate() (string, string) {
@@ -643,6 +663,15 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
+	for _, colDef := range colDefs {
+		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
+			return ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name.L)
+		}
+	}
+	return nil
+}
+
 func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
 	if name == "" {
 		return nil
@@ -817,7 +846,13 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	if is.TableExists(ident.Schema, ident.Name) {
 		return errors.Trace(infoschema.ErrTableExists)
 	}
+	if err = checkTooLongTable(ident.Name); err != nil {
+		return errors.Trace(err)
+	}
 	if err = checkDuplicateColumn(colDefs); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkTooLongColumn(colDefs); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -965,6 +1000,10 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
 		return infoschema.ErrColumnExists.Gen("column %s already exists", colName)
+	}
+
+	if len(colName) > mysql.MaxColumnNameLength {
+		return ErrTooLongIdent.Gen("too long column %s", colName)
 	}
 
 	// ingore table constraints now, maybe return error later
@@ -1212,6 +1251,7 @@ const (
 	codeCantRemoveAllFields = 1090
 	codeCantDropFieldOrKey  = 1091
 	codeInvalidOnUpdate     = 1294
+	codeTooLongIdent        = 1059
 
 	codeBlobKeyWithoutLength = 1170
 	codeIncorrectPrefixKey   = 1089
@@ -1225,6 +1265,7 @@ func init() {
 		codeInvalidOnUpdate:      mysql.ErrInvalidOnUpdate,
 		codeBlobKeyWithoutLength: mysql.ErrBlobKeyWithoutLength,
 		codeIncorrectPrefixKey:   mysql.ErrWrongSubKey,
+		codeTooLongIdent:         mysql.ErrTooLongIdent,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLERrCodes
 }

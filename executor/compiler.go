@@ -33,6 +33,13 @@ type Compiler struct {
 // If it is not supported, the node will be converted to old statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
 	ast.SetFlag(node)
+	if _, ok := node.(*ast.UpdateStmt); ok {
+		sVars := variable.GetSessionVars(ctx)
+		sVars.InUpdateStmt = true
+		defer func() {
+			sVars.InUpdateStmt = false
+		}()
+	}
 
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	if err := plan.Preprocess(node, is, ctx); err != nil {
@@ -44,13 +51,6 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 	}
 	sb := NewSubQueryBuilder(is)
 
-	if _, ok := node.(*ast.UpdateStmt); ok {
-		sVars := variable.GetSessionVars(ctx)
-		sVars.InUpdateStmt = true
-		defer func() {
-			sVars.InUpdateStmt = false
-		}()
-	}
 	p, err := plan.Optimize(ctx, node, sb, is)
 	if err != nil {
 		return nil, errors.Trace(err)
