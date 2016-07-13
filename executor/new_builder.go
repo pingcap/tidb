@@ -17,7 +17,6 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -192,7 +191,6 @@ func (b *executorBuilder) buildNewTableScan(v *plan.PhysicalTableScan, s *plan.S
 }
 
 func (b *executorBuilder) buildNewIndexScan(v *plan.PhysicalIndexScan, s *plan.Selection) Executor {
-	log.Warnf("index %d", len(v.AccessCondition))
 	txn, err := b.ctx.GetTxn(false)
 	if err != nil {
 		b.err = err

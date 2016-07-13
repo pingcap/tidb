@@ -15,7 +15,6 @@ package plan
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
@@ -54,9 +53,6 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 			return nil, errors.Trace(err)
 		}
 		p = logic.Convert2PhysicalPlan()
-		for np := p; len(np.GetChildren()) > 0; np = np.GetChildByIndex(0) {
-			log.Warnf("cccc %T", np.GetChildByIndex(0))
-		}
 	}
 	err := Refine(p)
 	if err != nil {

@@ -17,7 +17,6 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -1037,10 +1036,6 @@ func (e *ApplyExec) Next() (*Row, error) {
 			idx := col.Index
 			col.SetValue(&srcRow.Data[idx])
 		}
-		log.Warnf("src row")
-		for _, d := range srcRow.Data {
-			log.Warnf("d %v", d.GetValue())
-		}
 		innerRow, err := e.innerExec.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1066,10 +1061,6 @@ func (e *ApplyExec) Next() (*Row, error) {
 			e.checker.dataHasNull = false
 			e.innerExec.Close()
 			return srcRow, nil
-		}
-		log.Warnf("inner row")
-		for _, d := range innerRow.Data {
-			log.Warnf("d %v", d.GetValue())
 		}
 		finished, data, err := e.checker.Check(srcRow.Data)
 		if err != nil {

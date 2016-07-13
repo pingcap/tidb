@@ -13,13 +13,9 @@
 
 package plan
 
-import "github.com/ngaut/log"
-
 // Convert2PhysicalPlan implements Physical Convert2PhysicalPlan interface.
 func (p *DataSource) Convert2PhysicalPlan() (np PhysicalPlan) {
-	log.Warnf("wtf")
 	indices, includeTableScan := availableIndices(p.table)
-	log.Warnf("res %v %v", includeTableScan, len(indices))
 	if includeTableScan && len(indices) == 0 {
 		np = &PhysicalTableScan{
 			Table:       p.Table,
@@ -64,7 +60,6 @@ func (p *Aggregation) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
 	child.SetParents(p)
-	log.Warnf("child %T", child)
 	return p
 }
 
@@ -92,7 +87,6 @@ func (p *Projection) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
 	child.SetParents(p)
-	log.Warnf("child %T", child)
 	return p
 }
 
@@ -152,7 +146,6 @@ func (p *Trim) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
 	child.SetParents(p)
-	log.Warnf("child %T %T", child, child.GetChildByIndex(0))
 	return p
 }
 

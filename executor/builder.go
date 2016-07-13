@@ -670,9 +670,6 @@ func (b *executorBuilder) buildUnionScanExec(src Executor) *UnionScanExec {
 
 func (b *executorBuilder) buildNewUnionScanExec(src Executor, condition expression.Expression) *UnionScanExec {
 	us := &UnionScanExec{ctx: b.ctx, Src: src}
-	if condition != nil {
-		log.Warnf("un %s", condition.ToString())
-	}
 	switch x := src.(type) {
 	case *NewXSelectTableExec:
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
@@ -689,9 +686,6 @@ func (b *executorBuilder) buildNewUnionScanExec(src Executor, condition expressi
 		}
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.newCondition = condition
-		if condition != nil {
-			log.Warnf("un %s", condition.ToString())
-		}
 		us.newBuildAndSortAddedRows(x.table, x.asName)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", src)

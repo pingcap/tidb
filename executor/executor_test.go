@@ -1333,7 +1333,7 @@ func (s *testSuite) TestDirtyTransaction(c *C) {
 	tk.MustQuery("select * from t order by b desc, a desc").Check(testkit.Rows("6 8", "4 8", "7 6", "1 5"))
 	// Add deleted row back.
 	tk.MustExec("insert t values (2, 3), (3, 4)")
-	tk.MustQuery("select * from t order by b, a").Check(testkit.Rows("2 3", "3 4", "1 5", "7 6", "4 8", "6 8"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 3", "3 4", "1 5", "7 6", "4 8", "6 8"))
 	tk.MustQuery("select * from t order by a desc").Check(testkit.Rows("7 6", "6 8", "4 8", "3 4", "2 3", "1 5"))
 	tk.MustQuery("select * from t order by b, a").Check(testkit.Rows("2 3", "3 4", "1 5", "7 6", "4 8", "6 8"))
 	tk.MustQuery("select * from t order by b desc, a desc").Check(testkit.Rows("6 8", "4 8", "7 6", "1 5", "3 4", "2 3"))

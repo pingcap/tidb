@@ -366,7 +366,6 @@ func availableIndices(table *ast.TableName) (indices []*model.IndexInfo, include
 			usableHints = append(usableHints, hint)
 		}
 	}
-	log.Warnf("hints %d", len(usableHints))
 	if len(usableHints) == 0 {
 		return table.TableInfo.Indices, true
 	}

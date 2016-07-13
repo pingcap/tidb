@@ -17,7 +17,6 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -171,7 +170,6 @@ func buildSelection(p *Selection) error {
 		err = buildNewTableRange(v)
 	case *PhysicalIndexScan:
 		v.AccessCondition, p.Conditions = detachIndexScanConditions(p.Conditions, v)
-		log.Warnf("p cond %d %d", len(p.Conditions), len(v.AccessCondition))
 		err = buildNewIndexRange(v)
 	}
 	return errors.Trace(err)
@@ -198,7 +196,6 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 			}
 		}
 	}
-	log.Warnf("eqc %d", indexScan.accessEqualCount)
 	for _, cond := range conditions {
 		if indexScan.accessEqualCount < len(indexScan.Index.Columns) {
 			checker := &conditionChecker{
