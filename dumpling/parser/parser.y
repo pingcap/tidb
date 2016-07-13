@@ -164,6 +164,7 @@ import (
 	full		"FULL"
 	fulltext	"FULLTEXT"
 	ge		">="
+	getLock		"GET_LOCK"
 	global		"GLOBAL"
 	grant		"GRANT"
 	grants		"GRANTS"
@@ -247,6 +248,7 @@ import (
 	redundant	"REDUNDANT"
 	references	"REFERENCES"
 	regexpKwd	"REGEXP"
+	releaseLock	"RELEASE_LOCK"
 	repeat		"REPEAT"
 	repeatable	"REPEATABLE"
 	replace		"REPLACE"
@@ -1966,7 +1968,7 @@ NotKeywordToken:
 |	"IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM" | "MAX" | "MICROSECOND" | "MIN"
 |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" | "SUBDATE"
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION"
-|	"WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND" | "STATS_PERSISTENT"
+|	"WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND" | "STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK"
 
 /************************************************************************************
  *
@@ -2764,6 +2766,14 @@ FunctionCallNonKeyword:
 |	"ROUND" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+	}
+|	"GET_LOCK" '(' Expression ',' Expression ')' 
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
+	}
+|	"RELEASE_LOCK" '(' Expression ')' 
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 
 DateArithOpt:
