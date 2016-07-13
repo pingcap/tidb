@@ -129,10 +129,13 @@ func (e *NewXSelectIndexExec) fetchHandles() ([]int64, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Save the index order.
-	e.indexOrder = make(map[int64]int)
-	for i, h := range handles {
-		e.indexOrder[h] = i
+	// TODO: support out of order when implement cbo
+	if !e.indexPlan.OutOfOrder {
+		// Save the index order.
+		e.indexOrder = make(map[int64]int)
+		for i, h := range handles {
+			e.indexOrder[h] = i
+		}
 	}
 	return handles, nil
 }
