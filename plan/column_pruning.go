@@ -184,10 +184,10 @@ func (p *NewUnion) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Co
 			}
 		}
 		childOuterUsedCols, err := child.PruneColumnsAndResolveIndices(newSchema)
-		outerUsedCols = append(outerUsedCols, childOuterUsedCols...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		outerUsedCols = append(outerUsedCols, childOuterUsedCols...)
 	}
 	return outerUsedCols, nil
 }
@@ -260,10 +260,10 @@ func (p *Join) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 		}
 	}
 	outerLeft, err := p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(leftCols)
-	outerUsedCols = append(outerUsedCols, outerLeft...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	outerUsedCols = append(outerUsedCols, outerLeft...)
 	for i, leftCond := range p.LeftConditions {
 		p.LeftConditions[i], err = retrieveColumnsInExpression(leftCond, p.GetChildByIndex(0).GetSchema())
 		if err != nil {
@@ -271,10 +271,10 @@ func (p *Join) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 		}
 	}
 	outerRight, err := p.GetChildByIndex(1).(LogicalPlan).PruneColumnsAndResolveIndices(rightCols)
-	outerUsedCols = append(outerUsedCols, outerRight...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	outerUsedCols = append(outerUsedCols, outerRight...)
 	for i, rightCond := range p.RightConditions {
 		p.RightConditions[i], err = retrieveColumnsInExpression(rightCond, p.GetChildByIndex(1).GetSchema())
 		if err != nil {
@@ -303,7 +303,7 @@ func (p *Join) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 }
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
-// e.g. For query select b.c ,(select count(*) from a where a.id = b.id) from b. Its plan is Projection->Apply->TableScan.
+// e.g. For query select b.c, (select count(*) from a where a.id = b.id) from b. Its plan is Projection->Apply->TableScan.
 // The schema of b is (a,b,c,id). When Pruning Apply, the parentUsedCols is (c, extra), outerSchema is (a,b,c,id).
 // Then after pruning inner plan, the childOuterUsedCols schema in apply becomes (id).
 // Now there're two columns in parentUsedCols, c is the column from Apply's child ---- TableScan, but extra isn't.
@@ -325,11 +325,11 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 		}
 	}
 	childOuterUsedCols, err := child.PruneColumnsAndResolveIndices(newUsedCols)
-	for _, col := range p.OuterSchema {
-		col.Index = p.GetChildByIndex(0).GetSchema().GetIndex(col)
-	}
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	for _, col := range p.OuterSchema {
+		col.Index = p.GetChildByIndex(0).GetSchema().GetIndex(col)
 	}
 	combinedSchema := append(p.GetChildByIndex(0).GetSchema().DeepCopy(), p.InnerPlan.GetSchema().DeepCopy()...)
 	if p.Checker == nil {
