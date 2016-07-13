@@ -16,18 +16,24 @@ package statistics
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+)
+
+const (
+	defaultBucketCount = 256
+
+	pseudoRowCount    = 10000
+	pseudoEqualRate   = 10
+	pseudoLessRate    = 3
+	pseudoBetweenRate = 4
+	pseudoTimestamp   = 1
 )
 
 // Column represents statistics for a column.
@@ -64,6 +70,9 @@ func (c *Column) String() string {
 
 // EqualRowCount estimates the row count where the column equals to value.
 func (c *Column) EqualRowCount(value types.Datum) (int64, error) {
+	if len(c.Numbers) == 0 {
+		return pseudoRowCount / pseudoEqualRate, nil
+	}
 	index, match, err := c.search(value)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -80,6 +89,9 @@ func (c *Column) EqualRowCount(value types.Datum) (int64, error) {
 
 // LessRowCount estimates the row count where the column less than value.
 func (c *Column) LessRowCount(value types.Datum) (int64, error) {
+	if len(c.Numbers) == 0 {
+		return pseudoRowCount / pseudoLessRate, nil
+	}
 	index, match, err := c.search(value)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -99,8 +111,11 @@ func (c *Column) LessRowCount(value types.Datum) (int64, error) {
 	return (prevNumber + lessThanBucketValueCount) / 2, nil
 }
 
-// BetweenCount estimate the row count where column greater or equal to a and less than b.
-func (c *Column) BetweenCount(a, b types.Datum) (int64, error) {
+// BetweenRowCount estimate the row count where column greater or equal to a and less than b.
+func (c *Column) BetweenRowCount(a, b types.Datum) (int64, error) {
+	if len(c.Numbers) == 0 {
+		return pseudoRowCount / pseudoBetweenRate, nil
+	}
 	lessCountA, err := c.LessRowCount(a)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -144,11 +159,10 @@ func (c *Column) search(target types.Datum) (index int, match bool, err error) {
 
 // Table represents statistics for a table.
 type Table struct {
-	info        *model.TableInfo
-	TS          int64 // build timestamp.
-	Columns     []*Column
-	Count       int64 // Total row count in a table.
-	BucketCount int64 // Number of histogram bucket.
+	info    *model.TableInfo
+	TS      int64 // build timestamp.
+	Columns []*Column
+	Count   int64 // Total row count in a table.
 }
 
 // String implements Stringer interface.
@@ -186,7 +200,7 @@ func (t *Table) ToPB() (*TablePB, error) {
 }
 
 // buildColumn builds column statistics from samples.
-func (t *Table) buildColumn(offset int, samples []types.Datum) error {
+func (t *Table) buildColumn(offset int, samples []types.Datum, bucketCount int64) error {
 	err := types.SortDatums(samples)
 	if err != nil {
 		return errors.Trace(err)
@@ -199,11 +213,11 @@ func (t *Table) buildColumn(offset int, samples []types.Datum) error {
 	col := &Column{
 		ID:      ci.ID,
 		NDV:     estimatedNDV,
-		Numbers: make([]int64, 1, t.BucketCount),
-		Values:  make([]types.Datum, 1, t.BucketCount),
-		Repeats: make([]int64, 1, t.BucketCount),
+		Numbers: make([]int64, 1, bucketCount),
+		Values:  make([]types.Datum, 1, bucketCount),
+		Repeats: make([]int64, 1, bucketCount),
 	}
-	valuesPerBucket := t.Count/t.BucketCount + 1
+	valuesPerBucket := t.Count/bucketCount + 1
 
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := t.Count / int64(len(samples))
@@ -271,14 +285,13 @@ func estimateNDV(count int64, samples []types.Datum) (int64, error) {
 // NewTable creates a table statistics.
 func NewTable(ti *model.TableInfo, ts, count, numBuckets int64, columnSamples [][]types.Datum) (*Table, error) {
 	t := &Table{
-		info:        ti,
-		TS:          ts,
-		Count:       count,
-		BucketCount: numBuckets,
-		Columns:     make([]*Column, len(columnSamples)),
+		info:    ti,
+		TS:      ts,
+		Count:   count,
+		Columns: make([]*Column, len(columnSamples)),
 	}
 	for i, sample := range columnSamples {
-		err := t.buildColumn(i, sample)
+		err := t.buildColumn(i, sample, defaultBucketCount)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -327,88 +340,18 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 	return t, nil
 }
 
-const (
-	pseudoRowCount    = 10000
-	pseudoBucketCount = 5
-	pseudoTimestamp   = 1
-)
-
 // PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
 func PseudoTable(ti *model.TableInfo) *Table {
 	t := &Table{info: ti}
 	t.TS = pseudoTimestamp
 	t.Count = pseudoRowCount
-	t.BucketCount = pseudoBucketCount
 	t.Columns = make([]*Column, len(ti.Columns))
 	for i, v := range ti.Columns {
-		numbers := pseudoNumbers()
 		c := &Column{
-			ID:      v.ID,
-			NDV:     pseudoRowCount / 2,
-			Numbers: numbers,
-			Values:  pseudoValues(v, numbers),
-			Repeats: pseudoRepeats,
+			ID:  v.ID,
+			NDV: pseudoRowCount / 2,
 		}
 		t.Columns[i] = c
 	}
 	return t
-}
-
-func pseudoNumbers() []int64 {
-	numbers := make([]int64, pseudoBucketCount)
-	for i := range numbers {
-		numbers[i] = int64(pseudoRowCount/pseudoBucketCount*(i+1) - 1)
-	}
-	return numbers
-}
-
-var pseudoStrValues = []types.Datum{
-	types.NewStringDatum("/"),
-	types.NewStringDatum("9"),
-	types.NewStringDatum("Z"),
-	types.NewStringDatum("z"),
-	types.NewStringDatum("~"),
-}
-
-var pseudoRepeats = []int64{2, 2, 2, 2, 2}
-
-func pseudoValues(col *model.ColumnInfo, numbers []int64) []types.Datum {
-	values := make([]types.Datum, len(numbers))
-	now := time.Now()
-	for i := range values {
-		number := numbers[i]
-		switch col.Tp {
-		case mysql.TypeTiny:
-			values[i] = types.NewIntDatum(int64(i))
-		case mysql.TypeLong, mysql.TypeLonglong, mysql.TypeShort, mysql.TypeInt24:
-			values[i] = types.NewIntDatum(number)
-		case mysql.TypeFloat:
-			values[i] = types.NewFloat32Datum(float32(number))
-		case mysql.TypeDouble:
-			values[i] = types.NewFloat64Datum(float64(number))
-		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-			values[i] = pseudoStrValues[i]
-		case mysql.TypeNewDecimal:
-			values[i] = types.NewDecimalDatum(mysql.NewDecimalFromInt(number, 0))
-		case mysql.TypeYear:
-			year := now.Year() + i - len(numbers) + 1
-			values[i] = types.NewIntDatum(int64(year))
-		case mysql.TypeDuration:
-			dur := time.Hour * time.Duration(i+1)
-			values[i] = types.NewDurationDatum(mysql.Duration{Duration: dur})
-		case mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			t := now.AddDate(0, 0, -i)
-			values[i] = types.NewDatum(mysql.Time{Time: t, Type: col.Tp})
-		case mysql.TypeBit:
-			val := uint64(1) << uint64(i)
-			values[i] = types.NewDatum(mysql.Bit{Value: val, Width: 8})
-		case mysql.TypeEnum:
-			values[i] = types.NewDatum(mysql.Enum{Name: strconv.Itoa(i), Value: uint64(i)})
-		case mysql.TypeSet:
-			values[i] = types.NewDatum(mysql.Set{Name: strconv.Itoa(i), Value: uint64(i)})
-		default:
-			log.Errorf("unknown type %d", col.Tp)
-		}
-	}
-	return values
 }

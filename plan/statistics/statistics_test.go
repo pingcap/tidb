@@ -79,6 +79,18 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	bucketCount := int64(256)
 	t, err := NewTable(tblInfo, timestamp, s.count, bucketCount, [][]types.Datum{s.samples})
 	c.Check(err, IsNil)
+
+	col := t.Columns[0]
+	count, err := col.EqualRowCount(types.NewIntDatum(1000))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(2))
+	count, err = col.LessRowCount(types.NewIntDatum(2000))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(19955))
+	count, err = col.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(5075))
+
 	str := t.String()
 	log.Debug(str)
 	c.Check(len(str), Greater, 0)
@@ -97,58 +109,23 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 
 func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	ti := &model.TableInfo{}
-	tps := []uint8{mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeFloat, mysql.TypeDouble,
-		mysql.TypeTimestamp, mysql.TypeLonglong, mysql.TypeInt24, mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime,
-		mysql.TypeYear, mysql.TypeNewDate, mysql.TypeVarchar, mysql.TypeBit, mysql.TypeNewDecimal, mysql.TypeEnum,
-		mysql.TypeSet, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob, mysql.TypeInt24}
-	for i, v := range tps {
-		ti.Columns = append(ti.Columns, &model.ColumnInfo{
-			ID:        int64(i + 1),
-			FieldType: *types.NewFieldType(v),
-		})
-	}
-	tbl := PseudoTable(ti)
-	c.Assert(tbl.Count, Greater, int64(0))
-	c.Assert(tbl.BucketCount, Greater, int64(0))
-	c.Assert(tbl.TS, Greater, int64(0))
-	for _, col := range tbl.Columns {
-		c.Assert(col.ID, Greater, int64(0))
-		c.Assert(col.NDV, Greater, int64(0))
-		c.Assert(len(col.Numbers), Greater, 0)
-		for i := 1; i < len(col.Numbers); i++ {
-			c.Assert(col.Numbers[i], Greater, col.Numbers[i-1])
-		}
-		c.Assert(len(col.Values), Greater, 0)
-		var allNull = true
-		for i := 0; i < len(col.Values); i++ {
-			if !col.Values[i].IsNull() {
-				allNull = false
-			}
-		}
-		c.Assert(allNull, IsFalse)
-		c.Assert(len(col.Repeats), Greater, 0)
-	}
-}
-
-func (s *testStatisticsSuite) TestRowCount(c *C) {
-	ti := &model.TableInfo{}
-	ci := &model.ColumnInfo{
+	ti.Columns = append(ti.Columns, &model.ColumnInfo{
 		ID:        1,
 		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-	}
-	ti.Columns = []*model.ColumnInfo{ci}
+	})
 	tbl := PseudoTable(ti)
+	c.Assert(tbl.Count, Greater, int64(0))
+	c.Assert(tbl.TS, Greater, int64(0))
 	col := tbl.Columns[0]
-	count, err := col.EqualRowCount(types.NewIntDatum(1999))
+	c.Assert(col.ID, Greater, int64(0))
+	c.Assert(col.NDV, Greater, int64(0))
+	count, err := col.LessRowCount(types.NewIntDatum(100))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, int64(3))
-	count, err = col.LessRowCount(types.NewIntDatum(5999))
+	c.Assert(count, Equals, int64(3333))
+	count, err = col.EqualRowCount(types.NewIntDatum(1000))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, int64(5997))
-	count, err = col.BetweenCount(types.NewIntDatum(3500), types.NewDatum(5500))
+	c.Assert(count, Equals, int64(1000))
+	count, err = col.BetweenRowCount(types.NewIntDatum(1000), types.NewIntDatum(5000))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, int64(2000))
-	count, err = col.BetweenCount(types.NewIntDatum(500), types.NewDatum(1500))
-	c.Assert(err, IsNil)
-	c.Assert(count, Equals, int64(667))
+	c.Assert(count, Equals, int64(2500))
 }
