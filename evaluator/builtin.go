@@ -124,7 +124,7 @@ var Funcs = map[string]Func{
 	// get_lock() and release_lock() is parsed but do nothing.
 	// It is used for preventing error in Ruby's activerecord migrations.
 	"get_lock":     {builtinLock, 2, 2},
-	"release_lock": {builtinLock, 1, 1},
+	"release_lock": {builtinReleaseLock, 1, 1},
 
 	// only used by new plan
 	ast.AndAnd:     {builtinAndAnd, 2, 2},

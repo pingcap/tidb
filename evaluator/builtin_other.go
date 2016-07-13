@@ -486,7 +486,15 @@ func builtinGetVar(args []types.Datum, ctx context.Context) (types.Datum, error)
 }
 
 // The lock function will do nothing.
+// Warning: get_lock() function is parsed but ignored.
 func builtinLock(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	d.SetInt64(1)
+	return d, nil
+}
+
+// The release lock function will do nothing.
+// Warning: release_lock() function is parsed but ignored.
+func builtinReleaseLock(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	d.SetInt64(1)
 	return d, nil
 }
