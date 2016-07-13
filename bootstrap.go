@@ -195,7 +195,7 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGloablVariablesTable)
 	// Create TiDB table.
 	mustExecute(s, CreateTiDBTable)
-	// Create help table
+	// Create help table.
 	mustExecute(s, CreateHelpTopic)
 }
 
