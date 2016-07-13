@@ -612,7 +612,6 @@ func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType)
 			ran.LowVal[i].SetBytes([]byte{})
 			continue
 		}
-		log.Warnf("low val %v", ran.LowVal[i].GetValue())
 		converted, err := ran.LowVal[i].ConvertTo(fieldTypes[i])
 		if err != nil {
 			return errors.Trace(err)

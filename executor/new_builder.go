@@ -98,14 +98,15 @@ func (b *executorBuilder) toPBExpr(conditions []expression.Expression, tbl *mode
 }
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
-	ts, ok := v.GetChildByIndex(0).(*plan.PhysicalTableScan)
+	child := v.GetChildByIndex(0)
 	var src Executor
-	if ok {
-		src = b.buildNewTableScan(ts, v)
-	} else if is, ok := v.GetParentByIndex(0).(*plan.PhysicalIndexScan); ok {
-		src = b.buildNewIndexScan(is, v)
-	} else {
-		src = b.build(v.GetChildByIndex(0))
+	switch x := child.(type) {
+	case *plan.PhysicalTableScan:
+		src = b.buildNewTableScan(x, v)
+	case *plan.PhysicalIndexScan:
+		src = b.buildNewIndexScan(x, v)
+	default:
+		src = b.build(x)
 	}
 
 	if len(v.Conditions) == 0 {

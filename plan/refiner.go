@@ -175,30 +175,40 @@ func buildSelection(p *Selection) error {
 	return errors.Trace(err)
 }
 
+// getEQFunctionOffset judge if the expression is a eq function like A = 1 where a is an index.
+// If so, it will return the offset of A in index columns. e.g. for index(C,B,A), A's offset is 2.
+func getEQFunctionOffset(expr expression.Expression, cols []*model.IndexColumn) int {
+	f, ok := expr.(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.EQ {
+		return -1
+	}
+	if c, ok := f.Args[0].(*expression.Column); ok {
+		if _, ok := f.Args[1].(*expression.Constant); ok {
+			for i, col := range cols {
+				if col.Name.L == c.ColName.L {
+					return i
+				}
+			}
+		}
+	} else if _, ok := f.Args[0].(*expression.Constant); ok {
+		if c, ok := f.Args[1].(*expression.Column); ok {
+			for i, col := range cols {
+				if col.Name.L == c.ColName.L {
+					return i
+				}
+			}
+		}
+	}
+	return -1
+}
+
 func detachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
 	accessConds := make([]expression.Expression, len(indexScan.Index.Columns))
 	var filterConds []expression.Expression
 	for _, cond := range conditions {
-		if f, ok := cond.(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
-			if c, ok := f.Args[0].(*expression.Column); ok {
-				if _, ok := f.Args[1].(*expression.Constant); ok {
-					for i, col := range indexScan.Index.Columns {
-						if col.Name.L == c.ColName.L {
-							accessConds[i] = cond
-							break
-						}
-					}
-				}
-			} else if _, ok := f.Args[0].(*expression.Constant); ok {
-				if c, ok := f.Args[1].(*expression.Column); ok {
-					for i, col := range indexScan.Index.Columns {
-						if col.Name.L == c.ColName.L {
-							accessConds[i] = cond
-							break
-						}
-					}
-				}
-			}
+		offset := getEQFunctionOffset(cond, indexScan.Index.Columns)
+		if offset != -1 {
+			accessConds[offset] = cond
 		}
 	}
 	for i, cond := range accessConds {
