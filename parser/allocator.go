@@ -79,49 +79,19 @@ func (ac *Allocator) allocFieldType() *types.FieldType {
 		ac.fieldType = make([]types.FieldType, 0, capacity)
 	}
 	ac.fieldType = ac.fieldType[:len(ac.fieldType)+1]
+	ac.fieldType[len(ac.fieldType)-1] = types.FieldType{}
 	return &ac.fieldType[len(ac.fieldType)-1]
 }
 
 // Reset resets the Allocator's inner field so the memory space can be reused.
 func (ac *Allocator) Reset() {
-	for i := 0; i < len(ac.valueExpr); i++ {
-		ac.valueExpr[i] = ast.ValueExpr{}
-	}
 	ac.valueExpr = ac.valueExpr[:0]
-
-	for i := 0; i < len(ac.fieldType); i++ {
-		ac.fieldType[i] = types.FieldType{}
-	}
 	ac.fieldType = ac.fieldType[:0]
-
-	for i := 0; i < len(ac.insertStmt); i++ {
-		ac.insertStmt[i] = ast.InsertStmt{}
-	}
 	ac.insertStmt = ac.insertStmt[:0]
-
-	for i := 0; i < len(ac.selectStmt); i++ {
-		ac.selectStmt[i] = ast.SelectStmt{}
-	}
 	ac.selectStmt = ac.selectStmt[:0]
-
-	for i := 0; i < len(ac.join); i++ {
-		ac.join[i] = ast.Join{}
-	}
 	ac.join = ac.join[:0]
-
-	for i := 0; i < len(ac.tableName); i++ {
-		ac.tableName[i] = ast.TableName{}
-	}
 	ac.tableName = ac.tableName[:0]
-
-	for i := 0; i < len(ac.tableSource); i++ {
-		ac.tableSource[i] = ast.TableSource{}
-	}
 	ac.tableSource = ac.tableSource[:0]
-
-	for i := 0; i < len(ac.tableRefsClause); i++ {
-		ac.tableRefsClause[i] = ast.TableRefsClause{}
-	}
 	ac.tableRefsClause = ac.tableRefsClause[:0]
 }
 
@@ -139,6 +109,7 @@ func (ac *Allocator) allocTableRefsClause() *ast.TableRefsClause {
 		ac.tableRefsClause = make([]ast.TableRefsClause, 0, capacity)
 	}
 	ac.tableRefsClause = ac.tableRefsClause[:len(ac.tableRefsClause)+1]
+	ac.tableRefsClause[len(ac.tableRefsClause)-1] = ast.TableRefsClause{}
 	return &ac.tableRefsClause[len(ac.tableRefsClause)-1]
 }
 
@@ -156,6 +127,7 @@ func (ac *Allocator) allocTableSource() *ast.TableSource {
 		ac.tableSource = make([]ast.TableSource, 0, capacity)
 	}
 	ac.tableSource = ac.tableSource[:len(ac.tableSource)+1]
+	ac.tableSource[len(ac.tableSource)-1] = ast.TableSource{}
 	return &ac.tableSource[len(ac.tableSource)-1]
 }
 
@@ -171,6 +143,7 @@ func (ac *Allocator) allocValueExpr() *ast.ValueExpr {
 		ac.valueExpr = make([]ast.ValueExpr, 0, capacity)
 	}
 	ac.valueExpr = ac.valueExpr[:len(ac.valueExpr)+1]
+	ac.valueExpr[len(ac.valueExpr)-1] = ast.ValueExpr{}
 	return &ac.valueExpr[len(ac.valueExpr)-1]
 }
 
@@ -188,6 +161,7 @@ func (ac *Allocator) allocInsertStmt() *ast.InsertStmt {
 		ac.insertStmt = make([]ast.InsertStmt, 0, capacity)
 	}
 	ac.insertStmt = ac.insertStmt[:len(ac.insertStmt)+1]
+	ac.insertStmt[len(ac.insertStmt)-1] = ast.InsertStmt{}
 	return &ac.insertStmt[len(ac.insertStmt)-1]
 }
 
@@ -205,6 +179,7 @@ func (ac *Allocator) allocSelectStmt() *ast.SelectStmt {
 		ac.selectStmt = make([]ast.SelectStmt, 0, capacity)
 	}
 	ac.selectStmt = ac.selectStmt[:len(ac.selectStmt)+1]
+	ac.selectStmt[len(ac.selectStmt)-1] = ast.SelectStmt{}
 	return &ac.selectStmt[len(ac.selectStmt)-1]
 }
 
@@ -222,6 +197,7 @@ func (ac *Allocator) allocJoin() *ast.Join {
 		ac.join = make([]ast.Join, 0, capacity)
 	}
 	ac.join = ac.join[:len(ac.join)+1]
+	ac.join[len(ac.join)-1] = ast.Join{}
 	return &ac.join[len(ac.join)-1]
 }
 
@@ -239,5 +215,6 @@ func (ac *Allocator) allocTableName() *ast.TableName {
 		ac.tableName = make([]ast.TableName, 0, capacity)
 	}
 	ac.tableName = ac.tableName[:len(ac.tableName)+1]
+	ac.tableName[len(ac.tableName)-1] = ast.TableName{}
 	return &ac.tableName[len(ac.tableName)-1]
 }

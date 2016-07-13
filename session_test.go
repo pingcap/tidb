@@ -2316,6 +2316,7 @@ func newSessionWithoutInit(c *C, store kv.Storage) *session {
 		sid:         atomic.AddInt64(&sessionID, 1),
 		debugInfos:  make(map[string]interface{}),
 		maxRetryCnt: 10,
+		allocator:   parser.NewAllocator(),
 	}
 	return s
 }
