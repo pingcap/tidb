@@ -130,7 +130,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		return er.handleExistSubquery(v)
 	case *ast.PatternInExpr:
 		if v.Sel != nil {
-			return er.handlePatternIn(v)
+			return er.handleInSubquery(v)
 		}
 	case *ast.SubqueryExpr:
 		return er.handleScalarSubquery(v)
@@ -244,7 +244,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	return v, true
 }
 
-func (er *expressionRewriter) handlePatternIn(v *ast.PatternInExpr) (ast.Node, bool) {
+func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, bool) {
 	v.Expr.Accept(er)
 	if er.err != nil {
 		return v, true
