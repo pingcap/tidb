@@ -175,7 +175,7 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 	}
 	for _, ca := range cases {
 		colInfo := &model.ColumnInfo{FieldType: *ca.ft}
-		zv := getZeroValue(colInfo)
+		zv := GetZeroValue(colInfo)
 		c.Assert(zv.Kind(), Equals, ca.value.Kind())
 		cmp, err := zv.CompareDatum(ca.value)
 		c.Assert(err, IsNil)

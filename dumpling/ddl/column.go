@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -165,7 +166,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if columnInfo.DefaultValue != nil {
+		if columnInfo.DefaultValue != nil || mysql.HasNotNullFlag(columnInfo.Flag) {
 			err = d.runReorgJob(func() error {
 				return d.backfillColumn(tbl, columnInfo, reorgInfo)
 			})
@@ -321,9 +322,17 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 }
 
 func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, handles []int64, reorgInfo *reorgInfo) error {
-	defaultVal, _, err := table.GetColDefaultValue(nil, columnInfo)
-	if err != nil {
-		return errors.Trace(err)
+	var (
+		defaultVal types.Datum
+		err        error
+	)
+	if columnInfo.DefaultValue != nil {
+		defaultVal, _, err = table.GetColDefaultValue(nil, columnInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else if mysql.HasNotNullFlag(columnInfo.Flag) {
+		defaultVal = table.GetZeroValue(columnInfo)
 	}
 	colMap := make(map[int64]*types.FieldType)
 	for _, col := range t.Meta().Columns {
