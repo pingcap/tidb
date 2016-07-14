@@ -989,3 +989,22 @@ func (s *testParserSuite) TestInsertStatementMemoryAllocation(c *C) {
 	runtime.ReadMemStats(&newStats)
 	c.Assert(int(newStats.TotalAlloc-oldStats.TotalAlloc), Less, 1024*500)
 }
+
+func BenchmarkParse(b *testing.B) {
+	var table = []string{
+		"insert into t (c) select c1 from t1 union select c2 from t2",
+		"select c1 from t1 union (select c2 from t2) limit 1, 1",
+		"create table t (c int comment 'comment')",
+	}
+	parser := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, v := range table {
+			_, err := parser.Parse(v, "", "")
+			if err != nil {
+				b.Failed()
+			}
+		}
+	}
+	b.ReportAllocs()
+}
