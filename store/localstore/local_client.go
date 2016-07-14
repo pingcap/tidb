@@ -68,7 +68,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 		return true
 	case tipb.ExprType_Plus, tipb.ExprType_Div:
 		return true
-	case tipb.ExprType_Count, tipb.ExprType_First:
+	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true

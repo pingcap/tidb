@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -122,6 +123,7 @@ type session struct {
 
 	// For performance_schema only.
 	stmtState *perfschema.StatementState
+	parser    *parser.Parser
 }
 
 func (s *session) cleanRetryInfo() {
@@ -272,7 +274,8 @@ func (s *session) Retry() error {
 // ExecRestrictedSQL implements SQLHelper interface.
 // This is used for executing some restricted sql statements.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error) {
-	rawStmts, err := Parse(ctx, sql)
+	charset, collation := getCtxCharsetInfo(s)
+	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -380,11 +383,18 @@ func (s *session) ShouldAutocommit(ctx context.Context) bool {
 	return false
 }
 
+func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
+	return s.parser.Parse(sql, charset, collation)
+}
+
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
-	rawStmts, err := Parse(s, sql)
+	charset, collation := getCtxCharsetInfo(s)
+	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
+		log.Warnf("compiling %s, error: %v", sql, err)
 		return nil, errors.Trace(err)
 	}
+
 	var rs []ast.RecordSet
 	ph := sessionctx.GetDomain(s).PerfSchema()
 	for i, rst := range rawStmts {
@@ -610,6 +620,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 		sid:         atomic.AddInt64(&sessionID, 1),
 		debugInfos:  make(map[string]interface{}),
 		maxRetryCnt: 10,
+		parser:      parser.New(),
 	}
 	domain, err := domap.Get(store)
 	if err != nil {

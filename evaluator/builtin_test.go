@@ -81,3 +81,19 @@ func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }
+
+func (s *testEvaluatorSuite) TestLock(c *C) {
+	defer testleak.AfterTest(c)()
+
+	v, err := builtinLock(types.MakeDatums(1), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetInt64(), Equals, int64(1))
+
+	v, err = builtinLock(types.MakeDatums(nil), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetInt64(), Equals, int64(1))
+
+	v, err = builtinReleaseLock(types.MakeDatums(1), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetInt64(), Equals, int64(1))
+}

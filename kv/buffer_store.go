@@ -20,7 +20,6 @@ import (
 // BufferStore wraps a Retriever for read and a MemBuffer for buffered write.
 // Common usage pattern:
 //	bs := NewBufferStore(r) // use BufferStore to wrap a Retriever
-//	defer bs.Release()      // make sure it will be released
 //	// ...
 //	// read/write on bs
 //	// ...

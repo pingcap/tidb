@@ -378,6 +378,7 @@ found_rows	{f}{o}{u}{n}{d}_{r}{o}{w}{s}
 from		{f}{r}{o}{m}
 full		{f}{u}{l}{l}
 fulltext	{f}{u}{l}{l}{t}{e}{x}{t}
+get_lock	{g}{e}{t}_{l}{o}{c}{k}
 global		{g}{l}{o}{b}{a}{l}
 grant		{g}{r}{a}{n}{t}
 grants		{g}{r}{a}{n}{t}{s}
@@ -441,11 +442,13 @@ pow 		{p}{o}{w}
 power		{p}{o}{w}{e}{r}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
+privileges	{p}{r}{i}{v}{i}{l}{e}{g}{e}{s}
 procedure	{p}{r}{o}{c}{e}{d}{u}{r}{e}
 quarter		{q}{u}{a}{r}{t}{e}{r}
 quick		{q}{u}{i}{c}{k}
 rand		{r}{a}{n}{d}
 read		{r}{e}{a}{d}
+release_lock	{r}{e}{l}{e}{a}{s}{e}_{l}{o}{c}{k}
 repeat		{r}{e}{p}{e}{a}{t}
 repeatable	{r}{e}{p}{e}{a}{t}{a}{b}{l}{e}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
@@ -472,6 +475,7 @@ show		{s}{h}{o}{w}
 some		{s}{o}{m}{e}
 space		{s}{p}{a}{c}{e}
 start		{s}{t}{a}{r}{t}
+statsPersistent	{s}{t}{a}{t}{s}_{p}{e}{r}{s}{i}{s}{t}{e}{n}{t}
 status          {s}{t}{a}{t}{u}{s}
 subdate		{s}{u}{b}{d}{a}{t}{e}
 strcmp		{s}{t}{r}{c}{m}{p}
@@ -577,7 +581,7 @@ user		{u}{s}{e}{r}
 using		{u}{s}{i}{n}{g}
 
 idchar0		[a-zA-Z_]
-idchars		{idchar0}|[0-9$] // See: https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+idchars		{idchar0}|[0-9$] // See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 ident		{idchar0}{idchars}*
 
 user_var	"@"{ident}
@@ -948,6 +952,8 @@ action		{a}{c}{t}{i}{o}{n}
 {prepare}		lval.item = string(l.val)
 			return prepare
 {primary}		return primary
+{privileges}		lval.item = string(l.val)
+			return privileges
 {procedure}		return procedure
 {quarter}		lval.item = string(l.val)
 			return quarter
@@ -977,13 +983,19 @@ redundant		lval.item = string(l.val)
 			return space
 {start}			lval.item = string(l.val)
 			return start
+{statsPersistent}	lval.item = string(l.val)
+			return statsPersistent
 {status}		lval.item = string(l.val)
 			return status
+{get_lock}		lval.item = string(l.val)
+			return getLock
 {global}		lval.item = string(l.val)
 			return global
 {rand}			lval.item = string(l.val)
 			return rand
 {read}			return read
+{release_lock}		lval.item = string(l.val)
+			return releaseLock
 {repeat}		lval.item = string(l.val)
 			return repeat
 {repeatable}		lval.item = string(l.val)
@@ -1243,8 +1255,7 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 	// TODO: performance issue.
 	s := string(l.stringLit)
 	l.stringLit = l.stringLit[0:0]
-	v := stringutil.RemoveUselessBackslash(pref+s)
-	v, err := stringutil.Unquote(v)
+	v, err := stringutil.Unquote(pref + s)
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)
 	}
@@ -1285,7 +1296,7 @@ func (l *lexer) float(lval *yySymType) int {
 	return floatLit
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
+// See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
 func (l *lexer) hex(lval *yySymType) int {
 	s := string(l.val)
 	h, err := mysql.ParseHex(s)
@@ -1303,7 +1314,7 @@ func (l *lexer) hex(lval *yySymType) int {
 	return hexLit
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
+// See https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
 func (l *lexer) bit(lval *yySymType) int {
 	s := string(l.val)
 	b, err := mysql.ParseBit(s, -1)
@@ -1319,7 +1330,7 @@ func (l *lexer) handleIdent(lval *yySymType) int {
 	s := lval.item.(string)
 	// A character string literal may have an optional character set introducer and COLLATE clause:
 	// [_charset_name]'string' [COLLATE collation_name]
-	// See: https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
+	// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
 	if !strings.HasPrefix(s, "_") {
 		return identifier	
 	}

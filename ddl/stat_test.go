@@ -39,12 +39,10 @@ func (s *testStatSuite) TestStat(c *C) {
 	store := testCreateStore(c, "test_stat")
 	defer store.Close()
 
-	lease := 50 * time.Millisecond
-
-	d := newDDL(store, nil, nil, lease)
+	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
 
-	time.Sleep(lease)
+	time.Sleep(testLease)
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	testCreateSchema(c, mock.NewContext(), d, dbInfo)

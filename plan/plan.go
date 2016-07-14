@@ -94,6 +94,10 @@ type Plan interface {
 	GetID() string
 	// Check weather this plan is correlated or not.
 	IsCorrelated() bool
+	// SetParents set parents for plan.
+	SetParents([]Plan)
+	// SetParents set children for plan.
+	SetChildren([]Plan)
 }
 
 // LogicalPlan is a tree of logical operators.
@@ -102,10 +106,14 @@ type LogicalPlan interface {
 	Plan
 
 	// PredicatePushDown push down predicates in where/on/having clause as deeply as possible.
-	PredicatePushDown([]expression.Expression) ([]expression.Expression, error)
+	// It will accept a predicate that is a expression slice, and return the expressions that can't be pushed.
+	// Because it may change the root when exists having clause, we need return a plan that representing a new root.
+	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan, error)
 
 	// PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
-	// This function returns a column slice representing outer columns and an error.
+	// This function returns a column slice representing columns from outer env and an error.
+	// We need return outer columns, because Apply plan will prune inner Planner and it will know
+	// how many columns referenced by inner plan exactly.
 	PruneColumnsAndResolveIndices([]*expression.Column) ([]*expression.Column, error)
 	// TODO: implement Convert2PhysicalPlan()
 }
@@ -126,18 +134,22 @@ func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, error) {
-	rest, err1 := p.GetChildByIndex(0).(LogicalPlan).PredicatePushDown(predicates)
-	if err1 != nil {
-		return nil, errors.Trace(err1)
+func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	if len(p.GetChildren()) == 0 {
+		return predicates, p, nil
+	}
+	child := p.GetChildByIndex(0).(LogicalPlan)
+	rest, _, err := child.PredicatePushDown(predicates)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 	if len(rest) > 0 {
-		err1 = addSelection(p, p.GetChildByIndex(0).(LogicalPlan), rest, p.allocator)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
+		err = addSelection(p, child, rest, p.allocator)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
 		}
 	}
-	return nil, nil
+	return nil, p, nil
 }
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
@@ -241,7 +253,7 @@ func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
 			return nil
 		}
 	}
-	return SystemInternalErrorType.Gen("RemoveParent Failed!")
+	return SystemInternalErrorType.Gen("ReplaceParent Failed!")
 }
 
 // ReplaceChild means replace a child with another one.
@@ -252,7 +264,7 @@ func (p *basePlan) ReplaceChild(child, newChild Plan) error {
 			return nil
 		}
 	}
-	return SystemInternalErrorType.Gen("RemoveChildren Failed!")
+	return SystemInternalErrorType.Gen("ReplaceChildren Failed!")
 }
 
 // GetParentByIndex implements Plan GetParentByIndex interface.
@@ -279,4 +291,14 @@ func (p *basePlan) GetParents() []Plan {
 // GetChildren implements Plan GetChildren interface.
 func (p *basePlan) GetChildren() []Plan {
 	return p.children
+}
+
+// RemoveAllParents implements Plan RemoveAllParents interface.
+func (p *basePlan) SetParents(pars []Plan) {
+	p.parents = pars
+}
+
+// RemoveAllParents implements Plan RemoveAllParents interface.
+func (p *basePlan) SetChildren(children []Plan) {
+	p.parents = children
 }

@@ -150,6 +150,7 @@ type Error struct {
 	class   ErrClass
 	code    ErrCode
 	message string
+	args    []interface{}
 	file    string
 	line    int
 }
@@ -172,14 +173,31 @@ func (e *Error) Location() (file string, line int) {
 
 // Error implements error interface.
 func (e *Error) Error() string {
-	return fmt.Sprintf("[%s:%d]%s", e.class, e.code, e.message)
+	return fmt.Sprintf("[%s:%d]%s", e.class, e.code, e.getMsg())
+}
+
+func (e *Error) getMsg() string {
+	if len(e.args) > 0 {
+		return fmt.Sprintf(e.message, e.args...)
+	}
+	return e.message
 }
 
 // Gen generates a new *Error with the same class and code, and a new formatted message.
 func (e *Error) Gen(format string, args ...interface{}) *Error {
 	err := *e
-	err.message = fmt.Sprintf(format, args...)
+	err.message = format
+	err.args = args
 	_, err.file, err.line, _ = runtime.Caller(1)
+	return &err
+}
+
+// FastGen generates a new *Error with the same class and code, and a new formatted message.
+// This will not call runtime.Caller to get file and line.
+func (e *Error) FastGen(format string, args ...interface{}) *Error {
+	err := *e
+	err.message = format
+	err.args = args
 	return &err
 }
 
@@ -201,7 +219,7 @@ func (e *Error) NotEqual(err error) bool {
 // ToSQLError convert Error to mysql.SQLError.
 func (e *Error) ToSQLError() *mysql.SQLError {
 	code := e.getMySQLErrorCode()
-	return mysql.NewErrf(code, e.message)
+	return mysql.NewErrf(code, e.getMsg())
 }
 
 var defaultMySQLErrorCode uint16

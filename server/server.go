@@ -68,7 +68,11 @@ type Server struct {
 
 // ConnectionCount gets current connection count.
 func (s *Server) ConnectionCount() int {
-	return len(s.clients)
+	var cnt int
+	s.rwlock.RLock()
+	cnt = len(s.clients)
+	s.rwlock.RUnlock()
+	return cnt
 }
 
 func (s *Server) getToken() *Token {
@@ -80,7 +84,7 @@ func (s *Server) releaseToken(token *Token) {
 }
 
 // Generate a random string using ASCII characters but avoid separator character.
-// See: https://github.com/mysql/mysql-server/blob/5.7/mysys_ssl/crypt_genhash_impl.cc#L435
+// See https://github.com/mysql/mysql-server/blob/5.7/mysys_ssl/crypt_genhash_impl.cc#L435
 func randomBuf(size int) []byte {
 	buf := make([]byte, size)
 	for i := 0; i < size; i++ {

@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -69,6 +70,9 @@ type Column struct {
 	// e.g. SELECT name as id , 1 - id as id , 1 + name as id, name as id from src having id = 1;
 	// There are four ids in the same schema, so you can't identify the column through the FromID and ColName.
 	Position int
+	// IsAggOrSubq means if this column is referenced to a Aggregation column or a Subquery column.
+	// If so, this column's name will be the plain sql text.
+	IsAggOrSubq bool
 
 	// only used during execution
 	Index      int
@@ -107,7 +111,7 @@ func (col *Column) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (col *Column) Eval(row []types.Datum, _ context.Context) (d types.Datum, err error) {
+func (col *Column) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
 	if col.Correlated {
 		return *col.data, nil
 	}
@@ -123,6 +127,15 @@ func (col *Column) DeepCopy() Expression {
 // Schema stands for the row schema get from input.
 type Schema []*Column
 
+// ToString output the contents of schema, for debug.
+func (s Schema) ToString() string {
+	strs := make([]string, 0, len(s))
+	for _, col := range s {
+		strs = append(strs, col.ToString())
+	}
+	return "[" + strings.Join(strs, ",") + "]"
+}
+
 // DeepCopy copies the total schema.
 func (s Schema) DeepCopy() Schema {
 	result := make(Schema, 0, len(s))
@@ -133,7 +146,7 @@ func (s Schema) DeepCopy() Schema {
 	return result
 }
 
-// FindColumn find an Column from schema for a ast.ColumnName. It compares the db/table/column names.
+// FindColumn finds an Column from schema for a ast.ColumnName. It compares the db/table/column names.
 // If there are more than one result, it will raise ambiguous error.
 func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
@@ -146,29 +159,6 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 				idx = i
 			} else {
 				return nil, errors.Errorf("Column %s is ambiguous", col.ToString())
-			}
-		}
-	}
-	if idx == -1 {
-		return nil, nil
-	}
-	return s[idx], nil
-}
-
-// FindSelectFieldColumn finds a column from select fields.
-func (s Schema) FindSelectFieldColumn(astCol *ast.ColumnName, selectFields []Expression) (*Column, error) {
-	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
-	idx := -1
-	for i, col := range s {
-		if (dbName.L == "" || dbName.L == col.DBName.L) &&
-			(tblName.L == "" || tblName.L == col.TblName.L) &&
-			(colName.L == col.ColName.L) {
-			if expr, ok := selectFields[i].(*Column); !ok {
-				return s[i], nil
-			} else if idx == -1 {
-				idx = i
-			} else if !expr.Equal(selectFields[idx]) {
-				return nil, errors.Errorf("Column %s is ambiguous", s[i].ToString())
 			}
 		}
 	}
@@ -225,11 +215,15 @@ func (sf *ScalarFunction) ToString() string {
 }
 
 // NewFunction creates a new scalar function.
-func NewFunction(funcName string, retType *types.FieldType, args ...Expression) *ScalarFunction {
+func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (*ScalarFunction, error) {
 	f, ok := evaluator.Funcs[funcName]
 	if !ok {
 		log.Errorf("Function %s is not implemented.", funcName)
-		return nil
+		return nil, nil
+	}
+	if len(args) < f.MinArgs || (f.MaxArgs != -1 && len(args) > f.MaxArgs) {
+		return nil, evaluator.ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].",
+			f.MinArgs, f.MaxArgs)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
@@ -237,7 +231,7 @@ func NewFunction(funcName string, retType *types.FieldType, args ...Expression) 
 		Args:     funcArgs,
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
-		Function: f.F}
+		Function: f.F}, nil
 }
 
 //Schema2Exprs converts []*Column to []Expression.
@@ -322,8 +316,9 @@ func ComposeCNFCondition(conditions []Expression) Expression {
 	if length == 1 {
 		return conditions[0]
 	}
-	return NewFunction(ast.AndAnd,
+	expr, _ := NewFunction(ast.AndAnd,
 		types.NewFieldType(mysql.TypeTiny),
 		ComposeCNFCondition(conditions[length/2:]),
 		ComposeCNFCondition(conditions[:length/2]))
+	return expr
 }

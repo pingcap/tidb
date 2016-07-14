@@ -120,6 +120,12 @@ var Funcs = map[string]Func{
 	"ifnull": {builtinIfNull, 2, 2},
 	"nullif": {builtinNullIf, 2, 2},
 
+	// miscellaneous functions
+	// get_lock() and release_lock() is parsed but do nothing.
+	// It is used for preventing error in Ruby's activerecord migrations.
+	"get_lock":     {builtinLock, 2, 2},
+	"release_lock": {builtinReleaseLock, 1, 1},
+
 	// only used by new plan
 	ast.AndAnd:     {builtinAndAnd, 2, 2},
 	ast.OrOr:       {builtinOrOr, 2, 2},
@@ -149,11 +155,15 @@ var Funcs = map[string]Func{
 	ast.In:         {builtinIn, 1, -1},
 	ast.IsTruth:    {isTrueOpFactory(opcode.IsTruth), 1, 1},
 	ast.IsFalsity:  {isTrueOpFactory(opcode.IsFalsity), 1, 1},
-	ast.Like:       {builtinLike, 1, 3},
+	ast.Like:       {builtinLike, 3, 3},
+	ast.Regexp:     {builtinRegexp, 2, 2},
+	ast.Case:       {builtinCaseWhen, 1, -1},
 	ast.RowFunc:    {builtinRow, 2, -1},
+	ast.SetVar:     {builtinSetVar, 2, 2},
+	ast.GetVar:     {builtinGetVar, 1, 1},
 }
 
-// See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	for _, d = range args {
 		if !d.IsNull() {
@@ -163,7 +173,7 @@ func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, er
 	return d, nil
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
 func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		d.SetInt64(1)

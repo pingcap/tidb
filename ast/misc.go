@@ -34,7 +34,6 @@ var (
 	_ StmtNode = &GrantStmt{}
 	_ StmtNode = &PrepareStmt{}
 	_ StmtNode = &RollbackStmt{}
-	_ StmtNode = &SetCharsetStmt{}
 	_ StmtNode = &SetPwdStmt{}
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &UseStmt{}
@@ -51,7 +50,7 @@ type TypeOpt struct {
 }
 
 // FloatOpt is used for parsing floating-point type option from SQL.
-// See: http://dev.mysql.com/doc/refman/5.7/en/floating-point-types.html
+// See http://dev.mysql.com/doc/refman/5.7/en/floating-point-types.html
 type FloatOpt struct {
 	Flen    int
 	Decimal int
@@ -68,7 +67,7 @@ type AuthOption struct {
 
 // ExplainStmt is a statement to provide information about how is SQL statement executed
 // or get columns information in a table.
-// See: https://dev.mysql.com/doc/refman/5.7/en/explain.html
+// See https://dev.mysql.com/doc/refman/5.7/en/explain.html
 type ExplainStmt struct {
 	stmtNode
 
@@ -92,7 +91,7 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 
 // PrepareStmt is a statement to prepares a SQL statement which contains placeholders,
 // and it is executed with ExecuteStmt and released with DeallocateStmt.
-// See: https://dev.mysql.com/doc/refman/5.7/en/prepare.html
+// See https://dev.mysql.com/doc/refman/5.7/en/prepare.html
 type PrepareStmt struct {
 	stmtNode
 
@@ -119,7 +118,7 @@ func (n *PrepareStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // DeallocateStmt is a statement to release PreparedStmt.
-// See: https://dev.mysql.com/doc/refman/5.7/en/deallocate-prepare.html
+// See https://dev.mysql.com/doc/refman/5.7/en/deallocate-prepare.html
 type DeallocateStmt struct {
 	stmtNode
 
@@ -137,7 +136,7 @@ func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // ExecuteStmt is a statement to execute PreparedStmt.
-// See: https://dev.mysql.com/doc/refman/5.7/en/execute.html
+// See https://dev.mysql.com/doc/refman/5.7/en/execute.html
 type ExecuteStmt struct {
 	stmtNode
 
@@ -163,7 +162,7 @@ func (n *ExecuteStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // BeginStmt is a statement to start a new transaction.
-// See: https://dev.mysql.com/doc/refman/5.7/en/commit.html
+// See https://dev.mysql.com/doc/refman/5.7/en/commit.html
 type BeginStmt struct {
 	stmtNode
 }
@@ -179,7 +178,7 @@ func (n *BeginStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // CommitStmt is a statement to commit the current transaction.
-// See: https://dev.mysql.com/doc/refman/5.7/en/commit.html
+// See https://dev.mysql.com/doc/refman/5.7/en/commit.html
 type CommitStmt struct {
 	stmtNode
 }
@@ -195,7 +194,7 @@ func (n *CommitStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // RollbackStmt is a statement to roll back the current transaction.
-// See: https://dev.mysql.com/doc/refman/5.7/en/commit.html
+// See https://dev.mysql.com/doc/refman/5.7/en/commit.html
 type RollbackStmt struct {
 	stmtNode
 }
@@ -211,7 +210,7 @@ func (n *RollbackStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // UseStmt is a statement to use the DBName database as the current database.
-// See: https://dev.mysql.com/doc/refman/5.7/en/use.html
+// See https://dev.mysql.com/doc/refman/5.7/en/use.html
 type UseStmt struct {
 	stmtNode
 
@@ -228,6 +227,12 @@ func (n *UseStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+const (
+	// SetNames is the const for set names/charset stmt.
+	// If VariableAssignment.Name == Names, it should be set names/charset stmt.
+	SetNames = "SetNAMES"
+)
+
 // VariableAssignment is a variable assignment struct.
 type VariableAssignment struct {
 	node
@@ -235,6 +240,11 @@ type VariableAssignment struct {
 	Value    ExprNode
 	IsGlobal bool
 	IsSystem bool
+
+	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
+	// For SetCharsetStmt, Value is charset, ExtendValue is collation.
+	// TODO: Use SetStmt to implement set password statement.
+	ExtendValue ExprNode
 }
 
 // Accept implements Node interface.
@@ -276,8 +286,9 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+/*
 // SetCharsetStmt is a statement to assign values to character and collation variables.
-// See: https://dev.mysql.com/doc/refman/5.7/en/set-statement.html
+// See https://dev.mysql.com/doc/refman/5.7/en/set-statement.html
 type SetCharsetStmt struct {
 	stmtNode
 
@@ -294,9 +305,10 @@ func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
 	n = newNode.(*SetCharsetStmt)
 	return v.Leave(n)
 }
+*/
 
 // SetPwdStmt is a statement to assign a password to user account.
-// See: https://dev.mysql.com/doc/refman/5.7/en/set-password.html
+// See https://dev.mysql.com/doc/refman/5.7/en/set-password.html
 type SetPwdStmt struct {
 	stmtNode
 
@@ -321,7 +333,7 @@ type UserSpec struct {
 }
 
 // CreateUserStmt creates user account.
-// See: https://dev.mysql.com/doc/refman/5.7/en/create-user.html
+// See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 type CreateUserStmt struct {
 	stmtNode
 

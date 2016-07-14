@@ -362,7 +362,7 @@ func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
-		// See: https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
+		// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 		return src
 	}
 	e := &SelectLockExec{
@@ -669,7 +669,7 @@ func (b *executorBuilder) buildUnionScanExec(src Executor) *UnionScanExec {
 func (b *executorBuilder) buildNewUnionScanExec(src Executor, condition expression.Expression) *UnionScanExec {
 	us := &UnionScanExec{ctx: b.ctx, Src: src}
 	switch x := src.(type) {
-	case *NewTableScanExec:
+	case *NewXSelectTableExec:
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.newCondition = condition
 		us.newBuildAndSortAddedRows(x.table, x.asName)

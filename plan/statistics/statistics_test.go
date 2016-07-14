@@ -79,6 +79,18 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	bucketCount := int64(256)
 	t, err := NewTable(tblInfo, timestamp, s.count, bucketCount, [][]types.Datum{s.samples})
 	c.Check(err, IsNil)
+
+	col := t.Columns[0]
+	count, err := col.EqualRowCount(types.NewIntDatum(1000))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(2))
+	count, err = col.LessRowCount(types.NewIntDatum(2000))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(19955))
+	count, err = col.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(5075))
+
 	str := t.String()
 	log.Debug(str)
 	c.Check(len(str), Greater, 0)
@@ -93,4 +105,27 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	nt, err := TableFromPB(tblInfo, ntpb)
 	c.Check(err, IsNil)
 	c.Check(nt.String(), Equals, str)
+}
+
+func (s *testStatisticsSuite) TestPseudoTable(c *C) {
+	ti := &model.TableInfo{}
+	ti.Columns = append(ti.Columns, &model.ColumnInfo{
+		ID:        1,
+		FieldType: *types.NewFieldType(mysql.TypeLonglong),
+	})
+	tbl := PseudoTable(ti)
+	c.Assert(tbl.Count, Greater, int64(0))
+	c.Assert(tbl.TS, Greater, int64(0))
+	col := tbl.Columns[0]
+	c.Assert(col.ID, Greater, int64(0))
+	c.Assert(col.NDV, Greater, int64(0))
+	count, err := col.LessRowCount(types.NewIntDatum(100))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, int64(3333))
+	count, err = col.EqualRowCount(types.NewIntDatum(1000))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, int64(1000))
+	count, err = col.BetweenRowCount(types.NewIntDatum(1000), types.NewIntDatum(5000))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, int64(2500))
 }

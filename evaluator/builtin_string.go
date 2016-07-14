@@ -33,8 +33,7 @@ import (
 	"golang.org/x/text/transform"
 )
 
-// https://dev.mysql.com/doc/refman/5.7/en/string-functions.html
-
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html
 func builtinLength(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	switch args[0].Kind() {
 	case types.KindNull:
@@ -49,7 +48,7 @@ func builtinLength(args []types.Datum, _ context.Context) (d types.Datum, err er
 	}
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ascii
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ascii
 func builtinASCII(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	switch args[0].Kind() {
 	case types.KindNull:
@@ -68,7 +67,7 @@ func builtinASCII(args []types.Datum, _ context.Context) (d types.Datum, err err
 	}
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
 func builtinConcat(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	var s []byte
 	for _, a := range args {
@@ -86,7 +85,7 @@ func builtinConcat(args []types.Datum, _ context.Context) (d types.Datum, err er
 	return d, nil
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
 func builtinConcatWS(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	var sep string
 	s := make([]string, 0, len(args))
@@ -113,7 +112,7 @@ func builtinConcatWS(args []types.Datum, _ context.Context) (d types.Datum, err 
 	return d, nil
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_left
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_left
 func builtinLeft(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	str, err := args[0].ToString()
 	if err != nil {
@@ -133,7 +132,7 @@ func builtinLeft(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	return d, nil
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_repeat
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_repeat
 func builtinRepeat(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	str, err := args[0].ToString()
 	if err != nil {
@@ -156,7 +155,7 @@ func builtinRepeat(args []types.Datum, _ context.Context) (d types.Datum, err er
 	return d, nil
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
 func builtinLower(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	x := args[0]
 	switch x.Kind() {
@@ -172,7 +171,7 @@ func builtinLower(args []types.Datum, _ context.Context) (d types.Datum, err err
 	}
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
 func builtinReverse(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	x := args[0]
 	switch x.Kind() {
@@ -188,7 +187,7 @@ func builtinReverse(args []types.Datum, _ context.Context) (d types.Datum, err e
 	}
 }
 
-// See: http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_space
+// See http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_space
 func builtinSpace(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	x := args[0]
 	if x.IsNull() {
@@ -218,7 +217,7 @@ func builtinSpace(args []types.Datum, _ context.Context) (d types.Datum, err err
 	return d, nil
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
 func builtinUpper(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	x := args[0]
 	switch x.Kind() {
@@ -234,7 +233,7 @@ func builtinUpper(args []types.Datum, _ context.Context) (d types.Datum, err err
 	}
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
+// See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
 func builtinStrcmp(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() || args[1].IsNull() {
 		return d, nil
@@ -252,7 +251,7 @@ func builtinStrcmp(args []types.Datum, _ context.Context) (d types.Datum, err er
 	return d, nil
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
 func builtinReplace(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	for _, arg := range args {
 		if arg.IsNull() {
@@ -277,7 +276,7 @@ func builtinReplace(args []types.Datum, _ context.Context) (d types.Datum, err e
 	return d, nil
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
+// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 func builtinConvert(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// Casting nil to any type returns nil
 	if args[0].Kind() != types.KindString {
@@ -358,7 +357,7 @@ func builtinSubstring(args []types.Datum, _ context.Context) (d types.Datum, err
 	return d, nil
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
 func builtinSubstringIndex(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// The meaning of the elements of args.
 	// args[0] -> StrExpr
@@ -405,7 +404,7 @@ func builtinSubstringIndex(args []types.Datum, _ context.Context) (d types.Datum
 	return d, nil
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func builtinLocate(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// The meaning of the elements of args.
 	// args[0] -> SubStr
@@ -459,7 +458,7 @@ func builtinLocate(args []types.Datum, _ context.Context) (d types.Datum, err er
 
 const spaceChars = "\n\t\r "
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
 func builtinTrim(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// args[0] -> Str
 	// args[1] -> RemStr
@@ -513,8 +512,8 @@ func builtinTrim(args []types.Datum, _ context.Context) (d types.Datum, err erro
 }
 
 // For LTRIM & RTRIM
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rtrim
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rtrim
 func trimFn(fn func(string, string) string, cutset string) BuiltinFunc {
 	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 		if args[0].IsNull() {

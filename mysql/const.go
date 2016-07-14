@@ -44,6 +44,13 @@ const (
 	ServerPSOutParams              uint16 = 0x1000
 )
 
+// Identifier length limitations.
+const (
+	MaxTableNameLength    int = 64
+	MaxDatabaseNameLength int = 64
+	MaxColumnNameLength   int = 64
+)
+
 // Command informations.
 const (
 	ComSleep byte = iota

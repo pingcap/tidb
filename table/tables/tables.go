@@ -197,7 +197,6 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	}
 
 	bs := kv.NewBufferStore(txn)
-	defer bs.Release()
 
 	// Compose new row
 	t.composeNewData(touched, currentData, oldData)
@@ -317,7 +316,6 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		return 0, errors.Trace(err)
 	}
 	bs := kv.NewBufferStore(txn)
-	defer bs.Release()
 	// Insert new entries into indices.
 	h, err := t.addIndices(ctx, recordID, r, bs)
 	if err != nil {
@@ -393,7 +391,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 	if t.meta.PKIsHandle {
 		// Check key exists.
 		recordKey := t.RecordKey(recordID)
-		e := kv.ErrKeyExists.Gen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
+		e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
 		txn.SetOption(kv.PresumeKeyNotExistsError, e)
 		_, err = txn.Get(recordKey)
 		if err == nil {
@@ -416,7 +414,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			if err1 != nil {
 				return 0, errors.Trace(err1)
 			}
-			dupKeyErr = kv.ErrKeyExists.Gen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
+			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
 		if err = v.Create(bs, colVals, recordID); err != nil {
@@ -459,9 +457,6 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 		if col == nil {
 			continue
 		}
-		if col.State != model.StatePublic {
-			return nil, table.ErrColumnStateNonPublic.Gen("Cannot use none public column - %v", cols)
-		}
 		if col.IsPKHandleColumn(t.meta) {
 			if mysql.HasUnsignedFlag(col.Flag) {
 				v[i].SetUint64(uint64(h))
@@ -479,10 +474,6 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 	for i, col := range cols {
 		if col == nil {
 			continue
-		}
-		if col.State != model.StatePublic {
-			// TODO: check this
-			return nil, table.ErrColumnStateNonPublic.Gen("Cannot use none public column - %v", cols)
 		}
 		if col.IsPKHandleColumn(t.meta) {
 			continue

@@ -6,6 +6,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/xapi/xeval"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -102,18 +103,32 @@ func (n *aggregateFuncExpr) update(ctx *selectContext, args []types.Datum) error
 		return n.updateCount(ctx, args)
 	case tipb.ExprType_First:
 		return n.updateFirst(ctx, args)
+	case tipb.ExprType_Sum:
+		return n.updateSum(ctx, args)
 	}
 	return errors.Errorf("Unknown AggExpr: %v", n.expr.GetTp())
 }
 
-func (n *aggregateFuncExpr) toDatums() []types.Datum {
+func (n *aggregateFuncExpr) toDatums() (ds []types.Datum, err error) {
 	switch n.expr.GetTp() {
 	case tipb.ExprType_Count:
-		return n.getCountDatum()
+		ds = n.getCountDatum()
 	case tipb.ExprType_First:
-		return n.getValueDatum()
+		ds = n.getValueDatum()
+	case tipb.ExprType_Sum:
+		v := n.getAggItem().value
+		var d types.Datum
+		if !v.IsNull() {
+			// For sum result, we should convert it to decimal.
+			de, err1 := v.ToDecimal()
+			if err1 != nil {
+				return nil, errors.Trace(err1)
+			}
+			d = types.NewDecimalDatum(de)
+		}
+		ds = []types.Datum{d}
 	}
-	return nil
+	return
 }
 
 // Convert count to datum list.
@@ -166,5 +181,31 @@ func (n *aggregateFuncExpr) updateFirst(ctx *selectContext, args []types.Datum) 
 	}
 	aggItem.value = args[0]
 	aggItem.evaluated = true
+	return nil
+}
+
+func (n *aggregateFuncExpr) updateSum(ctx *selectContext, args []types.Datum) error {
+	if len(args) != 1 {
+		// This should not happen. The length of argument list is already checked in the early stage.
+		// This is just in case of error.
+		return errors.Errorf("Wrong number of argument for sum, need 1 but get %d", len(args))
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return nil
+	}
+	aggItem := n.getAggItem()
+	if !aggItem.evaluated {
+		aggItem.value = arg
+		aggItem.evaluated = true
+		aggItem.count = 1
+		return nil
+	}
+	var err error
+	aggItem.value, err = xeval.ComputeArithmetic(tipb.ExprType_Plus, arg, aggItem.value)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	aggItem.count++
 	return nil
 }

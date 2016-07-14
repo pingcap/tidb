@@ -1,3 +1,16 @@
+// Copyright 2016 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package pd
 
 import (
@@ -190,13 +203,16 @@ func (w *rpcWorker) handleRequests(requests []interface{}, conn *bufio.ReadWrite
 			ok = false
 			log.Error(err)
 		}
-		for i, req := range tsoRequests {
+		logicalHigh := ts.GetLogical()
+		physical := ts.GetPhysical()
+		for _, req := range tsoRequests {
 			if err != nil {
 				req.done <- err
 			} else {
-				req.physical = ts[i].GetPhysical()
-				req.logical = ts[i].GetLogical()
+				req.physical = physical
+				req.logical = logicalHigh
 				req.done <- nil
+				logicalHigh--
 			}
 		}
 	}
@@ -210,7 +226,7 @@ func newMsgID() uint64 {
 	return atomic.AddUint64(&msgID, 1)
 }
 
-func (w *rpcWorker) getTSFromRemote(conn *bufio.ReadWriter, n int) ([]*pdpb.Timestamp, error) {
+func (w *rpcWorker) getTSFromRemote(conn *bufio.ReadWriter, n int) (*pdpb.Timestamp, error) {
 	req := &pdpb.Request{
 		Header: &pdpb.RequestHeader{
 			Uuid:      uuid.NewV4().Bytes(),
@@ -218,7 +234,7 @@ func (w *rpcWorker) getTSFromRemote(conn *bufio.ReadWriter, n int) ([]*pdpb.Time
 		},
 		CmdType: pdpb.CommandType_Tso.Enum(),
 		Tso: &pdpb.TsoRequest{
-			Number: proto.Uint32(uint32(n)),
+			Count: proto.Uint32(uint32(n)),
 		},
 	}
 	resp, err := w.callRPC(conn, req)
@@ -228,11 +244,11 @@ func (w *rpcWorker) getTSFromRemote(conn *bufio.ReadWriter, n int) ([]*pdpb.Time
 	if resp.GetTso() == nil {
 		return nil, errors.New("[pd] tso filed in rpc response not set")
 	}
-	timestamps := resp.GetTso().GetTimestamps()
-	if len(timestamps) != n {
+	timestampHigh := resp.GetTso().GetTimestamp()
+	if resp.GetTso().GetCount() != uint32(n) {
 		return nil, errors.New("[pd] tso length in rpc response is incorrect")
 	}
-	return timestamps, nil
+	return timestampHigh, nil
 }
 
 func (w *rpcWorker) getStoreFromRemote(conn *bufio.ReadWriter, storeReq *pdpb.GetStoreRequest) (*pdpb.GetStoreResponse, error) {

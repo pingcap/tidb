@@ -35,6 +35,7 @@ type testParserSuite struct {
 
 func (s *testParserSuite) TestSimple(c *C) {
 	defer testleak.AfterTest(c)()
+	parser := New()
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
@@ -47,30 +48,30 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
-		"enable", "disable", "reverse", "space",
+		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
-		_, err := ParseOneStmt(src, "", "")
+		_, err := parser.ParseOneStmt(src, "", "")
 		c.Assert(err, IsNil, Commentf("source %s", src))
 	}
 
 	// Testcase for prepared statement
 	src := "SELECT id+?, id+? from t;"
-	_, err := ParseOneStmt(src, "", "")
+	_, err := parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
 
 	// Testcase for -- Comment and unary -- operator
 	src = "CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED); -- foo\nSelect --1 from foo;"
-	stmts, err := Parse(src, "", "")
+	stmts, err := parser.Parse(src, "", "")
 	c.Assert(err, IsNil)
 	c.Assert(stmts, HasLen, 2)
 
 	// Testcase for /*! xx */
-	// See: http://dev.mysql.com/doc/refman/5.7/en/comments.html
+	// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
 	// Fix: https://github.com/pingcap/tidb/issues/971
 	src = "/*!40101 SET character_set_client = utf8 */;"
-	stmts, err = Parse(src, "", "")
+	stmts, err = parser.Parse(src, "", "")
 	c.Assert(err, IsNil)
 	c.Assert(stmts, HasLen, 1)
 	stmt := stmts[0]
@@ -79,7 +80,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 
 	// Testcase for CONVERT(expr,type)
 	src = "SELECT CONVERT('111', SIGNED);"
-	st, err := ParseOneStmt(src, "", "")
+	st, err := parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
 	ss, ok := st.(*ast.SelectStmt)
 	c.Assert(ok, IsTrue)
@@ -97,7 +98,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"SELECT CONVERT('111', SIGNED) /*comment*/;",
 	}
 	for _, src := range srcs {
-		st, err = ParseOneStmt(src, "", "")
+		st, err = parser.ParseOneStmt(src, "", "")
 		c.Assert(err, IsNil)
 		ss, ok = st.(*ast.SelectStmt)
 		c.Assert(ok, IsTrue)
@@ -105,7 +106,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 
 	// For issue #961
 	src = "create table t (c int key);"
-	st, err = ParseOneStmt(src, "", "")
+	st, err = parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
 	cs, ok := st.(*ast.CreateTableStmt)
 	c.Assert(ok, IsTrue)
@@ -120,8 +121,9 @@ type testCase struct {
 }
 
 func (s *testParserSuite) RunTest(c *C, table []testCase) {
+	parser := New()
 	for _, t := range table {
-		_, err := Parse(t.src, "", "")
+		_, err := parser.Parse(t.src, "", "")
 		comment := Commentf("source %v", t.src)
 		if t.ok {
 			c.Assert(err, IsNil, comment)
@@ -265,6 +267,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// For set names
 		{"set names utf8", true},
 		{"set names utf8 collate utf8_unicode_ci", true},
+
+		// For set names and set vars
+		{"set names utf8, @@session.sql_mode=1;", true},
+		{"set @@session.sql_mode=1, names utf8, charset utf8;", true},
 
 		// For show character set
 		{"show character set;", true},
@@ -612,6 +618,10 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select adddate("2011-11-11 10:10:10.123456", 10)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", 0.10)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", "11,11")`, true},
+
+		// For misc functions
+		{`SELECT GET_LOCK('lock1',10);`, true},
+		{`SELECT RELEASE_LOCK('lock1');`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -688,6 +698,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) ROW_FORMAT = compact", true},
 		{"create table t (c int) ROW_FORMAT = redundant", true},
 		{"create table t (c int) ROW_FORMAT = dynamic", true},
+		{"create table t (c int) STATS_PERSISTENT = default", true},
+		{"create table t (c int) STATS_PERSISTENT = 0", true},
+		{"create table t (c int) STATS_PERSISTENT = 1", true},
 		// For check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
@@ -852,6 +865,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"GRANT ALL ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
+		{"grant all privileges on zabbix.* to 'zabbix'@'localhost' identified by 'password';", true},
 	}
 	s.RunTest(c, table)
 }
@@ -970,7 +984,7 @@ func (s *testParserSuite) TestInsertStatementMemoryAllocation(c *C) {
 	sql := "insert t values (1)" + strings.Repeat(",(1)", 1000)
 	var oldStats, newStats runtime.MemStats
 	runtime.ReadMemStats(&oldStats)
-	_, err := ParseOneStmt(sql, "", "")
+	_, err := New().ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
 	runtime.ReadMemStats(&newStats)
 	c.Assert(int(newStats.TotalAlloc-oldStats.TotalAlloc), Less, 1024*500)

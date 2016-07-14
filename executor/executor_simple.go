@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -40,8 +39,8 @@ import (
 
 // SimpleExec represents simple statement executor.
 // For statements do simple execution.
-// includes `UseStmt`, 'SetStmt`, `SetCharsetStmt`.
-// `DoStmt`, `BeginStmt`, `CommitStmt`, `RollbackStmt`.
+// includes `UseStmt`, 'SetStmt`, `DoStmt`,
+// `BeginStmt`, `CommitStmt`, `RollbackStmt`.
 // TODO: list all simple statements.
 type SimpleExec struct {
 	Statement ast.StmtNode
@@ -70,8 +69,6 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeUse(x)
 	case *ast.SetStmt:
 		err = e.executeSet(x)
-	case *ast.SetCharsetStmt:
-		err = e.executeSetCharset(x)
 	case *ast.DoStmt:
 		err = e.executeDo(x)
 	case *ast.BeginStmt:
@@ -108,7 +105,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	db.BindCurrentSchema(e.ctx, dbname.O)
 	// character_set_database is the character set used by the default database.
 	// The server sets this variable whenever the default database changes.
-	// See: http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
+	// See http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
 	sessionVars := variable.GetSessionVars(e.ctx)
 	err := sessionVars.SetSystemVar(variable.CharsetDatabase, types.NewStringDatum(dbinfo.Charset))
 	if err != nil {
@@ -126,6 +123,19 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 	globalVars := variable.GetGlobalVarAccessor(e.ctx)
 	for _, v := range s.Variables {
 		// Variable is case insensitive, we use lower case.
+		if v.Name == ast.SetNames {
+			// This is set charset stmt.
+			cs := v.Value.GetValue().(string)
+			var co string
+			if v.ExtendValue != nil {
+				co = v.ExtendValue.GetValue().(string)
+			}
+			err := e.setCharset(cs, co)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
 		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
@@ -192,23 +202,22 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeSetCharset(s *ast.SetCharsetStmt) error {
-	collation := s.Collate
+func (e *SimpleExec) setCharset(cs, co string) error {
 	var err error
-	if len(collation) == 0 {
-		collation, err = charset.GetDefaultCollation(s.Charset)
+	if len(co) == 0 {
+		co, err = charset.GetDefaultCollation(cs)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	sessionVars := variable.GetSessionVars(e.ctx)
 	for _, v := range variable.SetNamesVariables {
-		err = sessionVars.SetSystemVar(v, types.NewStringDatum(s.Charset))
+		err = sessionVars.SetSystemVar(v, types.NewStringDatum(cs))
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	err = sessionVars.SetSystemVar(variable.CollationConnection, types.NewStringDatum(collation))
+	err = sessionVars.SetSystemVar(variable.CollationConnection, types.NewStringDatum(co))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -355,7 +364,6 @@ func (e *SimpleExec) createStatisticsForTable(tn *ast.TableName) error {
 // collectSamples collects sample from the result set, using Reservoir Sampling algorithm.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
 func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples []*ast.Row, err error) {
-	ran := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for {
 		var row *ast.Row
 		row, err = result.Next()
@@ -368,9 +376,9 @@ func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples 
 		if len(samples) < maxSampleCount {
 			samples = append(samples, row)
 		} else {
-			shouldAdd := ran.Int63n(count) < maxSampleCount
+			shouldAdd := rand.Int63n(count) < maxSampleCount
 			if shouldAdd {
-				idx := ran.Intn(maxSampleCount)
+				idx := rand.Intn(maxSampleCount)
 				samples[idx] = row
 			}
 		}

@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -172,6 +173,101 @@ func (s *testAggFuncSuite) TestXAPIFirstRow(c *C) {
 	val, err = evaluator.Eval(ctx, fc)
 	c.Assert(err, IsNil)
 	c.Assert(val, testutil.DatumEquals, types.NewDatum(int64(31)))
+	agg.Close()
+	// After clear up, fc's value should be default.
+	val, err = evaluator.Eval(ctx, fc)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(nil))
+}
+
+func (s *testAggFuncSuite) TestXAPISum(c *C) {
+	defer testleak.AfterTest(c)()
+	// Compose aggregate exec for "select sum(c2) from t groupby c1";
+	//
+	// Data in region1:
+	// c1  c2
+	// 1	11
+	// 2	21
+	// 1    1
+	//
+	// Partial aggregate result for region1:
+	// groupkey	sum
+	// 1		12
+	// 2		21
+	//
+	// Data in region2:
+	// 1    nil
+	// 1    3
+	// 3    31
+	//
+	// Partial aggregate result for region2:
+	// groupkey	sum
+	// 1		3
+	// 3		31
+	//
+	// Expected final aggregate result:
+	// sum(c2)
+	// 15
+	// 21
+	// 31
+	c1 := ast.NewValueExpr([]byte{0})
+	rf1 := &ast.ResultField{Expr: c1}
+	c2 := ast.NewValueExpr(0)
+	rf2 := &ast.ResultField{Expr: c2}
+	col2 := &ast.ColumnNameExpr{Refer: rf2}
+	fc := &ast.AggregateFuncExpr{
+		F:    ast.AggFuncSum,
+		Args: []ast.ExprNode{col2},
+	}
+	// Return row:
+	// GroupKey, Sum
+	// Partial result from region1
+	row1 := types.MakeDatums([]byte{1}, 12)
+	row2 := types.MakeDatums([]byte{2}, 21)
+	// Partial result from region2
+	row3 := types.MakeDatums([]byte{1}, 3)
+	row4 := types.MakeDatums([]byte{3}, 31)
+	data := []([]types.Datum){row1, row2, row3, row4}
+
+	rows := make([]*Row, 0, 3)
+	for _, d := range data {
+		rows = append(rows, &Row{Data: d})
+	}
+	src := &mockExec{
+		rows:   rows,
+		fields: []*ast.ResultField{rf1, rf2},
+	}
+	agg := &XAggregateExec{
+		AggFuncs: []*ast.AggregateFuncExpr{fc},
+		Src:      src,
+	}
+	ast.SetFlag(fc)
+	var (
+		row *Row
+		err error
+	)
+	// First row: 15
+	row, err = agg.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	ctx := mock.NewContext()
+	val, err := evaluator.Eval(ctx, fc)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(mysql.NewDecimalFromInt(int64(15), 0)))
+	// Second row: 21
+	row, err = agg.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	val, err = evaluator.Eval(ctx, fc)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(mysql.NewDecimalFromInt(int64(21), 0)))
+	// Third row: 31
+	row, err = agg.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	val, err = evaluator.Eval(ctx, fc)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(mysql.NewDecimalFromInt(int64(31), 0)))
 	agg.Close()
 	// After clear up, fc's value should be default.
 	val, err = evaluator.Eval(ctx, fc)

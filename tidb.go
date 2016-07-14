@@ -112,7 +112,7 @@ func SetSchemaLease(lease time.Duration) {
 // collation_connection is important for comparisons of literal strings.
 // For comparisons of strings with column values, collation_connection does not matter because columns
 // have their own collation, which has a higher collation precedence.
-// See: https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
+// See https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
 func getCtxCharsetInfo(ctx context.Context) (string, string) {
 	sessionVars := variable.GetSessionVars(ctx)
 	charset := sessionVars.GetSystemVar("character_set_connection")
@@ -124,7 +124,7 @@ func getCtxCharsetInfo(ctx context.Context) (string, string) {
 func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
 	charset, collation := getCtxCharsetInfo(ctx)
-	stmts, err := parser.Parse(src, charset, collation)
+	stmts, err := parser.New().Parse(src, charset, collation)
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", src, err)
 		return nil, errors.Trace(err)

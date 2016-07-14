@@ -76,6 +76,8 @@ type Apply struct {
 	InnerPlan   LogicalPlan
 	OuterSchema expression.Schema
 	Checker     *ApplyConditionChecker
+	// outerColumns is the columns that not belong to this plan.
+	outerColumns []*expression.Column
 }
 
 // Exists checks if a query returns result.
@@ -126,7 +128,7 @@ type NewUnion struct {
 type NewSort struct {
 	baseLogicalPlan
 
-	ByItems []ByItems
+	ByItems []*ByItems
 
 	ExecLimit *Limit
 }
@@ -159,8 +161,13 @@ func InsertPlan(parent Plan, child Plan, insert Plan) error {
 func RemovePlan(p Plan) error {
 	parents := p.GetParents()
 	children := p.GetChildren()
-	if len(parents) != 1 || len(children) != 1 {
+	if len(parents) > 1 || len(children) != 1 {
 		return SystemInternalErrorType.Gen("can't remove this plan")
+	}
+	if len(parents) == 0 {
+		child := children[0]
+		child.SetParents(nil)
+		return nil
 	}
 	parent, child := parents[0], children[0]
 	err := parent.ReplaceChild(p, child)

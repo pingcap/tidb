@@ -143,6 +143,7 @@ func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
 		ft := types.NewFieldType(mysql.TypeNewDecimal)
 		ft.Charset = charset.CharsetBin
 		ft.Collate = charset.CollationBin
+		ft.Decimal = x.Args[0].GetType().Decimal
 		x.SetType(ft)
 	case ast.AggFuncGroupConcat:
 		ft := types.NewFieldType(mysql.TypeVarString)
@@ -290,13 +291,15 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp.Flag |= mysql.UnsignedFlag
 	case "if":
 		// TODO: fix this
-		// See: https://dev.mysql.com/doc/refman/5.5/en/control-flow-functions.html#function_if
+		// See https://dev.mysql.com/doc/refman/5.5/en/control-flow-functions.html#function_if
 		// The default return type of IF() (which may matter when it is stored into a temporary table) is calculated as follows.
 		// Expression	Return Value
 		// expr2 or expr3 returns a string	string
 		// expr2 or expr3 returns a floating-point value	floating-point
 		// expr2 or expr3 returns an integer	integer
 		tp = x.Args[1].GetType()
+	case "get_lock", "release_lock":
+		tp = types.NewFieldType(mysql.TypeLonglong)
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
