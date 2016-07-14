@@ -1450,6 +1450,8 @@ func (s *testSuite) TestBuiltin(c *C) {
 		{"aA%", "aAab", 1},
 		{"aA_", "Aaab", 0},
 		{"aA_", "Aab", 1},
+		{"", "", 1},
+		{"", "a", 0},
 	}
 	patternMatching(c, tk, "like", testCases)
 	// for regexp
