@@ -56,6 +56,7 @@ func makeUsedList(usedCols []*expression.Column, schema expression.Schema) []boo
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
 func (p *Projection) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
+	child := p.GetChildByIndex(0).(LogicalPlan)
 	var selfUsedCols, outerUsedCols []*expression.Column
 	used := makeUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
@@ -68,12 +69,12 @@ func (p *Projection) PruneColumnsAndResolveIndices(parentUsedCols []*expression.
 	for _, expr := range p.Exprs {
 		selfUsedCols, outerUsedCols = extractColumn(expr, selfUsedCols, outerUsedCols)
 	}
-	childOuterUsedCols, err := p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(selfUsedCols)
+	childOuterUsedCols, err := child.PruneColumnsAndResolveIndices(selfUsedCols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	for i, expr := range p.Exprs {
-		p.Exprs[i], err = retrieveColumnsInExpression(expr, p.GetChildByIndex(0).GetSchema())
+		p.Exprs[i], err = retrieveColumnsInExpression(expr, child.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -83,17 +84,18 @@ func (p *Projection) PruneColumnsAndResolveIndices(parentUsedCols []*expression.
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
 func (p *Selection) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
+	child := p.GetChildByIndex(0).(LogicalPlan)
 	var outerUsedCols []*expression.Column
 	for _, cond := range p.Conditions {
 		parentUsedCols, outerUsedCols = extractColumn(cond, parentUsedCols, outerUsedCols)
 	}
-	childOuterUsedCols, err := p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(parentUsedCols)
+	childOuterUsedCols, err := child.PruneColumnsAndResolveIndices(parentUsedCols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p.SetSchema(p.GetChildByIndex(0).GetSchema())
+	p.SetSchema(child.GetSchema())
 	for i, cond := range p.Conditions {
-		p.Conditions[i], err = retrieveColumnsInExpression(cond, p.GetChildByIndex(0).GetSchema())
+		p.Conditions[i], err = retrieveColumnsInExpression(cond, child.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -146,17 +148,18 @@ func (p *Aggregation) PruneColumnsAndResolveIndices(parentUsedCols []*expression
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
 func (p *NewSort) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
+	child := p.GetChildByIndex(0).(LogicalPlan)
 	var outerUsedCols []*expression.Column
 	for _, item := range p.ByItems {
 		parentUsedCols, outerUsedCols = extractColumn(item.Expr, parentUsedCols, outerUsedCols)
 	}
-	childOuterUsedCols, err := p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(parentUsedCols)
+	childOuterUsedCols, err := child.PruneColumnsAndResolveIndices(parentUsedCols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	p.SetSchema(p.GetChildByIndex(0).GetSchema())
 	for _, item := range p.ByItems {
-		item.Expr, err = retrieveColumnsInExpression(item.Expr, p.GetChildByIndex(0).GetSchema())
+		item.Expr, err = retrieveColumnsInExpression(item.Expr, child.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -251,37 +254,39 @@ func (p *Join) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 	for _, otherCond := range p.OtherConditions {
 		parentUsedCols, outerUsedCols = extractColumn(otherCond, parentUsedCols, outerUsedCols)
 	}
+	lChild := p.GetChildByIndex(0).(LogicalPlan)
+	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	var leftCols, rightCols []*expression.Column
 	for _, col := range parentUsedCols {
-		if p.GetChildByIndex(0).GetSchema().GetIndex(col) != -1 {
+		if lChild.GetSchema().GetIndex(col) != -1 {
 			leftCols = append(leftCols, col)
 		} else {
 			rightCols = append(rightCols, col)
 		}
 	}
-	outerLeft, err := p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(leftCols)
+	outerLeft, err := lChild.PruneColumnsAndResolveIndices(leftCols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	outerUsedCols = append(outerUsedCols, outerLeft...)
 	for i, leftCond := range p.LeftConditions {
-		p.LeftConditions[i], err = retrieveColumnsInExpression(leftCond, p.GetChildByIndex(0).GetSchema())
+		p.LeftConditions[i], err = retrieveColumnsInExpression(leftCond, lChild.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	outerRight, err := p.GetChildByIndex(1).(LogicalPlan).PruneColumnsAndResolveIndices(rightCols)
+	outerRight, err := rChild.PruneColumnsAndResolveIndices(rightCols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	outerUsedCols = append(outerUsedCols, outerRight...)
 	for i, rightCond := range p.RightConditions {
-		p.RightConditions[i], err = retrieveColumnsInExpression(rightCond, p.GetChildByIndex(1).GetSchema())
+		p.RightConditions[i], err = retrieveColumnsInExpression(rightCond, rChild.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	p.schema = append(p.GetChildByIndex(0).GetSchema().DeepCopy(), p.GetChildByIndex(1).GetSchema().DeepCopy()...)
+	p.schema = append(lChild.GetSchema().DeepCopy(), rChild.GetSchema().DeepCopy()...)
 	p.schema.InitIndices()
 	for i, otherCond := range p.OtherConditions {
 		p.OtherConditions[i], err = retrieveColumnsInExpression(otherCond, p.GetSchema())
@@ -290,11 +295,11 @@ func (p *Join) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 		}
 	}
 	for _, eqCond := range p.EqualConditions {
-		eqCond.Args[0], err = retrieveColumnsInExpression(eqCond.Args[0], p.GetChildByIndex(0).GetSchema())
+		eqCond.Args[0], err = retrieveColumnsInExpression(eqCond.Args[0], lChild.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		eqCond.Args[1], err = retrieveColumnsInExpression(eqCond.Args[1], p.GetChildByIndex(1).GetSchema())
+		eqCond.Args[1], err = retrieveColumnsInExpression(eqCond.Args[1], rChild.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -312,14 +317,14 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	newUsedCols := p.OuterSchema
 	for _, used := range parentUsedCols {
-		if p.GetChildByIndex(0).GetSchema().GetIndex(used) != -1 {
+		if child.GetSchema().GetIndex(used) != -1 {
 			newUsedCols = append(newUsedCols, used)
 		}
 	}
 	if p.Checker != nil {
 		condUsedCols, _ := extractColumn(p.Checker.Condition, nil, nil)
 		for _, used := range condUsedCols {
-			if p.GetChildByIndex(0).GetSchema().GetIndex(used) != -1 {
+			if child.GetSchema().GetIndex(used) != -1 {
 				newUsedCols = append(newUsedCols, used)
 			}
 		}
@@ -329,9 +334,9 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 		return nil, errors.Trace(err)
 	}
 	for _, col := range p.OuterSchema {
-		col.Index = p.GetChildByIndex(0).GetSchema().GetIndex(col)
+		col.Index = child.GetSchema().GetIndex(col)
 	}
-	combinedSchema := append(p.GetChildByIndex(0).GetSchema().DeepCopy(), p.InnerPlan.GetSchema().DeepCopy()...)
+	combinedSchema := append(child.GetSchema().DeepCopy(), p.InnerPlan.GetSchema().DeepCopy()...)
 	if p.Checker == nil {
 		p.schema = combinedSchema
 	} else {
@@ -340,7 +345,7 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		p.schema = append(p.GetChildByIndex(0).GetSchema().DeepCopy(), p.schema[len(p.schema)-1])
+		p.schema = append(child.GetSchema().DeepCopy(), p.schema[len(p.schema)-1])
 	}
 	p.schema.InitIndices()
 	return append(childOuterUsedCols, p.outerColumns...), nil
