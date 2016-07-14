@@ -172,6 +172,10 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 			resultStr: `[[\a \b)]`,
 		},
 		{
+			exprStr:   `a LIKE ""`,
+			resultStr: `[[ ]]`,
+		},
+		{
 			exprStr:   `a > 0 AND a < 1`,
 			resultStr: `[(0 1)]`,
 		},
