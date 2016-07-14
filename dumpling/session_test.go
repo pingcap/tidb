@@ -942,6 +942,9 @@ func (s *testSessionSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	matches(c, rows, [][]interface{}{{2, 2}})
 
+	mustExecSQL(c, se, "create table if not exists test_varchar_index (c1 varchar(255), index(c1))")
+	mustExecSQL(c, se, "insert test_varchar_index values (''), ('a')")
+	mustExecMatch(c, se, "select * from test_varchar_index where c1 like ''", [][]interface{}{{[]byte("")}})
 	err = store.Close()
 	c.Assert(err, IsNil)
 }
