@@ -120,8 +120,6 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 	if p.JoinType == InnerJoin {
 		p.EqualConditions = append(p.EqualConditions, equalCond...)
 		p.OtherConditions = append(p.OtherConditions, otherCond...)
-	} else if p.JoinType == SemiJoinWithAux {
-		p.EqualConditions = append(p.EqualConditions, equalCond...)
 	}
 	return
 }
