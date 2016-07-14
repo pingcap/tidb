@@ -150,4 +150,9 @@ func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
 	tk.MustExec("insert nn values (1), (2)")
 	tk.MustExec("alter table nn add column c2 int not null")
 	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0"))
+	_, err := tk.Exec("insert nn (c1) values (3)")
+	c.Check(err, NotNil)
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("insert nn (c1) values (3)")
+	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0", "3 0"))
 }
