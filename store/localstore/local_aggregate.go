@@ -105,6 +105,10 @@ func (n *aggregateFuncExpr) update(ctx *selectContext, args []types.Datum) error
 		return n.updateFirst(ctx, args)
 	case tipb.ExprType_Sum, tipb.ExprType_Avg:
 		return n.updateSum(ctx, args)
+	case tipb.ExprType_Max:
+		return n.updateMaxMin(ctx, args, true)
+	case tipb.ExprType_Min:
+		return n.updateMaxMin(ctx, args, false)
 	}
 	return errors.Errorf("Unknown AggExpr: %v", n.expr.GetTp())
 }
@@ -113,7 +117,7 @@ func (n *aggregateFuncExpr) toDatums() (ds []types.Datum, err error) {
 	switch n.expr.GetTp() {
 	case tipb.ExprType_Count:
 		ds = n.getCountDatum()
-	case tipb.ExprType_First:
+	case tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min:
 		ds = n.getValueDatum()
 	case tipb.ExprType_Sum:
 		d, err := getSumValue(n.getAggItem())
@@ -223,5 +227,40 @@ func (n *aggregateFuncExpr) updateSum(ctx *selectContext, args []types.Datum) er
 		return errors.Trace(err)
 	}
 	aggItem.count++
+	return nil
+}
+
+func (n *aggregateFuncExpr) updateMaxMin(ctx *selectContext, args []types.Datum, max bool) error {
+	if len(args) != 1 {
+		// This should not happen. The length of argument list is already checked in the early stage.
+		// This is just in case of error.
+		name := "max"
+		if !max {
+			name = "min"
+		}
+		return errors.Errorf("Wrong number of argument for %s, need 1 but get %d", name, len(args))
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return nil
+	}
+	aggItem := n.getAggItem()
+	if !aggItem.evaluated {
+		aggItem.value = arg
+		aggItem.evaluated = true
+		return nil
+	}
+	var err error
+	c, err := types.Compare(aggItem.value, arg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if max {
+		if c == -1 {
+			aggItem.value = arg
+		}
+	} else if c == 1 {
+		aggItem.value = arg
+	}
 	return nil
 }
