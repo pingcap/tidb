@@ -367,7 +367,9 @@ func (s *testAggFuncSuite) TestXAPIAvg(c *C) {
 	c.Assert(row, NotNil)
 	val, err = evaluator.Eval(ctx, fc)
 	c.Assert(err, IsNil)
-	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(mysql.NewDecimalFromFloat(float64(16.5))))
+	d := mysql.NewDecimalFromFloat(float64(16.5))
+	d.SetFracDigits(4) // For div operator, default frac is 4.
+	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(d))
 	// Forth row: nil
 	row, err = agg.Next()
 	c.Assert(err, IsNil)
