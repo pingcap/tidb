@@ -113,16 +113,6 @@ race:
 	$(GO) test --race -cover $(PACKAGES)
 	rm -rf vendor
 
-ddl_test:
-	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) test ./ddl/... -skip_ddl=false
-	rm -rf vendor
-
-ddl_race_test:
-	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) test --race ./ddl/... -skip_ddl=false
-	rm -rf vendor
-
 tikv_integration_test:
 	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) test ./store/tikv/. -with-tikv=true
