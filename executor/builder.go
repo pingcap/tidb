@@ -120,11 +120,13 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildAggregation(v)
 	case *plan.Projection:
 		return b.buildProjection(v)
-	case *plan.NewTableScan:
+	case *plan.PhysicalTableScan:
 		return b.buildNewTableScan(v, nil)
+	case *plan.PhysicalIndexScan:
+		return b.buildNewIndexScan(v, nil)
 	case *plan.NewTableDual:
 		return b.buildNewTableDual(v)
-	case *plan.Apply:
+	case *plan.PhysicalApply:
 		return b.buildApply(v)
 	case *plan.Exists:
 		return b.buildExists(v)
@@ -661,7 +663,7 @@ func (b *executorBuilder) buildUnionScanExec(src Executor) *UnionScanExec {
 		us.condition = b.joinConditions(append(x.indexPlan.AccessConditions, x.indexPlan.FilterConditions...))
 		us.buildAndSortAddedRows(x.table, x.indexPlan.TableAsName)
 	default:
-		b.err = ErrUnknownPlan
+		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", src)
 	}
 	return us
 }
@@ -673,8 +675,20 @@ func (b *executorBuilder) buildNewUnionScanExec(src Executor, condition expressi
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.newCondition = condition
 		us.newBuildAndSortAddedRows(x.table, x.asName)
+	case *NewXSelectIndexExec:
+		for _, ic := range x.indexPlan.Index.Columns {
+			for i, col := range x.indexPlan.GetSchema() {
+				if col.ColName.L == ic.Name.L {
+					us.usedIndex = append(us.usedIndex, i)
+					break
+				}
+			}
+		}
+		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
+		us.newCondition = condition
+		us.newBuildAndSortAddedRows(x.table, x.asName)
 	default:
-		b.err = ErrUnknownPlan
+		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", src)
 	}
 	return us
 }

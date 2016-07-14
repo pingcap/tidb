@@ -66,7 +66,7 @@ func (p *Selection) PredicatePushDown(predicates []expression.Expression) (ret [
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *NewTableScan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+func (p *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	return predicates, p, nil
 }
 
