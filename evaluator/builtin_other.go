@@ -457,7 +457,8 @@ func CastFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
 			if d.IsNull() {
 				return
 			}
-			return d.ConvertTo(tp)
+			err = d.ConvertTo(tp)
+			return
 		}, nil
 	}
 	return nil, errors.Errorf("unknown cast type - %v", tp)
