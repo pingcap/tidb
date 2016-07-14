@@ -284,11 +284,13 @@ func (s *testAggFuncSuite) TestXAPIAvg(c *C) {
 	// 1	11
 	// 2	21
 	// 1    1
+	// 3    2
 	//
 	// Partial aggregate result for region1:
 	// groupkey	cnt	sum
 	// 1		2	12
 	// 2		1	21
+	// 3		1	2
 	//
 	// Data in region2:
 	// 1    nil
@@ -304,7 +306,7 @@ func (s *testAggFuncSuite) TestXAPIAvg(c *C) {
 	// avg(c2)
 	// 5
 	// 21
-	// 31
+	// 16.500000
 	c1 := ast.NewValueExpr([]byte{0})
 	rf1 := &ast.ResultField{Expr: c1}
 	c2 := ast.NewValueExpr(0)
@@ -321,12 +323,13 @@ func (s *testAggFuncSuite) TestXAPIAvg(c *C) {
 	// Partial result from region1
 	row1 := types.MakeDatums([]byte{1}, 2, 12)
 	row2 := types.MakeDatums([]byte{2}, 1, 21)
+	row3 := types.MakeDatums([]byte{3}, 1, 2)
 	// Partial result from region2
-	row3 := types.MakeDatums([]byte{1}, 1, 3)
-	row4 := types.MakeDatums([]byte{3}, 1, 31)
-	data := []([]types.Datum){row1, row2, row3, row4}
+	row4 := types.MakeDatums([]byte{1}, 1, 3)
+	row5 := types.MakeDatums([]byte{3}, 1, 31)
+	data := []([]types.Datum){row1, row2, row3, row4, row5}
 
-	rows := make([]*Row, 0, 3)
+	rows := make([]*Row, 0, 5)
 	for _, d := range data {
 		rows = append(rows, &Row{Data: d})
 	}
@@ -358,13 +361,13 @@ func (s *testAggFuncSuite) TestXAPIAvg(c *C) {
 	val, err = evaluator.Eval(ctx, fc)
 	c.Assert(err, IsNil)
 	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(mysql.NewDecimalFromInt(int64(21), 0)))
-	// Third row: 31
+	// Third row: 16.5000
 	row, err = agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	val, err = evaluator.Eval(ctx, fc)
 	c.Assert(err, IsNil)
-	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(mysql.NewDecimalFromInt(int64(31), 0)))
+	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(mysql.NewDecimalFromFloat(float64(16.5))))
 	// Forth row: nil
 	row, err = agg.Next()
 	c.Assert(err, IsNil)
