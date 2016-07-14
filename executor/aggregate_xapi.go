@@ -43,7 +43,7 @@ func (n *finalAggregater) update(count uint64, value types.Datum) error {
 		return n.updateCount(count)
 	case ast.AggFuncFirstRow:
 		return n.updateFirst(value)
-	case ast.AggFuncSum:
+	case ast.AggFuncSum, ast.AggFuncAvg:
 		return n.updateSum(value, count)
 	}
 	return nil
