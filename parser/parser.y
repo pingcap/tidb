@@ -963,7 +963,7 @@ ColumnOption:
 	}
 |	"COMMENT" stringLit
 	{
-		$$ =  &ast.ColumnOption{Tp: ast.ColumnOptionComment, Expr: ast.NewValueExpr($2)}
+		$$ =  &ast.ColumnOption{Tp: ast.ColumnOptionComment, Expr: ac.newValueExpr($2)}
 	}
 |	"CHECK" '(' Expression ')'
 	{
@@ -1208,15 +1208,15 @@ NowSym:
 SignedLiteral:
 	Literal
 	{
-		$$ = ast.NewValueExpr($1)
+		$$ = ac.newValueExpr($1)
 	}
 |	'+' NumLiteral
 	{
-		$$ = &ast.UnaryOperationExpr{Op: opcode.Plus, V: ast.NewValueExpr($2)}
+		$$ = &ast.UnaryOperationExpr{Op: opcode.Plus, V: ac.newValueExpr($2)}
 	}
 |	'-' NumLiteral
 	{
-		$$ = &ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr($2)}
+		$$ = &ast.UnaryOperationExpr{Op: opcode.Minus, V: ac.newValueExpr($2)}
 	}
 
 // TODO: support decimal literal
@@ -1231,7 +1231,7 @@ CreateIndexStmt:
 		$$ = &ast.CreateIndexStmt{
 			Unique: $2.(bool),
 			IndexName: $4.(string),
-                	Table: $6.(*ast.TableName),
+			Table: $6.(*ast.TableName),
 			IndexColNames: $8.([]*ast.IndexColName),
 		}
 		if yylex.(*lexer).root {
@@ -1402,9 +1402,17 @@ DeleteFromStmt:
 	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableName WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
-		join := &ast.Join{Left: &ast.TableSource{Source: $6.(ast.ResultSetNode)}, Right: nil}
+		ts := ac.allocTableSource()
+		ts.Source = $6.(ast.ResultSetNode)
+
+		join := ac.allocJoin()
+		join.Left = ts
+		join.Right = nil
+
+		tr := ac.allocTableRefsClause()
+		tr.TableRefs = join
 		x := &ast.DeleteStmt{
-			TableRefs:	&ast.TableRefsClause{TableRefs: join},
+			TableRefs:	tr,
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
 			Ignore:		$4.(bool),
@@ -1426,6 +1434,8 @@ DeleteFromStmt:
 	}
 |	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional TableNameList "FROM" TableRefs WhereClauseOptional
 	{
+		tr := ac.allocTableRefsClause()
+		tr.TableRefs= $7.(*ast.Join)
 		// Multiple Table
 		x := &ast.DeleteStmt{
 			LowPriority:	$2.(bool),
@@ -1434,7 +1444,7 @@ DeleteFromStmt:
 			IsMultiTable:	true,
 			BeforeFrom:	true,
 			Tables:		&ast.DeleteTableList{Tables: $5.([]*ast.TableName)},
-			TableRefs:	&ast.TableRefsClause{TableRefs: $7.(*ast.Join)},
+			TableRefs:	tr,
 		}
 		if $8 != nil {
 			x.Where = $8.(ast.ExprNode)
@@ -1446,6 +1456,8 @@ DeleteFromStmt:
 	}
 |	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableNameList "USING" TableRefs WhereClauseOptional
 	{
+		tr := ac.allocTableRefsClause()
+		tr.TableRefs = $8.(*ast.Join)
 		// Multiple Table
 		x := &ast.DeleteStmt{
 			LowPriority:	$2.(bool),
@@ -1453,7 +1465,7 @@ DeleteFromStmt:
 			Ignore:		$4.(bool),
 			IsMultiTable:	true,
 			Tables:		&ast.DeleteTableList{Tables: $6.([]*ast.TableName)},
-			TableRefs:	&ast.TableRefsClause{TableRefs: $8.(*ast.Join)},
+			TableRefs:	tr,
 		}
 		if $9 != nil {
 			x.Where = $9.(ast.ExprNode)
@@ -1982,8 +1994,15 @@ InsertIntoStmt:
 		x := $6.(*ast.InsertStmt)
 		x.Priority = $2.(int)
 		// Wraps many layers here so that it can be processed the same way as select statement.
-		ts := &ast.TableSource{Source: $5.(*ast.TableName)}
-		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
+		ts := ac.allocTableSource()
+		ts.Source = $5.(*ast.TableName)
+
+		join := ac.allocJoin()
+		join.Left = ts
+
+		tr := ac.allocTableRefsClause()
+		tr.TableRefs = join
+		x.Table = tr
 		if $7 != nil {
 			x.OnDuplicate = $7.([]*ast.Assignment)
 		}
@@ -2003,34 +2022,62 @@ IntoOpt:
 InsertValues:
 	'(' ColumnNameListOpt ')' ValueSym ExpressionListList
 	{
-		$$ = &ast.InsertStmt{
-			Columns:   $2.([]*ast.ColumnName),
-			Lists:      $5.([][]ast.ExprNode),
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt{
+			Columns: $2.([]*ast.ColumnName),
+			Lists: $5.([][]ast.ExprNode),
 		}
+		$$ = tmp
 	}
 |	'(' ColumnNameListOpt ')' SelectStmt
 	{
-		$$ = &ast.InsertStmt{Columns: $2.([]*ast.ColumnName), Select: $4.(*ast.SelectStmt)}
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt{
+			Columns: $2.([]*ast.ColumnName),
+			Select: $4.(*ast.SelectStmt),
+		}
+		$$ = tmp
 	}
 |	'(' ColumnNameListOpt ')' UnionStmt
 	{
-		$$ = &ast.InsertStmt{Columns: $2.([]*ast.ColumnName), Select: $4.(*ast.UnionStmt)}
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt{
+			Columns : $2.([]*ast.ColumnName),
+			Select : $4.(*ast.UnionStmt),
+		}
+		$$ = tmp
 	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
-		$$ = &ast.InsertStmt{Lists:  $2.([][]ast.ExprNode)}
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt{
+			Lists : $2.([][]ast.ExprNode),
+		}
+		$$ = tmp
 	}
 |	SelectStmt
 	{
-		$$ = &ast.InsertStmt{Select: $1.(*ast.SelectStmt)}
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt{
+			Select : $1.(*ast.SelectStmt),
+		}
+		$$ = tmp
 	}
 |	UnionStmt
 	{
-		$$ = &ast.InsertStmt{Select: $1.(*ast.UnionStmt)}
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt {
+			Select : $1.(*ast.UnionStmt),
+		}
+		$$ = tmp
 	}
 |	"SET" ColumnSetValueList
 	{
-		$$ = &ast.InsertStmt{Setlist: $2.([]*ast.Assignment)}
+		tmp := ac.allocInsertStmt()
+		*tmp = ast.InsertStmt {
+			Setlist : $2.([]*ast.Assignment),
+		}
+		$$ = tmp
 	}
 
 ValueSym:
@@ -2102,8 +2149,13 @@ ReplaceIntoStmt:
 		x := $5.(*ast.InsertStmt)
 		x.IsReplace = true
 		x.Priority = $2.(int)
-		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
-		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
+		ts := ac.allocTableSource()
+		ts.Source = $4.(*ast.TableName)
+		tr := ac.allocTableRefsClause()
+		join := ac.allocJoin()
+		join.Left = ts
+		tr.TableRefs = join
+		x.Table = tr
 		$$ = x
 	}
 
@@ -2136,17 +2188,17 @@ Literal:
 |	intLit
 |	stringLit
 	{
-		tp := types.NewFieldType(mysql.TypeString)
+		tp := ac.newFieldType(mysql.TypeString)
 		l := yylex.(*lexer)
 		tp.Charset, tp.Collate = l.GetCharsetInfo()
-		expr := ast.NewValueExpr($1)
+		expr := ac.newValueExpr($1)
 		expr.SetType(tp)
 		$$ = expr
 	}
 |	"UNDERSCORE_CHARSET" stringLit
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
-		tp := types.NewFieldType(mysql.TypeString)
+		tp := ac.newFieldType(mysql.TypeString)
 		tp.Charset = $1.(string)
 		co, err := charset.GetDefaultCollation(tp.Charset)
 		if err != nil {
@@ -2155,7 +2207,7 @@ Literal:
 			return 1
 		}
 		tp.Collate = co
-		expr := ast.NewValueExpr($2)
+		expr := ac.newValueExpr($2)
 		expr.SetType(tp)
 		$$ = expr
 	}
@@ -2165,7 +2217,7 @@ Literal:
 Operand:
 	Literal
 	{
-		$$ = ast.NewValueExpr($1)
+		$$ = ac.newValueExpr($1)
 	}
 |	ColumnName
 	{
@@ -2291,7 +2343,7 @@ PrimaryExpression:
 |	"BINARY" PrimaryExpression %prec neg
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#operator_binary
-		x := types.NewFieldType(mysql.TypeString)
+		x := ac.newFieldType(mysql.TypeString)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = &ast.FuncCastExpr{
@@ -2379,7 +2431,7 @@ FunctionCallKeyword:
 |	"CONVERT" '(' Expression "USING" StringName ')' 
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
-		charset := ast.NewValueExpr($5)
+		charset := ac.newValueExpr($5)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1.(string)),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), charset},
@@ -2487,8 +2539,8 @@ FunctionCallNonKeyword:
 	}
 |	DateArithOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
-		op := ast.NewValueExpr($1)
-		dateArithInterval := ast.NewValueExpr(
+		op := ac.newValueExpr($1)
+		dateArithInterval := ac.newValueExpr(
 			ast.DateArithInterval{
 				Unit: $7.(string),
 				Interval: $6.(ast.ExprNode),
@@ -2506,8 +2558,8 @@ FunctionCallNonKeyword:
 	}
 |	DateArithMultiFormsOpt '(' Expression ',' DateArithInterval')'
 	{
-		op := ast.NewValueExpr($1)
-		dateArithInterval := ast.NewValueExpr($5)
+		op := ac.newValueExpr($1)
+		dateArithInterval := ac.newValueExpr($5)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr("DATE_ARITH"),
 			Args: []ast.ExprNode{
@@ -2529,7 +2581,7 @@ FunctionCallNonKeyword:
 	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
 	{
-		timeUnit := ast.NewValueExpr($3)
+		timeUnit := ac.newValueExpr($3)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1.(string)),
 			Args: []ast.ExprNode{timeUnit, $5.(ast.ExprNode)},
@@ -2724,8 +2776,8 @@ FunctionCallNonKeyword:
 	}
 |	"TRIM" '(' TrimDirection "FROM" Expression ')'
 	{
-		nilVal := ast.NewValueExpr(nil)
-		direction := ast.NewValueExpr($3)
+		nilVal := ac.newValueExpr(nil)
+		direction := ac.newValueExpr($3)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1.(string)),
 			Args: []ast.ExprNode{$5.(ast.ExprNode), nilVal, direction},
@@ -2733,7 +2785,7 @@ FunctionCallNonKeyword:
 	}
 |	"TRIM" '(' TrimDirection Expression "FROM" Expression ')'
 	{
-		direction := ast.NewValueExpr($3)
+		direction := ac.newValueExpr($3)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1.(string)),
 			Args: []ast.ExprNode{$6.(ast.ExprNode),$4.(ast.ExprNode), direction},
@@ -2834,7 +2886,7 @@ FunctionCallAgg:
 	}
 |	"COUNT" '(' DistinctOpt '*' ')'
 	{
-		args := []ast.ExprNode{ast.NewValueExpr(1)}
+		args := []ast.ExprNode{ac.newValueExpr(1)}
 		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: args, Distinct: $3.(bool)}
 	}
 |	"GROUP_CONCAT" '(' DistinctOpt ExpressionList ')'
@@ -2914,7 +2966,7 @@ ElseOpt:
 CastType:
 	"BINARY" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeString)
+		x := ac.newFieldType(mysql.TypeString)
 		x.Flen = $2.(int) 
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
@@ -2922,7 +2974,7 @@ CastType:
 	}
 |	"CHAR" OptFieldLen OptBinary OptCharset
 	{
-		x := types.NewFieldType(mysql.TypeString)
+		x := ac.newFieldType(mysql.TypeString)
 		x.Flen = $2.(int) 
 		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
@@ -2932,37 +2984,37 @@ CastType:
 	}
 |	"DATE"
 	{
-		x := types.NewFieldType(mysql.TypeDate)
+		x := ac.newFieldType(mysql.TypeDate)
 		$$ = x
 	}
 |	"DATETIME" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeDatetime)
+		x := ac.newFieldType(mysql.TypeDatetime)
 		x.Decimal = $2.(int)
 		$$ = x
 	}
 |	"DECIMAL" FloatOpt
 	{
 		fopt := $2.(*ast.FloatOpt)
-		x := types.NewFieldType(mysql.TypeNewDecimal)
+		x := ac.newFieldType(mysql.TypeNewDecimal)
 		x.Flen = fopt.Flen
 		x.Decimal = fopt.Decimal
 		$$ = x
 	}
 |	"TIME" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeDuration)
+		x := ac.newFieldType(mysql.TypeDuration)
 		x.Decimal = $2.(int)
 		$$ = x
 	}
 |	"SIGNED" OptInteger
 	{
-		x := types.NewFieldType(mysql.TypeLonglong)
+		x := ac.newFieldType(mysql.TypeLonglong)
 		$$ = x
 	}
 |	"UNSIGNED" OptInteger
 	{
-		x := types.NewFieldType(mysql.TypeLonglong)
+		x := ac.newFieldType(mysql.TypeLonglong)
 		x.Flag |= mysql.UnsignedFlag
 		$$ = x
 	}
@@ -3049,11 +3101,16 @@ LowPriorityOptional:
 TableName:
 	Identifier
 	{
-		$$ = &ast.TableName{Name:model.NewCIStr($1.(string))}
+		tmp := ac.allocTableName()
+		tmp.Name = model.NewCIStr($1.(string))
+		$$ = tmp
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.TableName{Schema:model.NewCIStr($1.(string)),	Name:model.NewCIStr($3.(string))}
+		tmp := ac.allocTableName()
+		tmp.Schema = model.NewCIStr($1.(string))
+		tmp.Name = model.NewCIStr($3.(string))
+		$$ = tmp
 	}
 
 TableNameList:
@@ -3257,7 +3314,9 @@ FromDual:
 TableRefsClause:
 	TableRefs
 	{
-		$$ = &ast.TableRefsClause{TableRefs: $1.(*ast.Join)}
+		tmp := ac.allocTableRefsClause()
+		tmp.TableRefs= $1.(*ast.Join)
+		$$ = tmp
 	}
 
 TableRefs:
@@ -3267,13 +3326,19 @@ TableRefs:
 			// if $1 is Join, use it directly
 			$$ = j
 		} else {
-			$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: nil}
+			join := ac.allocJoin()
+			join.Left = $1.(ast.ResultSetNode)
+			$$ = join
 		}
 	}
 |	TableRefs ',' EscapedTableRef
 	{
 		/* from a, b is default cross join */
-		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin}
+		join := ac.allocJoin()
+		join.Left = $1.(ast.ResultSetNode)
+		join.Right = $3.(ast.ResultSetNode)
+		join.Tp = ast.CrossJoin
+		$$ = join
 	}
 
 EscapedTableRef:
@@ -3305,7 +3370,10 @@ TableFactor:
 	{
 		tn := $1.(*ast.TableName)
 		tn.IndexHints = $3.([]*ast.IndexHint)
-		$$ = &ast.TableSource{Source: tn, AsName: $2.(model.CIStr)}
+		tmp := ac.allocTableSource()
+		tmp.Source = tn
+		tmp.AsName = $2.(model.CIStr)
+		$$ = tmp
 	}
 |	'(' SelectStmt ')' TableAsName
 	{
@@ -3313,11 +3381,17 @@ TableFactor:
 		l := yylex.(*lexer)
 		endOffset := l.endOffset(yyS[yypt-1].offset)
 		l.SetLastSelectFieldText(st, endOffset)
-		$$ = &ast.TableSource{Source: $2.(*ast.SelectStmt), AsName: $4.(model.CIStr)}
+		tmp := ac.allocTableSource()
+		tmp.Source = $2.(*ast.SelectStmt)
+		tmp.AsName = $4.(model.CIStr)
+		$$ = tmp
 	}
 |	'(' UnionStmt ')' TableAsName
 	{
-		$$ = &ast.TableSource{Source: $2.(*ast.UnionStmt), AsName: $4.(model.CIStr)}
+		tmp := ac.allocTableSource()
+		tmp.Source = $2.(*ast.UnionStmt)
+		tmp.AsName = $4.(model.CIStr)
+		$$ = tmp
 	}
 |	'(' TableRefs ')'
 	{
@@ -3424,17 +3498,31 @@ JoinTable:
 	/* Use %prec to evaluate production TableRef before cross join */
 	TableRef CrossOpt TableRef %prec tableRefPriority
 	{
-		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin}
+		join := ac.allocJoin()
+		join.Left = $1.(ast.ResultSetNode)
+		join.Right = $3.(ast.ResultSetNode)
+		join.Tp = ast.CrossJoin
+		$$ = join
 	}
 |	TableRef CrossOpt TableRef "ON" Expression
 	{
 		on := &ast.OnCondition{Expr: $5.(ast.ExprNode)}
-		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin, On: on}
+		join := ac.allocJoin()
+		join.Left = $1.(ast.ResultSetNode)
+		join.Right = $3.(ast.ResultSetNode)
+		join.Tp = ast.CrossJoin
+		join.On = on
+		$$ = join
 	}
 |	TableRef JoinType OuterOpt "JOIN" TableRef "ON" Expression
 	{
 		on := &ast.OnCondition{Expr: $7.(ast.ExprNode)}
-		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $5.(ast.ResultSetNode), Tp: $2.(ast.JoinType), On: on}
+		join := ac.allocJoin()
+		join.Left = $1.(ast.ResultSetNode)
+		join.Right = $5.(ast.ResultSetNode)
+		join.Tp = $2.(ast.JoinType)
+		join.On = on
+		$$ = join
 	}
 	/* Support Using */
 
@@ -4291,32 +4379,32 @@ Type:
 	}
 |	"float32"
 	{
-		x := types.NewFieldType($1.(byte))
+		x := ac.newFieldType($1.(byte))
 		$$ = x
 	}
 |	"float64"
 	{
-		x := types.NewFieldType($1.(byte))
+		x := ac.newFieldType($1.(byte))
 		$$ = x
 	}
 |	"int64"
 	{
-		x := types.NewFieldType($1.(byte))
+		x := ac.newFieldType($1.(byte))
 		$$ = x
 	}
 |	"string"
 	{
-		x := types.NewFieldType($1.(byte))
+		x := ac.newFieldType($1.(byte))
 		$$ = x
 	}
 |	"uint"
 	{
-		x := types.NewFieldType($1.(byte))
+		x := ac.newFieldType($1.(byte))
 		$$ = x
 	}
 |	"uint64"
 	{
-		x := types.NewFieldType($1.(byte))
+		x := ac.newFieldType($1.(byte))
 		$$ = x
 	}
 
@@ -4324,7 +4412,7 @@ NumericType:
 	IntegerType OptFieldLen FieldOpts
 	{
 		// TODO: check flen 0
-		x := types.NewFieldType($1.(byte))
+		x := ac.newFieldType($1.(byte))
 		x.Flen = $2.(int)
 		for _, o := range $3.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
@@ -4339,7 +4427,7 @@ NumericType:
 |	FixedPointType FloatOpt FieldOpts
 	{
 		fopt := $2.(*ast.FloatOpt)
-		x := types.NewFieldType($1.(byte))
+		x := ac.newFieldType($1.(byte))
 		x.Flen = fopt.Flen 
 		x.Decimal = fopt.Decimal
 		for _, o := range $3.([]*ast.TypeOpt) {
@@ -4355,7 +4443,7 @@ NumericType:
 |	FloatingPointType FloatOpt FieldOpts
 	{
 		fopt := $2.(*ast.FloatOpt)
-		x := types.NewFieldType($1.(byte))
+		x := ac.newFieldType($1.(byte))
 		x.Flen = fopt.Flen 
 		if x.Tp == mysql.TypeFloat {
 			// Fix issue #312
@@ -4380,7 +4468,7 @@ NumericType:
 	}
 |	BitValueType OptFieldLen
 	{
-		x := types.NewFieldType($1.(byte))
+		x := ac.newFieldType($1.(byte))
 		x.Flen = $2.(int)
 		if x.Flen == -1 || x.Flen == 0 {
 			x.Flen = 1
@@ -4464,7 +4552,7 @@ BitValueType:
 StringType:
 	NationalOpt "CHAR" FieldLen OptBinary OptCharset OptCollate
 	{
-		x := types.NewFieldType(mysql.TypeString)
+		x := ac.newFieldType(mysql.TypeString)
 		x.Flen = $3.(int)
 		if $4.(bool) {
 			x.Flag |= mysql.BinaryFlag
@@ -4473,7 +4561,7 @@ StringType:
 	}
 |	NationalOpt "CHAR" OptBinary OptCharset OptCollate
 	{
-		x := types.NewFieldType(mysql.TypeString)
+		x := ac.newFieldType(mysql.TypeString)
 		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
@@ -4481,7 +4569,7 @@ StringType:
 	}
 |	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
 	{
-		x := types.NewFieldType(mysql.TypeVarchar)
+		x := ac.newFieldType(mysql.TypeVarchar)
 		x.Flen = $3.(int) 
 		if $4.(bool) {
 			x.Flag |= mysql.BinaryFlag
@@ -4492,7 +4580,7 @@ StringType:
 	}
 |	"BINARY" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeString)
+		x := ac.newFieldType(mysql.TypeString)
 		x.Flen = $2.(int) 
 		x.Charset = charset.CharsetBin 
 		x.Collate = charset.CharsetBin
@@ -4500,7 +4588,7 @@ StringType:
 	}
 |	"VARBINARY" FieldLen
 	{
-		x := types.NewFieldType(mysql.TypeVarchar)
+		x := ac.newFieldType(mysql.TypeVarchar)
 		x.Flen = $2.(int) 
 		x.Charset = charset.CharsetBin 
 		x.Collate = charset.CharsetBin
@@ -4522,7 +4610,7 @@ StringType:
 	}
 |	"ENUM" '(' StringList ')' OptCharset OptCollate
 	{
-		x := types.NewFieldType(mysql.TypeEnum)
+		x := ac.newFieldType(mysql.TypeEnum)
 		x.Elems = $3.([]string)
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
@@ -4530,7 +4618,7 @@ StringType:
 	}
 |	"SET" '(' StringList ')' OptCharset OptCollate
 	{
-		x := types.NewFieldType(mysql.TypeSet)
+		x := ac.newFieldType(mysql.TypeSet)
 		x.Elems = $3.([]string)
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
@@ -4549,14 +4637,14 @@ NationalOpt:
 BlobType:
 	"TINYBLOB"
 	{
-		x := types.NewFieldType(mysql.TypeTinyBlob)
+		x := ac.newFieldType(mysql.TypeTinyBlob)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 |	"BLOB" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeBlob)
+		x := ac.newFieldType(mysql.TypeBlob)
 		x.Flen = $2.(int) 
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
@@ -4564,14 +4652,14 @@ BlobType:
 	}
 |	"MEDIUMBLOB"
 	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
+		x := ac.newFieldType(mysql.TypeMediumBlob)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 |	"LONGBLOB"
 	{
-		x := types.NewFieldType(mysql.TypeLongBlob)
+		x := ac.newFieldType(mysql.TypeLongBlob)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
@@ -4580,24 +4668,24 @@ BlobType:
 TextType:
 	"TINYTEXT"
 	{
-		x := types.NewFieldType(mysql.TypeTinyBlob)
+		x := ac.newFieldType(mysql.TypeTinyBlob)
 		$$ = x
 
 	}
 |	"TEXT" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeBlob)
+		x := ac.newFieldType(mysql.TypeBlob)
 		x.Flen = $2.(int) 
 		$$ = x
 	}
 |	"MEDIUMTEXT"
 	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
+		x := ac.newFieldType(mysql.TypeMediumBlob)
 		$$ = x
 	}
 |	"LONGTEXT"
 	{
-		x := types.NewFieldType(mysql.TypeLongBlob)
+		x := ac.newFieldType(mysql.TypeLongBlob)
 		$$ = x
 	}
 
@@ -4605,30 +4693,30 @@ TextType:
 DateAndTimeType:
 	"DATE"
 	{
-		x := types.NewFieldType(mysql.TypeDate)
+		x := ac.newFieldType(mysql.TypeDate)
 		$$ = x
 	}
 |	"DATETIME" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeDatetime)
+		x := ac.newFieldType(mysql.TypeDatetime)
 		x.Decimal = $2.(int)
 		$$ = x
 	}
 |	"TIMESTAMP" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeTimestamp)
+		x := ac.newFieldType(mysql.TypeTimestamp)
 		x.Decimal = $2.(int)
 		$$ = x
 	}
 |	"TIME" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeDuration)
+		x := ac.newFieldType(mysql.TypeDuration)
 		x.Decimal = $2.(int)
 		$$ = x
 	}
 |	"YEAR" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeYear)
+		x := ac.newFieldType(mysql.TypeYear)
 		x.Flen = $2.(int)
 		$$ = x
 	}
@@ -4749,11 +4837,15 @@ UpdateStmt:
 		if x, ok := $4.(*ast.Join); ok {
 			refs = x
 		} else {
-			refs = &ast.Join{Left: $4.(ast.ResultSetNode)}
+			join := ac.allocJoin()
+			join.Left = $4.(ast.ResultSetNode)
+			refs = join
 		}
+		tr := ac.allocTableRefsClause()
+		tr.TableRefs= refs
 		st := &ast.UpdateStmt{
 			LowPriority:	$2.(bool),
-			TableRefs:	&ast.TableRefsClause{TableRefs: refs},
+			TableRefs:	tr,
 			List:		$6.([]*ast.Assignment),
 		}
 		if $7 != nil {
@@ -4772,9 +4864,11 @@ UpdateStmt:
 	}
 |	"UPDATE" LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
 	{
+		tr := ac.allocTableRefsClause()
+		tr.TableRefs= $4.(*ast.Join)
 		st := &ast.UpdateStmt{
 			LowPriority:	$2.(bool),
-			TableRefs:	&ast.TableRefsClause{TableRefs: $4.(*ast.Join)},
+			TableRefs:	tr,
 			List:		$6.([]*ast.Assignment),
 		}
 		if $7 != nil {

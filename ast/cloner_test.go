@@ -32,3 +32,22 @@ func (ts *testClonerSuite) TestCloner(c *C) {
 	c.Assert(a3.GetValue(), Equals, int64(1))
 	c.Assert(b3.GetValue(), Equals, int64(1))
 }
+
+func (ts *testClonerSuite) TestClonePrepareStmt(c *C) {
+	cloner := &Cloner{}
+
+	a := &PrepareStmt{
+		stmtNode: stmtNode{
+			node: node{
+				text: "prepare stmt from 'select 1+?'",
+			},
+		},
+		Name:    "stmt",
+		SQLText: "select 1+?",
+		SQLVar:  (*VariableExpr)(nil),
+	}
+
+	b, ok := a.Accept(cloner)
+	c.Assert(ok, IsTrue)
+	c.Check(a, DeepEquals, b)
+}

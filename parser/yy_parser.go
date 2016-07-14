@@ -58,41 +58,40 @@ func handleMySQLSpecificCode(sql string) string {
 	return specCodePattern.ReplaceAllStringFunc(sql, trimComment)
 }
 
-// Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
-type Parser struct {
-	cache []yySymType
-}
-
-// New returns a Parser object.
-func New() *Parser {
-	return &Parser{
-		cache: make([]yySymType, 200),
-	}
-}
-
 // Parse parses a query string to raw ast.StmtNode.
 // If charset or collation is "", default charset and collation will be used.
-func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, error) {
+// If allocator is nil, a temporal allocator will be used. It's recommended to pass a allocator and reuse it.
+func Parse(sql, charset, collation string, allocator *Allocator) ([]ast.StmtNode, error) {
 	if charset == "" {
 		charset = mysql.DefaultCharset
 	}
 	if collation == "" {
 		collation = mysql.DefaultCollationName
 	}
+	if allocator == nil {
+		allocator = NewAllocator()
+	}
 	sql = handleMySQLSpecificCode(sql)
 	l := NewLexer(sql)
 	l.SetCharsetInfo(charset, collation)
-	yyParse(l, &parser.cache)
+	yyParse(l, allocator)
 	if len(l.Errors()) != 0 {
 		return nil, errors.Trace(l.Errors()[0])
 	}
-	return l.Stmts(), nil
+	ret := l.Stmts()
+	for i, v := range ret {
+		if _, ok := v.(*ast.PrepareStmt); ok {
+			c, _ := v.Accept(&ast.Cloner{})
+			ret[i] = c.(ast.StmtNode)
+		}
+	}
+	return ret, nil
 }
 
 // ParseOneStmt parses a query and returns an ast.StmtNode.
 // The query must have one statement, otherwise ErrSyntax is returned.
-func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode, error) {
-	stmts, err := parser.Parse(sql, charset, collation)
+func ParseOneStmt(sql, charset, collation string, allocator *Allocator) (ast.StmtNode, error) {
+	stmts, err := Parse(sql, charset, collation, allocator)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

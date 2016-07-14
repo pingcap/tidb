@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 var (
@@ -126,11 +125,7 @@ func (e *PrepareExec) DoPrepare() {
 		stmts []ast.StmtNode
 		err   error
 	)
-	if sqlParser, ok := e.Ctx.(sqlexec.SQLParser); ok {
-		stmts, err = sqlParser.ParseSQL(e.SQLText, charset, collation)
-	} else {
-		stmts, err = parser.New().Parse(e.SQLText, charset, collation)
-	}
+	stmts, err = parser.Parse(e.SQLText, charset, collation, nil)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return

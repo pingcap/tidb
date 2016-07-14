@@ -161,6 +161,12 @@ func copyStruct(in Node) (out Node) {
 	case *UnionStmt:
 		nv := *v
 		out = &nv
+	case *PrepareStmt:
+		nv := *v
+		if v.SQLVar != nil {
+			nv.SQLVar = copyStruct(v.SQLVar).(*VariableExpr)
+		}
+		out = &nv
 	default:
 		// We currently only handle expression and select statement.
 		// Will add more when we need to.

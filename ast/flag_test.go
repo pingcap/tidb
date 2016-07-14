@@ -15,11 +15,11 @@ func TestT(t *testing.T) {
 var _ = Suite(&testFlagSuite{})
 
 type testFlagSuite struct {
-	*parser.Parser
+	*parser.Allocator
 }
 
 func (ts *testFlagSuite) SetUpSuite(c *C) {
-	ts.Parser = parser.New()
+	ts.Allocator = parser.NewAllocator()
 }
 
 func (ts *testFlagSuite) TestHasAggFlag(c *C) {
@@ -101,7 +101,8 @@ func (ts *testFlagSuite) TestFlag(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		stmt, err := ts.ParseOneStmt("select "+ca.expr, "", "")
+		ts.Allocator.Reset()
+		stmt, err := parser.ParseOneStmt("select "+ca.expr, "", "", ts.Allocator)
 		c.Assert(err, IsNil)
 		selectStmt := stmt.(*ast.SelectStmt)
 		ast.SetFlag(selectStmt)

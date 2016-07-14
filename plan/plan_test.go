@@ -32,11 +32,11 @@ func TestT(t *testing.T) {
 }
 
 type testPlanSuite struct {
-	*parser.Parser
+	*parser.Allocator
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
+	s.Allocator = parser.NewAllocator()
 }
 
 func (s *testPlanSuite) TestRangeBuilder(c *C) {
@@ -203,7 +203,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 
 	for _, ca := range cases {
 		sql := "select 1 from dual where " + ca.exprStr
-		stmts, err := s.Parse(sql, "", "")
+		stmts, err := parser.Parse(sql, "", "", s.Allocator)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
 		stmt := stmts[0].(*ast.SelectStmt)
 		result := rb.build(stmt.Where)
@@ -238,7 +238,7 @@ func (s *testPlanSuite) TestFilterRate(c *C) {
 	}
 	for _, ca := range cases {
 		sql := "select 1 from dual where " + ca.expr
-		s, err := s.ParseOneStmt(sql, "", "")
+		s, err := parser.ParseOneStmt(sql, "", "", s.Allocator)
 		c.Assert(err, IsNil, Commentf("for expr %s", ca.expr))
 		stmt := s.(*ast.SelectStmt)
 		rate := guesstimateFilterRate(stmt.Where)
@@ -343,7 +343,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		stmt, err := parser.ParseOneStmt(ca.sql, "", "", s.Allocator)
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 		mockResolve(stmt)
@@ -359,6 +359,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 
 func (s *testPlanSuite) TestSplitWhere(c *C) {
 	defer testleak.AfterTest(c)()
+	s.Allocator.Reset()
 	cases := []struct {
 		expr  string
 		count int
@@ -372,7 +373,7 @@ func (s *testPlanSuite) TestSplitWhere(c *C) {
 	for _, ca := range cases {
 		sql := "select 1 from dual where " + ca.expr
 		comment := Commentf("for expr %s", ca.expr)
-		st, err := s.ParseOneStmt(sql, "", "")
+		st, err := parser.ParseOneStmt(sql, "", "", s.Allocator)
 		c.Assert(err, IsNil, comment)
 		stmt := st.(*ast.SelectStmt)
 		conditions := splitWhere(stmt.Where)
@@ -382,6 +383,7 @@ func (s *testPlanSuite) TestSplitWhere(c *C) {
 
 func (s *testPlanSuite) TestNullRejectFinder(c *C) {
 	defer testleak.AfterTest(c)()
+	s.Allocator.Reset()
 	cases := []struct {
 		expr    string
 		notNull bool
@@ -400,7 +402,7 @@ func (s *testPlanSuite) TestNullRejectFinder(c *C) {
 	for _, ca := range cases {
 		sql := "select * from t where " + ca.expr
 		comment := Commentf("for expr %s", ca.expr)
-		s, err := s.ParseOneStmt(sql, "", "")
+		s, err := parser.ParseOneStmt(sql, "", "", s.Allocator)
 		c.Assert(err, IsNil, comment)
 		finder := &nullRejectFinder{nullRejectTables: map[*ast.TableName]bool{}}
 		stmt := s.(*ast.SelectStmt)
@@ -580,6 +582,7 @@ func (b *mockJoinResolver) Leave(in ast.Node) (ast.Node, bool) {
 
 func (s *testPlanSuite) TestJoinPath(c *C) {
 	defer testleak.AfterTest(c)()
+	s.Allocator.Reset()
 	cases := []struct {
 		sql     string
 		explain string
@@ -661,7 +664,7 @@ func (s *testPlanSuite) TestJoinPath(c *C) {
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
-		s, err := s.ParseOneStmt(ca.sql, "", "")
+		s, err := parser.ParseOneStmt(ca.sql, "", "", s.Allocator)
 		c.Assert(err, IsNil, comment)
 		stmt := s.(*ast.SelectStmt)
 		mockJoinResolve(c, stmt)
@@ -674,6 +677,7 @@ func (s *testPlanSuite) TestJoinPath(c *C) {
 
 func (s *testPlanSuite) TestMultiColumnIndex(c *C) {
 	defer testleak.AfterTest(c)()
+	s.Allocator.Reset()
 	cases := []struct {
 		sql              string
 		accessEqualCount int
@@ -685,7 +689,7 @@ func (s *testPlanSuite) TestMultiColumnIndex(c *C) {
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
-		s, err := s.ParseOneStmt(ca.sql, "", "")
+		s, err := parser.ParseOneStmt(ca.sql, "", "", s.Allocator)
 		c.Assert(err, IsNil, comment)
 		stmt := s.(*ast.SelectStmt)
 		ast.SetFlag(stmt)
@@ -703,6 +707,7 @@ func (s *testPlanSuite) TestMultiColumnIndex(c *C) {
 
 func (s *testPlanSuite) TestIndexHint(c *C) {
 	defer testleak.AfterTest(c)()
+	s.Allocator.Reset()
 	cases := []struct {
 		sql     string
 		explain string
@@ -738,7 +743,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
-		s, err := s.ParseOneStmt(ca.sql, "", "")
+		s, err := parser.ParseOneStmt(ca.sql, "", "", s.Allocator)
 		c.Assert(err, IsNil, comment)
 		stmt := s.(*ast.SelectStmt)
 		mockJoinResolve(c, stmt)

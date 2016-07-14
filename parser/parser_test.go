@@ -35,7 +35,7 @@ type testParserSuite struct {
 
 func (s *testParserSuite) TestSimple(c *C) {
 	defer testleak.AfterTest(c)()
-	parser := New()
+	allocator := NewAllocator()
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
@@ -52,18 +52,20 @@ func (s *testParserSuite) TestSimple(c *C) {
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
-		_, err := parser.ParseOneStmt(src, "", "")
+		allocator.Reset()
+		_, err := ParseOneStmt(src, "", "", allocator)
 		c.Assert(err, IsNil, Commentf("source %s", src))
 	}
 
 	// Testcase for prepared statement
 	src := "SELECT id+?, id+? from t;"
-	_, err := parser.ParseOneStmt(src, "", "")
+	allocator.Reset()
+	_, err := ParseOneStmt(src, "", "", allocator)
 	c.Assert(err, IsNil)
 
 	// Testcase for -- Comment and unary -- operator
 	src = "CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED); -- foo\nSelect --1 from foo;"
-	stmts, err := parser.Parse(src, "", "")
+	stmts, err := Parse(src, "", "", allocator)
 	c.Assert(err, IsNil)
 	c.Assert(stmts, HasLen, 2)
 
@@ -71,7 +73,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
 	// Fix: https://github.com/pingcap/tidb/issues/971
 	src = "/*!40101 SET character_set_client = utf8 */;"
-	stmts, err = parser.Parse(src, "", "")
+	stmts, err = Parse(src, "", "", allocator)
 	c.Assert(err, IsNil)
 	c.Assert(stmts, HasLen, 1)
 	stmt := stmts[0]
@@ -80,7 +82,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 
 	// Testcase for CONVERT(expr,type)
 	src = "SELECT CONVERT('111', SIGNED);"
-	st, err := parser.ParseOneStmt(src, "", "")
+	st, err := ParseOneStmt(src, "", "", allocator)
 	c.Assert(err, IsNil)
 	ss, ok := st.(*ast.SelectStmt)
 	c.Assert(ok, IsTrue)
@@ -98,7 +100,8 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"SELECT CONVERT('111', SIGNED) /*comment*/;",
 	}
 	for _, src := range srcs {
-		st, err = parser.ParseOneStmt(src, "", "")
+		allocator.Reset()
+		st, err = ParseOneStmt(src, "", "", allocator)
 		c.Assert(err, IsNil)
 		ss, ok = st.(*ast.SelectStmt)
 		c.Assert(ok, IsTrue)
@@ -106,7 +109,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 
 	// For issue #961
 	src = "create table t (c int key);"
-	st, err = parser.ParseOneStmt(src, "", "")
+	st, err = ParseOneStmt(src, "", "", allocator)
 	c.Assert(err, IsNil)
 	cs, ok := st.(*ast.CreateTableStmt)
 	c.Assert(ok, IsTrue)
@@ -121,9 +124,10 @@ type testCase struct {
 }
 
 func (s *testParserSuite) RunTest(c *C, table []testCase) {
-	parser := New()
+	allocator := NewAllocator()
 	for _, t := range table {
-		_, err := parser.Parse(t.src, "", "")
+		allocator.Reset()
+		_, err := Parse(t.src, "", "", allocator)
 		comment := Commentf("source %v", t.src)
 		if t.ok {
 			c.Assert(err, IsNil, comment)
@@ -984,7 +988,7 @@ func (s *testParserSuite) TestInsertStatementMemoryAllocation(c *C) {
 	sql := "insert t values (1)" + strings.Repeat(",(1)", 1000)
 	var oldStats, newStats runtime.MemStats
 	runtime.ReadMemStats(&oldStats)
-	_, err := New().ParseOneStmt(sql, "", "")
+	_, err := ParseOneStmt(sql, "", "", nil)
 	c.Assert(err, IsNil)
 	runtime.ReadMemStats(&newStats)
 	c.Assert(int(newStats.TotalAlloc-oldStats.TotalAlloc), Less, 1024*500)

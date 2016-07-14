@@ -28,11 +28,11 @@ import (
 var _ = Suite(&testNameResolverSuite{})
 
 func (s *testNameResolverSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
+	s.Allocator = parser.NewAllocator()
 }
 
 type testNameResolverSuite struct {
-	*parser.Parser
+	*parser.Allocator
 }
 
 type resolverVerifier struct {
@@ -94,7 +94,8 @@ func (ts *testNameResolverSuite) TestNameResolver(c *C) {
 	domain := sessionctx.GetDomain(ctx)
 	db.BindCurrentSchema(ctx, "test")
 	for _, tc := range resolverTestCases {
-		node, err := ts.ParseOneStmt(tc.src, "", "")
+		ts.Allocator.Reset()
+		node, err := parser.ParseOneStmt(tc.src, "", "", ts.Allocator)
 		c.Assert(err, IsNil)
 		resolveErr := plan.ResolveName(node, domain.InfoSchema(), ctx)
 		if tc.valid {

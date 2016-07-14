@@ -122,8 +122,9 @@ type session struct {
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
 
 	// For performance_schema only.
-	stmtState *perfschema.StatementState
-	parser    *parser.Parser
+	stmtState    *perfschema.StatementState
+	allocator    *parser.Allocator
+	execRefCount int
 }
 
 func (s *session) cleanRetryInfo() {
@@ -384,10 +385,20 @@ func (s *session) ShouldAutocommit(ctx context.Context) bool {
 }
 
 func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
-	return s.parser.Parse(sql, charset, collation)
+	return parser.Parse(sql, charset, collation, s.allocator)
 }
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
+	s.execRefCount++
+	rs, err := s.execute(sql)
+	s.execRefCount--
+	return rs, err
+}
+
+func (s *session) execute(sql string) ([]ast.RecordSet, error) {
+	if variable.GetSessionVars(s).Status&mysql.ServerStatusInTrans == 0 && s.execRefCount <= 1 {
+		s.allocator.Reset()
+	}
 	charset, collation := getCtxCharsetInfo(s)
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
@@ -620,7 +631,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 		sid:         atomic.AddInt64(&sessionID, 1),
 		debugInfos:  make(map[string]interface{}),
 		maxRetryCnt: 10,
-		parser:      parser.New(),
+		allocator:   parser.NewAllocator(),
 	}
 	domain, err := domap.Get(store)
 	if err != nil {
