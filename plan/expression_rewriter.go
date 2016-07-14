@@ -216,7 +216,12 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	}
 	np = er.b.buildExists(np)
 	if np.IsCorrelated() {
-		er.p = er.b.buildApply(er.p, np, outerSchema, nil)
+		if sel, ok := np.GetChildByIndex(0).(*Selection); ok && !sel.GetChildByIndex(0).IsCorrelated() {
+			er.p = er.b.buildSemiJoin(er.p, sel.GetChildByIndex(0).(LogicalPlan), sel.Conditions, true)
+		} else {
+			// Can't be built as semi-join
+			er.p = er.b.buildApply(er.p, np, outerSchema, nil)
+		}
 		if er.p.IsCorrelated() {
 			er.correlated = true
 		}

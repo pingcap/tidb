@@ -83,7 +83,7 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 	leftPlan := p.GetChildByIndex(0).(LogicalPlan)
 	rightPlan := p.GetChildByIndex(1).(LogicalPlan)
 	equalCond, leftPushCond, rightPushCond, otherCond := extractOnCondition(predicates, leftPlan, rightPlan)
-	if p.JoinType == LeftOuterJoin {
+	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoinWithAux {
 		rightCond = p.RightConditions
 		leftCond = leftPushCond
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
@@ -120,6 +120,8 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 	if p.JoinType == InnerJoin {
 		p.EqualConditions = append(p.EqualConditions, equalCond...)
 		p.OtherConditions = append(p.OtherConditions, otherCond...)
+	} else if p.JoinType == SemiJoinWithAux {
+		p.EqualConditions = append(p.EqualConditions, equalCond...)
 	}
 	return
 }
