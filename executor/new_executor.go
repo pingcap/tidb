@@ -516,6 +516,119 @@ func (e *SelectionExec) Close() error {
 
 // NewTableScanExec is a table scan executor without result fields.
 type NewTableScanExec struct {
+	t          table.Table
+	asName     *model.CIStr
+	ctx        context.Context
+	ranges     []plan.TableRange
+	seekHandle int64
+	iter       kv.Iterator
+	cursor     int
+	schema     expression.Schema
+	columns    []*model.ColumnInfo
+}
+
+// Schema implements Executor Schema interface.
+func (e *NewTableScanExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Fields implements Executor interface.
+func (e *NewTableScanExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Next implements Executor interface.
+func (e *NewTableScanExec) Next() (*Row, error) {
+	for {
+		if e.cursor >= len(e.ranges) {
+			return nil, nil
+		}
+		ran := e.ranges[e.cursor]
+		if e.seekHandle < ran.LowVal {
+			e.seekHandle = ran.LowVal
+		}
+		if e.seekHandle > ran.HighVal {
+			e.cursor++
+			continue
+		}
+		handle, found, err := e.t.Seek(e.ctx, e.seekHandle)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !found {
+			return nil, nil
+		}
+		if handle > ran.HighVal {
+			// The handle is out of the current range, but may be in following ranges.
+			// We seek to the range that may contains the handle, so we
+			// don't need to seek key again.
+			inRange := e.seekRange(handle)
+			if !inRange {
+				// The handle may be less than the current range low value, can not
+				// return directly.
+				continue
+			}
+		}
+		row, err := e.getRow(handle)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.seekHandle = handle + 1
+		return row, nil
+	}
+}
+
+// seekRange increments the range cursor to the range
+// with high value greater or equal to handle.
+func (e *NewTableScanExec) seekRange(handle int64) (inRange bool) {
+	for {
+		e.cursor++
+		if e.cursor >= len(e.ranges) {
+			return false
+		}
+		ran := e.ranges[e.cursor]
+		if handle < ran.LowVal {
+			return false
+		}
+		if handle > ran.HighVal {
+			continue
+		}
+		return true
+	}
+}
+
+func (e *NewTableScanExec) getRow(handle int64) (*Row, error) {
+	row := &Row{}
+	var err error
+
+	columns := make([]*table.Column, len(e.schema))
+	for i, v := range e.columns {
+		columns[i] = &table.Column{ColumnInfo: *v}
+	}
+	row.Data, err = e.t.RowWithCols(e.ctx, handle, columns)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Put rowKey to the tail of record row.
+	rke := &RowKeyEntry{
+		Tbl:         e.t,
+		Handle:      handle,
+		TableAsName: e.asName,
+	}
+	row.RowKeys = append(row.RowKeys, rke)
+	return row, nil
+}
+
+// Close implements Executor Close interface.
+func (e *NewTableScanExec) Close() error {
+	e.iter = nil
+	e.cursor = 0
+	return nil
+}
+
+// NewXSelectTableExec represents XAPI select executor without result fields.
+type NewXSelectTableExec struct {
 	tableInfo   *model.TableInfo
 	table       table.Table
 	asName      *model.CIStr
@@ -531,11 +644,11 @@ type NewTableScanExec struct {
 }
 
 // Schema implements Executor Schema interface.
-func (e *NewTableScanExec) Schema() expression.Schema {
+func (e *NewXSelectTableExec) Schema() expression.Schema {
 	return e.schema
 }
 
-func (e *NewTableScanExec) doRequest() error {
+func (e *NewXSelectTableExec) doRequest() error {
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
@@ -558,14 +671,14 @@ func (e *NewTableScanExec) doRequest() error {
 }
 
 // Close implements Executor Close interface.
-func (e *NewTableScanExec) Close() error {
+func (e *NewXSelectTableExec) Close() error {
 	e.result = nil
 	e.subResult = nil
 	return nil
 }
 
 // Next implements Executor interface.
-func (e *NewTableScanExec) Next() (*Row, error) {
+func (e *NewXSelectTableExec) Next() (*Row, error) {
 	if e.result == nil {
 		err := e.doRequest()
 		if err != nil {
@@ -598,14 +711,14 @@ func (e *NewTableScanExec) Next() (*Row, error) {
 }
 
 // Fields implements Executor interface.
-func (e *NewTableScanExec) Fields() []*ast.ResultField {
+func (e *NewXSelectTableExec) Fields() []*ast.ResultField {
 	return nil
 }
 
 // NewSortExec represents sorting executor.
 type NewSortExec struct {
 	Src     Executor
-	ByItems []plan.ByItems
+	ByItems []*plan.ByItems
 	Rows    []*orderByRow
 	ctx     context.Context
 	Limit   *plan.Limit
@@ -956,25 +1069,31 @@ type ApplyExec struct {
 
 // conditionChecker checks if all or any of the row match this condition.
 type conditionChecker struct {
-	cond    expression.Expression
-	trimLen int
-	ctx     context.Context
-	all     bool
-	matched bool
+	cond        expression.Expression
+	trimLen     int
+	ctx         context.Context
+	all         bool
+	dataHasNull bool
 }
 
-func (c *conditionChecker) Exec(row *Row) (*Row, error) {
-	var err error
-	c.matched, err = expression.EvalBool(c.cond, row.Data, c.ctx)
+// Check returns finished for checking if the input row can determine the final result,
+// and returns data for the eval result.
+func (c *conditionChecker) Check(rowData []types.Datum) (finished bool, data types.Datum, err error) {
+	data, err = c.cond.Eval(rowData, c.ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return false, data, errors.Trace(err)
 	}
-	row.Data = row.Data[:c.trimLen]
-	if c.matched != c.all {
-		row.Data = append(row.Data, types.NewDatum(c.matched))
-		return row, nil
+	var matched int64
+	if data.IsNull() {
+		c.dataHasNull = true
+		matched = 0
+	} else {
+		matched, err = data.ToBool()
+		if err != nil {
+			return false, data, errors.Trace(err)
+		}
 	}
-	return nil, nil
+	return (matched != 0) != c.all, data, nil
 }
 
 // Schema implements Executor Schema interface.
@@ -990,7 +1109,7 @@ func (e *ApplyExec) Fields() []*ast.ResultField {
 // Close implements Executor Close interface.
 func (e *ApplyExec) Close() error {
 	if e.checker != nil {
-		e.checker.matched = false
+		e.checker.dataHasNull = false
 	}
 	return e.Src.Close()
 }
@@ -1013,6 +1132,7 @@ func (e *ApplyExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		trimLen := len(srcRow.Data)
 		if innerRow != nil {
 			srcRow.Data = append(srcRow.Data, innerRow.Data...)
 		}
@@ -1021,17 +1141,29 @@ func (e *ApplyExec) Next() (*Row, error) {
 			return srcRow, nil
 		}
 		if innerRow == nil {
-			srcRow.Data = append(srcRow.Data, types.NewDatum(e.checker.matched))
+			var d types.Datum
+			// If we can't determine the result until the last row comes, the all must be true and any must not be true.
+			// If the any have met a null, the result will be null.
+			if e.checker.dataHasNull && !e.checker.all {
+				d = types.NewDatum(nil)
+			} else {
+				d = types.NewDatum(e.checker.all)
+			}
+			srcRow.Data = append(srcRow.Data, d)
+			e.checker.dataHasNull = false
 			e.innerExec.Close()
 			return srcRow, nil
 		}
-		resultRow, err := e.checker.Exec(srcRow)
+		finished, data, err := e.checker.Check(srcRow.Data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if resultRow != nil {
+		srcRow.Data = srcRow.Data[:trimLen]
+		if finished {
+			e.checker.dataHasNull = false
 			e.innerExec.Close()
-			return resultRow, nil
+			srcRow.Data = append(srcRow.Data, data)
+			return srcRow, nil
 		}
 	}
 }
@@ -1190,12 +1322,9 @@ func (e *NewUnionExec) Next() (*Row, error) {
 			for i := range row.Data {
 				// The column value should be casted as the same type of the first select statement in corresponding position.
 				col := e.schema[i]
-				var val types.Datum
-				val, err = row.Data[i].ConvertTo(col.RetType)
-				if err != nil {
+				if err := row.Data[i].ConvertTo(col.RetType); err != nil {
 					return nil, errors.Trace(err)
 				}
-				row.Data[i] = val
 			}
 		}
 		return row, nil

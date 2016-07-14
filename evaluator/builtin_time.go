@@ -35,7 +35,8 @@ func convertToTime(arg types.Datum, tp byte) (d types.Datum, err error) {
 	f := types.NewFieldType(tp)
 	f.Decimal = mysql.MaxFsp
 
-	d, err = arg.ConvertTo(f)
+	d = arg
+	err = d.ConvertTo(f)
 	if err != nil {
 		d.SetNull()
 		return d, errors.Trace(err)
@@ -56,7 +57,8 @@ func convertToDuration(arg types.Datum, fsp int) (d types.Datum, err error) {
 	f := types.NewFieldType(mysql.TypeDuration)
 	f.Decimal = fsp
 
-	d, err = arg.ConvertTo(f)
+	d = arg
+	err = d.ConvertTo(f)
 	if err != nil {
 		d.SetNull()
 		return d, errors.Trace(err)
@@ -676,7 +678,8 @@ func builtinExtract(args []types.Datum, _ context.Context) (d types.Datum, err e
 
 	f := types.NewFieldType(mysql.TypeDatetime)
 	f.Decimal = mysql.MaxFsp
-	val, err := vd.ConvertTo(f)
+	val := vd
+	err = val.ConvertTo(f)
 	if err != nil {
 		d.SetNull()
 		return d, errors.Trace(err)
@@ -755,7 +758,8 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	}
 	resultField = types.NewFieldType(fieldType)
 	resultField.Decimal = mysql.MaxFsp
-	value, err := nodeDate.ConvertTo(resultField)
+	value := nodeDate
+	err = value.ConvertTo(resultField)
 	if err != nil {
 		return d, ErrInvalidOperation.Gen("DateArith invalid args, need date but get %T", nodeDate)
 	}

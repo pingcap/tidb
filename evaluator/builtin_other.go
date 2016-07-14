@@ -14,10 +14,14 @@
 package evaluator
 
 import (
+	"regexp"
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -83,6 +87,32 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	return
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+func builtinCaseWhen(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	l := len(args)
+	for i := 0; i < l-1; i += 2 {
+		if args[i].IsNull() {
+			continue
+		}
+		b, err1 := args[i].ToBool()
+		if err1 != nil {
+			return d, errors.Trace(err1)
+		}
+		if b == 1 {
+			d = args[i+1]
+			return
+		}
+	}
+	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
+	// else clause -> args[l-1]
+	// If case clause has else clause, l%2 == 1.
+	if l%2 == 1 {
+		d = args[l-1]
+	}
+	return
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
 func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		return
@@ -108,6 +138,30 @@ func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	return
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
+func builtinRegexp(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	// TODO: We don't need to compile pattern if it has been compiled or it is static.
+	if args[0].IsNull() || args[1].IsNull() {
+		return
+	}
+
+	targetStr, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", args[0], args[0])
+	}
+	patternStr, err := args[1].ToString()
+	if err != nil {
+		return d, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", args[1], args[1])
+	}
+	re, err := regexp.Compile(patternStr)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetInt64(boolToInt64(re.MatchString(targetStr)))
+	return
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
 func builtinIn(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		return
@@ -389,4 +443,59 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 		}
 		return
 	}
+}
+
+// CastFuncFactory produces builtin function according to field types.
+// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
+func CastFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
+	switch tp.Tp {
+	// Parser has restricted this.
+	case mysql.TypeString, mysql.TypeDuration, mysql.TypeDatetime,
+		mysql.TypeDate, mysql.TypeLonglong, mysql.TypeNewDecimal:
+		return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+			d = args[0]
+			if d.IsNull() {
+				return
+			}
+			err = d.ConvertTo(tp)
+			return
+		}, nil
+	}
+	return nil, errors.Errorf("unknown cast type - %v", tp)
+}
+
+func builtinSetVar(args []types.Datum, ctx context.Context) (types.Datum, error) {
+	sessionVars := variable.GetSessionVars(ctx)
+	varName, _ := args[0].ToString()
+	if !args[1].IsNull() {
+		strVal, err := args[1].ToString()
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		sessionVars.Users[varName] = strings.ToLower(strVal)
+	}
+	return args[1], nil
+}
+
+func builtinGetVar(args []types.Datum, ctx context.Context) (types.Datum, error) {
+	sessionVars := variable.GetSessionVars(ctx)
+	varName, _ := args[0].ToString()
+	if v, ok := sessionVars.Users[varName]; ok {
+		return types.NewDatum(v), nil
+	}
+	return types.Datum{}, nil
+}
+
+// The lock function will do nothing.
+// Warning: get_lock() function is parsed but ignored.
+func builtinLock(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	d.SetInt64(1)
+	return d, nil
+}
+
+// The release lock function will do nothing.
+// Warning: release_lock() function is parsed but ignored.
+func builtinReleaseLock(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	d.SetInt64(1)
+	return d, nil
 }

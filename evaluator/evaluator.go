@@ -672,7 +672,7 @@ func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
 		return true
 	}
 	var err error
-	d, err = d.Cast(v.Tp)
+	err = d.Cast(v.Tp)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false

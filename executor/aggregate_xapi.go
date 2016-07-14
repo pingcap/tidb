@@ -43,6 +43,8 @@ func (n *finalAggregater) update(count uint64, value types.Datum) error {
 		return n.updateCount(count)
 	case ast.AggFuncFirstRow:
 		return n.updateFirst(value)
+	case ast.AggFuncSum:
+		return n.updateSum(value, count)
 	}
 	return nil
 }
@@ -72,6 +74,20 @@ func (n *finalAggregater) updateFirst(val types.Datum) error {
 	}
 	ctx.Value = val.GetValue()
 	ctx.Evaluated = true
+	return nil
+}
+
+func (n *finalAggregater) updateSum(val types.Datum, count uint64) error {
+	ctx := n.getContext()
+	if val.IsNull() {
+		return nil
+	}
+	var err error
+	ctx.Value, err = types.CalculateSum(ctx.Value, val.GetValue())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx.Count += int64(count)
 	return nil
 }
 

@@ -328,7 +328,11 @@ func (ps *perfSchema) initRecords(tbName string, records [][]types.Datum) error 
 	return nil
 }
 
-var setupTimersRecords [][]types.Datum
+var setupTimersRecords = [][]types.Datum{
+	types.MakeDatums("stage", mysql.Enum{Name: "NANOSECOND", Value: 1}),
+	types.MakeDatums("statement", mysql.Enum{Name: "NANOSECOND", Value: 1}),
+	types.MakeDatums("transaction", mysql.Enum{Name: "NANOSECOND", Value: 1}),
+}
 
 func (ps *perfSchema) initialize() (err error) {
 	ps.tables = make(map[string]*model.TableInfo)
@@ -424,12 +428,6 @@ func (ps *perfSchema) initialize() (err error) {
 	err = ps.initRecords(TableSetupConsumers, setupConsumersRecords)
 	if err != nil {
 		return errors.Trace(err)
-	}
-
-	setupTimersRecords = [][]types.Datum{
-		types.MakeDatums("stage", mysql.Enum{Name: "NANOSECOND", Value: 1}),
-		types.MakeDatums("statement", mysql.Enum{Name: "NANOSECOND", Value: 1}),
-		types.MakeDatums("transaction", mysql.Enum{Name: "NANOSECOND", Value: 1}),
 	}
 	err = ps.initRecords(TableSetupTimers, setupTimersRecords)
 	if err != nil {

@@ -65,6 +65,8 @@ const (
 	IsTruth    = "istrue"  // Avoid name conflict with IsTrue in github/pingcap/check.
 	IsFalsity  = "isfalse" // Avoid name conflict with IsFalse in github/pingcap/check.
 	RowFunc    = "row"
+	SetVar     = "setvar"
+	GetVar     = "getvar"
 )
 
 // FuncCallExpr is for function expression.
@@ -149,12 +151,12 @@ type DateArithType byte
 
 const (
 	// DateAdd is to run adddate or date_add function option.
-	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
-	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
+	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
+	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
 	DateAdd DateArithType = iota + 1
 	// DateSub is to run subdate or date_sub function option.
-	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
-	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
+	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
+	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
 	DateSub
 )
 

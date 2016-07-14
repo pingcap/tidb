@@ -15,7 +15,6 @@ package ddl_test
 
 import (
 	"database/sql"
-	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -27,23 +26,17 @@ import (
 	_ "github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
-
-func trySkipDBTest(c *C) {
-	// skip_ddl flag is defined in ddl package, we can't use it directly, so using flag Lookup to help us.
-	if f := flag.Lookup("skip_ddl"); f == nil || strings.ToLower(f.Value.String()) == "false" {
-		return
-	}
-
-	c.Skip("skip DB test")
-}
 
 var _ = Suite(&testDBSuite{})
 
@@ -58,8 +51,6 @@ type testDBSuite struct {
 }
 
 func (s *testDBSuite) SetUpSuite(c *C) {
-	trySkipDBTest(c)
-
 	var err error
 
 	s.schemaName = "test_db"
@@ -84,8 +75,6 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
-	trySkipDBTest(c)
-
 	s.db.Close()
 
 	s.s.Close()
@@ -507,4 +496,63 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 		need := fmt.Sprintf("%v", expected[i])
 		c.Assert(got, Equals, need)
 	}
+}
+
+func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://update_multiple_table")
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (c1 int, c2 int)")
+	tk.MustExec("insert t1 values (1, 1), (2, 2)")
+	tk.MustExec("create table t2 (c1 int, c2 int)")
+	tk.MustExec("insert t2 values (1, 3), (2, 5)")
+	ctx := tk.Se.(context.Context)
+	domain := sessionctx.GetDomain(ctx)
+	is := domain.InfoSchema()
+	db, ok := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(ok, IsTrue)
+	t1Tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	t1Info := t1Tbl.Meta()
+
+	// Add a new column in write only state.
+	newColumn := &model.ColumnInfo{
+		ID:           100,
+		Name:         model.NewCIStr("c3"),
+		Offset:       2,
+		DefaultValue: 9,
+		FieldType:    *types.NewFieldType(mysql.TypeLonglong),
+		State:        model.StateWriteOnly,
+	}
+	t1Info.Columns = append(t1Info.Columns, newColumn)
+
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		_, err = m.GenSchemaVersion()
+		c.Assert(err, IsNil)
+		c.Assert(m.UpdateTable(db.ID, t1Info), IsNil)
+		return nil
+	})
+	err = domain.Reload()
+	c.Assert(err, IsNil)
+
+	tk.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1", "8 2"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 10", "2 10"))
+
+	newColumn.State = model.StatePublic
+
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		_, err = m.GenSchemaVersion()
+		c.Assert(err, IsNil)
+		c.Assert(m.UpdateTable(db.ID, t1Info), IsNil)
+		return nil
+	})
+	err = domain.Reload()
+	c.Assert(err, IsNil)
+
+	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
 }

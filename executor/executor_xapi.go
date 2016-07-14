@@ -484,7 +484,7 @@ func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	for i, v := range e.indexPlan.Index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
-	selIdxReq.Ranges, err = indexRangesToPBRanges(e.indexPlan.Ranges, fieldTypes, e.indexPlan.Index.Columns)
+	selIdxReq.Ranges, err = indexRangesToPBRanges(e.indexPlan.Ranges, fieldTypes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -579,7 +579,7 @@ func tableRangesToPBRanges(tableRanges []plan.TableRange) []*tipb.KeyRange {
 	return hrs
 }
 
-func indexRangesToPBRanges(ranges []*plan.IndexRange, fieldTypes []*types.FieldType, indexColumns []*model.IndexColumn) ([]*tipb.KeyRange, error) {
+func indexRangesToPBRanges(ranges []*plan.IndexRange, fieldTypes []*types.FieldType) ([]*tipb.KeyRange, error) {
 	keyRanges := make([]*tipb.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		err := convertIndexRangeTypes(ran, fieldTypes)
@@ -612,7 +612,8 @@ func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType)
 			ran.LowVal[i].SetBytes([]byte{})
 			continue
 		}
-		converted, err := ran.LowVal[i].ConvertTo(fieldTypes[i])
+		converted := ran.LowVal[i]
+		err := converted.ConvertTo(fieldTypes[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -641,7 +642,8 @@ func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType)
 		if ran.HighVal[i].Kind() == types.KindMaxValue {
 			continue
 		}
-		converted, err := ran.HighVal[i].ConvertTo(fieldTypes[i])
+		converted := ran.HighVal[i]
+		err := converted.ConvertTo(fieldTypes[i])
 		if err != nil {
 			return errors.Trace(err)
 		}

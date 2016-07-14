@@ -60,7 +60,7 @@ type DatabaseOption struct {
 }
 
 // CreateDatabaseStmt is a statement to create a database.
-// See: https://dev.mysql.com/doc/refman/5.7/en/create-database.html
+// See https://dev.mysql.com/doc/refman/5.7/en/create-database.html
 type CreateDatabaseStmt struct {
 	ddlNode
 
@@ -80,7 +80,7 @@ func (n *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // DropDatabaseStmt is a statement to drop a database and all tables in the database.
-// See: https://dev.mysql.com/doc/refman/5.7/en/drop-database.html
+// See https://dev.mysql.com/doc/refman/5.7/en/drop-database.html
 type DropDatabaseStmt struct {
 	ddlNode
 
@@ -122,7 +122,7 @@ func (n *IndexColName) Accept(v Visitor) (Node, bool) {
 }
 
 // ReferenceDef is used for parsing foreign key reference option from SQL.
-// See: http://dev.mysql.com/doc/refman/5.7/en/create-table-foreign-keys.html
+// See http://dev.mysql.com/doc/refman/5.7/en/create-table-foreign-keys.html
 type ReferenceDef struct {
 	node
 
@@ -275,7 +275,7 @@ func (n *ColumnOption) Accept(v Visitor) (Node, bool) {
 //  | index_type
 //  | WITH PARSER parser_name
 //  | COMMENT 'string'
-// See: http://dev.mysql.com/doc/refman/5.7/en/create-table.html
+// See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
 type IndexOption struct {
 	node
 
@@ -390,7 +390,7 @@ func (n *ColumnDef) Accept(v Visitor) (Node, bool) {
 }
 
 // CreateTableStmt is a statement to create a table.
-// See: https://dev.mysql.com/doc/refman/5.7/en/create-table.html
+// See https://dev.mysql.com/doc/refman/5.7/en/create-table.html
 type CreateTableStmt struct {
 	ddlNode
 
@@ -431,7 +431,7 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // DropTableStmt is a statement to drop one or more tables.
-// See: https://dev.mysql.com/doc/refman/5.7/en/drop-table.html
+// See https://dev.mysql.com/doc/refman/5.7/en/drop-table.html
 type DropTableStmt struct {
 	ddlNode
 
@@ -457,7 +457,7 @@ func (n *DropTableStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // CreateIndexStmt is a statement to create an index.
-// See: https://dev.mysql.com/doc/refman/5.7/en/create-index.html
+// See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type CreateIndexStmt struct {
 	ddlNode
 
@@ -490,7 +490,7 @@ func (n *CreateIndexStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // DropIndexStmt is a statement to drop the index.
-// See: https://dev.mysql.com/doc/refman/5.7/en/drop-index.html
+// See https://dev.mysql.com/doc/refman/5.7/en/drop-index.html
 type DropIndexStmt struct {
 	ddlNode
 
@@ -535,6 +535,7 @@ const (
 	TableOptionMinRows
 	TableOptionDelayKeyWrite
 	TableOptionRowFormat
+	TableOptionStatsPersistent
 )
 
 // RowFormat types
@@ -658,7 +659,7 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 }
 
 // AlterTableStmt is a statement to change the structure of a table.
-// See: https://dev.mysql.com/doc/refman/5.7/en/alter-table.html
+// See https://dev.mysql.com/doc/refman/5.7/en/alter-table.html
 type AlterTableStmt struct {
 	ddlNode
 
@@ -689,7 +690,7 @@ func (n *AlterTableStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // TruncateTableStmt is a statement to empty a table completely.
-// See: https://dev.mysql.com/doc/refman/5.7/en/truncate-table.html
+// See https://dev.mysql.com/doc/refman/5.7/en/truncate-table.html
 type TruncateTableStmt struct {
 	ddlNode
 

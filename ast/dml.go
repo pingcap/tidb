@@ -437,7 +437,7 @@ func (n *OrderByClause) Accept(v Visitor) (Node, bool) {
 }
 
 // SelectStmt represents the select query node.
-// See: https://dev.mysql.com/doc/refman/5.7/en/select.html
+// See https://dev.mysql.com/doc/refman/5.7/en/select.html
 type SelectStmt struct {
 	dmlNode
 	resultSetNode
@@ -554,7 +554,7 @@ func (n *UnionSelectList) Accept(v Visitor) (Node, bool) {
 }
 
 // UnionStmt represents "union statement"
-// See: https://dev.mysql.com/doc/refman/5.7/en/union.html
+// See https://dev.mysql.com/doc/refman/5.7/en/union.html
 type UnionStmt struct {
 	dmlNode
 	resultSetNode
@@ -626,7 +626,7 @@ func (n *Assignment) Accept(v Visitor) (Node, bool) {
 }
 
 // Priority const values.
-// See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
+// See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 const (
 	NoPriority = iota
 	LowPriority
@@ -635,7 +635,7 @@ const (
 )
 
 // InsertStmt is a statement to insert new rows into an existing table.
-// See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
+// See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 type InsertStmt struct {
 	dmlNode
 
@@ -705,7 +705,7 @@ func (n *InsertStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // DeleteStmt is a statement to delete rows from table.
-// See: https://dev.mysql.com/doc/refman/5.7/en/delete.html
+// See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteStmt struct {
 	dmlNode
 
@@ -768,7 +768,7 @@ func (n *DeleteStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // UpdateStmt is a statement to update columns of existing rows in tables with new values.
-// See: https://dev.mysql.com/doc/refman/5.7/en/update.html
+// See https://dev.mysql.com/doc/refman/5.7/en/update.html
 type UpdateStmt struct {
 	dmlNode
 
@@ -867,7 +867,7 @@ const (
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.
-// See: https://dev.mysql.com/doc/refman/5.7/en/show.html
+// See https://dev.mysql.com/doc/refman/5.7/en/show.html
 type ShowStmt struct {
 	dmlNode
 	resultSetNode

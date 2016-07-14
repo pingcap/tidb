@@ -113,6 +113,9 @@ func (ps *perfSchema) RegisterStatement(category, name string, elem interface{})
 }
 
 func (ps *perfSchema) StartStatement(sql string, connID uint64, callerName EnumCallerName, elem interface{}) *StatementState {
+	if !enablePerfSchema {
+		return nil
+	}
 	stmtType := reflect.TypeOf(elem)
 	info, ok := ps.stmtInfos[stmtType]
 	if !ok {
@@ -176,6 +179,9 @@ func (ps *perfSchema) StartStatement(sql string, connID uint64, callerName EnumC
 }
 
 func (ps *perfSchema) EndStatement(state *StatementState) {
+	if !enablePerfSchema {
+		return
+	}
 	if state == nil {
 		return
 	}
@@ -308,7 +314,6 @@ func (ps *perfSchema) registerStatements() {
 	ps.RegisterStatement("sql", "rollback", (*ast.RollbackStmt)(nil))
 	ps.RegisterStatement("sql", "select", (*ast.SelectStmt)(nil))
 	ps.RegisterStatement("sql", "set", (*ast.SetStmt)(nil))
-	ps.RegisterStatement("sql", "set_charset", (*ast.SetCharsetStmt)(nil))
 	ps.RegisterStatement("sql", "set_password", (*ast.SetPwdStmt)(nil))
 	ps.RegisterStatement("sql", "show", (*ast.ShowStmt)(nil))
 	ps.RegisterStatement("sql", "truncate", (*ast.TruncateTableStmt)(nil))

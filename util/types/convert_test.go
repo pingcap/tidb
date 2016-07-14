@@ -299,7 +299,7 @@ func testStrToInt(c *C, str string, expect int64) {
 
 func testStrToUint(c *C, str string, expect uint64) {
 	d := NewDatum(str)
-	d, _ = d.convertToUint(NewFieldType(mysql.TypeLonglong))
+	_ = d.convertToUint(NewFieldType(mysql.TypeLonglong))
 	c.Assert(d.GetUint64(), Equals, expect)
 }
 
@@ -355,12 +355,12 @@ func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 		ft.Flag |= mysql.UnsignedFlag
 	}
 	d := NewDatum(value)
-	casted, err := d.ConvertTo(ft)
+	err := d.ConvertTo(ft)
 	c.Assert(err, IsNil, Commentf("%v", ft))
-	if casted.IsNull() {
+	if d.IsNull() {
 		c.Assert(expected, Equals, "<nil>")
 	} else {
-		str, err := casted.ToString()
+		str, err := d.ToString()
 		c.Assert(err, IsNil)
 		c.Assert(str, Equals, expected)
 	}
@@ -380,12 +380,12 @@ func deny(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 		ft.Flag |= mysql.UnsignedFlag
 	}
 	d := NewDatum(value)
-	casted, err := d.ConvertTo(ft)
+	err := d.ConvertTo(ft)
 	c.Assert(err, NotNil)
-	if casted.IsNull() {
+	if d.IsNull() {
 		c.Assert(expected, Equals, "<nil>")
 	} else {
-		str, err := casted.ToString()
+		str, err := d.ToString()
 		c.Assert(err, IsNil)
 		c.Assert(str, Equals, expected)
 	}
@@ -472,8 +472,8 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeDouble, " -23.54", "-23.54")
 
 	// year
-	signedDeny(c, mysql.TypeYear, 123, "<nil>")
-	signedDeny(c, mysql.TypeYear, 3000, "<nil>")
+	signedDeny(c, mysql.TypeYear, 123, "123")
+	signedDeny(c, mysql.TypeYear, 3000, "3000")
 	signedAccept(c, mysql.TypeYear, "2000", "2000")
 
 	// time from string
@@ -490,7 +490,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedDeny(c, mysql.TypeDatetime, "2012-08-x", "0000-00-00 00:00:00")
 	signedDeny(c, mysql.TypeTimestamp, "2012-08-x", "0000-00-00 00:00:00")
 	signedDeny(c, mysql.TypeDuration, "2012-08-x", "00:00:00")
-	signedDeny(c, mysql.TypeDuration, 0, "<nil>")
+	signedDeny(c, mysql.TypeDuration, 0, "0")
 
 	// string from string
 	signedAccept(c, mysql.TypeString, "abc", "abc")

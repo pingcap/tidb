@@ -195,7 +195,11 @@ func (rs *localRegion) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
 		rowData = append(rowData, types.NewBytesDatum(gk))
 		for _, agg := range ctx.aggregates {
 			agg.currentGroup = gk
-			rowData = append(rowData, agg.toDatums()...)
+			ds, err := agg.toDatums()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			rowData = append(rowData, ds...)
 		}
 		var err error
 		row.Data, err = codec.EncodeValue(nil, rowData...)

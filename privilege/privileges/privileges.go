@@ -246,7 +246,7 @@ func (p *UserPrivileges) loadPrivileges(ctx context.Context) error {
 }
 
 // mysql.User/mysql.DB table privilege columns start from index 3.
-// See: booststrap.go CreateUserTable/CreateDBPrivTable
+// See booststrap.go CreateUserTable/CreateDBPrivTable
 const userTablePrivColumnStartIndex = 3
 const dbTablePrivColumnStartIndex = 3
 

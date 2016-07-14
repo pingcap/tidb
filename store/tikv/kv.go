@@ -70,7 +70,6 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 }
 
 type tikvStore struct {
-	mu          sync.Mutex
 	uuid        string
 	oracle      oracle.Oracle
 	client      Client
@@ -97,9 +96,6 @@ func NewMockTikvStore() kv.Storage {
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	txn, err := newTiKVTxn(s)
 	if err != nil {
 		return nil, errors.Trace(err)

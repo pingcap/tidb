@@ -45,11 +45,13 @@ var _ = Suite(&testSuite{})
 
 type testSuite struct {
 	store kv.Storage
+	*parser.Parser
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
+	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
@@ -297,6 +299,7 @@ func (s *testSuite) TestQualifedDelete(c *C) {
 }
 
 func (s *testSuite) TestInsert(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -368,9 +371,11 @@ func (s *testSuite) TestInsert(c *C) {
 
 	_, err = tk.Exec(`insert into insert_test (id, c2) values(1, 1) on duplicate key update t.c2 = 10`)
 	c.Assert(err, NotNil)
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -452,6 +457,7 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 	r = tk.MustQuery("select * from insert_autoinc_test;")
 	rowStr6 = fmt.Sprintf("%v %v", "6", "6")
 	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestReplace(c *C) {
@@ -995,6 +1001,7 @@ func (s *testSuite) TestUnion(c *C) {
 }
 
 func (s *testSuite) TestTablePKisHandleScan(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1055,6 +1062,7 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 		result := tk.MustQuery(ca.sql)
 		result.Check(ca.result)
 	}
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestJoin(c *C) {
@@ -1241,6 +1249,7 @@ func (s *testSuite) TestTableReverseOrder(c *C) {
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1266,6 +1275,7 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("create table t1 (a float)")
 	tk.MustExec("insert t1 values (281.37)")
 	tk.MustQuery("select a from t1 where (a in (select a from t1))").Check(testkit.Rows("281.37"))
+	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestDefaultNull(c *C) {
@@ -1345,6 +1355,8 @@ func (s *testSuite) TestBuiltin(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+
+	// for is true
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, index idx_b (b))")
 	tk.MustExec("insert t values (1, 1)")
@@ -1352,22 +1364,106 @@ func (s *testSuite) TestBuiltin(c *C) {
 	tk.MustExec("insert t values (3, 2)")
 	result := tk.MustQuery("select * from t where b is true")
 	result.Check(testkit.Rows("1 1", "2 2", "3 2"))
+	result = tk.MustQuery("select all + a from t where a = 1")
+	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select * from t where a is false")
 	result.Check(nil)
 	result = tk.MustQuery("select * from t where a is not true")
 	result.Check(nil)
+	// for in
 	result = tk.MustQuery("select * from t where b in (a)")
 	result.Check(testkit.Rows("1 1", "2 2"))
 	result = tk.MustQuery("select * from t where b not in (a)")
 	result.Check(testkit.Rows("3 2"))
 
+	// test cast
+	result = tk.MustQuery("select cast(1 as decimal(1,2))")
+	result.Check(testkit.Rows("1.00"))
+	result = tk.MustQuery("select cast('1991-09-05 11:11:11' as datetime)")
+	result.Check(testkit.Rows("1991-09-05 11:11:11"))
+	result = tk.MustQuery("select cast(cast('1991-09-05 11:11:11' as datetime) as char)")
+	result.Check(testkit.Rows("1991-09-05 11:11:11"))
+	result = tk.MustQuery("select cast('11:11:11' as time)")
+	result.Check(testkit.Rows("11:11:11"))
+
+	// for case
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(255), b int)")
-	tk.MustExec("insert t values ('abc123', 1)")
-	tk.MustExec("insert t values ('ab123', 2)")
-	result = tk.MustQuery("select * from t where a like 'ab_123'")
-	rowStr := fmt.Sprintf("%v %v", []byte("abc123"), "1")
-	result.Check(testkit.Rows(rowStr))
+	tk.MustExec("insert t values ('str1', 1)")
+	result = tk.MustQuery("select * from t where a = case b when 1 then 'str1' when 2 then 'str2' end")
+	rowStr1 := fmt.Sprintf("%v %v", []byte("str1"), "1")
+	result.Check(testkit.Rows(rowStr1))
+	result = tk.MustQuery("select * from t where a = case b when 1 then 'str2' when 2 then 'str3' end")
+	result.Check(nil)
+	tk.MustExec("insert t values ('str2', 2)")
+	result = tk.MustQuery("select * from t where a = case b when 2 then 'str2' when 3 then 'str3' end")
+	rowStr2 := fmt.Sprintf("%v %v", []byte("str2"), "2")
+	result.Check(testkit.Rows(rowStr2))
+	tk.MustExec("insert t values ('str3', 3)")
+	result = tk.MustQuery("select * from t where a = case b when 4 then 'str4' when 5 then 'str5' else 'str3' end")
+	rowStr3 := fmt.Sprintf("%v %v", []byte("str3"), "3")
+	result.Check(testkit.Rows(rowStr3))
+	result = tk.MustQuery("select * from t where a = case b when 4 then 'str4' when 5 then 'str5' else 'str6' end")
+	result.Check(nil)
+	result = tk.MustQuery("select * from t where a = case  when b then 'str3' when 1 then 'str1' else 'str2' end")
+	result.Check(testkit.Rows(rowStr3))
+	tk.MustExec("delete from t")
+	tk.MustExec("insert t values ('str2', 0)")
+	result = tk.MustQuery("select * from t where a = case  when b then 'str3' when 0 then 'str1' else 'str2' end")
+	rowStr2 = fmt.Sprintf("%v %v", []byte("str2"), "0")
+	result.Check(testkit.Rows(rowStr2))
+	tk.MustExec("insert t values ('str1', null)")
+	result = tk.MustQuery("select * from t where a = case b when null then 'str3' when 10 then 'str1' else 'str2' end")
+	result.Check(testkit.Rows(rowStr2))
+	result = tk.MustQuery("select * from t where a = case null when b then 'str3' when 10 then 'str1' else 'str2' end")
+	result.Check(testkit.Rows(rowStr2))
+
+	// for like and regexp
+	type testCase struct {
+		pattern string
+		val     string
+		result  int
+	}
+	patternMatching := func(c *C, tk *testkit.TestKit, queryOp string, data []testCase) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a varchar(255), b int)")
+		for i, d := range data {
+			tk.MustExec(fmt.Sprintf("insert into t values('%s', %d)", d.val, i))
+			result := tk.MustQuery(fmt.Sprintf("select * from t where a %s '%s'", queryOp, d.pattern))
+			if d.result == 1 {
+				rowStr := fmt.Sprintf("%v %d", []byte(d.val), i)
+				result.Check(testkit.Rows(rowStr))
+			} else {
+				result.Check(nil)
+			}
+			tk.MustExec(fmt.Sprintf("delete from t where b = %d", i))
+		}
+	}
+	// for like
+	testCases := []testCase{
+		{"a", "a", 1},
+		{"a", "b", 0},
+		{"aA", "Aa", 1},
+		{"aA%", "aAab", 1},
+		{"aA_", "Aaab", 0},
+		{"aA_", "Aab", 1},
+	}
+	patternMatching(c, tk, "like", testCases)
+	// for regexp
+	testCases = []testCase{
+		{"^$", "a", 0},
+		{"a", "a", 1},
+		{"a", "b", 0},
+		{"aA", "aA", 1},
+		{".", "a", 1},
+		{"^.$", "ab", 0},
+		{"..", "b", 0},
+		{".ab", "aab", 1},
+		{"ab.", "abcd", 1},
+		{".*", "abcd", 1},
+	}
+	patternMatching(c, tk, "regexp", testCases)
+
 	plan.UseNewPlanner = false
 }
 
@@ -1479,15 +1575,17 @@ func (s *testSuite) TestNewSubquery(c *C) {
 	tk.MustExec("commit")
 	result := tk.MustQuery("select 1 = (select count(*) from t where t.c = k.d) from t k")
 	result.Check(testkit.Rows("1", "1", "0"))
+	result = tk.MustQuery("select 1 = (select count(*) from t where exists( select * from t m where t.c = k.d)) from t k")
+	result.Check(testkit.Rows("1", "1", "0"))
 	result = tk.MustQuery("select t.c = any (select count(*) from t) from t")
 	result.Check(testkit.Rows("0", "0", "1"))
-	result = tk.MustQuery("select * from t where (t.c, 6) = all (select count(*), sum(t.c) from t)")
+	result = tk.MustQuery("select * from t where (t.c, 6) = any (select count(*), sum(t.c) from t)")
 	result.Check(testkit.Rows("3 4"))
 	result = tk.MustQuery("select t.c from t where (t.c) < all (select count(*) from t)")
 	result.Check(testkit.Rows("1", "2"))
-	result = tk.MustQuery("select t.c from t where (t.c, t.d) != any (select * from t)")
+	result = tk.MustQuery("select t.c from t where (t.c, t.d) = any (select * from t)")
 	result.Check(testkit.Rows("1", "2", "3"))
-	result = tk.MustQuery("select t.c from t where (t.c, t.d) = all (select * from t)")
+	result = tk.MustQuery("select t.c from t where (t.c, t.d) != all (select * from t)")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select (select count(*) from t where t.c = k.d) from t k")
 	result.Check(testkit.Rows("1", "1", "0"))
@@ -1495,6 +1593,18 @@ func (s *testSuite) TestNewSubquery(c *C) {
 	result.Check(testkit.Rows("1", "2", "3"))
 	result = tk.MustQuery("select t.c from t where (t.c, t.d) not in (select * from t)")
 	result.Check(testkit.Rows())
+	// = all empty set is true
+	result = tk.MustQuery("select t.c from t where (t.c, t.d) != all (select * from t where d > 1000)")
+	result.Check(testkit.Rows("1", "2", "3"))
+	result = tk.MustQuery("select t.c from t where (t.c) < any (select c from t where d > 1000)")
+	result.Check(testkit.Rows())
+	tk.MustExec("insert t values (NULL, NULL)")
+	result = tk.MustQuery("select (t.c) < any (select c from t) from t")
+	result.Check(testkit.Rows("1", "1", "<nil>", "<nil>"))
+	result = tk.MustQuery("select (10) > all (select c from t) from t")
+	result.Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
+	result = tk.MustQuery("select (c) > all (select c from t) from t")
+	result.Check(testkit.Rows("0", "0", "0", "<nil>"))
 	plan.UseNewPlanner = false
 }
 
@@ -1514,6 +1624,26 @@ func (s *testSuite) TestNewTableDual(c *C) {
 	plan.UseNewPlanner = false
 }
 
+func (s *testSuite) TestNewTableScan(c *C) {
+	plan.UseNewPlanner = true
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use information_schema")
+	result := tk.MustQuery("select * from schemata")
+	// There must be these tables: information_schema, mysql, preformance_schema and test.
+	c.Assert(len(result.Rows()), GreaterEqual, 4)
+	tk.MustExec("use test")
+	tk.MustExec("create database mytest")
+	rowStr1 := fmt.Sprintf("%s %s %s %s %v", "def", "mysql", "utf8", "utf8_general_ci", nil)
+	rowStr2 := fmt.Sprintf("%s %s %s %s %v", "def", "mytest", "utf8", "utf8_general_ci", nil)
+	tk.MustExec("use information_schema")
+	result = tk.MustQuery("select * from schemata where schema_name = 'mysql'")
+	result.Check(testkit.Rows(rowStr1))
+	result = tk.MustQuery("select * from schemata where schema_name like 'my%'")
+	result.Check(testkit.Rows(rowStr1, rowStr2))
+	plan.UseNewPlanner = false
+}
+
 func (s *testSuite) TestAggregation(c *C) {
 	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
@@ -1530,6 +1660,12 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert t values (4, 3)")
 	result := tk.MustQuery("select count(*) from t group by d")
 	result.Check(testkit.Rows("3", "2", "2"))
+	result = tk.MustQuery("select count(*) from (select d, c from t) k where d != 0 group by d")
+	result.Check(testkit.Rows("3", "2", "2"))
+	result = tk.MustQuery("select c as a from t group by d having a < 0")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select c as a from t group by d having sum(a) = 2")
+	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select count(distinct c) from t group by d")
 	result.Check(testkit.Rows("1", "2", "2"))
 	result = tk.MustQuery("select sum(c) from t group by d")
@@ -1572,6 +1708,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert t values (1, 1)")
 	result = tk.MustQuery("select d, d*d as d from t having d = -1")
 	result.Check(testkit.Rows())
+	result = tk.MustQuery("select d*d as d from t group by d having d = -1")
+	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select d, 1-d as d, c as d from t order by d")
 	result.Check(testkit.Rows("1 0 1", "0 1 1", "-1 2 1"))
 	result = tk.MustQuery("select d, 1-d as d, c as d from t order by d+1")
@@ -1592,12 +1730,19 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("0 1 -1"))
 	result = tk.MustQuery("select d as d, c as d from t group by d + 1")
 	result.Check(testkit.Rows("-1 1", "0 1", "1 1"))
+	result = tk.MustQuery("select c as d, c as d from t group by d")
+	result.Check(testkit.Rows("1 1", "1 1", "1 1"))
 	_, err := tk.Exec("select d as d, c as d from t group by d")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("select t.d, c as d from t group by d")
 	c.Assert(err, NotNil)
 	result = tk.MustQuery("select *, c+1 as d from t group by 3")
 	result.Check(testkit.Rows("1 -1 2"))
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a float, b int default 3)")
+	tk.MustExec("insert into t1 (a) values (2), (11), (8)")
+	result = tk.MustQuery("select min(a), min(case when 1=1 then a else NULL end), min(case when 1!=1 then NULL else a end) from t1 where b=3 group by b")
+	result.Check(testkit.Rows("2 2 2"))
 	plan.UseNewPlanner = false
 }
 
@@ -1608,14 +1753,14 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	compiler := &executor.Compiler{}
 	ctx := se.(context.Context)
 
-	stmtNode, err := parser.ParseOneStmt("select 1", "", "")
+	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
 	stmt, err := compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 	c.Check(stmt.IsDDL(), IsFalse)
 
-	stmtNode, err = parser.ParseOneStmt("create table t (a int)", "", "")
+	stmtNode, err = s.ParseOneStmt("create table t (a int)", "", "")
 	c.Check(err, IsNil)
 	stmt, err = compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
@@ -1643,5 +1788,42 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("1 1"))
 	result = tk.MustQuery("select * from t where (c, d) = (select * from t k where (t.c,t.d) = (c,d))")
 	result.Check(testkit.Rows("1 1", "1 3", "2 1", "2 3"))
+	plan.UseNewPlanner = false
+}
+
+func (s *testSuite) TestColumnName(c *C) {
+	plan.UseNewPlanner = true
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int, d int)")
+	rs, err := tk.Exec("select 1 + c, count(*) from t")
+	c.Check(err, IsNil)
+	fields, err := rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 2)
+	c.Check(fields[0].Column.Name.L, Equals, "1 + c")
+	c.Check(fields[1].Column.Name.L, Equals, "count(*)")
+	rs, err = tk.Exec("select (c) > all (select c from t) from t")
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
+	plan.UseNewPlanner = false
+}
+
+func (s *testSuite) TestSelectVar(c *C) {
+	plan.UseNewPlanner = true
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (d int)")
+	tk.MustExec("insert into t values(1), (2), (1)")
+	result := tk.MustQuery("select @a, @a := d+1 from t")
+	result.Check(testkit.Rows("<nil> 2", "<nil> 3", "<nil> 2"))
+	result = tk.MustQuery("select @a, @a := d+1 from t")
+	result.Check(testkit.Rows("2 2", "2 3", "3 2"))
+
 	plan.UseNewPlanner = false
 }

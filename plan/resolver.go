@@ -361,9 +361,14 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 	rfs := make([]*ast.ResultField, 0, len(tn.TableInfo.Columns))
 	sVars := variable.GetSessionVars(nr.Ctx)
 	for _, v := range tn.TableInfo.Columns {
-		if v.State != model.StatePublic {
-			if !sVars.InUpdateStmt || v.State != model.StateWriteReorganization {
-				// TODO: check this
+		if sVars.InUpdateStmt {
+			switch v.State {
+			case model.StatePublic, model.StateWriteOnly, model.StateWriteReorganization:
+			default:
+				continue
+			}
+		} else {
+			if v.State != model.StatePublic {
 				continue
 			}
 		}

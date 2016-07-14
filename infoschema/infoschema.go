@@ -273,7 +273,6 @@ func newMemSchemaHandle() (*memSchemaHandle, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	initMemoryTables(h)
 	h.perfHandle, err = perfschema.NewPerfHandle()
 	if err != nil {
 		return nil, errors.Trace(err)
