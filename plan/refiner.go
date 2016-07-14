@@ -346,6 +346,9 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 		if err != nil {
 			return false
 		}
+		if len(patternStr) == 0 {
+			return true
+		}
 		firstChar := patternStr[0]
 		return firstChar != '%' && firstChar != '.'
 	}

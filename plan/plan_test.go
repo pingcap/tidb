@@ -321,6 +321,10 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 			best: "Index(t.b)->Fields",
 		},
 		{
+			sql:  "select * from t where b like ''",
+			best: "Index(t.b)->Fields",
+		},
+		{
 			sql:  "select * from t where d",
 			best: "Table(t)->Fields",
 		},
