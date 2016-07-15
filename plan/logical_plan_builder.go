@@ -928,8 +928,8 @@ func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 
 func deCorrelated(expr expression.Expression, outerPlan Plan) bool {
 	correlated := false
-	_, outer := extractColumn(expr, nil, nil)
-	for _, c := range outer {
+	_, correlatedCols := extractColumn(expr, nil, nil)
+	for _, c := range correlatedCols {
 		if outerPlan.GetSchema().GetIndex(c) != -1 {
 			c.Correlated = false
 		} else {
