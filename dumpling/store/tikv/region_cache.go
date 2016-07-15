@@ -200,7 +200,7 @@ func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 	var region *Region
 	var backoffErr error
 	for backoff := pdBackoff(); backoffErr == nil; backoffErr = backoff() {
-		meta, err := c.pdClient.GetRegion(key)
+		meta, leader, err := c.pdClient.GetRegion(key)
 		if err != nil {
 			log.Warnf("loadRegion from PD failed, key: %q, err: %v", key, err)
 			continue
@@ -211,6 +211,15 @@ func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 		}
 		if len(meta.Peers) == 0 {
 			return nil, errors.New("receive Region with no peer")
+		}
+		// Move leader to the first.
+		if leader != nil {
+			for i := range meta.Peers {
+				if meta.Peers[i].GetId() == leader.GetId() {
+					meta.Peers[0], meta.Peers[i] = meta.Peers[i], meta.Peers[0]
+					break
+				}
+			}
 		}
 		peer := meta.Peers[0]
 		store, err := c.pdClient.GetStore(peer.GetStoreId())
