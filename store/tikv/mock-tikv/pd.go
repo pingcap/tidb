@@ -55,12 +55,9 @@ func (c *pdClient) GetTS() (int64, int64, error) {
 	return physicalTS, logicalTS, nil
 }
 
-func (c *pdClient) GetRegion(key []byte) (*metapb.Region, error) {
-	region := c.cluster.GetRegionByKey(key)
-	if region == nil {
-		return nil, errors.New("not found")
-	}
-	return region, nil
+func (c *pdClient) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, error) {
+	region, peer := c.cluster.GetRegionByKey(key)
+	return region, peer, nil
 }
 
 func (c *pdClient) GetStore(storeID uint64) (*metapb.Store, error) {

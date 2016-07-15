@@ -38,10 +38,12 @@ const (
 type Client interface {
 	// GetTS gets a timestamp from PD.
 	GetTS() (int64, int64, error)
-	// GetRegion gets a region from PD by key.
+	// GetRegion gets a region and its leader Peer from PD by key.
 	// The region may expire after split. Caller is responsible for caching and
 	// taking care of region change.
-	GetRegion(key []byte) (*metapb.Region, error)
+	// Also it may return nil if PD finds no Region for the key temporarily,
+	// client should retry later.
+	GetRegion(key []byte) (*metapb.Region, *metapb.Peer, error)
 	// GetStore gets a store from PD by store id.
 	// The store may expire later. Caller is responsible for caching and taking care
 	// of store change.
@@ -125,7 +127,7 @@ func (c *client) GetTS() (int64, int64, error) {
 	return req.physical, req.logical, err
 }
 
-func (c *client) GetRegion(key []byte) (*metapb.Region, error) {
+func (c *client) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, error) {
 	req := &regionRequest{
 		pbReq: &pdpb.GetRegionRequest{
 			RegionKey: key,
@@ -137,13 +139,9 @@ func (c *client) GetRegion(key []byte) (*metapb.Region, error) {
 	c.workerMutex.RUnlock()
 	err := <-req.done
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
-	region := req.pbResp.GetRegion()
-	if region == nil {
-		return nil, errors.New("[pd] region field in rpc response not set")
-	}
-	return region, nil
+	return req.pbResp.GetRegion(), req.pbResp.GetLeader(), nil
 }
 
 func (c *client) GetStore(storeID uint64) (*metapb.Store, error) {
