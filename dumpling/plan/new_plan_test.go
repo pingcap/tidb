@@ -131,8 +131,18 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:   "select a from t where exists(select 1 from t as x where x.a < t.a)",
-			first: "DataScan(t)->Apply(DataScan(t)->Selection->Projection->Exists)->Selection->Projection",
-			best:  "DataScan(t)->Apply(DataScan(t)->Selection->Projection->Exists)->Selection->Projection",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+		},
+		{
+			sql:   "select a from t where exists(select 1 from t as x where x.a = t.a and t.a < 1 and x.a < 1)",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)->Selection}->Selection->Projection",
+		},
+		{
+			sql:   "select a from t where exists(select 1 from t as x where x.a = t.a and x.a < 1) and a < 1",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Selection->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -147,13 +157,14 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 		}
-		p := builder.build(stmt).(LogicalPlan)
+		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		c.Assert(ToString(p), Equals, ca.first, Commentf("for %s", ca.sql))
+		lp := p.(LogicalPlan)
+		c.Assert(ToString(lp), Equals, ca.first, Commentf("for %s", ca.sql))
 
-		_, p, err = p.PredicatePushDown(nil)
+		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		_, err = p.PruneColumnsAndResolveIndices(p.GetSchema())
+		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
