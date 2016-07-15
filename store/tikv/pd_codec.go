@@ -28,9 +28,12 @@ type codecPDClient struct {
 // returned StartKey && EndKey from pd-server.
 func (c *codecPDClient) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, error) {
 	encodedKey := codec.EncodeBytes([]byte(nil), key)
-	region, _, err := c.Client.GetRegion(encodedKey)
+	region, peer, err := c.Client.GetRegion(encodedKey)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
+	}
+	if region == nil {
+		return nil, nil, nil
 	}
 	if len(region.StartKey) != 0 {
 		_, decoded, err := codec.DecodeBytes(region.StartKey)
@@ -46,5 +49,5 @@ func (c *codecPDClient) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, err
 		}
 		region.EndKey = decoded
 	}
-	return region, nil, nil
+	return region, peer, nil
 }

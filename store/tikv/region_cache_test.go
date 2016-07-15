@@ -113,7 +113,6 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 	peer3 := s.cluster.AllocID()
 	s.cluster.AddStore(store3, s.storeAddr(store3))
 	s.cluster.AddPeer(s.region1, store3, peer3)
-	s.cluster.ChangeLeader(s.region1, peer3)
 	// tikv-server reports `NotLeader`
 	s.cache.UpdateLeader(r.VerID(), peer3)
 
@@ -125,6 +124,8 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 	c.Assert(r.curPeerIdx, Equals, 0)
 	c.Assert(r.GetAddress(), Equals, s.storeAddr(s.store1))
 
+	// tikv-server notifies new leader to pd-server.
+	s.cluster.ChangeLeader(s.region1, peer3)
 	// tikv-server reports `NotLeader` again.
 	s.cache.UpdateLeader(r.VerID(), peer3)
 	r, err = s.cache.GetRegion([]byte("a"))
@@ -146,6 +147,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	peer3 := s.cluster.AllocID()
 	s.cluster.AddStore(store3, s.storeAddr(store3))
 	s.cluster.AddPeer(s.region1, store3, peer3)
+	// tikv-server notifies new leader to pd-server.
 	s.cluster.ChangeLeader(s.region1, peer3)
 	// tikv-server reports `NotLeader`(store2 is the leader)
 	s.cache.UpdateLeader(r.VerID(), s.peer2)
@@ -155,16 +157,8 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
+	// pd-server should return the new leader.
 	c.Assert(r.curPeerIdx, Equals, 0)
-	c.Assert(r.GetAddress(), Equals, s.storeAddr(s.store1))
-
-	// tikv-server reports `NotLeader` again.
-	s.cache.UpdateLeader(r.VerID(), peer3)
-	r, err = s.cache.GetRegion([]byte("a"))
-	c.Assert(err, IsNil)
-	c.Assert(r, NotNil)
-	c.Assert(r.GetID(), Equals, s.region1)
-	c.Assert(r.curPeerIdx, Equals, 2)
 	c.Assert(r.GetAddress(), Equals, s.storeAddr(store3))
 }
 
