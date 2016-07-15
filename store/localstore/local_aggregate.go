@@ -251,7 +251,7 @@ func (n *aggregateFuncExpr) updateMaxMin(ctx *selectContext, args []types.Datum,
 		return nil
 	}
 	var err error
-	c, err := types.Compare(aggItem.value, arg)
+	c, err := aggItem.value.CompareDatum(arg)
 	if err != nil {
 		return errors.Trace(err)
 	}
