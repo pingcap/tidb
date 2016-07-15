@@ -926,7 +926,8 @@ func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	return maxOneRow
 }
 
-func deCorrelated(expr expression.Expression, outerPlan Plan) bool {
+// tryDecorrelated try to remove the correlated column that can be find in the outerPlan's schema.
+func tryDecorrelated(expr expression.Expression, outerPlan Plan) bool {
 	correlated := false
 	_, correlatedCols := extractColumn(expr, nil, nil)
 	for _, c := range correlatedCols {
@@ -944,7 +945,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	joinPlan.initID()
 	joinPlan.correlated = outerPlan.IsCorrelated() || innerPlan.IsCorrelated()
 	for _, expr := range onCondition {
-		joinPlan.correlated = joinPlan.correlated || deCorrelated(expr, outerPlan)
+		joinPlan.correlated = joinPlan.correlated || tryDecorrelated(expr, outerPlan)
 	}
 	eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, outerPlan, innerPlan)
 	joinPlan.EqualConditions = eqCond
