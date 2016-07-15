@@ -200,7 +200,7 @@ func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 	var region *Region
 	var backoffErr error
 	for backoff := pdBackoff(); backoffErr == nil; backoffErr = backoff() {
-		meta, err := c.pdClient.GetRegion(key)
+		meta, _, err := c.pdClient.GetRegion(key)
 		if err != nil {
 			log.Warnf("loadRegion from PD failed, key: %q, err: %v", key, err)
 			continue
