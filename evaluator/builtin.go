@@ -120,6 +120,9 @@ var Funcs = map[string]Func{
 	"ifnull": {builtinIfNull, 2, 2},
 	"nullif": {builtinNullIf, 2, 2},
 
+	// miscellaneous functions
+	"sleep": {builtinSleep, 1, 1},
+
 	// only used by new plan
 	ast.AndAnd:     {builtinAndAnd, 2, 2},
 	ast.OrOr:       {builtinOrOr, 2, 2},

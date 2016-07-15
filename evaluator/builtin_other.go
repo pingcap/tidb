@@ -16,6 +16,7 @@ package evaluator
 import (
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -24,6 +25,28 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
+
+// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
+func builtinSleep(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return d, errors.New("Incorrect arguments to sleep.")
+	}
+	zero := types.NewIntDatum(0)
+	ret, err := args[0].CompareDatum(zero)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if ret == -1 {
+		return d, errors.New("Incorrect arguments to sleep.")
+	}
+
+	// TODO: consider it's interrupted using KILL QUERY from other session, or
+	// interrupted by time out.
+	duration := time.Duration(args[0].GetFloat64() * float64(time.Second.Nanoseconds()))
+	time.Sleep(duration)
+	d.SetInt64(0)
+	return
+}
 
 func builtinAndAnd(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	leftDatum := args[0]

@@ -1972,6 +1972,24 @@ func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestSleep(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "select sleep(0.01);")
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (a int);")
+	mustExecSQL(c, se, "insert t values (sleep(0.02));")
+	r := mustExecSQL(c, se, "select * from t;")
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 0)
+
+	err = store.Close()
+	c.Assert(err, IsNil)
+}
+
 func (s *testSessionSuite) TestIssue893(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)

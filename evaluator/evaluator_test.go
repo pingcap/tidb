@@ -78,6 +78,24 @@ func (s *testEvaluatorSuite) TestBetween(c *C) {
 	s.runTests(c, cases)
 }
 
+func (s *testEvaluatorSuite) TestSleep(c *C) {
+	// for error case
+	d := make([]types.Datum, 1)
+	_, err := builtinSleep(d, nil)
+	c.Assert(err, NotNil)
+	d[0].SetFloat64(-2.5)
+	_, err = builtinSleep(d, nil)
+	c.Assert(err, NotNil)
+
+	d[0].SetFloat64(0.5)
+	start := time.Now()
+	ret, err := builtinSleep(d, nil)
+	c.Assert(err, IsNil)
+	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
+	sub := time.Now().Sub(start)
+	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(0.5*1e9))
+}
+
 func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()

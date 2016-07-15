@@ -470,6 +470,7 @@ session		{s}{e}{s}{s}{i}{o}{n}
 set		{s}{e}{t}
 share		{s}{h}{a}{r}{e}
 show		{s}{h}{o}{w}
+sleep		{s}{l}{e}{e}{p}
 some		{s}{o}{m}{e}
 space		{s}{p}{a}{c}{e}
 start		{s}{t}{a}{r}{t}
@@ -1020,6 +1021,8 @@ redundant		lval.item = string(l.val)
 {set}			return set
 {share}			return share
 {show}			return show
+{sleep}			lval.item = string(l.val)
+			return sleep
 {subdate}		lval.item = string(l.val)
 			return subDate
 {strcmp}		lval.item = string(l.val)
