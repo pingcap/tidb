@@ -19,12 +19,21 @@ import (
 // EvalSubquery evaluates incorrelated subqueries once.
 var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
 
-func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int) (
+func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (
 	newExpr expression.Expression, newPlan LogicalPlan, correlated bool, err error) {
-	er := &expressionRewriter{p: p, aggrMap: aggMapper, schema: p.GetSchema(), b: b}
+	er := &expressionRewriter{
+		p:        p,
+		aggrMap:  aggMapper,
+		schema:   p.GetSchema(),
+		b:        b,
+		asScalar: asScalar,
+	}
 	expr.Accept(er)
 	if er.err != nil {
 		return nil, nil, false, errors.Trace(er.err)
+	}
+	if !er.asScalar && len(er.ctxStack) == 0 {
+		return nil, er.p, er.correlated, nil
 	}
 	if len(er.ctxStack) != 1 {
 		return nil, nil, false, errors.Errorf("context len %v is invalid", len(er.ctxStack))
@@ -44,6 +53,8 @@ type expressionRewriter struct {
 	columnMap  map[*ast.ColumnNameExpr]expression.Expression
 	b          *planBuilder
 	correlated bool
+	// asScalar means the return value must be a scalar value.
+	asScalar bool
 }
 
 func getRowLen(e expression.Expression) int {
@@ -134,6 +145,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 	case *ast.SubqueryExpr:
 		return er.handleScalarSubquery(v)
+	case *ast.ParenthesesExpr:
+	default:
+		er.asScalar = true
 	}
 	return inNode, false
 }
@@ -217,7 +231,10 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	np = er.b.buildExists(np)
 	if np.IsCorrelated() {
 		if sel, ok := np.GetChildByIndex(0).(*Selection); ok && !sel.GetChildByIndex(0).IsCorrelated() {
-			er.p = er.b.buildSemiJoin(er.p, sel.GetChildByIndex(0).(LogicalPlan), sel.Conditions, true)
+			er.p = er.b.buildSemiJoin(er.p, sel.GetChildByIndex(0).(LogicalPlan), sel.Conditions, er.asScalar)
+			if !er.asScalar {
+				return v, true
+			}
 		} else {
 			// Can't be built as semi-join
 			er.p = er.b.buildApply(er.p, np, outerSchema, nil)

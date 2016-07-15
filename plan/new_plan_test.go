@@ -131,18 +131,23 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:   "select a from t where exists(select 1 from t as x where x.a < t.a)",
-			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
-			best:  "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			first: "Join{DataScan(t)->DataScan(t)}->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)}->Projection",
 		},
 		{
 			sql:   "select a from t where exists(select 1 from t as x where x.a = t.a and t.a < 1 and x.a < 1)",
-			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
-			best:  "Join{DataScan(t)->DataScan(t)->Selection}->Selection->Projection",
+			first: "Join{DataScan(t)->DataScan(t)}->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
 		},
 		{
 			sql:   "select a from t where exists(select 1 from t as x where x.a = t.a and x.a < 1) and a < 1",
 			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
-			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select a from t where exists(select 1 from t as x where x.a = t.a) and exists(select 1 from t as x where x.a = t.a)",
+			first: "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Projection",
+			best:  "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Projection",
 		},
 	}
 	for _, ca := range cases {
