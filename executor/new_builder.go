@@ -25,7 +25,7 @@ import (
 )
 
 //TODO: select join algorithm during cbo phase.
-func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
+func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 	e := &HashJoinExec{
 		schema:      v.GetSchema(),
 		otherFilter: expression.ComposeCNFCondition(v.OtherConditions),
@@ -72,6 +72,30 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 	} else {
 		e.smallExec = b.build(v.GetChildByIndex(1))
 		e.bigExec = b.build(v.GetChildByIndex(0))
+	}
+	return e
+}
+
+func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
+	var leftHashKey, rightHashKey []*expression.Column
+	for _, eqCond := range v.EqualConditions {
+		ln, _ := eqCond.Args[0].(*expression.Column)
+		rn, _ := eqCond.Args[1].(*expression.Column)
+		leftHashKey = append(leftHashKey, ln)
+		rightHashKey = append(rightHashKey, rn)
+	}
+	e := &HashSemiJoinExec{
+		schema:       v.GetSchema(),
+		otherFilter:  expression.ComposeCNFCondition(v.OtherConditions),
+		bigFilter:    expression.ComposeCNFCondition(v.LeftConditions),
+		smallFilter:  expression.ComposeCNFCondition(v.RightConditions),
+		bigExec:      b.build(v.GetChildByIndex(0)),
+		smallExec:    b.build(v.GetChildByIndex(1)),
+		prepared:     false,
+		ctx:          b.ctx,
+		bigHashKey:   leftHashKey,
+		smallHashKey: rightHashKey,
+		withAux:      v.WithAux,
 	}
 	return e
 }

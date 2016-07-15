@@ -42,13 +42,11 @@ type HashJoinExec struct {
 	smallFilter  expression.Expression
 	bigFilter    expression.Expression
 	otherFilter  expression.Expression
-	//TODO: remove fields when abandon old plan.
-	fields      []*ast.ResultField
-	schema      expression.Schema
-	outter      bool
-	leftSmall   bool
-	matchedRows []*Row
-	cursor      int
+	schema       expression.Schema
+	outter       bool
+	leftSmall    bool
+	matchedRows  []*Row
+	cursor       int
 }
 
 // Close implements Executor Close interface.
@@ -75,17 +73,17 @@ func joinTwoRow(a *Row, b *Row) *Row {
 	return ret
 }
 
-func (e *HashJoinExec) getHashKey(exprs []*expression.Column, row *Row) ([]byte, error) {
+func getHashKey(exprs []*expression.Column, row *Row) ([]byte, error) {
 	vals := make([]types.Datum, 0, len(exprs))
 	for _, expr := range exprs {
-		v, err := expr.Eval(row.Data, e.ctx)
+		v, err := expr.Eval(row.Data, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		vals = append(vals, v)
 	}
 	if len(vals) == 0 {
-		return []byte{}, nil
+		return nil, nil
 	}
 
 	return codec.EncodeValue([]byte{}, vals...)
@@ -98,7 +96,7 @@ func (e *HashJoinExec) Schema() expression.Schema {
 
 // Fields implements Executor Fields interface.
 func (e *HashJoinExec) Fields() []*ast.ResultField {
-	return e.fields
+	return nil
 }
 
 func (e *HashJoinExec) prepare() error {
@@ -124,7 +122,7 @@ func (e *HashJoinExec) prepare() error {
 				continue
 			}
 		}
-		hashcode, err := e.getHashKey(e.smallHashKey, row)
+		hashcode, err := getHashKey(e.smallHashKey, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -140,7 +138,7 @@ func (e *HashJoinExec) prepare() error {
 }
 
 func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, err error) {
-	hashcode, err := e.getHashKey(e.bigHashKey, bigRow)
+	hashcode, err := getHashKey(e.bigHashKey, bigRow)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -243,6 +241,147 @@ func (e *HashJoinExec) Next() (*Row, error) {
 		} else if e.outter {
 			row = e.fillNullRow(bigRow)
 			return row, nil
+		}
+	}
+}
+
+// HashSemiJoinExec implements the hash join algorithm for semi join.
+type HashSemiJoinExec struct {
+	hashTable    map[string][]*Row
+	smallHashKey []*expression.Column
+	bigHashKey   []*expression.Column
+	smallExec    Executor
+	bigExec      Executor
+	prepared     bool
+	ctx          context.Context
+	smallFilter  expression.Expression
+	bigFilter    expression.Expression
+	otherFilter  expression.Expression
+	schema       expression.Schema
+	withAux      bool
+}
+
+// Close implements Executor Close interface.
+func (e *HashSemiJoinExec) Close() error {
+	e.prepared = false
+	err := e.smallExec.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return e.bigExec.Close()
+}
+
+// Schema implements Executor Schema interface.
+func (e *HashSemiJoinExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Fields implements Executor Fields interface.
+func (e *HashSemiJoinExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+func (e *HashSemiJoinExec) prepare() error {
+	e.hashTable = make(map[string][]*Row)
+	for {
+		row, err := e.smallExec.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if row == nil {
+			e.smallExec.Close()
+			break
+		}
+
+		matched := true
+		if e.smallFilter != nil {
+			matched, err = expression.EvalBool(e.smallFilter, row.Data, e.ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !matched {
+				continue
+			}
+		}
+		hashcode, err := getHashKey(e.smallHashKey, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if rows, ok := e.hashTable[string(hashcode)]; !ok {
+			e.hashTable[string(hashcode)] = []*Row{row}
+		} else {
+			e.hashTable[string(hashcode)] = append(rows, row)
+		}
+	}
+
+	e.prepared = true
+	return nil
+}
+
+func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, err error) {
+	hashcode, err := getHashKey(e.bigHashKey, bigRow)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	rows, ok := e.hashTable[string(hashcode)]
+	if !ok {
+		return
+	}
+	// match eq condition
+	for _, smallRow := range rows {
+		matched = true
+		var matchedRow *Row
+		matchedRow = joinTwoRow(bigRow, smallRow)
+		if e.otherFilter != nil {
+			matched, err = expression.EvalBool(e.otherFilter, matchedRow.Data, e.ctx)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+		}
+		if matched {
+			return
+		}
+	}
+	return
+}
+
+// Next implements Executor Next interface.
+func (e *HashSemiJoinExec) Next() (*Row, error) {
+	if !e.prepared {
+		if err := e.prepare(); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	for {
+		bigRow, err := e.bigExec.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if bigRow == nil {
+			e.bigExec.Close()
+			return nil, nil
+		}
+
+		matched := true
+		if e.bigFilter != nil {
+			matched, err = expression.EvalBool(e.bigFilter, bigRow.Data, e.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		if matched {
+			matched, err = e.rowIsMatched(bigRow)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		if e.withAux {
+			bigRow.Data = append(bigRow.Data, types.NewDatum(matched))
+			return bigRow, nil
+		} else if matched {
+			return bigRow, nil
 		}
 	}
 }
