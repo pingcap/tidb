@@ -240,6 +240,7 @@ func (s *session) Retry() error {
 	for {
 		variable.GetSessionVars(s).RetryInfo.Attempts = retryCnt + 1
 		s.resetHistory()
+		log.Info("RollbackTxn for retry txn.")
 		s.RollbackTxn()
 		success := true
 		variable.GetSessionVars(s).RetryInfo.ResetOffset()
@@ -547,6 +548,7 @@ func (s *session) ClearValue(key fmt.Stringer) {
 
 // Close function does some clean work when session end.
 func (s *session) Close() error {
+	log.Info("RollbackTxn for session close.")
 	return s.RollbackTxn()
 }
 
