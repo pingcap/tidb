@@ -898,6 +898,8 @@ func (b *planBuilder) buildExists(p LogicalPlan) LogicalPlan {
 out:
 	for {
 		switch p.(type) {
+		// This can be removed when in exists clause,
+		// e.g. exists(select count(*) from t order by a) is equal to exists t.
 		case *Trim, *Projection, *NewSort, *Aggregation:
 			p = p.GetChildByIndex(0).(LogicalPlan)
 			p.SetParents()
@@ -926,7 +928,7 @@ func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	return maxOneRow
 }
 
-// tryDecorrelated try to remove the correlated column that can be find in the outerPlan's schema.
+// tryDecorrelated tries to remove the correlated column that can be found in the outerPlan's schema.
 func tryDecorrelated(expr expression.Expression, outerPlan Plan) bool {
 	correlated := false
 	_, correlatedCols := extractColumn(expr, nil, nil)
