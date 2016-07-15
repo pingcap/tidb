@@ -346,7 +346,7 @@ func (b *planBuilder) buildTableSource(sel *ast.SelectStmt) Plan {
 }
 
 func (b *planBuilder) buildAllAccessMethodsPlan(path *joinPath) []Plan {
-	indices, includeTableScan := b.availableIndices(path.table)
+	indices, includeTableScan := availableIndices(path.table)
 	var candidates []Plan
 	if includeTableScan {
 		p := b.buildTableScanPlan(path)
@@ -359,7 +359,7 @@ func (b *planBuilder) buildAllAccessMethodsPlan(path *joinPath) []Plan {
 	return candidates
 }
 
-func (b *planBuilder) availableIndices(table *ast.TableName) (indices []*model.IndexInfo, includeTableScan bool) {
+func availableIndices(table *ast.TableName) (indices []*model.IndexInfo, includeTableScan bool) {
 	var usableHints []*ast.IndexHint
 	for _, hint := range table.IndexHints {
 		if hint.HintScope == ast.HintForScan {

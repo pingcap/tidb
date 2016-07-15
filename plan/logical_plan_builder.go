@@ -81,7 +81,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 			p = b.buildNewUnion(v)
 		case *ast.TableName:
 			// TODO: select physical algorithm during cbo phase.
-			p = b.buildNewTableScanPlan(v)
+			p = b.buildDataSource(v)
 		default:
 			b.err = ErrUnsupportedType.Gen("unsupported table source type %T", v)
 			return nil
@@ -89,7 +89,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 		if b.err != nil {
 			return nil
 		}
-		if v, ok := p.(*NewTableScan); ok {
+		if v, ok := p.(*DataSource); ok {
 			v.TableAsName = &x.AsName
 		}
 		if x.AsName.L != "" {
@@ -110,7 +110,8 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 	}
 }
 
-func extractColumn(expr expression.Expression, cols []*expression.Column, outerCols []*expression.Column) (result []*expression.Column, outer []*expression.Column) {
+func extractColumn(expr expression.Expression, cols []*expression.Column, outerCols []*expression.Column) (
+	result []*expression.Column, outer []*expression.Column) {
 	switch v := expr.(type) {
 	case *expression.Column:
 		if v.Correlated {
@@ -815,8 +816,12 @@ func (b *planBuilder) buildNewTableDual() LogicalPlan {
 	return dual
 }
 
-func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName) LogicalPlan {
-	p := &NewTableScan{Table: tn.TableInfo, baseLogicalPlan: newBaseLogicalPlan(Ts, b.allocator)}
+func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
+	p := &DataSource{
+		table:           tn,
+		Table:           tn.TableInfo,
+		baseLogicalPlan: newBaseLogicalPlan(Ts, b.allocator),
+	}
 	p.initID()
 	// Equal condition contains a column from previous joined table.
 	rfs := tn.GetResultFields()

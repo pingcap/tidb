@@ -48,7 +48,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
-		"enable", "disable", "reverse", "space", "privileges", "sleep",
+		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -621,6 +621,10 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select adddate("2011-11-11 10:10:10.123456", 10)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", 0.10)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", "11,11")`, true},
+
+		// For misc functions
+		{`SELECT GET_LOCK('lock1',10);`, true},
+		{`SELECT RELEASE_LOCK('lock1');`, true},
 	}
 	s.RunTest(c, table)
 }

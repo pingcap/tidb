@@ -274,3 +274,107 @@ func (s *testAggFuncSuite) TestXAPISum(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, testutil.DatumEquals, types.NewDatum(nil))
 }
+
+func (s *testAggFuncSuite) TestXAPIAvg(c *C) {
+	defer testleak.AfterTest(c)()
+	// Compose aggregate exec for "select avg(c2) from t groupby c1";
+	//
+	// Data in region1:
+	// c1  c2
+	// 1	11
+	// 2	21
+	// 1    1
+	// 3    2
+	//
+	// Partial aggregate result for region1:
+	// groupkey	cnt	sum
+	// 1		2	12
+	// 2		1	21
+	// 3		1	2
+	//
+	// Data in region2:
+	// 1    nil
+	// 1    3
+	// 3    31
+	//
+	// Partial aggregate result for region2:
+	// groupkey	cnt	sum
+	// 1		1	3
+	// 3		1	31
+	//
+	// Expected final aggregate result:
+	// avg(c2)
+	// 5
+	// 21
+	// 16.500000
+	c1 := ast.NewValueExpr([]byte{0})
+	rf1 := &ast.ResultField{Expr: c1}
+	c2 := ast.NewValueExpr(0)
+	rf2 := &ast.ResultField{Expr: c2}
+	c3 := ast.NewValueExpr(0)
+	rf3 := &ast.ResultField{Expr: c3}
+	col2 := &ast.ColumnNameExpr{Refer: rf2}
+	fc := &ast.AggregateFuncExpr{
+		F:    ast.AggFuncAvg,
+		Args: []ast.ExprNode{col2},
+	}
+	// Return row:
+	// GroupKey, Sum
+	// Partial result from region1
+	row1 := types.MakeDatums([]byte{1}, 2, 12)
+	row2 := types.MakeDatums([]byte{2}, 1, 21)
+	row3 := types.MakeDatums([]byte{3}, 1, 2)
+	// Partial result from region2
+	row4 := types.MakeDatums([]byte{1}, 1, 3)
+	row5 := types.MakeDatums([]byte{3}, 1, 31)
+	data := []([]types.Datum){row1, row2, row3, row4, row5}
+
+	rows := make([]*Row, 0, 5)
+	for _, d := range data {
+		rows = append(rows, &Row{Data: d})
+	}
+	src := &mockExec{
+		rows:   rows,
+		fields: []*ast.ResultField{rf1, rf2, rf3}, // groupby, cnt, sum
+	}
+	agg := &XAggregateExec{
+		AggFuncs: []*ast.AggregateFuncExpr{fc},
+		Src:      src,
+	}
+	ast.SetFlag(fc)
+	var (
+		row *Row
+		err error
+	)
+	// First row: 5
+	row, err = agg.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	ctx := mock.NewContext()
+	val, err := evaluator.Eval(ctx, fc)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(mysql.NewDecimalFromInt(int64(5), 0)))
+	// Second row: 21
+	row, err = agg.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	val, err = evaluator.Eval(ctx, fc)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(mysql.NewDecimalFromInt(int64(21), 0)))
+	// Third row: 16.5000
+	row, err = agg.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	val, err = evaluator.Eval(ctx, fc)
+	c.Assert(err, IsNil)
+	d := mysql.NewDecimalFromFloat(float64(16.5))
+	d.SetFracDigits(4) // For div operator, default frac is 4.
+	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(d))
+	// Forth row: nil
+	row, err = agg.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, IsNil)
+	// Close executor
+	err = agg.Close()
+	c.Assert(err, IsNil)
+}

@@ -17,7 +17,7 @@ import (
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
-var EvalSubquery func(p Plan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
+var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
 
 func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int) (
 	newExpr expression.Expression, newPlan LogicalPlan, correlated bool, err error) {
@@ -102,7 +102,6 @@ func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (LogicalPlan
 		er.err = errors.Trace(err)
 		return np, outerSchema
 	}
-	er.err = Refine(np)
 	return np, outerSchema
 }
 
@@ -126,215 +125,241 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			return inNode, true
 		}
 	case *ast.CompareSubqueryExpr:
-		v.L.Accept(er)
+		return er.handleCompareSubquery(v)
+	case *ast.ExistsSubqueryExpr:
+		return er.handleExistSubquery(v)
+	case *ast.PatternInExpr:
+		if v.Sel != nil {
+			return er.handleInSubquery(v)
+		}
+	case *ast.SubqueryExpr:
+		return er.handleScalarSubquery(v)
+	}
+	return inNode, false
+}
+
+func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) (ast.Node, bool) {
+	v.L.Accept(er)
+	if er.err != nil {
+		return v, true
+	}
+	lexpr := er.ctxStack[len(er.ctxStack)-1]
+	subq, ok := v.R.(*ast.SubqueryExpr)
+	if !ok {
+		er.err = errors.Errorf("Unknown compare type %T.", v.R)
+		return v, true
+	}
+	np, outerSchema := er.buildSubquery(subq)
+	if er.err != nil {
+		return v, true
+	}
+	// Only (a,b,c) = all (...) and (a,b,c) != any () can use row expression.
+	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
+	if !canMultiCol && (getRowLen(lexpr) != 1 || len(np.GetSchema()) != 1) {
+		er.err = errors.New("Operand should contain 1 column(s)")
+		return v, true
+	}
+	if getRowLen(lexpr) != len(np.GetSchema()) {
+		er.err = errors.Errorf("Operand should contain %d column(s)", getRowLen(lexpr))
+		return v, true
+	}
+	var checkCondition expression.Expression
+	var rexpr expression.Expression
+	if len(np.GetSchema()) == 1 {
+		rexpr = np.GetSchema()[0].DeepCopy()
+	} else {
+		args := make([]expression.Expression, 0, len(np.GetSchema()))
+		for _, col := range np.GetSchema() {
+			args = append(args, col.DeepCopy())
+		}
+		rexpr, er.err = expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), args...)
 		if er.err != nil {
-			return inNode, true
+			er.err = errors.Trace(er.err)
+			return v, true
 		}
-		lexpr := er.ctxStack[len(er.ctxStack)-1]
-		subq, ok := v.R.(*ast.SubqueryExpr)
-		if !ok {
-			er.err = errors.Errorf("Unknown compare type %T.", v.R)
-			return inNode, true
-		}
-		np, outerSchema := er.buildSubquery(subq)
+	}
+	switch v.Op {
+	// Only EQ, NE and NullEQ can be composed with and.
+	case opcode.EQ, opcode.NE, opcode.NullEQ:
+		checkCondition, er.err = constructBinaryOpFunction(lexpr, rexpr, opcode.Ops[v.Op])
 		if er.err != nil {
-			return inNode, true
+			er.err = errors.Trace(er.err)
+			return v, true
 		}
-		// Only (a,b,c) = all (...) and (a,b,c) != any () can use row expression.
-		canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
-		if !canMultiCol && (getRowLen(lexpr) != 1 || len(np.GetSchema()) != 1) {
-			er.err = errors.New("Operand should contain 1 column(s)")
-			return inNode, true
+	// If op is not EQ, NE, NullEQ, say LT, it will remain as row(a,b) < row(c,d), and be compared as row datum.
+	default:
+		checkCondition, er.err = expression.NewFunction(opcode.Ops[v.Op],
+			types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
+		if er.err != nil {
+			er.err = errors.Trace(er.err)
+			return v, true
 		}
-		if getRowLen(lexpr) != len(np.GetSchema()) {
-			er.err = errors.Errorf("Operand should contain %d column(s)", getRowLen(lexpr))
-			return inNode, true
-		}
-		var checkCondition expression.Expression
-		var rexpr expression.Expression
-		if len(np.GetSchema()) == 1 {
-			rexpr = np.GetSchema()[0].DeepCopy()
-		} else {
-			args := make([]expression.Expression, 0, len(np.GetSchema()))
-			for _, col := range np.GetSchema() {
-				args = append(args, col.DeepCopy())
-			}
-			rexpr, er.err = expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), args...)
-			if er.err != nil {
-				er.err = errors.Trace(er.err)
-				return inNode, true
-			}
-		}
-		switch v.Op {
-		// Only EQ, NE and NullEQ can be composed with and.
-		case opcode.EQ, opcode.NE, opcode.NullEQ:
-			checkCondition, er.err = constructBinaryOpFunction(lexpr, rexpr, opcode.Ops[v.Op])
-			if er.err != nil {
-				er.err = errors.Trace(er.err)
-				return inNode, true
-			}
-		// If op is not EQ, NE, NullEQ, say LT, it will remain as row(a,b) < row(c,d), and be compared as row datum.
-		default:
-			checkCondition, er.err = expression.NewFunction(opcode.Ops[v.Op],
-				types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
-			if er.err != nil {
-				er.err = errors.Trace(er.err)
-				return inNode, true
-			}
-		}
-		er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: v.All})
+	}
+	er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: v.All})
+	if er.p.IsCorrelated() {
+		er.correlated = true
+	}
+	// The parent expression only use the last column in schema, which represents whether the condition is matched.
+	er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
+	return v, true
+}
+
+func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (ast.Node, bool) {
+	subq, ok := v.Sel.(*ast.SubqueryExpr)
+	if !ok {
+		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
+		return v, true
+	}
+	np, outerSchema := er.buildSubquery(subq)
+	if er.err != nil {
+		return v, true
+	}
+	np = er.b.buildExists(np)
+	if np.IsCorrelated() {
+		er.p = er.b.buildApply(er.p, np, outerSchema, nil)
 		if er.p.IsCorrelated() {
 			er.correlated = true
 		}
-		// The parent expression only use the last column in schema, which represents whether the condition is matched.
-		er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
-		return inNode, true
-	case *ast.ExistsSubqueryExpr:
-		subq, ok := v.Sel.(*ast.SubqueryExpr)
-		if !ok {
-			er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
-			return inNode, true
-		}
-		np, outerSchema := er.buildSubquery(subq)
-		if er.err != nil {
-			return inNode, true
-		}
-		np = er.b.buildExists(np)
-		if np.IsCorrelated() {
-			er.p = er.b.buildApply(er.p, np, outerSchema, nil)
-			if er.p.IsCorrelated() {
-				er.correlated = true
-			}
-			er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
-		} else {
-			_, err := np.PruneColumnsAndResolveIndices(np.GetSchema())
-			if err != nil {
-				er.err = errors.Trace(err)
-				return inNode, true
-			}
-			d, err := EvalSubquery(np, er.b.is, er.b.ctx)
-			if err != nil {
-				er.err = errors.Trace(err)
-				return inNode, true
-			}
-			er.ctxStack = append(er.ctxStack, &expression.Constant{
-				Value:   d[0],
-				RetType: np.GetSchema()[0].GetType()})
-		}
-		return inNode, true
-	case *ast.PatternInExpr:
-		if v.Sel != nil {
-			v.Expr.Accept(er)
-			if er.err != nil {
-				return inNode, true
-			}
-			lexpr := er.ctxStack[len(er.ctxStack)-1]
-			subq, ok := v.Sel.(*ast.SubqueryExpr)
-			if !ok {
-				er.err = errors.Errorf("Unknown compare type %T.", v.Sel)
-				return inNode, true
-			}
-			np, outerSchema := er.buildSubquery(subq)
-			if er.err != nil {
-				return inNode, true
-			}
-			if getRowLen(lexpr) != len(np.GetSchema()) {
-				er.err = errors.Errorf("Operand should contain %d column(s)", getRowLen(lexpr))
-				return inNode, true
-			}
-			var rexpr expression.Expression
-			if len(np.GetSchema()) == 1 {
-				rexpr = np.GetSchema()[0].DeepCopy()
-			} else {
-				args := make([]expression.Expression, 0, len(np.GetSchema()))
-				for _, col := range np.GetSchema() {
-					args = append(args, col.DeepCopy())
-				}
-				rexpr, er.err = expression.NewFunction(ast.RowFunc, nil, args...)
-				if er.err != nil {
-					er.err = errors.Trace(er.err)
-					return inNode, true
-				}
-			}
-			// a in (subq) will be rewrited as a = any(subq).
-			// a not in (subq) will be rewrited as a != all(subq).
-			op, all := ast.EQ, false
-			if v.Not {
-				op, all = ast.NE, true
-			}
-			checkCondition, err := constructBinaryOpFunction(lexpr, rexpr, op)
-			if err != nil {
-				er.err = errors.Trace(err)
-				return inNode, true
-			}
-			er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: all})
-			if er.p.IsCorrelated() {
-				er.correlated = true
-			}
-			// The parent expression only use the last column in schema, which represents whether the condition is matched.
-			er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
-			return inNode, true
-		}
-	case *ast.SubqueryExpr:
-		np, outerSchema := er.buildSubquery(v)
-		if er.err != nil {
-			return inNode, true
-		}
-		np = er.b.buildMaxOneRow(np)
-		if np.IsCorrelated() {
-			er.p = er.b.buildApply(er.p, np, outerSchema, nil)
-			if er.p.IsCorrelated() {
-				er.correlated = true
-			}
-			if len(np.GetSchema()) > 1 {
-				newCols := make([]expression.Expression, 0, len(np.GetSchema()))
-				for _, col := range np.GetSchema() {
-					newCols = append(newCols, col.DeepCopy())
-				}
-				expr, err := expression.NewFunction(ast.RowFunc, nil, newCols...)
-				if err != nil {
-					er.err = errors.Trace(err)
-					return inNode, true
-				}
-				er.ctxStack = append(er.ctxStack, expr)
-
-			} else {
-				er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
-			}
-			return inNode, true
-		}
+		er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
+	} else {
 		_, err := np.PruneColumnsAndResolveIndices(np.GetSchema())
 		if err != nil {
 			er.err = errors.Trace(err)
-			return inNode, true
+			return v, true
 		}
-		d, err := EvalSubquery(np, er.b.is, er.b.ctx)
+		phyPlan := np.Convert2PhysicalPlan()
+		if err = refine(phyPlan); err != nil {
+			er.err = errors.Trace(err)
+			return v, true
+		}
+		d, err := EvalSubquery(phyPlan, er.b.is, er.b.ctx)
 		if err != nil {
 			er.err = errors.Trace(err)
-			return inNode, true
+			return v, true
+		}
+		er.ctxStack = append(er.ctxStack, &expression.Constant{
+			Value:   d[0],
+			RetType: np.GetSchema()[0].GetType()})
+	}
+	return v, true
+}
+
+func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, bool) {
+	v.Expr.Accept(er)
+	if er.err != nil {
+		return v, true
+	}
+	lexpr := er.ctxStack[len(er.ctxStack)-1]
+	subq, ok := v.Sel.(*ast.SubqueryExpr)
+	if !ok {
+		er.err = errors.Errorf("Unknown compare type %T.", v.Sel)
+		return v, true
+	}
+	np, outerSchema := er.buildSubquery(subq)
+	if er.err != nil {
+		return v, true
+	}
+	if getRowLen(lexpr) != len(np.GetSchema()) {
+		er.err = errors.Errorf("Operand should contain %d column(s)", getRowLen(lexpr))
+		return v, true
+	}
+	var rexpr expression.Expression
+	if len(np.GetSchema()) == 1 {
+		rexpr = np.GetSchema()[0].DeepCopy()
+	} else {
+		args := make([]expression.Expression, 0, len(np.GetSchema()))
+		for _, col := range np.GetSchema() {
+			args = append(args, col.DeepCopy())
+		}
+		rexpr, er.err = expression.NewFunction(ast.RowFunc, nil, args...)
+		if er.err != nil {
+			er.err = errors.Trace(er.err)
+			return v, true
+		}
+	}
+	// a in (subq) will be rewrited as a = any(subq).
+	// a not in (subq) will be rewrited as a != all(subq).
+	op, all := ast.EQ, false
+	if v.Not {
+		op, all = ast.NE, true
+	}
+	checkCondition, err := constructBinaryOpFunction(lexpr, rexpr, op)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return v, true
+	}
+	er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: all})
+	if er.p.IsCorrelated() {
+		er.correlated = true
+	}
+	// The parent expression only use the last column in schema, which represents whether the condition is matched.
+	er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
+	return v, true
+
+}
+
+func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Node, bool) {
+	np, outerSchema := er.buildSubquery(v)
+	if er.err != nil {
+		return v, true
+	}
+	np = er.b.buildMaxOneRow(np)
+	if np.IsCorrelated() {
+		er.p = er.b.buildApply(er.p, np, outerSchema, nil)
+		if er.p.IsCorrelated() {
+			er.correlated = true
 		}
 		if len(np.GetSchema()) > 1 {
 			newCols := make([]expression.Expression, 0, len(np.GetSchema()))
-			for i, data := range d {
-				newCols = append(newCols, &expression.Constant{
-					Value:   data,
-					RetType: np.GetSchema()[i].GetType()})
+			for _, col := range np.GetSchema() {
+				newCols = append(newCols, col.DeepCopy())
 			}
-			expr, err1 := expression.NewFunction(ast.RowFunc, nil, newCols...)
-			if err1 != nil {
-				er.err = errors.Trace(err1)
-				return inNode, true
+			expr, err := expression.NewFunction(ast.RowFunc, nil, newCols...)
+			if err != nil {
+				er.err = errors.Trace(err)
+				return v, true
 			}
 			er.ctxStack = append(er.ctxStack, expr)
 		} else {
-			er.ctxStack = append(er.ctxStack, &expression.Constant{
-				Value:   d[0],
-				RetType: np.GetSchema()[0].GetType(),
-			})
+			er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
 		}
-		return inNode, true
+		return v, true
 	}
-	return inNode, false
+	_, err := np.PruneColumnsAndResolveIndices(np.GetSchema())
+	if err != nil {
+		er.err = errors.Trace(err)
+		return v, true
+	}
+	phyPlan := np.Convert2PhysicalPlan()
+	if err = refine(phyPlan); err != nil {
+		er.err = errors.Trace(err)
+		return v, true
+	}
+	d, err := EvalSubquery(phyPlan, er.b.is, er.b.ctx)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return v, true
+	}
+	if len(np.GetSchema()) > 1 {
+		newCols := make([]expression.Expression, 0, len(np.GetSchema()))
+		for i, data := range d {
+			newCols = append(newCols, &expression.Constant{
+				Value:   data,
+				RetType: np.GetSchema()[i].GetType()})
+		}
+		expr, err1 := expression.NewFunction(ast.RowFunc, nil, newCols...)
+		if err1 != nil {
+			er.err = errors.Trace(err1)
+			return v, true
+		}
+		er.ctxStack = append(er.ctxStack, expr)
+	} else {
+		er.ctxStack = append(er.ctxStack, &expression.Constant{
+			Value:   d[0],
+			RetType: np.GetSchema()[0].GetType(),
+		})
+	}
+	return v, true
 }
 
 // Leave implements Visitor interface.

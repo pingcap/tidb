@@ -378,6 +378,7 @@ found_rows	{f}{o}{u}{n}{d}_{r}{o}{w}{s}
 from		{f}{r}{o}{m}
 full		{f}{u}{l}{l}
 fulltext	{f}{u}{l}{l}{t}{e}{x}{t}
+get_lock	{g}{e}{t}_{l}{o}{c}{k}
 global		{g}{l}{o}{b}{a}{l}
 grant		{g}{r}{a}{n}{t}
 grants		{g}{r}{a}{n}{t}{s}
@@ -447,6 +448,7 @@ quarter		{q}{u}{a}{r}{t}{e}{r}
 quick		{q}{u}{i}{c}{k}
 rand		{r}{a}{n}{d}
 read		{r}{e}{a}{d}
+release_lock	{r}{e}{l}{e}{a}{s}{e}_{l}{o}{c}{k}
 repeat		{r}{e}{p}{e}{a}{t}
 repeatable	{r}{e}{p}{e}{a}{t}{a}{b}{l}{e}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
@@ -986,11 +988,15 @@ redundant		lval.item = string(l.val)
 			return statsPersistent
 {status}		lval.item = string(l.val)
 			return status
+{get_lock}		lval.item = string(l.val)
+			return getLock
 {global}		lval.item = string(l.val)
 			return global
 {rand}			lval.item = string(l.val)
 			return rand
 {read}			return read
+{release_lock}		lval.item = string(l.val)
+			return releaseLock
 {repeat}		lval.item = string(l.val)
 			return repeat
 {repeatable}		lval.item = string(l.val)
@@ -1252,8 +1258,7 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 	// TODO: performance issue.
 	s := string(l.stringLit)
 	l.stringLit = l.stringLit[0:0]
-	v := stringutil.RemoveUselessBackslash(pref+s)
-	v, err := stringutil.Unquote(v)
+	v, err := stringutil.Unquote(pref + s)
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)
 	}

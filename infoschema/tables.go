@@ -37,6 +37,7 @@ const (
 	catalogVal         = "def"
 	tableProfiling     = "PROFILING"
 	tablePartitions    = "PARTITIONS"
+	tableKeyColumm     = "KEY_COLUMN_USAGE"
 )
 
 type columnInfo struct {
@@ -195,6 +196,21 @@ var collationsCols = []columnInfo{
 	{"IS_DEFAULT", mysql.TypeVarchar, 3, 0, nil, nil},
 	{"IS_COMPILED", mysql.TypeVarchar, 3, 0, nil, nil},
 	{"SORTLEN", mysql.TypeLonglong, 3, 0, nil, nil},
+}
+
+var keyColumnUsageCols = []columnInfo{
+	{"CONSTRAINT_CATALOG", mysql.TypeVarchar, 512, mysql.NotNullFlag, nil, nil},
+	{"CONSTRAINT_SCHEMA", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"CONSTRAINT_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"TABLE_CATALOG", mysql.TypeVarchar, 512, mysql.NotNullFlag, nil, nil},
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"COLUMN_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"ORDINAL_POSITION", mysql.TypeLonglong, 10, mysql.NotNullFlag, nil, nil},
+	{"POSITION_IN_UNIQUE_CONSTRAINT", mysql.TypeLonglong, 10, 0, nil, nil},
+	{"REFERENCED_TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"REFERENCED_TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"REFERENCED_COLUMN_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/partitions-table.html
@@ -481,6 +497,7 @@ var tableNameToColumns = map[string]([]columnInfo){
 	tableFiles:         filesCols,
 	tableProfiling:     profilingCols,
 	tablePartitions:    partitionsCols,
+	tableKeyColumm:     keyColumnUsageCols,
 }
 
 func createMemoryTable(meta *model.TableInfo, alloc autoid.Allocator) (table.Table, error) {
