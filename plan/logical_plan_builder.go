@@ -961,8 +961,10 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	joinPlan.OtherConditions = otherCond
 	if asScalar {
 		joinPlan.SetSchema(append(outerPlan.GetSchema().DeepCopy(), &expression.Column{
-			FromID:  joinPlan.id,
-			ColName: model.NewCIStr(fmt.Sprintf("%s_aux_0", joinPlan.id)),
+			FromID:      joinPlan.id,
+			ColName:     model.NewCIStr(fmt.Sprintf("%s_aux_0", joinPlan.id)),
+			RetType:     types.NewFieldType(mysql.TypeTiny),
+			IsAggOrSubq: true,
 		}))
 		joinPlan.JoinType = SemiJoinWithAux
 	} else {

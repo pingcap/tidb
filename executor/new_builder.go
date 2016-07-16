@@ -17,7 +17,6 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -37,7 +36,6 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 		rightHashKey = append(rightHashKey, rn)
 		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
-	log.Warnf("hk %d %d", len(v.EqualConditions), len(targetTypes))
 	e := &HashJoinExec{
 		schema:      v.GetSchema(),
 		otherFilter: expression.ComposeCNFCondition(v.OtherConditions),
