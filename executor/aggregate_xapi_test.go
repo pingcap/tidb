@@ -400,17 +400,20 @@ func (s *testAggFuncSuite) TestXAPIMaxMin(c *C) {
 	// 1    nil
 	// 1    3
 	// 3    31
+	// 4	nil
 	//
 	// Partial aggregate result for region2:
 	// groupkey	max(c2)	min(c2)
 	// 1		3	3
 	// 3		31	31
+	// 4		nil	nil
 	//
 	// Expected final aggregate result:
 	// max(c2)	min(c2)
 	// 11		1
 	// 21		21
 	// 31		2
+	// nil		nil
 	c1 := ast.NewValueExpr([]byte{0})
 	rf1 := &ast.ResultField{Expr: c1}
 	c2 := ast.NewValueExpr(0)
@@ -437,9 +440,10 @@ func (s *testAggFuncSuite) TestXAPIMaxMin(c *C) {
 	// Partial result from region2
 	row4 := types.MakeDatums([]byte{1}, int64(3), int64(3))
 	row5 := types.MakeDatums([]byte{3}, int64(31), int64(31))
-	data := []([]types.Datum){row1, row2, row3, row4, row5}
+	row6 := types.MakeDatums([]byte{4}, nil, nil)
+	data := []([]types.Datum){row1, row2, row3, row4, row5, row6}
 
-	rows := make([]*Row, 0, 5)
+	rows := make([]*Row, 0, 6)
 	for _, d := range data {
 		rows = append(rows, &Row{Data: d})
 	}
@@ -490,7 +494,18 @@ func (s *testAggFuncSuite) TestXAPIMaxMin(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, testutil.DatumEquals, types.NewDatum(int64(2)))
 
-	// Forth row: nil
+	// Forth row: nil, nil
+	row, err = agg.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	val, err = evaluator.Eval(ctx, fc)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(nil))
+	val, err = evaluator.Eval(ctx, fc1)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(nil))
+
+	// Fifth row: nil
 	row, err = agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
