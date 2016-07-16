@@ -146,7 +146,6 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	case *ast.SubqueryExpr:
 		return er.handleScalarSubquery(v)
 	case *ast.ParenthesesExpr:
-	default:
 		er.asScalar = true
 	}
 	return inNode, false
@@ -231,7 +230,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	np = er.b.buildExists(np)
 	if np.IsCorrelated() {
 		if sel, ok := np.GetChildByIndex(0).(*Selection); ok && !sel.GetChildByIndex(0).IsCorrelated() {
-			er.p = er.b.buildSemiJoin(er.p, sel.GetChildByIndex(0).(LogicalPlan), sel.Conditions, er.asScalar)
+			er.p = er.b.buildSemiJoin(er.p, sel.GetChildByIndex(0).(LogicalPlan), sel.Conditions, er.asScalar, false)
 			if !er.asScalar {
 				return v, true
 			}
@@ -267,7 +266,10 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 }
 
 func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, bool) {
+	asScalar := er.asScalar
+	er.asScalar = true
 	v.Expr.Accept(er)
+	er.asScalar = asScalar
 	if er.err != nil {
 		return v, true
 	}
@@ -301,16 +303,25 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	}
 	// a in (subq) will be rewrited as a = any(subq).
 	// a not in (subq) will be rewrited as a != all(subq).
-	op, all := ast.EQ, false
-	if v.Not {
-		op, all = ast.NE, true
+	checkCondition, err := constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
+	if !np.IsCorrelated() {
+		er.p = er.b.buildSemiJoin(er.p, np, splitCNFItems(checkCondition), asScalar, v.Not)
+		if asScalar {
+			col := er.p.GetSchema()[len(er.p.GetSchema())-1]
+			er.ctxStack[len(er.ctxStack)-1] = col
+		} else {
+			er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
+		}
+		return v, true
 	}
-	checkCondition, err := constructBinaryOpFunction(lexpr, rexpr, op)
+	if v.Not {
+		checkCondition, _ = expression.NewFunction(ast.UnaryNot, v.Type, checkCondition)
+	}
 	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: all})
+	er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: v.Not})
 	if er.p.IsCorrelated() {
 		er.correlated = true
 	}

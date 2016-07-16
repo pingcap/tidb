@@ -1187,6 +1187,15 @@ func (s *testSuite) TestNewJoin(c *C) {
 	result = tk.MustQuery("select * from t1 a join t1 b on a.c1 = b.c1;")
 	result.Check(testkit.Rows("1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1"))
 
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int,c2 double)")
+	tk.MustExec("create table t1(c1 double,c2 int)")
+	tk.MustExec("insert into t values (1, 2), (1, NULL)")
+	tk.MustExec("insert into t1 values (1, 2), (1, NULL)")
+	result = tk.MustQuery("select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);")
+	result.Check(testkit.Rows("1 2 1 2"))
+
 	plan.UseNewPlanner = false
 }
 
@@ -1262,6 +1271,8 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("insert t values (1, 1), (2, 1)")
 	result := tk.MustQuery("select m1.a from t as m1 where m1.a in (select m2.b from t as m2)")
 	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select m1.a from t as m1 where (3, m1.b) not in (select * from t as m2)")
+	result.Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select m1.a from t as m1 where m1.a in (select m2.b+? from t as m2)", 1)
 	result.Check(testkit.Rows("2"))
 	tk.MustExec(`prepare stmt1 from 'select m1.a from t as m1 where m1.a in (select m2.b+? from t as m2)'`)

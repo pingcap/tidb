@@ -17,27 +17,33 @@ import (
 	"math"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 //TODO: select join algorithm during cbo phase.
 func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
-	e := &HashJoinExec{
-		schema:      v.GetSchema(),
-		otherFilter: expression.ComposeCNFCondition(v.OtherConditions),
-		prepared:    false,
-		ctx:         b.ctx,
-	}
 	var leftHashKey, rightHashKey []*expression.Column
+	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
 		ln, _ := eqCond.Args[0].(*expression.Column)
 		rn, _ := eqCond.Args[1].(*expression.Column)
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
+		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
+	}
+	log.Warnf("hk %d %d", len(v.EqualConditions), len(targetTypes))
+	e := &HashJoinExec{
+		schema:      v.GetSchema(),
+		otherFilter: expression.ComposeCNFCondition(v.OtherConditions),
+		prepared:    false,
+		ctx:         b.ctx,
+		targetTypes: targetTypes,
 	}
 	switch v.JoinType {
 	case plan.LeftOuterJoin:
@@ -78,11 +84,13 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 
 func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 	var leftHashKey, rightHashKey []*expression.Column
+	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
 		ln, _ := eqCond.Args[0].(*expression.Column)
 		rn, _ := eqCond.Args[1].(*expression.Column)
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
+		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
 	e := &HashSemiJoinExec{
 		schema:       v.GetSchema(),
@@ -96,6 +104,8 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 		bigHashKey:   leftHashKey,
 		smallHashKey: rightHashKey,
 		withAux:      v.WithAux,
+		anti:         v.Anti,
+		targetTypes:  targetTypes,
 	}
 	return e
 }

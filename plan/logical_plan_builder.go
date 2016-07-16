@@ -237,7 +237,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		p = np
 		selection.correlated = selection.correlated || correlated
 		if expr != nil {
-			expressions = append(expressions, expr)
+			expressions = append(expressions, splitCNFItems(expr)...)
 		}
 	}
 	if len(expressions) == 0 {
@@ -947,7 +947,7 @@ func tryDecorrelated(expr expression.Expression, outerPlan Plan) bool {
 	return correlated
 }
 
-func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool) LogicalPlan {
+func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) LogicalPlan {
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
 	joinPlan.initID()
 	joinPlan.correlated = outerPlan.IsCorrelated() || innerPlan.IsCorrelated()
@@ -969,6 +969,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		joinPlan.SetSchema(outerPlan.GetSchema().DeepCopy())
 		joinPlan.JoinType = SemiJoin
 	}
+	joinPlan.anti = not
 	addChild(joinPlan, outerPlan)
 	addChild(joinPlan, innerPlan)
 	return joinPlan

@@ -100,6 +100,11 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			best:  "DataScan(t)->Selection->Projection->Projection",
 		},
 		{
+			sql:   "select * from t ta, t tb where (ta.d, ta.a) = (tb.b, tb.c)",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)}->Projection",
+		},
+		{
 			sql:   "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
 			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
 			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
@@ -554,9 +559,10 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 			}
 		}
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
-		c.Assert(selection.Conditions, HasLen, 1, Commentf("conditions:%v, expr:%v",
-			selection.Conditions, ca.exprStr))
-		result := rb.newBuild(selection.Conditions[0])
+		result := fullRange
+		for _, cond := range selection.Conditions {
+			result = rb.intersection(result, rb.newBuild(cond))
+		}
 		c.Assert(rb.err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, ca.resultStr, Commentf("differen for expr %s", ca.exprStr))
