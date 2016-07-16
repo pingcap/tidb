@@ -3885,6 +3885,13 @@ ShowStmt:
 			Table: $4.(*ast.TableName),
 		}
 	}
+|	"SHOW" "KEYS" "FROM" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowIndex,
+			Table: $4.(*ast.TableName),
+		}
+	}
 
 ShowTargetFilterable:
 	"ENGINES"
