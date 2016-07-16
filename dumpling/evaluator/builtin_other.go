@@ -16,6 +16,7 @@ package evaluator
 import (
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -24,6 +25,42 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
+
+// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
+func builtinSleep(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if ctx == nil {
+		return d, errors.Errorf("Missing context when evalue builtin")
+	}
+
+	sessVars := variable.GetSessionVars(ctx)
+	if args[0].IsNull() {
+		if sessVars.StrictSQLMode {
+			return d, errors.New("Incorrect arguments to sleep.")
+		}
+		d.SetInt64(0)
+		return
+	}
+	// processing argument is negative
+	zero := types.NewIntDatum(0)
+	ret, err := args[0].CompareDatum(zero)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if ret == -1 {
+		if sessVars.StrictSQLMode {
+			return d, errors.New("Incorrect arguments to sleep.")
+		}
+		d.SetInt64(0)
+		return
+	}
+
+	// TODO: consider it's interrupted using KILL QUERY from other session, or
+	// interrupted by time out.
+	duration := time.Duration(args[0].GetFloat64() * float64(time.Second.Nanoseconds()))
+	time.Sleep(duration)
+	d.SetInt64(0)
+	return
+}
 
 func builtinAndAnd(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	leftDatum := args[0]

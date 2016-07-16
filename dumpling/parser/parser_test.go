@@ -48,7 +48,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
-		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock",
+		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -525,6 +525,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// Repeat
 		{`SELECT REPEAT("a", 10);`, true},
+
+		// Sleep
+		{`SELECT SLEEP(10);`, true},
 
 		// For date_add
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
