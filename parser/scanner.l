@@ -382,6 +382,7 @@ get_lock	{g}{e}{t}_{l}{o}{c}{k}
 global		{g}{l}{o}{b}{a}{l}
 grant		{g}{r}{a}{n}{t}
 grants		{g}{r}{a}{n}{t}{s}
+greatest	{g}{r}{e}{a}{t}{e}{s}{t}
 group		{g}{r}{o}{u}{p}
 group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
 hash		{h}{a}{s}{h}
@@ -846,6 +847,8 @@ action		{a}{c}{t}{i}{o}{n}
 {grant}			return grant
 {grants}		lval.item = string(l.val)
 			return grants
+{greatest}		lval.item = string(l.val)
+			return greatest
 {group}			return group
 {group_concat}		lval.item = string(l.val)
 			return groupConcat
