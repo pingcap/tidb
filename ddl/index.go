@@ -52,6 +52,10 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 			return nil, errors.Trace(errIncorrectPrefixKey)
 		}
 
+		if ic.Length > 255 {
+			return nil, errors.Trace(errTooLongKey)
+		}
+
 		idxColumns = append(idxColumns, &model.IndexColumn{
 			Name:   col.Name,
 			Offset: col.Offset,
