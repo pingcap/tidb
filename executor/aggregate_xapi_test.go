@@ -73,12 +73,8 @@ func (s *testAggFuncSuite) TestXAPICount(c *C) {
 		Src:      src,
 	}
 	ast.SetFlag(fc)
-	var (
-		row *Row
-		err error
-	)
 	// First Row: 3
-	row, err = agg.Next()
+	row, err := agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	ctx := mock.NewContext()
@@ -147,12 +143,8 @@ func (s *testAggFuncSuite) TestXAPIFirstRow(c *C) {
 		Src:      src,
 	}
 	ast.SetFlag(fc)
-	var (
-		row *Row
-		err error
-	)
 	// First Row: 11
-	row, err = agg.Next()
+	row, err := agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	ctx := mock.NewContext()
@@ -242,12 +234,8 @@ func (s *testAggFuncSuite) TestXAPISum(c *C) {
 		Src:      src,
 	}
 	ast.SetFlag(fc)
-	var (
-		row *Row
-		err error
-	)
 	// First row: 15
-	row, err = agg.Next()
+	row, err := agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	ctx := mock.NewContext()
@@ -342,12 +330,8 @@ func (s *testAggFuncSuite) TestXAPIAvg(c *C) {
 		Src:      src,
 	}
 	ast.SetFlag(fc)
-	var (
-		row *Row
-		err error
-	)
 	// First row: 5
-	row, err = agg.Next()
+	row, err := agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	ctx := mock.NewContext()
@@ -432,7 +416,7 @@ func (s *testAggFuncSuite) TestXAPIMaxMin(c *C) {
 	ast.SetFlag(fc)
 	ast.SetFlag(fc1)
 	// Return row:
-	// GroupKey, Sum
+	// GroupKey, max(c2), min(c2)
 	// Partial result from region1
 	row1 := types.MakeDatums([]byte{1}, int64(11), int64(1))
 	row2 := types.MakeDatums([]byte{2}, int64(21), int64(21))
@@ -456,12 +440,8 @@ func (s *testAggFuncSuite) TestXAPIMaxMin(c *C) {
 		Src:      src,
 	}
 	ast.SetFlag(fc)
-	var (
-		row *Row
-		err error
-	)
 	// First row: 11, 1
-	row, err = agg.Next()
+	row, err := agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	ctx := mock.NewContext()
