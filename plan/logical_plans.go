@@ -32,7 +32,10 @@ const (
 	LeftOuterJoin
 	// RightOuterJoin means right join.
 	RightOuterJoin
-	// TODO: support semi join.
+	// SemiJoin means if row a in table A matches some rows in B, just output a.
+	SemiJoin
+	// SemiJoinWithAux means if row a in table A matches some rows in B, output (a, true), otherwise, output (a, false).
+	SemiJoinWithAux
 )
 
 // Join is the logical join plan.

@@ -121,6 +121,8 @@ var Funcs = map[string]Func{
 	"nullif": {builtinNullIf, 2, 2},
 
 	// miscellaneous functions
+	"sleep": {builtinSleep, 1, 1},
+
 	// get_lock() and release_lock() is parsed but do nothing.
 	// It is used for preventing error in Ruby's activerecord migrations.
 	"get_lock":     {builtinLock, 2, 2},
