@@ -992,7 +992,6 @@ func (s *testParserSuite) TestInsertStatementMemoryAllocation(c *C) {
 
 func BenchmarkParse(b *testing.B) {
 	var table = []string{
-		"create table t (c int)",
 		"insert into t values (1), (2), (3)",
 		"insert into t values (4), (5), (6), (7)",
 		"select c from t where c > 2",
