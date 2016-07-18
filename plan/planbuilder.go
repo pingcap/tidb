@@ -575,6 +575,7 @@ func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *Select
 		Lock: lock,
 	}
 	addChild(selectLock, src)
+	selectLock.SetSchema(src.GetSchema())
 	selectLock.SetFields(src.Fields())
 	return selectLock
 }
