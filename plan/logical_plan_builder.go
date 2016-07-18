@@ -854,6 +854,10 @@ func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema,
 	}
 	ap.initID()
 	addChild(ap, p)
+	_, inner, b.err = inner.PredicatePushDown(nil)
+	if b.err != nil {
+		return nil
+	}
 	outerColumns, err := inner.PruneColumnsAndResolveIndices(inner.GetSchema())
 	if err != nil {
 		b.err = errors.Trace(err)

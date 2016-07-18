@@ -96,12 +96,6 @@ func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (LogicalPlan
 		er.err = errors.Trace(er.b.err)
 		return nil, nil
 	}
-	var err error
-	_, np, err = np.PredicatePushDown(nil)
-	if err != nil {
-		er.err = errors.Trace(err)
-		return np, outerSchema
-	}
 	return np, outerSchema
 }
 
@@ -227,6 +221,10 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		}
 		er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
 	} else {
+		_, np, er.err = np.PredicatePushDown(nil)
+		if er.err != nil {
+			return v, true
+		}
 		_, err := np.PruneColumnsAndResolveIndices(np.GetSchema())
 		if err != nil {
 			er.err = errors.Trace(err)
@@ -328,6 +326,10 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		} else {
 			er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
 		}
+		return v, true
+	}
+	_, np, er.err = np.PredicatePushDown(nil)
+	if er.err != nil {
 		return v, true
 	}
 	_, err := np.PruneColumnsAndResolveIndices(np.GetSchema())
