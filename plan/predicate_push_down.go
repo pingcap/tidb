@@ -24,6 +24,11 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 		baseLogicalPlan: newBaseLogicalPlan(Sel, allocator)}
 	selection.initID()
 	selection.SetSchema(child.GetSchema().DeepCopy())
+	var outer []*expression.Column
+	for _, cond := range conditions {
+		_, outer = extractColumn(cond, nil, outer)
+	}
+	selection.correlated = child.IsCorrelated() || len(outer) > 0
 	return InsertPlan(p, child, selection)
 }
 

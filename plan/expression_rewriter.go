@@ -19,6 +19,9 @@ import (
 // EvalSubquery evaluates incorrelated subqueries once.
 var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
 
+// rewrite function rewrites ast expr to expression.Expression.
+// aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
+// asScalar means whether this expression must be treated as a scalar expression.
 func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (
 	newExpr expression.Expression, newPlan LogicalPlan, correlated bool, err error) {
 	er := &expressionRewriter{
@@ -146,7 +149,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	case *ast.SubqueryExpr:
 		return er.handleScalarSubquery(v)
 	case *ast.ParenthesesExpr:
-	//default:
+	default:
 		er.asScalar = true
 	}
 	return inNode, false

@@ -78,6 +78,44 @@ func (s *testEvaluatorSuite) TestBetween(c *C) {
 	s.runTests(c, cases)
 }
 
+func (s *testEvaluatorSuite) TestSleep(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := mock.NewContext()
+	variable.BindSessionVars(ctx)
+	sessVars := variable.GetSessionVars(ctx)
+
+	// non-strict model
+	sessVars.StrictSQLMode = false
+	d := make([]types.Datum, 1)
+	_, err := builtinSleep(d, nil)
+	c.Assert(err, NotNil)
+	ret, err := builtinSleep(d, ctx)
+	c.Assert(err, IsNil)
+	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
+	d[0].SetInt64(-1)
+	ret, err = builtinSleep(d, ctx)
+	c.Assert(err, IsNil)
+	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
+
+	// for error case under the strict model
+	sessVars.StrictSQLMode = true
+	d[0].SetNull()
+	_, err = builtinSleep(d, ctx)
+	c.Assert(err, NotNil)
+	d[0].SetFloat64(-2.5)
+	_, err = builtinSleep(d, ctx)
+	c.Assert(err, NotNil)
+
+	// strict model
+	d[0].SetFloat64(0.5)
+	start := time.Now()
+	ret, err = builtinSleep(d, ctx)
+	c.Assert(err, IsNil)
+	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
+	sub := time.Now().Sub(start)
+	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(0.5*1e9))
+}
+
 func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()

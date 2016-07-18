@@ -1209,6 +1209,11 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("insert t values (-1), (2), (3), (5), (6), (7), (8), (9)")
 	result := tk.MustQuery("select a from t where a < 0 or (a >= 2.1 and a < 5.1) or ( a > 5.9 and a <= 7.9) or a > '8.1'")
 	result.Check(testkit.Rows("-1", "3", "5", "6", "7", "9"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int unique)")
+	tk.MustExec("insert t values (0)")
+	result = tk.MustQuery("select NULL from t ")
+	result.Check(testkit.Rows("<nil>"))
 	plan.UseNewPlanner = false
 }
 
@@ -1592,7 +1597,9 @@ func (s *testSuite) TestNewSubquery(c *C) {
 	tk.MustExec("insert t values (2, 2)")
 	tk.MustExec("insert t values (3, 4)")
 	tk.MustExec("commit")
-	result := tk.MustQuery("select 1 = (select count(*) from t where t.c = k.d) from t k")
+	result := tk.MustQuery("select * from t where exists(select * from t k where t.c = k.c having sum(c) = 1)")
+	result.Check(testkit.Rows("1 1"))
+	result = tk.MustQuery("select 1 = (select count(*) from t where t.c = k.d) from t k")
 	result.Check(testkit.Rows("1", "1", "0"))
 	result = tk.MustQuery("select 1 = (select count(*) from t where exists( select * from t m where t.c = k.d)) from t k")
 	result.Check(testkit.Rows("1", "1", "0"))

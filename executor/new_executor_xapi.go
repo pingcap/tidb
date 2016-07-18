@@ -157,7 +157,7 @@ func (e *NewXSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	if e.indexPlan.Desc {
 		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: &e.indexPlan.Desc})
 	}
-	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Columns))
+	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
 	for i, v := range e.indexPlan.Index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
