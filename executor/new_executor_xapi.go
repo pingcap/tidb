@@ -35,6 +35,18 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+var (
+	_ NewXExecutor = &NewXSelectTableExec{}
+)
+
+// NewXExecutor defines some interfaces used by dist-sql.
+type NewXExecutor interface {
+	// AddAggregate adds aggregate info into an executor.
+	AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByItem, fields []*types.FieldType)
+	// GetTableName gets the table name of this XExecutor.
+	GetTable() *model.TableInfo
+}
+
 // NewXSelectIndexExec represents XAPI select index executor without result fields.
 type NewXSelectIndexExec struct {
 	tableInfo   *model.TableInfo
@@ -348,6 +360,19 @@ type NewXSelectTableExec struct {
 	Columns     []*model.ColumnInfo
 	schema      expression.Schema
 	ranges      []plan.TableRange
+
+	/*
+		The following attributes are used for aggregation push down.
+		aggFuncs is the aggregation functions in protobuf format. They will be added to xapi request msg.
+		byItem is the groupby items in protobuf format. They will be added to xapi request msg.
+		aggFields is used to decode returned rows from xapi.
+		aggregate indicates of the executor is handling aggregate result.
+		It is more convenient to use a single varible than use a long condition.
+	*/
+	aggFuncs  []*tipb.Expr
+	byItems   []*tipb.ByItem
+	aggFields []*types.FieldType
+	aggregate bool
 }
 
 // Schema implements Executor Schema interface.
@@ -370,9 +395,17 @@ func (e *NewXSelectTableExec) doRequest() error {
 		TableId: proto.Int64(e.tableInfo.ID),
 	}
 	selReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.tableInfo.PKIsHandle)
+	// Aggregate Info
+	selReq.Aggregates = e.aggFuncs
+	selReq.GroupBy = e.byItems
 	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	//if len(selReq.Aggregates) > 0 || len(selReq.GroupBy) > 0 {
+	if e.aggregate {
+		// The returned rows should be aggregate partial result.
+		e.result.SetFields(e.aggFields)
 	}
 	return nil
 }
@@ -413,8 +446,25 @@ func (e *NewXSelectTableExec) Next() (*Row, error) {
 			e.subResult = nil
 			continue
 		}
+		if e.aggregate {
+			// compose aggreagte row
+			return &Row{Data: rowData}, nil
+		}
 		return resultRowToRow(e.table, h, rowData, e.asName), nil
 	}
+}
+
+// AddAggregate implements NewXExecutor interface.
+func (e *NewXSelectTableExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByItem, fields []*types.FieldType) {
+	e.aggFuncs = funcs
+	e.byItems = byItems
+	e.aggFields = fields
+	e.aggregate = true
+}
+
+// GetTableName implements NewXExecutor interface.
+func (e *NewXSelectTableExec) GetTable() *model.TableInfo {
+	return e.tableInfo
 }
 
 // Fields implements Executor interface.
