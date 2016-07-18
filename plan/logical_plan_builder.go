@@ -150,10 +150,11 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 		columns, _ := extractColumn(expr, nil, nil)
 		allFromLeft, allFromRight := true, true
 		for _, col := range columns {
-			if left.GetSchema().GetIndex(col) != -1 {
-				allFromRight = false
-			} else {
+			if left.GetSchema().GetIndex(col) == -1 {
 				allFromLeft = false
+			}
+			if right.GetSchema().GetIndex(col) == -1 {
+				allFromRight = false
 			}
 		}
 		if allFromRight {
@@ -894,6 +895,18 @@ func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema,
 }
 
 func (b *planBuilder) buildExists(p LogicalPlan) LogicalPlan {
+out:
+	for {
+		switch p.(type) {
+		// This can be removed when in exists clause,
+		// e.g. exists(select count(*) from t order by a) is equal to exists t.
+		case *Trim, *Projection, *NewSort, *Aggregation:
+			p = p.GetChildByIndex(0).(LogicalPlan)
+			p.SetParents()
+		default:
+			break out
+		}
+	}
 	exists := &Exists{baseLogicalPlan: newBaseLogicalPlan(Ext, b.allocator)}
 	exists.initID()
 	addChild(exists, p)
@@ -913,4 +926,45 @@ func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	maxOneRow.SetSchema(p.GetSchema().DeepCopy())
 	maxOneRow.correlated = p.IsCorrelated()
 	return maxOneRow
+}
+
+// tryDecorrelated tries to remove the correlated column that can be found in the outerPlan's schema.
+func tryDecorrelated(expr expression.Expression, outerPlan Plan) bool {
+	correlated := false
+	_, correlatedCols := extractColumn(expr, nil, nil)
+	for _, c := range correlatedCols {
+		if outerPlan.GetSchema().GetIndex(c) != -1 {
+			c.Correlated = false
+		} else {
+			correlated = true
+		}
+	}
+	return correlated
+}
+
+func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, inExpr bool) LogicalPlan {
+	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
+	joinPlan.initID()
+	joinPlan.correlated = outerPlan.IsCorrelated() || innerPlan.IsCorrelated()
+	for _, expr := range onCondition {
+		joinPlan.correlated = joinPlan.correlated || tryDecorrelated(expr, outerPlan)
+	}
+	eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, outerPlan, innerPlan)
+	joinPlan.EqualConditions = eqCond
+	joinPlan.LeftConditions = leftCond
+	joinPlan.RightConditions = rightCond
+	joinPlan.OtherConditions = otherCond
+	if inExpr {
+		joinPlan.SetSchema(append(outerPlan.GetSchema().DeepCopy(), &expression.Column{
+			FromID:  joinPlan.id,
+			ColName: model.NewCIStr(fmt.Sprintf("%s_aux_0", joinPlan.id)),
+		}))
+		joinPlan.JoinType = SemiJoinWithAux
+	} else {
+		joinPlan.SetSchema(outerPlan.GetSchema().DeepCopy())
+		joinPlan.JoinType = SemiJoin
+	}
+	addChild(joinPlan, outerPlan)
+	addChild(joinPlan, innerPlan)
+	return joinPlan
 }

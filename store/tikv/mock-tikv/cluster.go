@@ -124,17 +124,17 @@ func (c *Cluster) GetRegion(regionID uint64) (*metapb.Region, uint64) {
 	return proto.Clone(r.meta).(*metapb.Region), r.leader
 }
 
-// GetRegionByKey returns the Region whose range contains the key.
-func (c *Cluster) GetRegionByKey(key []byte) *metapb.Region {
+// GetRegionByKey returns the Region and its leader whose range contains the key.
+func (c *Cluster) GetRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	for _, r := range c.regions {
 		if regionContains(r.meta.StartKey, r.meta.EndKey, key) {
-			return proto.Clone(r.meta).(*metapb.Region)
+			return proto.Clone(r.meta).(*metapb.Region), proto.Clone(r.leaderPeer()).(*metapb.Peer)
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // Bootstrap creates the first Region. The Stores should be in the Cluster before
@@ -250,6 +250,15 @@ func (r *Region) removePeer(peerID uint64) {
 
 func (r *Region) changeLeader(leaderStoreID uint64) {
 	r.leader = leaderStoreID
+}
+
+func (r *Region) leaderPeer() *metapb.Peer {
+	for _, p := range r.meta.Peers {
+		if p.GetId() == r.leader {
+			return p
+		}
+	}
+	return nil
 }
 
 func (r *Region) split(newRegionID uint64, key []byte, peerIDs []uint64, leaderPeerID uint64) *Region {

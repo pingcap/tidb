@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
@@ -253,6 +254,7 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) error {
 }
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
+	log.Info("RollbackTxn for rollback statement.")
 	err := e.ctx.RollbackTxn()
 	variable.GetSessionVars(e.ctx).SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return errors.Trace(err)

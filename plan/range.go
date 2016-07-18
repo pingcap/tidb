@@ -592,6 +592,11 @@ func (r *rangeBuilder) buildFromPatternLike(x *ast.PatternLikeExpr) []rangePoint
 		r.err = errors.Trace(err)
 		return fullRange
 	}
+	if pattern == "" {
+		startPoint := rangePoint{value: types.NewStringDatum(""), start: true}
+		endPoint := rangePoint{value: types.NewStringDatum("")}
+		return []rangePoint{startPoint, endPoint}
+	}
 	lowValue := make([]byte, 0, len(pattern))
 	// escape the pattern
 	var exclude bool

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/perfschema"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
@@ -42,6 +43,7 @@ var (
 	lease      = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
 	socket     = flag.String("socket", "", "The socket file to use for connection.")
 	enablePS   = flag.Int("perfschema", 0, "If enable performance schema.")
+	useNewPlan = flag.Int("newplan", 0, "If use new planner.")
 )
 
 func main() {
@@ -75,6 +77,10 @@ func main() {
 
 	if *enablePS == 1 {
 		perfschema.EnablePerfSchema()
+	}
+
+	if *useNewPlan == 1 {
+		plan.UseNewPlanner = true
 	}
 
 	// Create a session to load information schema.

@@ -237,7 +237,7 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum
 			sessVars := variable.GetSessionVars(ctx)
 			if !sessVars.StrictSQLMode {
 				// TODO: add warning.
-				return getZeroValue(col), true, nil
+				return GetZeroValue(col), true, nil
 			}
 		}
 		return types.Datum{}, false, errors.Trace(err)
@@ -269,7 +269,8 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum
 	return value, true, nil
 }
 
-func getZeroValue(col *model.ColumnInfo) types.Datum {
+// GetZeroValue gets zero value for given column type.
+func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	var d types.Datum
 	switch col.Tp {
 	case mysql.TypeTiny, mysql.TypeInt24, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:

@@ -359,8 +359,12 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 	tn.DBInfo = dbInfo
 
 	rfs := make([]*ast.ResultField, 0, len(tn.TableInfo.Columns))
+	tmp := make([]struct {
+		ast.ValueExpr
+		ast.ResultField
+	}, len(tn.TableInfo.Columns))
 	sVars := variable.GetSessionVars(nr.Ctx)
-	for _, v := range tn.TableInfo.Columns {
+	for i, v := range tn.TableInfo.Columns {
 		if sVars.InUpdateStmt {
 			switch v.State {
 			case model.StatePublic, model.StateWriteOnly, model.StateWriteReorganization:
@@ -372,9 +376,10 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 				continue
 			}
 		}
-		expr := &ast.ValueExpr{}
+		expr := &tmp[i].ValueExpr
+		rf := &tmp[i].ResultField
 		expr.SetType(&v.FieldType)
-		rf := &ast.ResultField{
+		*rf = ast.ResultField{
 			Column:    v,
 			Table:     tn.TableInfo,
 			DBName:    tn.Schema,

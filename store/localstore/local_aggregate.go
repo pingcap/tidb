@@ -103,8 +103,12 @@ func (n *aggregateFuncExpr) update(ctx *selectContext, args []types.Datum) error
 		return n.updateCount(ctx, args)
 	case tipb.ExprType_First:
 		return n.updateFirst(ctx, args)
-	case tipb.ExprType_Sum:
+	case tipb.ExprType_Sum, tipb.ExprType_Avg:
 		return n.updateSum(ctx, args)
+	case tipb.ExprType_Max:
+		return n.updateMaxMin(ctx, args, true)
+	case tipb.ExprType_Min:
+		return n.updateMaxMin(ctx, args, false)
 	}
 	return errors.Errorf("Unknown AggExpr: %v", n.expr.GetTp())
 }
@@ -113,22 +117,38 @@ func (n *aggregateFuncExpr) toDatums() (ds []types.Datum, err error) {
 	switch n.expr.GetTp() {
 	case tipb.ExprType_Count:
 		ds = n.getCountDatum()
-	case tipb.ExprType_First:
+	case tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min:
 		ds = n.getValueDatum()
 	case tipb.ExprType_Sum:
-		v := n.getAggItem().value
-		var d types.Datum
-		if !v.IsNull() {
-			// For sum result, we should convert it to decimal.
-			de, err1 := v.ToDecimal()
-			if err1 != nil {
-				return nil, errors.Trace(err1)
-			}
-			d = types.NewDecimalDatum(de)
+		d, err := getSumValue(n.getAggItem())
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		ds = []types.Datum{d}
+	case tipb.ExprType_Avg:
+		item := n.getAggItem()
+		sum, err := getSumValue(item)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		cnt := types.NewUintDatum(item.count)
+		ds = []types.Datum{cnt, sum}
 	}
 	return
+}
+
+func getSumValue(item *aggItem) (types.Datum, error) {
+	v := item.value
+	var d types.Datum
+	if !v.IsNull() {
+		// For sum result, we should convert it to decimal.
+		de, err1 := v.ToDecimal()
+		if err1 != nil {
+			return d, errors.Trace(err1)
+		}
+		d = types.NewDecimalDatum(de)
+	}
+	return d, nil
 }
 
 // Convert count to datum list.
@@ -207,5 +227,39 @@ func (n *aggregateFuncExpr) updateSum(ctx *selectContext, args []types.Datum) er
 		return errors.Trace(err)
 	}
 	aggItem.count++
+	return nil
+}
+
+func (n *aggregateFuncExpr) updateMaxMin(ctx *selectContext, args []types.Datum, max bool) error {
+	if len(args) != 1 {
+		// This should not happen. The length of argument list is already checked in the early stage.
+		// This is just in case of error.
+		name := "max"
+		if !max {
+			name = "min"
+		}
+		return errors.Errorf("Wrong number of argument for %s, need 1 but get %d", name, len(args))
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return nil
+	}
+	aggItem := n.getAggItem()
+	if !aggItem.evaluated {
+		aggItem.value = arg
+		aggItem.evaluated = true
+		return nil
+	}
+	c, err := aggItem.value.CompareDatum(arg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if max {
+		if c == -1 {
+			aggItem.value = arg
+		}
+	} else if c == 1 {
+		aggItem.value = arg
+	}
 	return nil
 }

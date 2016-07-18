@@ -69,6 +69,9 @@ func (e *NewXSelectIndexExec) Schema() expression.Schema {
 func (e *NewXSelectIndexExec) Close() error {
 	e.result = nil
 	e.subResult = nil
+	e.taskCursor = 0
+	e.tasks = nil
+	e.indexOrder = make(map[int64]int)
 	return nil
 }
 
