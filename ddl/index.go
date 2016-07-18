@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-const prefixLength = 767
+const maxPrefixLength = 767
 
 func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, indexID int64,
 	idxColNames []*ast.IndexColName) (*model.IndexInfo, error) {
@@ -54,7 +54,7 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 			return nil, errors.Trace(errIncorrectPrefixKey)
 		}
 
-		if ic.Length > prefixLength {
+		if ic.Length > maxPrefixLength {
 			return nil, errors.Trace(errTooLongKey)
 		}
 
