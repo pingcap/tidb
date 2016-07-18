@@ -2148,7 +2148,7 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	c.Assert(err, NotNil)
 
 	_, err = exec(c, se, "create index idx_c1 on t (c2(555555));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	// ERROR 1071 (42000): Specified key was too long; max key length is 767 bytes
 	c.Assert(err, NotNil)
 
 	_, err = exec(c, se, "create index idx_c1 on t (c1(5))")
