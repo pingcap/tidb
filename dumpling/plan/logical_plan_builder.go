@@ -735,10 +735,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 	}
 	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
 	if sel.LockTp != ast.SelectLockNone {
-		// TODO: support it !
-		//p = b.buildSelectLock(p, sel.LockTp)
-		b.err = errors.New("SelectLocal have not been supported!")
-		return nil
+		p = b.buildSelectLock(p, sel.LockTp)
 	}
 	if sel.GroupBy != nil {
 		p, correlated, gbyCols = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)

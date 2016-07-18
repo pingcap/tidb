@@ -804,6 +804,7 @@ func (s *testSessionSuite) TestIssue1114(c *C) {
 }
 
 func (s *testSessionSuite) TestSelectForUpdate(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
@@ -865,6 +866,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	c.Assert(err, IsNil)
 	err = store.Close()
 	c.Assert(err, IsNil)
+	plan.UseNewPlanner = false
 }
 
 func (s *testSessionSuite) TestRow(c *C) {
