@@ -260,7 +260,7 @@ func (p *Join) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 	for _, col := range parentUsedCols {
 		if lChild.GetSchema().GetIndex(col) != -1 {
 			leftCols = append(leftCols, col)
-		} else {
+		} else if rChild.GetSchema().GetIndex(col) != -1 {
 			rightCols = append(rightCols, col)
 		}
 	}
@@ -286,10 +286,10 @@ func (p *Join) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 			return nil, errors.Trace(err)
 		}
 	}
-	p.schema = append(lChild.GetSchema().DeepCopy(), rChild.GetSchema().DeepCopy()...)
-	p.schema.InitIndices()
+	composedSchema := append(lChild.GetSchema().DeepCopy(), rChild.GetSchema().DeepCopy()...)
+	composedSchema.InitIndices()
 	for i, otherCond := range p.OtherConditions {
-		p.OtherConditions[i], err = retrieveColumnsInExpression(otherCond, p.GetSchema())
+		p.OtherConditions[i], err = retrieveColumnsInExpression(otherCond, composedSchema)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -304,6 +304,14 @@ func (p *Join) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 			return nil, errors.Trace(err)
 		}
 	}
+	if p.JoinType == SemiJoin {
+		p.schema = lChild.GetSchema().DeepCopy()
+	} else if p.JoinType == SemiJoinWithAux {
+		p.schema = append(lChild.GetSchema().DeepCopy(), p.schema[len(p.schema)-1])
+	} else {
+		p.schema = composedSchema
+	}
+	p.schema.InitIndices()
 	return outerUsedCols, nil
 }
 

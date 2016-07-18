@@ -942,6 +942,9 @@ func (s *testSessionSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	matches(c, rows, [][]interface{}{{2, 2}})
 
+	mustExecSQL(c, se, "create table if not exists test_varchar_index (c1 varchar(255), index(c1))")
+	mustExecSQL(c, se, "insert test_varchar_index values (''), ('a')")
+	mustExecMatch(c, se, "select * from test_varchar_index where c1 like ''", [][]interface{}{{[]byte("")}})
 	err = store.Close()
 	c.Assert(err, IsNil)
 }
@@ -1967,6 +1970,24 @@ func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	match(c, row.Data, 21)
+
+	err = store.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSessionSuite) TestSleep(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "select sleep(0.01);")
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (a int);")
+	mustExecSQL(c, se, "insert t values (sleep(0.02));")
+	r := mustExecSQL(c, se, "select * from t;")
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 0)
 
 	err = store.Close()
 	c.Assert(err, IsNil)
