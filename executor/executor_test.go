@@ -1222,6 +1222,8 @@ func (s *testSuite) TestSubquerySameTable(c *C) {
 	tk.MustExec("insert t values (1), (2)")
 	result := tk.MustQuery("select a from t where exists(select 1 from t as x where x.a < t.a)")
 	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select a from t where not exists(select 1 from t as x where x.a < t.a)")
+	result.Check(testkit.Rows("1"))
 	plan.UseNewPlanner = false
 }
 
