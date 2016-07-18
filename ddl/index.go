@@ -30,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+const prefixLength = 767
+
 func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, indexID int64,
 	idxColNames []*ast.IndexColName) (*model.IndexInfo, error) {
 	// build offsets
@@ -52,7 +54,7 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 			return nil, errors.Trace(errIncorrectPrefixKey)
 		}
 
-		if ic.Length > 255 {
+		if ic.Length > prefixLength {
 			return nil, errors.Trace(errTooLongKey)
 		}
 

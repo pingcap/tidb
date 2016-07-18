@@ -60,7 +60,7 @@ var (
 
 	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specificate a key length")
 	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
-	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey, "Specified key was too long; max key length is 255 bytes")
+	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey, "Specified key was too long; max key length is 767 bytes")
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
