@@ -35,7 +35,7 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 	if er.err != nil {
 		return nil, nil, false, errors.Trace(er.err)
 	}
-	if !er.asScalar && len(er.ctxStack) == 0 {
+	if !asScalar && len(er.ctxStack) == 0 {
 		return nil, er.p, er.correlated, nil
 	}
 	if len(er.ctxStack) != 1 {
@@ -273,7 +273,6 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	asScalar := er.asScalar
 	er.asScalar = true
 	v.Expr.Accept(er)
-	er.asScalar = asScalar
 	if er.err != nil {
 		return v, true
 	}
