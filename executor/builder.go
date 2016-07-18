@@ -370,9 +370,10 @@ func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 		return src
 	}
 	e := &SelectLockExec{
-		Src:  src,
-		Lock: v.Lock,
-		ctx:  b.ctx,
+		Src:    src,
+		Lock:   v.Lock,
+		ctx:    b.ctx,
+		schema: v.GetSchema(),
 	}
 	return e
 }

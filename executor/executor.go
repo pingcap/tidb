@@ -852,14 +852,15 @@ func (e *FilterExec) Close() error {
 
 // SelectLockExec represents a select lock executor.
 type SelectLockExec struct {
-	Src  Executor
-	Lock ast.SelectLockType
-	ctx  context.Context
+	Src    Executor
+	Lock   ast.SelectLockType
+	ctx    context.Context
+	schema expression.Schema
 }
 
 // Schema implements Executor Schema interface.
 func (e *SelectLockExec) Schema() expression.Schema {
-	return nil
+	return e.schema
 }
 
 // Fields implements Executor Fields interface.
