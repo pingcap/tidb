@@ -96,12 +96,6 @@ func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (LogicalPlan
 		er.err = errors.Trace(er.b.err)
 		return nil, nil
 	}
-	var err error
-	_, np, err = np.PredicatePushDown(nil)
-	if err != nil {
-		er.err = errors.Trace(err)
-		return np, outerSchema
-	}
 	return np, outerSchema
 }
 
