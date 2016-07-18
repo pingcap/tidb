@@ -573,7 +573,9 @@ func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
 	selectLock := &SelectLock{
 		Lock: lock,
+		baseLogicalPlan: newBaseLogicalPlan(Lock, b.allocator),
 	}
+	selectLock.initID()
 	addChild(selectLock, src)
 	selectLock.SetSchema(src.GetSchema())
 	selectLock.SetFields(src.Fields())
