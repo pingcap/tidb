@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/juju/errors"
@@ -346,6 +347,7 @@ func (e *NewXAggregateExec) innerNext() (bool, error) {
 	if e.Src != nil {
 		var err error
 		row, err = e.Src.Next()
+		fmt.Println("row: ", row.Data, len(row.Data))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -370,6 +372,7 @@ func (e *NewXAggregateExec) innerNext() (bool, error) {
 	cursor++
 	// The rest columns are partial result for aggregate function.
 	for _, agg := range e.aggregaters {
+		fmt.Println("AGG: cursor", cursor, len(row.Data))
 		var count uint64
 		var value types.Datum
 		if needCount(agg.name) {

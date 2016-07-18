@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -405,6 +406,7 @@ func (e *NewXSelectTableExec) doRequest() error {
 	//if len(selReq.Aggregates) > 0 || len(selReq.GroupBy) > 0 {
 	if e.aggregate {
 		// The returned rows should be aggregate partial result.
+		fmt.Println("Fields: ", len(e.aggFields))
 		e.result.SetFields(e.aggFields)
 	}
 	return nil
@@ -439,6 +441,7 @@ func (e *NewXSelectTableExec) Next() (*Row, error) {
 			log.Debugf("[TIME_TABLE_SCAN] %v", time.Now().Sub(startTs))
 		}
 		h, rowData, err := e.subResult.Next()
+		fmt.Println("XTS:", rowData, len(rowData))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
