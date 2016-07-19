@@ -47,7 +47,8 @@ type HashJoinExec struct {
 	leftSmall    bool
 	matchedRows  []*Row
 	cursor       int
-	targetTypes  []*types.FieldType
+	// targetTypes means the target the type that both smallHashKey and bigHashKey should convert to.
+	targetTypes []*types.FieldType
 }
 
 // Close implements Executor Close interface.
@@ -74,6 +75,8 @@ func joinTwoRow(a *Row, b *Row) *Row {
 	return ret
 }
 
+// getHashKey gets the hash key when given a row and hash columns.
+// It will return a boolean value representing if the hash key has null, a byte slice representing the result hash code.
 func getHashKey(exprs []*expression.Column, row *Row, targetTypes []*types.FieldType) (bool, []byte, error) {
 	vals := make([]types.Datum, 0, len(exprs))
 	for i, expr := range exprs {
@@ -275,9 +278,10 @@ type HashSemiJoinExec struct {
 	otherFilter       expression.Expression
 	schema            expression.Schema
 	withAux           bool
-	anti              bool
 	targetTypes       []*types.FieldType
 	smallTableHasNull bool
+	// If anti is true, semi join only output the unmatched row.
+	anti bool
 }
 
 // Close implements Executor Close interface.
