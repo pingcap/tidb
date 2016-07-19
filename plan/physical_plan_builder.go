@@ -171,6 +171,14 @@ func (p *Trim) Convert2PhysicalPlan() PhysicalPlan {
 }
 
 // Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
+func (p *SelectLock) Convert2PhysicalPlan() PhysicalPlan {
+	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
+	p.SetChildren(child)
+	child.SetParents(p)
+	return p
+}
+
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *Insert) Convert2PhysicalPlan() PhysicalPlan {
 	if len(p.GetChildren()) == 0 {
 		return p

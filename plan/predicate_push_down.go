@@ -24,11 +24,6 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 		baseLogicalPlan: newBaseLogicalPlan(Sel, allocator)}
 	selection.initID()
 	selection.SetSchema(child.GetSchema().DeepCopy())
-	var outer []*expression.Column
-	for _, cond := range conditions {
-		_, outer = extractColumn(cond, nil, outer)
-	}
-	selection.correlated = child.IsCorrelated() || len(outer) > 0
 	return InsertPlan(p, child, selection)
 }
 
@@ -257,6 +252,12 @@ func (p *Distinct) PredicatePushDown(predicates []expression.Expression) ([]expr
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Insert) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
+	return ret, p, errors.Trace(err)
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *SelectLock) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, errors.Trace(err)
 }
