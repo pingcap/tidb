@@ -81,6 +81,7 @@ type PhysicalHashSemiJoin struct {
 	basePhysicalPlan
 
 	WithAux bool
+	Anti    bool
 
 	EqualConditions []*expression.ScalarFunction
 	LeftConditions  []expression.Expression

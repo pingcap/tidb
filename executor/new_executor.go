@@ -47,6 +47,8 @@ type HashJoinExec struct {
 	leftSmall    bool
 	matchedRows  []*Row
 	cursor       int
+	// targetTypes means the target the type that both smallHashKey and bigHashKey should convert to.
+	targetTypes []*types.FieldType
 }
 
 // Close implements Executor Close interface.
@@ -73,20 +75,31 @@ func joinTwoRow(a *Row, b *Row) *Row {
 	return ret
 }
 
-func getHashKey(exprs []*expression.Column, row *Row) ([]byte, error) {
+// getHashKey gets the hash key when given a row and hash columns.
+// It will return a boolean value representing if the hash key has null, a byte slice representing the result hash code.
+func getHashKey(exprs []*expression.Column, row *Row, targetTypes []*types.FieldType) (bool, []byte, error) {
 	vals := make([]types.Datum, 0, len(exprs))
-	for _, expr := range exprs {
+	for i, expr := range exprs {
 		v, err := expr.Eval(row.Data, nil)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return false, nil, errors.Trace(err)
+		}
+		if v.IsNull() {
+			return true, nil, nil
+		}
+		if targetTypes[i].Tp != expr.RetType.Tp {
+			v, err = v.ConvertTo(targetTypes[i])
+			if err != nil {
+				return false, nil, errors.Trace(err)
+			}
 		}
 		vals = append(vals, v)
 	}
 	if len(vals) == 0 {
-		return nil, nil
+		return false, nil, nil
 	}
-
-	return codec.EncodeValue([]byte{}, vals...)
+	bytes, err := codec.EncodeValue([]byte{}, vals...)
+	return false, bytes, errors.Trace(err)
 }
 
 // Schema implements Executor Schema interface.
@@ -122,9 +135,12 @@ func (e *HashJoinExec) prepare() error {
 				continue
 			}
 		}
-		hashcode, err := getHashKey(e.smallHashKey, row)
+		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if hasNull {
+			continue
 		}
 		if rows, ok := e.hashTable[string(hashcode)]; !ok {
 			e.hashTable[string(hashcode)] = []*Row{row}
@@ -138,11 +154,14 @@ func (e *HashJoinExec) prepare() error {
 }
 
 func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, err error) {
-	hashcode, err := getHashKey(e.bigHashKey, bigRow)
+	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	if hasNull {
+		return
+	}
 	rows, ok := e.hashTable[string(hashcode)]
 	if !ok {
 		return
@@ -247,23 +266,29 @@ func (e *HashJoinExec) Next() (*Row, error) {
 
 // HashSemiJoinExec implements the hash join algorithm for semi join.
 type HashSemiJoinExec struct {
-	hashTable    map[string][]*Row
-	smallHashKey []*expression.Column
-	bigHashKey   []*expression.Column
-	smallExec    Executor
-	bigExec      Executor
-	prepared     bool
-	ctx          context.Context
-	smallFilter  expression.Expression
-	bigFilter    expression.Expression
-	otherFilter  expression.Expression
-	schema       expression.Schema
-	withAux      bool
+	hashTable         map[string][]*Row
+	smallHashKey      []*expression.Column
+	bigHashKey        []*expression.Column
+	smallExec         Executor
+	bigExec           Executor
+	prepared          bool
+	ctx               context.Context
+	smallFilter       expression.Expression
+	bigFilter         expression.Expression
+	otherFilter       expression.Expression
+	schema            expression.Schema
+	withAux           bool
+	targetTypes       []*types.FieldType
+	smallTableHasNull bool
+	// If anti is true, semi join only output the unmatched row.
+	anti bool
 }
 
 // Close implements Executor Close interface.
 func (e *HashSemiJoinExec) Close() error {
 	e.prepared = false
+	e.hashTable = make(map[string][]*Row)
+	e.smallTableHasNull = false
 	err := e.smallExec.Close()
 	if err != nil {
 		return errors.Trace(err)
@@ -303,9 +328,13 @@ func (e *HashSemiJoinExec) prepare() error {
 				continue
 			}
 		}
-		hashcode, err := getHashKey(e.smallHashKey, row)
+		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if hasNull {
+			e.smallTableHasNull = true
+			continue
 		}
 		if rows, ok := e.hashTable[string(hashcode)]; !ok {
 			e.hashTable[string(hashcode)] = []*Row{row}
@@ -318,12 +347,14 @@ func (e *HashSemiJoinExec) prepare() error {
 	return nil
 }
 
-func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, err error) {
-	hashcode, err := getHashKey(e.bigHashKey, bigRow)
+func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, hasNull bool, err error) {
+	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, false, errors.Trace(err)
 	}
-
+	if hasNull {
+		return false, true, nil
+	}
 	rows, ok := e.hashTable[string(hashcode)]
 	if !ok {
 		return
@@ -331,12 +362,12 @@ func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, err error) {
 	// match eq condition
 	for _, smallRow := range rows {
 		matched = true
-		var matchedRow *Row
-		matchedRow = joinTwoRow(bigRow, smallRow)
 		if e.otherFilter != nil {
+			var matchedRow *Row
+			matchedRow = joinTwoRow(bigRow, smallRow)
 			matched, err = expression.EvalBool(e.otherFilter, matchedRow.Data, e.ctx)
 			if err != nil {
-				return false, errors.Trace(err)
+				return false, false, errors.Trace(err)
 			}
 		}
 		if matched {
@@ -371,14 +402,25 @@ func (e *HashSemiJoinExec) Next() (*Row, error) {
 				return nil, errors.Trace(err)
 			}
 		}
+		isNull := false
 		if matched {
-			matched, err = e.rowIsMatched(bigRow)
+			matched, isNull, err = e.rowIsMatched(bigRow)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
+		if !matched && e.smallTableHasNull {
+			isNull = true
+		}
+		if e.anti && !isNull {
+			matched = !matched
+		}
 		if e.withAux {
-			bigRow.Data = append(bigRow.Data, types.NewDatum(matched))
+			if isNull {
+				bigRow.Data = append(bigRow.Data, types.NewDatum(nil))
+			} else {
+				bigRow.Data = append(bigRow.Data, types.NewDatum(matched))
+			}
 			return bigRow, nil
 		} else if matched {
 			return bigRow, nil
