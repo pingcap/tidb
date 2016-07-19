@@ -31,7 +31,7 @@ type recordSet struct {
 }
 
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
-	if plan.UseNewPlanner && len(a.fields) == 0{
+	if plan.UseNewPlanner && len(a.fields) == 0 {
 		for _, col := range a.schema {
 			rf := &ast.ResultField{
 				ColumnAsName: col.ColName,
