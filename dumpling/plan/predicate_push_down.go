@@ -185,6 +185,7 @@ func (p *NewUnion) PredicatePushDown(predicates []expression.Expression) (ret []
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	// TODO: implement aggregation push down.
+	p.GetChildByIndex(0).(LogicalPlan).PredicatePushDown(nil)
 	return predicates, p, nil
 }
 
