@@ -58,6 +58,7 @@ func (p *Join) Convert2PhysicalPlan() PhysicalPlan {
 			LeftConditions:  p.LeftConditions,
 			RightConditions: p.RightConditions,
 			OtherConditions: p.OtherConditions,
+			Anti:            p.anti,
 		}
 	default:
 		physicalPlan = &PhysicalHashJoin{

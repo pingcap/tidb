@@ -47,7 +47,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	for i, aggFunc := range aggFuncList {
 		var newArgList []expression.Expression
 		for _, arg := range aggFunc.Args {
-			newArg, np, correlated, err := b.rewrite(arg, p, nil)
+			newArg, np, correlated, err := b.rewrite(arg, p, nil, true)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
@@ -195,7 +195,7 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) LogicalPlan {
 	joinPlan.SetSchema(newSchema)
 	joinPlan.correlated = leftPlan.IsCorrelated() || rightPlan.IsCorrelated()
 	if join.On != nil {
-		onExpr, _, correlated, err := b.rewrite(join.On.Expr, joinPlan, nil)
+		onExpr, _, correlated, err := b.rewrite(join.On.Expr, joinPlan, nil, false)
 		if err != nil {
 			b.err = err
 			return nil
@@ -229,14 +229,19 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	selection.initID()
 	selection.correlated = p.IsCorrelated()
 	for _, cond := range conditions {
-		expr, np, correlated, err := b.rewrite(cond, p, AggMapper)
+		expr, np, correlated, err := b.rewrite(cond, p, AggMapper, false)
 		if err != nil {
 			b.err = err
 			return nil
 		}
 		p = np
 		selection.correlated = selection.correlated || correlated
-		expressions = append(expressions, expr)
+		if expr != nil {
+			expressions = append(expressions, splitCNFItems(expr)...)
+		}
+	}
+	if len(expressions) == 0 {
+		return p
 	}
 	selection.Conditions = expressions
 	selection.SetSchema(p.GetSchema().DeepCopy())
@@ -255,7 +260,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	schema := make(expression.Schema, 0, len(fields))
 	oldLen := 0
 	for _, field := range fields {
-		newExpr, np, correlated, err := b.rewrite(field.Expr, p, mapper)
+		newExpr, np, correlated, err := b.rewrite(field.Expr, p, mapper, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, oldLen
@@ -373,7 +378,7 @@ func (b *planBuilder) buildNewSort(p LogicalPlan, byItems []*ast.ByItem, aggMapp
 	sort.initID()
 	sort.correlated = p.IsCorrelated()
 	for _, item := range byItems {
-		it, np, correlated, err := b.rewrite(item.Expr, p, aggMapper)
+		it, np, correlated, err := b.rewrite(item.Expr, p, aggMapper, true)
 		if err != nil {
 			b.err = err
 			return nil
@@ -677,7 +682,7 @@ func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 			return nil, false, nil
 		}
 		item.Expr = retExpr.(ast.ExprNode)
-		expr, np, cor, err := b.rewrite(item.Expr, p, nil)
+		expr, np, cor, err := b.rewrite(item.Expr, p, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, false, nil
@@ -943,7 +948,7 @@ func tryDecorrelated(expr expression.Expression, outerPlan Plan) bool {
 	return correlated
 }
 
-func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, inExpr bool) LogicalPlan {
+func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) LogicalPlan {
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
 	joinPlan.initID()
 	joinPlan.correlated = outerPlan.IsCorrelated() || innerPlan.IsCorrelated()
@@ -955,16 +960,19 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	joinPlan.LeftConditions = leftCond
 	joinPlan.RightConditions = rightCond
 	joinPlan.OtherConditions = otherCond
-	if inExpr {
+	if asScalar {
 		joinPlan.SetSchema(append(outerPlan.GetSchema().DeepCopy(), &expression.Column{
-			FromID:  joinPlan.id,
-			ColName: model.NewCIStr(fmt.Sprintf("%s_aux_0", joinPlan.id)),
+			FromID:      joinPlan.id,
+			ColName:     model.NewCIStr(fmt.Sprintf("%s_aux_0", joinPlan.id)),
+			RetType:     types.NewFieldType(mysql.TypeTiny),
+			IsAggOrSubq: true,
 		}))
 		joinPlan.JoinType = SemiJoinWithAux
 	} else {
 		joinPlan.SetSchema(outerPlan.GetSchema().DeepCopy())
 		joinPlan.JoinType = SemiJoin
 	}
+	joinPlan.anti = not
 	addChild(joinPlan, outerPlan)
 	addChild(joinPlan, innerPlan)
 	return joinPlan

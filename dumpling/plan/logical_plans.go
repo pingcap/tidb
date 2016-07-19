@@ -43,6 +43,7 @@ type Join struct {
 	baseLogicalPlan
 
 	JoinType JoinType
+	anti     bool
 
 	EqualConditions []*expression.ScalarFunction
 	LeftConditions  []expression.Expression
