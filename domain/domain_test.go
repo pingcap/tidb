@@ -75,16 +75,16 @@ func (*testSuite) TestT(c *C) {
 	time.Sleep(1 * time.Second)
 
 	// for schemaValidity
-	err = CheckSchemaValidity(0)
+	err = dom.CheckSchemaValidity(0)
 	c.Assert(err, IsNil)
-	dom.IsMockFailed = true
+	dom.MockReloadFailed = true
 	err = dom.MustReload()
 	c.Assert(err, NotNil)
-	err = CheckSchemaValidity(0)
+	err = dom.CheckSchemaValidity(0)
 	c.Assert(err, NotNil)
-	dom.IsMockFailed = false
+	dom.MockReloadFailed = false
 	err = dom.MustReload()
 	c.Assert(err, IsNil)
-	err = CheckSchemaValidity(0)
+	err = dom.CheckSchemaValidity(0)
 	c.Assert(err, IsNil)
 }

@@ -35,14 +35,15 @@ var ddlLastReloadSchemaTS = "ddl_last_reload_schema_ts"
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store        kv.Storage
-	infoHandle   *infoschema.Handle
-	ddl          ddl.DDL
-	leaseCh      chan time.Duration
-	lastLeaseTS  int64 // nano seconds
-	m            sync.Mutex
-	txnTS        uint64 // It's used for checking schema validity.
-	IsMockFailed bool   // It mocks reload failed.
+	store            kv.Storage
+	infoHandle       *infoschema.Handle
+	ddl              ddl.DDL
+	leaseCh          chan time.Duration
+	lastLeaseTS      int64 // nano seconds
+	m                sync.Mutex
+	schemaValidity   *schemaValidityInfo
+	txnTS            uint64 // It's used for checking schema validity.
+	MockReloadFailed bool   // It mocks reload failed.
 }
 
 func (do *Domain) setTxnTS(ts uint64) {
@@ -178,13 +179,14 @@ const minReloadTimeout = 20 * time.Second
 // Reload reloads InfoSchema.
 func (do *Domain) Reload() error {
 	// for test
-	if do.IsMockFailed {
+	if do.MockReloadFailed {
 		err := kv.RunInNewTxn(do.store, false, func(txn kv.Transaction) error {
 			do.setTxnTS(txn.StartTS())
 			return nil
 		})
 		if err != nil {
-			log.Fatalf("mock reload failed err:%v", err)
+			log.Errorf("mock reload failed err:%v", err)
+			return errors.Trace(err)
 		}
 		return errors.New("mock reload failed")
 	}
@@ -232,10 +234,10 @@ func (do *Domain) Reload() error {
 func (do *Domain) MustReload() error {
 	if err := do.Reload(); err != nil {
 		log.Errorf("[ddl] reload schema err %v, txnTS:%v", errors.ErrorStack(err), do.getTxnTS())
-		SetSchemaValidity(false, do.getTxnTS())
+		do.SetSchemaValidity(false)
 		return errors.Trace(err)
 	}
-	SetSchemaValidity(true, 0)
+	do.SetSchemaValidity(true)
 	return nil
 }
 
@@ -287,33 +289,35 @@ type schemaValidityInfo struct {
 	mux           sync.RWMutex
 }
 
-var schemaValidity = schemaValidityInfo{}
-
 // SetSchemaValidity sets the schemaValidity value.
 // It's public in order to do the test.
-func SetSchemaValidity(v bool, txnTS uint64) {
-	schemaValidity.mux.Lock()
-	if schemaValidity.validity && !v && schemaValidity.lastInvalidTS < txnTS {
-		schemaValidity.lastInvalidTS = txnTS
+func (do *Domain) SetSchemaValidity(v bool) {
+	do.schemaValidity.mux.Lock()
+	if !v {
+		txnTS := do.getTxnTS()
+		if do.schemaValidity.validity && do.schemaValidity.lastInvalidTS < txnTS {
+			do.schemaValidity.lastInvalidTS = txnTS
+		}
 	}
-	schemaValidity.validity = v
-	schemaValidity.mux.Unlock()
+	do.schemaValidity.validity = v
+	do.schemaValidity.mux.Unlock()
 }
 
 // CheckSchemaValidity checks if schema info is out of date.
-func CheckSchemaValidity(txnTS uint64) error {
-	schemaValidity.mux.RLock()
-	if schemaValidity.validity && (txnTS == 0 || txnTS > schemaValidity.lastInvalidTS) {
-		schemaValidity.mux.RUnlock()
+func (do *Domain) CheckSchemaValidity(txnTS uint64) error {
+	do.schemaValidity.mux.RLock()
+	if do.schemaValidity.validity && (txnTS == 0 || txnTS > do.schemaValidity.lastInvalidTS) {
+		do.schemaValidity.mux.RUnlock()
 		return nil
 	}
-	schemaValidity.mux.RUnlock()
+	do.schemaValidity.mux.RUnlock()
 	return errLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
 }
 
 // NewDomain creates a new domain.
 func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
-	d = &Domain{store: store}
+	d = &Domain{store: store,
+		schemaValidity: &schemaValidityInfo{}}
 
 	d.infoHandle, err = infoschema.NewHandle(d.store)
 	if err != nil {

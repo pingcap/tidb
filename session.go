@@ -30,7 +30,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -138,7 +137,7 @@ func (s *session) checkServerStatus() error {
 	if s.txn != nil {
 		ts = s.txn.StartTS()
 	}
-	return domain.CheckSchemaValidity(ts)
+	return sessionctx.GetDomain(s).CheckSchemaValidity(ts)
 }
 
 func (s *session) Status() uint16 {
