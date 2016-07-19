@@ -85,6 +85,11 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		best  string
 	}{
 		{
+			sql:   "select count(*) from t a, t b where a.a = b.a",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Aggr->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)}->Aggr->Projection",
+		},
+		{
 			sql:   "select a from (select a from t where d = 0) k where k.a = 5",
 			first: "DataScan(t)->Selection->Projection->Selection->Projection",
 			best:  "DataScan(t)->Selection->Projection->Projection",
