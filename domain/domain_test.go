@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -40,7 +41,7 @@ func (*testSuite) TestT(c *C) {
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer testleak.AfterTest(c)()
 
 	ctx := mock.NewContext()
 
@@ -87,4 +88,11 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	err = dom.SchemaValidity.CheckValidity(0)
 	c.Assert(err, IsNil)
+
+	// for goroutine exit in Reload
+	defaultMinReloadTimeout = 1 * time.Second
+	err = store.Close()
+	c.Assert(err, IsNil)
+	err = dom.Reload()
+	c.Assert(err, NotNil)
 }

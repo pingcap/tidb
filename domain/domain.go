@@ -164,7 +164,7 @@ func (do *Domain) tryReload() {
 	}
 }
 
-const minReloadTimeout = 20 * time.Second
+var defaultMinReloadTimeout = 20 * time.Second
 
 // Reload reloads InfoSchema.
 func (do *Domain) Reload() error {
@@ -186,13 +186,13 @@ func (do *Domain) Reload() error {
 	defer do.m.Unlock()
 
 	timeout := do.ddl.GetLease() / 2
-	if timeout < minReloadTimeout {
-		timeout = minReloadTimeout
+	if timeout < defaultMinReloadTimeout {
+		timeout = defaultMinReloadTimeout
 	}
 
-	var exit *bool
+	exit := new(int32)
 	done := make(chan error, 1)
-	go func(exit *bool) {
+	go func(exit *int32) {
 		var err error
 
 		for {
@@ -203,7 +203,7 @@ func (do *Domain) Reload() error {
 			}
 
 			log.Errorf("[ddl] load schema err %v, retry again", errors.ErrorStack(err))
-			if *exit {
+			if atomic.LoadInt32(exit) == 1 {
 				return
 			}
 			// TODO: use a backoff algorithm.
@@ -218,7 +218,7 @@ func (do *Domain) Reload() error {
 	case err := <-done:
 		return errors.Trace(err)
 	case <-time.After(timeout):
-		*exit = true
+		atomic.StoreInt32(exit, 1)
 		return ErrLoadSchemaTimeOut
 	}
 }
@@ -235,9 +235,6 @@ func (do *Domain) MustReload() error {
 	do.SchemaValidity.SetValidity(true)
 	return nil
 }
-
-// Check schema every 300 seconds default.
-const defaultLoadTime = 300 * time.Second
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	ticker := time.NewTicker(lease)
