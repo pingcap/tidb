@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
@@ -2043,9 +2044,13 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 			// execute failed
 			_, err = exec(nil, s, fmt.Sprintf("insert into %s values(1)", tbl))
 		}
+
 		if err != nil {
-			// execute failed
+			// table t1 executes failed
+			// table t2 executes successfully
 			_, err = exec(nil, s, "commit")
+		} else if tbl == "t2" {
+			err = errors.New("insert result isn't expected")
 		}
 		end <- err
 	}
@@ -2065,7 +2070,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	}
 	// Make sure loading information schema is failed and server is invalid.
 	ctx := se.(context.Context)
-	sessionctx.GetDomain(ctx).MockReloadFailed = true
+	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed = true
 	sessionctx.GetDomain(ctx).MustReload()
 	// Make sure insert to table t1 transaction executes.
 	startCh1 <- struct{}{}
@@ -2082,15 +2087,15 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 		c.FailNow()
 	default:
 	}
-	sessionctx.GetDomain(ctx).SetSchemaValidity(true)
-	sessionctx.GetDomain(ctx).MockReloadFailed = false
+	sessionctx.GetDomain(ctx).SchemaValidity.SetValidity(true)
+	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed = false
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (a int);")
 	mustExecSQL(c, se, "insert t values (100);")
 	// Make sure insert to table t2 transaction executes.
 	startCh2 <- struct{}{}
 	err = <-endCh2
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 
 	err = se.Close()
 	c.Assert(err, IsNil)

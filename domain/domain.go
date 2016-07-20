@@ -35,29 +35,19 @@ var ddlLastReloadSchemaTS = "ddl_last_reload_schema_ts"
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store            kv.Storage
-	infoHandle       *infoschema.Handle
-	ddl              ddl.DDL
-	leaseCh          chan time.Duration
-	lastLeaseTS      int64 // nano seconds
-	m                sync.Mutex
-	schemaValidity   *schemaValidityInfo
-	txnTS            uint64 // It's used for checking schema validity.
-	MockReloadFailed bool   // It mocks reload failed.
-}
-
-func (do *Domain) setTxnTS(ts uint64) {
-	atomic.StoreUint64(&do.txnTS, ts)
-}
-
-func (do *Domain) getTxnTS() uint64 {
-	return atomic.LoadUint64(&do.txnTS)
+	store          kv.Storage
+	infoHandle     *infoschema.Handle
+	ddl            ddl.DDL
+	leaseCh        chan time.Duration
+	lastLeaseTS    int64 // nano seconds
+	m              sync.Mutex
+	SchemaValidity *schemaValidityInfo
 }
 
 func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 	defer func() {
 		if err != nil {
-			do.setTxnTS(txn.StartTS())
+			do.SchemaValidity.setTxnTS(txn.StartTS())
 		}
 	}()
 	m := meta.NewMeta(txn)
@@ -179,9 +169,9 @@ const minReloadTimeout = 20 * time.Second
 // Reload reloads InfoSchema.
 func (do *Domain) Reload() error {
 	// for test
-	if do.MockReloadFailed {
+	if do.SchemaValidity.MockReloadFailed {
 		err := kv.RunInNewTxn(do.store, false, func(txn kv.Transaction) error {
-			do.setTxnTS(txn.StartTS())
+			do.SchemaValidity.setTxnTS(txn.StartTS())
 			return nil
 		})
 		if err != nil {
@@ -233,11 +223,11 @@ func (do *Domain) Reload() error {
 // It's public in order to do the test.
 func (do *Domain) MustReload() error {
 	if err := do.Reload(); err != nil {
-		log.Errorf("[ddl] reload schema err %v, txnTS:%v", errors.ErrorStack(err), do.getTxnTS())
-		do.SetSchemaValidity(false)
+		log.Errorf("[ddl] reload schema err %v, txnTS:%v", errors.ErrorStack(err), do.SchemaValidity.getTxnTS())
+		do.SchemaValidity.SetValidity(false)
 		return errors.Trace(err)
 	}
-	do.SetSchemaValidity(true)
+	do.SchemaValidity.SetValidity(true)
 	return nil
 }
 
@@ -284,40 +274,50 @@ func (c *ddlCallback) OnChanged(err error) error {
 }
 
 type schemaValidityInfo struct {
-	validity      bool
-	lastInvalidTS uint64
-	mux           sync.RWMutex
+	validity         bool
+	lastInvalidTS    uint64
+	mux              sync.RWMutex
+	txnTS            uint64 // It's used for checking schema validity.
+	MockReloadFailed bool   // It mocks reload failed.
 }
 
-// SetSchemaValidity sets the schemaValidity value.
+func (s *schemaValidityInfo) setTxnTS(ts uint64) {
+	atomic.StoreUint64(&s.txnTS, ts)
+}
+
+func (s *schemaValidityInfo) getTxnTS() uint64 {
+	return atomic.LoadUint64(&s.txnTS)
+}
+
+// SetValidity sets the schema validity value.
 // It's public in order to do the test.
-func (do *Domain) SetSchemaValidity(v bool) {
-	do.schemaValidity.mux.Lock()
+func (s *schemaValidityInfo) SetValidity(v bool) {
+	s.mux.Lock()
 	if !v {
-		txnTS := do.getTxnTS()
-		if do.schemaValidity.validity && do.schemaValidity.lastInvalidTS < txnTS {
-			do.schemaValidity.lastInvalidTS = txnTS
+		txnTS := s.getTxnTS()
+		if s.validity && s.lastInvalidTS < txnTS {
+			s.lastInvalidTS = txnTS
 		}
 	}
-	do.schemaValidity.validity = v
-	do.schemaValidity.mux.Unlock()
+	s.validity = v
+	s.mux.Unlock()
 }
 
-// CheckSchemaValidity checks if schema info is out of date.
-func (do *Domain) CheckSchemaValidity(txnTS uint64) error {
-	do.schemaValidity.mux.RLock()
-	if do.schemaValidity.validity && (txnTS == 0 || txnTS > do.schemaValidity.lastInvalidTS) {
-		do.schemaValidity.mux.RUnlock()
+// CheckValidity checks if schema info is out of date.
+func (s *schemaValidityInfo) CheckValidity(txnTS uint64) error {
+	s.mux.RLock()
+	if s.validity && (txnTS == 0 || txnTS > s.lastInvalidTS) {
+		s.mux.RUnlock()
 		return nil
 	}
-	do.schemaValidity.mux.RUnlock()
+	s.mux.RUnlock()
 	return ErrLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
 }
 
 // NewDomain creates a new domain.
 func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	d = &Domain{store: store,
-		schemaValidity: &schemaValidityInfo{}}
+		SchemaValidity: &schemaValidityInfo{}}
 
 	d.infoHandle, err = infoschema.NewHandle(d.store)
 	if err != nil {
