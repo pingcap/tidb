@@ -70,6 +70,27 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 	c.Assert(v, testutil.DatumEquals, types.NewDatum(nil))
 }
 
+func (s *testEvaluatorSuite) TestGreatestFunc(c *C) {
+	defer testleak.AfterTest(c)()
+
+	v, err := builtinGreatest(types.MakeDatums(2, 0), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetInt64(), Equals, int64(2))
+
+	v, err = builtinGreatest(types.MakeDatums(34.0, 3.0, 5.0, 767.0), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetFloat64(), Equals, float64(767.0))
+
+	v, err = builtinGreatest(types.MakeDatums("B", "A", "C"), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, "C")
+
+	// GREATEST() returns NULL if any argument is NULL.
+	v, err = builtinGreatest(types.MakeDatums(1, nil, 2), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+}
+
 func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 	defer testleak.AfterTest(c)()
 

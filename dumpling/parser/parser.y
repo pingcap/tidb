@@ -168,6 +168,7 @@ import (
 	global		"GLOBAL"
 	grant		"GRANT"
 	grants		"GRANTS"
+	greatest	"GREATEST"
 	group		"GROUP"
 	groupConcat	"GROUP_CONCAT"
 	hash		"HASH"
@@ -1966,7 +1967,7 @@ UnReservedKeyword:
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
 |	"DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS"
-|	"GROUP_CONCAT"| "HOUR" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
+|	"GROUP_CONCAT"| "GREATEST" | "HOUR" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 |	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX"
 |	"SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
@@ -2540,6 +2541,10 @@ FunctionCallNonKeyword:
 |	"FOUND_ROWS" '(' ')'
 	{
 		$$ =  &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+	}
+|	"GREATEST" '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
 	}
 |	"HOUR" '(' Expression ')'
 	{
