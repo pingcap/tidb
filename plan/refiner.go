@@ -471,7 +471,7 @@ func pushDownNot(expr expression.Expression, not bool) expression.Expression {
 			if not {
 				args := f.Args
 				for i, a := range args {
-					args[i] = pushDownNot(a, !not)
+					args[i] = pushDownNot(a, true)
 				}
 				nf, _ := expression.NewFunction(ast.OrOr, f.GetType(), args...)
 				return nf
@@ -484,7 +484,7 @@ func pushDownNot(expr expression.Expression, not bool) expression.Expression {
 			if not {
 				args := f.Args
 				for i, a := range args {
-					args[i] = pushDownNot(a, !not)
+					args[i] = pushDownNot(a, true)
 				}
 				nf, _ := expression.NewFunction(ast.AndAnd, f.GetType(), args...)
 				return nf
