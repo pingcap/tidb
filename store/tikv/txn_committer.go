@@ -307,17 +307,25 @@ func (c *txnCommitter) cleanupKeys(keys [][]byte) error {
 }
 
 func (c *txnCommitter) Commit() error {
+	defer func() {
+		// Always clean up all written keys if the txn does not commit.
+		if !c.committed {
+			go func() {
+				c.cleanupKeys(c.writtenKeys)
+				log.Infof("txn clean up done, tid: %d", c.startTS)
+			}()
+		}
+	}()
+
 	err := c.prewriteKeys(c.keys)
 	if err != nil {
 		log.Warnf("txn commit failed on prewrite: %v, tid: %d", err, c.startTS)
-		go func() {
-			c.cleanupKeys(c.writtenKeys)
-		}()
 		return errors.Trace(err)
 	}
 
 	commitTS, err := c.store.getTimestampWithRetry()
 	if err != nil {
+		log.Warnf("txn get commitTS failed: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
 	}
 	c.commitTS = commitTS
@@ -325,9 +333,7 @@ func (c *txnCommitter) Commit() error {
 	err = c.commitKeys(c.keys)
 	if err != nil {
 		if !c.committed {
-			go func() {
-				c.cleanupKeys(c.writtenKeys)
-			}()
+			log.Warnf("txn commit failed on commit: %v, tid: %d", err, c.startTS)
 			return errors.Trace(err)
 		}
 		log.Warnf("txn commit succeed with error: %v, tid: %d", err, c.startTS)
