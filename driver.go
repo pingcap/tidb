@@ -245,7 +245,7 @@ func newDriverConn(sess *session, d *sqlDriver, schema string, params *driverPar
 func (c *driverConn) Prepare(query string) (driver.Stmt, error) {
 	stmtID, paramCount, fields, err := c.s.PrepareStmt(query)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	s := &driverStmt{
 		conn:       c,

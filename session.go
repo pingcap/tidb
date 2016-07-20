@@ -481,7 +481,7 @@ func checkArgs(args ...interface{}) error {
 func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.RecordSet, error) {
 	err := checkArgs(args...)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	r, err := runStmt(s, st, args...)
@@ -626,7 +626,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 	}
 	domain, err := domap.Get(store)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	sessionctx.BindDomain(s, domain)
 
