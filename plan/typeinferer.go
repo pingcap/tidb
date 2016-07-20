@@ -262,6 +262,16 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if x.FnName.L == "abs" && tp.Tp == mysql.TypeDatetime {
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
+	case "greatest":
+		for _, v := range x.Args {
+			InferType(v)
+		}
+		if len(x.Args) > 0 {
+			tp = x.Args[0].GetType()
+			for i := 1; i < len(x.Args); i++ {
+				mergeArithType(tp.Tp, x.Args[i].GetType().Tp)
+			}
+		}
 	case "pow", "power", "rand":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "curdate", "current_date", "date":
