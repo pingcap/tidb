@@ -339,7 +339,7 @@ func removeStore(c *C, dbPath string) {
 	os.RemoveAll(dbPath)
 }
 
-func exec(c *C, se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
+func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
 	if len(args) == 0 {
 		rs, err := se.Execute(sql)
 		if err == nil && len(rs) > 0 {
@@ -359,7 +359,7 @@ func exec(c *C, se Session, sql string, args ...interface{}) (ast.RecordSet, err
 }
 
 func mustExecSQL(c *C, se Session, sql string, args ...interface{}) ast.RecordSet {
-	rs, err := exec(c, se, sql, args...)
+	rs, err := exec(se, sql, args...)
 	c.Assert(err, IsNil)
 	return rs
 }
@@ -388,7 +388,7 @@ func mustExecMatch(c *C, se Session, sql string, expected [][]interface{}) {
 }
 
 func mustExecFailed(c *C, se Session, sql string, args ...interface{}) {
-	r, err := exec(c, se, sql, args...)
+	r, err := exec(se, sql, args...)
 	if err == nil && r != nil {
 		// sometimes we may meet error after executing first row.
 		_, err = r.Next()

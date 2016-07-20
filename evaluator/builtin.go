@@ -44,6 +44,7 @@ var Funcs = map[string]Func{
 	// common functions
 	"coalesce": {builtinCoalesce, 1, -1},
 	ast.IsNull: {builtinIsNull, 1, 1},
+	"greatest": {builtinGreatest, 2, -1},
 
 	// math functions
 	"abs":   {builtinAbs, 1, 1},
@@ -183,4 +184,26 @@ func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err er
 		d.SetInt64(0)
 	}
 	return d, nil
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
+func builtinGreatest(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	max := 0
+	for i := 0; i < len(args); i++ {
+		if args[i].IsNull() {
+			d.SetNull()
+			return
+		}
+
+		var cmp int
+		if cmp, err = args[i].CompareDatum(args[max]); err != nil {
+			return
+		}
+
+		if cmp > 0 {
+			max = i
+		}
+	}
+	d = args[max]
+	return
 }

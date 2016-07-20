@@ -19,12 +19,24 @@ import (
 // EvalSubquery evaluates incorrelated subqueries once.
 var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
 
-func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int) (
+// rewrite function rewrites ast expr to expression.Expression.
+// aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
+// asScalar means whether this expression must be treated as a scalar expression.
+func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (
 	newExpr expression.Expression, newPlan LogicalPlan, correlated bool, err error) {
-	er := &expressionRewriter{p: p, aggrMap: aggMapper, schema: p.GetSchema(), b: b}
+	er := &expressionRewriter{
+		p:        p,
+		aggrMap:  aggMapper,
+		schema:   p.GetSchema(),
+		b:        b,
+		asScalar: asScalar,
+	}
 	expr.Accept(er)
 	if er.err != nil {
 		return nil, nil, false, errors.Trace(er.err)
+	}
+	if !asScalar && len(er.ctxStack) == 0 {
+		return nil, er.p, er.correlated, nil
 	}
 	if len(er.ctxStack) != 1 {
 		return nil, nil, false, errors.Errorf("context len %v is invalid", len(er.ctxStack))
@@ -44,6 +56,8 @@ type expressionRewriter struct {
 	columnMap  map[*ast.ColumnNameExpr]expression.Expression
 	b          *planBuilder
 	correlated bool
+	// asScalar means the return value must be a scalar value.
+	asScalar bool
 }
 
 func getRowLen(e expression.Expression) int {
@@ -78,7 +92,7 @@ func constructBinaryOpFunction(l expression.Expression, r expression.Expression,
 		var err error
 		funcs[i], err = constructBinaryOpFunction(getRowArg(l, i), getRowArg(r, i), op)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 	}
 	return expression.ComposeCNFCondition(funcs), nil
@@ -95,12 +109,6 @@ func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (LogicalPlan
 	if er.b.err != nil {
 		er.err = errors.Trace(er.b.err)
 		return nil, nil
-	}
-	var err error
-	_, np, err = np.PredicatePushDown(nil)
-	if err != nil {
-		er.err = errors.Trace(err)
-		return np, outerSchema
 	}
 	return np, outerSchema
 }
@@ -134,6 +142,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 	case *ast.SubqueryExpr:
 		return er.handleScalarSubquery(v)
+	case *ast.ParenthesesExpr:
+	default:
+		er.asScalar = true
 	}
 	return inNode, false
 }
@@ -217,7 +228,10 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	np = er.b.buildExists(np)
 	if np.IsCorrelated() {
 		if sel, ok := np.GetChildByIndex(0).(*Selection); ok && !sel.GetChildByIndex(0).IsCorrelated() {
-			er.p = er.b.buildSemiJoin(er.p, sel.GetChildByIndex(0).(LogicalPlan), sel.Conditions, true)
+			er.p = er.b.buildSemiJoin(er.p, sel.GetChildByIndex(0).(LogicalPlan), sel.Conditions, er.asScalar, false)
+			if !er.asScalar {
+				return v, true
+			}
 		} else {
 			// Can't be built as semi-join
 			er.p = er.b.buildApply(er.p, np, outerSchema, nil)
@@ -227,6 +241,10 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		}
 		er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
 	} else {
+		_, np, er.err = np.PredicatePushDown(nil)
+		if er.err != nil {
+			return v, true
+		}
 		_, err := np.PruneColumnsAndResolveIndices(np.GetSchema())
 		if err != nil {
 			er.err = errors.Trace(err)
@@ -250,6 +268,8 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 }
 
 func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, bool) {
+	asScalar := er.asScalar
+	er.asScalar = true
 	v.Expr.Accept(er)
 	if er.err != nil {
 		return v, true
@@ -284,16 +304,25 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	}
 	// a in (subq) will be rewrited as a = any(subq).
 	// a not in (subq) will be rewrited as a != all(subq).
-	op, all := ast.EQ, false
-	if v.Not {
-		op, all = ast.NE, true
+	checkCondition, err := constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
+	if !np.IsCorrelated() {
+		er.p = er.b.buildSemiJoin(er.p, np, splitCNFItems(checkCondition), asScalar, v.Not)
+		if asScalar {
+			col := er.p.GetSchema()[len(er.p.GetSchema())-1]
+			er.ctxStack[len(er.ctxStack)-1] = col
+		} else {
+			er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
+		}
+		return v, true
 	}
-	checkCondition, err := constructBinaryOpFunction(lexpr, rexpr, op)
+	if v.Not {
+		checkCondition, _ = expression.NewFunction(ast.UnaryNot, v.Type, checkCondition)
+	}
 	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: all})
+	er.p = er.b.buildApply(er.p, np, outerSchema, &ApplyConditionChecker{Condition: checkCondition, All: v.Not})
 	if er.p.IsCorrelated() {
 		er.correlated = true
 	}
@@ -328,6 +357,10 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		} else {
 			er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
 		}
+		return v, true
+	}
+	_, np, er.err = np.PredicatePushDown(nil)
+	if er.err != nil {
 		return v, true
 	}
 	_, err := np.PruneColumnsAndResolveIndices(np.GetSchema())

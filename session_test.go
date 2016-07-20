@@ -380,7 +380,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	mustExecSQL(c, se2, "update t set c2=211 where c1=11")
 	mustExecSQL(c, se2, "commit")
 
-	_, err := exec(c, se1, "commit")
+	_, err := exec(se1, "commit")
 	// se1 will retry and the final value is 21
 	c.Assert(err, IsNil)
 	// Check the result is correct
@@ -487,21 +487,21 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	lastInsertID := se.LastInsertID()
 	mustExecSQL(c, se, "begin")
 	mustExecSQL(c, se, "insert into t (c2) values (11), (12), (13)")
-	rs, err := exec(c, se, "select c1 from t where c2 = 11")
+	rs, err := exec(se, "select c1 from t where c2 = 11")
 	c.Assert(err, IsNil)
 	expect, err := GetRows(rs)
 	c.Assert(err, IsNil)
-	_, err = exec(c, se, "update t set c2 = 33 where c2 = 1")
+	_, err = exec(se, "update t set c2 = 33 where c2 = 1")
 	c.Assert(err, IsNil)
 
 	mustExecSQL(c, se1, "begin")
 	mustExecSQL(c, se1, "update t set c2 = 22 where c2 = 1")
 	mustExecSQL(c, se1, "commit")
 
-	_, err = exec(c, se, "commit")
+	_, err = exec(se, "commit")
 	c.Assert(err, IsNil)
 
-	rs, err = exec(c, se, "select c1 from t where c2 = 11")
+	rs, err = exec(se, "select c1 from t where c2 = 11")
 	c.Assert(err, IsNil)
 	r, err := GetRows(rs)
 	c.Assert(err, IsNil)
@@ -513,21 +513,21 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	lastInsertID = se.LastInsertID()
 	mustExecSQL(c, se, "begin")
 	mustExecSQL(c, se, "insert into t set c2 = 31")
-	rs, err = exec(c, se, "select c1 from t where c2 = 31")
+	rs, err = exec(se, "select c1 from t where c2 = 31")
 	c.Assert(err, IsNil)
 	expect, err = GetRows(rs)
 	c.Assert(err, IsNil)
-	_, err = exec(c, se, "update t set c2 = 44 where c2 = 2")
+	_, err = exec(se, "update t set c2 = 44 where c2 = 2")
 	c.Assert(err, IsNil)
 
 	mustExecSQL(c, se1, "begin")
 	mustExecSQL(c, se1, "update t set c2 = 55 where c2 = 2")
 	mustExecSQL(c, se1, "commit")
 
-	_, err = exec(c, se, "commit")
+	_, err = exec(se, "commit")
 	c.Assert(err, IsNil)
 
-	rs, err = exec(c, se, "select c1 from t where c2 = 31")
+	rs, err = exec(se, "select c1 from t where c2 = 31")
 	c.Assert(err, IsNil)
 	r, err = GetRows(rs)
 	c.Assert(err, IsNil)
@@ -539,21 +539,21 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	lastInsertID = se.LastInsertID()
 	mustExecSQL(c, se, "begin")
 	mustExecSQL(c, se, "insert into t (c2) values (21), (22), (23)")
-	rs, err = exec(c, se, "select c1 from t where c2 = 21")
+	rs, err = exec(se, "select c1 from t where c2 = 21")
 	c.Assert(err, IsNil)
 	expect, err = GetRows(rs)
 	c.Assert(err, IsNil)
-	_, err = exec(c, se, "update t set c2 = 66 where c2 = 3")
+	_, err = exec(se, "update t set c2 = 66 where c2 = 3")
 	c.Assert(err, IsNil)
 
 	mustExecSQL(c, se1, "begin")
 	mustExecSQL(c, se1, "update t set c2 = 77 where c2 = 3")
 	mustExecSQL(c, se1, "commit")
 
-	_, err = exec(c, se, "commit")
+	_, err = exec(se, "commit")
 	c.Assert(err, IsNil)
 
-	rs, err = exec(c, se, "select c1 from t where c2 = 21")
+	rs, err = exec(se, "select c1 from t where c2 = 21")
 	c.Assert(err, IsNil)
 	r, err = GetRows(rs)
 	c.Assert(err, IsNil)
@@ -566,21 +566,21 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	mustExecSQL(c, se, "begin")
 	mustExecSQL(c, se, "insert into t set c2 = 41")
 	mustExecSQL(c, se, "update t set c1 = 0 where c2 = 41")
-	rs, err = exec(c, se, "select c1 from t where c2 = 41")
+	rs, err = exec(se, "select c1 from t where c2 = 41")
 	c.Assert(err, IsNil)
 	expect, err = GetRows(rs)
 	c.Assert(err, IsNil)
-	_, err = exec(c, se, "update t set c2 = 88 where c2 = 4")
+	_, err = exec(se, "update t set c2 = 88 where c2 = 4")
 	c.Assert(err, IsNil)
 
 	mustExecSQL(c, se1, "begin")
 	mustExecSQL(c, se1, "update t set c2 = 99 where c2 = 4")
 	mustExecSQL(c, se1, "commit")
 
-	_, err = exec(c, se, "commit")
+	_, err = exec(se, "commit")
 	c.Assert(err, IsNil)
 
-	rs, err = exec(c, se, "select c1 from t where c2 = 41")
+	rs, err = exec(se, "select c1 from t where c2 = 41")
 	c.Assert(err, IsNil)
 	r, err = GetRows(rs)
 	c.Assert(err, IsNil)
@@ -599,21 +599,21 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	mustExecSQL(c, se, "execute stmt using @v2")
 	mustExecSQL(c, se, "execute stmt using @v3")
 	mustExecSQL(c, se, "deallocate prepare stmt")
-	rs, err = exec(c, se, "select c1 from t where c2 = 12")
+	rs, err = exec(se, "select c1 from t where c2 = 12")
 	c.Assert(err, IsNil)
 	expect, err = GetRows(rs)
 	c.Assert(err, IsNil)
-	_, err = exec(c, se, "update t set c2 = 111 where c2 = 5")
+	_, err = exec(se, "update t set c2 = 111 where c2 = 5")
 	c.Assert(err, IsNil)
 
 	mustExecSQL(c, se1, "begin")
 	mustExecSQL(c, se1, "update t set c2 = 222 where c2 = 5")
 	mustExecSQL(c, se1, "commit")
 
-	_, err = exec(c, se, "commit")
+	_, err = exec(se, "commit")
 	c.Assert(err, IsNil)
 
-	rs, err = exec(c, se, "select c1 from t where c2 = 12")
+	rs, err = exec(se, "select c1 from t where c2 = 12")
 	c.Assert(err, IsNil)
 	r, err = GetRows(rs)
 	c.Assert(err, IsNil)
@@ -648,7 +648,7 @@ func (s *testSessionSuite) TestIssue996(c *C) {
 	mustExecSQL(c, se, "execute stmt1 using @v1")
 	mustExecSQL(c, se, "execute stmt1 using @v2")
 	mustExecSQL(c, se, "deallocate prepare stmt1")
-	rs, err := exec(c, se, "select c1 from t where c2 = 20")
+	rs, err := exec(se, "select c1 from t where c2 = 20")
 	c.Assert(err, IsNil)
 	r, err := GetRows(rs)
 	c.Assert(err, IsNil)
@@ -807,6 +807,7 @@ func (s *testSessionSuite) TestIssue1114(c *C) {
 }
 
 func (s *testSessionSuite) TestSelectForUpdate(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
@@ -822,7 +823,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 
 	// conflict
 	mustExecSQL(c, se1, "begin")
-	rs, err := exec(c, se1, "select * from t where c1=11 for update")
+	rs, err := exec(se1, "select * from t where c1=11 for update")
 	c.Assert(err, IsNil)
 	_, err = GetRows(rs)
 
@@ -830,7 +831,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	mustExecSQL(c, se2, "update t set c2=211 where c1=11")
 	mustExecSQL(c, se2, "commit")
 
-	_, err = exec(c, se1, "commit")
+	_, err = exec(se1, "commit")
 	c.Assert(err, NotNil)
 	err = se1.Retry()
 	// retry should fail
@@ -838,7 +839,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 
 	// not conflict
 	mustExecSQL(c, se1, "begin")
-	rs, err = exec(c, se1, "select * from t where c1=11 for update")
+	rs, err = exec(se1, "select * from t where c1=11 for update")
 	_, err = GetRows(rs)
 
 	mustExecSQL(c, se2, "begin")
@@ -849,14 +850,14 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 
 	// not conflict, auto commit
 	mustExecSQL(c, se1, "set @@autocommit=1;")
-	rs, err = exec(c, se1, "select * from t where c1=11 for update")
+	rs, err = exec(se1, "select * from t where c1=11 for update")
 	_, err = GetRows(rs)
 
 	mustExecSQL(c, se2, "begin")
 	mustExecSQL(c, se2, "update t set c2=211 where c1=11")
 	mustExecSQL(c, se2, "commit")
 
-	_, err = exec(c, se1, "commit")
+	_, err = exec(se1, "commit")
 	c.Assert(err, IsNil)
 
 	mustExecSQL(c, se, s.dropDBSQL)
@@ -868,6 +869,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	c.Assert(err, IsNil)
 	err = store.Close()
 	c.Assert(err, IsNil)
+	plan.UseNewPlanner = false
 }
 
 func (s *testSessionSuite) TestRow(c *C) {
@@ -1281,7 +1283,7 @@ func (s *testSessionSuite) TestBit(c *C) {
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (c1 bit(2))")
 	mustExecSQL(c, se, "insert into t values (0), (1), (2), (3)")
-	_, err := exec(c, se, "insert into t values (4)")
+	_, err := exec(se, "insert into t values (4)")
 	c.Assert(err, NotNil)
 	r := mustExecSQL(c, se, "select * from t where c1 = 2")
 	row, err := r.Next()
@@ -2235,11 +2237,15 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (c1 int, c2 blob, c3 varchar(64));")
-	_, err := exec(c, se, "create index idx_c1 on t (c2);")
+	_, err := exec(se, "create index idx_c1 on t (c2);")
 	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
 	c.Assert(err, NotNil)
 
-	_, err = exec(c, se, "create index idx_c1 on t (c1(5))")
+	_, err = exec(se, "create index idx_c1 on t (c2(555555));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 767 bytes
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create index idx_c1 on t (c1(5))")
 	// ERROR 1089 (HY000): Incorrect prefix key;
 	// the used key part isn't a string, the used length is longer than the key part,
 	// or the storage engine doesn't support unique prefix keys
@@ -2261,7 +2267,7 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abcd")}})
 
 	mustExecSQL(c, se, "insert into t values (4, 'ignore', 'abcdeXXX');")
-	_, err = exec(c, se, "insert into t values (5, 'ignore', 'abcdeYYY');")
+	_, err = exec(se, "insert into t values (5, 'ignore', 'abcdeYYY');")
 	// ERROR 1062 (23000): Duplicate entry 'abcde' for key 'idx_c3'
 	c.Assert(err, NotNil)
 	sql = "select c3 from t where c3 = 'abcde';"

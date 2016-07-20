@@ -3,6 +3,7 @@ package localstore
 import (
 	"io"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -68,7 +69,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 		return true
 	case tipb.ExprType_Plus, tipb.ExprType_Div:
 		return true
-	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum, tipb.ExprType_Avg:
+	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum, tipb.ExprType_Avg, tipb.ExprType_Max, tipb.ExprType_Min:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
@@ -132,7 +133,7 @@ func (it *response) Next() (resp io.ReadCloser, err error) {
 	}
 	if err != nil {
 		it.Close()
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	if len(regionResp.newStartKey) != 0 {
 		it.client.updateRegionInfo()

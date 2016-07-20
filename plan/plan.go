@@ -52,6 +52,8 @@ const (
 	Ext = "Exists"
 	// Dual is the type of TableDual.
 	Dual = "TableDual"
+	// Lock is the type of SelectLock.
+	Lock = "SelectLock"
 )
 
 // Plan is a description of an execution flow.
@@ -261,7 +263,7 @@ func (p *basePlan) AddChild(child Plan) {
 // ReplaceParent means replace a parent for another one.
 func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
 	for i, par := range p.parents {
-		if par == parent {
+		if par.GetID() == parent.GetID() {
 			p.parents[i] = newPar
 			return nil
 		}
@@ -272,7 +274,7 @@ func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
 // ReplaceChild means replace a child with another one.
 func (p *basePlan) ReplaceChild(child, newChild Plan) error {
 	for i, ch := range p.children {
-		if ch == child {
+		if ch.GetID() == child.GetID() {
 			p.children[i] = newChild
 			return nil
 		}

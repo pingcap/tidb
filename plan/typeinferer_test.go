@@ -135,6 +135,10 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"if(1>2, 2, 3)", mysql.TypeLonglong, charset.CharsetBin},
 		{"case c1 when null then 2 when 2 then 1.1 else 1 END", mysql.TypeNewDecimal, charset.CharsetBin},
 		{"case c1 when null then 2 when 2 then 'tidb' else 1.1 END", mysql.TypeVarchar, "utf8"},
+		{"greatest(1, 2, 3)", mysql.TypeLonglong, charset.CharsetBin},
+		{"greatest('TiDB', 'D', 'd')", mysql.TypeVarString, "utf8"},
+		{"greatest(1.1, 2.2)", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"greatest('TiDB', 3)", mysql.TypeVarString, "utf8"},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)

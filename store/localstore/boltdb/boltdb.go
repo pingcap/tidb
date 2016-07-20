@@ -179,21 +179,21 @@ func (driver Driver) Open(dbPath string) (engine.DB, error) {
 
 	d, err := bolt.Open(dbPath, 0600, nil)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	tx, err := d.Begin(true)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if _, err = tx.CreateBucketIfNotExists(bucketName); err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if err = tx.Commit(); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	return &db{d}, nil
