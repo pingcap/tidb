@@ -190,30 +190,35 @@ func (do *Domain) Reload() error {
 		timeout = minReloadTimeout
 	}
 
+	var exit *bool
 	done := make(chan error, 1)
-	go func() {
+	go func(exit *bool) {
 		var err error
 
 		for {
 			err = kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
-			if err != nil {
-				log.Errorf("[ddl] load schema err %v, retry again", errors.ErrorStack(err))
-				// TODO: use a backoff algorithm.
-				time.Sleep(500 * time.Millisecond)
-				continue
+			if err == nil {
+				atomic.StoreInt64(&do.lastLeaseTS, time.Now().UnixNano())
+				break
 			}
 
-			atomic.StoreInt64(&do.lastLeaseTS, time.Now().UnixNano())
-			break
+			log.Errorf("[ddl] load schema err %v, retry again", errors.ErrorStack(err))
+			if *exit {
+				return
+			}
+			// TODO: use a backoff algorithm.
+			time.Sleep(500 * time.Millisecond)
+			continue
 		}
 
 		done <- err
-	}()
+	}(exit)
 
 	select {
 	case err := <-done:
 		return errors.Trace(err)
 	case <-time.After(timeout):
+		*exit = true
 		return ErrLoadSchemaTimeOut
 	}
 }
@@ -274,7 +279,7 @@ func (c *ddlCallback) OnChanged(err error) error {
 }
 
 type schemaValidityInfo struct {
-	validity         bool
+	isValid          bool
 	lastInvalidTS    uint64
 	mux              sync.RWMutex
 	txnTS            uint64 // It's used for checking schema validity.
@@ -295,18 +300,18 @@ func (s *schemaValidityInfo) SetValidity(v bool) {
 	s.mux.Lock()
 	if !v {
 		txnTS := s.getTxnTS()
-		if s.validity && s.lastInvalidTS < txnTS {
+		if s.lastInvalidTS < txnTS {
 			s.lastInvalidTS = txnTS
 		}
 	}
-	s.validity = v
+	s.isValid = v
 	s.mux.Unlock()
 }
 
 // CheckValidity checks if schema info is out of date.
 func (s *schemaValidityInfo) CheckValidity(txnTS uint64) error {
 	s.mux.RLock()
-	if s.validity && (txnTS == 0 || txnTS > s.lastInvalidTS) {
+	if s.isValid && (txnTS == 0 || txnTS > s.lastInvalidTS) {
 		s.mux.RUnlock()
 		return nil
 	}
