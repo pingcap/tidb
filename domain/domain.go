@@ -224,7 +224,7 @@ func (do *Domain) Reload() error {
 	case err := <-done:
 		return errors.Trace(err)
 	case <-time.After(timeout):
-		return errLoadSchemaTimeOut
+		return ErrLoadSchemaTimeOut
 	}
 }
 
@@ -311,7 +311,7 @@ func (do *Domain) CheckSchemaValidity(txnTS uint64) error {
 		return nil
 	}
 	do.schemaValidity.mux.RUnlock()
-	return errLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
+	return ErrLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
 }
 
 // NewDomain creates a new domain.
@@ -346,5 +346,6 @@ const (
 )
 
 var (
-	errLoadSchemaTimeOut = terror.ClassDomain.New(codeLoadSchemaTimeOut, "reload schema timeout")
+	// ErrLoadSchemaTimeOut returns for loading schema time out.
+	ErrLoadSchemaTimeOut = terror.ClassDomain.New(codeLoadSchemaTimeOut, "reload schema timeout")
 )
