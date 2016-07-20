@@ -30,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+const maxPrefixLength = 767
+
 func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, indexID int64,
 	idxColNames []*ast.IndexColName) (*model.IndexInfo, error) {
 	// build offsets
@@ -50,6 +52,10 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 			!types.IsTypeChar(col.FieldType.Tp) &&
 			!types.IsTypeBlob(col.FieldType.Tp) {
 			return nil, errors.Trace(errIncorrectPrefixKey)
+		}
+
+		if ic.Length > maxPrefixLength {
+			return nil, errors.Trace(errTooLongKey)
 		}
 
 		idxColumns = append(idxColumns, &model.IndexColumn{

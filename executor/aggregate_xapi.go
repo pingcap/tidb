@@ -45,6 +45,10 @@ func (n *finalAggregater) update(count uint64, value types.Datum) error {
 		return n.updateFirst(value)
 	case ast.AggFuncSum, ast.AggFuncAvg:
 		return n.updateSum(value, count)
+	case ast.AggFuncMax:
+		return n.updateMaxMin(value, true)
+	case ast.AggFuncMin:
+		return n.updateMaxMin(value, false)
 	}
 	return nil
 }
@@ -74,6 +78,31 @@ func (n *finalAggregater) updateFirst(val types.Datum) error {
 	}
 	ctx.Value = val.GetValue()
 	ctx.Evaluated = true
+	return nil
+}
+
+func (n *finalAggregater) updateMaxMin(val types.Datum, max bool) error {
+	ctx := n.getContext()
+	if val.IsNull() {
+		return nil
+	}
+	v := val.GetValue()
+	if !ctx.Evaluated {
+		ctx.Value = v
+		ctx.Evaluated = true
+		return nil
+	}
+	c, err := types.Compare(ctx.Value, v)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if max {
+		if c == -1 {
+			ctx.Value = v
+		}
+	} else if c == 1 {
+		ctx.Value = v
+	}
 	return nil
 }
 

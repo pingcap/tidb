@@ -58,6 +58,7 @@ func (p *Join) Convert2PhysicalPlan() PhysicalPlan {
 			LeftConditions:  p.LeftConditions,
 			RightConditions: p.RightConditions,
 			OtherConditions: p.OtherConditions,
+			Anti:            p.anti,
 		}
 	default:
 		physicalPlan = &PhysicalHashJoin{
@@ -163,6 +164,14 @@ func (p *Exists) Convert2PhysicalPlan() PhysicalPlan {
 
 // Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *Trim) Convert2PhysicalPlan() PhysicalPlan {
+	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
+	p.SetChildren(child)
+	child.SetParents(p)
+	return p
+}
+
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
+func (p *SelectLock) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
 	child.SetParents(p)

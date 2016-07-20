@@ -73,12 +73,8 @@ func (s *testAggFuncSuite) TestXAPICount(c *C) {
 		Src:      src,
 	}
 	ast.SetFlag(fc)
-	var (
-		row *Row
-		err error
-	)
 	// First Row: 3
-	row, err = agg.Next()
+	row, err := agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	ctx := mock.NewContext()
@@ -147,12 +143,8 @@ func (s *testAggFuncSuite) TestXAPIFirstRow(c *C) {
 		Src:      src,
 	}
 	ast.SetFlag(fc)
-	var (
-		row *Row
-		err error
-	)
 	// First Row: 11
-	row, err = agg.Next()
+	row, err := agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	ctx := mock.NewContext()
@@ -242,12 +234,8 @@ func (s *testAggFuncSuite) TestXAPISum(c *C) {
 		Src:      src,
 	}
 	ast.SetFlag(fc)
-	var (
-		row *Row
-		err error
-	)
 	// First row: 15
-	row, err = agg.Next()
+	row, err := agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	ctx := mock.NewContext()
@@ -342,12 +330,8 @@ func (s *testAggFuncSuite) TestXAPIAvg(c *C) {
 		Src:      src,
 	}
 	ast.SetFlag(fc)
-	var (
-		row *Row
-		err error
-	)
 	// First row: 5
-	row, err = agg.Next()
+	row, err := agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	ctx := mock.NewContext()
@@ -371,6 +355,137 @@ func (s *testAggFuncSuite) TestXAPIAvg(c *C) {
 	d.SetFracDigits(4) // For div operator, default frac is 4.
 	c.Assert(val, testutil.DatumEquals, types.NewDecimalDatum(d))
 	// Forth row: nil
+	row, err = agg.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, IsNil)
+	// Close executor
+	err = agg.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testAggFuncSuite) TestXAPIMaxMin(c *C) {
+	defer testleak.AfterTest(c)()
+	// Compose aggregate exec for "select max(c2), min(c2) from t groupby c1";
+	//
+	// Data in region1:
+	// c1  c2
+	// 1	11
+	// 2	21
+	// 1    1
+	// 3    2
+	//
+	// Partial aggregate result for region1:
+	// groupkey	max(c2)	min(c2)
+	// 1		11	1
+	// 2		21	21
+	// 3		2	2
+	//
+	// Data in region2:
+	// 1    nil
+	// 1    3
+	// 3    31
+	// 4	nil
+	//
+	// Partial aggregate result for region2:
+	// groupkey	max(c2)	min(c2)
+	// 1		3	3
+	// 3		31	31
+	// 4		nil	nil
+	//
+	// Expected final aggregate result:
+	// max(c2)	min(c2)
+	// 11		1
+	// 21		21
+	// 31		2
+	// nil		nil
+	c1 := ast.NewValueExpr([]byte{0})
+	rf1 := &ast.ResultField{Expr: c1}
+	c2 := ast.NewValueExpr(0)
+	rf2 := &ast.ResultField{Expr: c2}
+	c3 := ast.NewValueExpr(0)
+	rf3 := &ast.ResultField{Expr: c3}
+	col2 := &ast.ColumnNameExpr{Refer: rf2}
+	fc := &ast.AggregateFuncExpr{
+		F:    ast.AggFuncMax,
+		Args: []ast.ExprNode{col2},
+	}
+	fc1 := &ast.AggregateFuncExpr{
+		F:    ast.AggFuncMin,
+		Args: []ast.ExprNode{col2},
+	}
+	ast.SetFlag(fc)
+	ast.SetFlag(fc1)
+	// Return row:
+	// GroupKey, max(c2), min(c2)
+	// Partial result from region1
+	row1 := types.MakeDatums([]byte{1}, int64(11), int64(1))
+	row2 := types.MakeDatums([]byte{2}, int64(21), int64(21))
+	row3 := types.MakeDatums([]byte{3}, int64(2), int64(2))
+	// Partial result from region2
+	row4 := types.MakeDatums([]byte{1}, int64(3), int64(3))
+	row5 := types.MakeDatums([]byte{3}, int64(31), int64(31))
+	row6 := types.MakeDatums([]byte{4}, nil, nil)
+	data := []([]types.Datum){row1, row2, row3, row4, row5, row6}
+
+	rows := make([]*Row, 0, 6)
+	for _, d := range data {
+		rows = append(rows, &Row{Data: d})
+	}
+	src := &mockExec{
+		rows:   rows,
+		fields: []*ast.ResultField{rf1, rf2, rf3}, // group, max(c2), min(c2)
+	}
+	agg := &XAggregateExec{
+		AggFuncs: []*ast.AggregateFuncExpr{fc, fc1},
+		Src:      src,
+	}
+	ast.SetFlag(fc)
+	// First row: 11, 1
+	row, err := agg.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	ctx := mock.NewContext()
+	val, err := evaluator.Eval(ctx, fc)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(int64(11)))
+	val, err = evaluator.Eval(ctx, fc1)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(int64(1)))
+
+	// Second row: 21, 21
+	row, err = agg.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	val, err = evaluator.Eval(ctx, fc)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(int64(21)))
+	val, err = evaluator.Eval(ctx, fc1)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(int64(21)))
+
+	// Third row: 31, 2
+	row, err = agg.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	val, err = evaluator.Eval(ctx, fc)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(int64(31)))
+	val, err = evaluator.Eval(ctx, fc1)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(int64(2)))
+
+	// Forth row: nil, nil
+	row, err = agg.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	val, err = evaluator.Eval(ctx, fc)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(nil))
+	val, err = evaluator.Eval(ctx, fc1)
+	c.Assert(err, IsNil)
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(nil))
+
+	// Fifth row: nil
 	row, err = agg.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)

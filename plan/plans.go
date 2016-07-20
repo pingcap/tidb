@@ -191,7 +191,7 @@ func (p *JoinInner) String() string {
 
 // SelectLock represents a select lock plan.
 type SelectLock struct {
-	basePlan
+	baseLogicalPlan
 
 	Lock ast.SelectLockType
 }

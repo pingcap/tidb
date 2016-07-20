@@ -48,7 +48,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
-		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "greatest",
+		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -992,4 +992,23 @@ func (s *testParserSuite) TestInsertStatementMemoryAllocation(c *C) {
 	c.Assert(err, IsNil)
 	runtime.ReadMemStats(&newStats)
 	c.Assert(int(newStats.TotalAlloc-oldStats.TotalAlloc), Less, 1024*500)
+}
+
+func BenchmarkParse(b *testing.B) {
+	var table = []string{
+		"insert into t values (1), (2), (3)",
+		"insert into t values (4), (5), (6), (7)",
+		"select c from t where c > 2",
+	}
+	parser := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, v := range table {
+			_, err := parser.Parse(v, "", "")
+			if err != nil {
+				b.Failed()
+			}
+		}
+	}
+	b.ReportAllocs()
 }

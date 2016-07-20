@@ -85,17 +85,21 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 	equalCond, leftPushCond, rightPushCond, otherCond := extractOnCondition(predicates, leftPlan, rightPlan)
 	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoinWithAux {
 		rightCond = p.RightConditions
+		p.RightConditions = nil
 		leftCond = leftPushCond
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
 	} else if p.JoinType == RightOuterJoin {
 		leftCond = p.LeftConditions
+		p.LeftConditions = nil
 		rightCond = rightPushCond
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
 	} else {
 		leftCond = append(p.LeftConditions, leftPushCond...)
 		rightCond = append(p.RightConditions, rightPushCond...)
+		p.LeftConditions = nil
+		p.RightConditions = nil
 	}
 	leftRet, _, err1 := leftPlan.PredicatePushDown(leftCond)
 	if err1 != nil {
@@ -181,6 +185,7 @@ func (p *NewUnion) PredicatePushDown(predicates []expression.Expression) (ret []
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	// TODO: implement aggregation push down.
+	p.GetChildByIndex(0).(LogicalPlan).PredicatePushDown(nil)
 	return predicates, p, nil
 }
 
@@ -248,6 +253,12 @@ func (p *Distinct) PredicatePushDown(predicates []expression.Expression) ([]expr
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Insert) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
+	return ret, p, errors.Trace(err)
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *SelectLock) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, errors.Trace(err)
 }

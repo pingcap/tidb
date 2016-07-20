@@ -804,6 +804,7 @@ func (s *testSessionSuite) TestIssue1114(c *C) {
 }
 
 func (s *testSessionSuite) TestSelectForUpdate(c *C) {
+	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
@@ -865,6 +866,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	c.Assert(err, IsNil)
 	err = store.Close()
 	c.Assert(err, IsNil)
+	plan.UseNewPlanner = false
 }
 
 func (s *testSessionSuite) TestRow(c *C) {
@@ -2145,6 +2147,10 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	mustExecSQL(c, se, "create table t (c1 int, c2 blob, c3 varchar(64));")
 	_, err := exec(c, se, "create index idx_c1 on t (c2);")
 	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
+	c.Assert(err, NotNil)
+
+	_, err = exec(c, se, "create index idx_c1 on t (c2(555555));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 767 bytes
 	c.Assert(err, NotNil)
 
 	_, err = exec(c, se, "create index idx_c1 on t (c1(5))")

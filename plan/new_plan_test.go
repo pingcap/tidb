@@ -85,6 +85,11 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		best  string
 	}{
 		{
+			sql:   "select count(*) from t a, t b where a.a = b.a",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Aggr->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)}->Aggr->Projection",
+		},
+		{
 			sql:   "select a from (select a from t where d = 0) k where k.a = 5",
 			first: "DataScan(t)->Selection->Projection->Selection->Projection",
 			best:  "DataScan(t)->Selection->Projection->Projection",
@@ -98,6 +103,11 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			sql:   "select a from (select d as a from t where d = 0) k where k.a = 5",
 			first: "DataScan(t)->Selection->Projection->Selection->Projection",
 			best:  "DataScan(t)->Selection->Projection->Projection",
+		},
+		{
+			sql:   "select * from t ta, t tb where (ta.d, ta.a) = (tb.b, tb.c)",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)}->Projection",
 		},
 		{
 			sql:   "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
@@ -131,18 +141,23 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:   "select a from t where exists(select 1 from t as x where x.a < t.a)",
-			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
-			best:  "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			first: "Join{DataScan(t)->DataScan(t)}->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)}->Projection",
 		},
 		{
 			sql:   "select a from t where exists(select 1 from t as x where x.a = t.a and t.a < 1 and x.a < 1)",
-			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
-			best:  "Join{DataScan(t)->DataScan(t)->Selection}->Selection->Projection",
+			first: "Join{DataScan(t)->DataScan(t)}->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
 		},
 		{
 			sql:   "select a from t where exists(select 1 from t as x where x.a = t.a and x.a < 1) and a < 1",
 			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
-			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select a from t where exists(select 1 from t as x where x.a = t.a) and exists(select 1 from t as x where x.a = t.a)",
+			first: "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Projection",
+			best:  "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -549,9 +564,10 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 			}
 		}
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
-		c.Assert(selection.Conditions, HasLen, 1, Commentf("conditions:%v, expr:%v",
-			selection.Conditions, ca.exprStr))
-		result := rb.newBuild(selection.Conditions[0])
+		result := fullRange
+		for _, cond := range selection.Conditions {
+			result = rb.intersection(result, rb.newBuild(cond))
+		}
 		c.Assert(rb.err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, ca.resultStr, Commentf("differen for expr %s", ca.exprStr))
