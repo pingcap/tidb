@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"sync"
 
+	"github.com/juju/errors"
 	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
@@ -328,7 +329,7 @@ func (s *MvccStore) CommitThenGet(key []byte, lockTS, commitTS, getTS uint64) ([
 	entry := s.getOrNewEntry(key)
 	err := entry.Commit(lockTS, commitTS)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	s.submit(entry)
 	return entry.Get(getTS)
@@ -374,7 +375,7 @@ func (s *MvccStore) RollbackThenGet(key []byte, lockTS uint64) ([]byte, error) {
 	entry := s.getOrNewEntry(key)
 	err := entry.Rollback(lockTS)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	s.submit(entry)
 	return entry.Get(lockTS)
