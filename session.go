@@ -138,7 +138,7 @@ func (s *session) checkSchemaValidOrRollback() error {
 	if s.txn != nil {
 		ts = s.txn.StartTS()
 	}
-	err := sessionctx.GetDomain(s).SchemaValidity.CheckValidity(ts)
+	err := sessionctx.GetDomain(s).SchemaValidity.Check(ts)
 	if err == nil {
 		return nil
 	}
