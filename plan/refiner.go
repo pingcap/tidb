@@ -444,7 +444,7 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	return true
 }
 
-var oppositeOp map[string]string = map[string]string{
+var oppositeOp = map[string]string{
 	ast.LT: ast.GE,
 	ast.GE: ast.LT,
 	ast.GT: ast.LE,
