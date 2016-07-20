@@ -1508,6 +1508,8 @@ func (s *testSuite) TestToPBExpr(c *C) {
 	result.Check(testkit.Rows("1.100000 1"))
 	result = tk.MustQuery("select * from t where b >= 3")
 	result.Check(testkit.Rows("3.300000 3"))
+	result = tk.MustQuery("select * from t where not (b = 1)")
+	result.Check(testkit.Rows("2.400000 2", "3.300000 3"))
 	// TODO: This test cannot pass temporarily, because local store doesn't support decimal correctly.
 	//result = tk.MustQuery("select * from t where b&1 = a|1")
 	//result.Check(testkit.Rows("1.100000 1"))
@@ -1528,6 +1530,16 @@ func (s *testSuite) TestToPBExpr(c *C) {
 	result.Check(testkit.Rows(rowStr0, rowStr1))
 	result = tk.MustQuery("select * from t where a like 'ab_12'")
 	result.Check(nil)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	tk.MustExec("insert t values (1)")
+	tk.MustExec("insert t values (2)")
+	result = tk.MustQuery("select * from t where not (a = 1)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select * from t where not(not (a = 1))")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select * from t where not(a != 1 and a != 2)")
+	result.Check(testkit.Rows("1", "2"))
 	plan.UseNewPlanner = false
 }
 

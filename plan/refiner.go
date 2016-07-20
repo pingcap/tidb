@@ -237,6 +237,9 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 			filterConds = append(filterConds, cond)
 		}
 	}
+	for i, cond := range accessConds {
+		accessConds[i] = pushDownNot(cond, false)
+	}
 	return accessConds, filterConds
 }
 
@@ -263,6 +266,9 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 			}
 		}
 		filterConditions = append(filterConditions, con)
+	}
+	for i, cond := range accessConditions {
+		accessConditions[i] = pushDownNot(cond, false)
 	}
 
 	return accessConditions, filterConditions
@@ -436,4 +442,61 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 		return col.ColName.L == c.idx.Columns[c.columnOffset].Name.L
 	}
 	return true
+}
+
+var oppositeOp map[string]string = map[string]string{
+	ast.LT: ast.GE,
+	ast.GE: ast.LT,
+	ast.GT: ast.LE,
+	ast.LE: ast.GT,
+	ast.EQ: ast.NE,
+	ast.NE: ast.EQ,
+}
+
+func pushDownNot(expr expression.Expression, not bool) expression.Expression {
+	if f, ok := expr.(*expression.ScalarFunction); ok {
+		switch f.FuncName.L {
+		case ast.UnaryNot:
+			return pushDownNot(f.Args[0], !not)
+		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
+			if not {
+				nf, _ := expression.NewFunction(oppositeOp[f.FuncName.L], f.GetType(), f.Args...)
+				return nf
+			}
+			for i, arg := range f.Args {
+				f.Args[i] = pushDownNot(arg, false)
+			}
+			return f
+		case ast.AndAnd:
+			if not {
+				args := f.Args
+				for i, a := range args {
+					args[i] = pushDownNot(a, !not)
+				}
+				nf, _ := expression.NewFunction(ast.OrOr, f.GetType(), args...)
+				return nf
+			}
+			for i, arg := range f.Args {
+				f.Args[i] = pushDownNot(arg, false)
+			}
+			return f
+		case ast.OrOr:
+			if not {
+				args := f.Args
+				for i, a := range args {
+					args[i] = pushDownNot(a, !not)
+				}
+				nf, _ := expression.NewFunction(ast.AndAnd, f.GetType(), args...)
+				return nf
+			}
+			for i, arg := range f.Args {
+				f.Args[i] = pushDownNot(arg, false)
+			}
+			return f
+		}
+	}
+	if not {
+		expr, _ = expression.NewFunction(ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
+	}
+	return expr
 }
