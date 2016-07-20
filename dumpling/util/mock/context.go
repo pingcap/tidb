@@ -17,6 +17,7 @@ package mock
 import (
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -62,7 +63,7 @@ func (c *Context) GetTxn(forceNew bool) (kv.Transaction, error) {
 	if forceNew {
 		err = c.CommitTxn()
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		c.txn, err = c.Store.Begin()
 		return c.txn, err

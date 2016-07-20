@@ -71,19 +71,19 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) 
 		if err == nil && len(rss) > 0 {
 			return rss[0], nil
 		}
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	stmtID, _, _, err := tk.Se.PrepareStmt(sql)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	rs, err := tk.Se.ExecutePreparedStmt(stmtID, args...)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	err = tk.Se.DropPreparedStmt(stmtID)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return rs, nil
 }

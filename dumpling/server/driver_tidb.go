@@ -60,7 +60,7 @@ func (ts *TiDBStatement) ID() int {
 func (ts *TiDBStatement) Execute(args ...interface{}) (rs ResultSet, err error) {
 	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ts.id, args...)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	if tidbRecordset == nil {
 		return
@@ -116,7 +116,7 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	if dbname != "" {
 		_, err := session.Execute("use " + dbname)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 	}
 	tc := &TiDBContext{
