@@ -3,6 +3,7 @@ package localstore
 import (
 	"io"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -132,7 +133,7 @@ func (it *response) Next() (resp io.ReadCloser, err error) {
 	}
 	if err != nil {
 		it.Close()
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	if len(regionResp.newStartKey) != 0 {
 		it.client.updateRegionInfo()

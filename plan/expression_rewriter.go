@@ -92,7 +92,7 @@ func constructBinaryOpFunction(l expression.Expression, r expression.Expression,
 		var err error
 		funcs[i], err = constructBinaryOpFunction(getRowArg(l, i), getRowArg(r, i), op)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 	}
 	return expression.ComposeCNFCondition(funcs), nil

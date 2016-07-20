@@ -293,7 +293,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	defer it.mu.Unlock()
 	if err != nil {
 		it.Close()
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	it.respGot++
 	if it.respGot == len(it.tasks) {
