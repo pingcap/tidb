@@ -2039,18 +2039,18 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	endCh2 := make(chan error, 0)
 	execFailedFunc := func(s Session, tbl string, start chan struct{}, end chan error) {
 		// execute successfully
-		_, err := exec(nil, s, "begin;")
+		_, err := exec(s, "begin;")
 		<-start
 		<-start
 		if err == nil {
 			// execute failed
-			_, err = exec(nil, s, fmt.Sprintf("insert into %s values(1)", tbl))
+			_, err = exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
 		}
 
 		if err != nil {
 			// table t1 executes failed
 			// table t2 executes successfully
-			_, err = exec(nil, s, "commit")
+			_, err = exec(s, "commit")
 		} else if tbl == "t2" {
 			err = errors.New("insert result isn't expected")
 		}
