@@ -190,9 +190,9 @@ func (do *Domain) Reload() error {
 		timeout = defaultMinReloadTimeout
 	}
 
-	exit := new(int32)
+	exit := int32(0)
 	done := make(chan error, 1)
-	go func(exit *int32) {
+	go func() {
 		var err error
 
 		for {
@@ -203,7 +203,7 @@ func (do *Domain) Reload() error {
 			}
 
 			log.Errorf("[ddl] load schema err %v, retry again", errors.ErrorStack(err))
-			if atomic.LoadInt32(exit) == 1 {
+			if atomic.LoadInt32(&exit) == 1 {
 				return
 			}
 			// TODO: use a backoff algorithm.
@@ -212,13 +212,13 @@ func (do *Domain) Reload() error {
 		}
 
 		done <- err
-	}(exit)
+	}()
 
 	select {
 	case err := <-done:
 		return errors.Trace(err)
 	case <-time.After(timeout):
-		atomic.StoreInt32(exit, 1)
+		atomic.StoreInt32(&exit, 1)
 		return ErrLoadSchemaTimeOut
 	}
 }
@@ -306,8 +306,7 @@ func (s *schemaValidityInfo) SetValidity(v bool) {
 	s.mux.Unlock()
 }
 
-// CheckValidity checks if schema info is out of date.
-func (s *schemaValidityInfo) CheckValidity(lastFailedTS uint64) error {
+func (s *schemaValidityInfo) Check(lastFailedTS uint64) error {
 	s.mux.RLock()
 	if s.isValid && (lastFailedTS == 0 || lastFailedTS > s.lastInvalidTS) {
 		s.mux.RUnlock()

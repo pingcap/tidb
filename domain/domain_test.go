@@ -76,17 +76,17 @@ func (*testSuite) TestT(c *C) {
 	time.Sleep(1 * time.Second)
 
 	// for schemaValidity
-	err = dom.SchemaValidity.CheckValidity(0)
+	err = dom.SchemaValidity.Check(0)
 	c.Assert(err, IsNil)
 	dom.SchemaValidity.MockReloadFailed = true
 	err = dom.MustReload()
 	c.Assert(err, NotNil)
-	err = dom.SchemaValidity.CheckValidity(0)
+	err = dom.SchemaValidity.Check(0)
 	c.Assert(err, NotNil)
 	dom.SchemaValidity.MockReloadFailed = false
 	err = dom.MustReload()
 	c.Assert(err, IsNil)
-	err = dom.SchemaValidity.CheckValidity(0)
+	err = dom.SchemaValidity.Check(0)
 	c.Assert(err, IsNil)
 
 	// for goroutine exit in Reload
