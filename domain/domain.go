@@ -47,7 +47,7 @@ type Domain struct {
 func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 	defer func() {
 		if err != nil {
-			do.SchemaValidity.setTxnTS(txn.StartTS())
+			do.SchemaValidity.setLastFailedTS(txn.StartTS())
 		}
 	}()
 	m := meta.NewMeta(txn)
@@ -171,7 +171,7 @@ func (do *Domain) Reload() error {
 	// for test
 	if do.SchemaValidity.MockReloadFailed {
 		err := kv.RunInNewTxn(do.store, false, func(txn kv.Transaction) error {
-			do.SchemaValidity.setTxnTS(txn.StartTS())
+			do.SchemaValidity.setLastFailedTS(txn.StartTS())
 			return nil
 		})
 		if err != nil {
@@ -228,7 +228,8 @@ func (do *Domain) Reload() error {
 // It's public in order to do the test.
 func (do *Domain) MustReload() error {
 	if err := do.Reload(); err != nil {
-		log.Errorf("[ddl] reload schema err %v, txnTS:%v", errors.ErrorStack(err), do.SchemaValidity.getTxnTS())
+		log.Errorf("[ddl] reload schema err %v, txnTS:%v", errors.ErrorStack(err),
+			do.SchemaValidity.getLastFailedTS())
 		do.SchemaValidity.SetValidity(false)
 		return errors.Trace(err)
 	}
@@ -277,18 +278,18 @@ func (c *ddlCallback) OnChanged(err error) error {
 
 type schemaValidityInfo struct {
 	isValid          bool
-	lastInvalidTS    uint64
+	lastInvalidTS    uint64 // It's used for recording the last txn TS of schema invalid.
 	mux              sync.RWMutex
-	txnTS            uint64 // It's used for checking schema validity.
+	lastFailedTS     uint64 // It's used for recording the last txn TS of loading schema failed.
 	MockReloadFailed bool   // It mocks reload failed.
 }
 
-func (s *schemaValidityInfo) setTxnTS(ts uint64) {
-	atomic.StoreUint64(&s.txnTS, ts)
+func (s *schemaValidityInfo) setLastFailedTS(ts uint64) {
+	atomic.StoreUint64(&s.lastFailedTS, ts)
 }
 
-func (s *schemaValidityInfo) getTxnTS() uint64 {
-	return atomic.LoadUint64(&s.txnTS)
+func (s *schemaValidityInfo) getLastFailedTS() uint64 {
+	return atomic.LoadUint64(&s.lastFailedTS)
 }
 
 // SetValidity sets the schema validity value.
@@ -296,7 +297,7 @@ func (s *schemaValidityInfo) getTxnTS() uint64 {
 func (s *schemaValidityInfo) SetValidity(v bool) {
 	s.mux.Lock()
 	if !v {
-		txnTS := s.getTxnTS()
+		txnTS := s.getLastFailedTS()
 		if s.lastInvalidTS < txnTS {
 			s.lastInvalidTS = txnTS
 		}
@@ -306,9 +307,9 @@ func (s *schemaValidityInfo) SetValidity(v bool) {
 }
 
 // CheckValidity checks if schema info is out of date.
-func (s *schemaValidityInfo) CheckValidity(txnTS uint64) error {
+func (s *schemaValidityInfo) CheckValidity(lastFailedTS uint64) error {
 	s.mux.RLock()
-	if s.isValid && (txnTS == 0 || txnTS > s.lastInvalidTS) {
+	if s.isValid && (lastFailedTS == 0 || lastFailedTS > s.lastInvalidTS) {
 		s.mux.RUnlock()
 		return nil
 	}
