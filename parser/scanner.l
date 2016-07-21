@@ -298,6 +298,7 @@ avg		{a}{v}{g}
 avg_row_length	{a}{v}{g}_{r}{o}{w}_{l}{e}{n}{g}{t}{h}
 begin		{b}{e}{g}{i}{n}
 between		{b}{e}{t}{w}{e}{e}{n}
+binlog		{b}{i}{n}{l}{o}{g}
 both		{b}{o}{t}{h}
 btree		{b}{t}{r}{e}{e}
 by		{b}{y}
@@ -704,6 +705,8 @@ action		{a}{c}{t}{i}{o}{n}
 {begin}			lval.item = string(l.val)
 			return begin
 {between}		return between
+{binlog}		lval.item = string(l.val)
+			return binlog
 {both}			return both
 {btree}			lval.item = string(l.val)
 			return btree
