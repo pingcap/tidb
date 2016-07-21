@@ -84,6 +84,9 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeSetPwd(x)
 	case *ast.AnalyzeTableStmt:
 		err = e.executeAnalyzeTable(x)
+	case *ast.BinlogStmt:
+		// We just ignore it.
+		return nil, nil
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
