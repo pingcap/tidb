@@ -110,6 +110,21 @@ func (s *testSuite) TestSetVar(c *C) {
 	testSQL = "SET @@global.autocommit=1, @issue998b=6;"
 	tk.MustExec(testSQL)
 	tk.MustQuery(`select @issue998b, @@global.autocommit;`).Check(testkit.Rows("6 1"))
+
+	// Set default
+	// {ScopeGlobal | ScopeSession, "low_priority_updates", "OFF"},
+	// For global var
+	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("OFF"))
+	tk.MustExec(`set @@global.low_priority_updates="ON";`)
+	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("ON"))
+	tk.MustExec(`set @@global.low_priority_updates=DEFAULT;`) // It will be set to compiled-in default value.
+	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("OFF"))
+	// For session
+	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("OFF"))
+	tk.MustExec(`set @@global.low_priority_updates="ON";`)
+	tk.MustExec(`set @@session.low_priority_updates=DEFAULT;`) // It will be set to global var value.
+	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("ON"))
+
 	plan.UseNewPlanner = false
 }
 
