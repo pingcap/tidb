@@ -390,6 +390,9 @@ func (e *NewXAggregateExec) innerNext() (bool, error) {
 
 // Close implements Executor Close interface.
 func (e *NewXAggregateExec) Close() error {
+	e.executed = false
+	e.groups = nil
+	e.currentGroupIndex = 0
 	for _, af := range e.AggFuncs {
 		af.Clear()
 	}

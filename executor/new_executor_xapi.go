@@ -43,7 +43,7 @@ var (
 type NewXExecutor interface {
 	// AddAggregate adds aggregate info into an executor.
 	AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByItem, fields []*types.FieldType)
-	// GetTableName gets the table name of this XExecutor.
+	// GetTable gets the TableInfo of this XExecutor.
 	GetTable() *model.TableInfo
 }
 
@@ -462,7 +462,7 @@ func (e *NewXSelectTableExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.B
 	e.aggregate = true
 }
 
-// GetTableName implements NewXExecutor interface.
+// GetTable implements NewXExecutor interface.
 func (e *NewXSelectTableExec) GetTable() *model.TableInfo {
 	return e.tableInfo
 }
