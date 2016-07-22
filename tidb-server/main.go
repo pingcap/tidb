@@ -113,7 +113,7 @@ func main() {
 		os.Exit(0)
 	}()
 
-	go systimemon.SystimeMon(time.Now, func() {
+	go systimemon.StartMonitor(time.Now, func() {
 		log.Error("error: system time jump backward")
 	})
 
