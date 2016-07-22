@@ -135,7 +135,6 @@ func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
 	if len(v.GroupByItems) > 0 && !client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy) {
 		return e
 	}
-	log.Debugf("Use XAggregateExec with %d aggs", len(v.AggFuncs))
 	// Convert aggregate function exprs to pb.
 	pbAggFuncs := make([]*tipb.Expr, 0, len(v.AggFuncs))
 	for _, af := range v.AggFuncs {
@@ -196,6 +195,7 @@ func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
 		hasGroupBy: hasGroupBy,
 		schema:     v.GetSchema(),
 	}
+	log.Debugf("Use XAggregateExec with %d aggs", len(v.AggFuncs))
 	return xe
 }
 

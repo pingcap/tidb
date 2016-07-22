@@ -3,7 +3,6 @@ package localstore
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
@@ -207,7 +206,6 @@ func (rs *localRegion) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		fmt.Println("LR:", len(row.Data))
 		rows = append(rows, row)
 	}
 	return rows, nil
