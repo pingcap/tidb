@@ -312,7 +312,7 @@ func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte, ectx conte
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !ctx.Evaluated {
+	if ctx.Value == nil {
 		ctx.Value = value.GetValue()
 	}
 	if value.GetValue() == nil {
@@ -326,7 +326,6 @@ func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte, ectx conte
 	if (mmf.isMax && c == -1) || (!mmf.isMax && c == 1) {
 		ctx.Value = value.GetValue()
 	}
-	ctx.Evaluated = true
 	return nil
 }
 
@@ -337,7 +336,7 @@ type firstRowFunction struct {
 // Update implements AggregationFunction interface.
 func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := ff.getContext(groupKey)
-	if ctx.Evaluated {
+	if ctx.Value != nil {
 		return nil
 	}
 	if len(ff.Args) != 1 {
@@ -348,7 +347,6 @@ func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx cont
 		return errors.Trace(err)
 	}
 	ctx.Value = value.GetValue()
-	ctx.Evaluated = true
 	return nil
 }
 

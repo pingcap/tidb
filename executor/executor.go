@@ -1074,7 +1074,7 @@ func (e *SortExec) Close() error {
 
 // For select stmt with aggregate function but without groupby clasue,
 // We consider there is a single group with key singleGroup.
-const singleGroup = "SingleGroup"
+var singleGroup = []byte("SingleGroup")
 
 // AggregateExec deals with all the aggregate functions.
 // It is built from Aggregate Plan. When Next() is called, it reads all the data from Src and updates all the items in AggFuncs.
@@ -1087,7 +1087,7 @@ type AggregateExec struct {
 	finish            bool
 	AggFuncs          []*ast.AggregateFuncExpr
 	groupMap          map[string]bool
-	groups            []string
+	groups            [][]byte
 	currentGroupIndex int
 	GroupByItems      []*ast.ByItem
 }
@@ -1107,7 +1107,7 @@ func (e *AggregateExec) Next() (*Row, error) {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		e.groupMap = make(map[string]bool)
-		e.groups = []string{}
+		e.groups = [][]byte{}
 		for {
 			hasMore, err := e.innerNext()
 			if err != nil {
@@ -1137,7 +1137,7 @@ func (e *AggregateExec) Next() (*Row, error) {
 	return &Row{}, nil
 }
 
-func (e *AggregateExec) getGroupKey() (string, error) {
+func (e *AggregateExec) getGroupKey() ([]byte, error) {
 	if len(e.GroupByItems) == 0 {
 		return singleGroup, nil
 	}
@@ -1145,15 +1145,15 @@ func (e *AggregateExec) getGroupKey() (string, error) {
 	for _, item := range e.GroupByItems {
 		v, err := evaluator.Eval(e.ctx, item.Expr)
 		if err != nil {
-			return "", errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		vals = append(vals, v)
 	}
 	bs, err := codec.EncodeValue([]byte{}, vals...)
 	if err != nil {
-		return "", errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return string(bs), nil
+	return bs, nil
 }
 
 // Fetch a single row from src and update each aggregate function.
@@ -1178,8 +1178,8 @@ func (e *AggregateExec) innerNext() (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if _, ok := e.groupMap[groupKey]; !ok {
-		e.groupMap[groupKey] = true
+	if _, ok := e.groupMap[string(groupKey)]; !ok {
+		e.groupMap[string(groupKey)] = true
 		e.groups = append(e.groups, groupKey)
 	}
 	for _, af := range e.AggFuncs {
