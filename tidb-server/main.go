@@ -114,7 +114,7 @@ func main() {
 	}()
 
 	go systimemon.SystimeMon(time.Now, func() {
-		log.Error("error: system time jump forward")
+		log.Error("error: system time jump backward")
 	})
 
 	log.Error(svr.Run())
