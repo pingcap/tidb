@@ -45,6 +45,12 @@ type AggregationFunction interface {
 
 	// Clear collects the mapper's memory.
 	Clear()
+
+	// IsDistinct indicates if the aggregate function contains distinct attribute.
+	IsDistinct() bool
+
+	// SetContext sets the aggregate evaluation context.
+	SetContext(ctx map[string](*ast.AggEvaluateContext))
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -85,6 +91,10 @@ func newAggFunc(name string, args []Expression, dist bool) aggFunction {
 		Distinct:     dist}
 }
 
+func (af *aggFunction) IsDistinct() bool {
+	return af.Distinct
+}
+
 func (af *aggFunction) Clear() {
 	af.resultMapper = make(aggCtxMapper, 0)
 }
@@ -114,6 +124,10 @@ func (af *aggFunction) getContext(groupKey []byte) *ast.AggEvaluateContext {
 		af.resultMapper[string(groupKey)] = ctx
 	}
 	return ctx
+}
+
+func (af *aggFunction) SetContext(ctx map[string](*ast.AggEvaluateContext)) {
+	af.resultMapper = ctx
 }
 
 func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx context.Context) error {
