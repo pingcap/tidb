@@ -214,6 +214,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// global system variables
 		{"SET GLOBAL autocommit = 1", true},
 		{"SET @@global.autocommit = 1", true},
+		// Set default value
+		{"SET @@global.autocommit = default", true},
+		{"SET @@session.autocommit = default", true},
 		// SET CHARACTER SET
 		{"SET CHARACTER SET utf8mb4;", true},
 		{"SET CHARACTER SET 'utf8mb4';", true},
