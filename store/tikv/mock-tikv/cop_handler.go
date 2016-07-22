@@ -35,6 +35,13 @@ type selectContext struct {
 	sel          *tipb.SelectRequest
 	eval         *xeval.Evaluator
 	whereColumns map[int64]*tipb.ColumnInfo
+	groups       map[string]bool
+	groupKeys    [][]byte
+	aggregates   []*aggregateFuncExpr
+	aggregate    bool
+
+	// Use for DecodeRow.
+	colTps map[int64]*types.FieldType
 }
 
 func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Response, error) {
@@ -55,11 +62,23 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 		ctx := &selectContext{
 			sel: sel,
 		}
+		ctx.eval = &xeval.Evaluator{Row: make(map[int64]types.Datum)}
 		if sel.Where != nil {
-			ctx.eval = &xeval.Evaluator{Row: make(map[int64]types.Datum)}
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
 			collectColumnsInWhere(sel.Where, ctx)
 		}
+		ctx.aggregate = len(sel.Aggregates) > 0 || len(sel.GetGroupBy()) > 0
+		if ctx.aggregate {
+			// compose aggregateFuncExpr
+			ctx.aggregates = make([]*aggregateFuncExpr, 0, len(sel.Aggregates))
+			for _, agg := range sel.Aggregates {
+				aggExpr := &aggregateFuncExpr{expr: agg}
+				ctx.aggregates = append(ctx.aggregates, aggExpr)
+			}
+			ctx.groups = make(map[string]bool)
+			ctx.groupKeys = make([][]byte, 0)
+		}
+
 		var rows []*tipb.Row
 		if req.GetTp() == kv.ReqTypeSelect {
 			rows, err = h.getRowsFromSelectReq(ctx)
@@ -79,6 +98,32 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 		resp.Data = data
 	}
 	return resp, nil
+}
+
+func (h *rpcHandler) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
+	rows := make([]*tipb.Row, 0, len(ctx.groupKeys))
+	for _, gk := range ctx.groupKeys {
+		row := new(tipb.Row)
+		// Each aggregate partial result will be converted to one or two datums.
+		rowData := make([]types.Datum, 0, 1+2*len(ctx.aggregates))
+		// The first column is group key.
+		rowData = append(rowData, types.NewBytesDatum(gk))
+		for _, agg := range ctx.aggregates {
+			agg.currentGroup = gk
+			ds, err := agg.toDatums()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			rowData = append(rowData, ds...)
+		}
+		var err error
+		row.Data, err = codec.EncodeValue(nil, rowData...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
 }
 
 func collectColumnsInWhere(expr *tipb.Expr, ctx *selectContext) error {
@@ -126,6 +171,16 @@ func toPBError(err error) *tipb.Error {
 }
 
 func (h *rpcHandler) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, error) {
+	// Init ctx.colTps and use it to decode all the rows.
+	columns := ctx.sel.TableInfo.Columns
+	ctx.colTps = make(map[int64]*types.FieldType, len(columns))
+	for _, col := range columns {
+		if *col.PkHandle {
+			continue
+		}
+		ctx.colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
+	}
+
 	kvRanges, desc := h.extractKVRanges(ctx.sel)
 	var rows []*tipb.Row
 	limit := int64(-1)
@@ -142,6 +197,9 @@ func (h *rpcHandler) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, erro
 		}
 		rows = append(rows, ranRows...)
 		limit -= int64(len(ranRows))
+	}
+	if ctx.aggregate {
+		return h.getRowsFromAgg(ctx)
 	}
 	return rows, nil
 }
@@ -215,7 +273,7 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row, err := h.getRowByHandle(ctx, handle)
+		row, err := h.handleRowData(ctx, handle, val)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -269,7 +327,7 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row, err := h.getRowByHandle(ctx, handle)
+		row, err := h.handleRowData(ctx, handle, pair.Value)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -281,8 +339,11 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 	return rows, nil
 }
 
-func (h *rpcHandler) getRowByHandle(ctx *selectContext, handle int64) (*tipb.Row, error) {
-	tid := ctx.sel.TableInfo.GetTableId()
+// handleRowData deals with raw row data:
+//	1. Decodes row from raw byte slice.
+//	2. Checks if it fit where condition.
+//	3. Update aggregate functions.
+func (h *rpcHandler) handleRowData(ctx *selectContext, handle int64, value []byte) (*tipb.Row, error) {
 	columns := ctx.sel.TableInfo.Columns
 	row := new(tipb.Row)
 	var d types.Datum
@@ -293,10 +354,13 @@ func (h *rpcHandler) getRowByHandle(ctx *selectContext, handle int64) (*tipb.Row
 		return nil, errors.Trace(err)
 	}
 	rowData := make([][]byte, len(columns))
-	colTps := make(map[int64]*types.FieldType, len(columns))
+	values, err := h.getRowData(value, ctx.colTps)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	for i, col := range columns {
-		var colVal []byte
-		if col.GetPkHandle() {
+		if *col.PkHandle {
+			var colVal []byte
 			if mysql.HasUnsignedFlag(uint(*col.Flag)) {
 				// PK column is Unsigned
 				var ud types.Datum
@@ -310,21 +374,6 @@ func (h *rpcHandler) getRowByHandle(ctx *selectContext, handle int64) (*tipb.Row
 				colVal = row.Handle
 			}
 			rowData[i] = colVal
-		} else {
-			colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
-		}
-	}
-	key := tablecodec.EncodeRowKeyWithHandle(tid, handle)
-	value, err := h.mvccStore.Get(key, ctx.sel.GetStartTs())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	values, err := h.getRowData(value, colTps)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for i, col := range columns {
-		if col.GetPkHandle() {
 			continue
 		}
 		v, ok := values[col.GetColumnId()]
@@ -345,26 +394,31 @@ func (h *rpcHandler) getRowByHandle(ctx *selectContext, handle int64) (*tipb.Row
 	if !match {
 		return nil, nil
 	}
-	for _, d := range rowData {
-		row.Data = append(row.Data, d...)
+
+	if ctx.aggregate {
+		// Update aggregate functions.
+		err = h.aggregate(ctx, rowData)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		// If without aggregate functions, just return raw row data.
+		for _, d := range rowData {
+			row.Data = append(row.Data, d...)
+		}
 	}
 	return row, nil
 }
 
 func (h *rpcHandler) getRowData(value []byte, colTps map[int64]*types.FieldType) (map[int64][]byte, error) {
-	values, err := tablecodec.DecodeRow(value, colTps)
+	res, err := tablecodec.CutRow(value, colTps)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ret := make(map[int64][]byte, len(colTps))
-	for id, value := range values {
-		v, err1 := tablecodec.EncodeValue(value)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
-		}
-		ret[id] = v
+	if res == nil {
+		res = make(map[int64][]byte, len(colTps))
 	}
-	return ret, nil
+	return res, nil
 }
 
 func (h *rpcHandler) evalWhereForRow(ctx *selectContext, handle int64, row map[int64][]byte) (bool, error) {
