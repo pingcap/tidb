@@ -24,6 +24,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/ngaut/systimemon"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/perfschema"
@@ -111,6 +112,10 @@ func main() {
 		svr.Close()
 		os.Exit(0)
 	}()
+
+	go systimemon.SystimeMon(time.Now, func() {
+		log.Error("error: system time jump forward")
+	})
 
 	log.Error(svr.Run())
 }
