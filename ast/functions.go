@@ -195,7 +195,7 @@ type AggregateFuncExpr struct {
 	// but "sum(distinct c1)" is "3".
 	Distinct bool
 
-	CurrentGroup string
+	CurrentGroup []byte
 	// contextPerGroupMap is used to store aggregate evaluation context.
 	// Each entry for a group.
 	contextPerGroupMap map[string](*AggEvaluateContext)
@@ -220,7 +220,7 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 
 // Clear clears aggregate computing context.
 func (n *AggregateFuncExpr) Clear() {
-	n.CurrentGroup = ""
+	n.CurrentGroup = []byte{}
 	n.contextPerGroupMap = nil
 }
 
@@ -250,14 +250,14 @@ func (n *AggregateFuncExpr) GetContext() *AggEvaluateContext {
 	if n.contextPerGroupMap == nil {
 		n.contextPerGroupMap = make(map[string](*AggEvaluateContext))
 	}
-	if _, ok := n.contextPerGroupMap[n.CurrentGroup]; !ok {
+	if _, ok := n.contextPerGroupMap[string(n.CurrentGroup)]; !ok {
 		c := &AggEvaluateContext{}
 		if n.Distinct {
 			c.DistinctChecker = distinct.CreateDistinctChecker()
 		}
-		n.contextPerGroupMap[n.CurrentGroup] = c
+		n.contextPerGroupMap[string(n.CurrentGroup)] = c
 	}
-	return n.contextPerGroupMap[n.CurrentGroup]
+	return n.contextPerGroupMap[string(n.CurrentGroup)]
 }
 
 // SetContext sets the aggregate expr evaluation context.
@@ -290,14 +290,13 @@ func (n *AggregateFuncExpr) updateCount() error {
 
 func (n *AggregateFuncExpr) updateFirstRow() error {
 	ctx := n.GetContext()
-	if ctx.Evaluated {
+	if ctx.Value != nil {
 		return nil
 	}
 	if len(n.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
 	ctx.Value = n.Args[0].GetValue()
-	ctx.Evaluated = true
 	return nil
 }
 
@@ -307,9 +306,8 @@ func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
 	v := n.Args[0].GetValue()
-	if !ctx.Evaluated {
+	if ctx.Value == nil {
 		ctx.Value = v
-		ctx.Evaluated = true
 		return nil
 	}
 	c, err := types.Compare(ctx.Value, v)
@@ -442,5 +440,4 @@ type AggEvaluateContext struct {
 	Count           int64
 	Value           interface{}
 	Buffer          *bytes.Buffer // Buffer is used for group_concat.
-	Evaluated       bool
 }
