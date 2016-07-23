@@ -40,9 +40,9 @@ const (
 	ten8 = 100000000
 	ten9 = 1000000000
 
-	maxWordBufLen = 9 // a MyDecimal holds 9 words.
-	digitsPerWord = 9 // a word holds 9 digits.
-	wordSize      = 4 // a word is 4 bytes int32.
+	maxWordBufLen = 9 // A MyDecimal holds 9 words.
+	digitsPerWord = 9 // A word holds 9 digits.
+	wordSize      = 4 // A word is 4 bytes int32.
 	digMask       = ten8
 	wordBase      = ten9
 	wordMax       = wordBase - 1
@@ -100,10 +100,10 @@ func countLeadingZeroes(i int, word int32) int {
 }
 
 /*
+  countTrailingZeros returns the number of trailing zeroes that can be removed from fraction.
+
   @param   i    start index
   @param   word  value to compare against list of powers of 10
-
-  countTrailingZeros returns the number of trailing zeroes that can be removed from fraction.
 */
 func countTrailingZeroes(i int, word int32) int {
 	trailing := 0
