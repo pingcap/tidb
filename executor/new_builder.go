@@ -15,29 +15,37 @@ package executor
 
 import (
 	"math"
+	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 //TODO: select join algorithm during cbo phase.
-func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
-	e := &HashJoinExec{
-		schema:      v.GetSchema(),
-		otherFilter: expression.ComposeCNFCondition(v.OtherConditions),
-		prepared:    false,
-		ctx:         b.ctx,
-	}
+func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 	var leftHashKey, rightHashKey []*expression.Column
+	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
 		ln, _ := eqCond.Args[0].(*expression.Column)
 		rn, _ := eqCond.Args[1].(*expression.Column)
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
+		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
+	}
+	e := &HashJoinExec{
+		schema:      v.GetSchema(),
+		otherFilter: expression.ComposeCNFCondition(v.OtherConditions),
+		prepared:    false,
+		ctx:         b.ctx,
+		targetTypes: targetTypes,
 	}
 	switch v.JoinType {
 	case plan.LeftOuterJoin:
@@ -76,14 +84,119 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 	return e
 }
 
+func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
+	var leftHashKey, rightHashKey []*expression.Column
+	var targetTypes []*types.FieldType
+	for _, eqCond := range v.EqualConditions {
+		ln, _ := eqCond.Args[0].(*expression.Column)
+		rn, _ := eqCond.Args[1].(*expression.Column)
+		leftHashKey = append(leftHashKey, ln)
+		rightHashKey = append(rightHashKey, rn)
+		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
+	}
+	e := &HashSemiJoinExec{
+		schema:       v.GetSchema(),
+		otherFilter:  expression.ComposeCNFCondition(v.OtherConditions),
+		bigFilter:    expression.ComposeCNFCondition(v.LeftConditions),
+		smallFilter:  expression.ComposeCNFCondition(v.RightConditions),
+		bigExec:      b.build(v.GetChildByIndex(0)),
+		smallExec:    b.build(v.GetChildByIndex(1)),
+		prepared:     false,
+		ctx:          b.ctx,
+		bigHashKey:   leftHashKey,
+		smallHashKey: rightHashKey,
+		withAux:      v.WithAux,
+		anti:         v.Anti,
+		targetTypes:  targetTypes,
+	}
+	return e
+}
+
 func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
-	return &AggregationExec{
-		Src:          b.build(v.GetChildByIndex(0)),
+	src := b.build(v.GetChildByIndex(0))
+	e := &AggregationExec{
+		Src:          src,
 		schema:       v.GetSchema(),
 		ctx:          b.ctx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 	}
+	// Check if the underlying is xapi executor, we should try to push aggregate function down.
+	xSrc, ok := src.(NewXExecutor)
+	if !ok {
+		return e
+	}
+	txn, err := b.ctx.GetTxn(false)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	client := txn.GetClient()
+	if len(v.GroupByItems) > 0 && !client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy) {
+		return e
+	}
+	// Convert aggregate function exprs to pb.
+	pbAggFuncs := make([]*tipb.Expr, 0, len(v.AggFuncs))
+	for _, af := range v.AggFuncs {
+		if af.IsDistinct() {
+			// We do not support distinct push down.
+			return e
+		}
+		pbAggFunc := b.newAggFuncToPBExpr(client, af, xSrc.GetTable())
+		if pbAggFunc == nil {
+			return e
+		}
+		pbAggFuncs = append(pbAggFuncs, pbAggFunc)
+	}
+	pbByItems := make([]*tipb.ByItem, 0, len(v.GroupByItems))
+	// Convert groupby to pb
+	for _, item := range v.GroupByItems {
+		pbByItem := b.newGroupByItemToPB(client, item, xSrc.GetTable())
+		if pbByItem == nil {
+			return e
+		}
+		pbByItems = append(pbByItems, pbByItem)
+	}
+	// compose aggregate info
+	// We should infer fields type.
+	// Each agg item will be splitted into two datums: count and value
+	// The first field should be group key.
+	fields := make([]*types.FieldType, 0, 1+2*len(v.AggFuncs))
+	gk := types.NewFieldType(mysql.TypeBlob)
+	gk.Charset = charset.CharsetBin
+	gk.Collate = charset.CollationBin
+	fields = append(fields, gk)
+	// There will be one or two fields in the result row for each AggregateFuncExpr.
+	// Count needs count partial result field.
+	// Sum, FirstRow, Max, Min, GroupConcat need value partial result field.
+	// Avg needs both count and value partial result field.
+	for i, agg := range v.AggFuncs {
+		name := strings.ToLower(agg.GetName())
+		if needCount(name) {
+			// count partial result field
+			ft := types.NewFieldType(mysql.TypeLonglong)
+			ft.Flen = 21
+			ft.Charset = charset.CharsetBin
+			ft.Collate = charset.CollationBin
+			fields = append(fields, ft)
+		}
+		if needValue(name) {
+			// value partial result field
+			col := v.GetSchema()[i]
+			fields = append(fields, col.GetType())
+		}
+	}
+	xSrc.AddAggregate(pbAggFuncs, pbByItems, fields)
+	hasGroupBy := len(v.GroupByItems) > 0
+	xe := &NewXAggregateExec{
+		Src:        src,
+		ctx:        b.ctx,
+		AggFuncs:   v.AggFuncs,
+		hasGroupBy: hasGroupBy,
+		schema:     v.GetSchema(),
+	}
+	log.Debugf("Use XAggregateExec with %d aggs", len(v.AggFuncs))
+	return xe
 }
 
 func (b *executorBuilder) toPBExpr(conditions []expression.Expression, tbl *model.TableInfo) (

@@ -74,6 +74,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildDDL(x)
 	case *ast.AnalyzeTableStmt:
 		return b.buildSimple(x)
+	case *ast.BinlogStmt:
+		return b.buildSimple(x)
 	case *ast.CreateDatabaseStmt:
 		return b.buildDDL(x)
 	case *ast.CreateIndexStmt:
@@ -572,9 +574,12 @@ func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
 
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
 	selectLock := &SelectLock{
-		Lock: lock,
+		Lock:            lock,
+		baseLogicalPlan: newBaseLogicalPlan(Lock, b.allocator),
 	}
+	selectLock.initID()
 	addChild(selectLock, src)
+	selectLock.SetSchema(src.GetSchema())
 	selectLock.SetFields(src.Fields())
 	return selectLock
 }

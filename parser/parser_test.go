@@ -48,7 +48,8 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
-		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock",
+		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
+		"binlog",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -213,6 +214,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// global system variables
 		{"SET GLOBAL autocommit = 1", true},
 		{"SET @@global.autocommit = 1", true},
+		// Set default value
+		{"SET @@global.autocommit = default", true},
+		{"SET @@session.autocommit = default", true},
 		// SET CHARACTER SET
 		{"SET CHARACTER SET utf8mb4;", true},
 		{"SET CHARACTER SET 'utf8mb4';", true},
@@ -300,6 +304,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{`SHOW DATABASES LIKE 'test2'`, true},
 		{`SHOW PROCEDURE STATUS WHERE Db='test'`, true},
 		{`SHOW INDEX FROM t;`, true},
+		{`SHOW KEYS FROM t;`, true},
 
 		// For default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
@@ -345,6 +350,15 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{`SELECT /*!40001 SQL_NO_CACHE */ * FROM test WHERE 1 limit 0, 2000;`, true},
 
 		{`ANALYZE TABLE t`, true},
+
+		// For Binlog stmt
+		{`BINLOG '
+BxSFVw8JAAAA8QAAAPUAAAAAAAQANS41LjQ0LU1hcmlhREItbG9nAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAEzgNAAgAEgAEBAQEEgAA2QAEGggAAAAICAgCAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAA5gm5Mg==
+'/*!*/;`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -524,6 +538,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// Repeat
 		{`SELECT REPEAT("a", 10);`, true},
+
+		// Sleep
+		{`SELECT SLEEP(10);`, true},
 
 		// For date_add
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
@@ -988,4 +1005,23 @@ func (s *testParserSuite) TestInsertStatementMemoryAllocation(c *C) {
 	c.Assert(err, IsNil)
 	runtime.ReadMemStats(&newStats)
 	c.Assert(int(newStats.TotalAlloc-oldStats.TotalAlloc), Less, 1024*500)
+}
+
+func BenchmarkParse(b *testing.B) {
+	var table = []string{
+		"insert into t values (1), (2), (3)",
+		"insert into t values (4), (5), (6), (7)",
+		"select c from t where c > 2",
+	}
+	parser := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, v := range table {
+			_, err := parser.Parse(v, "", "")
+			if err != nil {
+				b.Failed()
+			}
+		}
+	}
+	b.ReportAllocs()
 }

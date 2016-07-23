@@ -240,6 +240,7 @@ func (s *session) Retry() error {
 	for {
 		variable.GetSessionVars(s).RetryInfo.Attempts = retryCnt + 1
 		s.resetHistory()
+		log.Info("RollbackTxn for retry txn.")
 		s.RollbackTxn()
 		success := true
 		variable.GetSessionVars(s).RetryInfo.ResetOffset()
@@ -480,7 +481,7 @@ func checkArgs(args ...interface{}) error {
 func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.RecordSet, error) {
 	err := checkArgs(args...)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	r, err := runStmt(s, st, args...)
@@ -547,6 +548,7 @@ func (s *session) ClearValue(key fmt.Stringer) {
 
 // Close function does some clean work when session end.
 func (s *session) Close() error {
+	log.Info("RollbackTxn for session close.")
 	return s.RollbackTxn()
 }
 
@@ -624,7 +626,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 	}
 	domain, err := domap.Get(store)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	sessionctx.BindDomain(s, domain)
 

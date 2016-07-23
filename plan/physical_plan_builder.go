@@ -49,10 +49,31 @@ func (p *Limit) Convert2PhysicalPlan() PhysicalPlan {
 func (p *Join) Convert2PhysicalPlan() PhysicalPlan {
 	l := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	r := p.GetChildByIndex(1).(LogicalPlan).Convert2PhysicalPlan()
-	p.SetChildren(l, r)
-	l.SetParents(p)
-	r.SetParents(p)
-	return p
+	var physicalPlan PhysicalPlan
+	switch p.JoinType {
+	case SemiJoin, SemiJoinWithAux:
+		physicalPlan = &PhysicalHashSemiJoin{
+			WithAux:         SemiJoinWithAux == p.JoinType,
+			EqualConditions: p.EqualConditions,
+			LeftConditions:  p.LeftConditions,
+			RightConditions: p.RightConditions,
+			OtherConditions: p.OtherConditions,
+			Anti:            p.anti,
+		}
+	default:
+		physicalPlan = &PhysicalHashJoin{
+			JoinType:        p.JoinType,
+			EqualConditions: p.EqualConditions,
+			LeftConditions:  p.LeftConditions,
+			RightConditions: p.RightConditions,
+			OtherConditions: p.OtherConditions,
+		}
+	}
+	physicalPlan.SetChildren(l, r)
+	physicalPlan.SetSchema(p.schema)
+	l.SetParents(physicalPlan)
+	r.SetParents(physicalPlan)
+	return physicalPlan
 }
 
 // Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
@@ -143,6 +164,14 @@ func (p *Exists) Convert2PhysicalPlan() PhysicalPlan {
 
 // Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
 func (p *Trim) Convert2PhysicalPlan() PhysicalPlan {
+	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
+	p.SetChildren(child)
+	child.SetParents(p)
+	return p
+}
+
+// Convert2PhysicalPlan implements LogicalPlan Convert2PhysicalPlan interface.
+func (p *SelectLock) Convert2PhysicalPlan() PhysicalPlan {
 	child := p.GetChildByIndex(0).(LogicalPlan).Convert2PhysicalPlan()
 	p.SetChildren(child)
 	child.SetParents(p)

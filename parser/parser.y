@@ -78,6 +78,7 @@ import (
 	avgRowLength	"AVG_ROW_LENGTH"
 	begin		"BEGIN"
 	between		"BETWEEN"
+	binlog		"BINLOG"
 	both		"BOTH"
 	btree		"BTREE"
 	by		"BY"
@@ -168,6 +169,7 @@ import (
 	global		"GLOBAL"
 	grant		"GRANT"
 	grants		"GRANTS"
+	greatest	"GREATEST"
 	group		"GROUP"
 	groupConcat	"GROUP_CONCAT"
 	hash		"HASH"
@@ -270,6 +272,7 @@ import (
 	set		"SET"
 	share		"SHARE"
 	show		"SHOW"
+	sleep		"SLEEP"
 	signed		"SIGNED"
 	some 		"SOME"
 	space 		"SPACE"
@@ -414,6 +417,7 @@ import (
 	AuthOption		"User auth option"
 	AuthString		"Password string value"
 	BeginTransactionStmt	"BEGIN TRANSACTION statement"
+	BinlogStmt		"Binlog base64 statement"
 	CastType		"Cast function target type"
 	ColumnDef		"table column definition"
 	ColumnName		"column name"
@@ -873,6 +877,12 @@ BeginTransactionStmt:
 |	"START" "TRANSACTION"
 	{
 		$$ = &ast.BeginStmt{}
+	}
+
+BinlogStmt:
+	"BINLOG" stringLit
+	{
+		$$ = &ast.BinlogStmt{Str: $2.(string)}
 	}
 
 ColumnDef:
@@ -1960,15 +1970,16 @@ UnReservedKeyword:
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 |	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE"
 |	"ISOLATION" |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
-|	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES"
+|	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
-|	"DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR"
-|	"IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM" | "MAX" | "MICROSECOND" | "MIN"
-|	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" | "SUBDATE"
-|	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION"
-|	"WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND" | "STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK"
+|	"DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS"
+|	"GROUP_CONCAT"| "GREATEST" | "HOUR" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
+|	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
+|	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX"
+|	"SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
+|	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK"
 
 /************************************************************************************
  *
@@ -2539,6 +2550,10 @@ FunctionCallNonKeyword:
 	{
 		$$ =  &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}
+|	"GREATEST" '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+	}
 |	"HOUR" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -2650,6 +2665,10 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"SECOND" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"SLEEP" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
@@ -3885,6 +3904,13 @@ ShowStmt:
 			Table: $4.(*ast.TableName),
 		}
 	}
+|	"SHOW" "KEYS" "FROM" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowIndex,
+			Table: $4.(*ast.TableName),
+		}
+	}
 
 ShowTargetFilterable:
 	"ENGINES"
@@ -4042,6 +4068,7 @@ Statement:
 |	AlterTableStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
+|	BinlogStmt
 |	CommitStmt
 |	DeallocateStmt
 |	DeleteFromStmt

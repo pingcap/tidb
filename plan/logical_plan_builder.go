@@ -47,7 +47,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	for i, aggFunc := range aggFuncList {
 		var newArgList []expression.Expression
 		for _, arg := range aggFunc.Args {
-			newArg, np, correlated, err := b.rewrite(arg, p, nil)
+			newArg, np, correlated, err := b.rewrite(arg, p, nil, true)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
@@ -150,10 +150,11 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 		columns, _ := extractColumn(expr, nil, nil)
 		allFromLeft, allFromRight := true, true
 		for _, col := range columns {
-			if left.GetSchema().GetIndex(col) != -1 {
-				allFromRight = false
-			} else {
+			if left.GetSchema().GetIndex(col) == -1 {
 				allFromLeft = false
+			}
+			if right.GetSchema().GetIndex(col) == -1 {
+				allFromRight = false
 			}
 		}
 		if allFromRight {
@@ -194,7 +195,7 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) LogicalPlan {
 	joinPlan.SetSchema(newSchema)
 	joinPlan.correlated = leftPlan.IsCorrelated() || rightPlan.IsCorrelated()
 	if join.On != nil {
-		onExpr, _, correlated, err := b.rewrite(join.On.Expr, joinPlan, nil)
+		onExpr, _, correlated, err := b.rewrite(join.On.Expr, joinPlan, nil, false)
 		if err != nil {
 			b.err = err
 			return nil
@@ -228,14 +229,19 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	selection.initID()
 	selection.correlated = p.IsCorrelated()
 	for _, cond := range conditions {
-		expr, np, correlated, err := b.rewrite(cond, p, AggMapper)
+		expr, np, correlated, err := b.rewrite(cond, p, AggMapper, false)
 		if err != nil {
 			b.err = err
 			return nil
 		}
 		p = np
 		selection.correlated = selection.correlated || correlated
-		expressions = append(expressions, expr)
+		if expr != nil {
+			expressions = append(expressions, splitCNFItems(expr)...)
+		}
+	}
+	if len(expressions) == 0 {
+		return p
 	}
 	selection.Conditions = expressions
 	selection.SetSchema(p.GetSchema().DeepCopy())
@@ -254,7 +260,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	schema := make(expression.Schema, 0, len(fields))
 	oldLen := 0
 	for _, field := range fields {
-		newExpr, np, correlated, err := b.rewrite(field.Expr, p, mapper)
+		newExpr, np, correlated, err := b.rewrite(field.Expr, p, mapper, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, oldLen
@@ -372,7 +378,7 @@ func (b *planBuilder) buildNewSort(p LogicalPlan, byItems []*ast.ByItem, aggMapp
 	sort.initID()
 	sort.correlated = p.IsCorrelated()
 	for _, item := range byItems {
-		it, np, correlated, err := b.rewrite(item.Expr, p, aggMapper)
+		it, np, correlated, err := b.rewrite(item.Expr, p, aggMapper, true)
 		if err != nil {
 			b.err = err
 			return nil
@@ -498,10 +504,12 @@ func (a *AggregateFuncExtractor) resolveFromSchema(v *ast.ColumnNameExpr, schema
 			return i, nil
 		}
 	}
-	a.selectFields = append(a.selectFields, &ast.SelectField{
+	sf := &ast.SelectField{
 		Expr:      &ast.ColumnNameExpr{Name: newColName},
 		Auxiliary: true,
-	})
+	}
+	sf.Expr.SetType(col.GetType())
+	a.selectFields = append(a.selectFields, sf)
 	return len(a.selectFields) - 1, nil
 }
 
@@ -676,7 +684,7 @@ func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 			return nil, false, nil
 		}
 		item.Expr = retExpr.(ast.ExprNode)
-		expr, np, cor, err := b.rewrite(item.Expr, p, nil)
+		expr, np, cor, err := b.rewrite(item.Expr, p, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, false, nil
@@ -734,10 +742,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 	}
 	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
 	if sel.LockTp != ast.SelectLockNone {
-		// TODO: support it !
-		//p = b.buildSelectLock(p, sel.LockTp)
-		b.err = errors.New("SelectLocal have not been supported!")
-		return nil
+		p = b.buildSelectLock(p, sel.LockTp)
 	}
 	if sel.GroupBy != nil {
 		p, correlated, gbyCols = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
@@ -856,6 +861,10 @@ func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema,
 	}
 	ap.initID()
 	addChild(ap, p)
+	_, inner, b.err = inner.PredicatePushDown(nil)
+	if b.err != nil {
+		return nil
+	}
 	outerColumns, err := inner.PruneColumnsAndResolveIndices(inner.GetSchema())
 	if err != nil {
 		b.err = errors.Trace(err)
@@ -894,6 +903,18 @@ func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema,
 }
 
 func (b *planBuilder) buildExists(p LogicalPlan) LogicalPlan {
+out:
+	for {
+		switch p.(type) {
+		// This can be removed when in exists clause,
+		// e.g. exists(select count(*) from t order by a) is equal to exists t.
+		case *Trim, *Projection, *NewSort, *Aggregation:
+			p = p.GetChildByIndex(0).(LogicalPlan)
+			p.SetParents()
+		default:
+			break out
+		}
+	}
 	exists := &Exists{baseLogicalPlan: newBaseLogicalPlan(Ext, b.allocator)}
 	exists.initID()
 	addChild(exists, p)
@@ -913,4 +934,48 @@ func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	maxOneRow.SetSchema(p.GetSchema().DeepCopy())
 	maxOneRow.correlated = p.IsCorrelated()
 	return maxOneRow
+}
+
+// tryDecorrelated tries to remove the correlated column that can be found in the outerPlan's schema.
+func tryDecorrelated(expr expression.Expression, outerPlan Plan) bool {
+	correlated := false
+	_, correlatedCols := extractColumn(expr, nil, nil)
+	for _, c := range correlatedCols {
+		if outerPlan.GetSchema().GetIndex(c) != -1 {
+			c.Correlated = false
+		} else {
+			correlated = true
+		}
+	}
+	return correlated
+}
+
+func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) LogicalPlan {
+	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
+	joinPlan.initID()
+	joinPlan.correlated = outerPlan.IsCorrelated() || innerPlan.IsCorrelated()
+	for _, expr := range onCondition {
+		joinPlan.correlated = joinPlan.correlated || tryDecorrelated(expr, outerPlan)
+	}
+	eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, outerPlan, innerPlan)
+	joinPlan.EqualConditions = eqCond
+	joinPlan.LeftConditions = leftCond
+	joinPlan.RightConditions = rightCond
+	joinPlan.OtherConditions = otherCond
+	if asScalar {
+		joinPlan.SetSchema(append(outerPlan.GetSchema().DeepCopy(), &expression.Column{
+			FromID:      joinPlan.id,
+			ColName:     model.NewCIStr(fmt.Sprintf("%s_aux_0", joinPlan.id)),
+			RetType:     types.NewFieldType(mysql.TypeTiny),
+			IsAggOrSubq: true,
+		}))
+		joinPlan.JoinType = SemiJoinWithAux
+	} else {
+		joinPlan.SetSchema(outerPlan.GetSchema().DeepCopy())
+		joinPlan.JoinType = SemiJoin
+	}
+	joinPlan.anti = not
+	addChild(joinPlan, outerPlan)
+	addChild(joinPlan, innerPlan)
+	return joinPlan
 }

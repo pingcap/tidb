@@ -24,9 +24,11 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/ngaut/systimemon"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/perfschema"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
@@ -42,6 +44,7 @@ var (
 	lease      = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
 	socket     = flag.String("socket", "", "The socket file to use for connection.")
 	enablePS   = flag.Int("perfschema", 0, "If enable performance schema.")
+	useNewPlan = flag.Int("newplan", 0, "If use new planner.")
 )
 
 func main() {
@@ -77,6 +80,10 @@ func main() {
 		perfschema.EnablePerfSchema()
 	}
 
+	if *useNewPlan == 1 {
+		plan.UseNewPlanner = true
+	}
+
 	// Create a session to load information schema.
 	se, err := tidb.CreateSession(store)
 	if err != nil {
@@ -105,6 +112,10 @@ func main() {
 		svr.Close()
 		os.Exit(0)
 	}()
+
+	go systimemon.StartMonitor(time.Now, func() {
+		log.Error("error: system time jump backward")
+	})
 
 	log.Error(svr.Run())
 }

@@ -3,5 +3,6 @@ language: go
 go:
   - 1.6
   - 1.5.3
+  - 1.7rc3
     
 script: make

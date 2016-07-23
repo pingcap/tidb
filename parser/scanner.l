@@ -298,6 +298,7 @@ avg		{a}{v}{g}
 avg_row_length	{a}{v}{g}_{r}{o}{w}_{l}{e}{n}{g}{t}{h}
 begin		{b}{e}{g}{i}{n}
 between		{b}{e}{t}{w}{e}{e}{n}
+binlog		{b}{i}{n}{l}{o}{g}
 both		{b}{o}{t}{h}
 btree		{b}{t}{r}{e}{e}
 by		{b}{y}
@@ -382,6 +383,7 @@ get_lock	{g}{e}{t}_{l}{o}{c}{k}
 global		{g}{l}{o}{b}{a}{l}
 grant		{g}{r}{a}{n}{t}
 grants		{g}{r}{a}{n}{t}{s}
+greatest	{g}{r}{e}{a}{t}{e}{s}{t}
 group		{g}{r}{o}{u}{p}
 group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
 hash		{h}{a}{s}{h}
@@ -472,6 +474,7 @@ session		{s}{e}{s}{s}{i}{o}{n}
 set		{s}{e}{t}
 share		{s}{h}{a}{r}{e}
 show		{s}{h}{o}{w}
+sleep		{s}{l}{e}{e}{p}
 some		{s}{o}{m}{e}
 space		{s}{p}{a}{c}{e}
 start		{s}{t}{a}{r}{t}
@@ -702,6 +705,8 @@ action		{a}{c}{t}{i}{o}{n}
 {begin}			lval.item = string(l.val)
 			return begin
 {between}		return between
+{binlog}		lval.item = string(l.val)
+			return binlog
 {both}			return both
 {btree}			lval.item = string(l.val)
 			return btree
@@ -845,6 +850,8 @@ action		{a}{c}{t}{i}{o}{n}
 {grant}			return grant
 {grants}		lval.item = string(l.val)
 			return grants
+{greatest}		lval.item = string(l.val)
+			return greatest
 {group}			return group
 {group_concat}		lval.item = string(l.val)
 			return groupConcat
@@ -1026,6 +1033,8 @@ redundant		lval.item = string(l.val)
 {set}			return set
 {share}			return share
 {show}			return show
+{sleep}			lval.item = string(l.val)
+			return sleep
 {subdate}		lval.item = string(l.val)
 			return subDate
 {strcmp}		lval.item = string(l.val)

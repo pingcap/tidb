@@ -63,3 +63,28 @@ type PhysicalApply struct {
 	OuterSchema expression.Schema
 	Checker     *ApplyConditionChecker
 }
+
+// PhysicalHashJoin represents hash join for inner/ outer join.
+type PhysicalHashJoin struct {
+	basePhysicalPlan
+
+	JoinType JoinType
+
+	EqualConditions []*expression.ScalarFunction
+	LeftConditions  []expression.Expression
+	RightConditions []expression.Expression
+	OtherConditions []expression.Expression
+}
+
+// PhysicalHashSemiJoin represents hash join for semi join.
+type PhysicalHashSemiJoin struct {
+	basePhysicalPlan
+
+	WithAux bool
+	Anti    bool
+
+	EqualConditions []*expression.ScalarFunction
+	LeftConditions  []expression.Expression
+	RightConditions []expression.Expression
+	OtherConditions []expression.Expression
+}

@@ -45,6 +45,12 @@ type AggregationFunction interface {
 
 	// Clear collects the mapper's memory.
 	Clear()
+
+	// IsDistinct indicates if the aggregate function contains distinct attribute.
+	IsDistinct() bool
+
+	// SetContext sets the aggregate evaluation context.
+	SetContext(ctx map[string](*ast.AggEvaluateContext))
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -85,6 +91,10 @@ func newAggFunc(name string, args []Expression, dist bool) aggFunction {
 		Distinct:     dist}
 }
 
+func (af *aggFunction) IsDistinct() bool {
+	return af.Distinct
+}
+
 func (af *aggFunction) Clear() {
 	af.resultMapper = make(aggCtxMapper, 0)
 }
@@ -114,6 +124,10 @@ func (af *aggFunction) getContext(groupKey []byte) *ast.AggEvaluateContext {
 		af.resultMapper[string(groupKey)] = ctx
 	}
 	return ctx
+}
+
+func (af *aggFunction) SetContext(ctx map[string](*ast.AggEvaluateContext)) {
+	af.resultMapper = ctx
 }
 
 func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx context.Context) error {
@@ -298,7 +312,7 @@ func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte, ectx conte
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !ctx.Evaluated {
+	if ctx.Value == nil {
 		ctx.Value = value.GetValue()
 	}
 	if value.GetValue() == nil {
@@ -312,7 +326,6 @@ func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte, ectx conte
 	if (mmf.isMax && c == -1) || (!mmf.isMax && c == 1) {
 		ctx.Value = value.GetValue()
 	}
-	ctx.Evaluated = true
 	return nil
 }
 
@@ -323,7 +336,7 @@ type firstRowFunction struct {
 // Update implements AggregationFunction interface.
 func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := ff.getContext(groupKey)
-	if ctx.Evaluated {
+	if ctx.Value != nil {
 		return nil
 	}
 	if len(ff.Args) != 1 {
@@ -334,7 +347,6 @@ func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx cont
 		return errors.Trace(err)
 	}
 	ctx.Value = value.GetValue()
-	ctx.Evaluated = true
 	return nil
 }
 

@@ -79,7 +79,7 @@ func (ts *testFunctionsSuite) TestAggFuncCount(c *C) {
 		F:        AggFuncCount,
 		Distinct: true,
 	}
-	agg.CurrentGroup = "xx"
+	agg.CurrentGroup = []byte("xx")
 	expr := NewValueExpr(1)
 	expr1 := NewValueExpr(nil)
 	expr2 := NewValueExpr(1)
@@ -95,7 +95,7 @@ func (ts *testFunctionsSuite) TestAggFuncCount(c *C) {
 		Args: args,
 		F:    AggFuncCount,
 	}
-	agg.CurrentGroup = "xx"
+	agg.CurrentGroup = []byte("xx")
 	expr = NewValueExpr(1)
 	expr1 = NewValueExpr(nil)
 	expr2 = NewValueExpr(1)
@@ -116,7 +116,7 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 		F:        AggFuncSum,
 		Distinct: true,
 	}
-	agg.CurrentGroup = "xx"
+	agg.CurrentGroup = []byte("xx")
 	expr := NewValueExpr(1)
 	expr1 := NewValueExpr(nil)
 	expr2 := NewValueExpr(1)
@@ -135,7 +135,7 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 		Args: args,
 		F:    AggFuncSum,
 	}
-	agg.CurrentGroup = "xx"
+	agg.CurrentGroup = []byte("xx")
 	expr = NewValueExpr(2)
 	expr1 = NewValueExpr(nil)
 	expr2 = NewValueExpr(2)
