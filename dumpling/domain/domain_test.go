@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -40,7 +41,7 @@ func (*testSuite) TestT(c *C) {
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer testleak.AfterTest(c)()
 
 	ctx := mock.NewContext()
 
@@ -72,7 +73,26 @@ func (*testSuite) TestT(c *C) {
 	time.Sleep(20 * time.Millisecond)
 	atomic.StoreInt64(&dom.lastLeaseTS, 0)
 	dom.tryReload()
-
-	store.Close()
 	time.Sleep(1 * time.Second)
+
+	// for schemaValidity
+	err = dom.SchemaValidity.Check(0)
+	c.Assert(err, IsNil)
+	dom.SchemaValidity.MockReloadFailed = true
+	err = dom.MustReload()
+	c.Assert(err, NotNil)
+	err = dom.SchemaValidity.Check(0)
+	c.Assert(err, NotNil)
+	dom.SchemaValidity.MockReloadFailed = false
+	err = dom.MustReload()
+	c.Assert(err, IsNil)
+	err = dom.SchemaValidity.Check(0)
+	c.Assert(err, IsNil)
+
+	// for goroutine exit in Reload
+	defaultMinReloadTimeout = 1 * time.Second
+	err = store.Close()
+	c.Assert(err, IsNil)
+	err = dom.Reload()
+	c.Assert(err, NotNil)
 }
