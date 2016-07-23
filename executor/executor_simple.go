@@ -84,6 +84,9 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeSetPwd(x)
 	case *ast.AnalyzeTableStmt:
 		err = e.executeAnalyzeTable(x)
+	case *ast.BinlogStmt:
+		// We just ignore it.
+		return nil, nil
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -170,7 +173,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 			if sysVar.Scope&variable.ScopeGlobal == 0 {
 				return errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
 			}
-			value, err := evaluator.Eval(e.ctx, v.Value)
+			value, err := e.getVarValue(v, sysVar, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -190,7 +193,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 			if sysVar.Scope&variable.ScopeSession == 0 {
 				return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
 			}
-			value, err := evaluator.Eval(e.ctx, v.Value)
+			value, err := e.getVarValue(v, nil, globalVars)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -201,6 +204,27 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 		}
 	}
 	return nil
+}
+
+func (e *SimpleExec) getVarValue(v *ast.VariableAssignment, sysVar *variable.SysVar, globalVars variable.GlobalVarAccessor) (value types.Datum, err error) {
+	switch v.Value.(type) {
+	case *ast.DefaultExpr:
+		// To set a SESSION variable to the GLOBAL value or a GLOBAL value
+		// to the compiled-in MySQL default value, use the DEFAULT keyword.
+		// See http://dev.mysql.com/doc/refman/5.7/en/set-statement.html
+		if sysVar != nil {
+			value = types.NewStringDatum(sysVar.Value)
+		} else {
+			s, err1 := globalVars.GetGlobalSysVar(e.ctx, strings.ToLower(v.Name))
+			if err1 != nil {
+				return value, errors.Trace(err1)
+			}
+			value = types.NewStringDatum(s)
+		}
+	default:
+		value, err = evaluator.Eval(e.ctx, v.Value)
+	}
+	return value, errors.Trace(err)
 }
 
 func (e *SimpleExec) setCharset(cs, co string) error {
