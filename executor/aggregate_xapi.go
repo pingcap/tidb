@@ -73,11 +73,10 @@ func (n *finalAggregater) updateCount(count uint64) error {
 
 func (n *finalAggregater) updateFirst(val types.Datum) error {
 	ctx := n.getContext()
-	if ctx.Evaluated {
+	if ctx.Value != nil {
 		return nil
 	}
 	ctx.Value = val.GetValue()
-	ctx.Evaluated = true
 	return nil
 }
 
@@ -87,9 +86,8 @@ func (n *finalAggregater) updateMaxMin(val types.Datum, max bool) error {
 		return nil
 	}
 	v := val.GetValue()
-	if !ctx.Evaluated {
+	if ctx.Value == nil {
 		ctx.Value = v
-		ctx.Evaluated = true
 		return nil
 	}
 	c, err := types.Compare(ctx.Value, v)
@@ -132,7 +130,7 @@ type XAggregateExec struct {
 	AggFuncs          []*ast.AggregateFuncExpr
 	aggregaters       []*finalAggregater
 	groupMap          map[string]bool
-	groups            []string
+	groups            [][]byte
 	hasGroupBy        bool
 	currentGroupIndex int
 }
@@ -152,7 +150,7 @@ func (e *XAggregateExec) Next() (*Row, error) {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		e.groupMap = make(map[string]bool)
-		e.groups = []string{}
+		e.groups = [][]byte{}
 		e.aggregaters = make([]*finalAggregater, len(e.AggFuncs))
 		for i, af := range e.AggFuncs {
 			agg := &finalAggregater{
@@ -219,7 +217,7 @@ func (e *XAggregateExec) innerNext() (bool, error) {
 	groupKey := row.Data[cursor].GetBytes()
 	if _, ok := e.groupMap[string(groupKey)]; !ok {
 		e.groupMap[string(groupKey)] = true
-		e.groups = append(e.groups, string(groupKey))
+		e.groups = append(e.groups, groupKey)
 	}
 	cursor++
 	// The rest columns are partial result for aggregate function.
@@ -276,7 +274,7 @@ type NewXAggregateExec struct {
 	AggFuncs          []expression.AggregationFunction
 	aggregaters       []*finalAggregater
 	groupMap          map[string]bool
-	groups            []string
+	groups            [][]byte
 	hasGroupBy        bool
 	currentGroupIndex int
 	schema            expression.Schema
@@ -297,7 +295,7 @@ func (e *NewXAggregateExec) Next() (*Row, error) {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		e.groupMap = make(map[string]bool)
-		e.groups = []string{}
+		e.groups = [][]byte{}
 		e.aggregaters = make([]*finalAggregater, len(e.AggFuncs))
 		for i, af := range e.AggFuncs {
 			agg := &finalAggregater{
@@ -365,7 +363,7 @@ func (e *NewXAggregateExec) innerNext() (bool, error) {
 	groupKey := row.Data[cursor].GetBytes()
 	if _, ok := e.groupMap[string(groupKey)]; !ok {
 		e.groupMap[string(groupKey)] = true
-		e.groups = append(e.groups, string(groupKey))
+		e.groups = append(e.groups, groupKey)
 	}
 	cursor++
 	// The rest columns are partial result for aggregate function.
