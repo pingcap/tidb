@@ -37,7 +37,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 
 TARGET = ""
 
-.PHONY: all build install update parser clean todo test gotest interpreter server
+.PHONY: all build install update parser clean todo test gotest interpreter server goyacc golex
 
 all: parser build test check
 
@@ -53,9 +53,17 @@ install:
 
 TEMP_FILE = temp_parser_file
 
-parser:
-	$(GO) install github.com/pingcap/tidb/_vendor/vendor/github.com/pingcap/goyacc
-	$(GO) install github.com/pingcap/tidb/_vendor/vendor/github.com/qiuyesuifeng/golex
+golex:
+	rm -rf vendor && ln -s _vendor/vendor vendor
+	$(GO) install github.com/pingcap/tidb/parser/golex
+	rm -rf vendor
+
+goyacc:
+	rm -rf vendor && ln -s _vendor/vendor vendor
+	$(GO) install github.com/pingcap/tidb/parser/goyacc
+	rm -rf vendor
+
+parser: goyacc golex
 	$(GOYACC) -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
 	$(GOYACC) -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}'
 	rm -f $(TEMP_FILE)
