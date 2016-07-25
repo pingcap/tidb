@@ -290,13 +290,13 @@ func (n *AggregateFuncExpr) updateCount() error {
 
 func (n *AggregateFuncExpr) updateFirstRow() error {
 	ctx := n.GetContext()
-	if ctx.Value != nil {
+	if !ctx.Value.IsNull() {
 		return nil
 	}
 	if len(n.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
-	ctx.Value = n.Args[0].GetValue()
+	ctx.Value = *n.Args[0].GetDatum()
 	return nil
 }
 
@@ -305,12 +305,12 @@ func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
 	if len(n.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
-	v := n.Args[0].GetValue()
-	if ctx.Value == nil {
+	v := *n.Args[0].GetDatum()
+	if ctx.Value.IsNull() {
 		ctx.Value = v
 		return nil
 	}
-	c, err := types.Compare(ctx.Value, v)
+	c, err := ctx.Value.CompareDatum(v)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -329,13 +329,12 @@ func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
 
 func (n *AggregateFuncExpr) updateSum() error {
 	ctx := n.GetContext()
-	a := n.Args[0]
-	value := a.GetValue()
-	if value == nil {
+	value := *n.Args[0].GetDatum()
+	if value.IsNull() {
 		return nil
 	}
 	if n.Distinct {
-		d, err := ctx.DistinctChecker.Check([]interface{}{value})
+		d, err := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -438,6 +437,6 @@ func (a *AggregateFuncExtractor) Leave(n Node) (node Node, ok bool) {
 type AggEvaluateContext struct {
 	DistinctChecker *distinct.Checker
 	Count           int64
-	Value           interface{}
+	Value           types.Datum
 	Buffer          *bytes.Buffer // Buffer is used for group_concat.
 }
