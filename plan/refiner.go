@@ -276,6 +276,10 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 		}
 		filterConditions = append(filterConditions, con)
 	}
+	for i, cond := range accessConditions {
+		accessConditions[i] = pushDownNot(cond, false)
+	}
+
 	return accessConditions, filterConditions
 }
 
