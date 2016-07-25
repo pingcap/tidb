@@ -84,41 +84,45 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 }
 
 // CalculateSum adds v to sum.
-func CalculateSum(sum interface{}, v interface{}) (interface{}, error) {
+func CalculateSum(sum Datum, v Datum) (Datum, error) {
 	// for avg and sum calculation
 	// avg and sum use decimal for integer and decimal type, use float for others
 	// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
 	var (
-		data interface{}
+		data Datum
 		err  error
 	)
 
-	switch y := v.(type) {
-	case int, uint, int8, uint8, int16, uint16, int32, uint32, int64, uint64:
-		data, err = mysql.ConvertToDecimal(v)
-	case mysql.Decimal:
-		data = y
-	case nil:
-		data = nil
+	switch v.Kind() {
+	case KindNull:
+	case KindInt64, KindUint64:
+		var d mysql.Decimal
+		d, err = v.ToDecimal()
+		if err == nil {
+			data = NewDecimalDatum(d)
+		}
+	case KindMysqlDecimal:
+		data = v
 	default:
-		d := NewDatum(v)
-		data, err = d.ToFloat64()
+		var f float64
+		f, err = v.ToFloat64()
+		if err == nil {
+			data = NewFloat64Datum(f)
+		}
 	}
 
 	if err != nil {
-		return nil, errors.Trace(err)
+		return data, errors.Trace(err)
 	}
-	if data == nil {
+	if data.IsNull() {
 		return sum, nil
 	}
-	switch x := sum.(type) {
-	case nil:
+	switch sum.Kind() {
+	case KindNull:
 		return data, nil
-	case float64:
-		return x + data.(float64), nil
-	case mysql.Decimal:
-		return x.Add(data.(mysql.Decimal)), nil
+	case KindFloat64, KindMysqlDecimal:
+		return ComputePlus(sum, data)
 	default:
-		return nil, errors.Errorf("invalid value %v(%T) for aggregate", x, x)
+		return data, errors.Errorf("invalid value %v for aggregate", sum.Kind())
 	}
 }

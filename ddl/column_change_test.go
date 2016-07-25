@@ -114,12 +114,50 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 	s.testColumnDrop(c, ctx, d, publicTable)
+	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
 	d.close()
+}
+
+func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo) {
+	d.close()
+	tc := &testDDLCallback{}
+	// set up hook
+	prevState := model.StateNone
+	var checkErr error
+	var writeOnlyTable, publicTable table.Table
+	tc.onJobUpdated = func(job *model.Job) {
+		if job.SchemaState == prevState {
+			return
+		}
+		prevState = job.SchemaState
+		var err error
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+			writeOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+		case model.StatePublic:
+			publicTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+			_, err = writeOnlyTable.AddRecord(ctx, types.MakeDatums(10, 10))
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+		}
+	}
+	d.hook = tc
+	d.start()
+	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	testCheckJobDone(c, d, job, true)
 }
 
 func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx context.Context, d *ddl, tbl table.Table) {
 	d.close()
-	dropCol := tbl.Cols()[0]
+	dropCol := tbl.Cols()[2]
 	tc := &testDDLCallback{}
 	// set up hook
 	prevState := model.StateNone

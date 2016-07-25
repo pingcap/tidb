@@ -920,7 +920,7 @@ func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
 	avg := &ast.AggregateFuncExpr{
 		F: ast.AggFuncAvg,
 	}
-	avg.CurrentGroup = "emptyGroup"
+	avg.CurrentGroup = []byte("emptyGroup")
 	ast.SetFlag(avg)
 	result, err := Eval(ctx, avg)
 	c.Assert(err, IsNil)

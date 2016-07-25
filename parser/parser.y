@@ -78,6 +78,7 @@ import (
 	avgRowLength	"AVG_ROW_LENGTH"
 	begin		"BEGIN"
 	between		"BETWEEN"
+	binlog		"BINLOG"
 	both		"BOTH"
 	btree		"BTREE"
 	by		"BY"
@@ -416,6 +417,7 @@ import (
 	AuthOption		"User auth option"
 	AuthString		"Password string value"
 	BeginTransactionStmt	"BEGIN TRANSACTION statement"
+	BinlogStmt		"Binlog base64 statement"
 	CastType		"Cast function target type"
 	ColumnDef		"table column definition"
 	ColumnName		"column name"
@@ -875,6 +877,12 @@ BeginTransactionStmt:
 |	"START" "TRANSACTION"
 	{
 		$$ = &ast.BeginStmt{}
+	}
+
+BinlogStmt:
+	"BINLOG" stringLit
+	{
+		$$ = &ast.BinlogStmt{Str: $2.(string)}
 	}
 
 ColumnDef:
@@ -1962,7 +1970,7 @@ UnReservedKeyword:
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 |	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE"
 |	"ISOLATION" |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
-|	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO"
+|	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
@@ -4060,6 +4068,7 @@ Statement:
 |	AlterTableStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
+|	BinlogStmt
 |	CommitStmt
 |	DeallocateStmt
 |	DeleteFromStmt

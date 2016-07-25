@@ -946,6 +946,14 @@ func (b *executorBuilder) newConditionExprToPBExpr(client kv.Client, exprs []exp
 	return
 }
 
+func (b *executorBuilder) newGroupByItemToPB(client kv.Client, expr expression.Expression, tbl *model.TableInfo) *tipb.ByItem {
+	e := b.newExprToPBExpr(client, expr, tbl)
+	if e == nil {
+		return nil
+	}
+	return &tipb.ByItem{Expr: e}
+}
+
 func (b *executorBuilder) newAggFuncToPBExpr(client kv.Client, aggFunc expression.AggregationFunction,
 	tbl *model.TableInfo) *tipb.Expr {
 	var tp tipb.ExprType

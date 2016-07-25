@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package localstore
+package mocktikv
 
 import (
 	"bytes"
@@ -25,7 +25,7 @@ import (
 
 var singleGroup = []byte("SingleGroup")
 
-func (rs *localRegion) getGroupKey(ctx *selectContext) ([]byte, error) {
+func (h *rpcHandler) getGroupKey(ctx *selectContext) ([]byte, error) {
 	items := ctx.sel.GetGroupBy()
 	if len(items) == 0 {
 		return singleGroup, nil
@@ -46,7 +46,7 @@ func (rs *localRegion) getGroupKey(ctx *selectContext) ([]byte, error) {
 }
 
 // Update aggregate functions with rows.
-func (rs *localRegion) aggregate(ctx *selectContext, row [][]byte) error {
+func (h *rpcHandler) aggregate(ctx *selectContext, row [][]byte) error {
 	// Put row data into evaluate context for later evaluation.
 	cols := ctx.sel.TableInfo.Columns
 	for i, col := range cols {
@@ -57,7 +57,7 @@ func (rs *localRegion) aggregate(ctx *selectContext, row [][]byte) error {
 		ctx.eval.Row[col.GetColumnId()] = datum
 	}
 	// Get group key.
-	gk, err := rs.getGroupKey(ctx)
+	gk, err := h.getGroupKey(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
