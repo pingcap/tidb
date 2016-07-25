@@ -61,7 +61,7 @@ var (
 	zeroMyDecimal = MyDecimal{digitsInt: 1}
 )
 
-// add adds a and b and carry, returns new carry.
+// add adds a and b and carry, returns the sum and new carry.
 func add(a, b, carry int32) (int32, int32) {
 	sum := a + b + carry
 	if sum >= wordBase {
@@ -116,17 +116,16 @@ func countTrailingZeroes(i int, word int32) int {
 
 // MyDecimal represents a decimal value.
 type MyDecimal struct {
-	// the number of *decimal* digits before the point.
+	// The number of *decimal* digits before the point.
 	digitsInt int
 
-	// the number of decimal digits after the point
+	// The number of decimal digits after the point.
 	digitsFrac int
 
 	negative bool
 
-	// an array of int32 words.
-	// A word is an int32 value can hold 9 digits.
-	// 0 <= word < wordBase
+	// An array of int32 words.
+	// A word is an int32 value can hold 9 digits.(0 <= word < wordBase)
 	wordBuf [maxWordBufLen]int32
 }
 
@@ -134,7 +133,7 @@ func (d *MyDecimal) String() string {
 	return fmt.Sprintf("di:%d, df:%d, neg:%v, buf:%v", d.digitsInt, d.digitsFrac, d.negative, d.wordBuf)
 }
 
-// FromString parse decimal from string.
+// FromString parses decimal from string.
 func (d *MyDecimal) FromString(str []byte) int {
 	ec := eDecBadNum
 	for i := 0; i < len(str); i++ {
@@ -249,7 +248,7 @@ func (d *MyDecimal) FromString(str []byte) int {
 }
 
 // Shift shifts decimal digits in given number (with rounding if it need), shift > 0 means shift to left shift,
-// shift < 0 meand right shift. In fact it is multipling on 10^shift.
+// shift < 0 means right shift. In fact it is multiplying on 10^shift.
 //
 // RETURN
 //   eDecOK          OK
@@ -257,6 +256,9 @@ func (d *MyDecimal) FromString(str []byte) int {
 //   eDecTruncated   number was rounded to fit into buffer
 //
 func (d *MyDecimal) Shift(shift int) int {
+	if shift == 0 {
+		return eDecOK
+	}
 	var (
 		/* index of first non zero digit (all indexes from 0) */
 		digitBegin int
@@ -269,12 +271,9 @@ func (d *MyDecimal) Shift(shift int) int {
 		/* number of digits in result */
 		digitsInt, digitsFrac int
 		/* return code */
-		err      = eDecOK
+		errCode  = eDecOK
 		newFront int
 	)
-	if shift == 0 {
-		return eDecOK
-	}
 	digitBegin, digitEnd = d.digitBounds()
 	if digitBegin == digitEnd {
 		*d = zeroMyDecimal
@@ -298,7 +297,7 @@ func (d *MyDecimal) Shift(shift int) int {
 			return eDecOverflow
 		}
 		/* cat off fraction part to allow new number to fit in our buffer */
-		err = eDecTruncate
+		errCode = eDecTruncate
 		wordsFrac -= lack
 		diff := digitsFrac - wordsFrac*digitsPerWord
 		d.Round(d, digitEnd-point-diff, halfUp)
@@ -306,8 +305,8 @@ func (d *MyDecimal) Shift(shift int) int {
 		digitsFrac = wordsFrac * digitsPerWord
 		if digitEnd <= digitBegin {
 			/*
-			   we lost all digits (they will be shifted out of buffer), so we can
-			   just return 0
+			   We lost all digits (they will be shifted out of buffer), so we can
+			   just return 0.
 			*/
 			*d = zeroMyDecimal
 			return eDecTruncate
@@ -319,7 +318,7 @@ func (d *MyDecimal) Shift(shift int) int {
 		var doLeft bool
 		/*
 		   Calculate left/right shift to align decimal digits inside our bug
-		   digits correctly
+		   digits correctly.
 		*/
 		if shift > 0 {
 			lMiniShift = shift % digitsPerWord
@@ -339,13 +338,12 @@ func (d *MyDecimal) Shift(shift int) int {
 		}
 		newPoint += miniShift
 		/*
-		   If number is shifted and correctly aligned in buffer we can
-		   finish
+		   If number is shifted and correctly aligned in buffer we can finish.
 		*/
 		if shift+miniShift == 0 && (newPoint-digitsInt) < digitsPerWord {
 			d.digitsInt = digitsInt
 			d.digitsFrac = digitsFrac
-			return err /* already shifted as it should be */
+			return errCode /* already shifted as it should be */
 		}
 		digitBegin += miniShift
 		digitEnd += miniShift
@@ -386,9 +384,9 @@ func (d *MyDecimal) Shift(shift int) int {
 		newPoint += digitShift
 	}
 	/*
-	   If there are gaps then fill ren with 0.
+	   If there are gaps then fill them with 0.
 
-	   Only one of following 'for' loops will work becouse wordIdxBegin <= wordIdxEnd
+	   Only one of following 'for' loops will work because wordIdxBegin <= wordIdxEnd.
 	*/
 	wordIdxBegin := digitBegin / digitsPerWord
 	wordIdxEnd := (digitEnd - 1) / digitsPerWord
@@ -410,7 +408,7 @@ func (d *MyDecimal) Shift(shift int) int {
 	}
 	d.digitsInt = digitsInt
 	d.digitsFrac = digitsFrac
-	return err
+	return errCode
 }
 
 /*
@@ -423,9 +421,7 @@ func (d *MyDecimal) Shift(shift int) int {
       end   - index of position just after last decimal digit.
 */
 func (d *MyDecimal) digitBounds() (start, end int) {
-	var (
-		i int
-	)
+	var i int
 	bufBeg := 0
 	bufLen := (d.digitsInt+digitsPerWord-1)/digitsPerWord + (d.digitsFrac+digitsPerWord-1)/digitsPerWord
 	bufEnd := bufLen - 1
@@ -468,7 +464,7 @@ func (d *MyDecimal) digitBounds() (start, end int) {
 }
 
 /*
-  doMiniLeftShift do left shift for alignment of data in buffer
+  doMiniLeftShift does left shift for alignment of data in buffer
 
     shift   number of decimal digits on which it should be shifted
     beg/end bounds of decimal digits (see digitsBounds())
@@ -492,7 +488,7 @@ func (d *MyDecimal) doMiniLeftShift(shift, beg, end int) {
 }
 
 /*
-  doMiniRightShift do right shift for alignment of data in buffer
+  doMiniRightShift does right shift for alignment of data in buffer
 
     shift   number of decimal digits on which it should be shifted
     beg/end bounds of decimal digits (see digitsBounds())
@@ -537,7 +533,6 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, mode roundMode) (errcode int)
 	}
 	wordsFrac := (d.digitsFrac + digitsPerWord - 1) / digitsPerWord
 	wordsInt := (d.digitsInt + digitsPerWord - 1) / digitsPerWord
-	//var x, y int32
 
 	var roundDigit int32
 	switch mode {
