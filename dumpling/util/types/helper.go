@@ -106,7 +106,7 @@ func CalculateSum(sum Datum, v Datum) (Datum, error) {
 	default:
 		var f float64
 		f, err = v.ToFloat64()
-		if err != nil {
+		if err == nil {
 			data = NewFloat64Datum(f)
 		}
 	}
