@@ -637,7 +637,7 @@ action		{a}{c}{t}{i}{o}{n}
 ":="			return assignmentEq
 ">="			return ge
 "!="			return neq
-"<>"			return neq
+"<>"			return neqSynonym
 "||"			return oror
 ">>"			return rsh
 "<=>"			return nulleq
@@ -934,7 +934,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return quarter
 {quick}			lval.item = string(l.val)
 			return quick
-redundant		lval.item = string(l.val)
+{redundant}		lval.item = string(l.val)
 			return redundant
 {right}			return right
 {rollback}		lval.item = string(l.val)
