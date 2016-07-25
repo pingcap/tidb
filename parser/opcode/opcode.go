@@ -43,9 +43,17 @@ const (
 	IntDiv
 	LogicXor
 	NullEQ
+	In
+	Like
+	Case
+	Regexp
+	IsNull
+	IsTruth
+	IsFalsity
 )
 
-var ops = map[Op]string{
+// Ops maps opcode to string.
+var Ops = map[Op]string{
 	AndAnd:     "&&",
 	LeftShift:  "<<",
 	RightShift: ">>",
@@ -69,11 +77,18 @@ var ops = map[Op]string{
 	IntDiv:     "DIV",
 	LogicXor:   "XOR",
 	NullEQ:     "<=>",
+	In:         "in",
+	Like:       "like",
+	Case:       "case",
+	Regexp:     "regexp",
+	IsNull:     "isnull",
+	IsTruth:    "istrue",
+	IsFalsity:  "isfalse",
 }
 
 // String implements Stringer interface.
 func (o Op) String() string {
-	str, ok := ops[o]
+	str, ok := Ops[o]
 	if !ok {
 		panic(fmt.Sprintf("%d", o))
 	}

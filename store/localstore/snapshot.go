@@ -14,175 +14,208 @@
 package localstore
 
 import (
-	"bytes"
-
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 var (
-	_ kv.Snapshot     = (*dbSnapshot)(nil)
-	_ kv.MvccSnapshot = (*dbSnapshot)(nil)
-	_ kv.Iterator     = (*dbIter)(nil)
+	_ kv.Snapshot = (*dbSnapshot)(nil)
+	_ kv.Iterator = (*dbIter)(nil)
 )
 
+// dbSnapshot implements MvccSnapshot interface.
 type dbSnapshot struct {
-	engine.Snapshot
+	store   *dbStore
 	version kv.Version // transaction begin version
 }
 
-func (s *dbSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
-	// engine Snapshot return nil, nil for value not found,
-	// so here we will check nil and return kv.ErrNotExist.
-	// get newest version, (0, MaxUint64)
-	// Key arrangement:
-	// Key -> META
-	// ...
-	// Key_ver
-	// Key_ver-1
-	// Key_ver-2
-	// ...
-	// Key_ver-n
-	// Key_0
-	// NextKey -> META
-	// NextKey_xxx
-	startKey := MvccEncodeVersionKey(k, ver)
-	endKey := MvccEncodeVersionKey(k, kv.MinVersion)
-
-	// get raw iterator
-	it := s.Snapshot.NewIterator(startKey)
-	defer it.Release()
-
-	var rawKey []byte
-	var v []byte
-	if it.Next() {
-		// If scan exceed this key's all versions
-		// it.Key() > endKey.
-		if kv.EncodedKey(it.Key()).Cmp(endKey) < 0 {
-			// Check newest version of this key.
-			// If it's tombstone, just skip it.
-			if !isTombstone(it.Value()) {
-				rawKey = it.Key()
-				v = it.Value()
-			}
-		}
+func newSnapshot(store *dbStore, ver kv.Version) *dbSnapshot {
+	ss := &dbSnapshot{
+		store:   store,
+		version: ver,
 	}
-	// No such key (or it's tombstone).
-	if rawKey == nil {
-		return nil, kv.ErrNotExist
+
+	return ss
+}
+
+// mvccSeek seeks for the first key in db which has a k >= key and a version <=
+// snapshot's version, returns kv.ErrNotExist if such key is not found. If exact
+// is true, only k == key can be returned.
+func (s *dbSnapshot) mvccSeek(key kv.Key, exact bool) (kv.Key, []byte, error) {
+	// Key layout:
+	// ...
+	// Key_verMax      -- (1)
+	// ...
+	// Key_ver+1       -- (2)
+	// Key_ver         -- (3)
+	// Key_ver-1       -- (4)
+	// ...
+	// Key_0           -- (5)
+	// NextKey_verMax  -- (6)
+	// ...
+	// NextKey_ver+1   -- (7)
+	// NextKey_ver     -- (8)
+	// NextKey_ver-1   -- (9)
+	// ...
+	// NextKey_0       -- (10)
+	// ...
+	// EOF
+	for {
+		mvccKey := MvccEncodeVersionKey(key, s.version)
+		mvccK, v, err := s.store.Seek([]byte(mvccKey), s.version.Ver) // search for [3...EOF)
+		if err != nil {
+			if terror.ErrorEqual(err, engine.ErrNotFound) { // EOF
+				return nil, nil, errors.Trace(kv.ErrNotExist)
+			}
+			return nil, nil, errors.Trace(err)
+		}
+		k, ver, err := MvccDecode(mvccK)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		// quick test for exact mode
+		if exact {
+			if key.Cmp(k) != 0 || isTombstone(v) {
+				return nil, nil, errors.Trace(kv.ErrNotExist)
+			}
+			return k, v, nil
+		}
+		if ver.Ver > s.version.Ver {
+			// currently on [6...7]
+			key = k // search for [8...EOF) next loop
+			continue
+		}
+		// currently on [3...5] or [8...10]
+		if isTombstone(v) {
+			key = k.Next() // search for (5...EOF) or (10..EOF) next loop
+			continue
+		}
+		// target found
+		return k, v, nil
+	}
+}
+
+// reverseMvccSeek seeks for the first key in db which has a k < key and a version <=
+// snapshot's version, returns kv.ErrNotExist if such key is not found.
+func (s *dbSnapshot) reverseMvccSeek(key kv.Key) (kv.Key, []byte, error) {
+	for {
+		var mvccKey []byte
+		if len(key) != 0 {
+			mvccKey = MvccEncodeVersionKey(key, kv.MaxVersion)
+		}
+		revMvccKey, _, err := s.store.SeekReverse(mvccKey, s.version.Ver)
+		if err != nil {
+			if terror.ErrorEqual(err, engine.ErrNotFound) {
+				return nil, nil, kv.ErrNotExist
+			}
+			return nil, nil, errors.Trace(err)
+		}
+		revKey, _, err := MvccDecode(revMvccKey)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		resultKey, v, err := s.mvccSeek(revKey, true)
+		if terror.ErrorEqual(err, kv.ErrNotExist) {
+			key = revKey
+			continue
+		}
+		return resultKey, v, errors.Trace(err)
+	}
+}
+
+func (s *dbSnapshot) Get(key kv.Key) ([]byte, error) {
+	_, v, err := s.mvccSeek(key, true)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	return v, nil
 }
 
-func (s *dbSnapshot) NewMvccIterator(k kv.Key, ver kv.Version) kv.Iterator {
-	return newDBIter(s, k, ver)
-}
-
-func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
-	// Get latest version.
-	return s.MvccGet(k, s.version)
-}
-
-func (s *dbSnapshot) NewIterator(param interface{}) kv.Iterator {
-	k, ok := param.([]byte)
-	if !ok {
-		log.Errorf("leveldb iterator parameter error, %+v", param)
-		return nil
+func (s *dbSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	m := make(map[string][]byte)
+	for _, k := range keys {
+		v, err := s.Get(k)
+		if err != nil && !kv.IsErrNotFound(err) {
+			return nil, errors.Trace(err)
+		}
+		if len(v) > 0 {
+			m[string(k)] = v
+		}
 	}
-	return newDBIter(s, k, s.version)
+	return m, nil
 }
 
-func (s *dbSnapshot) MvccRelease() {
-	s.Release()
+func (s *dbSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
+	it, err := newDBIter(s, k, false)
+	return it, errors.Trace(err)
 }
 
-func (s *dbSnapshot) Release() {
-	if s.Snapshot != nil {
-		s.Snapshot.Release()
-		s.Snapshot = nil
-	}
+func (s *dbSnapshot) SeekReverse(k kv.Key) (kv.Iterator, error) {
+	it, err := newDBIter(s, k, true)
+	return it, errors.Trace(err)
 }
 
 type dbIter struct {
-	s               *dbSnapshot
-	startKey        kv.Key
-	valid           bool
-	exceptedVersion kv.Version
-	k               kv.Key
-	v               []byte
+	s       *dbSnapshot
+	valid   bool
+	k       kv.Key
+	v       []byte
+	reverse bool
 }
 
-func newDBIter(s *dbSnapshot, startKey kv.Key, exceptedVer kv.Version) *dbIter {
-	it := &dbIter{
-		s:               s,
-		startKey:        startKey,
-		valid:           true,
-		exceptedVersion: exceptedVer,
+func newDBIter(s *dbSnapshot, key kv.Key, reverse bool) (*dbIter, error) {
+	var (
+		k   kv.Key
+		v   []byte
+		err error
+	)
+	if reverse {
+		k, v, err = s.reverseMvccSeek(key)
+	} else {
+		k, v, err = s.mvccSeek(key, false)
 	}
-	it.Next(nil)
-	return it
+	if err != nil {
+		if terror.ErrorEqual(err, kv.ErrNotExist) {
+			err = nil
+		}
+		return &dbIter{valid: false}, errors.Trace(err)
+	}
+
+	return &dbIter{
+		s:       s,
+		valid:   true,
+		k:       k,
+		v:       v,
+		reverse: reverse,
+	}, nil
 }
 
-func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
-	encKey := codec.EncodeBytes(nil, it.startKey)
-	// max key
-	encEndKey := codec.EncodeBytes(nil, []byte{0xff, 0xff})
-	var retErr error
-	var engineIter engine.Iterator
-	for {
-		engineIter = it.s.Snapshot.NewIterator(encKey)
-		// Check if overflow
-		if !engineIter.Next() {
-			it.valid = false
-			break
-		}
-
-		metaKey := engineIter.Key()
-		// Check if meet the end of table.
-		if bytes.Compare(metaKey, encEndKey) >= 0 {
-			it.valid = false
-			break
-		}
-		// Get real key from metaKey
-		key, _, err := MvccDecode(metaKey)
-		if err != nil {
-			// It's not a valid metaKey, maybe overflow (other data).
-			it.valid = false
-			break
-		}
-		// Get kv pair.
-		val, err := it.s.MvccGet(key, it.exceptedVersion)
-		if err != nil && !errors2.ErrorEqual(err, kv.ErrNotExist) {
-			// Get this version error
-			it.valid = false
-			retErr = err
-			break
-		}
-		if val != nil {
-			it.k = key
-			it.v = val
-			it.startKey = key.Next()
-			break
-		}
-		// Release the iterator, and update key
-		engineIter.Release()
-		// Current key's all versions are deleted, just go next key.
-		encKey = codec.EncodeBytes(nil, key.Next())
+func (it *dbIter) Next() error {
+	var k, v []byte
+	var err error
+	if it.reverse {
+		k, v, err = it.s.reverseMvccSeek(it.k)
+	} else {
+		k, v, err = it.s.mvccSeek(it.k.Next(), false)
 	}
-	engineIter.Release()
-	return it, errors.Trace(retErr)
+	if err != nil {
+		it.valid = false
+		if !terror.ErrorEqual(err, kv.ErrNotExist) {
+			return errors.Trace(err)
+		}
+	}
+	it.k, it.v = k, v
+	return nil
 }
 
 func (it *dbIter) Valid() bool {
 	return it.valid
 }
 
-func (it *dbIter) Key() string {
-	return string(it.k)
+func (it *dbIter) Key() kv.Key {
+	return it.k
 }
 
 func (it *dbIter) Value() []byte {

@@ -1,0 +1,18 @@
+syntax = "proto2";
+
+package statistics;
+
+message ColumnPB {
+    optional int64 id = 1;
+    optional int64 ndv = 2;
+    repeated int64 numbers = 3;
+    optional bytes value = 4; // encoded bytes from datum slice values.
+    repeated int64 repeats = 5;
+}
+
+message TablePB {
+    optional int64 id = 1;
+    optional int64 ts = 2;
+    optional int64 count = 3;
+    repeated ColumnPB columns = 4;
+}

@@ -1,6 +1,10 @@
-/parser/parser.go
-/parser/scanner.go
 /interpreter/interpreter
 /interpreter/test
+/parser/parser.go
+/parser/scanner.go
 /tidb-server/tidb-server
 coverage.out
+.idea/
+*.iml
+temp_parser_file
+y.output

@@ -13,70 +13,17 @@
 
 package kv
 
-import (
-	"errors"
-
-	"github.com/pingcap/tidb/util/codec"
-)
-
-var (
-	// ErrClosed is used when close an already closed txn.
-	ErrClosed = errors.New("Error: Transaction already closed")
-	// ErrNotExist is used when try to get an entry with an unexist key from KV store.
-	ErrNotExist = errors.New("Error: key not exist")
-	// ErrKeyExists is used when try to put an entry to KV store.
-	ErrKeyExists = errors.New("Error: key already exist")
-	// ErrConditionNotMatch is used when condition is not met.
-	ErrConditionNotMatch = errors.New("Error: Condition not match")
-	// ErrLockConflict is used when try to lock an already locked key.
-	ErrLockConflict = errors.New("Error: Lock conflict")
-)
-
-var (
-	// keyPrefix is used to avoid key conflict with some database metadata keys.
-	keyPrefix    = []byte("z")
-	codecEncoder = &encoder{
-		codec.EncodeKey,
-		codec.DecodeKey,
-	}
-
-	defaultEncoder = codecEncoder
-)
-
-type encoder struct {
-	enc func(...interface{}) ([]byte, error)
-	dec func([]byte) ([]interface{}, error)
-}
-
-// EncodeKey appends the k behind keyPrefix.
-func EncodeKey(k []byte) []byte {
-	return append(keyPrefix, k...)
-}
-
-// DecodeKey removes the prefixed keyPrefix.
-func DecodeKey(k []byte) []byte {
-	return k[len(keyPrefix):]
-}
-
-// EncodeValue encodes values before it is stored to the KV store.
-func EncodeValue(values ...interface{}) ([]byte, error) {
-	return defaultEncoder.enc(values...)
-}
-
-// DecodeValue decodes values after it is fetched from the KV store.
-func DecodeValue(data []byte) ([]interface{}, error) {
-	return defaultEncoder.dec(data)
-}
+import "github.com/juju/errors"
 
 // NextUntil applies FnKeyCmp to each entry of the iterator until meets some condition.
-// It will stop when fn returns true, or iterator is invalid or occur error
-func NextUntil(it Iterator, fn FnKeyCmp) (Iterator, error) {
+// It will stop when fn returns true, or iterator is invalid or an error occurs.
+func NextUntil(it Iterator, fn FnKeyCmp) error {
 	var err error
-	for it.Valid() && !fn([]byte(it.Key())) {
-		it, err = it.Next(nil)
+	for it.Valid() && !fn(it.Key()) {
+		err = it.Next()
 		if err != nil {
-			return nil, err
+			return errors.Trace(err)
 		}
 	}
-	return it, nil
+	return nil
 }

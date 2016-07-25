@@ -13,6 +13,12 @@
 
 package charset
 
+import (
+	"strings"
+
+	"github.com/juju/errors"
+)
+
 // Charset is a charset.
 // Now we only support MySQL.
 type Charset struct {
@@ -34,7 +40,7 @@ type Collation struct {
 
 var charsets = make(map[string]*Charset)
 
-// All the supported charsets should in the following table.
+// All the supported charsets should be in the following table.
 var charsetInfos = []*Charset{
 	{"utf8", nil, make(map[string]*Collation), "UTF-8 Unicode", 3},
 	{"latin1", nil, make(map[string]*Collation), "cp1252 West European", 1},
@@ -87,7 +93,7 @@ func GetAllCharsets() []*Desc {
 }
 
 // ValidCharsetAndCollation checks the charset and the collation validity
-// and retuns a boolean.
+// and returns a boolean.
 func ValidCharsetAndCollation(cs string, co string) bool {
 	// We will use utf8 as a default charset.
 	if cs == "" {
@@ -110,6 +116,24 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 	return true
 }
 
+// GetDefaultCollation returns the default collation for charset
+func GetDefaultCollation(charset string) (string, error) {
+	c, ok := charsets[charset]
+	if !ok {
+		return "", errors.Errorf("Unkown charset %s", charset)
+	}
+	return c.DefaultCollation.Name, nil
+}
+
+// GetCharsetInfo returns charset and collation for cs as name.
+func GetCharsetInfo(cs string) (string, string, error) {
+	c, ok := charsets[strings.ToLower(cs)]
+	if !ok {
+		return "", "", errors.Errorf("Unknown charset %s", cs)
+	}
+	return c.Name, c.DefaultCollation.Name, nil
+}
+
 // GetCollations returns a list for all collations.
 func GetCollations() []*Collation {
 	return collations
@@ -118,6 +142,8 @@ func GetCollations() []*Collation {
 const (
 	// CharsetBin is used for marking binary charset.
 	CharsetBin = "binary"
+	// CollationBin is the default collation for CharsetBin.
+	CollationBin = "binary"
 )
 
 var collations = []*Collation{

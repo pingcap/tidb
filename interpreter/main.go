@@ -21,19 +21,24 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/peterh/liner"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
 )
 
 var (
-	logLevel = flag.String("L", "error", "log level")
-	store    = flag.String("store", "goleveldb", "the name for the registered storage, e.g. memory, goleveldb, boltdb")
-	dbPath   = flag.String("dbpath", "test/test", "db path")
+	logLevel   = flag.String("L", "error", "log level")
+	store      = flag.String("store", "goleveldb", "the name for the registered storage, e.g. memory, goleveldb, boltdb")
+	dbPath     = flag.String("dbpath", "test", "db path")
+	dbName     = flag.String("dbname", "test", "default db name")
+	lease      = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
+	useNewPlan = flag.Int("newplan", 0, "If use new planner.")
 
 	line        *liner.State
 	historyPath = "/tmp/tidb_interpreter"
@@ -54,8 +59,10 @@ func saveHistory() {
 }
 
 func executeLine(tx *sql.Tx, txnLine string) error {
+	start := time.Now()
 	if tidb.IsQuery(txnLine) {
 		rows, err := tx.Query(txnLine)
+		elapsed := time.Since(start).Seconds()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -95,21 +102,42 @@ func executeLine(tx *sql.Tx, txnLine string) error {
 		result, _ := printer.GetPrintResult(cols, datas)
 		fmt.Printf("%s", result)
 
+		switch len(datas) {
+		case 0:
+			fmt.Printf("Empty set")
+		case 1:
+			fmt.Printf("1 row in set")
+		default:
+			fmt.Printf("%v rows in set", len(datas))
+		}
+		fmt.Printf(" (%.2f sec)\n", elapsed)
 		if err := rows.Err(); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
-		// TODO: rows affected and last insert id
-		_, err := tx.Exec(txnLine)
+		// TODO: last insert id
+		res, err := tx.Exec(txnLine)
+		elapsed := time.Since(start).Seconds()
 		if err != nil {
 			return errors.Trace(err)
 		}
+		cnt, err := res.RowsAffected()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		switch cnt {
+		case 0, 1:
+			fmt.Printf("Query OK, %d row affected", cnt)
+		default:
+			fmt.Printf("Query OK, %d rows affected", cnt)
+		}
+		fmt.Printf(" (%.2f sec)\n", elapsed)
 	}
 	return nil
 }
 
 func mayExit(err error, l string) bool {
-	if errors2.ErrorEqual(err, liner.ErrPromptAborted) || errors2.ErrorEqual(err, io.EOF) {
+	if terror.ErrorEqual(err, liner.ErrPromptAborted) || terror.ErrorEqual(err, io.EOF) {
 		fmt.Println("\nBye")
 		saveHistory()
 		return true
@@ -150,7 +178,14 @@ func main() {
 	line.SetCtrlCAborts(true)
 	openHistory()
 
-	mdb, err := sql.Open(tidb.DriverName, *store+"://"+*dbPath)
+	tidb.SetSchemaLease(time.Duration(*lease) * time.Second)
+
+	if *useNewPlan == 1 {
+		plan.UseNewPlanner = true
+	}
+
+	// use test as default DB.
+	mdb, err := sql.Open(tidb.DriverName, *store+"://"+*dbPath+"/"+*dbName)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
@@ -181,7 +216,7 @@ func main() {
 				}
 
 				if strings.HasPrefix(txnLine, "COMMIT") || strings.HasPrefix(txnLine, "commit") {
-					err := tx.Commit()
+					err = tx.Commit()
 					if err != nil {
 						log.Error(errors.ErrorStack(err))
 						tx.Rollback()
@@ -206,8 +241,11 @@ func main() {
 			if err != nil {
 				log.Error(errors.ErrorStack(err))
 				tx.Rollback()
-			} else {
-				tx.Commit()
+				continue
+			}
+			err = tx.Commit()
+			if err != nil {
+				log.Error(errors.ErrorStack(err))
 			}
 		}
 	}

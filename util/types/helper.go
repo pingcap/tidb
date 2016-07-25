@@ -15,25 +15,32 @@ package types
 
 import (
 	"math"
+
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
 )
 
-// RoundFloat rounds float val to the nearest integer value with float64 format, like GNU rint function.
-// RoundFloat uses default rounding mode, see http://www.gnu.org/software/libc/manual/html_node/Rounding.html
-// so we will choose the even number if the result is midway between two representable value.
-// e.g, 1.5 -> 2, 2.5 -> 2.
-func RoundFloat(val float64) float64 {
-	v, frac := math.Modf(val)
-	if val >= 0.0 {
-		if frac > 0.5 || (frac == 0.5 && uint64(v)%2 != 0) {
-			v += 1.0
-		}
-	} else {
-		if frac < -0.5 || (frac == -0.5 && uint64(v)%2 != 0) {
-			v -= 1.0
-		}
+// RoundFloat rounds float val to the nearest integer value with float64 format, like MySQL Round function.
+// RoundFloat uses default rounding mode, see https://dev.mysql.com/doc/refman/5.7/en/precision-math-rounding.html
+// so rounding use "round half away from zero".
+// e.g, 1.5 -> 2, -1.5 -> -2.
+func RoundFloat(f float64) float64 {
+	if math.Abs(f) < 0.5 {
+		return 0
 	}
 
-	return v
+	return math.Trunc(f + math.Copysign(0.5, f))
+}
+
+// Round rounds the argument f to dec decimal places.
+// dec defaults to 0 if not specified. dec can be negative
+// to cause dec digits left of the decimal point of the
+// value f to become zero.
+func Round(f float64, dec int) float64 {
+	shift := math.Pow10(dec)
+	f = f * shift
+	f = RoundFloat(f)
+	return f / shift
 }
 
 func getMaxFloat(flen int, decimal int) float64 {
@@ -74,4 +81,48 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	}
 
 	return f, nil
+}
+
+// CalculateSum adds v to sum.
+func CalculateSum(sum Datum, v Datum) (Datum, error) {
+	// for avg and sum calculation
+	// avg and sum use decimal for integer and decimal type, use float for others
+	// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
+	var (
+		data Datum
+		err  error
+	)
+
+	switch v.Kind() {
+	case KindNull:
+	case KindInt64, KindUint64:
+		var d mysql.Decimal
+		d, err = v.ToDecimal()
+		if err == nil {
+			data = NewDecimalDatum(d)
+		}
+	case KindMysqlDecimal:
+		data = v
+	default:
+		var f float64
+		f, err = v.ToFloat64()
+		if err == nil {
+			data = NewFloat64Datum(f)
+		}
+	}
+
+	if err != nil {
+		return data, errors.Trace(err)
+	}
+	if data.IsNull() {
+		return sum, nil
+	}
+	switch sum.Kind() {
+	case KindNull:
+		return data, nil
+	case KindFloat64, KindMysqlDecimal:
+		return ComputePlus(sum, data)
+	default:
+		return data, errors.Errorf("invalid value %v for aggregate", sum.Kind())
+	}
 }

@@ -1,7 +1,3 @@
-// Copyright 2014 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,58 +14,306 @@
 package plan
 
 import (
-	"github.com/pingcap/tidb/context"
+	"math"
+
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/field"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/format"
 )
 
-// RowIterFunc is the callback for iterating records.
-type RowIterFunc func(id interface{}, data []interface{}) (more bool, err error)
+const (
+	// Sel is the type of Selection.
+	Sel = "Selection"
+	// Proj is the type of Projection.
+	Proj = "Projection"
+	// Agg is the type of Aggregation.
+	Agg = "Aggregation"
+	// Jn is the type of Join.
+	Jn = "Join"
+	// Un is the type of Union.
+	Un = "Union"
+	// Ts is the type of TableScan.
+	Ts = "TableScan"
+	// Idx is the type of IndexScan.
+	Idx = "IndexScan"
+	// Srt is the type of Sort.
+	Srt = "Sort"
+	// Lim is the type of Limit.
+	Lim = "Limit"
+	// App is the type of Apply.
+	App = "Apply"
+	// Dis is the type of Distinct.
+	Dis = "Distinct"
+	// Trm is the type of Trim.
+	Trm = "Trim"
+	// MOR is the type of MaxOneRow.
+	MOR = "MaxOneRow"
+	// Ext is the type of Exists.
+	Ext = "Exists"
+	// Dual is the type of TableDual.
+	Dual = "TableDual"
+	// Lock is the type of SelectLock.
+	Lock = "SelectLock"
+)
 
-// Plan is the interface of query execution plan.
+// Plan is a description of an execution flow.
+// It is created from ast.Node first, then optimized by optimizer,
+// then used by executor to create a Cursor which executes the statement.
 type Plan interface {
-	// Explain the plan.
-	Explain(w format.Formatter)
-	// GetFields returns the result field list for a plan.
-	GetFields() []*field.ResultField
-	// Filter try to use index plan to reduce the result set.
-	// If index can be used, a new index plan is returned, 'filtered' is true.
-	// If no index can be used, the original plan is returned and 'filtered' return false.
-	Filter(ctx context.Context, expr expression.Expression) (p Plan, filtered bool, err error)
-
-	// Next returns the next row that contains data and row keys, nil row means there is no more to return.
-	// Aggregation plan will fetch all the data at the first call.
-	Next(ctx context.Context) (row *Row, err error)
-
-	// Close closes the underlying iterator of the plan.
-	// If you call Next after Close, it will start iteration from the beginning.
-	// If the plan is not returned as Recordset.Plan, it must be Closed to prevent resource leak.
-	Close() error
+	// Fields returns the result fields of the plan.
+	Fields() []*ast.ResultField
+	// SetFields sets the results fields of the plan.
+	SetFields(fields []*ast.ResultField)
+	// The cost before returning fhe first row.
+	StartupCost() float64
+	// The cost after returning all the rows.
+	TotalCost() float64
+	// The expected row count.
+	RowCount() float64
+	// SetLimit is used to push limit to upstream to estimate the cost.
+	SetLimit(limit float64)
+	// AddParent means append a parent for plan.
+	AddParent(parent Plan)
+	// AddChild means append a child for plan.
+	AddChild(children Plan)
+	// ReplaceParent means replace a parent with another one.
+	ReplaceParent(parent, newPar Plan) error
+	// ReplaceChild means replace a child with another one.
+	ReplaceChild(children, newChild Plan) error
+	// Retrieve parent by index.
+	GetParentByIndex(index int) Plan
+	// Retrieve child by index.
+	GetChildByIndex(index int) Plan
+	// Get all the parents.
+	GetParents() []Plan
+	// Get all the children.
+	GetChildren() []Plan
+	// Set the schema.
+	SetSchema(schema expression.Schema)
+	// Get the schema.
+	GetSchema() expression.Schema
+	// Get ID.
+	GetID() string
+	// Check weather this plan is correlated or not.
+	IsCorrelated() bool
+	// SetParents sets parents for plan.
+	SetParents(...Plan)
+	// SetParents sets children for plan.
+	SetChildren(...Plan)
 }
 
-// Planner is implemented by any structure that has a Plan method.
-type Planner interface {
-	// Plan function returns Plan.
-	Plan(ctx context.Context) (Plan, error)
+// LogicalPlan is a tree of logical operators.
+// We can do a lot of logical optimization to it, like predicate push down and column pruning.
+type LogicalPlan interface {
+	Plan
+
+	// PredicatePushDown push down predicates in where/on/having clause as deeply as possible.
+	// It will accept a predicate that is a expression slice, and return the expressions that can't be pushed.
+	// Because it may change the root when exists having clause, we need return a plan that representing a new root.
+	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan, error)
+
+	// PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
+	// This function returns a column slice representing columns from outer env and an error.
+	// We need return outer columns, because Apply plan will prune inner Planner and it will know
+	// how many columns referenced by inner plan exactly.
+	PruneColumnsAndResolveIndices([]*expression.Column) ([]*expression.Column, error)
+
+	// Convert2PhysicalPlan converts logical plan to physical plan.
+	Convert2PhysicalPlan() PhysicalPlan
 }
 
-// Row represents a record row.
-type Row struct {
-	// Data is the output record data for current Plan.
-	Data []interface{}
-	// FromData is the first origin record data, generated by From.
-	FromData []interface{}
-
-	RowKeys []*RowKeyEntry
+// PhysicalPlan is a tree of physical operators.
+type PhysicalPlan interface {
+	Plan
 }
 
-// RowKeyEntry is designed for Delete statement in multi-table mode,
-// we should know which table this row comes from.
-type RowKeyEntry struct {
-	// The table which this row come from.
-	Tbl table.Table
-	// Row handle.
-	Key string
+type baseLogicalPlan struct {
+	basePlan
+}
+
+type basePhysicalPlan struct {
+	basePlan
+}
+
+func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
+	return baseLogicalPlan{
+		basePlan: basePlan{
+			tp:        tp,
+			allocator: a,
+		},
+	}
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	if len(p.GetChildren()) == 0 {
+		return predicates, p, nil
+	}
+	child := p.GetChildByIndex(0).(LogicalPlan)
+	rest, _, err := child.PredicatePushDown(predicates)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if len(rest) > 0 {
+		err = addSelection(p, child, rest, p.allocator)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+	}
+	return nil, p, nil
+}
+
+func (p *baseLogicalPlan) Convert2PhysicalPlan() PhysicalPlan {
+	return p
+}
+
+// PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
+func (p *baseLogicalPlan) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
+	outer, err := p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(parentUsedCols)
+	p.SetSchema(p.GetChildByIndex(0).GetSchema())
+	return outer, errors.Trace(err)
+}
+
+func (p *baseLogicalPlan) initID() {
+	p.id = p.tp + p.allocator.allocID()
+}
+
+// basePlan implements base Plan interface.
+// Should be used as embedded struct in Plan implementations.
+type basePlan struct {
+	fields      []*ast.ResultField
+	startupCost float64
+	totalCost   float64
+	rowCount    float64
+	limit       float64
+	correlated  bool
+
+	parents  []Plan
+	children []Plan
+
+	schema    expression.Schema
+	tp        string
+	id        string
+	allocator *idAllocator
+}
+
+// IsCorrelated implements Plan IsCorrelated interface.
+func (p *basePlan) IsCorrelated() bool {
+	return p.correlated
+}
+
+// GetID implements Plan GetID interface.
+func (p *basePlan) GetID() string {
+	return p.id
+}
+
+// SetSchema implements Plan SetSchema interface.
+func (p *basePlan) SetSchema(schema expression.Schema) {
+	p.schema = schema
+}
+
+// GetSchema implements Plan GetSchema interface.
+func (p *basePlan) GetSchema() expression.Schema {
+	return p.schema
+}
+
+// StartupCost implements Plan StartupCost interface.
+func (p *basePlan) StartupCost() float64 {
+	return p.startupCost
+}
+
+// TotalCost implements Plan TotalCost interface.
+func (p *basePlan) TotalCost() float64 {
+	return p.totalCost
+}
+
+// RowCount implements Plan RowCount interface.
+func (p *basePlan) RowCount() float64 {
+	if p.limit == 0 {
+		return p.rowCount
+	}
+	return math.Min(p.rowCount, p.limit)
+}
+
+// SetLimit implements Plan SetLimit interface.
+func (p *basePlan) SetLimit(limit float64) {
+	p.limit = limit
+}
+
+// Fields implements Plan Fields interface.
+func (p *basePlan) Fields() []*ast.ResultField {
+	return p.fields
+}
+
+// SetFields implements Plan SetFields interface.
+func (p *basePlan) SetFields(fields []*ast.ResultField) {
+	p.fields = fields
+}
+
+// AddParent implements Plan AddParent interface.
+func (p *basePlan) AddParent(parent Plan) {
+	p.parents = append(p.parents, parent)
+}
+
+// AddChild implements Plan AddChild interface.
+func (p *basePlan) AddChild(child Plan) {
+	p.children = append(p.children, child)
+}
+
+// ReplaceParent means replace a parent for another one.
+func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
+	for i, par := range p.parents {
+		if par.GetID() == parent.GetID() {
+			p.parents[i] = newPar
+			return nil
+		}
+	}
+	return SystemInternalErrorType.Gen("ReplaceParent Failed!")
+}
+
+// ReplaceChild means replace a child with another one.
+func (p *basePlan) ReplaceChild(child, newChild Plan) error {
+	for i, ch := range p.children {
+		if ch.GetID() == child.GetID() {
+			p.children[i] = newChild
+			return nil
+		}
+	}
+	return SystemInternalErrorType.Gen("ReplaceChildren Failed!")
+}
+
+// GetParentByIndex implements Plan GetParentByIndex interface.
+func (p *basePlan) GetParentByIndex(index int) (parent Plan) {
+	if index < len(p.parents) && index >= 0 {
+		return p.parents[index]
+	}
+	return nil
+}
+
+// GetChildByIndex implements Plan GetChildByIndex interface.
+func (p *basePlan) GetChildByIndex(index int) (parent Plan) {
+	if index < len(p.children) && index >= 0 {
+		return p.children[index]
+	}
+	return nil
+}
+
+// GetParents implements Plan GetParents interface.
+func (p *basePlan) GetParents() []Plan {
+	return p.parents
+}
+
+// GetChildren implements Plan GetChildren interface.
+func (p *basePlan) GetChildren() []Plan {
+	return p.children
+}
+
+// RemoveAllParents implements Plan RemoveAllParents interface.
+func (p *basePlan) SetParents(pars ...Plan) {
+	p.parents = pars
+}
+
+// RemoveAllParents implements Plan RemoveAllParents interface.
+func (p *basePlan) SetChildren(children ...Plan) {
+	p.children = children
 }

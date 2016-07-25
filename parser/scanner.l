@@ -22,35 +22,42 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"unicode"
 	"strings"
-	
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/stmt"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"unicode"
+
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 type lexer struct {
 	c		int
 	col		int
 	errs		[]error
-	expr		expression.Expression
+	expr		ast.ExprNode
 	i		int
-	inj		int
 	lcol		int
 	line		int
-	list		[]stmt.Statement
+	list		[]ast.StmtNode
 	ncol		int
 	nline		int
 	sc		int
 	src		string
 	val		[]byte
 	ungetBuf	[]byte
-	root		bool
-	prepare		bool 
-	ParamList	[]*expression.ParamMarker
 	stmtStartPos 	int
+	stringLit 	[]byte
+
+	// record token's offset of the input
+	tokenEndOffset   int
+	tokenStartOffset int
+
+	// Charset information
+	charset		string
+	collation	string
 }
+
 
 // NewLexer builds a new lexer.
 func NewLexer(src string) (l *lexer) {
@@ -67,42 +74,54 @@ func (l *lexer) Errors() []error {
 	return l.errs
 }
 
-func (l *lexer) Stmts() []stmt.Statement{
+func (l *lexer) Stmts() []ast.StmtNode {
 	return l.list
 }
 
-func (l *lexer) Expr() expression.Expression {
+func (l *lexer) Expr() ast.ExprNode {
 	return l.expr
 }
 
-func (l *lexer) Inj() int {
-	return l.inj
+func (l *lexer) SetCharsetInfo(charset, collation string) {
+	l.charset = charset
+	l.collation = collation
 }
 
-func (l *lexer) SetPrepare() {
-	l.prepare = true	
+func (l *lexer) GetCharsetInfo() (string, string) {
+	return l.charset, l.collation
 }
 
-func (l *lexer) IsPrepare() bool {
-	return l.prepare	
+// The select statement is not at the end of the whole statement, if the last
+// field text was set from its offset to the end of the src string, update
+// the last field text.
+func (l *lexer) SetLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
+	lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+	if lastField.Offset + len(lastField.Text()) >= len(l.src)-1 {
+		lastField.SetText(l.src[lastField.Offset:lastEnd])
+	}
 }
 
-func (l *lexer) SetInj(inj int) {
-	l.inj = inj
+func (l *lexer) startOffset(offset int) int {
+	offset--
+	for unicode.IsSpace(rune(l.src[offset])) {
+		offset++
+	}
+	return offset
 }
 
-func (l *lexer) Root() bool {
-	return l.root
-}
-
-func (l *lexer) SetRoot(root bool) {
-	l.root = root
+func (l *lexer) endOffset(offset int) int {
+	offset--
+	for offset > 0 && unicode.IsSpace(rune(l.src[offset-1])) {
+		offset--
+	}
+	return offset
 }
 
 func (l *lexer) unget(b byte) {
 	l.ungetBuf = append(l.ungetBuf, b)
 	l.i--
 	l.ncol--
+	l.tokenEndOffset--
 }
 
 func (l *lexer) next() int {
@@ -129,6 +148,7 @@ func (l *lexer) next() int {
 	default:
 		l.ncol++
 	}
+	l.tokenEndOffset++
 	return l.c
 }
 
@@ -174,19 +194,16 @@ func (l *lexer) stmtText() string {
 
 func (l *lexer) Lex(lval *yySymType) (r int) {
 	defer func() {
-		lval.line, lval.col = l.line, l.col
+		lval.offset = l.tokenStartOffset
+		l.tokenStartOffset = l.tokenEndOffset
 	}()
 	const (
 		INITIAL = iota
 		S1
 		S2
 		S3
+		S4
 	)
-
-	if n := l.inj; n != 0 {
-		l.inj = 0
-		return n
-	}
 
 	c0, c := 0, l.c
 %}
@@ -233,22 +250,32 @@ z		[zZ]
 
 abs		{a}{b}{s}
 add		{a}{d}{d}
+adddate		{a}{d}{d}{d}{a}{t}{e}
+admin		{a}{d}{m}{i}{n}
 after		{a}{f}{t}{e}{r}
 all		{a}{l}{l}
 alter		{a}{l}{t}{e}{r}
+analyze		{a}{n}{a}{l}{y}{z}{e}
 and		{a}{n}{d}
 any 		{a}{n}{y}
 as		{a}{s}
 asc		{a}{s}{c}
+ascii		{a}{s}{c}{i}{i}
 auto_increment	{a}{u}{t}{o}_{i}{n}{c}{r}{e}{m}{e}{n}{t}
 avg		{a}{v}{g}
+avg_row_length	{a}{v}{g}_{r}{o}{w}_{l}{e}{n}{g}{t}{h}
 begin		{b}{e}{g}{i}{n}
 between		{b}{e}{t}{w}{e}{e}{n}
+binlog		{b}{i}{n}{l}{o}{g}
+both		{b}{o}{t}{h}
+btree		{b}{t}{r}{e}{e}
 by		{b}{y}
 case		{c}{a}{s}{e}
 cast		{c}{a}{s}{t}
 character	{c}{h}{a}{r}{a}{c}{t}{e}{r}
 charset		{c}{h}{a}{r}{s}{e}{t}
+check 		{c}{h}{e}{c}{k}
+checksum 	{c}{h}{e}{c}{k}{s}{u}{m}
 coalesce	{c}{o}{a}{l}{e}{s}{c}{e}
 collate		{c}{o}{l}{l}{a}{t}{e}
 collation	{c}{o}{l}{l}{a}{t}{i}{o}{n}
@@ -256,49 +283,78 @@ column		{c}{o}{l}{u}{m}{n}
 columns		{c}{o}{l}{u}{m}{n}{s}
 comment 	{c}{o}{m}{m}{e}{n}{t}
 commit		{c}{o}{m}{m}{i}{t}
+committed	{c}{o}{m}{m}{i}{t}{t}{e}{d}
+compact		{c}{o}{m}{p}{a}{c}{t}
+compressed	{c}{o}{m}{p}{r}{e}{s}{s}{e}{d}
+compression	{c}{o}{m}{p}{r}{e}{s}{s}{i}{o}{n}
 concat		{c}{o}{n}{c}{a}{t}
 concat_ws	{c}{o}{n}{c}{a}{t}_{w}{s}
+connection	{c}{o}{n}{n}{e}{c}{t}{i}{o}{n}
+connection_id	{c}{o}{n}{n}{e}{c}{t}{i}{o}{n}_{i}{d}
 constraint	{c}{o}{n}{s}{t}{r}{a}{i}{n}{t}
 convert		{c}{o}{n}{v}{e}{r}{t}
 count		{c}{o}{u}{n}{t}
 create		{c}{r}{e}{a}{t}{e}
 cross		{c}{r}{o}{s}{s}
+curdate 	{c}{u}{r}{d}{a}{t}{e}
+current_date	{c}{u}{r}{r}{e}{n}{t}_{d}{a}{t}{e}
+curtime 	{c}{u}{r}{t}{i}{m}{e}
+current_time	{c}{u}{r}{r}{e}{n}{t}_{t}{i}{m}{e}
 current_user	{c}{u}{r}{r}{e}{n}{t}_{u}{s}{e}{r}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
+date_add	{d}{a}{t}{e}_{a}{d}{d}
+date_format	{d}{a}{t}{e}_{f}{o}{r}{m}{a}{t}
+date_sub	{d}{a}{t}{e}_{s}{u}{b}
 day		{d}{a}{y}
+dayname	{d}{a}{y}{n}{a}{m}{e}
 dayofweek	{d}{a}{y}{o}{f}{w}{e}{e}{k}
 dayofmonth	{d}{a}{y}{o}{f}{m}{o}{n}{t}{h}
 dayofyear	{d}{a}{y}{o}{f}{y}{e}{a}{r}
+ddl		{d}{d}{l}
 deallocate	{d}{e}{a}{l}{l}{o}{c}{a}{t}{e}
 default		{d}{e}{f}{a}{u}{l}{t}
 delayed		{d}{e}{l}{a}{y}{e}{d}
+delay_key_write	{d}{e}{l}{a}{y}_{k}{e}{y}_{w}{r}{i}{t}{e}
 delete		{d}{e}{l}{e}{t}{e}
 drop		{d}{r}{o}{p}
 desc		{d}{e}{s}{c}
 describe	{d}{e}{s}{c}{r}{i}{b}{e}
 distinct	{d}{i}{s}{t}{i}{n}{c}{t}
 div		{d}{i}{v}
+disable		{d}{i}{s}{a}{b}{l}{e}
 do		{d}{o}
 dual 		{d}{u}{a}{l}
 duplicate	{d}{u}{p}{l}{i}{c}{a}{t}{e}
+dynamic		{d}{y}{n}{a}{m}{i}{c}
 else		{e}{l}{s}{e}
+enable		{e}{n}{a}{b}{l}{e}
 end		{e}{n}{d}
 engine		{e}{n}{g}{i}{n}{e}
 engines		{e}{n}{g}{i}{n}{e}{s}
+escape		{e}{s}{c}{a}{p}{e}
 execute		{e}{x}{e}{c}{u}{t}{e}
 exists		{e}{x}{i}{s}{t}{s}
 explain		{e}{x}{p}{l}{a}{i}{n}
+extract		{e}{x}{t}{r}{a}{c}{t}
+fields		{f}{i}{e}{l}{d}{s}
 first		{f}{i}{r}{s}{t}
+fixed		{f}{i}{x}{e}{d}
 for		{f}{o}{r}
+force		{f}{o}{r}{c}{e}
 foreign		{f}{o}{r}{e}{i}{g}{n}
 found_rows	{f}{o}{u}{n}{d}_{r}{o}{w}{s}
 from		{f}{r}{o}{m}
 full		{f}{u}{l}{l}
 fulltext	{f}{u}{l}{l}{t}{e}{x}{t}
+get_lock	{g}{e}{t}_{l}{o}{c}{k}
 global		{g}{l}{o}{b}{a}{l}
+grant		{g}{r}{a}{n}{t}
+grants		{g}{r}{a}{n}{t}{s}
+greatest	{g}{r}{e}{a}{t}{e}{s}{t}
 group		{g}{r}{o}{u}{p}
 group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
+hash		{h}{a}{s}{h}
 having		{h}{a}{v}{i}{n}{g}
 high_priority	{h}{i}{g}{h}_{p}{r}{i}{o}{r}{i}{t}{y}
 hour		{h}{o}{u}{r}
@@ -310,50 +366,91 @@ in		{i}{n}
 index		{i}{n}{d}{e}{x}
 inner 		{i}{n}{n}{e}{r}
 insert		{i}{n}{s}{e}{r}{t}
+interval	{i}{n}{t}{e}{r}{v}{a}{l}
 into		{i}{n}{t}{o}
 is		{i}{s}
+isnull		{i}{s}{n}{u}{l}{l}
+isolation	{i}{s}{o}{l}{a}{t}{i}{o}{n}
 join		{j}{o}{i}{n}
 key		{k}{e}{y}
+keys		{k}{e}{y}{s}
+key_block_size	{k}{e}{y}_{b}{l}{o}{c}{k}_{s}{i}{z}{e}
+last_insert_id  {l}{a}{s}{t}_{i}{n}{s}{e}{r}{t}_{i}{d}
+leading		{l}{e}{a}{d}{i}{n}{g}
 left		{l}{e}{f}{t}
 length		{l}{e}{n}{g}{t}{h}
+level		{l}{e}{v}{e}{l}
 like		{l}{i}{k}{e}
 limit		{l}{i}{m}{i}{t}
 local		{l}{o}{c}{a}{l}
+locate		{l}{o}{c}{a}{t}{e}
 lock		{l}{o}{c}{k}
+lower		{l}{o}{w}{e}{r}
+lcase		{l}{c}{a}{s}{e}
 low_priority	{l}{o}{w}_{p}{r}{i}{o}{r}{i}{t}{y}
+ltrim		{l}{t}{r}{i}{m}
+max_rows	{m}{a}{x}_{r}{o}{w}{s}
 microsecond	{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
 minute		{m}{i}{n}{u}{t}{e}
+min_rows	{m}{i}{n}_{r}{o}{w}{s}
 mod 		{m}{o}{d}
 mode		{m}{o}{d}{e}
 month		{m}{o}{n}{t}{h}
+monthname	{m}{o}{n}{t}{h}{n}{a}{m}{e}
 names		{n}{a}{m}{e}{s}
+national	{n}{a}{t}{i}{o}{n}{a}{l}
 not		{n}{o}{t}
 offset		{o}{f}{f}{s}{e}{t}
 on		{o}{n}
+only		{o}{n}{l}{y}
+option		{o}{p}{t}{i}{o}{n}
 or		{o}{r}
 order		{o}{r}{d}{e}{r}
 outer		{o}{u}{t}{e}{r}
 password	{p}{a}{s}{s}{w}{o}{r}{d}
+pow 		{p}{o}{w}
+power		{p}{o}{w}{e}{r}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
+privileges	{p}{r}{i}{v}{i}{l}{e}{g}{e}{s}
+procedure	{p}{r}{o}{c}{e}{d}{u}{r}{e}
+quarter		{q}{u}{a}{r}{t}{e}{r}
 quick		{q}{u}{i}{c}{k}
+rand		{r}{a}{n}{d}
+read		{r}{e}{a}{d}
+release_lock	{r}{e}{l}{e}{a}{s}{e}_{l}{o}{c}{k}
 repeat		{r}{e}{p}{e}{a}{t}
+repeatable	{r}{e}{p}{e}{a}{t}{a}{b}{l}{e}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
+replace		{r}{e}{p}{l}{a}{c}{e}
+redundant	{r}{e}{d}{u}{n}{d}{a}{n}{t}
+reverse		{r}{e}{v}{e}{r}{s}{e}
 right		{r}{i}{g}{h}{t}
 rlike		{r}{l}{i}{k}{e}
 rollback	{r}{o}{l}{l}{b}{a}{c}{k}
+round		{r}{o}{u}{n}{d}
 row 		{r}{o}{w}
+row_format	{r}{o}{w}_{f}{o}{r}{m}{a}{t}
+rtrim		{r}{t}{r}{i}{m}
 schema		{s}{c}{h}{e}{m}{a}
 schemas		{s}{c}{h}{e}{m}{a}{s}
 second		{s}{e}{c}{o}{n}{d}
 select		{s}{e}{l}{e}{c}{t}
+serializable	{s}{e}{r}{i}{a}{l}{i}{z}{a}{b}{l}{e}
 session		{s}{e}{s}{s}{i}{o}{n}
 set		{s}{e}{t}
 share		{s}{h}{a}{r}{e}
 show		{s}{h}{o}{w}
+sleep		{s}{l}{e}{e}{p}
 some		{s}{o}{m}{e}
+space		{s}{p}{a}{c}{e}
 start		{s}{t}{a}{r}{t}
+statsPersistent	{s}{t}{a}{t}{s}_{p}{e}{r}{s}{i}{s}{t}{e}{n}{t}
+status          {s}{t}{a}{t}{u}{s}
+subdate		{s}{u}{b}{d}{a}{t}{e}
+strcmp		{s}{t}{r}{c}{m}{p}
+substr		{s}{u}{b}{s}{t}{r}
 substring	{s}{u}{b}{s}{t}{r}{i}{n}{g}
 substring_index	{s}{u}{b}{s}{t}{r}{i}{n}{g}_{i}{n}{d}{e}{x}
 sum		{s}{u}{m}
@@ -361,24 +458,35 @@ sysdate		{s}{y}{s}{d}{a}{t}{e}
 table		{t}{a}{b}{l}{e}
 tables		{t}{a}{b}{l}{e}{s}
 then		{t}{h}{e}{n}
+to		{t}{o}
+trailing	{t}{r}{a}{i}{l}{i}{n}{g}
 transaction	{t}{r}{a}{n}{s}{a}{c}{t}{i}{o}{n}
+triggers	{t}{r}{i}{g}{g}{e}{r}{s}
+trim		{t}{r}{i}{m}
 truncate	{t}{r}{u}{n}{c}{a}{t}{e}
 max		{m}{a}{x}
 min		{m}{i}{n}
+uncommitted	{u}{n}{c}{o}{m}{m}{i}{t}{t}{e}{d}
 unknown		{u}{n}{k}{n}{o}{w}{n}
 union		{u}{n}{i}{o}{n}
 unique		{u}{n}{i}{q}{u}{e}
+unlock		{u}{n}{l}{o}{c}{k}
 nullif		{n}{u}{l}{l}{i}{f}
 update		{u}{p}{d}{a}{t}{e}
+upper		{u}{p}{p}{e}{r}
+ucase		{u}{c}{a}{s}{e}
+utc_date	{u}{t}{c}_{d}{a}{t}{e}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
 variables	{v}{a}{r}{i}{a}{b}{l}{e}{s}
+version		{v}{e}{r}{s}{i}{o}{n}
 warnings	{w}{a}{r}{n}{i}{n}{g}{s}
 week		{w}{e}{e}{k}
 weekday		{w}{e}{e}{k}{d}{a}{y}
 weekofyear	{w}{e}{e}{k}{o}{f}{y}{e}{a}{r}
 where		{w}{h}{e}{r}{e}
 when		{w}{h}{e}{n}
+write		{w}{r}{i}{t}{e}
 xor		{x}{o}{r}
 yearweek	{y}{e}{a}{r}{w}{e}{e}{k}
 
@@ -387,6 +495,8 @@ false		{f}{a}{l}{s}{e}
 true		{t}{r}{u}{e}
 
 calc_found_rows	{s}{q}{l}_{c}{a}{l}{c}_{f}{o}{u}{n}{d}_{r}{o}{w}{s}
+sql_cache	{s}{q}{l}_{c}{a}{c}{h}{e}
+sql_no_cache	{s}{q}{l}_{n}{o}_{c}{a}{c}{h}{e}
 
 current_ts	{c}{u}{r}{r}{e}{n}{t}_{t}{i}{m}{e}{s}{t}{a}{m}{p}
 localtime	{l}{o}{c}{a}{l}{t}{i}{m}{e}
@@ -442,18 +552,34 @@ user		{u}{s}{e}{r}
 using		{u}{s}{i}{n}{g}
 
 idchar0		[a-zA-Z_]
-idchars		{idchar0}|[0-9]
+idchars		{idchar0}|[0-9$] // See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 ident		{idchar0}{idchars}*
-quotedIdent	`{ident}`
 
 user_var	"@"{ident}
 sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
+
+second_microsecond	{s}{e}{c}{o}{n}{d}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+minute_microsecond	{m}{i}{n}{u}{t}{e}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+minute_second 		{m}{i}{n}{u}{t}{e}_{s}{e}{c}{o}{n}{d}
+hour_microsecond	{h}{o}{u}{r}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+hour_second 		{h}{o}{u}{r}_{s}{e}{c}{o}{n}{d}
+hour_minute		{h}{o}{u}{r}_{m}{i}{n}{u}{t}{e}
+day_microsecond		{d}{a}{y}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+day_second 		{d}{a}{y}_{s}{e}{c}{o}{n}{d}
+day_minute		{d}{a}{y}_{m}{i}{n}{u}{t}{e}
+day_hour		{d}{a}{y}_{h}{o}{u}{r}
+year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
+
+restrict	{r}{e}{s}{t}{r}{i}{c}{t}
+cascade		{c}{a}{s}{c}{a}{d}{e}
+no		{n}{o}
+action		{a}{c}{t}{i}{o}{n}
 
 %yyc c
 %yyn c = l.next()
 %yyt l.sc
 
-%x S1 S2 S3
+%x S1 S2 S3 S4
 
 %%
 		l.val = l.val[:0]
@@ -482,15 +608,33 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 
 \"			l.sc = S1
 '			l.sc = S2
+`			l.sc = S4
 
-<S1>(\\.|[^\"]|\"\")*\"		return l.str(lval, "\"")
-<S2>((\\')|[^']|\n|'')*'	return l.str(lval, "'")
+<S1>[^\"\\]*		l.stringLit = append(l.stringLit, l.val...)	
+<S1>\\.			l.stringLit = append(l.stringLit, l.val...)
+<S1>\"\"		l.stringLit = append(l.stringLit, '"')
+<S1>\"			l.stringLit = append(l.stringLit, '"')
+			l.sc = 0
+			return l.str(lval, "\"")	
+<S2>[^'\\]*		l.stringLit = append(l.stringLit, l.val...)	
+<S2>\\.			l.stringLit = append(l.stringLit, l.val...)
+<S2>''			l.stringLit = append(l.stringLit, '\'')
+<S2>'			l.stringLit = append(l.stringLit, '\'')
+			l.sc = 0
+			return l.str(lval, "'")
+<S4>[^`]*		l.stringLit = append(l.stringLit, l.val...)	
+<S4>``			l.stringLit = append(l.stringLit, '`')
+<S4>`			l.sc = 0
+			lval.item = string(l.stringLit)
+			l.stringLit = l.stringLit[0:0]
+			return identifier
 
 "&&"			return andand
 "&^"			return andnot
 "<<"			return lsh
 "<="			return le
 "=" 			return eq
+":="			return assignmentEq
 ">="			return ge
 "!="			return neq
 "<>"			return neq
@@ -504,28 +648,46 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {abs}			lval.item = string(l.val)
 			return abs
 {add}			return add
+{adddate}		lval.item = string(l.val)
+			return addDate
+{admin}			lval.item = string(l.val)
+			return admin
 {after}			lval.item = string(l.val)
 			return after
 {all}			return all
 {alter}			return alter
+{analyze}		return analyze
 {and}			return and
 {any}			lval.item = string(l.val)
 			return any
 {asc}			return asc
 {as}			return as
+{ascii}			lval.item = string(l.val)
+			return ascii
 {auto_increment}	lval.item = string(l.val)
 			return autoIncrement
 {avg}			lval.item = string(l.val)
 			return avg
+{avg_row_length}	lval.item = string(l.val)
+			return avgRowLength
 {begin}			lval.item = string(l.val)
 			return begin
 {between}		return between
+{binlog}		lval.item = string(l.val)
+			return binlog
+{both}			return both
+{btree}			lval.item = string(l.val)
+			return btree
 {by}			return by
 {case}			return caseKwd
-{cast}			return cast
+{cast}			lval.item = string(l.val)
+			return cast
 {character}		return character
 {charset}		lval.item = string(l.val)
 			return charsetKwd
+{check}			return check
+{checksum}		lval.item = string(l.val)
+			return checksum
 {coalesce}		lval.item = string(l.val)
 			return coalesce
 {collate}		return collate
@@ -538,37 +700,79 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return comment
 {commit}		lval.item = string(l.val)
 			return commit
+{committed}		lval.item = string(l.val)
+			return committed
+{compact}		lval.item = string(l.val)
+			return compact
+{compressed}		lval.item = string(l.val)
+			return compressed
+{compression}		lval.item = string(l.val)
+			return compression
 {concat}		lval.item = string(l.val)
 			return concat
 {concat_ws}		lval.item = string(l.val)
 			return concatWs
+{connection}		lval.item = string(l.val)
+			return connection
+{connection_id}		lval.item = string(l.val)
+			return connectionID
 {constraint}		return constraint
-{convert}		return convert
+{convert}		lval.item = string(l.val)
+			return convert
 {count}			lval.item = string(l.val)
 			return count
 {create}		return create
 {cross}			return cross
+{curdate}		lval.item = string(l.val)
+			return curDate
+{current_date}		lval.item = string(l.val)
+			return currentDate
+{curtime}		lval.item = string(l.val)
+			return curTime
+{current_time}		lval.item = string(l.val)
+			return currentTime
 {current_user}		lval.item = string(l.val)
 			return currentUser
 {database}		lval.item = string(l.val)
 			return database
 {databases}		return databases
+{date_add}		lval.item = string(l.val)
+			return dateAdd
+{date_format}		lval.item = string(l.val)
+			return dateFormat
+{date_sub}		lval.item = string(l.val)
+			return dateSub
 {day}			lval.item = string(l.val)
 			return day
+{dayname}		lval.item = string(l.val)
+			return dayname
 {dayofweek}		lval.item = string(l.val)
 			return dayofweek
 {dayofmonth}		lval.item = string(l.val)
 			return dayofmonth
 {dayofyear}		lval.item = string(l.val)
 			return dayofyear
+{day_hour}		lval.item = string(l.val)
+			return dayHour
+{day_microsecond}	lval.item = string(l.val)
+			return dayMicrosecond
+{day_minute}		lval.item = string(l.val)
+			return dayMinute
+{day_second}		lval.item = string(l.val)
+			return daySecond
+{ddl}			return ddl
 {deallocate}		lval.item = string(l.val)
 			return deallocate
 {default}		return defaultKwd
 {delayed}		return delayed
+{delay_key_write}	lval.item = string(l.val)
+			return delayKeyWrite
 {delete}		return deleteKwd
 {desc}			return desc
 {describe}		return describe
 {drop}			return drop
+{disable}		lval.item = string(l.val)
+			return disable
 {distinct}		return distinct
 {div}			return div
 {do}			lval.item = string(l.val)
@@ -576,7 +780,11 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {dual}			return dual
 {duplicate}		lval.item = string(l.val)
 			return duplicate
+{dynamic}		lval.item = string(l.val)
+			return dynamic
 {else}			return elseKwd
+{enable}		lval.item = string(l.val)
+			return enable
 {end}			lval.item = string(l.val)
 			return end
 {engine}		lval.item = string(l.val)
@@ -586,11 +794,20 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {execute}		lval.item = string(l.val)
 			return execute
 {enum}			return enum
+{escape}		lval.item = string(l.val)
+			return escape
 {exists}		return exists
 {explain}		return explain
+{extract}		lval.item = string(l.val)
+			return extract
+{fields}		lval.item = string(l.val)
+			return fields
 {first}			lval.item = string(l.val)
 			return first
+{fixed}			lval.item = string(l.val)
+			return fixed
 {for}			return forKwd
+{force}			return force
 {foreign}		return foreign
 {found_rows}		lval.item = string(l.val)
 			return foundRows
@@ -598,101 +815,200 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {full}			lval.item = string(l.val)
 			return full
 {fulltext}		return fulltext
+{grant}			return grant
+{grants}		lval.item = string(l.val)
+			return grants
+{greatest}		lval.item = string(l.val)
+			return greatest
 {group}			return group
 {group_concat}		lval.item = string(l.val)
 			return groupConcat
+{hash}			lval.item = string(l.val)
+			return hash
 {having}		return having
 {high_priority}		return highPriority
 {hour}			lval.item = string(l.val)
 			return hour
+{hour_microsecond}	lval.item = string(l.val)
+			return hourMicrosecond
+{hour_minute}		lval.item = string(l.val)
+			return hourMinute
+{hour_second}		lval.item = string(l.val)
+			return hourSecond
 {identified}		lval.item = string(l.val)
 			return identified
 {if}			lval.item = string(l.val)
 			return ifKwd
 {ifnull}		lval.item = string(l.val)
 			return ifNull
+{isnull}		lval.item = string(l.val)
+			return isNull
 {ignore}		return ignore
 {index}			return index
 {inner} 		return inner
 {insert}		return insert
+{interval}		return interval
 {into}			return into
 {in}			return in
 {is}			return is
+{isolation}		lval.item = string(l.val)
+			return isolation
 {join}			return join
 {key}			return key
+{key_block_size}	lval.item = string(l.val)
+			return keyBlockSize
+{keys}			return keys
+{last_insert_id}	lval.item = string(l.val)
+			return lastInsertID
+{leading}		return leading
 {left}			lval.item = string(l.val)
 			return left
 {length}		lval.item = string(l.val)
 			return length
+{level}			lval.item = string(l.val)
+			return level
 {like}			return like
 {limit}			return limit
 {local}			lval.item = string(l.val)
 			return local
+{locate}		lval.item = string(l.val)
+			return locate
 {lock}			return lock
+{lower}			lval.item = string(l.val)
+			return lower
+{lcase}			lval.item = string(l.val)
+			return lcase
 {low_priority}		return lowPriority
+{ltrim}			lval.item = string(l.val)
+			return ltrim
 {max}			lval.item = string(l.val)
 			return max
+{max_rows}		lval.item = string(l.val)
+			return maxRows
 {microsecond}		lval.item = string(l.val)
 			return microsecond
 {min}			lval.item = string(l.val)
 			return min
 {minute}		lval.item = string(l.val)
 			return minute
+{minute_microsecond}	lval.item = string(l.val)
+			return minuteMicrosecond
+{minute_second}		lval.item = string(l.val)
+			return minuteSecond
+{min_rows}		lval.item = string(l.val)
+			return minRows
 {mod}			return mod
 {mode}			lval.item = string(l.val)
 			return mode
 {month}			lval.item = string(l.val)
 			return month
+{monthname}		lval.item = string(l.val)
+			return monthname
 {names}			lval.item = string(l.val)
 			return names
+{national}		lval.item = string(l.val)
+			return national
 {not}			return not
 {offset}		lval.item = string(l.val)
 			return offset
 {on}			return on
+{only}			lval.item = string(l.val)
+			return only
+{option}		return option
 {order}			return order
 {or}			return or
 {outer}			return outer
 {password}		lval.item = string(l.val)
 			return password
+{pow}			lval.item = string(l.val)
+			return pow
+{power}		lval.item = string(l.val)
+			return power
 {prepare}		lval.item = string(l.val)
 			return prepare
 {primary}		return primary
+{privileges}		lval.item = string(l.val)
+			return privileges
+{procedure}		return procedure
+{quarter}		lval.item = string(l.val)
+			return quarter
 {quick}			lval.item = string(l.val)
 			return quick
+redundant		lval.item = string(l.val)
+			return redundant
 {right}			return right
 {rollback}		lval.item = string(l.val)
 			return rollback
+{round}			lval.item = string(l.val)
+			return round
 {row}			lval.item = string(l.val)
 			return row
+{row_format}		lval.item = string(l.val)
+			return rowFormat
 {schema}		lval.item = string(l.val)
 			return schema
 {schemas}		return schemas
+{serializable}		lval.item = string(l.val)
+			return serializable
 {session}		lval.item = string(l.val)
 			return session
 {some}			lval.item = string(l.val)
 			return some
+{space}			lval.item = string(l.val)
+			return space
 {start}			lval.item = string(l.val)
 			return start
+{statsPersistent}	lval.item = string(l.val)
+			return statsPersistent
+{status}		lval.item = string(l.val)
+			return status
+{get_lock}		lval.item = string(l.val)
+			return getLock
 {global}		lval.item = string(l.val)
 			return global
+{rand}			lval.item = string(l.val)
+			return rand
+{read}			return read
+{release_lock}		lval.item = string(l.val)
+			return releaseLock
 {repeat}		lval.item = string(l.val)
 			return repeat
-{regexp}		return regexp
+{repeatable}		lval.item = string(l.val)
+			return repeatable
+{regexp}		return regexpKwd
+{replace}		lval.item = string(l.val)
+			return replace
 {references}		return references
 {rlike}			return rlike
+{rtrim}			lval.item = string(l.val)
+			return rtrim
+{reverse}		lval.item = string(l.val)
+			return reverse
 
 {sys_var}		lval.item = string(l.val)
 			return sysVar
 
 {user_var}		lval.item = string(l.val)
 			return userVar
+{utc_date}		lval.item = string(l.val)
+			return utcDate
 {second}		lval.item = string(l.val)
 			return second
+{second_microsecond}	lval.item= string(l.val)
+			return secondMicrosecond
 {select}		return selectKwd
 
 {set}			return set
 {share}			return share
 {show}			return show
+{sleep}			lval.item = string(l.val)
+			return sleep
+{subdate}		lval.item = string(l.val)
+			return subDate
+{strcmp}		lval.item = string(l.val)
+			return strcmp
+{substr}		lval.item = string(l.val)
+			return substring
 {substring}		lval.item = string(l.val)
 			return substring
 {substring_index}	lval.item = string(l.val)
@@ -705,17 +1021,30 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {tables}		lval.item = string(l.val)
 			return tables
 {then}			return then
+{to}			return to
+{trailing}		return trailing
 {transaction}		lval.item = string(l.val)
 			return transaction
+{triggers}		lval.item = string(l.val)
+			return triggers
+{trim}			lval.item = string(l.val)
+			return trim
 {truncate}		lval.item = string(l.val)
 			return truncate
+{uncommitted}		lval.item = string(l.val)
+			return uncommitted
 {union}			return union
 {unique}		return unique
 {unknown}		lval.item = string(l.val)
 			return unknown
 {nullif}		lval.item = string(l.val)
 			return nullIf
+{unlock}		return unlock
 {update}		return update
+{upper}			lval.item = string(l.val)
+			return upper
+{ucase}			lval.item = string(l.val)
+			return ucase
 {use}			return use
 {user}			lval.item = string(l.val)
 			return user
@@ -725,6 +1054,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {values}		return values
 {variables}		lval.item = string(l.val)
 			return variables
+{version}		lval.item = string(l.val)
+			return version
 {warnings}		lval.item = string(l.val)
 			return warnings
 {week}			lval.item = string(l.val)
@@ -735,10 +1066,22 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return weekofyear
 {when}			return when
 {where}			return where
+{write}			return write
 {xor}			return xor
 {yearweek}		lval.item = string(l.val)
 			return yearweek
-			
+{year_month}		lval.item = string(l.val)
+			return yearMonth
+
+{restrict}		lval.item = string(l.val)
+			return restrict
+{cascade}		lval.item = string(l.val)
+			return cascade
+{no}			lval.item = string(l.val)
+			return no
+{action}		lval.item = string(l.val)
+			return action
+
 {signed}		lval.item = string(l.val)
 			return signed
 {unsigned}		return unsigned
@@ -753,6 +1096,10 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 
 {calc_found_rows}	lval.item = string(l.val)
 			return calcFoundRows
+{sql_cache}		lval.item = string(l.val)
+			return sqlCache
+{sql_no_cache}		lval.item = string(l.val)
+			return sqlNoCache
 
 {current_ts}		lval.item = string(l.val)
 			return currentTs
@@ -864,10 +1211,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return integerType
 
 {ident}			lval.item = string(l.val)
-			return identifier
-
-{quotedIdent}		lval.item = l.trimIdent(string(l.val))
-			return identifier
+			return l.handleIdent(lval)
 
 .			return c0
 
@@ -885,17 +1229,10 @@ func (l *lexer) npos() (line, col int) {
 
 func (l *lexer) str(lval *yySymType, pref string) int {
 	l.sc = 0
-	s := string(l.val)
 	// TODO: performance issue.
-	if pref == "'" {
-		s = strings.Replace(s, "''", "'", -1)
-		s = strings.Replace(s, "\\'", "'", -1)    
-		s = strings.TrimSuffix(s, "'") + "\""
-		pref = "\""
-	} else if pref == "\"" {
-		s = strings.Replace(s, "\"\"", "\"", -1)
-	}
-	v, err := strconv.Unquote(pref + s)
+	s := string(l.stringLit)
+	l.stringLit = l.stringLit[0:0]
+	v, err := stringutil.Unquote(pref + s)
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)
 	}
@@ -936,19 +1273,25 @@ func (l *lexer) float(lval *yySymType) int {
 	return floatLit
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
+// See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
 func (l *lexer) hex(lval *yySymType) int {
 	s := string(l.val)
 	h, err := mysql.ParseHex(s)
 	if err != nil {
-		l.errf("hexadecimal literal: %v", err)
-		return int(unicode.ReplacementChar)
+		// If parse hexadecimal literal to numerical value error, we should treat it as a string.
+		hexStr, err1 := mysql.ParseHexStr(s)
+		if err1 != nil {
+			l.errf("hex literal: %v", err)
+			return int(unicode.ReplacementChar)
+		}
+		lval.item = hexStr
+		return stringLit 
 	}
 	lval.item = h
 	return hexLit
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
+// See https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
 func (l *lexer) bit(lval *yySymType) int {
 	s := string(l.val)
 	b, err := mysql.ParseBit(s, -1)
@@ -958,4 +1301,20 @@ func (l *lexer) bit(lval *yySymType) int {
 	}
 	lval.item = b
 	return bitLit
+}
+
+func (l *lexer) handleIdent(lval *yySymType) int {
+	s := lval.item.(string)
+	// A character string literal may have an optional character set introducer and COLLATE clause:
+	// [_charset_name]'string' [COLLATE collation_name]
+	// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
+	if !strings.HasPrefix(s, "_") {
+		return identifier	
+	}
+	cs, _, err := charset.GetCharsetInfo(s[1:])
+	if err != nil {
+		return identifier	
+	}
+	lval.item = cs
+	return underscoreCS
 }

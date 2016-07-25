@@ -16,9 +16,10 @@ package codec
 import (
 	"bytes"
 	"math/big"
+	"strconv"
 
 	"github.com/juju/errors"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 )
 
 const (
@@ -35,46 +36,15 @@ func codecSign(value int64) int64 {
 	return positiveSign
 }
 
-func encodeExp(expValue int64, expSign int64, valSign int64) int64 {
-	if expSign == negativeSign {
-		expValue = -expValue
-	}
-
-	if expSign != valSign {
-		expValue = ^expValue
-	}
-
-	return expValue
-}
-
-func decodeExp(expValue int64, expSign int64, valSign int64) int64 {
-	if expSign != valSign {
-		expValue = ^expValue
-	}
-
-	if expSign == negativeSign {
-		expValue = -expValue
-	}
-
-	return expValue
-}
-
-func codecValue(value []byte, valSign int64) {
-	if valSign == negativeSign {
-		reverseBytes(value)
-	}
-}
-
 // EncodeDecimal encodes a decimal d into a byte slice which can be sorted lexicographically later.
 // EncodeDecimal guarantees that the encoded value is in ascending order for comparison.
 // Decimal encoding:
-// EncodeInt    -> value sign
-// EncodeInt    -> exp sign
-// EncodeInt    -> exp value
-// EncodeBytes  -> abs value bytes
+// Byte -> value sign
+// EncodeInt -> exp value
+// EncodeBytes -> abs value bytes
 func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 	if d.Equals(mysql.ZeroDecimal) {
-		return EncodeInt(b, zeroSign)
+		return append(b, byte(zeroSign))
 	}
 
 	v := d.BigIntValue()
@@ -83,69 +53,58 @@ func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 	absVal := new(big.Int)
 	absVal.Abs(v)
 
-	value := []byte(absVal.String())
-
-	// Trim right side "0", like "12.34000" -> "12.34" or "0.1234000" -> "0.1234".
-	if d.Exponent() != 0 {
-		value = bytes.TrimRight(value, "0")
-	}
-
 	// Get exp and value, format is "value":"exp".
 	// like "12.34" -> "0.1234":"2".
 	// like "-0.01234" -> "-0.1234":"-1".
 	exp := int64(0)
 	div := big.NewInt(10)
+	mod := big.NewInt(0)
+	value := []byte{}
 	for ; ; exp++ {
 		if absVal.Sign() == 0 {
 			break
 		}
-		absVal = absVal.Div(absVal, div)
+
+		mod.Mod(absVal, div)
+		absVal.Div(absVal, div)
+		value = append([]byte(strconv.Itoa(int(mod.Int64()))), value...)
 	}
 
+	value = bytes.TrimRight(value, "0")
+
 	expVal := exp + int64(d.Exponent())
-	expSign := codecSign(expVal)
+	if valSign == negativeSign {
+		expVal = -expVal
+	}
 
-	// For negtive exp, do bit reverse for exp.
-	// For negtive decimal, do bit reverse for exp and value.
-	expVal = encodeExp(expVal, expSign, valSign)
-	codecValue(value, valSign)
-
-	r := EncodeInt(b, valSign)
-	r = EncodeInt(r, expSign)
-	r = EncodeInt(r, expVal)
-	r = EncodeBytes(r, value)
-	return r
+	b = append(b, byte(valSign))
+	b = EncodeInt(b, expVal)
+	if valSign == negativeSign {
+		b = EncodeBytesDesc(b, value)
+	} else {
+		b = EncodeBytes(b, value)
+	}
+	return b
 }
 
 // DecodeDecimal decodes bytes to decimal.
 // DecodeFloat decodes a float from a byte slice
 // Decimal decoding:
-// DecodeInt    -> value sign
-// DecodeInt    -> exp sign
-// DecodeInt    -> exp value
-// DecodeBytes  -> abs value bytes
+// Byte -> value sign
+// DecodeInt -> exp value
+// DecodeBytes -> abs value bytes
 func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {
 	var (
-		r   []byte
+		r   = b
 		d   mysql.Decimal
 		err error
 	)
 
 	// Decode value sign.
-	valSign := zeroSign
-	r, valSign, err = DecodeInt(b)
-	if err != nil {
-		return r, d, errors.Trace(err)
-	}
+	valSign := int64(r[0])
+	r = r[1:]
 	if valSign == zeroSign {
 		d, err = mysql.ParseDecimal("0")
-		return r, d, errors.Trace(err)
-	}
-
-	// Decode exp sign.
-	expSign := zeroSign
-	r, expSign, err = DecodeInt(r)
-	if err != nil {
 		return r, d, errors.Trace(err)
 	}
 
@@ -155,35 +114,38 @@ func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {
 	if err != nil {
 		return r, d, errors.Trace(err)
 	}
-	expVal = decodeExp(expVal, expSign, valSign)
 
 	// Decode abs value bytes.
 	value := []byte{}
-	r, value, err = DecodeBytes(r)
+	if valSign == negativeSign {
+		expVal = -expVal
+		r, value, err = DecodeBytesDesc(r)
+	} else {
+		r, value, err = DecodeBytes(r)
+	}
 	if err != nil {
 		return r, d, errors.Trace(err)
 	}
-	codecValue(value, valSign)
 
-	// Generate decimal string value.
-	var decimalStr []byte
+	// Set decimal sign and point to value.
 	if valSign == negativeSign {
-		decimalStr = append(decimalStr, '-')
-	}
-
-	if expVal <= 0 {
-		// Like decimal "0.1234" or "0.01234".
-		decimalStr = append(decimalStr, '0')
-		decimalStr = append(decimalStr, '.')
-		decimalStr = append(decimalStr, bytes.Repeat([]byte{'0'}, -int(expVal))...)
-		decimalStr = append(decimalStr, value...)
+		value = append([]byte("-0."), value...)
 	} else {
-		// Like decimal "12.34".
-		decimalStr = append(decimalStr, value[:expVal]...)
-		decimalStr = append(decimalStr, '.')
-		decimalStr = append(decimalStr, value[expVal:]...)
+		value = append([]byte("0."), value...)
 	}
 
-	d, err = mysql.ParseDecimal(string(decimalStr))
-	return r, d, errors.Trace(err)
+	numberDecimal, err := mysql.ParseDecimal(string(value))
+	if err != nil {
+		return r, d, errors.Trace(err)
+	}
+
+	expDecimal := mysql.NewDecimalFromInt(1, int32(expVal))
+	d = numberDecimal.Mul(expDecimal)
+	if expDecimal.Exponent() > 0 {
+		// For int64(3), it will be converted to value=0.3 and exp=1 when doing encode.
+		// Its frac will be changed after we run d = numberDecimal.Mul(expDecimal).
+		// So we try to get frac to the original one.
+		d.SetFracDigits(d.FracDigits() - expDecimal.Exponent())
+	}
+	return r, d, nil
 }

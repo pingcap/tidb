@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -33,4 +34,117 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(abc.O, Equals, "aBC")
 	c.Assert(abc.L, Equals, "abc")
 	c.Assert(abc.String(), Equals, "aBC")
+}
+
+func (*testSuite) TestClone(c *C) {
+	column := &ColumnInfo{
+		ID:           1,
+		Name:         NewCIStr("c"),
+		Offset:       0,
+		DefaultValue: 0,
+		FieldType:    *types.NewFieldType(0),
+	}
+
+	index := &IndexInfo{
+		Name:  NewCIStr("key"),
+		Table: NewCIStr("t"),
+		Columns: []*IndexColumn{
+			{
+				Name:   NewCIStr("c"),
+				Offset: 0,
+				Length: 10,
+			}},
+		Unique:  true,
+		Primary: true,
+	}
+
+	table := &TableInfo{
+		ID:          1,
+		Name:        NewCIStr("t"),
+		Charset:     "utf8",
+		Collate:     "utf8",
+		Columns:     []*ColumnInfo{column},
+		Indices:     []*IndexInfo{index},
+		ForeignKeys: []*FKInfo{},
+	}
+
+	dbInfo := &DBInfo{
+		ID:      1,
+		Name:    NewCIStr("test"),
+		Charset: "utf8",
+		Collate: "utf8",
+		Tables:  []*TableInfo{table},
+	}
+
+	n := dbInfo.Clone()
+	c.Assert(n, DeepEquals, dbInfo)
+}
+
+func (*testSuite) TestJobCodec(c *C) {
+	type A struct {
+		Name string
+	}
+	job := &Job{
+		ID:   1,
+		Args: []interface{}{NewCIStr("a"), A{Name: "abc"}},
+	}
+
+	b, err := job.Encode()
+	c.Assert(err, IsNil)
+
+	newJob := &Job{}
+	err = newJob.Decode(b)
+	c.Assert(err, IsNil)
+
+	name := CIStr{}
+	a := A{}
+	err = newJob.DecodeArgs(&name, &a)
+	c.Assert(err, IsNil)
+	c.Assert(name, DeepEquals, NewCIStr("a"))
+	c.Assert(a, DeepEquals, A{Name: "abc"})
+
+	c.Assert(len(newJob.String()), Greater, 0)
+
+	job.State = JobDone
+	c.Assert(job.IsFinished(), IsTrue)
+	c.Assert(job.IsRunning(), IsFalse)
+}
+
+func (testSuite) TestState(c *C) {
+	schemaTbl := []SchemaState{
+		StateDeleteOnly,
+		StateWriteOnly,
+		StateWriteReorganization,
+		StateDeleteReorganization,
+		StatePublic,
+	}
+
+	for _, state := range schemaTbl {
+		c.Assert(len(state.String()), Greater, 0)
+	}
+
+	jobTbl := []JobState{
+		JobRunning,
+		JobDone,
+		JobCancelled,
+	}
+
+	for _, state := range jobTbl {
+		c.Assert(len(state.String()), Greater, 0)
+	}
+
+	actionTbl := []ActionType{
+		ActionCreateSchema,
+		ActionDropSchema,
+		ActionCreateTable,
+		ActionDropTable,
+		ActionAddColumn,
+		ActionDropColumn,
+		ActionAddIndex,
+		ActionDropIndex,
+	}
+
+	for _, action := range actionTbl {
+		c.Assert(len(action.String()), Greater, 0)
+	}
 }

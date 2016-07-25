@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -37,6 +38,7 @@ func (k contextKeyType) String() string {
 const contextKey contextKeyType = 0
 
 func (s *testMockSuite) TestContext(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := NewContext()
 
 	ctx.SetValue(contextKey, 1)
@@ -50,6 +52,6 @@ func (s *testMockSuite) TestContext(c *C) {
 	_, err := ctx.GetTxn(false)
 	c.Assert(err, IsNil)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 }

@@ -15,7 +15,8 @@ package codec
 
 import (
 	. "github.com/pingcap/check"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testDecimalSuite{})
@@ -24,6 +25,7 @@ type testDecimalSuite struct {
 }
 
 func (s *testDecimalSuite) TestDecimalCodec(c *C) {
+	defer testleak.AfterTest(c)()
 	inputs := []struct {
 		Input float64
 	}{
@@ -49,4 +51,26 @@ func (s *testDecimalSuite) TestDecimalCodec(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v.Equals(d), IsTrue)
 	}
+}
+
+func (s *testDecimalSuite) TestFrac(c *C) {
+	defer testleak.AfterTest(c)()
+	inputs := []struct {
+		Input mysql.Decimal
+	}{
+		{mysql.NewDecimalFromInt(int64(3), 0)},
+		{mysql.NewDecimalFromFloat(float64(0.03))},
+	}
+	for _, v := range inputs {
+		testFrac(c, v.Input)
+	}
+}
+
+func testFrac(c *C, v mysql.Decimal) {
+	b := EncodeDecimal([]byte{}, v)
+	_, d, err := DecodeDecimal(b)
+	c.Assert(err, IsNil)
+	c.Assert(v.Equals(d), IsTrue)
+	c.Assert(v.FracDigits(), Equals, d.FracDigits())
+	c.Assert(v.String(), Equals, d.String())
 }

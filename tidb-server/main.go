@@ -20,43 +20,83 @@ import (
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/ngaut/systimemon"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/tidb-server/server"
+	"github.com/pingcap/tidb/metric"
+	"github.com/pingcap/tidb/perfschema"
+	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/store/localstore/boltdb"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
 )
 
 var (
-	store     = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb]")
-	storePath = flag.String("path", "/tmp/tidb", "tidb storage path")
-	logLevel  = flag.String("L", "debug", "log level: info, debug, warn, error, fatal")
-	port      = flag.String("P", "4000", "mp server port")
+	store      = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
+	storePath  = flag.String("path", "/tmp/tidb", "tidb storage path")
+	logLevel   = flag.String("L", "debug", "log level: info, debug, warn, error, fatal")
+	port       = flag.String("P", "4000", "mp server port")
+	statusPort = flag.String("status", "10080", "tidb server status port")
+	lease      = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
+	socket     = flag.String("socket", "", "The socket file to use for connection.")
+	enablePS   = flag.Int("perfschema", 0, "If enable performance schema.")
+	useNewPlan = flag.Int("newplan", 0, "If use new planner.")
 )
 
 func main() {
+	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
+	tidb.RegisterStore("tikv", tikv.Driver{})
+
+	metric.RunMetric(3 * time.Second)
 	printer.PrintTiDBInfo()
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	flag.Parse()
 
+	if *lease < 0 {
+		log.Fatalf("invalid lease seconds %d", *lease)
+	}
+
+	tidb.SetSchemaLease(time.Duration(*lease) * time.Second)
+
 	cfg := &server.Config{
-		Addr:     fmt.Sprintf(":%s", *port),
-		LogLevel: *logLevel,
+		Addr:       fmt.Sprintf(":%s", *port),
+		LogLevel:   *logLevel,
+		StatusAddr: fmt.Sprintf(":%s", *statusPort),
+		Socket:     *socket,
 	}
 
 	log.SetLevelByString(cfg.LogLevel)
 	store, err := tidb.NewStore(fmt.Sprintf("%s://%s", *store, *storePath))
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(errors.ErrorStack(err))
 	}
+
+	if *enablePS == 1 {
+		perfschema.EnablePerfSchema()
+	}
+
+	if *useNewPlan == 1 {
+		plan.UseNewPlanner = true
+	}
+
+	// Create a session to load information schema.
+	se, err := tidb.CreateSession(store)
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
+	se.Close()
 
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(store)
 	var svr *server.Server
 	svr, err = server.NewServer(cfg, driver)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(errors.ErrorStack(err))
 	}
 
 	sc := make(chan os.Signal, 1)
@@ -72,6 +112,10 @@ func main() {
 		svr.Close()
 		os.Exit(0)
 	}()
+
+	go systimemon.StartMonitor(time.Now, func() {
+		log.Error("error: system time jump backward")
+	})
 
 	log.Error(svr.Run())
 }
