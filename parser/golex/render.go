@@ -59,8 +59,8 @@ func (r *renderGo) prolog(l *lex.L) {
 		for _, sc := range x {
 			state := l.StartConditionsStates[sc]
 			r.wprintf("case %d: // start condition: %s\n", sc, scNames[sc])
-			if state, ok := l.StartConditionsBolStates[sc]; ok {
-				r.wprintf("if yyb { goto yystart%d }\n", state.Index)
+			if state1, ok := l.StartConditionsBolStates[sc]; ok {
+				r.wprintf("if yyb { goto yystart%d }\n", state1.Index)
 			}
 			r.wprintf("goto yystart%d\n", state.Index)
 		}

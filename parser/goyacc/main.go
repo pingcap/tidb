@@ -221,14 +221,14 @@ func main1(in string) (err error) {
 		}
 
 		defer func() {
-			if e := f.Close(); e != nil && err == nil {
-				err = e
+			if e1 := f.Close(); e1 != nil && err == nil {
+				err = e1
 			}
 		}()
 		w := bufio.NewWriter(f)
 		defer func() {
-			if e := w.Flush(); e != nil && err == nil {
-				err = e
+			if e1 := w.Flush(); e1 != nil && err == nil {
+				err = e1
 			}
 		}()
 		buf := bytes.NewBuffer(nil)
@@ -247,9 +247,9 @@ func main1(in string) (err error) {
 
 	var rep io.Writer
 	if nm := *oReport; nm != "" {
-		f, err := os.Create(nm)
-		if err != nil {
-			return err
+		f, err1 := os.Create(nm)
+		if err1 != nil {
+			return err1
 		}
 
 		defer func() {
@@ -268,9 +268,9 @@ func main1(in string) (err error) {
 
 	var xerrors []byte
 	if nm := *oXErrors; nm != "" {
-		b, err := ioutil.ReadFile(nm)
-		if err != nil {
-			return err
+		b, err1 := ioutil.ReadFile(nm)
+		if err1 != nil {
+			return err1
 		}
 
 		xerrors = b

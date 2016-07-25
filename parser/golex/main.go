@@ -18,6 +18,7 @@ import (
 )
 
 const (
+	// OFILE defines the lexer output file name
 	OFILE = "lex.yy.go"
 )
 
@@ -63,8 +64,6 @@ func q(c uint32) string {
 	case '"':
 		return "'\"'"
 	}
-
-	panic("unreachable")
 }
 
 func main() {
@@ -122,9 +121,9 @@ func main() {
 		if oflag == "" {
 			oflag = OFILE
 		}
-		g, err := os.Create(oflag)
-		if err != nil {
-			log.Fatal(err)
+		g, err1 := os.Create(oflag)
+		if err1 != nil {
+			log.Fatal(err1)
 		}
 
 		defer g.Close()
