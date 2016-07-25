@@ -504,10 +504,12 @@ func (a *AggregateFuncExtractor) resolveFromSchema(v *ast.ColumnNameExpr, schema
 			return i, nil
 		}
 	}
-	a.selectFields = append(a.selectFields, &ast.SelectField{
+	sf := &ast.SelectField{
 		Expr:      &ast.ColumnNameExpr{Name: newColName},
 		Auxiliary: true,
-	})
+	}
+	sf.Expr.SetType(col.GetType())
+	a.selectFields = append(a.selectFields, sf)
 	return len(a.selectFields) - 1, nil
 }
 

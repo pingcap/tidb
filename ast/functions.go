@@ -195,7 +195,7 @@ type AggregateFuncExpr struct {
 	// but "sum(distinct c1)" is "3".
 	Distinct bool
 
-	CurrentGroup string
+	CurrentGroup []byte
 	// contextPerGroupMap is used to store aggregate evaluation context.
 	// Each entry for a group.
 	contextPerGroupMap map[string](*AggEvaluateContext)
@@ -220,7 +220,7 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 
 // Clear clears aggregate computing context.
 func (n *AggregateFuncExpr) Clear() {
-	n.CurrentGroup = ""
+	n.CurrentGroup = []byte{}
 	n.contextPerGroupMap = nil
 }
 
@@ -250,14 +250,14 @@ func (n *AggregateFuncExpr) GetContext() *AggEvaluateContext {
 	if n.contextPerGroupMap == nil {
 		n.contextPerGroupMap = make(map[string](*AggEvaluateContext))
 	}
-	if _, ok := n.contextPerGroupMap[n.CurrentGroup]; !ok {
+	if _, ok := n.contextPerGroupMap[string(n.CurrentGroup)]; !ok {
 		c := &AggEvaluateContext{}
 		if n.Distinct {
 			c.DistinctChecker = distinct.CreateDistinctChecker()
 		}
-		n.contextPerGroupMap[n.CurrentGroup] = c
+		n.contextPerGroupMap[string(n.CurrentGroup)] = c
 	}
-	return n.contextPerGroupMap[n.CurrentGroup]
+	return n.contextPerGroupMap[string(n.CurrentGroup)]
 }
 
 // SetContext sets the aggregate expr evaluation context.
@@ -290,14 +290,13 @@ func (n *AggregateFuncExpr) updateCount() error {
 
 func (n *AggregateFuncExpr) updateFirstRow() error {
 	ctx := n.GetContext()
-	if ctx.Evaluated {
+	if !ctx.Value.IsNull() {
 		return nil
 	}
 	if len(n.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
-	ctx.Value = n.Args[0].GetValue()
-	ctx.Evaluated = true
+	ctx.Value = *n.Args[0].GetDatum()
 	return nil
 }
 
@@ -306,13 +305,12 @@ func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
 	if len(n.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
-	v := n.Args[0].GetValue()
-	if !ctx.Evaluated {
+	v := *n.Args[0].GetDatum()
+	if ctx.Value.IsNull() {
 		ctx.Value = v
-		ctx.Evaluated = true
 		return nil
 	}
-	c, err := types.Compare(ctx.Value, v)
+	c, err := ctx.Value.CompareDatum(v)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -331,13 +329,12 @@ func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
 
 func (n *AggregateFuncExpr) updateSum() error {
 	ctx := n.GetContext()
-	a := n.Args[0]
-	value := a.GetValue()
-	if value == nil {
+	value := *n.Args[0].GetDatum()
+	if value.IsNull() {
 		return nil
 	}
 	if n.Distinct {
-		d, err := ctx.DistinctChecker.Check([]interface{}{value})
+		d, err := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -440,7 +437,6 @@ func (a *AggregateFuncExtractor) Leave(n Node) (node Node, ok bool) {
 type AggEvaluateContext struct {
 	DistinctChecker *distinct.Checker
 	Count           int64
-	Value           interface{}
+	Value           types.Datum
 	Buffer          *bytes.Buffer // Buffer is used for group_concat.
-	Evaluated       bool
 }

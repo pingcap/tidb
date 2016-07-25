@@ -4,6 +4,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testFunctionsSuite{})
@@ -79,7 +80,7 @@ func (ts *testFunctionsSuite) TestAggFuncCount(c *C) {
 		F:        AggFuncCount,
 		Distinct: true,
 	}
-	agg.CurrentGroup = "xx"
+	agg.CurrentGroup = []byte("xx")
 	expr := NewValueExpr(1)
 	expr1 := NewValueExpr(nil)
 	expr2 := NewValueExpr(1)
@@ -95,7 +96,7 @@ func (ts *testFunctionsSuite) TestAggFuncCount(c *C) {
 		Args: args,
 		F:    AggFuncCount,
 	}
-	agg.CurrentGroup = "xx"
+	agg.CurrentGroup = []byte("xx")
 	expr = NewValueExpr(1)
 	expr1 = NewValueExpr(nil)
 	expr2 = NewValueExpr(1)
@@ -116,7 +117,7 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 		F:        AggFuncSum,
 		Distinct: true,
 	}
-	agg.CurrentGroup = "xx"
+	agg.CurrentGroup = []byte("xx")
 	expr := NewValueExpr(1)
 	expr1 := NewValueExpr(nil)
 	expr2 := NewValueExpr(1)
@@ -127,15 +128,14 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 	}
 	ctx := agg.GetContext()
 	expect, _ := mysql.ConvertToDecimal(1)
-	v, ok := ctx.Value.(mysql.Decimal)
-	c.Assert(ok, IsTrue)
-	c.Assert(v.Equals(expect), IsTrue)
+	c.Assert(ctx.Value.Kind(), Equals, types.KindMysqlDecimal)
+	c.Assert(ctx.Value.GetMysqlDecimal().Equals(expect), IsTrue)
 	// sum without distinct
 	agg = &AggregateFuncExpr{
 		Args: args,
 		F:    AggFuncSum,
 	}
-	agg.CurrentGroup = "xx"
+	agg.CurrentGroup = []byte("xx")
 	expr = NewValueExpr(2)
 	expr1 = NewValueExpr(nil)
 	expr2 = NewValueExpr(2)
@@ -146,7 +146,6 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 	}
 	ctx = agg.GetContext()
 	expect, _ = mysql.ConvertToDecimal(4)
-	v, ok = ctx.Value.(mysql.Decimal)
-	c.Assert(ok, IsTrue)
-	c.Assert(v.Equals(expect), IsTrue)
+	c.Assert(ctx.Value.Kind(), Equals, types.KindMysqlDecimal)
+	c.Assert(ctx.Value.GetMysqlDecimal().Equals(expect), IsTrue)
 }

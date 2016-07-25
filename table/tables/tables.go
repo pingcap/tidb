@@ -329,10 +329,6 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		if col.IsPKHandleColumn(t.meta) {
 			continue
 		}
-		if col.DefaultValue == nil && r[col.Offset].IsNull() {
-			// Save storage space by not storing null value.
-			continue
-		}
 		var value types.Datum
 		if col.State == model.StateWriteOnly || col.State == model.StateWriteReorganization {
 			// if col is in write only or write reorganization state, we must add it with its default value.
@@ -342,6 +338,10 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 			}
 		} else {
 			value = r[col.Offset]
+			if col.DefaultValue == nil && r[col.Offset].IsNull() {
+				// Save storage space by not storing null value.
+				continue
+			}
 		}
 		colIDs = append(colIDs, col.ID)
 		row = append(row, value)

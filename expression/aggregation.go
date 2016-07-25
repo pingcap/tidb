@@ -45,6 +45,12 @@ type AggregationFunction interface {
 
 	// Clear collects the mapper's memory.
 	Clear()
+
+	// IsDistinct indicates if the aggregate function contains distinct attribute.
+	IsDistinct() bool
+
+	// SetContext sets the aggregate evaluation context.
+	SetContext(ctx map[string](*ast.AggEvaluateContext))
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -85,6 +91,10 @@ func newAggFunc(name string, args []Expression, dist bool) aggFunction {
 		Distinct:     dist}
 }
 
+func (af *aggFunction) IsDistinct() bool {
+	return af.Distinct
+}
+
 func (af *aggFunction) Clear() {
 	af.resultMapper = make(aggCtxMapper, 0)
 }
@@ -116,6 +126,10 @@ func (af *aggFunction) getContext(groupKey []byte) *ast.AggEvaluateContext {
 	return ctx
 }
 
+func (af *aggFunction) SetContext(ctx map[string](*ast.AggEvaluateContext)) {
+	af.resultMapper = ctx
+}
+
 func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := af.getContext(groupKey)
 	a := af.Args[0]
@@ -123,7 +137,7 @@ func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx contex
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if value.GetValue() == nil {
+	if value.IsNull() {
 		return nil
 	}
 	if af.Distinct {
@@ -135,7 +149,7 @@ func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx contex
 			return nil
 		}
 	}
-	ctx.Value, err = types.CalculateSum(ctx.Value, value.GetValue())
+	ctx.Value, err = types.CalculateSum(ctx.Value, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -154,8 +168,7 @@ func (sf *sumFunction) Update(row []types.Datum, groupKey []byte, ctx context.Co
 
 // GetGroupResult implements AggregationFunction interface.
 func (sf *sumFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
-	d.SetValue(sf.getContext(groupKey).Value)
-	return
+	return sf.getContext(groupKey).Value
 }
 
 type countFunction struct {
@@ -212,14 +225,13 @@ func (af *avgFunction) Update(row []types.Datum, groupKey []byte, ctx context.Co
 // GetGroupResult implements AggregationFunction interface.
 func (af *avgFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	ctx := af.getContext(groupKey)
-	switch x := ctx.Value.(type) {
-	case float64:
-		t := x / float64(ctx.Count)
-		ctx.Value = t
-		d.SetFloat64(t)
-	case mysql.Decimal:
+	switch ctx.Value.Kind() {
+	case types.KindFloat64:
+		t := ctx.Value.GetFloat64() / float64(ctx.Count)
+		d.SetValue(t)
+	case types.KindMysqlDecimal:
+		x := ctx.Value.GetMysqlDecimal()
 		t := x.Div(mysql.NewDecimalFromUint(uint64(ctx.Count), 0))
-		ctx.Value = t
 		d.SetMysqlDecimal(t)
 	}
 	return
@@ -283,8 +295,7 @@ type maxMinFunction struct {
 
 // GetGroupResult implements AggregationFunction interface.
 func (mmf *maxMinFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
-	d.SetValue(mmf.getContext(groupKey).Value)
-	return
+	return mmf.getContext(groupKey).Value
 }
 
 // Update implements AggregationFunction interface.
@@ -298,21 +309,20 @@ func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte, ectx conte
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !ctx.Evaluated {
-		ctx.Value = value.GetValue()
+	if ctx.Value.IsNull() {
+		ctx.Value = value
 	}
-	if value.GetValue() == nil {
+	if value.IsNull() {
 		return nil
 	}
 	var c int
-	c, err = types.Compare(ctx.Value, value.GetValue())
+	c, err = ctx.Value.CompareDatum(value)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if (mmf.isMax && c == -1) || (!mmf.isMax && c == 1) {
-		ctx.Value = value.GetValue()
+		ctx.Value = value
 	}
-	ctx.Evaluated = true
 	return nil
 }
 
@@ -323,7 +333,7 @@ type firstRowFunction struct {
 // Update implements AggregationFunction interface.
 func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := ff.getContext(groupKey)
-	if ctx.Evaluated {
+	if !ctx.Value.IsNull() {
 		return nil
 	}
 	if len(ff.Args) != 1 {
@@ -333,13 +343,11 @@ func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx cont
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.Value = value.GetValue()
-	ctx.Evaluated = true
+	ctx.Value = value
 	return nil
 }
 
 // GetGroupResult implements AggregationFunction interface.
 func (ff *firstRowFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
-	d.SetValue(ff.getContext(groupKey).Value)
-	return
+	return ff.getContext(groupKey).Value
 }
