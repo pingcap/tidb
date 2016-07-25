@@ -54,8 +54,8 @@ install:
 TEMP_FILE = temp_parser_file
 
 parser:
-	go install github.com/pingcap/tidb/_vendor/vendor/github.com/pingcap/goyacc
-	go install github.com/pingcap/tidb/_vendor/vendor/github.com/qiuyesuifeng/golex
+	$(GO) install github.com/pingcap/tidb/_vendor/vendor/github.com/pingcap/goyacc
+	$(GO) install github.com/pingcap/tidb/_vendor/vendor/github.com/qiuyesuifeng/golex
 	$(GOYACC) -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
 	$(GOYACC) -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}'
 	rm -f $(TEMP_FILE)
