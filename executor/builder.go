@@ -675,10 +675,12 @@ func (b *executorBuilder) buildNewUnionScanExec(src Executor, condition expressi
 	us := &UnionScanExec{ctx: b.ctx, Src: src}
 	switch x := src.(type) {
 	case *NewXSelectTableExec:
+		us.desc = x.desc
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.newCondition = condition
 		us.newBuildAndSortAddedRows(x.table, x.asName)
 	case *NewXSelectIndexExec:
+		us.desc = x.indexPlan.Desc
 		for _, ic := range x.indexPlan.Index.Columns {
 			for i, col := range x.indexPlan.GetSchema() {
 				if col.ColName.L == ic.Name.L {

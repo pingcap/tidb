@@ -17,14 +17,13 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -821,15 +820,19 @@ func (b *planBuilder) buildNewTableDual() LogicalPlan {
 	return dual
 }
 
-func (b *planBuilder) getStaticTable(table *model.TableInfo) *statistics.Table {
+func (b *planBuilder) getTableStats(table *model.TableInfo) *statistics.Table {
 	txn, err := b.ctx.GetTxn(false)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
 	}
+	// mock ctx
+	if txn == nil {
+		return statistics.PseudoTable(table)
+	}
 	m := meta.NewMeta(txn)
 	statsPB, err := m.GetTableStats(table.ID)
-	if terror.ErrorEqual(err, kv.ErrNotExist) {
+	if statsPB == nil {
 		return statistics.PseudoTable(table)
 	}
 	if err != nil {
@@ -845,7 +848,7 @@ func (b *planBuilder) getStaticTable(table *model.TableInfo) *statistics.Table {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	statisticTable := b.getStaticTable(tn.TableInfo)
+	statisticTable := b.getTableStats(tn.TableInfo)
 	if b.err != nil {
 		return nil
 	}
@@ -856,6 +859,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		statisticTable:  statisticTable,
 	}
 	p.initID()
+	log.Warnf("build! %s", p.id)
 	// Equal condition contains a column from previous joined table.
 	rfs := tn.GetResultFields()
 	schema := make([]*expression.Column, 0, len(rfs))
@@ -990,6 +994,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	joinPlan.LeftConditions = leftCond
 	joinPlan.RightConditions = rightCond
 	joinPlan.OtherConditions = otherCond
+	//	log.Warnf("build semi join %s", eqCond[0].ToString())
 	if asScalar {
 		joinPlan.SetSchema(append(outerPlan.GetSchema().DeepCopy(), &expression.Column{
 			FromID:      joinPlan.id,
@@ -1003,7 +1008,8 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		joinPlan.JoinType = SemiJoin
 	}
 	joinPlan.anti = not
-	addChild(joinPlan, outerPlan)
-	addChild(joinPlan, innerPlan)
+	joinPlan.SetChildren(outerPlan, innerPlan)
+	outerPlan.SetParents(joinPlan)
+	innerPlan.SetParents(joinPlan)
 	return joinPlan
 }

@@ -250,7 +250,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 			er.err = errors.Trace(err)
 			return v, true
 		}
-		_, res, _, err := np.Convert2PhysicalPlan(nil)
+		_, res, _, err := np.convert2PhysicalPlan(nil)
 		phyPlan := res.p.PushLimit(nil)
 		if err != nil {
 			er.err = errors.Trace(err)
@@ -369,7 +369,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	_, res, _, err := np.Convert2PhysicalPlan(nil)
+	_, res, _, err := np.convert2PhysicalPlan(nil)
 	phyPlan := res.p.PushLimit(nil)
 	if err != nil {
 		er.err = errors.Trace(err)

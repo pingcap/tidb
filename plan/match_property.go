@@ -17,7 +17,8 @@ import (
 	"math"
 )
 
-func (ts *PhysicalTableScan) MatchProperty(prop requiredProperty, rowCounts []uint64, _ ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (ts *PhysicalTableScan) matchProperty(prop requiredProperty, rowCounts []uint64, _ ...*responseProperty) *responseProperty {
 	rowCount := float64(rowCounts[0])
 	cost := rowCount * netWorkFactor
 	if len(prop) == 0 {
@@ -31,7 +32,8 @@ func (ts *PhysicalTableScan) MatchProperty(prop requiredProperty, rowCounts []ui
 	return &responseProperty{p: ts, cost: math.MaxFloat64}
 }
 
-func (is *PhysicalIndexScan) MatchProperty(prop requiredProperty, rowCounts []uint64, _ ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (is *PhysicalIndexScan) matchProperty(prop requiredProperty, rowCounts []uint64, _ ...*responseProperty) *responseProperty {
 	rowCount := float64(rowCounts[0])
 	// currently index read from kv 2 times.
 	cost := rowCount * netWorkFactor * 2
@@ -47,12 +49,12 @@ func (is *PhysicalIndexScan) MatchProperty(prop requiredProperty, rowCounts []ui
 			}
 			continue
 		}
-		matched++
 		if prop[matched].desc {
 			allAsc = false
 		} else {
 			allDesc = false
 		}
+		matched++
 		if matched == len(prop) {
 			break
 		}
@@ -74,7 +76,8 @@ func (is *PhysicalIndexScan) MatchProperty(prop requiredProperty, rowCounts []ui
 	return &responseProperty{p: is, cost: math.MaxFloat64}
 }
 
-func (p *PhysicalHashSemiJoin) MatchProperty(prop requiredProperty, _ []uint64, response ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *PhysicalHashSemiJoin) matchProperty(prop requiredProperty, _ []uint64, response ...*responseProperty) *responseProperty {
 	lRes, rRes := response[0], response[1]
 	np := *p
 	np.SetChildren(lRes.p, rRes.p)
@@ -82,19 +85,21 @@ func (p *PhysicalHashSemiJoin) MatchProperty(prop requiredProperty, _ []uint64, 
 	return &responseProperty{p: &np, cost: cost}
 }
 
-func (p *PhysicalApply) MatchProperty(prop requiredProperty, rowCounts []uint64, response ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *PhysicalApply) matchProperty(prop requiredProperty, rowCounts []uint64, response ...*responseProperty) *responseProperty {
 	np := *p
 	np.SetChildren(response[0].p)
 	return &responseProperty{p: &np, cost: response[0].cost}
 }
 
-func (p *PhysicalHashJoin) MatchProperty(prop requiredProperty, rowCounts []uint64, response ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *PhysicalHashJoin) matchProperty(prop requiredProperty, rowCounts []uint64, response ...*responseProperty) *responseProperty {
 	lRes, rRes := response[0], response[1]
 	lCount, rCount := float64(rowCounts[0]), float64(rowCounts[1])
 	np := *p
 	np.SetChildren(lRes.p, rRes.p)
 	cost := lRes.cost + rRes.cost
-	if p.smallTable == 1 {
+	if p.SmallTable == 1 {
 		cost += lCount + memoryFactor*rCount
 	} else {
 		cost += rCount + memoryFactor*lCount
@@ -102,7 +107,8 @@ func (p *PhysicalHashJoin) MatchProperty(prop requiredProperty, rowCounts []uint
 	return &responseProperty{p: &np, cost: cost}
 }
 
-func (p *NewUnion) MatchProperty(prop requiredProperty, _ []uint64, response ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *NewUnion) matchProperty(prop requiredProperty, _ []uint64, response ...*responseProperty) *responseProperty {
 	np := *p
 	children := make([]Plan, 0, len(response))
 	cost := float64(0)
@@ -114,9 +120,10 @@ func (p *NewUnion) MatchProperty(prop requiredProperty, _ []uint64, response ...
 	return &responseProperty{p: &np, cost: cost}
 }
 
-func (p *Selection) MatchProperty(prop requiredProperty, rowCounts []uint64, response ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Selection) matchProperty(prop requiredProperty, rowCounts []uint64, response ...*responseProperty) *responseProperty {
 	if len(response) == 0 {
-		res := p.GetChildByIndex(0).(PhysicalPlan).MatchProperty(prop, nil, nil)
+		res := p.GetChildByIndex(0).(PhysicalPlan).matchProperty(prop, rowCounts)
 		sel := *p
 		sel.SetChildren(res.p)
 		res.p = &sel
@@ -127,58 +134,59 @@ func (p *Selection) MatchProperty(prop requiredProperty, rowCounts []uint64, res
 	return &responseProperty{p: &np, cost: response[0].cost}
 }
 
-func (p *Projection) MatchProperty(_ requiredProperty, _ []uint64, response ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Projection) matchProperty(_ requiredProperty, _ []uint64, response ...*responseProperty) *responseProperty {
 	np := *p
 	np.SetChildren(response[0].p)
 	return &responseProperty{p: &np, cost: response[0].cost}
 }
 
-func (p *MaxOneRow) MatchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *MaxOneRow) matchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
 	panic("You can't call this function!")
-	return nil
 }
 
-func (p *Exists) MatchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Exists) matchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
 	panic("You can't call this function!")
-	return nil
 }
 
-func (p *Trim) MatchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Trim) matchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
 	panic("You can't call this function!")
-	return nil
 }
 
-func (p *Aggregation) MatchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Aggregation) matchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
 	panic("You can't call this function!")
-	return nil
 }
 
-func (p *Limit) MatchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Limit) matchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
 	panic("You can't call this function!")
-	return nil
 }
 
-func (p *Distinct) MatchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Distinct) matchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
 	panic("You can't call this function!")
-	return nil
 }
 
-func (p *NewTableDual) MatchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *NewTableDual) matchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
 	panic("You can't call this function!")
-	return nil
 }
 
-func (p *NewSort) MatchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *NewSort) matchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
 	panic("You can't call this function!")
-	return nil
 }
 
-func (p *Insert) MatchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Insert) matchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
 	panic("You can't call this function!")
-	return nil
 }
 
-func (p *SelectLock) MatchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *SelectLock) matchProperty(_ requiredProperty, _ []uint64, _ ...*responseProperty) *responseProperty {
 	panic("You can't call this function!")
-	return nil
 }

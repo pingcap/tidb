@@ -130,18 +130,23 @@ type LogicalPlan interface {
 	// how many columns referenced by inner plan exactly.
 	PruneColumnsAndResolveIndices([]*expression.Column) ([]*expression.Column, error)
 
-	// Convert2PhysicalPlan converts logical plan to physical plan.
-	Convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error)
+	// convert2PhysicalPlan converts logical plan to physical plan. The arg prop means the required sort property.
+	// This function returns two response. The first one is the best plan that matches the required property strictly.
+	// The second one is the best plan that needn't matches the required property.
+	convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error)
 }
 
 // PhysicalPlan is a tree of physical operators.
 type PhysicalPlan interface {
 	Plan
 
-	MatchProperty(prop requiredProperty, rowCount []uint64, childResponse ...*responseProperty) *responseProperty
+	// matchProperty means that this physical plan will try to return the best plan that matches the required property.
+	matchProperty(prop requiredProperty, rowCount []uint64, childResponse ...*responseProperty) *responseProperty
 
+	// Copy copies the current plan.
 	Copy() PhysicalPlan
 
+	// PushLimit tries to push down limit as deeply as possible.
 	PushLimit(l *Limit) PhysicalPlan
 }
 
@@ -169,7 +174,7 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 		return nil, nil, errors.Trace(err)
 	}
 	if len(rest) > 0 {
-		return rest, nil, nil
+		addSelection(p, child, rest, p.allocator)
 	}
 	return nil, nil, nil
 }

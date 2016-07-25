@@ -84,6 +84,7 @@ func (p *Projection) PruneColumnsAndResolveIndices(parentUsedCols []*expression.
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
 func (p *Selection) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
+	log.Warnf("used cols %s %d", p.id, len(parentUsedCols))
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	var outerUsedCols []*expression.Column
 	for _, cond := range p.Conditions {
@@ -197,6 +198,7 @@ func (p *NewUnion) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Co
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
 func (p *DataSource) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
+	log.Warnf("used cols %s %d", p.id, len(parentUsedCols))
 	used := makeUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -258,12 +260,14 @@ func (p *Join) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	var leftCols, rightCols []*expression.Column
 	for _, col := range parentUsedCols {
+		//log.Warnf("col %s", col.ToString())
 		if lChild.GetSchema().GetIndex(col) != -1 {
 			leftCols = append(leftCols, col)
 		} else if rChild.GetSchema().GetIndex(col) != -1 {
 			rightCols = append(rightCols, col)
 		}
 	}
+	//	log.Warnf("lschema rschema %s %s %d %d", lChild.GetSchema().ToString(), rChild.GetSchema().ToString(), len(leftCols), len(rightCols))
 	outerLeft, err := lChild.PruneColumnsAndResolveIndices(leftCols)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -20,6 +20,7 @@ func insertLimit(p PhysicalPlan, l *Limit) *Limit {
 	return l
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *Limit) PushLimit(l *Limit) PhysicalPlan {
 	child := p.GetChildByIndex(0).(PhysicalPlan)
 	newChild := child.PushLimit(p)
@@ -33,6 +34,7 @@ func (p *Limit) PushLimit(l *Limit) PhysicalPlan {
 	return newChild
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *NewSort) PushLimit(l *Limit) PhysicalPlan {
 	child := p.GetChildByIndex(0).(PhysicalPlan)
 	newChild := child.PushLimit(nil)
@@ -42,6 +44,7 @@ func (p *NewSort) PushLimit(l *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *Selection) PushLimit(l *Limit) PhysicalPlan {
 	child := p.GetChildByIndex(0).(PhysicalPlan)
 	newChild := child.PushLimit(nil)
@@ -53,6 +56,7 @@ func (p *Selection) PushLimit(l *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *PhysicalHashSemiJoin) PushLimit(l *Limit) PhysicalPlan {
 	lChild := p.GetChildByIndex(0).(PhysicalPlan)
 	rChild := p.GetChildByIndex(1).(PhysicalPlan)
@@ -73,6 +77,7 @@ func (p *PhysicalHashSemiJoin) PushLimit(l *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *PhysicalHashJoin) PushLimit(l *Limit) PhysicalPlan {
 	lChild := p.GetChildByIndex(0).(PhysicalPlan)
 	rChild := p.GetChildByIndex(1).(PhysicalPlan)
@@ -110,6 +115,7 @@ func (p *PhysicalHashJoin) PushLimit(l *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *NewUnion) PushLimit(l *Limit) PhysicalPlan {
 	for i, child := range p.GetChildren() {
 		if l != nil {
@@ -117,6 +123,7 @@ func (p *NewUnion) PushLimit(l *Limit) PhysicalPlan {
 		} else {
 			p.children[i] = child.(PhysicalPlan).PushLimit(nil)
 		}
+		p.children[i].SetParents(p)
 	}
 	if l != nil {
 		return insertLimit(p, l)
@@ -124,6 +131,7 @@ func (p *NewUnion) PushLimit(l *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *Projection) PushLimit(l *Limit) PhysicalPlan {
 	newChild := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(l)
 	p.SetChildren(newChild)
@@ -131,6 +139,7 @@ func (p *Projection) PushLimit(l *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *Trim) PushLimit(l *Limit) PhysicalPlan {
 	newChild := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(l)
 	p.SetChildren(newChild)
@@ -138,6 +147,7 @@ func (p *Trim) PushLimit(l *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *SelectLock) PushLimit(l *Limit) PhysicalPlan {
 	newChild := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(l)
 	p.SetChildren(newChild)
@@ -145,6 +155,7 @@ func (p *SelectLock) PushLimit(l *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *PhysicalApply) PushLimit(l *Limit) PhysicalPlan {
 	p.InnerPlan = p.InnerPlan.PushLimit(nil)
 	newChild := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(l)
@@ -153,6 +164,7 @@ func (p *PhysicalApply) PushLimit(l *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *Aggregation) PushLimit(l *Limit) PhysicalPlan {
 	newChild := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(nil)
 	p.SetChildren(newChild)
@@ -163,6 +175,7 @@ func (p *Aggregation) PushLimit(l *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *Distinct) PushLimit(l *Limit) PhysicalPlan {
 	newChild := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(nil)
 	p.SetChildren(newChild)
@@ -173,6 +186,7 @@ func (p *Distinct) PushLimit(l *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *MaxOneRow) PushLimit(_ *Limit) PhysicalPlan {
 	newChild := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(&Limit{Count: 2})
 	p.SetChildren(newChild)
@@ -180,6 +194,7 @@ func (p *MaxOneRow) PushLimit(_ *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *Exists) PushLimit(_ *Limit) PhysicalPlan {
 	newChild := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(&Limit{Count: 1})
 	p.SetChildren(newChild)
@@ -187,6 +202,7 @@ func (p *Exists) PushLimit(_ *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *PhysicalIndexScan) PushLimit(l *Limit) PhysicalPlan {
 	if l != nil {
 		count := int64(l.Offset + l.Count)
@@ -198,6 +214,7 @@ func (p *PhysicalIndexScan) PushLimit(l *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *PhysicalTableScan) PushLimit(l *Limit) PhysicalPlan {
 	if l != nil {
 		count := int64(l.Offset + l.Count)
@@ -209,13 +226,22 @@ func (p *PhysicalTableScan) PushLimit(l *Limit) PhysicalPlan {
 	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *Insert) PushLimit(_ *Limit) PhysicalPlan {
 	if len(p.GetChildren()) == 0 {
 		return p
 	}
-	return p.GetChildByIndex(0).(PhysicalPlan).PushLimit(nil)
+	np := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(nil)
+	p.SetChildren(np)
+	p.SelectPlan = np
+	np.SetParents(p)
+	return p
 }
 
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *NewTableDual) PushLimit(l *Limit) PhysicalPlan {
+	if l == nil {
+		return p
+	}
 	return insertLimit(p, l)
 }

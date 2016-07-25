@@ -104,7 +104,6 @@ type NewTableDual struct {
 
 // DataSource represents a tablescan without condition push down.
 type DataSource struct {
-	basePlan
 	baseLogicalPlan
 
 	table   *ast.TableName
@@ -122,19 +121,16 @@ type DataSource struct {
 
 // Trim trims child's rows.
 type Trim struct {
-	basePlan
 	baseLogicalPlan
 }
 
 // NewUnion represents Union plan.
 type NewUnion struct {
-	basePlan
 	baseLogicalPlan
 }
 
 // NewSort stands for the order by plan.
 type NewSort struct {
-	basePlan
 	baseLogicalPlan
 
 	ByItems []*ByItems

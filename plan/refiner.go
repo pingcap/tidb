@@ -222,6 +222,15 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 		}
 	}
 	for _, cond := range conditions {
+		isAccess := false
+		for _, acCond := range accessConds {
+			if cond == acCond {
+				isAccess = true
+			}
+		}
+		if isAccess {
+			continue
+		}
 		if indexScan.accessEqualCount < len(indexScan.Index.Columns) {
 			checker := &conditionChecker{
 				tableName:    indexScan.Table.Name,

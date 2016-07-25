@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) error {
+func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) error {
 	selection := &Selection{
 		Conditions:      conditions,
 		baseLogicalPlan: newBaseLogicalPlan(Sel, allocator)}

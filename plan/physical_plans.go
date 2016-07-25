@@ -76,7 +76,7 @@ type PhysicalHashJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
-	smallTable      int
+	SmallTable      int
 }
 
 // PhysicalHashSemiJoin represents hash join for semi join.
@@ -92,91 +92,109 @@ type PhysicalHashSemiJoin struct {
 	OtherConditions []expression.Expression
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalIndexScan) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalTableScan) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalApply) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalHashSemiJoin) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalHashJoin) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *Distinct) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *Selection) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *Projection) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *Exists) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *MaxOneRow) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *Insert) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *Limit) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *NewUnion) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *NewSort) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *NewTableDual) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *Trim) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *SelectLock) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *Aggregation) Copy() PhysicalPlan {
 	np := *p
 	return &np
