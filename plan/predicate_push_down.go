@@ -165,18 +165,18 @@ func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *NewUnion) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
 	retPlan = p
-	for _, proj := range p.Selects {
+	for _, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		for _, cond := range predicates {
 			newCond := columnSubstitute(cond.DeepCopy(), p.GetSchema(), expression.Schema2Exprs(proj.GetSchema()))
 			newExprs = append(newExprs, newCond)
 		}
-		retCond, _, err := proj.PredicatePushDown(newExprs)
+		retCond, _, err := proj.(LogicalPlan).PredicatePushDown(newExprs)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 		if len(retCond) != 0 {
-			addSelection(p, proj, retCond, p.allocator)
+			addSelection(p, proj.(LogicalPlan), retCond, p.allocator)
 		}
 	}
 	return

@@ -20,15 +20,16 @@ import (
 
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
-	basePhysicalPlan
+	basePlan
 
-	Table      *model.TableInfo
-	Index      *model.IndexInfo
-	Ranges     []*IndexRange
-	Columns    []*model.ColumnInfo
-	DBName     *model.CIStr
-	Desc       bool
-	OutOfOrder bool
+	Table        *model.TableInfo
+	Index        *model.IndexInfo
+	Ranges       []*IndexRange
+	Columns      []*model.ColumnInfo
+	DBName       *model.CIStr
+	Desc         bool
+	OutOfOrder   bool
+	ReadTwoTimes bool
 
 	accessEqualCount int
 	AccessCondition  []expression.Expression
@@ -40,13 +41,14 @@ type PhysicalIndexScan struct {
 
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
-	baseLogicalPlan
+	basePlan
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
 	DBName  *model.CIStr
 	Desc    bool
 	Ranges  []TableRange
+	pkCol   *expression.Column
 
 	AccessCondition []expression.Expression
 
@@ -57,7 +59,7 @@ type PhysicalTableScan struct {
 
 // PhysicalApply represents apply plan, only used for subquery.
 type PhysicalApply struct {
-	basePhysicalPlan
+	basePlan
 
 	InnerPlan   PhysicalPlan
 	OuterSchema expression.Schema
@@ -66,7 +68,7 @@ type PhysicalApply struct {
 
 // PhysicalHashJoin represents hash join for inner/ outer join.
 type PhysicalHashJoin struct {
-	basePhysicalPlan
+	basePlan
 
 	JoinType JoinType
 
@@ -74,11 +76,12 @@ type PhysicalHashJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
+	smallTable      int
 }
 
 // PhysicalHashSemiJoin represents hash join for semi join.
 type PhysicalHashSemiJoin struct {
-	basePhysicalPlan
+	basePlan
 
 	WithAux bool
 	Anti    bool
@@ -87,4 +90,94 @@ type PhysicalHashSemiJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
+}
+
+func (p *PhysicalIndexScan) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *PhysicalTableScan) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *PhysicalApply) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *PhysicalHashSemiJoin) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *PhysicalHashJoin) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *Distinct) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *Selection) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *Projection) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *Exists) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *MaxOneRow) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *Insert) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *Limit) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *NewUnion) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *NewSort) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *NewTableDual) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *Trim) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *SelectLock) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *Aggregation) Copy() PhysicalPlan {
+	np := *p
+	return &np
 }

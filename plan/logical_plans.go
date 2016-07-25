@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/plan/statistics"
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -60,6 +61,7 @@ type Projection struct {
 // Aggregation represents an aggregate plan.
 type Aggregation struct {
 	baseLogicalPlan
+	// TODO: implement hash aggregation and streamed aggreagtion
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
 }
@@ -102,6 +104,7 @@ type NewTableDual struct {
 
 // DataSource represents a tablescan without condition push down.
 type DataSource struct {
+	basePlan
 	baseLogicalPlan
 
 	table   *ast.TableName
@@ -113,22 +116,25 @@ type DataSource struct {
 	TableAsName *model.CIStr
 
 	LimitCount *int64
+
+	statisticTable *statistics.Table
 }
 
 // Trim trims child's rows.
 type Trim struct {
+	basePlan
 	baseLogicalPlan
 }
 
 // NewUnion represents Union plan.
 type NewUnion struct {
+	basePlan
 	baseLogicalPlan
-
-	Selects []LogicalPlan
 }
 
 // NewSort stands for the order by plan.
 type NewSort struct {
+	basePlan
 	baseLogicalPlan
 
 	ByItems []*ByItems
