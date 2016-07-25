@@ -17,7 +17,6 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
@@ -439,6 +438,9 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField) (
 	var matchedExpr ast.ExprNode
 	index = -1
 	for i, field := range fields {
+		if field.Auxiliary {
+			continue
+		}
 		if matchField(field, v) {
 			curCol, isCol := field.Expr.(*ast.ColumnNameExpr)
 			if !isCol {
@@ -859,7 +861,6 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		statisticTable:  statisticTable,
 	}
 	p.initID()
-	log.Warnf("build! %s", p.id)
 	// Equal condition contains a column from previous joined table.
 	rfs := tn.GetResultFields()
 	schema := make([]*expression.Column, 0, len(rfs))
@@ -994,7 +995,6 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	joinPlan.LeftConditions = leftCond
 	joinPlan.RightConditions = rightCond
 	joinPlan.OtherConditions = otherCond
-	//	log.Warnf("build semi join %s", eqCond[0].ToString())
 	if asScalar {
 		joinPlan.SetSchema(append(outerPlan.GetSchema().DeepCopy(), &expression.Column{
 			FromID:      joinPlan.id,

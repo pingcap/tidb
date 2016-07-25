@@ -70,7 +70,11 @@ func (p *DataSource) handleTableScan(prop requiredProperty) (*responseProperty, 
 	resultPlan = ts
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
 		newSel := *sel
-		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(newSel.Conditions, table)
+		conds := make([]expression.Expression, 0, len(sel.Conditions))
+		for _, cond := range sel.Conditions {
+			conds = append(conds, cond.DeepCopy())
+		}
+		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
 		err := buildNewTableRange(ts)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -138,7 +142,11 @@ func (p *DataSource) handleIndexScan(prop requiredProperty, index *model.IndexIn
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
 		rowCount = 0
 		newSel := *sel
-		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(sel.Conditions, is)
+		conds := make([]expression.Expression, 0, len(sel.Conditions))
+		for _, cond := range sel.Conditions {
+			conds = append(conds, cond.DeepCopy())
+		}
+		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
 		err := buildNewIndexRange(is)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -475,7 +483,9 @@ func (p *NewSort) convert2PhysicalPlan(prop requiredProperty) (*responseProperty
 	}
 	cnt := float64(count)
 	sortCost := cnt*math.Log2(cnt) + memoryFactor*cnt
-	if sortCost+res1.cost < res0.cost {
+	if len(selfProp) == 0 {
+		res0 = addPlanToResponse(p, res1)
+	} else if sortCost+res1.cost < res0.cost {
 		res0.cost = sortCost + res1.cost
 		res0 = addPlanToResponse(p, res1)
 	}

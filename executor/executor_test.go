@@ -1698,6 +1698,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert t values (4, 3)")
 	result := tk.MustQuery("select count(*) from t group by d")
 	result.Check(testkit.Rows("3", "2", "2"))
+	result = tk.MustQuery("select - c, c as d from t group by c having null not between c and avg(distinct d) - d")
+	result.Check(testkit.Rows())
 	result = tk.MustQuery("select count(*) from (select d, c from t) k where d != 0 group by d")
 	result.Check(testkit.Rows("3", "2", "2"))
 	result = tk.MustQuery("select c as a from t group by d having a < 0")

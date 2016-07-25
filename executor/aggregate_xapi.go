@@ -298,7 +298,8 @@ func (e *NewXAggregateExec) Next() (*Row, error) {
 		e.aggregaters = make([]*finalAggregater, len(e.AggFuncs))
 		for i, af := range e.AggFuncs {
 			agg := &finalAggregater{
-				name: strings.ToLower(af.GetName()),
+				name:               strings.ToLower(af.GetName()),
+				contextPerGroupMap: make(map[string](*ast.AggEvaluateContext)),
 			}
 			e.aggregaters[i] = agg
 		}

@@ -16,7 +16,6 @@ package plan
 import (
 	"fmt"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
@@ -258,7 +257,6 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		c.Assert(err, IsNil)
 		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
 		c.Assert(err, IsNil)
-		log.Warnf("lp %s", ToString(lp))
 		_, res, _, err := lp.convert2PhysicalPlan(nil)
 		c.Assert(err, IsNil)
 		p = res.p.PushLimit(nil)
