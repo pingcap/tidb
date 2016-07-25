@@ -1,0 +1,22 @@
+{
+	"ImportPath": "github.com/qiuyesuifeng/golex",
+	"GoVersion": "go1.5",
+	"Deps": [
+		{
+			"ImportPath": "github.com/cznic/fileutil",
+			"Rev": "73109188c05569cd7eaf09a523a090e714fa9d37"
+		},
+		{
+			"ImportPath": "github.com/cznic/lex",
+			"Rev": "eb696ab8f2cc0fdc492993c4d7264ead14236524"
+		},
+		{
+			"ImportPath": "github.com/cznic/lexer",
+			"Rev": "52ae7862082bd9649e03c1c4013a104b37811bfa"
+		},
+		{
+			"ImportPath": "golang.org/x/exp/ebnf",
+			"Rev": "d00e13ec443927751b2bd49e97dea7bf3b6a6487"
+		}
+	]
+}

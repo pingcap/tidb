@@ -1,0 +1,30 @@
+{
+	"ImportPath": "github.com/qiuyesuifeng/goyacc",
+	"GoVersion": "go1.5",
+	"Deps": [
+		{
+			"ImportPath": "github.com/cznic/golex/lex",
+			"Rev": "a799639cffe3567786ea9d7de534659ec57a1cff"
+		},
+		{
+			"ImportPath": "github.com/cznic/mathutil",
+			"Rev": "1dc74626b71a300f674026585083535b6a4d3853"
+		},
+		{
+			"ImportPath": "github.com/cznic/parser/yacc",
+			"Rev": "0229b9c53eb14833dcada756f299a5af56a30214"
+		},
+		{
+			"ImportPath": "github.com/cznic/sortutil",
+			"Rev": "e14776c5119b49f2cf829486056e411043b6b6b2"
+		},
+		{
+			"ImportPath": "github.com/cznic/strutil",
+			"Rev": "1eb03e3cc9d345307a45ec82bd3016cde4bd4464"
+		},
+		{
+			"ImportPath": "github.com/cznic/y",
+			"Rev": "14e7b5dacdeb0d957a83b2eceedd64d23bcca6f6"
+		}
+	]
+}

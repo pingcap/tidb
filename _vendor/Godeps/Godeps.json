@@ -1,7 +1,7 @@
 {
 	"ImportPath": "github.com/pingcap/tidb",
 	"GoVersion": "go1.6",
-	"GodepVersion": "v62",
+	"GodepVersion": "v63",
 	"Packages": [
 		"./..."
 	],
@@ -114,6 +114,14 @@
 		{
 			"ImportPath": "github.com/pingcap/check",
 			"Rev": "ce8a2f822ab1e245a4eefcef2996531c79c943f1"
+		},
+		{
+			"ImportPath": "github.com/pingcap/goyacc",
+			"Rev": "a55cf06b0bfff86298a8ccfccf72249a2d30d981"
+		},
+		{
+			"ImportPath": "github.com/qiuyesuifeng/golex",
+			"Rev": "74c134d389e5a8399ef33747a748d8ff6d871ac6"
 		},
 		{
 			"ImportPath": "github.com/pingcap/goleveldb/leveldb",
