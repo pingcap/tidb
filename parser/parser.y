@@ -40,10 +40,7 @@ import (
 
 %union {
 	offset int // offset
-	line int
-	col  int
 	item interface{}
-	list []interface{}
 }
 
 %token	<item>
@@ -713,10 +710,6 @@ import (
 
 Start:
 	StatementList
-|	parseExpression Expression
-	{
-		yylex.(*lexer).expr = $2.(ast.ExprNode)
-	}
 
 /**************************************AlterTableStmt***************************************
  * See https://dev.mysql.com/doc/refman/5.7/en/alter-table.html
@@ -1244,9 +1237,6 @@ CreateIndexStmt:
                 	Table: $6.(*ast.TableName),
 			IndexColNames: $8.([]*ast.IndexColName),
 		}
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 CreateIndexStmtUnique:
@@ -1297,10 +1287,6 @@ CreateDatabaseStmt:
 			IfNotExists:	$3.(bool),
 			Name:		$4.(string),
 			Options:	$5.([]*ast.DatabaseOption),
-		}
-
-		if yylex.(*lexer).root {
-			break
 		}
 	}
 
@@ -1430,9 +1416,6 @@ DeleteFromStmt:
 		}
 
 		$$ = x
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 |	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional TableNameList "FROM" TableRefs WhereClauseOptional
 	{
@@ -1450,9 +1433,6 @@ DeleteFromStmt:
 			x.Where = $8.(ast.ExprNode)
 		}
 		$$ = x
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 |	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableNameList "USING" TableRefs WhereClauseOptional
 	{
@@ -1469,9 +1449,6 @@ DeleteFromStmt:
 			x.Where = $9.(ast.ExprNode)
 		}
 		$$ = x
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 DatabaseSym:
@@ -1481,9 +1458,6 @@ DropDatabaseStmt:
 	"DROP" DatabaseSym IfExists DBName
 	{
 		$$ = &ast.DropDatabaseStmt{IfExists: $3.(bool), Name: $4.(string)}
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 DropIndexStmt:
@@ -1496,16 +1470,10 @@ DropTableStmt:
 	"DROP" TableOrTables TableNameList
 	{
 		$$ = &ast.DropTableStmt{Tables: $3.([]*ast.TableName)}
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 |	"DROP" TableOrTables "IF" "EXISTS" TableNameList
 	{
 		$$ = &ast.DropTableStmt{IfExists: true, Tables: $5.([]*ast.TableName)}
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 TableOrTables:
@@ -1999,9 +1967,6 @@ InsertIntoStmt:
 			x.OnDuplicate = $7.([]*ast.Assignment)
 		}
 		$$ = x
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 IntoOpt:
@@ -4793,9 +4758,6 @@ UpdateStmt:
 			st.Limit = $9.(*ast.Limit)
 		}
 		$$ = st
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 |	"UPDATE" LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
 	{
@@ -4808,18 +4770,12 @@ UpdateStmt:
 			st.Where = $7.(ast.ExprNode)
 		}
 		$$ = st
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 UseStmt:
 	"USE" DBName
 	{
 		$$ = &ast.UseStmt{DBName: $2.(string)}
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 WhereClause:
