@@ -724,9 +724,9 @@ yynewstate:
 		components := rule.Components
 		typ := rule.Sym.Type
 		max := len(components)
-		if p := rule.Parent; p != nil {
+		if p1 := rule.Parent; p1 != nil {
 			max = rule.MaxParentDlr
-			components = p.Components
+			components = p1.Components
 		}
 		f.Format("case %d: ", r)
 		for _, part := range action {
