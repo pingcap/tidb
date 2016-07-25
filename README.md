@@ -40,6 +40,10 @@ Read the [Roadmap](./docs/ROADMAP.md).
 
 Read the [Quick Start](./docs/QUICKSTART.md).
 
+## Documentation
+
+Read the full [documentation](https://github.com/pingcap/docs).
+
 ## Architecture
 
 ![architecture](./docs/architecture.png)
