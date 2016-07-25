@@ -73,7 +73,7 @@ func add(a, b, carry int32) (int32, int32) {
 	return sum, carry
 }
 
-// fixWordCntError limits word count in wordBufLen, and returns overflow or truncate error
+// fixWordCntError limits word count in wordBufLen, and returns overflow or truncate error.
 func fixWordCntError(wordsInt, wordsFrac int) (newWordsInt, newWordsFrac, errcode int) {
 	if wordsInt+wordsFrac > wordBufLen {
 		if wordsInt > wordBufLen {
@@ -412,11 +412,8 @@ func (d *MyDecimal) Shift(shift int) int {
 }
 
 /*
-  digitBounds returns bounds of decimal digits in the number
+  digitBounds returns bounds of decimal digits in the number.
 
-  SYNOPSIS
-    digits_bounds()
-      from         - decimal number for processing
       start - index (from 0 ) of first decimal digits.
       end   - index of position just after last decimal digit.
 */
@@ -464,7 +461,7 @@ func (d *MyDecimal) digitBounds() (start, end int) {
 }
 
 /*
-  doMiniLeftShift does left shift for alignment of data in buffer
+  doMiniLeftShift does left shift for alignment of data in buffer.
 
     shift   number of decimal digits on which it should be shifted
     beg/end bounds of decimal digits (see digitsBounds())
@@ -488,7 +485,7 @@ func (d *MyDecimal) doMiniLeftShift(shift, beg, end int) {
 }
 
 /*
-  doMiniRightShift does right shift for alignment of data in buffer
+  doMiniRightShift does right shift for alignment of data in buffer.
 
     shift   number of decimal digits on which it should be shifted
     beg/end bounds of decimal digits (see digitsBounds())
@@ -511,13 +508,11 @@ func (d *MyDecimal) doMiniRightShift(shift, beg, end int) {
 	d.wordBuf[bufFrom] = d.wordBuf[bufFrom] / powers10[shift]
 }
 
-// Round rounds the decimal to "frac" digits
+// Round rounds the decimal to "frac" digits.
 //
-// SYNOPSIS
-//  decimal_round()
-//    to      - result buffer. d == to is allowed
+//    to     - result buffer. d == to is allowed
 //    frac   - to what position after fraction point to round. can be negative!
-//    mode    - round to nearest even or truncate
+//    mode   - round to nearest even or truncate
 //
 // NOTES
 //  scale can be negative !
