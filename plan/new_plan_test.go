@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func newMockResolve(node ast.Node) error {
@@ -32,13 +33,16 @@ func newMockResolve(node ast.Node) error {
 			Name: model.NewCIStr("c_d_e"),
 			Columns: []*model.IndexColumn{
 				{
-					Name: model.NewCIStr("c"),
+					Name:   model.NewCIStr("c"),
+					Length: types.UnspecifiedLength,
 				},
 				{
-					Name: model.NewCIStr("d"),
+					Name:   model.NewCIStr("d"),
+					Length: types.UnspecifiedLength,
 				},
 				{
-					Name: model.NewCIStr("e"),
+					Name:   model.NewCIStr("e"),
+					Length: types.UnspecifiedLength,
 				},
 			},
 		},
@@ -199,6 +203,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[1,1]]->Projection",
 		},
 		{
+			sql:  "select * from t a where 1 = a.c order by a.d limit 2",
+			best: "Index(t.c_d_e)[[1,1]]->Projection",
+		},
+		{
 			sql:  "select * from t a where a.c < 10000 order by a.a limit 2",
 			best: "Table(t)->Selection->Limit->Projection",
 		},
@@ -286,7 +294,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c = 4 and d <= 5 and d > 3",
-			best: "Index(t.c_d_e)[[4 3,4 5]]->Projection",
+			best: "Index(t.c_d_e)[(4 3,4 5]]->Projection",
 		},
 		{
 			sql:  "select a from t where d <= 5 and d > 3",
