@@ -1014,6 +1014,7 @@ func BenchmarkParse(b *testing.B) {
 		"select c from t where c > 2",
 	}
 	parser := New()
+	// parser.lexer = &Scanner{}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {

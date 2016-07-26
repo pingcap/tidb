@@ -66,12 +66,29 @@ type Parser struct {
 	result    []ast.StmtNode
 	cache     []yySymType
 	src       string
+	lexer     yyReset
+}
+
+type yyReset interface {
+	reset(sql string) yyLexerXX
+}
+
+type yyLexerXX interface {
+	yyLexer
+	Errors() []error
+}
+
+type defaultLexer struct{}
+
+func (l defaultLexer) reset(sql string) yyLexerXX {
+	return NewLexer(sql)
 }
 
 // New returns a Parser object.
 func New() *Parser {
 	return &Parser{
 		cache: make([]yySymType, 200),
+		lexer: defaultLexer{},
 	}
 }
 
@@ -90,9 +107,10 @@ func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, err
 	parser.result = parser.result[:0]
 
 	sql = handleMySQLSpecificCode(sql)
-	l := NewLexer(sql)
 
+	l := parser.lexer.reset(sql)
 	yyParse(l, parser)
+
 	if len(l.Errors()) != 0 {
 		return nil, errors.Trace(l.Errors()[0])
 	}

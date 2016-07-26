@@ -3136,7 +3136,7 @@ SelectStmt:
 		}
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
-			src := yylex.(*lexer).src
+			src := parser.src
 			var lastEnd int
 			if $4 != nil {
 				lastEnd = yyS[yypt-1].offset-1
@@ -3165,7 +3165,7 @@ SelectStmt:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-3].offset-1
-			lastField.SetText(yylex.(*lexer).src[lastField.Offset:lastEnd])
+			lastField.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 		if $5 != nil {
 			st.Where = $5.(ast.ExprNode)
@@ -3189,7 +3189,7 @@ SelectStmt:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-7].offset-1
-			lastField.SetText(yylex.(*lexer).src[lastField.Offset:lastEnd])
+			lastField.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 
 		if $6 != nil {
@@ -3515,7 +3515,7 @@ SubSelect:
 		s := $2.(*ast.SelectStmt)
 		endOffset := parser.endOffset(yyS[yypt].offset)
 		parser.setLastSelectFieldText(s, endOffset)
-		src := yylex.(*lexer).src
+		src := parser.src
 		// See the implementation of yyParse function
 		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
 		$$ = &ast.SubqueryExpr{Query: s}
@@ -3523,7 +3523,7 @@ SubSelect:
 |	'(' UnionStmt ')'
 	{
 		s := $2.(*ast.UnionStmt)
-		src := yylex.(*lexer).src
+		src := parser.src
 		// See the implementation of yyParse function
 		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
 		$$ = &ast.SubqueryExpr{Query: s}
@@ -4055,7 +4055,9 @@ StatementList:
 	{
 		if $1 != nil {
 			s := $1.(ast.StmtNode)
-			s.SetText(yylex.(*lexer).stmtText())
+			if lexer, ok := yylex.(*lexer); ok {
+				s.SetText(lexer.stmtText())
+			}
 			parser.result = append(parser.result, s)
 		}
 	}
@@ -4063,7 +4065,9 @@ StatementList:
 	{
 		if $3 != nil {
 			s := $3.(ast.StmtNode)
-			s.SetText(yylex.(*lexer).stmtText())
+			if lexer, ok := yylex.(*lexer); ok {
+				s.SetText(lexer.stmtText())
+			}
 			parser.result = append(parser.result, s)
 		}
 	}
