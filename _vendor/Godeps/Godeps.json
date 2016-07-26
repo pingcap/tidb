@@ -320,26 +320,6 @@
 			"Rev": "c2ca1c75c6af5556eb6ce67994120adf12f2ccef"
 		},
 		{
-			"ImportPath": "github.com/qiuyesuifeng/golex/Godeps/_workspace/src/github.com/cznic/fileutil",
-			"Rev": "74c134d389e5a8399ef33747a748d8ff6d871ac6"
-		},
-		{
-			"ImportPath": "github.com/qiuyesuifeng/golex/Godeps/_workspace/src/github.com/cznic/lex",
-			"Rev": "74c134d389e5a8399ef33747a748d8ff6d871ac6"
-		},
-		{
-			"ImportPath": "github.com/qiuyesuifeng/golex/Godeps/_workspace/src/github.com/cznic/lexer",
-			"Rev": "74c134d389e5a8399ef33747a748d8ff6d871ac6"
-		},
-		{
-			"ImportPath": "github.com/qiuyesuifeng/golex/Godeps/_workspace/src/golang.org/x/exp/ebnf",
-			"Rev": "74c134d389e5a8399ef33747a748d8ff6d871ac6"
-		},
-		{
-			"ImportPath": "github.com/cznic/golex/lex",
-			"Rev": "da5a7153a51074477ecac5c45a7e5182a0c72448"
-		},
-		{
 			"ImportPath": "github.com/cznic/mathutil",
 			"Rev": "78ad7f262603437f0ecfebc835d80094f89c8f54"
 		},

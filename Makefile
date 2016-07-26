@@ -54,9 +54,7 @@ install:
 TEMP_FILE = temp_parser_file
 
 golex:
-	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) install github.com/pingcap/tidb/parser/golex
-	rm -rf vendor
+	$(GO) get github.com/qiuyesuifeng/golex
 
 goyacc:
 	rm -rf vendor && ln -s _vendor/vendor vendor
