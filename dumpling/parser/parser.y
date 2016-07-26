@@ -276,7 +276,6 @@ import (
 	start		"START"
 	statsPersistent	"STATS_PERSISTENT"
 	status		"STATUS"
-	stringType	"string"
 	subDate		"SUBDATE"
 	strcmp		"STRCMP"
 	substring	"SUBSTRING"
@@ -366,22 +365,8 @@ import (
 	mediumtextType	"MEDIUMTEXT"
 	longtextType	"LONGTEXT"
 	
-	int16Type	"int16"
-	int24Type	"int24"
-	int32Type	"int32"
-	int64Type	"int64"
-	int8Type	"int8"
-	uintType	"uint"
-	uint16Type	"uint16"
-	uint32Type	"uint32"
-	uint64Type	"uint64"
-	uint8Type	"uint8"
-	float32Type	"float32"
-	float64Type	"float64"
 	boolType	"BOOL"
 	booleanType	"BOOLEAN"
-
-	parseExpression	"parse expression prefix"
 
 	secondMicrosecond	"SECOND_MICROSECOND"
 	minuteMicrosecond	"MINUTE_MICROSECOND"
@@ -4280,36 +4265,6 @@ Type:
 |	DateAndTimeType
 	{
 		$$ = $1
-	}
-|	"float32"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
-	}
-|	"float64"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
-	}
-|	"int64"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
-	}
-|	"string"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
-	}
-|	"uint"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
-	}
-|	"uint64"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
 	}
 
 NumericType:
