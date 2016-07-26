@@ -155,7 +155,7 @@ func (d *MyDecimal) removeLeadingZeros() (wordIdx int, digitsInt int) {
 	return
 }
 
-// ToString convert decimal to its printable string representation.
+// ToString converts decimal to its printable string representation.
 //
 //      fixedPrec - 0 if representation can be variable length and
 //                  fixed_decimals will not be checked in this case.
