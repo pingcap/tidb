@@ -171,7 +171,7 @@ import (
 	groupConcat	"GROUP_CONCAT"
 	hash		"HASH"
 	having		"HAVING"
-    hex         "HEX"
+  hex         "HEX"
 	highPriority	"HIGH_PRIORITY"
 	hour		"HOUR"
 	identified	"IDENTIFIED"
