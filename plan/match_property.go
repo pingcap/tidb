@@ -14,8 +14,8 @@
 package plan
 
 import (
-	"math"
 	"github.com/pingcap/tidb/util/types"
+	"math"
 )
 
 // matchProperty implements PhysicalPlan matchProperty interface.
