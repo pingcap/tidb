@@ -56,7 +56,7 @@ func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, in
 	return uint64(count), nil
 }
 
-func (p *DataSource) handleTableScan(prop requiredProperty) (*responseProperty, *responseProperty, error) {
+func (p *DataSource) handleTableScan(prop requiredProperty) (*planInfo, *planInfo, error) {
 	statsTbl := p.statisticTable
 	table := p.Table
 	var resultPlan PhysicalPlan
@@ -125,7 +125,7 @@ func (p *DataSource) handleTableScan(prop requiredProperty) (*responseProperty, 
 	return resultPlan.matchProperty(prop, rowCounts), resultPlan.matchProperty(nil, rowCounts), nil
 }
 
-func (p *DataSource) handleIndexScan(prop requiredProperty, index *model.IndexInfo) (*responseProperty, *responseProperty, error) {
+func (p *DataSource) handleIndexScan(prop requiredProperty, index *model.IndexInfo) (*planInfo, *planInfo, error) {
 	statsTbl := p.statisticTable
 	var resultPlan PhysicalPlan
 	is := &PhysicalIndexScan{
@@ -166,28 +166,15 @@ func (p *DataSource) handleIndexScan(prop requiredProperty, index *model.IndexIn
 		rb := rangeBuilder{}
 		is.Ranges = rb.buildIndexRanges(fullRange)
 	}
-	for _, c := range is.Columns {
-		matched := false
-		for _, idx := range index.Columns {
-			if idx.Name.L == c.Name.L {
-				matched = true
-				break
-			}
-		}
-		if matched {
-			is.ReadTwoTimes = true
-			break
-		}
-	}
 	rowCounts := []uint64{rowCount}
 	return resultPlan.matchProperty(prop, rowCounts), resultPlan.matchProperty(nil, rowCounts), nil
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *DataSource) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *DataSource) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	statsTbl := p.statisticTable
 	indices, includeTableScan := availableIndices(p.table)
-	var sortedRes, unsortedRes *responseProperty
+	var sortedRes, unsortedRes *planInfo
 	var err error
 	if includeTableScan {
 		sortedRes, unsortedRes, err = p.handleTableScan(prop)
@@ -210,14 +197,14 @@ func (p *DataSource) convert2PhysicalPlan(prop requiredProperty) (*responsePrope
 	return sortedRes, unsortedRes, uint64(statsTbl.Count), nil
 }
 
-func addPlanToResponse(p PhysicalPlan, res *responseProperty) *responseProperty {
+func addPlanToResponse(p PhysicalPlan, res *planInfo) *planInfo {
 	np := p.Copy()
 	np.SetChildren(res.p)
-	return &responseProperty{p: np, cost: res.cost}
+	return &planInfo{p: np, cost: res.cost}
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *Limit) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *Limit) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	res0, res1, count, err := p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(prop)
 	if err != nil {
 		return nil, nil, 0, errors.Trace(err)
@@ -232,7 +219,7 @@ func estimateJoinCount(lc uint64, rc uint64) uint64 {
 	return lc * rc / 3
 }
 
-func (p *Join) handleLeftJoin(prop requiredProperty, innerJoin bool) (*responseProperty, *responseProperty, uint64, error) {
+func (p *Join) handleLeftJoin(prop requiredProperty, innerJoin bool) (*planInfo, *planInfo, uint64, error) {
 	lChild := p.GetChildByIndex(0).(LogicalPlan)
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	allLeft := true
@@ -273,7 +260,7 @@ func (p *Join) handleLeftJoin(prop requiredProperty, innerJoin bool) (*responseP
 	return res0, res1, estimateJoinCount(lCount, rCount), nil
 }
 
-func (p *Join) handleRightJoin(prop requiredProperty, innerJoin bool) (*responseProperty, *responseProperty, uint64, error) {
+func (p *Join) handleRightJoin(prop requiredProperty, innerJoin bool) (*planInfo, *planInfo, uint64, error) {
 	lChild := p.GetChildByIndex(0).(LogicalPlan)
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	allRight := true
@@ -314,7 +301,7 @@ func (p *Join) handleRightJoin(prop requiredProperty, innerJoin bool) (*response
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *Join) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *Join) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	switch p.JoinType {
 	case SemiJoin, SemiJoinWithAux:
 		lChild := p.GetChildByIndex(0).(LogicalPlan)
@@ -364,6 +351,9 @@ func (p *Join) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *
 			return nil, nil, 0, errors.Trace(err)
 		}
 		rres0, rres1, _, err := p.handleRightJoin(prop, true)
+		if err != nil {
+			return nil, nil, 0, errors.Trace(err)
+		}
 		if rres0.cost < lres0.cost {
 			lres0 = rres0
 		}
@@ -375,19 +365,19 @@ func (p *Join) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *Aggregation) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *Aggregation) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	_, res, cnt, err := p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(nil)
 	if len(prop) != 0 {
-		return &responseProperty{cost: math.MaxFloat64}, addPlanToResponse(p, res), cnt / 3, errors.Trace(err)
+		return &planInfo{cost: math.MaxFloat64}, addPlanToResponse(p, res), cnt / 3, errors.Trace(err)
 	}
 	res = addPlanToResponse(p, res)
 	return res, res, cnt / 3, errors.Trace(err)
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *NewUnion) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *NewUnion) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	count := uint64(0)
-	var res0Collection, res1Collection []*responseProperty
+	var res0Collection, res1Collection []*planInfo
 	for _, child := range p.GetChildren() {
 		newProp := make(requiredProperty, 0, len(prop))
 		for _, c := range prop {
@@ -406,7 +396,7 @@ func (p *NewUnion) convert2PhysicalPlan(prop requiredProperty) (*responsePropert
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *Selection) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *Selection) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	res0, res1, count, err := p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(prop)
 	if err != nil {
 		return nil, nil, 0, errors.Trace(err)
@@ -419,7 +409,7 @@ func (p *Selection) convert2PhysicalPlan(prop requiredProperty) (*responseProper
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *Projection) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *Projection) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	newProp := make(requiredProperty, 0, len(prop))
 	childSchema := p.GetChildByIndex(0).GetSchema()
 	usedCols := make([]bool, len(childSchema))
@@ -446,7 +436,7 @@ loop:
 	}
 	res1 = addPlanToResponse(p, res1)
 	if !canPassSort {
-		return &responseProperty{cost: math.MaxFloat64}, res1, count, nil
+		return &planInfo{cost: math.MaxFloat64}, res1, count, nil
 	}
 
 	return addPlanToResponse(p, res0), res1, count, nil
@@ -467,7 +457,7 @@ func matchProp(target, new requiredProperty) bool {
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *NewSort) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *NewSort) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	selfProp := make(requiredProperty, 0, len(p.ByItems))
 	for _, by := range p.ByItems {
 		if col, ok := by.Expr.(*expression.Column); ok {
@@ -492,11 +482,11 @@ func (p *NewSort) convert2PhysicalPlan(prop requiredProperty) (*responseProperty
 	if matchProp(prop, selfProp) {
 		return res0, res0, count, nil
 	}
-	return &responseProperty{cost: math.MaxFloat64}, res0, count, nil
+	return &planInfo{cost: math.MaxFloat64}, res0, count, nil
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *Apply) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *Apply) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	_, innerRes, _, err := p.InnerPlan.convert2PhysicalPlan(nil)
 	if err != nil {
@@ -516,7 +506,7 @@ func (p *Apply) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, 
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *Distinct) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *Distinct) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	res0, res1, count, err := child.convert2PhysicalPlan(prop)
 	if err != nil {
@@ -526,13 +516,13 @@ func (p *Distinct) convert2PhysicalPlan(prop requiredProperty) (*responsePropert
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *NewTableDual) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
-	res := &responseProperty{p: p, cost: 1.0}
+func (p *NewTableDual) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
+	res := &planInfo{p: p, cost: 1.0}
 	return res, res, 1, nil
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *MaxOneRow) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *MaxOneRow) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	res0, res1, count, err := child.convert2PhysicalPlan(prop)
 	if err != nil {
@@ -542,7 +532,7 @@ func (p *MaxOneRow) convert2PhysicalPlan(prop requiredProperty) (*responseProper
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *Exists) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *Exists) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	res0, res1, count, err := child.convert2PhysicalPlan(prop)
 	if err != nil {
@@ -552,7 +542,7 @@ func (p *Exists) convert2PhysicalPlan(prop requiredProperty) (*responseProperty,
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *Trim) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *Trim) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	res0, res1, count, err := child.convert2PhysicalPlan(prop)
 	if err != nil {
@@ -562,7 +552,7 @@ func (p *Trim) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *SelectLock) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *SelectLock) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	res0, res1, count, err := child.convert2PhysicalPlan(prop)
 	if err != nil {
@@ -572,9 +562,9 @@ func (p *SelectLock) convert2PhysicalPlan(prop requiredProperty) (*responsePrope
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *Insert) convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error) {
+func (p *Insert) convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error) {
 	if len(p.GetChildren()) == 0 {
-		res := &responseProperty{p: p}
+		res := &planInfo{p: p}
 		return res, res, 0, nil
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)

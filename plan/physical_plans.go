@@ -22,14 +22,13 @@ import (
 type PhysicalIndexScan struct {
 	basePlan
 
-	Table        *model.TableInfo
-	Index        *model.IndexInfo
-	Ranges       []*IndexRange
-	Columns      []*model.ColumnInfo
-	DBName       *model.CIStr
-	Desc         bool
-	OutOfOrder   bool
-	ReadTwoTimes bool
+	Table      *model.TableInfo
+	Index      *model.IndexInfo
+	Ranges     []*IndexRange
+	Columns    []*model.ColumnInfo
+	DBName     *model.CIStr
+	Desc       bool
+	OutOfOrder bool
 
 	accessEqualCount int
 	AccessCondition  []expression.Expression

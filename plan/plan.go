@@ -104,7 +104,7 @@ type Plan interface {
 
 type requiredProperty []*columnProp
 
-type responseProperty struct {
+type planInfo struct {
 	p    PhysicalPlan
 	cost float64
 }
@@ -133,7 +133,7 @@ type LogicalPlan interface {
 	// convert2PhysicalPlan converts logical plan to physical plan. The arg prop means the required sort property.
 	// This function returns two response. The first one is the best plan that matches the required property strictly.
 	// The second one is the best plan that needn't matches the required property.
-	convert2PhysicalPlan(prop requiredProperty) (*responseProperty, *responseProperty, uint64, error)
+	convert2PhysicalPlan(prop requiredProperty) (*planInfo, *planInfo, uint64, error)
 }
 
 // PhysicalPlan is a tree of physical operators.
@@ -141,7 +141,7 @@ type PhysicalPlan interface {
 	Plan
 
 	// matchProperty means that this physical plan will try to return the best plan that matches the required property.
-	matchProperty(prop requiredProperty, rowCount []uint64, childResponse ...*responseProperty) *responseProperty
+	matchProperty(prop requiredProperty, rowCount []uint64, childResponse ...*planInfo) *planInfo
 
 	// Copy copies the current plan.
 	Copy() PhysicalPlan
