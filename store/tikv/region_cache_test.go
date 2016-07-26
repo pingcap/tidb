@@ -29,6 +29,7 @@ type testRegionCacheSuite struct {
 	peer2   uint64
 	region1 uint64
 	cache   *RegionCache
+	bo      *Backoff
 }
 
 var _ = Suite(&testRegionCacheSuite{})
@@ -42,6 +43,7 @@ func (s *testRegionCacheSuite) SetUpTest(c *C) {
 	s.peer1 = peerIDs[0]
 	s.peer2 = peerIDs[1]
 	s.cache = NewRegionCache(mocktikv.NewPDClient(s.cluster))
+	s.bo = NewBackoff(5000)
 }
 
 func (s *testRegionCacheSuite) storeAddr(id uint64) string {
@@ -57,7 +59,7 @@ func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 }
 
 func (s *testRegionCacheSuite) TestSimple(c *C) {
-	r, err := s.cache.GetRegion([]byte("a"))
+	r, err := s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
@@ -66,15 +68,12 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestDropStore(c *C) {
-	// This test is disabled since it costs too much time due to the retry
-	// mechanism.
-	// TODO: Find a way to change retry timeout in test then uncomment it.
-	//
-	//	s.cluster.RemoveStore(s.store1)
-	//	r, err := s.cache.GetRegion([]byte("a"))
-	//	c.Assert(err, NotNil)
-	//	c.Assert(r, IsNil)
-	//	s.checkCache(c, 0)
+	bo := NewBackoff(100)
+	s.cluster.RemoveStore(s.store1)
+	r, err := s.cache.GetRegion(bo, []byte("a"))
+	c.Assert(err, NotNil)
+	c.Assert(r, IsNil)
+	s.checkCache(c, 0)
 }
 
 func (s *testRegionCacheSuite) TestDropStoreRetry(c *C) {
@@ -85,19 +84,19 @@ func (s *testRegionCacheSuite) TestDropStoreRetry(c *C) {
 		s.cluster.AddStore(s.store1, s.storeAddr(s.store1))
 		close(done)
 	}()
-	r, err := s.cache.GetRegion([]byte("a"))
+	r, err := s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	<-done
 }
 
 func (s *testRegionCacheSuite) TestUpdateLeader(c *C) {
-	r, err := s.cache.GetRegion([]byte("a"))
+	r, err := s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	// tikv-server reports `NotLeader`
 	s.cache.UpdateLeader(r.VerID(), s.peer2)
 
-	r, err = s.cache.GetRegion([]byte("a"))
+	r, err = s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
@@ -106,7 +105,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
-	r, err := s.cache.GetRegion([]byte("a"))
+	r, err := s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	// new store3 becomes leader
 	store3 := s.cluster.AllocID()
@@ -117,7 +116,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 	s.cache.UpdateLeader(r.VerID(), peer3)
 
 	// Store3 does not exist in cache, causes a reload from PD.
-	r, err = s.cache.GetRegion([]byte("a"))
+	r, err = s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
@@ -128,7 +127,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 	s.cluster.ChangeLeader(s.region1, peer3)
 	// tikv-server reports `NotLeader` again.
 	s.cache.UpdateLeader(r.VerID(), peer3)
-	r, err = s.cache.GetRegion([]byte("a"))
+	r, err = s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
@@ -137,7 +136,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
-	r, err := s.cache.GetRegion([]byte("a"))
+	r, err := s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	// store2 becomes leader
 	s.cluster.ChangeLeader(s.region1, s.peer2)
@@ -153,7 +152,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	s.cache.UpdateLeader(r.VerID(), s.peer2)
 
 	// Store2 does not exist any more, causes a reload from PD.
-	r, err = s.cache.GetRegion([]byte("a"))
+	r, err = s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
@@ -163,7 +162,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestSplit(c *C) {
-	r, err := s.cache.GetRegion([]byte("x"))
+	r, err := s.cache.GetRegion(s.bo, []byte("x"))
 	c.Assert(err, IsNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(r.GetAddress(), Equals, s.storeAddr(s.store1))
@@ -177,7 +176,7 @@ func (s *testRegionCacheSuite) TestSplit(c *C) {
 	s.cache.DropRegion(r.VerID())
 	s.checkCache(c, 0)
 
-	r, err = s.cache.GetRegion([]byte("x"))
+	r, err = s.cache.GetRegion(s.bo, []byte("x"))
 	c.Assert(err, IsNil)
 	c.Assert(r.GetID(), Equals, region2)
 	c.Assert(r.GetAddress(), Equals, s.storeAddr(s.store1))
@@ -190,7 +189,7 @@ func (s *testRegionCacheSuite) TestMerge(c *C) {
 	newPeers := s.cluster.AllocIDs(2)
 	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
 
-	r, err := s.cache.GetRegion([]byte("x"))
+	r, err := s.cache.GetRegion(s.bo, []byte("x"))
 	c.Assert(err, IsNil)
 	c.Assert(r.GetID(), Equals, region2)
 
@@ -201,20 +200,20 @@ func (s *testRegionCacheSuite) TestMerge(c *C) {
 	s.cache.DropRegion(r.VerID())
 	s.checkCache(c, 0)
 
-	r, err = s.cache.GetRegion([]byte("x"))
+	r, err = s.cache.GetRegion(s.bo, []byte("x"))
 	c.Assert(err, IsNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	s.checkCache(c, 1)
 }
 
 func (s *testRegionCacheSuite) TestReconnect(c *C) {
-	r, err := s.cache.GetRegion([]byte("a"))
+	r, err := s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 
 	// connect tikv-server failed, cause drop cache
 	s.cache.DropRegion(r.VerID())
 
-	r, err = s.cache.GetRegion([]byte("a"))
+	r, err = s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
@@ -223,17 +222,17 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestNextPeer(c *C) {
-	region, err := s.cache.GetRegion([]byte("a"))
+	region, err := s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(region.curPeerIdx, Equals, 0)
 
 	s.cache.NextPeer(region.VerID())
-	region, err = s.cache.GetRegion([]byte("a"))
+	region, err = s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(region.curPeerIdx, Equals, 1)
 
 	s.cache.NextPeer(region.VerID())
-	region, err = s.cache.GetRegion([]byte("a"))
+	region, err = s.cache.GetRegion(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	// Out of range of Peers, so get Region again and pick Stores[0] as leader.
 	c.Assert(region.curPeerIdx, Equals, 0)

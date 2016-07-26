@@ -74,6 +74,7 @@ func (s *Scanner) Value() []byte {
 
 // Next return next element.
 func (s *Scanner) Next() error {
+	bo := NewBackoff(scannerNextMaxBackoff)
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}
@@ -84,7 +85,7 @@ func (s *Scanner) Next() error {
 				s.Close()
 				return kv.ErrNotExist
 			}
-			err := s.getData()
+			err := s.getData(bo)
 			if err != nil {
 				s.Close()
 				return errors.Trace(err)
@@ -93,7 +94,7 @@ func (s *Scanner) Next() error {
 				continue
 			}
 		}
-		if err := s.resolveCurrentLock(); err != nil {
+		if err := s.resolveCurrentLock(bo); err != nil {
 			s.Close()
 			return errors.Trace(err)
 		}
@@ -114,16 +115,19 @@ func (s *Scanner) startTS() uint64 {
 	return s.snapshot.version.Ver
 }
 
-func (s *Scanner) resolveCurrentLock() error {
+func (s *Scanner) resolveCurrentLock(bo *Backoff) error {
 	current := s.cache[s.idx]
 	if current.GetError() == nil {
 		return nil
 	}
-	var backoffErr error
-	for backoff := txnLockBackoff(); backoffErr == nil; backoffErr = backoff() {
-		val, err := s.snapshot.handleKeyError(current.GetError())
+	for {
+		val, err := s.snapshot.handleKeyError(bo, current.GetError())
 		if err != nil {
 			if terror.ErrorEqual(err, errInnerRetryable) {
+				err = bo.Backoff(boTxnLock, err.Error())
+				if err != nil {
+					return errors.Trace(err)
+				}
 				continue
 			}
 			return errors.Trace(err)
@@ -132,15 +136,12 @@ func (s *Scanner) resolveCurrentLock() error {
 		current.Value = val
 		return nil
 	}
-	return errors.Annotate(backoffErr, txnRetryableMark)
 }
 
-func (s *Scanner) getData() error {
+func (s *Scanner) getData(bo *Backoff) error {
 	log.Debugf("txn getData nextStartKey[%q], txn %d", s.nextStartKey, s.startTS())
-
-	var backoffErr error
-	for backoff := regionMissBackoff(); backoffErr == nil; backoffErr = backoff() {
-		region, err := s.snapshot.store.regionCache.GetRegion(s.nextStartKey)
+	for {
+		region, err := s.snapshot.store.regionCache.GetRegion(bo, s.nextStartKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -152,12 +153,16 @@ func (s *Scanner) getData() error {
 				Version:  proto.Uint64(s.startTS()),
 			},
 		}
-		resp, err := s.snapshot.store.SendKVReq(req, region.VerID())
+		resp, err := s.snapshot.store.SendKVReq(bo, req, region.VerID())
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
 			log.Warnf("scanner getData failed: %s", regionErr)
+			err = bo.Backoff(boRegionMiss, regionErr.String())
+			if err != nil {
+				return errors.Trace(err)
+			}
 			continue
 		}
 		cmdScanResp := resp.GetCmdScanResp()
@@ -196,5 +201,4 @@ func (s *Scanner) getData() error {
 		s.nextStartKey = kv.Key(lastKey).Next()
 		return nil
 	}
-	return errors.Annotate(backoffErr, txnRetryableMark)
 }

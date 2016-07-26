@@ -16,9 +16,11 @@ package tikv
 import (
 	"math"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 )
 
 const (
@@ -32,17 +34,13 @@ const (
 	DecorrJitter
 )
 
-// NewBackoff creates a backoff func which implements exponential backoff with
+// NewBackoffFn creates a backoff func which implements exponential backoff with
 // optional jitters.
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html
-func NewBackoff(retry, base, cap, jitter int) func() error {
+func NewBackoffFn(base, cap, jitter int) func() int {
 	attempts := 0
-	totalSleep := 0
 	lastSleep := base
-	return func() error {
-		if attempts >= retry {
-			return errors.Errorf("still fail after %d retries, total sleep %dms", attempts, totalSleep)
-		}
+	return func() int {
 		var sleep int
 		switch jitter {
 		case NoJitter:
@@ -59,12 +57,88 @@ func NewBackoff(retry, base, cap, jitter int) func() error {
 		time.Sleep(time.Duration(sleep) * time.Millisecond)
 
 		attempts++
-		totalSleep += sleep
 		lastSleep = sleep
-		return nil
+		return lastSleep
 	}
 }
 
 func expo(base, cap, n int) int {
 	return int(math.Min(float64(cap), float64(base)*math.Pow(2.0, float64(n))))
+}
+
+type backoffType int
+
+const (
+	boTiKVRPC backoffType = iota
+	boTxnLock
+	boPDRPC
+	boRegionMiss
+)
+
+func (t backoffType) createFn() func() int {
+	switch t {
+	case boTiKVRPC:
+		return NewBackoffFn(100, 2000, EqualJitter)
+	case boTxnLock:
+		return NewBackoffFn(300, 3000, EqualJitter)
+	case boPDRPC:
+		return NewBackoffFn(500, 3000, EqualJitter)
+	case boRegionMiss:
+		return NewBackoffFn(100, 500, NoJitter)
+	}
+	return nil
+}
+
+const (
+	copBuildTaskMaxBackoff = 3000
+	newTxnMaxBackoff       = 3000
+	storeVersionMaxBackoff = 3000
+	scannerNextMaxBackoff  = 3000
+	batchGetMaxBackoff     = 10000
+	copNextMaxBackoff      = 10000
+	getMaxBackoff          = 10000
+	commitMaxBackoff       = 15000
+)
+
+// Backoff is a utility for retrying queries.
+type Backoff struct {
+	mu         sync.Mutex
+	fn         map[backoffType]func() int
+	maxSleep   int
+	totalSleep int
+	errors     []string
+}
+
+// NewBackoff creates a Backoff with maximum sleep time(in ms).
+func NewBackoff(maxSleep int) *Backoff {
+	return &Backoff{
+		maxSleep: maxSleep,
+	}
+}
+
+// Backoff sleeps a while base on the backoffType and records the error message.
+// It returns an retryable error if total sleep time exceeds maxSleep.
+func (b *Backoff) Backoff(typ backoffType, err string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// Lazy initialize.
+	if b.fn == nil {
+		b.fn = make(map[backoffType]func() int)
+	}
+	f, ok := b.fn[typ]
+	if !ok {
+		f = typ.createFn()
+		b.fn[typ] = f
+	}
+
+	b.totalSleep += f()
+
+	log.Warnf("%s, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
+	b.errors = append(b.errors, err)
+	if b.totalSleep >= b.maxSleep {
+		e := errors.Errorf("backoff.maxSleep %dms is exceeded, errors: %v", b.maxSleep, b.errors)
+		return errors.Annotate(e, txnRetryableMark)
+	}
+	return nil
 }

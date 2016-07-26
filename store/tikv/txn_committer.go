@@ -35,6 +35,7 @@ type txnCommitter struct {
 	mu          sync.RWMutex
 	writtenKeys [][]byte
 	committed   bool
+	bo          *Backoff
 }
 
 func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
@@ -79,6 +80,7 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 		startTS:   txn.StartTS(),
 		keys:      keys,
 		mutations: mutations,
+		bo:        NewBackoff(commitMaxBackoff),
 	}, nil
 }
 
@@ -93,7 +95,7 @@ func (c *txnCommitter) iterKeys(keys [][]byte, f func(batchKeys) error, sizeFn f
 	if len(keys) == 0 {
 		return nil
 	}
-	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(keys)
+	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(c.bo, keys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -182,17 +184,16 @@ func (c *txnCommitter) prewriteSingleRegion(batch batchKeys) error {
 		},
 	}
 
-	var backoffErr error
-	for backoff := txnLockBackoff(); backoffErr == nil; backoffErr = backoff() {
-		resp, err := c.store.SendKVReq(req, batch.region)
+	for {
+		resp, err := c.store.SendKVReq(c.bo, req, batch.region)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			// re-split keys and prewrite again.
-			// TODO: The recursive maybe not able to exit if TiKV &
-			// PD are implemented incorrectly. A possible fix is
-			// introducing a 'max backoff time'.
+			err = c.bo.Backoff(boRegionMiss, regionErr.String())
+			if err != nil {
+				return errors.Trace(err)
+			}
 			err = c.prewriteKeys(batch.keys)
 			return errors.Trace(err)
 		}
@@ -209,19 +210,23 @@ func (c *txnCommitter) prewriteSingleRegion(batch batchKeys) error {
 			return nil
 		}
 		for _, keyErr := range keyErrs {
-			lockInfo, err := extractLockInfoFromKeyErr(keyErr)
+			var lockInfo *pb.LockInfo
+			lockInfo, err = extractLockInfoFromKeyErr(keyErr)
 			if err != nil {
 				// It could be `Retryable` or `Abort`.
 				return errors.Trace(err)
 			}
 			lock := newLock(c.store, lockInfo.GetPrimaryLock(), lockInfo.GetLockVersion(), lockInfo.GetKey(), c.startTS)
-			_, err = lock.cleanup()
+			_, err = lock.cleanup(c.bo)
 			if err != nil && terror.ErrorNotEqual(err, errInnerRetryable) {
 				return errors.Trace(err)
 			}
 		}
+		err = c.bo.Backoff(boTxnLock, "prewrite encounter locks")
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	return errors.Annotate(backoffErr, txnRetryableMark)
 }
 
 func (c *txnCommitter) commitSingleRegion(batch batchKeys) error {
@@ -234,11 +239,15 @@ func (c *txnCommitter) commitSingleRegion(batch batchKeys) error {
 		},
 	}
 
-	resp, err := c.store.SendKVReq(req, batch.region)
+	resp, err := c.store.SendKVReq(c.bo, req, batch.region)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if regionErr := resp.GetRegionError(); regionErr != nil {
+		err = c.bo.Backoff(boRegionMiss, regionErr.String())
+		if err != nil {
+			return errors.Trace(err)
+		}
 		// re-split keys and commit again.
 		err = c.commitKeys(batch.keys)
 		return errors.Trace(err)
@@ -278,11 +287,15 @@ func (c *txnCommitter) cleanupSingleRegion(batch batchKeys) error {
 			StartVersion: proto.Uint64(c.startTS),
 		},
 	}
-	resp, err := c.store.SendKVReq(req, batch.region)
+	resp, err := c.store.SendKVReq(c.bo, req, batch.region)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if regionErr := resp.GetRegionError(); regionErr != nil {
+		err = c.bo.Backoff(boRegionMiss, regionErr.String())
+		if err != nil {
+			return errors.Trace(err)
+		}
 		err = c.cleanupKeys(batch.keys)
 		return errors.Trace(err)
 	}
@@ -323,7 +336,7 @@ func (c *txnCommitter) Commit() error {
 		return errors.Trace(err)
 	}
 
-	commitTS, err := c.store.getTimestampWithRetry()
+	commitTS, err := c.store.getTimestampWithRetry(c.bo)
 	if err != nil {
 		log.Warnf("txn get commitTS failed: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)

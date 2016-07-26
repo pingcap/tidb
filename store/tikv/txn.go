@@ -37,7 +37,8 @@ type tikvTxn struct {
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
-	startTS, err := store.getTimestampWithRetry()
+	bo := NewBackoff(newTxnMaxBackoff)
+	startTS, err := store.getTimestampWithRetry(bo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

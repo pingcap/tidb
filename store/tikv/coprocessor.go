@@ -76,7 +76,8 @@ func supportExpr(exprType tipb.ExprType) bool {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(req *kv.Request) kv.Response {
-	tasks, err := buildCopTasks(c.store.regionCache, req.KeyRanges, req.Desc)
+	bo := NewBackoff(copBuildTaskMaxBackoff)
+	tasks, err := buildCopTasks(bo, c.store.regionCache, req.KeyRanges, req.Desc)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -133,11 +134,11 @@ func (t *copTask) pbRanges() []*coprocessor.KeyRange {
 	return ranges
 }
 
-func buildCopTasks(cache *RegionCache, ranges []kv.KeyRange, desc bool) ([]*copTask, error) {
+func buildCopTasks(bo *Backoff, cache *RegionCache, ranges []kv.KeyRange, desc bool) ([]*copTask, error) {
 	var tasks []*copTask
 	for _, r := range ranges {
 		var err error
-		if tasks, err = appendTask(tasks, cache, r); err != nil {
+		if tasks, err = appendTask(tasks, bo, cache, r); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -155,14 +156,14 @@ func reverseTasks(tasks []*copTask) {
 	}
 }
 
-func appendTask(tasks []*copTask, cache *RegionCache, r kv.KeyRange) ([]*copTask, error) {
+func appendTask(tasks []*copTask, bo *Backoff, cache *RegionCache, r kv.KeyRange) ([]*copTask, error) {
 	var last *copTask
 	if len(tasks) > 0 {
 		last = tasks[len(tasks)-1]
 	}
 	// Ensure `r` (or part of `r`) is inside `last`, create a task if need.
 	if last == nil || !last.region.Contains(r.StartKey) {
-		region, err := cache.GetRegion(r.StartKey)
+		region, err := cache.GetRegion(bo, r.StartKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -187,7 +188,7 @@ func appendTask(tasks []*copTask, cache *RegionCache, r kv.KeyRange) ([]*copTask
 			StartKey: last.region.EndKey(),
 			EndKey:   r.EndKey,
 		}
-		return appendTask(tasks, cache, remain)
+		return appendTask(tasks, bo, cache, remain)
 	}
 	return tasks, nil
 }
@@ -207,6 +208,7 @@ type copIterator struct {
 
 // Pick the next new copTask and send request to tikv-server.
 func (it *copIterator) work() {
+	bo := NewBackoff(copNextMaxBackoff)
 	for {
 		it.mu.Lock()
 		if it.finished {
@@ -227,7 +229,7 @@ func (it *copIterator) work() {
 		}
 		task.status = taskRunning
 		it.mu.Unlock()
-		resp, err := it.handleTask(task)
+		resp, err := it.handleTask(bo, task)
 		if err != nil {
 			it.errChan <- err
 			break
@@ -303,9 +305,8 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 }
 
 // Handle single copTask.
-func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) {
-	var backoffErr error
-	for backoff := rpcBackoff(); backoffErr == nil; backoffErr = backoff() {
+func (it *copIterator) handleTask(bo *Backoff, task *copTask) (*coprocessor.Response, error) {
+	for {
 		req := &coprocessor.Request{
 			Context: task.region.GetContext(),
 			Tp:      proto.Int64(it.req.Tp),
@@ -315,9 +316,13 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 		resp, err := it.store.client.SendCopReq(task.region.GetAddress(), req)
 		if err != nil {
 			it.store.regionCache.NextPeer(task.region.VerID())
-			err1 := it.rebuildCurrentTask(task)
-			if err1 != nil {
-				return nil, errors.Trace(err1)
+			err = bo.Backoff(boTiKVRPC, err.Error())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			err = it.rebuildCurrentTask(bo, task)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 			log.Warnf("send coprocessor request error: %v, try next peer later", err)
 			continue
@@ -328,7 +333,11 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 			} else {
 				it.store.regionCache.DropRegion(task.region.VerID())
 			}
-			err = it.rebuildCurrentTask(task)
+			err = bo.Backoff(boRegionMiss, err.Error())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			err = it.rebuildCurrentTask(bo, task)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -337,8 +346,12 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 		}
 		if e := resp.GetLocked(); e != nil {
 			lock := newLock(it.store, e.GetPrimaryLock(), e.GetLockVersion(), e.GetKey(), e.GetLockVersion())
-			_, lockErr := lock.cleanup()
+			_, lockErr := lock.cleanup(bo)
 			if lockErr == nil || terror.ErrorEqual(lockErr, errInnerRetryable) {
+				err = bo.Backoff(boTxnLock, lockErr.Error())
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 				continue
 			}
 			log.Warnf("cleanup lock error: %v", lockErr)
@@ -351,12 +364,11 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 		}
 		return resp, nil
 	}
-	return nil, errors.Trace(backoffErr)
 }
 
 // Rebuild current task. It may be split into multiple tasks (in region split scenario).
-func (it *copIterator) rebuildCurrentTask(task *copTask) error {
-	newTasks, err := buildCopTasks(it.store.regionCache, task.ranges, it.req.Desc)
+func (it *copIterator) rebuildCurrentTask(bo *Backoff, task *copTask) error {
+	newTasks, err := buildCopTasks(bo, it.store.regionCache, task.ranges, it.req.Desc)
 	if err != nil {
 		return errors.Trace(err)
 	}

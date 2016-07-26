@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"bytes"
+	"fmt"
 	"sync"
 
 	"github.com/golang/protobuf/proto"
@@ -55,14 +56,14 @@ func (c *RegionCache) GetRegionByVerID(id RegionVerID) *Region {
 }
 
 // GetRegion find in cache, or get new region.
-func (c *RegionCache) GetRegion(key []byte) (*Region, error) {
+func (c *RegionCache) GetRegion(bo *Backoff, key []byte) (*Region, error) {
 	c.mu.RLock()
 	r := c.getRegionFromCache(key)
 	c.mu.RUnlock()
 	if r != nil {
 		return r, nil
 	}
-	r, err := c.loadRegion(key)
+	r, err := c.loadRegion(bo, key)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -74,7 +75,7 @@ func (c *RegionCache) GetRegion(key []byte) (*Region, error) {
 // GroupKeysByRegion separates keys into groups by their belonging Regions.
 // Specially it also returns the first key's region which may be used as the
 // 'PrimaryLockKey' and should be committed ahead of others.
-func (c *RegionCache) GroupKeysByRegion(keys [][]byte) (map[RegionVerID][][]byte, RegionVerID, error) {
+func (c *RegionCache) GroupKeysByRegion(bo *Backoff, keys [][]byte) (map[RegionVerID][][]byte, RegionVerID, error) {
 	groups := make(map[RegionVerID][][]byte)
 	var first RegionVerID
 	var lastRegion *Region
@@ -84,7 +85,7 @@ func (c *RegionCache) GroupKeysByRegion(keys [][]byte) (map[RegionVerID][][]byte
 			region = lastRegion
 		} else {
 			var err error
-			region, err = c.GetRegion(k)
+			region, err = c.GetRegion(bo, k)
 			if err != nil {
 				return nil, first, errors.Trace(err)
 			}
@@ -196,17 +197,21 @@ func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 }
 
 // loadRegion loads region from pd client, and picks the first peer as leader.
-func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
-	var region *Region
-	var backoffErr error
-	for backoff := pdBackoff(); backoffErr == nil; backoffErr = backoff() {
+func (c *RegionCache) loadRegion(bo *Backoff, key []byte) (*Region, error) {
+	for {
 		meta, leader, err := c.pdClient.GetRegion(key)
 		if err != nil {
-			log.Warnf("loadRegion from PD failed, key: %q, err: %v", key, err)
+			err = bo.Backoff(boPDRPC, fmt.Sprintf("loadRegion from PD failed, key: %q, err: %v", key, err))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			continue
 		}
 		if meta == nil {
-			log.Warnf("region not found for key %q", key)
+			err = bo.Backoff(boPDRPC, fmt.Sprintf("region not found for key %q", key))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			continue
 		}
 		if len(meta.Peers) == 0 {
@@ -224,21 +229,20 @@ func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 		peer := meta.Peers[0]
 		store, err := c.pdClient.GetStore(peer.GetStoreId())
 		if err != nil {
-			log.Warnf("loadStore from PD failed, key %q, storeID: %d, err: %v", key, peer.GetStoreId(), err)
+			err = bo.Backoff(boPDRPC, fmt.Sprintf("loadStore from PD failed, key %q, storeID: %d, err: %v", key, peer.GetStoreId(), err))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			continue
 		}
-		region = &Region{
+		region := &Region{
 			meta:       meta,
 			peer:       peer,
 			addr:       store.GetAddress(),
 			curPeerIdx: 0,
 		}
-		break
+		return region, nil
 	}
-	if backoffErr != nil {
-		return nil, errors.Annotate(backoffErr, txnRetryableMark)
-	}
-	return region, nil
 }
 
 // llrbItem is llrbTree's Item that uses []byte for compare.
@@ -341,24 +345,4 @@ func (r *Region) NextPeer() (*metapb.Peer, error) {
 		return nil, errors.New("out of range of peer")
 	}
 	return r.meta.Peers[nextPeerIdx], nil
-}
-
-// regionMissBackoff is for region cache miss retry.
-func regionMissBackoff() func() error {
-	const (
-		maxRetry  = 2
-		sleepBase = 1
-		sleepCap  = 1
-	)
-	return NewBackoff(maxRetry, sleepBase, sleepCap, NoJitter)
-}
-
-// pdBackoff is for PD RPC retry.
-func pdBackoff() func() error {
-	const (
-		maxRetry  = 10
-		sleepBase = 500
-		sleepCap  = 3000
-	)
-	return NewBackoff(maxRetry, sleepBase, sleepCap, EqualJitter)
 }
