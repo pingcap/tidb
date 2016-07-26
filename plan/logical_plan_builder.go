@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
@@ -823,30 +822,8 @@ func (b *planBuilder) buildNewTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) getTableStats(table *model.TableInfo) *statistics.Table {
-	txn, err := b.ctx.GetTxn(false)
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
-	// mock ctx
-	if txn == nil {
-		return statistics.PseudoTable(table)
-	}
-	m := meta.NewMeta(txn)
-	statsPB, err := m.GetTableStats(table.ID)
-	if statsPB == nil {
-		return statistics.PseudoTable(table)
-	}
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
-	statsTbl, err := statistics.TableFromPB(table, statsPB)
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
-	return statsTbl
+	// TODO: Currently we always retrun a pseudo table for good performance. We will use a cache in future.
+	return statistics.PseudoTable(table)
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {

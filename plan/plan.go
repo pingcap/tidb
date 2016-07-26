@@ -174,7 +174,10 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 		return nil, nil, errors.Trace(err)
 	}
 	if len(rest) > 0 {
-		addSelection(p, child, rest, p.allocator)
+		err = addSelection(p, child, rest, p.allocator)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
 	}
 	return nil, nil, nil
 }
