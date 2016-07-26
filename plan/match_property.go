@@ -15,6 +15,7 @@ package plan
 
 import (
 	"math"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // matchProperty implements PhysicalPlan matchProperty interface.
@@ -43,6 +44,9 @@ func (is *PhysicalIndexScan) matchProperty(prop requiredProperty, rowCounts []ui
 	matched := 0
 	allDesc, allAsc := true, true
 	for i, indexCol := range is.Index.Columns {
+		if indexCol.Length != types.UnspecifiedLength {
+			break
+		}
 		if prop[matched].col.ColName.L != indexCol.Name.L {
 			if matched != 0 || i >= is.accessEqualCount {
 				break
