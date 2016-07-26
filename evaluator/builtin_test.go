@@ -91,6 +91,31 @@ func (s *testEvaluatorSuite) TestGreatestFunc(c *C) {
 	c.Assert(v.IsNull(), IsTrue)
 }
 
+func (s *testEvaluatorSuite) TestHexFunc(c *C) {
+	defer testleak.AfterTest(c)()
+
+	v, err := builtinHex(types.MakeDatums(12), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, "C")
+
+	v, err = builtinHex(types.MakeDatums(12.3), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, "C")
+
+	v, err = builtinHex(types.MakeDatums("hello 中国"), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, "68656C6C6F20E4B8ADE59BBD")
+
+	v, err = builtinHex(types.MakeDatums("abc"), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, "616263")
+
+	v, err = builtinHex(types.MakeDatums(0x12), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, "12")
+
+}
+
 func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 	defer testleak.AfterTest(c)()
 

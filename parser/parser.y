@@ -20,7 +20,7 @@
 // at 2013-10-04 23:10:47.861401015 +0200 CEST
 //
 //  $ ebnf2y -o ql.y -oe ql.ebnf -start StatementList -pkg ql -p _
-// 
+//
 //   [1]: http://github.com/cznic/ebnf2y
 
 package parser
@@ -171,6 +171,7 @@ import (
 	groupConcat	"GROUP_CONCAT"
 	hash		"HASH"
 	having		"HAVING"
+    hex         "HEX"
 	highPriority	"HIGH_PRIORITY"
 	hour		"HOUR"
 	identified	"IDENTIFIED"
@@ -321,7 +322,7 @@ import (
 	xor 		"XOR"
 	yearweek	"YEARWEEK"
 	zerofill	"ZEROFILL"
-	
+
 	calcFoundRows	"SQL_CALC_FOUND_ROWS"
 	sqlCache	"SQL_CACHE"
 	sqlNoCache	"SQL_NO_CACHE"
@@ -330,7 +331,7 @@ import (
 	localTime	"LOCALTIME"
 	localTs		"LOCALTIMESTAMP"
 	now		"NOW"
-	
+
 	tinyIntType	"TINYINT"
 	smallIntType	"SMALLINT"
 	mediumIntType	"MEDIUMINT"
@@ -338,20 +339,20 @@ import (
 	integerType	"INTEGER"
 	bigIntType	"BIGINT"
 	bitType		"BIT"
-	
+
 	decimalType	"DECIMAL"
 	numericType	"NUMERIC"
 	floatType	"float"
 	doubleType	"DOUBLE"
 	precisionType	"PRECISION"
 	realType	"REAL"
-	
+
 	dateType	"DATE"
 	timeType	"TIME"
 	datetimeType	"DATETIME"
 	timestampType	"TIMESTAMP"
 	yearType	"YEAR"
-	
+
 	charType	"CHAR"
 	varcharType	"VARCHAR"
 	binaryType	"BINARY"
@@ -364,7 +365,7 @@ import (
 	textType	"TEXT"
 	mediumtextType	"MEDIUMTEXT"
 	longtextType	"LONGTEXT"
-	
+
 	boolType	"BOOL"
 	booleanType	"BOOLEAN"
 
@@ -656,7 +657,7 @@ import (
 %precedence insertValues
 
 %precedence lowerThanKey
-%precedence key 
+%precedence key
 
 %left   join inner cross left right full
 /* A dummy token to force the priority of TableRef production in a join. */
@@ -723,7 +724,7 @@ AlterTableSpec:
 			Column:		$3.(*ast.ColumnDef),
 			Position:	$4.(*ast.ColumnPosition),
 		}
-	}	
+	}
 |	"ADD" Constraint
 	{
 		constraint := $2.(*ast.Constraint)
@@ -776,7 +777,7 @@ ColumnKeywordOpt:
 ColumnPosition:
 	{
 		$$ = &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
-	}	
+	}
 |	"FIRST"
 	{
 		$$ = &ast.ColumnPosition{Tp: ast.ColumnPositionFirst}
@@ -803,11 +804,11 @@ ConstraintKeywordOpt:
 	{
 		$$ = nil
 	}
-|	"CONSTRAINT" 
+|	"CONSTRAINT"
 	{
 		$$ = nil
 	}
-|	"CONSTRAINT" Symbol 
+|	"CONSTRAINT" Symbol
 	{
 		$$ = $2.(string)
 	}
@@ -925,10 +926,10 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoIncrement}
 	}
-|	PrimaryOpt "KEY" 
+|	PrimaryOpt "KEY"
 	{
-		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY 
-		// can also be specified as just KEY when given in a column definition. 
+		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY
+		// can also be specified as just KEY when given in a column definition.
 		// See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey}
 	}
@@ -983,7 +984,7 @@ ConstraintElem:
 	"PRIMARY" "KEY" IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
 		c := &ast.Constraint{
-			Tp: ast.ConstraintPrimaryKey, 
+			Tp: ast.ConstraintPrimaryKey,
 			Keys: $5.([]*ast.IndexColName),
 		}
 		if $7 != nil {
@@ -993,7 +994,7 @@ ConstraintElem:
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $3.(model.IndexType)	
+			c.Option.Tp = $3.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -1023,7 +1024,7 @@ ConstraintElem:
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $3.(model.IndexType)	
+			c.Option.Tp = $3.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -1041,7 +1042,7 @@ ConstraintElem:
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $3.(model.IndexType)	
+			c.Option.Tp = $3.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -1059,7 +1060,7 @@ ConstraintElem:
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $3.(model.IndexType)	
+			c.Option.Tp = $3.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -1077,7 +1078,7 @@ ConstraintElem:
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $4.(model.IndexType)	
+			c.Option.Tp = $4.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -1095,7 +1096,7 @@ ConstraintElem:
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $4.(model.IndexType)	
+			c.Option.Tp = $4.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -1165,11 +1166,11 @@ ReferOpt:
 	}
 
 /*
- * The DEFAULT clause specifies a default value for a column. 
- * With one exception, the default value must be a constant; 
- * it cannot be a function or an expression. This means, for example, 
- * that you cannot set the default for a date column to be the value of 
- * a function such as NOW() or CURRENT_DATE. The exception is that you 
+ * The DEFAULT clause specifies a default value for a column.
+ * With one exception, the default value must be a constant;
+ * it cannot be a function or an expression. This means, for example,
+ * that you cannot set the default for a date column to be the value of
+ * a function such as NOW() or CURRENT_DATE. The exception is that you
  * can specify CURRENT_TIMESTAMP as the default for a TIMESTAMP or DATETIME column.
  *
  * See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
@@ -1286,7 +1287,7 @@ DatabaseOption:
 |	DefaultKwdOpt "COLLATE" EqOpt StringName
 	{
 		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionCollate, Value: $4.(string)}
-	} 
+	}
 
 DatabaseOptionListOpt:
 	{
@@ -1340,7 +1341,7 @@ CreateTableStmt:
 		$$ = &ast.CreateTableStmt{
 			Table:          $4.(*ast.TableName),
 			IfNotExists:    $3.(bool),
-			Cols:           columnDefs, 
+			Cols:           columnDefs,
 			Constraints:    constraints,
 			Options:        $8.([]*ast.TableOption),
 		}
@@ -1871,11 +1872,11 @@ IndexOption:
 	{
 		$$ = nil
 	}
-|	"KEY_BLOCK_SIZE" EqOpt LengthNum 
+|	"KEY_BLOCK_SIZE" EqOpt LengthNum
 	{
 		$$ = &ast.IndexOption{
 			KeyBlockSize: $1.(uint64),
-		}	
+		}
 	}
 |	IndexType
 	{
@@ -1889,9 +1890,9 @@ IndexOption:
 			Comment: $2.(string),
 		}
 	}
-	   
+
 IndexType:
-	"USING" "BTREE"	
+	"USING" "BTREE"
 	{
 		$$ = model.IndexTypeBtree
 	}
@@ -1902,7 +1903,7 @@ IndexType:
 
 IndexTypeOpt:
 	{
-		$$ = nil 
+		$$ = nil
 	}
 |	IndexType
 	{
@@ -1915,8 +1916,8 @@ Identifier:
 
 UnReservedKeyword:
 	"ASCII" | "AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET" | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED"
-|	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "DYNAMIC" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FIXED" | "FULL" | "HASH" 
-|	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION" | "SIGNED" 
+|	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "DYNAMIC" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FIXED" | "FULL" | "HASH"
+|	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION" | "SIGNED"
 |	"START" | "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
@@ -1927,7 +1928,7 @@ UnReservedKeyword:
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
 |	"DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS"
-|	"GROUP_CONCAT"| "GREATEST" | "HOUR" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
+|	"GROUP_CONCAT"| "GREATEST" | "HOUR" | "HEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 |	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX"
 |	"SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
@@ -2035,10 +2036,10 @@ ColumnSetValueList:
 		$$ = append($1.([]*ast.Assignment), $3.(*ast.Assignment))
 	}
 
-/* 
- * ON DUPLICATE KEY UPDATE col_name=expr [, col_name=expr] ... 
+/*
+ * ON DUPLICATE KEY UPDATE col_name=expr [, col_name=expr] ...
  * See https://dev.mysql.com/doc/refman/5.7/en/insert-on-duplicate.html
- */ 
+ */
 OnDuplicateKeyUpdate:
 	{
 		$$ = nil
@@ -2189,7 +2190,7 @@ ByList:
 	}
 
 ByItem:
-	Expression Order 
+	Expression Order
 	{
 		expr := $1
 		valueExpr, ok := expr.(*ast.ValueExpr)
@@ -2224,7 +2225,7 @@ OrderByOptional:
 	{
 		$$ = $1
 	}
-	
+
 PrimaryExpression:
 	Operand
 |	Function
@@ -2252,10 +2253,10 @@ PrimaryExpression:
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = &ast.FuncCastExpr{
-			Expr: $2.(ast.ExprNode), 
+			Expr: $2.(ast.ExprNode),
 			Tp: x,
 			FunctionType: ast.CastBinaryOperator,
-		}	
+		}
 	}
 |	PrimaryExpression "COLLATE" StringName %prec neg
 	{
@@ -2273,7 +2274,7 @@ FunctionNameConflict:
 	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" | "VERSION" | "UTC_DATE"
 
 FunctionCallConflict:
-	FunctionNameConflict '(' ExpressionListOpt ')' 
+	FunctionNameConflict '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
 	}
@@ -2317,12 +2318,12 @@ FunctionCallKeyword:
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
 		$$ = &ast.FuncCastExpr{
-			Expr: $3.(ast.ExprNode), 
+			Expr: $3.(ast.ExprNode),
 			Tp: $5.(*types.FieldType),
 			FunctionType: ast.CastFunction,
 		}
 	}
-|	"CASE" ExpressionOpt WhenClauseList ElseOpt "END"	
+|	"CASE" ExpressionOpt WhenClauseList ElseOpt "END"
 	{
 		x := &ast.CaseExpr{WhenClauses: $3.([]*ast.WhenClause)}
 		if $2 != nil {
@@ -2333,7 +2334,7 @@ FunctionCallKeyword:
 		}
 		$$ = x
 	}
-|	"CONVERT" '(' Expression "USING" StringName ')' 
+|	"CONVERT" '(' Expression "USING" StringName ')'
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 		charset := ast.NewValueExpr($5)
@@ -2346,10 +2347,10 @@ FunctionCallKeyword:
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 		$$ = &ast.FuncCastExpr{
-			Expr: $3.(ast.ExprNode), 
+			Expr: $3.(ast.ExprNode),
 			Tp: $5.(*types.FieldType),
 			FunctionType: ast.CastConvertFunction,
-		}	
+		}
 	}
 |	"ASCII" '(' Expression ')'
 	{
@@ -2386,7 +2387,7 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}
-|	"CUR_TIME" '(' ExpressionOpt ')' 
+|	"CUR_TIME" '(' ExpressionOpt ')'
 	{
 		args := []ast.ExprNode{}
 		if $3 != nil {
@@ -2504,6 +2505,11 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"HEX" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+
 |	"IFNULL" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
@@ -2732,11 +2738,11 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
 	}
-|	"GET_LOCK" '(' Expression ',' Expression ')' 
+|	"GET_LOCK" '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
 	}
-|	"RELEASE_LOCK" '(' Expression ')' 
+|	"RELEASE_LOCK" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
@@ -2833,9 +2839,9 @@ FuncDatetimePrec:
 	}
 
 TimeUnit:
-	"MICROSECOND" | "SECOND" | "MINUTE" | "HOUR" | "DAY" | "WEEK" 
+	"MICROSECOND" | "SECOND" | "MINUTE" | "HOUR" | "DAY" | "WEEK"
 |	"MONTH" | "QUARTER" | "YEAR" | "SECOND_MICROSECOND" | "MINUTE_MICROSECOND"
-|	"MINUTE_SECOND" | "HOUR_MICROSECOND" | "HOUR_SECOND" | "HOUR_MINUTE" 
+|	"MINUTE_SECOND" | "HOUR_MICROSECOND" | "HOUR_SECOND" | "HOUR_MINUTE"
 |	"DAY_MICROSECOND" | "DAY_SECOND" | "DAY_MINUTE" | "DAY_HOUR" | "YEAR_MONTH"
 
 ExpressionOpt:
@@ -2843,7 +2849,7 @@ ExpressionOpt:
 		$$ = nil
 	}
 |	Expression
-	{	
+	{
 		$$ = $1
 	}
 
@@ -2869,7 +2875,7 @@ WhenClause:
 ElseOpt:
 	/* empty */
 	{
-		$$ = nil	
+		$$ = nil
 	}
 |	"ELSE" Expression
 	{
@@ -2880,7 +2886,7 @@ CastType:
 	"BINARY" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int) 
+		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
@@ -2888,7 +2894,7 @@ CastType:
 |	"CHAR" OptFieldLen OptBinary OptCharset
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int) 
+		x.Flen = $2.(int)
 		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
@@ -3063,8 +3069,8 @@ PreparedStmt:
 			sqlVar = $4.(*ast.VariableExpr)
 		}
 		$$ = &ast.PrepareStmt{
-			Name:		$2.(string), 
-			SQLText:	sqlText, 
+			Name:		$2.(string),
+			SQLText:	sqlText,
 			SQLVar: 	sqlVar,
 		}
 	}
@@ -3089,7 +3095,7 @@ ExecuteStmt:
 |	"EXECUTE" Identifier "USING" UserVariableList
 	{
 		$$ = &ast.ExecuteStmt{
-			Name: $2.(string), 
+			Name: $2.(string),
 			UsingVars: $4.([]ast.ExprNode),
 		}
 	}
@@ -3097,11 +3103,11 @@ ExecuteStmt:
 UserVariableList:
 	UserVariable
 	{
-		$$ = []ast.ExprNode{$1.(ast.ExprNode)}		
+		$$ = []ast.ExprNode{$1.(ast.ExprNode)}
 	}
 |	UserVariableList ',' UserVariable
 	{
-		$$ = append($1.([]ast.ExprNode), $3.(ast.ExprNode))		
+		$$ = append($1.([]ast.ExprNode), $3.(ast.ExprNode))
 	}
 
 /*
@@ -3248,15 +3254,15 @@ EscapedTableRef:
 	}
 |	'{' Identifier TableRef '}'
 	{
-		/* 
-		* ODBC escape syntax for outer join is { OJ join_table } 
-		* Use an Identifier for OJ 
+		/*
+		* ODBC escape syntax for outer join is { OJ join_table }
+		* Use an Identifier for OJ
 		*/
 		$$ = $3
 	}
 
 TableRef:
-	TableFactor 
+	TableFactor
 	{
 		$$ = $1
 	}
@@ -3373,7 +3379,7 @@ IndexHintList:
  	{
  		$$ = append($1.([]*ast.IndexHint), $2.(*ast.IndexHint))
  	}
- 	
+
 IndexHintListOpt:
 	{
 		var hintList []*ast.IndexHint
@@ -3438,11 +3444,11 @@ SelectStmtLimit:
 	{
 		$$ = nil
 	}
-|	"LIMIT" LengthNum 
+|	"LIMIT" LengthNum
 	{
 		$$ = &ast.Limit{Count: $2.(uint64)}
 	}
-|	"LIMIT" LengthNum ',' LengthNum 
+|	"LIMIT" LengthNum ',' LengthNum
 	{
 		$$ = &ast.Limit{Offset: $2.(uint64), Count: $4.(uint64)}
 	}
@@ -3633,7 +3639,7 @@ SetStmt:
 	{
 		$$ = &ast.SetPwdStmt{User: $4.(string), Password: $6.(string)}
 	}
-|	"SET" "GLOBAL" "TRANSACTION" TransactionChars 
+|	"SET" "GLOBAL" "TRANSACTION" TransactionChars
 	{
 		// Parsed but ignored
 	}
@@ -3705,14 +3711,14 @@ VariableAssignment:
 |	"NAMES" StringName
 	{
 		$$ = &ast.VariableAssignment{
-			Name: ast.SetNames, 
+			Name: ast.SetNames,
 			Value: ast.NewValueExpr($2.(string)),
 		}
 	}
 |	"NAMES" StringName "COLLATE" StringName
 	{
 		$$ = &ast.VariableAssignment{
-			Name: ast.SetNames, 
+			Name: ast.SetNames,
 			Value: ast.NewValueExpr($2.(string)),
 			ExtendValue: ast.NewValueExpr($4.(string)),
 		}
@@ -3720,7 +3726,7 @@ VariableAssignment:
 |	CharsetKw StringName
 	{
 		$$ = &ast.VariableAssignment{
-			Name: ast.SetNames, 
+			Name: ast.SetNames,
 			Value: ast.NewValueExpr($2.(string)),
 		}
 	}
@@ -3768,7 +3774,7 @@ UserVariable:
 	}
 
 Username:
-	stringLit "AT" stringLit	
+	stringLit "AT" stringLit
 	{
 		$$ = $1.(string) + "@" + $3.(string)
 	}
@@ -3778,7 +3784,7 @@ PasswordOpt:
 	{
 		$$ = $1.(string)
 	}
-|	"PASSWORD" '(' AuthString ')' 
+|	"PASSWORD" '(' AuthString ')'
 	{
 		$$ = $3.(string)
 	}
@@ -3943,7 +3949,7 @@ ShowTargetFilterable:
 
 ShowLikeOrWhereOpt:
 	{
-		$$ = nil 
+		$$ = nil
 	}
 |	"LIKE" PrimaryExpression
 	{
@@ -3959,15 +3965,15 @@ ShowLikeOrWhereOpt:
 
 GlobalScope:
 	{
-		$$ = false	
+		$$ = false
 	}
 |	"GLOBAL"
 	{
-		$$ = true	
+		$$ = true
 	}
-|	"SESSION" 
+|	"SESSION"
 	{
-		$$ = false	
+		$$ = false
 	}
 
 OptFull:
@@ -4090,7 +4096,7 @@ TableElement:
 |	"CHECK" '(' Expression ')'
 	{
 		/* Nothing to do now */
-		$$ = nil 
+		$$ = nil
 	}
 
 TableElementList:
@@ -4114,19 +4120,19 @@ TableElementList:
 TableOption:
 	"ENGINE" Identifier
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $2.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $2.(string)}
 	}
 |	"ENGINE" eq Identifier
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $3.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $3.(string)}
 	}
 |	DefaultKwdOpt CharsetKw EqOpt StringName
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionCharset, StrValue: $4.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionCharset, StrValue: $4.(string)}
 	}
 |	DefaultKwdOpt "COLLATE" EqOpt StringName
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $4.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $4.(string)}
 	}
 |	"AUTO_INCREMENT" eq LengthNum
 	{
@@ -4134,43 +4140,43 @@ TableOption:
 	}
 |	"COMMENT" EqOpt stringLit
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionComment, StrValue: $3.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionComment, StrValue: $3.(string)}
 	}
 |	"AVG_ROW_LENGTH" EqOpt LengthNum
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionAvgRowLength, UintValue: $3.(uint64)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionAvgRowLength, UintValue: $3.(uint64)}
 	}
 |	"CONNECTION" EqOpt stringLit
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionConnection, StrValue: $3.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionConnection, StrValue: $3.(string)}
 	}
 |	"CHECKSUM" EqOpt LengthNum
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionCheckSum, UintValue: $3.(uint64)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionCheckSum, UintValue: $3.(uint64)}
 	}
 |	"PASSWORD" EqOpt stringLit
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionPassword, StrValue: $3.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionPassword, StrValue: $3.(string)}
 	}
 |	"COMPRESSION" EqOpt Identifier
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionCompression, StrValue: $3.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionCompression, StrValue: $3.(string)}
 	}
 |	"KEY_BLOCK_SIZE" EqOpt LengthNum
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionKeyBlockSize, UintValue: $3.(uint64)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionKeyBlockSize, UintValue: $3.(uint64)}
 	}
 |	"MAX_ROWS" EqOpt LengthNum
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionMaxRows, UintValue: $3.(uint64)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionMaxRows, UintValue: $3.(uint64)}
 	}
 |	"MIN_ROWS" EqOpt LengthNum
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionMinRows, UintValue: $3.(uint64)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionMinRows, UintValue: $3.(uint64)}
 	}
 |	"DELAY_KEY_WRITE" EqOpt LengthNum
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionDelayKeyWrite, UintValue: $3.(uint64)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionDelayKeyWrite, UintValue: $3.(uint64)}
 	}
 |	RowFormat
 	{
@@ -4178,7 +4184,7 @@ TableOption:
 	}
 |	"STATS_PERSISTENT" EqOpt StatsPersistentVal
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent}
 	}
 
 StatsPersistentVal:
@@ -4277,7 +4283,7 @@ NumericType:
 	{
 		fopt := $2.(*ast.FloatOpt)
 		x := types.NewFieldType($1.(byte))
-		x.Flen = fopt.Flen 
+		x.Flen = fopt.Flen
 		x.Decimal = fopt.Decimal
 		for _, o := range $3.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
@@ -4293,14 +4299,14 @@ NumericType:
 	{
 		fopt := $2.(*ast.FloatOpt)
 		x := types.NewFieldType($1.(byte))
-		x.Flen = fopt.Flen 
+		x.Flen = fopt.Flen
 		if x.Tp == mysql.TypeFloat {
 			// Fix issue #312
 			if x.Flen > 53 {
 				yylex.Errorf("Float len(%d) should not be greater than 53", x.Flen)
 				return 1
 			}
-			if x.Flen > 24 { 
+			if x.Flen > 24 {
 				x.Tp = mysql.TypeDouble
 			}
 		}
@@ -4342,7 +4348,7 @@ IntegerType:
 	}
 |	"INT"
 	{
-		$$ = mysql.TypeLong 
+		$$ = mysql.TypeLong
 	}
 |	"INTEGER"
 	{
@@ -4354,11 +4360,11 @@ IntegerType:
 	}
 |	"BOOL"
 	{
-		$$ = mysql.TypeTiny        
+		$$ = mysql.TypeTiny
 	}
 |	"BOOLEAN"
 	{
-		$$ = mysql.TypeTiny        
+		$$ = mysql.TypeTiny
 	}
 
 OptInteger:
@@ -4395,7 +4401,7 @@ FloatingPointType:
 BitValueType:
 	"BIT"
 	{
-		$$ = mysql.TypeBit 
+		$$ = mysql.TypeBit
 	}
 
 StringType:
@@ -4419,7 +4425,7 @@ StringType:
 |	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
-		x.Flen = $3.(int) 
+		x.Flen = $3.(int)
 		if $4.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
@@ -4430,16 +4436,16 @@ StringType:
 |	"BINARY" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int) 
-		x.Charset = charset.CharsetBin 
+		x.Flen = $2.(int)
+		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 |	"VARBINARY" FieldLen
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
-		x.Flen = $2.(int) 
-		x.Charset = charset.CharsetBin 
+		x.Flen = $2.(int)
+		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
 	}
@@ -4494,7 +4500,7 @@ BlobType:
 |	"BLOB" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeBlob)
-		x.Flen = $2.(int) 
+		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
@@ -4524,7 +4530,7 @@ TextType:
 |	"TEXT" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeBlob)
-		x.Flen = $2.(int) 
+		x.Flen = $2.(int)
 		$$ = x
 	}
 |	"MEDIUMTEXT"
@@ -4579,10 +4585,10 @@ FieldLen:
 OptFieldLen:
 	{
 		/* -1 means unspecified field length*/
-		$$ = types.UnspecifiedLength 
+		$$ = types.UnspecifiedLength
 	}
 |	FieldLen
-	{   
+	{
 		$$ = $1.(int)
 	}
 
@@ -4602,7 +4608,7 @@ FieldOpts:
 	}
 |	FieldOpts FieldOpt
 	{
-		$$ = append($1.([]*ast.TypeOpt), $2.(*ast.TypeOpt)) 
+		$$ = append($1.([]*ast.TypeOpt), $2.(*ast.TypeOpt))
 	}
 
 FloatOpt:
@@ -4760,7 +4766,7 @@ CreateUserStmt:
 	}
 
 UserSpec:
-	Username AuthOption	
+	Username AuthOption
 	{
 		userSpec := &ast.UserSpec{
 			User: $1.(string),
@@ -4967,6 +4973,6 @@ LockType:
 
 TableLockList:
 	TableLock
-|	TableLockList ',' TableLock 
+|	TableLockList ',' TableLock
 
 %%
