@@ -447,7 +447,7 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	if !ok {
 		return false
 	}
-	if col.TblName.L != c.tableName.L {
+	if col.Correlated {
 		return false
 	}
 	if c.pkName.L != "" {

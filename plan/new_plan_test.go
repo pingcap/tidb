@@ -203,8 +203,8 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[1,1]]->Projection",
 		},
 		{
-			sql:  "select * from t a where 1 = a.c order by a.d limit 2",
-			best: "Index(t.c_d_e)[[1,1]]->Projection",
+			sql:  "select * from t a where 1 = a.c and a.d > 1 order by a.d desc limit 2",
+			best: "Index(t.c_d_e)[(1 1,1 <nil>]]->Projection",
 		},
 		{
 			sql:  "select * from t a where a.c < 10000 order by a.a limit 2",

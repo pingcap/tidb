@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
@@ -57,6 +58,7 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 			return nil, errors.Trace(err)
 		}
 		p = res.p.PushLimit(nil)
+		log.Debugf("[PLAN] %s", ToString(p))
 	} else {
 		err := Refine(p)
 		if err != nil {
