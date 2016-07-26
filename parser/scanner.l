@@ -294,7 +294,7 @@ group		{g}{r}{o}{u}{p}
 group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
 hash		{h}{a}{s}{h}
 having		{h}{a}{v}{i}{n}{g}
-hex			{h}{e}{x}
+hex		{h}{e}{x}
 high_priority	{h}{i}{g}{h}_{p}{r}{i}{o}{r}{i}{t}{y}
 hour		{h}{o}{u}{r}
 identified	{i}{d}{e}{n}{t}{i}{f}{i}{e}{d}
