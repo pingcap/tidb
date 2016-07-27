@@ -78,7 +78,7 @@
 //
 //	type yyLexer interface {
 //		Lex(lval *yySymType) int
-//		Error(e string)
+//		Errorf(format string,  a ...interface{})
 //	}
 //
 // Optionally the argument to yyParse may implement the following interface:
@@ -507,7 +507,7 @@ var %[1]sDebug = 0
 
 type %[1]sLexer interface {
 	Lex(lval *%[1]sSymType) int
-	Error(s string)
+	Errorf(format string, a ...interface{})
 }
 
 type %[1]sLexerEx interface {
@@ -641,7 +641,8 @@ yynewstate:
 			if !ok || msg == "" {
 				msg = "syntax error"
 			}
-			yylex.Error(msg)
+			// ignore goyacc error message
+			yylex.Errorf("")
 			Nerrs++
 			fallthrough
 
