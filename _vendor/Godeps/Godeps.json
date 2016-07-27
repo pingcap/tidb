@@ -1,7 +1,7 @@
 {
 	"ImportPath": "github.com/pingcap/tidb",
 	"GoVersion": "go1.6",
-	"GodepVersion": "v62",
+	"GodepVersion": "v63",
 	"Packages": [
 		"./..."
 	],
@@ -318,6 +318,26 @@
 		{
 			"ImportPath": "github.com/ngaut/systimemon",
 			"Rev": "c2ca1c75c6af5556eb6ce67994120adf12f2ccef"
+		},
+		{
+			"ImportPath": "github.com/cznic/mathutil",
+			"Rev": "78ad7f262603437f0ecfebc835d80094f89c8f54"
+		},
+		{
+			"ImportPath": "github.com/cznic/parser/yacc",
+			"Rev": "31edd927e5b19d1c4a260c41a397e7f81d6694d9"
+		},
+		{
+			"ImportPath": "github.com/cznic/sortutil",
+			"Rev": "4c7342852e65c2088c981288f2c5610d10b9f7f4"
+		},
+		{
+			"ImportPath": "github.com/cznic/strutil",
+			"Rev": "1eb03e3cc9d345307a45ec82bd3016cde4bd4464"
+		},
+		{
+			"ImportPath": "github.com/cznic/y",
+			"Rev": "9fdf92d4aac058959f814606bb729ed50f5e4240"
 		}
 	]
 }

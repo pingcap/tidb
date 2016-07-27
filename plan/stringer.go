@@ -27,7 +27,7 @@ func ToString(p Plan) string {
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch in.(type) {
-	case *JoinOuter, *JoinInner, *Join, *Union, *NewUnion:
+	case *JoinOuter, *JoinInner, *Join, *Union, *NewUnion, *PhysicalHashJoin, *PhysicalHashSemiJoin:
 		idxs = append(idxs, len(strs))
 	}
 
@@ -46,7 +46,33 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *PhysicalIndexScan:
 		str = fmt.Sprintf("Index(%s.%s)%v", x.Table.Name.L, x.Index.Name.L, x.Ranges)
+	case *PhysicalTableScan:
+		str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
+	case *PhysicalHashJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		if x.SmallTable == 0 {
+			str = "RightHashJoin{" + strings.Join(children, "->") + "}"
+		} else {
+			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
+		}
+	case *PhysicalHashSemiJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		if x.WithAux {
+			str = "SemiJoinWithAux{" + strings.Join(children, "->") + "}"
+		} else {
+			str = "SemiJoin{" + strings.Join(children, "->") + "}"
+		}
 	case *Apply:
+		str = fmt.Sprintf("Apply(%s)", ToString(x.InnerPlan))
+	case *PhysicalApply:
 		str = fmt.Sprintf("Apply(%s)", ToString(x.InnerPlan))
 	case *Exists:
 		str = "Exists"
@@ -63,6 +89,11 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *Filter:
 		str = "Filter"
 	case *Sort:
+		str = "Sort"
+		if x.ExecLimit != nil {
+			str += fmt.Sprintf(" + Limit(%v) + Offset(%v)", x.ExecLimit.Count, x.ExecLimit.Offset)
+		}
+	case *NewSort:
 		str = "Sort"
 		if x.ExecLimit != nil {
 			str += fmt.Sprintf(" + Limit(%v) + Offset(%v)", x.ExecLimit.Count, x.ExecLimit.Offset)

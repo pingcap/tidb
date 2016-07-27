@@ -102,6 +102,18 @@ type Plan interface {
 	SetChildren(...Plan)
 }
 
+type requiredProperty []*columnProp
+
+type physicalPlanInfo struct {
+	p    PhysicalPlan
+	cost float64
+}
+
+type columnProp struct {
+	col  *expression.Column
+	desc bool
+}
+
 // LogicalPlan is a tree of logical operators.
 // We can do a lot of logical optimization to it, like predicate push down and column pruning.
 type LogicalPlan interface {
@@ -118,20 +130,28 @@ type LogicalPlan interface {
 	// how many columns referenced by inner plan exactly.
 	PruneColumnsAndResolveIndices([]*expression.Column) ([]*expression.Column, error)
 
-	// Convert2PhysicalPlan converts logical plan to physical plan.
-	Convert2PhysicalPlan() PhysicalPlan
+	// convert2PhysicalPlan converts logical plan to physical plan. The arg prop means the required sort property.
+	// This function returns two response. The first one is the best plan that matches the required property strictly.
+	// The second one is the best plan that needn't matches the required property.
+	convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error)
 }
 
 // PhysicalPlan is a tree of physical operators.
 type PhysicalPlan interface {
 	Plan
+
+	// matchProperty means that this physical plan will try to return the best plan that matches the required property.
+	// rowCounts means the child row counts, and childPlanInfo means the plan infos returned by children.
+	matchProperty(prop requiredProperty, rowCounts []uint64, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo
+
+	// Copy copies the current plan.
+	Copy() PhysicalPlan
+
+	// PushLimit tries to push down limit as deeply as possible.
+	PushLimit(l *Limit) PhysicalPlan
 }
 
 type baseLogicalPlan struct {
-	basePlan
-}
-
-type basePhysicalPlan struct {
 	basePlan
 }
 
@@ -147,7 +167,7 @@ func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	if len(p.GetChildren()) == 0 {
-		return predicates, p, nil
+		return predicates, nil, nil
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	rest, _, err := child.PredicatePushDown(predicates)
@@ -160,11 +180,7 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 			return nil, nil, errors.Trace(err)
 		}
 	}
-	return nil, p, nil
-}
-
-func (p *baseLogicalPlan) Convert2PhysicalPlan() PhysicalPlan {
-	return p
+	return nil, nil, nil
 }
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.

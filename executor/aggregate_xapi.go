@@ -56,9 +56,6 @@ func (n *finalAggregater) update(count uint64, value types.Datum) error {
 // GetContext gets aggregate evaluation context for the current group.
 // If it is nil, add a new context into contextPerGroupMap.
 func (n *finalAggregater) getContext() *ast.AggEvaluateContext {
-	if n.contextPerGroupMap == nil {
-		n.contextPerGroupMap = make(map[string](*ast.AggEvaluateContext))
-	}
 	if _, ok := n.contextPerGroupMap[string(n.currentGroup)]; !ok {
 		n.contextPerGroupMap[string(n.currentGroup)] = &ast.AggEvaluateContext{}
 	}
@@ -73,10 +70,10 @@ func (n *finalAggregater) updateCount(count uint64) error {
 
 func (n *finalAggregater) updateFirst(val types.Datum) error {
 	ctx := n.getContext()
-	if ctx.Value != nil {
+	if !ctx.Value.IsNull() {
 		return nil
 	}
-	ctx.Value = val.GetValue()
+	ctx.Value = val
 	return nil
 }
 
@@ -85,21 +82,20 @@ func (n *finalAggregater) updateMaxMin(val types.Datum, max bool) error {
 	if val.IsNull() {
 		return nil
 	}
-	v := val.GetValue()
-	if ctx.Value == nil {
-		ctx.Value = v
+	if ctx.Value.IsNull() {
+		ctx.Value = val
 		return nil
 	}
-	c, err := types.Compare(ctx.Value, v)
+	c, err := ctx.Value.CompareDatum(val)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if max {
 		if c == -1 {
-			ctx.Value = v
+			ctx.Value = val
 		}
 	} else if c == 1 {
-		ctx.Value = v
+		ctx.Value = val
 	}
 	return nil
 }
@@ -110,7 +106,7 @@ func (n *finalAggregater) updateSum(val types.Datum, count uint64) error {
 		return nil
 	}
 	var err error
-	ctx.Value, err = types.CalculateSum(ctx.Value, val.GetValue())
+	ctx.Value, err = types.CalculateSum(ctx.Value, val)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -154,7 +150,8 @@ func (e *XAggregateExec) Next() (*Row, error) {
 		e.aggregaters = make([]*finalAggregater, len(e.AggFuncs))
 		for i, af := range e.AggFuncs {
 			agg := &finalAggregater{
-				name: strings.ToLower(af.F),
+				name:               strings.ToLower(af.F),
+				contextPerGroupMap: make(map[string](*ast.AggEvaluateContext)),
 			}
 			e.aggregaters[i] = agg
 		}
@@ -299,7 +296,8 @@ func (e *NewXAggregateExec) Next() (*Row, error) {
 		e.aggregaters = make([]*finalAggregater, len(e.AggFuncs))
 		for i, af := range e.AggFuncs {
 			agg := &finalAggregater{
-				name: strings.ToLower(af.GetName()),
+				name:               strings.ToLower(af.GetName()),
+				contextPerGroupMap: make(map[string](*ast.AggEvaluateContext)),
 			}
 			e.aggregaters[i] = agg
 		}

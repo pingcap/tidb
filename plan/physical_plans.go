@@ -20,7 +20,7 @@ import (
 
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
-	basePhysicalPlan
+	basePlan
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
@@ -40,13 +40,14 @@ type PhysicalIndexScan struct {
 
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
-	baseLogicalPlan
+	basePlan
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
 	DBName  *model.CIStr
 	Desc    bool
 	Ranges  []TableRange
+	pkCol   *expression.Column
 
 	AccessCondition []expression.Expression
 
@@ -57,7 +58,7 @@ type PhysicalTableScan struct {
 
 // PhysicalApply represents apply plan, only used for subquery.
 type PhysicalApply struct {
-	basePhysicalPlan
+	basePlan
 
 	InnerPlan   PhysicalPlan
 	OuterSchema expression.Schema
@@ -66,7 +67,7 @@ type PhysicalApply struct {
 
 // PhysicalHashJoin represents hash join for inner/ outer join.
 type PhysicalHashJoin struct {
-	basePhysicalPlan
+	basePlan
 
 	JoinType JoinType
 
@@ -74,11 +75,12 @@ type PhysicalHashJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
+	SmallTable      int
 }
 
 // PhysicalHashSemiJoin represents hash join for semi join.
 type PhysicalHashSemiJoin struct {
-	basePhysicalPlan
+	basePlan
 
 	WithAux bool
 	Anti    bool
@@ -87,4 +89,112 @@ type PhysicalHashSemiJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalIndexScan) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalTableScan) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalApply) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalHashSemiJoin) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalHashJoin) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *Distinct) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *Selection) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *Projection) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *Exists) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *MaxOneRow) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *Insert) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *Limit) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *NewUnion) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *NewSort) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *NewTableDual) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *Trim) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *SelectLock) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *Aggregation) Copy() PhysicalPlan {
+	np := *p
+	return &np
 }

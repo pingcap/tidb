@@ -41,10 +41,7 @@ import (
 
 %union {
 	offset int // offset
-	line int
-	col  int
 	item interface{}
-	list []interface{}
 }
 
 %token	<item>
@@ -280,7 +277,6 @@ import (
 	start		"START"
 	statsPersistent	"STATS_PERSISTENT"
 	status		"STATUS"
-	stringType	"string"
 	subDate		"SUBDATE"
 	strcmp		"STRCMP"
 	substring	"SUBSTRING"
@@ -370,22 +366,8 @@ import (
 	mediumtextType	"MEDIUMTEXT"
 	longtextType	"LONGTEXT"
 	
-	int16Type	"int16"
-	int24Type	"int24"
-	int32Type	"int32"
-	int64Type	"int64"
-	int8Type	"int8"
-	uintType	"uint"
-	uint16Type	"uint16"
-	uint32Type	"uint32"
-	uint64Type	"uint64"
-	uint8Type	"uint8"
-	float32Type	"float32"
-	float64Type	"float64"
 	boolType	"BOOL"
 	booleanType	"BOOLEAN"
-
-	parseExpression	"parse expression prefix"
 
 	secondMicrosecond	"SECOND_MICROSECOND"
 	minuteMicrosecond	"MINUTE_MICROSECOND"
@@ -714,10 +696,6 @@ import (
 
 Start:
 	StatementList
-|	parseExpression Expression
-	{
-		yylex.(*lexer).expr = $2.(ast.ExprNode)
-	}
 
 /**************************************AlterTableStmt***************************************
  * See https://dev.mysql.com/doc/refman/5.7/en/alter-table.html
@@ -1245,9 +1223,6 @@ CreateIndexStmt:
                 	Table: $6.(*ast.TableName),
 			IndexColNames: $8.([]*ast.IndexColName),
 		}
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 CreateIndexStmtUnique:
@@ -1298,10 +1273,6 @@ CreateDatabaseStmt:
 			IfNotExists:	$3.(bool),
 			Name:		$4.(string),
 			Options:	$5.([]*ast.DatabaseOption),
-		}
-
-		if yylex.(*lexer).root {
-			break
 		}
 	}
 
@@ -1431,9 +1402,6 @@ DeleteFromStmt:
 		}
 
 		$$ = x
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 |	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional TableNameList "FROM" TableRefs WhereClauseOptional
 	{
@@ -1451,9 +1419,6 @@ DeleteFromStmt:
 			x.Where = $8.(ast.ExprNode)
 		}
 		$$ = x
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 |	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableNameList "USING" TableRefs WhereClauseOptional
 	{
@@ -1470,9 +1435,6 @@ DeleteFromStmt:
 			x.Where = $9.(ast.ExprNode)
 		}
 		$$ = x
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 DatabaseSym:
@@ -1482,9 +1444,6 @@ DropDatabaseStmt:
 	"DROP" DatabaseSym IfExists DBName
 	{
 		$$ = &ast.DropDatabaseStmt{IfExists: $3.(bool), Name: $4.(string)}
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 DropIndexStmt:
@@ -1497,16 +1456,10 @@ DropTableStmt:
 	"DROP" TableOrTables TableNameList
 	{
 		$$ = &ast.DropTableStmt{Tables: $3.([]*ast.TableName)}
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 |	"DROP" TableOrTables "IF" "EXISTS" TableNameList
 	{
 		$$ = &ast.DropTableStmt{IfExists: true, Tables: $5.([]*ast.TableName)}
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 TableOrTables:
@@ -1845,7 +1798,7 @@ FieldList:
 	Field
 	{
 		field := $1.(*ast.SelectField)
-		field.Offset = yylex.(*lexer).startOffset(yyS[yypt].offset)
+		field.Offset = parser.startOffset(yyS[yypt].offset)
 		$$ = []*ast.SelectField{field}
 	}
 |	FieldList ',' Field
@@ -1853,13 +1806,12 @@ FieldList:
 
 		fl := $1.([]*ast.SelectField)
 		last := fl[len(fl)-1]
-		l := yylex.(*lexer)
 		if last.Expr != nil && last.AsName.O == "" {
-			lastEnd := l.endOffset(yyS[yypt-1].offset)
-			last.SetText(l.src[last.Offset:lastEnd])
+			lastEnd := parser.endOffset(yyS[yypt-1].offset)
+			last.SetText(parser.src[last.Offset:lastEnd])
 		}
 		newField := $3.(*ast.SelectField)
-		newField.Offset = l.startOffset(yyS[yypt].offset)
+		newField.Offset = parser.startOffset(yyS[yypt].offset)
 		$$ = append(fl, newField)
 	}
 
@@ -2000,9 +1952,6 @@ InsertIntoStmt:
 			x.OnDuplicate = $7.([]*ast.Assignment)
 		}
 		$$ = x
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 IntoOpt:
@@ -2149,8 +2098,7 @@ Literal:
 |	stringLit
 	{
 		tp := types.NewFieldType(mysql.TypeString)
-		l := yylex.(*lexer)
-		tp.Charset, tp.Collate = l.GetCharsetInfo()
+		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($1)
 		expr.SetType(tp)
 		$$ = expr
@@ -2184,11 +2132,10 @@ Operand:
 	}
 |	'(' Expression ')'
 	{
-		l := yylex.(*lexer)
-		startOffset := l.startOffset(yyS[yypt-1].offset)
-		endOffset := l.endOffset(yyS[yypt].offset)
+		startOffset := parser.startOffset(yyS[yypt-1].offset)
+		endOffset := parser.endOffset(yyS[yypt].offset)
 		expr := $2.(ast.ExprNode)
-		expr.SetText(l.src[startOffset:endOffset])
+		expr.SetText(parser.src[startOffset:endOffset])
 		$$ = &ast.ParenthesesExpr{Expr: expr}
 	}
 |	"DEFAULT" %prec lowerThanLeftParen
@@ -3329,9 +3276,8 @@ TableFactor:
 |	'(' SelectStmt ')' TableAsName
 	{
 		st := $2.(*ast.SelectStmt)
-		l := yylex.(*lexer)
-		endOffset := l.endOffset(yyS[yypt-1].offset)
-		l.SetLastSelectFieldText(st, endOffset)
+		endOffset := parser.endOffset(yyS[yypt-1].offset)
+		parser.setLastSelectFieldText(st, endOffset)
 		$$ = &ast.TableSource{Source: $2.(*ast.SelectStmt), AsName: $4.(model.CIStr)}
 	}
 |	'(' UnionStmt ')' TableAsName
@@ -3568,9 +3514,8 @@ SubSelect:
 	'(' SelectStmt ')'
 	{
 		s := $2.(*ast.SelectStmt)
-		l := yylex.(*lexer)
-		endOffset := l.endOffset(yyS[yypt].offset)
-		l.SetLastSelectFieldText(s, endOffset)
+		endOffset := parser.endOffset(yyS[yypt].offset)
+		parser.setLastSelectFieldText(s, endOffset)
 		src := yylex.(*lexer).src
 		// See the implementation of yyParse function
 		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
@@ -3607,9 +3552,8 @@ UnionStmt:
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
-		l := yylex.(*lexer)
-		endOffset := l.endOffset(yyS[yypt-2].offset)
-		l.SetLastSelectFieldText(lastSelect, endOffset)
+		endOffset := parser.endOffset(yyS[yypt-2].offset)
+		parser.setLastSelectFieldText(lastSelect, endOffset)
 		union.SelectList.Selects = append(union.SelectList.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
@@ -3618,12 +3562,11 @@ UnionStmt:
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
-		l := yylex.(*lexer)
-		endOffset := l.endOffset(yyS[yypt-6].offset)
-		l.SetLastSelectFieldText(lastSelect, endOffset)
+		endOffset := parser.endOffset(yyS[yypt-6].offset)
+		parser.setLastSelectFieldText(lastSelect, endOffset)
 		st := $5.(*ast.SelectStmt)
-		endOffset = l.endOffset(yyS[yypt-2].offset)
-		l.SetLastSelectFieldText(st, endOffset)
+		endOffset = parser.endOffset(yyS[yypt-2].offset)
+		parser.setLastSelectFieldText(st, endOffset)
 		union.SelectList.Selects = append(union.SelectList.Selects, st)
 		if $7 != nil {
 			union.OrderBy = $7.(*ast.OrderByClause)
@@ -3647,9 +3590,8 @@ UnionClauseList:
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
-		l := yylex.(*lexer)
-		endOffset := l.endOffset(yyS[yypt-2].offset)
-		l.SetLastSelectFieldText(lastSelect, endOffset)
+		endOffset := parser.endOffset(yyS[yypt-2].offset)
+		parser.setLastSelectFieldText(lastSelect, endOffset)
 		union.SelectList.Selects = append(union.SelectList.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
@@ -3659,9 +3601,8 @@ UnionSelect:
 |	'(' SelectStmt ')'
 	{
 		st := $2.(*ast.SelectStmt)
-		l := yylex.(*lexer)
-		endOffset := l.endOffset(yyS[yypt].offset)
-		l.SetLastSelectFieldText(st, endOffset)
+		endOffset := parser.endOffset(yyS[yypt].offset)
+		parser.setLastSelectFieldText(st, endOffset)
 		$$ = st
 	}
 
@@ -4116,7 +4057,7 @@ StatementList:
 		if $1 != nil {
 			s := $1.(ast.StmtNode)
 			s.SetText(yylex.(*lexer).stmtText())
-			yylex.(*lexer).list = append(yylex.(*lexer).list, s)
+			parser.result = append(parser.result, s)
 		}
 	}
 |	StatementList ';' Statement
@@ -4124,7 +4065,7 @@ StatementList:
 		if $3 != nil {
 			s := $3.(ast.StmtNode)
 			s.SetText(yylex.(*lexer).stmtText())
-			yylex.(*lexer).list = append(yylex.(*lexer).list, s)
+			parser.result = append(parser.result, s)
 		}
 	}
 
@@ -4316,36 +4257,6 @@ Type:
 	{
 		$$ = $1
 	}
-|	"float32"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
-	}
-|	"float64"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
-	}
-|	"int64"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
-	}
-|	"string"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
-	}
-|	"uint"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
-	}
-|	"uint64"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
-	}
 
 NumericType:
 	IntegerType OptFieldLen FieldOpts
@@ -4387,7 +4298,7 @@ NumericType:
 		if x.Tp == mysql.TypeFloat {
 			// Fix issue #312
 			if x.Flen > 53 {
-        yylex.Error(fmt.Sprintf("Float len(%d) should not be greater than 53", x.Flen))
+				yylex.Error(fmt.Sprintf("Float len(%d) should not be greater than 53", x.Flen))
 				return 1
 			}
 			if x.Flen > 24 { 
@@ -4793,9 +4704,6 @@ UpdateStmt:
 			st.Limit = $9.(*ast.Limit)
 		}
 		$$ = st
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 |	"UPDATE" LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
 	{
@@ -4808,18 +4716,12 @@ UpdateStmt:
 			st.Where = $7.(ast.ExprNode)
 		}
 		$$ = st
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 UseStmt:
 	"USE" DBName
 	{
 		$$ = &ast.UseStmt{DBName: $2.(string)}
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 WhereClause:

@@ -37,28 +37,20 @@ type lexer struct {
 	errs		[]error
 	expr		ast.ExprNode
 	i		int
-	inj		int
 	lcol		int
 	line		int
-	list		[]ast.StmtNode
 	ncol		int
 	nline		int
 	sc		int
 	src		string
 	val		[]byte
 	ungetBuf	[]byte
-	root		bool
-	prepare		bool
 	stmtStartPos 	int
 	stringLit 	[]byte
 
 	// record token's offset of the input
 	tokenEndOffset   int
 	tokenStartOffset int
-
-	// Charset information
-	charset		string
-	collation	string
 }
 
 
@@ -77,71 +69,8 @@ func (l *lexer) Errors() []error {
 	return l.errs
 }
 
-func (l *lexer) Stmts() []ast.StmtNode {
-	return l.list
-}
-
 func (l *lexer) Expr() ast.ExprNode {
 	return l.expr
-}
-
-func (l *lexer) Inj() int {
-	return l.inj
-}
-
-func (l *lexer) SetInj(inj int) {
-	l.inj = inj
-}
-
-func (l *lexer) SetPrepare() {
-	l.prepare = true
-}
-
-func (l *lexer) IsPrepare() bool {
-	return l.prepare
-}
-
-func (l *lexer) Root() bool {
-	return l.root
-}
-
-func (l *lexer) SetRoot(root bool) {
-	l.root = root
-}
-
-func (l *lexer) SetCharsetInfo(charset, collation string) {
-	l.charset = charset
-	l.collation = collation
-}
-
-func (l *lexer) GetCharsetInfo() (string, string) {
-	return l.charset, l.collation
-}
-
-// The select statement is not at the end of the whole statement, if the last
-// field text was set from its offset to the end of the src string, update
-// the last field text.
-func (l *lexer) SetLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
-	lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-	if lastField.Offset + len(lastField.Text()) >= len(l.src)-1 {
-		lastField.SetText(l.src[lastField.Offset:lastEnd])
-	}
-}
-
-func (l *lexer) startOffset(offset int) int {
-	offset--
-	for unicode.IsSpace(rune(l.src[offset])) {
-		offset++
-	}
-	return offset
-}
-
-func (l *lexer) endOffset(offset int) int {
-	offset--
-	for offset > 0 && unicode.IsSpace(rune(l.src[offset-1])) {
-		offset--
-	}
-	return offset
 }
 
 func (l *lexer) unget(b byte) {
@@ -202,7 +131,7 @@ func (l *lexer) stmtText() string {
 
 func (l *lexer) Lex(lval *yySymType) (r int) {
 	defer func() {
-		lval.line, lval.col, lval.offset = l.line, l.col, l.tokenStartOffset
+		lval.offset = l.tokenStartOffset
 		l.tokenStartOffset = l.tokenEndOffset
 	}()
 	const (
@@ -212,11 +141,6 @@ func (l *lexer) Lex(lval *yySymType) (r int) {
 		S3
 		S4
 	)
-
-	if n := l.inj; n != 0 {
-		l.inj = 0
-		return n
-	}
 
 	c0, c := 0, l.c
 %}
@@ -650,7 +574,7 @@ action		{a}{c}{t}{i}{o}{n}
 ":="			return assignmentEq
 ">="			return ge
 "!="			return neq
-"<>"			return neq
+"<>"			return neqSynonym
 "||"			return oror
 ">>"			return rsh
 "<=>"			return nulleq
@@ -947,7 +871,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return quarter
 {quick}			lval.item = string(l.val)
 			return quick
-redundant		lval.item = string(l.val)
+{redundant}		lval.item = string(l.val)
 			return redundant
 {right}			return right
 {rollback}		lval.item = string(l.val)

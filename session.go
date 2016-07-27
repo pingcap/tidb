@@ -30,6 +30,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -132,6 +133,25 @@ func (s *session) cleanRetryInfo() {
 	}
 }
 
+func (s *session) checkSchemaValidOrRollback() error {
+	var ts uint64
+	if s.txn != nil {
+		ts = s.txn.StartTS()
+	}
+	err := sessionctx.GetDomain(s).SchemaValidity.Check(ts)
+	if err == nil {
+		return nil
+	}
+
+	if err1 := s.RollbackTxn(); err1 != nil {
+		// TODO: handle this error.
+		log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err1))
+		errMsg := fmt.Sprintf("schema is invalid, rollback txn err:%v", err1.Error())
+		return domain.ErrLoadSchemaTimeOut.Gen(errMsg)
+	}
+	return errors.Trace(err)
+}
+
 func (s *session) Status() uint16 {
 	return variable.GetSessionVars(s).Status
 }
@@ -195,6 +215,10 @@ func (s *session) finishTxn(rollback bool) error {
 }
 
 func (s *session) CommitTxn() error {
+	if err := s.checkSchemaValidOrRollback(); err != nil {
+		return errors.Trace(err)
+	}
+
 	return s.finishTxn(false)
 }
 
@@ -241,7 +265,11 @@ func (s *session) Retry() error {
 		variable.GetSessionVars(s).RetryInfo.Attempts = retryCnt + 1
 		s.resetHistory()
 		log.Info("RollbackTxn for retry txn.")
-		s.RollbackTxn()
+		err = s.RollbackTxn()
+		if err != nil {
+			// TODO: handle this error.
+			log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
+		}
 		success := true
 		variable.GetSessionVars(s).RetryInfo.ResetOffset()
 		for _, sr := range nh.history {
@@ -275,6 +303,9 @@ func (s *session) Retry() error {
 // ExecRestrictedSQL implements SQLHelper interface.
 // This is used for executing some restricted sql statements.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error) {
+	if err := s.checkSchemaValidOrRollback(); err != nil {
+		return nil, errors.Trace(err)
+	}
 	charset, collation := getCtxCharsetInfo(s)
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
@@ -289,7 +320,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.Record
 		log.Errorf("Compile %s with error: %v", sql, err)
 		return nil, errors.Trace(err)
 	}
-	// Check statement for some restriction
+	// Check statement for some restrictions.
 	// For example only support DML on system meta table.
 	// TODO: Add more restrictions.
 	log.Debugf("Executing %s [%s]", st.OriginText(), sql)
@@ -389,6 +420,9 @@ func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, erro
 }
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
+	if err := s.checkSchemaValidOrRollback(); err != nil {
+		return nil, errors.Trace(err)
+	}
 	charset, collation := getCtxCharsetInfo(s)
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
@@ -422,6 +456,9 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 
 // For execute prepare statement in binary protocol
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
+	if err := s.checkSchemaValidOrRollback(); err != nil {
+		return 0, 0, nil, errors.Trace(err)
+	}
 	prepareExec := &executor.PrepareExec{
 		IS:      sessionctx.GetDomain(s).InfoSchema(),
 		Ctx:     s,
@@ -477,8 +514,11 @@ func checkArgs(args ...interface{}) error {
 	return nil
 }
 
-// Execute a prepared statement
+// ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.RecordSet, error) {
+	if err := s.checkSchemaValidOrRollback(); err != nil {
+		return nil, errors.Trace(err)
+	}
 	err := checkArgs(args...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -489,6 +529,9 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
+	if err := s.checkSchemaValidOrRollback(); err != nil {
+		return errors.Trace(err)
+	}
 	vars := variable.GetSessionVars(s)
 	if _, ok := vars.PreparedStmts[stmtID]; !ok {
 		return executor.ErrStmtNotFound

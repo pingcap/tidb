@@ -43,7 +43,7 @@ type HashJoinExec struct {
 	bigFilter    expression.Expression
 	otherFilter  expression.Expression
 	schema       expression.Schema
-	outter       bool
+	outer        bool
 	leftSmall    bool
 	matchedRows  []*Row
 	cursor       int
@@ -168,7 +168,6 @@ func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, er
 	}
 	// match eq condition
 	for _, smallRow := range rows {
-		//TODO: remove result fields in order to reduce memory copy cost.
 		otherMatched := true
 		var matchedRow *Row
 		if e.leftSmall {
@@ -257,7 +256,7 @@ func (e *HashJoinExec) Next() (*Row, error) {
 		row, ok := e.returnRecord()
 		if ok {
 			return row, nil
-		} else if e.outter {
+		} else if e.outer {
 			row = e.fillNullRow(bigRow)
 			return row, nil
 		}
@@ -1333,7 +1332,7 @@ func (e *MaxOneRowExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if srcRow == nil {
-			return &Row{Data: []types.Datum{types.NewDatum(nil)}}, nil
+			return &Row{Data: make([]types.Datum, len(e.schema))}, nil
 		}
 		srcRow1, err := e.Src.Next()
 		if err != nil {

@@ -47,32 +47,21 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 		ctx:         b.ctx,
 		targetTypes: targetTypes,
 	}
-	switch v.JoinType {
-	case plan.LeftOuterJoin:
-		e.outter = true
-		e.leftSmall = false
+	if v.SmallTable == 1 {
 		e.smallFilter = expression.ComposeCNFCondition(v.RightConditions)
 		e.bigFilter = expression.ComposeCNFCondition(v.LeftConditions)
 		e.smallHashKey = rightHashKey
 		e.bigHashKey = leftHashKey
-	case plan.RightOuterJoin:
-		e.outter = true
+		e.leftSmall = false
+	} else {
 		e.leftSmall = true
 		e.smallFilter = expression.ComposeCNFCondition(v.LeftConditions)
 		e.bigFilter = expression.ComposeCNFCondition(v.RightConditions)
 		e.smallHashKey = leftHashKey
 		e.bigHashKey = rightHashKey
-	case plan.InnerJoin:
-		//TODO: assume right table is the small one before cbo is realized.
-		e.outter = false
-		e.leftSmall = false
-		e.smallFilter = expression.ComposeCNFCondition(v.RightConditions)
-		e.bigFilter = expression.ComposeCNFCondition(v.LeftConditions)
-		e.smallHashKey = rightHashKey
-		e.bigHashKey = leftHashKey
-	default:
-		b.err = ErrUnknownPlan.Gen("Unknown Join Type !!")
-		return nil
+	}
+	if v.JoinType == plan.LeftOuterJoin || v.JoinType == plan.RightOuterJoin {
+		e.outer = true
 	}
 	if e.leftSmall {
 		e.smallExec = b.build(v.GetChildByIndex(0))
@@ -272,6 +261,8 @@ func (b *executorBuilder) buildNewTableScan(v *plan.PhysicalTableScan, s *plan.S
 			schema:      v.GetSchema(),
 			Columns:     v.Columns,
 			ranges:      v.Ranges,
+			desc:        v.Desc,
+			limitCount:  v.LimitCount,
 		}
 		ret = st
 		if !txn.IsReadOnly() {
@@ -298,8 +289,7 @@ func (b *executorBuilder) buildNewTableScan(v *plan.PhysicalTableScan, s *plan.S
 		ranges:     v.Ranges,
 	}
 	if v.Desc {
-		b.err = errors.New("Not implement yet.")
-		return nil
+		return &ReverseExec{Src: ts}
 	}
 	return ts
 }
@@ -403,9 +393,9 @@ func (b *executorBuilder) buildNewUnion(v *plan.NewUnion) Executor {
 	e := &NewUnionExec{
 		schema: v.GetSchema(),
 		fields: v.Fields(),
-		Srcs:   make([]Executor, len(v.Selects)),
+		Srcs:   make([]Executor, len(v.GetChildren())),
 	}
-	for i, sel := range v.Selects {
+	for i, sel := range v.GetChildren() {
 		selExec := b.build(sel)
 		e.Srcs[i] = selExec
 	}
