@@ -28,10 +28,8 @@ import (
 	"golang.org/x/net/context"
 )
 
-// pdRootPath for all pd clients.
-const pdRootPath = "/pd"
-
 const (
+	pdRootPath        = "/pd"
 	requestTimeout    = 3 * time.Second
 	maxRetryGetLeader = 100
 )
@@ -218,7 +216,7 @@ func (c *client) watchLeader(leaderPath string, revision int64) {
 
 func getLeader(etcdClient *clientv3.Client, path string) (string, int64, error) {
 	kv := clientv3.NewKV(etcdClient)
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	ctx, cancel := context.WithTimeout(etcdClient.Ctx(), requestTimeout)
 	resp, err := kv.Get(ctx, path)
 	cancel()
 	if err != nil {

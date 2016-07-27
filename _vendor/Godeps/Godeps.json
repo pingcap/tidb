@@ -1,7 +1,7 @@
 {
 	"ImportPath": "github.com/pingcap/tidb",
 	"GoVersion": "go1.6",
-	"GodepVersion": "v63",
+	"GodepVersion": "v74",
 	"Packages": [
 		"./..."
 	],
@@ -205,7 +205,7 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/pd/pd-client",
-			"Rev": "5fc7e04d0347e55cca6595a99841210f8df7ff0c"
+			"Rev": "7dcd043959d9dbb2ad2b27305549b37e7add1d81"
 		},
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-tipb",
@@ -320,6 +320,7 @@
 			"Rev": "c2ca1c75c6af5556eb6ce67994120adf12f2ccef"
 		},
 		{
+<<<<<<< HEAD
 			"ImportPath": "github.com/cznic/mathutil",
 			"Rev": "78ad7f262603437f0ecfebc835d80094f89c8f54"
 		},
@@ -338,6 +339,21 @@
 		{
 			"ImportPath": "github.com/cznic/y",
 			"Rev": "9fdf92d4aac058959f814606bb729ed50f5e4240"
+=======
+			"ImportPath": "github.com/grpc-ecosystem/grpc-gateway/runtime",
+			"Comment": "v1.1.0-2-gc8ec92d",
+			"Rev": "c8ec92d0481dd77d9b8c1808eb6476d190aa039a"
+		},
+		{
+			"ImportPath": "github.com/grpc-ecosystem/grpc-gateway/utilities",
+			"Comment": "v1.1.0-2-gc8ec92d",
+			"Rev": "c8ec92d0481dd77d9b8c1808eb6476d190aa039a"
+		},
+		{
+			"ImportPath": "github.com/grpc-ecosystem/grpc-gateway/runtime/internal",
+			"Comment": "v1.1.0-2-gc8ec92d",
+			"Rev": "c8ec92d0481dd77d9b8c1808eb6476d190aa039a"
+>>>>>>> update vendor
 		}
 	]
 }
