@@ -217,11 +217,23 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 			indexScan.accessEqualCount = i
 			break
 		}
+		if indexScan.Index.Columns[i].Length != types.UnspecifiedLength {
+			filterConds = append(filterConds, cond)
+		}
 		if i == len(accessConds)-1 {
 			indexScan.accessEqualCount = len(accessConds)
 		}
 	}
 	for _, cond := range conditions {
+		isAccess := false
+		for _, acCond := range accessConds {
+			if cond == acCond {
+				isAccess = true
+			}
+		}
+		if isAccess {
+			continue
+		}
 		if indexScan.accessEqualCount < len(indexScan.Index.Columns) {
 			checker := &conditionChecker{
 				tableName:    indexScan.Table.Name,
@@ -230,6 +242,9 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 			}
 			if checker.newCheck(cond) {
 				accessConds = append(accessConds, cond)
+				if indexScan.Index.Columns[indexScan.accessEqualCount].Length != types.UnspecifiedLength {
+					filterConds = append(filterConds, cond)
+				}
 			} else {
 				filterConds = append(filterConds, cond)
 			}
@@ -432,7 +447,7 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	if !ok {
 		return false
 	}
-	if col.TblName.L != c.tableName.L {
+	if col.Correlated {
 		return false
 	}
 	if c.pkName.L != "" {

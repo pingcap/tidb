@@ -191,7 +191,6 @@ func (e *NewXSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	startTs := txn.StartTS()
 	selIdxReq.StartTs = &startTs
 	selIdxReq.IndexInfo = xapi.IndexToProto(e.table.Meta(), e.indexPlan.Index)
-	// Push limit to index request only if there is not filter conditions.
 	selIdxReq.Limit = e.indexPlan.LimitCount
 	if e.indexPlan.Desc {
 		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: &e.indexPlan.Desc})
@@ -394,6 +393,8 @@ type NewXSelectTableExec struct {
 	Columns     []*model.ColumnInfo
 	schema      expression.Schema
 	ranges      []plan.TableRange
+	desc        bool
+	limitCount  *int64
 
 	/*
 		The following attributes are used for aggregation push down.
@@ -428,6 +429,10 @@ func (e *NewXSelectTableExec) doRequest() error {
 	selReq.TableInfo = &tipb.TableInfo{
 		TableId: proto.Int64(e.tableInfo.ID),
 	}
+	if e.supportDesc && e.desc {
+		selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: &e.desc})
+	}
+	selReq.Limit = e.limitCount
 	selReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.tableInfo.PKIsHandle)
 	// Aggregate Info
 	selReq.Aggregates = e.aggFuncs

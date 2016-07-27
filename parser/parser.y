@@ -1797,7 +1797,7 @@ FieldList:
 	Field
 	{
 		field := $1.(*ast.SelectField)
-		field.Offset = yylex.(*lexer).startOffset(yyS[yypt].offset)
+		field.Offset = parser.startOffset(yyS[yypt].offset)
 		$$ = []*ast.SelectField{field}
 	}
 |	FieldList ',' Field
@@ -1805,13 +1805,12 @@ FieldList:
 
 		fl := $1.([]*ast.SelectField)
 		last := fl[len(fl)-1]
-		l := yylex.(*lexer)
 		if last.Expr != nil && last.AsName.O == "" {
-			lastEnd := l.endOffset(yyS[yypt-1].offset)
-			last.SetText(l.src[last.Offset:lastEnd])
+			lastEnd := parser.endOffset(yyS[yypt-1].offset)
+			last.SetText(parser.src[last.Offset:lastEnd])
 		}
 		newField := $3.(*ast.SelectField)
-		newField.Offset = l.startOffset(yyS[yypt].offset)
+		newField.Offset = parser.startOffset(yyS[yypt].offset)
 		$$ = append(fl, newField)
 	}
 
@@ -2098,8 +2097,7 @@ Literal:
 |	stringLit
 	{
 		tp := types.NewFieldType(mysql.TypeString)
-		l := yylex.(*lexer)
-		tp.Charset, tp.Collate = l.GetCharsetInfo()
+		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($1)
 		expr.SetType(tp)
 		$$ = expr
@@ -2134,11 +2132,10 @@ Operand:
 	}
 |	'(' Expression ')'
 	{
-		l := yylex.(*lexer)
-		startOffset := l.startOffset(yyS[yypt-1].offset)
-		endOffset := l.endOffset(yyS[yypt].offset)
+		startOffset := parser.startOffset(yyS[yypt-1].offset)
+		endOffset := parser.endOffset(yyS[yypt].offset)
 		expr := $2.(ast.ExprNode)
-		expr.SetText(l.src[startOffset:endOffset])
+		expr.SetText(parser.src[startOffset:endOffset])
 		$$ = &ast.ParenthesesExpr{Expr: expr}
 	}
 |	"DEFAULT" %prec lowerThanLeftParen
@@ -3279,9 +3276,8 @@ TableFactor:
 |	'(' SelectStmt ')' TableAsName
 	{
 		st := $2.(*ast.SelectStmt)
-		l := yylex.(*lexer)
-		endOffset := l.endOffset(yyS[yypt-1].offset)
-		l.SetLastSelectFieldText(st, endOffset)
+		endOffset := parser.endOffset(yyS[yypt-1].offset)
+		parser.setLastSelectFieldText(st, endOffset)
 		$$ = &ast.TableSource{Source: $2.(*ast.SelectStmt), AsName: $4.(model.CIStr)}
 	}
 |	'(' UnionStmt ')' TableAsName
@@ -3518,9 +3514,8 @@ SubSelect:
 	'(' SelectStmt ')'
 	{
 		s := $2.(*ast.SelectStmt)
-		l := yylex.(*lexer)
-		endOffset := l.endOffset(yyS[yypt].offset)
-		l.SetLastSelectFieldText(s, endOffset)
+		endOffset := parser.endOffset(yyS[yypt].offset)
+		parser.setLastSelectFieldText(s, endOffset)
 		src := yylex.(*lexer).src
 		// See the implementation of yyParse function
 		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
@@ -3557,9 +3552,8 @@ UnionStmt:
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
-		l := yylex.(*lexer)
-		endOffset := l.endOffset(yyS[yypt-2].offset)
-		l.SetLastSelectFieldText(lastSelect, endOffset)
+		endOffset := parser.endOffset(yyS[yypt-2].offset)
+		parser.setLastSelectFieldText(lastSelect, endOffset)
 		union.SelectList.Selects = append(union.SelectList.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
@@ -3568,12 +3562,11 @@ UnionStmt:
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
-		l := yylex.(*lexer)
-		endOffset := l.endOffset(yyS[yypt-6].offset)
-		l.SetLastSelectFieldText(lastSelect, endOffset)
+		endOffset := parser.endOffset(yyS[yypt-6].offset)
+		parser.setLastSelectFieldText(lastSelect, endOffset)
 		st := $5.(*ast.SelectStmt)
-		endOffset = l.endOffset(yyS[yypt-2].offset)
-		l.SetLastSelectFieldText(st, endOffset)
+		endOffset = parser.endOffset(yyS[yypt-2].offset)
+		parser.setLastSelectFieldText(st, endOffset)
 		union.SelectList.Selects = append(union.SelectList.Selects, st)
 		if $7 != nil {
 			union.OrderBy = $7.(*ast.OrderByClause)
@@ -3597,9 +3590,8 @@ UnionClauseList:
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
-		l := yylex.(*lexer)
-		endOffset := l.endOffset(yyS[yypt-2].offset)
-		l.SetLastSelectFieldText(lastSelect, endOffset)
+		endOffset := parser.endOffset(yyS[yypt-2].offset)
+		parser.setLastSelectFieldText(lastSelect, endOffset)
 		union.SelectList.Selects = append(union.SelectList.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
@@ -3609,9 +3601,8 @@ UnionSelect:
 |	'(' SelectStmt ')'
 	{
 		st := $2.(*ast.SelectStmt)
-		l := yylex.(*lexer)
-		endOffset := l.endOffset(yyS[yypt].offset)
-		l.SetLastSelectFieldText(st, endOffset)
+		endOffset := parser.endOffset(yyS[yypt].offset)
+		parser.setLastSelectFieldText(st, endOffset)
 		$$ = st
 	}
 
@@ -4066,7 +4057,7 @@ StatementList:
 		if $1 != nil {
 			s := $1.(ast.StmtNode)
 			s.SetText(yylex.(*lexer).stmtText())
-			yylex.(*lexer).list = append(yylex.(*lexer).list, s)
+			parser.result = append(parser.result, s)
 		}
 	}
 |	StatementList ';' Statement
@@ -4074,7 +4065,7 @@ StatementList:
 		if $3 != nil {
 			s := $3.(ast.StmtNode)
 			s.SetText(yylex.(*lexer).stmtText())
-			yylex.(*lexer).list = append(yylex.(*lexer).list, s)
+			parser.result = append(parser.result, s)
 		}
 	}
 

@@ -39,7 +39,6 @@ type lexer struct {
 	i		int
 	lcol		int
 	line		int
-	list		[]ast.StmtNode
 	ncol		int
 	nline		int
 	sc		int
@@ -52,10 +51,6 @@ type lexer struct {
 	// record token's offset of the input
 	tokenEndOffset   int
 	tokenStartOffset int
-
-	// Charset information
-	charset		string
-	collation	string
 }
 
 
@@ -74,47 +69,8 @@ func (l *lexer) Errors() []error {
 	return l.errs
 }
 
-func (l *lexer) Stmts() []ast.StmtNode {
-	return l.list
-}
-
 func (l *lexer) Expr() ast.ExprNode {
 	return l.expr
-}
-
-func (l *lexer) SetCharsetInfo(charset, collation string) {
-	l.charset = charset
-	l.collation = collation
-}
-
-func (l *lexer) GetCharsetInfo() (string, string) {
-	return l.charset, l.collation
-}
-
-// The select statement is not at the end of the whole statement, if the last
-// field text was set from its offset to the end of the src string, update
-// the last field text.
-func (l *lexer) SetLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
-	lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-	if lastField.Offset + len(lastField.Text()) >= len(l.src)-1 {
-		lastField.SetText(l.src[lastField.Offset:lastEnd])
-	}
-}
-
-func (l *lexer) startOffset(offset int) int {
-	offset--
-	for unicode.IsSpace(rune(l.src[offset])) {
-		offset++
-	}
-	return offset
-}
-
-func (l *lexer) endOffset(offset int) int {
-	offset--
-	for offset > 0 && unicode.IsSpace(rune(l.src[offset-1])) {
-		offset--
-	}
-	return offset
 }
 
 func (l *lexer) unget(b byte) {
