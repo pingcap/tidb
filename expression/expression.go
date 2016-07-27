@@ -120,6 +120,9 @@ func (col *Column) Eval(row []types.Datum, _ context.Context) (types.Datum, erro
 
 // DeepCopy implements Expression interface.
 func (col *Column) DeepCopy() Expression {
+	if col.Correlated {
+		return col
+	}
 	newCol := *col
 	return &newCol
 }

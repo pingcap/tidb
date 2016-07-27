@@ -682,6 +682,9 @@ func (m *Meta) GetTableStats(tableID int64) (*statistics.TablePB, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if len(data) == 0 {
+		return nil, nil
+	}
 	tpb := &statistics.TablePB{}
 	err = proto.Unmarshal(data, tpb)
 	if err != nil {

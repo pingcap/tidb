@@ -250,11 +250,12 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 			er.err = errors.Trace(err)
 			return v, true
 		}
-		phyPlan := np.Convert2PhysicalPlan()
-		if err = refine(phyPlan); err != nil {
+		_, res, _, err := np.convert2PhysicalPlan(nil)
+		if err != nil {
 			er.err = errors.Trace(err)
 			return v, true
 		}
+		phyPlan := res.p.PushLimit(nil)
 		d, err := EvalSubquery(phyPlan, er.b.is, er.b.ctx)
 		if err != nil {
 			er.err = errors.Trace(err)
@@ -368,11 +369,12 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	phyPlan := np.Convert2PhysicalPlan()
-	if err = refine(phyPlan); err != nil {
+	_, res, _, err := np.convert2PhysicalPlan(nil)
+	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true
 	}
+	phyPlan := res.p.PushLimit(nil)
 	d, err := EvalSubquery(phyPlan, er.b.is, er.b.ctx)
 	if err != nil {
 		er.err = errors.Trace(err)
@@ -653,7 +655,7 @@ func (er *expressionRewriter) caseToScalarFunc(v *ast.CaseExpr) {
 		value := er.ctxStack[stkLen-argsLen-1]
 		args = make([]expression.Expression, 0, argsLen)
 		for i := stkLen - argsLen; i < stkLen-1; i += 2 {
-			arg, err := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), value, er.ctxStack[i])
+			arg, err := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), value.DeepCopy(), er.ctxStack[i])
 			if err != nil {
 				er.err = errors.Trace(err)
 				return
