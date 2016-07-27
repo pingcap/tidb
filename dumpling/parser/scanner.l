@@ -108,28 +108,10 @@ func (l *lexer) next() int {
 	return l.c
 }
 
-func (l *lexer) err0(ln, c int, arg interface{}) {
-	var argStr string
-	if arg != nil {
-		argStr = fmt.Sprintf(" %v", arg)
-	}
-
-	err := fmt.Errorf("line %d column %d near \"%s\"%s", ln, c, l.val, argStr)
+func (l *lexer) Errorf(format string, a ...interface{}) {
+	s := fmt.Sprintf(format, a...)
+	err := fmt.Errorf("line %d column %d near \"%s\"%s", l.line, l.col, l.val, s)
 	l.errs = append(l.errs, err)
-}
-
-func (l *lexer) err(arg interface{}) {
-	l.err0(l.line, l.col, arg)
-}
-
-func (l *lexer) errf(format string, args ...interface{}) {
-	s := fmt.Sprintf(format, args...)
-	l.err0(l.line, l.col, s)
-}
-
-func (l *lexer) Error(s string) {
-	// Notice: ignore origin error info.
-	l.err(nil)
 }
 
 func (l *lexer) stmtText() string {
@@ -1205,7 +1187,7 @@ func (l *lexer) trimIdent(idt string) string {
 func (l *lexer) int(lval *yySymType) int {
 	n, err := strconv.ParseUint(string(l.val), 0, 64)
 	if err != nil {
-		l.errf("integer literal: %v", err)
+		l.Errorf("integer literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 
@@ -1221,7 +1203,7 @@ func (l *lexer) int(lval *yySymType) int {
 func (l *lexer) float(lval *yySymType) int {
 	n, err := strconv.ParseFloat(string(l.val), 64)
 	if err != nil {
-		l.errf("float literal: %v", err)
+		l.Errorf("float literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 
@@ -1237,7 +1219,7 @@ func (l *lexer) hex(lval *yySymType) int {
 		// If parse hexadecimal literal to numerical value error, we should treat it as a string.
 		hexStr, err1 := mysql.ParseHexStr(s)
 		if err1 != nil {
-			l.errf("hex literal: %v", err)
+			l.Errorf("hex literal: %v", err)
 			return int(unicode.ReplacementChar)
 		}
 		lval.item = hexStr
@@ -1252,7 +1234,7 @@ func (l *lexer) bit(lval *yySymType) int {
 	s := string(l.val)
 	b, err := mysql.ParseBit(s, -1)
 	if err != nil {
-		l.errf("bit literal: %v", err)
+		l.Errorf("bit literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 	lval.item = b
