@@ -26,7 +26,6 @@ import (
 type testStoreSuite struct {
 	cluster *mocktikv.Cluster
 	store   *tikvStore
-	bo      *Backoffer
 }
 
 var _ = Suite(&testStoreSuite{})
@@ -37,16 +36,15 @@ func (s *testStoreSuite) SetUpTest(c *C) {
 	mvccStore := mocktikv.NewMvccStore()
 	clientFactory := mocktikv.NewRPCClient(s.cluster, mvccStore)
 	s.store = newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), clientFactory)
-	s.bo = NewBackoffer(5000)
 }
 
 func (s *testStoreSuite) TestOracle(c *C) {
 	o := newMockOracle(s.store.oracle)
 	s.store.oracle = o
 
-	t1, err := s.store.getTimestampWithRetry(s.bo)
+	t1, err := s.store.getTimestampWithRetry(NewBackoffer(100))
 	c.Assert(err, IsNil)
-	t2, err := s.store.getTimestampWithRetry(s.bo)
+	t2, err := s.store.getTimestampWithRetry(NewBackoffer(100))
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
 
@@ -56,20 +54,20 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 	o.disable()
 	go func() {
-		time.Sleep(time.Second)
+		time.Sleep(time.Millisecond * 100)
 		o.enable()
 		wg.Done()
 	}()
 
 	go func() {
-		t3, err := s.store.getTimestampWithRetry(s.bo)
+		t3, err := s.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff))
 		c.Assert(err, IsNil)
 		c.Assert(t2, Less, t3)
 		wg.Done()
 	}()
 
 	go func() {
-		expired, err := s.store.checkTimestampExpiredWithRetry(s.bo, t2, 500)
+		expired, err := s.store.checkTimestampExpiredWithRetry(NewBackoffer(tsoMaxBackoff), t2, 50)
 		c.Assert(err, IsNil)
 		c.Assert(expired, IsTrue)
 		wg.Done()
