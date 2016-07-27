@@ -141,7 +141,8 @@ type PhysicalPlan interface {
 	Plan
 
 	// matchProperty means that this physical plan will try to return the best plan that matches the required property.
-	matchProperty(prop requiredProperty, rowCount []uint64, childResponse ...*physicalPlanInfo) *physicalPlanInfo
+	// rowCounts means the child row counts, and childPlanInfo means the plan infos returned by children.
+	matchProperty(prop requiredProperty, rowCounts []uint64, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo
 
 	// Copy copies the current plan.
 	Copy() PhysicalPlan

@@ -59,11 +59,11 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 		}
 		p = res.p.PushLimit(nil)
 		log.Debugf("[PLAN] %s", ToString(p))
-	} else {
-		err := Refine(p)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		return p, nil
+	}
+	err := Refine(p)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	return p, nil
 }

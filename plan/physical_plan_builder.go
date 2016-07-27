@@ -28,6 +28,7 @@ const (
 	memoryFactor    = 5.0
 	selectionFactor = 0.8
 	distinctFactor  = 0.7
+	cpuFactor       = 0.9
 )
 
 func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, indexInfo *model.IndexInfo) (uint64, error) {
@@ -472,7 +473,7 @@ func (p *NewSort) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo
 		return nil, nil, 0, errors.Trace(err)
 	}
 	cnt := float64(count)
-	sortCost := cnt*math.Log2(cnt) + memoryFactor*cnt
+	sortCost := cnt*math.Log2(cnt)*cpuFactor + memoryFactor*cnt
 	if len(selfProp) == 0 {
 		res0 = addPlanToResponse(p, res1)
 	} else if sortCost+res1.cost < res0.cost {

@@ -48,10 +48,10 @@ func (is *PhysicalIndexScan) matchProperty(prop requiredProperty, rowCounts []ui
 			break
 		}
 		if prop[matched].col.ColName.L != indexCol.Name.L {
-			if matched != 0 || i >= is.accessEqualCount {
-				break
+			if matched == 0 && i < is.accessEqualCount {
+				continue
 			}
-			continue
+			break
 		}
 		if prop[matched].desc {
 			allAsc = false
@@ -64,7 +64,7 @@ func (is *PhysicalIndexScan) matchProperty(prop requiredProperty, rowCounts []ui
 		}
 	}
 	if matched == len(prop) {
-		sortedCost := cost + rowCount*math.Log2(rowCount)
+		sortedCost := cost + rowCount*math.Log2(rowCount)*cpuFactor
 		if allDesc {
 			sortedIs := *is
 			sortedIs.Desc = true
@@ -81,8 +81,8 @@ func (is *PhysicalIndexScan) matchProperty(prop requiredProperty, rowCounts []ui
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
-func (p *PhysicalHashSemiJoin) matchProperty(prop requiredProperty, _ []uint64, response ...*physicalPlanInfo) *physicalPlanInfo {
-	lRes, rRes := response[0], response[1]
+func (p *PhysicalHashSemiJoin) matchProperty(prop requiredProperty, _ []uint64, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+	lRes, rRes := childPlanInfo[0], childPlanInfo[1]
 	np := *p
 	np.SetChildren(lRes.p, rRes.p)
 	cost := lRes.cost + rRes.cost
@@ -90,15 +90,15 @@ func (p *PhysicalHashSemiJoin) matchProperty(prop requiredProperty, _ []uint64, 
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
-func (p *PhysicalApply) matchProperty(prop requiredProperty, rowCounts []uint64, response ...*physicalPlanInfo) *physicalPlanInfo {
+func (p *PhysicalApply) matchProperty(prop requiredProperty, rowCounts []uint64, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	np := *p
-	np.SetChildren(response[0].p)
-	return &physicalPlanInfo{p: &np, cost: response[0].cost}
+	np.SetChildren(childPlanInfo[0].p)
+	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
-func (p *PhysicalHashJoin) matchProperty(prop requiredProperty, rowCounts []uint64, response ...*physicalPlanInfo) *physicalPlanInfo {
-	lRes, rRes := response[0], response[1]
+func (p *PhysicalHashJoin) matchProperty(prop requiredProperty, rowCounts []uint64, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+	lRes, rRes := childPlanInfo[0], childPlanInfo[1]
 	lCount, rCount := float64(rowCounts[0]), float64(rowCounts[1])
 	np := *p
 	np.SetChildren(lRes.p, rRes.p)
@@ -112,11 +112,11 @@ func (p *PhysicalHashJoin) matchProperty(prop requiredProperty, rowCounts []uint
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
-func (p *NewUnion) matchProperty(prop requiredProperty, _ []uint64, response ...*physicalPlanInfo) *physicalPlanInfo {
+func (p *NewUnion) matchProperty(prop requiredProperty, _ []uint64, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	np := *p
-	children := make([]Plan, 0, len(response))
+	children := make([]Plan, 0, len(childPlanInfo))
 	cost := float64(0)
-	for _, res := range response {
+	for _, res := range childPlanInfo {
 		children = append(children, res.p)
 		cost += res.cost
 	}
@@ -125,8 +125,8 @@ func (p *NewUnion) matchProperty(prop requiredProperty, _ []uint64, response ...
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Selection) matchProperty(prop requiredProperty, rowCounts []uint64, response ...*physicalPlanInfo) *physicalPlanInfo {
-	if len(response) == 0 {
+func (p *Selection) matchProperty(prop requiredProperty, rowCounts []uint64, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+	if len(childPlanInfo) == 0 {
 		res := p.GetChildByIndex(0).(PhysicalPlan).matchProperty(prop, rowCounts)
 		sel := *p
 		sel.SetChildren(res.p)
@@ -134,15 +134,15 @@ func (p *Selection) matchProperty(prop requiredProperty, rowCounts []uint64, res
 		return res
 	}
 	np := *p
-	np.SetChildren(response[0].p)
-	return &physicalPlanInfo{p: &np, cost: response[0].cost}
+	np.SetChildren(childPlanInfo[0].p)
+	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Projection) matchProperty(_ requiredProperty, _ []uint64, response ...*physicalPlanInfo) *physicalPlanInfo {
+func (p *Projection) matchProperty(_ requiredProperty, _ []uint64, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	np := *p
-	np.SetChildren(response[0].p)
-	return &physicalPlanInfo{p: &np, cost: response[0].cost}
+	np.SetChildren(childPlanInfo[0].p)
+	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
