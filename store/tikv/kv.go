@@ -45,7 +45,7 @@ type Driver struct {
 }
 
 // Open opens or creates an TiKV storage with given path.
-// Path example: tikv://etcd-node1:port,etcd-node2:port/?cluster=1
+// Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1
 func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
