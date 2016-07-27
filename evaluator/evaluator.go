@@ -703,21 +703,21 @@ func (e *Evaluator) evalAggCount(v *ast.AggregateFuncExpr) {
 
 func (e *Evaluator) evalAggSetValue(v *ast.AggregateFuncExpr) {
 	ctx := v.GetContext()
-	v.SetValue(ctx.Value)
+	v.SetDatum(ctx.Value)
 }
 
 func (e *Evaluator) evalAggAvg(v *ast.AggregateFuncExpr) {
 	ctx := v.GetContext()
-	switch x := ctx.Value.(type) {
-	case float64:
-		t := x / float64(ctx.Count)
-		ctx.Value = t
-		v.SetFloat64(t)
-	case mysql.Decimal:
+	switch ctx.Value.Kind() {
+	case types.KindFloat64:
+		t := ctx.Value.GetFloat64() / float64(ctx.Count)
+		v.SetValue(t)
+	case types.KindMysqlDecimal:
+		x := ctx.Value.GetMysqlDecimal()
 		t := x.Div(mysql.NewDecimalFromUint(uint64(ctx.Count), 0))
-		ctx.Value = t
 		v.SetMysqlDecimal(t)
 	}
+	ctx.Value = *v.GetDatum()
 }
 
 func (e *Evaluator) evalAggGroupConcat(v *ast.AggregateFuncExpr) {

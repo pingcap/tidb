@@ -37,7 +37,6 @@ type lexer struct {
 	errs		[]error
 	expr		ast.ExprNode
 	i		int
-	inj		int
 	lcol		int
 	line		int
 	list		[]ast.StmtNode
@@ -47,8 +46,6 @@ type lexer struct {
 	src		string
 	val		[]byte
 	ungetBuf	[]byte
-	root		bool
-	prepare		bool
 	stmtStartPos 	int
 	stringLit 	[]byte
 
@@ -83,30 +80,6 @@ func (l *lexer) Stmts() []ast.StmtNode {
 
 func (l *lexer) Expr() ast.ExprNode {
 	return l.expr
-}
-
-func (l *lexer) Inj() int {
-	return l.inj
-}
-
-func (l *lexer) SetInj(inj int) {
-	l.inj = inj
-}
-
-func (l *lexer) SetPrepare() {
-	l.prepare = true
-}
-
-func (l *lexer) IsPrepare() bool {
-	return l.prepare
-}
-
-func (l *lexer) Root() bool {
-	return l.root
-}
-
-func (l *lexer) SetRoot(root bool) {
-	l.root = root
 }
 
 func (l *lexer) SetCharsetInfo(charset, collation string) {
@@ -195,7 +168,7 @@ func (l *lexer) stmtText() string {
 
 func (l *lexer) Lex(lval *yySymType) (r int) {
 	defer func() {
-		lval.line, lval.col, lval.offset = l.line, l.col, l.tokenStartOffset
+		lval.offset = l.tokenStartOffset
 		l.tokenStartOffset = l.tokenEndOffset
 	}()
 	const (
@@ -205,11 +178,6 @@ func (l *lexer) Lex(lval *yySymType) (r int) {
 		S3
 		S4
 	)
-
-	if n := l.inj; n != 0 {
-		l.inj = 0
-		return n
-	}
 
 	c0, c := 0, l.c
 %}
@@ -643,7 +611,7 @@ action		{a}{c}{t}{i}{o}{n}
 ":="			return assignmentEq
 ">="			return ge
 "!="			return neq
-"<>"			return neq
+"<>"			return neqSynonym
 "||"			return oror
 ">>"			return rsh
 "<=>"			return nulleq
@@ -940,7 +908,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return quarter
 {quick}			lval.item = string(l.val)
 			return quick
-redundant		lval.item = string(l.val)
+{redundant}		lval.item = string(l.val)
 			return redundant
 {right}			return right
 {rollback}		lval.item = string(l.val)

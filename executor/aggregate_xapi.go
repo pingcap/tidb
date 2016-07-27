@@ -73,10 +73,10 @@ func (n *finalAggregater) updateCount(count uint64) error {
 
 func (n *finalAggregater) updateFirst(val types.Datum) error {
 	ctx := n.getContext()
-	if ctx.Value != nil {
+	if !ctx.Value.IsNull() {
 		return nil
 	}
-	ctx.Value = val.GetValue()
+	ctx.Value = val
 	return nil
 }
 
@@ -85,21 +85,20 @@ func (n *finalAggregater) updateMaxMin(val types.Datum, max bool) error {
 	if val.IsNull() {
 		return nil
 	}
-	v := val.GetValue()
-	if ctx.Value == nil {
-		ctx.Value = v
+	if ctx.Value.IsNull() {
+		ctx.Value = val
 		return nil
 	}
-	c, err := types.Compare(ctx.Value, v)
+	c, err := ctx.Value.CompareDatum(val)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if max {
 		if c == -1 {
-			ctx.Value = v
+			ctx.Value = val
 		}
 	} else if c == 1 {
-		ctx.Value = v
+		ctx.Value = val
 	}
 	return nil
 }
@@ -110,7 +109,7 @@ func (n *finalAggregater) updateSum(val types.Datum, count uint64) error {
 		return nil
 	}
 	var err error
-	ctx.Value, err = types.CalculateSum(ctx.Value, val.GetValue())
+	ctx.Value, err = types.CalculateSum(ctx.Value, val)
 	if err != nil {
 		return errors.Trace(err)
 	}
