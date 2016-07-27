@@ -72,6 +72,9 @@ func (s *testSuite) TestShow(c *C) {
 	testSQL = "show status like 'character_set_results';"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), NotNil)
+
+	tk.MustQuery("SHOW PROCEDURE STATUS WHERE Db='test'").Check(testkit.Rows())
+	tk.MustQuery("SHOW TRIGGERS WHERE Trigger ='test'").Check(testkit.Rows())
 }
 
 type stats struct {
