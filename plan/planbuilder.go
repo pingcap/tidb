@@ -1045,7 +1045,14 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		Full:   show.Full,
 		User:   show.User,
 	}
-	p.SetFields(show.GetResultFields())
+	switch show.Tp {
+	case ast.ShowProcedureStatus:
+		p.SetFields(buildShowProcedureFields())
+	case ast.ShowTriggers:
+		p.SetFields(buildShowTriggerFields())
+	default:
+		p.SetFields(show.GetResultFields())
+	}
 	var conditions []ast.ExprNode
 	if show.Pattern != nil {
 		conditions = append(conditions, show.Pattern)
@@ -1116,5 +1123,39 @@ func buildExplainFields() []*ast.ResultField {
 	rfs = append(rfs, buildResultField("", "ref", mysql.TypeVarchar, 128))
 	rfs = append(rfs, buildResultField("", "rows", mysql.TypeVarchar, 128))
 	rfs = append(rfs, buildResultField("", "Extra", mysql.TypeVarchar, 128))
+	return rfs
+}
+
+func buildShowProcedureFields() []*ast.ResultField {
+	tblName := "ROUTINES"
+	rfs := make([]*ast.ResultField, 0, 11)
+	rfs = append(rfs, buildResultField(tblName, "Db", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField(tblName, "Name", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField(tblName, "Type", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField(tblName, "Definer", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField(tblName, "Modified", mysql.TypeDatetime, 19))
+	rfs = append(rfs, buildResultField(tblName, "Created", mysql.TypeDatetime, 19))
+	rfs = append(rfs, buildResultField(tblName, "Security_type", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField(tblName, "Comment", mysql.TypeBlob, 196605))
+	rfs = append(rfs, buildResultField(tblName, "character_set_client", mysql.TypeVarchar, 32))
+	rfs = append(rfs, buildResultField(tblName, "collation_connection", mysql.TypeVarchar, 32))
+	rfs = append(rfs, buildResultField(tblName, "Database Collation", mysql.TypeVarchar, 32))
+	return rfs
+}
+
+func buildShowTriggerFields() []*ast.ResultField {
+	tblName := "TRIGGERS"
+	rfs := make([]*ast.ResultField, 0, 11)
+	rfs = append(rfs, buildResultField(tblName, "Trigger", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField(tblName, "Event", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField(tblName, "Table", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField(tblName, "Statement", mysql.TypeBlob, 196605))
+	rfs = append(rfs, buildResultField(tblName, "Timing", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField(tblName, "Created", mysql.TypeDatetime, 19))
+	rfs = append(rfs, buildResultField(tblName, "sql_mode", mysql.TypeBlob, 8192))
+	rfs = append(rfs, buildResultField(tblName, "Definer", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField(tblName, "character_set_client", mysql.TypeVarchar, 32))
+	rfs = append(rfs, buildResultField(tblName, "collation_connection", mysql.TypeVarchar, 32))
+	rfs = append(rfs, buildResultField(tblName, "Database Collation", mysql.TypeVarchar, 32))
 	return rfs
 }
