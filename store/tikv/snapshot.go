@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	"fmt"
 	"sync"
 	"unsafe"
 
@@ -120,7 +119,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoff, batch batchKeys, collec
 			return errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			err = bo.Backoff(boRegionMiss, regionErr.String())
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -153,7 +152,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoff, batch batchKeys, collec
 		}
 		if len(lockedKeys) > 0 {
 			pending = lockedKeys
-			err = bo.Backoff(boTxnLock, fmt.Sprintf("batchGet lockedKeys: %d", len(lockedKeys)))
+			err = bo.Backoff(boTxnLock, errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -184,7 +183,7 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 			return nil, errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			err = bo.Backoff(boRegionMiss, regionErr.String())
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -199,7 +198,7 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 			val, err = s.handleKeyError(bo, keyErr)
 			if err != nil {
 				if terror.ErrorEqual(err, errInnerRetryable) {
-					err = bo.Backoff(boTxnLock, err.Error())
+					err = bo.Backoff(boTxnLock, err)
 					if err != nil {
 						return nil, errors.Trace(err)
 					}

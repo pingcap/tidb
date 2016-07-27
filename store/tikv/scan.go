@@ -124,7 +124,7 @@ func (s *Scanner) resolveCurrentLock(bo *Backoff) error {
 		val, err := s.snapshot.handleKeyError(bo, current.GetError())
 		if err != nil {
 			if terror.ErrorEqual(err, errInnerRetryable) {
-				err = bo.Backoff(boTxnLock, err.Error())
+				err = bo.Backoff(boTxnLock, err)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -159,7 +159,7 @@ func (s *Scanner) getData(bo *Backoff) error {
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
 			log.Warnf("scanner getData failed: %s", regionErr)
-			err = bo.Backoff(boRegionMiss, regionErr.String())
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}

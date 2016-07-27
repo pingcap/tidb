@@ -190,7 +190,7 @@ func (c *txnCommitter) prewriteSingleRegion(batch batchKeys) error {
 			return errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			err = c.bo.Backoff(boRegionMiss, regionErr.String())
+			err = c.bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -222,7 +222,7 @@ func (c *txnCommitter) prewriteSingleRegion(batch batchKeys) error {
 				return errors.Trace(err)
 			}
 		}
-		err = c.bo.Backoff(boTxnLock, "prewrite encounter locks")
+		err = c.bo.Backoff(boTxnLock, errors.New("prewrite encounter locks"))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -244,7 +244,7 @@ func (c *txnCommitter) commitSingleRegion(batch batchKeys) error {
 		return errors.Trace(err)
 	}
 	if regionErr := resp.GetRegionError(); regionErr != nil {
-		err = c.bo.Backoff(boRegionMiss, regionErr.String())
+		err = c.bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -292,7 +292,7 @@ func (c *txnCommitter) cleanupSingleRegion(batch batchKeys) error {
 		return errors.Trace(err)
 	}
 	if regionErr := resp.GetRegionError(); regionErr != nil {
-		err = c.bo.Backoff(boRegionMiss, regionErr.String())
+		err = c.bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}

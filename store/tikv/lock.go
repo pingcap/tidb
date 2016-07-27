@@ -67,7 +67,7 @@ func (l *txnLock) cleanup(bo *Backoff) ([]byte, error) {
 			return nil, errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			err = bo.Backoff(boRegionMiss, regionErr.String())
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -108,7 +108,7 @@ func (l *txnLock) rollbackThenGet(bo *Backoff) ([]byte, error) {
 			return nil, errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			err = bo.Backoff(boRegionMiss, regionErr.String())
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -146,7 +146,7 @@ func (l *txnLock) commitThenGet(bo *Backoff, commitVersion uint64) ([]byte, erro
 			return nil, errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			err = bo.Backoff(boRegionMiss, regionErr.String())
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

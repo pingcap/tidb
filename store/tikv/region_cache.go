@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"bytes"
-	"fmt"
 	"sync"
 
 	"github.com/golang/protobuf/proto"
@@ -201,14 +200,14 @@ func (c *RegionCache) loadRegion(bo *Backoff, key []byte) (*Region, error) {
 	for {
 		meta, leader, err := c.pdClient.GetRegion(key)
 		if err != nil {
-			err = bo.Backoff(boPDRPC, fmt.Sprintf("loadRegion from PD failed, key: %q, err: %v", key, err))
+			err = bo.Backoff(boPDRPC, errors.Errorf("loadRegion from PD failed, key: %q, err: %v", key, err))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			continue
 		}
 		if meta == nil {
-			err = bo.Backoff(boPDRPC, fmt.Sprintf("region not found for key %q", key))
+			err = bo.Backoff(boPDRPC, errors.Errorf("region not found for key %q", key))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -229,7 +228,7 @@ func (c *RegionCache) loadRegion(bo *Backoff, key []byte) (*Region, error) {
 		peer := meta.Peers[0]
 		store, err := c.pdClient.GetStore(peer.GetStoreId())
 		if err != nil {
-			err = bo.Backoff(boPDRPC, fmt.Sprintf("loadStore from PD failed, key %q, storeID: %d, err: %v", key, peer.GetStoreId(), err))
+			err = bo.Backoff(boPDRPC, errors.Errorf("loadStore from PD failed, key %q, storeID: %d, err: %v", key, peer.GetStoreId(), err))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

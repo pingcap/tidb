@@ -316,7 +316,7 @@ func (it *copIterator) handleTask(bo *Backoff, task *copTask) (*coprocessor.Resp
 		resp, err := it.store.client.SendCopReq(task.region.GetAddress(), req)
 		if err != nil {
 			it.store.regionCache.NextPeer(task.region.VerID())
-			err = bo.Backoff(boTiKVRPC, err.Error())
+			err = bo.Backoff(boTiKVRPC, err)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -333,7 +333,7 @@ func (it *copIterator) handleTask(bo *Backoff, task *copTask) (*coprocessor.Resp
 			} else {
 				it.store.regionCache.DropRegion(task.region.VerID())
 			}
-			err = bo.Backoff(boRegionMiss, err.Error())
+			err = bo.Backoff(boRegionMiss, err)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -348,7 +348,7 @@ func (it *copIterator) handleTask(bo *Backoff, task *copTask) (*coprocessor.Resp
 			lock := newLock(it.store, e.GetPrimaryLock(), e.GetLockVersion(), e.GetKey(), e.GetLockVersion())
 			_, lockErr := lock.cleanup(bo)
 			if lockErr == nil || terror.ErrorEqual(lockErr, errInnerRetryable) {
-				err = bo.Backoff(boTxnLock, lockErr.Error())
+				err = bo.Backoff(boTxnLock, lockErr)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}

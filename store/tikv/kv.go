@@ -138,7 +138,7 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoff) (uint64, error) {
 		if err == nil {
 			return startTS, nil
 		}
-		err = bo.Backoff(boPDRPC, fmt.Sprintf("get timestamp failed: %v", err))
+		err = bo.Backoff(boPDRPC, errors.Errorf("get timestamp failed: %v", err))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -151,7 +151,7 @@ func (s *tikvStore) checkTimestampExpiredWithRetry(bo *Backoff, ts uint64, TTL u
 		if err == nil {
 			return expired, nil
 		}
-		err = bo.Backoff(boPDRPC, fmt.Sprintf("check expired failed: %v", err))
+		err = bo.Backoff(boPDRPC, errors.Errorf("check expired failed: %v", err))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -177,7 +177,7 @@ func (s *tikvStore) SendKVReq(bo *Backoff, req *pb.Request, regionID RegionVerID
 		resp, err := s.client.SendKVReq(region.GetAddress(), req)
 		if err != nil {
 			s.regionCache.NextPeer(region.VerID())
-			err = bo.Backoff(boTiKVRPC, fmt.Sprintf("send tikv request error: %v, ctx: %s, try next peer later", err, req.Context))
+			err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, req.Context))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -189,7 +189,7 @@ func (s *tikvStore) SendKVReq(bo *Backoff, req *pb.Request, regionID RegionVerID
 				log.Warnf("tikv reports `NotLeader`: %s, ctx: %s, retry later", notLeader, req.Context)
 				s.regionCache.UpdateLeader(region.VerID(), notLeader.GetLeader().GetId())
 				if notLeader.GetLeader() == nil {
-					err = bo.Backoff(boRegionMiss, fmt.Sprintf("not leader: %v, ctx: %s", notLeader, req.Context))
+					err = bo.Backoff(boRegionMiss, errors.Errorf("not leader: %v, ctx: %s", notLeader, req.Context))
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
