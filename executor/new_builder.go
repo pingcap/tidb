@@ -60,11 +60,8 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 		e.smallHashKey = leftHashKey
 		e.bigHashKey = rightHashKey
 	}
-	switch v.JoinType {
-	case plan.LeftOuterJoin, plan.RightOuterJoin:
-		e.outter = true
-	default:
-		e.outter = false
+	if v.JoinType == plan.LeftOuterJoin || v.JoinType == plan.RightOuterJoin {
+		e.outer = true
 	}
 	if e.leftSmall {
 		e.smallExec = b.build(v.GetChildByIndex(0))

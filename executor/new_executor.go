@@ -43,7 +43,7 @@ type HashJoinExec struct {
 	bigFilter    expression.Expression
 	otherFilter  expression.Expression
 	schema       expression.Schema
-	outter       bool
+	outer        bool
 	leftSmall    bool
 	matchedRows  []*Row
 	cursor       int
@@ -256,7 +256,7 @@ func (e *HashJoinExec) Next() (*Row, error) {
 		row, ok := e.returnRecord()
 		if ok {
 			return row, nil
-		} else if e.outter {
+		} else if e.outer {
 			row = e.fillNullRow(bigRow)
 			return row, nil
 		}
