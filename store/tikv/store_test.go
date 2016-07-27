@@ -26,7 +26,7 @@ import (
 type testStoreSuite struct {
 	cluster *mocktikv.Cluster
 	store   *tikvStore
-	bo      *Backoff
+	bo      *Backoffer
 }
 
 var _ = Suite(&testStoreSuite{})
@@ -37,7 +37,7 @@ func (s *testStoreSuite) SetUpTest(c *C) {
 	mvccStore := mocktikv.NewMvccStore()
 	clientFactory := mocktikv.NewRPCClient(s.cluster, mvccStore)
 	s.store = newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), clientFactory)
-	s.bo = NewBackoff(5000)
+	s.bo = NewBackoffer(5000)
 }
 
 func (s *testStoreSuite) TestOracle(c *C) {

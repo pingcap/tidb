@@ -29,7 +29,7 @@ type testRegionCacheSuite struct {
 	peer2   uint64
 	region1 uint64
 	cache   *RegionCache
-	bo      *Backoff
+	bo      *Backoffer
 }
 
 var _ = Suite(&testRegionCacheSuite{})
@@ -43,7 +43,7 @@ func (s *testRegionCacheSuite) SetUpTest(c *C) {
 	s.peer1 = peerIDs[0]
 	s.peer2 = peerIDs[1]
 	s.cache = NewRegionCache(mocktikv.NewPDClient(s.cluster))
-	s.bo = NewBackoff(5000)
+	s.bo = NewBackoffer(5000)
 }
 
 func (s *testRegionCacheSuite) storeAddr(id uint64) string {
@@ -68,7 +68,7 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestDropStore(c *C) {
-	bo := NewBackoff(100)
+	bo := NewBackoffer(100)
 	s.cluster.RemoveStore(s.store1)
 	r, err := s.cache.GetRegion(bo, []byte("a"))
 	c.Assert(err, NotNil)

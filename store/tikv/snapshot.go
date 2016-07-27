@@ -53,7 +53,7 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
-	bo := NewBackoff(batchGetMaxBackoff)
+	bo := NewBackoffer(batchGetMaxBackoff)
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
@@ -72,7 +72,7 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	return m, nil
 }
 
-func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoff, keys [][]byte, collectF func(k, v []byte)) error {
+func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
 	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys)
 	if err != nil {
 		return errors.Trace(err)
@@ -104,7 +104,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoff, keys [][]byte, collect
 	return errors.Trace(err)
 }
 
-func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoff, batch batchKeys, collectF func(k, v []byte)) error {
+func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
 	pending := batch.keys
 	for {
 		req := &pb.Request{
@@ -164,7 +164,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoff, batch batchKeys, collec
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
-	bo := NewBackoff(getMaxBackoff)
+	bo := NewBackoffer(getMaxBackoff)
 
 	req := &pb.Request{
 		Type: pb.MessageType_CmdGet.Enum(),
@@ -243,7 +243,7 @@ func extractLockInfoFromKeyErr(keyErr *pb.KeyError) (*pb.LockInfo, error) {
 }
 
 // handleKeyError tries to resolve locks then retry to get value.
-func (s *tikvSnapshot) handleKeyError(bo *Backoff, keyErr *pb.KeyError) ([]byte, error) {
+func (s *tikvSnapshot) handleKeyError(bo *Backoffer, keyErr *pb.KeyError) ([]byte, error) {
 	lockInfo, err := extractLockInfoFromKeyErr(keyErr)
 	if err != nil {
 		return nil, errors.Trace(err)

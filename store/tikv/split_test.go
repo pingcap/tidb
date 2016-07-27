@@ -22,7 +22,7 @@ import (
 type testSplitSuite struct {
 	cluster *mocktikv.Cluster
 	store   *tikvStore
-	bo      *Backoff
+	bo      *Backoffer
 }
 
 var _ = Suite(&testSplitSuite{})
@@ -33,7 +33,7 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	mvccStore := mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
 	s.store = newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), client)
-	s.bo = NewBackoff(5000)
+	s.bo = NewBackoffer(5000)
 }
 
 func (s *testSplitSuite) begin(c *C) *tikvTxn {

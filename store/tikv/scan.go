@@ -74,7 +74,7 @@ func (s *Scanner) Value() []byte {
 
 // Next return next element.
 func (s *Scanner) Next() error {
-	bo := NewBackoff(scannerNextMaxBackoff)
+	bo := NewBackoffer(scannerNextMaxBackoff)
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}
@@ -115,7 +115,7 @@ func (s *Scanner) startTS() uint64 {
 	return s.snapshot.version.Ver
 }
 
-func (s *Scanner) resolveCurrentLock(bo *Backoff) error {
+func (s *Scanner) resolveCurrentLock(bo *Backoffer) error {
 	current := s.cache[s.idx]
 	if current.GetError() == nil {
 		return nil
@@ -138,7 +138,7 @@ func (s *Scanner) resolveCurrentLock(bo *Backoff) error {
 	}
 }
 
-func (s *Scanner) getData(bo *Backoff) error {
+func (s *Scanner) getData(bo *Backoffer) error {
 	log.Debugf("txn getData nextStartKey[%q], txn %d", s.nextStartKey, s.startTS())
 	for {
 		region, err := s.snapshot.store.regionCache.GetRegion(bo, s.nextStartKey)

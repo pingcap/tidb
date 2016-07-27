@@ -35,7 +35,7 @@ type txnCommitter struct {
 	mu          sync.RWMutex
 	writtenKeys [][]byte
 	committed   bool
-	bo          *Backoff
+	bo          *Backoffer
 }
 
 func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
@@ -80,7 +80,7 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 		startTS:   txn.StartTS(),
 		keys:      keys,
 		mutations: mutations,
-		bo:        NewBackoff(commitMaxBackoff),
+		bo:        NewBackoffer(commitMaxBackoff),
 	}, nil
 }
 

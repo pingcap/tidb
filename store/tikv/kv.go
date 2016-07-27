@@ -124,7 +124,7 @@ func (s *tikvStore) UUID() string {
 }
 
 func (s *tikvStore) CurrentVersion() (kv.Version, error) {
-	bo := NewBackoff(storeVersionMaxBackoff)
+	bo := NewBackoffer(storeVersionMaxBackoff)
 	startTS, err := s.getTimestampWithRetry(bo)
 	if err != nil {
 		return kv.NewVersion(0), errors.Trace(err)
@@ -132,7 +132,7 @@ func (s *tikvStore) CurrentVersion() (kv.Version, error) {
 	return kv.NewVersion(startTS), nil
 }
 
-func (s *tikvStore) getTimestampWithRetry(bo *Backoff) (uint64, error) {
+func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	for {
 		startTS, err := s.oracle.GetTimestamp()
 		if err == nil {
@@ -145,7 +145,7 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoff) (uint64, error) {
 	}
 }
 
-func (s *tikvStore) checkTimestampExpiredWithRetry(bo *Backoff, ts uint64, TTL uint64) (bool, error) {
+func (s *tikvStore) checkTimestampExpiredWithRetry(bo *Backoffer, ts uint64, TTL uint64) (bool, error) {
 	for {
 		expired, err := s.oracle.IsExpired(ts, TTL)
 		if err == nil {
@@ -161,7 +161,7 @@ func (s *tikvStore) checkTimestampExpiredWithRetry(bo *Backoff, ts uint64, TTL u
 // sendKVReq sends req to tikv server. It will retry internally to find the right
 // region leader if i) fails to establish a connection to server or ii) server
 // returns `NotLeader`.
-func (s *tikvStore) SendKVReq(bo *Backoff, req *pb.Request, regionID RegionVerID) (*pb.Response, error) {
+func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVerID) (*pb.Response, error) {
 	for {
 		region := s.regionCache.GetRegionByVerID(regionID)
 		if region == nil {

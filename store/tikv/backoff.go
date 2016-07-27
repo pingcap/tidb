@@ -101,8 +101,8 @@ const (
 	commitMaxBackoff       = 15000
 )
 
-// Backoff is a utility for retrying queries.
-type Backoff struct {
+// Backoffer is a utility for retrying queries.
+type Backoffer struct {
 	mu         sync.Mutex
 	fn         map[backoffType]func() int
 	maxSleep   int
@@ -110,16 +110,16 @@ type Backoff struct {
 	errors     []error
 }
 
-// NewBackoff creates a Backoff with maximum sleep time(in ms).
-func NewBackoff(maxSleep int) *Backoff {
-	return &Backoff{
+// NewBackoffer creates a Backoffer with maximum sleep time(in ms).
+func NewBackoffer(maxSleep int) *Backoffer {
+	return &Backoffer{
 		maxSleep: maxSleep,
 	}
 }
 
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
-func (b *Backoff) Backoff(typ backoffType, err error) error {
+func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -138,7 +138,7 @@ func (b *Backoff) Backoff(typ backoffType, err error) error {
 	log.Warnf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
 	b.errors = append(b.errors, err)
 	if b.totalSleep >= b.maxSleep {
-		e := errors.Errorf("backoff.maxSleep %dms is exceeded, errors: %v", b.maxSleep, b.errors)
+		e := errors.Errorf("backoffer.maxSleep %dms is exceeded, errors: %v", b.maxSleep, b.errors)
 		return errors.Annotate(e, txnRetryableMark)
 	}
 	return nil

@@ -76,7 +76,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(req *kv.Request) kv.Response {
-	bo := NewBackoff(copBuildTaskMaxBackoff)
+	bo := NewBackoffer(copBuildTaskMaxBackoff)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, req.KeyRanges, req.Desc)
 	if err != nil {
 		return copErrorResponse{err}
@@ -134,7 +134,7 @@ func (t *copTask) pbRanges() []*coprocessor.KeyRange {
 	return ranges
 }
 
-func buildCopTasks(bo *Backoff, cache *RegionCache, ranges []kv.KeyRange, desc bool) ([]*copTask, error) {
+func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges []kv.KeyRange, desc bool) ([]*copTask, error) {
 	var tasks []*copTask
 	for _, r := range ranges {
 		var err error
@@ -156,7 +156,7 @@ func reverseTasks(tasks []*copTask) {
 	}
 }
 
-func appendTask(tasks []*copTask, bo *Backoff, cache *RegionCache, r kv.KeyRange) ([]*copTask, error) {
+func appendTask(tasks []*copTask, bo *Backoffer, cache *RegionCache, r kv.KeyRange) ([]*copTask, error) {
 	var last *copTask
 	if len(tasks) > 0 {
 		last = tasks[len(tasks)-1]
@@ -208,7 +208,7 @@ type copIterator struct {
 
 // Pick the next new copTask and send request to tikv-server.
 func (it *copIterator) work() {
-	bo := NewBackoff(copNextMaxBackoff)
+	bo := NewBackoffer(copNextMaxBackoff)
 	for {
 		it.mu.Lock()
 		if it.finished {
@@ -305,7 +305,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 }
 
 // Handle single copTask.
-func (it *copIterator) handleTask(bo *Backoff, task *copTask) (*coprocessor.Response, error) {
+func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Response, error) {
 	for {
 		req := &coprocessor.Request{
 			Context: task.region.GetContext(),
@@ -367,7 +367,7 @@ func (it *copIterator) handleTask(bo *Backoff, task *copTask) (*coprocessor.Resp
 }
 
 // Rebuild current task. It may be split into multiple tasks (in region split scenario).
-func (it *copIterator) rebuildCurrentTask(bo *Backoff, task *copTask) error {
+func (it *copIterator) rebuildCurrentTask(bo *Backoffer, task *copTask) error {
 	newTasks, err := buildCopTasks(bo, it.store.regionCache, task.ranges, it.req.Desc)
 	if err != nil {
 		return errors.Trace(err)

@@ -55,7 +55,7 @@ func (c *RegionCache) GetRegionByVerID(id RegionVerID) *Region {
 }
 
 // GetRegion find in cache, or get new region.
-func (c *RegionCache) GetRegion(bo *Backoff, key []byte) (*Region, error) {
+func (c *RegionCache) GetRegion(bo *Backoffer, key []byte) (*Region, error) {
 	c.mu.RLock()
 	r := c.getRegionFromCache(key)
 	c.mu.RUnlock()
@@ -74,7 +74,7 @@ func (c *RegionCache) GetRegion(bo *Backoff, key []byte) (*Region, error) {
 // GroupKeysByRegion separates keys into groups by their belonging Regions.
 // Specially it also returns the first key's region which may be used as the
 // 'PrimaryLockKey' and should be committed ahead of others.
-func (c *RegionCache) GroupKeysByRegion(bo *Backoff, keys [][]byte) (map[RegionVerID][][]byte, RegionVerID, error) {
+func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[RegionVerID][][]byte, RegionVerID, error) {
 	groups := make(map[RegionVerID][][]byte)
 	var first RegionVerID
 	var lastRegion *Region
@@ -196,7 +196,7 @@ func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 }
 
 // loadRegion loads region from pd client, and picks the first peer as leader.
-func (c *RegionCache) loadRegion(bo *Backoff, key []byte) (*Region, error) {
+func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 	for {
 		meta, leader, err := c.pdClient.GetRegion(key)
 		if err != nil {

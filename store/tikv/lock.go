@@ -42,7 +42,7 @@ func newLock(store *tikvStore, pLock []byte, lockVer uint64, key []byte, ver uin
 var lockTTL uint64 = 3000
 
 // cleanup cleanup the lock
-func (l *txnLock) cleanup(bo *Backoff) ([]byte, error) {
+func (l *txnLock) cleanup(bo *Backoffer) ([]byte, error) {
 	expired, err := l.store.checkTimestampExpiredWithRetry(bo, l.pl.version, lockTTL)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -90,7 +90,7 @@ func (l *txnLock) cleanup(bo *Backoff) ([]byte, error) {
 }
 
 // If key == nil then only rollback but value is nil
-func (l *txnLock) rollbackThenGet(bo *Backoff) ([]byte, error) {
+func (l *txnLock) rollbackThenGet(bo *Backoffer) ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdRollbackThenGet.Enum(),
 		CmdRbGetReq: &pb.CmdRollbackThenGetRequest{
@@ -126,7 +126,7 @@ func (l *txnLock) rollbackThenGet(bo *Backoff) ([]byte, error) {
 }
 
 // If key == nil then only commit but value is nil
-func (l *txnLock) commitThenGet(bo *Backoff, commitVersion uint64) ([]byte, error) {
+func (l *txnLock) commitThenGet(bo *Backoffer, commitVersion uint64) ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdCommitThenGet.Enum(),
 		CmdCommitGetReq: &pb.CmdCommitThenGetRequest{

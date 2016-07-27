@@ -30,7 +30,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
 
-	bo := NewBackoff(3000)
+	bo := NewBackoffer(3000)
 
 	tasks, err := buildCopTasks(bo, cache, s.buildKeyRanges("a", "c"), false)
 	c.Assert(err, IsNil)
@@ -90,7 +90,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	cluster := mocktikv.NewCluster()
 	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
-	bo := NewBackoff(3000)
+	bo := NewBackoffer(3000)
 
 	tasks, err := buildCopTasks(bo, cache, s.buildKeyRanges("a", "z"), false)
 	c.Assert(err, IsNil)
