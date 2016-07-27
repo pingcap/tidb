@@ -941,6 +941,7 @@ func (e *LimitExec) Next() (*Row, error) {
 
 // Close implements Executor Close interface.
 func (e *LimitExec) Close() error {
+	e.Idx = 0
 	return e.Src.Close()
 }
 

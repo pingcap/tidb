@@ -56,9 +56,6 @@ func (n *finalAggregater) update(count uint64, value types.Datum) error {
 // GetContext gets aggregate evaluation context for the current group.
 // If it is nil, add a new context into contextPerGroupMap.
 func (n *finalAggregater) getContext() *ast.AggEvaluateContext {
-	if n.contextPerGroupMap == nil {
-		n.contextPerGroupMap = make(map[string](*ast.AggEvaluateContext))
-	}
 	if _, ok := n.contextPerGroupMap[string(n.currentGroup)]; !ok {
 		n.contextPerGroupMap[string(n.currentGroup)] = &ast.AggEvaluateContext{}
 	}
@@ -153,7 +150,8 @@ func (e *XAggregateExec) Next() (*Row, error) {
 		e.aggregaters = make([]*finalAggregater, len(e.AggFuncs))
 		for i, af := range e.AggFuncs {
 			agg := &finalAggregater{
-				name: strings.ToLower(af.F),
+				name:               strings.ToLower(af.F),
+				contextPerGroupMap: make(map[string](*ast.AggEvaluateContext)),
 			}
 			e.aggregaters[i] = agg
 		}
@@ -298,7 +296,8 @@ func (e *NewXAggregateExec) Next() (*Row, error) {
 		e.aggregaters = make([]*finalAggregater, len(e.AggFuncs))
 		for i, af := range e.AggFuncs {
 			agg := &finalAggregater{
-				name: strings.ToLower(af.GetName()),
+				name:               strings.ToLower(af.GetName()),
+				contextPerGroupMap: make(map[string](*ast.AggEvaluateContext)),
 			}
 			e.aggregaters[i] = agg
 		}
