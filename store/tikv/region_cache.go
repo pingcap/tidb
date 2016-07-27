@@ -197,20 +197,22 @@ func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 
 // loadRegion loads region from pd client, and picks the first peer as leader.
 func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
+	var backoffErr error
 	for {
-		meta, leader, err := c.pdClient.GetRegion(key)
-		if err != nil {
-			err = bo.Backoff(boPDRPC, errors.Errorf("loadRegion from PD failed, key: %q, err: %v", key, err))
+		if backoffErr != nil {
+			err := bo.Backoff(boPDRPC, backoffErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+		}
+
+		meta, leader, err := c.pdClient.GetRegion(key)
+		if err != nil {
+			backoffErr = errors.Errorf("loadRegion from PD failed, key: %q, err: %v", key, err)
 			continue
 		}
 		if meta == nil {
-			err = bo.Backoff(boPDRPC, errors.Errorf("region not found for key %q", key))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			backoffErr = errors.Errorf("region not found for key %q", key)
 			continue
 		}
 		if len(meta.Peers) == 0 {
@@ -228,10 +230,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 		peer := meta.Peers[0]
 		store, err := c.pdClient.GetStore(peer.GetStoreId())
 		if err != nil {
-			err = bo.Backoff(boPDRPC, errors.Errorf("loadStore from PD failed, key %q, storeID: %d, err: %v", key, peer.GetStoreId(), err))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			backoffErr = errors.Errorf("loadStore from PD failed, key %q, storeID: %d, err: %v", key, peer.GetStoreId(), err)
 			continue
 		}
 		region := &Region{
