@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -313,13 +314,13 @@ func (b *planBuilder) buildNewDistinct(src LogicalPlan) LogicalPlan {
 func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) LogicalPlan {
 	u := &NewUnion{baseLogicalPlan: newBaseLogicalPlan(Un, b.allocator)}
 	u.initID()
-	u.Selects = make([]LogicalPlan, len(union.SelectList.Selects))
+	u.children = make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
-		u.Selects[i] = b.buildNewSelect(sel)
-		u.correlated = u.correlated || u.Selects[i].IsCorrelated()
+		u.children[i] = b.buildNewSelect(sel)
+		u.correlated = u.correlated || u.children[i].IsCorrelated()
 	}
-	firstSchema := u.Selects[0].GetSchema().DeepCopy()
-	for _, sel := range u.Selects {
+	firstSchema := u.children[0].GetSchema().DeepCopy()
+	for _, sel := range u.children {
 		if len(firstSchema) != len(sel.GetSchema()) {
 			b.err = errors.New("The used SELECT statements have a different number of columns")
 			return nil
@@ -344,7 +345,7 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) LogicalPlan {
 				firstSchema[i].RetType.Tp = col.RetType.Tp
 			}
 		}
-		addChild(u, sel)
+		sel.SetParents(u)
 	}
 	for _, v := range firstSchema {
 		v.FromID = u.id
@@ -401,10 +402,6 @@ func (b *planBuilder) buildNewLimit(src LogicalPlan, limit *ast.Limit) LogicalPl
 	}
 	li.initID()
 	li.correlated = src.IsCorrelated()
-	if s, ok := src.(*NewSort); ok {
-		s.ExecLimit = li
-		return s
-	}
 	addChild(li, src)
 	li.SetSchema(src.GetSchema().DeepCopy())
 	return li
@@ -440,6 +437,9 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField) (
 	var matchedExpr ast.ExprNode
 	index = -1
 	for i, field := range fields {
+		if field.Auxiliary {
+			continue
+		}
 		if matchField(field, v) {
 			curCol, isCol := field.Expr.(*ast.ColumnNameExpr)
 			if !isCol {
@@ -821,11 +821,21 @@ func (b *planBuilder) buildNewTableDual() LogicalPlan {
 	return dual
 }
 
+func (b *planBuilder) getTableStats(table *model.TableInfo) *statistics.Table {
+	// TODO: Currently we always retrun a pseudo table for good performance. We will use a cache in future.
+	return statistics.PseudoTable(table)
+}
+
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
+	statisticTable := b.getTableStats(tn.TableInfo)
+	if b.err != nil {
+		return nil
+	}
 	p := &DataSource{
 		table:           tn,
 		Table:           tn.TableInfo,
 		baseLogicalPlan: newBaseLogicalPlan(Ts, b.allocator),
+		statisticTable:  statisticTable,
 	}
 	p.initID()
 	// Equal condition contains a column from previous joined table.
@@ -975,7 +985,8 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		joinPlan.JoinType = SemiJoin
 	}
 	joinPlan.anti = not
-	addChild(joinPlan, outerPlan)
-	addChild(joinPlan, innerPlan)
+	joinPlan.SetChildren(outerPlan, innerPlan)
+	outerPlan.SetParents(joinPlan)
+	innerPlan.SetParents(joinPlan)
 	return joinPlan
 }
