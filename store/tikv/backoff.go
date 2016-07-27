@@ -16,7 +16,6 @@ package tikv
 import (
 	"math"
 	"math/rand"
-	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -91,19 +90,19 @@ func (t backoffType) createFn() func() int {
 
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
-	copBuildTaskMaxBackoff = 3000
-	newTxnMaxBackoff       = 3000
-	storeVersionMaxBackoff = 3000
-	scannerNextMaxBackoff  = 3000
+	copBuildTaskMaxBackoff = 5000
+	tsoMaxBackoff          = 5000
+	scannerNextMaxBackoff  = 5000
 	batchGetMaxBackoff     = 10000
 	copNextMaxBackoff      = 10000
 	getMaxBackoff          = 10000
-	commitMaxBackoff       = 15000
+	prewriteMaxBackoff     = 10000
+	commitMaxBackoff       = 10000
+	cleanupMaxBackoff      = 10000
 )
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {
-	mu         sync.Mutex
 	fn         map[backoffType]func() int
 	maxSleep   int
 	totalSleep int
@@ -120,9 +119,6 @@ func NewBackoffer(maxSleep int) *Backoffer {
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	// Lazy initialize.
 	if b.fn == nil {
 		b.fn = make(map[backoffType]func() int)
@@ -142,4 +138,13 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		return errors.Annotate(e, txnRetryableMark)
 	}
 	return nil
+}
+
+// Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors.
+func (b *Backoffer) Fork() *Backoffer {
+	return &Backoffer{
+		maxSleep:   b.maxSleep,
+		totalSleep: b.totalSleep,
+		errors:     b.errors,
+	}
 }

@@ -35,7 +35,6 @@ type txnCommitter struct {
 	mu          sync.RWMutex
 	writtenKeys [][]byte
 	committed   bool
-	bo          *Backoffer
 }
 
 func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
@@ -80,7 +79,6 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 		startTS:   txn.StartTS(),
 		keys:      keys,
 		mutations: mutations,
-		bo:        NewBackoffer(commitMaxBackoff),
 	}, nil
 }
 
@@ -91,11 +89,11 @@ func (c *txnCommitter) primary() []byte {
 // iterKeys groups keys into batches, then applies `f` to them. If the flag
 // asyncNonPrimary is set, it will return as soon as the primary batch is
 // processed.
-func (c *txnCommitter) iterKeys(keys [][]byte, f func(batchKeys) error, sizeFn func([]byte) int, asyncNonPrimary bool) error {
+func (c *txnCommitter) iterKeys(bo *Backoffer, keys [][]byte, f func(*Backoffer, batchKeys) error, sizeFn func([]byte) int, asyncNonPrimary bool) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(c.bo, keys)
+	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -112,7 +110,7 @@ func (c *txnCommitter) iterKeys(keys [][]byte, f func(batchKeys) error, sizeFn f
 	}
 
 	if firstIsPrimary {
-		err = c.doBatches(batches[:1], f)
+		err = c.doBatches(bo, batches[:1], f)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -120,21 +118,21 @@ func (c *txnCommitter) iterKeys(keys [][]byte, f func(batchKeys) error, sizeFn f
 	}
 	if asyncNonPrimary {
 		go func() {
-			c.doBatches(batches, f)
+			c.doBatches(bo, batches, f)
 		}()
 		return nil
 	}
-	err = c.doBatches(batches, f)
+	err = c.doBatches(bo, batches, f)
 	return errors.Trace(err)
 }
 
 // doBatches applies f to batches parallelly.
-func (c *txnCommitter) doBatches(batches []batchKeys, f func(batchKeys) error) error {
+func (c *txnCommitter) doBatches(bo *Backoffer, batches []batchKeys, f func(*Backoffer, batchKeys) error) error {
 	if len(batches) == 0 {
 		return nil
 	}
 	if len(batches) == 1 {
-		e := f(batches[0])
+		e := f(bo, batches[0])
 		if e != nil {
 			log.Warnf("txnCommitter doBatches failed: %v, tid: %d", e, c.startTS)
 		}
@@ -145,7 +143,7 @@ func (c *txnCommitter) doBatches(batches []batchKeys, f func(batchKeys) error) e
 	ch := make(chan error)
 	for _, batch := range batches {
 		go func(batch batchKeys) {
-			ch <- f(batch)
+			ch <- f(bo.Fork(), batch)
 		}(batch)
 	}
 	var err error
@@ -170,7 +168,7 @@ func (c *txnCommitter) keySize(key []byte) int {
 	return len(key)
 }
 
-func (c *txnCommitter) prewriteSingleRegion(batch batchKeys) error {
+func (c *txnCommitter) prewriteSingleRegion(bo *Backoffer, batch batchKeys) error {
 	mutations := make([]*pb.Mutation, len(batch.keys))
 	for i, k := range batch.keys {
 		mutations[i] = c.mutations[string(k)]
@@ -185,16 +183,16 @@ func (c *txnCommitter) prewriteSingleRegion(batch batchKeys) error {
 	}
 
 	for {
-		resp, err := c.store.SendKVReq(c.bo, req, batch.region)
+		resp, err := c.store.SendKVReq(bo, req, batch.region)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			err = c.bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.prewriteKeys(batch.keys)
+			err = c.prewriteKeys(bo, batch.keys)
 			return errors.Trace(err)
 		}
 		prewriteResp := resp.GetCmdPrewriteResp()
@@ -217,19 +215,19 @@ func (c *txnCommitter) prewriteSingleRegion(batch batchKeys) error {
 				return errors.Trace(err)
 			}
 			lock := newLock(c.store, lockInfo.GetPrimaryLock(), lockInfo.GetLockVersion(), lockInfo.GetKey(), c.startTS)
-			_, err = lock.cleanup(c.bo)
+			_, err = lock.cleanup(bo)
 			if err != nil && terror.ErrorNotEqual(err, errInnerRetryable) {
 				return errors.Trace(err)
 			}
 		}
-		err = c.bo.Backoff(boTxnLock, errors.New("prewrite encounter locks"))
+		err = bo.Backoff(boTxnLock, errors.New("prewrite encounter locks"))
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 }
 
-func (c *txnCommitter) commitSingleRegion(batch batchKeys) error {
+func (c *txnCommitter) commitSingleRegion(bo *Backoffer, batch batchKeys) error {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdCommit.Enum(),
 		CmdCommitReq: &pb.CmdCommitRequest{
@@ -239,17 +237,17 @@ func (c *txnCommitter) commitSingleRegion(batch batchKeys) error {
 		},
 	}
 
-	resp, err := c.store.SendKVReq(c.bo, req, batch.region)
+	resp, err := c.store.SendKVReq(bo, req, batch.region)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if regionErr := resp.GetRegionError(); regionErr != nil {
-		err = c.bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+		err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
 		// re-split keys and commit again.
-		err = c.commitKeys(batch.keys)
+		err = c.commitKeys(bo, batch.keys)
 		return errors.Trace(err)
 	}
 	commitResp := resp.GetCmdCommitResp()
@@ -279,7 +277,7 @@ func (c *txnCommitter) commitSingleRegion(batch batchKeys) error {
 	return nil
 }
 
-func (c *txnCommitter) cleanupSingleRegion(batch batchKeys) error {
+func (c *txnCommitter) cleanupSingleRegion(bo *Backoffer, batch batchKeys) error {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdBatchRollback.Enum(),
 		CmdBatchRollbackReq: &pb.CmdBatchRollbackRequest{
@@ -287,16 +285,16 @@ func (c *txnCommitter) cleanupSingleRegion(batch batchKeys) error {
 			StartVersion: proto.Uint64(c.startTS),
 		},
 	}
-	resp, err := c.store.SendKVReq(c.bo, req, batch.region)
+	resp, err := c.store.SendKVReq(bo, req, batch.region)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if regionErr := resp.GetRegionError(); regionErr != nil {
-		err = c.bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+		err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = c.cleanupKeys(batch.keys)
+		err = c.cleanupKeys(bo, batch.keys)
 		return errors.Trace(err)
 	}
 	if keyErr := resp.GetCmdBatchRollbackResp().GetError(); keyErr != nil {
@@ -307,16 +305,16 @@ func (c *txnCommitter) cleanupSingleRegion(batch batchKeys) error {
 	return nil
 }
 
-func (c *txnCommitter) prewriteKeys(keys [][]byte) error {
-	return c.iterKeys(keys, c.prewriteSingleRegion, c.keyValueSize, false)
+func (c *txnCommitter) prewriteKeys(bo *Backoffer, keys [][]byte) error {
+	return c.iterKeys(bo, keys, c.prewriteSingleRegion, c.keyValueSize, false)
 }
 
-func (c *txnCommitter) commitKeys(keys [][]byte) error {
-	return c.iterKeys(keys, c.commitSingleRegion, c.keySize, true)
+func (c *txnCommitter) commitKeys(bo *Backoffer, keys [][]byte) error {
+	return c.iterKeys(bo, keys, c.commitSingleRegion, c.keySize, true)
 }
 
-func (c *txnCommitter) cleanupKeys(keys [][]byte) error {
-	return c.iterKeys(keys, c.cleanupSingleRegion, c.keySize, false)
+func (c *txnCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
+	return c.iterKeys(bo, keys, c.cleanupSingleRegion, c.keySize, false)
 }
 
 func (c *txnCommitter) Commit() error {
@@ -324,26 +322,26 @@ func (c *txnCommitter) Commit() error {
 		// Always clean up all written keys if the txn does not commit.
 		if !c.committed {
 			go func() {
-				c.cleanupKeys(c.writtenKeys)
+				c.cleanupKeys(NewBackoffer(cleanupMaxBackoff), c.writtenKeys)
 				log.Infof("txn clean up done, tid: %d", c.startTS)
 			}()
 		}
 	}()
 
-	err := c.prewriteKeys(c.keys)
+	err := c.prewriteKeys(NewBackoffer(prewriteMaxBackoff), c.keys)
 	if err != nil {
 		log.Warnf("txn commit failed on prewrite: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
 	}
 
-	commitTS, err := c.store.getTimestampWithRetry(c.bo)
+	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff))
 	if err != nil {
 		log.Warnf("txn get commitTS failed: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
 	}
 	c.commitTS = commitTS
 
-	err = c.commitKeys(c.keys)
+	err = c.commitKeys(NewBackoffer(commitMaxBackoff), c.keys)
 	if err != nil {
 		if !c.committed {
 			log.Warnf("txn commit failed on commit: %v, tid: %d", err, c.startTS)
