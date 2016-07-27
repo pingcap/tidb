@@ -27,7 +27,7 @@ package parser
 
 import (
 	"strings"
-	
+
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
@@ -1334,7 +1334,7 @@ CreateTableStmt:
 			}
 		}
 		if len(columnDefs) == 0 {
-			yylex.(*lexer).err("Column Definition List can't be empty.")
+			yylex.Errorf("Column Definition List can't be empty.")
 			return 1
 		}
 		$$ = &ast.CreateTableStmt{
@@ -1702,7 +1702,7 @@ PredicateExpr:
 	{
 		escape := $5.(string)
 		if len(escape) > 1 {
-			yylex.(*lexer).errf("Incorrect arguments %s to ESCAPE", escape)
+			yylex.Errorf("Incorrect arguments %s to ESCAPE", escape)
 			return 1
 		} else if len(escape) == 0 {
 			escape = "\\"
@@ -2109,8 +2109,7 @@ Literal:
 		tp.Charset = $1.(string)
 		co, err := charset.GetDefaultCollation(tp.Charset)
 		if err != nil {
-			l := yylex.(*lexer)
-			l.errf("Get collation error for charset: %s", tp.Charset)
+			yylex.Errorf("Get collation error for charset: %s", tp.Charset)
 			return 1
 		}
 		tp.Collate = co
@@ -4298,7 +4297,7 @@ NumericType:
 		if x.Tp == mysql.TypeFloat {
 			// Fix issue #312
 			if x.Flen > 53 {
-				yylex.(*lexer).errf("Float len(%d) should not be greater than 53", x.Flen)
+				yylex.Errorf("Float len(%d) should not be greater than 53", x.Flen)
 				return 1
 			}
 			if x.Flen > 24 { 
@@ -4323,7 +4322,7 @@ NumericType:
 		if x.Flen == -1 || x.Flen == 0 {
 			x.Flen = 1
 		} else if x.Flen > 64 {
-			yylex.(*lexer).errf("invalid field length %d for bit type, must in [1, 64]", x.Flen)
+			yylex.Errorf("invalid field length %d for bit type, must in [1, 64]", x.Flen)
 		}
 		$$ = x
 	}
