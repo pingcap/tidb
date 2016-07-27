@@ -16,6 +16,7 @@ package mysql
 import (
 	"fmt"
 	"math"
+	"strconv"
 )
 
 type roundMode int
@@ -131,6 +132,140 @@ type MyDecimal struct {
 
 func (d *MyDecimal) String() string {
 	return fmt.Sprintf("di:%d, df:%d, neg:%v, buf:%v", d.digitsInt, d.digitsFrac, d.negative, d.wordBuf)
+}
+
+func (d *MyDecimal) stringSize() int {
+	// sign, zero integer and dot.
+	return d.digitsInt + d.digitsFrac + 3
+}
+
+func (d *MyDecimal) removeLeadingZeros() (wordIdx int, digitsInt int) {
+	digitsInt = d.digitsInt
+	i := ((digitsInt - 1) % digitsPerWord) + 1
+	for digitsInt > 0 && d.wordBuf[wordIdx] == 0 {
+		digitsInt -= i
+		i = digitsPerWord
+		wordIdx++
+	}
+	if digitsInt > 0 {
+		digitsInt -= countLeadingZeroes((digitsInt-1)%digitsPerWord, d.wordBuf[wordIdx])
+	} else {
+		digitsInt = 0
+	}
+	return
+}
+
+// ToString converts decimal to its printable string representation.
+//
+//      fixedPrec - 0 if representation can be variable length and
+//                  fixed_decimals will not be checked in this case.
+//                  Put number as with fixed point position with this
+//                  number of digits (sign counted and decimal point is
+//                  counted)
+//      fixedDec  - number digits after point.
+//      filler    - character to fill gaps in case of fixed_precision > 0
+//
+//  RETURN VALUE
+//
+//      str       - result string
+//      errCode   - eDecOK/eDecTruncate/eDecOverflow
+//
+func (d *MyDecimal) ToString(fixedPrec, fixedDec int, filler byte) (str []byte, errCode int) {
+	fixedDigitsInt := 0
+	if fixedPrec > 0 {
+		fixedDigitsInt = fixedPrec - fixedDec
+	}
+	str = make([]byte, d.stringSize())
+	digitsFrac := d.digitsFrac
+	wordStartIdx, digitsInt := d.removeLeadingZeros()
+	if digitsInt+digitsFrac == 0 {
+		digitsInt = 1
+		wordStartIdx = 0
+	}
+
+	digitsIntLen := digitsInt
+	if fixedPrec > 0 {
+		digitsIntLen = fixedDigitsInt
+	}
+	if digitsIntLen == 0 {
+		digitsIntLen = 1
+	}
+	digitsFracLen := digitsFrac
+	if fixedPrec > 0 {
+		digitsFracLen = fixedDec
+	}
+	length := digitsIntLen + digitsFracLen
+	if d.negative {
+		length++
+	}
+	if digitsFrac > 0 {
+		length++
+	}
+
+	if fixedPrec > 0 {
+		if digitsFrac > fixedDec {
+			errCode = eDecTruncate
+			digitsFrac = fixedDec
+		}
+		if digitsInt > fixedDigitsInt {
+			errCode = eDecOverflow
+			digitsInt = fixedDigitsInt
+		}
+	}
+	str = str[:length]
+	strIdx := 0
+	if d.negative {
+		str[strIdx] = '-'
+		strIdx++
+	}
+	var fill int
+	if digitsFrac > 0 {
+		fracIdx := strIdx + digitsIntLen
+		fill = digitsFracLen - digitsFrac
+		wordIdx := wordStartIdx + (digitsInt+digitsPerWord-1)/digitsPerWord
+		str[fracIdx] = '.'
+		fracIdx++
+		for ; digitsFrac > 0; digitsFrac -= digitsPerWord {
+			x := d.wordBuf[wordIdx]
+			wordIdx++
+			for i := myMin(digitsFrac, digitsPerWord); i > 0; i-- {
+				y := x / digMask
+				str[fracIdx] = byte(y) + '0'
+				fracIdx++
+				x -= y * digMask
+				x *= 10
+			}
+		}
+		for ; fill > 0; fill-- {
+			str[fracIdx] = filler
+			fracIdx++
+		}
+	}
+	fill = digitsIntLen - digitsInt
+	if digitsInt == 0 {
+		fill-- /* symbol 0 before digital point */
+	}
+	for ; fill > 0; fill-- {
+		str[strIdx] = filler
+		strIdx++
+	}
+	if digitsInt > 0 {
+		strIdx += digitsInt
+		wordIdx := wordStartIdx + (digitsInt+digitsPerWord-1)/digitsPerWord
+		for ; digitsInt > 0; digitsInt -= digitsPerWord {
+			wordIdx--
+			x := d.wordBuf[wordIdx]
+			for i := myMin(digitsInt, digitsPerWord); i > 0; i-- {
+				y := x / 10
+				strIdx--
+				str[strIdx] = '0' + byte(x-y*10)
+				x = y
+			}
+		}
+	} else {
+		str[strIdx] = '0'
+	}
+	return
 }
 
 // FromString parses decimal from string.
@@ -700,6 +835,42 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, mode roundMode) (errcode int)
 	return
 }
 
+// FromInt sets the decimal value from int64.
+func (d *MyDecimal) FromInt(val int64) int {
+	var uVal uint64
+	if val < 0 {
+		d.negative = true
+		uVal = uint64(-val)
+	} else {
+		uVal = uint64(val)
+	}
+	return d.FromUint(uVal)
+}
+
+// FromUint sets the decimal value from uint64.
+func (d *MyDecimal) FromUint(val uint64) int {
+	x := val
+	wordIdx := 1
+	for x >= wordBase {
+		wordIdx++
+		x /= wordBase
+	}
+	if wordIdx > wordBufLen {
+		wordIdx = wordBufLen
+		return eDecOverflow
+	}
+	d.digitsFrac = 0
+	d.digitsInt = wordIdx * digitsPerWord
+	x = val
+	for wordIdx > 0 {
+		wordIdx--
+		y := x / wordBase
+		d.wordBuf[wordIdx] = int32(x - y*wordBase)
+		x = y
+	}
+	return eDecOK
+}
+
 // ToInt returns int part of the decimal, returns the result and errcode.
 func (d *MyDecimal) ToInt() (int64, int) {
 	var x int64
@@ -763,4 +934,23 @@ func (d *MyDecimal) ToUint() (uint64, int) {
 		wordIdx++
 	}
 	return x, eDecOK
+}
+
+// FromFloat64 creates a decimal from float64 value.
+func (d *MyDecimal) FromFloat64(f float64) int {
+	s := strconv.FormatFloat(f, 'g', -1, 64)
+	return d.FromString([]byte(s))
+}
+
+// ToFloat64 converts decimal to float64 value.
+func (d *MyDecimal) ToFloat64() (float64, int) {
+	str, ec := d.ToString(0, 0, 0)
+	if ec != eDecOK {
+		return 0, ec
+	}
+	f, err := strconv.ParseFloat(string(str), 64)
+	if err != nil {
+		ec = eDecOverflow
+	}
+	return f, ec
 }
