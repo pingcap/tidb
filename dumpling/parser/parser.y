@@ -2097,8 +2097,7 @@ Literal:
 |	stringLit
 	{
 		tp := types.NewFieldType(mysql.TypeString)
-		l := yylex.(*lexer)
-		tp.Charset, tp.Collate = l.GetCharsetInfo()
+		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($1)
 		expr.SetType(tp)
 		$$ = expr
@@ -4058,7 +4057,7 @@ StatementList:
 		if $1 != nil {
 			s := $1.(ast.StmtNode)
 			s.SetText(yylex.(*lexer).stmtText())
-			yylex.(*lexer).list = append(yylex.(*lexer).list, s)
+			parser.result = append(parser.result, s)
 		}
 	}
 |	StatementList ';' Statement
@@ -4066,7 +4065,7 @@ StatementList:
 		if $3 != nil {
 			s := $3.(ast.StmtNode)
 			s.SetText(yylex.(*lexer).stmtText())
-			yylex.(*lexer).list = append(yylex.(*lexer).list, s)
+			parser.result = append(parser.result, s)
 		}
 	}
 

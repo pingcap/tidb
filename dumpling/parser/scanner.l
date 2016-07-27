@@ -39,7 +39,6 @@ type lexer struct {
 	i		int
 	lcol		int
 	line		int
-	list		[]ast.StmtNode
 	ncol		int
 	nline		int
 	sc		int
@@ -52,10 +51,6 @@ type lexer struct {
 	// record token's offset of the input
 	tokenEndOffset   int
 	tokenStartOffset int
-
-	// Charset information
-	charset		string
-	collation	string
 }
 
 
@@ -74,21 +69,8 @@ func (l *lexer) Errors() []error {
 	return l.errs
 }
 
-func (l *lexer) Stmts() []ast.StmtNode {
-	return l.list
-}
-
 func (l *lexer) Expr() ast.ExprNode {
 	return l.expr
-}
-
-func (l *lexer) SetCharsetInfo(charset, collation string) {
-	l.charset = charset
-	l.collation = collation
-}
-
-func (l *lexer) GetCharsetInfo() (string, string) {
-	return l.charset, l.collation
 }
 
 func (l *lexer) unget(b byte) {
