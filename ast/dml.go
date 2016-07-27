@@ -914,6 +914,14 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Pattern = node.(*PatternLikeExpr)
 	}
+
+	switch n.Tp {
+	case ShowTriggers, ShowProcedureStatus:
+		// We don't have any data to return for those types,
+		// but visiting Where may cause resolving error, so return here to avoid error.
+		return v.Leave(n)
+	}
+
 	if n.Where != nil {
 		node, ok := n.Where.Accept(v)
 		if !ok {

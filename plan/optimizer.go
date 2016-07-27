@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
@@ -52,7 +53,13 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		p = logic.Convert2PhysicalPlan()
+		_, res, _, err := logic.convert2PhysicalPlan(nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		p = res.p.PushLimit(nil)
+		log.Debugf("[PLAN] %s", ToString(p))
+		return p, nil
 	}
 	err := Refine(p)
 	if err != nil {

@@ -45,22 +45,22 @@ type Driver struct {
 }
 
 // Open opens or creates an TiKV storage with given path.
-// Path example: tikv://etcd-node1:port,etcd-node2:port/pd-path?cluster=1
+// Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1
 func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	etcdAddrs, pdPath, clusterID, err := parsePath(path)
+	etcdAddrs, clusterID, err := parsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// FIXME: uuid will be a very long and ugly string, simplify it.
-	uuid := fmt.Sprintf("tikv-%v-%v-%v", etcdAddrs, pdPath, clusterID)
+	uuid := fmt.Sprintf("tikv-%v-%v", etcdAddrs, clusterID)
 	if store, ok := mc.cache[uuid]; ok {
 		return store, nil
 	}
 
-	pdCli, err := pd.NewClient(etcdAddrs, pdPath, clusterID)
+	pdCli, err := pd.NewClient(etcdAddrs, clusterID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -202,7 +202,7 @@ func (s *tikvStore) SendKVReq(req *pb.Request, regionID RegionVerID) (*pb.Respon
 	return nil, errors.Trace(backoffErr)
 }
 
-func parsePath(path string) (etcdAddrs []string, pdPath string, clusterID uint64, err error) {
+func parsePath(path string) (etcdAddrs []string, clusterID uint64, err error) {
 	var u *url.URL
 	u, err = url.Parse(path)
 	if err != nil {
@@ -221,7 +221,6 @@ func parsePath(path string) (etcdAddrs []string, pdPath string, clusterID uint64
 		return
 	}
 	etcdAddrs = strings.Split(u.Host, ",")
-	pdPath = u.Path
 	return
 }
 

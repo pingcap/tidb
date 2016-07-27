@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func newMockResolve(node ast.Node) error {
@@ -32,13 +33,16 @@ func newMockResolve(node ast.Node) error {
 			Name: model.NewCIStr("c_d_e"),
 			Columns: []*model.IndexColumn{
 				{
-					Name: model.NewCIStr("c"),
+					Name:   model.NewCIStr("c"),
+					Length: types.UnspecifiedLength,
 				},
 				{
-					Name: model.NewCIStr("d"),
+					Name:   model.NewCIStr("d"),
+					Length: types.UnspecifiedLength,
 				},
 				{
-					Name: model.NewCIStr("e"),
+					Name:   model.NewCIStr("e"),
+					Length: types.UnspecifiedLength,
 				},
 			},
 		},
@@ -171,6 +175,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
+			ctx:       mock.NewContext(),
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
@@ -186,6 +191,88 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	UseNewPlanner = false
 }
 
+func (s *testPlanSuite) TestCBO(c *C) {
+	UseNewPlanner = true
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select * from t a where a.c = 1 order by a.d limit 2",
+			best: "Index(t.c_d_e)[[1,1]]->Projection",
+		},
+		{
+			sql:  "select * from t a where 1 = a.c and a.d > 1 order by a.d desc limit 2",
+			best: "Index(t.c_d_e)[(1 1,1 <nil>]]->Projection",
+		},
+		{
+			sql:  "select * from t a where a.c < 10000 order by a.a limit 2",
+			best: "Table(t)->Selection->Limit->Projection",
+		},
+		{
+			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by a.c",
+			best: "LeftHashJoin{Index(t.c_d_e)[[<nil>,<nil>]]->Projection->Table(t)->Projection}->Projection",
+		},
+		{
+			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by b.c",
+			best: "LeftHashJoin{Table(t)->Projection->Table(t)->Projection}->Projection->Sort",
+		},
+		{
+			sql:  "select * from (select * from t) a right outer join (select * from t) b on 1 order by a.c",
+			best: "RightHashJoin{Table(t)->Projection->Table(t)->Projection}->Projection->Sort",
+		},
+		{
+			sql:  "select * from (select * from t) a right outer join (select * from t) b on 1 order by b.c",
+			best: "RightHashJoin{Table(t)->Projection->Index(t.c_d_e)[[<nil>,<nil>]]->Projection}->Projection",
+		},
+		{
+			sql:  "select * from t a where exists(select * from t b where a.a = b.a) and a.c = 1 order by a.d limit 3",
+			best: "SemiJoin{Index(t.c_d_e)[[1,1]]->Table(t)}->Limit->Projection",
+		},
+		{
+			sql:  "select exists(select * from t b where a.a = b.a and b.c = 1) from t a order by a.c limit 3",
+			best: "SemiJoinWithAux{Index(t.c_d_e)[[<nil>,<nil>]]->Index(t.c_d_e)[[1,1]]}->Projection->Trim",
+		},
+		{
+			sql:  "select * from (select t.a from t union select t.d from t where t.c = 1 union select t.c from t) k order by a limit 1",
+			best: "UnionAll{Table(t)->Projection->Index(t.c_d_e)[[1,1]]->Projection->Index(t.c_d_e)[[<nil>,<nil>]]->Projection}->Distinct->Limit->Projection",
+		},
+		{
+			sql:  "select * from (select t.a from t union select t.d from t union select t.c from t) k order by a limit 1",
+			best: "UnionAll{Table(t)->Projection->Table(t)->Projection->Table(t)->Projection}->Distinct->Projection->Sort + Limit(1) + Offset(0)",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		err = newMockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mock.NewContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
+		c.Assert(err, IsNil)
+		_, res, _, err := lp.convert2PhysicalPlan(nil)
+		c.Assert(err, IsNil)
+		p = res.p.PushLimit(nil)
+		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+	}
+	UseNewPlanner = false
+}
+
 func (s *testPlanSuite) TestRefine(c *C) {
 	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
@@ -195,11 +282,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 	}{
 		{
 			sql:  "select a from t where c = 4 and d = 5 and e = 6",
-			best: "Index(t.c_d_e)[[4 5 6,4 5 6]]->Selection->Projection",
+			best: "Index(t.c_d_e)[[4 5 6,4 5 6]]->Projection",
 		},
 		{
 			sql:  "select a from t where d = 4 and c = 5",
-			best: "Index(t.c_d_e)[[5 4,5 4]]->Selection->Projection",
+			best: "Index(t.c_d_e)[[5 4,5 4]]->Projection",
 		},
 		{
 			sql:  "select a from t where c = 4 and e < 5",
@@ -207,11 +294,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c = 4 and d <= 5 and d > 3",
-			best: "Index(t.c_d_e)[[4 3,4 5]]->Selection->Projection",
+			best: "Index(t.c_d_e)[(4 3,4 5]]->Projection",
 		},
 		{
 			sql:  "select a from t where d <= 5 and d > 3",
-			best: "Index(t.c_d_e)[[<nil>,<nil>]]->Selection->Projection",
+			best: "Table(t)->Selection->Projection",
 		},
 		{
 			sql:  "select a from t where c <= 5 and c >= 3 and d = 1",
@@ -229,6 +316,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
+			ctx:       mock.NewContext(),
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
@@ -237,9 +325,9 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		c.Assert(err, IsNil)
 		_, err = p.PruneColumnsAndResolveIndices(p.GetSchema())
 		c.Assert(err, IsNil)
-		np := p.Convert2PhysicalPlan()
-		err = refine(np)
+		_, res, _, err := p.convert2PhysicalPlan(nil)
 		c.Assert(err, IsNil)
+		np := res.p.PushLimit(nil)
 		c.Assert(ToString(np), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 	UseNewPlanner = false
@@ -366,7 +454,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
-			allocator: new(idAllocator)}
+			allocator: new(idAllocator),
+			ctx:       mock.NewContext(),
+		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
 
@@ -380,9 +470,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
-	pA := &PhysicalTableScan{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
+	pA := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
 
-	pB := &PhysicalTableScan{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
+	pB := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
 
 	pA.initID()
 	pB.initID()
@@ -553,7 +643,8 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 		err = newMockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		p, err := BuildPlan(stmt, nil)
+		builder := &planBuilder{allocator: new(idAllocator), ctx: mock.NewContext()}
+		p := builder.build(stmt)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, ca.exprStr))
 		var selection *Selection
 		for _, child := range p.GetChildren() {
