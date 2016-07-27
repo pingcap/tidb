@@ -1,3 +1,16 @@
+// Copyright 2016 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Copyright 2014 The goyacc Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
@@ -522,14 +535,14 @@ func %[1]slex1(yylex %[1]sLexer, lval *%[1]sSymType) (n int) {
 	return n
 }
 
-func %[1]sParse(yylex %[1]sLexer, cache *[]%[1]sSymType) int {
+func %[1]sParse(yylex %[1]sLexer, parser *Parser) int {
 	const yyError = %[2]d
 
 	yyEx, _ := yylex.(%[1]sLexerEx)
 	var yyn int
 	var yylval %[1]sSymType
 	var yyVAL %[1]sSymType
-	yyS := *cache
+	yyS := parser.cache
 
 	Nerrs := 0   /* number of errors */
 	Errflag := 0 /* error recovery flag */
@@ -560,7 +573,7 @@ yystack:
 		nyys := make([]%[1]sSymType, len(yyS)*2)
 		copy(nyys, yyS)
 		yyS = nyys
-    *cache = yyS
+		parser.cache = yyS
 	}
 	yyS[yyp] = yyVAL
 	yyS[yyp].yys = yystate
@@ -685,7 +698,7 @@ yynewstate:
 		nyys := make([]%[1]sSymType, len(yyS)*2)
 		copy(nyys, yyS)
 		yyS = nyys
-    *cache = yyS
+		parser.cache = yyS
 	}
 	yyVAL = yyS[yyp+1]
 
