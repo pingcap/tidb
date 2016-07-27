@@ -469,15 +469,15 @@ func builtinHex(args []types.Datum, _ context.Context) (d types.Datum, err error
 	case types.KindString:
 		x, err := args[0].ToString()
 		if err != nil {
-			return d, nil
+			return d, errors.Trace(err)
 		}
 		d.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))))
 		return d, nil
-	case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal, types.KindMysqlHex:
+	case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
 		x, _ := args[0].Cast(types.NewFieldType(mysql.TypeLonglong))
-		d.SetString(strings.ToUpper(strconv.FormatInt(x.GetInt64(), 16)))
+		h := fmt.Sprintf("%x", uint64(x.GetInt64()))
+		d.SetString(strings.ToUpper(h))
 		return d, nil
-
 	default:
 		return d, errors.Errorf("Hex invalid args, need int or string but get %T", args[0].GetValue())
 	}

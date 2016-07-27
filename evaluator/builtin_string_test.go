@@ -658,3 +658,40 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 	}
 }
+func (s *testEvaluatorSuite) TestHexFunc(c *C) {
+
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input  interface{}
+		Expect string
+	}{
+		{12, "C"},
+		{12.3, "C"},
+		{12.5, "D"},
+		{-12.3, "FFFFFFFFFFFFFFF4"},
+		{-12.5, "FFFFFFFFFFFFFFF3"},
+		{"12", "3132"},
+		{0x12, "12"},
+		{"", ""},
+	}
+
+	dtbl := tblToDtbl(tbl)
+
+	for _, t := range dtbl {
+		d, err := builtinHex(t["Input"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expect"])
+	}
+
+	wrong := []struct {
+		Input interface{}
+	}{
+		{nil},
+		{},
+	}
+	dwrong := tblToDtbl(wrong)
+	for _, t := range dwrong {
+		_, err := builtinHex(t["Input"], nil)
+		c.Assert(err, NotNil)
+	}
+}
