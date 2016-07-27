@@ -16,6 +16,7 @@ package parser
 import (
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -60,6 +61,7 @@ func handleMySQLSpecificCode(sql string) string {
 
 // Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
 type Parser struct {
+	src   string
 	cache []yySymType
 }
 
@@ -79,10 +81,11 @@ func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, err
 	if collation == "" {
 		collation = mysql.DefaultCollationName
 	}
+	parser.src = sql
 	sql = handleMySQLSpecificCode(sql)
 	l := NewLexer(sql)
 	l.SetCharsetInfo(charset, collation)
-	yyParse(l, &parser.cache)
+	yyParse(l, parser)
 	if len(l.Errors()) != 0 {
 		return nil, errors.Trace(l.Errors()[0])
 	}
@@ -100,4 +103,30 @@ func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode
 		return nil, ErrSyntax
 	}
 	return stmts[0], nil
+}
+
+// The select statement is not at the end of the whole statement, if the last
+// field text was set from its offset to the end of the src string, update
+// the last field text.
+func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
+	lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+	if lastField.Offset+len(lastField.Text()) >= len(parser.src)-1 {
+		lastField.SetText(parser.src[lastField.Offset:lastEnd])
+	}
+}
+
+func (parser *Parser) startOffset(offset int) int {
+	offset--
+	for unicode.IsSpace(rune(parser.src[offset])) {
+		offset++
+	}
+	return offset
+}
+
+func (parser *Parser) endOffset(offset int) int {
+	offset--
+	for offset > 0 && unicode.IsSpace(rune(parser.src[offset-1])) {
+		offset--
+	}
+	return offset
 }
