@@ -210,7 +210,7 @@ func (it *copIterator) work() {
 	for {
 		it.mu.Lock()
 		if it.finished {
-			it.mu.Lock()
+			it.mu.Unlock()
 			break
 		}
 		// Find the next task to send.
