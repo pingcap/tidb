@@ -35,7 +35,7 @@ func newTestStore(c *C) *tikvStore {
 
 	if *withTiKV {
 		var d Driver
-		store, err := d.Open(fmt.Sprintf("tikv://%s/?cluster=%d", *pdAddrs, *clusterID))
+		store, err := d.Open(fmt.Sprintf("tikv://%s?cluster=%d", *pdAddrs, *clusterID))
 		c.Assert(err, IsNil)
 		return store.(*tikvStore)
 	}
