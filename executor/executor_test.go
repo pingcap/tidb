@@ -608,6 +608,9 @@ func (s *testSuite) TestSelectLimit(c *C) {
 	r.Check(testkit.Rows(rowStr1))
 	tk.MustExec("commit")
 
+	r = tk.MustQuery("select id from (select * from select_limit limit 1) k where id != 1;")
+	r.Check(testkit.Rows())
+
 	tk.MustExec("begin")
 	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 0;")
 	rowStr2 := fmt.Sprintf("%v %v", 2, []byte("hello"))

@@ -217,8 +217,9 @@ func (p *Apply) PredicatePushDown(predicates []expression.Expression) (ret []exp
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Limit) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
-	return ret, p, errors.Trace(err)
+	// Limit forbids any condition to push down.
+	_, _, err := p.baseLogicalPlan.PredicatePushDown(nil)
+	return predicates, p, errors.Trace(err)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
