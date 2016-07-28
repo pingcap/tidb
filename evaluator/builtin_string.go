@@ -463,9 +463,6 @@ const spaceChars = "\n\t\r "
 
 // See http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
 func builtinHex(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	if args == nil {
-
-	}
 	switch args[0].Kind() {
 	case types.KindNull:
 		return d, nil
