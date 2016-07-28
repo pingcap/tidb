@@ -491,6 +491,23 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 
 func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 	src := b.build(v.GetChildByIndex(0))
+	cnt := int64(v.Offset + v.Count)
+	switch x := src.(type) {
+	case *NewXSelectIndexExec:
+		if x.indexPlan.LimitCount == nil {
+			x.indexPlan.LimitCount = &cnt
+			if v.Offset == 0 {
+				return src
+			}
+		}
+	case *NewXSelectTableExec:
+		if x.limitCount != nil {
+			x.limitCount = &cnt
+			if v.Offset == 0 {
+				return src
+			}
+		}
+	}
 	e := &LimitExec{
 		Src:    src,
 		Offset: v.Offset,
