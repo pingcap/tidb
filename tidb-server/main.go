@@ -80,8 +80,8 @@ func main() {
 		perfschema.EnablePerfSchema()
 	}
 
-	if *useNewPlan == 1 {
-		plan.UseNewPlanner = true
+	if *useNewPlan == 0 {
+		plan.UseNewPlanner = false
 	}
 
 	// Create a session to load information schema.

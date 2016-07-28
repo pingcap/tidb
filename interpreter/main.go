@@ -180,8 +180,8 @@ func main() {
 
 	tidb.SetSchemaLease(time.Duration(*lease) * time.Second)
 
-	if *useNewPlan == 1 {
-		plan.UseNewPlanner = true
+	if *useNewPlan == 0 {
+		plan.UseNewPlanner = false
 	}
 
 	// use test as default DB.
