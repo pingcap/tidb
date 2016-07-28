@@ -171,7 +171,6 @@ func (e *NewXSelectIndexExec) fetchHandles() ([]int64, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// TODO: support out of order when implement cbo
 	if !e.indexPlan.OutOfOrder {
 		// Save the index order.
 		e.indexOrder = make(map[int64]int)
@@ -292,7 +291,6 @@ func (e *NewXSelectIndexExec) executeTask(task *lookupTableTask) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// TODO: check this
 	if !e.indexPlan.OutOfOrder {
 		// Restore the index order.
 		sorter := &rowsSorter{order: e.indexOrder, rows: task.rows}
