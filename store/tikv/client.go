@@ -126,14 +126,3 @@ func (c *rpcClient) Close() error {
 	c.p.Close()
 	return nil
 }
-
-// rpcBackoff is for RPC (with TiKV) retry.
-// It is expected to sleep for about 10s(+/-3s) in total before abort.
-func rpcBackoff() func() error {
-	const (
-		maxRetry  = 10
-		sleepBase = 100
-		sleepCap  = 2000
-	)
-	return NewBackoff(maxRetry, sleepBase, sleepCap, EqualJitter)
-}

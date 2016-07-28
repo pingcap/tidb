@@ -30,28 +30,30 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
 
-	tasks, err := buildCopTasks(cache, s.buildKeyRanges("a", "c"), false)
+	bo := NewBackoffer(3000)
+
+	tasks, err := buildCopTasks(bo, cache, s.buildKeyRanges("a", "c"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
 
-	tasks, err = buildCopTasks(cache, s.buildKeyRanges("g", "n"), false)
+	tasks, err = buildCopTasks(bo, cache, s.buildKeyRanges("g", "n"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
 
-	tasks, err = buildCopTasks(cache, s.buildKeyRanges("m", "n"), false)
+	tasks, err = buildCopTasks(bo, cache, s.buildKeyRanges("m", "n"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[1], "m", "n")
 
-	tasks, err = buildCopTasks(cache, s.buildKeyRanges("a", "k"), false)
+	tasks, err = buildCopTasks(bo, cache, s.buildKeyRanges("a", "k"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
 	s.taskEqual(c, tasks[1], regionIDs[1], "g", "k")
 
-	tasks, err = buildCopTasks(cache, s.buildKeyRanges("a", "x"), false)
+	tasks, err = buildCopTasks(bo, cache, s.buildKeyRanges("a", "x"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 4)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
@@ -59,23 +61,23 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	s.taskEqual(c, tasks[2], regionIDs[2], "n", "t")
 	s.taskEqual(c, tasks[3], regionIDs[3], "t", "x")
 
-	tasks, err = buildCopTasks(cache, s.buildKeyRanges("a", "b", "b", "c"), false)
+	tasks, err = buildCopTasks(bo, cache, s.buildKeyRanges("a", "b", "b", "c"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "b", "c")
 
-	tasks, err = buildCopTasks(cache, s.buildKeyRanges("a", "b", "e", "f"), false)
+	tasks, err = buildCopTasks(bo, cache, s.buildKeyRanges("a", "b", "e", "f"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "e", "f")
 
-	tasks, err = buildCopTasks(cache, s.buildKeyRanges("g", "n", "o", "p"), false)
+	tasks, err = buildCopTasks(bo, cache, s.buildKeyRanges("g", "n", "o", "p"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
 	s.taskEqual(c, tasks[1], regionIDs[2], "o", "p")
 
-	tasks, err = buildCopTasks(cache, s.buildKeyRanges("h", "k", "m", "p"), false)
+	tasks, err = buildCopTasks(bo, cache, s.buildKeyRanges("h", "k", "m", "p"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[1], "h", "k", "m", "n")
@@ -88,8 +90,9 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	cluster := mocktikv.NewCluster()
 	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
+	bo := NewBackoffer(3000)
 
-	tasks, err := buildCopTasks(cache, s.buildKeyRanges("a", "z"), false)
+	tasks, err := buildCopTasks(bo, cache, s.buildKeyRanges("a", "z"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "m")
@@ -102,7 +105,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	cluster.Split(regionIDs[1], regionIDs[2], []byte("q"), []uint64{peerIDs[2]}, storeID)
 	cache.DropRegion(tasks[1].region.VerID())
 
-	tasks, err = buildCopTasks(cache, s.buildKeyRanges("a", "z"), true)
+	tasks, err = buildCopTasks(bo, cache, s.buildKeyRanges("a", "z"), true)
 	c.Assert(err, IsNil)
 	iter := &copIterator{
 		store: &tikvStore{
@@ -113,14 +116,14 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 		},
 		tasks: tasks,
 	}
-	err = iter.rebuildCurrentTask(iter.tasks[0])
+	err = iter.rebuildCurrentTask(bo, iter.tasks[0])
 	c.Assert(err, IsNil)
 	c.Assert(iter.tasks, HasLen, 3)
 	s.taskEqual(c, iter.tasks[2], regionIDs[0], "a", "m")
 	s.taskEqual(c, iter.tasks[1], regionIDs[1], "m", "q")
 	s.taskEqual(c, iter.tasks[0], regionIDs[2], "q", "z")
 
-	tasks, err = buildCopTasks(cache, s.buildKeyRanges("a", "z"), true)
+	tasks, err = buildCopTasks(bo, cache, s.buildKeyRanges("a", "z"), true)
 	iter = &copIterator{
 		store: &tikvStore{
 			regionCache: cache,
@@ -130,7 +133,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 		},
 		tasks: tasks,
 	}
-	err = iter.rebuildCurrentTask(iter.tasks[2])
+	err = iter.rebuildCurrentTask(bo, iter.tasks[2])
 	c.Assert(err, IsNil)
 	c.Assert(iter.tasks, HasLen, 3)
 	s.taskEqual(c, iter.tasks[2], regionIDs[0], "a", "m")
