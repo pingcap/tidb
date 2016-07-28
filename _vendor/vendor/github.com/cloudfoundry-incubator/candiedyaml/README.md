@@ -1,4 +1,6 @@
 [![Build Status](https://travis-ci.org/cloudfoundry-incubator/candiedyaml.svg)](https://travis-ci.org/cloudfoundry-incubator/candiedyaml)
+[![GoDoc](https://godoc.org/github.com/cloudfoundry-incubator/candiedyaml?status.svg)](https://godoc.org/github.com/cloudfoundry-incubator/candiedyaml)
+
 
 candiedyaml
 ===========
