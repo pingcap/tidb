@@ -13,7 +13,7 @@
 		},
 		{
 			"ImportPath": "github.com/cloudfoundry-incubator/candiedyaml",
-			"Rev": "5cef21e2e4f0fd147973b558d4db7395176bcd95"
+			"Rev": "99c3df83b51532e3615f851d8c2dbb638f5313bf"
 		},
 		{
 			"ImportPath": "github.com/coreos/etcd/auth/authpb",
@@ -320,7 +320,6 @@
 			"Rev": "c2ca1c75c6af5556eb6ce67994120adf12f2ccef"
 		},
 		{
-<<<<<<< HEAD
 			"ImportPath": "github.com/cznic/mathutil",
 			"Rev": "78ad7f262603437f0ecfebc835d80094f89c8f54"
 		},
@@ -339,7 +338,8 @@
 		{
 			"ImportPath": "github.com/cznic/y",
 			"Rev": "9fdf92d4aac058959f814606bb729ed50f5e4240"
-=======
+		},
+		{
 			"ImportPath": "github.com/grpc-ecosystem/grpc-gateway/runtime",
 			"Comment": "v1.1.0-2-gc8ec92d",
 			"Rev": "c8ec92d0481dd77d9b8c1808eb6476d190aa039a"
@@ -353,7 +353,6 @@
 			"ImportPath": "github.com/grpc-ecosystem/grpc-gateway/runtime/internal",
 			"Comment": "v1.1.0-2-gc8ec92d",
 			"Rev": "c8ec92d0481dd77d9b8c1808eb6476d190aa039a"
->>>>>>> update vendor
 		}
 	]
 }
