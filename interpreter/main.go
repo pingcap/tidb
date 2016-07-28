@@ -38,7 +38,7 @@ var (
 	dbPath     = flag.String("dbpath", "test", "db path")
 	dbName     = flag.String("dbname", "test", "default db name")
 	lease      = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
-	useNewPlan = flag.Int("newplan", 0, "If use new planner.")
+	useNewPlan = flag.Int("newplan", 1, "If use new planner.")
 
 	line        *liner.State
 	historyPath = "/tmp/tidb_interpreter"
@@ -180,8 +180,8 @@ func main() {
 
 	tidb.SetSchemaLease(time.Duration(*lease) * time.Second)
 
-	if *useNewPlan == 1 {
-		plan.UseNewPlanner = true
+	if *useNewPlan == 0 {
+		plan.UseNewPlanner = false
 	}
 
 	// use test as default DB.

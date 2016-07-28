@@ -157,10 +157,11 @@ LOOP:
 		matchRows(c, rows, [][]interface{}{{keys[index]}, {keys[index+1]}, {keys[index+2]}})
 	}
 
-	rows := s.mustQuery(c, "explain select c1 from t1 where c3 >= 100")
+	// TODO: support explain in future.
+	//rows := s.mustQuery(c, "explain select c1 from t1 where c3 >= 100")
 
-	ay := dumpRows(c, rows)
-	c.Assert(strings.Contains(fmt.Sprintf("%v", ay), "c3_index"), IsTrue)
+	//ay := dumpRows(c, rows)
+	//c.Assert(strings.Contains(fmt.Sprintf("%v", ay), "c3_index"), IsTrue)
 
 	// get all row handles
 	ctx := s.s.(context.Context)
