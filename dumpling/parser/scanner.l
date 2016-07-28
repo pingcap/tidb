@@ -117,13 +117,13 @@ func (l *lexer) Errorf(format string, a ...interface{}) {
 func (l *lexer) stmtText() string {
 	endPos := l.i
 	if l.src[l.i-1] == '\n' {
-		endPos = l.i-1 // trim new line	
+		endPos = l.i-1 // trim new line
 	}
 	if l.src[l.stmtStartPos] == '\n' {
-		l.stmtStartPos++	
+		l.stmtStartPos++
 	}
 
-	text := l.src[l.stmtStartPos:endPos] 
+	text := l.src[l.stmtStartPos:endPos]
 
 	l.stmtStartPos = l.i
 	return text
@@ -294,6 +294,7 @@ group		{g}{r}{o}{u}{p}
 group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
 hash		{h}{a}{s}{h}
 having		{h}{a}{v}{i}{n}{g}
+hex		{h}{e}{x}
 high_priority	{h}{i}{g}{h}_{p}{r}{i}{o}{r}{i}{t}{y}
 hour		{h}{o}{u}{r}
 identified	{i}{d}{e}{n}{t}{i}{f}{i}{e}{d}
@@ -522,7 +523,7 @@ action		{a}{c}{t}{i}{o}{n}
 %%
 		l.val = l.val[:0]
 		c0, l.line, l.col = l.c, l.nline, l.ncol
-                        
+
 <*>\0		return 0
 
 [ \t\n\r]+
@@ -530,13 +531,13 @@ action		{a}{c}{t}{i}{o}{n}
 \/\/.*
 \/\*([^*]|\*+[^*/])*\*+\/
 --			l.sc = S3
-<S3>[ \t]+.*		{l.sc = 0} 
+<S3>[ \t]+.*		{l.sc = 0}
 <S3>[^ \t]		{
 				l.sc = 0
 				l.c = '-'
 				n := len(l.val)
 				l.unget(l.val[n-1])
-				return '-' 
+				return '-'
 			}
 
 {int_lit}		return l.int(lval)
@@ -548,19 +549,19 @@ action		{a}{c}{t}{i}{o}{n}
 '			l.sc = S2
 `			l.sc = S4
 
-<S1>[^\"\\]*		l.stringLit = append(l.stringLit, l.val...)	
+<S1>[^\"\\]*		l.stringLit = append(l.stringLit, l.val...)
 <S1>\\.			l.stringLit = append(l.stringLit, l.val...)
 <S1>\"\"		l.stringLit = append(l.stringLit, '"')
 <S1>\"			l.stringLit = append(l.stringLit, '"')
 			l.sc = 0
-			return l.str(lval, "\"")	
-<S2>[^'\\]*		l.stringLit = append(l.stringLit, l.val...)	
+			return l.str(lval, "\"")
+<S2>[^'\\]*		l.stringLit = append(l.stringLit, l.val...)
 <S2>\\.			l.stringLit = append(l.stringLit, l.val...)
 <S2>''			l.stringLit = append(l.stringLit, '\'')
 <S2>'			l.stringLit = append(l.stringLit, '\'')
 			l.sc = 0
 			return l.str(lval, "'")
-<S4>[^`]*		l.stringLit = append(l.stringLit, l.val...)	
+<S4>[^`]*		l.stringLit = append(l.stringLit, l.val...)
 <S4>``			l.stringLit = append(l.stringLit, '`')
 <S4>`			l.sc = 0
 			lval.item = string(l.stringLit)
@@ -764,6 +765,8 @@ action		{a}{c}{t}{i}{o}{n}
 {hash}			lval.item = string(l.val)
 			return hash
 {having}		return having
+{hex}				lval.item = string(l.val)
+			return hex
 {high_priority}		return highPriority
 {hour}			lval.item = string(l.val)
 			return hour
@@ -1046,16 +1049,16 @@ action		{a}{c}{t}{i}{o}{n}
 {now}			lval.item = string(l.val)
 			return now
 
-{bit}			lval.item = string(l.val) 
+{bit}			lval.item = string(l.val)
 			return bitType
 
-{tiny}			lval.item = string(l.val) 
+{tiny}			lval.item = string(l.val)
 			return tinyIntType
 
-{tinyint}		lval.item = string(l.val) 
+{tinyint}		lval.item = string(l.val)
 			return tinyIntType
 
-{smallint}		lval.item = string(l.val) 
+{smallint}		lval.item = string(l.val)
 			return smallIntType
 
 {mediumint}		lval.item = string(l.val)
@@ -1085,7 +1088,7 @@ action		{a}{c}{t}{i}{o}{n}
 {date}			lval.item = string(l.val)
 			return dateType
 
-{time}			lval.item = string(l.val) 
+{time}			lval.item = string(l.val)
 			return timeType
 
 {timestamp}		lval.item = string(l.val)
@@ -1133,13 +1136,13 @@ action		{a}{c}{t}{i}{o}{n}
 {longtext}		lval.item = string(l.val)
 			return longtextType
 
-{bool}			lval.item = string(l.val) 
+{bool}			lval.item = string(l.val)
 			return boolType
 
 {boolean}		lval.item = string(l.val)
 			return booleanType
 
-{byte}			lval.item = string(l.val) 
+{byte}			lval.item = string(l.val)
 			return byteType
 
 {int}			lval.item = string(l.val)
@@ -1163,7 +1166,7 @@ func (l *lexer) npos() (line, col int) {
 		col = l.lcol+1
 	}
 	return
-} 
+}
 
 func (l *lexer) str(lval *yySymType, pref string) int {
 	l.sc = 0
@@ -1179,8 +1182,8 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 }
 
 func (l *lexer) trimIdent(idt string) string {
-	idt = strings.TrimPrefix(idt, "`")    
-	idt = strings.TrimSuffix(idt, "`")    
+	idt = strings.TrimPrefix(idt, "`")
+	idt = strings.TrimSuffix(idt, "`")
 	return idt
 }
 
@@ -1223,7 +1226,7 @@ func (l *lexer) hex(lval *yySymType) int {
 			return int(unicode.ReplacementChar)
 		}
 		lval.item = hexStr
-		return stringLit 
+		return stringLit
 	}
 	lval.item = h
 	return hexLit
@@ -1247,11 +1250,11 @@ func (l *lexer) handleIdent(lval *yySymType) int {
 	// [_charset_name]'string' [COLLATE collation_name]
 	// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
 	if !strings.HasPrefix(s, "_") {
-		return identifier	
+		return identifier
 	}
 	cs, _, err := charset.GetCharsetInfo(s[1:])
 	if err != nil {
-		return identifier	
+		return identifier
 	}
 	lval.item = cs
 	return underscoreCS
