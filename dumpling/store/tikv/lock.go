@@ -36,24 +36,14 @@ func newLock(store *tikvStore, pLock []byte, lockVer uint64, key []byte, ver uin
 	}
 }
 
-// txnLockBackoff is for transaction lock retry.
-func txnLockBackoff() func() error {
-	const (
-		maxRetry  = 6
-		sleepBase = 300
-		sleepCap  = 3000
-	)
-	return NewBackoff(maxRetry, sleepBase, sleepCap, EqualJitter)
-}
-
 // locks after 3000ms is considered unusual (the client created the lock might
 // be dead). Other client may cleanup this kind of lock.
 // For locks created recently, we will do backoff and retry.
 var lockTTL uint64 = 3000
 
 // cleanup cleanup the lock
-func (l *txnLock) cleanup() ([]byte, error) {
-	expired, err := l.store.checkTimestampExpiredWithRetry(l.pl.version, lockTTL)
+func (l *txnLock) cleanup(bo *Backoffer) ([]byte, error) {
+	expired, err := l.store.checkTimestampExpiredWithRetry(bo, l.pl.version, lockTTL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -67,17 +57,20 @@ func (l *txnLock) cleanup() ([]byte, error) {
 			StartVersion: proto.Uint64(l.pl.version),
 		},
 	}
-	var backoffErr error
-	for backoff := regionMissBackoff(); backoffErr == nil; backoffErr = backoff() {
-		region, err := l.store.regionCache.GetRegion(l.pl.key)
+	for {
+		region, err := l.store.regionCache.GetRegion(bo, l.pl.key)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := l.store.SendKVReq(req, region.VerID())
+		resp, err := l.store.SendKVReq(bo, req, region.VerID())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			continue
 		}
 		cmdCleanupResp := resp.GetCmdCleanupResp()
@@ -89,16 +82,15 @@ func (l *txnLock) cleanup() ([]byte, error) {
 		}
 		if cmdCleanupResp.CommitVersion == nil {
 			// cleanup successfully
-			return l.rollbackThenGet()
+			return l.rollbackThenGet(bo)
 		}
 		// already committed
-		return l.commitThenGet(cmdCleanupResp.GetCommitVersion())
+		return l.commitThenGet(bo, cmdCleanupResp.GetCommitVersion())
 	}
-	return nil, errors.Annotate(backoffErr, txnRetryableMark)
 }
 
 // If key == nil then only rollback but value is nil
-func (l *txnLock) rollbackThenGet() ([]byte, error) {
+func (l *txnLock) rollbackThenGet(bo *Backoffer) ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdRollbackThenGet.Enum(),
 		CmdRbGetReq: &pb.CmdRollbackThenGetRequest{
@@ -106,17 +98,20 @@ func (l *txnLock) rollbackThenGet() ([]byte, error) {
 			LockVersion: proto.Uint64(l.pl.version),
 		},
 	}
-	var backoffErr error
-	for backoff := regionMissBackoff(); backoffErr == nil; backoffErr = backoff() {
-		region, err := l.store.regionCache.GetRegion(l.key)
+	for {
+		region, err := l.store.regionCache.GetRegion(bo, l.key)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := l.store.SendKVReq(req, region.VerID())
+		resp, err := l.store.SendKVReq(bo, req, region.VerID())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			continue
 		}
 		cmdRbGResp := resp.GetCmdRbGetResp()
@@ -128,11 +123,10 @@ func (l *txnLock) rollbackThenGet() ([]byte, error) {
 		}
 		return cmdRbGResp.GetValue(), nil
 	}
-	return nil, errors.Annotate(backoffErr, txnRetryableMark)
 }
 
 // If key == nil then only commit but value is nil
-func (l *txnLock) commitThenGet(commitVersion uint64) ([]byte, error) {
+func (l *txnLock) commitThenGet(bo *Backoffer, commitVersion uint64) ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdCommitThenGet.Enum(),
 		CmdCommitGetReq: &pb.CmdCommitThenGetRequest{
@@ -142,17 +136,20 @@ func (l *txnLock) commitThenGet(commitVersion uint64) ([]byte, error) {
 			GetVersion:    proto.Uint64(l.ver),
 		},
 	}
-	var backoffErr error
-	for backoff := regionMissBackoff(); backoffErr == nil; backoffErr = backoff() {
-		region, err := l.store.regionCache.GetRegion(l.key)
+	for {
+		region, err := l.store.regionCache.GetRegion(bo, l.key)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := l.store.SendKVReq(req, region.VerID())
+		resp, err := l.store.SendKVReq(bo, req, region.VerID())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			continue
 		}
 		cmdCommitGetResp := resp.GetCmdCommitGetResp()
@@ -164,7 +161,6 @@ func (l *txnLock) commitThenGet(commitVersion uint64) ([]byte, error) {
 		}
 		return cmdCommitGetResp.GetValue(), nil
 	}
-	return nil, errors.Annotate(backoffErr, txnRetryableMark)
 }
 
 type pLock struct {
