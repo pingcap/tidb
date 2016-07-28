@@ -19,7 +19,6 @@ import (
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/terror"
 )
 
 // Scanner support tikv scan
@@ -120,22 +119,13 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer) error {
 	if current.GetError() == nil {
 		return nil
 	}
-	for {
-		val, err := s.snapshot.handleKeyError(bo, current.GetError())
-		if err != nil {
-			if terror.ErrorEqual(err, errInnerRetryable) {
-				err = bo.Backoff(boTxnLock, err)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				continue
-			}
-			return errors.Trace(err)
-		}
-		current.Error = nil
-		current.Value = val
-		return nil
+	val, err := s.snapshot.get(bo, kv.Key(current.Key))
+	if err != nil {
+		return errors.Trace(err)
 	}
+	current.Error = nil
+	current.Value = val
+	return nil
 }
 
 func (s *Scanner) getData(bo *Backoffer) error {
@@ -174,7 +164,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		// Check if kvPair contains error, it should be a Lock.
 		for _, pair := range kvPairs {
 			if keyErr := pair.GetError(); keyErr != nil {
-				lock, err := extractLockInfoFromKeyErr(keyErr)
+				lock, err := extractLockFromKeyErr(keyErr)
 				if err != nil {
 					return errors.Trace(err)
 				}

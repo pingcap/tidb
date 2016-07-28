@@ -22,7 +22,6 @@ import (
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/terror"
 )
 
 var (
@@ -130,32 +129,35 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		if batchGetResp == nil {
 			return errors.Trace(errBodyMissing)
 		}
-		var lockedKeys [][]byte
+		var (
+			lockedKeys [][]byte
+			locks      []*Lock
+		)
 		for _, pair := range batchGetResp.Pairs {
 			keyErr := pair.GetError()
 			if keyErr == nil {
 				collectF(pair.GetKey(), pair.GetValue())
 				continue
 			}
-			// This could be slow if we meet many expired locks.
-			// TODO: Find a way to do quick unlock.
-			var val []byte
-			val, err = s.handleKeyError(bo, keyErr)
-			if err != nil {
-				if terror.ErrorNotEqual(err, errInnerRetryable) {
-					return errors.Trace(err)
-				}
-				lockedKeys = append(lockedKeys, pair.GetKey())
-				continue
-			}
-			collectF(pair.GetKey(), val)
-		}
-		if len(lockedKeys) > 0 {
-			pending = lockedKeys
-			err = bo.Backoff(boTxnLock, errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
+			lock, err := extractLockFromKeyErr(keyErr)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			lockedKeys = append(lockedKeys, pair.GetKey())
+			locks = append(locks, lock)
+		}
+		if len(lockedKeys) > 0 {
+			ok, err := s.store.lockResolver.ResolveLocks(bo, locks)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !ok {
+				err = bo.Backoff(boTxnLock, errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+			pending = lockedKeys
 			continue
 		}
 		return nil
@@ -164,8 +166,17 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
-	bo := NewBackoffer(getMaxBackoff)
+	val, err := s.get(NewBackoffer(getMaxBackoff), k)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return nil, kv.ErrNotExist
+	}
+	return val, nil
+}
 
+func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdGet.Enum(),
 		CmdGetReq: &pb.CmdGetRequest{
@@ -195,20 +206,21 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 		}
 		val := cmdGetResp.GetValue()
 		if keyErr := cmdGetResp.GetError(); keyErr != nil {
-			val, err = s.handleKeyError(bo, keyErr)
+			lock, err := extractLockFromKeyErr(keyErr)
 			if err != nil {
-				if terror.ErrorEqual(err, errInnerRetryable) {
-					err = bo.Backoff(boTxnLock, err)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					continue
-				}
 				return nil, errors.Trace(err)
 			}
-		}
-		if len(val) == 0 {
-			return nil, kv.ErrNotExist
+			ok, err := s.store.lockResolver.ResolveLocks(bo, []*Lock{lock})
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !ok {
+				err = bo.Backoff(boTxnLock, errors.New(keyErr.String()))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+			continue
 		}
 		return val, nil
 	}
@@ -225,9 +237,9 @@ func (s *tikvSnapshot) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	return nil, kv.ErrNotImplemented
 }
 
-func extractLockInfoFromKeyErr(keyErr *pb.KeyError) (*pb.LockInfo, error) {
+func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
-		return locked, nil
+		return newLock(locked), nil
 	}
 	if keyErr.Retryable != nil {
 		err := errors.Errorf("tikv restarts txn: %s", keyErr.GetRetryable())
@@ -242,16 +254,10 @@ func extractLockInfoFromKeyErr(keyErr *pb.KeyError) (*pb.LockInfo, error) {
 	return nil, errors.Errorf("unexpected KeyError: %s", keyErr.String())
 }
 
-// handleKeyError tries to resolve locks then retry to get value.
-func (s *tikvSnapshot) handleKeyError(bo *Backoffer, keyErr *pb.KeyError) ([]byte, error) {
-	lockInfo, err := extractLockInfoFromKeyErr(keyErr)
-	if err != nil {
-		return nil, errors.Trace(err)
+func newLock(l *pb.LockInfo) *Lock {
+	return &Lock{
+		Key:     l.GetKey(),
+		Primary: l.GetPrimaryLock(),
+		TxnID:   l.GetLockVersion(),
 	}
-	lock := newLock(s.store, lockInfo.GetPrimaryLock(), lockInfo.GetLockVersion(), lockInfo.GetKey(), s.version.Ver)
-	val, err := lock.cleanup(bo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return val, nil
 }

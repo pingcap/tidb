@@ -70,19 +70,22 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 }
 
 type tikvStore struct {
-	uuid        string
-	oracle      oracle.Oracle
-	client      Client
-	regionCache *RegionCache
+	uuid         string
+	oracle       oracle.Oracle
+	client       Client
+	regionCache  *RegionCache
+	lockResolver *LockResolver
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client) *tikvStore {
-	return &tikvStore{
+	store := &tikvStore{
 		uuid:        uuid,
 		oracle:      oracles.NewPdOracle(pdClient),
 		client:      client,
 		regionCache: NewRegionCache(pdClient),
 	}
+	store.lockResolver = NewLockResolver(store)
+	return store
 }
 
 // NewMockTikvStore creates a mocked tikv store.

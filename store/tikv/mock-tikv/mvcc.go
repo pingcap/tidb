@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"sync"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -379,4 +380,61 @@ func (s *MvccStore) RollbackThenGet(key []byte, lockTS uint64) ([]byte, error) {
 	}
 	s.submit(entry)
 	return entry.Get(lockTS)
+}
+
+// ScanLock scans all orphan locks in a Region.
+func (s *MvccStore) ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var locks []*kvrpcpb.LockInfo
+	iterator := func(item llrb.Item) bool {
+		ent := item.(*mvccEntry)
+		if !regionContains(startKey, endKey, ent.key) {
+			return false
+		}
+		if ent.lock != nil && ent.lock.startTS <= maxTS {
+			locks = append(locks, &kvrpcpb.LockInfo{
+				PrimaryLock: ent.lock.primary,
+				LockVersion: proto.Uint64(ent.lock.startTS),
+				Key:         ent.key,
+			})
+		}
+		return true
+	}
+	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
+	return locks, nil
+}
+
+// ResolveLock resolves all orphan locks belong to a transaction.
+func (s *MvccStore) ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var ents []*mvccEntry
+	var err error
+	iterator := func(item llrb.Item) bool {
+		ent := item.(*mvccEntry)
+		if !regionContains(startKey, endKey, ent.key) {
+			return false
+		}
+		if ent.lock != nil && ent.lock.startTS == startTS {
+			if commitTS > 0 {
+				err = ent.Commit(startTS, commitTS)
+			} else {
+				err = ent.Rollback(startTS)
+			}
+			if err != nil {
+				return false
+			}
+			ents = append(ents, ent)
+		}
+		return true
+	}
+	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.submit(ents...)
+	return nil
 }
