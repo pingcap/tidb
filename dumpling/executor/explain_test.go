@@ -15,12 +15,14 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite) TestExplain(c *C) {
+	plan.UseNewPlanner = false
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -92,4 +94,5 @@ func (s *testSuite) TestExplain(c *C) {
 		result := tk.MustQuery("explain " + ca.sql)
 		result.Check(testutil.RowsWithSep(" | ", ca.result...))
 	}
+	plan.UseNewPlanner = true
 }
