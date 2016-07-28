@@ -140,7 +140,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"greatest(1.1, 2.2)", mysql.TypeNewDecimal, charset.CharsetBin},
 		{"greatest('TiDB', 3)", mysql.TypeVarString, "utf8"},
 		{"hex('TiDB')", mysql.TypeVarString, "utf8"},
-		{"hex{12}", mysql.TypeVarString, "utf8"},
+		{"hex(12)", mysql.TypeVarString, "utf8"},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)

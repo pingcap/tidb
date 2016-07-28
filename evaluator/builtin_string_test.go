@@ -680,18 +680,7 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 	for _, t := range dtbl {
 		d, err := builtinHex(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expect"])
-	}
+		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
 
-	wrong := []struct {
-		Input interface{}
-	}{
-		{nil},
-		{},
-	}
-	dwrong := tblToDtbl(wrong)
-	for _, t := range dwrong {
-		_, err := builtinHex(t["Input"], nil)
-		c.Assert(err, NotNil)
 	}
 }
