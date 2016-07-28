@@ -391,3 +391,166 @@ func (s *testMyDecimalSuite) TestToString(c *C) {
 		c.Check(string(result), Equals, ca.output)
 	}
 }
+
+func (s *testMyDecimalSuite) TestToBinFromBin(c *C) {
+	type tcase struct {
+		input     string
+		precision int
+		frac      int
+		output    string
+		errcode   int
+	}
+	cases := []tcase{
+		{"-10.55", 4, 2, "-10.55", 0},
+		{"0.0123456789012345678912345", 30, 25, "0.0123456789012345678912345", 0},
+		{"12345", 5, 0, "12345", 0},
+		{"12345", 10, 3, "12345.000", 0},
+		{"123.45", 10, 3, "123.450", 0},
+		{"-123.45", 20, 10, "-123.4500000000", 0},
+		{".00012345000098765", 15, 14, "0.00012345000098", 0},
+		{".00012345000098765", 22, 20, "0.00012345000098765000", 0},
+		{".12345000098765", 30, 20, "0.12345000098765000000", 0},
+		{"-.000000012345000098765", 30, 20, "-0.00000001234500009876", 0},
+		{"1234500009876.5", 30, 5, "1234500009876.50000", 0},
+		{"111111111.11", 10, 2, "11111111.11", 0},
+		{"000000000.01", 7, 3, "0.010", 0},
+		{"123.4", 10, 2, "123.40", 0},
+	}
+	for _, ca := range cases {
+		var dec MyDecimal
+		ec := dec.FromString([]byte(ca.input))
+		c.Assert(ec, Equals, 0)
+		buf, ec := dec.ToBin(ca.precision, ca.frac)
+		var dec2 MyDecimal
+		ec = dec2.FromBin(buf, ca.precision, ca.frac)
+		c.Assert(ec, Equals, ca.errcode)
+		str, _ := dec2.ToString(0, 0, 0)
+		c.Assert(string(str), Equals, ca.output)
+	}
+}
+
+func (s *testMyDecimalSuite) TestCompare(c *C) {
+	type tcase struct {
+		a   string
+		b   string
+		cmp int
+	}
+	cases := []tcase{
+		{"12", "13", -1},
+		{"13", "12", 1},
+		{"-10", "10", -1},
+		{"10", "-10", 1},
+		{"-12", "-13", 1},
+		{"0", "12", -1},
+		{"-10", "0", -1},
+		{"4", "4", 0},
+		{"-1.1", "-1.2", 1},
+		{"1.2", "1.1", 1},
+		{"1.1", "1.2", -1},
+	}
+	for _, ca := range cases {
+		var a, b MyDecimal
+		a.FromString([]byte(ca.a))
+		b.FromString([]byte(ca.b))
+		c.Assert(a.Compare(&b), Equals, ca.cmp)
+	}
+}
+
+func (s *testMyDecimalSuite) TestMaxDecimal(c *C) {
+	type tcase struct {
+		prec   int
+		frac   int
+		result string
+	}
+	cases := []tcase{
+		{1, 1, "0.9"},
+		{1, 0, "9"},
+		{2, 1, "9.9"},
+		{4, 2, "99.99"},
+		{6, 3, "999.999"},
+		{8, 4, "9999.9999"},
+		{10, 5, "99999.99999"},
+		{12, 6, "999999.999999"},
+		{14, 7, "9999999.9999999"},
+		{16, 8, "99999999.99999999"},
+		{18, 9, "999999999.999999999"},
+		{20, 10, "9999999999.9999999999"},
+		{20, 20, "0.99999999999999999999"},
+		{20, 0, "99999999999999999999"},
+		{40, 20, "99999999999999999999.99999999999999999999"},
+	}
+	for _, ca := range cases {
+		var dec MyDecimal
+		maxDecimal(ca.prec, ca.frac, &dec)
+		str, _ := dec.ToString(0, 0, 0)
+		c.Assert(string(str), Equals, ca.result)
+	}
+}
+
+func (s *testMyDecimalSuite) TestAdd(c *C) {
+	type tcase struct {
+		a      string
+		b      string
+		result string
+		ec     int
+	}
+	cases := []tcase{
+		{".00012345000098765", "123.45", "123.45012345000098765", 0},
+		{".1", ".45", "0.55", 0},
+		{"1234500009876.5", ".00012345000098765", "1234500009876.50012345000098765", 0},
+		{"9999909999999.5", ".555", "9999910000000.055", 0},
+		{"99999999", "1", "100000000", 0},
+		{"989999999", "1", "990000000", 0},
+		{"999999999", "1", "1000000000", 0},
+		{"12345", "123.45", "12468.45", 0},
+		{"-12345", "-123.45", "-12468.45", 0},
+		{"-12345", "123.45", "-12221.55", 0},
+		{"12345", "-123.45", "12221.55", 0},
+		{"123.45", "-12345", "-12221.55", 0},
+		{"-123.45", "12345", "12221.55", 0},
+		{"5", "-6.0", "-1.0", 0},
+	}
+	for _, ca := range cases {
+		var a, b, sum MyDecimal
+		a.FromString([]byte(ca.a))
+		b.FromString([]byte(ca.b))
+		ec := DecimalAdd(&a, &b, &sum)
+		c.Assert(ec, Equals, ca.ec)
+		result, _ := sum.ToString(0, 0, 0)
+		c.Assert(string(result), Equals, ca.result)
+	}
+}
+
+func (s *testMyDecimalSuite) TestSub(c *C) {
+	type tcase struct {
+		a      string
+		b      string
+		result string
+		ec     int
+	}
+	cases := []tcase{
+		{".00012345000098765", "123.45", "-123.44987654999901235", 0},
+		{"1234500009876.5", ".00012345000098765", "1234500009876.49987654999901235", 0},
+		{"9999900000000.5", ".555", "9999899999999.945", 0},
+		{"1111.5551", "1111.555", "0.0001", 0},
+		{".555", ".555", "0", 0},
+		{"10000000", "1", "9999999", 0},
+		{"1000001000", ".1", "1000000999.9", 0},
+		{"1000000000", ".1", "999999999.9", 0},
+		{"12345", "123.45", "12221.55", 0},
+		{"-12345", "-123.45", "-12221.55", 0},
+		{"123.45", "12345", "-12221.55", 0},
+		{"-123.45", "-12345", "12221.55", 0},
+		{"-12345", "123.45", "-12468.45", 0},
+		{"12345", "-123.45", "12468.45", 0},
+	}
+	for _, ca := range cases {
+		var a, b, sum MyDecimal
+		a.FromString([]byte(ca.a))
+		b.FromString([]byte(ca.b))
+		ec := DecimalSub(&a, &b, &sum)
+		c.Assert(ec, Equals, ca.ec)
+		result, _ := sum.ToString(0, 0, 0)
+		c.Assert(string(result), Equals, ca.result)
+	}
+}
