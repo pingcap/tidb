@@ -491,6 +491,11 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 
 func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 	src := b.build(v.GetChildByIndex(0))
+	if x, ok := src.(NewXExecutor); ok {
+		if x.AddLimit(v) && v.Offset == 0 {
+			return src
+		}
+	}
 	e := &LimitExec{
 		Src:    src,
 		Offset: v.Offset,
