@@ -38,7 +38,7 @@ import (
 var (
 	store      = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
 	storePath  = flag.String("path", "/tmp/tidb", "tidb storage path")
-	logLevel   = flag.String("L", "debug", "log level: info, debug, warn, error, fatal")
+	logLevel   = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
 	port       = flag.String("P", "4000", "mp server port")
 	statusPort = flag.String("status", "10080", "tidb server status port")
 	lease      = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
