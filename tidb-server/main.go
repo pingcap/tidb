@@ -44,7 +44,7 @@ var (
 	lease      = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
 	socket     = flag.String("socket", "", "The socket file to use for connection.")
 	enablePS   = flag.Int("perfschema", 0, "If enable performance schema.")
-	useNewPlan = flag.Int("newplan", 0, "If use new planner.")
+	useNewPlan = flag.Int("newplan", 1, "If use new planner.")
 )
 
 func main() {
