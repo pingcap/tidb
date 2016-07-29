@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
-	"time"
 )
 
 // Optimize does optimization and creates a Plan.
@@ -54,10 +53,7 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		startTs := time.Now()
 		_, res, _, err := logic.convert2PhysicalPlan(nil)
-		runTime := time.Now().Sub(startTs)
-		log.Warnf("[TIME_CBO] %v", runTime)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
