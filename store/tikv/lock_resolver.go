@@ -97,7 +97,7 @@ func (lr *LockResolver) isExpire(bo *Backoffer, l *Lock) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if expired && l.TxnID > maxExpire {
+	if expired {
 		lr.mu.Lock()
 		if l.TxnID > lr.maxExpire {
 			lr.maxExpire = l.TxnID
