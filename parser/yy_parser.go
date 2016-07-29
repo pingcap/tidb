@@ -70,17 +70,12 @@ type Parser struct {
 }
 
 type yyReset interface {
-	reset(sql string) yyLexerXX
-}
-
-type yyLexerXX interface {
-	yyLexer
-	Errors() []error
+	reset(sql string) yyLexer
 }
 
 type defaultLexer struct{}
 
-func (l defaultLexer) reset(sql string) yyLexerXX {
+func (l defaultLexer) reset(sql string) yyLexer {
 	return NewLexer(sql)
 }
 

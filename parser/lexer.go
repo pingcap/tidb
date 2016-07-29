@@ -44,7 +44,7 @@ func (s *Scanner) Errors() []error {
 
 // reset resets the sql string to be scanned.
 // Scanner satisfies yyReset interface.
-func (s *Scanner) reset(sql string) yyLexerXX {
+func (s *Scanner) reset(sql string) yyLexer {
 	s.r = reader{s: sql}
 	return s
 }
@@ -107,13 +107,14 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		}
 	}
 
-	if ch0 == '@' {
+	switch ch0 {
+	case '@':
 		return s.startWithAt()
-	} else if ch0 == '/' {
+	case '/':
 		return s.startWithSlash()
-	} else if ch0 == '-' {
+	case '-':
 		return s.startWithDash()
-	} else if ch0 == '#' {
+	case '#':
 		s.r.incAsLongAs(func(ch byte) bool {
 			return ch != '\n'
 		})
