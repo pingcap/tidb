@@ -38,13 +38,13 @@ import (
 var (
 	store      = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
 	storePath  = flag.String("path", "/tmp/tidb", "tidb storage path")
-	logLevel   = flag.String("L", "debug", "log level: info, debug, warn, error, fatal")
+	logLevel   = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
 	port       = flag.String("P", "4000", "mp server port")
 	statusPort = flag.String("status", "10080", "tidb server status port")
 	lease      = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
 	socket     = flag.String("socket", "", "The socket file to use for connection.")
 	enablePS   = flag.Int("perfschema", 0, "If enable performance schema.")
-	useNewPlan = flag.Int("newplan", 0, "If use new planner.")
+	useNewPlan = flag.Int("newplan", 1, "If use new planner.")
 )
 
 func main() {
@@ -80,8 +80,8 @@ func main() {
 		perfschema.EnablePerfSchema()
 	}
 
-	if *useNewPlan == 1 {
-		plan.UseNewPlanner = true
+	if *useNewPlan == 0 {
+		plan.UseNewPlanner = false
 	}
 
 	// Create a session to load information schema.

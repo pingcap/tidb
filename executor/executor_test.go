@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -129,7 +128,6 @@ func (s *testSuite) TestAdmin(c *C) {
 }
 
 func (s *testSuite) TestPrepared(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -185,7 +183,6 @@ func (s *testSuite) TestPrepared(c *C) {
 	exec.Fields()
 	exec.Next()
 	exec.Close()
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
@@ -299,7 +296,6 @@ func (s *testSuite) TestQualifedDelete(c *C) {
 }
 
 func (s *testSuite) TestInsert(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -371,11 +367,9 @@ func (s *testSuite) TestInsert(c *C) {
 
 	_, err = tk.Exec(`insert into insert_test (id, c2) values(1, 1) on duplicate key update t.c2 = 10`)
 	c.Assert(err, NotNil)
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -457,7 +451,6 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 	r = tk.MustQuery("select * from insert_autoinc_test;")
 	rowStr6 = fmt.Sprintf("%v %v", "6", "6")
 	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestReplace(c *C) {
@@ -599,7 +592,6 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 }
 
 func (s *testSuite) TestSelectLimit(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -615,6 +607,9 @@ func (s *testSuite) TestSelectLimit(c *C) {
 	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("hello"))
 	r.Check(testkit.Rows(rowStr1))
 	tk.MustExec("commit")
+
+	r = tk.MustQuery("select id from (select * from select_limit limit 1) k where id != 1;")
+	r.Check(testkit.Rows())
 
 	tk.MustExec("begin")
 	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 0;")
@@ -638,11 +633,9 @@ func (s *testSuite) TestSelectLimit(c *C) {
 	_, err := tk.Exec("select * from select_limit limit 18446744073709551616 offset 3;")
 	c.Assert(err, NotNil)
 	tk.MustExec("rollback")
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestSelectOrderBy(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -720,12 +713,9 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r.Check(testkit.Rows("0", "-1", "-2"))
 	r = tk.MustQuery("select t.d from t order by d;")
 	r.Check(testkit.Rows("1", "2", "3"))
-
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestSelectDistinct(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -738,11 +728,9 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustExec("drop table select_distinct_test")
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestSelectErrorRow(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -773,7 +761,6 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 	c.Assert(err, NotNil)
 
 	tk.MustExec("commit")
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestUpdate(c *C) {
@@ -944,7 +931,6 @@ func (s *testSuite) TestMultiUpdate(c *C) {
 }
 
 func (s *testSuite) TestUnion(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -997,11 +983,9 @@ func (s *testSuite) TestUnion(c *C) {
 	r.Check(testkit.Rows("abc", "1"))
 
 	tk.MustExec("commit")
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestTablePKisHandleScan(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1062,69 +1046,9 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 		result := tk.MustQuery(ca.sql)
 		result.Check(ca.result)
 	}
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestJoin(c *C) {
-	defer testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (c int)")
-	tk.MustExec("insert t values (1)")
-	cases := []struct {
-		sql    string
-		result [][]interface{}
-	}{
-		{
-			"select 1 from t as a left join t as b on 0",
-			testkit.Rows("1"),
-		},
-		{
-			"select 1 from t as a join t as b on 1",
-			testkit.Rows("1"),
-		},
-	}
-	for _, ca := range cases {
-		result := tk.MustQuery(ca.sql)
-		result.Check(ca.result)
-	}
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 int, c2 int)")
-	tk.MustExec("create table t1(c1 int, c2 int)")
-	tk.MustExec("insert into t values(1,1),(2,2)")
-	tk.MustExec("insert into t1 values(2,3),(4,4)")
-	result := tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	result.Check(testkit.Rows("1 1 <nil> <nil>"))
-	result = tk.MustQuery("select * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	result.Check(testkit.Rows("<nil> <nil> 1 1"))
-	result = tk.MustQuery("select * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	result.Check(testkit.Rows())
-	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false")
-	result.Check(testkit.Rows())
-	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1")
-	result.Check(testkit.Rows("1 1 <nil> <nil>", "2 2 2 3"))
-
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("drop table if exists t3")
-
-	tk.MustExec("create table t1 (c1 int, c2 int)")
-	tk.MustExec("create table t2 (c1 int, c2 int)")
-	tk.MustExec("create table t3 (c1 int, c2 int)")
-
-	tk.MustExec("insert into t1 values (1,1), (2,2), (3,3)")
-	tk.MustExec("insert into t2 values (1,1), (3,3), (5,5)")
-	tk.MustExec("insert into t3 values (1,1), (5,5), (9,9)")
-
-	result = tk.MustQuery("select * from t1 left join t2 on t1.c1 = t2.c1 right join t3 on t2.c1 = t3.c1 order by t1.c1, t1.c2, t2.c1, t2.c2, t3.c1, t3.c2;")
-	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> 5 5", "<nil> <nil> <nil> <nil> 9 9", "1 1 1 1 1 1"))
-}
-
-func (s *testSuite) TestNewJoin(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1196,11 +1120,9 @@ func (s *testSuite) TestNewJoin(c *C) {
 	result = tk.MustQuery("select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);")
 	result.Check(testkit.Rows("1 2 1 2"))
 
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestIndexScan(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1214,11 +1136,9 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("insert t values (0)")
 	result = tk.MustQuery("select NULL from t ")
 	result.Check(testkit.Rows("<nil>"))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1229,11 +1149,9 @@ func (s *testSuite) TestSubquerySameTable(c *C) {
 	result.Check(testkit.Rows("2"))
 	result = tk.MustQuery("select a from t where not exists(select 1 from t as x where x.a < t.a)")
 	result.Check(testkit.Rows("1"))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1250,11 +1168,9 @@ func (s *testSuite) TestIndexReverseOrder(c *C) {
 	tk.MustExec("insert t values (0, 2), (1, 2), (2, 2), (0, 1), (1, 1), (2, 1), (0, 0), (1, 0), (2, 0)")
 	result = tk.MustQuery("select b, a from t order by b, a desc")
 	result.Check(testkit.Rows("0 2", "0 1", "0 0", "1 2", "1 1", "1 0", "2 2", "2 1", "2 0"))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestTableReverseOrder(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1265,11 +1181,9 @@ func (s *testSuite) TestTableReverseOrder(c *C) {
 	result.Check(testkit.Rows("9", "8", "7", "6", "5", "4", "3", "2", "1"))
 	result = tk.MustQuery("select a from t where a <3 or (a >=6 and a < 8) order by a desc")
 	result.Check(testkit.Rows("7", "6", "2", "1"))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1297,7 +1211,6 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("create table t1 (a float)")
 	tk.MustExec("insert t1 values (281.37)")
 	tk.MustQuery("select a from t1 where (a in (select a from t1))").Check(testkit.Rows("281.37"))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestDefaultNull(c *C) {
@@ -1332,7 +1245,6 @@ func (s *testSuite) TestUsignedPKColumn(c *C) {
 }
 
 func (s *testSuite) TestDirtyTransaction(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1369,11 +1281,9 @@ func (s *testSuite) TestDirtyTransaction(c *C) {
 	tk.MustExec("insert t values (3, 4)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("3 4"))
 	tk.Exec("abort")
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestBuiltin(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1487,12 +1397,9 @@ func (s *testSuite) TestBuiltin(c *C) {
 		{".*", "abcd", 1},
 	}
 	patternMatching(c, tk, "regexp", testCases)
-
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1541,7 +1448,6 @@ func (s *testSuite) TestToPBExpr(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select * from t where not(a != 1 and a != 2)")
 	result.Check(testkit.Rows("1", "2"))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestDatumXAPI(c *C) {
@@ -1570,14 +1476,12 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 }
 
 func (s *testSuite) TestJoinPanic(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists events")
 	tk.MustExec("create table events (clock int, source int)")
 	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestSQLMode(c *C) {
@@ -1600,7 +1504,6 @@ func (s *testSuite) TestSQLMode(c *C) {
 }
 
 func (s *testSuite) TestNewSubquery(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1646,11 +1549,9 @@ func (s *testSuite) TestNewSubquery(c *C) {
 	result.Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
 	result = tk.MustQuery("select (c) > all (select c from t) from t")
 	result.Check(testkit.Rows("0", "0", "0", "<nil>"))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestNewTableDual(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1662,11 +1563,9 @@ func (s *testSuite) TestNewTableDual(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("Select 1 from dual where 1")
 	result.Check(testkit.Rows("1"))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestNewTableScan(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use information_schema")
@@ -1682,11 +1581,9 @@ func (s *testSuite) TestNewTableScan(c *C) {
 	result.Check(testkit.Rows(rowStr1))
 	result = tk.MustQuery("select * from schemata where schema_name like 'my%'")
 	result.Check(testkit.Rows(rowStr1, rowStr2))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestAggregation(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1786,7 +1683,6 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t1 (a) values (2), (11), (8)")
 	result = tk.MustQuery("select min(a), min(case when 1=1 then a else NULL end), min(case when 1!=1 then NULL else a end) from t1 where b=3 group by b")
 	result.Check(testkit.Rows("2 2 2"))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestAdapterStatement(c *C) {
@@ -1811,7 +1707,6 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 }
 
 func (s *testSuite) TestRow(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1831,11 +1726,9 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("1 1"))
 	result = tk.MustQuery("select * from t where (c, d) = (select * from t k where (t.c,t.d) = (c,d))")
 	result.Check(testkit.Rows("1 1", "1 3", "2 1", "2 3"))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestColumnName(c *C) {
-	plan.UseNewPlanner = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1853,11 +1746,9 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(err, IsNil)
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestSelectVar(c *C) {
-	plan.UseNewPlanner = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1868,5 +1759,4 @@ func (s *testSuite) TestSelectVar(c *C) {
 	result = tk.MustQuery("select @a, @a := d+1 from t")
 	result.Check(testkit.Rows("2 2", "2 3", "3 2"))
 
-	plan.UseNewPlanner = false
 }

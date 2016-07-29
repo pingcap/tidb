@@ -204,9 +204,17 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	var src Executor
 	switch x := child.(type) {
 	case *plan.PhysicalTableScan:
-		src = b.buildNewTableScan(x, v)
+		if x.LimitCount == nil {
+			src = b.buildNewTableScan(x, v)
+		} else {
+			src = b.buildNewTableScan(x, nil)
+		}
 	case *plan.PhysicalIndexScan:
-		src = b.buildNewIndexScan(x, v)
+		if x.LimitCount == nil {
+			src = b.buildNewIndexScan(x, v)
+		} else {
+			src = b.buildNewIndexScan(x, nil)
+		}
 	default:
 		src = b.build(x)
 	}

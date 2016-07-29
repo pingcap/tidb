@@ -106,6 +106,7 @@ var Funcs = map[string]Func{
 	"trim":            {builtinTrim, 1, 3},
 	"upper":           {builtinUpper, 1, 1},
 	"ucase":           {builtinUpper, 1, 1},
+	"hex":             {builtinHex, 1, 1},
 
 	// information functions
 	"connection_id":  {builtinConnectionID, 0, 0},

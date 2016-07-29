@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -31,7 +30,6 @@ import (
 )
 
 func (s *testSuite) TestCharsetDatabase(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
@@ -49,11 +47,9 @@ func (s *testSuite) TestCharsetDatabase(c *C) {
 	tk.MustExec(testSQL)
 	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestSetVar(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := "SET @a = 1;"
@@ -124,8 +120,6 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustExec(`set @@global.low_priority_updates="ON";`)
 	tk.MustExec(`set @@session.low_priority_updates=DEFAULT;`) // It will be set to global var value.
 	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("ON"))
-
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestSetCharset(c *C) {

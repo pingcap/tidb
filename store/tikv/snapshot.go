@@ -53,11 +53,12 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
+	bo := NewBackoffer(batchGetMaxBackoff)
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
 	m := make(map[string][]byte)
-	err := s.batchGetKeysByRegions(bytesKeys, func(k, v []byte) {
+	err := s.batchGetKeysByRegions(bo, bytesKeys, func(k, v []byte) {
 		if len(v) == 0 {
 			return
 		}
@@ -71,8 +72,8 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	return m, nil
 }
 
-func (s *tikvSnapshot) batchGetKeysByRegions(keys [][]byte, collectF func(k, v []byte)) error {
-	groups, _, err := s.store.regionCache.GroupKeysByRegion(keys)
+func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
+	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -86,12 +87,12 @@ func (s *tikvSnapshot) batchGetKeysByRegions(keys [][]byte, collectF func(k, v [
 		return nil
 	}
 	if len(batches) == 1 {
-		return errors.Trace(s.batchGetSingleRegion(batches[0], collectF))
+		return errors.Trace(s.batchGetSingleRegion(bo, batches[0], collectF))
 	}
 	ch := make(chan error)
 	for _, batch := range batches {
 		go func(batch batchKeys) {
-			ch <- s.batchGetSingleRegion(batch, collectF)
+			ch <- s.batchGetSingleRegion(bo.Fork(), batch, collectF)
 		}(batch)
 	}
 	for i := 0; i < len(batches); i++ {
@@ -103,10 +104,9 @@ func (s *tikvSnapshot) batchGetKeysByRegions(keys [][]byte, collectF func(k, v [
 	return errors.Trace(err)
 }
 
-func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v []byte)) error {
+func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
 	pending := batch.keys
-	var backoffErr error
-	for backoff := txnLockBackoff(); backoffErr == nil; backoffErr = backoff() {
+	for {
 		req := &pb.Request{
 			Type: pb.MessageType_CmdBatchGet.Enum(),
 			CmdBatchGetReq: &pb.CmdBatchGetRequest{
@@ -114,12 +114,16 @@ func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v 
 				Version: proto.Uint64(s.version.Ver),
 			},
 		}
-		resp, err := s.store.SendKVReq(req, batch.region)
+		resp, err := s.store.SendKVReq(bo, req, batch.region)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			err = s.batchGetKeysByRegions(pending, collectF)
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = s.batchGetKeysByRegions(bo, pending, collectF)
 			return errors.Trace(err)
 		}
 		batchGetResp := resp.GetCmdBatchGetResp()
@@ -135,7 +139,8 @@ func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v 
 			}
 			// This could be slow if we meet many expired locks.
 			// TODO: Find a way to do quick unlock.
-			val, err := s.handleKeyError(keyErr)
+			var val []byte
+			val, err = s.handleKeyError(bo, keyErr)
 			if err != nil {
 				if terror.ErrorNotEqual(err, errInnerRetryable) {
 					return errors.Trace(err)
@@ -147,15 +152,20 @@ func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v 
 		}
 		if len(lockedKeys) > 0 {
 			pending = lockedKeys
+			err = bo.Backoff(boTxnLock, errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
+			if err != nil {
+				return errors.Trace(err)
+			}
 			continue
 		}
 		return nil
 	}
-	return errors.Annotate(backoffErr, txnRetryableMark)
 }
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
+	bo := NewBackoffer(getMaxBackoff)
+
 	req := &pb.Request{
 		Type: pb.MessageType_CmdGet.Enum(),
 		CmdGetReq: &pb.CmdGetRequest{
@@ -163,23 +173,20 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 			Version: proto.Uint64(s.version.Ver),
 		},
 	}
-
-	var (
-		backoffErr    error
-		regionBackoff = regionMissBackoff()
-		txnBackoff    = txnLockBackoff()
-	)
-	for backoffErr == nil {
-		region, err := s.store.regionCache.GetRegion(k)
+	for {
+		region, err := s.store.regionCache.GetRegion(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := s.store.SendKVReq(req, region.VerID())
+		resp, err := s.store.SendKVReq(bo, req, region.VerID())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			backoffErr = regionBackoff()
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			continue
 		}
 		cmdGetResp := resp.GetCmdGetResp()
@@ -188,10 +195,13 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 		}
 		val := cmdGetResp.GetValue()
 		if keyErr := cmdGetResp.GetError(); keyErr != nil {
-			val, err = s.handleKeyError(keyErr)
+			val, err = s.handleKeyError(bo, keyErr)
 			if err != nil {
 				if terror.ErrorEqual(err, errInnerRetryable) {
-					backoffErr = txnBackoff()
+					err = bo.Backoff(boTxnLock, err)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
 					continue
 				}
 				return nil, errors.Trace(err)
@@ -202,7 +212,6 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 		}
 		return val, nil
 	}
-	return nil, errors.Annotate(backoffErr, txnRetryableMark)
 }
 
 // Seek return a list of key-value pair after `k`.
@@ -234,13 +243,13 @@ func extractLockInfoFromKeyErr(keyErr *pb.KeyError) (*pb.LockInfo, error) {
 }
 
 // handleKeyError tries to resolve locks then retry to get value.
-func (s *tikvSnapshot) handleKeyError(keyErr *pb.KeyError) ([]byte, error) {
+func (s *tikvSnapshot) handleKeyError(bo *Backoffer, keyErr *pb.KeyError) ([]byte, error) {
 	lockInfo, err := extractLockInfoFromKeyErr(keyErr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	lock := newLock(s.store, lockInfo.GetPrimaryLock(), lockInfo.GetLockVersion(), lockInfo.GetKey(), s.version.Ver)
-	val, err := lock.cleanup()
+	val, err := lock.cleanup(bo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

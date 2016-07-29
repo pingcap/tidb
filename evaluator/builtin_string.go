@@ -18,6 +18,7 @@
 package evaluator
 
 import (
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -27,7 +28,9 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
 	"golang.org/x/text/transform"
@@ -457,6 +460,28 @@ func builtinLocate(args []types.Datum, _ context.Context) (d types.Datum, err er
 }
 
 const spaceChars = "\n\t\r "
+
+// See http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
+func builtinHex(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	switch args[0].Kind() {
+	case types.KindNull:
+		return d, nil
+	case types.KindString:
+		x, err := args[0].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))))
+		return d, nil
+	case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+		x, _ := args[0].Cast(types.NewFieldType(mysql.TypeLonglong))
+		h := fmt.Sprintf("%x", uint64(x.GetInt64()))
+		d.SetString(strings.ToUpper(h))
+		return d, nil
+	default:
+		return d, errors.Errorf("Hex invalid args, need int or string but get %T", args[0].GetValue())
+	}
+}
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
 func builtinTrim(args []types.Datum, _ context.Context) (d types.Datum, err error) {
