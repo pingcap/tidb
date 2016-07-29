@@ -564,7 +564,7 @@ action		{a}{c}{t}{i}{o}{n}
 <S4>[^`]*		l.stringLit = append(l.stringLit, l.val...)
 <S4>``			l.stringLit = append(l.stringLit, '`')
 <S4>`			l.sc = 0
-			lval.item = string(l.stringLit)
+			lval.ident = string(l.stringLit)
 			l.stringLit = l.stringLit[0:0]
 			return identifier
 
@@ -1151,7 +1151,7 @@ action		{a}{c}{t}{i}{o}{n}
 {integer}		lval.item = string(l.val)
 			return integerType
 
-{ident}			lval.item = string(l.val)
+{ident}			lval.ident = string(l.val)
 			return l.handleIdent(lval)
 
 .			return c0
@@ -1245,7 +1245,7 @@ func (l *lexer) bit(lval *yySymType) int {
 }
 
 func (l *lexer) handleIdent(lval *yySymType) int {
-	s := lval.item.(string)
+	s := lval.ident
 	// A character string literal may have an optional character set introducer and COLLATE clause:
 	// [_charset_name]'string' [COLLATE collation_name]
 	// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
