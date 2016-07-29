@@ -78,7 +78,7 @@ func (p *NewTableDual) PredicatePushDown(predicates []expression.Expression) ([]
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
 	//TODO: add null rejecter.
-	groups, valid := tryToGetJoinGroups(p)
+	groups, valid := tryToGetJoinGroup(p)
 	if valid {
 		e := joinReOrderSolver{allocator: p.allocator}
 		e.reorderJoin(groups, predicates)
