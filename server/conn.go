@@ -380,7 +380,7 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 	} else {
 		err = cc.writeOK()
 	}
-	log.Debugf("[TIME_QUERY] %v %s", time.Now().Sub(startTs), sql)
+	log.Infof("[TIME_QUERY] %v %s", time.Now().Sub(startTs), sql)
 	return errors.Trace(err)
 }
 

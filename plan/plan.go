@@ -190,7 +190,7 @@ func (p *baseLogicalPlan) PruneColumnsAndResolveIndices(parentUsedCols []*expres
 	return outer, errors.Trace(err)
 }
 
-func (p *baseLogicalPlan) initID() {
+func (p *basePlan) initID() {
 	p.id = p.tp + p.allocator.allocID()
 }
 

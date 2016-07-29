@@ -25,10 +25,8 @@ import (
 type JoinType int
 
 const (
-	// CrossJoin means Cartesian Product, but not used now.
-	CrossJoin JoinType = iota
 	// InnerJoin means inner join.
-	InnerJoin
+	InnerJoin = iota
 	// LeftOuterJoin means left join.
 	LeftOuterJoin
 	// RightOuterJoin means right join.
@@ -43,8 +41,10 @@ const (
 type Join struct {
 	baseLogicalPlan
 
-	JoinType JoinType
-	anti     bool
+	JoinType  JoinType
+	anti      bool
+	reordered bool
+	crossJoin bool
 
 	EqualConditions []*expression.ScalarFunction
 	LeftConditions  []expression.Expression

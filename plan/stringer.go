@@ -59,6 +59,11 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		} else {
 			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
 		}
+		for _, eq := range x.EqualConditions {
+			l := eq.Args[0].ToString()
+			r := eq.Args[1].ToString()
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
 	case *PhysicalHashSemiJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
