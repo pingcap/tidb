@@ -134,10 +134,10 @@ interpreter:
 server: parser
 ifeq ($(TARGET), "")
 	rm -rf vendor && ln -s _vendor/vendor vendor
-	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)' -o ../bin/tidb-server
+	$(GO) build -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
 	rm -rf vendor
 else
 	rm -rf vendor && ln -s _vendor/vendor vendor
-	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)'
+	$(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
 	rm -rf vendor
 endif
