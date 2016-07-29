@@ -47,6 +47,67 @@ import (
 %token	<ident>
 	/*yy:token "%c"     */	identifier      "identifier"
 
+	abs		"ABS"
+	addDate		"ADDDATE"
+	admin		"ADMIN"
+	coalesce	"COALESCE"
+	concat		"CONCAT"
+	concatWs	"CONCAT_WS"
+	connectionID 	"CONNECTION_ID"
+	curTime 	"CUR_TIME"
+	count		"COUNT"
+	day		"DAY"
+	dateAdd		"DATE_ADD"
+	dateFormat	"DATE_FORMAT"
+	dateSub		"DATE_SUB"
+	dayname		"DAYNAME"
+	dayofmonth	"DAYOFMONTH"
+	dayofweek	"DAYOFWEEK"
+	dayofyear	"DAYOFYEAR"
+	foundRows	"FOUND_ROWS"
+	groupConcat	"GROUP_CONCAT"
+	greatest	"GREATEST"
+	hour		"HOUR"
+	hex         	"HEX"
+	ifNull		"IFNULL"
+	isNull		"ISNULL"
+	lastInsertID	"LAST_INSERT_ID"
+	lcase 		"LCASE"
+	length		"LENGTH"
+	locate		"LOCATE"
+	lower 		"LOWER"
+	ltrim		"LTRIM"
+	max		"MAX"
+	microsecond	"MICROSECOND"
+	min		"MIN"
+	minute		"MINUTE"
+	nullIf		"NULLIF"
+	month		"MONTH"
+	monthname	"MONTHNAME"
+	now		"NOW"
+	pow 		"POW"
+	power 		"POWER"
+	rand		"RAND"
+	second		"SECOND"
+	sleep		"SLEEP"
+	calcFoundRows	"SQL_CALC_FOUND_ROWS"
+	subDate		"SUBDATE"
+	substring	"SUBSTRING"
+	substringIndex	"SUBSTRING_INDEX"
+	sum		"SUM"
+	trim		"TRIM"
+	rtrim 		"RTRIM"
+	ucase 		"UCASE"
+	upper 		"UPPER"
+	version		"VERSION"
+	weekday		"WEEKDAY"
+	weekofyear	"WEEKOFYEAR"
+	yearweek	"YEARWEEK"
+	round		"ROUND"
+	statsPersistent	"STATS_PERSISTENT"
+	getLock		"GET_LOCK"
+	releaseLock	"RELEASE_LOCK"
+
 %token	<item>
 
 	/*yy:token "1.%d"   */	floatLit        "floating-point literal"
@@ -56,10 +117,7 @@ import (
 	/*yy:token "%b"     */	bitLit          "bit literal"
 
 
-	abs		"ABS"
 	add		"ADD"
-	addDate		"ADDDATE"
-	admin		"ADMIN"
 	after		"AFTER"
 	all 		"ALL"
 	alter		"ALTER"
@@ -89,7 +147,6 @@ import (
 	charsetKwd	"CHARSET"
 	check 		"CHECK"
 	checksum	"CHECKSUM"
-	coalesce	"COALESCE"
 	collate 	"COLLATE"
 	collation	"COLLATION"
 	column		"COLUMN"
@@ -100,31 +157,18 @@ import (
 	compact		"COMPACT"
 	compressed	"COMPRESSED"
 	compression	"COMPRESSION"
-	concat		"CONCAT"
-	concatWs	"CONCAT_WS"
 	connection 	"CONNECTION"
-	connectionID 	"CONNECTION_ID"
 	constraint	"CONSTRAINT"
 	convert		"CONVERT"
-	count		"COUNT"
 	create		"CREATE"
 	cross 		"CROSS"
 	curDate 	"CURDATE"
 	utcDate 	"UTC_DATE"
 	currentDate 	"CURRENT_DATE"
-	curTime 	"CUR_TIME"
 	currentTime 	"CURRENT_TIME"
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
-	dateAdd		"DATE_ADD"
-	dateFormat	"DATE_FORMAT"
-	dateSub		"DATE_SUB"
-	day		"DAY"
-	dayname		"DAYNAME"
-	dayofmonth	"DAYOFMONTH"
-	dayofweek	"DAYOFWEEK"
-	dayofyear	"DAYOFYEAR"
 	ddl		"DDL"
 	deallocate	"DEALLOCATE"
 	defaultKwd	"DEFAULT"
@@ -160,27 +204,20 @@ import (
 	foreign		"FOREIGN"
 	forKwd		"FOR"
 	force		"FORCE"
-	foundRows	"FOUND_ROWS"
 	from		"FROM"
 	full		"FULL"
 	fulltext	"FULLTEXT"
 	ge		">="
-	getLock		"GET_LOCK"
 	global		"GLOBAL"
 	grant		"GRANT"
 	grants		"GRANTS"
-	greatest	"GREATEST"
 	group		"GROUP"
-	groupConcat	"GROUP_CONCAT"
 	hash		"HASH"
 	having		"HAVING"
-    	hex         	"HEX"
 	highPriority	"HIGH_PRIORITY"
-	hour		"HOUR"
 	identified	"IDENTIFIED"
 	ignore		"IGNORE"
 	ifKwd		"IF"
-	ifNull		"IFNULL"
 	in		"IN"
 	index		"INDEX"
 	inner 		"INNER"
@@ -188,38 +225,25 @@ import (
 	interval	"INTERVAL"
 	into		"INTO"
 	is		"IS"
-	isNull		"ISNULL"
 	isolation	"ISOLATION"
 	join		"JOIN"
 	key		"KEY"
 	keyBlockSize	"KEY_BLOCK_SIZE"
 	keys		"KEYS"
-	lastInsertID	"LAST_INSERT_ID"
 	le		"<="
 	leading		"LEADING"
 	left		"LEFT"
-	length		"LENGTH"
 	level		"LEVEL"
 	like		"LIKE"
 	limit		"LIMIT"
 	local		"LOCAL"
-	locate		"LOCATE"
 	lock		"LOCK"
-	lower 		"LOWER"
-	lcase 		"LCASE"
 	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
-	ltrim		"LTRIM"
-	max		"MAX"
 	maxRows		"MAX_ROWS"
-	microsecond	"MICROSECOND"
-	min		"MIN"
-	minute		"MINUTE"
 	minRows		"MIN_ROWS"
 	mod 		"MOD"
 	mode		"MODE"
-	month		"MONTH"
-	monthname	"MONTHNAME"
 	names		"NAMES"
 	national	"NATIONAL"
 	neq		"!="
@@ -227,7 +251,6 @@ import (
 	not		"NOT"
 	null		"NULL"
 	nulleq		"<=>"
-	nullIf		"NULLIF"
 	offset		"OFFSET"
 	on		"ON"
 	only		"ONLY"
@@ -238,53 +261,40 @@ import (
 	outer		"OUTER"
 	password	"PASSWORD"
 	placeholder	"PLACEHOLDER"
-	pow 		"POW"
-	power 		"POWER"
 	prepare		"PREPARE"
 	primary		"PRIMARY"
 	privileges	"PRIVILEGES"
 	procedure	"PROCEDURE"
 	quarter		"QUARTER"
 	quick		"QUICK"
-	rand		"RAND"
 	read		"READ"
 	redundant	"REDUNDANT"
 	references	"REFERENCES"
 	regexpKwd	"REGEXP"
-	releaseLock	"RELEASE_LOCK"
 	repeat		"REPEAT"
 	repeatable	"REPEATABLE"
 	replace		"REPLACE"
 	right		"RIGHT"
 	rlike		"RLIKE"
 	rollback	"ROLLBACK"
-	round		"ROUND"
 	row 		"ROW"
 	rowFormat	"ROW_FORMAT"
 	rsh		">>"
-	rtrim 		"RTRIM"
 	reverse		"REVERSE"
 	schema		"SCHEMA"
 	schemas		"SCHEMAS"
-	second		"SECOND"
 	selectKwd	"SELECT"
 	serializable	"SERIALIZABLE"
 	session		"SESSION"
 	set		"SET"
 	share		"SHARE"
 	show		"SHOW"
-	sleep		"SLEEP"
 	signed		"SIGNED"
 	some 		"SOME"
 	space 		"SPACE"
 	start		"START"
-	statsPersistent	"STATS_PERSISTENT"
 	status		"STATUS"
-	subDate		"SUBDATE"
 	strcmp		"STRCMP"
-	substring	"SUBSTRING"
-	substringIndex	"SUBSTRING_INDEX"
-	sum		"SUM"
 	sysVar		"SYS_VAR"
 	sysDate		"SYSDATE"
 	tableKwd	"TABLE"
@@ -294,7 +304,6 @@ import (
 	trailing	"TRAILING"
 	transaction	"TRANSACTION"
 	triggers	"TRIGGERS"
-	trim		"TRIM"
 	trueKwd		"true"
 	truncate	"TRUNCATE"
 	uncommitted	"UNCOMMITTED"
@@ -305,8 +314,6 @@ import (
 	unlock		"UNLOCK"
 	unsigned	"UNSIGNED"
 	update		"UPDATE"
-	upper 		"UPPER"
-	ucase 		"UCASE"
 	use		"USE"
 	user		"USER"
 	using		"USING"
@@ -314,26 +321,20 @@ import (
 	value		"VALUE"
 	values		"VALUES"
 	variables	"VARIABLES"
-	version		"VERSION"
 	warnings	"WARNINGS"
 	week		"WEEK"
-	weekday		"WEEKDAY"
-	weekofyear	"WEEKOFYEAR"
 	when		"WHEN"
 	where		"WHERE"
 	write		"WRITE"
 	xor 		"XOR"
-	yearweek	"YEARWEEK"
 	zerofill	"ZEROFILL"
 
-	calcFoundRows	"SQL_CALC_FOUND_ROWS"
 	sqlCache	"SQL_CACHE"
 	sqlNoCache	"SQL_NO_CACHE"
 
 	currentTs	"CURRENT_TIMESTAMP"
 	localTime	"LOCALTIME"
 	localTs		"LOCALTIMESTAMP"
-	now		"NOW"
 
 	tinyIntType	"TINYINT"
 	smallIntType	"SMALLINT"
@@ -609,7 +610,6 @@ import (
 	WhereClauseOptional	"Optinal WHERE clause"
 
 	UnReservedKeyword	"MySQL unreserved keywords"
-	NotKeywordToken		"Tokens not mysql keyword but treated specially"
 
 	WhenClause		"When clause"
 	WhenClauseList		"When clause list"
@@ -645,6 +645,7 @@ import (
 
 %type <ident>
 	Identifier		"identifier or unreserved keyword"
+	NotKeywordToken		"Tokens not mysql keyword but treated specially"
 
 %token	tableRefPriority
 
@@ -1200,6 +1201,9 @@ NowSym:
 |	"LOCALTIME"
 |	"LOCALTIMESTAMP"
 |	"NOW"
+	{
+		$$ = $1
+	}
 
 SignedLiteral:
 	Literal
@@ -1927,11 +1931,6 @@ identifier
 		}
 	}
 | NotKeywordToken
-	{
-		if str, ok := $1.(string); ok {
-			$$ = str
-		}
-	}
 
 UnReservedKeyword:
 	"ASCII" | "AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET" | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED"
@@ -2290,7 +2289,12 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" | "VERSION" | "UTC_DATE"
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" 
+| "VERSION"
+	{
+		$$ = $1
+	}
+| "UTC_DATE"
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')'
@@ -2400,7 +2404,7 @@ FunctionCallKeyword:
 FunctionCallNonKeyword:
 	"COALESCE" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"CURDATE" '(' ')'
 	{
@@ -2412,7 +2416,7 @@ FunctionCallNonKeyword:
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"CURRENT_TIME" FuncDatetimePrec
 	{
@@ -2432,35 +2436,35 @@ FunctionCallNonKeyword:
 	}
 |	"ABS" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"CONCAT" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"CONCAT_WS" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"DAY" '(' Expression ')'
 	{
-		$$ =  &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ =  &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DAYNAME" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DAYOFWEEK" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DAYOFMONTH" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DAYOFYEAR" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	DateArithOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
@@ -2497,7 +2501,7 @@ FunctionCallNonKeyword:
 |	"DATE_FORMAT" '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args:	[]ast.ExprNode{
 				$3.(ast.ExprNode),
 				$5.(ast.ExprNode),
@@ -2514,28 +2518,28 @@ FunctionCallNonKeyword:
 	}
 |	"FOUND_ROWS" '(' ')'
 	{
-		$$ =  &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+		$$ =  &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
 |	"GREATEST" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"HOUR" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"HEX" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 
 |	"IFNULL" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"ISNULL" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"LAST_INSERT_ID" '(' ExpressionOpt ')'
 	{
@@ -2543,53 +2547,53 @@ FunctionCallNonKeyword:
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"LENGTH" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"LOCATE" '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
 		}
 	}
 |	"LOCATE" '(' Expression ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}
 |	"LOWER" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"LCASE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"LTRIM" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"MICROSECOND" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"MINUTE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"MONTH" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"MONTHNAME" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"NOW" '(' ExpressionOpt ')'
 	{
@@ -2597,21 +2601,21 @@ FunctionCallNonKeyword:
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"NULLIF" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"POW" '(' Expression ',' Expression ')'
 	{
 		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"POWER" '(' Expression ',' Expression ')'
 	{
 		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"RAND" '(' ExpressionOpt ')'
 	{
@@ -2620,7 +2624,7 @@ FunctionCallNonKeyword:
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"REPLACE" '(' Expression ',' Expression ',' Expression ')'
 	{
@@ -2633,15 +2637,15 @@ FunctionCallNonKeyword:
 	}
 |	"RTRIM" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"SECOND" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"SLEEP" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"SPACE" '(' Expression ')'
 	{
@@ -2654,35 +2658,35 @@ FunctionCallNonKeyword:
 |	"SUBSTRING" '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
 		}
 	}
 |	"SUBSTRING" '(' Expression "FROM" Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
 		}
 	}
 |	"SUBSTRING" '(' Expression ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}
 |	"SUBSTRING" '(' Expression "FROM" Expression "FOR" Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}
 |	"SUBSTRING_INDEX" '(' Expression ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}
@@ -2701,14 +2705,14 @@ FunctionCallNonKeyword:
 |	"TRIM" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
 |	"TRIM" '(' Expression "FROM" Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$5.(ast.ExprNode), $3.(ast.ExprNode)},
 		}
 	}
@@ -2717,7 +2721,7 @@ FunctionCallNonKeyword:
 		nilVal := ast.NewValueExpr(nil)
 		direction := ast.NewValueExpr($3)
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$5.(ast.ExprNode), nilVal, direction},
 		}
 	}
@@ -2725,45 +2729,45 @@ FunctionCallNonKeyword:
 	{
 		direction := ast.NewValueExpr($3)
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$6.(ast.ExprNode),$4.(ast.ExprNode), direction},
 		}
 	}
 |	"UPPER" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"UCASE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"WEEKDAY" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"WEEKOFYEAR" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"YEARWEEK" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"CONNECTION_ID" '(' ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
 |	"ROUND" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"GET_LOCK" '(' Expression ',' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
 	}
 |	"RELEASE_LOCK" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 
 DateArithOpt:
@@ -2820,28 +2824,28 @@ FunctionCallAgg:
 	}
 |	"COUNT" '(' DistinctOpt ExpressionList ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
 	}
 |	"COUNT" '(' DistinctOpt '*' ')'
 	{
 		args := []ast.ExprNode{ast.NewValueExpr(1)}
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: args, Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
 	}
 |	"GROUP_CONCAT" '(' DistinctOpt ExpressionList ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
 	}
 |	"MAX" '(' DistinctOpt Expression ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
 |	"MIN" '(' DistinctOpt Expression ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
 |	"SUM" '(' DistinctOpt Expression ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
 
 FuncDatetimePrec:
@@ -2858,8 +2862,32 @@ FuncDatetimePrec:
 	}
 
 TimeUnit:
-	"MICROSECOND" | "SECOND" | "MINUTE" | "HOUR" | "DAY" | "WEEK"
-|	"MONTH" | "QUARTER" | "YEAR" | "SECOND_MICROSECOND" | "MINUTE_MICROSECOND"
+	"MICROSECOND"
+	{
+		$$ = $1
+	}
+| "SECOND"
+	{
+		$$ = $1
+	}
+| "MINUTE"
+	{
+		$$ = $1
+	}
+| "HOUR"
+	{
+		$$ = $1
+	}
+| "DAY"
+	{
+		$$ = $1
+	}
+| "WEEK"
+| "MONTH"
+	{
+		$$ = $1
+	}
+| "QUARTER" | "YEAR" | "SECOND_MICROSECOND" | "MINUTE_MICROSECOND"
 |	"MINUTE_SECOND" | "HOUR_MICROSECOND" | "HOUR_SECOND" | "HOUR_MINUTE"
 |	"DAY_MICROSECOND" | "DAY_SECOND" | "DAY_MINUTE" | "DAY_HOUR" | "YEAR_MONTH"
 
