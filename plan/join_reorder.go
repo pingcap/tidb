@@ -14,19 +14,23 @@
 package plan
 
 import (
+	"sort"
+
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 )
 
-func tryToGetJoinGroups(j *Join) ([]LogicalPlan, bool) {
-	if j.reordered || !j.crossJoin {
+
+// tryToGetJoinGroup try to fetch a whole join group, which all joins is cartesian join.
+func tryToGetJoinGroup(j *Join) ([]LogicalPlan, bool) {
+	if j.reordered || !j.cartesianJoin {
 		return nil, false
 	}
 	lChild := j.GetChildByIndex(0).(LogicalPlan)
 	rChild := j.GetChildByIndex(1).(LogicalPlan)
 	if nj, ok := lChild.(*Join); ok {
-		plans, valid := tryToGetJoinGroups(nj)
+		plans, valid := tryToGetJoinGroup(nj)
 		return append(plans, rChild), valid
 	}
 	return []LogicalPlan{lChild, rChild}, true
@@ -44,54 +48,135 @@ func findColumnIndexByGroup(groups []LogicalPlan, col *expression.Column) int {
 }
 
 type joinReOrderSolver struct {
-	graph      [][]int
-	groups     []LogicalPlan
+	graph      []edgeList
+	group      []LogicalPlan
 	visited    []bool
 	resultJoin LogicalPlan
+	groupRank  []*rankInfo
 	allocator  *idAllocator
 }
 
-func (e *joinReOrderSolver) reorderJoin(groups []LogicalPlan, conds []expression.Expression) {
-	e.graph = make([][]int, len(groups))
-	e.groups = groups
-	e.visited = make([]bool, len(groups))
-	e.resultJoin = nil
-	for _, cond := range conds {
-		if f, ok := cond.(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
-			lCol, lok := f.Args[0].(*expression.Column)
-			rCol, rok := f.Args[1].(*expression.Column)
-			if lok && rok {
-				lID := findColumnIndexByGroup(groups, lCol)
-				rID := findColumnIndexByGroup(groups, rCol)
-				e.graph[lID] = append(e.graph[lID], rID)
-				e.graph[rID] = append(e.graph[rID], lID)
-			}
-		}
-	}
-	var crossJoinGroup []LogicalPlan
-	for i := 0; i < len(groups); i++ {
-		if !e.visited[i] {
-			e.resultJoin = e.groups[i]
-			e.walkGraph(i)
-			crossJoinGroup = append(crossJoinGroup, e.resultJoin)
-		}
-	}
-	e.makeBushyJoin(crossJoinGroup)
+type edgeList []*rankInfo
+
+func (l edgeList) Len() int {
+	return len(l)
 }
 
-func (e *joinReOrderSolver) makeBushyJoin(crossJoinGroup []LogicalPlan) {
-	for len(crossJoinGroup) > 1 {
-		resultJoinGroup := make([]LogicalPlan, 0, len(crossJoinGroup))
-		for i := 0; i < len(crossJoinGroup); i += 2 {
-			if i+1 == len(crossJoinGroup) {
-				resultJoinGroup = append(resultJoinGroup, crossJoinGroup[i])
+func (l edgeList) Less(i, j int) bool {
+	return l[i].rate < l[j].rate
+}
+
+func (l edgeList) Swap(i, j int) {
+	l[i], l[j] = l[j], l[i]
+}
+
+type rankInfo struct {
+	nodeID int
+	rate   float64
+}
+
+func (e *joinReOrderSolver) Less(i, j int) bool {
+	return e.groupRank[i].rate < e.groupRank[j].rate
+}
+
+func (e *joinReOrderSolver) Swap(i, j int) {
+	e.groupRank[i], e.groupRank[j] = e.groupRank[j], e.groupRank[i]
+}
+
+func (e *joinReOrderSolver) Len() int {
+	return len(e.groupRank)
+}
+
+// reorderJoin implements a simple join reorder algorithm. It will extract all the equal conditions and compose them to a graph.
+// Then walk through the graph and pick the nodes connected by some edge to compose a join tree.
+// We will pick the node with least result set as early as possible.
+func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.Expression) {
+	e.graph = make([]edgeList, len(group))
+	e.group = group
+	e.visited = make([]bool, len(group))
+	e.resultJoin = nil
+	e.groupRank = make([]*rankInfo, len(group))
+	for i := 0; i < len(e.groupRank); i++ {
+		e.groupRank[i] = &rankInfo{
+			nodeID: i,
+			rate:   1.0,
+		}
+	}
+	for _, cond := range conds {
+		if f, ok := cond.(*expression.ScalarFunction); ok {
+			if f.FuncName.L == ast.EQ {
+				lCol, lok := f.Args[0].(*expression.Column)
+				rCol, rok := f.Args[1].(*expression.Column)
+				if lok && rok {
+					lID := findColumnIndexByGroup(group, lCol)
+					rID := findColumnIndexByGroup(group, rCol)
+					if lID != rID {
+						e.graph[lID] = append(e.graph[lID], &rankInfo{nodeID: rID})
+						e.graph[rID] = append(e.graph[rID], &rankInfo{nodeID: lID})
+						continue
+					}
+				}
+			}
+			id := -1
+			rate := 1.0
+			cols, _ := extractColumn(f, nil, nil)
+			for _, col := range cols {
+				idx := findColumnIndexByGroup(group, col)
+				if id == -1 {
+					switch f.FuncName.L {
+					case ast.EQ:
+						rate *= 0.1
+					case ast.LT, ast.LE, ast.GE, ast.GT:
+						rate *= 0.3
+					default:
+						rate *= 0.9
+					}
+					id = idx
+				} else {
+					id = -1
+					break
+				}
+			}
+			if id != -1 {
+				e.groupRank[id].rate *= rate
+			}
+		}
+	}
+	for _, edge := range e.graph {
+		for _, node := range edge {
+			node.rate = e.groupRank[node.nodeID].rate
+		}
+	}
+	sort.Sort(e)
+	for _, edge := range e.graph {
+		sort.Sort(edge)
+	}
+	var cartesianJoinGroup []LogicalPlan
+	for j := 0; j < len(e.groupRank); j++ {
+		i := e.groupRank[j].nodeID
+		if !e.visited[i] {
+			e.resultJoin = e.group[i]
+			e.walkGraph(i)
+			cartesianJoinGroup = append(cartesianJoinGroup, e.resultJoin)
+		}
+	}
+	e.makeBushyJoin(cartesianJoinGroup)
+}
+
+// Make cartesian join as bushy tree.
+func (e *joinReOrderSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) {
+	for len(cartesianJoinGroup) > 1 {
+		resultJoinGroup := make([]LogicalPlan, 0, len(cartesianJoinGroup))
+		for i := 0; i < len(cartesianJoinGroup); i += 2 {
+			if i+1 == len(cartesianJoinGroup) {
+				resultJoinGroup = append(resultJoinGroup, cartesianJoinGroup[i])
 				break
 			}
-			resultJoinGroup = append(resultJoinGroup, e.newJoin(crossJoinGroup[i], crossJoinGroup[i+1]))
+			resultJoinGroup = append(resultJoinGroup, e.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1]))
 		}
-		crossJoinGroup = resultJoinGroup
+		cartesianJoinGroup = resultJoinGroup
 	}
-	e.resultJoin = crossJoinGroup[0]
+	e.resultJoin = cartesianJoinGroup[0]
 }
 
 func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *Join {
@@ -108,11 +193,13 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *Join {
 	return join
 }
 
+// walkGraph implement a dfs algorithm. Each time it picks a edge with lowest rate.
 func (e *joinReOrderSolver) walkGraph(u int) {
 	e.visited[u] = true
-	for _, v := range e.graph[u] {
+	for _, edge := range e.graph[u] {
+		v := edge.nodeID
 		if !e.visited[v] {
-			e.resultJoin = e.newJoin(e.resultJoin, e.groups[v])
+			e.resultJoin = e.newJoin(e.resultJoin, e.group[v])
 			e.walkGraph(v)
 		}
 	}

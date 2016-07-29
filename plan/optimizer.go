@@ -58,7 +58,7 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 			return nil, errors.Trace(err)
 		}
 		p = res.p.PushLimit(nil)
-		log.Infof("[PLAN] %s", ToString(p))
+		log.Warnf("[PLAN] %s", ToString(p))
 		return p, nil
 	}
 	err := Refine(p)

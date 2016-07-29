@@ -210,7 +210,7 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) LogicalPlan {
 		joinPlan.RightConditions = rightCond
 		joinPlan.OtherConditions = otherCond
 	} else if joinPlan.JoinType == InnerJoin {
-		joinPlan.crossJoin = true
+		joinPlan.cartesianJoin = true
 	}
 	if join.Tp == ast.LeftJoin {
 		joinPlan.JoinType = LeftOuterJoin

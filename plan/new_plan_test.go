@@ -208,7 +208,11 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t5.b < 8",
-			best: "LeftHashJoin{LeftHashJoin{LeftHashJoin{LeftHashJoin{Table(t)->Table(t)->Selection}(t1.a,t5.a)->Table(t)}(t5.a,t4.a)->Table(t)}(t4.a,t3.a)(t1.a,t3.a)->Table(t)}(t3.a,t2.a)(t1.a,t2.a)(t4.a,t2.a)->Projection",
+			best: "LeftHashJoin{LeftHashJoin{LeftHashJoin{RightHashJoin{Table(t)->Selection->Table(t)}(t5.a,t1.a)->Table(t)}(t1.a,t2.a)->Table(t)}(t2.a,t3.a)(t1.a,t3.a)->Table(t)}(t5.a,t4.a)(t3.a,t4.a)(t2.a,t4.a)->Projection",
+		},
+		{
+			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
+			best: "LeftHashJoin{LeftHashJoin{LeftHashJoin{LeftHashJoin{Table(t)->Selection->Table(t)}(t3.a,t4.a)->Table(t)}(t4.a,t5.a)->Table(t)}(t5.a,t1.a)(t3.a,t1.a)->Table(t)}(t3.a,t2.a)(t1.a,t2.a)(t4.a,t2.a)->Projection",
 		},
 	}
 	for _, ca := range cases {
