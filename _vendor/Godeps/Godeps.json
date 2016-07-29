@@ -165,35 +165,35 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/coprocessor",
-			"Rev": "f89c1ea9a25ebaa24ab95d5930a1016cdab51d12"
+			"Rev": "c4015d882bdc0d0efbaf190c8b4c11877fb5db3d"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/errorpb",
-			"Rev": "f89c1ea9a25ebaa24ab95d5930a1016cdab51d12"
+			"Rev": "c4015d882bdc0d0efbaf190c8b4c11877fb5db3d"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/kvrpcpb",
-			"Rev": "f89c1ea9a25ebaa24ab95d5930a1016cdab51d12"
+			"Rev": "c4015d882bdc0d0efbaf190c8b4c11877fb5db3d"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/metapb",
-			"Rev": "f89c1ea9a25ebaa24ab95d5930a1016cdab51d12"
+			"Rev": "c4015d882bdc0d0efbaf190c8b4c11877fb5db3d"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/msgpb",
-			"Rev": "f89c1ea9a25ebaa24ab95d5930a1016cdab51d12"
+			"Rev": "c4015d882bdc0d0efbaf190c8b4c11877fb5db3d"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/pdpb",
-			"Rev": "f89c1ea9a25ebaa24ab95d5930a1016cdab51d12"
+			"Rev": "c4015d882bdc0d0efbaf190c8b4c11877fb5db3d"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_cmdpb",
-			"Rev": "f89c1ea9a25ebaa24ab95d5930a1016cdab51d12"
+			"Rev": "c4015d882bdc0d0efbaf190c8b4c11877fb5db3d"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_serverpb",
-			"Rev": "f89c1ea9a25ebaa24ab95d5930a1016cdab51d12"
+			"Rev": "c4015d882bdc0d0efbaf190c8b4c11877fb5db3d"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raftpb",
@@ -201,7 +201,7 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/util",
-			"Rev": "f89c1ea9a25ebaa24ab95d5930a1016cdab51d12"
+			"Rev": "c4015d882bdc0d0efbaf190c8b4c11877fb5db3d"
 		},
 		{
 			"ImportPath": "github.com/pingcap/pd/pd-client",
@@ -353,6 +353,10 @@
 			"ImportPath": "github.com/grpc-ecosystem/grpc-gateway/runtime/internal",
 			"Comment": "v1.1.0-2-gc8ec92d",
 			"Rev": "c8ec92d0481dd77d9b8c1808eb6476d190aa039a"
+		},
+		{
+			"ImportPath": "github.com/pingcap/kvproto/pkg/eraftpb",
+			"Rev": "c4015d882bdc0d0efbaf190c8b4c11877fb5db3d"
 		}
 	]
 }
