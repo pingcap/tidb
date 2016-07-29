@@ -37,9 +37,13 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 
 TARGET = ""
 
-.PHONY: all build install update parser clean todo test gotest interpreter server goyacc golex
+.PHONY: all build install update parser clean todo test gotest interpreter server goyacc golex dev
 
-all: parser build test check
+default: server
+
+all: dev server install
+
+dev: parser build test check
 
 build:
 	rm -rf vendor && ln -s _vendor/vendor vendor
@@ -116,7 +120,7 @@ gotest:
 
 race:
 	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) test --race -cover $(PACKAGES)
+	$(GO) test --race $(PACKAGES)
 	rm -rf vendor
 
 tikv_integration_test:
@@ -132,10 +136,10 @@ interpreter:
 server: parser
 ifeq ($(TARGET), "")
 	rm -rf vendor && ln -s _vendor/vendor vendor
-	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)'
+	$(GO) build -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
 	rm -rf vendor
 else
 	rm -rf vendor && ln -s _vendor/vendor vendor
-	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)'
+	$(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
 	rm -rf vendor
 endif

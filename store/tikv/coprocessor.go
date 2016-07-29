@@ -98,9 +98,7 @@ func (c *CopClient) Send(req *kv.Request) kv.Response {
 	}
 	it.errChan = make(chan error, 1)
 	if len(it.tasks) == 0 {
-		it.mu.Lock()
 		it.Close()
-		it.mu.Unlock()
 	}
 	it.run()
 	return it
@@ -274,10 +272,10 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 				break
 			}
 		}
+		it.mu.Unlock()
 		if task == nil {
 			it.Close()
 		}
-		it.mu.Unlock()
 		if task == nil {
 			return nil, nil
 		}
@@ -293,12 +291,12 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	it.mu.Lock()
 	defer it.mu.Unlock()
 	if err != nil {
-		it.Close()
+		it.finished = true
 		return nil, errors.Trace(err)
 	}
 	it.respGot++
 	if it.respGot == len(it.tasks) {
-		it.Close()
+		it.finished = true
 	}
 	return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
 }
@@ -306,6 +304,13 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 // Handle single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Response, error) {
 	for {
+		it.mu.RLock()
+		if it.finished {
+			it.mu.RUnlock()
+			return nil, nil
+		}
+		it.mu.RUnlock()
+
 		req := &coprocessor.Request{
 			Context: task.region.GetContext(),
 			Tp:      proto.Int64(it.req.Tp),
@@ -393,7 +398,9 @@ func (it *copIterator) rebuildCurrentTask(bo *Backoffer, task *copTask) error {
 }
 
 func (it *copIterator) Close() error {
+	it.mu.Lock()
 	it.finished = true
+	it.mu.Unlock()
 	return nil
 }
 
