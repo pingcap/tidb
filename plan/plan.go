@@ -152,7 +152,31 @@ type PhysicalPlan interface {
 }
 
 type baseLogicalPlan struct {
+	propLen  int
+	propRes0 *physicalPlanInfo
+	propRes1 *physicalPlanInfo
+	count    uint64
 	basePlan
+}
+
+func (p *baseLogicalPlan) getPlanInfo(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64) {
+	if p.propRes0 == nil {
+		return nil, nil, 0
+	}
+	if len(prop) > p.propLen {
+		return nil, nil, 0
+	}
+	if len(prop) == p.propLen {
+		return p.propRes0, p.propRes1, p.count
+	}
+	return p.propRes1, p.propRes1, p.count
+}
+
+func (p *baseLogicalPlan) storePlanInfo(prop requiredProperty, res0, res1 *physicalPlanInfo, cnt uint64) {
+	p.propLen = len(prop)
+	p.propRes0 = res0
+	p.propRes1 = res1
+	p.count = cnt
 }
 
 func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
