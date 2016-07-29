@@ -305,6 +305,13 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 // Handle single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Response, error) {
 	for {
+		it.mu.RLock()
+		if it.finished {
+			it.mu.RUnlock()
+			return nil, nil
+		}
+		it.mu.RUnlock()
+
 		req := &coprocessor.Request{
 			Context: task.region.GetContext(),
 			Tp:      proto.Int64(it.req.Tp),
