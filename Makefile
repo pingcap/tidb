@@ -39,7 +39,9 @@ TARGET = ""
 
 .PHONY: all build install update parser clean todo test gotest interpreter server goyacc golex dev
 
-all: server
+default: server
+
+all: dev server install
 
 dev: parser build test check
 
