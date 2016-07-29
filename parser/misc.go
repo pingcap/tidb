@@ -39,45 +39,67 @@ func isIdentFirstChar(ch byte) bool {
 	return isLetter(ch) || ch == '_'
 }
 
-var tokenPrefixTable = []struct {
-	prefix string
-	token  int
-}{
-	{"||", oror},
-	{"&&", andand},
-	{"&^", andnot},
-	{":=", assignmentEq},
-	{"<=>", nulleq},
-	{">=", ge},
-	{"<=", le},
-	{"!=", neq},
-	{"<>", neqSynonym},
-	{"<<", lsh},
-	{">>", rsh},
+func isASCII(ch byte) bool {
+	return ch >= 0 && ch <= 0177
 }
 
-var tokenByteTable [255]int
+type trieNode struct {
+	childs [256]*trieNode
+	token  int
+}
+
+var ruleTable trieNode
+
+func initTokenByte(c byte, tok int) {
+	if ruleTable.childs[c] == nil {
+		ruleTable.childs[c] = &trieNode{}
+	}
+	ruleTable.childs[c].token = tok
+}
+
+func initTokenString(str string, tok int) {
+	node := &ruleTable
+	for _, c := range str {
+		if node.childs[c] == nil {
+			node.childs[c] = &trieNode{}
+		}
+		node = node.childs[c]
+	}
+	node.token = tok
+}
 
 func init() {
-	tokenByteTable['*'] = int('*')
-	tokenByteTable['/'] = int('/')
-	tokenByteTable['+'] = int('+')
-	tokenByteTable['-'] = int('-')
-	tokenByteTable['>'] = int('>')
-	tokenByteTable['<'] = int('<')
-	tokenByteTable['('] = int('(')
-	tokenByteTable[')'] = int(')')
-	tokenByteTable[';'] = int(';')
-	tokenByteTable[','] = int(',')
-	tokenByteTable['&'] = int('&')
-	tokenByteTable['%'] = int('%')
-	tokenByteTable[':'] = int(':')
-	tokenByteTable['|'] = int('|')
-	tokenByteTable['^'] = int('^')
-	tokenByteTable['~'] = int('~')
-	tokenByteTable['\\'] = int('\\')
-	tokenByteTable['?'] = placeholder
-	tokenByteTable['='] = eq
+	initTokenByte('*', int('*'))
+	initTokenByte('/', int('/'))
+	initTokenByte('+', int('+'))
+	initTokenByte('-', int('-'))
+	initTokenByte('>', int('>'))
+	initTokenByte('<', int('<'))
+	initTokenByte('(', int('('))
+	initTokenByte(')', int(')'))
+	initTokenByte(';', int(';'))
+	initTokenByte(',', int(','))
+	initTokenByte('&', int('&'))
+	initTokenByte('%', int('%'))
+	initTokenByte(':', int(':'))
+	initTokenByte('|', int('|'))
+	initTokenByte('^', int('^'))
+	initTokenByte('~', int('~'))
+	initTokenByte('\\', int('\\'))
+	initTokenByte('?', placeholder)
+	initTokenByte('=', eq)
+
+	initTokenString("||", oror)
+	initTokenString("&&", andand)
+	initTokenString("&^", andnot)
+	initTokenString(":=", assignmentEq)
+	initTokenString("<=>", nulleq)
+	initTokenString(">=", ge)
+	initTokenString("<=", le)
+	initTokenString("!=", neq)
+	initTokenString("<>", neqSynonym)
+	initTokenString("<<", lsh)
+	initTokenString(">>", rsh)
 }
 
 var tokenMap = map[string]int{
@@ -90,13 +112,10 @@ var tokenMap = map[string]int{
 	"ALTER":               alter,
 	"ANALYZE":             analyze,
 	"AND":                 and,
-	"&&":                  andand,
-	"&^":                  andnot,
 	"ANY":                 any,
 	"AS":                  as,
 	"ASC":                 asc,
 	"ASCII":               ascii,
-	":=":                  assignmentEq,
 	"AUTO_INCREMENT":      autoIncrement,
 	"AVG":                 avg,
 	"AVG_ROW_LENGTH":      avgRowLength,
@@ -187,7 +206,6 @@ var tokenMap = map[string]int{
 	"FROM":                from,
 	"FULL":                full,
 	"FULLTEXT":            fulltext,
-	">=":                  ge,
 	"GET_LOCK":            getLock,
 	"GLOBAL":              global,
 	"GRANT":               grant,
@@ -217,7 +235,6 @@ var tokenMap = map[string]int{
 	"KEY_BLOCK_SIZE":      keyBlockSize,
 	"KEYS":                keys,
 	"LAST_INSERT_ID":      lastInsertID,
-	"<=":                  le,
 	"LEADING":             leading,
 	"LEFT":                left,
 	"LENGTH":              length,
@@ -230,7 +247,6 @@ var tokenMap = map[string]int{
 	"LOWER":               lower,
 	"LCASE":               lcase,
 	"LOW_PRIORITY":        lowPriority,
-	"<<":                  lsh,
 	"LTRIM":               ltrim,
 	"MAX":                 max,
 	"MAX_ROWS":            maxRows,
@@ -244,11 +260,8 @@ var tokenMap = map[string]int{
 	"MONTHNAME":           monthname,
 	"NAMES":               names,
 	"NATIONAL":            national,
-	"!=":                  neq,
-	"<>":                  neqSynonym,
 	"NOT":                 not,
 	"NULL":                null,
-	"<=>":                 nulleq,
 	"NULLIF":              nullIf,
 	"OFFSET":              offset,
 	"ON":                  on,
@@ -256,7 +269,6 @@ var tokenMap = map[string]int{
 	"OPTION":              option,
 	"OR":                  or,
 	"ORDER":               order,
-	"||":                  oror,
 	"OUTER":               outer,
 	"PASSWORD":            password,
 	"POW":                 pow,
@@ -282,7 +294,6 @@ var tokenMap = map[string]int{
 	"ROUND":               round,
 	"ROW":                 row,
 	"ROW_FORMAT":          rowFormat,
-	">>":                  rsh,
 	"RTRIM":               rtrim,
 	"REVERSE":             reverse,
 	"SCHEMA":              schema,
@@ -412,12 +423,4 @@ func isTokenIdentifier(s string, buf *bytes.Buffer) int {
 	}
 	tok := tokenMap[hack.String(data)]
 	return tok
-}
-
-func isTokenByte(ch byte) int {
-	return tokenByteTable[ch]
-}
-
-func isASCII(ch byte) bool {
-	return ch >= 0 && ch <= 0177
 }

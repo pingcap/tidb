@@ -69,6 +69,8 @@ type Parser struct {
 	lexer     yyReset
 }
 
+// yyReset is an interface with reset method and returns a yyLexer.
+// if an object implements both yyLexer and yyReset, it can return itself in the reset method, thus reducing allocation.
 type yyReset interface {
 	reset(sql string) yyLexer
 }

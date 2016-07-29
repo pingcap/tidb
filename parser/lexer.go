@@ -71,7 +71,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 	if tok == unicode.ReplacementChar && s.r.eof() {
 		return 0
 	}
-	v.item = lit
+	v.ident = lit
 	return tok
 }
 
@@ -99,14 +99,6 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		return s.scanString()
 	}
 
-	for _, v := range tokenPrefixTable {
-		if strings.HasPrefix(s.r.s[pos.Offset:], v.prefix) {
-			s.r.incN(len(v.prefix))
-			tok, lit = v.token, v.prefix
-			return
-		}
-	}
-
 	switch ch0 {
 	case '@':
 		return s.startWithAt()
@@ -121,16 +113,19 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		return s.scan()
 	}
 
-	if ch0 == 0 && s.r.eof() {
-		return 0, eof, ""
-	}
-	if tok = isTokenByte(ch0); tok != 0 {
+	// search a trie to scan a token
+	ch := ch0
+	node := &ruleTable
+	for {
+		if node.childs[ch] == nil || s.r.eof() {
+			break
+		}
+		node = node.childs[ch]
 		s.r.inc()
-		return
+		ch = s.r.peek()
 	}
 
-	tok = unicode.ReplacementChar
-	s.r.inc()
+	tok, lit = node.token, s.r.data(&pos)
 	return
 }
 
