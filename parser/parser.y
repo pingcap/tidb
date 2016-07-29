@@ -41,12 +41,15 @@ import (
 %union {
 	offset int // offset
 	item interface{}
+	ident string
 }
+
+%token	<ident>
+	/*yy:token "%c"     */	identifier      "identifier"
 
 %token	<item>
 
 	/*yy:token "1.%d"   */	floatLit        "floating-point literal"
-	/*yy:token "%c"     */	identifier      "identifier"
 	/*yy:token "%d"     */	intLit          "integer literal"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 	/*yy:token "%x"     */	hexLit          "hexadecimal literal"
@@ -504,7 +507,6 @@ import (
 	logAnd			"logical and operator"
 	logOr			"logical or operator"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
-	name			"name"
 	NationalOpt		"National option"
 	NotOpt			"optional NOT"
 	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
@@ -606,7 +608,6 @@ import (
 	WhereClause		"WHERE clause"
 	WhereClauseOptional	"Optinal WHERE clause"
 
-	Identifier		"identifier or unreserved keyword"
 	UnReservedKeyword	"MySQL unreserved keywords"
 	NotKeywordToken		"Tokens not mysql keyword but treated specially"
 
@@ -641,6 +642,9 @@ import (
 	OptCollate		"Optional Collate setting"
 	NUM			"numbers"
 	LengthNum		"Field length num(uint64)"
+
+%type <ident>
+	Identifier		"identifier or unreserved keyword"
 
 %token	tableRefPriority
 
@@ -815,6 +819,9 @@ ConstraintKeywordOpt:
 
 Symbol:
 	Identifier
+	{
+		$$ = $1
+	}
 
 /*******************************************************************************************/
 
@@ -873,15 +880,15 @@ ColumnDef:
 ColumnName:
 	Identifier
 	{
-		$$ = &ast.ColumnName{Name: model.NewCIStr($1.(string))}
+		$$ = &ast.ColumnName{Name: model.NewCIStr($1)}
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.ColumnName{Table: model.NewCIStr($1.(string)), Name: model.NewCIStr($3.(string))}
+		$$ = &ast.ColumnName{Table: model.NewCIStr($1), Name: model.NewCIStr($3)}
 	}
 |	Identifier '.' Identifier '.' Identifier
 	{
-		$$ = &ast.ColumnName{Schema: model.NewCIStr($1.(string)), Table: model.NewCIStr($3.(string)), Name: model.NewCIStr($5.(string))}
+		$$ = &ast.ColumnName{Schema: model.NewCIStr($1), Table: model.NewCIStr($3), Name: model.NewCIStr($5)}
 	}
 
 ColumnNameList:
@@ -1219,7 +1226,7 @@ CreateIndexStmt:
 	{
 		$$ = &ast.CreateIndexStmt{
 			Unique: $2.(bool),
-			IndexName: $4.(string),
+			IndexName: $4,
                 	Table: $6.(*ast.TableName),
 			IndexColNames: $8.([]*ast.IndexColName),
 		}
@@ -1278,6 +1285,9 @@ CreateDatabaseStmt:
 
 DBName:
 	Identifier
+  {
+    $$ = $1
+  }
 
 DatabaseOption:
 	DefaultKwdOpt CharsetKw EqOpt StringName
@@ -1449,7 +1459,7 @@ DropDatabaseStmt:
 DropIndexStmt:
 	"DROP" "INDEX" IfExists Identifier "ON" TableName
 	{
-		$$ = &ast.DropIndexStmt{IfExists: $3.(bool), IndexName: $4.(string), Table: $6.(*ast.TableName)}
+		$$ = &ast.DropIndexStmt{IfExists: $3.(bool), IndexName: $4, Table: $6.(*ast.TableName)}
 	}
 
 DropTableStmt:
@@ -1582,9 +1592,6 @@ logAnd:
 |	"AND"
 	{
 	}
-
-name:
-	Identifier
 
 ExpressionList:
 	Expression
@@ -1751,12 +1758,12 @@ Field:
 	}
 |	Identifier '.' '*'
 	{
-		wildCard := &ast.WildCardField{Table: model.NewCIStr($1.(string))}
+		wildCard := &ast.WildCardField{Table: model.NewCIStr($1)}
 		$$ = &ast.SelectField{WildCard: wildCard}
 	}
 |	Identifier '.' Identifier '.' '*'
 	{
-		wildCard := &ast.WildCardField{Schema: model.NewCIStr($1.(string)), Table: model.NewCIStr($3.(string))}
+		wildCard := &ast.WildCardField{Schema: model.NewCIStr($1), Table: model.NewCIStr($3)}
 		$$ = &ast.SelectField{WildCard: wildCard}
 	}
 |	Expression FieldAsNameOpt
@@ -1865,7 +1872,7 @@ IndexName:
 |	Identifier
 	{
 		//"index name"
-		$$ = $1.(string)
+		$$ = $1
 	}
 
 IndexOption:
@@ -1912,7 +1919,19 @@ IndexTypeOpt:
 
 /**********************************Identifier********************************************/
 Identifier:
-	identifier | UnReservedKeyword | NotKeywordToken
+identifier
+| UnReservedKeyword
+	{
+		if str, ok := $1.(string); ok {
+			$$ = str
+		}
+	}
+| NotKeywordToken
+	{
+		if str, ok := $1.(string); ok {
+			$$ = str
+		}
+	}
 
 UnReservedKeyword:
 	"ASCII" | "AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET" | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED"
@@ -3020,11 +3039,11 @@ LowPriorityOptional:
 TableName:
 	Identifier
 	{
-		$$ = &ast.TableName{Name:model.NewCIStr($1.(string))}
+		$$ = &ast.TableName{Name:model.NewCIStr($1)}
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.TableName{Schema:model.NewCIStr($1.(string)),	Name:model.NewCIStr($3.(string))}
+		$$ = &ast.TableName{Schema:model.NewCIStr($1),	Name:model.NewCIStr($3)}
 	}
 
 TableNameList:
@@ -3069,7 +3088,7 @@ PreparedStmt:
 			sqlVar = $4.(*ast.VariableExpr)
 		}
 		$$ = &ast.PrepareStmt{
-			Name:		$2.(string),
+			Name:		$2,
 			SQLText:	sqlText,
 			SQLVar: 	sqlVar,
 		}
@@ -3090,12 +3109,12 @@ PrepareSQL:
 ExecuteStmt:
 	"EXECUTE" Identifier
 	{
-		$$ = &ast.ExecuteStmt{Name: $2.(string)}
+		$$ = &ast.ExecuteStmt{Name: $2}
 	}
 |	"EXECUTE" Identifier "USING" UserVariableList
 	{
 		$$ = &ast.ExecuteStmt{
-			Name: $2.(string),
+			Name: $2,
 			UsingVars: $4.([]ast.ExprNode),
 		}
 	}
@@ -3117,7 +3136,7 @@ UserVariableList:
 DeallocateStmt:
 	DeallocateSym "PREPARE" Identifier
 	{
-		$$ = &ast.DeallocateStmt{Name: $3.(string)}
+		$$ = &ast.DeallocateStmt{Name: $3}
 	}
 
 DeallocateSym:
@@ -3306,11 +3325,11 @@ TableAsNameOpt:
 TableAsName:
 	Identifier
 	{
-		$$ = model.NewCIStr($1.(string))
+		$$ = model.NewCIStr($1)
 	}
 |	"AS" Identifier
 	{
-		$$ = model.NewCIStr($2.(string))
+		$$ = model.NewCIStr($2)
 	}
 
 IndexHintType:
@@ -3362,11 +3381,11 @@ IndexNameList:
 	}
 |	Identifier
 	{
-		$$ = []model.CIStr{model.NewCIStr($1.(string))}
+		$$ = []model.CIStr{model.NewCIStr($1)}
 	}
 |	IndexNameList ',' Identifier
 	{
-		$$ = append($1.([]model.CIStr), model.NewCIStr($3.(string)))
+		$$ = append($1.([]model.CIStr), model.NewCIStr($3))
 	}
 
 
@@ -3666,19 +3685,19 @@ IsolationLevel:
 VariableAssignment:
 	Identifier eq Expression
 	{
-		$$ = &ast.VariableAssignment{Name: $1.(string), Value: $3.(ast.ExprNode), IsSystem: true}
+		$$ = &ast.VariableAssignment{Name: $1, Value: $3.(ast.ExprNode), IsSystem: true}
 	}
 |	"GLOBAL" Identifier eq Expression
 	{
-		$$ = &ast.VariableAssignment{Name: $2.(string), Value: $4.(ast.ExprNode), IsGlobal: true, IsSystem: true}
+		$$ = &ast.VariableAssignment{Name: $2, Value: $4.(ast.ExprNode), IsGlobal: true, IsSystem: true}
 	}
 |	"SESSION" Identifier eq Expression
 	{
-		$$ = &ast.VariableAssignment{Name: $2.(string), Value: $4.(ast.ExprNode), IsSystem: true}
+		$$ = &ast.VariableAssignment{Name: $2, Value: $4.(ast.ExprNode), IsSystem: true}
 	}
 |	"LOCAL" Identifier eq Expression
 	{
-		$$ = &ast.VariableAssignment{Name: $2.(string), Value: $4.(ast.ExprNode), IsSystem: true}
+		$$ = &ast.VariableAssignment{Name: $2, Value: $4.(ast.ExprNode), IsSystem: true}
 	}
 |	"SYS_VAR" eq Expression
 	{
@@ -4120,11 +4139,11 @@ TableElementList:
 TableOption:
 	"ENGINE" Identifier
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $2.(string)}
+		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $2}
 	}
 |	"ENGINE" eq Identifier
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $3.(string)}
+		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $3}
 	}
 |	DefaultKwdOpt CharsetKw EqOpt StringName
 	{
@@ -4160,7 +4179,7 @@ TableOption:
 	}
 |	"COMPRESSION" EqOpt Identifier
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionCompression, StrValue: $3.(string)}
+		$$ = &ast.TableOption{Tp: ast.TableOptionCompression, StrValue: $3}
 	}
 |	"KEY_BLOCK_SIZE" EqOpt LengthNum
 	{
@@ -4678,7 +4697,7 @@ StringName:
 	}
 |	Identifier
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 
 /***********************************************************************************
@@ -4932,22 +4951,22 @@ PrivLevel:
 	{
 		$$ = &ast.GrantLevel {
 			Level: ast.GrantLevelDB,
-			DBName: $1.(string),
+			DBName: $1,
 		}
 	}
 |	Identifier '.' Identifier
 	{
 		$$ = &ast.GrantLevel {
 			Level: ast.GrantLevelTable,
-			DBName: $1.(string),
-			TableName: $3.(string),
+			DBName: $1,
+			TableName: $3,
 		}
 	}
 |	Identifier
 	{
 		$$ = &ast.GrantLevel {
 			Level: ast.GrantLevelTable,
-			TableName: $1.(string),
+			TableName: $1,
 		}
 	}
 
