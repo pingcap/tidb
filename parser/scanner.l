@@ -591,7 +591,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return addDate
 {admin}			lval.ident = string(l.val)
 			return admin
-{after}			lval.item = string(l.val)
+{after}			lval.ident = string(l.val)
 			return after
 {all}			return all
 {alter}			return alter
@@ -601,28 +601,28 @@ action		{a}{c}{t}{i}{o}{n}
 			return any
 {asc}			return asc
 {as}			return as
-{ascii}			lval.item = string(l.val)
+{ascii}			lval.ident = string(l.val)
 			return ascii
-{auto_increment}	lval.item = string(l.val)
+{auto_increment}	lval.ident = string(l.val)
 			return autoIncrement
-{avg}			lval.item = string(l.val)
+{avg}			lval.ident = string(l.val)
 			return avg
 {avg_row_length}	lval.item = string(l.val)
 			return avgRowLength
-{begin}			lval.item = string(l.val)
+{begin}			lval.ident = string(l.val)
 			return begin
 {between}		return between
 {binlog}		lval.item = string(l.val)
 			return binlog
 {both}			return both
-{btree}			lval.item = string(l.val)
+{btree}			lval.ident = string(l.val)
 			return btree
 {by}			return by
 {case}			return caseKwd
 {cast}			lval.item = string(l.val)
 			return cast
 {character}		return character
-{charset}		lval.item = string(l.val)
+{charset}		lval.ident = string(l.val)
 			return charsetKwd
 {check}			return check
 {checksum}		lval.item = string(l.val)
@@ -1049,7 +1049,7 @@ action		{a}{c}{t}{i}{o}{n}
 {now}			lval.ident = string(l.val)
 			return now
 
-{bit}			lval.item = string(l.val)
+{bit}			lval.ident = string(l.val)
 			return bitType
 
 {tiny}			lval.item = string(l.val)
@@ -1136,10 +1136,10 @@ action		{a}{c}{t}{i}{o}{n}
 {longtext}		lval.item = string(l.val)
 			return longtextType
 
-{bool}			lval.item = string(l.val)
+{bool}			lval.ident = string(l.val)
 			return boolType
 
-{boolean}		lval.item = string(l.val)
+{boolean}		lval.ident = string(l.val)
 			return booleanType
 
 {byte}			lval.item = string(l.val)

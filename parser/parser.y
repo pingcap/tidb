@@ -118,7 +118,6 @@ import (
 
 
 	add		"ADD"
-	after		"AFTER"
 	all 		"ALL"
 	alter		"ALTER"
 	analyze		"ANALYZE"
@@ -128,23 +127,17 @@ import (
 	any 		"ANY"
 	as		"AS"
 	asc		"ASC"
-	ascii		"ASCII"
 	assignmentEq	":="
 	at		"AT"
-	autoIncrement	"AUTO_INCREMENT"
-	avg		"AVG"
 	avgRowLength	"AVG_ROW_LENGTH"
-	begin		"BEGIN"
 	between		"BETWEEN"
 	binlog		"BINLOG"
 	both		"BOTH"
-	btree		"BTREE"
 	by		"BY"
 	byteType	"BYTE"
 	caseKwd		"CASE"
 	cast		"CAST"
 	character	"CHARACTER"
-	charsetKwd	"CHARSET"
 	check 		"CHECK"
 	checksum	"CHECKSUM"
 	collate 	"COLLATE"
@@ -342,7 +335,6 @@ import (
 	intType		"INT"
 	integerType	"INTEGER"
 	bigIntType	"BIGINT"
-	bitType		"BIT"
 
 	decimalType	"DECIMAL"
 	numericType	"NUMERIC"
@@ -370,8 +362,6 @@ import (
 	mediumtextType	"MEDIUMTEXT"
 	longtextType	"LONGTEXT"
 
-	boolType	"BOOL"
-	booleanType	"BOOLEAN"
 
 	secondMicrosecond	"SECOND_MICROSECOND"
 	minuteMicrosecond	"MINUTE_MICROSECOND"
@@ -390,6 +380,17 @@ import (
 	no		"NO"
 	action		"ACTION"
 
+%token	<ident>
+	after		"AFTER"
+	ascii		"ASCII"
+	autoIncrement	"AUTO_INCREMENT"
+	avg		"AVG"
+	begin		"BEGIN"
+	bitType		"BIT"
+	booleanType	"BOOLEAN"
+	boolType	"BOOL"
+	btree		"BTREE"
+	charsetKwd	"CHARSET"
 
 %type   <item>
 	AdminStmt		"Check table statement or show ddl statement"
@@ -1933,7 +1934,47 @@ identifier
 | NotKeywordToken
 
 UnReservedKeyword:
-	"ASCII" | "AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET" | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED"
+	"ASCII" 
+	{
+		$$ = $1
+	}
+| "AUTO_INCREMENT" 
+	{
+		$$ = $1
+	}
+| "AFTER" 
+	{
+		$$ = $1
+	}
+| "AVG" 
+	{
+		$$ = $1
+	}
+| "BEGIN" 
+	{
+		$$ = $1
+	}
+| "BIT" 
+	{
+		$$ = $1
+	}
+| "BOOL" 
+	{
+		$$ = $1
+	}
+| "BOOLEAN" 
+	{
+		$$ = $1
+	}
+| "BTREE" 
+	{
+		$$ = $1
+	}
+| "CHARSET" 
+	{
+		$$ = $1
+	}
+| "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED"
 |	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "DYNAMIC" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FIXED" | "FULL" | "HASH"
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION" | "SIGNED"
 |	"START" | "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
@@ -2377,7 +2418,7 @@ FunctionCallKeyword:
 	}
 |	"ASCII" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DATE" '(' Expression ')'
 	{
@@ -2820,7 +2861,7 @@ TrimDirection:
 FunctionCallAgg:
 	"AVG" '(' DistinctOpt ExpressionList ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
 	}
 |	"COUNT" '(' DistinctOpt ExpressionList ')'
 	{
@@ -4701,6 +4742,9 @@ OptCharset:
 CharsetKw:
 	"CHARACTER" "SET"
 |	"CHARSET"
+	{
+		$$ = $1
+	}
 
 OptCollate:
 	{
