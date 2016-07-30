@@ -810,7 +810,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return level
 {like}			return like
 {limit}			return limit
-{local}			lval.item = string(l.val)
+{local}			lval.ident = string(l.val)
 			return local
 {locate}		lval.ident = string(l.val)
 			return locate
@@ -845,12 +845,12 @@ action		{a}{c}{t}{i}{o}{n}
 			return month
 {monthname}		lval.ident = string(l.val)
 			return monthname
-{names}			lval.item = string(l.val)
+{names}			lval.ident = string(l.val)
 			return names
 {national}		lval.item = string(l.val)
 			return national
 {not}			return not
-{offset}		lval.item = string(l.val)
+{offset}		lval.ident = string(l.val)
 			return offset
 {on}			return on
 {only}			lval.item = string(l.val)
@@ -859,13 +859,13 @@ action		{a}{c}{t}{i}{o}{n}
 {order}			return order
 {or}			return or
 {outer}			return outer
-{password}		lval.item = string(l.val)
+{password}		lval.ident = string(l.val)
 			return password
 {pow}			lval.ident = string(l.val)
 			return pow
 {power}			lval.ident = string(l.val)
 			return power
-{prepare}		lval.item = string(l.val)
+{prepare}		lval.ident = string(l.val)
 			return prepare
 {primary}		return primary
 {privileges}		lval.item = string(l.val)
@@ -873,12 +873,12 @@ action		{a}{c}{t}{i}{o}{n}
 {procedure}		return procedure
 {quarter}		lval.item = string(l.val)
 			return quarter
-{quick}			lval.item = string(l.val)
+{quick}			lval.ident = string(l.val)
 			return quick
-{redundant}		lval.item = string(l.val)
+{redundant}		lval.ident = string(l.val)
 			return redundant
 {right}			return right
-{rollback}		lval.item = string(l.val)
+{rollback}		lval.ident = string(l.val)
 			return rollback
 {round}			lval.ident = string(l.val)
 			return round
@@ -891,13 +891,13 @@ action		{a}{c}{t}{i}{o}{n}
 {schemas}		return schemas
 {serializable}		lval.item = string(l.val)
 			return serializable
-{session}		lval.item = string(l.val)
+{session}		lval.ident = string(l.val)
 			return session
 {some}			lval.item = string(l.val)
 			return some
 {space}			lval.item = string(l.val)
 			return space
-{start}			lval.item = string(l.val)
+{start}			lval.ident = string(l.val)
 			return start
 {statsPersistent}	lval.ident = string(l.val)
 			return statsPersistent
@@ -1023,7 +1023,7 @@ action		{a}{c}{t}{i}{o}{n}
 {action}		lval.item = string(l.val)
 			return action
 
-{signed}		lval.item = string(l.val)
+{signed}		lval.ident = string(l.val)
 			return signed
 {unsigned}		return unsigned
 {zerofill}		return zerofill

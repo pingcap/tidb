@@ -214,7 +214,6 @@ import (
 	level		"LEVEL"
 	like		"LIKE"
 	limit		"LIMIT"
-	local		"LOCAL"
 	lock		"LOCK"
 	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
@@ -222,14 +221,12 @@ import (
 	minRows		"MIN_ROWS"
 	mod 		"MOD"
 	mode		"MODE"
-	names		"NAMES"
 	national	"NATIONAL"
 	neq		"!="
 	neqSynonym	"<>"
 	not		"NOT"
 	null		"NULL"
 	nulleq		"<=>"
-	offset		"OFFSET"
 	on		"ON"
 	only		"ONLY"
 	option		"OPTION"
@@ -237,16 +234,12 @@ import (
 	order		"ORDER"
 	oror		"||"
 	outer		"OUTER"
-	password	"PASSWORD"
 	placeholder	"PLACEHOLDER"
-	prepare		"PREPARE"
 	primary		"PRIMARY"
 	privileges	"PRIVILEGES"
 	procedure	"PROCEDURE"
 	quarter		"QUARTER"
-	quick		"QUICK"
 	read		"READ"
-	redundant	"REDUNDANT"
 	references	"REFERENCES"
 	regexpKwd	"REGEXP"
 	repeat		"REPEAT"
@@ -254,7 +247,6 @@ import (
 	replace		"REPLACE"
 	right		"RIGHT"
 	rlike		"RLIKE"
-	rollback	"ROLLBACK"
 	row 		"ROW"
 	rowFormat	"ROW_FORMAT"
 	rsh		">>"
@@ -263,14 +255,11 @@ import (
 	schemas		"SCHEMAS"
 	selectKwd	"SELECT"
 	serializable	"SERIALIZABLE"
-	session		"SESSION"
 	set		"SET"
 	share		"SHARE"
 	show		"SHOW"
-	signed		"SIGNED"
 	some 		"SOME"
 	space 		"SPACE"
-	start		"START"
 	status		"STATUS"
 	strcmp		"STRCMP"
 	sysVar		"SYS_VAR"
@@ -391,6 +380,17 @@ import (
 	fixed		"FIXED"
 	full		"FULL"
 	hash		"HASH"
+	local		"LOCAL"
+	names		"NAMES"
+	offset		"OFFSET"
+	password	"PASSWORD"
+	prepare		"PREPARE"
+	quick		"QUICK"
+	redundant	"REDUNDANT"
+	rollback	"ROLLBACK"
+	session		"SESSION"
+	signed		"SIGNED"
+	start		"START"
 
 %type   <item>
 	AdminStmt		"Check table statement or show ddl statement"
@@ -2042,8 +2042,51 @@ UnReservedKeyword:
 	{
 		$$ = $1
 	}
-|	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION" | "SIGNED"
-|	"START" | "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
+|	"LOCAL" 
+	{
+		$$ = $1
+	}
+| "NAMES" 
+	{
+		$$ = $1
+	}
+| "OFFSET" 
+	{
+		$$ = $1
+	}
+| "PASSWORD" %prec lowerThanEq 
+	{
+		$$ = $1
+	}
+| "PREPARE" 
+	{
+		$$ = $1
+	}
+| "QUICK" 
+	{
+		$$ = $1
+	}
+| "REDUNDANT" 
+	{
+		$$ = $1
+	}
+| "ROLLBACK" 
+	{
+		$$ = $1
+	}
+| "SESSION" 
+	{
+		$$ = $1
+	}
+| "SIGNED"
+	{
+		$$ = $1
+	}
+| "START" 
+	{
+		$$ = $1
+	}
+| "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 |	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE"
