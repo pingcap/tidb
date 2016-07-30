@@ -143,12 +143,8 @@ import (
 	collate 	"COLLATE"
 	collation	"COLLATION"
 	column		"COLUMN"
-	columns		"COLUMNS"
 	comment 	"COMMENT"
-	commit		"COMMIT"
 	committed	"COMMITTED"
-	compact		"COMPACT"
-	compressed	"COMPRESSED"
 	compression	"COMPRESSION"
 	connection 	"CONNECTION"
 	constraint	"CONSTRAINT"
@@ -163,7 +159,6 @@ import (
 	database	"DATABASE"
 	databases	"DATABASES"
 	ddl		"DDL"
-	deallocate	"DEALLOCATE"
 	defaultKwd	"DEFAULT"
 	delayed		"DELAYED"
 	delayKeyWrite	"DELAY_KEY_WRITE"
@@ -173,7 +168,6 @@ import (
 	disable		"DISABLE"
 	distinct	"DISTINCT"
 	div 		"DIV"
-	do		"DO"
 	drop		"DROP"
 	dual 		"DUAL"
 	duplicate	"DUPLICATE"
@@ -343,9 +337,7 @@ import (
 	precisionType	"PRECISION"
 	realType	"REAL"
 
-	dateType	"DATE"
 	timeType	"TIME"
-	datetimeType	"DATETIME"
 	timestampType	"TIMESTAMP"
 	yearType	"YEAR"
 
@@ -391,6 +383,14 @@ import (
 	boolType	"BOOL"
 	btree		"BTREE"
 	charsetKwd	"CHARSET"
+	columns		"COLUMNS"
+	commit		"COMMIT"
+	compact		"COMPACT"
+	compressed	"COMPRESSED"
+	dateType	"DATE"
+	datetimeType	"DATETIME"
+	deallocate	"DEALLOCATE"
+	do		"DO"
 
 %type   <item>
 	AdminStmt		"Check table statement or show ddl statement"
@@ -1974,8 +1974,40 @@ UnReservedKeyword:
 	{
 		$$ = $1
 	}
-| "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED"
-|	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "DYNAMIC" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FIXED" | "FULL" | "HASH"
+| "COLUMNS" 
+	{
+		$$ = $1
+	}
+| "COMMIT" 
+	{
+		$$ = $1
+	}
+| "COMPACT" 
+	{
+		$$ = $1
+	}
+| "COMPRESSED"
+	{
+		$$ = $1
+	}
+|	"DATE" 
+	{
+		$$ = $1
+	}
+| "DATETIME" 
+	{
+		$$ = $1
+	}
+| "DEALLOCATE" 
+	{
+		$$ = $1
+	}
+| "DO" 
+	{
+		$$ = $1
+	}
+| "DYNAMIC" 
+| "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FIXED" | "FULL" | "HASH"
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION" | "SIGNED"
 |	"START" | "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
@@ -2422,7 +2454,7 @@ FunctionCallKeyword:
 	}
 |	"DATE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"USER" '(' ')'
 	{
@@ -3212,7 +3244,11 @@ DeallocateStmt:
 	}
 
 DeallocateSym:
-	"DEALLOCATE" | "DROP"
+	"DEALLOCATE" 
+	{
+		$$ = $1
+	}
+| "DROP"
 
 /****************************Prepared Statement End*******************************/
 

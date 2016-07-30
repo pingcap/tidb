@@ -633,17 +633,17 @@ action		{a}{c}{t}{i}{o}{n}
 {collation}		lval.item = string(l.val)
 			return collation
 {column}		return column
-{columns}		lval.item = string(l.val)
+{columns}		lval.ident = string(l.val)
 			return columns
 {comment}		lval.item = string(l.val)
 			return comment
-{commit}		lval.item = string(l.val)
+{commit}		lval.ident = string(l.val)
 			return commit
 {committed}		lval.item = string(l.val)
 			return committed
-{compact}		lval.item = string(l.val)
+{compact}		lval.ident = string(l.val)
 			return compact
-{compressed}		lval.item = string(l.val)
+{compressed}		lval.ident = string(l.val)
 			return compressed
 {compression}		lval.item = string(l.val)
 			return compression
@@ -700,7 +700,7 @@ action		{a}{c}{t}{i}{o}{n}
 {day_second}		lval.item = string(l.val)
 			return daySecond
 {ddl}			return ddl
-{deallocate}		lval.item = string(l.val)
+{deallocate}		lval.ident = string(l.val)
 			return deallocate
 {default}		return defaultKwd
 {delayed}		return delayed
@@ -714,7 +714,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return disable
 {distinct}		return distinct
 {div}			return div
-{do}			lval.item = string(l.val)
+{do}			lval.ident = string(l.val)
 			return do
 {dual}			return dual
 {duplicate}		lval.item = string(l.val)
@@ -1085,7 +1085,7 @@ action		{a}{c}{t}{i}{o}{n}
 {real}			lval.item = string(l.val)
 			return realType
 
-{date}			lval.item = string(l.val)
+{date}			lval.ident = string(l.val)
 			return dateType
 
 {time}			lval.item = string(l.val)
@@ -1094,7 +1094,7 @@ action		{a}{c}{t}{i}{o}{n}
 {timestamp}		lval.item = string(l.val)
 			return timestampType
 
-{datetime}		lval.item = string(l.val)
+{datetime}		lval.ident = string(l.val)
 			return datetimeType
 
 {year}			lval.item = string(l.val)
