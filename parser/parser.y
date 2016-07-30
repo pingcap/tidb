@@ -46,6 +46,7 @@ import (
 
 %token	<ident>
 	/*yy:token "%c"     */	identifier      "identifier"
+	/*yy:token "\"%c\"" */	stringLit       "string literal"
 
 	abs		"ABS"
 	addDate		"ADDDATE"
@@ -112,7 +113,6 @@ import (
 
 	/*yy:token "1.%d"   */	floatLit        "floating-point literal"
 	/*yy:token "%d"     */	intLit          "integer literal"
-	/*yy:token "\"%c\"" */	stringLit       "string literal"
 	/*yy:token "%x"     */	hexLit          "hexadecimal literal"
 	/*yy:token "%b"     */	bitLit          "bit literal"
 
@@ -869,7 +869,7 @@ BeginTransactionStmt:
 BinlogStmt:
 	"BINLOG" stringLit
 	{
-		$$ = &ast.BinlogStmt{Str: $2.(string)}
+		$$ = &ast.BinlogStmt{Str: $2}
 	}
 
 ColumnDef:
@@ -1898,7 +1898,7 @@ IndexOption:
 |	"COMMENT" stringLit
 	{
 		$$ = &ast.IndexOption {
-			Comment: $2.(string),
+			Comment: $2,
 		}
 	}
 
@@ -3124,6 +3124,9 @@ PreparedStmt:
 
 PrepareSQL:
 	stringLit
+	{
+		$$ = $1
+	}
 |	UserVariable
 
 
@@ -3823,13 +3826,13 @@ UserVariable:
 Username:
 	stringLit "AT" stringLit
 	{
-		$$ = $1.(string) + "@" + $3.(string)
+		$$ = $1 + "@" + $3
 	}
 
 PasswordOpt:
 	stringLit
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 |	"PASSWORD" '(' AuthString ')'
 	{
@@ -3839,7 +3842,7 @@ PasswordOpt:
 AuthString:
 	stringLit
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 
 /****************************Admin Statement*******************************/
@@ -4187,7 +4190,7 @@ TableOption:
 	}
 |	"COMMENT" EqOpt stringLit
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionComment, StrValue: $3.(string)}
+		$$ = &ast.TableOption{Tp: ast.TableOptionComment, StrValue: $3}
 	}
 |	"AVG_ROW_LENGTH" EqOpt LengthNum
 	{
@@ -4195,7 +4198,7 @@ TableOption:
 	}
 |	"CONNECTION" EqOpt stringLit
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionConnection, StrValue: $3.(string)}
+		$$ = &ast.TableOption{Tp: ast.TableOptionConnection, StrValue: $3}
 	}
 |	"CHECKSUM" EqOpt LengthNum
 	{
@@ -4203,7 +4206,7 @@ TableOption:
 	}
 |	"PASSWORD" EqOpt stringLit
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionPassword, StrValue: $3.(string)}
+		$$ = &ast.TableOption{Tp: ast.TableOptionPassword, StrValue: $3}
 	}
 |	"COMPRESSION" EqOpt Identifier
 	{
@@ -4711,17 +4714,17 @@ OptCollate:
 StringList:
 	stringLit
 	{
-		$$ = []string{$1.(string)}
+		$$ = []string{$1}
 	}
 |	StringList ',' stringLit
 	{
-		$$ = append($1.([]string), $3.(string))
+		$$ = append($1.([]string), $3)
 	}
 
 StringName:
 	stringLit
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 |	Identifier
 	{
@@ -4854,6 +4857,9 @@ AuthOption:
 
 HashString:
 	stringLit
+	{
+		$$ = $1
+	}
 
 /*************************************************************************************
  * Grant statement

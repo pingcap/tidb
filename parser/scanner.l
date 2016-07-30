@@ -1177,7 +1177,7 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)
 	}
-	lval.item = v
+	lval.ident = v
 	return stringLit
 }
 
@@ -1225,7 +1225,7 @@ func (l *lexer) hex(lval *yySymType) int {
 			l.Errorf("hex literal: %v", err)
 			return int(unicode.ReplacementChar)
 		}
-		lval.item = hexStr
+		lval.ident = hexStr
 		return stringLit
 	}
 	lval.item = h
