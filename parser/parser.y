@@ -124,12 +124,10 @@ import (
 	and		"AND"
 	andand		"&&"
 	andnot		"&^"
-	any 		"ANY"
 	as		"AS"
 	asc		"ASC"
 	assignmentEq	":="
 	at		"AT"
-	avgRowLength	"AVG_ROW_LENGTH"
 	between		"BETWEEN"
 	binlog		"BINLOG"
 	both		"BOTH"
@@ -141,12 +139,9 @@ import (
 	check 		"CHECK"
 	checksum	"CHECKSUM"
 	collate 	"COLLATE"
-	collation	"COLLATION"
 	column		"COLUMN"
-	comment 	"COMMENT"
 	committed	"COMMITTED"
 	compression	"COMPRESSION"
-	connection 	"CONNECTION"
 	constraint	"CONSTRAINT"
 	convert		"CONVERT"
 	create		"CREATE"
@@ -187,13 +182,11 @@ import (
 	from		"FROM"
 	fulltext	"FULLTEXT"
 	ge		">="
-	global		"GLOBAL"
 	grant		"GRANT"
 	grants		"GRANTS"
 	group		"GROUP"
 	having		"HAVING"
 	highPriority	"HIGH_PRIORITY"
-	identified	"IDENTIFIED"
 	ignore		"IGNORE"
 	ifKwd		"IF"
 	in		"IN"
@@ -220,7 +213,6 @@ import (
 	maxRows		"MAX_ROWS"
 	minRows		"MIN_ROWS"
 	mod 		"MOD"
-	mode		"MODE"
 	national	"NATIONAL"
 	neq		"!="
 	neqSynonym	"<>"
@@ -258,38 +250,28 @@ import (
 	set		"SET"
 	share		"SHARE"
 	show		"SHOW"
-	some 		"SOME"
 	space 		"SPACE"
-	status		"STATUS"
 	strcmp		"STRCMP"
 	sysVar		"SYS_VAR"
 	sysDate		"SYSDATE"
 	tableKwd	"TABLE"
-	tables		"TABLES"
 	then		"THEN"
 	to		"TO"
 	trailing	"TRAILING"
-	transaction	"TRANSACTION"
 	triggers	"TRIGGERS"
 	trueKwd		"true"
-	truncate	"TRUNCATE"
 	uncommitted	"UNCOMMITTED"
 	underscoreCS	"UNDERSCORE_CHARSET"
-	unknown 	"UNKNOWN"
 	union		"UNION"
 	unique		"UNIQUE"
 	unlock		"UNLOCK"
 	unsigned	"UNSIGNED"
 	update		"UPDATE"
 	use		"USE"
-	user		"USER"
 	using		"USING"
 	userVar		"USER_VAR"
-	value		"VALUE"
 	values		"VALUES"
 	variables	"VARIABLES"
-	warnings	"WARNINGS"
-	week		"WEEK"
 	when		"WHEN"
 	where		"WHERE"
 	write		"WRITE"
@@ -317,9 +299,6 @@ import (
 	precisionType	"PRECISION"
 	realType	"REAL"
 
-	timeType	"TIME"
-	timestampType	"TIMESTAMP"
-	yearType	"YEAR"
 
 	charType	"CHAR"
 	varcharType	"VARCHAR"
@@ -330,7 +309,6 @@ import (
 	mediumblobType	"MEDIUMBLOB"
 	longblobType	"LONGBLOB"
 	tinytextType	"TINYTEXT"
-	textType	"TEXT"
 	mediumtextType	"MEDIUMTEXT"
 	longtextType	"LONGTEXT"
 
@@ -354,8 +332,10 @@ import (
 
 %token	<ident>
 	after		"AFTER"
+	any 		"ANY"
 	ascii		"ASCII"
 	autoIncrement	"AUTO_INCREMENT"
+	avgRowLength	"AVG_ROW_LENGTH"
 	avg		"AVG"
 	begin		"BEGIN"
 	bitType		"BIT"
@@ -363,10 +343,13 @@ import (
 	boolType	"BOOL"
 	btree		"BTREE"
 	charsetKwd	"CHARSET"
+	collation	"COLLATION"
 	columns		"COLUMNS"
+	comment 	"COMMENT"
 	commit		"COMMIT"
 	compact		"COMPACT"
 	compressed	"COMPRESSED"
+	connection 	"CONNECTION"
 	dateType	"DATE"
 	datetimeType	"DATETIME"
 	deallocate	"DEALLOCATE"
@@ -380,7 +363,9 @@ import (
 	fixed		"FIXED"
 	full		"FULL"
 	hash		"HASH"
+	identified	"IDENTIFIED"
 	local		"LOCAL"
+	mode		"MODE"
 	names		"NAMES"
 	offset		"OFFSET"
 	password	"PASSWORD"
@@ -391,6 +376,21 @@ import (
 	session		"SESSION"
 	signed		"SIGNED"
 	start		"START"
+	status		"STATUS"
+	some 		"SOME"
+	global		"GLOBAL"
+	tables		"TABLES"
+	textType	"TEXT"
+	timeType	"TIME"
+	timestampType	"TIMESTAMP"
+	transaction	"TRANSACTION"
+	truncate	"TRUNCATE"
+	unknown 	"UNKNOWN"
+	user		"USER"
+	value		"VALUE"
+	warnings	"WARNINGS"
+	week		"WEEK"
+	yearType	"YEAR"
 
 %type   <item>
 	AdminStmt		"Check table statement or show ddl statement"
@@ -2086,9 +2086,95 @@ UnReservedKeyword:
 	{
 		$$ = $1
 	}
-| "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
-|	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
-|	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
+| "STATUS" 
+	{
+		$$ = $1
+	}
+| "GLOBAL" 
+	{
+		$$ = $1
+	}
+| "TABLES"
+	{
+		$$ = $1
+	}
+| "TEXT" 
+	{
+		$$ = $1
+	}
+| "TIME" 
+	{
+		$$ = $1
+	}
+| "TIMESTAMP" 
+	{
+		$$ = $1
+	}
+| "TRANSACTION" 
+	{
+		$$ = $1
+	}
+| "TRUNCATE" 
+	{
+		$$ = $1
+	}
+| "UNKNOWN"
+	{
+		$$ = $1
+	}
+| "VALUE" 
+	{
+		$$ = $1
+	}
+| "WARNINGS" 
+	{
+		$$ = $1
+	}
+| "YEAR" 
+	{
+		$$ = $1
+	}
+| "MODE" 
+	{
+		$$ = $1
+	}
+| "WEEK" 
+	{
+		$$ = $1
+	}
+| "ANY" 
+	{
+		$$ = $1
+	}
+| "SOME" 
+	{
+		$$ = $1
+	}
+| "USER" 
+	{
+		$$ = $1
+	}
+| "IDENTIFIED" 
+	{
+		$$ = $1
+	}
+| "COLLATION"
+	{
+		$$ = $1
+	}
+|	"COMMENT" 
+	{
+		$$ = $1
+	}
+| "AVG_ROW_LENGTH" 
+	{
+		$$ = $1
+	}
+| "CONNECTION" 
+	{
+		$$ = $1
+	}
+| "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 |	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE"
 |	"ISOLATION" |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
 |	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG"
@@ -2164,6 +2250,9 @@ InsertValues:
 
 ValueSym:
 	"VALUE"
+	{
+		$$ = $1
+	}
 |	"VALUES"
 
 ExpressionListList:
@@ -2535,7 +2624,7 @@ FunctionCallKeyword:
 	}
 |	"USER" '(' ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
 |	"VALUES" '(' ColumnName ')' %prec lowerThanInsertValues
 	{
@@ -2544,11 +2633,11 @@ FunctionCallKeyword:
 	}
 |	"WEEK" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"YEAR" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 
 FunctionCallNonKeyword:
@@ -2850,7 +2939,7 @@ FunctionCallNonKeyword:
 	}
 |	"TIME" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"TRIM" '(' Expression ')'
 	{
@@ -3033,11 +3122,19 @@ TimeUnit:
 		$$ = $1
 	}
 | "WEEK"
+	{
+		$$ = $1
+	}
 | "MONTH"
 	{
 		$$ = $1
 	}
-| "QUARTER" | "YEAR" | "SECOND_MICROSECOND" | "MINUTE_MICROSECOND"
+| "QUARTER" 
+| "YEAR" 
+	{
+		$$ = $1
+	}
+| "SECOND_MICROSECOND" | "MINUTE_MICROSECOND"
 |	"MINUTE_SECOND" | "HOUR_MICROSECOND" | "HOUR_SECOND" | "HOUR_MINUTE"
 |	"DAY_MICROSECOND" | "DAY_SECOND" | "DAY_MINUTE" | "DAY_HOUR" | "YEAR_MONTH"
 
