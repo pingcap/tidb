@@ -381,12 +381,13 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 	} else {
 		err = cc.writeOK()
 	}
-	runTime := time.Now().Sub(startTs)
-	if runTime < time.Second {
-		log.Infof("[TIME_QUERY] %v %s", runTime, sql)
+	costTime := time.Now().Sub(startTs)
+	if costTime < time.Second {
+		log.Infof("[TIME_QUERY] %v %s", costTime, sql)
 	} else {
-		log.Warnf("[TIME_QUERY] %v %s", runTime, sql)
+		log.Warnf("[TIME_QUERY] %v %s", costTime, sql)
 	}
+	metrics.Query(costTime)
 	return errors.Trace(err)
 }
 
