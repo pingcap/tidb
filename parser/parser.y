@@ -129,7 +129,6 @@ import (
 	assignmentEq	":="
 	at		"AT"
 	between		"BETWEEN"
-	binlog		"BINLOG"
 	both		"BOTH"
 	by		"BY"
 	byteType	"BYTE"
@@ -139,7 +138,6 @@ import (
 	check 		"CHECK"
 	collate 	"COLLATE"
 	column		"COLUMN"
-	committed	"COMMITTED"
 	constraint	"CONSTRAINT"
 	convert		"CONVERT"
 	create		"CREATE"
@@ -157,14 +155,12 @@ import (
 	deleteKwd	"DELETE"
 	desc		"DESC"
 	describe	"DESCRIBE"
-	disable		"DISABLE"
 	distinct	"DISTINCT"
 	div 		"DIV"
 	drop		"DROP"
 	dual 		"DUAL"
 	duplicate	"DUPLICATE"
 	elseKwd		"ELSE"
-	enable		"ENABLE"
 	enum 		"ENUM"
 	eq		"="
 	exists		"EXISTS"
@@ -196,21 +192,18 @@ import (
 	le		"<="
 	leading		"LEADING"
 	left		"LEFT"
-	level		"LEVEL"
 	like		"LIKE"
 	limit		"LIMIT"
 	lock		"LOCK"
 	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
 	mod 		"MOD"
-	national	"NATIONAL"
 	neq		"!="
 	neqSynonym	"<>"
 	not		"NOT"
 	null		"NULL"
 	nulleq		"<=>"
 	on		"ON"
-	only		"ONLY"
 	option		"OPTION"
 	or		"OR"
 	order		"ORDER"
@@ -218,7 +211,6 @@ import (
 	outer		"OUTER"
 	placeholder	"PLACEHOLDER"
 	primary		"PRIMARY"
-	privileges	"PRIVILEGES"
 	procedure	"PROCEDURE"
 	read		"READ"
 	references	"REFERENCES"
@@ -228,15 +220,12 @@ import (
 	right		"RIGHT"
 	rlike		"RLIKE"
 	rsh		">>"
-	reverse		"REVERSE"
 	schema		"SCHEMA"
 	schemas		"SCHEMAS"
 	selectKwd	"SELECT"
-	serializable	"SERIALIZABLE"
 	set		"SET"
 	share		"SHARE"
 	show		"SHOW"
-	space 		"SPACE"
 	strcmp		"STRCMP"
 	sysVar		"SYS_VAR"
 	sysDate		"SYSDATE"
@@ -245,7 +234,6 @@ import (
 	to		"TO"
 	trailing	"TRAILING"
 	trueKwd		"true"
-	uncommitted	"UNCOMMITTED"
 	underscoreCS	"UNDERSCORE_CHARSET"
 	union		"UNION"
 	unique		"UNIQUE"
@@ -256,15 +244,12 @@ import (
 	using		"USING"
 	userVar		"USER_VAR"
 	values		"VALUES"
-	variables	"VARIABLES"
 	when		"WHEN"
 	where		"WHERE"
 	write		"WRITE"
 	xor 		"XOR"
 	zerofill	"ZEROFILL"
 
-	sqlCache	"SQL_CACHE"
-	sqlNoCache	"SQL_NO_CACHE"
 
 	currentTs	"CURRENT_TIMESTAMP"
 	localTime	"LOCALTIME"
@@ -312,10 +297,9 @@ import (
 
 	restrict	"RESTRICT"
 	cascade		"CASCADE"
-	no		"NO"
-	action		"ACTION"
 
 %token	<ident>
+	action		"ACTION"
 	after		"AFTER"
 	any 		"ANY"
 	ascii		"ASCII"
@@ -323,6 +307,7 @@ import (
 	avgRowLength	"AVG_ROW_LENGTH"
 	avg		"AVG"
 	begin		"BEGIN"
+	binlog		"BINLOG"
 	bitType		"BIT"
 	booleanType	"BOOLEAN"
 	boolType	"BOOL"
@@ -333,6 +318,7 @@ import (
 	columns		"COLUMNS"
 	comment 	"COMMENT"
 	commit		"COMMIT"
+	committed	"COMMITTED"
 	compact		"COMPACT"
 	compressed	"COMPRESSED"
 	compression	"COMPRESSION"
@@ -341,8 +327,10 @@ import (
 	datetimeType	"DATETIME"
 	deallocate	"DEALLOCATE"
 	delayKeyWrite	"DELAY_KEY_WRITE"
+	disable		"DISABLE"
 	do		"DO"
 	dynamic		"DYNAMIC"
+	enable		"ENABLE"
 	end		"END"
 	engine		"ENGINE"
 	engines		"ENGINES"
@@ -358,22 +346,32 @@ import (
 	isolation	"ISOLATION"
 	keyBlockSize	"KEY_BLOCK_SIZE"
 	local		"LOCAL"
+	level		"LEVEL"
 	mode		"MODE"
 	maxRows		"MAX_ROWS"
 	minRows		"MIN_ROWS"
 	names		"NAMES"
+	national	"NATIONAL"
+	no		"NO"
 	offset		"OFFSET"
+	only		"ONLY"
 	password	"PASSWORD"
 	prepare		"PREPARE"
+	privileges	"PRIVILEGES"
 	quarter		"QUARTER"
 	quick		"QUICK"
 	redundant	"REDUNDANT"
 	repeatable	"REPEATABLE"
+	reverse		"REVERSE"
 	rollback	"ROLLBACK"
 	row 		"ROW"
 	rowFormat	"ROW_FORMAT"
+	serializable	"SERIALIZABLE"
 	session		"SESSION"
 	signed		"SIGNED"
+	space 		"SPACE"
+	sqlCache	"SQL_CACHE"
+	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
 	status		"STATUS"
 	some 		"SOME"
@@ -385,9 +383,11 @@ import (
 	transaction	"TRANSACTION"
 	triggers	"TRIGGERS"
 	truncate	"TRUNCATE"
+	uncommitted	"UNCOMMITTED"
 	unknown 	"UNKNOWN"
 	user		"USER"
 	value		"VALUE"
+	variables	"VARIABLES"
 	warnings	"WARNINGS"
 	week		"WEEK"
 	yearType	"YEAR"
@@ -610,7 +610,6 @@ import (
 	WhereClause		"WHERE clause"
 	WhereClauseOptional	"Optinal WHERE clause"
 
-	UnReservedKeyword	"MySQL unreserved keywords"
 
 	WhenClause		"When clause"
 	WhenClauseList		"When clause list"
@@ -647,6 +646,7 @@ import (
 %type <ident>
 	Identifier		"identifier or unreserved keyword"
 	NotKeywordToken		"Tokens not mysql keyword but treated specially"
+	UnReservedKeyword	"MySQL unreserved keywords"
 
 %token	tableRefPriority
 
@@ -1927,320 +1927,101 @@ IndexTypeOpt:
 Identifier:
 identifier
 | UnReservedKeyword
-	{
-		if str, ok := $1.(string); ok {
-			$$ = str
-		}
-	}
 | NotKeywordToken
 
 UnReservedKeyword:
-	"ASCII" 
-	{
-		$$ = $1
-	}
-| "AUTO_INCREMENT" 
-	{
-		$$ = $1
-	}
-| "AFTER" 
-	{
-		$$ = $1
-	}
-| "AVG" 
-	{
-		$$ = $1
-	}
-| "BEGIN" 
-	{
-		$$ = $1
-	}
-| "BIT" 
-	{
-		$$ = $1
-	}
-| "BOOL" 
-	{
-		$$ = $1
-	}
-| "BOOLEAN" 
-	{
-		$$ = $1
-	}
-| "BTREE" 
-	{
-		$$ = $1
-	}
-| "CHARSET" 
-	{
-		$$ = $1
-	}
-| "COLUMNS" 
-	{
-		$$ = $1
-	}
-| "COMMIT" 
-	{
-		$$ = $1
-	}
-| "COMPACT" 
-	{
-		$$ = $1
-	}
+ "ACTION"
+| "ASCII"
+| "AUTO_INCREMENT"
+| "AFTER"
+| "AVG"
+| "BEGIN"
+| "BIT"
+| "BOOL"
+| "BOOLEAN"
+| "BTREE"
+| "CHARSET"
+| "COLUMNS"
+| "COMMIT"
+| "COMPACT"
 | "COMPRESSED"
-	{
-		$$ = $1
-	}
-|	"DATE" 
-	{
-		$$ = $1
-	}
-| "DATETIME" 
-	{
-		$$ = $1
-	}
-| "DEALLOCATE" 
-	{
-		$$ = $1
-	}
-| "DO" 
-	{
-		$$ = $1
-	}
-| "DYNAMIC" 
-	{
-		$$ = $1
-	}
-| "END" 
-	{
-		$$ = $1
-	}
-| "ENGINE" 
-	{
-		$$ = $1
-	}
-| "ENGINES" 
-	{
-		$$ = $1
-	}
-| "EXECUTE" 
-	{
-		$$ = $1
-	}
-| "FIRST" 
-	{
-		$$ = $1
-	}
-| "FIXED" 
-	{
-		$$ = $1
-	}
-| "FULL" 
-	{
-		$$ = $1
-	}
+| "DATE"
+| "DATETIME"
+| "DEALLOCATE"
+| "DO"
+| "DYNAMIC"
+| "END"
+| "ENGINE"
+| "ENGINES"
+| "ESCAPE"
+| "EXECUTE"
+| "FIELDS"
+| "FIRST"
+| "FIXED"
+| "FULL"
 | "HASH"
-	{
-		$$ = $1
-	}
-|	"LOCAL" 
-	{
-		$$ = $1
-	}
-| "NAMES" 
-	{
-		$$ = $1
-	}
-| "OFFSET" 
-	{
-		$$ = $1
-	}
-| "PASSWORD" %prec lowerThanEq 
-	{
-		$$ = $1
-	}
-| "PREPARE" 
-	{
-		$$ = $1
-	}
-| "QUICK" 
-	{
-		$$ = $1
-	}
-| "REDUNDANT" 
-	{
-		$$ = $1
-	}
-| "ROLLBACK" 
-	{
-		$$ = $1
-	}
-| "SESSION" 
-	{
-		$$ = $1
-	}
+| "LOCAL"
+| "NAMES"
+| "OFFSET"
+| "PASSWORD" %prec lowerThanEq
+| "PREPARE"
+| "QUICK"
+| "REDUNDANT"
+| "ROLLBACK"
+| "SESSION"
 | "SIGNED"
-	{
-		$$ = $1
-	}
-| "START" 
-	{
-		$$ = $1
-	}
-| "STATUS" 
-	{
-		$$ = $1
-	}
-| "GLOBAL" 
-	{
-		$$ = $1
-	}
+| "START"
+| "STATUS"
+| "GLOBAL"
 | "TABLES"
-	{
-		$$ = $1
-	}
-| "TEXT" 
-	{
-		$$ = $1
-	}
-| "TIME" 
-	{
-		$$ = $1
-	}
-| "TIMESTAMP" 
-	{
-		$$ = $1
-	}
-| "TRANSACTION" 
-	{
-		$$ = $1
-	}
-| "TRUNCATE" 
-	{
-		$$ = $1
-	}
+| "TEXT"
+| "TIME"
+| "TIMESTAMP"
+| "TRANSACTION"
+| "TRUNCATE"
 | "UNKNOWN"
-	{
-		$$ = $1
-	}
-| "VALUE" 
-	{
-		$$ = $1
-	}
-| "WARNINGS" 
-	{
-		$$ = $1
-	}
-| "YEAR" 
-	{
-		$$ = $1
-	}
+| "VALUE"
+| "WARNINGS"
+| "YEAR"
 | "MODE" 
-	{
-		$$ = $1
-	}
 | "WEEK" 
-	{
-		$$ = $1
-	}
-| "ANY" 
-	{
-		$$ = $1
-	}
-| "SOME" 
-	{
-		$$ = $1
-	}
-| "USER" 
-	{
-		$$ = $1
-	}
-| "IDENTIFIED" 
-	{
-		$$ = $1
-	}
+| "ANY"
+| "SOME"
+| "USER"
+| "IDENTIFIED"
 | "COLLATION"
-	{
-		$$ = $1
-	}
-|	"COMMENT" 
-	{
-		$$ = $1
-	}
-| "AVG_ROW_LENGTH" 
-	{
-		$$ = $1
-	}
-| "CONNECTION" 
-	{
-		$$ = $1
-	}
-| "CHECKSUM" 
-	{
-		$$ = $1
-	}
-| "COMPRESSION" 
-	{
-		$$ = $1
-	}
-| "KEY_BLOCK_SIZE" 
-	{
-		$$ = $1
-	}
-| "MAX_ROWS" 
-	{
-		$$ = $1
-	}
+| "COMMENT"
+| "AVG_ROW_LENGTH"
+| "CONNECTION"
+| "CHECKSUM"
+| "COMPRESSION"
+| "KEY_BLOCK_SIZE"
+| "MAX_ROWS"
 | "MIN_ROWS"
-	{
-		$$ = $1
-	}
-|	"NATIONAL" 
-	{
-		$$ = $1
-	}
-| "ROW" 
-	{
-		$$ = $1
-	}
-| "ROW_FORMAT" 
-	{
-		$$ = $1
-	}
-| "QUARTER" 
-	{
-		$$ = $1
-	}
-| "ESCAPE" 
-	{
-		$$ = $1
-	}
-| "GRANTS" 
-	{
-		$$ = $1
-	}
-| "FIELDS" 
-	{
-		$$ = $1
-	}
-| "TRIGGERS" 
-	{
-		$$ = $1
-	}
+| "NATIONAL"
+| "ROW"
+| "ROW_FORMAT"
+| "QUARTER"
+| "GRANTS"
+| "TRIGGERS"
 | "DELAY_KEY_WRITE"
-	{
-		$$ = $1
-	}
-|	"ISOLATION" 
-	{
-		$$ = $1
-	}
-|	"REPEATABLE" 
-	{
-		$$ = $1
-	}
-| "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
-|	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG"
+| "ISOLATION"
+| "REPEATABLE"
+| "COMMITTED"
+| "UNCOMMITTED"
+| "ONLY"
+| "SERIALIZABLE"
+| "LEVEL"
+| "VARIABLES"
+| "SQL_CACHE"
+| "SQL_NO_CACHE"
+| "DISABLE" 
+| "ENABLE"
+| "REVERSE"
+| "SPACE"
+| "PRIVILEGES"
+| "NO"
+| "BINLOG"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
@@ -2935,7 +2716,7 @@ FunctionCallNonKeyword:
 	}
 |	"REVERSE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"RTRIM" '(' Expression ')'
 	{
@@ -2951,7 +2732,7 @@ FunctionCallNonKeyword:
 	}
 |	"SPACE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"STRCMP" '(' Expression ',' Expression ')'
 	{
@@ -4022,13 +3803,13 @@ TransactionChars:
 TransactionChar:
 	"ISOLATION" "LEVEL" IsolationLevel {}
 |	"READ" "WRITE"
-|	"READ" "ONLY"
+|	"READ" "ONLY" {}
 
 IsolationLevel:
 	"REPEATABLE" "READ" {}
-|	"READ"	"COMMITTED"
-|	"READ"	"UNCOMMITTED"
-|	"SERIALIZABLE"
+|	"READ"	"COMMITTED" {}
+|	"READ"	"UNCOMMITTED" {}
+|	"SERIALIZABLE" {}
 
 VariableAssignment:
 	Identifier eq Expression

@@ -612,7 +612,7 @@ action		{a}{c}{t}{i}{o}{n}
 {begin}			lval.ident = string(l.val)
 			return begin
 {between}		return between
-{binlog}		lval.item = string(l.val)
+{binlog}		lval.ident= string(l.val)
 			return binlog
 {both}			return both
 {btree}			lval.ident = string(l.val)
@@ -639,7 +639,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return comment
 {commit}		lval.ident = string(l.val)
 			return commit
-{committed}		lval.item = string(l.val)
+{committed}		lval.ident = string(l.val)
 			return committed
 {compact}		lval.ident = string(l.val)
 			return compact
@@ -710,7 +710,7 @@ action		{a}{c}{t}{i}{o}{n}
 {desc}			return desc
 {describe}		return describe
 {drop}			return drop
-{disable}		lval.item = string(l.val)
+{disable}		lval.ident = string(l.val)
 			return disable
 {distinct}		return distinct
 {div}			return div
@@ -722,7 +722,7 @@ action		{a}{c}{t}{i}{o}{n}
 {dynamic}		lval.ident = string(l.val)
 			return dynamic
 {else}			return elseKwd
-{enable}		lval.item = string(l.val)
+{enable}		lval.ident = string(l.val)
 			return enable
 {end}			lval.ident = string(l.val)
 			return end
@@ -806,7 +806,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return left
 {length}		lval.ident = string(l.val)
 			return length
-{level}			lval.item = string(l.val)
+{level}			lval.ident = string(l.val)
 			return level
 {like}			return like
 {limit}			return limit
@@ -853,7 +853,7 @@ action		{a}{c}{t}{i}{o}{n}
 {offset}		lval.ident = string(l.val)
 			return offset
 {on}			return on
-{only}			lval.item = string(l.val)
+{only}			lval.ident = string(l.val)
 			return only
 {option}		return option
 {order}			return order
@@ -868,7 +868,7 @@ action		{a}{c}{t}{i}{o}{n}
 {prepare}		lval.ident = string(l.val)
 			return prepare
 {primary}		return primary
-{privileges}		lval.item = string(l.val)
+{privileges}		lval.ident = string(l.val)
 			return privileges
 {procedure}		return procedure
 {quarter}		lval.ident = string(l.val)
@@ -895,7 +895,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return session
 {some}			lval.ident = string(l.val)
 			return some
-{space}			lval.item = string(l.val)
+{space}			lval.ident = string(l.val)
 			return space
 {start}			lval.ident = string(l.val)
 			return start
@@ -923,7 +923,7 @@ action		{a}{c}{t}{i}{o}{n}
 {rlike}			return rlike
 {rtrim}			lval.ident = string(l.val)
 			return rtrim
-{reverse}		lval.item = string(l.val)
+{reverse}		lval.ident = string(l.val)
 			return reverse
 
 {sys_var}		lval.item = string(l.val)
@@ -972,7 +972,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return trim
 {truncate}		lval.item = string(l.val)
 			return truncate
-{uncommitted}		lval.item = string(l.val)
+{uncommitted}		lval.ident = string(l.val)
 			return uncommitted
 {union}			return union
 {unique}		return unique
@@ -993,7 +993,7 @@ action		{a}{c}{t}{i}{o}{n}
 {value}			lval.ident = string(l.val)
 			return value
 {values}		return values
-{variables}		lval.item = string(l.val)
+{variables}		lval.ident = string(l.val)
 			return variables
 {version}		lval.ident = string(l.val)
 			return version
@@ -1018,9 +1018,9 @@ action		{a}{c}{t}{i}{o}{n}
 			return restrict
 {cascade}		lval.item = string(l.val)
 			return cascade
-{no}			lval.item = string(l.val)
+{no}			lval.ident = string(l.val)
 			return no
-{action}		lval.item = string(l.val)
+{action}		lval.ident = string(l.val)
 			return action
 
 {signed}		lval.ident = string(l.val)
@@ -1037,9 +1037,9 @@ action		{a}{c}{t}{i}{o}{n}
 
 {calc_found_rows}	lval.ident = string(l.val)
 			return calcFoundRows
-{sql_cache}		lval.item = string(l.val)
+{sql_cache}		lval.ident = string(l.val)
 			return sqlCache
-{sql_no_cache}		lval.item = string(l.val)
+{sql_no_cache}		lval.ident = string(l.val)
 			return sqlNoCache
 
 {current_ts}		lval.item = string(l.val)
