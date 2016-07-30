@@ -625,7 +625,7 @@ action		{a}{c}{t}{i}{o}{n}
 {charset}		lval.ident = string(l.val)
 			return charsetKwd
 {check}			return check
-{checksum}		lval.item = string(l.val)
+{checksum}		lval.ident = string(l.val)
 			return checksum
 {coalesce}		lval.ident = string(l.val)
 			return coalesce
@@ -645,7 +645,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return compact
 {compressed}		lval.ident = string(l.val)
 			return compressed
-{compression}		lval.item = string(l.val)
+{compression}		lval.ident = string(l.val)
 			return compression
 {concat}		lval.ident = string(l.val)
 			return concat
@@ -704,7 +704,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return deallocate
 {default}		return defaultKwd
 {delayed}		return delayed
-{delay_key_write}	lval.item = string(l.val)
+{delay_key_write}	lval.ident = string(l.val)
 			return delayKeyWrite
 {delete}		return deleteKwd
 {desc}			return desc
@@ -733,13 +733,13 @@ action		{a}{c}{t}{i}{o}{n}
 {execute}		lval.ident = string(l.val)
 			return execute
 {enum}			return enum
-{escape}		lval.item = string(l.val)
+{escape}		lval.ident = string(l.val)
 			return escape
 {exists}		return exists
 {explain}		return explain
 {extract}		lval.item = string(l.val)
 			return extract
-{fields}		lval.item = string(l.val)
+{fields}		lval.ident = string(l.val)
 			return fields
 {first}			lval.ident = string(l.val)
 			return first
@@ -755,7 +755,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return full
 {fulltext}		return fulltext
 {grant}			return grant
-{grants}		lval.item = string(l.val)
+{grants}		lval.ident = string(l.val)
 			return grants
 {greatest}		lval.ident = string(l.val)
 			return greatest
@@ -792,11 +792,11 @@ action		{a}{c}{t}{i}{o}{n}
 {into}			return into
 {in}			return in
 {is}			return is
-{isolation}		lval.item = string(l.val)
+{isolation}		lval.ident = string(l.val)
 			return isolation
 {join}			return join
 {key}			return key
-{key_block_size}	lval.item = string(l.val)
+{key_block_size}	lval.ident = string(l.val)
 			return keyBlockSize
 {keys}			return keys
 {last_insert_id}	lval.ident = string(l.val)
@@ -824,7 +824,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return ltrim
 {max}			lval.ident = string(l.val)
 			return max
-{max_rows}		lval.item = string(l.val)
+{max_rows}		lval.ident = string(l.val)
 			return maxRows
 {microsecond}		lval.ident = string(l.val)
 			return microsecond
@@ -836,7 +836,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return minuteMicrosecond
 {minute_second}		lval.item = string(l.val)
 			return minuteSecond
-{min_rows}		lval.item = string(l.val)
+{min_rows}		lval.ident = string(l.val)
 			return minRows
 {mod}			return mod
 {mode}			lval.ident = string(l.val)
@@ -847,7 +847,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return monthname
 {names}			lval.ident = string(l.val)
 			return names
-{national}		lval.item = string(l.val)
+{national}		lval.ident = string(l.val)
 			return national
 {not}			return not
 {offset}		lval.ident = string(l.val)
@@ -871,7 +871,7 @@ action		{a}{c}{t}{i}{o}{n}
 {privileges}		lval.item = string(l.val)
 			return privileges
 {procedure}		return procedure
-{quarter}		lval.item = string(l.val)
+{quarter}		lval.ident = string(l.val)
 			return quarter
 {quick}			lval.ident = string(l.val)
 			return quick
@@ -882,9 +882,9 @@ action		{a}{c}{t}{i}{o}{n}
 			return rollback
 {round}			lval.ident = string(l.val)
 			return round
-{row}			lval.item = string(l.val)
+{row}			lval.ident = string(l.val)
 			return row
-{row_format}		lval.item = string(l.val)
+{row_format}		lval.ident = string(l.val)
 			return rowFormat
 {schema}		lval.item = string(l.val)
 			return schema
@@ -914,7 +914,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return releaseLock
 {repeat}		lval.item = string(l.val)
 			return repeat
-{repeatable}		lval.item = string(l.val)
+{repeatable}		lval.ident = string(l.val)
 			return repeatable
 {regexp}		return regexpKwd
 {replace}		lval.item = string(l.val)
@@ -966,7 +966,7 @@ action		{a}{c}{t}{i}{o}{n}
 {trailing}		return trailing
 {transaction}		lval.ident = string(l.val)
 			return transaction
-{triggers}		lval.item = string(l.val)
+{triggers}		lval.ident = string(l.val)
 			return triggers
 {trim}			lval.ident = string(l.val)
 			return trim

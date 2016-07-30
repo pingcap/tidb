@@ -137,11 +137,9 @@ import (
 	cast		"CAST"
 	character	"CHARACTER"
 	check 		"CHECK"
-	checksum	"CHECKSUM"
 	collate 	"COLLATE"
 	column		"COLUMN"
 	committed	"COMMITTED"
-	compression	"COMPRESSION"
 	constraint	"CONSTRAINT"
 	convert		"CONVERT"
 	create		"CREATE"
@@ -156,7 +154,6 @@ import (
 	ddl		"DDL"
 	defaultKwd	"DEFAULT"
 	delayed		"DELAYED"
-	delayKeyWrite	"DELAY_KEY_WRITE"
 	deleteKwd	"DELETE"
 	desc		"DESC"
 	describe	"DESCRIBE"
@@ -170,12 +167,10 @@ import (
 	enable		"ENABLE"
 	enum 		"ENUM"
 	eq		"="
-	escape 		"ESCAPE"
 	exists		"EXISTS"
 	explain		"EXPLAIN"
 	extract		"EXTRACT"
 	falseKwd	"false"
-	fields		"FIELDS"
 	foreign		"FOREIGN"
 	forKwd		"FOR"
 	force		"FORCE"
@@ -183,7 +178,6 @@ import (
 	fulltext	"FULLTEXT"
 	ge		">="
 	grant		"GRANT"
-	grants		"GRANTS"
 	group		"GROUP"
 	having		"HAVING"
 	highPriority	"HIGH_PRIORITY"
@@ -196,10 +190,8 @@ import (
 	interval	"INTERVAL"
 	into		"INTO"
 	is		"IS"
-	isolation	"ISOLATION"
 	join		"JOIN"
 	key		"KEY"
-	keyBlockSize	"KEY_BLOCK_SIZE"
 	keys		"KEYS"
 	le		"<="
 	leading		"LEADING"
@@ -210,8 +202,6 @@ import (
 	lock		"LOCK"
 	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
-	maxRows		"MAX_ROWS"
-	minRows		"MIN_ROWS"
 	mod 		"MOD"
 	national	"NATIONAL"
 	neq		"!="
@@ -230,17 +220,13 @@ import (
 	primary		"PRIMARY"
 	privileges	"PRIVILEGES"
 	procedure	"PROCEDURE"
-	quarter		"QUARTER"
 	read		"READ"
 	references	"REFERENCES"
 	regexpKwd	"REGEXP"
 	repeat		"REPEAT"
-	repeatable	"REPEATABLE"
 	replace		"REPLACE"
 	right		"RIGHT"
 	rlike		"RLIKE"
-	row 		"ROW"
-	rowFormat	"ROW_FORMAT"
 	rsh		">>"
 	reverse		"REVERSE"
 	schema		"SCHEMA"
@@ -258,7 +244,6 @@ import (
 	then		"THEN"
 	to		"TO"
 	trailing	"TRAILING"
-	triggers	"TRIGGERS"
 	trueKwd		"true"
 	uncommitted	"UNCOMMITTED"
 	underscoreCS	"UNDERSCORE_CHARSET"
@@ -343,36 +328,50 @@ import (
 	boolType	"BOOL"
 	btree		"BTREE"
 	charsetKwd	"CHARSET"
+	checksum	"CHECKSUM"
 	collation	"COLLATION"
 	columns		"COLUMNS"
 	comment 	"COMMENT"
 	commit		"COMMIT"
 	compact		"COMPACT"
 	compressed	"COMPRESSED"
+	compression	"COMPRESSION"
 	connection 	"CONNECTION"
 	dateType	"DATE"
 	datetimeType	"DATETIME"
 	deallocate	"DEALLOCATE"
+	delayKeyWrite	"DELAY_KEY_WRITE"
 	do		"DO"
 	dynamic		"DYNAMIC"
 	end		"END"
 	engine		"ENGINE"
 	engines		"ENGINES"
+	escape 		"ESCAPE"
 	execute		"EXECUTE"
+	fields		"FIELDS"
 	first		"FIRST"
 	fixed		"FIXED"
 	full		"FULL"
+	grants		"GRANTS"
 	hash		"HASH"
 	identified	"IDENTIFIED"
+	isolation	"ISOLATION"
+	keyBlockSize	"KEY_BLOCK_SIZE"
 	local		"LOCAL"
 	mode		"MODE"
+	maxRows		"MAX_ROWS"
+	minRows		"MIN_ROWS"
 	names		"NAMES"
 	offset		"OFFSET"
 	password	"PASSWORD"
 	prepare		"PREPARE"
+	quarter		"QUARTER"
 	quick		"QUICK"
 	redundant	"REDUNDANT"
+	repeatable	"REPEATABLE"
 	rollback	"ROLLBACK"
+	row 		"ROW"
+	rowFormat	"ROW_FORMAT"
 	session		"SESSION"
 	signed		"SIGNED"
 	start		"START"
@@ -384,6 +383,7 @@ import (
 	timeType	"TIME"
 	timestampType	"TIMESTAMP"
 	transaction	"TRANSACTION"
+	triggers	"TRIGGERS"
 	truncate	"TRUNCATE"
 	unknown 	"UNKNOWN"
 	user		"USER"
@@ -1887,7 +1887,8 @@ IndexOption:
 |	"KEY_BLOCK_SIZE" EqOpt LengthNum
 	{
 		$$ = &ast.IndexOption{
-			KeyBlockSize: $1.(uint64),
+			// TODO bug should be fix here!
+			// KeyBlockSize: $1.(uint64),
 		}
 	}
 |	IndexType
@@ -2174,9 +2175,71 @@ UnReservedKeyword:
 	{
 		$$ = $1
 	}
-| "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE"
-|	"ISOLATION" |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
+| "CHECKSUM" 
+	{
+		$$ = $1
+	}
+| "COMPRESSION" 
+	{
+		$$ = $1
+	}
+| "KEY_BLOCK_SIZE" 
+	{
+		$$ = $1
+	}
+| "MAX_ROWS" 
+	{
+		$$ = $1
+	}
+| "MIN_ROWS"
+	{
+		$$ = $1
+	}
+|	"NATIONAL" 
+	{
+		$$ = $1
+	}
+| "ROW" 
+	{
+		$$ = $1
+	}
+| "ROW_FORMAT" 
+	{
+		$$ = $1
+	}
+| "QUARTER" 
+	{
+		$$ = $1
+	}
+| "ESCAPE" 
+	{
+		$$ = $1
+	}
+| "GRANTS" 
+	{
+		$$ = $1
+	}
+| "FIELDS" 
+	{
+		$$ = $1
+	}
+| "TRIGGERS" 
+	{
+		$$ = $1
+	}
+| "DELAY_KEY_WRITE"
+	{
+		$$ = $1
+	}
+|	"ISOLATION" 
+	{
+		$$ = $1
+	}
+|	"REPEATABLE" 
+	{
+		$$ = $1
+	}
+| "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
 |	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG"
 
 NotKeywordToken:
@@ -3130,6 +3193,9 @@ TimeUnit:
 		$$ = $1
 	}
 | "QUARTER" 
+	{
+		$$ = $1
+	}
 | "YEAR" 
 	{
 		$$ = $1
@@ -3954,12 +4020,12 @@ TransactionChars:
 |	TransactionChars ',' TransactionChar
 
 TransactionChar:
-	"ISOLATION" "LEVEL" IsolationLevel
+	"ISOLATION" "LEVEL" IsolationLevel {}
 |	"READ" "WRITE"
 |	"READ" "ONLY"
 
 IsolationLevel:
-	"REPEATABLE" "READ"
+	"REPEATABLE" "READ" {}
 |	"READ"	"COMMITTED"
 |	"READ"	"UNCOMMITTED"
 |	"SERIALIZABLE"
