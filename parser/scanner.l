@@ -719,18 +719,18 @@ action		{a}{c}{t}{i}{o}{n}
 {dual}			return dual
 {duplicate}		lval.item = string(l.val)
 			return duplicate
-{dynamic}		lval.item = string(l.val)
+{dynamic}		lval.ident = string(l.val)
 			return dynamic
 {else}			return elseKwd
 {enable}		lval.item = string(l.val)
 			return enable
-{end}			lval.item = string(l.val)
+{end}			lval.ident = string(l.val)
 			return end
-{engine}		lval.item = string(l.val)
+{engine}		lval.ident = string(l.val)
 			return engine
-{engines}		lval.item = string(l.val)
+{engines}		lval.ident = string(l.val)
 			return engines
-{execute}		lval.item = string(l.val)
+{execute}		lval.ident = string(l.val)
 			return execute
 {enum}			return enum
 {escape}		lval.item = string(l.val)
@@ -741,9 +741,9 @@ action		{a}{c}{t}{i}{o}{n}
 			return extract
 {fields}		lval.item = string(l.val)
 			return fields
-{first}			lval.item = string(l.val)
+{first}			lval.ident = string(l.val)
 			return first
-{fixed}			lval.item = string(l.val)
+{fixed}			lval.ident = string(l.val)
 			return fixed
 {for}			return forKwd
 {force}			return force
@@ -751,7 +751,7 @@ action		{a}{c}{t}{i}{o}{n}
 {found_rows}		lval.ident = string(l.val)
 			return foundRows
 {from}			return from
-{full}			lval.item = string(l.val)
+{full}			lval.ident = string(l.val)
 			return full
 {fulltext}		return fulltext
 {grant}			return grant
@@ -762,7 +762,7 @@ action		{a}{c}{t}{i}{o}{n}
 {group}			return group
 {group_concat}		lval.ident = string(l.val)
 			return groupConcat
-{hash}			lval.item = string(l.val)
+{hash}			lval.ident = string(l.val)
 			return hash
 {having}		return having
 {hex}			lval.ident = string(l.val)

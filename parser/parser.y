@@ -171,35 +171,26 @@ import (
 	drop		"DROP"
 	dual 		"DUAL"
 	duplicate	"DUPLICATE"
-	dynamic		"DYNAMIC"
 	elseKwd		"ELSE"
 	enable		"ENABLE"
-	end		"END"
-	engine		"ENGINE"
-	engines		"ENGINES"
 	enum 		"ENUM"
 	eq		"="
 	escape 		"ESCAPE"
-	execute		"EXECUTE"
 	exists		"EXISTS"
 	explain		"EXPLAIN"
 	extract		"EXTRACT"
 	falseKwd	"false"
 	fields		"FIELDS"
-	first		"FIRST"
-	fixed		"FIXED"
 	foreign		"FOREIGN"
 	forKwd		"FOR"
 	force		"FORCE"
 	from		"FROM"
-	full		"FULL"
 	fulltext	"FULLTEXT"
 	ge		">="
 	global		"GLOBAL"
 	grant		"GRANT"
 	grants		"GRANTS"
 	group		"GROUP"
-	hash		"HASH"
 	having		"HAVING"
 	highPriority	"HIGH_PRIORITY"
 	identified	"IDENTIFIED"
@@ -391,6 +382,15 @@ import (
 	datetimeType	"DATETIME"
 	deallocate	"DEALLOCATE"
 	do		"DO"
+	dynamic		"DYNAMIC"
+	end		"END"
+	engine		"ENGINE"
+	engines		"ENGINES"
+	execute		"EXECUTE"
+	first		"FIRST"
+	fixed		"FIXED"
+	full		"FULL"
+	hash		"HASH"
 
 %type   <item>
 	AdminStmt		"Check table statement or show ddl statement"
@@ -2007,7 +2007,41 @@ UnReservedKeyword:
 		$$ = $1
 	}
 | "DYNAMIC" 
-| "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FIXED" | "FULL" | "HASH"
+	{
+		$$ = $1
+	}
+| "END" 
+	{
+		$$ = $1
+	}
+| "ENGINE" 
+	{
+		$$ = $1
+	}
+| "ENGINES" 
+	{
+		$$ = $1
+	}
+| "EXECUTE" 
+	{
+		$$ = $1
+	}
+| "FIRST" 
+	{
+		$$ = $1
+	}
+| "FIXED" 
+	{
+		$$ = $1
+	}
+| "FULL" 
+	{
+		$$ = $1
+	}
+| "HASH"
+	{
+		$$ = $1
+	}
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION" | "SIGNED"
 |	"START" | "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
