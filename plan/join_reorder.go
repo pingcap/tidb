@@ -141,9 +141,9 @@ func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.
 			}
 		}
 	}
-	for _, edge := range e.graph {
-		for _, node := range edge {
-			node.rate = e.groupRank[node.nodeID].rate
+	for _, node := range e.graph {
+		for _, edge := range node {
+			edge.rate = e.groupRank[edge.nodeID].rate
 		}
 	}
 	sort.Sort(e)

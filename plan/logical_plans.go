@@ -26,7 +26,7 @@ type JoinType int
 
 const (
 	// InnerJoin means inner join.
-	InnerJoin = iota
+	InnerJoin JoinType = iota
 	// LeftOuterJoin means left join.
 	LeftOuterJoin
 	// RightOuterJoin means right join.
