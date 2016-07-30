@@ -30,7 +30,8 @@ var (
 		})
 )
 
-func QueryMetrics(costTime time.Duration) {
+// Query is used for add query cost time into metrics.
+func Query(costTime time.Duration) {
 	queryMetric.Observe(float64(costTime))
 }
 

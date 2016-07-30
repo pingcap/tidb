@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
+	// For prometheus init
 	_ "github.com/pingcap/tidb/util/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )

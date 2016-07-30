@@ -383,7 +383,7 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 	}
 	costTime := time.Now().Sub(startTs)
 	log.Debugf("[TIME_QUERY] %v %s", costTime, sql)
-	metrics.QueryMetrics(costTime)
+	metrics.Query(costTime)
 	return errors.Trace(err)
 }
 
