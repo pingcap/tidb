@@ -196,10 +196,6 @@
 			"Rev": "f89c1ea9a25ebaa24ab95d5930a1016cdab51d12"
 		},
 		{
-			"ImportPath": "github.com/pingcap/kvproto/pkg/raftpb",
-			"Rev": "f89c1ea9a25ebaa24ab95d5930a1016cdab51d12"
-		},
-		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/util",
 			"Rev": "f89c1ea9a25ebaa24ab95d5930a1016cdab51d12"
 		},
@@ -353,6 +349,46 @@
 			"ImportPath": "github.com/grpc-ecosystem/grpc-gateway/runtime/internal",
 			"Comment": "v1.1.0-2-gc8ec92d",
 			"Rev": "c8ec92d0481dd77d9b8c1808eb6476d190aa039a"
+		},
+		{
+			"ImportPath": "github.com/beorn7/perks/quantile",
+			"Rev": "3ac7bf7a47d159a033b107610db8a1b6575507a4"
+		},
+		{
+			"ImportPath": "github.com/matttproud/golang_protobuf_extensions/pbutil",
+			"Comment": "v1.0.0-2-gc12348c",
+			"Rev": "c12348ce28de40eed0136aa2b644d0ee0650e56c"
+		},
+		{
+			"ImportPath": "github.com/prometheus/client_golang/prometheus",
+			"Comment": "0.7.0-87-g28be158",
+			"Rev": "28be15864ef9ba05d74fa6fd13b928fd250e8f01"
+		},
+		{
+			"ImportPath": "github.com/prometheus/client_model/go",
+			"Comment": "model-0.0.2-12-gfa8ad6f",
+			"Rev": "fa8ad6fec33561be4280a8f0514318c79d7f6cb6"
+		},
+		{
+			"ImportPath": "github.com/prometheus/common/expfmt",
+			"Rev": "bc0a4460d0fc2693fcdebafafbf07c6d18913b97"
+		},
+		{
+			"ImportPath": "github.com/prometheus/common/model",
+			"Rev": "bc0a4460d0fc2693fcdebafafbf07c6d18913b97"
+		},
+		{
+			"ImportPath": "github.com/prometheus/procfs",
+			"Rev": "abf152e5f3e97f2fafac028d2cc06c1feb87ffa5"
+		},
+		{
+			"ImportPath": "bitbucket.org/ww/goautoneg",
+			"Comment": "null-5",
+			"Rev": "'75cd24fc2f2c2a2088577d12123ddee5f54e0675'"
+		},
+		{
+			"ImportPath": "github.com/prometheus/common/internal/bitbucket.org/ww/goautoneg",
+			"Rev": "bc0a4460d0fc2693fcdebafafbf07c6d18913b97"
 		}
 	]
 }

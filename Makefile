@@ -120,7 +120,7 @@ gotest:
 
 race:
 	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) test --race -cover $(PACKAGES)
+	$(GO) test --race $(PACKAGES)
 	rm -rf vendor
 
 tikv_integration_test:
