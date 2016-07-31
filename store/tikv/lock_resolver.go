@@ -27,21 +27,24 @@ const resolvedCacheSize = 512
 // LockResolver resolves locks and also caches resolved txn status.
 type LockResolver struct {
 	store *tikvStore
-	mu    sync.RWMutex
-	// Cache resolved txns (FIFO, txn id -> txnStatus).
-	resolved       map[uint64]txnStatus
-	recentResolved *list.List
-	// Maximum txnID that guaranteed to be expired.
-	maxExpire uint64
+	mu    struct {
+		sync.RWMutex
+		// Cache resolved txns (FIFO, txn id -> txnStatus).
+		resolved       map[uint64]txnStatus
+		recentResolved *list.List
+		// Maximum txnID that guaranteed to be expired.
+		maxExpire uint64
+	}
 }
 
 // NewLockResolver creates a LockResolver.
 func NewLockResolver(store *tikvStore) *LockResolver {
-	return &LockResolver{
-		store:          store,
-		resolved:       make(map[uint64]txnStatus),
-		recentResolved: list.New(),
+	r := &LockResolver{
+		store: store,
 	}
+	r.mu.resolved = make(map[uint64]txnStatus)
+	r.mu.recentResolved = list.New()
+	return r
 }
 
 type txnStatus uint64
@@ -65,15 +68,15 @@ func (lr *LockResolver) saveResolved(txnID uint64, status txnStatus) {
 	lr.mu.Lock()
 	defer lr.mu.Unlock()
 
-	if _, ok := lr.resolved[txnID]; ok {
+	if _, ok := lr.mu.resolved[txnID]; ok {
 		return
 	}
-	lr.resolved[txnID] = status
-	lr.recentResolved.PushBack(txnID)
-	if len(lr.resolved) > resolvedCacheSize {
-		front := lr.recentResolved.Front()
-		delete(lr.resolved, front.Value.(uint64))
-		lr.recentResolved.Remove(front)
+	lr.mu.resolved[txnID] = status
+	lr.mu.recentResolved.PushBack(txnID)
+	if len(lr.mu.resolved) > resolvedCacheSize {
+		front := lr.mu.recentResolved.Front()
+		delete(lr.mu.resolved, front.Value.(uint64))
+		lr.mu.recentResolved.Remove(front)
 	}
 }
 
@@ -81,13 +84,13 @@ func (lr *LockResolver) getResolved(txnID uint64) (txnStatus, bool) {
 	lr.mu.RLock()
 	defer lr.mu.RUnlock()
 
-	s, ok := lr.resolved[txnID]
+	s, ok := lr.mu.resolved[txnID]
 	return s, ok
 }
 
 func (lr *LockResolver) isExpire(bo *Backoffer, l *Lock) (bool, error) {
 	lr.mu.RLock()
-	maxExpire := lr.maxExpire
+	maxExpire := lr.mu.maxExpire
 	lr.mu.RUnlock()
 
 	if l.TxnID <= maxExpire {
@@ -99,8 +102,8 @@ func (lr *LockResolver) isExpire(bo *Backoffer, l *Lock) (bool, error) {
 	}
 	if expired {
 		lr.mu.Lock()
-		if l.TxnID > lr.maxExpire {
-			lr.maxExpire = l.TxnID
+		if l.TxnID > lr.mu.maxExpire {
+			lr.mu.maxExpire = l.TxnID
 		}
 		lr.mu.Unlock()
 	}
