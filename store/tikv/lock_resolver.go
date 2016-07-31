@@ -113,6 +113,10 @@ func (lr *LockResolver) isExpire(bo *Backoffer, l *Lock) (bool, error) {
 // ResolveLocks tries to resolve Locks. If returned `ok` is false, there
 // are some locks not expired, caller need to sleep then retry later.
 func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err error) {
+	if len(locks) == 0 {
+		return true, nil
+	}
+
 	var expiredLocks []*Lock
 	for _, l := range locks {
 		isExpired, err := lr.isExpire(bo, l)
@@ -122,6 +126,9 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err
 		if isExpired {
 			expiredLocks = append(expiredLocks, l)
 		}
+	}
+	if len(expiredLocks) == 0 {
+		return false, nil
 	}
 
 	// TxnID -> []Region, record resolved Regions.
