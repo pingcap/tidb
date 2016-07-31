@@ -315,9 +315,9 @@ func (p *Join) handleRightJoin(prop requiredProperty, innerJoin bool) (*physical
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
 func (p *Join) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
-	r0, r1, cnt := p.getPlanInfo(prop)
-	if r0 != nil {
-		return r0, r1, cnt, nil
+	sortedPlanInfo, unsortedPlanInfo, cnt := p.getPlanInfo(prop)
+	if sortedPlanInfo != nil {
+		return sortedPlanInfo, unsortedPlanInfo, cnt, nil
 	}
 	switch p.JoinType {
 	case SemiJoin, SemiJoinWithAux:
