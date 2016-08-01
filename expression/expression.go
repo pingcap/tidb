@@ -217,16 +217,42 @@ func (sf *ScalarFunction) ToString() string {
 	return result
 }
 
-// NewFunction creates a new scalar function.
-func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (*ScalarFunction, error) {
+// NewFunction creates a new scalar function or constant.
+func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	f, ok := evaluator.Funcs[funcName]
 	if !ok {
 		log.Errorf("Function %s is not implemented.", funcName)
 		return nil, nil
 	}
+
 	if len(args) < f.MinArgs || (f.MaxArgs != -1 && len(args) > f.MaxArgs) {
 		return nil, evaluator.ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].",
 			f.MinArgs, f.MaxArgs)
+	}
+
+	canConstantFolding := true
+	var datums []types.Datum
+
+	for _, expr := range args {
+		if v, ok := expr.(*Constant); ok {
+			datums = append(datums, types.NewDatum(v.Value.GetValue()))
+		} else {
+			canConstantFolding = false
+			break
+		}
+	}
+
+	if canConstantFolding {
+		fn := f.F
+		newArgs, err := fn(datums, nil)
+
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &Constant{
+			Value:   newArgs,
+			RetType: retType,
+		}, errors.Trace(err)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
