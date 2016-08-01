@@ -29,18 +29,21 @@ import (
 // RegionCache caches Regions loaded from PD.
 type RegionCache struct {
 	pdClient pd.Client
-	mu       sync.RWMutex
-	regions  map[RegionVerID]*Region
-	sorted   *llrb.LLRB
+	mu       struct {
+		sync.RWMutex
+		regions map[RegionVerID]*Region
+		sorted  *llrb.LLRB
+	}
 }
 
 // NewRegionCache creates a RegionCache.
 func NewRegionCache(pdClient pd.Client) *RegionCache {
-	return &RegionCache{
+	c := &RegionCache{
 		pdClient: pdClient,
-		regions:  make(map[RegionVerID]*Region),
-		sorted:   llrb.New(),
 	}
+	c.mu.regions = make(map[RegionVerID]*Region)
+	c.mu.sorted = llrb.New()
+	return c
 }
 
 // GetRegionByVerID finds a Region by Region's verID.
@@ -48,7 +51,7 @@ func (c *RegionCache) GetRegionByVerID(id RegionVerID) *Region {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if r, ok := c.regions[id]; ok {
+	if r, ok := c.mu.regions[id]; ok {
 		return r.Clone()
 	}
 	return nil
@@ -127,7 +130,7 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderID uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	r, ok := c.regions[regionID]
+	r, ok := c.mu.regions[regionID]
 	if !ok {
 		log.Debugf("regionCache: cannot find region when updating leader %d,%d", regionID, leaderID)
 		return
@@ -159,7 +162,7 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderID uint64) {
 
 func (c *RegionCache) getRegionFromCache(key []byte) *Region {
 	var r *Region
-	c.sorted.DescendLessOrEqual(newRBSearchItem(key), func(item llrb.Item) bool {
+	c.mu.sorted.DescendLessOrEqual(newRBSearchItem(key), func(item llrb.Item) bool {
 		r = item.(*llrbItem).region
 		return false
 	})
@@ -175,24 +178,24 @@ func (c *RegionCache) getRegionFromCache(key []byte) *Region {
 // insertRegionToCache tries to insert the Region to cache. If there is an old
 // Region with the same VerID, it will return the old one instead.
 func (c *RegionCache) insertRegionToCache(r *Region) *Region {
-	if old, ok := c.regions[r.VerID()]; ok {
+	if old, ok := c.mu.regions[r.VerID()]; ok {
 		return old
 	}
-	old := c.sorted.ReplaceOrInsert(newRBItem(r))
+	old := c.mu.sorted.ReplaceOrInsert(newRBItem(r))
 	if old != nil {
-		delete(c.regions, old.(*llrbItem).region.VerID())
+		delete(c.mu.regions, old.(*llrbItem).region.VerID())
 	}
-	c.regions[r.VerID()] = r
+	c.mu.regions[r.VerID()] = r
 	return r
 }
 
 func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
-	r, ok := c.regions[verID]
+	r, ok := c.mu.regions[verID]
 	if !ok {
 		return
 	}
-	c.sorted.Delete(newRBItem(r))
-	delete(c.regions, r.VerID())
+	c.mu.sorted.Delete(newRBItem(r))
+	delete(c.mu.regions, r.VerID())
 }
 
 // loadRegion loads region from pd client, and picks the first peer as leader.
