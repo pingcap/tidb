@@ -48,6 +48,7 @@ import (
 	/*yy:token "%c"     */	identifier      "identifier"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 
+	/* the following tokens belong to NotKeywordToken*/
 	abs		"ABS"
 	addDate		"ADDDATE"
 	admin		"ADMIN"
@@ -299,6 +300,7 @@ import (
 	cascade		"CASCADE"
 
 %token	<ident>
+	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
 	after		"AFTER"
 	any 		"ANY"
@@ -2372,12 +2374,11 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" 
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" | "UTC_DATE"
 | "VERSION"
 	{
 		$$ = $1
 	}
-| "UTC_DATE"
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')'
