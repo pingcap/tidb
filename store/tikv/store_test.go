@@ -76,8 +76,10 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 type mockOracle struct {
 	oracle.Oracle
-	mu   sync.RWMutex
-	stop bool
+	mu struct {
+		sync.RWMutex
+		stop bool
+	}
 }
 
 func newMockOracle(oracle oracle.Oracle) *mockOracle {
@@ -87,20 +89,20 @@ func newMockOracle(oracle oracle.Oracle) *mockOracle {
 func (o *mockOracle) enable() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.stop = false
+	o.mu.stop = false
 }
 
 func (o *mockOracle) disable() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.stop = true
+	o.mu.stop = true
 }
 
 func (o *mockOracle) GetTimestamp() (uint64, error) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 
-	if o.stop {
+	if o.mu.stop {
 		return 0, errors.New("stopped")
 	}
 	return o.Oracle.GetTimestamp()
@@ -110,7 +112,7 @@ func (o *mockOracle) IsExpired(lockTimestamp uint64, TTL uint64) (bool, error) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 
-	if o.stop {
+	if o.mu.stop {
 		return false, errors.New("stopped")
 	}
 	return o.Oracle.IsExpired(lockTimestamp, TTL)
