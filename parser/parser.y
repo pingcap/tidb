@@ -20,7 +20,7 @@
 // at 2013-10-04 23:10:47.861401015 +0200 CEST
 //
 //  $ ebnf2y -o ql.y -oe ql.ebnf -start StatementList -pkg ql -p _
-// 
+//
 //   [1]: http://github.com/cznic/ebnf2y
 
 package parser
@@ -41,55 +41,92 @@ import (
 %union {
 	offset int // offset
 	item interface{}
+	ident string
 }
 
-%token	<item>
-
-	/*yy:token "1.%d"   */	floatLit        "floating-point literal"
+%token	<ident>
 	/*yy:token "%c"     */	identifier      "identifier"
-	/*yy:token "%d"     */	intLit          "integer literal"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
-	/*yy:token "%x"     */	hexLit          "hexadecimal literal"
-	/*yy:token "%b"     */	bitLit          "bit literal"
 
-
+	/* the following tokens belong to NotKeywordToken*/
 	abs		"ABS"
-	add		"ADD"
 	addDate		"ADDDATE"
 	admin		"ADMIN"
-	after		"AFTER"
-	all 		"ALL"
-	alter		"ALTER"
-	analyze		"ANALYZE"
-	and		"AND"
-	andand		"&&"
-	andnot		"&^"
-	any 		"ANY"
-	as		"AS"
-	asc		"ASC"
-	ascii		"ASCII"
-	assignmentEq	":="
-	at		"AT"
-	autoIncrement	"AUTO_INCREMENT"
-	avg		"AVG"
-	avgRowLength	"AVG_ROW_LENGTH"
-	begin		"BEGIN"
-	between		"BETWEEN"
-	binlog		"BINLOG"
-	both		"BOTH"
-	btree		"BTREE"
-	by		"BY"
-	byteType	"BYTE"
-	caseKwd		"CASE"
-	cast		"CAST"
-	character	"CHARACTER"
-	charsetKwd	"CHARSET"
-	check 		"CHECK"
-	checksum	"CHECKSUM"
 	coalesce	"COALESCE"
-	collate 	"COLLATE"
+	concat		"CONCAT"
+	concatWs	"CONCAT_WS"
+	connectionID 	"CONNECTION_ID"
+	curTime 	"CUR_TIME"
+	count		"COUNT"
+	day		"DAY"
+	dateAdd		"DATE_ADD"
+	dateFormat	"DATE_FORMAT"
+	dateSub		"DATE_SUB"
+	dayname		"DAYNAME"
+	dayofmonth	"DAYOFMONTH"
+	dayofweek	"DAYOFWEEK"
+	dayofyear	"DAYOFYEAR"
+	foundRows	"FOUND_ROWS"
+	groupConcat	"GROUP_CONCAT"
+	greatest	"GREATEST"
+	hour		"HOUR"
+	hex         	"HEX"
+	ifNull		"IFNULL"
+	isNull		"ISNULL"
+	lastInsertID	"LAST_INSERT_ID"
+	lcase 		"LCASE"
+	length		"LENGTH"
+	locate		"LOCATE"
+	lower 		"LOWER"
+	ltrim		"LTRIM"
+	max		"MAX"
+	microsecond	"MICROSECOND"
+	min		"MIN"
+	minute		"MINUTE"
+	nullIf		"NULLIF"
+	month		"MONTH"
+	monthname	"MONTHNAME"
+	now		"NOW"
+	pow 		"POW"
+	power 		"POWER"
+	rand		"RAND"
+	second		"SECOND"
+	sleep		"SLEEP"
+	calcFoundRows	"SQL_CALC_FOUND_ROWS"
+	subDate		"SUBDATE"
+	substring	"SUBSTRING"
+	substringIndex	"SUBSTRING_INDEX"
+	sum		"SUM"
+	trim		"TRIM"
+	rtrim 		"RTRIM"
+	ucase 		"UCASE"
+	upper 		"UPPER"
+	version		"VERSION"
+	weekday		"WEEKDAY"
+	weekofyear	"WEEKOFYEAR"
+	yearweek	"YEARWEEK"
+	round		"ROUND"
+	statsPersistent	"STATS_PERSISTENT"
+	getLock		"GET_LOCK"
+	releaseLock	"RELEASE_LOCK"
+
+	/* the following tokens belong to UnReservedKeyword*/
+	action		"ACTION"
+	after		"AFTER"
+	any 		"ANY"
+	ascii		"ASCII"
+	autoIncrement	"AUTO_INCREMENT"
+	avgRowLength	"AVG_ROW_LENGTH"
+	avg		"AVG"
+	begin		"BEGIN"
+	binlog		"BINLOG"
+	bitType		"BIT"
+	booleanType	"BOOLEAN"
+	boolType	"BOOL"
+	btree		"BTREE"
+	charsetKwd	"CHARSET"
+	checksum	"CHECKSUM"
 	collation	"COLLATION"
-	column		"COLUMN"
 	columns		"COLUMNS"
 	comment 	"COMMENT"
 	commit		"COMMIT"
@@ -97,86 +134,145 @@ import (
 	compact		"COMPACT"
 	compressed	"COMPRESSED"
 	compression	"COMPRESSION"
-	concat		"CONCAT"
-	concatWs	"CONCAT_WS"
 	connection 	"CONNECTION"
-	connectionID 	"CONNECTION_ID"
+	dateType	"DATE"
+	datetimeType	"DATETIME"
+	deallocate	"DEALLOCATE"
+	delayKeyWrite	"DELAY_KEY_WRITE"
+	disable		"DISABLE"
+	do		"DO"
+	dynamic		"DYNAMIC"
+	enable		"ENABLE"
+	end		"END"
+	engine		"ENGINE"
+	engines		"ENGINES"
+	escape 		"ESCAPE"
+	execute		"EXECUTE"
+	fields		"FIELDS"
+	first		"FIRST"
+	fixed		"FIXED"
+	full		"FULL"
+	grants		"GRANTS"
+	hash		"HASH"
+	identified	"IDENTIFIED"
+	isolation	"ISOLATION"
+	keyBlockSize	"KEY_BLOCK_SIZE"
+	local		"LOCAL"
+	level		"LEVEL"
+	mode		"MODE"
+	maxRows		"MAX_ROWS"
+	minRows		"MIN_ROWS"
+	names		"NAMES"
+	national	"NATIONAL"
+	no		"NO"
+	offset		"OFFSET"
+	only		"ONLY"
+	password	"PASSWORD"
+	prepare		"PREPARE"
+	privileges	"PRIVILEGES"
+	quarter		"QUARTER"
+	quick		"QUICK"
+	redundant	"REDUNDANT"
+	repeatable	"REPEATABLE"
+	reverse		"REVERSE"
+	rollback	"ROLLBACK"
+	row 		"ROW"
+	rowFormat	"ROW_FORMAT"
+	serializable	"SERIALIZABLE"
+	session		"SESSION"
+	signed		"SIGNED"
+	space 		"SPACE"
+	sqlCache	"SQL_CACHE"
+	sqlNoCache	"SQL_NO_CACHE"
+	start		"START"
+	status		"STATUS"
+	some 		"SOME"
+	global		"GLOBAL"
+	tables		"TABLES"
+	textType	"TEXT"
+	timeType	"TIME"
+	timestampType	"TIMESTAMP"
+	transaction	"TRANSACTION"
+	triggers	"TRIGGERS"
+	truncate	"TRUNCATE"
+	uncommitted	"UNCOMMITTED"
+	unknown 	"UNKNOWN"
+	user		"USER"
+	value		"VALUE"
+	variables	"VARIABLES"
+	warnings	"WARNINGS"
+	week		"WEEK"
+	yearType	"YEAR"
+
+%token	<item>
+
+	/*yy:token "1.%d"   */	floatLit        "floating-point literal"
+	/*yy:token "%d"     */	intLit          "integer literal"
+	/*yy:token "%x"     */	hexLit          "hexadecimal literal"
+	/*yy:token "%b"     */	bitLit          "bit literal"
+
+	add		"ADD"
+	all 		"ALL"
+	alter		"ALTER"
+	analyze		"ANALYZE"
+	and		"AND"
+	andand		"&&"
+	andnot		"&^"
+	as		"AS"
+	asc		"ASC"
+	assignmentEq	":="
+	at		"AT"
+	between		"BETWEEN"
+	both		"BOTH"
+	by		"BY"
+	byteType	"BYTE"
+	caseKwd		"CASE"
+	cast		"CAST"
+	character	"CHARACTER"
+	check 		"CHECK"
+	collate 	"COLLATE"
+	column		"COLUMN"
 	constraint	"CONSTRAINT"
 	convert		"CONVERT"
-	count		"COUNT"
 	create		"CREATE"
 	cross 		"CROSS"
 	curDate 	"CURDATE"
 	utcDate 	"UTC_DATE"
 	currentDate 	"CURRENT_DATE"
-	curTime 	"CUR_TIME"
 	currentTime 	"CURRENT_TIME"
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
-	dateAdd		"DATE_ADD"
-	dateFormat	"DATE_FORMAT"
-	dateSub		"DATE_SUB"
-	day		"DAY"
-	dayname		"DAYNAME"
-	dayofmonth	"DAYOFMONTH"
-	dayofweek	"DAYOFWEEK"
-	dayofyear	"DAYOFYEAR"
 	ddl		"DDL"
-	deallocate	"DEALLOCATE"
 	defaultKwd	"DEFAULT"
 	delayed		"DELAYED"
-	delayKeyWrite	"DELAY_KEY_WRITE"
 	deleteKwd	"DELETE"
 	desc		"DESC"
 	describe	"DESCRIBE"
-	disable		"DISABLE"
 	distinct	"DISTINCT"
 	div 		"DIV"
-	do		"DO"
 	drop		"DROP"
 	dual 		"DUAL"
 	duplicate	"DUPLICATE"
-	dynamic		"DYNAMIC"
 	elseKwd		"ELSE"
-	enable		"ENABLE"
-	end		"END"
-	engine		"ENGINE"
-	engines		"ENGINES"
 	enum 		"ENUM"
 	eq		"="
-	escape 		"ESCAPE"
-	execute		"EXECUTE"
 	exists		"EXISTS"
 	explain		"EXPLAIN"
 	extract		"EXTRACT"
 	falseKwd	"false"
-	fields		"FIELDS"
-	first		"FIRST"
-	fixed		"FIXED"
 	foreign		"FOREIGN"
 	forKwd		"FOR"
 	force		"FORCE"
-	foundRows	"FOUND_ROWS"
 	from		"FROM"
-	full		"FULL"
 	fulltext	"FULLTEXT"
 	ge		">="
-	getLock		"GET_LOCK"
-	global		"GLOBAL"
 	grant		"GRANT"
-	grants		"GRANTS"
-	greatest	"GREATEST"
 	group		"GROUP"
-	groupConcat	"GROUP_CONCAT"
-	hash		"HASH"
 	having		"HAVING"
 	highPriority	"HIGH_PRIORITY"
-	hour		"HOUR"
-	identified	"IDENTIFIED"
 	ignore		"IGNORE"
 	ifKwd		"IF"
-	ifNull		"IFNULL"
 	in		"IN"
 	index		"INDEX"
 	inner 		"INNER"
@@ -184,174 +280,90 @@ import (
 	interval	"INTERVAL"
 	into		"INTO"
 	is		"IS"
-	isNull		"ISNULL"
-	isolation	"ISOLATION"
 	join		"JOIN"
 	key		"KEY"
-	keyBlockSize	"KEY_BLOCK_SIZE"
 	keys		"KEYS"
-	lastInsertID	"LAST_INSERT_ID"
 	le		"<="
 	leading		"LEADING"
 	left		"LEFT"
-	length		"LENGTH"
-	level		"LEVEL"
 	like		"LIKE"
 	limit		"LIMIT"
-	local		"LOCAL"
-	locate		"LOCATE"
 	lock		"LOCK"
-	lower 		"LOWER"
-	lcase 		"LCASE"
 	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
-	ltrim		"LTRIM"
-	max		"MAX"
-	maxRows		"MAX_ROWS"
-	microsecond	"MICROSECOND"
-	min		"MIN"
-	minute		"MINUTE"
-	minRows		"MIN_ROWS"
 	mod 		"MOD"
-	mode		"MODE"
-	month		"MONTH"
-	monthname	"MONTHNAME"
-	names		"NAMES"
-	national	"NATIONAL"
 	neq		"!="
 	neqSynonym	"<>"
 	not		"NOT"
 	null		"NULL"
 	nulleq		"<=>"
-	nullIf		"NULLIF"
-	offset		"OFFSET"
 	on		"ON"
-	only		"ONLY"
 	option		"OPTION"
 	or		"OR"
 	order		"ORDER"
 	oror		"||"
 	outer		"OUTER"
-	password	"PASSWORD"
 	placeholder	"PLACEHOLDER"
-	pow 		"POW"
-	power 		"POWER"
-	prepare		"PREPARE"
 	primary		"PRIMARY"
-	privileges	"PRIVILEGES"
 	procedure	"PROCEDURE"
-	quarter		"QUARTER"
-	quick		"QUICK"
-	rand		"RAND"
 	read		"READ"
-	redundant	"REDUNDANT"
 	references	"REFERENCES"
 	regexpKwd	"REGEXP"
-	releaseLock	"RELEASE_LOCK"
 	repeat		"REPEAT"
-	repeatable	"REPEATABLE"
 	replace		"REPLACE"
 	right		"RIGHT"
 	rlike		"RLIKE"
-	rollback	"ROLLBACK"
-	round		"ROUND"
-	row 		"ROW"
-	rowFormat	"ROW_FORMAT"
 	rsh		">>"
-	rtrim 		"RTRIM"
-	reverse		"REVERSE"
 	schema		"SCHEMA"
 	schemas		"SCHEMAS"
-	second		"SECOND"
 	selectKwd	"SELECT"
-	serializable	"SERIALIZABLE"
-	session		"SESSION"
 	set		"SET"
 	share		"SHARE"
 	show		"SHOW"
-	sleep		"SLEEP"
-	signed		"SIGNED"
-	some 		"SOME"
-	space 		"SPACE"
-	start		"START"
-	statsPersistent	"STATS_PERSISTENT"
-	status		"STATUS"
-	subDate		"SUBDATE"
 	strcmp		"STRCMP"
-	substring	"SUBSTRING"
-	substringIndex	"SUBSTRING_INDEX"
-	sum		"SUM"
 	sysVar		"SYS_VAR"
 	sysDate		"SYSDATE"
 	tableKwd	"TABLE"
-	tables		"TABLES"
 	then		"THEN"
 	to		"TO"
 	trailing	"TRAILING"
-	transaction	"TRANSACTION"
-	triggers	"TRIGGERS"
-	trim		"TRIM"
 	trueKwd		"true"
-	truncate	"TRUNCATE"
-	uncommitted	"UNCOMMITTED"
 	underscoreCS	"UNDERSCORE_CHARSET"
-	unknown 	"UNKNOWN"
 	union		"UNION"
 	unique		"UNIQUE"
 	unlock		"UNLOCK"
 	unsigned	"UNSIGNED"
 	update		"UPDATE"
-	upper 		"UPPER"
-	ucase 		"UCASE"
 	use		"USE"
-	user		"USER"
 	using		"USING"
 	userVar		"USER_VAR"
-	value		"VALUE"
 	values		"VALUES"
-	variables	"VARIABLES"
-	version		"VERSION"
-	warnings	"WARNINGS"
-	week		"WEEK"
-	weekday		"WEEKDAY"
-	weekofyear	"WEEKOFYEAR"
 	when		"WHEN"
 	where		"WHERE"
 	write		"WRITE"
 	xor 		"XOR"
-	yearweek	"YEARWEEK"
 	zerofill	"ZEROFILL"
-	
-	calcFoundRows	"SQL_CALC_FOUND_ROWS"
-	sqlCache	"SQL_CACHE"
-	sqlNoCache	"SQL_NO_CACHE"
+
 
 	currentTs	"CURRENT_TIMESTAMP"
 	localTime	"LOCALTIME"
 	localTs		"LOCALTIMESTAMP"
-	now		"NOW"
-	
+
 	tinyIntType	"TINYINT"
 	smallIntType	"SMALLINT"
 	mediumIntType	"MEDIUMINT"
 	intType		"INT"
 	integerType	"INTEGER"
 	bigIntType	"BIGINT"
-	bitType		"BIT"
-	
+
 	decimalType	"DECIMAL"
 	numericType	"NUMERIC"
 	floatType	"float"
 	doubleType	"DOUBLE"
 	precisionType	"PRECISION"
 	realType	"REAL"
-	
-	dateType	"DATE"
-	timeType	"TIME"
-	datetimeType	"DATETIME"
-	timestampType	"TIMESTAMP"
-	yearType	"YEAR"
-	
+
+
 	charType	"CHAR"
 	varcharType	"VARCHAR"
 	binaryType	"BINARY"
@@ -361,12 +373,8 @@ import (
 	mediumblobType	"MEDIUMBLOB"
 	longblobType	"LONGBLOB"
 	tinytextType	"TINYTEXT"
-	textType	"TEXT"
 	mediumtextType	"MEDIUMTEXT"
 	longtextType	"LONGTEXT"
-	
-	boolType	"BOOL"
-	booleanType	"BOOLEAN"
 
 	secondMicrosecond	"SECOND_MICROSECOND"
 	minuteMicrosecond	"MINUTE_MICROSECOND"
@@ -382,8 +390,6 @@ import (
 
 	restrict	"RESTRICT"
 	cascade		"CASCADE"
-	no		"NO"
-	action		"ACTION"
 
 
 %type   <item>
@@ -503,7 +509,6 @@ import (
 	logAnd			"logical and operator"
 	logOr			"logical or operator"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
-	name			"name"
 	NationalOpt		"National option"
 	NotOpt			"optional NOT"
 	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
@@ -604,16 +609,10 @@ import (
 	Variable		"User or system variable"
 	WhereClause		"WHERE clause"
 	WhereClauseOptional	"Optinal WHERE clause"
-
-	Identifier		"identifier or unreserved keyword"
-	UnReservedKeyword	"MySQL unreserved keywords"
-	NotKeywordToken		"Tokens not mysql keyword but treated specially"
-
 	WhenClause		"When clause"
 	WhenClauseList		"When clause list"
 	ElseOpt			"Optional else clause"
 	ExpressionOpt		"Optional expression"
-
 	Type			"Types"
 
 	NumericType		"Numeric types"
@@ -621,11 +620,9 @@ import (
 	FixedPointType		"Exact value types"
 	FloatingPointType	"Approximate value types"
 	BitValueType		"bit value types"
-
 	StringType		"String types"
 	BlobType		"Blob types"
 	TextType		"Text types"
-
 	DateAndTimeType		"Date and Time types"
 
 	OptFieldLen		"Field length or empty"
@@ -640,6 +637,11 @@ import (
 	OptCollate		"Optional Collate setting"
 	NUM			"numbers"
 	LengthNum		"Field length num(uint64)"
+
+%type	<ident>
+	Identifier		"identifier or unreserved keyword"
+	NotKeywordToken		"Tokens not mysql keyword but treated specially"
+	UnReservedKeyword	"MySQL unreserved keywords"
 
 %token	tableRefPriority
 
@@ -656,7 +658,7 @@ import (
 %precedence insertValues
 
 %precedence lowerThanKey
-%precedence key 
+%precedence key
 
 %left   join inner cross left right full
 /* A dummy token to force the priority of TableRef production in a join. */
@@ -723,7 +725,7 @@ AlterTableSpec:
 			Column:		$3.(*ast.ColumnDef),
 			Position:	$4.(*ast.ColumnPosition),
 		}
-	}	
+	}
 |	"ADD" Constraint
 	{
 		constraint := $2.(*ast.Constraint)
@@ -776,7 +778,7 @@ ColumnKeywordOpt:
 ColumnPosition:
 	{
 		$$ = &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
-	}	
+	}
 |	"FIRST"
 	{
 		$$ = &ast.ColumnPosition{Tp: ast.ColumnPositionFirst}
@@ -803,17 +805,20 @@ ConstraintKeywordOpt:
 	{
 		$$ = nil
 	}
-|	"CONSTRAINT" 
+|	"CONSTRAINT"
 	{
 		$$ = nil
 	}
-|	"CONSTRAINT" Symbol 
+|	"CONSTRAINT" Symbol
 	{
 		$$ = $2.(string)
 	}
 
 Symbol:
 	Identifier
+	{
+		$$ = $1
+	}
 
 /*******************************************************************************************/
 
@@ -860,7 +865,7 @@ BeginTransactionStmt:
 BinlogStmt:
 	"BINLOG" stringLit
 	{
-		$$ = &ast.BinlogStmt{Str: $2.(string)}
+		$$ = &ast.BinlogStmt{Str: $2}
 	}
 
 ColumnDef:
@@ -872,15 +877,15 @@ ColumnDef:
 ColumnName:
 	Identifier
 	{
-		$$ = &ast.ColumnName{Name: model.NewCIStr($1.(string))}
+		$$ = &ast.ColumnName{Name: model.NewCIStr($1)}
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.ColumnName{Table: model.NewCIStr($1.(string)), Name: model.NewCIStr($3.(string))}
+		$$ = &ast.ColumnName{Table: model.NewCIStr($1), Name: model.NewCIStr($3)}
 	}
 |	Identifier '.' Identifier '.' Identifier
 	{
-		$$ = &ast.ColumnName{Schema: model.NewCIStr($1.(string)), Table: model.NewCIStr($3.(string)), Name: model.NewCIStr($5.(string))}
+		$$ = &ast.ColumnName{Schema: model.NewCIStr($1), Table: model.NewCIStr($3), Name: model.NewCIStr($5)}
 	}
 
 ColumnNameList:
@@ -925,10 +930,10 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoIncrement}
 	}
-|	PrimaryOpt "KEY" 
+|	PrimaryOpt "KEY"
 	{
-		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY 
-		// can also be specified as just KEY when given in a column definition. 
+		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY
+		// can also be specified as just KEY when given in a column definition.
 		// See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey}
 	}
@@ -983,7 +988,7 @@ ConstraintElem:
 	"PRIMARY" "KEY" IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
 		c := &ast.Constraint{
-			Tp: ast.ConstraintPrimaryKey, 
+			Tp: ast.ConstraintPrimaryKey,
 			Keys: $5.([]*ast.IndexColName),
 		}
 		if $7 != nil {
@@ -993,7 +998,7 @@ ConstraintElem:
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $3.(model.IndexType)	
+			c.Option.Tp = $3.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -1023,7 +1028,7 @@ ConstraintElem:
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $3.(model.IndexType)	
+			c.Option.Tp = $3.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -1041,7 +1046,7 @@ ConstraintElem:
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $3.(model.IndexType)	
+			c.Option.Tp = $3.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -1059,7 +1064,7 @@ ConstraintElem:
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $3.(model.IndexType)	
+			c.Option.Tp = $3.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -1077,7 +1082,7 @@ ConstraintElem:
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $4.(model.IndexType)	
+			c.Option.Tp = $4.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -1095,7 +1100,7 @@ ConstraintElem:
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $4.(model.IndexType)	
+			c.Option.Tp = $4.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -1165,11 +1170,11 @@ ReferOpt:
 	}
 
 /*
- * The DEFAULT clause specifies a default value for a column. 
- * With one exception, the default value must be a constant; 
- * it cannot be a function or an expression. This means, for example, 
- * that you cannot set the default for a date column to be the value of 
- * a function such as NOW() or CURRENT_DATE. The exception is that you 
+ * The DEFAULT clause specifies a default value for a column.
+ * With one exception, the default value must be a constant;
+ * it cannot be a function or an expression. This means, for example,
+ * that you cannot set the default for a date column to be the value of
+ * a function such as NOW() or CURRENT_DATE. The exception is that you
  * can specify CURRENT_TIMESTAMP as the default for a TIMESTAMP or DATETIME column.
  *
  * See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
@@ -1192,6 +1197,9 @@ NowSym:
 |	"LOCALTIME"
 |	"LOCALTIMESTAMP"
 |	"NOW"
+	{
+		$$ = $1
+	}
 
 SignedLiteral:
 	Literal
@@ -1218,7 +1226,7 @@ CreateIndexStmt:
 	{
 		$$ = &ast.CreateIndexStmt{
 			Unique: $2.(bool),
-			IndexName: $4.(string),
+			IndexName: $4,
                 	Table: $6.(*ast.TableName),
 			IndexColNames: $8.([]*ast.IndexColName),
 		}
@@ -1277,6 +1285,9 @@ CreateDatabaseStmt:
 
 DBName:
 	Identifier
+  {
+    $$ = $1
+  }
 
 DatabaseOption:
 	DefaultKwdOpt CharsetKw EqOpt StringName
@@ -1286,7 +1297,7 @@ DatabaseOption:
 |	DefaultKwdOpt "COLLATE" EqOpt StringName
 	{
 		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionCollate, Value: $4.(string)}
-	} 
+	}
 
 DatabaseOptionListOpt:
 	{
@@ -1340,7 +1351,7 @@ CreateTableStmt:
 		$$ = &ast.CreateTableStmt{
 			Table:          $4.(*ast.TableName),
 			IfNotExists:    $3.(bool),
-			Cols:           columnDefs, 
+			Cols:           columnDefs,
 			Constraints:    constraints,
 			Options:        $8.([]*ast.TableOption),
 		}
@@ -1448,7 +1459,7 @@ DropDatabaseStmt:
 DropIndexStmt:
 	"DROP" "INDEX" IfExists Identifier "ON" TableName
 	{
-		$$ = &ast.DropIndexStmt{IfExists: $3.(bool), IndexName: $4.(string), Table: $6.(*ast.TableName)}
+		$$ = &ast.DropIndexStmt{IfExists: $3.(bool), IndexName: $4, Table: $6.(*ast.TableName)}
 	}
 
 DropTableStmt:
@@ -1581,9 +1592,6 @@ logAnd:
 |	"AND"
 	{
 	}
-
-name:
-	Identifier
 
 ExpressionList:
 	Expression
@@ -1750,12 +1758,12 @@ Field:
 	}
 |	Identifier '.' '*'
 	{
-		wildCard := &ast.WildCardField{Table: model.NewCIStr($1.(string))}
+		wildCard := &ast.WildCardField{Table: model.NewCIStr($1)}
 		$$ = &ast.SelectField{WildCard: wildCard}
 	}
 |	Identifier '.' Identifier '.' '*'
 	{
-		wildCard := &ast.WildCardField{Schema: model.NewCIStr($1.(string)), Table: model.NewCIStr($3.(string))}
+		wildCard := &ast.WildCardField{Schema: model.NewCIStr($1), Table: model.NewCIStr($3)}
 		$$ = &ast.SelectField{WildCard: wildCard}
 	}
 |	Expression FieldAsNameOpt
@@ -1864,18 +1872,19 @@ IndexName:
 |	Identifier
 	{
 		//"index name"
-		$$ = $1.(string)
+		$$ = $1
 	}
 
 IndexOption:
 	{
 		$$ = nil
 	}
-|	"KEY_BLOCK_SIZE" EqOpt LengthNum 
+|	"KEY_BLOCK_SIZE" EqOpt LengthNum
 	{
 		$$ = &ast.IndexOption{
-			KeyBlockSize: $1.(uint64),
-		}	
+			// TODO bug should be fix here!
+			// KeyBlockSize: $1.(uint64),
+		}
 	}
 |	IndexType
 	{
@@ -1886,12 +1895,12 @@ IndexOption:
 |	"COMMENT" stringLit
 	{
 		$$ = &ast.IndexOption {
-			Comment: $2.(string),
+			Comment: $2,
 		}
 	}
-	   
+
 IndexType:
-	"USING" "BTREE"	
+	"USING" "BTREE"
 	{
 		$$ = model.IndexTypeBtree
 	}
@@ -1902,7 +1911,7 @@ IndexType:
 
 IndexTypeOpt:
 	{
-		$$ = nil 
+		$$ = nil
 	}
 |	IndexType
 	{
@@ -1911,23 +1920,15 @@ IndexTypeOpt:
 
 /**********************************Identifier********************************************/
 Identifier:
-	identifier | UnReservedKeyword | NotKeywordToken
+identifier | UnReservedKeyword | NotKeywordToken
 
 UnReservedKeyword:
-	"ASCII" | "AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET" | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED"
-|	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "DYNAMIC" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FIXED" | "FULL" | "HASH" 
-|	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION" | "SIGNED" 
-|	"START" | "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
-|	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
-|	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE"
-|	"ISOLATION" |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
-|	"SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG"
+ "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET" | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "DYNAMIC" | "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FULL" | "HASH" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION" | "SIGNED" | "START" | "STATUS" | "GLOBAL" | "TABLES" | "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
 |	"DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS"
-|	"GROUP_CONCAT"| "GREATEST" | "HOUR" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
+|	"GROUP_CONCAT"| "GREATEST" | "HOUR" | "HEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 |	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX"
 |	"SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
@@ -1995,6 +1996,9 @@ InsertValues:
 
 ValueSym:
 	"VALUE"
+	{
+		$$ = $1
+	}
 |	"VALUES"
 
 ExpressionListList:
@@ -2035,10 +2039,10 @@ ColumnSetValueList:
 		$$ = append($1.([]*ast.Assignment), $3.(*ast.Assignment))
 	}
 
-/* 
- * ON DUPLICATE KEY UPDATE col_name=expr [, col_name=expr] ... 
+/*
+ * ON DUPLICATE KEY UPDATE col_name=expr [, col_name=expr] ...
  * See https://dev.mysql.com/doc/refman/5.7/en/insert-on-duplicate.html
- */ 
+ */
 OnDuplicateKeyUpdate:
 	{
 		$$ = nil
@@ -2189,7 +2193,7 @@ ByList:
 	}
 
 ByItem:
-	Expression Order 
+	Expression Order
 	{
 		expr := $1
 		valueExpr, ok := expr.(*ast.ValueExpr)
@@ -2224,7 +2228,7 @@ OrderByOptional:
 	{
 		$$ = $1
 	}
-	
+
 PrimaryExpression:
 	Operand
 |	Function
@@ -2252,10 +2256,10 @@ PrimaryExpression:
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = &ast.FuncCastExpr{
-			Expr: $2.(ast.ExprNode), 
+			Expr: $2.(ast.ExprNode),
 			Tp: x,
 			FunctionType: ast.CastBinaryOperator,
-		}	
+		}
 	}
 |	PrimaryExpression "COLLATE" StringName %prec neg
 	{
@@ -2270,10 +2274,14 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" | "VERSION" | "UTC_DATE"
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" | "UTC_DATE"
+| "VERSION"
+	{
+		$$ = $1
+	}
 
 FunctionCallConflict:
-	FunctionNameConflict '(' ExpressionListOpt ')' 
+	FunctionNameConflict '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
 	}
@@ -2317,12 +2325,12 @@ FunctionCallKeyword:
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
 		$$ = &ast.FuncCastExpr{
-			Expr: $3.(ast.ExprNode), 
+			Expr: $3.(ast.ExprNode),
 			Tp: $5.(*types.FieldType),
 			FunctionType: ast.CastFunction,
 		}
 	}
-|	"CASE" ExpressionOpt WhenClauseList ElseOpt "END"	
+|	"CASE" ExpressionOpt WhenClauseList ElseOpt "END"
 	{
 		x := &ast.CaseExpr{WhenClauses: $3.([]*ast.WhenClause)}
 		if $2 != nil {
@@ -2333,7 +2341,7 @@ FunctionCallKeyword:
 		}
 		$$ = x
 	}
-|	"CONVERT" '(' Expression "USING" StringName ')' 
+|	"CONVERT" '(' Expression "USING" StringName ')'
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 		charset := ast.NewValueExpr($5)
@@ -2346,22 +2354,22 @@ FunctionCallKeyword:
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 		$$ = &ast.FuncCastExpr{
-			Expr: $3.(ast.ExprNode), 
+			Expr: $3.(ast.ExprNode),
 			Tp: $5.(*types.FieldType),
 			FunctionType: ast.CastConvertFunction,
-		}	
+		}
 	}
 |	"ASCII" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DATE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"USER" '(' ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
 |	"VALUES" '(' ColumnName ')' %prec lowerThanInsertValues
 	{
@@ -2370,29 +2378,29 @@ FunctionCallKeyword:
 	}
 |	"WEEK" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"YEAR" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 
 FunctionCallNonKeyword:
 	"COALESCE" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"CURDATE" '(' ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}
-|	"CUR_TIME" '(' ExpressionOpt ')' 
+|	"CUR_TIME" '(' ExpressionOpt ')'
 	{
 		args := []ast.ExprNode{}
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"CURRENT_TIME" FuncDatetimePrec
 	{
@@ -2412,35 +2420,35 @@ FunctionCallNonKeyword:
 	}
 |	"ABS" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"CONCAT" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"CONCAT_WS" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"DAY" '(' Expression ')'
 	{
-		$$ =  &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ =  &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DAYNAME" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DAYOFWEEK" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DAYOFMONTH" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DAYOFYEAR" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	DateArithOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
@@ -2477,7 +2485,7 @@ FunctionCallNonKeyword:
 |	"DATE_FORMAT" '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args:	[]ast.ExprNode{
 				$3.(ast.ExprNode),
 				$5.(ast.ExprNode),
@@ -2494,23 +2502,28 @@ FunctionCallNonKeyword:
 	}
 |	"FOUND_ROWS" '(' ')'
 	{
-		$$ =  &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+		$$ =  &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
 |	"GREATEST" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"HOUR" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"HEX" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+
 |	"IFNULL" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"ISNULL" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"LAST_INSERT_ID" '(' ExpressionOpt ')'
 	{
@@ -2518,53 +2531,53 @@ FunctionCallNonKeyword:
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"LENGTH" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"LOCATE" '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
 		}
 	}
 |	"LOCATE" '(' Expression ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}
 |	"LOWER" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"LCASE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"LTRIM" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"MICROSECOND" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"MINUTE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"MONTH" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"MONTHNAME" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"NOW" '(' ExpressionOpt ')'
 	{
@@ -2572,21 +2585,21 @@ FunctionCallNonKeyword:
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"NULLIF" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"POW" '(' Expression ',' Expression ')'
 	{
 		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"POWER" '(' Expression ',' Expression ')'
 	{
 		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"RAND" '(' ExpressionOpt ')'
 	{
@@ -2595,7 +2608,7 @@ FunctionCallNonKeyword:
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"REPLACE" '(' Expression ',' Expression ',' Expression ')'
 	{
@@ -2604,23 +2617,23 @@ FunctionCallNonKeyword:
 	}
 |	"REVERSE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"RTRIM" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"SECOND" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"SLEEP" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"SPACE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"STRCMP" '(' Expression ',' Expression ')'
 	{
@@ -2629,35 +2642,35 @@ FunctionCallNonKeyword:
 |	"SUBSTRING" '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
 		}
 	}
 |	"SUBSTRING" '(' Expression "FROM" Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
 		}
 	}
 |	"SUBSTRING" '(' Expression ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}
 |	"SUBSTRING" '(' Expression "FROM" Expression "FOR" Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}
 |	"SUBSTRING_INDEX" '(' Expression ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}
@@ -2671,19 +2684,19 @@ FunctionCallNonKeyword:
 	}
 |	"TIME" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"TRIM" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
 |	"TRIM" '(' Expression "FROM" Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$5.(ast.ExprNode), $3.(ast.ExprNode)},
 		}
 	}
@@ -2692,7 +2705,7 @@ FunctionCallNonKeyword:
 		nilVal := ast.NewValueExpr(nil)
 		direction := ast.NewValueExpr($3)
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$5.(ast.ExprNode), nilVal, direction},
 		}
 	}
@@ -2700,45 +2713,45 @@ FunctionCallNonKeyword:
 	{
 		direction := ast.NewValueExpr($3)
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$6.(ast.ExprNode),$4.(ast.ExprNode), direction},
 		}
 	}
 |	"UPPER" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"UCASE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"WEEKDAY" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"WEEKOFYEAR" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"YEARWEEK" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"CONNECTION_ID" '(' ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
 |	"ROUND" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
-|	"GET_LOCK" '(' Expression ',' Expression ')' 
+|	"GET_LOCK" '(' Expression ',' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
 	}
-|	"RELEASE_LOCK" '(' Expression ')' 
+|	"RELEASE_LOCK" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 
 DateArithOpt:
@@ -2791,32 +2804,32 @@ TrimDirection:
 FunctionCallAgg:
 	"AVG" '(' DistinctOpt ExpressionList ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
 	}
 |	"COUNT" '(' DistinctOpt ExpressionList ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
 	}
 |	"COUNT" '(' DistinctOpt '*' ')'
 	{
 		args := []ast.ExprNode{ast.NewValueExpr(1)}
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: args, Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
 	}
 |	"GROUP_CONCAT" '(' DistinctOpt ExpressionList ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
 	}
 |	"MAX" '(' DistinctOpt Expression ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
 |	"MIN" '(' DistinctOpt Expression ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
 |	"SUM" '(' DistinctOpt Expression ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
 
 FuncDatetimePrec:
@@ -2833,9 +2846,44 @@ FuncDatetimePrec:
 	}
 
 TimeUnit:
-	"MICROSECOND" | "SECOND" | "MINUTE" | "HOUR" | "DAY" | "WEEK" 
-|	"MONTH" | "QUARTER" | "YEAR" | "SECOND_MICROSECOND" | "MINUTE_MICROSECOND"
-|	"MINUTE_SECOND" | "HOUR_MICROSECOND" | "HOUR_SECOND" | "HOUR_MINUTE" 
+	"MICROSECOND"
+	{
+		$$ = $1
+	}
+| "SECOND"
+	{
+		$$ = $1
+	}
+| "MINUTE"
+	{
+		$$ = $1
+	}
+| "HOUR"
+	{
+		$$ = $1
+	}
+| "DAY"
+	{
+		$$ = $1
+	}
+| "WEEK"
+	{
+		$$ = $1
+	}
+| "MONTH"
+	{
+		$$ = $1
+	}
+| "QUARTER" 
+	{
+		$$ = $1
+	}
+| "YEAR" 
+	{
+		$$ = $1
+	}
+| "SECOND_MICROSECOND" | "MINUTE_MICROSECOND"
+|	"MINUTE_SECOND" | "HOUR_MICROSECOND" | "HOUR_SECOND" | "HOUR_MINUTE"
 |	"DAY_MICROSECOND" | "DAY_SECOND" | "DAY_MINUTE" | "DAY_HOUR" | "YEAR_MONTH"
 
 ExpressionOpt:
@@ -2843,7 +2891,7 @@ ExpressionOpt:
 		$$ = nil
 	}
 |	Expression
-	{	
+	{
 		$$ = $1
 	}
 
@@ -2869,7 +2917,7 @@ WhenClause:
 ElseOpt:
 	/* empty */
 	{
-		$$ = nil	
+		$$ = nil
 	}
 |	"ELSE" Expression
 	{
@@ -2880,7 +2928,7 @@ CastType:
 	"BINARY" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int) 
+		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
@@ -2888,7 +2936,7 @@ CastType:
 |	"CHAR" OptFieldLen OptBinary OptCharset
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int) 
+		x.Flen = $2.(int)
 		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
@@ -3014,11 +3062,11 @@ LowPriorityOptional:
 TableName:
 	Identifier
 	{
-		$$ = &ast.TableName{Name:model.NewCIStr($1.(string))}
+		$$ = &ast.TableName{Name:model.NewCIStr($1)}
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.TableName{Schema:model.NewCIStr($1.(string)),	Name:model.NewCIStr($3.(string))}
+		$$ = &ast.TableName{Schema:model.NewCIStr($1),	Name:model.NewCIStr($3)}
 	}
 
 TableNameList:
@@ -3063,14 +3111,17 @@ PreparedStmt:
 			sqlVar = $4.(*ast.VariableExpr)
 		}
 		$$ = &ast.PrepareStmt{
-			Name:		$2.(string), 
-			SQLText:	sqlText, 
+			Name:		$2,
+			SQLText:	sqlText,
 			SQLVar: 	sqlVar,
 		}
 	}
 
 PrepareSQL:
 	stringLit
+	{
+		$$ = $1
+	}
 |	UserVariable
 
 
@@ -3084,12 +3135,12 @@ PrepareSQL:
 ExecuteStmt:
 	"EXECUTE" Identifier
 	{
-		$$ = &ast.ExecuteStmt{Name: $2.(string)}
+		$$ = &ast.ExecuteStmt{Name: $2}
 	}
 |	"EXECUTE" Identifier "USING" UserVariableList
 	{
 		$$ = &ast.ExecuteStmt{
-			Name: $2.(string), 
+			Name: $2,
 			UsingVars: $4.([]ast.ExprNode),
 		}
 	}
@@ -3097,11 +3148,11 @@ ExecuteStmt:
 UserVariableList:
 	UserVariable
 	{
-		$$ = []ast.ExprNode{$1.(ast.ExprNode)}		
+		$$ = []ast.ExprNode{$1.(ast.ExprNode)}
 	}
 |	UserVariableList ',' UserVariable
 	{
-		$$ = append($1.([]ast.ExprNode), $3.(ast.ExprNode))		
+		$$ = append($1.([]ast.ExprNode), $3.(ast.ExprNode))
 	}
 
 /*
@@ -3111,11 +3162,15 @@ UserVariableList:
 DeallocateStmt:
 	DeallocateSym "PREPARE" Identifier
 	{
-		$$ = &ast.DeallocateStmt{Name: $3.(string)}
+		$$ = &ast.DeallocateStmt{Name: $3}
 	}
 
 DeallocateSym:
-	"DEALLOCATE" | "DROP"
+	"DEALLOCATE" 
+	{
+		$$ = $1
+	}
+| "DROP"
 
 /****************************Prepared Statement End*******************************/
 
@@ -3248,15 +3303,15 @@ EscapedTableRef:
 	}
 |	'{' Identifier TableRef '}'
 	{
-		/* 
-		* ODBC escape syntax for outer join is { OJ join_table } 
-		* Use an Identifier for OJ 
+		/*
+		* ODBC escape syntax for outer join is { OJ join_table }
+		* Use an Identifier for OJ
 		*/
 		$$ = $3
 	}
 
 TableRef:
-	TableFactor 
+	TableFactor
 	{
 		$$ = $1
 	}
@@ -3300,11 +3355,11 @@ TableAsNameOpt:
 TableAsName:
 	Identifier
 	{
-		$$ = model.NewCIStr($1.(string))
+		$$ = model.NewCIStr($1)
 	}
 |	"AS" Identifier
 	{
-		$$ = model.NewCIStr($2.(string))
+		$$ = model.NewCIStr($2)
 	}
 
 IndexHintType:
@@ -3356,11 +3411,11 @@ IndexNameList:
 	}
 |	Identifier
 	{
-		$$ = []model.CIStr{model.NewCIStr($1.(string))}
+		$$ = []model.CIStr{model.NewCIStr($1)}
 	}
 |	IndexNameList ',' Identifier
 	{
-		$$ = append($1.([]model.CIStr), model.NewCIStr($3.(string)))
+		$$ = append($1.([]model.CIStr), model.NewCIStr($3))
 	}
 
 
@@ -3373,7 +3428,7 @@ IndexHintList:
  	{
  		$$ = append($1.([]*ast.IndexHint), $2.(*ast.IndexHint))
  	}
- 	
+
 IndexHintListOpt:
 	{
 		var hintList []*ast.IndexHint
@@ -3438,11 +3493,11 @@ SelectStmtLimit:
 	{
 		$$ = nil
 	}
-|	"LIMIT" LengthNum 
+|	"LIMIT" LengthNum
 	{
 		$$ = &ast.Limit{Count: $2.(uint64)}
 	}
-|	"LIMIT" LengthNum ',' LengthNum 
+|	"LIMIT" LengthNum ',' LengthNum
 	{
 		$$ = &ast.Limit{Offset: $2.(uint64), Count: $4.(uint64)}
 	}
@@ -3633,7 +3688,7 @@ SetStmt:
 	{
 		$$ = &ast.SetPwdStmt{User: $4.(string), Password: $6.(string)}
 	}
-|	"SET" "GLOBAL" "TRANSACTION" TransactionChars 
+|	"SET" "GLOBAL" "TRANSACTION" TransactionChars
 	{
 		// Parsed but ignored
 	}
@@ -3647,32 +3702,32 @@ TransactionChars:
 |	TransactionChars ',' TransactionChar
 
 TransactionChar:
-	"ISOLATION" "LEVEL" IsolationLevel
+	"ISOLATION" "LEVEL" IsolationLevel {}
 |	"READ" "WRITE"
-|	"READ" "ONLY"
+|	"READ" "ONLY" {}
 
 IsolationLevel:
-	"REPEATABLE" "READ"
-|	"READ"	"COMMITTED"
-|	"READ"	"UNCOMMITTED"
-|	"SERIALIZABLE"
+	"REPEATABLE" "READ" {}
+|	"READ"	"COMMITTED" {}
+|	"READ"	"UNCOMMITTED" {}
+|	"SERIALIZABLE" {}
 
 VariableAssignment:
 	Identifier eq Expression
 	{
-		$$ = &ast.VariableAssignment{Name: $1.(string), Value: $3.(ast.ExprNode), IsSystem: true}
+		$$ = &ast.VariableAssignment{Name: $1, Value: $3.(ast.ExprNode), IsSystem: true}
 	}
 |	"GLOBAL" Identifier eq Expression
 	{
-		$$ = &ast.VariableAssignment{Name: $2.(string), Value: $4.(ast.ExprNode), IsGlobal: true, IsSystem: true}
+		$$ = &ast.VariableAssignment{Name: $2, Value: $4.(ast.ExprNode), IsGlobal: true, IsSystem: true}
 	}
 |	"SESSION" Identifier eq Expression
 	{
-		$$ = &ast.VariableAssignment{Name: $2.(string), Value: $4.(ast.ExprNode), IsSystem: true}
+		$$ = &ast.VariableAssignment{Name: $2, Value: $4.(ast.ExprNode), IsSystem: true}
 	}
 |	"LOCAL" Identifier eq Expression
 	{
-		$$ = &ast.VariableAssignment{Name: $2.(string), Value: $4.(ast.ExprNode), IsSystem: true}
+		$$ = &ast.VariableAssignment{Name: $2, Value: $4.(ast.ExprNode), IsSystem: true}
 	}
 |	"SYS_VAR" eq Expression
 	{
@@ -3705,14 +3760,14 @@ VariableAssignment:
 |	"NAMES" StringName
 	{
 		$$ = &ast.VariableAssignment{
-			Name: ast.SetNames, 
+			Name: ast.SetNames,
 			Value: ast.NewValueExpr($2.(string)),
 		}
 	}
 |	"NAMES" StringName "COLLATE" StringName
 	{
 		$$ = &ast.VariableAssignment{
-			Name: ast.SetNames, 
+			Name: ast.SetNames,
 			Value: ast.NewValueExpr($2.(string)),
 			ExtendValue: ast.NewValueExpr($4.(string)),
 		}
@@ -3720,7 +3775,7 @@ VariableAssignment:
 |	CharsetKw StringName
 	{
 		$$ = &ast.VariableAssignment{
-			Name: ast.SetNames, 
+			Name: ast.SetNames,
 			Value: ast.NewValueExpr($2.(string)),
 		}
 	}
@@ -3768,17 +3823,17 @@ UserVariable:
 	}
 
 Username:
-	stringLit "AT" stringLit	
+	stringLit "AT" stringLit
 	{
-		$$ = $1.(string) + "@" + $3.(string)
+		$$ = $1 + "@" + $3
 	}
 
 PasswordOpt:
 	stringLit
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
-|	"PASSWORD" '(' AuthString ')' 
+|	"PASSWORD" '(' AuthString ')'
 	{
 		$$ = $3.(string)
 	}
@@ -3786,7 +3841,7 @@ PasswordOpt:
 AuthString:
 	stringLit
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 
 /****************************Admin Statement*******************************/
@@ -3943,7 +3998,7 @@ ShowTargetFilterable:
 
 ShowLikeOrWhereOpt:
 	{
-		$$ = nil 
+		$$ = nil
 	}
 |	"LIKE" PrimaryExpression
 	{
@@ -3959,15 +4014,15 @@ ShowLikeOrWhereOpt:
 
 GlobalScope:
 	{
-		$$ = false	
+		$$ = false
 	}
 |	"GLOBAL"
 	{
-		$$ = true	
+		$$ = true
 	}
-|	"SESSION" 
+|	"SESSION"
 	{
-		$$ = false	
+		$$ = false
 	}
 
 OptFull:
@@ -4090,7 +4145,7 @@ TableElement:
 |	"CHECK" '(' Expression ')'
 	{
 		/* Nothing to do now */
-		$$ = nil 
+		$$ = nil
 	}
 
 TableElementList:
@@ -4114,19 +4169,19 @@ TableElementList:
 TableOption:
 	"ENGINE" Identifier
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $2.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $2}
 	}
 |	"ENGINE" eq Identifier
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $3.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $3}
 	}
 |	DefaultKwdOpt CharsetKw EqOpt StringName
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionCharset, StrValue: $4.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionCharset, StrValue: $4.(string)}
 	}
 |	DefaultKwdOpt "COLLATE" EqOpt StringName
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $4.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $4.(string)}
 	}
 |	"AUTO_INCREMENT" eq LengthNum
 	{
@@ -4134,43 +4189,43 @@ TableOption:
 	}
 |	"COMMENT" EqOpt stringLit
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionComment, StrValue: $3.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionComment, StrValue: $3}
 	}
 |	"AVG_ROW_LENGTH" EqOpt LengthNum
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionAvgRowLength, UintValue: $3.(uint64)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionAvgRowLength, UintValue: $3.(uint64)}
 	}
 |	"CONNECTION" EqOpt stringLit
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionConnection, StrValue: $3.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionConnection, StrValue: $3}
 	}
 |	"CHECKSUM" EqOpt LengthNum
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionCheckSum, UintValue: $3.(uint64)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionCheckSum, UintValue: $3.(uint64)}
 	}
 |	"PASSWORD" EqOpt stringLit
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionPassword, StrValue: $3.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionPassword, StrValue: $3}
 	}
 |	"COMPRESSION" EqOpt Identifier
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionCompression, StrValue: $3.(string)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionCompression, StrValue: $3}
 	}
 |	"KEY_BLOCK_SIZE" EqOpt LengthNum
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionKeyBlockSize, UintValue: $3.(uint64)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionKeyBlockSize, UintValue: $3.(uint64)}
 	}
 |	"MAX_ROWS" EqOpt LengthNum
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionMaxRows, UintValue: $3.(uint64)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionMaxRows, UintValue: $3.(uint64)}
 	}
 |	"MIN_ROWS" EqOpt LengthNum
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionMinRows, UintValue: $3.(uint64)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionMinRows, UintValue: $3.(uint64)}
 	}
 |	"DELAY_KEY_WRITE" EqOpt LengthNum
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionDelayKeyWrite, UintValue: $3.(uint64)} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionDelayKeyWrite, UintValue: $3.(uint64)}
 	}
 |	RowFormat
 	{
@@ -4178,7 +4233,7 @@ TableOption:
 	}
 |	"STATS_PERSISTENT" EqOpt StatsPersistentVal
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent} 
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent}
 	}
 
 StatsPersistentVal:
@@ -4277,7 +4332,7 @@ NumericType:
 	{
 		fopt := $2.(*ast.FloatOpt)
 		x := types.NewFieldType($1.(byte))
-		x.Flen = fopt.Flen 
+		x.Flen = fopt.Flen
 		x.Decimal = fopt.Decimal
 		for _, o := range $3.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
@@ -4293,14 +4348,14 @@ NumericType:
 	{
 		fopt := $2.(*ast.FloatOpt)
 		x := types.NewFieldType($1.(byte))
-		x.Flen = fopt.Flen 
+		x.Flen = fopt.Flen
 		if x.Tp == mysql.TypeFloat {
 			// Fix issue #312
 			if x.Flen > 53 {
 				yylex.Errorf("Float len(%d) should not be greater than 53", x.Flen)
 				return 1
 			}
-			if x.Flen > 24 { 
+			if x.Flen > 24 {
 				x.Tp = mysql.TypeDouble
 			}
 		}
@@ -4342,7 +4397,7 @@ IntegerType:
 	}
 |	"INT"
 	{
-		$$ = mysql.TypeLong 
+		$$ = mysql.TypeLong
 	}
 |	"INTEGER"
 	{
@@ -4354,11 +4409,11 @@ IntegerType:
 	}
 |	"BOOL"
 	{
-		$$ = mysql.TypeTiny        
+		$$ = mysql.TypeTiny
 	}
 |	"BOOLEAN"
 	{
-		$$ = mysql.TypeTiny        
+		$$ = mysql.TypeTiny
 	}
 
 OptInteger:
@@ -4395,7 +4450,7 @@ FloatingPointType:
 BitValueType:
 	"BIT"
 	{
-		$$ = mysql.TypeBit 
+		$$ = mysql.TypeBit
 	}
 
 StringType:
@@ -4419,7 +4474,7 @@ StringType:
 |	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
-		x.Flen = $3.(int) 
+		x.Flen = $3.(int)
 		if $4.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
@@ -4430,16 +4485,16 @@ StringType:
 |	"BINARY" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int) 
-		x.Charset = charset.CharsetBin 
+		x.Flen = $2.(int)
+		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 |	"VARBINARY" FieldLen
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
-		x.Flen = $2.(int) 
-		x.Charset = charset.CharsetBin 
+		x.Flen = $2.(int)
+		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
 	}
@@ -4494,7 +4549,7 @@ BlobType:
 |	"BLOB" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeBlob)
-		x.Flen = $2.(int) 
+		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
@@ -4524,7 +4579,7 @@ TextType:
 |	"TEXT" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeBlob)
-		x.Flen = $2.(int) 
+		x.Flen = $2.(int)
 		$$ = x
 	}
 |	"MEDIUMTEXT"
@@ -4579,10 +4634,10 @@ FieldLen:
 OptFieldLen:
 	{
 		/* -1 means unspecified field length*/
-		$$ = types.UnspecifiedLength 
+		$$ = types.UnspecifiedLength
 	}
 |	FieldLen
-	{   
+	{
 		$$ = $1.(int)
 	}
 
@@ -4602,7 +4657,7 @@ FieldOpts:
 	}
 |	FieldOpts FieldOpt
 	{
-		$$ = append($1.([]*ast.TypeOpt), $2.(*ast.TypeOpt)) 
+		$$ = append($1.([]*ast.TypeOpt), $2.(*ast.TypeOpt))
 	}
 
 FloatOpt:
@@ -4645,6 +4700,9 @@ OptCharset:
 CharsetKw:
 	"CHARACTER" "SET"
 |	"CHARSET"
+	{
+		$$ = $1
+	}
 
 OptCollate:
 	{
@@ -4658,21 +4716,21 @@ OptCollate:
 StringList:
 	stringLit
 	{
-		$$ = []string{$1.(string)}
+		$$ = []string{$1}
 	}
 |	StringList ',' stringLit
 	{
-		$$ = append($1.([]string), $3.(string))
+		$$ = append($1.([]string), $3)
 	}
 
 StringName:
 	stringLit
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 |	Identifier
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 
 /***********************************************************************************
@@ -4760,7 +4818,7 @@ CreateUserStmt:
 	}
 
 UserSpec:
-	Username AuthOption	
+	Username AuthOption
 	{
 		userSpec := &ast.UserSpec{
 			User: $1.(string),
@@ -4801,6 +4859,9 @@ AuthOption:
 
 HashString:
 	stringLit
+	{
+		$$ = $1
+	}
 
 /*************************************************************************************
  * Grant statement
@@ -4926,22 +4987,22 @@ PrivLevel:
 	{
 		$$ = &ast.GrantLevel {
 			Level: ast.GrantLevelDB,
-			DBName: $1.(string),
+			DBName: $1,
 		}
 	}
 |	Identifier '.' Identifier
 	{
 		$$ = &ast.GrantLevel {
 			Level: ast.GrantLevelTable,
-			DBName: $1.(string),
-			TableName: $3.(string),
+			DBName: $1,
+			TableName: $3,
 		}
 	}
 |	Identifier
 	{
 		$$ = &ast.GrantLevel {
 			Level: ast.GrantLevelTable,
-			TableName: $1.(string),
+			TableName: $1,
 		}
 	}
 
@@ -4967,6 +5028,6 @@ LockType:
 
 TableLockList:
 	TableLock
-|	TableLockList ',' TableLock 
+|	TableLockList ',' TableLock
 
 %%

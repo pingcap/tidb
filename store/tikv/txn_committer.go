@@ -26,15 +26,17 @@ import (
 )
 
 type txnCommitter struct {
-	store       *tikvStore
-	txn         *tikvTxn
-	startTS     uint64
-	keys        [][]byte
-	mutations   map[string]*pb.Mutation
-	commitTS    uint64
-	mu          sync.RWMutex
-	writtenKeys [][]byte
-	committed   bool
+	store     *tikvStore
+	txn       *tikvTxn
+	startTS   uint64
+	keys      [][]byte
+	mutations map[string]*pb.Mutation
+	commitTS  uint64
+	mu        struct {
+		sync.RWMutex
+		writtenKeys [][]byte
+		committed   bool
+	}
 }
 
 func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
@@ -204,7 +206,7 @@ func (c *txnCommitter) prewriteSingleRegion(bo *Backoffer, batch batchKeys) erro
 			// We need to cleanup all written keys if transaction aborts.
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			c.writtenKeys = append(c.writtenKeys, batch.keys...)
+			c.mu.writtenKeys = append(c.mu.writtenKeys, batch.keys...)
 			return nil
 		}
 		for _, keyErr := range keyErrs {
@@ -258,7 +260,7 @@ func (c *txnCommitter) commitSingleRegion(bo *Backoffer, batch batchKeys) error 
 		c.mu.RLock()
 		defer c.mu.RUnlock()
 		err = errors.Errorf("commit failed: %v", keyErr.String())
-		if c.committed {
+		if c.mu.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.
 			log.Errorf("txn failed commit key after primary key committed: %v, tid: %d", err, c.startTS)
@@ -273,7 +275,7 @@ func (c *txnCommitter) commitSingleRegion(bo *Backoffer, batch batchKeys) error 
 	defer c.mu.Unlock()
 	// Group that contains primary key is always the first.
 	// We mark transaction's status committed when we receive the first success response.
-	c.committed = true
+	c.mu.committed = true
 	return nil
 }
 
@@ -320,11 +322,12 @@ func (c *txnCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 func (c *txnCommitter) Commit() error {
 	defer func() {
 		// Always clean up all written keys if the txn does not commit.
-		if !c.committed {
+		c.mu.RLock()
+		writtenKeys := c.mu.writtenKeys
+		committed := c.mu.committed
+		c.mu.RUnlock()
+		if !committed {
 			go func() {
-				c.mu.RLock()
-				writtenKeys := c.writtenKeys
-				c.mu.RUnlock()
 				c.cleanupKeys(NewBackoffer(cleanupMaxBackoff), writtenKeys)
 				log.Infof("txn clean up done, tid: %d", c.startTS)
 			}()
@@ -346,7 +349,7 @@ func (c *txnCommitter) Commit() error {
 
 	err = c.commitKeys(NewBackoffer(commitMaxBackoff), c.keys)
 	if err != nil {
-		if !c.committed {
+		if !c.mu.committed {
 			log.Warnf("txn commit failed on commit: %v, tid: %d", err, c.startTS)
 			return errors.Trace(err)
 		}

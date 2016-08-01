@@ -84,9 +84,9 @@ func (c *CopClient) Send(req *kv.Request) kv.Response {
 	it := &copIterator{
 		store:       c.store,
 		req:         req,
-		tasks:       tasks,
 		concurrency: req.Concurrency,
 	}
+	it.mu.tasks = tasks
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
 	}
@@ -98,10 +98,8 @@ func (c *CopClient) Send(req *kv.Request) kv.Response {
 		it.respChan = make(chan *coprocessor.Response, it.concurrency)
 	}
 	it.errChan = make(chan error, 1)
-	if len(it.tasks) == 0 {
-		it.mu.Lock()
+	if len(it.mu.tasks) == 0 {
 		it.Close()
-		it.mu.Unlock()
 	}
 	it.run()
 	return it
@@ -194,16 +192,17 @@ func appendTask(tasks []*copTask, bo *Backoffer, cache *RegionCache, r kv.KeyRan
 }
 
 type copIterator struct {
-	store *tikvStore
-	req   *kv.Request
-	tasks []*copTask
-
-	mu          sync.RWMutex
-	respGot     int
+	store       *tikvStore
+	req         *kv.Request
 	concurrency int
-	respChan    chan *coprocessor.Response
-	errChan     chan error
-	finished    bool
+	mu          struct {
+		sync.RWMutex
+		tasks    []*copTask
+		respGot  int
+		finished bool
+	}
+	respChan chan *coprocessor.Response
+	errChan  chan error
 }
 
 // Pick the next new copTask and send request to tikv-server.
@@ -211,13 +210,13 @@ func (it *copIterator) work() {
 	bo := NewBackoffer(copNextMaxBackoff)
 	for {
 		it.mu.Lock()
-		if it.finished {
+		if it.mu.finished {
 			it.mu.Unlock()
 			break
 		}
 		// Find the next task to send.
 		var task *copTask
-		for _, t := range it.tasks {
+		for _, t := range it.mu.tasks {
 			if t.status == taskNew {
 				task = t
 				break
@@ -251,7 +250,7 @@ func (it *copIterator) run() {
 
 // Return next coprocessor result.
 func (it *copIterator) Next() (io.ReadCloser, error) {
-	if it.finished {
+	if it.mu.finished {
 		return nil, nil
 	}
 	var (
@@ -269,16 +268,16 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	} else {
 		var task *copTask
 		it.mu.Lock()
-		for _, t := range it.tasks {
+		for _, t := range it.mu.tasks {
 			if t.status != taskDone {
 				task = t
 				break
 			}
 		}
+		it.mu.Unlock()
 		if task == nil {
 			it.Close()
 		}
-		it.mu.Unlock()
 		if task == nil {
 			return nil, nil
 		}
@@ -294,12 +293,12 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	it.mu.Lock()
 	defer it.mu.Unlock()
 	if err != nil {
-		it.Close()
+		it.mu.finished = true
 		return nil, errors.Trace(err)
 	}
-	it.respGot++
-	if it.respGot == len(it.tasks) {
-		it.Close()
+	it.mu.respGot++
+	if it.mu.respGot == len(it.mu.tasks) {
+		it.mu.finished = true
 	}
 	return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
 }
@@ -307,6 +306,13 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 // Handle single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Response, error) {
 	for {
+		it.mu.RLock()
+		if it.mu.finished {
+			it.mu.RUnlock()
+			return nil, nil
+		}
+		it.mu.RUnlock()
+
 		req := &coprocessor.Request{
 			Context: task.region.GetContext(),
 			Tp:      proto.Int64(it.req.Tp),
@@ -385,16 +391,18 @@ func (it *copIterator) rebuildCurrentTask(bo *Backoffer, task *copTask) error {
 	task.ranges = t.ranges
 	close(t.respChan)
 	newTasks[0] = task
-	it.tasks = append(it.tasks[:task.idx], append(newTasks, it.tasks[task.idx+1:]...)...)
+	it.mu.tasks = append(it.mu.tasks[:task.idx], append(newTasks, it.mu.tasks[task.idx+1:]...)...)
 	// Update index.
-	for i := task.idx; i < len(it.tasks); i++ {
-		it.tasks[i].idx = i
+	for i := task.idx; i < len(it.mu.tasks); i++ {
+		it.mu.tasks[i].idx = i
 	}
 	return nil
 }
 
 func (it *copIterator) Close() error {
-	it.finished = true
+	it.mu.Lock()
+	it.mu.finished = true
+	it.mu.Unlock()
 	return nil
 }
 

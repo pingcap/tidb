@@ -43,6 +43,9 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
+	// For prometheus init
+	_ "github.com/pingcap/tidb/util/metrics"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
@@ -216,11 +219,17 @@ func (s *Server) startStatusHTTP() {
 				}
 
 			})
+			// HTTP path for prometheus.
+			http.Handle("/metrics", prometheus.Handler())
 			addr := s.cfg.StatusAddr
 			if len(addr) == 0 {
 				addr = defaultStatusAddr
 			}
-			log.Fatal(http.ListenAndServe(addr, nil))
+			log.Infof("Listening on %v for status and metrics report.", addr)
+			err := http.ListenAndServe(addr, nil)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}()
 	})
 }

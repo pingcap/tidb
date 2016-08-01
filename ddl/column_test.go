@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"reflect"
+	"sync"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -821,6 +822,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	checkOK := false
+	var mu sync.Mutex
 	oldCol := &table.Column{}
 
 	tc := &testDDLCallback{}
@@ -831,7 +833,9 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID).(*tables.Table)
 		col := table.FindCol(t.Columns, colName)
 		if col == nil {
+			mu.Lock()
 			checkOK = true
+			mu.Unlock()
 			return
 		}
 		oldCol = col
@@ -847,7 +851,9 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 
 	job := testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, false)
 	testCheckJobDone(c, d, job, false)
+	mu.Lock()
 	c.Assert(checkOK, IsTrue)
+	mu.Unlock()
 
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)

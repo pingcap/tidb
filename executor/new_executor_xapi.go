@@ -46,6 +46,8 @@ type NewXExecutor interface {
 	AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByItem, fields []*types.FieldType)
 	// GetTable gets the TableInfo of this XExecutor.
 	GetTable() *model.TableInfo
+	// AddLimit try to add limit to NewXExecutor. If success, return true.
+	AddLimit(l *plan.Limit) bool
 }
 
 // NewXSelectIndexExec represents XAPI select index executor without result fields.
@@ -89,6 +91,16 @@ func (e *NewXSelectIndexExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.B
 	e.aggregate = true
 }
 
+// AddLimit implements NewXExecutor interface.
+func (e *NewXSelectIndexExec) AddLimit(limit *plan.Limit) bool {
+	cnt := int64(limit.Offset + limit.Count)
+	if e.indexPlan.LimitCount == nil {
+		e.indexPlan.LimitCount = &cnt
+		return true
+	}
+	return false
+}
+
 // GetTable implements NewXExecutor interface.
 func (e *NewXSelectIndexExec) GetTable() *model.TableInfo {
 	return e.tableInfo
@@ -109,7 +121,9 @@ func (e *NewXSelectIndexExec) Close() error {
 	e.result = nil
 	e.subResult = nil
 	e.taskCursor = 0
+	e.mu.Lock()
 	e.tasks = nil
+	e.mu.Unlock()
 	e.indexOrder = make(map[int64]int)
 	return nil
 }
@@ -171,7 +185,6 @@ func (e *NewXSelectIndexExec) fetchHandles() ([]int64, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// TODO: support out of order when implement cbo
 	if !e.indexPlan.OutOfOrder {
 		// Save the index order.
 		e.indexOrder = make(map[int64]int)
@@ -259,8 +272,8 @@ func (e *NewXSelectIndexExec) runTableTasks(n int) {
 func (e *NewXSelectIndexExec) pickAndExecTask() {
 	for {
 		// Pick a new task.
-		e.mu.Lock()
 		var task *lookupTableTask
+		e.mu.Lock()
 		for _, t := range e.tasks {
 			if t.status == taskNew {
 				task = t
@@ -292,7 +305,6 @@ func (e *NewXSelectIndexExec) executeTask(task *lookupTableTask) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// TODO: check this
 	if !e.indexPlan.OutOfOrder {
 		// Restore the index order.
 		sorter := &rowsSorter{order: e.indexOrder, rows: task.rows}
@@ -408,6 +420,16 @@ type NewXSelectTableExec struct {
 	byItems   []*tipb.ByItem
 	aggFields []*types.FieldType
 	aggregate bool
+}
+
+// AddLimit implements NewXExecutor interface.
+func (e *NewXSelectTableExec) AddLimit(limit *plan.Limit) bool {
+	cnt := int64(limit.Offset + limit.Count)
+	if e.limitCount == nil {
+		e.limitCount = &cnt
+		return true
+	}
+	return false
 }
 
 // Schema implements Executor Schema interface.

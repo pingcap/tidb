@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/metrics"
 )
 
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
@@ -380,7 +381,13 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 	} else {
 		err = cc.writeOK()
 	}
-	log.Debugf("[TIME_QUERY] %v %s", time.Now().Sub(startTs), sql)
+	costTime := time.Now().Sub(startTs)
+	if costTime < time.Second {
+		log.Debugf("[TIME_QUERY] %v %s", costTime, sql)
+	} else {
+		log.Warnf("[TIME_QUERY] %v %s", costTime, sql)
+	}
+	metrics.Query(costTime)
 	return errors.Trace(err)
 }
 

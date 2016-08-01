@@ -26,7 +26,7 @@ import (
 )
 
 // UseNewPlanner means if use the new planner.
-var UseNewPlanner = false
+var UseNewPlanner = true
 
 type idAllocator struct {
 	id int
@@ -81,7 +81,6 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 		case *ast.UnionStmt:
 			p = b.buildNewUnion(v)
 		case *ast.TableName:
-			// TODO: select physical algorithm during cbo phase.
 			p = b.buildDataSource(v)
 		default:
 			b.err = ErrUnsupportedType.Gen("unsupported table source type %T", v)
@@ -210,6 +209,8 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) LogicalPlan {
 		joinPlan.LeftConditions = leftCond
 		joinPlan.RightConditions = rightCond
 		joinPlan.OtherConditions = otherCond
+	} else if joinPlan.JoinType == InnerJoin {
+		joinPlan.cartesianJoin = true
 	}
 	if join.Tp == ast.LeftJoin {
 		joinPlan.JoinType = LeftOuterJoin
@@ -448,7 +449,8 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField) (
 			if matchedExpr == nil {
 				matchedExpr = curCol
 				index = i
-			} else if !colMatch(matchedExpr.(*ast.ColumnNameExpr).Name, curCol.Name) {
+			} else if !colMatch(matchedExpr.(*ast.ColumnNameExpr).Name, curCol.Name) &&
+				!colMatch(curCol.Name, matchedExpr.(*ast.ColumnNameExpr).Name) {
 				return -1, errors.Errorf("Column '%s' in field list is ambiguous", curCol.Name.Name.L)
 			}
 		}
@@ -787,7 +789,6 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 			return nil
 		}
 	}
-	// TODO: implement push order during cbo
 	if sel.OrderBy != nil {
 		p = b.buildNewSort(p, sel.OrderBy.Items, orderMap)
 		if b.err != nil {
@@ -822,7 +823,7 @@ func (b *planBuilder) buildNewTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) getTableStats(table *model.TableInfo) *statistics.Table {
-	// TODO: Currently we always retrun a pseudo table for good performance. We will use a cache in future.
+	// TODO: Currently we always return a pseudo table for good performance. We will use a cache in future.
 	return statistics.PseudoTable(table)
 }
 
