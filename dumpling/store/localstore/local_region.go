@@ -46,6 +46,7 @@ type selectContext struct {
 	txn          kv.Transaction
 	eval         *xeval.Evaluator
 	whereColumns map[int64]*tipb.ColumnInfo
+	aggColumns   map[int64]*tipb.ColumnInfo
 	groups       map[string]bool
 	groupKeys    [][]byte
 	aggregates   []*aggregateFuncExpr
@@ -73,18 +74,27 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		ctx.eval = &xeval.Evaluator{Row: make(map[int64]types.Datum)}
 		if sel.Where != nil {
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
-			collectColumnsInWhere(sel.Where, ctx)
+			collectColumnsInExpr(sel.Where, ctx, ctx.whereColumns)
 		}
 		ctx.aggregate = len(sel.Aggregates) > 0 || len(sel.GetGroupBy()) > 0
 		if ctx.aggregate {
 			// compose aggregateFuncExpr
 			ctx.aggregates = make([]*aggregateFuncExpr, 0, len(sel.Aggregates))
+			ctx.aggColumns = make(map[int64]*tipb.ColumnInfo)
 			for _, agg := range sel.Aggregates {
 				aggExpr := &aggregateFuncExpr{expr: agg}
 				ctx.aggregates = append(ctx.aggregates, aggExpr)
+				collectColumnsInExpr(agg, ctx, ctx.aggColumns)
 			}
 			ctx.groups = make(map[string]bool)
 			ctx.groupKeys = make([][]byte, 0)
+			for _, item := range ctx.sel.GetGroupBy() {
+				collectColumnsInExpr(item.Expr, ctx, ctx.aggColumns)
+			}
+			for k := range ctx.whereColumns {
+				// It is will be handled in where.
+				delete(ctx.aggColumns, k)
+			}
 		}
 
 		var rows []*tipb.Row
@@ -111,7 +121,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 	return resp, nil
 }
 
-func collectColumnsInWhere(expr *tipb.Expr, ctx *selectContext) error {
+func collectColumnsInExpr(expr *tipb.Expr, ctx *selectContext, collector map[int64]*tipb.ColumnInfo) error {
 	if expr == nil {
 		return nil
 	}
@@ -128,14 +138,14 @@ func collectColumnsInWhere(expr *tipb.Expr, ctx *selectContext) error {
 		}
 		for _, c := range columns {
 			if c.GetColumnId() == i {
-				ctx.whereColumns[i] = c
+				collector[i] = c
 				return nil
 			}
 		}
 		return xeval.ErrInvalid.Gen("column %d not found", i)
 	}
 	for _, child := range expr.Children {
-		err := collectColumnsInWhere(child, ctx)
+		err := collectColumnsInExpr(child, ctx, collector)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -399,7 +409,7 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 
 	if ctx.aggregate {
 		// Update aggregate functions.
-		err = rs.aggregate(ctx, rowData)
+		err = rs.aggregate(ctx, handle, values)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -423,11 +433,9 @@ func (rs *localRegion) getRowData(value []byte, colTps map[int64]*types.FieldTyp
 	return res, nil
 }
 
-func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64, row map[int64][]byte) (bool, error) {
-	if ctx.sel.Where == nil {
-		return true, nil
-	}
-	for colID, col := range ctx.whereColumns {
+// Put column values into ctx, the values will be used for expr evaluation.
+func (rs *localRegion) setColumnValueToCtx(ctx *selectContext, h int64, row map[int64][]byte, cols map[int64]*tipb.ColumnInfo) error {
+	for colID, col := range cols {
 		if col.GetPkHandle() {
 			ctx.eval.Row[colID] = types.NewIntDatum(h)
 		} else {
@@ -435,10 +443,21 @@ func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64, row map[int6
 			ft := xapi.FieldTypeFromPBColumn(col)
 			datum, err := tablecodec.DecodeColumnValue(data, ft)
 			if err != nil {
-				return false, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			ctx.eval.Row[colID] = datum
 		}
+	}
+	return nil
+}
+
+func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64, row map[int64][]byte) (bool, error) {
+	if ctx.sel.Where == nil {
+		return true, nil
+	}
+	err := rs.setColumnValueToCtx(ctx, h, row, ctx.whereColumns)
+	if err != nil {
+		return false, errors.Trace(err)
 	}
 	result, err := ctx.eval.Eval(ctx.sel.Where)
 	if err != nil {
