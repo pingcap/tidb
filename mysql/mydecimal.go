@@ -56,9 +56,19 @@ const (
 )
 
 var (
-	wordBufLen    = 9
-	powers10      = [10]int32{ten0, ten1, ten2, ten3, ten4, ten5, ten6, ten7, ten8, ten9}
-	dig2bytes     = [10]int{0, 1, 1, 2, 2, 3, 3, 4, 4, 4}
+	wordBufLen = 9
+	powers10   = [10]int32{ten0, ten1, ten2, ten3, ten4, ten5, ten6, ten7, ten8, ten9}
+	dig2bytes  = [10]int{0, 1, 1, 2, 2, 3, 3, 4, 4, 4}
+	fracMax    = [8]int32{
+		900000000,
+		990000000,
+		999000000,
+		999900000,
+		999990000,
+		999999000,
+		999999900,
+		999999990,
+	}
 	zeroMyDecimal = MyDecimal{digitsInt: 1}
 )
 
@@ -72,6 +82,18 @@ func add(a, b, carry int32) (int32, int32) {
 		carry = 0
 	}
 	return sum, carry
+}
+
+// sub substracts b and carry from a, returns the diff and new carry.
+func sub(a, b, carry int32) (int32, int32) {
+	diff := a - b - carry
+	if diff < 0 {
+		carry = 1
+		diff += wordBase
+	} else {
+		carry = 0
+	}
+	return diff, carry
 }
 
 // fixWordCntError limits word count in wordBufLen, and returns overflow or truncate error.
@@ -953,4 +975,662 @@ func (d *MyDecimal) ToFloat64() (float64, int) {
 		ec = eDecOverflow
 	}
 	return f, ec
+}
+
+/*
+ToBin converts decimal to its binary fixed-length representation
+two representations of the same length can be compared with memcmp
+with the correct -1/0/+1 result
+
+  PARAMS
+		precision/frac - see decimalBinSize() below
+
+  NOTE
+    the buffer is assumed to be of the size decimalBinSize(precision, frac)
+
+  RETURN VALUE
+  	bin     - binary value
+    errCode - eDecOK/eDecTruncate/eDecOverflow
+
+  DESCRIPTION
+    for storage decimal numbers are converted to the "binary" format.
+
+    This format has the following properties:
+      1. length of the binary representation depends on the {precision, frac}
+      as provided by the caller and NOT on the digitsInt/digitsFrac of the decimal to
+      convert.
+      2. binary representations of the same {precision, frac} can be compared
+      with memcmp - with the same result as DecimalCompare() of the original
+      decimals (not taking into account possible precision loss during
+      conversion).
+
+    This binary format is as follows:
+      1. First the number is converted to have a requested precision and frac.
+      2. Every full digitsPerWord digits of digitsInt part are stored in 4 bytes
+         as is
+      3. The first digitsInt % digitesPerWord digits are stored in the reduced
+         number of bytes (enough bytes to store this number of digits -
+         see dig2bytes)
+      4. same for frac - full word are stored as is,
+         the last frac % digitsPerWord digits - in the reduced number of bytes.
+      5. If the number is negative - every byte is inversed.
+      5. The very first bit of the resulting byte array is inverted (because
+         memcmp compares unsigned bytes, see property 2 above)
+
+    Example:
+
+      1234567890.1234
+
+    internally is represented as 3 words
+
+      1 234567890 123400000
+
+    (assuming we want a binary representation with precision=14, frac=4)
+    in hex it's
+
+      00-00-00-01  0D-FB-38-D2  07-5A-EF-40
+
+    now, middle word is full - it stores 9 decimal digits. It goes
+    into binary representation as is:
+
+
+      ...........  0D-FB-38-D2 ............
+
+    First word has only one decimal digit. We can store one digit in
+    one byte, no need to waste four:
+
+                01 0D-FB-38-D2 ............
+
+    now, last word. It's 123400000. We can store 1234 in two bytes:
+
+                01 0D-FB-38-D2 04-D2
+
+    So, we've packed 12 bytes number in 7 bytes.
+    And now we invert the highest bit to get the final result:
+
+                81 0D FB 38 D2 04 D2
+
+    And for -1234567890.1234 it would be
+
+                7E F2 04 C7 2D FB 2D
+*/
+func (d *MyDecimal) ToBin(precision, frac int) ([]byte, int) {
+	var errCode int
+	var mask int32
+	if d.negative {
+		mask = -1
+	}
+	digitsInt := precision - frac
+	wordsInt := digitsInt / digitsPerWord
+	leadingDigits := digitsInt - wordsInt*digitsPerWord
+	wordsFrac := frac / digitsPerWord
+	trailingDigits := frac - wordsFrac*digitsPerWord
+
+	wordsFracFrom := d.digitsFrac / digitsPerWord
+	trailingDigitsFrom := d.digitsFrac - wordsFracFrom*digitsPerWord
+	intSize := wordsInt*wordSize + dig2bytes[leadingDigits]
+	fracSize := wordsFrac*wordSize + dig2bytes[trailingDigits]
+	fracSizeFrom := wordsFracFrom*wordSize + dig2bytes[trailingDigitsFrom]
+	originIntSize := intSize
+	originFracSize := fracSize
+
+	bin := make([]byte, intSize+fracSize)
+	binIdx := 0
+	wordIdxFrom, digitsIntFrom := d.removeLeadingZeros()
+	if digitsIntFrom+fracSizeFrom == 0 {
+		mask = 0
+		digitsInt = 1
+	}
+
+	wordsIntFrom := digitsIntFrom / digitsPerWord
+	leadingDigitsFrom := digitsIntFrom - wordsIntFrom*digitsPerWord
+	iSizeFrom := wordsIntFrom*wordSize + dig2bytes[leadingDigitsFrom]
+
+	if wordsInt < wordsIntFrom {
+		wordIdxFrom += wordsIntFrom - wordsInt
+		if leadingDigitsFrom > 0 {
+			wordIdxFrom++
+		}
+		if leadingDigits > 0 {
+			wordIdxFrom--
+		}
+		wordsIntFrom = wordsInt
+		leadingDigitsFrom = leadingDigits
+		errCode = eDecOverflow
+	} else if intSize > iSizeFrom {
+		for intSize > iSizeFrom {
+			intSize--
+			bin[binIdx] = byte(mask)
+			binIdx++
+		}
+	}
+
+	if fracSize < fracSizeFrom {
+		wordsFracFrom = wordsFrac
+		trailingDigitsFrom = trailingDigits
+		errCode = eDecTruncate
+	} else if fracSize > fracSizeFrom && trailingDigitsFrom > 0 {
+		if wordsFrac == wordsFracFrom {
+			trailingDigitsFrom = trailingDigits
+			fracSize = fracSizeFrom
+		} else {
+			wordsFracFrom++
+			trailingDigitsFrom = 0
+		}
+	}
+	// xIntFrom part
+	if leadingDigitsFrom > 0 {
+		i := dig2bytes[leadingDigitsFrom]
+		x := (d.wordBuf[wordIdxFrom] % powers10[leadingDigitsFrom]) ^ mask
+		wordIdxFrom++
+		writeWord(bin[binIdx:], x, i)
+		binIdx += i
+	}
+
+	// wordsInt + wordsFrac part.
+	for stop := wordIdxFrom + wordsIntFrom + wordsFracFrom; wordIdxFrom < stop; binIdx += wordSize {
+		x := d.wordBuf[wordIdxFrom] ^ mask
+		wordIdxFrom++
+		writeWord(bin[binIdx:], x, 4)
+	}
+
+	// xFracFrom part
+	if trailingDigitsFrom > 0 {
+		var x int32
+		i := dig2bytes[trailingDigitsFrom]
+		lim := trailingDigits
+		if wordsFracFrom < wordsFrac {
+			lim = digitsPerWord
+		}
+
+		for trailingDigitsFrom < lim && dig2bytes[trailingDigitsFrom] == i {
+			trailingDigitsFrom++
+		}
+		x = (d.wordBuf[wordIdxFrom] / powers10[digitsPerWord-trailingDigitsFrom]) ^ mask
+		writeWord(bin[binIdx:], x, i)
+		binIdx += i
+	}
+	if fracSize > fracSizeFrom {
+		binIdxEnd := originIntSize + originFracSize
+		for fracSize > fracSizeFrom && binIdx < binIdxEnd {
+			fracSize--
+			bin[binIdx] = byte(mask)
+			binIdx++
+		}
+	}
+	bin[0] ^= 0x80
+	return bin, errCode
+}
+
+// FromBin Restores decimal from its binary fixed-length representation.
+func (d *MyDecimal) FromBin(bin []byte, precision, frac int) int {
+	var errcode = eDecOK
+	digitsInt := precision - frac
+	wordsInt := digitsInt / digitsPerWord
+	leadingDigits := digitsInt - wordsInt*digitsPerWord
+	wordsFrac := frac / digitsPerWord
+	trailingDigits := frac - wordsFrac*digitsPerWord
+	wordsIntTo := wordsInt
+	if leadingDigits > 0 {
+		wordsIntTo++
+	}
+	wordsFracTo := wordsFrac
+	if trailingDigits > 0 {
+		wordsFracTo++
+	}
+
+	binIdx := 0
+	mask := int32(-1)
+	if bin[binIdx]&0x80 > 0 {
+		mask = 0
+	}
+	binSize := decimalBinSize(precision, frac)
+	dCopy := make([]byte, binSize)
+	copy(dCopy, bin)
+	dCopy[0] ^= 0x80
+	bin = dCopy
+	oldWordsIntTo := wordsIntTo
+	wordsIntTo, wordsFracTo, errcode = fixWordCntError(wordsIntTo, wordsFracTo)
+	if errcode != 0 {
+		if wordsIntTo < oldWordsIntTo {
+			binIdx += dig2bytes[leadingDigits] + (wordsInt-wordsIntTo)*wordSize
+		} else {
+			trailingDigits = 0
+			wordsFrac = wordsFracTo
+		}
+	}
+	d.negative = mask != 0
+	d.digitsInt = wordsInt*digitsPerWord + leadingDigits
+	d.digitsFrac = wordsFrac*digitsPerWord + trailingDigits
+
+	wordIdx := 0
+	if leadingDigits > 0 {
+		i := dig2bytes[leadingDigits]
+		x := readWord(bin[binIdx:], i)
+		binIdx += i
+		d.wordBuf[wordIdx] = x ^ mask
+		if uint64(d.wordBuf[wordIdx]) >= uint64(powers10[leadingDigits+1]) {
+			*d = zeroMyDecimal
+			return eDecBadNum
+		}
+		if wordIdx > 0 || d.wordBuf[wordIdx] != 0 {
+			wordIdx++
+		} else {
+			d.digitsInt -= leadingDigits
+		}
+	}
+	for stop := binIdx + wordsInt*wordSize; binIdx < stop; binIdx += wordSize {
+		d.wordBuf[wordIdx] = readWord(bin[binIdx:], 4) ^ mask
+		if uint32(d.wordBuf[wordIdx]) > wordMax {
+			*d = zeroMyDecimal
+			return eDecBadNum
+		}
+		if wordIdx > 0 || d.wordBuf[wordIdx] != 0 {
+			wordIdx++
+		} else {
+			d.digitsInt -= digitsPerWord
+		}
+	}
+
+	for stop := binIdx + wordsFrac*wordSize; binIdx < stop; binIdx += wordSize {
+		d.wordBuf[wordIdx] = readWord(bin[binIdx:], 4) ^ mask
+		if uint32(d.wordBuf[wordIdx]) > wordMax {
+			*d = zeroMyDecimal
+			return eDecBadNum
+		}
+		wordIdx++
+	}
+
+	if trailingDigits > 0 {
+		i := dig2bytes[trailingDigits]
+		x := readWord(bin[binIdx:], i)
+		d.wordBuf[wordIdx] = (x ^ mask) * powers10[digitsPerWord-trailingDigits]
+		if uint32(d.wordBuf[wordIdx]) > wordMax {
+			*d = zeroMyDecimal
+			return eDecBadNum
+		}
+		wordIdx++
+	}
+
+	if d.digitsInt == 0 && d.digitsFrac == 0 {
+		*d = zeroMyDecimal
+	}
+	return errcode
+}
+
+// decimalBinSize returns the size of array to hold a binary representation of a decimal.
+func decimalBinSize(precision, frac int) int {
+	digitsInt := precision - frac
+	wordsInt := digitsInt / digitsPerWord
+	wordsFrac := frac / digitsPerWord
+	xInt := digitsInt - wordsInt*digitsPerWord
+	xFrac := frac - wordsFrac*digitsPerWord
+	return wordsInt*wordSize + dig2bytes[xInt] + wordsFrac*wordSize + dig2bytes[xFrac]
+}
+
+func readWord(b []byte, size int) int32 {
+	var x int32
+	switch size {
+	case 1:
+		x = int32(int8(b[0]))
+	case 2:
+		x = int32(int8(b[0]))<<8 + int32(b[1])
+	case 3:
+		if b[0]&128 > 0 {
+			x = int32(uint32(255)<<24 | uint32(b[0])<<16 | uint32(b[1])<<8 | uint32(b[2]))
+		} else {
+			x = int32(uint32(b[0])<<16 | uint32(b[1])<<8 | uint32(b[2]))
+		}
+	case 4:
+		x = int32(b[3]) + int32(b[2])<<8 + int32(b[1])<<16 + int32(int8(b[0]))<<24
+	}
+	return x
+}
+
+func writeWord(b []byte, word int32, size int) {
+	v := uint32(word)
+	switch size {
+	case 1:
+		b[0] = byte(word)
+	case 2:
+		b[0] = byte(v >> 8)
+		b[1] = byte(v)
+	case 3:
+		b[0] = byte(v >> 16)
+		b[1] = byte(v >> 8)
+		b[2] = byte(v)
+	case 4:
+		b[0] = byte(v >> 24)
+		b[1] = byte(v >> 16)
+		b[2] = byte(v >> 8)
+		b[3] = byte(v)
+	}
+}
+
+// Compare compares one decimal to another, returns -1/0/1.
+func (d *MyDecimal) Compare(to *MyDecimal) int {
+	if d.negative == to.negative {
+		return doSub(d, to, nil)
+	}
+	if d.negative {
+		return -1
+	}
+	return 1
+}
+
+// DecimalAdd adds two decimals, sets the result to 'to'.
+func DecimalAdd(from1, from2, to *MyDecimal) int {
+	if from1.negative == from2.negative {
+		return doAdd(from1, from2, to)
+	}
+	return doSub(from1, from2, to)
+}
+
+// DecimalSub subs one decimal from another, sets the result to 'to'.
+func DecimalSub(from1, from2, to *MyDecimal) int {
+	if from1.negative == from2.negative {
+		return doSub(from1, from2, to)
+	}
+	return doAdd(from1, from2, to)
+}
+
+func doSub(from1, from2, to *MyDecimal) int {
+	var (
+		errcode     int
+		wordsInt1   = (from1.digitsInt + digitsPerWord - 1) / digitsPerWord
+		wordsFrac1  = (from1.digitsFrac + digitsPerWord - 1) / digitsPerWord
+		wordsInt2   = (from2.digitsInt + digitsPerWord - 1) / digitsPerWord
+		wordsFrac2  = (from2.digitsFrac + digitsPerWord - 1) / digitsPerWord
+		wordsFracTo = myMax(wordsFrac1, wordsFrac2)
+
+		start1 = 0
+		stop1  = wordsInt1
+		idx1   = 0
+		start2 = 0
+		stop2  = wordsInt2
+		idx2   = 0
+	)
+	if from1.wordBuf[idx1] == 0 {
+		for idx1 < stop1 && from1.wordBuf[idx1] == 0 {
+			idx1++
+		}
+		start1 = idx1
+		wordsInt1 = stop1 - idx1
+	}
+	if from2.wordBuf[idx2] == 0 {
+		for idx2 < stop2 && from2.wordBuf[idx2] == 0 {
+			idx2++
+		}
+		start2 = idx2
+		wordsInt2 = stop2 - idx2
+	}
+
+	var carry int32
+	if wordsInt2 > wordsInt1 {
+		carry = 1
+	} else if wordsInt2 == wordsInt1 {
+		end1 := stop1 + wordsFrac1 - 1
+		end2 := stop2 + wordsFrac2 - 1
+		for idx1 <= end1 && from1.wordBuf[end1] == 0 {
+			end1--
+		}
+		for idx2 <= end2 && from2.wordBuf[end2] == 0 {
+			end2--
+		}
+		wordsFrac1 = end1 - stop1 + 1
+		wordsFrac2 = end2 - stop2 + 1
+		for idx1 <= end1 && idx2 <= end2 && from1.wordBuf[idx1] == from2.wordBuf[idx2] {
+			idx1++
+			idx2++
+		}
+		if idx1 <= end1 {
+			if idx2 <= end2 && from2.wordBuf[idx2] > from1.wordBuf[idx1] {
+				carry = 1
+			} else {
+				carry = 0
+			}
+		} else {
+			if idx2 <= end2 {
+				carry = 1
+			} else {
+				if to == nil {
+					return 0
+				}
+				*to = zeroMyDecimal
+				return eDecOK
+			}
+		}
+	}
+
+	if to == nil {
+		if carry > 0 == from1.negative { // from2 is negative too.
+			return 1
+		}
+		return -1
+	}
+
+	to.negative = from1.negative
+
+	/* ensure that always idx1 > idx2 (and wordsInt1 >= wordsInt2) */
+	if carry > 0 {
+		from1, from2 = from2, from1
+		start1, start2 = start2, start1
+		wordsInt1, wordsInt2 = wordsInt2, wordsInt1
+		wordsFrac1, wordsFrac2 = wordsFrac2, wordsFrac1
+		to.negative = !to.negative
+	}
+
+	wordsInt1, wordsFracTo, errcode = fixWordCntError(wordsInt1, wordsFracTo)
+	idxTo := wordsInt1 + wordsFracTo
+	to.digitsFrac = from1.digitsFrac
+	if to.digitsFrac < from2.digitsFrac {
+		to.digitsFrac = from2.digitsFrac
+	}
+	to.digitsInt = wordsInt1 * digitsPerWord
+	if errcode != eDecOK {
+		if to.digitsFrac > wordsFracTo*digitsPerWord {
+			to.digitsFrac = wordsFracTo * digitsPerWord
+		}
+		if wordsFrac1 > wordsFracTo {
+			wordsFrac1 = wordsFracTo
+		}
+		if wordsFrac2 > wordsFracTo {
+			wordsFrac2 = wordsFracTo
+		}
+		if wordsInt2 > wordsInt1 {
+			wordsInt2 = wordsInt1
+		}
+	}
+	carry = 0
+
+	/* part 1 - max(frac) ... min (frac) */
+	if wordsFrac1 > wordsFrac2 {
+		idx1 = start1 + wordsInt1 + wordsFrac1
+		stop1 = start1 + wordsInt1 + wordsFrac2
+		idx2 = start2 + wordsInt2 + wordsFrac2
+		for wordsFracTo > wordsFrac1 {
+			wordsFracTo--
+			idxTo--
+			to.wordBuf[idxTo] = 0
+		}
+		for idx1 > stop1 {
+			idxTo--
+			idx1--
+			to.wordBuf[idxTo] = from1.wordBuf[idx1]
+		}
+	} else {
+		idx1 = start1 + wordsInt1 + wordsFrac1
+		idx2 = start2 + wordsInt2 + wordsFrac2
+		stop2 = start2 + wordsInt2 + wordsFrac1
+		for wordsFracTo > wordsFrac2 {
+			wordsFracTo--
+			idxTo--
+			to.wordBuf[idxTo] = 0
+		}
+		for idx2 > stop2 {
+			idxTo--
+			idx2--
+			to.wordBuf[idxTo], carry = sub(0, from2.wordBuf[idx2], carry)
+		}
+	}
+
+	/* part 2 - min(frac) ... wordsInt2 */
+	for idx2 > start2 {
+		idxTo--
+		idx1--
+		idx2--
+		to.wordBuf[idxTo], carry = sub(from1.wordBuf[idx1], from2.wordBuf[idx2], carry)
+	}
+
+	/* part 3 - wordsInt2 ... wordsInt1 */
+	for carry > 0 && idx1 > start1 {
+		idxTo--
+		idx1--
+		to.wordBuf[idxTo], carry = sub(from1.wordBuf[idx1], 0, carry)
+	}
+	for idx1 > start1 {
+		idxTo--
+		idx1--
+		to.wordBuf[idxTo] = from1.wordBuf[idx1]
+	}
+	for idxTo > 0 {
+		idxTo--
+		to.wordBuf[idxTo] = 0
+	}
+	return errcode
+}
+
+func doAdd(from1, from2, to *MyDecimal) int {
+	var (
+		errCode     int
+		wordsInt1   = (from1.digitsInt + digitsPerWord - 1) / digitsPerWord
+		wordsFrac1  = (from1.digitsFrac + digitsPerWord - 1) / digitsPerWord
+		wordsInt2   = (from2.digitsInt + digitsPerWord - 1) / digitsPerWord
+		wordsFrac2  = (from2.digitsFrac + digitsPerWord - 1) / digitsPerWord
+		wordsIntTo  = myMax(wordsInt1, wordsInt2)
+		wordsFracTo = myMax(wordsFrac1, wordsFrac2)
+	)
+
+	var x int32
+	if wordsInt1 > wordsInt2 {
+		x = from1.wordBuf[0]
+	} else if wordsInt2 < wordsInt1 {
+		x = from2.wordBuf[0]
+	} else {
+		x = from1.wordBuf[0] + from2.wordBuf[0]
+	}
+	if x > wordMax-1 { /* yes, there is */
+		wordsIntTo++
+		to.wordBuf[0] = 0 /* safety */
+	}
+
+	wordsIntTo, wordsFracTo, errCode = fixWordCntError(wordsIntTo, wordsFracTo)
+	if errCode == eDecOverflow {
+		maxDecimal(wordBufLen*digitsPerWord, 0, to)
+		return errCode
+	}
+	idxTo := wordsIntTo + wordsFracTo
+	to.negative = from1.negative
+	to.digitsInt = wordsIntTo * digitsPerWord
+	to.digitsFrac = myMax(from1.digitsFrac, from2.digitsFrac)
+
+	if errCode != eDecOK {
+		if to.digitsFrac > wordsFracTo*digitsPerWord {
+			to.digitsFrac = wordsFracTo * digitsPerWord
+		}
+		if wordsFrac1 > wordsFracTo {
+			wordsFrac1 = wordsFracTo
+		}
+		if wordsFrac2 > wordsFracTo {
+			wordsFrac2 = wordsFracTo
+		}
+		if wordsInt1 > wordsIntTo {
+			wordsInt1 = wordsIntTo
+		}
+		if wordsInt2 > wordsIntTo {
+			wordsInt2 = wordsIntTo
+		}
+	}
+	var dec1, dec2 = from1, from2
+	var idx1, idx2, stop, stop2 int
+	/* part 1 - max(frac) ... min (frac) */
+	if wordsFrac1 > wordsFrac2 {
+		idx1 = wordsInt1 + wordsFrac1
+		stop = wordsInt1 + wordsFrac2
+		idx2 = wordsInt2 + wordsFrac2
+		if wordsInt1 > wordsInt2 {
+			stop2 = wordsInt1 - wordsInt2
+		}
+	} else {
+		idx1 = wordsInt2 + wordsFrac2
+		stop = wordsInt2 + wordsFrac1
+		idx2 = wordsInt1 + wordsFrac1
+		if wordsInt2 > wordsInt1 {
+			stop2 = wordsInt2 - wordsInt1
+		}
+		dec1, dec2 = from2, from1
+	}
+	for idx1 > stop {
+		idxTo--
+		idx1--
+		to.wordBuf[idxTo] = dec1.wordBuf[idx1]
+	}
+
+	/* part 2 - min(frac) ... min(digitsInt) */
+	carry := int32(0)
+	for idx1 > stop2 {
+		idx1--
+		idx2--
+		idxTo--
+		to.wordBuf[idxTo], carry = add(dec1.wordBuf[idx1], dec2.wordBuf[idx2], carry)
+	}
+
+	/* part 3 - min(digitsInt) ... max(digitsInt) */
+	stop = 0
+	if wordsInt1 > wordsInt2 {
+		idx1 = wordsInt1 - wordsInt2
+		dec1, dec2 = from1, from2
+	} else {
+		idx1 = wordsInt2 - wordsInt1
+		dec1, dec2 = from2, from1
+	}
+	for idx1 > stop {
+		idxTo--
+		idx1--
+		to.wordBuf[idxTo], carry = add(dec1.wordBuf[idx1], 0, carry)
+	}
+	if carry > 0 {
+		idxTo--
+		to.wordBuf[idxTo] = 1
+	}
+	return errCode
+}
+
+func maxDecimal(precision, frac int, to *MyDecimal) {
+	digitsInt := precision - frac
+	to.negative = false
+	to.digitsInt = digitsInt
+	idx := 0
+	if digitsInt > 0 {
+		firstWordDigits := digitsInt % digitsPerWord
+		if firstWordDigits > 0 {
+			to.wordBuf[idx] = powers10[firstWordDigits] - 1 /* get 9 99 999 ... */
+			idx++
+		}
+		for digitsInt /= digitsPerWord; digitsInt > 0; digitsInt-- {
+			to.wordBuf[idx] = wordMax
+			idx++
+		}
+	}
+	to.digitsFrac = frac
+	if frac > 0 {
+		lastDigits := frac % digitsPerWord
+		for frac /= digitsPerWord; frac > 0; frac-- {
+			to.wordBuf[idx] = wordMax
+			idx++
+		}
+		if lastDigits > 0 {
+			to.wordBuf[idx] = fracMax[lastDigits-1]
+		}
+	}
 }

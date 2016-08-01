@@ -121,7 +121,9 @@ func (e *NewXSelectIndexExec) Close() error {
 	e.result = nil
 	e.subResult = nil
 	e.taskCursor = 0
+	e.mu.Lock()
 	e.tasks = nil
+	e.mu.Unlock()
 	e.indexOrder = make(map[int64]int)
 	return nil
 }
@@ -270,8 +272,8 @@ func (e *NewXSelectIndexExec) runTableTasks(n int) {
 func (e *NewXSelectIndexExec) pickAndExecTask() {
 	for {
 		// Pick a new task.
-		e.mu.Lock()
 		var task *lookupTableTask
+		e.mu.Lock()
 		for _, t := range e.tasks {
 			if t.status == taskNew {
 				task = t
