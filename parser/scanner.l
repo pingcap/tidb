@@ -581,81 +581,81 @@ action		{a}{c}{t}{i}{o}{n}
 "@"			return at
 "?"			return placeholder
 
-{abs}			lval.item = string(l.val)
+{abs}			lval.ident = string(l.val)
 			return abs
 {add}			return add
-{adddate}		lval.item = string(l.val)
+{adddate}		lval.ident = string(l.val)
 			return addDate
-{admin}			lval.item = string(l.val)
+{admin}			lval.ident = string(l.val)
 			return admin
-{after}			lval.item = string(l.val)
+{after}			lval.ident = string(l.val)
 			return after
 {all}			return all
 {alter}			return alter
 {analyze}		return analyze
 {and}			return and
-{any}			lval.item = string(l.val)
+{any}			lval.ident = string(l.val)
 			return any
 {asc}			return asc
 {as}			return as
-{ascii}			lval.item = string(l.val)
+{ascii}			lval.ident = string(l.val)
 			return ascii
-{auto_increment}	lval.item = string(l.val)
+{auto_increment}	lval.ident = string(l.val)
 			return autoIncrement
-{avg}			lval.item = string(l.val)
+{avg}			lval.ident = string(l.val)
 			return avg
-{avg_row_length}	lval.item = string(l.val)
+{avg_row_length}	lval.ident = string(l.val)
 			return avgRowLength
-{begin}			lval.item = string(l.val)
+{begin}			lval.ident = string(l.val)
 			return begin
 {between}		return between
-{binlog}		lval.item = string(l.val)
+{binlog}		lval.ident= string(l.val)
 			return binlog
 {both}			return both
-{btree}			lval.item = string(l.val)
+{btree}			lval.ident = string(l.val)
 			return btree
 {by}			return by
 {case}			return caseKwd
 {cast}			lval.item = string(l.val)
 			return cast
 {character}		return character
-{charset}		lval.item = string(l.val)
+{charset}		lval.ident = string(l.val)
 			return charsetKwd
 {check}			return check
-{checksum}		lval.item = string(l.val)
+{checksum}		lval.ident = string(l.val)
 			return checksum
-{coalesce}		lval.item = string(l.val)
+{coalesce}		lval.ident = string(l.val)
 			return coalesce
 {collate}		return collate
-{collation}		lval.item = string(l.val)
+{collation}		lval.ident = string(l.val)
 			return collation
 {column}		return column
-{columns}		lval.item = string(l.val)
+{columns}		lval.ident = string(l.val)
 			return columns
-{comment}		lval.item = string(l.val)
+{comment}		lval.ident = string(l.val)
 			return comment
-{commit}		lval.item = string(l.val)
+{commit}		lval.ident = string(l.val)
 			return commit
-{committed}		lval.item = string(l.val)
+{committed}		lval.ident = string(l.val)
 			return committed
-{compact}		lval.item = string(l.val)
+{compact}		lval.ident = string(l.val)
 			return compact
-{compressed}		lval.item = string(l.val)
+{compressed}		lval.ident = string(l.val)
 			return compressed
-{compression}		lval.item = string(l.val)
+{compression}		lval.ident = string(l.val)
 			return compression
-{concat}		lval.item = string(l.val)
+{concat}		lval.ident = string(l.val)
 			return concat
-{concat_ws}		lval.item = string(l.val)
+{concat_ws}		lval.ident = string(l.val)
 			return concatWs
-{connection}		lval.item = string(l.val)
+{connection}		lval.ident = string(l.val)
 			return connection
-{connection_id}		lval.item = string(l.val)
+{connection_id}		lval.ident = string(l.val)
 			return connectionID
 {constraint}		return constraint
 {convert}		lval.item = string(l.val)
 			return convert
-{count}			lval.item = string(l.val)
+{count}			lval.ident = string(l.val)
 			return count
 {create}		return create
 {cross}			return cross
@@ -663,7 +663,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return curDate
 {current_date}		lval.item = string(l.val)
 			return currentDate
-{curtime}		lval.item = string(l.val)
+{curtime}		lval.ident = string(l.val)
 			return curTime
 {current_time}		lval.item = string(l.val)
 			return currentTime
@@ -672,21 +672,21 @@ action		{a}{c}{t}{i}{o}{n}
 {database}		lval.item = string(l.val)
 			return database
 {databases}		return databases
-{date_add}		lval.item = string(l.val)
+{date_add}		lval.ident = string(l.val)
 			return dateAdd
-{date_format}		lval.item = string(l.val)
+{date_format}		lval.ident = string(l.val)
 			return dateFormat
-{date_sub}		lval.item = string(l.val)
+{date_sub}		lval.ident = string(l.val)
 			return dateSub
-{day}			lval.item = string(l.val)
+{day}			lval.ident = string(l.val)
 			return day
-{dayname}		lval.item = string(l.val)
+{dayname}		lval.ident = string(l.val)
 			return dayname
-{dayofweek}		lval.item = string(l.val)
+{dayofweek}		lval.ident = string(l.val)
 			return dayofweek
-{dayofmonth}		lval.item = string(l.val)
+{dayofmonth}		lval.ident = string(l.val)
 			return dayofmonth
-{dayofyear}		lval.item = string(l.val)
+{dayofyear}		lval.ident = string(l.val)
 			return dayofyear
 {day_hour}		lval.item = string(l.val)
 			return dayHour
@@ -697,75 +697,75 @@ action		{a}{c}{t}{i}{o}{n}
 {day_second}		lval.item = string(l.val)
 			return daySecond
 {ddl}			return ddl
-{deallocate}		lval.item = string(l.val)
+{deallocate}		lval.ident = string(l.val)
 			return deallocate
 {default}		return defaultKwd
 {delayed}		return delayed
-{delay_key_write}	lval.item = string(l.val)
+{delay_key_write}	lval.ident = string(l.val)
 			return delayKeyWrite
 {delete}		return deleteKwd
 {desc}			return desc
 {describe}		return describe
 {drop}			return drop
-{disable}		lval.item = string(l.val)
+{disable}		lval.ident = string(l.val)
 			return disable
 {distinct}		return distinct
 {div}			return div
-{do}			lval.item = string(l.val)
+{do}			lval.ident = string(l.val)
 			return do
 {dual}			return dual
 {duplicate}		lval.item = string(l.val)
 			return duplicate
-{dynamic}		lval.item = string(l.val)
+{dynamic}		lval.ident = string(l.val)
 			return dynamic
 {else}			return elseKwd
-{enable}		lval.item = string(l.val)
+{enable}		lval.ident = string(l.val)
 			return enable
-{end}			lval.item = string(l.val)
+{end}			lval.ident = string(l.val)
 			return end
-{engine}		lval.item = string(l.val)
+{engine}		lval.ident = string(l.val)
 			return engine
-{engines}		lval.item = string(l.val)
+{engines}		lval.ident = string(l.val)
 			return engines
-{execute}		lval.item = string(l.val)
+{execute}		lval.ident = string(l.val)
 			return execute
 {enum}			return enum
-{escape}		lval.item = string(l.val)
+{escape}		lval.ident = string(l.val)
 			return escape
 {exists}		return exists
 {explain}		return explain
 {extract}		lval.item = string(l.val)
 			return extract
-{fields}		lval.item = string(l.val)
+{fields}		lval.ident = string(l.val)
 			return fields
-{first}			lval.item = string(l.val)
+{first}			lval.ident = string(l.val)
 			return first
-{fixed}			lval.item = string(l.val)
+{fixed}			lval.ident = string(l.val)
 			return fixed
 {for}			return forKwd
 {force}			return force
 {foreign}		return foreign
-{found_rows}		lval.item = string(l.val)
+{found_rows}		lval.ident = string(l.val)
 			return foundRows
 {from}			return from
-{full}			lval.item = string(l.val)
+{full}			lval.ident = string(l.val)
 			return full
 {fulltext}		return fulltext
 {grant}			return grant
-{grants}		lval.item = string(l.val)
+{grants}		lval.ident = string(l.val)
 			return grants
-{greatest}		lval.item = string(l.val)
+{greatest}		lval.ident = string(l.val)
 			return greatest
 {group}			return group
-{group_concat}		lval.item = string(l.val)
+{group_concat}		lval.ident = string(l.val)
 			return groupConcat
-{hash}			lval.item = string(l.val)
+{hash}			lval.ident = string(l.val)
 			return hash
 {having}		return having
-{hex}				lval.item = string(l.val)
+{hex}			lval.ident = string(l.val)
 			return hex
 {high_priority}		return highPriority
-{hour}			lval.item = string(l.val)
+{hour}			lval.ident = string(l.val)
 			return hour
 {hour_microsecond}	lval.item = string(l.val)
 			return hourMicrosecond
@@ -773,13 +773,13 @@ action		{a}{c}{t}{i}{o}{n}
 			return hourMinute
 {hour_second}		lval.item = string(l.val)
 			return hourSecond
-{identified}		lval.item = string(l.val)
+{identified}		lval.ident = string(l.val)
 			return identified
 {if}			lval.item = string(l.val)
 			return ifKwd
-{ifnull}		lval.item = string(l.val)
+{ifnull}		lval.ident = string(l.val)
 			return ifNull
-{isnull}		lval.item = string(l.val)
+{isnull}		lval.ident = string(l.val)
 			return isNull
 {ignore}		return ignore
 {index}			return index
@@ -789,138 +789,138 @@ action		{a}{c}{t}{i}{o}{n}
 {into}			return into
 {in}			return in
 {is}			return is
-{isolation}		lval.item = string(l.val)
+{isolation}		lval.ident = string(l.val)
 			return isolation
 {join}			return join
 {key}			return key
-{key_block_size}	lval.item = string(l.val)
+{key_block_size}	lval.ident = string(l.val)
 			return keyBlockSize
 {keys}			return keys
-{last_insert_id}	lval.item = string(l.val)
+{last_insert_id}	lval.ident = string(l.val)
 			return lastInsertID
 {leading}		return leading
 {left}			lval.item = string(l.val)
 			return left
-{length}		lval.item = string(l.val)
+{length}		lval.ident = string(l.val)
 			return length
-{level}			lval.item = string(l.val)
+{level}			lval.ident = string(l.val)
 			return level
 {like}			return like
 {limit}			return limit
-{local}			lval.item = string(l.val)
+{local}			lval.ident = string(l.val)
 			return local
-{locate}		lval.item = string(l.val)
+{locate}		lval.ident = string(l.val)
 			return locate
 {lock}			return lock
-{lower}			lval.item = string(l.val)
+{lower}			lval.ident = string(l.val)
 			return lower
-{lcase}			lval.item = string(l.val)
+{lcase}			lval.ident = string(l.val)
 			return lcase
 {low_priority}		return lowPriority
-{ltrim}			lval.item = string(l.val)
+{ltrim}			lval.ident = string(l.val)
 			return ltrim
-{max}			lval.item = string(l.val)
+{max}			lval.ident = string(l.val)
 			return max
-{max_rows}		lval.item = string(l.val)
+{max_rows}		lval.ident = string(l.val)
 			return maxRows
-{microsecond}		lval.item = string(l.val)
+{microsecond}		lval.ident = string(l.val)
 			return microsecond
-{min}			lval.item = string(l.val)
+{min}			lval.ident = string(l.val)
 			return min
-{minute}		lval.item = string(l.val)
+{minute}		lval.ident = string(l.val)
 			return minute
 {minute_microsecond}	lval.item = string(l.val)
 			return minuteMicrosecond
 {minute_second}		lval.item = string(l.val)
 			return minuteSecond
-{min_rows}		lval.item = string(l.val)
+{min_rows}		lval.ident = string(l.val)
 			return minRows
 {mod}			return mod
-{mode}			lval.item = string(l.val)
+{mode}			lval.ident = string(l.val)
 			return mode
-{month}			lval.item = string(l.val)
+{month}			lval.ident = string(l.val)
 			return month
-{monthname}		lval.item = string(l.val)
+{monthname}		lval.ident = string(l.val)
 			return monthname
-{names}			lval.item = string(l.val)
+{names}			lval.ident = string(l.val)
 			return names
-{national}		lval.item = string(l.val)
+{national}		lval.ident = string(l.val)
 			return national
 {not}			return not
-{offset}		lval.item = string(l.val)
+{offset}		lval.ident = string(l.val)
 			return offset
 {on}			return on
-{only}			lval.item = string(l.val)
+{only}			lval.ident = string(l.val)
 			return only
 {option}		return option
 {order}			return order
 {or}			return or
 {outer}			return outer
-{password}		lval.item = string(l.val)
+{password}		lval.ident = string(l.val)
 			return password
-{pow}			lval.item = string(l.val)
+{pow}			lval.ident = string(l.val)
 			return pow
-{power}		lval.item = string(l.val)
+{power}			lval.ident = string(l.val)
 			return power
-{prepare}		lval.item = string(l.val)
+{prepare}		lval.ident = string(l.val)
 			return prepare
 {primary}		return primary
-{privileges}		lval.item = string(l.val)
+{privileges}		lval.ident = string(l.val)
 			return privileges
 {procedure}		return procedure
-{quarter}		lval.item = string(l.val)
+{quarter}		lval.ident = string(l.val)
 			return quarter
-{quick}			lval.item = string(l.val)
+{quick}			lval.ident = string(l.val)
 			return quick
-{redundant}		lval.item = string(l.val)
+{redundant}		lval.ident = string(l.val)
 			return redundant
 {right}			return right
-{rollback}		lval.item = string(l.val)
+{rollback}		lval.ident = string(l.val)
 			return rollback
-{round}			lval.item = string(l.val)
+{round}			lval.ident = string(l.val)
 			return round
-{row}			lval.item = string(l.val)
+{row}			lval.ident = string(l.val)
 			return row
-{row_format}		lval.item = string(l.val)
+{row_format}		lval.ident = string(l.val)
 			return rowFormat
 {schema}		lval.item = string(l.val)
 			return schema
 {schemas}		return schemas
 {serializable}		lval.item = string(l.val)
 			return serializable
-{session}		lval.item = string(l.val)
+{session}		lval.ident = string(l.val)
 			return session
-{some}			lval.item = string(l.val)
+{some}			lval.ident = string(l.val)
 			return some
-{space}			lval.item = string(l.val)
+{space}			lval.ident = string(l.val)
 			return space
-{start}			lval.item = string(l.val)
+{start}			lval.ident = string(l.val)
 			return start
-{statsPersistent}	lval.item = string(l.val)
+{statsPersistent}	lval.ident = string(l.val)
 			return statsPersistent
-{status}		lval.item = string(l.val)
+{status}		lval.ident = string(l.val)
 			return status
-{get_lock}		lval.item = string(l.val)
+{get_lock}		lval.ident = string(l.val)
 			return getLock
-{global}		lval.item = string(l.val)
+{global}		lval.ident = string(l.val)
 			return global
-{rand}			lval.item = string(l.val)
+{rand}			lval.ident = string(l.val)
 			return rand
 {read}			return read
-{release_lock}		lval.item = string(l.val)
+{release_lock}		lval.ident = string(l.val)
 			return releaseLock
 {repeat}		lval.item = string(l.val)
 			return repeat
-{repeatable}		lval.item = string(l.val)
+{repeatable}		lval.ident = string(l.val)
 			return repeatable
 {regexp}		return regexpKwd
 {replace}		lval.item = string(l.val)
 			return replace
 {references}		return references
 {rlike}			return rlike
-{rtrim}			lval.item = string(l.val)
+{rtrim}			lval.ident = string(l.val)
 			return rtrim
-{reverse}		lval.item = string(l.val)
+{reverse}		lval.ident = string(l.val)
 			return reverse
 
 {sys_var}		lval.item = string(l.val)
@@ -930,7 +930,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return userVar
 {utc_date}		lval.item = string(l.val)
 			return utcDate
-{second}		lval.item = string(l.val)
+{second}		lval.ident = string(l.val)
 			return second
 {second_microsecond}	lval.item= string(l.val)
 			return secondMicrosecond
@@ -939,74 +939,74 @@ action		{a}{c}{t}{i}{o}{n}
 {set}			return set
 {share}			return share
 {show}			return show
-{sleep}			lval.item = string(l.val)
+{sleep}			lval.ident = string(l.val)
 			return sleep
-{subdate}		lval.item = string(l.val)
+{subdate}		lval.ident = string(l.val)
 			return subDate
 {strcmp}		lval.item = string(l.val)
 			return strcmp
-{substr}		lval.item = string(l.val)
+{substr}		lval.ident = string(l.val)
 			return substring
-{substring}		lval.item = string(l.val)
+{substring}		lval.ident = string(l.val)
 			return substring
-{substring_index}	lval.item = string(l.val)
+{substring_index}	lval.ident = string(l.val)
 			return substringIndex
-{sum}			lval.item = string(l.val)
+{sum}			lval.ident = string(l.val)
 			return sum
 {sysdate}		lval.item = string(l.val)
 			return sysDate
 {table}			return tableKwd
-{tables}		lval.item = string(l.val)
+{tables}		lval.ident = string(l.val)
 			return tables
 {then}			return then
 {to}			return to
 {trailing}		return trailing
-{transaction}		lval.item = string(l.val)
+{transaction}		lval.ident = string(l.val)
 			return transaction
-{triggers}		lval.item = string(l.val)
+{triggers}		lval.ident = string(l.val)
 			return triggers
-{trim}			lval.item = string(l.val)
+{trim}			lval.ident = string(l.val)
 			return trim
 {truncate}		lval.item = string(l.val)
 			return truncate
-{uncommitted}		lval.item = string(l.val)
+{uncommitted}		lval.ident = string(l.val)
 			return uncommitted
 {union}			return union
 {unique}		return unique
-{unknown}		lval.item = string(l.val)
+{unknown}		lval.ident = string(l.val)
 			return unknown
-{nullif}		lval.item = string(l.val)
+{nullif}		lval.ident = string(l.val)
 			return nullIf
 {unlock}		return unlock
 {update}		return update
-{upper}			lval.item = string(l.val)
+{upper}			lval.ident = string(l.val)
 			return upper
-{ucase}			lval.item = string(l.val)
+{ucase}			lval.ident = string(l.val)
 			return ucase
 {use}			return use
-{user}			lval.item = string(l.val)
+{user}			lval.ident = string(l.val)
 			return user
 {using}			return using
-{value}			lval.item = string(l.val)
+{value}			lval.ident = string(l.val)
 			return value
 {values}		return values
-{variables}		lval.item = string(l.val)
+{variables}		lval.ident = string(l.val)
 			return variables
-{version}		lval.item = string(l.val)
+{version}		lval.ident = string(l.val)
 			return version
-{warnings}		lval.item = string(l.val)
+{warnings}		lval.ident = string(l.val)
 			return warnings
-{week}			lval.item = string(l.val)
+{week}			lval.ident = string(l.val)
 			return week
-{weekday}		lval.item = string(l.val)
+{weekday}		lval.ident = string(l.val)
 			return weekday
-{weekofyear}		lval.item = string(l.val)
+{weekofyear}		lval.ident = string(l.val)
 			return weekofyear
 {when}			return when
 {where}			return where
 {write}			return write
 {xor}			return xor
-{yearweek}		lval.item = string(l.val)
+{yearweek}		lval.ident = string(l.val)
 			return yearweek
 {year_month}		lval.item = string(l.val)
 			return yearMonth
@@ -1015,12 +1015,12 @@ action		{a}{c}{t}{i}{o}{n}
 			return restrict
 {cascade}		lval.item = string(l.val)
 			return cascade
-{no}			lval.item = string(l.val)
+{no}			lval.ident = string(l.val)
 			return no
-{action}		lval.item = string(l.val)
+{action}		lval.ident = string(l.val)
 			return action
 
-{signed}		lval.item = string(l.val)
+{signed}		lval.ident = string(l.val)
 			return signed
 {unsigned}		return unsigned
 {zerofill}		return zerofill
@@ -1032,21 +1032,21 @@ action		{a}{c}{t}{i}{o}{n}
 
 {true}			return trueKwd
 
-{calc_found_rows}	lval.item = string(l.val)
+{calc_found_rows}	lval.ident = string(l.val)
 			return calcFoundRows
-{sql_cache}		lval.item = string(l.val)
+{sql_cache}		lval.ident = string(l.val)
 			return sqlCache
-{sql_no_cache}		lval.item = string(l.val)
+{sql_no_cache}		lval.ident = string(l.val)
 			return sqlNoCache
 
 {current_ts}		lval.item = string(l.val)
 			return currentTs
 {localtime}		return localTime
 {localts}		return localTs
-{now}			lval.item = string(l.val)
+{now}			lval.ident = string(l.val)
 			return now
 
-{bit}			lval.item = string(l.val)
+{bit}			lval.ident = string(l.val)
 			return bitType
 
 {tiny}			lval.item = string(l.val)
@@ -1082,19 +1082,19 @@ action		{a}{c}{t}{i}{o}{n}
 {real}			lval.item = string(l.val)
 			return realType
 
-{date}			lval.item = string(l.val)
+{date}			lval.ident = string(l.val)
 			return dateType
 
-{time}			lval.item = string(l.val)
+{time}			lval.ident = string(l.val)
 			return timeType
 
-{timestamp}		lval.item = string(l.val)
+{timestamp}		lval.ident = string(l.val)
 			return timestampType
 
-{datetime}		lval.item = string(l.val)
+{datetime}		lval.ident = string(l.val)
 			return datetimeType
 
-{year}			lval.item = string(l.val)
+{year}			lval.ident = string(l.val)
 			return yearType
 
 {char}			lval.item = string(l.val)
@@ -1127,16 +1127,16 @@ action		{a}{c}{t}{i}{o}{n}
 {mediumtext}		lval.item = string(l.val)
 			return mediumtextType
 
-{text}			lval.item = string(l.val)
+{text}			lval.ident = string(l.val)
 			return textType
 
 {longtext}		lval.item = string(l.val)
 			return longtextType
 
-{bool}			lval.item = string(l.val)
+{bool}			lval.ident = string(l.val)
 			return boolType
 
-{boolean}		lval.item = string(l.val)
+{boolean}		lval.ident = string(l.val)
 			return booleanType
 
 {byte}			lval.item = string(l.val)
@@ -1174,7 +1174,7 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)
 	}
-	lval.item = v
+	lval.ident = v
 	return stringLit
 }
 
