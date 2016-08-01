@@ -231,7 +231,7 @@ func NewFunction(funcName string, retType *types.FieldType, args ...Expression) 
 	}
 
 	canConstantFolding := true
-	var datums []types.Datum
+	datums := make([]types.Datum, 0, len(args))
 
 	for _, expr := range args {
 		if v, ok := expr.(*Constant); ok {
@@ -252,7 +252,7 @@ func NewFunction(funcName string, retType *types.FieldType, args ...Expression) 
 		return &Constant{
 			Value:   newArgs,
 			RetType: retType,
-		}, errors.Trace(err)
+		}, nil
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
