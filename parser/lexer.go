@@ -210,8 +210,6 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 		}
 		// TODO this would break reader's line col information
 		if ch0 == '\n' {
-			tok = unicode.ReplacementChar
-			return
 		}
 		if ch0 == '\\' {
 			s.r.inc()
