@@ -91,11 +91,9 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			for _, item := range ctx.sel.GetGroupBy() {
 				collectColumnsInExpr(item.Expr, ctx, ctx.aggColumns)
 			}
-			for k := range ctx.aggColumns {
-				if _, ok := ctx.whereColumns[k]; ok {
-					// It is already handled in where.
-					delete(ctx.aggColumns, k)
-				}
+			for k := range ctx.whereColumns {
+				// It is will be handled in where.
+				delete(ctx.aggColumns, k)
 			}
 		}
 
