@@ -67,6 +67,8 @@ type NewXSelectIndexExec struct {
 	indexOrder map[int64]int
 	indexPlan  *plan.PhysicalIndexScan
 
+	returnedRows int64 // returned row count
+
 	mu sync.Mutex
 
 	/*
@@ -125,11 +127,15 @@ func (e *NewXSelectIndexExec) Close() error {
 	e.tasks = nil
 	e.mu.Unlock()
 	e.indexOrder = make(map[int64]int)
+	e.returnedRows = 0
 	return nil
 }
 
 // Next implements Executor Next interface.
 func (e *NewXSelectIndexExec) Next() (*Row, error) {
+	if e.indexPlan.LimitCount != nil && e.returnedRows >= *e.indexPlan.LimitCount {
+		return nil, nil
+	}
 	if e.tasks == nil {
 		startTs := time.Now()
 		handles, err := e.fetchHandles()
@@ -168,6 +174,7 @@ func (e *NewXSelectIndexExec) Next() (*Row, error) {
 		if task.cursor < len(task.rows) {
 			row := task.rows[task.cursor]
 			task.cursor++
+			e.returnedRows++
 			return row, nil
 		}
 		e.taskCursor++
@@ -393,20 +400,21 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResul
 
 // NewXSelectTableExec represents XAPI select executor without result fields.
 type NewXSelectTableExec struct {
-	tableInfo   *model.TableInfo
-	table       table.Table
-	asName      *model.CIStr
-	ctx         context.Context
-	supportDesc bool
-	isMemDB     bool
-	result      *xapi.SelectResult
-	subResult   *xapi.SubResult
-	where       *tipb.Expr
-	Columns     []*model.ColumnInfo
-	schema      expression.Schema
-	ranges      []plan.TableRange
-	desc        bool
-	limitCount  *int64
+	tableInfo    *model.TableInfo
+	table        table.Table
+	asName       *model.CIStr
+	ctx          context.Context
+	supportDesc  bool
+	isMemDB      bool
+	result       *xapi.SelectResult
+	subResult    *xapi.SubResult
+	where        *tipb.Expr
+	Columns      []*model.ColumnInfo
+	schema       expression.Schema
+	ranges       []plan.TableRange
+	desc         bool
+	limitCount   *int64
+	returnedRows int64 // returned rowCount
 
 	/*
 		The following attributes are used for aggregation push down.
@@ -475,11 +483,15 @@ func (e *NewXSelectTableExec) doRequest() error {
 func (e *NewXSelectTableExec) Close() error {
 	e.result = nil
 	e.subResult = nil
+	e.returnedRows = 0
 	return nil
 }
 
 // Next implements Executor interface.
 func (e *NewXSelectTableExec) Next() (*Row, error) {
+	if e.limitCount != nil && e.returnedRows >= *e.limitCount {
+		return nil, nil
+	}
 	if e.result == nil {
 		err := e.doRequest()
 		if err != nil {
@@ -509,8 +521,10 @@ func (e *NewXSelectTableExec) Next() (*Row, error) {
 		}
 		if e.aggregate {
 			// compose aggreagte row
+			e.returnedRows++
 			return &Row{Data: rowData}, nil
 		}
+		e.returnedRows++
 		return resultRowToRow(e.table, h, rowData, e.asName), nil
 	}
 }
