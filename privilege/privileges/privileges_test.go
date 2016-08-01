@@ -52,8 +52,11 @@ type testPrivilegeSuite struct {
 	createColumnPrivTableSQL string
 }
 
-func (s *testPrivilegeSuite) SetUpTest(c *C) {
+func (s *testPrivilegeSuite) SetUpSuit(c *C) {
 	log.SetLevelByString("error")
+}
+
+func (s *testPrivilegeSuite) SetUpTest(c *C) {
 	s.dbName = "test"
 	s.store = newStore(c, s.dbName)
 	se := newSession(c, s.store, s.dbName)

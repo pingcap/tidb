@@ -320,11 +320,12 @@ func (c *txnCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 func (c *txnCommitter) Commit() error {
 	defer func() {
 		// Always clean up all written keys if the txn does not commit.
-		if !c.committed {
+		c.mu.RLock()
+		writtenKeys := c.writtenKeys
+		committed := c.committed
+		c.mu.RUnlock()
+		if !committed {
 			go func() {
-				c.mu.RLock()
-				writtenKeys := c.writtenKeys
-				c.mu.RUnlock()
 				c.cleanupKeys(NewBackoffer(cleanupMaxBackoff), writtenKeys)
 				log.Infof("txn clean up done, tid: %d", c.startTS)
 			}()

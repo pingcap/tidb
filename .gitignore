@@ -1,3 +1,4 @@
+bin
 /interpreter/interpreter
 /interpreter/test
 /parser/parser.go

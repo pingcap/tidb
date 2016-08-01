@@ -47,8 +47,8 @@ Press `Ctrl+C` to quit.
 #### __Run as MySQL protocol server__
 
 ```
-make server
-cd tidb-server && ./tidb-server
+make
+cd bin && ./tidb-server
 ```
 
 In case you want to compile a specific location:
