@@ -140,7 +140,7 @@ func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 }
 
 func (parser *Parser) startOffset(offset int) int {
-	offset--
+	// offset--
 	for unicode.IsSpace(rune(parser.src[offset])) {
 		offset++
 	}
@@ -148,7 +148,7 @@ func (parser *Parser) startOffset(offset int) int {
 }
 
 func (parser *Parser) endOffset(offset int) int {
-	offset--
+	// offset--
 	for offset > 0 && unicode.IsSpace(rune(parser.src[offset-1])) {
 		offset--
 	}

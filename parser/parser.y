@@ -391,7 +391,6 @@ import (
 	restrict	"RESTRICT"
 	cascade		"CASCADE"
 
-
 %type   <item>
 	AdminStmt		"Check table statement or show ddl statement"
 	AlterTableStmt		"Alter table statement"
