@@ -124,7 +124,9 @@ type testCase struct {
 
 func (s *testParserSuite) RunTest(c *C, table []testCase) {
 	parser := New()
-	parser.lexer = &Scanner{}
+	if useNewLexer {
+		parser.lexer = &Scanner{}
+	}
 	for _, t := range table {
 		_, err := parser.Parse(t.src, "", "")
 		comment := Commentf("source %v", t.src)
@@ -181,24 +183,22 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"REPLACE INTO foo VALUE ()", true},
 		// 40
 		{`SELECT stuff.id
-				FROM stuff
-				WHERE stuff.value >= ALL (SELECT stuff.value
-				FROM stuff)`, true},
+			FROM stuff
+			WHERE stuff.value >= ALL (SELECT stuff.value
+			FROM stuff)`, true},
 		{"BEGIN", true},
 		{"START TRANSACTION", true},
 		// 45
 		{"COMMIT", true},
 		{"ROLLBACK", true},
-		{`
-				BEGIN;
-					INSERT INTO foo VALUES (42, 3.14);
-					INSERT INTO foo VALUES (-1, 2.78);
-				COMMIT;`, true},
 		{`BEGIN;
-					INSERT INTO tmp SELECT * from bar;
-				SELECT * from tmp;
-
-				ROLLBACK;`, true},
+			INSERT INTO foo VALUES (42, 3.14);
+			INSERT INTO foo VALUES (-1, 2.78);
+		COMMIT;`, true},
+		{`BEGIN;
+			INSERT INTO tmp SELECT * from bar;
+			SELECT * from tmp;
+		ROLLBACK;`, true},
 
 		// set
 		// user defined
@@ -353,12 +353,12 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// For Binlog stmt
 		{`BINLOG '
-		BxSFVw8JAAAA8QAAAPUAAAAAAAQANS41LjQ0LU1hcmlhREItbG9nAAAAAAAAAAAAAAAAAAAAAAAA
-		AAAAAAAAAAAAAAAAAAAAAAAAEzgNAAgAEgAEBAQEEgAA2QAEGggAAAAICAgCAAAAAAAAAAAAAAAA
-		AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-		AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-		AAAAAAAAAAAA5gm5Mg==
-		'/*!*/;`, true},
+BxSFVw8JAAAA8QAAAPUAAAAAAAQANS41LjQ0LU1hcmlhREItbG9nAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAEzgNAAgAEgAEBAQEEgAA2QAEGggAAAAICAgCAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAA5gm5Mg==
+'/*!*/;`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -1014,7 +1014,9 @@ func BenchmarkParse(b *testing.B) {
 		"select c from t where c > 2",
 	}
 	parser := New()
-	// parser.lexer = &Scanner{}
+	if useNewLexer {
+		parser.lexer = &Scanner{}
+	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {

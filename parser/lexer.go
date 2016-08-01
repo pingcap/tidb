@@ -117,9 +117,8 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 					tok = unicode.ReplacementChar
 				}
 				return
-			} else {
-				s.r.p = pos
 			}
+			s.r.p = pos
 		case 'b':
 			s.r.inc()
 			if s.r.readByte() == '\'' {
@@ -131,9 +130,8 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 					tok = unicode.ReplacementChar
 				}
 				return
-			} else {
-				s.r.p = pos
 			}
+			s.r.p = pos
 		}
 		return s.scanIdent()
 	} else if isDigit(ch0) || ch0 == '.' {
@@ -346,10 +344,9 @@ func (s *Scanner) scanNumber() (tok int, pos Pos, lit string) {
 	case '.':
 		if isDigit(s.r.peek()) {
 			return s.scanFloat(&pos)
-		} else {
-			tok, lit = int('.'), "."
-			return
 		}
+		tok, lit = int('.'), "."
+		return
 	}
 
 	s.scanDigits()

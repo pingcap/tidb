@@ -40,6 +40,8 @@ var (
 	specCodePattern = regexp.MustCompile(`\/\*!(M?[0-9]{5,6})?([^*]|\*+[^*/])*\*+\/`)
 	specCodeStart   = regexp.MustCompile(`^\/\*!(M?[0-9]{5,6} )?[ \t]*`)
 	specCodeEnd     = regexp.MustCompile(`[ \t]*\*\/$`)
+
+	useNewLexer bool
 )
 
 func trimComment(txt string) string {
@@ -140,7 +142,9 @@ func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 }
 
 func (parser *Parser) startOffset(offset int) int {
-	// offset--
+	if !useNewLexer {
+		offset--
+	}
 	for unicode.IsSpace(rune(parser.src[offset])) {
 		offset++
 	}
@@ -148,7 +152,9 @@ func (parser *Parser) startOffset(offset int) int {
 }
 
 func (parser *Parser) endOffset(offset int) int {
-	// offset--
+	if !useNewLexer {
+		offset--
+	}
 	for offset > 0 && unicode.IsSpace(rune(parser.src[offset-1])) {
 		offset--
 	}
