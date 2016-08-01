@@ -229,6 +229,7 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 		for _, acCond := range accessConds {
 			if cond == acCond {
 				isAccess = true
+				break
 			}
 		}
 		if isAccess {
@@ -270,17 +271,17 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 			}
 		}
 	}
-	for _, con := range conditions {
+	for _, cond := range conditions {
 		if pkName.L != "" {
 			checker := conditionChecker{
 				tableName: table.Name,
 				pkName:    pkName}
-			if checker.newCheck(con) {
-				accessConditions = append(accessConditions, con)
+			if checker.newCheck(cond) {
+				accessConditions = append(accessConditions, cond)
 				continue
 			}
 		}
-		filterConditions = append(filterConditions, con)
+		filterConditions = append(filterConditions, cond)
 	}
 	for i, cond := range accessConditions {
 		accessConditions[i] = pushDownNot(cond, false)
@@ -422,8 +423,6 @@ func (c *conditionChecker) newCheck(condition expression.Expression) bool {
 }
 
 func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
-	// TODO: Implement parentheses, patternin and patternlike.
-	// Expression needs to implement IsPreEvaluable function.
 	switch scalar.FuncName.L {
 	case ast.OrOr, ast.AndAnd:
 		return c.newCheck(scalar.Args[0]) && c.newCheck(scalar.Args[1])
@@ -437,7 +436,43 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 	case ast.IsNull, ast.IsTruth, ast.IsFalsity:
 		return c.checkColumn(scalar.Args[0])
 	case ast.UnaryNot:
+		// Don't support "not like" and "not in" convert to access conditions.
+		if s, ok := scalar.Args[0].(*expression.ScalarFunction); ok {
+			if s.FuncName.L == ast.In || s.FuncName.L == ast.Like {
+				return false
+			}
+		}
 		return c.newCheck(scalar.Args[0])
+	case ast.In:
+		if !c.checkColumn(scalar.Args[0]) {
+			return false
+		}
+		for _, v := range scalar.Args[1:] {
+			if _, ok := v.(*expression.Constant); !ok {
+				return false
+			}
+		}
+		return true
+	case ast.Like:
+		if !c.checkColumn(scalar.Args[0]) {
+			return false
+		}
+		pattern, ok := scalar.Args[1].(*expression.Constant)
+		if !ok {
+			return false
+		}
+		if pattern.Value.IsNull() {
+			return false
+		}
+		patternStr, err := pattern.Value.ToString()
+		if err != nil {
+			return false
+		}
+		if len(patternStr) == 0 {
+			return true
+		}
+		firstChar := patternStr[0]
+		return firstChar != '%' && firstChar != '.'
 	}
 	return false
 }

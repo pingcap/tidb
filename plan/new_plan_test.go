@@ -370,6 +370,38 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  "select a from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
 			best: "Table(t)->Selection->Projection",
 		},
+		{
+			sql:  "select a from t where c = 5",
+			best: "Index(t.c_d_e)[[5,5]]->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1)",
+			best: "Index(t.c_d_e)[[1,1]]->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1, 2, 3)",
+			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3]]->Projection",
+		},
+		{
+			sql:  "select a from t where d in (1, 2, 3)",
+			best: "Table(t)->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c not in (1)",
+			best: "Table(t)->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c like 'abc'",
+			best: "Index(t.c_d_e)[[abc,abc]]->Projection",
+		},
+		{
+			sql:  "select a from t where c not like 'abc'",
+			best: "Table(t)->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c like 'abc%'",
+			best: "Index(t.c_d_e)[[abc,abd)]->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
