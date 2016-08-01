@@ -192,12 +192,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 			INSERT INTO foo VALUES (42, 3.14);
 			INSERT INTO foo VALUES (-1, 2.78);
 		COMMIT;`, true},
-		{` // A
-		BEGIN;
+		{`BEGIN;
 			INSERT INTO tmp SELECT * from bar;
 		SELECT * from tmp;
-
-		// B
 		ROLLBACK;`, true},
 
 		// set
