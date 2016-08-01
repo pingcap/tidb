@@ -268,7 +268,12 @@ func (s *Scanner) scanNumber() (tok int, pos Pos, lit string) {
 		lit = s.r.data(&pos)
 		return
 	case '.':
-		return s.scanFloat(&pos)
+		if isDigit(s.r.peek()) {
+			return s.scanFloat(&pos)
+		} else {
+			tok, lit = int('.'), "."
+			return
+		}
 	}
 
 	s.scanDigits()
