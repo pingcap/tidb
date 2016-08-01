@@ -87,7 +87,7 @@ func (e *joinReOrderSolver) Len() int {
 }
 
 // reorderJoin implements a simple join reorder algorithm. It will extract all the equal conditions and compose them to a graph.
-// Then walk through the graph and pick the nodes connected by some edge to compose a join tree.
+// Then walk through the graph and pick the nodes connected by some edges to compose a join tree.
 // We will pick the node with least result set as early as possible.
 func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.Expression) {
 	e.graph = make([]edgeList, len(group))
