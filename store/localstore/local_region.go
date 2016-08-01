@@ -433,11 +433,9 @@ func (rs *localRegion) getRowData(value []byte, colTps map[int64]*types.FieldTyp
 	return res, nil
 }
 
-func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64, row map[int64][]byte) (bool, error) {
-	if ctx.sel.Where == nil {
-		return true, nil
-	}
-	for colID, col := range ctx.whereColumns {
+// Put column values into ctx, the values will be used for expr evaluation.
+func (rs *localRegion) setColumnValueToCtx(ctx *selectContext, h int64, row map[int64][]byte, cols map[int64]*tipb.ColumnInfo) error {
+	for colID, col := range cols {
 		if col.GetPkHandle() {
 			ctx.eval.Row[colID] = types.NewIntDatum(h)
 		} else {
@@ -445,10 +443,21 @@ func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64, row map[int6
 			ft := xapi.FieldTypeFromPBColumn(col)
 			datum, err := tablecodec.DecodeColumnValue(data, ft)
 			if err != nil {
-				return false, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			ctx.eval.Row[colID] = datum
 		}
+	}
+	return nil
+}
+
+func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64, row map[int64][]byte) (bool, error) {
+	if ctx.sel.Where == nil {
+		return true, nil
+	}
+	err := rs.setColumnValueToCtx(ctx, h, row, ctx.whereColumns)
+	if err != nil {
+		return false, errors.Trace(err)
 	}
 	result, err := ctx.eval.Eval(ctx.sel.Where)
 	if err != nil {
