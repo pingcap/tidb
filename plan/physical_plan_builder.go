@@ -14,13 +14,14 @@
 package plan
 
 import (
+	"math"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/util/types"
-	"math"
 )
 
 const (
@@ -47,7 +48,15 @@ func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, in
 			rowCount, err = table.Columns[offset].LessRowCount(r)
 			rowCount = table.Count - rowCount
 		} else {
-			rowCount, err = table.Columns[offset].BetweenRowCount(l, r)
+			compare, err1 := l.CompareDatum(r)
+			if err1 != nil {
+				return 0, errors.Trace(err1)
+			}
+			if compare == 0 {
+				rowCount, err = table.Columns[offset].EqualRowCount(l)
+			} else {
+				rowCount, err = table.Columns[offset].BetweenRowCount(l, r)
+			}
 		}
 		if err != nil {
 			return 0, errors.Trace(err)
