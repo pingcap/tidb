@@ -67,7 +67,7 @@ type NewXSelectIndexExec struct {
 	indexOrder map[int64]int
 	indexPlan  *plan.PhysicalIndexScan
 
-	returnedRows int64 // returned row count
+	returnedRows uint64 // returned row count
 
 	mu sync.Mutex
 
@@ -133,7 +133,7 @@ func (e *NewXSelectIndexExec) Close() error {
 
 // Next implements Executor Next interface.
 func (e *NewXSelectIndexExec) Next() (*Row, error) {
-	if e.indexPlan.LimitCount != nil && e.returnedRows >= *e.indexPlan.LimitCount {
+	if e.indexPlan.LimitCount != nil && e.returnedRows >= uint64(*e.indexPlan.LimitCount) {
 		return nil, nil
 	}
 	if e.tasks == nil {
@@ -414,7 +414,7 @@ type NewXSelectTableExec struct {
 	ranges       []plan.TableRange
 	desc         bool
 	limitCount   *int64
-	returnedRows int64 // returned rowCount
+	returnedRows uint64 // returned rowCount
 
 	/*
 		The following attributes are used for aggregation push down.
@@ -489,7 +489,7 @@ func (e *NewXSelectTableExec) Close() error {
 
 // Next implements Executor interface.
 func (e *NewXSelectTableExec) Next() (*Row, error) {
-	if e.limitCount != nil && e.returnedRows >= *e.limitCount {
+	if e.limitCount != nil && e.returnedRows >= uint64(*e.limitCount) {
 		return nil, nil
 	}
 	if e.result == nil {
