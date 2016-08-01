@@ -46,6 +46,7 @@ type selectContext struct {
 	txn          kv.Transaction
 	eval         *xeval.Evaluator
 	whereColumns map[int64]*tipb.ColumnInfo
+	aggColumns   map[int64]*tipb.ColumnInfo
 	groups       map[string]bool
 	groupKeys    [][]byte
 	aggregates   []*aggregateFuncExpr
@@ -73,18 +74,29 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		ctx.eval = &xeval.Evaluator{Row: make(map[int64]types.Datum)}
 		if sel.Where != nil {
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
-			collectColumnsInWhere(sel.Where, ctx)
+			collectColumnsInExpr(sel.Where, ctx, ctx.whereColumns)
 		}
 		ctx.aggregate = len(sel.Aggregates) > 0 || len(sel.GetGroupBy()) > 0
 		if ctx.aggregate {
 			// compose aggregateFuncExpr
 			ctx.aggregates = make([]*aggregateFuncExpr, 0, len(sel.Aggregates))
+			ctx.aggColumns = make(map[int64]*tipb.ColumnInfo)
 			for _, agg := range sel.Aggregates {
 				aggExpr := &aggregateFuncExpr{expr: agg}
 				ctx.aggregates = append(ctx.aggregates, aggExpr)
+				collectColumnsInExpr(agg, ctx, ctx.aggColumns)
 			}
 			ctx.groups = make(map[string]bool)
 			ctx.groupKeys = make([][]byte, 0)
+			for _, item := range ctx.sel.GetGroupBy() {
+				collectColumnsInExpr(item.Expr, ctx, ctx.aggColumns)
+			}
+			for k := range ctx.aggColumns {
+				if _, ok := ctx.whereColumns[k]; ok {
+					// It is already handled in where.
+					delete(ctx.aggColumns, k)
+				}
+			}
 		}
 
 		var rows []*tipb.Row
@@ -111,7 +123,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 	return resp, nil
 }
 
-func collectColumnsInWhere(expr *tipb.Expr, ctx *selectContext) error {
+func collectColumnsInExpr(expr *tipb.Expr, ctx *selectContext, collector map[int64]*tipb.ColumnInfo) error {
 	if expr == nil {
 		return nil
 	}
@@ -128,14 +140,14 @@ func collectColumnsInWhere(expr *tipb.Expr, ctx *selectContext) error {
 		}
 		for _, c := range columns {
 			if c.GetColumnId() == i {
-				ctx.whereColumns[i] = c
+				collector[i] = c
 				return nil
 			}
 		}
 		return xeval.ErrInvalid.Gen("column %d not found", i)
 	}
 	for _, child := range expr.Children {
-		err := collectColumnsInWhere(child, ctx)
+		err := collectColumnsInExpr(child, ctx, collector)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -399,7 +411,7 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 
 	if ctx.aggregate {
 		// Update aggregate functions.
-		err = rs.aggregate(ctx, rowData)
+		err = rs.aggregate(ctx, handle, values)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

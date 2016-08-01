@@ -17,8 +17,10 @@ import (
 	"bytes"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/xapi"
 	"github.com/pingcap/tidb/xapi/xeval"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -46,15 +48,20 @@ func (rs *localRegion) getGroupKey(ctx *selectContext) ([]byte, error) {
 }
 
 // Update aggregate functions with rows.
-func (rs *localRegion) aggregate(ctx *selectContext, row [][]byte) error {
+func (rs *localRegion) aggregate(ctx *selectContext, h int64, row map[int64][]byte) error {
 	// Put row data into evaluate context for later evaluation.
-	cols := ctx.sel.TableInfo.Columns
-	for i, col := range cols {
-		_, datum, err := codec.DecodeOne(row[i])
-		if err != nil {
-			return errors.Trace(err)
+	for colID, col := range ctx.aggColumns {
+		if col.GetPkHandle() {
+			ctx.eval.Row[colID] = types.NewIntDatum(h)
+		} else {
+			data := row[colID]
+			ft := xapi.FieldTypeFromPBColumn(col)
+			datum, err := tablecodec.DecodeColumnValue(data, ft)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			ctx.eval.Row[colID] = datum
 		}
-		ctx.eval.Row[col.GetColumnId()] = datum
 	}
 	// Get group key.
 	gk, err := rs.getGroupKey(ctx)
