@@ -52,3 +52,6 @@ func (l *localOracle) GetTimestamp() (uint64, error) {
 	l.n = 0
 	return uint64(ts), nil
 }
+
+func (l *localOracle) Close() {
+}

@@ -35,7 +35,9 @@ func (s *testStoreSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	mvccStore := mocktikv.NewMvccStore()
 	clientFactory := mocktikv.NewRPCClient(s.cluster, mvccStore)
-	s.store = newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), clientFactory)
+	store, err := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), clientFactory)
+	c.Assert(err, IsNil)
+	s.store = store
 }
 
 func (s *testStoreSuite) TestOracle(c *C) {
@@ -50,27 +52,23 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 	// Check retry.
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(2)
 
 	o.disable()
 	go func() {
+		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
 		o.enable()
-		wg.Done()
 	}()
 
 	go func() {
+		defer wg.Done()
 		t3, err := s.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff))
 		c.Assert(err, IsNil)
 		c.Assert(t2, Less, t3)
-		wg.Done()
-	}()
-
-	go func() {
 		expired, err := s.store.checkTimestampExpiredWithRetry(NewBackoffer(tsoMaxBackoff), t2, 50)
 		c.Assert(err, IsNil)
 		c.Assert(expired, IsTrue)
-		wg.Done()
 	}()
 
 	wg.Wait()
