@@ -191,6 +191,64 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	UseNewPlanner = false
 }
 
+func (s *testPlanSuite) TestJoinReOrder(c *C) {
+	UseNewPlanner = true
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select * from t t1, t t2, t t3, t t4, t t5, t t6 where t1.a = t2.b and t2.a = t3.b and t3.c = t4.a and t4.d = t2.c and t5.d = t6.d",
+			best: "LeftHashJoin{LeftHashJoin{LeftHashJoin{LeftHashJoin{Table(t)->Table(t)}(t1.a,t2.b)->Table(t)}(t2.a,t3.b)->Table(t)}(t3.c,t4.a)(t2.c,t4.d)->LeftHashJoin{Table(t)->Table(t)}(t5.d,t6.d)}->Projection",
+		},
+		{
+			sql:  "select * from t t1, t t2, t t3, t t4, t t5, t t6, t t7, t t8 where t1.a = t8.a",
+			best: "LeftHashJoin{LeftHashJoin{LeftHashJoin{LeftHashJoin{Table(t)->Table(t)}(t1.a,t8.a)->Table(t)}->LeftHashJoin{Table(t)->Table(t)}}->LeftHashJoin{LeftHashJoin{Table(t)->Table(t)}->Table(t)}}->Projection",
+		},
+		{
+			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t5.b < 8",
+			best: "LeftHashJoin{LeftHashJoin{LeftHashJoin{RightHashJoin{Table(t)->Selection->Table(t)}(t5.a,t1.a)->Table(t)}(t1.a,t2.a)->Table(t)}(t2.a,t3.a)(t1.a,t3.a)->Table(t)}(t5.a,t4.a)(t3.a,t4.a)(t2.a,t4.a)->Projection",
+		},
+		{
+			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
+			best: "LeftHashJoin{LeftHashJoin{LeftHashJoin{LeftHashJoin{Table(t)->Selection->Table(t)}(t3.a,t4.a)->Table(t)}(t4.a,t5.a)->Table(t)}(t5.a,t1.a)(t3.a,t1.a)->Table(t)}(t3.a,t2.a)(t1.a,t2.a)(t4.a,t2.a)->Projection",
+		},
+		{
+			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
+			best: "Table(t)->Apply(LeftHashJoin{RightHashJoin{Table(t)->Selection->Table(t)}(t2.a,t3.a)->Table(t)}(t3.a,t1.a)->Projection)->Selection->Projection",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		err = newMockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mock.NewContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
+		c.Assert(err, IsNil)
+		_, res, _, err := lp.convert2PhysicalPlan(nil)
+		c.Assert(err, IsNil)
+		p = res.p.PushLimit(nil)
+		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+	}
+	UseNewPlanner = false
+}
+
 func (s *testPlanSuite) TestCBO(c *C) {
 	UseNewPlanner = true
 	defer testleak.AfterTest(c)()

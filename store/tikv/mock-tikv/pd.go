@@ -23,11 +23,11 @@ import (
 )
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
-var (
-	tsMu       sync.Mutex
+var tsMu = struct {
+	sync.Mutex
 	physicalTS int64
 	logicalTS  int64
-)
+}{}
 
 type pdClient struct {
 	cluster *Cluster
@@ -46,13 +46,13 @@ func (c *pdClient) GetTS() (int64, int64, error) {
 	defer tsMu.Unlock()
 
 	ts := time.Now().UnixNano() / int64(time.Millisecond)
-	if physicalTS >= ts {
-		logicalTS++
+	if tsMu.physicalTS >= ts {
+		tsMu.logicalTS++
 	} else {
-		physicalTS = ts
-		logicalTS = 0
+		tsMu.physicalTS = ts
+		tsMu.logicalTS = 0
 	}
-	return physicalTS, logicalTS, nil
+	return tsMu.physicalTS, tsMu.logicalTS, nil
 }
 
 func (c *pdClient) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, error) {
