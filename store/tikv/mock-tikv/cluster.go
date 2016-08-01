@@ -31,7 +31,7 @@ import (
 //    process. Only the store with request's Region's leader Peer could respond
 //    to client's request.
 type Cluster struct {
-	mu      sync.RWMutex
+	sync.RWMutex
 	id      uint64
 	stores  map[uint64]*Store
 	regions map[uint64]*Region
@@ -49,16 +49,16 @@ func NewCluster() *Cluster {
 // AllocID creates an unique ID in cluster. The ID could be used as either
 // StoreID, RegionID, or PeerID.
 func (c *Cluster) AllocID() uint64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.Lock()
+	defer c.Unlock()
 
 	return c.allocID()
 }
 
 // AllocIDs creates multiple IDs.
 func (c *Cluster) AllocIDs(n int) []uint64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.Lock()
+	defer c.Unlock()
 
 	var ids []uint64
 	for len(ids) < n {
@@ -74,8 +74,8 @@ func (c *Cluster) allocID() uint64 {
 
 // GetStore returns a Store's meta.
 func (c *Cluster) GetStore(storeID uint64) *metapb.Store {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.RLock()
+	defer c.RUnlock()
 
 	if store := c.stores[storeID]; store != nil {
 		return proto.Clone(store.meta).(*metapb.Store)
@@ -85,8 +85,8 @@ func (c *Cluster) GetStore(storeID uint64) *metapb.Store {
 
 // GetStoreByAddr returns a Store's meta by an addr.
 func (c *Cluster) GetStoreByAddr(addr string) *metapb.Store {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.RLock()
+	defer c.RUnlock()
 
 	for _, s := range c.stores {
 		if s.meta.GetAddress() == addr {
@@ -98,24 +98,24 @@ func (c *Cluster) GetStoreByAddr(addr string) *metapb.Store {
 
 // AddStore add a new Store to the cluster.
 func (c *Cluster) AddStore(storeID uint64, addr string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.Lock()
+	defer c.Unlock()
 
 	c.stores[storeID] = newStore(storeID, addr)
 }
 
 // RemoveStore removes a Store from the cluster.
 func (c *Cluster) RemoveStore(storeID uint64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.Lock()
+	defer c.Unlock()
 
 	delete(c.stores, storeID)
 }
 
 // GetRegion returns a Region's meta and leader ID.
 func (c *Cluster) GetRegion(regionID uint64) (*metapb.Region, uint64) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.RLock()
+	defer c.RUnlock()
 
 	r := c.regions[regionID]
 	if r == nil {
@@ -126,8 +126,8 @@ func (c *Cluster) GetRegion(regionID uint64) (*metapb.Region, uint64) {
 
 // GetRegionByKey returns the Region and its leader whose range contains the key.
 func (c *Cluster) GetRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.RLock()
+	defer c.RUnlock()
 
 	for _, r := range c.regions {
 		if regionContains(r.meta.StartKey, r.meta.EndKey, key) {
@@ -140,8 +140,8 @@ func (c *Cluster) GetRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
 // Bootstrap creates the first Region. The Stores should be in the Cluster before
 // bootstrap.
 func (c *Cluster) Bootstrap(regionID uint64, storeIDs, peerIDs []uint64, leaderStoreID uint64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.Lock()
+	defer c.Unlock()
 
 	if len(storeIDs) != len(peerIDs) {
 		panic("len(storeIDs) != len(peerIDs)")
@@ -151,8 +151,8 @@ func (c *Cluster) Bootstrap(regionID uint64, storeIDs, peerIDs []uint64, leaderS
 
 // AddPeer adds a new Peer for the Region on the Store.
 func (c *Cluster) AddPeer(regionID, storeID, peerID uint64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.Lock()
+	defer c.Unlock()
 
 	c.regions[regionID].addPeer(peerID, storeID)
 }
@@ -160,8 +160,8 @@ func (c *Cluster) AddPeer(regionID, storeID, peerID uint64) {
 // RemovePeer removes the Peer from the Region. Note that if the Peer is leader,
 // the Region will have no leader before calling ChangeLeader().
 func (c *Cluster) RemovePeer(regionID, storeID uint64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.Lock()
+	defer c.Unlock()
 
 	c.regions[regionID].removePeer(storeID)
 }
@@ -169,8 +169,8 @@ func (c *Cluster) RemovePeer(regionID, storeID uint64) {
 // ChangeLeader sets the Region's leader Peer. Caller should guarantee the Peer
 // exists.
 func (c *Cluster) ChangeLeader(regionID, leaderStoreID uint64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.Lock()
+	defer c.Unlock()
 
 	c.regions[regionID].changeLeader(leaderStoreID)
 }
@@ -183,8 +183,8 @@ func (c *Cluster) GiveUpLeader(regionID uint64) {
 
 // Split splits a Region at the key and creates new Region.
 func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, peerIDs []uint64, leaderPeerID uint64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.Lock()
+	defer c.Unlock()
 
 	newRegion := c.regions[regionID].split(newRegionID, key, peerIDs, leaderPeerID)
 	c.regions[newRegionID] = newRegion
@@ -192,8 +192,8 @@ func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, peerIDs []uint
 
 // Merge merges 2 Regions, their key ranges should be adjacent.
 func (c *Cluster) Merge(regionID1, regionID2 uint64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.Lock()
+	defer c.Unlock()
 
 	c.regions[regionID1].merge(c.regions[regionID2].meta.GetEndKey())
 	delete(c.regions, regionID2)

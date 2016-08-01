@@ -25,7 +25,7 @@ const epochShiftBits = 18
 var _ oracle.Oracle = &localOracle{}
 
 type localOracle struct {
-	mu              sync.Mutex
+	sync.Mutex
 	lastTimeStampTs int64
 	n               int64
 }
@@ -41,8 +41,8 @@ func (l *localOracle) IsExpired(lockTs uint64, TTL uint64) (bool, error) {
 }
 
 func (l *localOracle) GetTimestamp() (uint64, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.Lock()
+	defer l.Unlock()
 	ts := (time.Now().UnixNano() / int64(time.Millisecond)) << epochShiftBits
 	if l.lastTimeStampTs == ts {
 		l.n++
