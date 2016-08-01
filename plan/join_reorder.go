@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-// tryToGetJoinGroup try to fetch a whole join group, which all joins is cartesian join.
+// tryToGetJoinGroup tries to fetch a whole join group, which all joins is cartesian join.
 func tryToGetJoinGroup(j *Join) ([]LogicalPlan, bool) {
 	if j.reordered || !j.cartesianJoin {
 		return nil, false
@@ -127,6 +127,7 @@ func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.
 						rate *= 0.1
 					case ast.LT, ast.LE, ast.GE, ast.GT:
 						rate *= 0.3
+					// TODO: Estimate it more precisely in future.
 					default:
 						rate *= 0.9
 					}
@@ -192,7 +193,7 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *Join {
 	return join
 }
 
-// walkGraph implement a dfs algorithm. Each time it picks a edge with lowest rate.
+// walkGraph implements a dfs algorithm. Each time it picks a edge with lowest rate, which has been sorted before.
 func (e *joinReOrderSolver) walkGraphAndComposeJoin(u int) {
 	e.visited[u] = true
 	for _, edge := range e.graph[u] {
