@@ -46,6 +46,8 @@ func (s *Scanner) Errors() []error {
 // Scanner satisfies yyReset interface.
 func (s *Scanner) reset(sql string) yyLexer {
 	s.r = reader{s: sql}
+	s.buf.Reset()
+	s.errs = s.errs[:0]
 	return s
 }
 
@@ -133,6 +135,7 @@ func (s *Scanner) startWithDash() (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	if !strings.HasPrefix(s.r.s[pos.Offset:], "-- ") {
 		tok = int('-')
+		s.r.inc()
 		return
 	}
 
@@ -265,7 +268,12 @@ func (s *Scanner) scanNumber() (tok int, pos Pos, lit string) {
 		lit = s.r.data(&pos)
 		return
 	case '.':
-		return s.scanFloat(&pos)
+		if isDigit(s.r.peek()) {
+			return s.scanFloat(&pos)
+		} else {
+			tok, lit = int('.'), "."
+			return
+		}
 	}
 
 	s.scanDigits()
