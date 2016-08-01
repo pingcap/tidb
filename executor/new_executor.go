@@ -1013,7 +1013,7 @@ func (b *executorBuilder) columnToPBExpr(client kv.Client, column *expression.Co
 
 	id := int64(-1)
 	for _, col := range tbl.Columns {
-		if tbl.Name == column.TblName && col.Name == column.ColName {
+		if !column.Correlated && col.Name == column.ColName {
 			id = col.ID
 			break
 		}
