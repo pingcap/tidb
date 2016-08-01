@@ -1324,7 +1324,7 @@ func (s *testSuite) TestDefaultNull(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 <nil>"))
 }
 
-func (s *testSuite) TestUsignedPKColumn(c *C) {
+func (s *testSuite) TestUnsignedPKColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1643,6 +1643,16 @@ func (s *testSuite) TestNewSubquery(c *C) {
 	result.Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
 	result = tk.MustQuery("select (c) > all (select c from t) from t")
 	result.Check(testkit.Rows("0", "0", "0", "<nil>"))
+
+	tk.MustExec("drop table if exists a")
+	tk.MustExec("create table a (c int, d int)")
+	tk.MustExec("insert a values (1, 2)")
+	tk.MustExec("drop table if exists b")
+	tk.MustExec("create table b (c int, d int)")
+	tk.MustExec("insert b values (2, 1)")
+
+	result = tk.MustQuery("select * from a b where c = (select d from b a where a.c = 2 and b.c = 1)")
+	result.Check(testkit.Rows("1 2"))
 }
 
 func (s *testSuite) TestNewTableDual(c *C) {
