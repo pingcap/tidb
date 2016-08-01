@@ -46,6 +46,8 @@ func (s *Scanner) Errors() []error {
 // Scanner satisfies yyReset interface.
 func (s *Scanner) reset(sql string) yyLexer {
 	s.r = reader{s: sql}
+	s.buf.Reset()
+	s.errs = s.errs[:0]
 	return s
 }
 
