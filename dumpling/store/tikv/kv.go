@@ -34,7 +34,7 @@ import (
 )
 
 type storeCache struct {
-	mu    sync.Mutex
+	sync.Mutex
 	cache map[string]*tikvStore
 }
 
@@ -47,8 +47,8 @@ type Driver struct {
 // Open opens or creates an TiKV storage with given path.
 // Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1
 func (d Driver) Open(path string) (kv.Storage, error) {
-	mc.mu.Lock()
-	defer mc.mu.Unlock()
+	mc.Lock()
+	defer mc.Unlock()
 
 	etcdAddrs, clusterID, err := parsePath(path)
 	if err != nil {
@@ -109,8 +109,8 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 }
 
 func (s *tikvStore) Close() error {
-	mc.mu.Lock()
-	defer mc.mu.Unlock()
+	mc.Lock()
+	defer mc.Unlock()
 
 	delete(mc.cache, s.uuid)
 	if err := s.client.Close(); err != nil {
