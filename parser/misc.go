@@ -314,6 +314,7 @@ var tokenMap = map[string]int{
 	"STATUS":              status,
 	"SUBDATE":             subDate,
 	"STRCMP":              strcmp,
+	"SUBSTR":              substring,
 	"SUBSTRING":           substring,
 	"SUBSTRING_INDEX":     substringIndex,
 	"SUM":                 sum,
