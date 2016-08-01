@@ -383,7 +383,7 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 	}
 	costTime := time.Now().Sub(startTs)
 	if costTime < time.Second {
-		log.Infof("[TIME_QUERY] %v %s", costTime, sql)
+		log.Debugf("[TIME_QUERY] %v %s", costTime, sql)
 	} else {
 		log.Warnf("[TIME_QUERY] %v %s", costTime, sql)
 	}
