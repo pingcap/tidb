@@ -20,13 +20,10 @@ package parser
 
 import (
 	"fmt"
-	"math"
-	"strconv"
 	"strings"
 	"unicode"
 
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -540,10 +537,10 @@ action		{a}{c}{t}{i}{o}{n}
 				return '-'
 			}
 
-{int_lit}		return l.int(lval)
-{float_lit}		return l.float(lval)
-{hex_lit}		return l.hex(lval)
-{bit_lit}		return l.bit(lval)
+{int_lit}		return toInt(l, lval, string(l.val))
+{float_lit}		return toFloat(l, lval, string(l.val))
+{hex_lit}		return toHex(l, lval, string(l.val))
+{bit_lit}		return toBit(l, lval, string(l.val))
 
 \"			l.sc = S1
 '			l.sc = S2
@@ -1185,63 +1182,6 @@ func (l *lexer) trimIdent(idt string) string {
 	idt = strings.TrimPrefix(idt, "`")
 	idt = strings.TrimSuffix(idt, "`")
 	return idt
-}
-
-func (l *lexer) int(lval *yySymType) int {
-	n, err := strconv.ParseUint(string(l.val), 0, 64)
-	if err != nil {
-		l.Errorf("integer literal: %v", err)
-		return int(unicode.ReplacementChar)
-	}
-
-	switch {
-	case n < math.MaxInt64:
-		lval.item = int64(n)
-	default:
-		lval.item = uint64(n)
-	}
-	return intLit
-}
-
-func (l *lexer) float(lval *yySymType) int {
-	n, err := strconv.ParseFloat(string(l.val), 64)
-	if err != nil {
-		l.Errorf("float literal: %v", err)
-		return int(unicode.ReplacementChar)
-	}
-
-	lval.item = float64(n)
-	return floatLit
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
-func (l *lexer) hex(lval *yySymType) int {
-	s := string(l.val)
-	h, err := mysql.ParseHex(s)
-	if err != nil {
-		// If parse hexadecimal literal to numerical value error, we should treat it as a string.
-		hexStr, err1 := mysql.ParseHexStr(s)
-		if err1 != nil {
-			l.Errorf("hex literal: %v", err)
-			return int(unicode.ReplacementChar)
-		}
-		lval.ident = hexStr
-		return stringLit
-	}
-	lval.item = h
-	return hexLit
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
-func (l *lexer) bit(lval *yySymType) int {
-	s := string(l.val)
-	b, err := mysql.ParseBit(s, -1)
-	if err != nil {
-		l.Errorf("bit literal: %v", err)
-		return int(unicode.ReplacementChar)
-	}
-	lval.item = b
-	return bitLit
 }
 
 func (l *lexer) handleIdent(lval *yySymType) int {
