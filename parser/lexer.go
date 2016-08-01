@@ -133,6 +133,7 @@ func (s *Scanner) startWithDash() (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	if !strings.HasPrefix(s.r.s[pos.Offset:], "-- ") {
 		tok = int('-')
+		s.r.inc()
 		return
 	}
 
