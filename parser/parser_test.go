@@ -36,6 +36,7 @@ type testParserSuite struct {
 func (s *testParserSuite) TestSimple(c *C) {
 	defer testleak.AfterTest(c)()
 	parser := New()
+	parser.lexer = &Scanner{}
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
@@ -123,6 +124,7 @@ type testCase struct {
 
 func (s *testParserSuite) RunTest(c *C, table []testCase) {
 	parser := New()
+	parser.lexer = &Scanner{}
 	for _, t := range table {
 		_, err := parser.Parse(t.src, "", "")
 		comment := Commentf("source %v", t.src)
@@ -179,23 +181,24 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"REPLACE INTO foo VALUE ()", true},
 		// 40
 		{`SELECT stuff.id
-		FROM stuff
-		WHERE stuff.value >= ALL (SELECT stuff.value
-		FROM stuff)`, true},
+				FROM stuff
+				WHERE stuff.value >= ALL (SELECT stuff.value
+				FROM stuff)`, true},
 		{"BEGIN", true},
 		{"START TRANSACTION", true},
 		// 45
 		{"COMMIT", true},
 		{"ROLLBACK", true},
 		{`
-		BEGIN;
-			INSERT INTO foo VALUES (42, 3.14);
-			INSERT INTO foo VALUES (-1, 2.78);
-		COMMIT;`, true},
+				BEGIN;
+					INSERT INTO foo VALUES (42, 3.14);
+					INSERT INTO foo VALUES (-1, 2.78);
+				COMMIT;`, true},
 		{`BEGIN;
-			INSERT INTO tmp SELECT * from bar;
-		SELECT * from tmp;
-		ROLLBACK;`, true},
+					INSERT INTO tmp SELECT * from bar;
+				SELECT * from tmp;
+
+				ROLLBACK;`, true},
 
 		// set
 		// user defined
@@ -350,12 +353,12 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// For Binlog stmt
 		{`BINLOG '
-BxSFVw8JAAAA8QAAAPUAAAAAAAQANS41LjQ0LU1hcmlhREItbG9nAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAEzgNAAgAEgAEBAQEEgAA2QAEGggAAAAICAgCAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAA5gm5Mg==
-'/*!*/;`, true},
+		BxSFVw8JAAAA8QAAAPUAAAAAAAQANS41LjQ0LU1hcmlhREItbG9nAAAAAAAAAAAAAAAAAAAAAAAA
+		AAAAAAAAAAAAAAAAAAAAAAAAEzgNAAgAEgAEBAQEEgAA2QAEGggAAAAICAgCAAAAAAAAAAAAAAAA
+		AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+		AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+		AAAAAAAAAAAA5gm5Mg==
+		'/*!*/;`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -462,7 +465,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select sysdate(), sysdate(6)", true},
 		{"SELECT time('01:02:03');", true},
 
-		// Select current_time
+		// // Select current_time
 		{"select current_time", true},
 		{"select current_time()", true},
 		{"select current_time(6)", true},
@@ -676,7 +679,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (a bytes)", false},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED)", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) -- foo", true},
-		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) // foo", true},
+		// {"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) // foo", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
 		{"CREATE TABLE foo /* foo */ (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
 		{"CREATE TABLE foo (name CHAR(50) BINARY)", true},

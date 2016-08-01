@@ -65,15 +65,26 @@ func (s *Scanner) Errorf(format string, a ...interface{}) {
 func (s *Scanner) Lex(v *yySymType) int {
 	tok, pos, lit := s.scan()
 	v.offset = pos.Offset
+	v.ident = lit
 	if tok == identifier {
 		if tok1 := isTokenIdentifier(lit, &s.buf); tok1 != 0 {
-			return tok1
+			tok = tok1
 		}
+	}
+	switch tok {
+	case intLit:
+		return toInt(s, v, lit)
+	case floatLit:
+		return toFloat(s, v, lit)
+	case hexLit:
+		return toHex(s, v, lit)
+	case userVar, sysVar, database, currentUser, replace, cast, sysDate, currentTs, currentTime, currentDate, curDate, utcDate, extract, repeat, secondMicrosecond, minuteMicrosecond, minuteSecond, hourMicrosecond, hourMinute, hourSecond, dayMicrosecond, dayMinute, daySecond, dayHour, yearMonth:
+		v.item = lit
+		return tok
 	}
 	if tok == unicode.ReplacementChar && s.r.eof() {
 		return 0
 	}
-	v.ident = lit
 	return tok
 }
 
@@ -94,11 +105,43 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 
 	if isIdentFirstChar(ch0) {
+		switch ch0 {
+		case 'X', 'x':
+			s.r.inc()
+			if s.r.readByte() == '\'' {
+				s.scanHex()
+				if s.r.peek() == '\'' {
+					s.r.inc()
+					tok, lit = hexLit, s.r.data(&pos)
+				} else {
+					tok = unicode.ReplacementChar
+				}
+				return
+			} else {
+				s.r.p = pos
+			}
+		case 'b':
+			s.r.inc()
+			if s.r.readByte() == '\'' {
+				s.scanBit()
+				if s.r.peek() == '\'' {
+					s.r.inc()
+					tok, lit = bitLit, s.r.data(&pos)
+				} else {
+					tok = unicode.ReplacementChar
+				}
+				return
+			} else {
+				s.r.p = pos
+			}
+		}
 		return s.scanIdent()
 	} else if isDigit(ch0) || ch0 == '.' {
 		return s.scanNumber()
 	} else if ch0 == '\'' || ch0 == '"' {
 		return s.scanString()
+	} else if ch0 == '`' {
+		return s.scanQuotedIdent()
 	}
 
 	switch ch0 {
@@ -198,32 +241,64 @@ func (s *Scanner) scanIdent() (tok int, pos Pos, lit string) {
 	return identifier, pos, s.r.data(&pos)
 }
 
+func (s *Scanner) scanQuotedIdent() (tok int, pos Pos, lit string) {
+	pos = s.r.pos()
+	s.r.inc()
+	s.buf.Reset()
+	for {
+		ch := s.r.readByte()
+		if s.r.eof() {
+			tok = unicode.ReplacementChar
+			return
+		}
+		if ch == '`' {
+			if s.r.peek() != '`' {
+				tok, lit = identifier, s.buf.String()
+				return
+			}
+			s.r.inc()
+		}
+		s.buf.WriteByte(ch)
+	}
+}
+
 func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 	s.buf.Reset()
 	tok, pos = stringLit, s.r.pos()
 	ending := s.r.readByte()
 	for {
+		if s.r.eof() {
+			tok, lit = 0, s.buf.String()
+			return
+		}
 		ch0 := s.r.peek()
 		if ch0 == ending {
 			s.r.inc()
-			break
+			if s.r.peek() != ending {
+				break
+			}
 		}
-		// TODO this would break reader's line col information
-		if ch0 == '\n' {
-			tok = unicode.ReplacementChar
-			return
-		}
+		// TODO this would break reader's line and col information
+		// if ch0 == '\n' {
+		// 	tok = unicode.ReplacementChar
+		// 	return
+		// }
 		if ch0 == '\\' {
 			s.r.inc()
 			ch1 := s.r.peek()
 			if ch1 == 'n' {
 				s.buf.WriteByte('\n')
+				s.r.inc()
+				continue
 			} else if ch1 == '\\' {
-				s.buf.WriteByte('\\')
 			} else if ch1 == '"' {
 				s.buf.WriteByte('"')
+				s.r.inc()
+				continue
 			} else if ch1 == '\'' {
 				s.buf.WriteByte('\'')
+				s.r.inc()
+				continue
 			}
 		} else if !isASCII(ch0) {
 			// TODO handle non-ascii
@@ -258,12 +333,15 @@ func (s *Scanner) scanNumber() (tok int, pos Pos, lit string) {
 			s.r.inc()
 			s.scanHex()
 			tok = hexLit
-		case ch1 == 'b' || ch1 == 'B':
+		case ch1 == 'b':
 			s.r.inc()
 			s.scanBit()
 			tok = bitLit
 		case ch1 == '.':
 			return s.scanFloat(&pos)
+		case ch1 == 'B':
+			tok = unicode.ReplacementChar
+			return
 		}
 		lit = s.r.data(&pos)
 		return
@@ -384,6 +462,9 @@ func (r *reader) incAsLongAs(fn func(byte) bool) byte {
 		ch := r.peek()
 		if !fn(ch) {
 			return ch
+		}
+		if ch == 0 && r.eof() {
+			return 0
 		}
 		r.inc()
 	}

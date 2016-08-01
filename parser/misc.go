@@ -32,7 +32,7 @@ func isDigit(ch byte) bool {
 }
 
 func isIdentChar(ch byte) bool {
-	return isLetter(ch) || isDigit(ch) || ch == '_'
+	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$'
 }
 
 func isIdentFirstChar(ch byte) bool {
@@ -314,6 +314,7 @@ var tokenMap = map[string]int{
 	"STATUS":              status,
 	"SUBDATE":             subDate,
 	"STRCMP":              strcmp,
+	"SUBSTR":              substring,
 	"SUBSTRING":           substring,
 	"SUBSTRING_INDEX":     substringIndex,
 	"SUM":                 sum,

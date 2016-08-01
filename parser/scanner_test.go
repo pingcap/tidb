@@ -14,6 +14,8 @@
 package parser
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -121,4 +123,28 @@ SELECT`, selectKwd},
 		{"--5", int('-')},
 	}
 	runTest(c, table)
+}
+
+func (s *testLexerSuite) TestCompatible(c *C) {
+	str := `select "abc_" like "abc\\_" escape '\\'`
+	testCompatible(str, c)
+}
+
+func testCompatible(str string, c *C) {
+	l1 := NewScanner(str)
+	l2 := NewLexer(str)
+
+	for {
+		var v1, v2 yySymType
+		tok1 := l1.Lex(&v1)
+		tok2 := l2.Lex(&v2)
+		fmt.Println(tok1, tok2, v1, v2)
+		c.Assert(tok1, Equals, tok2)
+		// if v2.ident != "" {
+		// 	c.Check(v1, Equals, v2)
+		// }
+		if tok1 == 0 {
+			break
+		}
+	}
 }
