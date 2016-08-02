@@ -44,9 +44,9 @@ var (
 	statusPort   = flag.String("status", "10080", "tidb server status port")
 	lease        = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
 	socket       = flag.String("socket", "", "The socket file to use for connection.")
-	enablePS     = flag.Int("perfschema", 0, "If enable performance schema.")
-	reportStatus = flag.Int("report-status", '1', "If enable status report HTTP service")
-	useNewPlan   = flag.Int("newplan", 1, "If use new planner.")
+	enablePS     = flag.Bool("perfschema", false, "If enable performance schema.")
+	reportStatus = flag.Bool("report-status", true, "If enable status report HTTP service")
+	useNewPlan   = flag.Bool("newplan", true, "If use new planner.")
 )
 
 func main() {
@@ -70,7 +70,7 @@ func main() {
 		LogLevel:     *logLevel,
 		StatusAddr:   fmt.Sprintf(":%s", *statusPort),
 		Socket:       *socket,
-		ReportStatus: *reportStatus != 0,
+		ReportStatus: *reportStatus,
 	}
 
 	log.SetLevelByString(cfg.LogLevel)
@@ -79,11 +79,11 @@ func main() {
 		log.Fatal(errors.ErrorStack(err))
 	}
 
-	if *enablePS == 1 {
+	if *enablePS {
 		perfschema.EnablePerfSchema()
 	}
 
-	if *useNewPlan == 0 {
+	if *useNewPlan {
 		plan.UseNewPlanner = false
 	}
 
