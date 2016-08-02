@@ -224,6 +224,12 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 			indexScan.accessEqualCount = len(accessConds)
 		}
 	}
+
+	checker := &conditionChecker{
+		tableName:    indexScan.Table.Name,
+		idx:          indexScan.Index,
+		columnOffset: indexScan.accessEqualCount,
+	}
 	for _, cond := range conditions {
 		isAccess := false
 		for _, acCond := range accessConds {
@@ -235,22 +241,17 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 		if isAccess {
 			continue
 		}
-		if indexScan.accessEqualCount < len(indexScan.Index.Columns) {
-			checker := &conditionChecker{
-				tableName:    indexScan.Table.Name,
-				idx:          indexScan.Index,
-				columnOffset: indexScan.accessEqualCount,
-			}
-			if checker.newCheck(cond) {
-				accessConds = append(accessConds, cond)
-				if indexScan.Index.Columns[indexScan.accessEqualCount].Length != types.UnspecifiedLength {
-					filterConds = append(filterConds, cond)
-				}
-			} else {
-				filterConds = append(filterConds, cond)
-			}
-		} else {
+		if indexScan.accessEqualCount >= len(indexScan.Index.Columns) ||
+			!checker.newCheck(cond) {
 			filterConds = append(filterConds, cond)
+			continue
+		}
+		accessConds = append(accessConds, cond)
+		if indexScan.Index.Columns[indexScan.accessEqualCount].Length != types.UnspecifiedLength ||
+			// TODO: it will lead to repeated compution cost.
+			checker.isReserved {
+			filterConds = append(filterConds, cond)
+			checker.isReserved = false
 		}
 	}
 	for i, cond := range accessConds {
@@ -262,7 +263,6 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 // detachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
 func detachTableScanConditions(conditions []expression.Expression, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
 	var pkName model.CIStr
-	var accessConditions, filterConditions []expression.Expression
 	if table.PKIsHandle {
 		for _, colInfo := range table.Columns {
 			if mysql.HasPriKeyFlag(colInfo.Flag) {
@@ -271,17 +271,25 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 			}
 		}
 	}
+	if pkName.L == "" {
+		return nil, conditions
+	}
+
+	var accessConditions, filterConditions []expression.Expression
+	checker := conditionChecker{
+		tableName: table.Name,
+		pkName:    pkName}
 	for _, cond := range conditions {
-		if pkName.L != "" {
-			checker := conditionChecker{
-				tableName: table.Name,
-				pkName:    pkName}
-			if checker.newCheck(cond) {
-				accessConditions = append(accessConditions, cond)
-				continue
-			}
+		if !checker.newCheck(cond) {
+			filterConditions = append(filterConditions, cond)
+			continue
 		}
-		filterConditions = append(filterConditions, cond)
+		accessConditions = append(accessConditions, cond)
+		// TODO: it will lead to repeated compution cost.
+		if checker.isReserved {
+			filterConditions = append(filterConditions, cond)
+			checker.isReserved = false
+		}
 	}
 	for i, cond := range accessConditions {
 		accessConditions[i] = pushDownNot(cond, false)
@@ -310,11 +318,11 @@ func buildNewTableRange(p *PhysicalTableScan) error {
 
 // conditionChecker checks if this condition can be pushed to index plan.
 type conditionChecker struct {
-	tableName model.CIStr
-	idx       *model.IndexInfo
-	// the offset of the indexed column to be checked.
-	columnOffset int
+	tableName    model.CIStr
+	idx          *model.IndexInfo
+	columnOffset int // the offset of the indexed column to be checked.
 	pkName       model.CIStr
+	isReserved   bool // check if a access condition can be reserved to filter conditions.
 }
 
 func (c *conditionChecker) check(condition ast.ExprNode) bool {
@@ -454,27 +462,45 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		}
 		return true
 	case ast.Like:
-		if !c.checkColumn(scalar.Args[0]) {
-			return false
-		}
-		pattern, ok := scalar.Args[1].(*expression.Constant)
-		if !ok {
-			return false
-		}
-		if pattern.Value.IsNull() {
-			return false
-		}
-		patternStr, err := pattern.Value.ToString()
-		if err != nil {
-			return false
-		}
-		if len(patternStr) == 0 {
-			return true
-		}
-		firstChar := patternStr[0]
-		return firstChar != '%' && firstChar != '.'
+		return c.checkLikeFunc(scalar)
 	}
 	return false
+}
+
+func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool {
+	if !c.checkColumn(scalar.Args[0]) {
+		return false
+	}
+	pattern, ok := scalar.Args[1].(*expression.Constant)
+	if !ok {
+		return false
+	}
+	if pattern.Value.IsNull() {
+		return false
+	}
+	patternStr, err := pattern.Value.ToString()
+	if err != nil {
+		return false
+	}
+	if len(patternStr) == 0 {
+		return true
+	}
+	for i := 0; i < len(patternStr); i++ {
+		if i == 0 && (patternStr[i] == '%' || patternStr[i] == '_') {
+			return false
+		}
+		if patternStr[i] == '%' {
+			if i != len(patternStr)-1 {
+				c.isReserved = true
+			}
+			break
+		}
+		if patternStr[i] == '_' {
+			c.isReserved = true
+			break
+		}
+	}
+	return true
 }
 
 func (c *conditionChecker) checkColumn(expr expression.Expression) bool {

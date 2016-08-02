@@ -375,6 +375,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "Index(t.c_d_e)[[5,5]]->Projection",
 		},
 		{
+			sql:  "select a from t where c = 5 and b = 1",
+			best: "Index(t.c_d_e)[[5,5]]->Selection->Projection",
+		},
+		{
 			sql:  "select a from t where c in (1)",
 			best: "Index(t.c_d_e)[[1,1]]->Projection",
 		},
@@ -399,8 +403,20 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "Table(t)->Selection->Projection",
 		},
 		{
+			sql:  "select a from t where c like '_abc'",
+			best: "Table(t)->Selection->Projection",
+		},
+		{
 			sql:  "select a from t where c like 'abc%'",
 			best: "Index(t.c_d_e)[[abc,abd)]->Projection",
+		},
+		{
+			sql:  "select a from t where c like 'abc_'",
+			best: "Index(t.c_d_e)[(abc,abd)]->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c like 'abc%af'",
+			best: "Index(t.c_d_e)[[abc,abd)]->Selection->Projection",
 		},
 	}
 	for _, ca := range cases {
