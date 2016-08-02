@@ -134,6 +134,10 @@ func (e *NewXSelectIndexExec) Close() error {
 
 // Next implements Executor Next interface.
 func (e *NewXSelectIndexExec) Next() (*Row, error) {
+	if e.indexPlan.LimitCount != nil && e.returnedRows >= uint64(*e.indexPlan.LimitCount) {
+		return nil, nil
+	}
+	e.returnedRows++
 	if e.indexPlan.DoubleRead {
 		return e.nextForDoubleRead()
 	}
@@ -141,9 +145,6 @@ func (e *NewXSelectIndexExec) Next() (*Row, error) {
 }
 
 func (e *NewXSelectIndexExec) nextForSingleRead() (*Row, error) {
-	if e.indexPlan.LimitCount != nil && e.returnedRows >= uint64(*e.indexPlan.LimitCount) {
-		return nil, nil
-	}
 	if e.result == nil {
 		var err error
 		e.result, err = e.doIndexRequest()
@@ -174,15 +175,11 @@ func (e *NewXSelectIndexExec) nextForSingleRead() (*Row, error) {
 			// TODO: Implement aggregation push down in single read index
 			return nil, errors.New("Can't push aggr in a single read index executor!")
 		}
-		e.returnedRows++
 		return resultRowToRow(e.table, h, rowData, e.asName), nil
 	}
 }
 
 func (e *NewXSelectIndexExec) nextForDoubleRead() (*Row, error) {
-	if e.indexPlan.LimitCount != nil && e.returnedRows >= uint64(*e.indexPlan.LimitCount) {
-		return nil, nil
-	}
 	if e.tasks == nil {
 		startTs := time.Now()
 		handles, err := e.fetchHandles()
@@ -221,7 +218,6 @@ func (e *NewXSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		if task.cursor < len(task.rows) {
 			row := task.rows[task.cursor]
 			task.cursor++
-			e.returnedRows++
 			return row, nil
 		}
 		e.taskCursor++
@@ -569,12 +565,11 @@ func (e *NewXSelectTableExec) Next() (*Row, error) {
 			e.subResult = nil
 			continue
 		}
+		e.returnedRows++
 		if e.aggregate {
 			// compose aggreagte row
-			e.returnedRows++
 			return &Row{Data: rowData}, nil
 		}
-		e.returnedRows++
 		return resultRowToRow(e.table, h, rowData, e.asName), nil
 	}
 }
