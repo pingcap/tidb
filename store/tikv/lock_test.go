@@ -25,7 +25,13 @@ type testLockSuite struct {
 var _ = Suite(&testLockSuite{})
 
 func (s *testLockSuite) SetUpTest(c *C) {
-	s.store = NewMockTikvStore().(*tikvStore)
+	store, err := NewMockTikvStore()
+	c.Assert(err, IsNil)
+	s.store = store.(*tikvStore)
+}
+
+func (s *testLockSuite) TearDownTest(c *C) {
+	s.store.Close()
 }
 
 func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byte, commitPrimary bool) {
@@ -124,6 +130,7 @@ func (s *testLockSuite) TestBatchGetLock(c *C) {
 }
 
 func init() {
-	// Set lockTTL to 3(ms) to speed up tests.
+	// Speed up tests.
 	lockTTL = 3
+	oracleUpdateInterval = 2
 }

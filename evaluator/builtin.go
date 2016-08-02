@@ -167,6 +167,24 @@ var Funcs = map[string]Func{
 	ast.GetVar:     {builtinGetVar, 1, 1},
 }
 
+// DynamicFuncs are those functions that
+// use input parameter ctx or
+// return an uncertain result would not be constant folded
+// the value 0 means nothing
+var DynamicFuncs = map[string]int{
+	"rand":           0,
+	"connection_id":  0,
+	"current_user":   0,
+	"database":       0,
+	"found_rows":     0,
+	"last_insert_id": 0,
+	"user":           0,
+	"version":        0,
+	"sleep":          0,
+	ast.GetVar:       0,
+	ast.SetVar:       0,
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	for _, d = range args {
