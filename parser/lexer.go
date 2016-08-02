@@ -91,6 +91,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 			tok = tok1
 		}
 	}
+
 	switch tok {
 	case intLit:
 		return toInt(s, v, lit)
@@ -304,24 +305,24 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 		if ch0 == '\n' {
 		}
 		if ch0 == '\\' {
-			save := s.r.pos()
+			// save := s.r.pos()
 			s.r.inc()
-			ch1 := s.r.peek()
-			if ch1 == 'n' {
+			ch0 = s.r.peek()
+			if ch0 == 'n' {
 				s.buf.WriteByte('\n')
 				s.r.inc()
 				continue
-			} else if ch1 == '\\' {
-			} else if ch1 == '"' {
+			} else if ch0 == '\\' {
+			} else if ch0 == '"' {
 				s.buf.WriteByte('"')
 				s.r.inc()
 				continue
-			} else if ch1 == '\'' {
+			} else if ch0 == '\'' {
 				s.buf.WriteByte('\'')
 				s.r.inc()
 				continue
-			} else {
-				s.r.p = save
+			} else if ch0 == '_' || ch0 == '%' {
+				s.buf.WriteByte('\\')
 			}
 		} else if !isASCII(ch0) {
 			// TODO handle non-ascii
@@ -338,6 +339,7 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 		_, _, lit1 := s.scanString()
 		lit = lit + lit1
 	}
+
 	return
 }
 

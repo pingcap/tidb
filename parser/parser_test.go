@@ -1027,25 +1027,23 @@ func BenchmarkParse(b *testing.B) {
 }
 
 var tableCompatible = []string{
-	// `drop table IF EXISTS t;
-	//  CREATE TABLE t(c INT, index cidx (c));`,
-	// `INSERT INTO t VALUES(1), (null), (2);`,
-	// "SELECT COUNT(c) FROM t WHERE c IS NOT NULL;",
-	// `select cast(null as char(30))`,
-	// `select 0b01 + 1, 0b01000001 = "A"`,
-	// "create table t (id tiny)",
-	// "select        ((a+1))     from t",
-	// "select !true from t",
-	// "select IF(1>2,2,3) from t",
-	// "select hex('TiDB') from t",
-	// `show tables like 'show\_test'`,
-	// `select _utf8"string";`,
-	// "alter table show_test drop foreign key `fk`",
-	"select * from t1 left join t2 on t1.c1 = t3.c3 left join on t3 on t1.c1 = t2.c2",
-	// "drop table if exists t",
-	// "create table t (b blob)",
-	// `insert t values('\x01')`,
-	// `select length(b) from t`,
+	`drop table IF EXISTS t;
+	CREATE TABLE t(c INT, index cidx (c));`,
+	`INSERT INTO t VALUES(1), (null), (2);`,
+	"SELECT COUNT(c) FROM t WHERE c IS NOT NULL;",
+	`select cast(null as char(30))`,
+	`select 0b01 + 1, 0b01000001 = "A"`,
+	"create table t (id tiny)",
+	"select        ((a+1))     from t",
+	"select !true from t",
+	"select IF(1>2,2,3) from t",
+	"select hex('TiDB') from t",
+	`show tables like 'show\_test'`,
+	`select _utf8"string";`,
+	"alter table show_test drop foreign key `fk`",
+	`insert t values('\x01')`,
+	`select "ab\_c"`,
+	`select "ab\%c"`,
 }
 
 func (s *testParserSuite) TestParserCompatible(c *C) {
