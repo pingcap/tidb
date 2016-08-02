@@ -420,17 +420,17 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
 	case *ast.FuncCallExpr:
-		er.funcCallToScalarFunc(v)
+		er.funcCallToExpression(v)
 	case *ast.ColumnName:
 		er.toColumn(v)
 	case *ast.UnaryOperationExpr:
-		er.unaryOpToScalarFunc(v)
+		er.unaryOpToExpression(v)
 	case *ast.BinaryOperationExpr:
-		er.binaryOpToScalarFunc(v)
+		er.binaryOpToExpression(v)
 	case *ast.BetweenExpr:
-		er.betweenToScalarFunc(v)
+		er.betweenToExpression(v)
 	case *ast.CaseExpr:
-		er.caseToScalarFunc(v)
+		er.caseToExpression(v)
 	case *ast.FuncCastExpr:
 		er.castToScalarFunc(v)
 	case *ast.PatternLikeExpr:
@@ -440,11 +440,11 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	case *ast.RowExpr:
 		er.rowToScalarFunc(v)
 	case *ast.PatternInExpr:
-		er.inToScalarFunc(v)
+		er.inToExpression(v)
 	case *ast.PositionExpr:
 		er.positionToScalarFunc(v)
 	case *ast.IsNullExpr:
-		er.isnullToScalarFunc(v)
+		er.isnullToExpression(v)
 	case *ast.IsTruthExpr:
 		er.istrueToScalarFunc(v)
 	default:
@@ -535,7 +535,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	return
 }
 
-func (er *expressionRewriter) unaryOpToScalarFunc(v *ast.UnaryOperationExpr) {
+func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 	stkLen := len(er.ctxStack)
 	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
 		er.err = errors.New("Operand should contain 1 column(s)")
@@ -558,7 +558,7 @@ func (er *expressionRewriter) unaryOpToScalarFunc(v *ast.UnaryOperationExpr) {
 	er.ctxStack[stkLen-1], er.err = expression.NewFunction(op, v.Type, er.ctxStack[stkLen-1])
 }
 
-func (er *expressionRewriter) binaryOpToScalarFunc(v *ast.BinaryOperationExpr) {
+func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 	stkLen := len(er.ctxStack)
 	var function expression.Expression
 	switch v.Op {
@@ -576,8 +576,8 @@ func (er *expressionRewriter) binaryOpToScalarFunc(v *ast.BinaryOperationExpr) {
 	er.ctxStack = append(er.ctxStack, function)
 }
 
-func (er *expressionRewriter) notToScalarFunc(hasNot bool, op string, tp *types.FieldType,
-	args ...expression.Expression) *expression.ScalarFunction {
+func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.FieldType,
+	args ...expression.Expression) expression.Expression {
 	opFunc, err := expression.NewFunction(op, tp, args...)
 	if err != nil {
 		er.err = errors.Trace(err)
@@ -595,13 +595,13 @@ func (er *expressionRewriter) notToScalarFunc(hasNot bool, op string, tp *types.
 	return opFunc
 }
 
-func (er *expressionRewriter) isnullToScalarFunc(v *ast.IsNullExpr) {
+func (er *expressionRewriter) isnullToExpression(v *ast.IsNullExpr) {
 	stkLen := len(er.ctxStack)
 	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
 		er.err = errors.New("Operand should contain 1 column(s)")
 		return
 	}
-	function := er.notToScalarFunc(v.Not, ast.IsNull, v.Type, er.ctxStack[stkLen-1])
+	function := er.notToExpression(v.Not, ast.IsNull, v.Type, er.ctxStack[stkLen-1])
 	er.ctxStack = er.ctxStack[:stkLen-1]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -620,23 +620,23 @@ func (er *expressionRewriter) istrueToScalarFunc(v *ast.IsTruthExpr) {
 	if v.True == 0 {
 		op = ast.IsFalsity
 	}
-	function := er.notToScalarFunc(v.Not, op, v.Type, er.ctxStack[stkLen-1])
+	function := er.notToExpression(v.Not, op, v.Type, er.ctxStack[stkLen-1])
 	er.ctxStack = er.ctxStack[:stkLen-1]
 	er.ctxStack = append(er.ctxStack, function)
 }
 
-func (er *expressionRewriter) inToScalarFunc(v *ast.PatternInExpr) {
+func (er *expressionRewriter) inToExpression(v *ast.PatternInExpr) {
 	if v.Sel != nil {
 		return
 	}
 	stkLen := len(er.ctxStack)
 	lLen := len(v.List)
-	function := er.notToScalarFunc(v.Not, ast.In, v.Type, er.ctxStack[stkLen-lLen-1:stkLen]...)
+	function := er.notToExpression(v.Not, ast.In, v.Type, er.ctxStack[stkLen-lLen-1:stkLen]...)
 	er.ctxStack = er.ctxStack[:stkLen-lLen-1]
 	er.ctxStack = append(er.ctxStack, function)
 }
 
-func (er *expressionRewriter) caseToScalarFunc(v *ast.CaseExpr) {
+func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 	stkLen := len(er.ctxStack)
 	argsLen := 2 * len(v.WhenClauses)
 	if v.ElseClause != nil {
@@ -685,7 +685,7 @@ func (er *expressionRewriter) caseToScalarFunc(v *ast.CaseExpr) {
 
 func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 	l := len(er.ctxStack)
-	function := er.notToScalarFunc(v.Not, ast.Like, v.Type,
+	function := er.notToExpression(v.Not, ast.Like, v.Type,
 		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape))})
 	er.ctxStack = er.ctxStack[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
@@ -693,7 +693,7 @@ func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 
 func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
 	l := len(er.ctxStack)
-	function := er.notToScalarFunc(v.Not, ast.Regexp, v.Type, er.ctxStack[l-2], er.ctxStack[l-1])
+	function := er.notToExpression(v.Not, ast.Regexp, v.Type, er.ctxStack[l-2], er.ctxStack[l-1])
 	er.ctxStack = er.ctxStack[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -714,10 +714,10 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 	er.ctxStack = append(er.ctxStack, function)
 }
 
-func (er *expressionRewriter) betweenToScalarFunc(v *ast.BetweenExpr) {
+func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	stkLen := len(er.ctxStack)
 	var op string
-	var l, r *expression.ScalarFunction
+	var l, r expression.Expression
 	if v.Not {
 		l, er.err = expression.NewFunction(ast.LT, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
 		if er.err == nil {
@@ -744,9 +744,9 @@ func (er *expressionRewriter) betweenToScalarFunc(v *ast.BetweenExpr) {
 	er.ctxStack = append(er.ctxStack, function)
 }
 
-func (er *expressionRewriter) funcCallToScalarFunc(v *ast.FuncCallExpr) {
+func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	stackLen := len(er.ctxStack)
-	var function *expression.ScalarFunction
+	var function expression.Expression
 	function, er.err = expression.NewFunction(v.FnName.L, v.Type, er.ctxStack[stackLen-len(v.Args):]...)
 	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
 	er.ctxStack = append(er.ctxStack, function)
@@ -789,9 +789,10 @@ func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
 		return
 	}
 	function := &expression.ScalarFunction{
-		Args:     []expression.Expression{er.ctxStack[len(er.ctxStack)-1]},
-		FuncName: model.NewCIStr("cast"),
-		RetType:  v.Tp,
-		Function: bt}
+		Args:      []expression.Expression{er.ctxStack[len(er.ctxStack)-1]},
+		FuncName:  model.NewCIStr("cast"),
+		RetType:   v.Tp,
+		Function:  bt,
+		ArgValues: make([]types.Datum, 1)}
 	er.ctxStack[len(er.ctxStack)-1] = function
 }

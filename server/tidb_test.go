@@ -34,9 +34,10 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := &Config{
-		Addr:       ":4001",
-		LogLevel:   "debug",
-		StatusAddr: ":10090",
+		Addr:         ":4001",
+		LogLevel:     "debug",
+		StatusAddr:   ":10090",
+		ReportStatus: true,
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
