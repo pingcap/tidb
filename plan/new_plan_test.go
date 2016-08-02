@@ -403,6 +403,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "Table(t)->Selection->Projection",
 		},
 		{
+			sql:  "select a from t where not (c like 'abc' or c like 'abd')",
+			best: "Table(t)->Selection->Projection",
+		},
+		{
 			sql:  "select a from t where c like '_abc'",
 			best: "Table(t)->Selection->Projection",
 		},
@@ -419,23 +423,27 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "Index(t.c_d_e)[[abc,abd)]->Selection->Projection",
 		},
 		{
-			sql:  "select a from t where c like 'abc\\_' escape ''",
+			sql:  `select a from t where c like 'abc\\_' escape ''`,
 			best: "Index(t.c_d_e)[[abc_,abc_]]->Projection",
 		},
 		{
-			sql:  "select a from t where c like 'abc\\_'",
+			sql:  `select a from t where c like 'abc\\_'`,
 			best: "Index(t.c_d_e)[[abc_,abc_]]->Projection",
 		},
 		{
-			sql:  "select a from t where c like 'abc\\_%'",
+			sql:  `select a from t where c like 'abc\\\\_'`,
+			best: "Index(t.c_d_e)[(abc\\,abc])]->Selection->Projection",
+		},
+		{
+			sql:  `select a from t where c like 'abc\\_%'`,
 			best: "Index(t.c_d_e)[[abc_,abc`)]->Projection",
 		},
 		{
-			sql:  "select a from t where c like 'abc=_%' escape '='",
+			sql:  `select a from t where c like 'abc=_%' escape '='`,
 			best: "Index(t.c_d_e)[[abc_,abc`)]->Projection",
 		},
 		{
-			sql:  "select a from t where c like 'abc\\__'",
+			sql:  `select a from t where c like 'abc\\__'`,
 			best: "Index(t.c_d_e)[(abc_,abc`)]->Selection->Projection",
 		},
 	}

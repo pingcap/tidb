@@ -241,6 +241,7 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 		if isAccess {
 			continue
 		}
+		cond = pushDownNot(cond, false)
 		if indexScan.accessEqualCount >= len(indexScan.Index.Columns) ||
 			!checker.newCheck(cond) {
 			filterConds = append(filterConds, cond)
@@ -249,13 +250,10 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 		accessConds = append(accessConds, cond)
 		if indexScan.Index.Columns[indexScan.accessEqualCount].Length != types.UnspecifiedLength ||
 			// TODO: it will lead to repeated compution cost.
-			checker.isReserved {
+			checker.shouldReserve {
 			filterConds = append(filterConds, cond)
-			checker.isReserved = false
+			checker.shouldReserve = false
 		}
-	}
-	for i, cond := range accessConds {
-		accessConds[i] = pushDownNot(cond, false)
 	}
 	return accessConds, filterConds
 }
@@ -280,19 +278,17 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 		tableName: table.Name,
 		pkName:    pkName}
 	for _, cond := range conditions {
+		cond = pushDownNot(cond, false)
 		if !checker.newCheck(cond) {
 			filterConditions = append(filterConditions, cond)
 			continue
 		}
 		accessConditions = append(accessConditions, cond)
 		// TODO: it will lead to repeated compution cost.
-		if checker.isReserved {
+		if checker.shouldReserve {
 			filterConditions = append(filterConditions, cond)
-			checker.isReserved = false
+			checker.shouldReserve = false
 		}
-	}
-	for i, cond := range accessConditions {
-		accessConditions[i] = pushDownNot(cond, false)
 	}
 
 	return accessConditions, filterConditions
@@ -318,11 +314,11 @@ func buildNewTableRange(p *PhysicalTableScan) error {
 
 // conditionChecker checks if this condition can be pushed to index plan.
 type conditionChecker struct {
-	tableName    model.CIStr
-	idx          *model.IndexInfo
-	columnOffset int // the offset of the indexed column to be checked.
-	pkName       model.CIStr
-	isReserved   bool // check if a access condition can be reserved to filter conditions.
+	tableName     model.CIStr
+	idx           *model.IndexInfo
+	columnOffset  int // the offset of the indexed column to be checked.
+	pkName        model.CIStr
+	shouldReserve bool // check if a access condition should be reserved in filter conditions.
 }
 
 func (c *conditionChecker) check(condition ast.ExprNode) bool {
@@ -380,7 +376,7 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 			return true
 		}
 		firstChar := patternStr[0]
-		return firstChar != '%' && firstChar != '.'
+		return firstChar != '%' && firstChar != '_'
 	}
 	return false
 }
@@ -499,12 +495,12 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool
 		}
 		if patternStr[i] == '%' {
 			if i != len(patternStr)-1 {
-				c.isReserved = true
+				c.shouldReserve = true
 			}
 			break
 		}
 		if patternStr[i] == '_' {
-			c.isReserved = true
+			c.shouldReserve = true
 			break
 		}
 	}
