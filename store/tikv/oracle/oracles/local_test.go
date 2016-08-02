@@ -40,11 +40,11 @@ func TestIsExpired(t *testing.T) {
 	defer o.Close()
 	ts, _ := o.GetTimestamp()
 	time.Sleep(1 * time.Second)
-	expire, _ := o.IsExpired(uint64(ts), 500)
+	expire := o.IsExpired(uint64(ts), 500)
 	if !expire {
 		t.Error("should expired")
 	}
-	expire, _ = o.IsExpired(uint64(ts), 2000)
+	expire = o.IsExpired(uint64(ts), 2000)
 	if expire {
 		t.Error("should not expired")
 	}
