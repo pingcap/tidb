@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
@@ -217,16 +216,42 @@ func (sf *ScalarFunction) ToString() string {
 	return result
 }
 
-// NewFunction creates a new scalar function.
-func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (*ScalarFunction, error) {
+// NewFunction creates a new scalar function or constant.
+func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+
+	_, canConstantFolding := evaluator.DynamicFuncs[funcName]
+	canConstantFolding = !canConstantFolding
+
 	f, ok := evaluator.Funcs[funcName]
 	if !ok {
-		log.Errorf("Function %s is not implemented.", funcName)
-		return nil, nil
+		return nil, errors.Errorf("Function %s is not implemented.", funcName)
 	}
+
 	if len(args) < f.MinArgs || (f.MaxArgs != -1 && len(args) > f.MaxArgs) {
 		return nil, evaluator.ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].",
 			f.MinArgs, f.MaxArgs)
+	}
+
+	datums := make([]types.Datum, 0, len(args))
+
+	for i := 0; i < len(args) && canConstantFolding; i++ {
+		if v, ok := args[i].(*Constant); ok {
+			datums = append(datums, types.NewDatum(v.Value.GetValue()))
+		} else {
+			canConstantFolding = false
+		}
+	}
+
+	if canConstantFolding {
+		fn := f.F
+		newArgs, err := fn(datums, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &Constant{
+			Value:   newArgs,
+			RetType: retType,
+		}, nil
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)

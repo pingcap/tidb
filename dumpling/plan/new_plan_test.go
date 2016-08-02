@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -101,7 +102,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		{
 			sql:   "select a from (select 1+2 as a from t where d = 0) k where k.a = 5",
 			first: "DataScan(t)->Selection->Projection->Selection->Projection",
-			best:  "DataScan(t)->Selection->Projection->Selection->Projection",
+			best:  "DataScan(t)->Selection->Projection->Projection",
 		},
 		{
 			sql:   "select a from (select d as a from t where d = 0) k where k.a = 5",
@@ -727,7 +728,81 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 		}
 		c.Assert(rb.err, IsNil)
 		got := fmt.Sprintf("%v", result)
-		c.Assert(got, Equals, ca.resultStr, Commentf("differen for expr %s", ca.exprStr))
+		c.Assert(got, Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
+	}
+	UseNewPlanner = false
+}
+
+func (s *testPlanSuite) TestConstantFolding(c *C) {
+	UseNewPlanner = true
+	defer testleak.AfterTest(c)()
+
+	cases := []struct {
+		exprStr   string
+		resultStr string
+	}{
+		{
+			exprStr:   "a < 1 + 2",
+			resultStr: "<(test.t.a,3,)",
+		},
+		{
+			exprStr:   "a < greatest(1, 2)",
+			resultStr: "<(test.t.a,2,)",
+		},
+		{
+			exprStr:   "a <  1 + 2 + 3 + b",
+			resultStr: "<(test.t.a,+(6,test.t.b,),)",
+		},
+		{
+			exprStr: "a = CASE 1+2 " +
+				"WHEN 3 THEN 'a' " +
+				"WHEN 1 THEN 'b' " +
+				"END;",
+			resultStr: "=(test.t.a,a,)",
+		},
+		{
+			exprStr:   "a in (hex(12), 'a', '9')",
+			resultStr: "in(test.t.a,C,a,9,)",
+		},
+		{
+			exprStr:   "'string' is not null",
+			resultStr: "1",
+		},
+		{
+			exprStr:   "'string' is null",
+			resultStr: "0",
+		},
+		{
+			exprStr:   "a = !(1+1)",
+			resultStr: "=(test.t.a,0,)",
+		},
+		{
+			exprStr:   "a = rand()",
+			resultStr: "=(test.t.a,rand(),)",
+		},
+		{
+			exprStr:   "a = version()",
+			resultStr: "=(test.t.a,version(),)",
+		},
+	}
+
+	for _, ca := range cases {
+		sql := "select 1 from t where " + ca.exprStr
+		stmts, err := s.Parse(sql, "", "")
+		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
+		stmt := stmts[0].(*ast.SelectStmt)
+
+		err = newMockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{allocator: new(idAllocator), ctx: mock.NewContext()}
+		p := builder.build(stmt)
+		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, ca.exprStr))
+
+		selection := p.GetChildByIndex(0).(*Selection)
+		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
+
+		c.Assert(expression.ComposeCNFCondition(selection.Conditions).ToString(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
 	}
 	UseNewPlanner = false
 }
