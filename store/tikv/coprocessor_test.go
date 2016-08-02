@@ -114,14 +114,14 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 		req: &kv.Request{
 			Desc: true,
 		},
-		tasks: tasks,
 	}
-	err = iter.rebuildCurrentTask(bo, iter.tasks[0])
+	iter.mu.tasks = tasks
+	err = iter.rebuildCurrentTask(bo, iter.mu.tasks[0])
 	c.Assert(err, IsNil)
-	c.Assert(iter.tasks, HasLen, 3)
-	s.taskEqual(c, iter.tasks[2], regionIDs[0], "a", "m")
-	s.taskEqual(c, iter.tasks[1], regionIDs[1], "m", "q")
-	s.taskEqual(c, iter.tasks[0], regionIDs[2], "q", "z")
+	c.Assert(iter.mu.tasks, HasLen, 3)
+	s.taskEqual(c, iter.mu.tasks[2], regionIDs[0], "a", "m")
+	s.taskEqual(c, iter.mu.tasks[1], regionIDs[1], "m", "q")
+	s.taskEqual(c, iter.mu.tasks[0], regionIDs[2], "q", "z")
 
 	tasks, err = buildCopTasks(bo, cache, s.buildKeyRanges("a", "z"), true)
 	iter = &copIterator{
@@ -131,14 +131,14 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 		req: &kv.Request{
 			Desc: false,
 		},
-		tasks: tasks,
 	}
-	err = iter.rebuildCurrentTask(bo, iter.tasks[2])
+	iter.mu.tasks = tasks
+	err = iter.rebuildCurrentTask(bo, iter.mu.tasks[2])
 	c.Assert(err, IsNil)
-	c.Assert(iter.tasks, HasLen, 3)
-	s.taskEqual(c, iter.tasks[2], regionIDs[0], "a", "m")
-	s.taskEqual(c, iter.tasks[1], regionIDs[1], "m", "q")
-	s.taskEqual(c, iter.tasks[0], regionIDs[2], "q", "z")
+	c.Assert(iter.mu.tasks, HasLen, 3)
+	s.taskEqual(c, iter.mu.tasks[2], regionIDs[0], "a", "m")
+	s.taskEqual(c, iter.mu.tasks[1], regionIDs[1], "m", "q")
+	s.taskEqual(c, iter.mu.tasks[0], regionIDs[2], "q", "z")
 }
 
 func (s *testCoprocessorSuite) buildKeyRanges(keys ...string) []kv.KeyRange {

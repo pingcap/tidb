@@ -152,7 +152,31 @@ type PhysicalPlan interface {
 }
 
 type baseLogicalPlan struct {
+	propLen          int
+	sortedPlanInfo   *physicalPlanInfo
+	unSortedPlanInfo *physicalPlanInfo
+	count            uint64
 	basePlan
+}
+
+func (p *baseLogicalPlan) getPlanInfo(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64) {
+	if p.sortedPlanInfo == nil {
+		return nil, nil, 0
+	}
+	if len(prop) > p.propLen {
+		return nil, nil, 0
+	}
+	if len(prop) == p.propLen {
+		return p.sortedPlanInfo, p.unSortedPlanInfo, p.count
+	}
+	return p.unSortedPlanInfo, p.unSortedPlanInfo, p.count
+}
+
+func (p *baseLogicalPlan) storePlanInfo(prop requiredProperty, sortedPlanInfo, unSortedPlanInfo *physicalPlanInfo, cnt uint64) {
+	p.propLen = len(prop)
+	p.sortedPlanInfo = sortedPlanInfo
+	p.unSortedPlanInfo = unSortedPlanInfo
+	p.count = cnt
 }
 
 func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
@@ -190,7 +214,7 @@ func (p *baseLogicalPlan) PruneColumnsAndResolveIndices(parentUsedCols []*expres
 	return outer, errors.Trace(err)
 }
 
-func (p *baseLogicalPlan) initID() {
+func (p *basePlan) initID() {
 	p.id = p.tp + p.allocator.allocID()
 }
 

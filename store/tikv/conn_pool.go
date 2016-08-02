@@ -76,12 +76,11 @@ func (p *Pool) Close() {
 
 // Pools maintains connections with multiple addrs.
 type Pools struct {
-	m sync.Mutex
-
-	capability int
-
-	mpools map[string]*Pool
-
+	m struct {
+		sync.Mutex
+		capability int
+		mpools     map[string]*Pool
+	}
 	f createConnFunc
 }
 
@@ -90,18 +89,18 @@ type Pools struct {
 func NewPools(capability int, f createConnFunc) *Pools {
 	p := new(Pools)
 	p.f = f
-	p.capability = capability
-	p.mpools = make(map[string]*Pool)
+	p.m.capability = capability
+	p.m.mpools = make(map[string]*Pool)
 	return p
 }
 
 // GetConn takes a connection out of the pool by addr.
 func (p *Pools) GetConn(addr string) (*Conn, error) {
 	p.m.Lock()
-	pool, ok := p.mpools[addr]
+	pool, ok := p.m.mpools[addr]
 	if !ok {
-		pool = NewPool(addr, p.capability, p.f)
-		p.mpools[addr] = pool
+		pool = NewPool(addr, p.m.capability, p.f)
+		p.m.mpools[addr] = pool
 	}
 	p.m.Unlock()
 
@@ -115,7 +114,7 @@ func (p *Pools) PutConn(c *Conn) {
 	}
 
 	p.m.Lock()
-	pool, ok := p.mpools[c.addr]
+	pool, ok := p.m.mpools[c.addr]
 	p.m.Unlock()
 	if !ok {
 		c.Close()
@@ -129,9 +128,9 @@ func (p *Pools) Close() {
 	p.m.Lock()
 	defer p.m.Unlock()
 
-	for _, pool := range p.mpools {
+	for _, pool := range p.m.mpools {
 		pool.Close()
 	}
 
-	p.mpools = map[string]*Pool{}
+	p.m.mpools = map[string]*Pool{}
 }

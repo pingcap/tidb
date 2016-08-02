@@ -46,15 +46,11 @@ func (rs *localRegion) getGroupKey(ctx *selectContext) ([]byte, error) {
 }
 
 // Update aggregate functions with rows.
-func (rs *localRegion) aggregate(ctx *selectContext, row [][]byte) error {
+func (rs *localRegion) aggregate(ctx *selectContext, h int64, row map[int64][]byte) error {
 	// Put row data into evaluate context for later evaluation.
-	cols := ctx.sel.TableInfo.Columns
-	for i, col := range cols {
-		_, datum, err := codec.DecodeOne(row[i])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		ctx.eval.Row[col.GetColumnId()] = datum
+	err := rs.setColumnValueToCtx(ctx, h, row, ctx.aggColumns)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	// Get group key.
 	gk, err := rs.getGroupKey(ctx)

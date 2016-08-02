@@ -35,7 +35,9 @@ func (s *testStoreSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	mvccStore := mocktikv.NewMvccStore()
 	clientFactory := mocktikv.NewRPCClient(s.cluster, mvccStore)
-	s.store = newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), clientFactory)
+	store, err := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), clientFactory)
+	c.Assert(err, IsNil)
+	s.store = store
 }
 
 func (s *testStoreSuite) TestOracle(c *C) {
@@ -50,27 +52,22 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 	// Check retry.
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(2)
 
 	o.disable()
 	go func() {
+		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
 		o.enable()
-		wg.Done()
 	}()
 
 	go func() {
+		defer wg.Done()
 		t3, err := s.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff))
 		c.Assert(err, IsNil)
 		c.Assert(t2, Less, t3)
-		wg.Done()
-	}()
-
-	go func() {
-		expired, err := s.store.checkTimestampExpiredWithRetry(NewBackoffer(tsoMaxBackoff), t2, 50)
-		c.Assert(err, IsNil)
+		expired := s.store.oracle.IsExpired(t2, 50)
 		c.Assert(expired, IsTrue)
-		wg.Done()
 	}()
 
 	wg.Wait()
@@ -78,8 +75,10 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 type mockOracle struct {
 	oracle.Oracle
-	mu   sync.RWMutex
-	stop bool
+	mu struct {
+		sync.RWMutex
+		stop bool
+	}
 }
 
 func newMockOracle(oracle oracle.Oracle) *mockOracle {
@@ -89,31 +88,28 @@ func newMockOracle(oracle oracle.Oracle) *mockOracle {
 func (o *mockOracle) enable() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.stop = false
+	o.mu.stop = false
 }
 
 func (o *mockOracle) disable() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.stop = true
+	o.mu.stop = true
 }
 
 func (o *mockOracle) GetTimestamp() (uint64, error) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 
-	if o.stop {
+	if o.mu.stop {
 		return 0, errors.New("stopped")
 	}
 	return o.Oracle.GetTimestamp()
 }
 
-func (o *mockOracle) IsExpired(lockTimestamp uint64, TTL uint64) (bool, error) {
+func (o *mockOracle) IsExpired(lockTimestamp uint64, TTL uint64) bool {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 
-	if o.stop {
-		return false, errors.New("stopped")
-	}
 	return o.Oracle.IsExpired(lockTimestamp, TTL)
 }

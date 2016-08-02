@@ -32,8 +32,6 @@ type LockResolver struct {
 		// Cache resolved txns (FIFO, txn id -> txnStatus).
 		resolved       map[uint64]txnStatus
 		recentResolved *list.List
-		// Maximum txnID that guaranteed to be expired.
-		maxExpire uint64
 	}
 }
 
@@ -88,28 +86,6 @@ func (lr *LockResolver) getResolved(txnID uint64) (txnStatus, bool) {
 	return s, ok
 }
 
-func (lr *LockResolver) isExpire(bo *Backoffer, l *Lock) (bool, error) {
-	lr.mu.RLock()
-	maxExpire := lr.mu.maxExpire
-	lr.mu.RUnlock()
-
-	if l.TxnID <= maxExpire {
-		return true, nil
-	}
-	expired, err := lr.store.checkTimestampExpiredWithRetry(bo, l.TxnID, lockTTL)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if expired {
-		lr.mu.Lock()
-		if l.TxnID > lr.mu.maxExpire {
-			lr.mu.maxExpire = l.TxnID
-		}
-		lr.mu.Unlock()
-	}
-	return expired, nil
-}
-
 // ResolveLocks tries to resolve Locks. If returned `ok` is false, there
 // are some locks not expired, caller need to sleep then retry later.
 func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err error) {
@@ -119,11 +95,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err
 
 	var expiredLocks []*Lock
 	for _, l := range locks {
-		isExpired, err := lr.isExpire(bo, l)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if isExpired {
+		if lr.store.oracle.IsExpired(l.TxnID, lockTTL) {
 			expiredLocks = append(expiredLocks, l)
 		}
 	}
