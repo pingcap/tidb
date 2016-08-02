@@ -201,8 +201,9 @@ type ScalarFunction struct {
 	Args     []Expression
 	FuncName model.CIStr
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
-	RetType  *types.FieldType
-	Function evaluator.BuiltinFunc
+	RetType   *types.FieldType
+	Function  evaluator.BuiltinFunc
+	ArgValues []types.Datum
 }
 
 // ToString implements Expression interface.
@@ -256,10 +257,11 @@ func NewFunction(funcName string, retType *types.FieldType, args ...Expression) 
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
 	return &ScalarFunction{
-		Args:     funcArgs,
-		FuncName: model.NewCIStr(funcName),
-		RetType:  retType,
-		Function: f.F}, nil
+		Args:      funcArgs,
+		FuncName:  model.NewCIStr(funcName),
+		RetType:   retType,
+		Function:  f.F,
+		ArgValues: make([]types.Datum, len(funcArgs))}, nil
 }
 
 //Schema2Exprs converts []*Column to []Expression.
@@ -282,7 +284,11 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 
 // DeepCopy implements Expression interface.
 func (sf *ScalarFunction) DeepCopy() Expression {
-	newFunc := &ScalarFunction{FuncName: sf.FuncName, Function: sf.Function, RetType: sf.RetType}
+	newFunc := &ScalarFunction{
+		FuncName:  sf.FuncName,
+		Function:  sf.Function,
+		RetType:   sf.RetType,
+		ArgValues: make([]types.Datum, len(sf.Args))}
 	newFunc.Args = make([]Expression, 0, len(sf.Args))
 	for _, arg := range sf.Args {
 		newFunc.Args = append(newFunc.Args, arg.DeepCopy())
@@ -297,16 +303,14 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Datum, error) {
-	args := make([]types.Datum, 0, len(sf.Args))
-	for _, arg := range sf.Args {
-		result, err := arg.Eval(row, ctx)
-		if err == nil {
-			args = append(args, result)
-		} else {
+	var err error
+	for i, arg := range sf.Args {
+		sf.ArgValues[i], err = arg.Eval(row, ctx)
+		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
 	}
-	return sf.Function(args, ctx)
+	return sf.Function(sf.ArgValues, ctx)
 }
 
 // Constant stands for a constant value.
