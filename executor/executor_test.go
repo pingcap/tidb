@@ -54,7 +54,9 @@ func (s *testSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		s.store = tikv.NewMockTikvStore()
+		store, err := tikv.NewMockTikvStore()
+		c.Assert(err, IsNil)
+		s.store = store
 		tidb.SetSchemaLease(0)
 	} else {
 		store, err := tidb.NewStore("memory://test/test")
