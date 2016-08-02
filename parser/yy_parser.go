@@ -40,8 +40,6 @@ var (
 	specCodePattern = regexp.MustCompile(`\/\*!(M?[0-9]{5,6})?([^*]|\*+[^*/])*\*+\/`)
 	specCodeStart   = regexp.MustCompile(`^\/\*!(M?[0-9]{5,6} )?[ \t]*`)
 	specCodeEnd     = regexp.MustCompile(`[ \t]*\*\/$`)
-
-	useNewLexer bool
 )
 
 func trimComment(txt string) string {
@@ -93,6 +91,11 @@ func New() *Parser {
 	}
 }
 
+// SetLexer sets the underlying lexer for the parser.
+func (parser *Parser) SetLexer(lexer yyReset) {
+	parser.lexer = lexer
+}
+
 // Parse parses a query string to raw ast.StmtNode.
 // If charset or collation is "", default charset and collation will be used.
 func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, error) {
@@ -141,24 +144,30 @@ func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 	}
 }
 
-func (parser *Parser) startOffset(offset int) int {
-	if !useNewLexer {
+func (parser *Parser) startOffset(v *yySymType) int {
+	if _, ok := parser.lexer.(defaultLexer); ok {
+		offset := v.offset
 		offset--
+		for unicode.IsSpace(rune(parser.src[offset])) {
+			offset++
+		}
+		return offset
 	}
-	for unicode.IsSpace(rune(parser.src[offset])) {
-		offset++
-	}
-	return offset
+
+	return v.offset
 }
 
-func (parser *Parser) endOffset(offset int) int {
-	if !useNewLexer {
+func (parser *Parser) endOffset(v *yySymType) int {
+	if _, ok := parser.lexer.(defaultLexer); ok {
+		offset := v.offset
 		offset--
+		for offset > 0 && unicode.IsSpace(rune(parser.src[offset-1])) {
+			offset--
+		}
+		return offset
 	}
-	for offset > 0 && unicode.IsSpace(rune(parser.src[offset-1])) {
-		offset--
-	}
-	return offset
+
+	return v.offset + len(v.ident)
 }
 
 func toInt(l yyLexer, lval *yySymType, str string) int {

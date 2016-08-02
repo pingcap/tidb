@@ -124,9 +124,7 @@ type testCase struct {
 
 func (s *testParserSuite) RunTest(c *C, table []testCase) {
 	parser := New()
-	if useNewLexer {
-		parser.lexer = &Scanner{}
-	}
+	parser.lexer = &Scanner{}
 	for _, t := range table {
 		_, err := parser.Parse(t.src, "", "")
 		comment := Commentf("source %v", t.src)
@@ -1014,9 +1012,7 @@ func BenchmarkParse(b *testing.B) {
 		"select c from t where c > 2",
 	}
 	parser := New()
-	if useNewLexer {
-		parser.lexer = &Scanner{}
-	}
+	parser.lexer = &Scanner{}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {
@@ -1027,4 +1023,7 @@ func BenchmarkParse(b *testing.B) {
 		}
 	}
 	b.ReportAllocs()
+}
+
+func (s *testParserSuite) TestStmtText(c *C) {
 }

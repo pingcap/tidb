@@ -14,6 +14,8 @@
 package parser
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -121,4 +123,20 @@ SELECT`, selectKwd},
 		{"--5", int('-')},
 	}
 	runTest(c, table)
+}
+
+func (s *testLexerSuite) TestXXX(c *C) {
+	// str := `select cast(null as char(30))`
+	str := "select 1 <=> 1, 1 <=> null, null <=> null, null <=> (select null)"
+	l1 := NewScanner(str)
+	l2 := NewLexer(str)
+	for {
+		var v1, v2 yySymType
+		tok1 := l1.Lex(&v1)
+		tok2 := l2.Lex(&v2)
+		fmt.Println(tok1, tok2, v1, v2)
+		if tok1 == 0 {
+			break
+		}
+	}
 }
