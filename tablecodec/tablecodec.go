@@ -177,13 +177,9 @@ func DecodeValues(data []byte, fts []*types.FieldType, inIndex bool) ([]types.Da
 	if len(values) > len(fts) {
 		return nil, errInvalidColumnCount.Gen("invalid column count %d is less than value count %d", len(fts), len(values))
 	}
-	if inIndex {
-		// We don't need to unflatten index columns for now.
-		return values, nil
-	}
 
 	for i := range values {
-		values[i], err = Unflatten(values[i], fts[i])
+		values[i], err = Unflatten(values[i], fts[i], inIndex)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -197,7 +193,7 @@ func DecodeColumnValue(data []byte, ft *types.FieldType) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	colDatum, err := Unflatten(d, ft)
+	colDatum, err := Unflatten(d, ft, false)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
@@ -241,7 +237,7 @@ func DecodeRow(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			v, err = Unflatten(v, ft)
+			v, err = Unflatten(v, ft, false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -297,7 +293,7 @@ func CutRow(data []byte, cols map[int64]*types.FieldType) (map[int64][]byte, err
 }
 
 // Unflatten converts a raw datum to a column datum.
-func Unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
+func Unflatten(datum types.Datum, ft *types.FieldType, inIndex bool) (types.Datum, error) {
 	if datum.IsNull() {
 		return datum, nil
 	}
@@ -312,11 +308,16 @@ func Unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t mysql.Time
-		t.Type = ft.Tp
-		t.Fsp = ft.Decimal
-		err := t.Unmarshal(datum.GetBytes())
-		if err != nil {
-			return datum, errors.Trace(err)
+		var err error
+		if inIndex {
+			t, err = mysql.ParseTime(datum.GetString(), ft.Tp, ft.Decimal)
+		} else {
+			t.Type = ft.Tp
+			t.Fsp = ft.Decimal
+			err = t.Unmarshal(datum.GetBytes())
+			if err != nil {
+				return datum, errors.Trace(err)
+			}
 		}
 		datum.SetMysqlTime(t)
 		return datum, nil
