@@ -789,9 +789,10 @@ func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
 		return
 	}
 	function := &expression.ScalarFunction{
-		Args:     []expression.Expression{er.ctxStack[len(er.ctxStack)-1]},
-		FuncName: model.NewCIStr("cast"),
-		RetType:  v.Tp,
-		Function: bt}
+		Args:       []expression.Expression{er.ctxStack[len(er.ctxStack)-1]},
+		FuncName:   model.NewCIStr("cast"),
+		RetType:    v.Tp,
+		Function:   bt,
+		ArgsBuffer: make([]types.Datum, 1)}
 	er.ctxStack[len(er.ctxStack)-1] = function
 }
