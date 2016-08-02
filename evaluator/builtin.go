@@ -167,11 +167,11 @@ var Funcs = map[string]Func{
 	ast.GetVar:     {builtinGetVar, 1, 1},
 }
 
-// FuncsCnntBeCnstntFld is for functions that
+// DynamicFuncs are those functions that
 // use input parameter ctx or
 // return an uncertain result would not be constant folded
 // the value 0 means nothing
-var FuncsCnntBeCnstntFld = map[string]int{
+var DynamicFuncs = map[string]int{
 	"rand":           0,
 	"connection_id":  0,
 	"current_user":   0,

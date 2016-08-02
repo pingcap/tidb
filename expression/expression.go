@@ -219,7 +219,7 @@ func (sf *ScalarFunction) ToString() string {
 // NewFunction creates a new scalar function or constant.
 func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 
-	_, canConstantFolding := evaluator.FuncsCnntBeCnstntFld[funcName]
+	_, canConstantFolding := evaluator.DynamicFuncs[funcName]
 	canConstantFolding = !canConstantFolding
 
 	f, ok := evaluator.Funcs[funcName]

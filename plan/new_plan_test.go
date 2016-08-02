@@ -776,6 +776,14 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 			exprStr:   "a = !(1+1)",
 			resultStr: "=(test.t.a,0,)",
 		},
+		{
+			exprStr:   "a = rand()",
+			resultStr: "=(test.t.a,rand(),)",
+		},
+		{
+			exprStr:   "a = version()",
+			resultStr: "=(test.t.a,version(),)",
+		},
 	}
 
 	for _, ca := range cases {
