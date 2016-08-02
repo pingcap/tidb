@@ -38,7 +38,10 @@ func (ts *PhysicalTableScan) matchProperty(prop requiredProperty, rowCounts []ui
 func (is *PhysicalIndexScan) matchProperty(prop requiredProperty, rowCounts []uint64, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	rowCount := float64(rowCounts[0])
 	// currently index read from kv 2 times.
-	cost := rowCount * netWorkFactor * 2
+	cost := rowCount * netWorkFactor
+	if is.DoubleRead {
+		cost *= 2
+	}
 	if len(prop) == 0 {
 		return &physicalPlanInfo{p: is, cost: cost}
 	}

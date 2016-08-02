@@ -29,6 +29,7 @@ type PhysicalIndexScan struct {
 	DBName     *model.CIStr
 	Desc       bool
 	OutOfOrder bool
+	DoubleRead bool
 
 	accessEqualCount int
 	AccessCondition  []expression.Expression
