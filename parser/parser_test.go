@@ -1028,12 +1028,13 @@ func BenchmarkParse(b *testing.B) {
 
 var tableCompatible = []string{
 	`drop table IF EXISTS t;
-CREATE TABLE t(c INT, index cidx (c));`,
+	 CREATE TABLE t(c INT, index cidx (c));`,
 	`INSERT INTO t VALUES(1), (null), (2);`,
 	"SELECT COUNT(c) FROM t WHERE c IS NOT NULL;",
 	`select cast(null as char(30))`,
 	`select 0b01 + 1, 0b01000001 = "A"`,
 	"create table t (id tiny)",
+	"select        ((a+1))     from t",
 }
 
 func (s *testParserSuite) TestParserCompatible(c *C) {

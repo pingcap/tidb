@@ -138,9 +138,7 @@ func (s *testLexerSuite) TestLexerCompatible(c *C) {
 			tok1 := l1.Lex(&v1)
 			tok2 := l2.Lex(&v2)
 			// fmt.Println(tok1, tok2, v1, v2)
-			if tok1 != tok2 {
-				c.Error(tok1, tok2, v1, v2)
-			}
+			c.Assert(tok1, Equals, tok2)
 			if tok1 == 0 {
 				break
 			}

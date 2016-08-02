@@ -98,6 +98,8 @@ func (s *Scanner) Lex(v *yySymType) int {
 	case userVar, sysVar, database, currentUser, replace, cast, sysDate, currentTs, currentTime, currentDate, curDate, utcDate, extract, repeat, secondMicrosecond, minuteMicrosecond, minuteSecond, hourMicrosecond, hourMinute, hourSecond, dayMicrosecond, dayMinute, daySecond, dayHour, yearMonth:
 		v.item = lit
 		return tok
+	case null:
+		v.item = nil
 	}
 	if tok == unicode.ReplacementChar && s.r.eof() {
 		return 0

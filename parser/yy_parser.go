@@ -91,8 +91,8 @@ type stmtTexter interface {
 func New() *Parser {
 	return &Parser{
 		cache: make([]yySymType, 200),
-		lexer: defaultLexer{},
-		// lexer: &Scanner{},
+		// lexer: defaultLexer{},
+		lexer: &Scanner{},
 	}
 }
 
@@ -163,16 +163,16 @@ func (parser *Parser) startOffset(v *yySymType) int {
 }
 
 func (parser *Parser) endOffset(v *yySymType) int {
+	offset := v.offset
 	if _, ok := parser.lexer.(defaultLexer); ok {
-		offset := v.offset
+		// offset = v.offset + len(v.ident)
 		offset--
-		for offset > 0 && unicode.IsSpace(rune(parser.src[offset-1])) {
-			offset--
-		}
-		return offset
 	}
 
-	return v.offset + len(v.ident)
+	for offset > 0 && unicode.IsSpace(rune(parser.src[offset-1])) {
+		offset--
+	}
+	return offset
 }
 
 func toInt(l yyLexer, lval *yySymType, str string) int {

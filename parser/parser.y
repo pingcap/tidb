@@ -3242,7 +3242,7 @@ SelectStmt:
 
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
-			lastEnd := yyS[yypt-7].offset-1
+			lastEnd := parser.endOffset(&yyS[yypt-7])
 			lastField.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 
