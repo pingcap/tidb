@@ -285,9 +285,9 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 // DeepCopy implements Expression interface.
 func (sf *ScalarFunction) DeepCopy() Expression {
 	newFunc := &ScalarFunction{
-		FuncName: sf.FuncName,
-		Function: sf.Function,
-		RetType: sf.RetType,
+		FuncName:  sf.FuncName,
+		Function:  sf.Function,
+		RetType:   sf.RetType,
 		ArgValues: make([]types.Datum, len(sf.Args))}
 	newFunc.Args = make([]Expression, 0, len(sf.Args))
 	for _, arg := range sf.Args {
