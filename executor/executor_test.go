@@ -1124,6 +1124,100 @@ func (s *testSuite) TestJoin(c *C) {
 
 }
 
+func (s *testSuite) TestMultiJoin(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t35(a35 int primary key, b35 int, x35 int)")
+	tk.MustExec("create table t40(a40 int primary key, b40 int, x40 int)")
+	tk.MustExec("create table t14(a14 int primary key, b14 int, x14 int)")
+	tk.MustExec("create table t42(a42 int primary key, b42 int, x42 int)")
+	tk.MustExec("create table t15(a15 int primary key, b15 int, x15 int)")
+	tk.MustExec("create table t7(a7 int primary key, b7 int, x7 int)")
+	tk.MustExec("create table t64(a64 int primary key, b64 int, x64 int)")
+	tk.MustExec("create table t19(a19 int primary key, b19 int, x19 int)")
+	tk.MustExec("create table t9(a9 int primary key, b9 int, x9 int)")
+	tk.MustExec("create table t8(a8 int primary key, b8 int, x8 int)")
+	tk.MustExec("create table t57(a57 int primary key, b57 int, x57 int)")
+	tk.MustExec("create table t37(a37 int primary key, b37 int, x37 int)")
+	tk.MustExec("create table t44(a44 int primary key, b44 int, x44 int)")
+	tk.MustExec("create table t38(a38 int primary key, b38 int, x38 int)")
+	tk.MustExec("create table t18(a18 int primary key, b18 int, x18 int)")
+	tk.MustExec("create table t62(a62 int primary key, b62 int, x62 int)")
+	tk.MustExec("create table t4(a4 int primary key, b4 int, x4 int)")
+	tk.MustExec("create table t48(a48 int primary key, b48 int, x48 int)")
+	tk.MustExec("create table t31(a31 int primary key, b31 int, x31 int)")
+	tk.MustExec("create table t16(a16 int primary key, b16 int, x16 int)")
+	tk.MustExec("create table t12(a12 int primary key, b12 int, x12 int)")
+	tk.MustExec("insert into t35 values(1,1,1)")
+	tk.MustExec("insert into t40 values(1,1,1)")
+	tk.MustExec("insert into t14 values(1,1,1)")
+	tk.MustExec("insert into t42 values(1,1,1)")
+	tk.MustExec("insert into t15 values(1,1,1)")
+	tk.MustExec("insert into t7 values(1,1,1)")
+	tk.MustExec("insert into t64 values(1,1,1)")
+	tk.MustExec("insert into t19 values(1,1,1)")
+	tk.MustExec("insert into t9 values(1,1,1)")
+	tk.MustExec("insert into t8 values(1,1,1)")
+	tk.MustExec("insert into t57 values(1,1,1)")
+	tk.MustExec("insert into t37 values(1,1,1)")
+	tk.MustExec("insert into t44 values(1,1,1)")
+	tk.MustExec("insert into t38 values(1,1,1)")
+	tk.MustExec("insert into t18 values(1,1,1)")
+	tk.MustExec("insert into t62 values(1,1,1)")
+	tk.MustExec("insert into t4 values(1,1,1)")
+	tk.MustExec("insert into t48 values(1,1,1)")
+	tk.MustExec("insert into t31 values(1,1,1)")
+	tk.MustExec("insert into t16 values(1,1,1)")
+	tk.MustExec("insert into t12 values(1,1,1)")
+	tk.MustExec("insert into t35 values(7,7,7)")
+	tk.MustExec("insert into t40 values(7,7,7)")
+	tk.MustExec("insert into t14 values(7,7,7)")
+	tk.MustExec("insert into t42 values(7,7,7)")
+	tk.MustExec("insert into t15 values(7,7,7)")
+	tk.MustExec("insert into t7 values(7,7,7)")
+	tk.MustExec("insert into t64 values(7,7,7)")
+	tk.MustExec("insert into t19 values(7,7,7)")
+	tk.MustExec("insert into t9 values(7,7,7)")
+	tk.MustExec("insert into t8 values(7,7,7)")
+	tk.MustExec("insert into t57 values(7,7,7)")
+	tk.MustExec("insert into t37 values(7,7,7)")
+	tk.MustExec("insert into t44 values(7,7,7)")
+	tk.MustExec("insert into t38 values(7,7,7)")
+	tk.MustExec("insert into t18 values(7,7,7)")
+	tk.MustExec("insert into t62 values(7,7,7)")
+	tk.MustExec("insert into t4 values(7,7,7)")
+	tk.MustExec("insert into t48 values(7,7,7)")
+	tk.MustExec("insert into t31 values(7,7,7)")
+	tk.MustExec("insert into t16 values(7,7,7)")
+	tk.MustExec("insert into t12 values(7,7,7)")
+	result := tk.MustQuery(`SELECT x4,x8,x38,x44,x31,x9,x57,x48,x19,x40,x14,x12,x7,x64,x37,x18,x62,x35,x42,x15,x16 FROM
+t35,t40,t14,t42,t15,t7,t64,t19,t9,t8,t57,t37,t44,t38,t18,t62,t4,t48,t31,t16,t12
+WHERE b48=a57
+AND a4=b19
+AND a14=b16
+AND b37=a48
+AND a40=b42
+AND a31=7
+AND a15=b40
+AND a38=b8
+AND b15=a31
+AND b64=a18
+AND b12=a44
+AND b7=a8
+AND b35=a16
+AND a12=b14
+AND a64=b57
+AND b62=a7
+AND a35=b38
+AND b9=a19
+AND a62=b18
+AND b4=a37
+AND b44=a42`)
+	result.Check(testkit.Rows("7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7"))
+}
+
 func (s *testSuite) TestIndexScan(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
@@ -1232,7 +1326,7 @@ func (s *testSuite) TestDefaultNull(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 <nil>"))
 }
 
-func (s *testSuite) TestUsignedPKColumn(c *C) {
+func (s *testSuite) TestUnsignedPKColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1551,6 +1645,16 @@ func (s *testSuite) TestNewSubquery(c *C) {
 	result.Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
 	result = tk.MustQuery("select (c) > all (select c from t) from t")
 	result.Check(testkit.Rows("0", "0", "0", "<nil>"))
+
+	tk.MustExec("drop table if exists a")
+	tk.MustExec("create table a (c int, d int)")
+	tk.MustExec("insert a values (1, 2)")
+	tk.MustExec("drop table if exists b")
+	tk.MustExec("create table b (c int, d int)")
+	tk.MustExec("insert b values (2, 1)")
+
+	result = tk.MustQuery("select * from a b where c = (select d from b a where a.c = 2 and b.c = 1)")
+	result.Check(testkit.Rows("1 2"))
 }
 
 func (s *testSuite) TestNewTableDual(c *C) {

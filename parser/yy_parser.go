@@ -14,7 +14,9 @@
 package parser
 
 import (
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -136,4 +138,59 @@ func (parser *Parser) endOffset(offset int) int {
 		offset--
 	}
 	return offset
+}
+
+func toInt(l yyLexer, lval *yySymType, str string) int {
+	n, err := strconv.ParseUint(str, 0, 64)
+	if err != nil {
+		l.Errorf("integer literal: %v", err)
+		return int(unicode.ReplacementChar)
+	}
+
+	switch {
+	case n < math.MaxInt64:
+		lval.item = int64(n)
+	default:
+		lval.item = uint64(n)
+	}
+	return intLit
+}
+
+func toFloat(l yyLexer, lval *yySymType, str string) int {
+	n, err := strconv.ParseFloat(str, 64)
+	if err != nil {
+		l.Errorf("float literal: %v", err)
+		return int(unicode.ReplacementChar)
+	}
+
+	lval.item = float64(n)
+	return floatLit
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
+func toHex(l yyLexer, lval *yySymType, str string) int {
+	h, err := mysql.ParseHex(str)
+	if err != nil {
+		// If parse hexadecimal literal to numerical value error, we should treat it as a string.
+		hexStr, err1 := mysql.ParseHexStr(str)
+		if err1 != nil {
+			l.Errorf("hex literal: %v", err)
+			return int(unicode.ReplacementChar)
+		}
+		lval.item = hexStr
+		return stringLit
+	}
+	lval.item = h
+	return hexLit
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
+func toBit(l yyLexer, lval *yySymType, str string) int {
+	b, err := mysql.ParseBit(str, -1)
+	if err != nil {
+		l.Errorf("bit literal: %v", err)
+		return int(unicode.ReplacementChar)
+	}
+	lval.item = b
+	return bitLit
 }
