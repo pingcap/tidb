@@ -66,8 +66,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 		t3, err := s.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff))
 		c.Assert(err, IsNil)
 		c.Assert(t2, Less, t3)
-		expired, err := s.store.checkTimestampExpiredWithRetry(NewBackoffer(tsoMaxBackoff), t2, 50)
-		c.Assert(err, IsNil)
+		expired := s.store.oracle.IsExpired(t2, 50)
 		c.Assert(expired, IsTrue)
 	}()
 
@@ -108,12 +107,9 @@ func (o *mockOracle) GetTimestamp() (uint64, error) {
 	return o.Oracle.GetTimestamp()
 }
 
-func (o *mockOracle) IsExpired(lockTimestamp uint64, TTL uint64) (bool, error) {
+func (o *mockOracle) IsExpired(lockTimestamp uint64, TTL uint64) bool {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 
-	if o.mu.stop {
-		return false, errors.New("stopped")
-	}
 	return o.Oracle.IsExpired(lockTimestamp, TTL)
 }

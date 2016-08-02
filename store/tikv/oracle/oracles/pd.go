@@ -40,6 +40,9 @@ type pdOracle struct {
 
 // NewPdOracle create an Oracle that uses a pd client source.
 // Refer https://github.com/pingcap/pd/blob/master/pd-client/client.go for more details.
+// PdOracle mantains `lastTS` to store the last timestamp got from PD server. If
+// `GetTimestamp()` is not called after `updateInterval`, it will be called by
+// itself to keep up with the timestamp on PD server.
 func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracle, error) {
 	o := &pdOracle{
 		c:       pdClient,
@@ -56,12 +59,13 @@ func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracl
 	return o, nil
 }
 
-// IsExpired returns whether lockTs+TTL is expired, both are ms.
-func (o *pdOracle) IsExpired(lockTs, TTL uint64) (bool, error) {
+// IsExpired returns whether lockTs+TTL is expired, both are ms. It uses `lastTS`
+// to compare, may return false negative result temporarily.
+func (o *pdOracle) IsExpired(lockTs, TTL uint64) bool {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 
-	return (o.mu.lastTs >> epochShiftBits) >= (lockTs>>epochShiftBits)+TTL, nil
+	return (o.mu.lastTs >> epochShiftBits) >= (lockTs>>epochShiftBits)+TTL
 }
 
 // GetTimestamp gets a new increasing time.

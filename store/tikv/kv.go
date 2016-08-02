@@ -157,19 +157,6 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	}
 }
 
-func (s *tikvStore) checkTimestampExpiredWithRetry(bo *Backoffer, ts uint64, TTL uint64) (bool, error) {
-	for {
-		expired, err := s.oracle.IsExpired(ts, TTL)
-		if err == nil {
-			return expired, nil
-		}
-		err = bo.Backoff(boPDRPC, errors.Errorf("check expired failed: %v", err))
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-	}
-}
-
 // sendKVReq sends req to tikv server. It will retry internally to find the right
 // region leader if i) fails to establish a connection to server or ii) server
 // returns `NotLeader`.
