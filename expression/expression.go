@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
@@ -219,10 +218,13 @@ func (sf *ScalarFunction) ToString() string {
 
 // NewFunction creates a new scalar function or constant.
 func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+
+	_, canConstantFolding := evaluator.FuncsCnntBeCnstntFld[funcName]
+	canConstantFolding = !canConstantFolding
+
 	f, ok := evaluator.Funcs[funcName]
 	if !ok {
-		log.Errorf("Function %s is not implemented.", funcName)
-		return nil, nil
+		return nil, errors.Errorf("Function %s is not implemented.", funcName)
 	}
 
 	if len(args) < f.MinArgs || (f.MaxArgs != -1 && len(args) > f.MaxArgs) {
@@ -230,22 +232,19 @@ func NewFunction(funcName string, retType *types.FieldType, args ...Expression) 
 			f.MinArgs, f.MaxArgs)
 	}
 
-	canConstantFolding := true
 	datums := make([]types.Datum, 0, len(args))
 
-	for _, expr := range args {
-		if v, ok := expr.(*Constant); ok {
+	for i := 0; i < len(args) && canConstantFolding; i++ {
+		if v, ok := args[i].(*Constant); ok {
 			datums = append(datums, types.NewDatum(v.Value.GetValue()))
 		} else {
 			canConstantFolding = false
-			break
 		}
 	}
 
 	if canConstantFolding {
 		fn := f.F
 		newArgs, err := fn(datums, nil)
-
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
