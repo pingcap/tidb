@@ -418,6 +418,26 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  "select a from t where c like 'abc%af'",
 			best: "Index(t.c_d_e)[[abc,abd)]->Selection->Projection",
 		},
+		{
+			sql:  "select a from t where c like 'abc\\_' escape ''",
+			best: "Index(t.c_d_e)[[abc_,abc_]]->Projection",
+		},
+		{
+			sql:  "select a from t where c like 'abc\\_'",
+			best: "Index(t.c_d_e)[[abc_,abc_]]->Projection",
+		},
+		{
+			sql:  "select a from t where c like 'abc\\_%'",
+			best: "Index(t.c_d_e)[[abc_,abc`)]->Projection",
+		},
+		{
+			sql:  "select a from t where c like 'abc=_%' escape '='",
+			best: "Index(t.c_d_e)[[abc_,abc`)]->Projection",
+		},
+		{
+			sql:  "select a from t where c like 'abc\\__'",
+			best: "Index(t.c_d_e)[(abc_,abc`)]->Selection->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)

@@ -485,7 +485,15 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool
 	if len(patternStr) == 0 {
 		return true
 	}
+	escape := byte(scalar.Args[2].(*expression.Constant).Value.GetInt64())
 	for i := 0; i < len(patternStr); i++ {
+		if patternStr[i] == escape {
+			i++
+			if i < len(patternStr)-1 {
+				continue
+			}
+			break
+		}
 		if i == 0 && (patternStr[i] == '%' || patternStr[i] == '_') {
 			return false
 		}
