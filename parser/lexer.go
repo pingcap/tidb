@@ -84,6 +84,9 @@ func (s *Scanner) Lex(v *yySymType) int {
 	v.offset = pos.Offset
 	v.ident = lit
 	if tok == identifier {
+		tok = handleIdent(v)
+	}
+	if tok == identifier {
 		if tok1 := isTokenIdentifier(lit, &s.buf); tok1 != 0 {
 			tok = tok1
 		}
@@ -95,7 +98,9 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return toFloat(s, v, lit)
 	case hexLit:
 		return toHex(s, v, lit)
-	case userVar, sysVar, database, currentUser, replace, cast, sysDate, currentTs, currentTime, currentDate, curDate, utcDate, extract, repeat, secondMicrosecond, minuteMicrosecond, minuteSecond, hourMicrosecond, hourMinute, hourSecond, dayMicrosecond, dayMinute, daySecond, dayHour, yearMonth:
+	case bitLit:
+		return toBit(s, v, lit)
+	case userVar, sysVar, database, currentUser, replace, cast, sysDate, currentTs, currentTime, currentDate, curDate, utcDate, extract, repeat, secondMicrosecond, minuteMicrosecond, minuteSecond, hourMicrosecond, hourMinute, hourSecond, dayMicrosecond, dayMinute, daySecond, dayHour, yearMonth, ifKwd, left:
 		v.item = lit
 		return tok
 	case null:
@@ -264,7 +269,7 @@ func (s *Scanner) scanQuotedIdent() (tok int, pos Pos, lit string) {
 	s.buf.Reset()
 	for {
 		ch := s.r.readByte()
-		if s.r.eof() {
+		if ch == 0 && s.r.eof() {
 			tok = unicode.ReplacementChar
 			return
 		}
@@ -299,6 +304,7 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 		if ch0 == '\n' {
 		}
 		if ch0 == '\\' {
+			save := s.r.pos()
 			s.r.inc()
 			ch1 := s.r.peek()
 			if ch1 == 'n' {
@@ -314,6 +320,8 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 				s.buf.WriteByte('\'')
 				s.r.inc()
 				continue
+			} else {
+				s.r.p = save
 			}
 		} else if !isASCII(ch0) {
 			// TODO handle non-ascii

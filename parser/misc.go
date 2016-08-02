@@ -83,6 +83,7 @@ func init() {
 	initTokenByte('%', int('%'))
 	initTokenByte(':', int(':'))
 	initTokenByte('|', int('|'))
+	initTokenByte('!', int('!'))
 	initTokenByte('^', int('^'))
 	initTokenByte('~', int('~'))
 	initTokenByte('\\', int('\\'))
@@ -217,6 +218,7 @@ var tokenMap = map[string]int{
 	"HAVING":              having,
 	"HIGH_PRIORITY":       highPriority,
 	"HOUR":                hour,
+	"HEX":                 hex,
 	"IDENTIFIED":          identified,
 	"IGNORE":              ignore,
 	"IF":                  ifKwd,

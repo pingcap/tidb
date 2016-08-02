@@ -14,7 +14,7 @@
 package parser
 
 import (
-	// "fmt"
+	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
@@ -137,7 +137,7 @@ func (s *testLexerSuite) TestLexerCompatible(c *C) {
 			var v1, v2 yySymType
 			tok1 := l1.Lex(&v1)
 			tok2 := l2.Lex(&v2)
-			// fmt.Println(tok1, tok2, v1, v2)
+			fmt.Println(tok1, tok2, v1, v2)
 			c.Assert(tok1, Equals, tok2)
 			if tok1 == 0 {
 				break
@@ -145,4 +145,12 @@ func (s *testLexerSuite) TestLexerCompatible(c *C) {
 		}
 	}
 
+}
+
+func (s *testLexerSuite) TestscanQuotedIdent(c *C) {
+	l := NewScanner("`fk`")
+	tok, pos, lit := l.scanQuotedIdent()
+	c.Assert(pos.Offset, Equals, 0)
+	c.Assert(tok, Equals, identifier)
+	c.Assert(lit, Equals, "fk")
 }
