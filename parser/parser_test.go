@@ -15,6 +15,7 @@ package parser
 
 import (
 	"fmt"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -1025,5 +1026,33 @@ func BenchmarkParse(b *testing.B) {
 	b.ReportAllocs()
 }
 
-func (s *testParserSuite) TestStmtText(c *C) {
+var tableCompatible = []string{
+	`drop table IF EXISTS t;
+CREATE TABLE t(c INT, index cidx (c));`,
+	`INSERT INTO t VALUES(1), (null), (2);`,
+	"SELECT COUNT(c) FROM t WHERE c IS NOT NULL;",
+	`select cast(null as char(30))`,
+	`select 0b01 + 1, 0b01000001 = "A"`,
+	"create table t (id tiny)",
+}
+
+func (s *testParserSuite) TestParserCompatible(c *C) {
+	defer testleak.AfterTest(c)()
+	p1 := New()
+	p2 := New()
+	p2.lexer = &Scanner{}
+
+	for _, str := range tableCompatible {
+		st1, err1 := p1.Parse(str, "", "")
+		st2, err2 := p2.Parse(str, "", "")
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+		c.Assert(len(st1), Equals, len(st2))
+
+		for i := 0; i < len(st1); i++ {
+			if !reflect.DeepEqual(st1[i], st2[i]) {
+				c.Error(i, st1[i], st2[i])
+			}
+		}
+	}
 }

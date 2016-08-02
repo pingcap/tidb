@@ -34,7 +34,8 @@ type Scanner struct {
 	r   reader
 	buf bytes.Buffer
 
-	errs []error
+	errs         []error
+	stmtStartPos int
 }
 
 // Errors returns the errors during a scan.
@@ -48,7 +49,23 @@ func (s *Scanner) reset(sql string) yyLexer {
 	s.r = reader{s: sql}
 	s.buf.Reset()
 	s.errs = s.errs[:0]
+	s.stmtStartPos = 0
 	return s
+}
+
+func (s *Scanner) stmtText() string {
+	endPos := s.r.pos().Offset
+	if s.r.s[endPos-1] == '\n' {
+		endPos = endPos - 1 // trim new line
+	}
+	if s.r.s[s.stmtStartPos] == '\n' {
+		s.stmtStartPos++
+	}
+
+	text := s.r.s[s.stmtStartPos:endPos]
+
+	s.stmtStartPos = endPos
+	return text
 }
 
 // Errorf tells scanner something is wrong.

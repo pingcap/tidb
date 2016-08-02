@@ -14,7 +14,7 @@
 package parser
 
 import (
-	"fmt"
+	// "fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
@@ -111,6 +111,8 @@ func runTest(c *C, table []testCaseItem) {
 }
 
 func (s *testLexerSuite) TestComment(c *C) {
+	defer testleak.AfterTest(c)()
+
 	table := []testCaseItem{
 		{"-- select --\n1", intLit},
 		{"/*!40101 SET character_set_client = utf8 */;", int(';')},
@@ -125,18 +127,24 @@ SELECT`, selectKwd},
 	runTest(c, table)
 }
 
-func (s *testLexerSuite) TestXXX(c *C) {
-	// str := `select cast(null as char(30))`
-	str := "select 1 <=> 1, 1 <=> null, null <=> null, null <=> (select null)"
-	l1 := NewScanner(str)
-	l2 := NewLexer(str)
-	for {
-		var v1, v2 yySymType
-		tok1 := l1.Lex(&v1)
-		tok2 := l2.Lex(&v2)
-		fmt.Println(tok1, tok2, v1, v2)
-		if tok1 == 0 {
-			break
+func (s *testLexerSuite) TestLexerCompatible(c *C) {
+	defer testleak.AfterTest(c)()
+
+	for _, str := range tableCompatible {
+		l1 := NewScanner(str)
+		l2 := NewLexer(str)
+		for {
+			var v1, v2 yySymType
+			tok1 := l1.Lex(&v1)
+			tok2 := l2.Lex(&v2)
+			// fmt.Println(tok1, tok2, v1, v2)
+			if tok1 != tok2 {
+				c.Error(tok1, tok2, v1, v2)
+			}
+			if tok1 == 0 {
+				break
+			}
 		}
 	}
+
 }

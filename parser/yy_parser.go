@@ -83,11 +83,16 @@ func (l defaultLexer) reset(sql string) yyLexer {
 	return NewLexer(sql)
 }
 
+type stmtTexter interface {
+	stmtText() string
+}
+
 // New returns a Parser object.
 func New() *Parser {
 	return &Parser{
 		cache: make([]yySymType, 200),
 		lexer: defaultLexer{},
+		// lexer: &Scanner{},
 	}
 }
 

@@ -4109,7 +4109,7 @@ StatementList:
 	{
 		if $1 != nil {
 			s := $1.(ast.StmtNode)
-			if lexer, ok := yylex.(*lexer); ok {
+			if lexer, ok := yylex.(stmtTexter); ok {
 				s.SetText(lexer.stmtText())
 			}
 			parser.result = append(parser.result, s)
@@ -4119,7 +4119,7 @@ StatementList:
 	{
 		if $3 != nil {
 			s := $3.(ast.StmtNode)
-			if lexer, ok := yylex.(*lexer); ok {
+			if lexer, ok := yylex.(stmtTexter); ok {
 				s.SetText(lexer.stmtText())
 			}
 			parser.result = append(parser.result, s)

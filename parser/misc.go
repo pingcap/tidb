@@ -362,6 +362,7 @@ var tokenMap = map[string]int{
 	"LOCALTIME":           localTime,
 	"LOCALTIMESTAMP":      localTs,
 	"NOW":                 now,
+	"TINY":                tinyIntType,
 	"TINYINT":             tinyIntType,
 	"SMALLINT":            smallIntType,
 	"MEDIUMINT":           mediumIntType,
