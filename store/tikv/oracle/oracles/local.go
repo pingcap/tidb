@@ -35,9 +35,9 @@ func NewLocalOracle() oracle.Oracle {
 	return &localOracle{}
 }
 
-func (l *localOracle) IsExpired(lockTs uint64, TTL uint64) (bool, error) {
+func (l *localOracle) IsExpired(lockTs uint64, TTL uint64) bool {
 	beginMs := lockTs >> epochShiftBits
-	return uint64(time.Now().UnixNano()/int64(time.Millisecond)) >= (beginMs + TTL), nil
+	return uint64(time.Now().UnixNano()/int64(time.Millisecond)) >= (beginMs + TTL)
 }
 
 func (l *localOracle) GetTimestamp() (uint64, error) {
@@ -51,4 +51,7 @@ func (l *localOracle) GetTimestamp() (uint64, error) {
 	l.lastTimeStampTs = ts
 	l.n = 0
 	return uint64(ts), nil
+}
+
+func (l *localOracle) Close() {
 }
