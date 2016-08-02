@@ -91,6 +91,7 @@ func (e *NewXSelectIndexExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.B
 	e.byItems = byItems
 	e.aggFields = fields
 	e.aggregate = true
+	e.indexPlan.DoubleRead = true
 }
 
 // AddLimit implements NewXExecutor interface.
@@ -136,6 +137,49 @@ func (e *NewXSelectIndexExec) Next() (*Row, error) {
 	if e.indexPlan.LimitCount != nil && e.returnedRows >= uint64(*e.indexPlan.LimitCount) {
 		return nil, nil
 	}
+	e.returnedRows++
+	if e.indexPlan.DoubleRead {
+		return e.nextForDoubleRead()
+	}
+	return e.nextForSingleRead()
+}
+
+func (e *NewXSelectIndexExec) nextForSingleRead() (*Row, error) {
+	if e.result == nil {
+		var err error
+		e.result, err = e.doIndexRequest()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	for {
+		if e.subResult == nil {
+			var err error
+			e.subResult, err = e.result.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if e.subResult == nil {
+				return nil, nil
+			}
+		}
+		h, rowData, err := e.subResult.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if rowData == nil {
+			e.subResult = nil
+			continue
+		}
+		if e.aggregate {
+			// TODO: Implement aggregation push down in single read index
+			return nil, errors.New("Can't push aggr in a single read index executor!")
+		}
+		return resultRowToRow(e.table, h, rowData, e.asName), nil
+	}
+}
+
+func (e *NewXSelectIndexExec) nextForDoubleRead() (*Row, error) {
 	if e.tasks == nil {
 		startTs := time.Now()
 		handles, err := e.fetchHandles()
@@ -174,7 +218,6 @@ func (e *NewXSelectIndexExec) Next() (*Row, error) {
 		if task.cursor < len(task.rows) {
 			row := task.rows[task.cursor]
 			task.cursor++
-			e.returnedRows++
 			return row, nil
 		}
 		e.taskCursor++
@@ -224,8 +267,11 @@ func (e *NewXSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 		return nil, errors.Trace(err)
 	}
 	concurrency := 1
-	if e.indexPlan.OutOfOrder {
-		concurrency = 10
+	if !e.indexPlan.DoubleRead {
+		concurrency = defaultConcurrency
+		selIdxReq.IndexInfo.Columns = xapi.ColumnsToProto(e.indexPlan.Columns, false)
+	} else if e.indexPlan.OutOfOrder {
+		concurrency = defaultConcurrency
 	}
 	return xapi.Select(txn.GetClient(), selIdxReq, concurrency)
 }
@@ -519,12 +565,11 @@ func (e *NewXSelectTableExec) Next() (*Row, error) {
 			e.subResult = nil
 			continue
 		}
+		e.returnedRows++
 		if e.aggregate {
 			// compose aggreagte row
-			e.returnedRows++
 			return &Row{Data: rowData}, nil
 		}
-		e.returnedRows++
 		return resultRowToRow(e.table, h, rowData, e.asName), nil
 	}
 }
