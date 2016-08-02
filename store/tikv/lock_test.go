@@ -130,6 +130,7 @@ func (s *testLockSuite) TestBatchGetLock(c *C) {
 }
 
 func init() {
-	// Set lockTTL to 3(ms) to speed up tests.
+	// Speed up tests.
 	lockTTL = 3
+	oracleUpdateInterval = 2
 }

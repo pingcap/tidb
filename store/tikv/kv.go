@@ -73,7 +73,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 }
 
 // update oracle's lastTS every 2000ms.
-const oracleUpdateInterval = 2000
+var oracleUpdateInterval = 2000
 
 type tikvStore struct {
 	uuid        string
@@ -83,7 +83,7 @@ type tikvStore struct {
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client) (*tikvStore, error) {
-	oracle, err := oracles.NewPdOracle(pdClient, oracleUpdateInterval*time.Millisecond)
+	oracle, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
