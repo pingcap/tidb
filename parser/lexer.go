@@ -101,7 +101,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return toHex(s, v, lit)
 	case bitLit:
 		return toBit(s, v, lit)
-	case userVar, sysVar, database, currentUser, replace, cast, sysDate, currentTs, currentTime, currentDate, curDate, utcDate, extract, repeat, secondMicrosecond, minuteMicrosecond, minuteSecond, hourMicrosecond, hourMinute, hourSecond, dayMicrosecond, dayMinute, daySecond, dayHour, yearMonth, ifKwd, left:
+	case userVar, sysVar, database, currentUser, replace, cast, sysDate, currentTs, currentTime, currentDate, curDate, utcDate, extract, repeat, secondMicrosecond, minuteMicrosecond, minuteSecond, hourMicrosecond, hourMinute, hourSecond, dayMicrosecond, dayMinute, daySecond, dayHour, yearMonth, ifKwd, left, convert:
 		v.item = lit
 		return tok
 	case null:
@@ -315,6 +315,10 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 			} else if ch0 == '\\' {
 			} else if ch0 == '"' {
 				s.buf.WriteByte('"')
+				s.r.inc()
+				continue
+			} else if ch0 == 't' {
+				s.buf.WriteByte('\t')
 				s.r.inc()
 				continue
 			} else if ch0 == '\'' {

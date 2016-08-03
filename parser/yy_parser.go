@@ -91,8 +91,7 @@ type stmtTexter interface {
 func New() *Parser {
 	return &Parser{
 		cache: make([]yySymType, 200),
-		// lexer: defaultLexer{},
-		lexer: &Scanner{},
+		lexer: defaultLexer{},
 	}
 }
 

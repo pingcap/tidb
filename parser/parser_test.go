@@ -1044,6 +1044,7 @@ var tableCompatible = []string{
 	`insert t values('\x01')`,
 	`select "ab\_c"`,
 	`select "ab\%c"`,
+	`SELECT CONVERT("ABCD" USING ASCII);`,
 }
 
 func (s *testParserSuite) TestParserCompatible(c *C) {
