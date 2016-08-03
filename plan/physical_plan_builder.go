@@ -45,7 +45,7 @@ func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, in
 		} else if l.Kind() == types.KindMinNotNull {
 			rowCount, err = table.Columns[offset].LessRowCount(r)
 		} else if r.Kind() == types.KindMaxValue {
-			rowCount, err = table.Columns[offset].LessRowCount(r)
+			rowCount, err = table.Columns[offset].LessRowCount(l)
 			rowCount = table.Count - rowCount
 		} else {
 			compare, err1 := l.CompareDatum(r)
@@ -67,7 +67,6 @@ func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, in
 }
 
 func (p *DataSource) handleTableScan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, error) {
-	statsTbl := p.statisticTable
 	table := p.Table
 	var resultPlan PhysicalPlan
 	ts := &PhysicalTableScan{
@@ -96,6 +95,8 @@ func (p *DataSource) handleTableScan(prop requiredProperty) (*physicalPlanInfo, 
 	} else {
 		ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
 	}
+
+	statsTbl := p.statisticTable
 	rowCount := uint64(statsTbl.Count)
 	if table.PKIsHandle {
 		for i, colInfo := range ts.Columns {
@@ -120,7 +121,7 @@ func (p *DataSource) handleTableScan(prop requiredProperty) (*physicalPlanInfo, 
 			} else if rg.LowVal == math.MinInt64 {
 				cnt, err = statsTbl.Columns[offset].LessRowCount(types.NewDatum(rg.HighVal))
 			} else if rg.HighVal == math.MaxInt64 {
-				cnt, err = statsTbl.Columns[offset].LessRowCount(types.NewDatum(rg.HighVal))
+				cnt, err = statsTbl.Columns[offset].LessRowCount(types.NewDatum(rg.LowVal))
 				cnt = statsTbl.Count - cnt
 			} else {
 				cnt, err = statsTbl.Columns[offset].BetweenRowCount(types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal))
@@ -197,7 +198,6 @@ func (p *DataSource) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanI
 	if sortedRes != nil {
 		return sortedRes, unsortedRes, cnt, nil
 	}
-	statsTbl := p.statisticTable
 	indices, includeTableScan := availableIndices(p.table)
 	var err error
 	if includeTableScan {
@@ -218,6 +218,7 @@ func (p *DataSource) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanI
 			unsortedRes = unsortedIsRes
 		}
 	}
+	statsTbl := p.statisticTable
 	p.storePlanInfo(prop, sortedRes, unsortedRes, uint64(statsTbl.Count))
 	return sortedRes, unsortedRes, uint64(statsTbl.Count), nil
 }
