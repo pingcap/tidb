@@ -30,7 +30,7 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 	if err := InferType(node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !UseNewPlanner {
+	if _, ok := node.(*ast.SelectStmt); !ok || !UseNewPlanner {
 		if err := logicOptimize(ctx, node); err != nil {
 			return nil, errors.Trace(err)
 		}
