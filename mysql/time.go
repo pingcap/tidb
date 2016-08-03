@@ -22,6 +22,7 @@ import (
 	"time"
 	"unicode"
 
+	"encoding/binary"
 	"github.com/juju/errors"
 )
 
@@ -30,6 +31,7 @@ var (
 	ErrInvalidTimeFormat = errors.New("invalid time format")
 	ErrInvalidYearFormat = errors.New("invalid year format")
 	ErrInvalidYear       = errors.New("invalid year")
+	ErrInvalidBinary     = errors.New("invalid binary")
 )
 
 // Time format without fractional seconds precision.
@@ -61,7 +63,7 @@ var (
 	ZeroDuration = Duration{Duration: time.Duration(0), Fsp: DefaultFsp}
 
 	// ZeroTime is the zero value for time.Time type.
-	ZeroTime = time.Date(0, 0, 0, 0, 0, 0, 0, time.UTC)
+	ZeroTime = time.Date(0, 0, 0, 0, 0, 0, 0, time.Local)
 
 	// ZeroDatetime is the zero value for datetime Time.
 	ZeroDatetime = Time{
@@ -83,6 +85,8 @@ var (
 		Type: TypeDate,
 		Fsp:  DefaultFsp,
 	}
+
+	local = time.Local
 )
 
 var (
@@ -157,71 +161,6 @@ func (t Time) String() string {
 // IsZero returns a boolean indicating whether the time is equal to ZeroTime.
 func (t Time) IsZero() bool {
 	return t.Time.Equal(ZeroTime)
-}
-
-// Marshal returns the binary encoding of time.
-func (t Time) Marshal() ([]byte, error) {
-	var (
-		b   []byte
-		err error
-	)
-
-	switch t.Type {
-	case TypeDatetime, TypeDate:
-		// We must use t's Zone not current Now Zone,
-		// For EDT/EST, even we create the time with time.Local location,
-		// we may still have a different zone with current Now time.
-		_, offset := t.Zone()
-		// For datetime and date type, we have a trick to marshal.
-		// e.g, if local time is 2010-10-10T10:10:10 UTC+8
-		// we will change this to 2010-10-10T10:10:10 UTC and then marshal.
-		b, err = t.Time.Add(time.Duration(offset) * time.Second).UTC().MarshalBinary()
-	case TypeTimestamp:
-		b, err = t.Time.UTC().MarshalBinary()
-	default:
-		err = errors.Errorf("invalid time type %d", t.Type)
-	}
-
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return b, nil
-}
-
-// Unmarshal decodes the binary data into Time with current local time.
-func (t *Time) Unmarshal(b []byte) error {
-	return t.UnmarshalInLocation(b, time.Local)
-}
-
-// UnmarshalInLocation decodes the binary data
-// into Time with a specific time Location.
-func (t *Time) UnmarshalInLocation(b []byte, loc *time.Location) error {
-	if err := t.Time.UnmarshalBinary(b); err != nil {
-		return errors.Trace(err)
-	}
-
-	if t.IsZero() {
-		return nil
-	}
-
-	if t.Type == TypeDatetime || t.Type == TypeDate {
-		// e.g, for 2010-10-10T10:10:10 UTC, we will unmarshal to 2010-10-10T10:10:10 location
-		_, offset := t.Time.In(loc).Zone()
-
-		t.Time = t.Time.Add(-time.Duration(offset) * time.Second).In(loc)
-		if t.Type == TypeDate {
-			// for date type ,we will only use year, month and day.
-			year, month, day := t.Time.Date()
-			t.Time = time.Date(year, month, day, 0, 0, 0, 0, loc)
-		}
-	} else if t.Type == TypeTimestamp {
-		t.Time = t.Time.In(loc)
-	} else {
-		return errors.Errorf("invalid time type %d", t.Type)
-	}
-
-	return nil
 }
 
 const numberFormat = "20060102150405"
@@ -344,6 +283,59 @@ func (t Time) RoundFrac(fsp int) (Time, error) {
 
 	nt := t.Time.Round(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond)
 	return Time{Time: nt, Type: t.Type, Fsp: fsp}, nil
+}
+
+// ToBin encodes Time to 12 bytes binary data.
+func (t Time) ToBin() []byte {
+	bin := make([]byte, 12)
+	tm := t.Time
+	if t.IsZero() {
+		return bin
+	}
+	if t.Type == TypeTimestamp {
+		tm = t.UTC()
+	}
+	year, month, day := tm.Date()
+	hour, minute, sec := tm.Clock()
+	intPart := (year*ten4+int(month)*ten2+day)*ten6 + hour*ten4 + minute*ten2 + sec
+	fracPart := uint32(tm.Nanosecond() / 1000)
+	binary.BigEndian.PutUint64(bin, uint64(intPart))
+	binary.BigEndian.PutUint32(bin[8:], fracPart)
+	return bin
+}
+
+// FromBin decodes 12 bytes binary data to Time.
+func (t *Time) FromBin(bin []byte) error {
+	if len(bin) != 12 {
+		return ErrInvalidBinary
+	}
+	intPart := int(binary.BigEndian.Uint64(bin))
+	fracPart := binary.BigEndian.Uint32(bin[8:])
+	if intPart == 0 && fracPart == 0 {
+		t.Time = ZeroTime
+		return nil
+	}
+	x := intPart / ten6 // date
+	year := x / ten4
+	x = x % ten4
+	month := x / ten2
+	day := x % ten2
+	x = intPart % ten6 // clock
+	hour := x / ten4
+	x = x % ten4
+	minute := x / ten2
+	second := x % ten2
+	nanosec := int(fracPart) * 1000
+	err := checkTime(year, month, day, hour, minute, second, nanosec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	loc := local
+	if t.Type == TypeTimestamp {
+		loc = time.UTC
+	}
+	t.Time = time.Date(year, time.Month(month), day, hour, minute, second, nanosec, loc).In(local)
+	return nil
 }
 
 func parseDateFormat(format string) []string {
