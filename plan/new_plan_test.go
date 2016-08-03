@@ -371,6 +371,86 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  "select a from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
 			best: "Table(t)->Selection->Projection",
 		},
+		{
+			sql:  "select a from t where c = 5",
+			best: "Index(t.c_d_e)[[5,5]]->Projection",
+		},
+		{
+			sql:  "select a from t where c = 5 and b = 1",
+			best: "Index(t.c_d_e)[[5,5]]->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1)",
+			best: "Index(t.c_d_e)[[1,1]]->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1) and d > 3",
+			best: "Index(t.c_d_e)[[1,1]]->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1, 2, 3)",
+			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3]]->Projection",
+		},
+		{
+			sql:  "select a from t where d in (1, 2, 3)",
+			best: "Table(t)->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c not in (1)",
+			best: "Table(t)->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c like 'abc'",
+			best: "Index(t.c_d_e)[[abc,abc]]->Projection",
+		},
+		{
+			sql:  "select a from t where c not like 'abc'",
+			best: "Table(t)->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where not (c like 'abc' or c like 'abd')",
+			best: "Table(t)->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c like '_abc'",
+			best: "Table(t)->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c like 'abc%'",
+			best: "Index(t.c_d_e)[[abc,abd)]->Projection",
+		},
+		{
+			sql:  "select a from t where c like 'abc_'",
+			best: "Index(t.c_d_e)[(abc,abd)]->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c like 'abc%af'",
+			best: "Index(t.c_d_e)[[abc,abd)]->Selection->Projection",
+		},
+		{
+			sql:  `select a from t where c like 'abc\\_' escape ''`,
+			best: "Index(t.c_d_e)[[abc_,abc_]]->Projection",
+		},
+		{
+			sql:  `select a from t where c like 'abc\\_'`,
+			best: "Index(t.c_d_e)[[abc_,abc_]]->Projection",
+		},
+		{
+			sql:  `select a from t where c like 'abc\\\\_'`,
+			best: "Index(t.c_d_e)[(abc\\,abc])]->Selection->Projection",
+		},
+		{
+			sql:  `select a from t where c like 'abc\\_%'`,
+			best: "Index(t.c_d_e)[[abc_,abc`)]->Projection",
+		},
+		{
+			sql:  `select a from t where c like 'abc=_%' escape '='`,
+			best: "Index(t.c_d_e)[[abc_,abc`)]->Projection",
+		},
+		{
+			sql:  `select a from t where c like 'abc\\__'`,
+			best: "Index(t.c_d_e)[(abc_,abc`)]->Selection->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
