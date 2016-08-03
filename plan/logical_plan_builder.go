@@ -283,7 +283,12 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 					colName = col.Name.Name
 				}
 			} else {
-				colName = model.NewCIStr(field.Text())
+				innerExpr := getInnerFromParentheses(field.Expr)
+				if _, ok := innerExpr.(*ast.ValueExpr); ok && innerExpr.Text() != "" {
+					colName = model.NewCIStr(innerExpr.Text())
+				} else {
+					colName = model.NewCIStr(field.Text())
+				}
 			}
 		}
 		schemaCol := &expression.Column{
@@ -419,10 +424,10 @@ func colMatch(a *ast.ColumnName, b *ast.ColumnName) bool {
 	return false
 }
 
-func matchField(f *ast.SelectField, col *ast.ColumnNameExpr) bool {
+func matchField(f *ast.SelectField, col *ast.ColumnNameExpr, ignoreAsName bool) bool {
 	// if col specify a table name, resolve from table source directly.
 	if col.Name.Table.L == "" {
-		if f.AsName.L == "" {
+		if f.AsName.L == "" || ignoreAsName {
 			if curCol, isCol := f.Expr.(*ast.ColumnNameExpr); isCol {
 				return curCol.Name.Name.L == col.Name.Name.L
 			}
@@ -434,14 +439,14 @@ func matchField(f *ast.SelectField, col *ast.ColumnNameExpr) bool {
 	return false
 }
 
-func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField) (index int, err error) {
+func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, ignoreAsName bool) (index int, err error) {
 	var matchedExpr ast.ExprNode
 	index = -1
 	for i, field := range fields {
 		if field.Auxiliary {
 			continue
 		}
-		if matchField(field, v) {
+		if matchField(field, v, ignoreAsName) {
 			curCol, isCol := field.Expr.(*ast.ColumnNameExpr)
 			if !isCol {
 				return i, nil
@@ -460,7 +465,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField) (
 
 // AggregateFuncExtractor visits Expr tree.
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
-type AggregateFuncExtractor struct {
+type havingAndOrderbyExprResolver struct {
 	inAggFunc    bool
 	inExpr       bool
 	orderBy      bool
@@ -473,7 +478,7 @@ type AggregateFuncExtractor struct {
 }
 
 // Enter implements Visitor interface.
-func (a *AggregateFuncExtractor) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
+func (a *havingAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
 	switch n.(type) {
 	case *ast.AggregateFuncExpr:
 		a.inAggFunc = true
@@ -488,7 +493,7 @@ func (a *AggregateFuncExtractor) Enter(n ast.Node) (node ast.Node, skipChildren 
 	return n, false
 }
 
-func (a *AggregateFuncExtractor) resolveFromSchema(v *ast.ColumnNameExpr, schema expression.Schema) (int, error) {
+func (a *havingAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, schema expression.Schema) (int, error) {
 	col, err := schema.FindColumn(v.Name)
 	if err != nil {
 		return -1, errors.Trace(err)
@@ -516,7 +521,7 @@ func (a *AggregateFuncExtractor) resolveFromSchema(v *ast.ColumnNameExpr, schema
 }
 
 // Leave implements Visitor interface.
-func (a *AggregateFuncExtractor) Leave(n ast.Node) (node ast.Node, ok bool) {
+func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool) {
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
 		a.inAggFunc = false
@@ -541,12 +546,16 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (node ast.Node, ok bool) {
 		}
 		index := -1
 		if resolveFieldsFirst {
-			index, a.err = resolveFromSelectFields(v, a.selectFields)
+			index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 			if a.err != nil {
 				return node, false
 			}
 			if index == -1 {
-				index, a.err = a.resolveFromSchema(v, a.p.GetSchema())
+				if a.orderBy {
+					index, a.err = a.resolveFromSchema(v, a.p.GetSchema())
+				} else {
+					index, a.err = resolveFromSelectFields(v, a.selectFields, true)
+				}
 			}
 		} else {
 			index, a.err = a.resolveFromSchema(v, a.p.GetSchema())
@@ -554,7 +563,7 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (node ast.Node, ok bool) {
 				return node, false
 			}
 			if index == -1 {
-				index, a.err = resolveFromSelectFields(v, a.selectFields)
+				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 			}
 		}
 		if a.err != nil {
@@ -574,7 +583,7 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (node ast.Node, ok bool) {
 
 func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan) (
 	map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int) {
-	extractor := &AggregateFuncExtractor{
+	extractor := &havingAndOrderbyExprResolver{
 		p:            p,
 		selectFields: sel.Fields.Fields,
 		aggMapper:    make(map[*ast.AggregateFuncExpr]int),
@@ -652,7 +661,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			g.err = errors.Trace(err)
 		} else if col == nil || !g.inExpr {
 			var index = -1
-			index, g.err = resolveFromSelectFields(v, g.fields)
+			index, g.err = resolveFromSelectFields(v, g.fields, false)
 			if g.err != nil {
 				return inNode, false
 			}
