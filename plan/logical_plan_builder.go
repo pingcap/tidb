@@ -283,7 +283,12 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 					colName = col.Name.Name
 				}
 			} else {
-				colName = model.NewCIStr(field.Text())
+				innerExpr := getInnerFromParentheses(field.Expr)
+				if _, ok := innerExpr.(*ast.ValueExpr); ok && innerExpr.Text() != "" {
+					colName = model.NewCIStr(innerExpr.Text())
+				} else {
+					colName = model.NewCIStr(field.Text())
+				}
 			}
 		}
 		schemaCol := &expression.Column{

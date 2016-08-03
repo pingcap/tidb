@@ -1806,8 +1806,7 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 		field string
 	}{
 		{"select distinct(a) from t", "a"},
-		// TODO: solve this in future.
-		//{"select (1)", "1"},
+		{"select (1)", "1"},
 		{"select (1+1)", "(1+1)"},
 		{"select a from t", "a"},
 		{"select        ((a+1))     from t", "((a+1))"},
@@ -2181,7 +2180,6 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 }
 
 func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
-	// TODO: New planner doesn't support in function yet, implement it in future.
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
