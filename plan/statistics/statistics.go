@@ -334,7 +334,7 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 			Repeats: cpb.GetRepeats(),
 		}
 		for i, val := range values {
-			c.Values[i], err = tablecodec.Unflatten(val, &cInfo.FieldType)
+			c.Values[i], err = tablecodec.Unflatten(val, &cInfo.FieldType, false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

@@ -64,10 +64,16 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	s := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient())
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	mc.cache[uuid] = s
 	return s, nil
 }
+
+// update oracle's lastTS every 2000ms.
+var oracleUpdateInterval = 2000
 
 type tikvStore struct {
 	uuid        string
@@ -76,17 +82,22 @@ type tikvStore struct {
 	regionCache *RegionCache
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, client Client) *tikvStore {
+func newTikvStore(uuid string, pdClient pd.Client, client Client) (*tikvStore, error) {
+	oracle, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	return &tikvStore{
 		uuid:        uuid,
-		oracle:      oracles.NewPdOracle(pdClient),
+		oracle:      oracle,
 		client:      client,
 		regionCache: NewRegionCache(pdClient),
-	}
+	}, nil
 }
 
 // NewMockTikvStore creates a mocked tikv store.
-func NewMockTikvStore() kv.Storage {
+func NewMockTikvStore() (kv.Storage, error) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.NewMvccStore()
@@ -116,6 +127,7 @@ func (s *tikvStore) Close() error {
 	if err := s.client.Close(); err != nil {
 		return errors.Trace(err)
 	}
+	s.oracle.Close()
 	return nil
 }
 
@@ -141,19 +153,6 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 		err = bo.Backoff(boPDRPC, errors.Errorf("get timestamp failed: %v", err))
 		if err != nil {
 			return 0, errors.Trace(err)
-		}
-	}
-}
-
-func (s *tikvStore) checkTimestampExpiredWithRetry(bo *Backoffer, ts uint64, TTL uint64) (bool, error) {
-	for {
-		expired, err := s.oracle.IsExpired(ts, TTL)
-		if err == nil {
-			return expired, nil
-		}
-		err = bo.Backoff(boPDRPC, errors.Errorf("check expired failed: %v", err))
-		if err != nil {
-			return false, errors.Trace(err)
 		}
 	}
 }

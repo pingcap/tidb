@@ -2181,7 +2181,6 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 }
 
 func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
-	plan.UseNewPlanner = false
 	// TODO: New planner doesn't support in function yet, implement it in future.
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
@@ -2192,7 +2191,7 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	mustExecSQL(c, se, "insert into t values (1, 5)")
 
 	sql := "select c1 from t where c1 in (1) and c2 < 10"
-	expectedExplain := "Index(t.idx_c1_c2)->Fields"
+	expectedExplain := "Index(t.idx_c1_c2)[[1,1]]->Selection->Projection"
 	checkPlan(c, se, sql, expectedExplain)
 	mustExecMatch(c, se, sql, [][]interface{}{{1}})
 
@@ -2200,13 +2199,14 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	checkPlan(c, se, sql, expectedExplain)
 	mustExecMatch(c, se, sql, [][]interface{}{{1}})
 
-	sql = "select c1 from t where c1 in (1.1) and c2 > 3"
-	checkPlan(c, se, sql, expectedExplain)
-	mustExecMatch(c, se, sql, [][]interface{}{})
-
 	sql = "select c1 from t where c1 in (1) and c2 < 5.1"
 	checkPlan(c, se, sql, expectedExplain)
 	mustExecMatch(c, se, sql, [][]interface{}{{1}})
+
+	sql = "select c1 from t where c1 in (1.1) and c2 > 3"
+	expectedExplain = "Index(t.idx_c1_c2)[[1.1,1.1]]->Selection->Projection"
+	checkPlan(c, se, sql, expectedExplain)
+	mustExecMatch(c, se, sql, [][]interface{}{})
 
 	// Test varchar type.
 	mustExecSQL(c, se, "drop table t;")
@@ -2219,7 +2219,6 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	c.Assert(err, IsNil)
 	err = store.Close()
 	c.Assert(err, IsNil)
-	plan.UseNewPlanner = true
 }
 
 func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {

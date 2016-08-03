@@ -176,6 +176,17 @@ func (p *DataSource) handleIndexScan(prop requiredProperty, index *model.IndexIn
 		rb := rangeBuilder{}
 		is.Ranges = rb.buildIndexRanges(fullRange)
 	}
+	for _, colInfo := range is.Columns {
+		for _, indexCol := range is.Index.Columns {
+			if colInfo.Name.L != indexCol.Name.L {
+				is.DoubleRead = true
+				break
+			}
+		}
+		if is.DoubleRead {
+			break
+		}
+	}
 	rowCounts := []uint64{rowCount}
 	return resultPlan.matchProperty(prop, rowCounts), resultPlan.matchProperty(nil, rowCounts), nil
 }
