@@ -410,23 +410,24 @@ func (s *testMyDecimalSuite) TestToBinFromBin(c *C) {
 		{"12345", 10, 3, "12345.000", 0},
 		{"123.45", 10, 3, "123.450", 0},
 		{"-123.45", 20, 10, "-123.4500000000", 0},
-		{".00012345000098765", 15, 14, "0.00012345000098", 0},
+		{".00012345000098765", 15, 14, "0.00012345000098", eDecTruncate},
 		{".00012345000098765", 22, 20, "0.00012345000098765000", 0},
 		{".12345000098765", 30, 20, "0.12345000098765000000", 0},
-		{"-.000000012345000098765", 30, 20, "-0.00000001234500009876", 0},
+		{"-.000000012345000098765", 30, 20, "-0.00000001234500009876", eDecTruncate},
 		{"1234500009876.5", 30, 5, "1234500009876.50000", 0},
-		{"111111111.11", 10, 2, "11111111.11", 0},
+		{"111111111.11", 10, 2, "11111111.11", eDecOverflow},
 		{"000000000.01", 7, 3, "0.010", 0},
 		{"123.4", 10, 2, "123.40", 0},
+		{"1000", 3, 0, "0", eDecOverflow},
 	}
 	for _, ca := range cases {
 		var dec MyDecimal
 		ec := dec.FromString([]byte(ca.input))
 		c.Assert(ec, Equals, 0)
 		buf, ec := dec.ToBin(ca.precision, ca.frac)
+		c.Assert(ec, Equals, ca.errcode, Commentf(ca.input))
 		var dec2 MyDecimal
 		ec = dec2.FromBin(buf, ca.precision, ca.frac)
-		c.Assert(ec, Equals, ca.errcode)
 		str, _ := dec2.ToString(0, 0, 0)
 		c.Assert(string(str), Equals, ca.output)
 	}
