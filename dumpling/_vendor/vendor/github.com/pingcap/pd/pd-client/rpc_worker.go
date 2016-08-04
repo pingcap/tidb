@@ -16,6 +16,9 @@ package pd
 import (
 	"bufio"
 	"net"
+	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,6 +34,7 @@ import (
 )
 
 const (
+	pdRPCPrefix      = "/pd/rpc"
 	connectPDTimeout = time.Second * 3
 	netIOTimeout     = time.Second
 )
@@ -113,7 +117,7 @@ func (w *rpcWorker) work() {
 
 RECONNECT:
 	log.Infof("[pd] connect to pd server %v", w.addr)
-	conn, err := net.DialTimeout("tcp", w.addr, connectPDTimeout)
+	conn, err := rpcConnect(w.addr)
 	if err != nil {
 		log.Warnf("[pd] failed connect pd server: %v, will retry later", err)
 
@@ -340,4 +344,46 @@ func (w *rpcWorker) checkResponse(resp *pdpb.Response) error {
 		return errors.Errorf("[pd] rpc response with error: %v", err)
 	}
 	return nil
+}
+
+func parseUrls(s string) ([]url.URL, error) {
+	items := strings.Split(s, ",")
+	urls := make([]url.URL, 0, len(items))
+	for _, item := range items {
+		u, err := url.Parse(item)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		urls = append(urls, *u)
+	}
+
+	return urls, nil
+}
+
+func rpcConnect(addr string) (net.Conn, error) {
+	req, err := http.NewRequest("GET", pdRPCPrefix, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	urls, err := parseUrls(addr)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, url := range urls {
+		conn, err := net.DialTimeout("tcp", url.Host, connectPDTimeout)
+		if err != nil {
+			continue
+		}
+		err = req.Write(conn)
+		if err != nil {
+			conn.Close()
+			continue
+		}
+		return conn, nil
+	}
+
+	return nil, errors.Errorf("connect to %s failed", addr)
 }
