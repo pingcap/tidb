@@ -46,6 +46,7 @@ func isASCII(ch byte) bool {
 type trieNode struct {
 	childs [256]*trieNode
 	token  int
+	fn     func(s *Scanner) (int, Pos, string)
 }
 
 var ruleTable trieNode
@@ -68,11 +69,21 @@ func initTokenString(str string, tok int) {
 	node.token = tok
 }
 
+func initTokenFunc(str string, fn func(s *Scanner) (int, Pos, string)) {
+	for i := 0; i < len(str); i++ {
+		c := str[i]
+		if ruleTable.childs[c] == nil {
+			ruleTable.childs[c] = &trieNode{}
+		}
+		ruleTable.childs[c].fn = fn
+	}
+	return
+}
+
 func init() {
 	initTokenByte('*', int('*'))
 	initTokenByte('/', int('/'))
 	initTokenByte('+', int('+'))
-	initTokenByte('-', int('-'))
 	initTokenByte('>', int('>'))
 	initTokenByte('<', int('<'))
 	initTokenByte('(', int('('))
@@ -101,6 +112,18 @@ func init() {
 	initTokenString("<>", neqSynonym)
 	initTokenString("<<", lsh)
 	initTokenString(">>", rsh)
+
+	initTokenFunc("@", startWithAt)
+	initTokenFunc("/", startWithSlash)
+	initTokenFunc("-", startWithDash)
+	initTokenFunc("#", startWithSharp)
+	initTokenFunc("Xx", startWithXx)
+	initTokenFunc("x", startWithXx)
+	initTokenFunc("b", startWithb)
+	initTokenFunc("_$ABCDEFGHIJKLMNOPQRSTUVWYZacdefghijklmnopqrstuvwyz", scanIdentifier)
+	initTokenFunc("`", startWithBackQuote)
+	initTokenFunc("0123456789.", startWithNumber)
+	initTokenFunc("'\"", startString)
 }
 
 var tokenMap = map[string]int{

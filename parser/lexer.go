@@ -125,77 +125,72 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 	if isWhitespace(ch0) {
 		ch0 = s.skipWhitespace()
 	}
+
 	pos = s.r.pos()
-
-	if isIdentFirstChar(ch0) {
-		switch ch0 {
-		case 'X', 'x':
-			s.r.inc()
-			if s.r.readByte() == '\'' {
-				s.scanHex()
-				if s.r.peek() == '\'' {
-					s.r.inc()
-					tok, lit = hexLit, s.r.data(&pos)
-				} else {
-					tok = unicode.ReplacementChar
-				}
-				return
-			}
-			s.r.p = pos
-		case 'b':
-			s.r.inc()
-			if s.r.readByte() == '\'' {
-				s.scanBit()
-				if s.r.peek() == '\'' {
-					s.r.inc()
-					tok, lit = bitLit, s.r.data(&pos)
-				} else {
-					tok = unicode.ReplacementChar
-				}
-				return
-			}
-			s.r.p = pos
-		}
-		return s.scanIdent()
-	} else if isDigit(ch0) || ch0 == '.' {
-		return s.scanNumber()
-	} else if ch0 == '\'' || ch0 == '"' {
-		return s.scanString()
-	} else if ch0 == '`' {
-		return s.scanQuotedIdent()
-	}
-
-	switch ch0 {
-	case '@':
-		return s.startWithAt()
-	case '/':
-		return s.startWithSlash()
-	case '-':
-		return s.startWithDash()
-	case '#':
-		s.r.incAsLongAs(func(ch byte) bool {
-			return ch != '\n'
-		})
-		return s.scan()
-	}
-
-	// search a trie to scan a token.
-	ch := ch0
+	// search a trie to get a token.
 	node := &ruleTable
 	for {
-		if node.childs[ch] == nil || s.r.eof() {
+		if node.childs[ch0] == nil || s.r.eof() {
 			break
 		}
-		node = node.childs[ch]
+		node = node.childs[ch0]
+		if node.fn != nil {
+			return node.fn(s)
+		}
 		s.r.inc()
-		ch = s.r.peek()
+		ch0 = s.r.peek()
 	}
 
 	tok, lit = node.token, s.r.data(&pos)
 	return
 }
 
-func (s *Scanner) startWithDash() (tok int, pos Pos, lit string) {
+func startWithXx(s *Scanner) (tok int, pos Pos, lit string) {
+	pos = s.r.pos()
+	s.r.inc()
+	if s.r.peek() == '\'' {
+		s.r.inc()
+		s.scanHex()
+		if s.r.peek() == '\'' {
+			s.r.inc()
+			tok, lit = hexLit, s.r.data(&pos)
+		} else {
+			tok = unicode.ReplacementChar
+		}
+		return
+	}
+	s.r.incAsLongAs(isIdentChar)
+	tok, lit = identifier, s.r.data(&pos)
+	return
+}
+
+func startWithb(s *Scanner) (tok int, pos Pos, lit string) {
+	pos = s.r.pos()
+	s.r.inc()
+	if s.r.peek() == '\'' {
+		s.r.inc()
+		s.scanBit()
+		if s.r.peek() == '\'' {
+			s.r.inc()
+			tok, lit = bitLit, s.r.data(&pos)
+		} else {
+			tok = unicode.ReplacementChar
+		}
+		return
+	}
+	s.r.incAsLongAs(isIdentChar)
+	tok, lit = identifier, s.r.data(&pos)
+	return
+}
+
+func startWithSharp(s *Scanner) (tok int, pos Pos, lit string) {
+	s.r.incAsLongAs(func(ch byte) bool {
+		return ch != '\n'
+	})
+	return s.scan()
+}
+
+func startWithDash(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	if !strings.HasPrefix(s.r.s[pos.Offset:], "-- ") {
 		tok = int('-')
@@ -210,7 +205,7 @@ func (s *Scanner) startWithDash() (tok int, pos Pos, lit string) {
 	return s.scan()
 }
 
-func (s *Scanner) startWithSlash() (tok int, pos Pos, lit string) {
+func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
 	ch0 := s.r.peek()
@@ -232,12 +227,12 @@ func (s *Scanner) startWithSlash() (tok int, pos Pos, lit string) {
 	return
 }
 
-func (s *Scanner) startWithAt() (tok int, pos Pos, lit string) {
+func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
 	ch1 := s.r.peek()
 	if isIdentFirstChar(ch1) {
-		s.scanIdent()
+		s.r.incAsLongAs(isIdentChar)
 		tok, lit = userVar, s.r.data(&pos)
 	} else if ch1 == '@' {
 		s.r.inc()
@@ -248,7 +243,7 @@ func (s *Scanner) startWithAt() (tok int, pos Pos, lit string) {
 				break
 			}
 		}
-		s.scanIdent()
+		s.r.incAsLongAs(isIdentChar)
 		tok, lit = sysVar, s.r.data(&pos)
 	} else {
 		tok = at
@@ -256,13 +251,14 @@ func (s *Scanner) startWithAt() (tok int, pos Pos, lit string) {
 	return
 }
 
-func (s *Scanner) scanIdent() (tok int, pos Pos, lit string) {
-	pos = s.r.pos()
+func scanIdentifier(s *Scanner) (int, Pos, string) {
+	pos := s.r.pos()
+	s.r.inc()
 	s.r.incAsLongAs(isIdentChar)
 	return identifier, pos, s.r.data(&pos)
 }
 
-func (s *Scanner) scanQuotedIdent() (tok int, pos Pos, lit string) {
+func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
 	s.buf.Reset()
@@ -281,6 +277,16 @@ func (s *Scanner) scanQuotedIdent() (tok int, pos Pos, lit string) {
 		}
 		s.buf.WriteByte(ch)
 	}
+}
+
+func startWithBackQuote(s *Scanner) (tok int, pos Pos, lit string) {
+	_, pos, lit = s.scanString()
+	tok = identifier
+	return
+}
+
+func startString(s *Scanner) (tok int, pos Pos, lit string) {
+	return s.scanString()
 }
 
 func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
@@ -344,7 +350,7 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 	return
 }
 
-func (s *Scanner) scanNumber() (tok int, pos Pos, lit string) {
+func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	ch0 := s.r.readByte()
 	switch ch0 {

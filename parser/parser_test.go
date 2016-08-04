@@ -134,6 +134,7 @@ func (s *testParserSuite) RunTest(c *C, table []testCase) {
 		}
 	}
 }
+
 func (s *testParserSuite) TestDMLStmt(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
@@ -1046,6 +1047,8 @@ var tableCompatible = []string{
 
 func (s *testParserSuite) TestParserCompatible(c *C) {
 	defer testleak.AfterTest(c)()
+	saveUseNewLexer := UseNewLexer
+
 	parser := New()
 	for _, str := range tableCompatible {
 		st1, err1 := parser.Parse(str, "", "")
@@ -1064,4 +1067,6 @@ func (s *testParserSuite) TestParserCompatible(c *C) {
 			}
 		}
 	}
+
+	UseNewLexer = saveUseNewLexer
 }

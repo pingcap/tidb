@@ -149,7 +149,7 @@ func (s *testLexerSuite) TestLexerCompatible(c *C) {
 func (s *testLexerSuite) TestscanQuotedIdent(c *C) {
 	defer testleak.AfterTest(c)()
 	l := NewScanner("`fk`")
-	tok, pos, lit := l.scanQuotedIdent()
+	tok, pos, lit := scanQuotedIdent(l)
 	c.Assert(pos.Offset, Equals, 0)
 	c.Assert(tok, Equals, identifier)
 	c.Assert(lit, Equals, "fk")
