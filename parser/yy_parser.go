@@ -71,19 +71,7 @@ type Parser struct {
 	result    []ast.StmtNode
 	cache     []yySymType
 	src       string
-	lexer     yyReset
-}
-
-// yyReset is an interface with reset method and returns a yyLexer.
-// if an object implements both yyLexer and yyReset, it can return itself in the reset method, thus reducing allocation.
-type yyReset interface {
-	reset(sql string) yyLexer
-}
-
-type defaultLexer struct{}
-
-func (l defaultLexer) reset(sql string) yyLexer {
-	return NewLexer(sql)
+	lexer     Scanner
 }
 
 type stmtTexter interface {
@@ -92,21 +80,9 @@ type stmtTexter interface {
 
 // New returns a Parser object.
 func New() *Parser {
-	var lexer yyReset
-	if UseNewLexer {
-		lexer = &Scanner{}
-	} else {
-		lexer = defaultLexer{}
-	}
 	return &Parser{
 		cache: make([]yySymType, 200),
-		lexer: lexer,
 	}
-}
-
-// SetLexer sets the underlying lexer for the parser.
-func (parser *Parser) SetLexer(lexer yyReset) {
-	parser.lexer = lexer
 }
 
 // Parse parses a query string to raw ast.StmtNode.
@@ -125,7 +101,13 @@ func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, err
 
 	sql = handleMySQLSpecificCode(sql)
 
-	l := parser.lexer.reset(sql)
+	var l yyLexer
+	if UseNewLexer {
+		parser.lexer.reset(sql)
+		l = &parser.lexer
+	} else {
+		l = NewLexer(sql)
+	}
 	yyParse(l, parser)
 
 	if len(l.Errors()) != 0 {
@@ -158,7 +140,7 @@ func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 }
 
 func (parser *Parser) startOffset(v *yySymType) int {
-	if _, ok := parser.lexer.(defaultLexer); ok {
+	if !UseNewLexer {
 		offset := v.offset
 		offset--
 		for unicode.IsSpace(rune(parser.src[offset])) {
@@ -172,7 +154,7 @@ func (parser *Parser) startOffset(v *yySymType) int {
 
 func (parser *Parser) endOffset(v *yySymType) int {
 	offset := v.offset
-	if _, ok := parser.lexer.(defaultLexer); ok {
+	if !UseNewLexer {
 		// offset = v.offset + len(v.ident)
 		offset--
 	}

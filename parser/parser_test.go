@@ -37,7 +37,6 @@ type testParserSuite struct {
 func (s *testParserSuite) TestSimple(c *C) {
 	defer testleak.AfterTest(c)()
 	parser := New()
-	parser.lexer = &Scanner{}
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
@@ -125,7 +124,6 @@ type testCase struct {
 
 func (s *testParserSuite) RunTest(c *C, table []testCase) {
 	parser := New()
-	parser.lexer = &Scanner{}
 	for _, t := range table {
 		_, err := parser.Parse(t.src, "", "")
 		comment := Commentf("source %v", t.src)
@@ -1013,7 +1011,6 @@ func BenchmarkParse(b *testing.B) {
 		"select c from t where c > 2",
 	}
 	parser := New()
-	parser.lexer = &Scanner{}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {
@@ -1049,13 +1046,14 @@ var tableCompatible = []string{
 
 func (s *testParserSuite) TestParserCompatible(c *C) {
 	defer testleak.AfterTest(c)()
-	p1 := New()
-	p2 := New()
-	p2.lexer = &Scanner{}
-
+	parser := New()
 	for _, str := range tableCompatible {
-		st1, err1 := p1.Parse(str, "", "")
-		st2, err2 := p2.Parse(str, "", "")
+		st1, err1 := parser.Parse(str, "", "")
+
+		UseNewLexer = true
+		st2, err2 := parser.Parse(str, "", "")
+		UseNewLexer = false
+
 		c.Assert(err1, IsNil)
 		c.Assert(err2, IsNil)
 		c.Assert(len(st1), Equals, len(st2))
