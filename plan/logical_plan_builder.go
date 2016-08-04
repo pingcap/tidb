@@ -274,8 +274,13 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		if field.AsName.L != "" {
 			colName = field.AsName
 		} else if c, ok := newExpr.(*expression.Column); ok && !c.IsAggOrSubq {
-			colName = c.ColName
-			tblName = c.TblName
+			if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
+				colName = astCol.Name.Name
+				tblName = astCol.Name.Table
+			} else {
+				colName = c.ColName
+				tblName = c.TblName
+			}
 		} else {
 			// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
 			if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
@@ -753,9 +758,6 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 		return nil
 	}
 	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
-	if sel.LockTp != ast.SelectLockNone {
-		p = b.buildSelectLock(p, sel.LockTp)
-	}
 	if sel.GroupBy != nil {
 		p, correlated, gbyCols = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 		if b.err != nil {
@@ -771,6 +773,9 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.err != nil {
 			return nil
 		}
+	}
+	if sel.LockTp != ast.SelectLockNone {
+		p = b.buildSelectLock(p, sel.LockTp)
 	}
 	if hasAgg {
 		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
