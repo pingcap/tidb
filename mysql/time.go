@@ -307,10 +307,10 @@ func (t Time) ToPackedUint() uint64 {
 	}
 	year, month, day := tm.Date()
 	hour, minute, sec := tm.Clock()
-	ymd := uint64(((year * 13 + int(month)) << 5) | day)
-	hms := uint64(hour << 12 | minute << 6 | sec)
-	micro := uint64(tm.Nanosecond()/1000)
-	return ((ymd << 17 | hms) << 24) | micro
+	ymd := uint64(((year*13 + int(month)) << 5) | day)
+	hms := uint64(hour<<12 | minute<<6 | sec)
+	micro := uint64(tm.Nanosecond() / 1000)
+	return ((ymd<<17 | hms) << 24) | micro
 }
 
 // FromPackedUint decodes Time from an packed uint64 value.
@@ -321,17 +321,17 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	}
 	ymdhms := packed >> 24
 	ymd := ymdhms >> 17
-	day := int(ymd % (1<<5))
+	day := int(ymd % (1 << 5))
 	ym := ymd >> 5
 	month := int(ym % 13)
-	year := int(ym/13)
+	year := int(ym / 13)
 
 	hms := ymdhms % (1 << 17)
-	second := int(hms % (1<<6))
+	second := int(hms % (1 << 6))
 	minute := int((hms >> 6) % (1 << 6))
 	hour := int(hms >> 12)
 
-	nanosec := int(packed % (1 << 24)) * 1000
+	nanosec := int(packed%(1<<24)) * 1000
 	err := checkTime(year, month, day, hour, minute, second, nanosec)
 	if err != nil {
 		return errors.Trace(err)
