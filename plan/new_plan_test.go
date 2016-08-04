@@ -400,6 +400,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "Table(t)->Selection->Projection",
 		},
 		{
+			sql:  "select a from t where c like ''",
+			best: "Index(t.c_d_e)[[,]]->Projection",
+		},
+		{
 			sql:  "select a from t where c like 'abc'",
 			best: "Index(t.c_d_e)[[abc,abc]]->Projection",
 		},
