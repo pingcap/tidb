@@ -26,6 +26,9 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
+// UseNewLexer provides a switch for the tidb-server binary.
+var UseNewLexer bool
+
 // Error instances.
 var (
 	ErrSyntax = terror.ClassParser.New(CodeSyntaxErr, "syntax error")
@@ -89,9 +92,15 @@ type stmtTexter interface {
 
 // New returns a Parser object.
 func New() *Parser {
+	var lexer yyReset
+	if UseNewLexer {
+		lexer = &Scanner{}
+	} else {
+		lexer = defaultLexer{}
+	}
 	return &Parser{
 		cache: make([]yySymType, 200),
-		lexer: defaultLexer{},
+		lexer: lexer,
 	}
 }
 

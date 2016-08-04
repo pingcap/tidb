@@ -27,6 +27,7 @@ import (
 	"github.com/ngaut/systimemon"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/metric"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/server"
@@ -36,15 +37,16 @@ import (
 )
 
 var (
-	store      = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
-	storePath  = flag.String("path", "/tmp/tidb", "tidb storage path")
-	logLevel   = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
-	port       = flag.String("P", "4000", "mp server port")
-	statusPort = flag.String("status", "10080", "tidb server status port")
-	lease      = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
-	socket     = flag.String("socket", "", "The socket file to use for connection.")
-	enablePS   = flag.Int("perfschema", 0, "If enable performance schema.")
-	useNewPlan = flag.Int("newplan", 1, "If use new planner.")
+	store       = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
+	storePath   = flag.String("path", "/tmp/tidb", "tidb storage path")
+	logLevel    = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
+	port        = flag.String("P", "4000", "mp server port")
+	statusPort  = flag.String("status", "10080", "tidb server status port")
+	lease       = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
+	socket      = flag.String("socket", "", "The socket file to use for connection.")
+	enablePS    = flag.Int("perfschema", 0, "If enable performance schema.")
+	useNewPlan  = flag.Int("newplan", 1, "If use new planner.")
+	useNewLexer = flag.Int("newlexer", 0, "If use new lexer.")
 )
 
 func main() {
@@ -82,6 +84,10 @@ func main() {
 
 	if *useNewPlan == 0 {
 		plan.UseNewPlanner = false
+	}
+
+	if *useNewLexer != 0 {
+		parser.UseNewLexer = true
 	}
 
 	// Create a session to load information schema.
