@@ -144,7 +144,6 @@ func (s *testLexerSuite) TestLexerCompatible(c *C) {
 			}
 		}
 	}
-
 }
 
 func (s *testLexerSuite) TestscanQuotedIdent(c *C) {

@@ -155,7 +155,6 @@ func (parser *Parser) startOffset(v *yySymType) int {
 func (parser *Parser) endOffset(v *yySymType) int {
 	offset := v.offset
 	if !UseNewLexer {
-		// offset = v.offset + len(v.ident)
 		offset--
 	}
 

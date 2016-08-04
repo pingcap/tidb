@@ -462,7 +462,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select sysdate(), sysdate(6)", true},
 		{"SELECT time('01:02:03');", true},
 
-		// // Select current_time
+		// Select current_time
 		{"select current_time", true},
 		{"select current_time()", true},
 		{"select current_time(6)", true},

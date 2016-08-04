@@ -29,7 +29,7 @@ type Pos struct {
 	Offset int
 }
 
-// Scanner implements the yyLexer interface
+// Scanner implements the yyLexer interface.
 type Scanner struct {
 	r   reader
 	buf bytes.Buffer
@@ -44,13 +44,11 @@ func (s *Scanner) Errors() []error {
 }
 
 // reset resets the sql string to be scanned.
-// Scanner satisfies yyReset interface.
-func (s *Scanner) reset(sql string) yyLexer {
+func (s *Scanner) reset(sql string) {
 	s.r = reader{s: sql}
 	s.buf.Reset()
 	s.errs = s.errs[:0]
 	s.stmtStartPos = 0
-	return s
 }
 
 func (s *Scanner) stmtText() string {
@@ -181,7 +179,7 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		return s.scan()
 	}
 
-	// search a trie to scan a token
+	// search a trie to scan a token.
 	ch := ch0
 	node := &ruleTable
 	for {
@@ -305,7 +303,6 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 		if ch0 == '\n' {
 		}
 		if ch0 == '\\' {
-			// save := s.r.pos()
 			s.r.inc()
 			ch0 = s.r.peek()
 			if ch0 == 'n' {
@@ -337,7 +334,7 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 
 	lit = s.buf.String()
 	// Quoted strings placed next to each other are concatenated to a single string.
-	// See http://dev.mysql.com/doc/refman/5.5/en/string-literals.html
+	// See http://dev.mysql.com/doc/refman/5.7/en/string-literals.html
 	ch := s.r.peek()
 	if ch == '\'' {
 		_, _, lit1 := s.scanString()
