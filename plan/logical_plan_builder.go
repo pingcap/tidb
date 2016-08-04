@@ -274,8 +274,13 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		if field.AsName.L != "" {
 			colName = field.AsName
 		} else if c, ok := newExpr.(*expression.Column); ok && !c.IsAggOrSubq {
-			colName = c.ColName
-			tblName = c.TblName
+			if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
+				colName = astCol.Name.Name
+				tblName = astCol.Name.Table
+			} else {
+				colName = c.ColName
+				tblName = c.TblName
+			}
 		} else {
 			// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
 			if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
@@ -283,7 +288,12 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 					colName = col.Name.Name
 				}
 			} else {
-				colName = model.NewCIStr(field.Text())
+				innerExpr := getInnerFromParentheses(field.Expr)
+				if _, ok := innerExpr.(*ast.ValueExpr); ok && innerExpr.Text() != "" {
+					colName = model.NewCIStr(innerExpr.Text())
+				} else {
+					colName = model.NewCIStr(field.Text())
+				}
 			}
 		}
 		schemaCol := &expression.Column{
@@ -533,7 +543,8 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 		}
 		if !a.inAggFunc && !a.orderBy {
 			for _, item := range a.gbyItems {
-				if col, ok := item.Expr.(*ast.ColumnNameExpr); ok && colMatch(v.Name, col.Name) {
+				if col, ok := item.Expr.(*ast.ColumnNameExpr); ok &&
+					(colMatch(v.Name, col.Name) || colMatch(col.Name, v.Name)) {
 					resolveFieldsFirst = false
 					break
 				}
@@ -652,9 +663,8 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
-		if col, err := g.schema.FindColumn(v.Name); err != nil {
-			g.err = errors.Trace(err)
-		} else if col == nil || !g.inExpr {
+		col, err := g.schema.FindColumn(v.Name)
+		if col == nil || !g.inExpr {
 			var index = -1
 			index, g.err = resolveFromSelectFields(v, g.fields, false)
 			if g.err != nil {
@@ -666,6 +676,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			if index != -1 {
 				return g.fields[index].Expr, true
 			}
+			g.err = errors.Trace(err)
 			return inNode, false
 		}
 	case *ast.PositionExpr:
@@ -747,9 +758,6 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 		return nil
 	}
 	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
-	if sel.LockTp != ast.SelectLockNone {
-		p = b.buildSelectLock(p, sel.LockTp)
-	}
 	if sel.GroupBy != nil {
 		p, correlated, gbyCols = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 		if b.err != nil {
@@ -765,6 +773,9 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.err != nil {
 			return nil
 		}
+	}
+	if sel.LockTp != ast.SelectLockNone {
+		p = b.buildSelectLock(p, sel.LockTp)
 	}
 	if hasAgg {
 		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
