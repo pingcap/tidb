@@ -128,6 +128,10 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 	}
 	pos = s.r.pos()
 
+	if ch0 != unicode.ReplacementChar && isIdentExtend(ch0) {
+		return scanIdentifier(s)
+	}
+
 	// search a trie to get a token.
 	node := &ruleTable
 	for ch0 >= 0 && ch0 <= 255 {

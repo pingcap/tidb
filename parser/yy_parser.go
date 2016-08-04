@@ -27,7 +27,7 @@ import (
 )
 
 // UseNewLexer provides a switch for the tidb-server binary.
-var UseNewLexer bool = true
+var UseNewLexer bool
 
 // Error instances.
 var (

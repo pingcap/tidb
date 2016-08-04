@@ -164,3 +164,18 @@ func (s *testLexerSuite) TestscanString(c *C) {
 	c.Assert(pos.Offset, Equals, 0)
 	c.Assert(lit, Equals, " \n\tTest String")
 }
+
+func (s *testLexerSuite) TestIdentifier(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []string{
+		`哈哈`,
+		// `5number`,
+	}
+	l := &Scanner{}
+	for _, v := range table {
+		l.reset(v)
+		tok, _, lit := l.scan()
+		c.Assert(tok, Equals, identifier)
+		c.Assert(lit, Equals, v)
+	}
+}

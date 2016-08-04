@@ -32,7 +32,11 @@ func isDigit(ch rune) bool {
 }
 
 func isIdentChar(ch rune) bool {
-	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$'
+	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || isIdentExtend(ch)
+}
+
+func isIdentExtend(ch rune) bool {
+	return ch >= 0x80 && ch <= '\uffff'
 }
 
 func isIdentFirstChar(ch rune) bool {
