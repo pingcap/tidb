@@ -538,7 +538,8 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 		}
 		if !a.inAggFunc && !a.orderBy {
 			for _, item := range a.gbyItems {
-				if col, ok := item.Expr.(*ast.ColumnNameExpr); ok && colMatch(v.Name, col.Name) {
+				if col, ok := item.Expr.(*ast.ColumnNameExpr); ok &&
+					(colMatch(v.Name, col.Name) || colMatch(col.Name, v.Name)) {
 					resolveFieldsFirst = false
 					break
 				}
@@ -657,9 +658,8 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
-		if col, err := g.schema.FindColumn(v.Name); err != nil {
-			g.err = errors.Trace(err)
-		} else if col == nil || !g.inExpr {
+		col, err := g.schema.FindColumn(v.Name)
+		if col == nil || !g.inExpr {
 			var index = -1
 			index, g.err = resolveFromSelectFields(v, g.fields, false)
 			if g.err != nil {
@@ -671,6 +671,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			if index != -1 {
 				return g.fields[index].Expr, true
 			}
+			g.err = errors.Trace(err)
 			return inNode, false
 		}
 	case *ast.PositionExpr:
