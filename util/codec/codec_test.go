@@ -496,7 +496,7 @@ func (s *testCodecSuite) TestTime(c *C) {
 		c.Assert(err, IsNil)
 		var t mysql.Time
 		t.Type = mysql.TypeDatetime
-		t.FromBin(v[0].GetBytes())
+		t.FromPackedUint(v[0].GetUint64())
 		c.Assert(types.NewDatum(t), DeepEquals, m)
 	}
 

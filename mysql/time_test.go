@@ -321,47 +321,46 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	defer testleak.AfterTest(c)()
 	t, err := ParseTimestamp("2010-10-10 10:11:11")
 	c.Assert(err, IsNil)
-	b := t.ToBin()
-	c.Assert(err, IsNil)
+	packed := t.ToPackedUint()
 
 	var t1 Time
 	t1.Type = TypeTimestamp
 
 	z := s.getLocation(c)
 	local = z
-	err = t1.FromBin(b)
+	err = t1.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t.String(), Not(Equals), t1.String())
 
 	local = time.Local
-	err = t1.FromBin(b)
+	err = t1.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t.String(), Equals, t1.String())
 
 	t1.Time = time.Now()
-	b = t1.ToBin()
+	packed = t1.ToPackedUint()
 
 	var t2 Time
 	t2.Type = TypeTimestamp
-	err = t2.FromBin(b)
+	err = t2.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t1.String(), Equals, t2.String())
 
-	b = ZeroDatetime.ToBin()
+	packed = ZeroDatetime.ToPackedUint()
 
 	var t3 Time
 	t3.Type = TypeDatetime
-	err = t3.FromBin(b)
+	err = t3.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t3.String(), Equals, ZeroDatetime.String())
 
 	t, err = ParseDatetime("0001-01-01 00:00:00")
 	c.Assert(err, IsNil)
-	b = t.ToBin()
+	packed = t.ToPackedUint()
 
 	var t4 Time
 	t4.Type = TypeDatetime
-	err = t4.FromBin(b)
+	err = t4.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t.String(), Equals, t4.String())
 
@@ -376,12 +375,12 @@ func (s *testTimeSuite) TestCodec(c *C) {
 		t, err := ParseTime(test, TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
 
-		b = t.ToBin()
+		packed = t.ToPackedUint()
 
 		var dest Time
 		dest.Type = TypeDatetime
 		dest.Fsp = MaxFsp
-		err = dest.FromBin(b)
+		err = dest.FromPackedUint(packed)
 		c.Assert(err, IsNil)
 		c.Assert(dest.String(), Equals, test)
 	}

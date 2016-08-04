@@ -136,8 +136,7 @@ func flatten(data types.Datum) (types.Datum, error) {
 	switch data.Kind() {
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
-		bin := data.GetMysqlTime().ToBin()
-		return types.NewBytesDatum(bin), nil
+		return types.NewUintDatum(data.GetMysqlTime().ToPackedUint()), nil
 	case types.KindMysqlDuration:
 		// for mysql time type
 		data.SetInt64(int64(data.GetMysqlDuration().Duration))
@@ -308,7 +307,7 @@ func Unflatten(datum types.Datum, ft *types.FieldType, inIndex bool) (types.Datu
 		t.Type = ft.Tp
 		t.Fsp = ft.Decimal
 		var err error
-		err = t.FromBin(datum.GetBytes())
+		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}

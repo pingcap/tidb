@@ -22,7 +22,6 @@ import (
 	"time"
 	"unicode"
 
-	"encoding/binary"
 	"github.com/juju/errors"
 )
 
@@ -31,7 +30,7 @@ var (
 	ErrInvalidTimeFormat = errors.New("invalid time format")
 	ErrInvalidYearFormat = errors.New("invalid year format")
 	ErrInvalidYear       = errors.New("invalid year")
-	ErrInvalidBinary     = errors.New("invalid binary")
+	ErrInvalidBinary     = errors.New("invalid time binary")
 )
 
 // Time format without fractional seconds precision.
@@ -285,47 +284,55 @@ func (t Time) RoundFrac(fsp int) (Time, error) {
 	return Time{Time: nt, Type: t.Type, Fsp: fsp}, nil
 }
 
-// ToBin encodes Time to 12 bytes binary data.
-func (t Time) ToBin() []byte {
-	bin := make([]byte, 12)
+// ToPackedUint encodes Time to a packed uint64 value.
+//
+//    1 bit  0
+//   17 bits year*13+month   (year 0-9999, month 0-12)
+//    5 bits day             (0-31)
+//    5 bits hour            (0-23)
+//    6 bits minute          (0-59)
+//    6 bits second          (0-59)
+//   24 bits microseconds    (0-999999)
+//
+//   Total: 64 bits = 8 bytes
+//
+//   0YYYYYYY.YYYYYYYY.YYdddddh.hhhhmmmm.mmssssss.ffffffff.ffffffff.ffffffff
+//
+func (t Time) ToPackedUint() uint64 {
 	tm := t.Time
 	if t.IsZero() {
-		return bin
+		return 0
 	}
 	if t.Type == TypeTimestamp {
 		tm = t.UTC()
 	}
 	year, month, day := tm.Date()
 	hour, minute, sec := tm.Clock()
-	intPart := (year*ten4+int(month)*ten2+day)*ten6 + hour*ten4 + minute*ten2 + sec
-	fracPart := uint32(tm.Nanosecond() / 1000)
-	binary.BigEndian.PutUint64(bin, uint64(intPart))
-	binary.BigEndian.PutUint32(bin[8:], fracPart)
-	return bin
+	ymd := uint64(((year * 13 + int(month)) << 5) | day)
+	hms := uint64(hour << 12 | minute << 6 | sec)
+	micro := uint64(tm.Nanosecond()/1000)
+	return ((ymd << 17 | hms) << 24) | micro
 }
 
-// FromBin decodes 12 bytes binary data to Time.
-func (t *Time) FromBin(bin []byte) error {
-	if len(bin) != 12 {
-		return ErrInvalidBinary
-	}
-	intPart := int(binary.BigEndian.Uint64(bin))
-	fracPart := binary.BigEndian.Uint32(bin[8:])
-	if intPart == 0 && fracPart == 0 {
+// FromPackedUint decodes Time from an packed uint64 value.
+func (t *Time) FromPackedUint(packed uint64) error {
+	if packed == 0 {
 		t.Time = ZeroTime
 		return nil
 	}
-	x := intPart / ten6 // date
-	year := x / ten4
-	x = x % ten4
-	month := x / ten2
-	day := x % ten2
-	x = intPart % ten6 // clock
-	hour := x / ten4
-	x = x % ten4
-	minute := x / ten2
-	second := x % ten2
-	nanosec := int(fracPart) * 1000
+	ymdhms := packed >> 24
+	ymd := ymdhms >> 17
+	day := int(ymd % (1<<5))
+	ym := ymd >> 5
+	month := int(ym % 13)
+	year := int(ym/13)
+
+	hms := ymdhms % (1 << 17)
+	second := int(hms % (1<<6))
+	minute := int((hms >> 6) % (1 << 6))
+	hour := int(hms >> 12)
+
+	nanosec := int(packed % (1 << 24)) * 1000
 	err := checkTime(year, month, day, hour, minute, second, nanosec)
 	if err != nil {
 		return errors.Trace(err)

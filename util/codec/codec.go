@@ -50,8 +50,8 @@ func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
 		case types.KindString, types.KindBytes:
 			b = encodeBytes(b, val.GetBytes(), comparable)
 		case types.KindMysqlTime:
-			// As ToBin creates a fixed length(12) bytes, we can encode it in compact bytes, and still comparable.
-			b = encodeBytes(b, val.GetMysqlTime().ToBin(), false)
+			b = append(b, uintFlag)
+			b = EncodeUint(b, val.GetMysqlTime().ToPackedUint())
 		case types.KindMysqlDuration:
 			// duration may have negative value, so we cannot use String to encode directly.
 			b = append(b, durationFlag)
