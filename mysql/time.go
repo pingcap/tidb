@@ -30,7 +30,6 @@ var (
 	ErrInvalidTimeFormat = errors.New("invalid time format")
 	ErrInvalidYearFormat = errors.New("invalid year format")
 	ErrInvalidYear       = errors.New("invalid year")
-	ErrInvalidBinary     = errors.New("invalid time binary")
 )
 
 // Time format without fractional seconds precision.
