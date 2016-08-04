@@ -340,6 +340,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		best string
 	}{
 		{
+			sql:  "select a from t where c is not null",
+			best: "Table(t)->Selection->Projection",
+		},
+		{
 			sql:  "select a from t where c >= 4",
 			best: "Index(t.c_d_e)[[4,<nil>]]->Projection",
 		},
