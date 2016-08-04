@@ -321,14 +321,14 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	}
 	ymdhms := packed >> 24
 	ymd := ymdhms >> 17
-	day := int(ymd % (1 << 5))
+	day := int(ymd & (1<<5 - 1))
 	ym := ymd >> 5
 	month := int(ym % 13)
 	year := int(ym / 13)
 
-	hms := ymdhms % (1 << 17)
-	second := int(hms % (1 << 6))
-	minute := int((hms >> 6) % (1 << 6))
+	hms := ymdhms & (1<<17 - 1)
+	second := int(hms & (1<<6 - 1))
+	minute := int((hms >> 6) & (1<<6 - 1))
 	hour := int(hms >> 12)
 
 	nanosec := int(packed%(1<<24)) * 1000
