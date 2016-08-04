@@ -40,7 +40,7 @@ func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, in
 		var rowCount int64
 		var err error
 		offset := indexInfo.Columns[i].Offset
-		if l.Kind() == types.KindMinNotNull && r.Kind() == types.KindMaxValue {
+		if l.Kind() == types.KindNull && r.Kind() == types.KindMaxValue {
 			break
 		} else if l.Kind() == types.KindMinNotNull {
 			rowCount, err = table.Columns[offset].LessRowCount(r)
