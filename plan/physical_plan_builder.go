@@ -45,8 +45,7 @@ func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, in
 		} else if l.Kind() == types.KindMinNotNull {
 			rowCount, err = table.Columns[offset].LessRowCount(r)
 		} else if r.Kind() == types.KindMaxValue {
-			rowCount, err = table.Columns[offset].LessRowCount(l)
-			rowCount = table.Count - rowCount
+			rowCount, err = table.Columns[offset].GreaterRowCount(l)
 		} else {
 			compare, err1 := l.CompareDatum(r)
 			if err1 != nil {
@@ -121,8 +120,7 @@ func (p *DataSource) handleTableScan(prop requiredProperty) (*physicalPlanInfo, 
 			} else if rg.LowVal == math.MinInt64 {
 				cnt, err = statsTbl.Columns[offset].LessRowCount(types.NewDatum(rg.HighVal))
 			} else if rg.HighVal == math.MaxInt64 {
-				cnt, err = statsTbl.Columns[offset].LessRowCount(types.NewDatum(rg.LowVal))
-				cnt = statsTbl.Count - cnt
+				cnt, err = statsTbl.Columns[offset].GreaterRowCount(types.NewDatum(rg.LowVal))
 			} else {
 				cnt, err = statsTbl.Columns[offset].BetweenRowCount(types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal))
 			}
