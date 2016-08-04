@@ -1706,6 +1706,11 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("3", "2", "2"))
 	result = tk.MustQuery("select - c, c as d from t group by c having null not between c and avg(distinct d) - d")
 	result.Check(testkit.Rows())
+	result = tk.MustQuery("select - c as c from t group by c having t.c > 5")
+	result.Check(testkit.Rows())
+	// TODO: This query is reported error in resolver.
+	//result := tk.MustQuery("select t1.c from t t1, t t2 group by c having c > 5")
+	//result.Check(testkit.Rows())
 	result = tk.MustQuery("select count(*) from (select d, c from t) k where d != 0 group by d")
 	result.Check(testkit.Rows("3", "2", "2"))
 	result = tk.MustQuery("select c as a from t group by d having a < 0")
