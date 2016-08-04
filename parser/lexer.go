@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 var _ = yyLexer(&Scanner{})
@@ -116,8 +117,8 @@ func NewScanner(s string) *Scanner {
 	return &Scanner{r: reader{s: s}}
 }
 
-func (s *Scanner) skipWhitespace() byte {
-	return s.r.incAsLongAs(isWhitespace)
+func (s *Scanner) skipWhitespace() rune {
+	return s.r.incAsLongAs(unicode.IsSpace)
 }
 
 func (s *Scanner) scan() (tok int, pos Pos, lit string) {
@@ -125,11 +126,11 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 	if isWhitespace(ch0) {
 		ch0 = s.skipWhitespace()
 	}
-
 	pos = s.r.pos()
+
 	// search a trie to get a token.
 	node := &ruleTable
-	for {
+	for ch0 >= 0 && ch0 <= 255 {
 		if node.childs[ch0] == nil || s.r.eof() {
 			break
 		}
@@ -184,7 +185,7 @@ func startWithb(s *Scanner) (tok int, pos Pos, lit string) {
 }
 
 func startWithSharp(s *Scanner) (tok int, pos Pos, lit string) {
-	s.r.incAsLongAs(func(ch byte) bool {
+	s.r.incAsLongAs(func(ch rune) bool {
 		return ch != '\n'
 	})
 	return s.scan()
@@ -199,7 +200,7 @@ func startWithDash(s *Scanner) (tok int, pos Pos, lit string) {
 	}
 
 	s.r.incN(3)
-	s.r.incAsLongAs(func(ch byte) bool {
+	s.r.incAsLongAs(func(ch rune) bool {
 		return ch != '\n'
 	})
 	return s.scan()
@@ -213,7 +214,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		s.r.inc()
 		for {
 			ch0 = s.r.readByte()
-			if ch0 == 0 && s.r.eof() {
+			if ch0 == unicode.ReplacementChar && s.r.eof() {
 				tok = unicode.ReplacementChar
 				return
 			}
@@ -264,7 +265,7 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 	s.buf.Reset()
 	for {
 		ch := s.r.readByte()
-		if ch == 0 && s.r.eof() {
+		if ch == unicode.ReplacementChar && s.r.eof() {
 			tok = unicode.ReplacementChar
 			return
 		}
@@ -275,14 +276,8 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 			}
 			s.r.inc()
 		}
-		s.buf.WriteByte(ch)
+		s.buf.WriteRune(ch)
 	}
-}
-
-func startWithBackQuote(s *Scanner) (tok int, pos Pos, lit string) {
-	_, pos, lit = s.scanString()
-	tok = identifier
-	return
 }
 
 func startString(s *Scanner) (tok int, pos Pos, lit string) {
@@ -334,7 +329,7 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 		} else if !isASCII(ch0) {
 			// TODO handle non-ascii
 		}
-		s.buf.WriteByte(ch0)
+		s.buf.WriteRune(ch0)
 		s.r.inc()
 	}
 
@@ -395,13 +390,13 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 }
 
 func (s *Scanner) scanOct() {
-	s.r.incAsLongAs(func(ch byte) bool {
+	s.r.incAsLongAs(func(ch rune) bool {
 		return ch >= '0' && ch <= '7'
 	})
 }
 
 func (s *Scanner) scanHex() {
-	s.r.incAsLongAs(func(ch byte) bool {
+	s.r.incAsLongAs(func(ch rune) bool {
 		return ch >= '0' && ch <= '9' ||
 			ch >= 'a' && ch <= 'f' ||
 			ch >= 'A' && ch <= 'F'
@@ -409,7 +404,7 @@ func (s *Scanner) scanHex() {
 }
 
 func (s *Scanner) scanBit() {
-	s.r.incAsLongAs(func(ch byte) bool {
+	s.r.incAsLongAs(func(ch rune) bool {
 		return ch == '0' || ch == '1'
 	})
 }
@@ -441,6 +436,7 @@ func (s *Scanner) scanDigits() string {
 type reader struct {
 	s string
 	p Pos
+	w int
 }
 
 var eof = Pos{-1, -1, -1}
@@ -449,19 +445,29 @@ func (r *reader) eof() bool {
 	return r.p.Offset >= len(r.s)
 }
 
-func (r *reader) peek() byte {
+func (r *reader) peek() rune {
 	if r.eof() {
-		return 0
+		return unicode.ReplacementChar
 	}
-	return r.s[r.p.Offset]
+	v, w := rune(r.s[r.p.Offset]), 1
+	switch {
+	case v == 0:
+		return unicode.ReplacementChar
+	case v >= 0x80:
+		v, w = utf8.DecodeRuneInString(r.s[r.p.Offset:])
+	}
+	r.w = w
+	return v
 }
 
+// inc increase the position offset of the reader.
+// peek must be called before calling inc!
 func (r *reader) inc() {
 	if r.s[r.p.Offset] == '\n' {
 		r.p.Line++
 		r.p.Col = 0
 	}
-	r.p.Offset++
+	r.p.Offset += r.w
 	r.p.Col++
 }
 
@@ -471,9 +477,9 @@ func (r *reader) incN(n int) {
 	}
 }
 
-func (r *reader) readByte() (ch byte) {
+func (r *reader) readByte() (ch rune) {
 	ch = r.peek()
-	if ch == 0 && r.eof() {
+	if ch == unicode.ReplacementChar && r.eof() {
 		return
 	}
 	r.inc()
@@ -488,13 +494,13 @@ func (r *reader) data(from *Pos) string {
 	return r.s[from.Offset:r.p.Offset]
 }
 
-func (r *reader) incAsLongAs(fn func(byte) bool) byte {
+func (r *reader) incAsLongAs(fn func(rune) bool) rune {
 	for {
 		ch := r.peek()
 		if !fn(ch) {
 			return ch
 		}
-		if ch == 0 && r.eof() {
+		if ch == unicode.ReplacementChar && r.eof() {
 			return 0
 		}
 		r.inc()

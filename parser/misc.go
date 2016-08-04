@@ -19,27 +19,27 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-func isWhitespace(ch byte) bool {
+func isWhitespace(ch rune) bool {
 	return ch == ' ' || ch == '\t' || ch == '\n'
 }
 
-func isLetter(ch byte) bool {
+func isLetter(ch rune) bool {
 	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
 
-func isDigit(ch byte) bool {
+func isDigit(ch rune) bool {
 	return (ch >= '0' && ch <= '9')
 }
 
-func isIdentChar(ch byte) bool {
+func isIdentChar(ch rune) bool {
 	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$'
 }
 
-func isIdentFirstChar(ch byte) bool {
+func isIdentFirstChar(ch rune) bool {
 	return isLetter(ch) || ch == '_'
 }
 
-func isASCII(ch byte) bool {
+func isASCII(ch rune) bool {
 	return ch >= 0 && ch <= 0177
 }
 
@@ -121,7 +121,7 @@ func init() {
 	initTokenFunc("x", startWithXx)
 	initTokenFunc("b", startWithb)
 	initTokenFunc("_$ABCDEFGHIJKLMNOPQRSTUVWYZacdefghijklmnopqrstuvwyz", scanIdentifier)
-	initTokenFunc("`", startWithBackQuote)
+	initTokenFunc("`", scanQuotedIdent)
 	initTokenFunc("0123456789.", startWithNumber)
 	initTokenFunc("'\"", startString)
 }
