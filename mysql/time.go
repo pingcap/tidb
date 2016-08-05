@@ -815,19 +815,21 @@ func splitDuration(t time.Duration) (int, int, int, int, int) {
 	return sign, int(hours), int(minutes), int(seconds), int(fraction)
 }
 
+var maxDaysInMonth = []int{31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+
 func checkTime(year int, month int, day int, hour int, minute int, second int, frac int) error {
 	// Notes: for datetime type, `insert t values("0001-01-01 00:00:00");` is valid
 	// so here only check year from 0~9999.
-	if (year < 0 || year > 9999) ||
-		(month <= 0 || month > 12) ||
-		(day <= 0 || day > 31) ||
-		(hour < 0 || hour >= 24) ||
-		(minute < 0 || minute >= 60) ||
-		(second < 0 || second >= 60) ||
-		(frac < 0) {
+	if year < 0 || year > 9999 ||
+		month <= 0 || month > 12 ||
+		day <= 0 || day > maxDaysInMonth[month-1] ||
+		(month == 2 && day == 29 && year%4 != 0) ||
+		hour < 0 || hour >= 24 ||
+		minute < 0 || minute >= 60 ||
+		second < 0 || second >= 60 ||
+		frac < 0 {
 		return errors.Trace(ErrInvalidTimeFormat)
 	}
-
 	return nil
 }
 
