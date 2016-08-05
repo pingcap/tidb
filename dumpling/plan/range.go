@@ -307,6 +307,11 @@ func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) 
 		r.err = errors.Trace(err)
 		return fullRange
 	}
+	if pattern == "" {
+		startPoint := rangePoint{value: types.NewStringDatum(""), start: true}
+		endPoint := rangePoint{value: types.NewStringDatum("")}
+		return []rangePoint{startPoint, endPoint}
+	}
 	lowValue := make([]byte, 0, len(pattern))
 	escape := byte(expr.Args[2].(*expression.Constant).Value.GetInt64())
 	var exclude bool

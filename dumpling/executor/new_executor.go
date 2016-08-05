@@ -1117,16 +1117,16 @@ func (b *executorBuilder) scalarFuncToPBExpr(client kv.Client, expr *expression.
 		if escape.IsNull() || byte(escape.GetInt64()) != '\\' {
 			return nil
 		}
-		pattern := expr.Args[1].(*expression.Constant).Value
-		if pattern.Kind() != types.KindString {
+		pattern, ok := expr.Args[1].(*expression.Constant)
+		if !ok || pattern.Value.Kind() != types.KindString {
 			return nil
 		}
-		for i, b := range pattern.GetString() {
+		for i, b := range pattern.Value.GetString() {
 			switch b {
 			case '\\', '_':
 				return nil
 			case '%':
-				if i != 0 && i != len(pattern.GetString())-1 {
+				if i != 0 && i != len(pattern.Value.GetString())-1 {
 					return nil
 				}
 			}
