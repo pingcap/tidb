@@ -15,6 +15,7 @@ package mysql
 
 import (
 	. "github.com/pingcap/check"
+	"strings"
 )
 
 var _ = Suite(&testMyDecimalSuite{})
@@ -574,6 +575,7 @@ func (s *testMyDecimalSuite) TestMul(c *C) {
 		{"123456", "9876543210", "1219318518533760", 0},
 		{"123", "0.01", "1.23", 0},
 		{"123", "0", "0", 0},
+		{"1" + strings.Repeat("0", 60), "1" + strings.Repeat("0", 60), "0", 2},
 	}
 	for _, ca := range cases {
 		var a, b, product MyDecimal

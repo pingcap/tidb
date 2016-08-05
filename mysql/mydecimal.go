@@ -1691,7 +1691,9 @@ func DecimalMul(from1, from2, to *MyDecimal) int {
 		to.digitsFrac = notFixedDec
 	}
 	to.digitsInt = wordsIntTo * digitsPerWord
-
+	if errCode == eDecOverflow {
+		return errCode
+	}
 	if errCode != eDecOK {
 		if to.digitsFrac > wordsFracTo*digitsPerWord {
 			to.digitsFrac = wordsFracTo * digitsPerWord
