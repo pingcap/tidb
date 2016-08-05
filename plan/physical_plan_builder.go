@@ -184,7 +184,7 @@ func (p *DataSource) handleIndexScan(prop requiredProperty, index *model.IndexIn
 	}
 	for _, colInfo := range is.Columns {
 		for _, indexCol := range is.Index.Columns {
-			if colInfo.Name.L != indexCol.Name.L {
+			if colInfo.Name.L != indexCol.Name.L || indexCol.Length != types.UnspecifiedLength {
 				is.DoubleRead = true
 				break
 			}
