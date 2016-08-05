@@ -1706,6 +1706,11 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("3", "2", "2"))
 	result = tk.MustQuery("select - c, c as d from t group by c having null not between c and avg(distinct d) - d")
 	result.Check(testkit.Rows())
+	result = tk.MustQuery("select - c as c from t group by c having t.c > 5")
+	result.Check(testkit.Rows())
+	// TODO: This query is reported error in resolver.
+	//result := tk.MustQuery("select t1.c from t t1, t t2 group by c having c > 5")
+	//result.Check(testkit.Rows())
 	result = tk.MustQuery("select count(*) from (select d, c from t) k where d != 0 group by d")
 	result.Check(testkit.Rows("3", "2", "2"))
 	result = tk.MustQuery("select c as a from t group by d having a < 0")
@@ -1789,6 +1794,11 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t1 (a) values (2), (11), (8)")
 	result = tk.MustQuery("select min(a), min(case when 1=1 then a else NULL end), min(case when 1!=1 then NULL else a end) from t1 where b=3 group by b")
 	result.Check(testkit.Rows("2 2 2"))
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, index(a))")
+	tk.MustExec("insert into t1 (a) values (1),(2),(3),(4),(5)")
+	result = tk.MustQuery("select count(a) from t1 where a < 3")
+	result.Check(testkit.Rows("2"))
 }
 
 func (s *testSuite) TestAdapterStatement(c *C) {

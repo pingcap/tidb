@@ -205,7 +205,7 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/pd/pd-client",
-			"Rev": "7dcd043959d9dbb2ad2b27305549b37e7add1d81"
+			"Rev": "a62c75dc3dd1606a73e66097f7def8058e07d55e"
 		},
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-tipb",

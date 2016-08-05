@@ -36,6 +36,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	// For pprof
+	_ "net/http/pprof"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -149,7 +151,9 @@ func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 func (s *Server) Run() error {
 
 	// Start http api to report tidb info such as tps.
-	s.startStatusHTTP()
+	if s.cfg.ReportStatus {
+		s.startStatusHTTP()
+	}
 
 	for {
 		conn, err := s.listener.Accept()

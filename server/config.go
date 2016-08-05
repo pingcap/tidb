@@ -15,9 +15,10 @@ package server
 
 // Config contains configuration options.
 type Config struct {
-	Addr       string `json:"addr" toml:"addr"`
-	LogLevel   string `json:"log_level" toml:"log_level"`
-	SkipAuth   bool   `json:"skip_auth" toml:"skip_auth"`
-	StatusAddr string `json:"status_addr" toml:"status_addr"`
-	Socket     string `json:"socket" toml:"socket"`
+	Addr         string `json:"addr" toml:"addr"`
+	LogLevel     string `json:"log_level" toml:"log_level"`
+	SkipAuth     bool   `json:"skip_auth" toml:"skip_auth"`
+	StatusAddr   string `json:"status_addr" toml:"status_addr"`
+	Socket       string `json:"socket" toml:"socket"`
+	ReportStatus bool   `json:"report_status" toml:"report_status"`
 }
