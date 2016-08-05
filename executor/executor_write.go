@@ -460,9 +460,9 @@ func (e *InsertExec) Next() (*Row, error) {
 
 	if len(e.OnDuplicate) > 0 {
 		// Set the variable to true, so AddRecord will get duplicate row handle when meet conflict.
-		variable.GetSessionVars(e.ctx).OnDuplicate = true
+		variable.GetSessionVars(e.ctx).OnDupUpdate = true
 		defer func() {
-			variable.GetSessionVars(e.ctx).OnDuplicate = false
+			variable.GetSessionVars(e.ctx).OnDupUpdate = false
 		}()
 	}
 	for _, row := range rows {
@@ -883,9 +883,9 @@ func (e *ReplaceExec) Next() (*Row, error) {
 	idx := 0
 	rowsLen := len(rows)
 	// Set the variable to true, so AddRecord will get duplicate row handle when meet conflict.
-	variable.GetSessionVars(e.ctx).OnDuplicate = true
+	variable.GetSessionVars(e.ctx).OnDupUpdate = true
 	defer func() {
-		variable.GetSessionVars(e.ctx).OnDuplicate = false
+		variable.GetSessionVars(e.ctx).OnDupUpdate = false
 	}()
 	for {
 		if idx >= rowsLen {
