@@ -313,7 +313,7 @@ func (t Time) ToPackedUint() uint64 {
 	return ((ymd<<17 | hms) << 24) | micro
 }
 
-// FromPackedUint decodes Time from an packed uint64 value.
+// FromPackedUint decodes Time from a packed uint64 value.
 func (t *Time) FromPackedUint(packed uint64) error {
 	if packed == 0 {
 		t.Time = ZeroTime
