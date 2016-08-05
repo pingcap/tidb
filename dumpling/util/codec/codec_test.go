@@ -494,7 +494,10 @@ func (s *testCodecSuite) TestTime(c *C) {
 		c.Assert(err, IsNil)
 		v, err := Decode(b)
 		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, types.MakeDatums([]byte(t)))
+		var t mysql.Time
+		t.Type = mysql.TypeDatetime
+		t.FromPackedUint(v[0].GetUint64())
+		c.Assert(types.NewDatum(t), DeepEquals, m)
 	}
 
 	tblCmp := []struct {
