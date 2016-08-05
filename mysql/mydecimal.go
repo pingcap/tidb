@@ -1650,7 +1650,7 @@ func maxDecimal(precision, frac int, to *MyDecimal) {
 }
 
 /*
-DecimalMul multiply two decimals.
+DecimalMul multiplies two decimals.
 
       from1, from2 - factors
       to      - product
@@ -1791,7 +1791,7 @@ func DecimalMul(from1, from2, to *MyDecimal) int {
 	return errCode
 }
 
-// DecimalDiv do division of two decimals.
+// DecimalDiv does division of two decimals.
 //
 // from1    - dividend
 // from2    - divisor
@@ -1802,7 +1802,7 @@ func DecimalDiv(from1, from2, to *MyDecimal, fracIncr int) int {
 }
 
 /*
-DecimalMod do modulus of two decimals.
+DecimalMod does modulus of two decimals.
 
       from1   - dividend
       from2   - divisor
