@@ -293,8 +293,11 @@ func peekCompactBytes(b []byte) (int, error) {
 }
 
 func peekDecimal(b []byte) (int, error) {
-	if len(b) < 9 {
+	if len(b) < 1 || (len(b) < 9 && int64(b[0]) != zeroSign) {
 		return 0, errors.New("cutDecimal error: Invalid decimal data")
+	}
+	if int64(b[0]) == zeroSign {
+		return 1, nil
 	}
 	// The first byte is value sign.
 	// The following 8 bytes are exp value.

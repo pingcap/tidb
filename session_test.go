@@ -2486,7 +2486,7 @@ func (s *testSessionSuite) TestXAggregateWithIndexScan(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecMultiSQL(c, se, initSQL)
-	sql := "SELECT COUNT(c) FROM t WHERE c IS NOT NULL;"
+	sql := "SELECT COUNT(c) FROM t WHERE c > 0;"
 	mustExecMatch(c, se, sql, [][]interface{}{{"2"}})
 
 	initSQL = `
@@ -2496,7 +2496,10 @@ func (s *testSessionSuite) TestXAggregateWithIndexScan(c *C) {
 	INSERT INTO tab1 VALUES(0,656,638.70,'zsiag',614,231.92,'dkfhp');
 	`
 	mustExecMultiSQL(c, se, initSQL)
-	sql = "SELECT DISTINCT + - COUNT( col3 ) AS col1 FROM tab1 AS cor0 WHERE col3 IS NOT NULL;"
+	sql = "SELECT DISTINCT + - COUNT( col3 ) AS col1 FROM tab1 AS cor0 WHERE col3 > 0;"
+	mustExecMatch(c, se, sql, [][]interface{}{{"-1"}})
+
+	sql = "SELECT DISTINCT + - COUNT( col3 ) AS col1 FROM tab1 AS cor0 WHERE col3 > 0 group by col0;"
 	mustExecMatch(c, se, sql, [][]interface{}{{"-1"}})
 }
 
