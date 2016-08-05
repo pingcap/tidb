@@ -458,6 +458,13 @@ func (e *InsertExec) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
+	if len(e.OnDuplicate) > 0 {
+		// Set the variable to true, so AddRecord will get duplicate row handle when meet conflict.
+		variable.GetSessionVars(e.ctx).OnDuplicate = true
+		defer func() {
+			variable.GetSessionVars(e.ctx).OnDuplicate = false
+		}()
+	}
 	for _, row := range rows {
 		if len(e.OnDuplicate) == 0 {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
@@ -875,6 +882,11 @@ func (e *ReplaceExec) Next() (*Row, error) {
 	 */
 	idx := 0
 	rowsLen := len(rows)
+	// Set the variable to true, so AddRecord will get duplicate row handle when meet conflict.
+	variable.GetSessionVars(e.ctx).OnDuplicate = true
+	defer func() {
+		variable.GetSessionVars(e.ctx).OnDuplicate = false
+	}()
 	for {
 		if idx >= rowsLen {
 			break

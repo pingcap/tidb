@@ -418,7 +418,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
 		if err = v.Create(bs, colVals, recordID); err != nil {
-			if terror.ErrorEqual(err, kv.ErrKeyExists) {
+			if variable.GetSessionVars(ctx).OnDupUpdate && terror.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
 				// For insert on duplicate syntax, we should update the row
 				iter, _, err1 := v.Seek(bs, colVals)

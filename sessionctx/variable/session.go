@@ -107,6 +107,9 @@ type SessionVars struct {
 
 	// InUpdateStmt indicates if the session is handling update stmt.
 	InUpdateStmt bool
+
+	// OnDupUpdate indicates if the session is handling insert stmt with OnDuplicateUpdate or replace stmt.
+	OnDupUpdate
 }
 
 // sessionVarsKeyType is a dummy type to avoid naming collision in context.
