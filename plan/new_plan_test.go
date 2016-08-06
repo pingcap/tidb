@@ -340,6 +340,18 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		best string
 	}{
 		{
+			sql:  "select a from t where c is not null",
+			best: "Table(t)->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c >= 4",
+			best: "Index(t.c_d_e)[[4,<nil>]]->Projection",
+		},
+		{
+			sql:  "select a from t where c <= 4",
+			best: "Index(t.c_d_e)[[<nil>,4]]->Projection",
+		},
+		{
 			sql:  "select a from t where c = 4 and d = 5 and e = 6",
 			best: "Index(t.c_d_e)[[4 5 6,4 5 6]]->Projection",
 		},
@@ -398,6 +410,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		{
 			sql:  "select a from t where c not in (1)",
 			best: "Table(t)->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c like ''",
+			best: "Index(t.c_d_e)[[,]]->Projection",
 		},
 		{
 			sql:  "select a from t where c like 'abc'",

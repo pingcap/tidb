@@ -807,7 +807,6 @@ func (s *testSessionSuite) TestIssue1114(c *C) {
 }
 
 func (s *testSessionSuite) TestSelectForUpdate(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
@@ -820,6 +819,9 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	mustExecSQL(c, se, "insert t values (11, 2, 3)")
 	mustExecSQL(c, se, "insert t values (12, 2, 3)")
 	mustExecSQL(c, se, "insert t values (13, 2, 3)")
+
+	mustExecSQL(c, se, "create table t1 (c1 int)")
+	mustExecSQL(c, se, "insert t1 values (11)")
 
 	// conflict
 	mustExecSQL(c, se1, "begin")
@@ -836,6 +838,19 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	err = se1.Retry()
 	// retry should fail
 	c.Assert(err, NotNil)
+
+	// no conflict for subquery.
+	mustExecSQL(c, se1, "begin")
+	rs, err = exec(se1, "select * from t where exists(select null from t1 where t1.c1=t.c1) for update")
+	c.Assert(err, IsNil)
+	_, err = GetRows(rs)
+
+	mustExecSQL(c, se2, "begin")
+	mustExecSQL(c, se2, "update t set c2=211 where c1=12")
+	mustExecSQL(c, se2, "commit")
+
+	_, err = exec(se1, "commit")
+	c.Assert(err, IsNil)
 
 	// not conflict
 	mustExecSQL(c, se1, "begin")
@@ -869,7 +884,6 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	c.Assert(err, IsNil)
 	err = store.Close()
 	c.Assert(err, IsNil)
-	plan.UseNewPlanner = false
 }
 
 func (s *testSessionSuite) TestRow(c *C) {
@@ -1640,7 +1654,7 @@ func (s *testSessionSuite) TestHaving(c *C) {
 	mustExecMatch(c, se, "select a.c1 from t as a having c1 = 1;", [][]interface{}{{1}})
 	mustExecMatch(c, se, "select c1 as a from t group by c3 having sum(a) = 1;", [][]interface{}{{1}})
 	mustExecMatch(c, se, "select c1 as a from t group by c3 having sum(a) + a = 2;", [][]interface{}{{1}})
-	//	mustExecMatch(c, se, "select a.c1 as c, a.c1 as d from t as a, t as b having c1 = 1 limit 1;", [][]interface{}{{1, 1}})
+	mustExecMatch(c, se, "select a.c1 as c, a.c1 as d from t as a, t as b having c1 = 1 limit 1;", [][]interface{}{{1, 1}})
 
 	mustExecMatch(c, se, "select sum(c1) from t group by c1 having sum(c1)", [][]interface{}{{1}, {2}, {3}})
 	mustExecMatch(c, se, "select sum(c1) - 1 from t group by c1 having sum(c1) - 1", [][]interface{}{{1}, {2}})
@@ -1806,8 +1820,7 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 		field string
 	}{
 		{"select distinct(a) from t", "a"},
-		// TODO: solve this in future.
-		//{"select (1)", "1"},
+		{"select (1)", "1"},
 		{"select (1+1)", "(1+1)"},
 		{"select a from t", "a"},
 		{"select        ((a+1))     from t", "((a+1))"},
@@ -2181,7 +2194,6 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 }
 
 func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
-	// TODO: New planner doesn't support in function yet, implement it in future.
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)

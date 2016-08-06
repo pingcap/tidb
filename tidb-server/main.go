@@ -83,7 +83,7 @@ func main() {
 		perfschema.EnablePerfSchema()
 	}
 
-	if *useNewPlan {
+	if !*useNewPlan {
 		plan.UseNewPlanner = false
 	}
 
