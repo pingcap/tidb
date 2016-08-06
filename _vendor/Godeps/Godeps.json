@@ -1,7 +1,7 @@
 {
 	"ImportPath": "github.com/pingcap/tidb",
 	"GoVersion": "go1.6",
-	"GodepVersion": "v74",
+	"GodepVersion": "v63",
 	"Packages": [
 		"./..."
 	],
@@ -205,7 +205,7 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/pd/pd-client",
-			"Rev": "a62c75dc3dd1606a73e66097f7def8058e07d55e"
+			"Rev": "0351a56a5c89d7566867e5249d696ab0240f3dfd"
 		},
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-tipb",
