@@ -1149,7 +1149,7 @@ action		{a}{c}{t}{i}{o}{n}
 			return integerType
 
 {ident}			lval.ident = string(l.val)
-			return l.handleIdent(lval)
+			return handleIdent(lval)
 
 .			return c0
 
@@ -1184,7 +1184,7 @@ func (l *lexer) trimIdent(idt string) string {
 	return idt
 }
 
-func (l *lexer) handleIdent(lval *yySymType) int {
+func handleIdent(lval *yySymType) int {
 	s := lval.ident
 	// A character string literal may have an optional character set introducer and COLLATE clause:
 	// [_charset_name]'string' [COLLATE collation_name]
