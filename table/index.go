@@ -30,7 +30,7 @@ type Index interface {
 	// Meta returns IndexInfo.
 	Meta() *model.IndexInfo
 	// Create supports insert into statement.
-	Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) error
+	Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error)
 	// Delete supports delete from statement.
 	Delete(m kv.Mutator, indexedValues []types.Datum, h int64) error
 	// Drop supports drop table, drop index statements.
