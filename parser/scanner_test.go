@@ -10,9 +10,12 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package parser
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -22,329 +25,10 @@ var _ = Suite(&testLexerSuite{})
 type testLexerSuite struct {
 }
 
-var tokenMap = map[string]int{
-	"ABS":                 abs,
-	"ADD":                 add,
-	"ADDDATE":             addDate,
-	"ADMIN":               admin,
-	"AFTER":               after,
-	"ALL":                 all,
-	"ALTER":               alter,
-	"ANALYZE":             analyze,
-	"AND":                 and,
-	"&&":                  andand,
-	"&^":                  andnot,
-	"ANY":                 any,
-	"AS":                  as,
-	"ASC":                 asc,
-	"ASCII":               ascii,
-	":=":                  assignmentEq,
-	"AUTO_INCREMENT":      autoIncrement,
-	"AVG":                 avg,
-	"AVG_ROW_LENGTH":      avgRowLength,
-	"BEGIN":               begin,
-	"BETWEEN":             between,
-	"BINLOG":              binlog,
-	"BOTH":                both,
-	"BTREE":               btree,
-	"BY":                  by,
-	"BYTE":                byteType,
-	"CASE":                caseKwd,
-	"CAST":                cast,
-	"CHARACTER":           character,
-	"CHARSET":             charsetKwd,
-	"CHECK":               check,
-	"CHECKSUM":            checksum,
-	"COALESCE":            coalesce,
-	"COLLATE":             collate,
-	"COLLATION":           collation,
-	"COLUMN":              column,
-	"COLUMNS":             columns,
-	"COMMENT":             comment,
-	"COMMIT":              commit,
-	"COMMITTED":           committed,
-	"COMPACT":             compact,
-	"COMPRESSED":          compressed,
-	"COMPRESSION":         compression,
-	"CONCAT":              concat,
-	"CONCAT_WS":           concatWs,
-	"CONNECTION":          connection,
-	"CONNECTION_ID":       connectionID,
-	"CONSTRAINT":          constraint,
-	"CONVERT":             convert,
-	"COUNT":               count,
-	"CREATE":              create,
-	"CROSS":               cross,
-	"CURDATE":             curDate,
-	"UTC_DATE":            utcDate,
-	"CURRENT_DATE":        currentDate,
-	"CURTIME":             curTime,
-	"CURRENT_TIME":        currentTime,
-	"CURRENT_USER":        currentUser,
-	"DATABASE":            database,
-	"DATABASES":           databases,
-	"DATE_ADD":            dateAdd,
-	"DATE_FORMAT":         dateFormat,
-	"DATE_SUB":            dateSub,
-	"DAY":                 day,
-	"DAYNAME":             dayname,
-	"DAYOFMONTH":          dayofmonth,
-	"DAYOFWEEK":           dayofweek,
-	"DAYOFYEAR":           dayofyear,
-	"DDL":                 ddl,
-	"DEALLOCATE":          deallocate,
-	"DEFAULT":             defaultKwd,
-	"DELAYED":             delayed,
-	"DELAY_KEY_WRITE":     delayKeyWrite,
-	"DELETE":              deleteKwd,
-	"DESC":                desc,
-	"DESCRIBE":            describe,
-	"DISABLE":             disable,
-	"DISTINCT":            distinct,
-	"DIV":                 div,
-	"DO":                  do,
-	"DROP":                drop,
-	"DUAL":                dual,
-	"DUPLICATE":           duplicate,
-	"DYNAMIC":             dynamic,
-	"ELSE":                elseKwd,
-	"ENABLE":              enable,
-	"END":                 end,
-	"ENGINE":              engine,
-	"ENGINES":             engines,
-	"ENUM":                enum,
-	"ESCAPE":              escape,
-	"EXECUTE":             execute,
-	"EXISTS":              exists,
-	"EXPLAIN":             explain,
-	"EXTRACT":             extract,
-	"false":               falseKwd,
-	"FIELDS":              fields,
-	"FIRST":               first,
-	"FIXED":               fixed,
-	"FOREIGN":             foreign,
-	"FOR":                 forKwd,
-	"FORCE":               force,
-	"FOUND_ROWS":          foundRows,
-	"FROM":                from,
-	"FULL":                full,
-	"FULLTEXT":            fulltext,
-	">=":                  ge,
-	"GET_LOCK":            getLock,
-	"GLOBAL":              global,
-	"GRANT":               grant,
-	"GRANTS":              grants,
-	"GREATEST":            greatest,
-	"GROUP":               group,
-	"GROUP_CONCAT":        groupConcat,
-	"HASH":                hash,
-	"HAVING":              having,
-	"HIGH_PRIORITY":       highPriority,
-	"HOUR":                hour,
-	"IDENTIFIED":          identified,
-	"IGNORE":              ignore,
-	"IF":                  ifKwd,
-	"IFNULL":              ifNull,
-	"IN":                  in,
-	"INDEX":               index,
-	"INNER":               inner,
-	"INSERT":              insert,
-	"INTERVAL":            interval,
-	"INTO":                into,
-	"IS":                  is,
-	"ISNULL":              isNull,
-	"ISOLATION":           isolation,
-	"JOIN":                join,
-	"KEY":                 key,
-	"KEY_BLOCK_SIZE":      keyBlockSize,
-	"KEYS":                keys,
-	"LAST_INSERT_ID":      lastInsertID,
-	"<=":                  le,
-	"LEADING":             leading,
-	"LEFT":                left,
-	"LENGTH":              length,
-	"LEVEL":               level,
-	"LIKE":                like,
-	"LIMIT":               limit,
-	"LOCAL":               local,
-	"LOCATE":              locate,
-	"LOCK":                lock,
-	"LOWER":               lower,
-	"LCASE":               lcase,
-	"LOW_PRIORITY":        lowPriority,
-	"<<":                  lsh,
-	"LTRIM":               ltrim,
-	"MAX":                 max,
-	"MAX_ROWS":            maxRows,
-	"MICROSECOND":         microsecond,
-	"MIN":                 min,
-	"MINUTE":              minute,
-	"MIN_ROWS":            minRows,
-	"MOD":                 mod,
-	"MODE":                mode,
-	"MONTH":               month,
-	"MONTHNAME":           monthname,
-	"NAMES":               names,
-	"NATIONAL":            national,
-	"!=":                  neq,
-	"<>":                  neqSynonym,
-	"NOT":                 not,
-	"NULL":                null,
-	"<=>":                 nulleq,
-	"NULLIF":              nullIf,
-	"OFFSET":              offset,
-	"ON":                  on,
-	"ONLY":                only,
-	"OPTION":              option,
-	"OR":                  or,
-	"ORDER":               order,
-	"||":                  oror,
-	"OUTER":               outer,
-	"PASSWORD":            password,
-	"POW":                 pow,
-	"POWER":               power,
-	"PREPARE":             prepare,
-	"PRIMARY":             primary,
-	"PRIVILEGES":          privileges,
-	"PROCEDURE":           procedure,
-	"QUARTER":             quarter,
-	"QUICK":               quick,
-	"RAND":                rand,
-	"READ":                read,
-	"REDUNDANT":           redundant,
-	"REFERENCES":          references,
-	"REGEXP":              regexpKwd,
-	"RELEASE_LOCK":        releaseLock,
-	"REPEAT":              repeat,
-	"REPEATABLE":          repeatable,
-	"REPLACE":             replace,
-	"RIGHT":               right,
-	"RLIKE":               rlike,
-	"ROLLBACK":            rollback,
-	"ROUND":               round,
-	"ROW":                 row,
-	"ROW_FORMAT":          rowFormat,
-	">>":                  rsh,
-	"RTRIM":               rtrim,
-	"REVERSE":             reverse,
-	"SCHEMA":              schema,
-	"SCHEMAS":             schemas,
-	"SECOND":              second,
-	"SELECT":              selectKwd,
-	"SERIALIZABLE":        serializable,
-	"SESSION":             session,
-	"SET":                 set,
-	"SHARE":               share,
-	"SHOW":                show,
-	"SLEEP":               sleep,
-	"SIGNED":              signed,
-	"SOME":                some,
-	"SPACE":               space,
-	"START":               start,
-	"STATS_PERSISTENT":    statsPersistent,
-	"STATUS":              status,
-	"SUBDATE":             subDate,
-	"STRCMP":              strcmp,
-	"SUBSTRING":           substring,
-	"SUBSTRING_INDEX":     substringIndex,
-	"SUM":                 sum,
-	"SYSDATE":             sysDate,
-	"TABLE":               tableKwd,
-	"TABLES":              tables,
-	"THEN":                then,
-	"TO":                  to,
-	"TRAILING":            trailing,
-	"TRANSACTION":         transaction,
-	"TRIGGERS":            triggers,
-	"TRIM":                trim,
-	"true":                trueKwd,
-	"TRUNCATE":            truncate,
-	"UNCOMMITTED":         uncommitted,
-	"UNKNOWN":             unknown,
-	"UNION":               union,
-	"UNIQUE":              unique,
-	"UNLOCK":              unlock,
-	"UNSIGNED":            unsigned,
-	"UPDATE":              update,
-	"UPPER":               upper,
-	"UCASE":               ucase,
-	"USE":                 use,
-	"USER":                user,
-	"USING":               using,
-	"VALUE":               value,
-	"VALUES":              values,
-	"VARIABLES":           variables,
-	"VERSION":             version,
-	"WARNINGS":            warnings,
-	"WEEK":                week,
-	"WEEKDAY":             weekday,
-	"WEEKOFYEAR":          weekofyear,
-	"WHEN":                when,
-	"WHERE":               where,
-	"WRITE":               write,
-	"XOR":                 xor,
-	"YEARWEEK":            yearweek,
-	"ZEROFILL":            zerofill,
-	"SQL_CALC_FOUND_ROWS": calcFoundRows,
-	"SQL_CACHE":           sqlCache,
-	"SQL_NO_CACHE":        sqlNoCache,
-	"CURRENT_TIMESTAMP":   currentTs,
-	"LOCALTIME":           localTime,
-	"LOCALTIMESTAMP":      localTs,
-	"NOW":                 now,
-	"TINYINT":             tinyIntType,
-	"SMALLINT":            smallIntType,
-	"MEDIUMINT":           mediumIntType,
-	"INT":                 intType,
-	"INTEGER":             integerType,
-	"BIGINT":              bigIntType,
-	"BIT":                 bitType,
-	"DECIMAL":             decimalType,
-	"NUMERIC":             numericType,
-	"float":               floatType,
-	"DOUBLE":              doubleType,
-	"PRECISION":           precisionType,
-	"REAL":                realType,
-	"DATE":                dateType,
-	"TIME":                timeType,
-	"DATETIME":            datetimeType,
-	"TIMESTAMP":           timestampType,
-	"YEAR":                yearType,
-	"CHAR":                charType,
-	"VARCHAR":             varcharType,
-	"BINARY":              binaryType,
-	"VARBINARY":           varbinaryType,
-	"TINYBLOB":            tinyblobType,
-	"BLOB":                blobType,
-	"MEDIUMBLOB":          mediumblobType,
-	"LONGBLOB":            longblobType,
-	"TINYTEXT":            tinytextType,
-	"TEXT":                textType,
-	"MEDIUMTEXT":          mediumtextType,
-	"LONGTEXT":            longtextType,
-	"BOOL":                boolType,
-	"BOOLEAN":             booleanType,
-	"SECOND_MICROSECOND":  secondMicrosecond,
-	"MINUTE_MICROSECOND":  minuteMicrosecond,
-	"MINUTE_SECOND":       minuteSecond,
-	"HOUR_MICROSECOND":    hourMicrosecond,
-	"HOUR_SECOND":         hourSecond,
-	"HOUR_MINUTE":         hourMinute,
-	"DAY_MICROSECOND":     dayMicrosecond,
-	"DAY_SECOND":          daySecond,
-	"DAY_MINUTE":          dayMinute,
-	"DAY_HOUR":            dayHour,
-	"YEAR_MONTH":          yearMonth,
-	"RESTRICT":            restrict,
-	"CASCADE":             cascade,
-	"NO":                  no,
-	"ACTION":              action,
-}
-
 func (s *testLexerSuite) TestTokenID(c *C) {
 	defer testleak.AfterTest(c)()
 	for str, tok := range tokenMap {
-		l := NewLexer(str)
+		l := NewScanner(str)
 		var v yySymType
 		tok1 := l.Lex(&v)
 		c.Check(tok, Equals, tok1)
@@ -355,7 +39,7 @@ func (s *testLexerSuite) TestSingleChar(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []byte{'|', '&', '-', '+', '*', '/', '%', '^', '~', '(', ',', ')'}
 	for _, tok := range table {
-		l := NewLexer(string(tok))
+		l := NewScanner(string(tok))
 		var v yySymType
 		tok1 := l.Lex(&v)
 		c.Check(int(tok), Equals, tok1)
@@ -420,19 +104,19 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 func runTest(c *C, table []testCaseItem) {
 	var val yySymType
 	for _, v := range table {
-		l := NewLexer(v.str)
+		l := NewScanner(v.str)
 		tok := l.Lex(&val)
 		c.Check(tok, Equals, v.tok)
 	}
 }
 
 func (s *testLexerSuite) TestComment(c *C) {
+	defer testleak.AfterTest(c)()
+
 	table := []testCaseItem{
 		{"-- select --\n1", intLit},
 		{"/*!40101 SET character_set_client = utf8 */;", int(';')},
 		{"/* some comments */ SELECT ", selectKwd},
-		{`/*
-`, 65533},
 		{`-- comment continues to the end of line
 SELECT`, selectKwd},
 		{`# comment continues to the end of line
@@ -441,4 +125,57 @@ SELECT`, selectKwd},
 		{"--5", int('-')},
 	}
 	runTest(c, table)
+}
+
+func (s *testLexerSuite) TestLexerCompatible(c *C) {
+	defer testleak.AfterTest(c)()
+
+	for _, str := range tableCompatible {
+		l1 := NewScanner(str)
+		l2 := NewLexer(str)
+		for {
+			var v1, v2 yySymType
+			tok1 := l1.Lex(&v1)
+			tok2 := l2.Lex(&v2)
+			fmt.Println(tok1, tok2, v1, v2)
+			c.Assert(tok1, Equals, tok2)
+			if tok1 == 0 {
+				break
+			}
+		}
+	}
+}
+
+func (s *testLexerSuite) TestscanQuotedIdent(c *C) {
+	defer testleak.AfterTest(c)()
+	l := NewScanner("`fk`")
+	l.r.peek()
+	tok, pos, lit := scanQuotedIdent(l)
+	c.Assert(pos.Offset, Equals, 0)
+	c.Assert(tok, Equals, identifier)
+	c.Assert(lit, Equals, "fk")
+}
+
+func (s *testLexerSuite) TestscanString(c *C) {
+	defer testleak.AfterTest(c)()
+	l := NewScanner(`' \n\tTest String'`)
+	tok, pos, lit := l.scanString()
+	c.Assert(tok, Equals, stringLit)
+	c.Assert(pos.Offset, Equals, 0)
+	c.Assert(lit, Equals, " \n\tTest String")
+}
+
+func (s *testLexerSuite) TestIdentifier(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []string{
+		`哈哈`,
+		// `5number`,
+	}
+	l := &Scanner{}
+	for _, v := range table {
+		l.reset(v)
+		tok, _, lit := l.scan()
+		c.Assert(tok, Equals, identifier)
+		c.Assert(lit, Equals, v)
+	}
 }
