@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/mock"
@@ -121,7 +120,6 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	h, err := t.AddRecord(ctx, types.MakeDatums(num+1, 1, 1))
 	c.Assert(err, IsNil)
 
-	variable.GetSessionVars(ctx).OnDupUpdate = true
 	h1, err := t.AddRecord(ctx, types.MakeDatums(num+1, 1, 1))
 	c.Assert(err, NotNil)
 	c.Assert(h, Equals, h1)
@@ -133,7 +131,6 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 
 	exist, _, err := index.Exist(txn, types.MakeDatums(1), h)
-	variable.GetSessionVars(ctx).OnDupUpdate = false
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
