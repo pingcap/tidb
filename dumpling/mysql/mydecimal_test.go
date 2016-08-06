@@ -15,6 +15,7 @@ package mysql
 
 import (
 	. "github.com/pingcap/check"
+	"strings"
 )
 
 var _ = Suite(&testMyDecimalSuite{})
@@ -29,6 +30,7 @@ func (s *testMyDecimalSuite) TestFromInt(c *C) {
 	}{
 		{-12345, "-12345"},
 		{-1, "-1"},
+		{1, "1"},
 		{-9223372036854775807, "-9223372036854775807"},
 		{-9223372036854775808, "-9223372036854775808"},
 	}
@@ -67,10 +69,12 @@ func (s *testMyDecimalSuite) TestToInt(c *C) {
 	}{
 		{"18446744073709551615", 9223372036854775807, 2},
 		{"-1", -1, 0},
+		{"1", 1, 0},
 		{"-1.23", -1, 1},
 		{"-9223372036854775807", -9223372036854775807, 0},
 		{"-9223372036854775808", -9223372036854775808, 0},
 		{"9223372036854775808", 9223372036854775807, 2},
+		{"-9223372036854775809", -9223372036854775808, 2},
 	}
 	for _, ca := range cases {
 		var dec MyDecimal
@@ -407,23 +411,24 @@ func (s *testMyDecimalSuite) TestToBinFromBin(c *C) {
 		{"12345", 10, 3, "12345.000", 0},
 		{"123.45", 10, 3, "123.450", 0},
 		{"-123.45", 20, 10, "-123.4500000000", 0},
-		{".00012345000098765", 15, 14, "0.00012345000098", 0},
+		{".00012345000098765", 15, 14, "0.00012345000098", eDecTruncate},
 		{".00012345000098765", 22, 20, "0.00012345000098765000", 0},
 		{".12345000098765", 30, 20, "0.12345000098765000000", 0},
-		{"-.000000012345000098765", 30, 20, "-0.00000001234500009876", 0},
+		{"-.000000012345000098765", 30, 20, "-0.00000001234500009876", eDecTruncate},
 		{"1234500009876.5", 30, 5, "1234500009876.50000", 0},
-		{"111111111.11", 10, 2, "11111111.11", 0},
+		{"111111111.11", 10, 2, "11111111.11", eDecOverflow},
 		{"000000000.01", 7, 3, "0.010", 0},
 		{"123.4", 10, 2, "123.40", 0},
+		{"1000", 3, 0, "0", eDecOverflow},
 	}
 	for _, ca := range cases {
 		var dec MyDecimal
 		ec := dec.FromString([]byte(ca.input))
 		c.Assert(ec, Equals, 0)
 		buf, ec := dec.ToBin(ca.precision, ca.frac)
+		c.Assert(ec, Equals, ca.errcode, Commentf(ca.input))
 		var dec2 MyDecimal
 		ec = dec2.FromBin(buf, ca.precision, ca.frac)
-		c.Assert(ec, Equals, ca.errcode)
 		str, _ := dec2.ToString(0, 0, 0)
 		c.Assert(string(str), Equals, ca.output)
 	}
@@ -551,6 +556,91 @@ func (s *testMyDecimalSuite) TestSub(c *C) {
 		ec := DecimalSub(&a, &b, &sum)
 		c.Assert(ec, Equals, ca.ec)
 		result, _ := sum.ToString(0, 0, 0)
+		c.Assert(string(result), Equals, ca.result)
+	}
+}
+
+func (s *testMyDecimalSuite) TestMul(c *C) {
+	type tcase struct {
+		a      string
+		b      string
+		result string
+		ec     int
+	}
+	cases := []tcase{
+		{"12", "10", "120", 0},
+		{"-123.456", "98765.4321", "-12193185.1853376", 0},
+		{"-123456000000", "98765432100000", "-12193185185337600000000000", 0},
+		{"123456", "987654321", "121931851853376", 0},
+		{"123456", "9876543210", "1219318518533760", 0},
+		{"123", "0.01", "1.23", 0},
+		{"123", "0", "0", 0},
+		{"1" + strings.Repeat("0", 60), "1" + strings.Repeat("0", 60), "0", 2},
+	}
+	for _, ca := range cases {
+		var a, b, product MyDecimal
+		a.FromString([]byte(ca.a))
+		b.FromString([]byte(ca.b))
+		ec := DecimalMul(&a, &b, &product)
+		c.Check(ec, Equals, ca.ec)
+		result, _ := product.ToString(0, 0, 0)
+		c.Assert(string(result), Equals, ca.result)
+	}
+}
+
+func (s *testMyDecimalSuite) TestDivMod(c *C) {
+	type tcase struct {
+		a      string
+		b      string
+		result string
+		ec     int
+	}
+	cases := []tcase{
+		{"120", "10", "12.000000000", 0},
+		{"123", "0.01", "12300.000000000", 0},
+		{"120", "100000000000.00000", "0.000000001200000000", 0},
+		{"123", "0", "", 4},
+		{"0", "0", "", 4},
+		{"-12193185.1853376", "98765.4321", "-123.456000000000000000", 0},
+		{"121931851853376", "987654321", "123456.000000000", 0},
+		{"0", "987", "0", 0},
+		{"1", "3", "0.333333333", 0},
+		{"1.000000000000", "3", "0.333333333333333333", 0},
+		{"1", "1", "1.000000000", 0},
+		{"0.0123456789012345678912345", "9999999999", "0.000000000001234567890246913578148141", 0},
+		{"10.333000000", "12.34500", "0.837019036046982584042122316", 0},
+		{"10.000000000060", "2", "5.000000000030000000", 0},
+	}
+	for _, ca := range cases {
+		var a, b, to MyDecimal
+		a.FromString([]byte(ca.a))
+		b.FromString([]byte(ca.b))
+		ec := DecimalDiv(&a, &b, &to, 5)
+		c.Check(ec, Equals, ca.ec)
+		if ca.ec == eDecDivZero {
+			continue
+		}
+		result, _ := to.ToString(0, 0, 0)
+		c.Assert(string(result), Equals, ca.result)
+	}
+
+	cases = []tcase{
+		{"234", "10", "4", 0},
+		{"234.567", "10.555", "2.357", 0},
+		{"-234.567", "10.555", "-2.357", 0},
+		{"234.567", "-10.555", "2.357", 0},
+		{"99999999999999999999999999999999999999", "3", "0", 0},
+	}
+	for _, ca := range cases {
+		var a, b, to MyDecimal
+		a.FromString([]byte(ca.a))
+		b.FromString([]byte(ca.b))
+		ec := DecimalMod(&a, &b, &to)
+		c.Check(ec, Equals, ca.ec)
+		if ca.ec == eDecDivZero {
+			continue
+		}
+		result, _ := to.ToString(0, 0, 0)
 		c.Assert(string(result), Equals, ca.result)
 	}
 }
