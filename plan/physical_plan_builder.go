@@ -40,13 +40,19 @@ func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, in
 		var rowCount int64
 		var err error
 		offset := indexInfo.Columns[i].Offset
-		if l.Kind() == types.KindMinNotNull && r.Kind() == types.KindMaxValue {
+		if l.Kind() == types.KindNull && r.Kind() == types.KindMaxValue {
 			break
 		} else if l.Kind() == types.KindMinNotNull {
-			rowCount, err = table.Columns[offset].LessRowCount(r)
+			rowCount, err = table.Columns[offset].EqualRowCount(types.Datum{})
+			if r.Kind() == types.KindMaxValue {
+				rowCount = table.Count - rowCount
+			} else if err == nil {
+				lessCount, err1 := table.Columns[offset].LessRowCount(r)
+				rowCount = lessCount - rowCount
+				err = err1
+			}
 		} else if r.Kind() == types.KindMaxValue {
-			rowCount, err = table.Columns[offset].LessRowCount(r)
-			rowCount = table.Count - rowCount
+			rowCount, err = table.Columns[offset].GreaterRowCount(l)
 		} else {
 			compare, err1 := l.CompareDatum(r)
 			if err1 != nil {
@@ -67,7 +73,6 @@ func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, in
 }
 
 func (p *DataSource) handleTableScan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, error) {
-	statsTbl := p.statisticTable
 	table := p.Table
 	var resultPlan PhysicalPlan
 	ts := &PhysicalTableScan{
@@ -96,6 +101,8 @@ func (p *DataSource) handleTableScan(prop requiredProperty) (*physicalPlanInfo, 
 	} else {
 		ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
 	}
+
+	statsTbl := p.statisticTable
 	rowCount := uint64(statsTbl.Count)
 	if table.PKIsHandle {
 		for i, colInfo := range ts.Columns {
@@ -120,8 +127,7 @@ func (p *DataSource) handleTableScan(prop requiredProperty) (*physicalPlanInfo, 
 			} else if rg.LowVal == math.MinInt64 {
 				cnt, err = statsTbl.Columns[offset].LessRowCount(types.NewDatum(rg.HighVal))
 			} else if rg.HighVal == math.MaxInt64 {
-				cnt, err = statsTbl.Columns[offset].LessRowCount(types.NewDatum(rg.HighVal))
-				cnt = statsTbl.Count - cnt
+				cnt, err = statsTbl.Columns[offset].GreaterRowCount(types.NewDatum(rg.LowVal))
 			} else {
 				cnt, err = statsTbl.Columns[offset].BetweenRowCount(types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal))
 			}
@@ -176,6 +182,17 @@ func (p *DataSource) handleIndexScan(prop requiredProperty, index *model.IndexIn
 		rb := rangeBuilder{}
 		is.Ranges = rb.buildIndexRanges(fullRange)
 	}
+	for _, colInfo := range is.Columns {
+		for _, indexCol := range is.Index.Columns {
+			if colInfo.Name.L != indexCol.Name.L || indexCol.Length != types.UnspecifiedLength {
+				is.DoubleRead = true
+				break
+			}
+		}
+		if is.DoubleRead {
+			break
+		}
+	}
 	rowCounts := []uint64{rowCount}
 	return resultPlan.matchProperty(prop, rowCounts), resultPlan.matchProperty(nil, rowCounts), nil
 }
@@ -186,7 +203,6 @@ func (p *DataSource) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanI
 	if sortedRes != nil {
 		return sortedRes, unsortedRes, cnt, nil
 	}
-	statsTbl := p.statisticTable
 	indices, includeTableScan := availableIndices(p.table)
 	var err error
 	if includeTableScan {
@@ -207,6 +223,7 @@ func (p *DataSource) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanI
 			unsortedRes = unsortedIsRes
 		}
 	}
+	statsTbl := p.statisticTable
 	p.storePlanInfo(prop, sortedRes, unsortedRes, uint64(statsTbl.Count))
 	return sortedRes, unsortedRes, uint64(statsTbl.Count), nil
 }

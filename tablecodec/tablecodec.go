@@ -136,11 +136,7 @@ func flatten(data types.Datum) (types.Datum, error) {
 	switch data.Kind() {
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
-		b, err := data.GetMysqlTime().Marshal()
-		if err != nil {
-			return types.NewDatum(nil), errors.Trace(err)
-		}
-		return types.NewDatum(b), nil
+		return types.NewUintDatum(data.GetMysqlTime().ToPackedUint()), nil
 	case types.KindMysqlDuration:
 		// for mysql time type
 		data.SetInt64(int64(data.GetMysqlDuration().Duration))
@@ -177,13 +173,9 @@ func DecodeValues(data []byte, fts []*types.FieldType, inIndex bool) ([]types.Da
 	if len(values) > len(fts) {
 		return nil, errInvalidColumnCount.Gen("invalid column count %d is less than value count %d", len(fts), len(values))
 	}
-	if inIndex {
-		// We don't need to unflatten index columns for now.
-		return values, nil
-	}
 
 	for i := range values {
-		values[i], err = Unflatten(values[i], fts[i])
+		values[i], err = Unflatten(values[i], fts[i], inIndex)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -197,7 +189,7 @@ func DecodeColumnValue(data []byte, ft *types.FieldType) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	colDatum, err := Unflatten(d, ft)
+	colDatum, err := Unflatten(d, ft, false)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
@@ -241,7 +233,7 @@ func DecodeRow(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			v, err = Unflatten(v, ft)
+			v, err = Unflatten(v, ft, false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -297,7 +289,7 @@ func CutRow(data []byte, cols map[int64]*types.FieldType) (map[int64][]byte, err
 }
 
 // Unflatten converts a raw datum to a column datum.
-func Unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
+func Unflatten(datum types.Datum, ft *types.FieldType, inIndex bool) (types.Datum, error) {
 	if datum.IsNull() {
 		return datum, nil
 	}
@@ -314,7 +306,8 @@ func Unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 		var t mysql.Time
 		t.Type = ft.Tp
 		t.Fsp = ft.Decimal
-		err := t.Unmarshal(datum.GetBytes())
+		var err error
+		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}

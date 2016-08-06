@@ -91,6 +91,30 @@ func (c *Column) EqualRowCount(value types.Datum) (int64, error) {
 	return totalCount / c.NDV, nil
 }
 
+// GreaterRowCount estimates the row count where the column greater than value.
+func (c *Column) GreaterRowCount(value types.Datum) (int64, error) {
+	if len(c.Numbers) == 0 {
+		return pseudoRowCount / pseudoLessRate, nil
+	}
+	index, match, err := c.search(value)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if index == 0 {
+		return c.totalRowCount(), nil
+	}
+	number := c.Numbers[index]
+	nextNumber := int64(0)
+	if index < len(c.Numbers)-1 {
+		nextNumber = c.Numbers[index+1]
+	}
+	greaterThanBucketValueCount := number - c.Repeats[index]
+	if match {
+		return greaterThanBucketValueCount, nil
+	}
+	return (nextNumber + greaterThanBucketValueCount) / 2, nil
+}
+
 // LessRowCount estimates the row count where the column less than value.
 func (c *Column) LessRowCount(value types.Datum) (int64, error) {
 	if len(c.Numbers) == 0 {
@@ -334,7 +358,7 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 			Repeats: cpb.GetRepeats(),
 		}
 		for i, val := range values {
-			c.Values[i], err = tablecodec.Unflatten(val, &cInfo.FieldType)
+			c.Values[i], err = tablecodec.Unflatten(val, &cInfo.FieldType, false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

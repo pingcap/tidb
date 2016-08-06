@@ -30,7 +30,8 @@ import (
 
 const (
 	pdRootPath        = "/pd"
-	requestTimeout    = 3 * time.Second
+	requestTimeout    = 10 * time.Second
+	connectTimeout    = 30 * time.Second
 	maxRetryGetLeader = 100
 )
 
@@ -71,7 +72,7 @@ func NewClient(etcdAddrs []string, clusterID uint64) (Client, error) {
 	log.Infof("[pd] create etcd client with endpoints %v", etcdAddrs)
 	etcdClient, err := clientv3.New(clientv3.Config{
 		Endpoints:   etcdAddrs,
-		DialTimeout: requestTimeout,
+		DialTimeout: connectTimeout,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -67,6 +67,8 @@ type NewXSelectIndexExec struct {
 	indexOrder map[int64]int
 	indexPlan  *plan.PhysicalIndexScan
 
+	returnedRows uint64 // returned row count
+
 	mu sync.Mutex
 
 	/*
@@ -89,6 +91,7 @@ func (e *NewXSelectIndexExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.B
 	e.byItems = byItems
 	e.aggFields = fields
 	e.aggregate = true
+	e.indexPlan.DoubleRead = true
 }
 
 // AddLimit implements NewXExecutor interface.
@@ -125,11 +128,58 @@ func (e *NewXSelectIndexExec) Close() error {
 	e.tasks = nil
 	e.mu.Unlock()
 	e.indexOrder = make(map[int64]int)
+	e.returnedRows = 0
 	return nil
 }
 
 // Next implements Executor Next interface.
 func (e *NewXSelectIndexExec) Next() (*Row, error) {
+	if e.indexPlan.LimitCount != nil && e.returnedRows >= uint64(*e.indexPlan.LimitCount) {
+		return nil, nil
+	}
+	e.returnedRows++
+	if e.indexPlan.DoubleRead {
+		return e.nextForDoubleRead()
+	}
+	return e.nextForSingleRead()
+}
+
+func (e *NewXSelectIndexExec) nextForSingleRead() (*Row, error) {
+	if e.result == nil {
+		var err error
+		e.result, err = e.doIndexRequest()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	for {
+		if e.subResult == nil {
+			var err error
+			e.subResult, err = e.result.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if e.subResult == nil {
+				return nil, nil
+			}
+		}
+		h, rowData, err := e.subResult.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if rowData == nil {
+			e.subResult = nil
+			continue
+		}
+		if e.aggregate {
+			// TODO: Implement aggregation push down in single read index
+			return nil, errors.New("Can't push aggr in a single read index executor!")
+		}
+		return resultRowToRow(e.table, h, rowData, e.asName), nil
+	}
+}
+
+func (e *NewXSelectIndexExec) nextForDoubleRead() (*Row, error) {
 	if e.tasks == nil {
 		startTs := time.Now()
 		handles, err := e.fetchHandles()
@@ -217,8 +267,11 @@ func (e *NewXSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 		return nil, errors.Trace(err)
 	}
 	concurrency := 1
-	if e.indexPlan.OutOfOrder {
-		concurrency = 10
+	if !e.indexPlan.DoubleRead {
+		concurrency = defaultConcurrency
+		selIdxReq.IndexInfo.Columns = xapi.ColumnsToProto(e.indexPlan.Columns, false)
+	} else if e.indexPlan.OutOfOrder {
+		concurrency = defaultConcurrency
 	}
 	return xapi.Select(txn.GetClient(), selIdxReq, concurrency)
 }
@@ -393,20 +446,21 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResul
 
 // NewXSelectTableExec represents XAPI select executor without result fields.
 type NewXSelectTableExec struct {
-	tableInfo   *model.TableInfo
-	table       table.Table
-	asName      *model.CIStr
-	ctx         context.Context
-	supportDesc bool
-	isMemDB     bool
-	result      *xapi.SelectResult
-	subResult   *xapi.SubResult
-	where       *tipb.Expr
-	Columns     []*model.ColumnInfo
-	schema      expression.Schema
-	ranges      []plan.TableRange
-	desc        bool
-	limitCount  *int64
+	tableInfo    *model.TableInfo
+	table        table.Table
+	asName       *model.CIStr
+	ctx          context.Context
+	supportDesc  bool
+	isMemDB      bool
+	result       *xapi.SelectResult
+	subResult    *xapi.SubResult
+	where        *tipb.Expr
+	Columns      []*model.ColumnInfo
+	schema       expression.Schema
+	ranges       []plan.TableRange
+	desc         bool
+	limitCount   *int64
+	returnedRows uint64 // returned rowCount
 
 	/*
 		The following attributes are used for aggregation push down.
@@ -475,11 +529,15 @@ func (e *NewXSelectTableExec) doRequest() error {
 func (e *NewXSelectTableExec) Close() error {
 	e.result = nil
 	e.subResult = nil
+	e.returnedRows = 0
 	return nil
 }
 
 // Next implements Executor interface.
 func (e *NewXSelectTableExec) Next() (*Row, error) {
+	if e.limitCount != nil && e.returnedRows >= uint64(*e.limitCount) {
+		return nil, nil
+	}
 	if e.result == nil {
 		err := e.doRequest()
 		if err != nil {
@@ -507,6 +565,7 @@ func (e *NewXSelectTableExec) Next() (*Row, error) {
 			e.subResult = nil
 			continue
 		}
+		e.returnedRows++
 		if e.aggregate {
 			// compose aggreagte row
 			return &Row{Data: rowData}, nil

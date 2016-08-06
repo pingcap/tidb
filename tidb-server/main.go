@@ -37,16 +37,18 @@ import (
 )
 
 var (
-	store       = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
-	storePath   = flag.String("path", "/tmp/tidb", "tidb storage path")
-	logLevel    = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
-	port        = flag.String("P", "4000", "mp server port")
-	statusPort  = flag.String("status", "10080", "tidb server status port")
-	lease       = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
-	socket      = flag.String("socket", "", "The socket file to use for connection.")
-	enablePS    = flag.Int("perfschema", 0, "If enable performance schema.")
-	useNewPlan  = flag.Int("newplan", 1, "If use new planner.")
-	useNewLexer = flag.Int("newlexer", 0, "If use new lexer.")
+	store        = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
+	storePath    = flag.String("path", "/tmp/tidb", "tidb storage path")
+	logLevel     = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
+	host         = flag.String("host", "0.0.0.0", "tidb server host")
+	port         = flag.String("P", "4000", "tidb server port")
+	statusPort   = flag.String("status", "10080", "tidb server status port")
+	lease        = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
+	socket       = flag.String("socket", "", "The socket file to use for connection.")
+	enablePS     = flag.Bool("perfschema", false, "If enable performance schema.")
+	reportStatus = flag.Bool("report-status", true, "If enable status report HTTP service")
+	useNewPlan   = flag.Bool("newplan", true, "If use new planner.")
+	useNewLexer  = flag.Bool("newlexer", false, "If use new lexer.")
 )
 
 func main() {
@@ -66,10 +68,11 @@ func main() {
 	tidb.SetSchemaLease(time.Duration(*lease) * time.Second)
 
 	cfg := &server.Config{
-		Addr:       fmt.Sprintf(":%s", *port),
-		LogLevel:   *logLevel,
-		StatusAddr: fmt.Sprintf(":%s", *statusPort),
-		Socket:     *socket,
+		Addr:         fmt.Sprintf("%s:%s", *host, *port),
+		LogLevel:     *logLevel,
+		StatusAddr:   fmt.Sprintf(":%s", *statusPort),
+		Socket:       *socket,
+		ReportStatus: *reportStatus,
 	}
 
 	log.SetLevelByString(cfg.LogLevel)
@@ -78,17 +81,15 @@ func main() {
 		log.Fatal(errors.ErrorStack(err))
 	}
 
-	if *enablePS == 1 {
+	if *enablePS {
 		perfschema.EnablePerfSchema()
 	}
 
-	if *useNewPlan == 0 {
+	if !*useNewPlan {
 		plan.UseNewPlanner = false
 	}
 
-	if *useNewLexer != 0 {
-		parser.UseNewLexer = true
-	}
+	parser.UseNewLexer = *useNewLexer
 
 	// Create a session to load information schema.
 	se, err := tidb.CreateSession(store)

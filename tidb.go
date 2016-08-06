@@ -18,14 +18,10 @@
 package tidb
 
 import (
-	"net/http"
-	"time"
-	// For pprof
-	_ "net/http/pprof"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -82,10 +78,6 @@ var (
 		domains: map[string]*domain.Domain{},
 	}
 	stores = make(map[string]kv.Driver)
-	// EnablePprof indicates whether to enable HTTP Pprof or not.
-	EnablePprof = os.Getenv("TIDB_PPROF") != "0"
-	// PprofAddr is the pprof url.
-	PprofAddr = ":8888"
 	// store.UUID()-> IfBootstrapped
 	storeBootstrapped = make(map[string]bool)
 
@@ -289,10 +281,6 @@ func init() {
 	// Register default memory and goleveldb storage
 	RegisterLocalStore("memory", goleveldb.MemoryDriver{})
 	RegisterLocalStore("goleveldb", goleveldb.Driver{})
-	// start pprof handlers
-	if EnablePprof {
-		go http.ListenAndServe(PprofAddr, nil)
-	}
 
 	// Init metrics
 	tpsMetrics = metric.NewTPSMetrics()

@@ -16,5 +16,6 @@ package oracle
 // Oracle is the interface that provides strictly ascending timestamps.
 type Oracle interface {
 	GetTimestamp() (uint64, error)
-	IsExpired(lockTimestamp uint64, TTL uint64) (bool, error)
+	IsExpired(lockTimestamp uint64, TTL uint64) bool
+	Close()
 }

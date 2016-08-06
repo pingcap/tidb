@@ -29,6 +29,9 @@ type PhysicalIndexScan struct {
 	DBName     *model.CIStr
 	Desc       bool
 	OutOfOrder bool
+	// DoubleRead means if the index executor will read kv two times.
+	// If the query requires the columns that don't belong to index, DoubleRead will be true.
+	DoubleRead bool
 
 	accessEqualCount int
 	AccessCondition  []expression.Expression
