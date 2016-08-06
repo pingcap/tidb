@@ -15,6 +15,7 @@ package parser
 
 import (
 	"fmt"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -133,6 +134,7 @@ func (s *testParserSuite) RunTest(c *C, table []testCase) {
 		}
 	}
 }
+
 func (s *testParserSuite) TestDMLStmt(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
@@ -179,25 +181,21 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"REPLACE INTO foo VALUE ()", true},
 		// 40
 		{`SELECT stuff.id
-		FROM stuff
-		WHERE stuff.value >= ALL (SELECT stuff.value
-		FROM stuff)`, true},
+			FROM stuff
+			WHERE stuff.value >= ALL (SELECT stuff.value
+			FROM stuff)`, true},
 		{"BEGIN", true},
 		{"START TRANSACTION", true},
 		// 45
 		{"COMMIT", true},
 		{"ROLLBACK", true},
-		{`
-		BEGIN;
+		{`BEGIN;
 			INSERT INTO foo VALUES (42, 3.14);
 			INSERT INTO foo VALUES (-1, 2.78);
 		COMMIT;`, true},
-		{` // A
-		BEGIN;
+		{`BEGIN;
 			INSERT INTO tmp SELECT * from bar;
-		SELECT * from tmp;
-
-		// B
+			SELECT * from tmp;
 		ROLLBACK;`, true},
 
 		// set
@@ -679,7 +677,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (a bytes)", false},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED)", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) -- foo", true},
-		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) // foo", true},
+		// {"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) // foo", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
 		{"CREATE TABLE foo /* foo */ (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
 		{"CREATE TABLE foo (name CHAR(50) BINARY)", true},
@@ -1024,4 +1022,51 @@ func BenchmarkParse(b *testing.B) {
 		}
 	}
 	b.ReportAllocs()
+}
+
+var tableCompatible = []string{
+	`drop table IF EXISTS t;
+	CREATE TABLE t(c INT, index cidx (c));`,
+	`INSERT INTO t VALUES(1), (null), (2);`,
+	"SELECT COUNT(c) FROM t WHERE c IS NOT NULL;",
+	`select cast(null as char(30))`,
+	`select 0b01 + 1, 0b01000001 = "A"`,
+	"create table t (id tiny)",
+	"select        ((a+1))     from t",
+	"select !true from t",
+	"select IF(1>2,2,3) from t",
+	"select hex('TiDB') from t",
+	`show tables like 'show\_test'`,
+	`select _utf8"string";`,
+	"alter table show_test drop foreign key `fk`",
+	`insert t values('\x01')`,
+	`select "ab\_c"`,
+	`select "ab\%c"`,
+	`SELECT CONVERT("ABCD" USING ASCII);`,
+}
+
+func (s *testParserSuite) TestParserCompatible(c *C) {
+	defer testleak.AfterTest(c)()
+	saveUseNewLexer := UseNewLexer
+
+	parser := New()
+	for _, str := range tableCompatible {
+		st1, err1 := parser.Parse(str, "", "")
+
+		UseNewLexer = true
+		st2, err2 := parser.Parse(str, "", "")
+		UseNewLexer = false
+
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+		c.Assert(len(st1), Equals, len(st2))
+
+		for i := 0; i < len(st1); i++ {
+			if !reflect.DeepEqual(st1[i], st2[i]) {
+				c.Error(i, st1[i], st2[i])
+			}
+		}
+	}
+
+	UseNewLexer = saveUseNewLexer
 }
