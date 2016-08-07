@@ -157,7 +157,8 @@ func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, d
 }
 
 // Create creates a new entry in the kvIndex data.
-// If the index is unique and there is an existing entry with the same key, Create will return ErrKeyExists.
+// If the index is unique and there is an existing entry with the same key,
+// Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
 func (c *index) Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error) {
 	key, distinct, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
