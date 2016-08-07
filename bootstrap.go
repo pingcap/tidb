@@ -191,7 +191,7 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateDBPrivTable)
 	mustExecute(s, CreateTablePrivTable)
 	mustExecute(s, CreateColumnPrivTable)
-	// Create global systemt variable table.
+	// Create global system variable table.
 	mustExecute(s, CreateGloablVariablesTable)
 	// Create TiDB table.
 	mustExecute(s, CreateTiDBTable)
