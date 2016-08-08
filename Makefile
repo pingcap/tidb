@@ -66,8 +66,8 @@ goyacc:
 	rm -rf vendor
 
 parser: goyacc golex
-	./bin/goyacc -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
-	./bin/goyacc -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}'
+	bin/goyacc -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
+	bin/goyacc -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}'
 	rm -f $(TEMP_FILE)
 	rm -f y.output
 
