@@ -62,14 +62,15 @@ golex:
 
 goyacc:
 	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) install github.com/pingcap/tidb/parser/goyacc
+	$(GO) build github.com/pingcap/tidb/parser/goyacc
 	rm -rf vendor
 
 parser: goyacc golex
-	$(GOYACC) -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
-	$(GOYACC) -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}'
+	./goyacc -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
+	./goyacc -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}'
 	rm -f $(TEMP_FILE)
 	rm -f y.output
+	rm -f goyacc
 
 	@if [ $(ARCH) = $(LINUX) ]; \
 	then \
