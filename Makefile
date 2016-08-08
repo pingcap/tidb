@@ -16,13 +16,11 @@ ifeq "$(major_version)" "$(filter $(major_version),$(old_versions))"
   # Old version of `make` installed. It fails to search golex/goyacc
   # by using the modified `PATH`, so we specify these commands with full path.
   GOLEX   = $$(which golex)
-  GOYACC  = $$(which goyacc)
   GOLINT  = $$(which golint)
 else
   # After version 4, `make` could follow modified `PATH` to find
   # golex/goyacc correctly.
   GOLEX   := golex
-  GOYACC  := goyacc
   GOLINT  := golint
 endif
 
