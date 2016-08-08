@@ -16,6 +16,7 @@ package mocktikv
 import (
 	"testing"
 
+	"github.com/gogo/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/util/codec"
@@ -53,6 +54,14 @@ func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
 		})
 	}
 	return mutations
+}
+
+func lock(key, primary string, ts uint64) *kvrpcpb.LockInfo {
+	return &kvrpcpb.LockInfo{
+		Key:         encodeKey(key),
+		PrimaryLock: encodeKey(primary),
+		LockVersion: proto.Uint64(ts),
+	}
 }
 
 func (s *testMockTiKVSuite) SetUpTest(c *C) {
@@ -150,6 +159,16 @@ func (s *testMockTiKVSuite) mustRollbackThenGetOK(c *C, key string, lockTS uint6
 	c.Assert(string(val), Equals, expect)
 }
 
+func (s *testMockTiKVSuite) mustScanLock(c *C, maxTs uint64, expect []*kvrpcpb.LockInfo) {
+	locks, err := s.store.ScanLock(nil, nil, maxTs)
+	c.Assert(err, IsNil)
+	c.Assert(locks, DeepEquals, expect)
+}
+
+func (s *testMockTiKVSuite) mustResolveLock(c *C, startTS, commitTS uint64) {
+	c.Assert(s.store.ResolveLock(nil, nil, startTS, commitTS), IsNil)
+}
+
 func (s *testMockTiKVSuite) TestGet(c *C) {
 	s.mustGetNone(c, "x", 10)
 	s.mustPutOK(c, "x", "x", 5, 10)
@@ -239,4 +258,29 @@ func (s *testMockTiKVSuite) TestScan(c *C) {
 	checkV20()
 	checkV30()
 	checkV40()
+}
+
+func (s *testMockTiKVSuite) TestScanLock(c *C) {
+	s.mustPutOK(c, "k1", "v1", 1, 2)
+	s.mustPrewriteOK(c, putMutations("p1", "v5", "s1", "v5"), "p1", 5)
+	s.mustPrewriteOK(c, putMutations("p2", "v10", "s2", "v10"), "p2", 10)
+	s.mustPrewriteOK(c, putMutations("p3", "v20", "s3", "v20"), "p3", 20)
+	s.mustScanLock(c, 10, []*kvrpcpb.LockInfo{
+		lock("p1", "p1", 5),
+		lock("p2", "p2", 10),
+		lock("s1", "p1", 5),
+		lock("s2", "p2", 10),
+	})
+}
+
+func (s *testMockTiKVSuite) TestResolveLock(c *C) {
+	s.mustPrewriteOK(c, putMutations("p1", "v5", "s1", "v5"), "p1", 5)
+	s.mustPrewriteOK(c, putMutations("p2", "v10", "s2", "v10"), "p2", 10)
+	s.mustResolveLock(c, 5, 0)
+	s.mustResolveLock(c, 10, 20)
+	s.mustGetNone(c, "p1", 20)
+	s.mustGetNone(c, "s1", 30)
+	s.mustGetOK(c, "p2", 20, "v10")
+	s.mustGetOK(c, "s2", 30, "v10")
+	s.mustScanLock(c, 30, nil)
 }

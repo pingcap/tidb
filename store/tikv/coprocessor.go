@@ -24,7 +24,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -351,17 +350,17 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 			continue
 		}
 		if e := resp.GetLocked(); e != nil {
-			lock := newLock(it.store, e.GetPrimaryLock(), e.GetLockVersion(), e.GetKey(), e.GetLockVersion())
-			_, lockErr := lock.cleanup(bo)
-			if lockErr == nil || terror.ErrorEqual(lockErr, errInnerRetryable) {
-				err = bo.Backoff(boTxnLock, lockErr)
+			ok, err1 := it.store.lockResolver.ResolveLocks(bo, []*Lock{newLock(e)})
+			if err1 != nil {
+				return nil, errors.Trace(err1)
+			}
+			if !ok {
+				err = bo.Backoff(boTxnLock, errors.New(e.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				continue
 			}
-			log.Warnf("cleanup lock error: %v", lockErr)
-			return nil, errors.Trace(lockErr)
+			continue
 		}
 		if e := resp.GetOtherError(); e != "" {
 			err = errors.Errorf("other error: %s", e)
