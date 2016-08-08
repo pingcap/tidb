@@ -915,6 +915,7 @@ func (s *testPlanSuite) TestCoveringIndex(c *C) {
 		{[]string{"a", "b"}, []string{"b", "a"}, []int{-1, -1}, true},
 		{[]string{"a", "b"}, []string{"b", "c"}, []int{-1, -1}, false},
 		{[]string{"a", "b"}, []string{"a", "b"}, []int{50, -1}, false},
+		{[]string{"a", "b"}, []string{"a", "c"}, []int{-1, -1}, false},
 	}
 	for _, ca := range cases {
 		var columns []*model.ColumnInfo
