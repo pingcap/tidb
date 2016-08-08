@@ -285,7 +285,24 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 }
 
 func startString(s *Scanner) (tok int, pos Pos, lit string) {
-	return s.scanString()
+	var quote bool
+	if s.r.peek() == '\'' {
+		quote = true
+	}
+	tok, pos, lit = s.scanString()
+
+	// Quoted strings placed next to each other are concatenated to a single string.
+	// See http://dev.mysql.com/doc/refman/5.7/en/string-literals.html
+	for quote {
+		ch := s.skipWhitespace()
+		if ch == '\'' {
+			_, _, lit1 := s.scanString()
+			lit = lit + lit1
+		} else {
+			quote = false
+		}
+	}
+	return
 }
 
 func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
@@ -319,6 +336,22 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 				s.buf.WriteByte('"')
 				s.r.inc()
 				continue
+			} else if ch0 == '0' {
+				s.buf.WriteByte(0)
+				s.r.inc()
+				continue
+			} else if ch0 == 'b' {
+				s.buf.WriteByte(8)
+				s.r.inc()
+				continue
+			} else if ch0 == 'Z' {
+				s.buf.WriteByte(26)
+				s.r.inc()
+				continue
+			} else if ch0 == 'r' {
+				s.buf.WriteByte(13)
+				s.r.inc()
+				continue
 			} else if ch0 == 't' {
 				s.buf.WriteByte('\t')
 				s.r.inc()
@@ -338,13 +371,6 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 	}
 
 	lit = s.buf.String()
-	// Quoted strings placed next to each other are concatenated to a single string.
-	// See http://dev.mysql.com/doc/refman/5.7/en/string-literals.html
-	ch := s.r.peek()
-	if ch == '\'' {
-		_, _, lit1 := s.scanString()
-		lit = lit + lit1
-	}
 
 	return
 }
