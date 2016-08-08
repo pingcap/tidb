@@ -48,6 +48,7 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+// Init initializes the FieldType data.
 func (ft *FieldType) Init(tp byte) {
 	ft.Tp = tp
 	ft.Flen = UnspecifiedLength
