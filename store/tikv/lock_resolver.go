@@ -86,8 +86,15 @@ func (lr *LockResolver) getResolved(txnID uint64) (txnStatus, bool) {
 	return s, ok
 }
 
-// ResolveLocks tries to resolve Locks. If returned `ok` is false, there
-// are some locks not expired, caller need to sleep then retry later.
+// ResolveLocks tries to resolve Locks. The resolving process is in 3 steps:
+// 1) Use the `lockTTL` to pick up all expired locks. Only locks that are too
+//    old are considerd orphan locks and will be handled later. If all locks are
+//    expired then all locks will be resolved so the returned `ok` will be true,
+//    otherwise caller should sleep a while before retry.
+// 2) For each lock, query the primary key to get txn(which left the lock)'s
+//    commit status.
+// 3) Send `ResolveLock` cmd to the lock's region to resolve all locks belong to
+//    the same transaction.
 func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err error) {
 	if len(locks) == 0 {
 		return true, nil
