@@ -417,19 +417,9 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if err = v.Create(bs, colVals, recordID); err != nil {
+		if dupHandle, err := v.Create(bs, colVals, recordID); err != nil {
 			if terror.ErrorEqual(err, kv.ErrKeyExists) {
-				// Get the duplicate row handle
-				// For insert on duplicate syntax, we should update the row
-				iter, _, err1 := v.Seek(bs, colVals)
-				if err1 != nil {
-					return 0, errors.Trace(err1)
-				}
-				_, h, err1 := iter.Next()
-				if err1 != nil {
-					return 0, errors.Trace(err1)
-				}
-				return h, errors.Trace(dupKeyErr)
+				return dupHandle, errors.Trace(dupKeyErr)
 			}
 			return 0, errors.Trace(err)
 		}
@@ -582,7 +572,7 @@ func (t *Table) buildIndexForRow(rm kv.RetrieverMutator, h int64, vals []types.D
 		return nil
 	}
 
-	if err := idx.Create(rm, vals, h); err != nil {
+	if _, err := idx.Create(rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

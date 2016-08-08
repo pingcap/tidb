@@ -444,7 +444,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 			}
 
 			// create the index.
-			err1 = kvX.Create(txn, vals, handle)
+			_, err1 = kvX.Create(txn, vals, handle)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
