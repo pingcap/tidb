@@ -305,74 +305,92 @@ func startString(s *Scanner) (tok int, pos Pos, lit string) {
 	return
 }
 
+// maybeBuf is used to avoid buf if possible.
+type maybeBuf struct {
+	flag bool
+	r    *reader
+	b    *bytes.Buffer
+	p    *Pos
+}
+
+func (mb *maybeBuf) useBuf(str string) {
+	if !mb.flag {
+		mb.flag = true
+		mb.b.Reset()
+		mb.b.WriteString(str)
+	}
+}
+
+func (mb *maybeBuf) writeRune(r rune) {
+	if mb.flag {
+		mb.b.WriteRune(r)
+	}
+}
+
+func (mb *maybeBuf) data() string {
+	var lit string
+	if mb.flag {
+		lit = mb.b.String()
+	} else {
+		lit = mb.r.data(mb.p)
+		lit = lit[1 : len(lit)-1]
+	}
+	return lit
+}
+
 func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
-	s.buf.Reset()
 	tok, pos = stringLit, s.r.pos()
+	mb := maybeBuf{false, &s.r, &s.buf, &pos}
 	ending := s.r.readByte()
-	for {
-		if s.r.eof() {
-			tok, lit = 0, s.buf.String()
-			return
-		}
-		ch0 := s.r.peek()
+	ch0 := s.r.peek()
+	for !s.r.eof() {
 		if ch0 == ending {
 			s.r.inc()
 			if s.r.peek() != ending {
-				break
+				lit = mb.data()
+				return
 			}
+			str := mb.r.data(&pos)
+			mb.useBuf(str[1 : len(str)-1])
+		} else if ch0 == '\\' {
+			mb.useBuf(mb.r.data(&pos)[1:])
+			ch0 = handleEscape(s)
 		}
-		// TODO this would break reader's line and col information
-		if ch0 == '\n' {
-		}
-		if ch0 == '\\' {
-			s.r.inc()
-			ch0 = s.r.peek()
-			if ch0 == 'n' {
-				s.buf.WriteByte('\n')
-				s.r.inc()
-				continue
-			} else if ch0 == '\\' {
-			} else if ch0 == '"' {
-				s.buf.WriteByte('"')
-				s.r.inc()
-				continue
-			} else if ch0 == '0' {
-				s.buf.WriteByte(0)
-				s.r.inc()
-				continue
-			} else if ch0 == 'b' {
-				s.buf.WriteByte(8)
-				s.r.inc()
-				continue
-			} else if ch0 == 'Z' {
-				s.buf.WriteByte(26)
-				s.r.inc()
-				continue
-			} else if ch0 == 'r' {
-				s.buf.WriteByte(13)
-				s.r.inc()
-				continue
-			} else if ch0 == 't' {
-				s.buf.WriteByte('\t')
-				s.r.inc()
-				continue
-			} else if ch0 == '\'' {
-				s.buf.WriteByte('\'')
-				s.r.inc()
-				continue
-			} else if ch0 == '_' || ch0 == '%' {
-				s.buf.WriteByte('\\')
-			}
-		} else if !isASCII(ch0) {
-			// TODO handle non-ascii
-		}
-		s.buf.WriteRune(ch0)
+		mb.writeRune(ch0)
 		s.r.inc()
+		ch0 = s.r.peek()
 	}
 
-	lit = s.buf.String()
-
+	tok = unicode.ReplacementChar
 	return
+}
+
+// handleEscape handles the case in scanString when previous char is '\'.
+func handleEscape(s *Scanner) rune {
+	s.r.inc()
+	ch0 := s.r.peek()
+	/*
+		\" \' \\ \n \0 \b \Z \r \t ==> escape to one char
+		\% \_ ==> preverse both char
+		other ==> remove \
+	*/
+	switch ch0 {
+	case 'n':
+		ch0 = '\n'
+	case '0':
+		ch0 = 0
+	case 'b':
+		ch0 = 8
+	case 'Z':
+		ch0 = 26
+	case 'r':
+		ch0 = '\r'
+	case 't':
+		ch0 = '\t'
+	case '%', '_':
+		s.buf.WriteByte('\\')
+	}
+	return ch0
 }
 
 func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {

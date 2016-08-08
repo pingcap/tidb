@@ -167,6 +167,7 @@ func (s *testLexerSuite) TestscanString(c *C) {
 		{`'\x\B'`, "xB"},
 		{`'\0\'\"\b\n\r\t\\'`, "\000'\"\b\n\r\t\\"},
 		{`'\Z'`, string(26)},
+		{`'\%\_'`, `\%\_`},
 		{`'hello'`, "hello"},
 		{`'"hello"'`, `"hello"`},
 		{`'""hello""'`, `""hello""`},
@@ -178,6 +179,7 @@ func (s *testLexerSuite) TestscanString(c *C) {
 		{`"hel""lo"`, `hel"lo`},
 		{`"\"hello"`, `"hello`},
 		{`'disappearing\ backslash'`, "disappearing backslash"},
+		{"'한국의中文UTF8およびテキストトラック'", "한국의中文UTF8およびテキストトラック"},
 	}
 
 	for _, v := range table {
