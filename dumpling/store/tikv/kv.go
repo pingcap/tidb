@@ -76,10 +76,11 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 var oracleUpdateInterval = 2000
 
 type tikvStore struct {
-	uuid        string
-	oracle      oracle.Oracle
-	client      Client
-	regionCache *RegionCache
+	uuid         string
+	oracle       oracle.Oracle
+	client       Client
+	regionCache  *RegionCache
+	lockResolver *LockResolver
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client) (*tikvStore, error) {
@@ -88,12 +89,14 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client) (*tikvStore, e
 		return nil, errors.Trace(err)
 	}
 
-	return &tikvStore{
+	store := &tikvStore{
 		uuid:        uuid,
 		oracle:      oracle,
 		client:      client,
 		regionCache: NewRegionCache(pdClient),
-	}, nil
+	}
+	store.lockResolver = NewLockResolver(store)
+	return store, nil
 }
 
 // NewMockTikvStore creates a mocked tikv store.
