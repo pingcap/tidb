@@ -27,7 +27,7 @@ import (
 )
 
 // UseNewLexer provides a switch for the tidb-server binary.
-var UseNewLexer bool
+var UseNewLexer bool = true
 
 // Error instances.
 var (
@@ -72,6 +72,9 @@ type Parser struct {
 	cache     []yySymType
 	src       string
 	lexer     Scanner
+
+	yylval yySymType
+	yyVAL  yySymType
 }
 
 type stmtTexter interface {

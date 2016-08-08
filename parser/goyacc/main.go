@@ -542,8 +542,8 @@ func %[1]sParse(yylex %[1]sLexer, parser *Parser) int {
 
 	yyEx, _ := yylex.(%[1]sLexerEx)
 	var yyn int
-	var yylval %[1]sSymType
-	var yyVAL %[1]sSymType
+	parser.yylval = %[1]sSymType{}
+	parser.yyVAL = %[1]sSymType{}
 	yyS := parser.cache
 
 	Nerrs := 0   /* number of errors */
@@ -577,12 +577,12 @@ yystack:
 		yyS = nyys
 		parser.cache = yyS
 	}
-	yyS[yyp] = yyVAL
+	yyS[yyp] = parser.yyVAL
 	yyS[yyp].yys = yystate
 
 yynewstate:
 	if yychar < 0 {
-		yychar = %[1]slex1(yylex, &yylval)
+		yychar = %[1]slex1(yylex, &parser.yylval)
 		var ok bool
 		if yyxchar, ok = %[1]sXLAT[yychar]; !ok {
 			yyxchar = len(%[1]sSymNames) // > tab width
@@ -605,7 +605,7 @@ yynewstate:
 	switch {
 	case yyn > 0: // shift
 		yychar = -1
-		yyVAL = yylval
+		parser.yyVAL = parser.yylval
 		yystate = yyn
 		yyshift = yyn
 		if %[1]sDebug >= 2 {
@@ -703,7 +703,7 @@ yynewstate:
 		yyS = nyys
 		parser.cache = yyS
 	}
-	yyVAL = yyS[yyp+1]
+	parser.yyVAL = yyS[yyp+1]
 
 	/* consult goto table to find next state */
 	exState := yystate
@@ -751,7 +751,7 @@ yynewstate:
 			case parser.ActionValueGo:
 				f.Format("%s", part.Src)
 			case parser.ActionValueDlrDlr:
-				f.Format("yyVAL.%s", typ)
+				f.Format("parser.yyVAL.%s", typ)
 				if typ == "" {
 					panic("internal error 002")
 				}
@@ -762,7 +762,7 @@ yynewstate:
 				}
 				f.Format("yyS[yypt-%d].%s", max-num, typ)
 			case parser.ActionValueDlrTagDlr:
-				f.Format("yyVAL.%s", part.Tag)
+				f.Format("parser.yyVAL.%s", part.Tag)
 			case parser.ActionValueDlrTagNum:
 				f.Format("yyS[yypt-%d].%s", max-num, part.Tag)
 			}
@@ -772,7 +772,7 @@ yynewstate:
 	f.Format(`%u
 	}
 
-	if yyEx != nil && yyEx.Reduced(r, exState, &yyVAL) {
+	if yyEx != nil && yyEx.Reduced(r, exState, &parser.yyVAL) {
 		return -1
 	}
 	goto yystack /* stack new state and value */
