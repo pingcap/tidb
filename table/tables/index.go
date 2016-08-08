@@ -157,25 +157,29 @@ func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, d
 }
 
 // Create creates a new entry in the kvIndex data.
-// If the index is unique and there is an existing entry with the same key, Create will return ErrKeyExists.
-func (c *index) Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) error {
+// If the index is unique and there is an existing entry with the same key,
+// Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
+func (c *index) Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error) {
 	key, distinct, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	if !distinct {
 		// TODO: reconsider value
 		err = rm.Set(key, []byte("timestamp?"))
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
-	_, err = rm.Get(key)
+	value, err := rm.Get(key)
 	if kv.IsErrNotFound(err) {
 		err = rm.Set(key, encodeHandle(h))
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-
-	return errors.Trace(kv.ErrKeyExists)
+	handle, err := decodeHandle(value)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return handle, errors.Trace(kv.ErrKeyExists)
 }
 
 // Delete removes the entry for handle h and indexdValues from KV index.
