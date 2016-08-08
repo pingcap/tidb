@@ -160,18 +160,18 @@ func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
 func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 	switch x.Op {
 	case opcode.AndAnd, opcode.OrOr, opcode.LogicXor:
-		x.Type = types.NewFieldType(mysql.TypeLonglong)
+		x.Type.Init(mysql.TypeLonglong)
 	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE, opcode.NullEQ:
-		x.Type = types.NewFieldType(mysql.TypeLonglong)
+		x.Type.Init(mysql.TypeLonglong)
 	case opcode.RightShift, opcode.LeftShift, opcode.And, opcode.Or, opcode.Xor:
-		x.Type = types.NewFieldType(mysql.TypeLonglong)
+		x.Type.Init(mysql.TypeLonglong)
 		x.Type.Flag |= mysql.UnsignedFlag
 	case opcode.IntDiv:
-		x.Type = types.NewFieldType(mysql.TypeLonglong)
+		x.Type.Init(mysql.TypeLonglong)
 	case opcode.Plus, opcode.Minus, opcode.Mul, opcode.Mod:
 		if x.L.GetType() != nil && x.R.GetType() != nil {
 			xTp := mergeArithType(x.L.GetType().Tp, x.R.GetType().Tp)
-			x.Type = types.NewFieldType(xTp)
+			x.Type.Init(xTp)
 			leftUnsigned := x.L.GetType().Flag & mysql.UnsignedFlag
 			rightUnsigned := x.R.GetType().Flag & mysql.UnsignedFlag
 			// If both operands are unsigned, result is unsigned.
@@ -183,7 +183,7 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 			if xTp == mysql.TypeLonglong {
 				xTp = mysql.TypeNewDecimal
 			}
-			x.Type = types.NewFieldType(xTp)
+			x.Type.Init(xTp)
 		}
 	}
 	x.Type.Charset = charset.CharsetBin
@@ -208,14 +208,14 @@ func mergeArithType(a, b byte) byte {
 func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 	switch x.Op {
 	case opcode.Not:
-		x.Type = types.NewFieldType(mysql.TypeLonglong)
+		x.Type.Init(mysql.TypeLonglong)
 	case opcode.BitNeg:
-		x.Type = types.NewFieldType(mysql.TypeLonglong)
+		x.Type.Init(mysql.TypeLonglong)
 		x.Type.Flag |= mysql.UnsignedFlag
 	case opcode.Plus:
-		x.Type = x.V.GetType()
+		x.Type = *x.V.GetType()
 	case opcode.Minus:
-		x.Type = types.NewFieldType(mysql.TypeLonglong)
+		x.Type.Init(mysql.TypeLonglong)
 		if x.V.GetType() != nil {
 			switch x.V.GetType().Tp {
 			case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:

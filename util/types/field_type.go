@@ -48,6 +48,12 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+func (ft *FieldType) Init(tp byte) {
+	ft.Tp = tp
+	ft.Flen = UnspecifiedLength
+	ft.Decimal = UnspecifiedLength
+}
+
 // CompactStr only considers Tp/CharsetBin/Flen/Deimal.
 // This is used for showing column type in infoschema.
 func (ft *FieldType) CompactStr() string {
