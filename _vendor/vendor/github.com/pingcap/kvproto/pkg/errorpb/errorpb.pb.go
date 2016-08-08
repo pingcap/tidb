@@ -29,7 +29,9 @@ var _ = math.Inf
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the proto package it is being compiled against.
-const _ = proto.ProtoPackageIsVersion1
+// A compilation error at this line likely means your copy of the
+// proto package needs to be updated.
+const _ = proto.ProtoPackageIsVersion2 // please upgrade the proto package
 
 type NotLeader struct {
 	RegionId         *uint64      `protobuf:"varint,1,opt,name=region_id" json:"region_id,omitempty"`
@@ -179,6 +181,8 @@ func init() {
 	proto.RegisterType((*StaleEpoch)(nil), "errorpb.StaleEpoch")
 	proto.RegisterType((*Error)(nil), "errorpb.Error")
 }
+
+func init() { proto.RegisterFile("errorpb.proto", fileDescriptor0) }
 
 var fileDescriptor0 = []byte{
 	// 272 bytes of a gzipped FileDescriptorProto

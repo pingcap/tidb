@@ -63,6 +63,10 @@ func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
 		resp.CmdRbGetResp = h.onRollbackThenGet(req.CmdRbGetReq)
 	case kvrpcpb.MessageType_CmdBatchGet:
 		resp.CmdBatchGetResp = h.onBatchGet(req.CmdBatchGetReq)
+	case kvrpcpb.MessageType_CmdScanLock:
+		resp.CmdResolveLockResp = h.onResolveLock(req.CmdResolveLockReq)
+	case kvrpcpb.MessageType_CmdResolveLock:
+		resp.CmdResolveLockResp = h.onResolveLock(req.CmdResolveLockReq)
 	}
 	return resp
 }
@@ -238,6 +242,28 @@ func (h *rpcHandler) onBatchGet(req *kvrpcpb.CmdBatchGetRequest) *kvrpcpb.CmdBat
 	return &kvrpcpb.CmdBatchGetResponse{
 		Pairs: convertToPbPairs(pairs),
 	}
+}
+
+func (h *rpcHandler) onScanLock(req *kvrpcpb.CmdScanLockRequest) *kvrpcpb.CmdScanLockResponse {
+	locks, err := h.mvccStore.ScanLock(h.startKey, h.endKey, req.GetMaxVersion())
+	if err != nil {
+		return &kvrpcpb.CmdScanLockResponse{
+			Error: convertToKeyError(err),
+		}
+	}
+	return &kvrpcpb.CmdScanLockResponse{
+		Locks: locks,
+	}
+}
+
+func (h *rpcHandler) onResolveLock(req *kvrpcpb.CmdResolveLockRequest) *kvrpcpb.CmdResolveLockResponse {
+	err := h.mvccStore.ResolveLock(h.startKey, h.endKey, req.GetStartVersion(), req.GetCommitVersion())
+	if err != nil {
+		return &kvrpcpb.CmdResolveLockResponse{
+			Error: convertToKeyError(err),
+		}
+	}
+	return &kvrpcpb.CmdResolveLockResponse{}
 }
 
 func convertToKeyError(err error) *kvrpcpb.KeyError {
