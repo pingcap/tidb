@@ -75,7 +75,7 @@ func main() {
 		ReportStatus: *reportStatus,
 	}
 
-	// Set log options
+	// set log options
 	if len(*logFile) > 0 {
 		err := log.SetOutputByName(*logFile)
 		if err != nil {
