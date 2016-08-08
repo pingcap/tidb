@@ -22,7 +22,6 @@ import (
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/terror"
 )
 
 type txnCommitter struct {
@@ -209,22 +208,23 @@ func (c *txnCommitter) prewriteSingleRegion(bo *Backoffer, batch batchKeys) erro
 			c.mu.writtenKeys = append(c.mu.writtenKeys, batch.keys...)
 			return nil
 		}
+		var locks []*Lock
 		for _, keyErr := range keyErrs {
-			var lockInfo *pb.LockInfo
-			lockInfo, err = extractLockInfoFromKeyErr(keyErr)
-			if err != nil {
-				// It could be `Retryable` or `Abort`.
-				return errors.Trace(err)
+			lock, err1 := extractLockFromKeyErr(keyErr)
+			if err1 != nil {
+				return errors.Trace(err1)
 			}
-			lock := newLock(c.store, lockInfo.GetPrimaryLock(), lockInfo.GetLockVersion(), lockInfo.GetKey(), c.startTS)
-			_, err = lock.cleanup(bo)
-			if err != nil && terror.ErrorNotEqual(err, errInnerRetryable) {
-				return errors.Trace(err)
-			}
+			locks = append(locks, lock)
 		}
-		err = bo.Backoff(boTxnLock, errors.New("prewrite encounter locks"))
+		ok, err := c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if !ok {
+			err = bo.Backoff(boTxnLock, errors.Errorf("prewrite lockedKeys: %d", len(locks)))
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 }
