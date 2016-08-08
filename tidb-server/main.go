@@ -46,9 +46,10 @@ var (
 	lease        = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
 	socket       = flag.String("socket", "", "The socket file to use for connection.")
 	enablePS     = flag.Bool("perfschema", false, "If enable performance schema.")
-	reportStatus = flag.Bool("report-status", true, "If enable status report HTTP service")
+	reportStatus = flag.Bool("report-status", true, "If enable status report HTTP service.")
 	useNewPlan   = flag.Bool("newplan", true, "If use new planner.")
 	useNewLexer  = flag.Bool("newlexer", false, "If use new lexer.")
+	logFile      = flag.String("log-file", "", "log file path")
 )
 
 func main() {
@@ -56,7 +57,6 @@ func main() {
 	tidb.RegisterStore("tikv", tikv.Driver{})
 
 	metric.RunMetric(3 * time.Second)
-	printer.PrintTiDBInfo()
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	flag.Parse()
@@ -75,7 +75,18 @@ func main() {
 		ReportStatus: *reportStatus,
 	}
 
+	// set log options
+	if len(*logFile) > 0 {
+		err := log.SetOutputByName(*logFile)
+		if err != nil {
+			log.Fatal(errors.ErrorStack(err))
+		}
+		log.SetRotateByDay()
+	}
+	// Call this before setting log level to make sure that TiDB info could be printed.
+	printer.PrintTiDBInfo()
 	log.SetLevelByString(cfg.LogLevel)
+
 	store, err := tidb.NewStore(fmt.Sprintf("%s://%s", *store, *storePath))
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
