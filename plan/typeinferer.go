@@ -81,7 +81,7 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.Type.Charset = charset.CharsetBin
 		x.Type.Collate = charset.CollationBin
 	case *ast.ParamMarkerExpr:
-		x.SetType(types.DefaultTypeForValue(x.GetValue()))
+		types.DefaultTypeForValue(x.GetValue(), x.GetType())
 	case *ast.ParenthesesExpr:
 		x.SetType(x.Expr.GetType())
 	case *ast.PatternInExpr:
@@ -230,9 +230,7 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 }
 
 func (v *typeInferrer) handleValueExpr(x *ast.ValueExpr) {
-	tp := types.DefaultTypeForValue(x.GetValue())
-	// Set charset and collation
-	x.SetType(tp)
+	types.DefaultTypeForValue(x.GetValue(), x.GetType())
 }
 
 func (v *typeInferrer) handleValuesExpr(x *ast.ValuesExpr) {

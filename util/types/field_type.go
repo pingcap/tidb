@@ -109,64 +109,64 @@ func (ft *FieldType) String() string {
 }
 
 // DefaultTypeForValue returns the default FieldType for the value.
-func DefaultTypeForValue(value interface{}) *FieldType {
-	var tp *FieldType
+func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	switch x := value.(type) {
 	case nil:
-		tp = NewFieldType(mysql.TypeNull)
+		tp.Tp = mysql.TypeNull
 	case bool, int64, int:
-		tp = NewFieldType(mysql.TypeLonglong)
+		tp.Tp = mysql.TypeLonglong
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case uint64:
-		tp = NewFieldType(mysql.TypeLonglong)
+		tp.Tp = mysql.TypeLonglong
 		tp.Flag |= mysql.UnsignedFlag
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case string:
-		tp = NewFieldType(mysql.TypeVarString)
+		tp.Tp = mysql.TypeVarString
 		tp.Charset = mysql.DefaultCharset
 		tp.Collate = mysql.DefaultCollationName
 	case float64:
-		tp = NewFieldType(mysql.TypeNewDecimal)
+		tp.Tp = mysql.TypeNewDecimal
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case []byte:
-		tp = NewFieldType(mysql.TypeBlob)
+		tp.Tp = mysql.TypeBlob
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case mysql.Bit:
-		tp = NewFieldType(mysql.TypeBit)
+		tp.Tp = mysql.TypeBit
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case mysql.Hex:
-		tp = NewFieldType(mysql.TypeVarchar)
+		tp.Tp = mysql.TypeVarchar
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case mysql.Time:
-		tp = NewFieldType(x.Type)
+		tp.Tp = x.Type
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case mysql.Duration:
-		tp = NewFieldType(mysql.TypeDuration)
+		tp.Tp = mysql.TypeDuration
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case mysql.Decimal:
-		tp = NewFieldType(mysql.TypeNewDecimal)
+		tp.Tp = mysql.TypeNewDecimal
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case mysql.Enum:
-		tp = NewFieldType(mysql.TypeEnum)
+		tp.Tp = mysql.TypeEnum
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case mysql.Set:
-		tp = NewFieldType(mysql.TypeSet)
+		tp.Tp = mysql.TypeSet
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	default:
-		tp = NewFieldType(mysql.TypeDecimal)
+		tp.Tp = mysql.TypeDecimal
 	}
-	return tp
+	tp.Flen = UnspecifiedLength
+	tp.Decimal = UnspecifiedLength
 }
 
 // DefaultCharsetForType returns the default charset/collation for mysql type.
