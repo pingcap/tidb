@@ -69,10 +69,11 @@ type Parser struct {
 	charset   string
 	collation string
 	result    []ast.StmtNode
-	cache     []yySymType
 	src       string
 	lexer     Scanner
 
+	// the following fields are used by yyParse to reduce allocation.
+	cache  []yySymType
 	yylval yySymType
 	yyVAL  yySymType
 }
