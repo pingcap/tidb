@@ -79,8 +79,6 @@ var resolverTestCases = []resolverTestCase{
 	{"select c1 from t1 group by c1 having c1 = 3", true},
 	{"select c1 from t1 group by c1 having c2 = 3", false},
 	{"select c1 from t1 where exists (select c2)", true},
-	{"create table t(a int primary key, b int, c varchar(10), d char(256));", false},
-	{"create index ib on t1(c1,c2,c1);", false},
 }
 
 func (ts *testNameResolverSuite) TestNameResolver(c *C) {

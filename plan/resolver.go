@@ -172,16 +172,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 			}
 		}
 	case *ast.CreateIndexStmt:
-		nr.checkCreateIndexGrammar(v)
-		if nr.Err != nil {
-			return inNode, true
-		}
 		nr.pushContext()
 	case *ast.CreateTableStmt:
-		nr.checkCreateTableGrammar(v)
-		if nr.Err != nil {
-			return inNode, true
-		}
 		nr.pushContext()
 		nr.currentContext().inCreateOrDropTable = true
 	case *ast.DeleteStmt:
@@ -237,9 +229,6 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 
 // Leave implements ast.Visitor interface.
 func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
-	if nr.Err != nil {
-		return inNode, false
-	}
 	switch v := inNode.(type) {
 	case *ast.AdminStmt:
 		nr.popContext()
@@ -963,30 +952,4 @@ func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
 	}
 	s.SetResultFields(fields)
 	nr.currentContext().fieldList = fields
-}
-
-func (nr *nameResolver) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
-	for _, colDef := range stmt.Cols {
-		if colDef.Tp.Tp == mysql.TypeString {
-			if colDef.Tp.Flen != types.UnspecifiedLength && colDef.Tp.Flen > 255 {
-				nr.Err = errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
-				return
-			}
-		}
-	}
-}
-
-func (nr *nameResolver) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
-	for i := 0; i < len(stmt.IndexColNames); i++ {
-		name1 := stmt.IndexColNames[i].Column.Name
-		for j := 0; j < len(stmt.IndexColNames); j++ {
-			name2 := stmt.IndexColNames[j].Column.Name
-			if i != j {
-				if name1.L == name2.L {
-					nr.Err = errors.Errorf("Duplicate column name '%s'", name1.O)
-					return
-				}
-			}
-		}
-	}
 }

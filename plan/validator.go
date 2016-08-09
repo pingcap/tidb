@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Validate checkes whether the node is valid.
@@ -49,6 +50,16 @@ func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			return in, true
 		}
 		v.inAggregate = true
+	case *ast.CreateTableStmt:
+		v.checkCreateTableGrammar(in.(*ast.CreateTableStmt))
+		if v.err != nil {
+			return in, true
+		}
+	case *ast.CreateIndexStmt:
+		v.checkCreateIndexGrammar(in.(*ast.CreateIndexStmt))
+		if v.err != nil {
+			return in, true
+		}
 	}
 	return in, false
 }
@@ -253,6 +264,32 @@ func (v *validator) checkFieldList(x *ast.FieldList) {
 		v.checkAllOneColumn(val.Expr)
 		if v.err != nil {
 			return
+		}
+	}
+}
+
+func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
+	for _, colDef := range stmt.Cols {
+		if colDef.Tp.Tp == mysql.TypeString {
+			if colDef.Tp.Flen != types.UnspecifiedLength && colDef.Tp.Flen > 255 {
+				v.err = errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
+				return
+			}
+		}
+	}
+}
+
+func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
+	for i := 0; i < len(stmt.IndexColNames); i++ {
+		name1 := stmt.IndexColNames[i].Column.Name
+		for j := 0; j < len(stmt.IndexColNames); j++ {
+			name2 := stmt.IndexColNames[j].Column.Name
+			if i != j {
+				if name1.L == name2.L {
+					v.err = errors.Errorf("Duplicate column name '%s'", name1.O)
+					return
+				}
+			}
 		}
 	}
 }
