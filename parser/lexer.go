@@ -298,15 +298,15 @@ func startString(s *Scanner) (tok int, pos Pos, lit string) {
 	return
 }
 
-// maybeBuf is used to avoid buf if possible.
-type maybeBuf struct {
+// lazyBuf is used to avoid buf if possible.
+type lazyBuf struct {
 	flag bool
 	r    *reader
 	b    *bytes.Buffer
 	p    *Pos
 }
 
-func (mb *maybeBuf) useBuf(str string) {
+func (mb *lazyBuf) useBuf(str string) {
 	if !mb.flag {
 		mb.flag = true
 		mb.b.Reset()
@@ -314,13 +314,13 @@ func (mb *maybeBuf) useBuf(str string) {
 	}
 }
 
-func (mb *maybeBuf) writeRune(r rune) {
+func (mb *lazyBuf) writeRune(r rune) {
 	if mb.flag {
 		mb.b.WriteRune(r)
 	}
 }
 
-func (mb *maybeBuf) data() string {
+func (mb *lazyBuf) data() string {
 	var lit string
 	if mb.flag {
 		lit = mb.b.String()
@@ -333,7 +333,7 @@ func (mb *maybeBuf) data() string {
 
 func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 	tok, pos = stringLit, s.r.pos()
-	mb := maybeBuf{false, &s.r, &s.buf, &pos}
+	mb := lazyBuf{false, &s.r, &s.buf, &pos}
 	ending := s.r.readByte()
 	ch0 := s.r.peek()
 	for !s.r.eof() {
