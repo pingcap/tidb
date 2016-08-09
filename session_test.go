@@ -2227,6 +2227,12 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	sql = "select c1 from t where c1 = 'abc'"
 	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}})
 
+	mustExecSQL(c, se, "insert into t values ('abc', 'xyz')")
+	mustExecSQL(c, se, "insert into t values ('abd', 'abc')")
+	mustExecSQL(c, se, "insert into t values ('abd', 'def')")
+	sql = "select c1 from t where c1 >= 'abc' and c2 = 'def'"
+	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}, {[]byte("abd")}})
+
 	err := se.Close()
 	c.Assert(err, IsNil)
 	err = store.Close()
