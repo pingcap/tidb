@@ -317,7 +317,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		return v, true
 	}
 	if v.Not {
-		checkCondition, _ = expression.NewFunction(ast.UnaryNot, v.Type, checkCondition)
+		checkCondition, _ = expression.NewFunction(ast.UnaryNot, &v.Type, checkCondition)
 	}
 	if err != nil {
 		er.err = errors.Trace(err)
@@ -412,10 +412,10 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr:
 	case *ast.ValueExpr:
-		value := &expression.Constant{Value: v.Datum, RetType: v.Type}
+		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.ParamMarkerExpr:
-		value := &expression.Constant{Value: v.Datum, RetType: v.Type}
+		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
@@ -555,7 +555,7 @@ func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		er.err = errors.Errorf("Unknown Unary Op %T", v.Op)
 		return
 	}
-	er.ctxStack[stkLen-1], er.err = expression.NewFunction(op, v.Type, er.ctxStack[stkLen-1])
+	er.ctxStack[stkLen-1], er.err = expression.NewFunction(op, &v.Type, er.ctxStack[stkLen-1])
 }
 
 func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
@@ -566,7 +566,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		function, er.err = constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
 			opcode.Ops[v.Op])
 	default:
-		function, er.err = expression.NewFunction(opcode.Ops[v.Op], v.Type, er.ctxStack[stkLen-2:]...)
+		function, er.err = expression.NewFunction(opcode.Ops[v.Op], &v.Type, er.ctxStack[stkLen-2:]...)
 	}
 	if er.err != nil {
 		er.err = errors.Trace(er.err)
@@ -601,7 +601,7 @@ func (er *expressionRewriter) isnullToExpression(v *ast.IsNullExpr) {
 		er.err = errors.New("Operand should contain 1 column(s)")
 		return
 	}
-	function := er.notToExpression(v.Not, ast.IsNull, v.Type, er.ctxStack[stkLen-1])
+	function := er.notToExpression(v.Not, ast.IsNull, &v.Type, er.ctxStack[stkLen-1])
 	er.ctxStack = er.ctxStack[:stkLen-1]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -620,7 +620,7 @@ func (er *expressionRewriter) istrueToScalarFunc(v *ast.IsTruthExpr) {
 	if v.True == 0 {
 		op = ast.IsFalsity
 	}
-	function := er.notToExpression(v.Not, op, v.Type, er.ctxStack[stkLen-1])
+	function := er.notToExpression(v.Not, op, &v.Type, er.ctxStack[stkLen-1])
 	er.ctxStack = er.ctxStack[:stkLen-1]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -631,7 +631,7 @@ func (er *expressionRewriter) inToExpression(v *ast.PatternInExpr) {
 	}
 	stkLen := len(er.ctxStack)
 	lLen := len(v.List)
-	function := er.notToExpression(v.Not, ast.In, v.Type, er.ctxStack[stkLen-lLen-1:stkLen]...)
+	function := er.notToExpression(v.Not, ast.In, &v.Type, er.ctxStack[stkLen-lLen-1:stkLen]...)
 	er.ctxStack = er.ctxStack[:stkLen-lLen-1]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -674,7 +674,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		//        else clasue
 		args = er.ctxStack[stkLen-argsLen : stkLen]
 	}
-	function, err := expression.NewFunction(ast.Case, v.Type, args...)
+	function, err := expression.NewFunction(ast.Case, &v.Type, args...)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
@@ -685,7 +685,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 
 func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 	l := len(er.ctxStack)
-	function := er.notToExpression(v.Not, ast.Like, v.Type,
+	function := er.notToExpression(v.Not, ast.Like, &v.Type,
 		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape))})
 	er.ctxStack = er.ctxStack[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
@@ -693,7 +693,7 @@ func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 
 func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
 	l := len(er.ctxStack)
-	function := er.notToExpression(v.Not, ast.Regexp, v.Type, er.ctxStack[l-2], er.ctxStack[l-1])
+	function := er.notToExpression(v.Not, ast.Regexp, &v.Type, er.ctxStack[l-2], er.ctxStack[l-1])
 	er.ctxStack = er.ctxStack[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -719,15 +719,15 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	var op string
 	var l, r expression.Expression
 	if v.Not {
-		l, er.err = expression.NewFunction(ast.LT, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
+		l, er.err = expression.NewFunction(ast.LT, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
 		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.GT, v.Type, er.ctxStack[stkLen-3].DeepCopy(), er.ctxStack[stkLen-1])
+			r, er.err = expression.NewFunction(ast.GT, &v.Type, er.ctxStack[stkLen-3].DeepCopy(), er.ctxStack[stkLen-1])
 		}
 		op = ast.OrOr
 	} else {
-		l, er.err = expression.NewFunction(ast.GE, v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
+		l, er.err = expression.NewFunction(ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
 		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.LE, v.Type, er.ctxStack[stkLen-3].DeepCopy(), er.ctxStack[stkLen-1])
+			r, er.err = expression.NewFunction(ast.LE, &v.Type, er.ctxStack[stkLen-3].DeepCopy(), er.ctxStack[stkLen-1])
 		}
 		op = ast.AndAnd
 	}
@@ -735,7 +735,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 		er.err = errors.Trace(er.err)
 		return
 	}
-	function, err := expression.NewFunction(op, v.Type, l, r)
+	function, err := expression.NewFunction(op, &v.Type, l, r)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
@@ -747,7 +747,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	stackLen := len(er.ctxStack)
 	var function expression.Expression
-	function, er.err = expression.NewFunction(v.FnName.L, v.Type, er.ctxStack[stackLen-len(v.Args):]...)
+	function, er.err = expression.NewFunction(v.FnName.L, &v.Type, er.ctxStack[stackLen-len(v.Args):]...)
 	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
 	er.ctxStack = append(er.ctxStack, function)
 }
