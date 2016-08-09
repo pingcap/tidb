@@ -282,13 +282,11 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	for i := 0; i < len(stmt.IndexColNames); i++ {
 		name1 := stmt.IndexColNames[i].Column.Name
-		for j := 0; j < len(stmt.IndexColNames); j++ {
+		for j := i + 1; j < len(stmt.IndexColNames); j++ {
 			name2 := stmt.IndexColNames[j].Column.Name
-			if i != j {
-				if name1.L == name2.L {
-					v.err = errors.Errorf("Duplicate column name '%s'", name1.O)
-					return
-				}
+			if name1.L == name2.L {
+				v.err = errors.Errorf("Duplicate column name '%s'", name1.O)
+				return
 			}
 		}
 	}
