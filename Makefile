@@ -16,13 +16,11 @@ ifeq "$(major_version)" "$(filter $(major_version),$(old_versions))"
   # Old version of `make` installed. It fails to search golex/goyacc
   # by using the modified `PATH`, so we specify these commands with full path.
   GOLEX   = $$(which golex)
-  GOYACC  = $$(which goyacc)
   GOLINT  = $$(which golint)
 else
   # After version 4, `make` could follow modified `PATH` to find
   # golex/goyacc correctly.
   GOLEX   := golex
-  GOYACC  := goyacc
   GOLINT  := golint
 endif
 
@@ -62,12 +60,12 @@ golex:
 
 goyacc:
 	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) install github.com/pingcap/tidb/parser/goyacc
+	$(GO) build -o bin/goyacc github.com/pingcap/tidb/parser/goyacc
 	rm -rf vendor
 
 parser: goyacc golex
-	$(GOYACC) -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
-	$(GOYACC) -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}'
+	bin/goyacc -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
+	bin/goyacc -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}'
 	rm -f $(TEMP_FILE)
 	rm -f y.output
 
