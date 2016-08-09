@@ -299,7 +299,6 @@ func (e *NewXSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	concurrency := 1
 	if !e.indexPlan.DoubleRead {
 		concurrency = defaultConcurrency
-		selIdxReq.IndexInfo.Columns = xapi.ColumnsToProto(e.indexPlan.Columns, false)
 		selIdxReq.Aggregates = e.aggFuncs
 		selIdxReq.GroupBy = e.byItems
 		selIdxReq.Where = e.where
