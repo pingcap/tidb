@@ -182,19 +182,25 @@ func (p *DataSource) handleIndexScan(prop requiredProperty, index *model.IndexIn
 		rb := rangeBuilder{}
 		is.Ranges = rb.buildIndexRanges(fullRange)
 	}
-	for _, colInfo := range is.Columns {
-		for _, indexCol := range is.Index.Columns {
-			if colInfo.Name.L != indexCol.Name.L || indexCol.Length != types.UnspecifiedLength {
-				is.DoubleRead = true
+	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns)
+	rowCounts := []uint64{rowCount}
+	return resultPlan.matchProperty(prop, rowCounts), resultPlan.matchProperty(nil, rowCounts), nil
+}
+
+func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn) bool {
+	for _, colInfo := range columns {
+		isIndexColumn := false
+		for _, indexCol := range indexColumns {
+			if colInfo.Name.L == indexCol.Name.L && indexCol.Length == types.UnspecifiedLength {
+				isIndexColumn = true
 				break
 			}
 		}
-		if is.DoubleRead {
-			break
+		if !isIndexColumn {
+			return false
 		}
 	}
-	rowCounts := []uint64{rowCount}
-	return resultPlan.matchProperty(prop, rowCounts), resultPlan.matchProperty(nil, rowCounts), nil
+	return true
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
