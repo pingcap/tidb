@@ -63,7 +63,7 @@ func (dn *dmlNode) dmlStatement() {}
 type exprNode struct {
 	node
 	types.Datum
-	Type *types.FieldType
+	Type types.FieldType
 	flag uint64
 }
 
@@ -79,12 +79,12 @@ func (en *exprNode) GetDatum() *types.Datum {
 
 // SetType implements Expression interface.
 func (en *exprNode) SetType(tp *types.FieldType) {
-	en.Type = tp
+	en.Type = *tp
 }
 
 // GetType implements Expression interface.
 func (en *exprNode) GetType() *types.FieldType {
-	return en.Type
+	return &en.Type
 }
 
 // SetFlag implements Expression interface.
