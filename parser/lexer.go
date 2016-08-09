@@ -285,22 +285,15 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 }
 
 func startString(s *Scanner) (tok int, pos Pos, lit string) {
-	var quote bool
-	if s.r.peek() == '\'' {
-		quote = true
-	}
 	tok, pos, lit = s.scanString()
 
 	// Quoted strings placed next to each other are concatenated to a single string.
 	// See http://dev.mysql.com/doc/refman/5.7/en/string-literals.html
-	for quote {
-		ch := s.skipWhitespace()
-		if ch == '\'' {
-			_, _, lit1 := s.scanString()
-			lit = lit + lit1
-		} else {
-			quote = false
-		}
+	ch := s.skipWhitespace()
+	for ch == '\'' || ch == '"' {
+		_, _, lit1 := s.scanString()
+		lit = lit + lit1
+		ch = s.skipWhitespace()
 	}
 	return
 }

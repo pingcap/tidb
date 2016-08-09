@@ -164,6 +164,7 @@ func (s *testLexerSuite) TestscanString(c *C) {
 	}{
 		{`' \n\tTest String'`, " \n\tTest String"},
 		{`'a' ' ' 'string'`, "a string"},
+		{`'a' " " "string"`, "a string"},
 		{`'\x\B'`, "xB"},
 		{`'\0\'\"\b\n\r\t\\'`, "\000'\"\b\n\r\t\\"},
 		{`'\Z'`, string(26)},
