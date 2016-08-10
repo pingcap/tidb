@@ -118,6 +118,9 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 
 // GetDefaultCollation returns the default collation for charset
 func GetDefaultCollation(charset string) (string, error) {
+	if strings.ToLower(charset) == CharsetBin {
+		return CollationBin, nil
+	}
 	c, ok := charsets[charset]
 	if !ok {
 		return "", errors.Errorf("Unkown charset %s", charset)
