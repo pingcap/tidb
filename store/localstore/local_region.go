@@ -357,48 +357,46 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 //	3. Update aggregate functions.
 func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []byte) (*tipb.Row, error) {
 	columns := ctx.sel.TableInfo.Columns
-	row := new(tipb.Row)
-	var d types.Datum
-	d.SetInt64(handle)
-	var err error
-	row.Handle, err = codec.EncodeValue(nil, d)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rowData := make([][]byte, len(columns))
 	values, err := rs.getRowData(value, ctx.colTps)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for i, col := range columns {
+	// Fill handle and null columns.
+	for _, col := range columns {
 		if *col.PkHandle {
-			var colVal []byte
+			var handleDatum types.Datum
 			if mysql.HasUnsignedFlag(uint(*col.Flag)) {
 				// PK column is Unsigned
-				var ud types.Datum
-				ud.SetUint64(uint64(handle))
-				var err1 error
-				colVal, err1 = codec.EncodeValue(nil, ud)
-				if err1 != nil {
-					return nil, errors.Trace(err1)
-				}
+				handleDatum = types.NewUintDatum(uint64(handle))
 			} else {
-				colVal = row.Handle
+				handleDatum = types.NewIntDatum(handle)
 			}
-			rowData[i] = colVal
-			continue
-		}
-		v, ok := values[col.GetColumnId()]
-		if !ok {
-			if mysql.HasNotNullFlag(uint(col.GetFlag())) {
-				return nil, errors.New("Miss column")
+			handleData, err1 := codec.EncodeValue(nil, handleDatum)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
 			}
-			v = []byte{codec.NilFlag}
-			values[col.GetColumnId()] = v
+			values[col.GetColumnId()] = handleData
+		} else {
+			_, ok := values[col.GetColumnId()]
+			if !ok {
+				if mysql.HasNotNullFlag(uint(col.GetFlag())) {
+					return nil, errors.New("Miss column")
+				}
+				values[col.GetColumnId()] = []byte{codec.NilFlag}
+			}
 		}
-		rowData[i] = v
 	}
-	// Evalue where
+	return rs.valuesToRow(ctx, handle, values)
+}
+
+func (rs *localRegion) valuesToRow(ctx *selectContext, handle int64, values map[int64][]byte) (*tipb.Row, error) {
+	var columns []*tipb.ColumnInfo
+	if ctx.sel.TableInfo != nil {
+		columns = ctx.sel.TableInfo.Columns
+	} else {
+		columns = ctx.sel.IndexInfo.Columns
+	}
+	// Evaluate where
 	match, err := rs.evalWhereForRow(ctx, handle, values)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -406,7 +404,7 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 	if !match {
 		return nil, nil
 	}
-
+	var row *tipb.Row
 	if ctx.aggregate {
 		// Update aggregate functions.
 		err = rs.aggregate(ctx, handle, values)
@@ -414,9 +412,16 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 			return nil, errors.Trace(err)
 		}
 	} else {
+		var handleData []byte
+		handleData, err = codec.EncodeValue(nil, types.NewIntDatum(handle))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		row = new(tipb.Row)
+		row.Handle = handleData
 		// If without aggregate functions, just return raw row data.
-		for _, d := range rowData {
-			row.Data = append(row.Data, d...)
+		for _, col := range columns {
+			row.Data = append(row.Data, values[col.GetColumnId()]...)
 		}
 	}
 	return row, nil
@@ -579,27 +584,11 @@ func (rs *localRegion) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange,
 				return nil, errors.Trace(err)
 			}
 		}
-		match, err := rs.evalWhereForRow(ctx, handle, values)
-		if !match {
-			continue
+		row, err := rs.valuesToRow(ctx, handle, values)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		if ctx.aggregate {
-			// Update aggregate functions.
-			err = rs.aggregate(ctx, handle, values)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		} else {
-			// If without aggregate functions, just return raw row data.
-			var handleData []byte
-			handleData, err = codec.EncodeValue(nil, types.NewIntDatum(handle))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			row := &tipb.Row{Handle: handleData}
-			for _, id := range ids {
-				row.Data = append(row.Data, values[id]...)
-			}
+		if row != nil {
 			rows = append(rows, row)
 			limit--
 		}
