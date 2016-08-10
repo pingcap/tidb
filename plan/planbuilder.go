@@ -1081,6 +1081,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		OnDuplicate: insert.OnDuplicate,
 		IsReplace:   insert.IsReplace,
 		Priority:    insert.Priority,
+		Ignore:      insert.Ignore,
 	}
 	if insert.Select != nil {
 		insertPlan.SelectPlan = b.build(insert.Select)

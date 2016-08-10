@@ -421,6 +421,7 @@ type InsertExec struct {
 	fields      []*ast.ResultField
 
 	Priority int
+	Ignore   bool
 
 	finished bool
 }
@@ -459,7 +460,7 @@ func (e *InsertExec) Next() (*Row, error) {
 	}
 
 	for _, row := range rows {
-		if len(e.OnDuplicate) == 0 {
+		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
 		h, err := e.Table.AddRecord(e.ctx, row)
@@ -470,6 +471,12 @@ func (e *InsertExec) Next() (*Row, error) {
 		}
 
 		if len(e.OnDuplicate) == 0 || !terror.ErrorEqual(err, kv.ErrKeyExists) {
+			// If you use the IGNORE keyword, errors that occur while executing the INSERT statement are ignored.
+			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
+			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
+			if e.Ignore {
+				return nil, nil
+			}
 			return nil, errors.Trace(err)
 		}
 		if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {

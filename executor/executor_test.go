@@ -455,6 +455,27 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
 }
 
+func (s *testSuite) TestInsertIgnore(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testSQL := `drop table if exists t;
+    create table t (id int PRIMARY KEY AUTO_INCREMENT, c1 int);`
+	tk.MustExec(testSQL)
+	testSQL = `insert into t values (1, 2);`
+	tk.MustExec(testSQL)
+
+	r := tk.MustQuery("select * from t;")
+	rowStr := fmt.Sprintf("%v %v", "1", "2")
+	r.Check(testkit.Rows(rowStr))
+
+	tk.MustExec("insert ignore into t values (1, 3)")
+
+	r = tk.MustQuery("select * from t;")
+	rowStr = fmt.Sprintf("%v %v", "1", "2")
+	r.Check(testkit.Rows(rowStr))
+}
+
 func (s *testSuite) TestReplace(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)

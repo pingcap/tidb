@@ -394,6 +394,7 @@ type Insert struct {
 
 	IsReplace bool
 	Priority  int
+	Ignore    bool
 }
 
 // DDL represents a DDL statement plan.
