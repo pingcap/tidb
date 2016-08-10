@@ -298,7 +298,10 @@ func startString(s *Scanner) (tok int, pos Pos, lit string) {
 	return
 }
 
-// lazyBuf is used to avoid buf if possible.
+// lazyBuf is used to avoid allocation if possible.
+// it has a flag field indicates whether bytes.Buffer is necessary. if
+// the flag is false, we can avoid calling bytes.Buffer.String(), which
+// make a copy of data and cause allocation.
 type lazyBuf struct {
 	flag bool
 	r    *reader
