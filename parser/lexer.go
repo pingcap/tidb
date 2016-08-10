@@ -299,33 +299,33 @@ func startString(s *Scanner) (tok int, pos Pos, lit string) {
 }
 
 // lazyBuf is used to avoid allocation if possible.
-// it has a flag field indicates whether bytes.Buffer is necessary. if
-// the flag is false, we can avoid calling bytes.Buffer.String(), which
+// it has a useBuf field indicates whether bytes.Buffer is necessary. if
+// useBuf is false, we can avoid calling bytes.Buffer.String(), which
 // make a copy of data and cause allocation.
 type lazyBuf struct {
-	flag bool
-	r    *reader
-	b    *bytes.Buffer
-	p    *Pos
+	useBuf bool
+	r      *reader
+	b      *bytes.Buffer
+	p      *Pos
 }
 
-func (mb *lazyBuf) useBuf(str string) {
-	if !mb.flag {
-		mb.flag = true
+func (mb *lazyBuf) setUseBuf(str string) {
+	if !mb.useBuf {
+		mb.useBuf = true
 		mb.b.Reset()
 		mb.b.WriteString(str)
 	}
 }
 
 func (mb *lazyBuf) writeRune(r rune) {
-	if mb.flag {
+	if mb.useBuf {
 		mb.b.WriteRune(r)
 	}
 }
 
 func (mb *lazyBuf) data() string {
 	var lit string
-	if mb.flag {
+	if mb.useBuf {
 		lit = mb.b.String()
 	} else {
 		lit = mb.r.data(mb.p)
@@ -347,9 +347,9 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 				return
 			}
 			str := mb.r.data(&pos)
-			mb.useBuf(str[1 : len(str)-1])
+			mb.setUseBuf(str[1 : len(str)-1])
 		} else if ch0 == '\\' {
-			mb.useBuf(mb.r.data(&pos)[1:])
+			mb.setUseBuf(mb.r.data(&pos)[1:])
 			ch0 = handleEscape(s)
 		}
 		mb.writeRune(ch0)
