@@ -270,11 +270,11 @@ func (v *validator) checkFieldList(x *ast.FieldList) {
 
 func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	for _, colDef := range stmt.Cols {
-		if colDef.Tp.Tp == mysql.TypeString {
-			if colDef.Tp.Flen != types.UnspecifiedLength && colDef.Tp.Flen > 255 {
-				v.err = errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
-				return
-			}
+		tp := colDef.Tp
+		if tp.Tp == mysql.TypeString &&
+			tp.Flen != types.UnspecifiedLength && tp.Flen > 255 {
+			v.err = errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
+			return
 		}
 	}
 }
