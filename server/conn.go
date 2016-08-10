@@ -382,6 +382,9 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 		err = cc.writeOK()
 	}
 	costTime := time.Now().Sub(startTs)
+	if len(sql) > 1024 {
+		sql = sql[:1024]
+	}
 	if costTime < time.Second {
 		log.Debugf("[TIME_QUERY] %v %s", costTime, sql)
 	} else {

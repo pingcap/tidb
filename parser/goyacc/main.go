@@ -421,9 +421,9 @@ type %[1]sXError struct {
 	f.Format("%u}\n")
 
 	// Reduction table
-	f.Format("\n%sReductions = map[int]struct{xsym, components int}{%i\n", *oPref)
-	for r, rule := range p.Rules {
-		f.Format("%d: {%d, %d},\n", r, xlat[rule.Sym.Value], len(rule.Components))
+	f.Format("\n%sReductions = []struct{xsym, components int}{%i\n", *oPref)
+	for _, rule := range p.Rules {
+		f.Format("{%d, %d},\n", xlat[rule.Sym.Value], len(rule.Components))
 	}
 	f.Format("%u}\n")
 
