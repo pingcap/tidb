@@ -101,7 +101,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		if req.Tp == kv.ReqTypeSelect {
 			rows, err = rs.getRowsFromSelectReq(ctx)
 		} else {
-			rows, err = rs.getRowsFromIndexReq(ctx, sel)
+			rows, err = rs.getRowsFromIndexReq(ctx)
 		}
 
 		selResp := new(tipb.SelectResponse)
@@ -490,12 +490,12 @@ func toPBError(err error) *tipb.Error {
 	return perr
 }
 
-func (rs *localRegion) getRowsFromIndexReq(ctx *selectContext, sel *tipb.SelectRequest) ([]*tipb.Row, error) {
-	kvRanges, desc := rs.extractKVRanges(sel)
+func (rs *localRegion) getRowsFromIndexReq(ctx *selectContext) ([]*tipb.Row, error) {
+	kvRanges, desc := rs.extractKVRanges(ctx.sel)
 	var rows []*tipb.Row
 	limit := int64(-1)
-	if sel.Limit != nil {
-		limit = sel.GetLimit()
+	if ctx.sel.Limit != nil {
+		limit = ctx.sel.GetLimit()
 	}
 	for _, ran := range kvRanges {
 		if limit == 0 {
