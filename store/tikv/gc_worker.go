@@ -294,7 +294,7 @@ func (w *GCWorker) loadLease() (time.Time, error) {
 }
 
 func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
-	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb where variable_name='%s'`, key)
+	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s'`, key)
 	rs, err := w.session.Execute(stmt)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -310,7 +310,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 }
 
 func (w *GCWorker) saveValueToSysTable(key, value string) error {
-	stmt := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value) VALUES ('%s', '%s') ON DUPLICATE KEY UPDATE variable_value = '%v'`, key, value, value)
+	stmt := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value) VALUES ('%s', '%s') ON DUPLICATE KEY UPDATE variable_value = '%s'`, key, value, value)
 	_, err := w.session.Execute(stmt)
 	return errors.Trace(err)
 }
