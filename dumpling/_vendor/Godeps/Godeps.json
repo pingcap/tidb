@@ -1,7 +1,7 @@
 {
 	"ImportPath": "github.com/pingcap/tidb",
 	"GoVersion": "go1.6",
-	"GodepVersion": "v63",
+	"GodepVersion": "v74",
 	"Packages": [
 		"./..."
 	],
@@ -93,7 +93,7 @@
 		},
 		{
 			"ImportPath": "github.com/ngaut/log",
-			"Rev": "37d3e0f43b4fe05429e1adb75e835bf31fc1bba6"
+			"Rev": "cec23d3e10b016363780d894a0eb732a12c06e02"
 		},
 		{
 			"ImportPath": "github.com/ngaut/pools",
