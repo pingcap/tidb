@@ -364,7 +364,7 @@ func handleEscape(s *Scanner) rune {
 	ch0 := s.r.peek()
 	/*
 		\" \' \\ \n \0 \b \Z \r \t ==> escape to one char
-		\% \_ ==> preverse both char
+		\% \_ ==> preserve both char
 		other ==> remove \
 	*/
 	switch ch0 {
