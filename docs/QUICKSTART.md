@@ -23,7 +23,7 @@ Notice: OS X user may use `docker-machine ip` to connect it.
 
 #### __Run TiDB on TiKV__
 
-Read this [doc](https://github.com/pingcap/tikv/blob/master/USAGE.md).
+Read this [doc](https://github.com/pingcap/docs/blob/master/op-guide/clustering.md).
 
 #### __Pre-requirement__
 
