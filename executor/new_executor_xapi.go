@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
@@ -175,8 +176,26 @@ func (e *NewXSelectIndexExec) nextForSingleRead() (*Row, error) {
 			// TODO: Implement aggregation push down in single read index
 			return nil, errors.New("Can't push aggr in a single read index executor!")
 		}
+		rowData = e.indexRowToTableRow(h, rowData)
 		return resultRowToRow(e.table, h, rowData, e.asName), nil
 	}
+}
+
+func (e *NewXSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.Datum) []types.Datum {
+	tableRow := make([]types.Datum, len(e.indexPlan.Columns))
+	for i, tblCol := range e.indexPlan.Columns {
+		if mysql.HasPriKeyFlag(tblCol.Flag) && e.indexPlan.Table.PKIsHandle {
+			tableRow[i] = types.NewIntDatum(handle)
+			continue
+		}
+		for j, idxCol := range e.indexPlan.Index.Columns {
+			if tblCol.Name.L == idxCol.Name.L {
+				tableRow[i] = indexRow[j]
+				break
+			}
+		}
+	}
+	return tableRow
 }
 
 func (e *NewXSelectIndexExec) nextForDoubleRead() (*Row, error) {
@@ -269,7 +288,6 @@ func (e *NewXSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	concurrency := 1
 	if !e.indexPlan.DoubleRead {
 		concurrency = defaultConcurrency
-		selIdxReq.IndexInfo.Columns = xapi.ColumnsToProto(e.indexPlan.Columns, false)
 	} else if e.indexPlan.OutOfOrder {
 		concurrency = defaultConcurrency
 	}

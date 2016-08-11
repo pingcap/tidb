@@ -285,68 +285,112 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 }
 
 func startString(s *Scanner) (tok int, pos Pos, lit string) {
-	return s.scanString()
+	tok, pos, lit = s.scanString()
+
+	// Quoted strings placed next to each other are concatenated to a single string.
+	// See http://dev.mysql.com/doc/refman/5.7/en/string-literals.html
+	ch := s.skipWhitespace()
+	for ch == '\'' || ch == '"' {
+		_, _, lit1 := s.scanString()
+		lit = lit + lit1
+		ch = s.skipWhitespace()
+	}
+	return
+}
+
+// lazyBuf is used to avoid allocation if possible.
+// it has a useBuf field indicates whether bytes.Buffer is necessary. if
+// useBuf is false, we can avoid calling bytes.Buffer.String(), which
+// make a copy of data and cause allocation.
+type lazyBuf struct {
+	useBuf bool
+	r      *reader
+	b      *bytes.Buffer
+	p      *Pos
+}
+
+func (mb *lazyBuf) setUseBuf(str string) {
+	if !mb.useBuf {
+		mb.useBuf = true
+		mb.b.Reset()
+		mb.b.WriteString(str)
+	}
+}
+
+func (mb *lazyBuf) writeRune(r rune, w int) {
+	if mb.useBuf {
+		if w > 1 {
+			mb.b.WriteRune(r)
+		} else {
+			mb.b.WriteByte(byte(r))
+		}
+	}
+}
+
+func (mb *lazyBuf) data() string {
+	var lit string
+	if mb.useBuf {
+		lit = mb.b.String()
+	} else {
+		lit = mb.r.data(mb.p)
+		lit = lit[1 : len(lit)-1]
+	}
+	return lit
 }
 
 func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
-	s.buf.Reset()
 	tok, pos = stringLit, s.r.pos()
+	mb := lazyBuf{false, &s.r, &s.buf, &pos}
 	ending := s.r.readByte()
-	for {
-		if s.r.eof() {
-			tok, lit = 0, s.buf.String()
-			return
-		}
-		ch0 := s.r.peek()
+	ch0 := s.r.peek()
+	for !s.r.eof() {
 		if ch0 == ending {
 			s.r.inc()
 			if s.r.peek() != ending {
-				break
+				lit = mb.data()
+				return
 			}
+			str := mb.r.data(&pos)
+			mb.setUseBuf(str[1 : len(str)-1])
+		} else if ch0 == '\\' {
+			mb.setUseBuf(mb.r.data(&pos)[1:])
+			ch0 = handleEscape(s)
 		}
-		// TODO this would break reader's line and col information
-		if ch0 == '\n' {
-		}
-		if ch0 == '\\' {
-			s.r.inc()
-			ch0 = s.r.peek()
-			if ch0 == 'n' {
-				s.buf.WriteByte('\n')
-				s.r.inc()
-				continue
-			} else if ch0 == '\\' {
-			} else if ch0 == '"' {
-				s.buf.WriteByte('"')
-				s.r.inc()
-				continue
-			} else if ch0 == 't' {
-				s.buf.WriteByte('\t')
-				s.r.inc()
-				continue
-			} else if ch0 == '\'' {
-				s.buf.WriteByte('\'')
-				s.r.inc()
-				continue
-			} else if ch0 == '_' || ch0 == '%' {
-				s.buf.WriteByte('\\')
-			}
-		} else if !isASCII(ch0) {
-			// TODO handle non-ascii
-		}
-		s.buf.WriteRune(ch0)
+		mb.writeRune(ch0, s.r.w)
 		s.r.inc()
+		ch0 = s.r.peek()
 	}
 
-	lit = s.buf.String()
-	// Quoted strings placed next to each other are concatenated to a single string.
-	// See http://dev.mysql.com/doc/refman/5.7/en/string-literals.html
-	ch := s.r.peek()
-	if ch == '\'' {
-		_, _, lit1 := s.scanString()
-		lit = lit + lit1
-	}
-
+	tok = unicode.ReplacementChar
 	return
+}
+
+// handleEscape handles the case in scanString when previous char is '\'.
+func handleEscape(s *Scanner) rune {
+	s.r.inc()
+	ch0 := s.r.peek()
+	/*
+		\" \' \\ \n \0 \b \Z \r \t ==> escape to one char
+		\% \_ ==> preserve both char
+		other ==> remove \
+	*/
+	switch ch0 {
+	case 'n':
+		ch0 = '\n'
+	case '0':
+		ch0 = 0
+	case 'b':
+		ch0 = 8
+	case 'Z':
+		ch0 = 26
+	case 'r':
+		ch0 = '\r'
+	case 't':
+		ch0 = '\t'
+	case '%', '_':
+		s.buf.WriteByte('\\')
+	}
+	return ch0
 }
 
 func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
@@ -459,6 +503,9 @@ func (r *reader) peek() rune {
 		return unicode.ReplacementChar
 	case v >= 0x80:
 		v, w = utf8.DecodeRuneInString(r.s[r.p.Offset:])
+		if v == utf8.RuneError && w == 1 {
+			v = rune(r.s[r.p.Offset]) // illegal UTF-8 encoding
+		}
 	}
 	r.w = w
 	return v

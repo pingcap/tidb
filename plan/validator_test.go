@@ -52,6 +52,8 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("Incorrect column specifier for column 'id'")},
 		{"create table t(id float auto_increment, key (id))", true, nil},
 		{"create table t(id int auto_increment) ENGINE=MYISAM", true, nil},
+		{"create table t(a int primary key, b int, c varchar(10), d char(256));", true, errors.New("Column length too big for column 'd' (max = 255); use BLOB or TEXT instead")},
+		{"create index ib on t(b,a,b);", true, errors.New("Duplicate column name 'b'")},
 	}
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)

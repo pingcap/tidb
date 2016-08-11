@@ -903,6 +903,36 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 	UseNewPlanner = false
 }
 
+func (s *testPlanSuite) TestCoveringIndex(c *C) {
+	cases := []struct {
+		columnNames []string
+		indexNames  []string
+		indexLens   []int
+		isCovering  bool
+	}{
+		{[]string{"a"}, []string{"a"}, []int{-1}, true},
+		{[]string{"a"}, []string{"a", "b"}, []int{-1, -1}, true},
+		{[]string{"a", "b"}, []string{"b", "a"}, []int{-1, -1}, true},
+		{[]string{"a", "b"}, []string{"b", "c"}, []int{-1, -1}, false},
+		{[]string{"a", "b"}, []string{"a", "b"}, []int{50, -1}, false},
+		{[]string{"a", "b"}, []string{"a", "c"}, []int{-1, -1}, false},
+	}
+	for _, ca := range cases {
+		var columns []*model.ColumnInfo
+		for _, cn := range ca.columnNames {
+			columns = append(columns, &model.ColumnInfo{Name: model.NewCIStr(cn)})
+		}
+		var indexCols []*model.IndexColumn
+		for i := range ca.indexNames {
+			icn := ca.indexNames[i]
+			icl := ca.indexLens[i]
+			indexCols = append(indexCols, &model.IndexColumn{Name: model.NewCIStr(icn), Length: icl})
+		}
+		covering := isCoveringIndex(columns, indexCols)
+		c.Assert(covering, Equals, ca.isCovering)
+	}
+}
+
 func check(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
 	switch p.(type) {
 	case *PhysicalTableScan:

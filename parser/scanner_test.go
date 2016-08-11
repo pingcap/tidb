@@ -158,11 +158,40 @@ func (s *testLexerSuite) TestscanQuotedIdent(c *C) {
 
 func (s *testLexerSuite) TestscanString(c *C) {
 	defer testleak.AfterTest(c)()
-	l := NewScanner(`' \n\tTest String'`)
-	tok, pos, lit := l.scanString()
-	c.Assert(tok, Equals, stringLit)
-	c.Assert(pos.Offset, Equals, 0)
-	c.Assert(lit, Equals, " \n\tTest String")
+	table := []struct {
+		raw    string
+		expect string
+	}{
+		{`' \n\tTest String'`, " \n\tTest String"},
+		{`'a' ' ' 'string'`, "a string"},
+		{`'a' " " "string"`, "a string"},
+		{`'\x\B'`, "xB"},
+		{`'\0\'\"\b\n\r\t\\'`, "\000'\"\b\n\r\t\\"},
+		{`'\Z'`, string(26)},
+		{`'\%\_'`, `\%\_`},
+		{`'hello'`, "hello"},
+		{`'"hello"'`, `"hello"`},
+		{`'""hello""'`, `""hello""`},
+		{`'hel''lo'`, "hel'lo"},
+		{`'\'hello'`, "'hello"},
+		{`"hello"`, "hello"},
+		{`"'hello'"`, "'hello'"},
+		{`"''hello''"`, "''hello''"},
+		{`"hel""lo"`, `hel"lo`},
+		{`"\"hello"`, `"hello`},
+		{`'disappearing\ backslash'`, "disappearing backslash"},
+		{"'한국의中文UTF8およびテキストトラック'", "한국의中文UTF8およびテキストトラック"},
+		{"'\\a\x90'", "a\x90"},
+		{`"\aèàø»"`, `aèàø»`},
+	}
+
+	for _, v := range table {
+		l := NewScanner(v.raw)
+		tok, pos, lit := l.scan()
+		c.Assert(tok, Equals, stringLit)
+		c.Assert(pos.Offset, Equals, 0)
+		c.Assert(lit, Equals, v.expect)
+	}
 }
 
 func (s *testLexerSuite) TestIdentifier(c *C) {

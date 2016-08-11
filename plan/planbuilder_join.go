@@ -777,7 +777,7 @@ func (b *planBuilder) buildTablePlanFromJoinPath(path *joinPath) Plan {
 		columnNameExpr.Name.Name = equiv.left.Column.Name
 		columnNameExpr.Name.Table = equiv.left.Table.Name
 		columnNameExpr.Refer = equiv.left
-		columnNameExpr.Type = equiv.left.Expr.GetType()
+		columnNameExpr.Type = *equiv.left.Expr.GetType()
 		ast.SetFlag(columnNameExpr)
 		condition := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.right.Expr, Op: opcode.EQ}
 		ast.MergeChildrenFlags(condition, columnNameExpr, equiv.right.Expr)
@@ -808,7 +808,7 @@ func (b *planBuilder) buildSubqueryJoinPath(path *joinPath) Plan {
 		columnNameExpr.Name.Name = equiv.left.Column.Name
 		columnNameExpr.Name.Table = equiv.left.Table.Name
 		columnNameExpr.Refer = equiv.left
-		columnNameExpr.Type = equiv.left.Expr.GetType()
+		columnNameExpr.Type = *equiv.left.Expr.GetType()
 		ast.SetFlag(columnNameExpr)
 		condition := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.right.Expr, Op: opcode.EQ}
 		ast.MergeChildrenFlags(condition, columnNameExpr, equiv.right.Expr)
