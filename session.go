@@ -358,6 +358,9 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
+	if s.initing {
+		return "", nil
+	}
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	sysVar, err := s.getExecRet(ctx, sql)
@@ -554,9 +557,9 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ac, err := s.isAutocommit(s)
-		if err != nil {
-			return nil, errors.Trace(err)
+		ac, err1 := s.isAutocommit(s)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 		if !ac {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)

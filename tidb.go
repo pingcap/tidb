@@ -150,9 +150,9 @@ func runStmt(ctx context.Context, s ast.Statement, args ...interface{}) (ast.Rec
 	se := ctx.(*session)
 	se.history.add(0, s)
 	// MySQL DDL should be auto-commit.
-	ac, err := autocommit.ShouldAutocommit(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
+	ac, err1 := autocommit.ShouldAutocommit(ctx)
+	if err1 != nil {
+		return nil, errors.Trace(err1)
 	}
 	if s.IsDDL() || ac {
 		if err != nil {
