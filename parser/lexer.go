@@ -317,9 +317,13 @@ func (mb *lazyBuf) setUseBuf(str string) {
 	}
 }
 
-func (mb *lazyBuf) writeRune(r rune) {
+func (mb *lazyBuf) writeRune(r rune, w int) {
 	if mb.useBuf {
-		mb.b.WriteRune(r)
+		if w > 1 {
+			mb.b.WriteRune(r)
+		} else {
+			mb.b.WriteByte(byte(r))
+		}
 	}
 }
 
@@ -352,7 +356,7 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 			mb.setUseBuf(mb.r.data(&pos)[1:])
 			ch0 = handleEscape(s)
 		}
-		mb.writeRune(ch0)
+		mb.writeRune(ch0, s.r.w)
 		s.r.inc()
 		ch0 = s.r.peek()
 	}
@@ -499,6 +503,9 @@ func (r *reader) peek() rune {
 		return unicode.ReplacementChar
 	case v >= 0x80:
 		v, w = utf8.DecodeRuneInString(r.s[r.p.Offset:])
+		if v == utf8.RuneError && w == 1 {
+			v = rune(r.s[r.p.Offset]) // illegal UTF-8 encoding
+		}
 	}
 	r.w = w
 	return v
