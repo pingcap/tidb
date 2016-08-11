@@ -379,40 +379,43 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 }
 
 // IsAutocommit checks if it is in the auto-commit mode.
-func (s *session) isAutocommit(ctx context.Context) bool {
+func (s *session) isAutocommit(ctx context.Context) (bool, error) {
 	sessionVar := variable.GetSessionVars(ctx)
 	autocommit := sessionVar.GetSystemVar("autocommit")
 	if autocommit.IsNull() {
 		if s.initing {
-			return false
+			return false, nil
 		}
 		autocommitStr, err := s.GetGlobalSysVar(ctx, "autocommit")
 		if err != nil {
-			log.Errorf("Get global sys var error: %v", err)
-			return false
+			return false, errors.Trace(err)
 		}
 		autocommit.SetString(autocommitStr)
 		err = sessionVar.SetSystemVar("autocommit", autocommit)
 		if err != nil {
-			log.Errorf("Set session sys var error: %v", err)
+			return false, errors.Trace(err)
 		}
 	}
 	autocommitStr := autocommit.GetString()
 	if autocommitStr == "ON" || autocommitStr == "on" || autocommitStr == "1" {
 		variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, true)
-		return true
+		return true, nil
 	}
 	variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, false)
-	return false
+	return false, nil
 }
 
-func (s *session) ShouldAutocommit(ctx context.Context) bool {
+func (s *session) ShouldAutocommit(ctx context.Context) (bool, error) {
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK.
-	if variable.GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 && s.isAutocommit(ctx) {
-		return true
+	ac, err := s.isAutocommit(ctx)
+	if err != nil {
+		return false, errors.Trace(err)
 	}
-	return false
+	if variable.GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 && ac {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
@@ -551,7 +554,11 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if !s.isAutocommit(s) {
+		ac, err := s.isAutocommit(s)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !ac {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		log.Infof("New txn:%s in session:%d", s.txn, s.sid)
@@ -564,8 +571,12 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if !s.isAutocommit(s) {
+		ac, err := s.isAutocommit(s)
+		if !ac {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		log.Warnf("Force new txn:%s in session:%d", s.txn, s.sid)
 	}
