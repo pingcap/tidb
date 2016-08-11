@@ -122,7 +122,19 @@ func (e *NewXSelectIndexExec) Schema() expression.Schema {
 
 // Close implements Exec Close interface.
 func (e *NewXSelectIndexExec) Close() error {
+	if e.result != nil {
+		err := e.result.Close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	e.result = nil
+	if e.subResult != nil {
+		err := e.subResult.Close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	e.subResult = nil
 	e.taskCursor = 0
 	e.mu.Lock()
@@ -545,7 +557,19 @@ func (e *NewXSelectTableExec) doRequest() error {
 
 // Close implements Executor Close interface.
 func (e *NewXSelectTableExec) Close() error {
+	if e.result != nil {
+		err := e.result.Close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	e.result = nil
+	if e.subResult != nil {
+		err := e.subResult.Close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	e.subResult = nil
 	e.returnedRows = 0
 	return nil
