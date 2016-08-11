@@ -269,12 +269,22 @@ func (v *validator) checkFieldList(x *ast.FieldList) {
 }
 
 func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
+	hasPrimaryKey := false
 	for _, colDef := range stmt.Cols {
 		tp := colDef.Tp
 		if tp.Tp == mysql.TypeString &&
 			tp.Flen != types.UnspecifiedLength && tp.Flen > 255 {
 			v.err = errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
 			return
+		}
+		for _, op := range colDef.Options {
+			if op.Tp == ast.ColumnOptionPrimaryKey {
+				if hasPrimaryKey {
+					v.err = errors.Errorf("Multiple primary key defined")
+					return
+				}
+				hasPrimaryKey = true
+			}
 		}
 	}
 }
