@@ -64,16 +64,11 @@ func newPacketIO(conn net.Conn) *packetIO {
 	return p
 }
 
-func (p *packetIO) readPacket() ([]byte, error) {
+func (p *packetIO) readOnePacket() ([]byte, error) {
 	var header [4]byte
 
 	if _, err := io.ReadFull(p.rb, header[:]); err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
-	if length < 1 {
-		return nil, errInvalidPayloadLen.Gen("invalid payload length %d", length)
 	}
 
 	sequence := uint8(header[3])
@@ -83,20 +78,46 @@ func (p *packetIO) readPacket() ([]byte, error) {
 
 	p.sequence++
 
+	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
+
 	data := make([]byte, length)
 	if _, err := io.ReadFull(p.rb, data); err != nil {
 		return nil, errors.Trace(err)
 	}
+	return data, nil
+}
+
+func (p *packetIO) readPacket() ([]byte, error) {
+	data, err := p.readOnePacket()
+	if err != nil {
+		return nil, err
+	}
+
+	length := len(data)
+
+	if length == 0 {
+		return nil, errInvalidPayloadLen.Gen("invalid empty payload")
+	}
+
 	if length < mysql.MaxPayloadLen {
 		return data, nil
 	}
 
-	var buf []byte
-	buf, err := p.readPacket()
-	if err != nil {
-		return nil, errors.Trace(err)
+	// handle muliti-packet
+	for {
+		buf, err := p.readOnePacket()
+		if err != nil {
+			return nil, err
+		}
+
+		data = append(data, buf...)
+
+		if len(buf) < mysql.MaxPayloadLen {
+			break
+		}
 	}
-	return append(data, buf...), nil
+
+	return data, nil
 }
 
 // writePacket writes data that already have header
