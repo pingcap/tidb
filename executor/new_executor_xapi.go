@@ -51,6 +51,24 @@ type NewXExecutor interface {
 	AddLimit(l *plan.Limit) bool
 }
 
+// Closeable is a interface for closeable structures.
+type Closeable interface {
+	// Close closes the object.
+	Close() error
+}
+
+func closeAll(objs ...Closeable) error {
+	for _, obj := range objs {
+		if obj != nil {
+			err := obj.Close()
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
+}
+
 // NewXSelectIndexExec represents XAPI select index executor without result fields.
 type NewXSelectIndexExec struct {
 	tableInfo   *model.TableInfo
@@ -122,6 +140,10 @@ func (e *NewXSelectIndexExec) Schema() expression.Schema {
 
 // Close implements Exec Close interface.
 func (e *NewXSelectIndexExec) Close() error {
+	err := closeAll(e.result, e.subResult)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	e.result = nil
 	e.subResult = nil
 	e.taskCursor = 0
@@ -545,6 +567,10 @@ func (e *NewXSelectTableExec) doRequest() error {
 
 // Close implements Executor Close interface.
 func (e *NewXSelectTableExec) Close() error {
+	err := closeAll(e.result, e.subResult)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	e.result = nil
 	e.subResult = nil
 	e.returnedRows = 0
