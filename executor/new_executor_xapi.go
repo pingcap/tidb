@@ -59,8 +59,8 @@ type NewXSelectIndexExec struct {
 	ctx         context.Context
 	supportDesc bool
 	isMemDB     bool
-	result      *xapi.SelectResult
-	subResult   *xapi.SubResult
+	result      xapi.SelectResult
+	subResult   xapi.PartialResult
 	where       *tipb.Expr
 
 	tasks      []*lookupTableTask
@@ -264,7 +264,7 @@ func (e *NewXSelectIndexExec) fetchHandles() ([]int64, error) {
 	return handles, nil
 }
 
-func (e *NewXSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
+func (e *NewXSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -388,7 +388,7 @@ func (e *NewXSelectIndexExec) executeTask(task *lookupTableTask) error {
 	return nil
 }
 
-func (e *NewXSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult *xapi.SelectResult) ([]*Row, error) {
+func (e *NewXSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult xapi.SelectResult) ([]*Row, error) {
 	var rows []*Row
 	for {
 		subResult, err := tblResult.Next()
@@ -407,7 +407,7 @@ func (e *NewXSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResul
 	return rows, nil
 }
 
-func (e *NewXSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult *xapi.SubResult) ([]*Row, error) {
+func (e *NewXSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult xapi.PartialResult) ([]*Row, error) {
 	var rows []*Row
 	for {
 		h, rowData, err := subResult.Next()
@@ -423,7 +423,7 @@ func (e *NewXSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult 
 	return rows, nil
 }
 
-func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, error) {
+func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, error) {
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -470,8 +470,8 @@ type NewXSelectTableExec struct {
 	ctx          context.Context
 	supportDesc  bool
 	isMemDB      bool
-	result       *xapi.SelectResult
-	subResult    *xapi.SubResult
+	result       xapi.SelectResult
+	subResult    xapi.PartialResult
 	where        *tipb.Expr
 	Columns      []*model.ColumnInfo
 	schema       expression.Schema
