@@ -475,7 +475,7 @@ func (e *InsertExec) Next() (*Row, error) {
 			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
 			if e.Ignore {
-				return nil, nil
+				continue
 			}
 			return nil, errors.Trace(err)
 		}

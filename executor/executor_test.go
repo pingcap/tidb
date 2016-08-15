@@ -469,11 +469,12 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	rowStr := fmt.Sprintf("%v %v", "1", "2")
 	r.Check(testkit.Rows(rowStr))
 
-	tk.MustExec("insert ignore into t values (1, 3)")
+	tk.MustExec("insert ignore into t values (1, 3), (2, 3)")
 
 	r = tk.MustQuery("select * from t;")
 	rowStr = fmt.Sprintf("%v %v", "1", "2")
-	r.Check(testkit.Rows(rowStr))
+	rowStr1 := fmt.Sprintf("%v %v", "2", "3")
+	r.Check(testkit.Rows(rowStr, rowStr1))
 }
 
 func (s *testSuite) TestReplace(c *C) {
