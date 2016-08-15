@@ -263,7 +263,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select count(*) from t t1 having 1 = 0",
-			best: "Dummy->Aggr->Projection",
+			best: "Dummy->Aggr->Selection->Projection",
 		},
 		{
 			sql:  "select * from t a where a.c = 1 order by a.d limit 2",
