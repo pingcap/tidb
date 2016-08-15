@@ -550,16 +550,19 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 // In this situation, if current transaction is still in progress,
 // there will be an implicit commit and create a new transaction.
 func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
-	var err error
+	var (
+		err error
+		ac  bool
+	)
 	if s.txn == nil {
 		s.resetHistory()
 		s.txn, err = s.store.Begin()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ac, err1 := s.isAutocommit(s)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
+		ac, err = s.isAutocommit(s)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		if !ac {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
@@ -574,7 +577,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ac, err := s.isAutocommit(s)
+		ac, err = s.isAutocommit(s)
 		if !ac {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
