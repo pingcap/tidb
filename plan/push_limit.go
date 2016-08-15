@@ -227,6 +227,11 @@ func (p *PhysicalTableScan) PushLimit(l *Limit) PhysicalPlan {
 }
 
 // PushLimit implements PhysicalPlan PushLimit interface.
+func (p *PhysicalDummyScan) PushLimit(l *Limit) PhysicalPlan {
+	return p
+}
+
+// PushLimit implements PhysicalPlan PushLimit interface.
 func (p *Insert) PushLimit(_ *Limit) PhysicalPlan {
 	if len(p.GetChildren()) == 0 {
 		return p

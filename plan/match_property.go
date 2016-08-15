@@ -198,3 +198,8 @@ func (p *Insert) matchProperty(_ requiredProperty, _ []uint64, _ ...*physicalPla
 func (p *SelectLock) matchProperty(_ requiredProperty, _ []uint64, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }
+
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *PhysicalDummyScan) matchProperty(_ requiredProperty, _ []uint64, _ ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
+}
