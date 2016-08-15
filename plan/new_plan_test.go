@@ -200,6 +200,10 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		best string
 	}{
 		{
+			sql:  "select * from t t1 where 1 = 0",
+			best: "Dummy->Projection",
+		},
+		{
 			sql:  "select * from t t1, t t2, t t3, t t4, t t5, t t6 where t1.a = t2.b and t2.a = t3.b and t3.c = t4.a and t4.d = t2.c and t5.d = t6.d",
 			best: "LeftHashJoin{LeftHashJoin{LeftHashJoin{LeftHashJoin{Table(t)->Table(t)}(t1.a,t2.b)->Table(t)}(t2.a,t3.b)->Table(t)}(t3.c,t4.a)(t2.c,t4.d)->LeftHashJoin{Table(t)->Table(t)}(t5.d,t6.d)}->Projection",
 		},
