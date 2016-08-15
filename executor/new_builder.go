@@ -410,3 +410,9 @@ func (b *executorBuilder) buildNewUnion(v *plan.NewUnion) Executor {
 	}
 	return e
 }
+
+func (b *executorBuilder) buildDummyScan(v *plan.PhysicalDummyScan) Executor {
+	return &DummyScanExec{
+		schema: v.GetSchema(),
+	}
+}

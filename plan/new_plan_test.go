@@ -258,6 +258,14 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		best string
 	}{
 		{
+			sql:  "select * from t t1 where 1 = 0",
+			best: "Dummy->Projection",
+		},
+		{
+			sql:  "select count(*) from t t1 having 1 = 0",
+			best: "Dummy->Aggr->Selection->Projection",
+		},
+		{
 			sql:  "select * from t a where a.c = 1 order by a.d limit 2",
 			best: "Index(t.c_d_e)[[1,1]]->Projection",
 		},

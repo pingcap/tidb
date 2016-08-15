@@ -1373,6 +1373,7 @@ func (s *testSessionSuite) bootstrapWithError(store kv.Storage, c *C) {
 		sid:    atomic.AddInt64(&sessionID, 1),
 		parser: parser.New(),
 	}
+	ss.initing = true
 	domain, err := domap.Get(store)
 	c.Assert(err, IsNil)
 	sessionctx.BindDomain(ss, domain)
