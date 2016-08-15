@@ -107,11 +107,19 @@ func (ir *IndexRange) IsPoint() bool {
 func (ir *IndexRange) String() string {
 	lowStrs := make([]string, 0, len(ir.LowVal))
 	for _, d := range ir.LowVal {
-		lowStrs = append(lowStrs, fmt.Sprintf("%v", d.GetValue()))
+		if d.Kind() == types.KindMinNotNull {
+			lowStrs = append(lowStrs, "-inf")
+		} else {
+			lowStrs = append(lowStrs, fmt.Sprintf("%v", d.GetValue()))
+		}
 	}
 	highStrs := make([]string, 0, len(ir.LowVal))
 	for _, d := range ir.HighVal {
-		highStrs = append(highStrs, fmt.Sprintf("%v", d.GetValue()))
+		if d.Kind() == types.KindMaxValue {
+			highStrs = append(highStrs, "+inf")
+		} else {
+			highStrs = append(highStrs, fmt.Sprintf("%v", d.GetValue()))
+		}
 	}
 	l, r := "[", "]"
 	if ir.LowExclude {

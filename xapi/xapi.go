@@ -173,6 +173,11 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (SelectR
 			result.fields = ProtoColumnsToFieldTypes(req.TableInfo.Columns)
 		} else {
 			result.fields = ProtoColumnsToFieldTypes(req.IndexInfo.Columns)
+			length := len(req.IndexInfo.Columns)
+			if req.IndexInfo.Columns[length-1].GetPkHandle() {
+				// Returned index row do not contains extra PKHandle column.
+				result.fields = result.fields[:length-1]
+			}
 			result.index = true
 		}
 	} else {
@@ -290,9 +295,20 @@ func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
 		IndexId: proto.Int64(idx.ID),
 		Unique:  proto.Bool(idx.Unique),
 	}
-	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns))
+	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns)+1)
 	for _, c := range idx.Columns {
 		cols = append(cols, columnToProto(t.Columns[c.Offset]))
+	}
+	if t.PKIsHandle {
+		// Coprocessor needs to know PKHandle column info, so we need to append it.
+		for _, col := range t.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				colPB := columnToProto(col)
+				colPB.PkHandle = proto.Bool(true)
+				cols = append(cols, colPB)
+				break
+			}
+		}
 	}
 	pi.Columns = cols
 	return pi

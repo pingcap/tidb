@@ -371,6 +371,23 @@ func DecodeIndexKey(key kv.Key) ([]types.Datum, error) {
 	return codec.Decode(b)
 }
 
+// CutIndexKey cuts encoded index key into colIDs to bytes slices map.
+// The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
+// if it is non-unique index.
+func CutIndexKey(key kv.Key, colIDs []int64) (values map[int64][]byte, b []byte, err error) {
+	b = key[prefixLen+idLen:]
+	values = make(map[int64][]byte)
+	for _, id := range colIDs {
+		var val []byte
+		val, b, err = codec.CutOne(b)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		values[id] = val
+	}
+	return
+}
+
 // EncodeTableIndexPrefix encodes index prefix with tableID and idxID.
 func EncodeTableIndexPrefix(tableID, idxID int64) kv.Key {
 	key := make([]byte, 0, prefixLen)
