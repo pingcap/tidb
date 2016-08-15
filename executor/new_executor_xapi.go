@@ -71,15 +71,15 @@ func closeAll(objs ...Closeable) error {
 
 // NewXSelectIndexExec represents XAPI select index executor without result fields.
 type NewXSelectIndexExec struct {
-	tableInfo   *model.TableInfo
-	table       table.Table
-	asName      *model.CIStr
-	ctx         context.Context
-	supportDesc bool
-	isMemDB     bool
-	result      xapi.SelectResult
-	subResult   xapi.PartialResult
-	where       *tipb.Expr
+	tableInfo     *model.TableInfo
+	table         table.Table
+	asName        *model.CIStr
+	ctx           context.Context
+	supportDesc   bool
+	isMemDB       bool
+	result        xapi.SelectResult
+	partialResult xapi.PartialResult
+	where         *tipb.Expr
 
 	tasks      []*lookupTableTask
 	taskCursor int
@@ -140,12 +140,12 @@ func (e *NewXSelectIndexExec) Schema() expression.Schema {
 
 // Close implements Exec Close interface.
 func (e *NewXSelectIndexExec) Close() error {
-	err := closeAll(e.result, e.subResult)
+	err := closeAll(e.result, e.partialResult)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	e.result = nil
-	e.subResult = nil
+	e.partialResult = nil
 	e.taskCursor = 0
 	e.mu.Lock()
 	e.tasks = nil
@@ -176,22 +176,22 @@ func (e *NewXSelectIndexExec) nextForSingleRead() (*Row, error) {
 		}
 	}
 	for {
-		if e.subResult == nil {
+		if e.partialResult == nil {
 			var err error
-			e.subResult, err = e.result.Next()
+			e.partialResult, err = e.result.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if e.subResult == nil {
+			if e.partialResult == nil {
 				return nil, nil
 			}
 		}
-		h, rowData, err := e.subResult.Next()
+		h, rowData, err := e.partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if rowData == nil {
-			e.subResult = nil
+			e.partialResult = nil
 			continue
 		}
 		if e.aggregate {
@@ -413,14 +413,14 @@ func (e *NewXSelectIndexExec) executeTask(task *lookupTableTask) error {
 func (e *NewXSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult xapi.SelectResult) ([]*Row, error) {
 	var rows []*Row
 	for {
-		subResult, err := tblResult.Next()
+		partialResult, err := tblResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if subResult == nil {
+		if partialResult == nil {
 			break
 		}
-		subRows, err := e.extractRowsFromSubResult(t, subResult)
+		subRows, err := e.extractRowsFromSubResult(t, partialResult)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -429,10 +429,10 @@ func (e *NewXSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResul
 	return rows, nil
 }
 
-func (e *NewXSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult xapi.PartialResult) ([]*Row, error) {
+func (e *NewXSelectIndexExec) extractRowsFromSubResult(t table.Table, partialResult xapi.PartialResult) ([]*Row, error) {
 	var rows []*Row
 	for {
-		h, rowData, err := subResult.Next()
+		h, rowData, err := partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -486,21 +486,21 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult
 
 // NewXSelectTableExec represents XAPI select executor without result fields.
 type NewXSelectTableExec struct {
-	tableInfo    *model.TableInfo
-	table        table.Table
-	asName       *model.CIStr
-	ctx          context.Context
-	supportDesc  bool
-	isMemDB      bool
-	result       xapi.SelectResult
-	subResult    xapi.PartialResult
-	where        *tipb.Expr
-	Columns      []*model.ColumnInfo
-	schema       expression.Schema
-	ranges       []plan.TableRange
-	desc         bool
-	limitCount   *int64
-	returnedRows uint64 // returned rowCount
+	tableInfo     *model.TableInfo
+	table         table.Table
+	asName        *model.CIStr
+	ctx           context.Context
+	supportDesc   bool
+	isMemDB       bool
+	result        xapi.SelectResult
+	partialResult xapi.PartialResult
+	where         *tipb.Expr
+	Columns       []*model.ColumnInfo
+	schema        expression.Schema
+	ranges        []plan.TableRange
+	desc          bool
+	limitCount    *int64
+	returnedRows  uint64 // returned rowCount
 
 	/*
 		The following attributes are used for aggregation push down.
@@ -567,12 +567,12 @@ func (e *NewXSelectTableExec) doRequest() error {
 
 // Close implements Executor Close interface.
 func (e *NewXSelectTableExec) Close() error {
-	err := closeAll(e.result, e.subResult)
+	err := closeAll(e.result, e.partialResult)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	e.result = nil
-	e.subResult = nil
+	e.partialResult = nil
 	e.returnedRows = 0
 	return nil
 }
@@ -589,24 +589,24 @@ func (e *NewXSelectTableExec) Next() (*Row, error) {
 		}
 	}
 	for {
-		if e.subResult == nil {
+		if e.partialResult == nil {
 			var err error
 			startTs := time.Now()
-			e.subResult, err = e.result.Next()
+			e.partialResult, err = e.result.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if e.subResult == nil {
+			if e.partialResult == nil {
 				return nil, nil
 			}
 			log.Debugf("[TIME_TABLE_SCAN] %v", time.Now().Sub(startTs))
 		}
-		h, rowData, err := e.subResult.Next()
+		h, rowData, err := e.partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if rowData == nil {
-			e.subResult = nil
+			e.partialResult = nil
 			continue
 		}
 		e.returnedRows++

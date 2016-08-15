@@ -36,7 +36,7 @@ var (
 
 var (
 	_ SelectResult  = &selectResult{}
-	_ PartialResult = &subResult{}
+	_ PartialResult = &partialResult{}
 )
 
 // SelectResult is an iterator of coprocessor partial results.
@@ -67,7 +67,7 @@ type selectResult struct {
 }
 
 // Next returns the next row.
-func (r *selectResult) Next() (partialResult PartialResult, err error) {
+func (r *selectResult) Next() (pr PartialResult, err error) {
 	var reader io.ReadCloser
 	reader, err = r.resp.Next()
 	if err != nil {
@@ -76,7 +76,7 @@ func (r *selectResult) Next() (partialResult PartialResult, err error) {
 	if reader == nil {
 		return nil, nil
 	}
-	partialResult = &subResult{
+	pr = &partialResult{
 		index:     r.index,
 		fields:    r.fields,
 		reader:    reader,
@@ -96,7 +96,7 @@ func (r *selectResult) Close() error {
 }
 
 // SubResult represents a subset of select result.
-type subResult struct {
+type partialResult struct {
 	index     bool
 	aggregate bool
 	fields    []*types.FieldType
@@ -107,7 +107,7 @@ type subResult struct {
 
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
-func (r *subResult) Next() (handle int64, data []types.Datum, err error) {
+func (r *partialResult) Next() (handle int64, data []types.Datum, err error) {
 	if r.resp == nil {
 		r.resp = new(tipb.SelectResponse)
 		var b []byte
@@ -151,7 +151,7 @@ func (r *subResult) Next() (handle int64, data []types.Datum, err error) {
 }
 
 // Close closes the sub result.
-func (r *subResult) Close() error {
+func (r *partialResult) Close() error {
 	return nil
 }
 
