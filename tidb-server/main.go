@@ -48,7 +48,7 @@ var (
 	enablePS     = flag.Bool("perfschema", false, "If enable performance schema.")
 	reportStatus = flag.Bool("report-status", true, "If enable status report HTTP service.")
 	useNewPlan   = flag.Bool("newplan", true, "If use new planner.")
-	useNewLexer  = flag.Bool("newlexer", false, "If use new lexer.")
+	useNewLexer  = flag.Bool("newlexer", true, "If use new lexer.")
 	logFile      = flag.String("log-file", "", "log file path")
 )
 
