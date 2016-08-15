@@ -1515,3 +1515,28 @@ func (e *NewUnionExec) Close() error {
 	}
 	return nil
 }
+
+// DummyScanExec represents a dummy table.
+type DummyScanExec struct {
+	schema expression.Schema
+}
+
+// Schema implements Executor Schema interface.
+func (e *DummyScanExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Close implements Executor Close interface.
+func (e *DummyScanExec) Close() error {
+	return nil
+}
+
+// Fields implements Executor Fields interface.
+func (e *DummyScanExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Next implements Executor Next interface.
+func (e *DummyScanExec) Next() (*Row, error) {
+	return nil, nil
+}
