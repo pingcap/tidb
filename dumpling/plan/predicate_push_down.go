@@ -195,16 +195,14 @@ func (p *NewUnion) PredicatePushDown(predicates []expression.Expression) (ret []
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	// TODO: implement aggregation push down.
-	var condsToPush, rest []expression.Expression
+	var condsToPush []expression.Expression
 	for _, cond := range predicates {
 		if _, ok := cond.(*expression.Constant); ok {
 			condsToPush = append(condsToPush, cond)
-		} else {
-			rest = append(rest, cond)
 		}
 	}
 	p.baseLogicalPlan.PredicatePushDown(condsToPush)
-	return rest, p, nil
+	return predicates, p, nil
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
