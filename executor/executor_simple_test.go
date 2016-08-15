@@ -140,6 +140,9 @@ func (s *testSuite) TestSetCharset(c *C) {
 	}
 	sVar := sessionVars.GetSystemVar(variable.CollationConnection)
 	c.Assert(sVar.GetString(), Equals, "utf8_general_ci")
+
+	// Issue 1523
+	tk.MustExec(`SET NAMES binary`)
 }
 
 func (s *testSuite) TestDo(c *C) {
