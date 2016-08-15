@@ -181,6 +181,8 @@ func (s *testLexerSuite) TestscanString(c *C) {
 		{`"\"hello"`, `"hello`},
 		{`'disappearing\ backslash'`, "disappearing backslash"},
 		{"'한국의中文UTF8およびテキストトラック'", "한국의中文UTF8およびテキストトラック"},
+		{"'\\a\x90'", "a\x90"},
+		{`"\aèàø»"`, `aèàø»`},
 	}
 
 	for _, v := range table {
