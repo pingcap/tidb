@@ -416,5 +416,4 @@ func (b *executorBuilder) buildDummyScan(v *plan.PhysicalDummyScan) Executor {
 	return &DummyScanExec{
 		schema: v.GetSchema(),
 	}
-
 }
