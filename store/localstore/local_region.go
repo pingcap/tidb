@@ -101,6 +101,11 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		if req.Tp == kv.ReqTypeSelect {
 			rows, err = rs.getRowsFromSelectReq(ctx)
 		} else {
+			// The PKHandle column info has been collected in ctx, so we can remove it in IndexInfo.
+			length := len(sel.IndexInfo.Columns)
+			if sel.IndexInfo.Columns[length-1].GetPkHandle() {
+				sel.IndexInfo.Columns = sel.IndexInfo.Columns[:length-1]
+			}
 			rows, err = rs.getRowsFromIndexReq(ctx)
 		}
 
@@ -158,7 +163,7 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, er
 	columns := ctx.sel.TableInfo.Columns
 	ctx.colTps = make(map[int64]*types.FieldType, len(columns))
 	for _, col := range columns {
-		if *col.PkHandle {
+		if col.GetPkHandle() {
 			continue
 		}
 		ctx.colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
@@ -363,7 +368,7 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 	}
 	// Fill handle and null columns.
 	for _, col := range columns {
-		if *col.PkHandle {
+		if col.GetPkHandle() {
 			var handleDatum types.Datum
 			if mysql.HasUnsignedFlag(uint(*col.Flag)) {
 				// PK column is Unsigned
@@ -442,7 +447,11 @@ func (rs *localRegion) getRowData(value []byte, colTps map[int64]*types.FieldTyp
 func (rs *localRegion) setColumnValueToCtx(ctx *selectContext, h int64, row map[int64][]byte, cols map[int64]*tipb.ColumnInfo) error {
 	for colID, col := range cols {
 		if col.GetPkHandle() {
-			ctx.eval.Row[colID] = types.NewIntDatum(h)
+			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
+				ctx.eval.Row[colID] = types.NewUintDatum(uint64(h))
+			} else {
+				ctx.eval.Row[colID] = types.NewIntDatum(h)
+			}
 		} else {
 			data := row[colID]
 			ft := xapi.FieldTypeFromPBColumn(col)

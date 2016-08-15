@@ -93,6 +93,11 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 		if req.GetTp() == kv.ReqTypeSelect {
 			rows, err = h.getRowsFromSelectReq(ctx)
 		} else {
+			// The PKHandle column info has been collected in ctx, so we can remove it in IndexInfo.
+			length := len(sel.IndexInfo.Columns)
+			if sel.IndexInfo.Columns[length-1].GetPkHandle() {
+				sel.IndexInfo.Columns = sel.IndexInfo.Columns[:length-1]
+			}
 			rows, err = h.getRowsFromIndexReq(ctx)
 		}
 		selResp := new(tipb.SelectResponse)
@@ -185,7 +190,7 @@ func (h *rpcHandler) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, erro
 	columns := ctx.sel.TableInfo.Columns
 	ctx.colTps = make(map[int64]*types.FieldType, len(columns))
 	for _, col := range columns {
-		if *col.PkHandle {
+		if col.GetPkHandle() {
 			continue
 		}
 		ctx.colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
@@ -440,7 +445,11 @@ func (h *rpcHandler) getRowData(value []byte, colTps map[int64]*types.FieldType)
 func (h *rpcHandler) setColumnValueToCtx(ctx *selectContext, handle int64, row map[int64][]byte, cols map[int64]*tipb.ColumnInfo) error {
 	for colID, col := range cols {
 		if col.GetPkHandle() {
-			ctx.eval.Row[colID] = types.NewIntDatum(handle)
+			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
+				ctx.eval.Row[colID] = types.NewUintDatum(uint64(handle))
+			} else {
+				ctx.eval.Row[colID] = types.NewIntDatum(handle)
+			}
 		} else {
 			data := row[colID]
 			ft := xapi.FieldTypeFromPBColumn(col)
