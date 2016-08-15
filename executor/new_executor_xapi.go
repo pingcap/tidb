@@ -92,7 +92,15 @@ func (e *NewXSelectIndexExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.B
 	e.byItems = byItems
 	e.aggFields = fields
 	e.aggregate = true
-	e.indexPlan.DoubleRead = true
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		e.indexPlan.DoubleRead = true
+		return
+	}
+	client := txn.GetClient()
+	if !client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeGroupBy) {
+		e.indexPlan.DoubleRead = true
+	}
 }
 
 // AddLimit implements NewXExecutor interface.
@@ -152,6 +160,10 @@ func (e *NewXSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if e.aggregate {
+			// The returned rows should be aggregate partial result.
+			e.result.SetFields(e.aggFields)
+		}
 	}
 	for {
 		if e.subResult == nil {
@@ -173,8 +185,7 @@ func (e *NewXSelectIndexExec) nextForSingleRead() (*Row, error) {
 			continue
 		}
 		if e.aggregate {
-			// TODO: Implement aggregation push down in single read index
-			return nil, errors.New("Can't push aggr in a single read index executor!")
+			return &Row{Data: rowData}, nil
 		}
 		rowData = e.indexRowToTableRow(h, rowData)
 		return resultRowToRow(e.table, h, rowData, e.asName), nil
@@ -288,6 +299,9 @@ func (e *NewXSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	concurrency := 1
 	if !e.indexPlan.DoubleRead {
 		concurrency = defaultConcurrency
+		selIdxReq.Aggregates = e.aggFuncs
+		selIdxReq.GroupBy = e.byItems
+		selIdxReq.Where = e.where
 	} else if e.indexPlan.OutOfOrder {
 		concurrency = defaultConcurrency
 	}

@@ -734,6 +734,10 @@ func (s *testCodecSuite) TestCut(c *C) {
 			types.MakeDatums(float32(1), float64(3.15), []byte("123456789012345")),
 			types.MakeDatums(float64(1), float64(3.15), []byte("123456789012345")),
 		},
+		{
+			types.MakeDatums(mysql.NewDecimalFromInt(0, 0), mysql.NewDecimalFromFloat(-1.3)),
+			types.MakeDatums(mysql.NewDecimalFromInt(0, 0), mysql.NewDecimalFromFloat(-1.3)),
+		},
 	}
 	for i, t := range table {
 		comment := Commentf("%d %v", i, t)
