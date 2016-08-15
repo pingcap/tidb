@@ -152,7 +152,7 @@ func (s *testLexerSuite) TestscanQuotedIdent(c *C) {
 	l.r.peek()
 	tok, pos, lit := scanQuotedIdent(l)
 	c.Assert(pos.Offset, Equals, 0)
-	c.Assert(tok, Equals, identifier)
+	c.Assert(tok, Equals, quotedIdentifier)
 	c.Assert(lit, Equals, "fk")
 }
 
@@ -181,6 +181,8 @@ func (s *testLexerSuite) TestscanString(c *C) {
 		{`"\"hello"`, `"hello`},
 		{`'disappearing\ backslash'`, "disappearing backslash"},
 		{"'한국의中文UTF8およびテキストトラック'", "한국의中文UTF8およびテキストトラック"},
+		{"'\\a\x90'", "a\x90"},
+		{`"\aèàø»"`, `aèàø»`},
 	}
 
 	for _, v := range table {
@@ -194,15 +196,17 @@ func (s *testLexerSuite) TestscanString(c *C) {
 
 func (s *testLexerSuite) TestIdentifier(c *C) {
 	defer testleak.AfterTest(c)()
-	table := []string{
-		`哈哈`,
+	table := [][2]string{
+		{`哈哈`, "哈哈"},
+		{"`numeric`", "numeric"},
 		// `5number`,
 	}
 	l := &Scanner{}
-	for _, v := range table {
-		l.reset(v)
-		tok, _, lit := l.scan()
+	for _, item := range table {
+		l.reset(item[0])
+		var v yySymType
+		tok := l.Lex(&v)
 		c.Assert(tok, Equals, identifier)
-		c.Assert(lit, Equals, v)
+		c.Assert(v.ident, Equals, item[1])
 	}
 }

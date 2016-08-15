@@ -136,6 +136,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildMaxOneRow(v)
 	case *plan.Trim:
 		return b.buildTrim(v)
+	case *plan.PhysicalDummyScan:
+		return b.buildDummyScan(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -362,7 +364,12 @@ func (b *executorBuilder) joinConditions(conditions []ast.ExprNode) ast.ExprNode
 
 func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	if autocommit.ShouldAutocommit(b.ctx) {
+	ac, err := autocommit.ShouldAutocommit(b.ctx)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return src
+	}
+	if ac {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
