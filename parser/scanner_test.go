@@ -196,16 +196,17 @@ func (s *testLexerSuite) TestscanString(c *C) {
 
 func (s *testLexerSuite) TestIdentifier(c *C) {
 	defer testleak.AfterTest(c)()
-	table := []string{
-		`哈哈`,
-		`numeric`,
+	table := [][2]string{
+		{`哈哈`, "哈哈"},
+		{"`numeric`", "numeric"},
 		// `5number`,
 	}
 	l := &Scanner{}
-	for _, v := range table {
-		l.reset(v)
-		tok, _, lit := l.scan()
+	for _, item := range table {
+		l.reset(item[0])
+		var v yySymType
+		tok := l.Lex(&v)
 		c.Assert(tok, Equals, identifier)
-		c.Assert(lit, Equals, v)
+		c.Assert(v.ident, Equals, item[1])
 	}
 }
