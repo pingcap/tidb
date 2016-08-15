@@ -269,6 +269,7 @@ func (v *validator) checkFieldList(x *ast.FieldList) {
 }
 
 func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
+	countPrimayKey := 0
 	for _, colDef := range stmt.Cols {
 		tp := colDef.Tp
 		if tp.Tp == mysql.TypeString &&
@@ -276,7 +277,21 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			v.err = errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
 			return
 		}
+		countPrimayKey += isPrimary(colDef.Options)
+		if countPrimayKey > 1 {
+			v.err = errors.Errorf("Multiple primary key defined")
+			return
+		}
 	}
+}
+
+func isPrimary(ops []*ast.ColumnOption) int {
+	for _, op := range ops {
+		if op.Tp == ast.ColumnOptionPrimaryKey {
+			return 1
+		}
+	}
+	return 0
 }
 
 func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
