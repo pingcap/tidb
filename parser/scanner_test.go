@@ -152,7 +152,7 @@ func (s *testLexerSuite) TestscanQuotedIdent(c *C) {
 	l.r.peek()
 	tok, pos, lit := scanQuotedIdent(l)
 	c.Assert(pos.Offset, Equals, 0)
-	c.Assert(tok, Equals, identifier)
+	c.Assert(tok, Equals, quotedIdentifier)
 	c.Assert(lit, Equals, "fk")
 }
 
@@ -198,6 +198,7 @@ func (s *testLexerSuite) TestIdentifier(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []string{
 		`哈哈`,
+		`numeric`,
 		// `5number`,
 	}
 	l := &Scanner{}
