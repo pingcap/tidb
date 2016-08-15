@@ -54,6 +54,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"create table t(id int auto_increment) ENGINE=MYISAM", true, nil},
 		{"create table t(a int primary key, b int, c varchar(10), d char(256));", true, errors.New("Column length too big for column 'd' (max = 255); use BLOB or TEXT instead")},
 		{"create index ib on t(b,a,b);", true, errors.New("Duplicate column name 'b'")},
+		{"create table t(c1 int not null primary key, c2 int not null primary key)", true, errors.New("Multiple primary key defined")},
 	}
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
