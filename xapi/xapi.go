@@ -95,7 +95,7 @@ func (r *selectResult) Close() error {
 	return r.resp.Close()
 }
 
-// SubResult represents a subset of select result.
+// partialResult represents a subset of select result.
 type partialResult struct {
 	index     bool
 	aggregate bool

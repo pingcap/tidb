@@ -434,7 +434,7 @@ func (e *NewXSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResul
 		if partialResult == nil {
 			break
 		}
-		subRows, err := e.extractRowsFromSubResult(t, partialResult)
+		subRows, err := e.extractRowsFromPartialResult(t, partialResult)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -443,7 +443,7 @@ func (e *NewXSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResul
 	return rows, nil
 }
 
-func (e *NewXSelectIndexExec) extractRowsFromSubResult(t table.Table, partialResult xapi.PartialResult) ([]*Row, error) {
+func (e *NewXSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialResult xapi.PartialResult) ([]*Row, error) {
 	var rows []*Row
 	for {
 		h, rowData, err := partialResult.Next()
