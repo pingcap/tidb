@@ -37,47 +37,55 @@ const (
 	maxFlag          byte = 250
 )
 
+func EncodeOne(b []byte, val types.Datum, comparable bool) ([]byte, error) {
+	switch val.Kind() {
+	case types.KindInt64:
+		b = encodeSignedInt(b, val.GetInt64(), comparable)
+	case types.KindUint64:
+		b = encodeUnsignedInt(b, val.GetUint64(), comparable)
+	case types.KindFloat32, types.KindFloat64:
+		b = append(b, floatFlag)
+		b = EncodeFloat(b, val.GetFloat64())
+	case types.KindString, types.KindBytes:
+		b = encodeBytes(b, val.GetBytes(), comparable)
+	case types.KindMysqlTime:
+		b = append(b, uintFlag)
+		b = EncodeUint(b, val.GetMysqlTime().ToPackedUint())
+	case types.KindMysqlDuration:
+		// duration may have negative value, so we cannot use String to encode directly.
+		b = append(b, durationFlag)
+		b = EncodeInt(b, int64(val.GetMysqlDuration().Duration))
+	case types.KindMysqlDecimal:
+		b = append(b, decimalFlag)
+		b = EncodeDecimal(b, val.GetMysqlDecimal())
+	case types.KindMysqlHex:
+		b = encodeSignedInt(b, int64(val.GetMysqlHex().ToNumber()), comparable)
+	case types.KindMysqlBit:
+		b = encodeUnsignedInt(b, uint64(val.GetMysqlBit().ToNumber()), comparable)
+	case types.KindMysqlEnum:
+		b = encodeUnsignedInt(b, uint64(val.GetMysqlEnum().ToNumber()), comparable)
+	case types.KindMysqlSet:
+		b = encodeUnsignedInt(b, uint64(val.GetMysqlSet().ToNumber()), comparable)
+	case types.KindNull:
+		b = append(b, NilFlag)
+	case types.KindMinNotNull:
+		b = append(b, bytesFlag)
+	case types.KindMaxValue:
+		b = append(b, maxFlag)
+	default:
+		return nil, errors.Errorf("unsupport encode type %d", val.Kind())
+	}
+	return b, nil
+}
+
 func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
+	var err error
 	for _, val := range vals {
-		switch val.Kind() {
-		case types.KindInt64:
-			b = encodeSignedInt(b, val.GetInt64(), comparable)
-		case types.KindUint64:
-			b = encodeUnsignedInt(b, val.GetUint64(), comparable)
-		case types.KindFloat32, types.KindFloat64:
-			b = append(b, floatFlag)
-			b = EncodeFloat(b, val.GetFloat64())
-		case types.KindString, types.KindBytes:
-			b = encodeBytes(b, val.GetBytes(), comparable)
-		case types.KindMysqlTime:
-			b = append(b, uintFlag)
-			b = EncodeUint(b, val.GetMysqlTime().ToPackedUint())
-		case types.KindMysqlDuration:
-			// duration may have negative value, so we cannot use String to encode directly.
-			b = append(b, durationFlag)
-			b = EncodeInt(b, int64(val.GetMysqlDuration().Duration))
-		case types.KindMysqlDecimal:
-			b = append(b, decimalFlag)
-			b = EncodeDecimal(b, val.GetMysqlDecimal())
-		case types.KindMysqlHex:
-			b = encodeSignedInt(b, int64(val.GetMysqlHex().ToNumber()), comparable)
-		case types.KindMysqlBit:
-			b = encodeUnsignedInt(b, uint64(val.GetMysqlBit().ToNumber()), comparable)
-		case types.KindMysqlEnum:
-			b = encodeUnsignedInt(b, uint64(val.GetMysqlEnum().ToNumber()), comparable)
-		case types.KindMysqlSet:
-			b = encodeUnsignedInt(b, uint64(val.GetMysqlSet().ToNumber()), comparable)
-		case types.KindNull:
-			b = append(b, NilFlag)
-		case types.KindMinNotNull:
-			b = append(b, bytesFlag)
-		case types.KindMaxValue:
-			b = append(b, maxFlag)
-		default:
-			return nil, errors.Errorf("unsupport encode type %d", val.Kind())
+		b, err = EncodeOne(b, val, comparable)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
-
 	return b, nil
 }
 

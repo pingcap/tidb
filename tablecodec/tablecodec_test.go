@@ -14,6 +14,8 @@
 package tablecodec
 
 import (
+	"fmt"
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -71,6 +73,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	bs, err := EncodeRow(row, colIDs)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
+	fmt.Println(len(bs))
 
 	// Decode
 	colMap := make(map[int64]*types.FieldType, 3)
@@ -194,4 +197,56 @@ func (s *testTableCodecSuite) TestCutKey(c *C) {
 	}
 	_, handleVal, _ := codec.DecodeOne(handleBytes)
 	c.Assert(handleVal, DeepEquals, types.NewIntDatum(100))
+}
+
+func BenchmarkRowCodec(b *testing.B) {
+	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
+	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
+	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeTimestamp)}
+	randcols := []*column{c1, c2, c3}
+
+	randrow := make([]types.Datum, 3)
+	randrow[0] = types.NewIntDatum(100)
+	randrow[1] = types.NewBytesDatum([]byte("abc"))
+	ts, _ := mysql.ParseTimestamp("2016-06-23 11:30:45")
+	randrow[2] = types.NewDatum(ts)
+	// randrow[2] = types.NewBytesDatum([]byte("abc"))
+
+	cols := [30]column{}
+	row := [30]types.Datum{}
+	for i := 0; i < 30; i++ {
+		r := rand.Intn(3)
+		cols[i].id = int64(i) + 1
+		cols[i].tp = randcols[r].tp
+		row[i] = randrow[r]
+	}
+
+	// Encode
+	colIDs := make([]int64, 0, 30)
+	for _, col := range cols {
+		colIDs = append(colIDs, col.id)
+	}
+
+	// b.ResetTimer()
+	// for i := 0; i < b.N; i++ {
+	// 	EncodeRow(row, colIDs)
+	// }
+	// b.ReportAllocs()
+
+	xx, _ := EncodeRow1(row[:], colIDs)
+	colMap := make(map[int64]*types.FieldType, 30)
+	// for i := 0; i < 30; i++ {
+	// 	colMap[cols[i].id] = cols[i].tp
+	// }
+	colMap[4] = cols[3].tp
+	colMap[7] = cols[6].tp
+	colMap[23] = cols[22].tp
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := DecodeRow1(xx, colMap)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }

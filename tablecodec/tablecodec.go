@@ -15,6 +15,7 @@ package tablecodec
 
 import (
 	"bytes"
+	"encoding/binary"
 	"time"
 
 	"github.com/juju/errors"
@@ -108,6 +109,74 @@ func EncodeValue(raw types.Datum) ([]byte, error) {
 	return b, errors.Trace(err)
 }
 
+// Row layout: colID1, len1, value1, colID2, len2, value2, .....
+func EncodeRow2(row []types.Datum, colIDs []int64) ([]byte, error) {
+	if len(row) != len(colIDs) {
+		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
+	}
+	if len(row) == 0 {
+		// We could not set nil value into kv.
+		return []byte{codec.NilFlag}, nil
+	}
+
+	buf := make([]byte, 0, 64)
+
+	var b []byte
+	for i, c := range row {
+		fc, err := flatten(c)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		x, err := codec.EncodeOne(buf, fc, false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		b = codec.EncodeVarint(b, colIDs[i])
+		b = codec.EncodeVarint(b, int64(len(x)))
+		b = append(b, x...)
+	}
+	return b, nil
+}
+
+// Row layout: meta_offset | data1, data2, data3... | meta
+// meta: length | colID1, offset | colID2, offset | ...
+func EncodeRow1(row []types.Datum, colIDs []int64) ([]byte, error) {
+	if len(row) != len(colIDs) {
+		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
+	}
+
+	if len(row) == 0 {
+		// We could not set nil value into kv.
+		return []byte{codec.NilFlag}, nil
+	}
+
+	meta := make([]int64, 2*len(colIDs)+1)
+	meta[0] = int64(len(row))
+	b := make([]byte, 4, 4+len(row)*4)
+	for i, c := range row {
+		fc, err := flatten(c)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		offset := int64(len(b))
+		meta[1+2*i] = colIDs[i]
+		meta[2+2*i] = offset
+		b, err = codec.EncodeOne(b, fc, false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	metaOffset := uint32(len(b))
+
+	for _, v := range meta {
+		b = codec.EncodeVarint(b, v)
+	}
+	binary.BigEndian.PutUint32(b[0:], metaOffset)
+	return b, nil
+}
+
 // EncodeRow encode row data and column ids into a slice of byte.
 // Row layout: colID1, value1, colID2, value2, .....
 func EncodeRow(row []types.Datum, colIDs []int64) ([]byte, error) {
@@ -196,6 +265,62 @@ func DecodeColumnValue(data []byte, ft *types.FieldType) (types.Datum, error) {
 	return colDatum, nil
 }
 
+func DecodeMeta(b []byte) ([]int64, error) {
+	offset := binary.BigEndian.Uint32(b)
+	data, count, err := codec.DecodeVarint(b[offset:])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	meta := make([]int64, 2*count)
+	for i := 0; i < int(2*count); i++ {
+		data, meta[i], err = codec.DecodeVarint(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return meta, nil
+}
+
+// Row layout: meta_offset | data1, data2, data3... | meta
+// meta: length | colID1, offset | colID2, offset | ...
+func DecodeRow1(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum, error) {
+	if b == nil {
+		return nil, nil
+	}
+	if len(b) == 1 && b[0] == codec.NilFlag {
+		return nil, nil
+	}
+	if len(b) < 4 {
+		return nil, errors.New("insufficient bytes to decode value")
+	}
+
+	meta, err := DecodeMeta(b)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	count := len(meta) / 2
+
+	ret := make(map[int64]types.Datum, len(cols))
+	for i := 0; i < int(count); i++ {
+		colID := meta[2*i]
+		offset := meta[2*i+1]
+		ft, ok := cols[colID]
+		if !ok {
+			continue
+		}
+		_, d, err := codec.DecodeOne(b[offset:])
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		d, err = Unflatten(d, ft, false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ret[colID] = d
+	}
+	return ret, nil
+}
+
 // DecodeRow decodes a byte slice into datums.
 // Row layout: colID1, value1, colID2, value2, .....
 func DecodeRow(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum, error) {
@@ -205,19 +330,17 @@ func DecodeRow(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum
 	if len(b) == 1 && b[0] == codec.NilFlag {
 		return nil, nil
 	}
+
 	row := make(map[int64]types.Datum, len(cols))
 	cnt := 0
 	var (
 		data []byte
 		err  error
+		cid  types.Datum
 	)
 	for len(b) > 0 {
 		// Get col id.
-		data, b, err = codec.CutOne(b)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		_, cid, err := codec.DecodeOne(data)
+		b, cid, err = codec.DecodeOne(b)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -244,6 +367,51 @@ func DecodeRow(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum
 				break
 			}
 		}
+	}
+	return row, nil
+}
+
+func DecodeRow2(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum, error) {
+	if b == nil {
+		return nil, nil
+	}
+	if len(b) == 1 && b[0] == codec.NilFlag {
+		return nil, nil
+	}
+
+	var (
+		err    error
+		d      types.Datum
+		colID  int64
+		cnt    int
+		length int64
+	)
+	row := make(map[int64]types.Datum, len(cols))
+	for len(b) > 0 && len(row) < len(cols) {
+		b, colID, err = codec.DecodeVarint(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		b, length, err = codec.DecodeVarint(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if ft, ok := cols[colID]; !ok {
+			// skip value
+			b = b[length:]
+		} else {
+			b, d, err = codec.DecodeOne(b)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			d, err = Unflatten(d, ft, false)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			row[colID] = d
+		}
+		cnt++
 	}
 	return row, nil
 }
