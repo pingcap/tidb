@@ -34,8 +34,32 @@ var (
 	errNilResp     = terror.ClassXEval.New(codeNilResp, "client returns nil response")
 )
 
+var (
+	_ SelectResult  = &selectResult{}
+	_ PartialResult = &partialResult{}
+)
+
+// SelectResult is an iterator of coprocessor partial results.
+type SelectResult interface {
+	// Next gets the next partial result.
+	Next() (PartialResult, error)
+	// SetFields sets the expected result type.
+	SetFields(fields []*types.FieldType)
+	// Close closes the iterator.
+	Close() error
+}
+
+// PartialResult is the result from a single region server.
+type PartialResult interface {
+	// Next returns the next row of the sub result.
+	// If no more row to return, data would be nil.
+	Next() (handle int64, data []types.Datum, err error)
+	// Close closes the partial result.
+	Close() error
+}
+
 // SelectResult is used to get response rows from SelectRequest.
-type SelectResult struct {
+type selectResult struct {
 	index     bool
 	aggregate bool
 	fields    []*types.FieldType
@@ -43,7 +67,7 @@ type SelectResult struct {
 }
 
 // Next returns the next row.
-func (r *SelectResult) Next() (subResult *SubResult, err error) {
+func (r *selectResult) Next() (pr PartialResult, err error) {
 	var reader io.ReadCloser
 	reader, err = r.resp.Next()
 	if err != nil {
@@ -52,7 +76,7 @@ func (r *SelectResult) Next() (subResult *SubResult, err error) {
 	if reader == nil {
 		return nil, nil
 	}
-	subResult = &SubResult{
+	pr = &partialResult{
 		index:     r.index,
 		fields:    r.fields,
 		reader:    reader,
@@ -62,17 +86,17 @@ func (r *SelectResult) Next() (subResult *SubResult, err error) {
 }
 
 // SetFields sets select result field types.
-func (r *SelectResult) SetFields(fields []*types.FieldType) {
+func (r *selectResult) SetFields(fields []*types.FieldType) {
 	r.fields = fields
 }
 
 // Close closes SelectResult.
-func (r *SelectResult) Close() error {
+func (r *selectResult) Close() error {
 	return r.resp.Close()
 }
 
-// SubResult represents a subset of select result.
-type SubResult struct {
+// partialResult represents a subset of select result.
+type partialResult struct {
 	index     bool
 	aggregate bool
 	fields    []*types.FieldType
@@ -83,7 +107,7 @@ type SubResult struct {
 
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
-func (r *SubResult) Next() (handle int64, data []types.Datum, err error) {
+func (r *partialResult) Next() (handle int64, data []types.Datum, err error) {
 	if r.resp == nil {
 		r.resp = new(tipb.SelectResponse)
 		var b []byte
@@ -127,12 +151,12 @@ func (r *SubResult) Next() (handle int64, data []types.Datum, err error) {
 }
 
 // Close closes the sub result.
-func (r *SubResult) Close() error {
+func (r *partialResult) Close() error {
 	return nil
 }
 
 // Select do a select request, returns SelectResult.
-func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (*SelectResult, error) {
+func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (SelectResult, error) {
 	// Convert tipb.*Request to kv.Request
 	kvReq, err := composeRequest(req, concurrency)
 	if err != nil {
@@ -142,13 +166,18 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (*Select
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
-	result := &SelectResult{resp: resp}
+	result := &selectResult{resp: resp}
 	// If Aggregates is not nil, we should set result fields latter.
 	if len(req.Aggregates) == 0 && len(req.GroupBy) == 0 {
 		if req.TableInfo != nil {
 			result.fields = ProtoColumnsToFieldTypes(req.TableInfo.Columns)
 		} else {
 			result.fields = ProtoColumnsToFieldTypes(req.IndexInfo.Columns)
+			length := len(req.IndexInfo.Columns)
+			if req.IndexInfo.Columns[length-1].GetPkHandle() {
+				// Returned index row do not contains extra PKHandle column.
+				result.fields = result.fields[:length-1]
+			}
 			result.index = true
 		}
 	} else {
@@ -266,9 +295,20 @@ func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
 		IndexId: proto.Int64(idx.ID),
 		Unique:  proto.Bool(idx.Unique),
 	}
-	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns))
+	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns)+1)
 	for _, c := range idx.Columns {
 		cols = append(cols, columnToProto(t.Columns[c.Offset]))
+	}
+	if t.PKIsHandle {
+		// Coprocessor needs to know PKHandle column info, so we need to append it.
+		for _, col := range t.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				colPB := columnToProto(col)
+				colPB.PkHandle = proto.Bool(true)
+				cols = append(cols, colPB)
+				break
+			}
+		}
 	}
 	pi.Columns = cols
 	return pi

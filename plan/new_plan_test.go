@@ -258,12 +258,20 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		best string
 	}{
 		{
+			sql:  "select * from t t1 where 1 = 0",
+			best: "Dummy->Projection",
+		},
+		{
+			sql:  "select count(*) from t t1 having 1 = 0",
+			best: "Dummy->Aggr->Selection->Projection",
+		},
+		{
 			sql:  "select * from t a where a.c = 1 order by a.d limit 2",
 			best: "Index(t.c_d_e)[[1,1]]->Projection",
 		},
 		{
 			sql:  "select * from t a where 1 = a.c and a.d > 1 order by a.d desc limit 2",
-			best: "Index(t.c_d_e)[(1 1,1 <nil>]]->Projection",
+			best: "Index(t.c_d_e)[(1 1,1 +inf]]->Projection",
 		},
 		{
 			sql:  "select * from t a where a.c < 10000 order by a.a limit 2",
@@ -271,7 +279,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by a.c",
-			best: "LeftHashJoin{Index(t.c_d_e)[[<nil>,<nil>]]->Projection->Table(t)->Projection}->Projection",
+			best: "LeftHashJoin{Index(t.c_d_e)[[<nil>,+inf]]->Projection->Table(t)->Projection}->Projection",
 		},
 		{
 			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by b.c",
@@ -283,7 +291,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from (select * from t) a right outer join (select * from t) b on 1 order by b.c",
-			best: "RightHashJoin{Table(t)->Projection->Index(t.c_d_e)[[<nil>,<nil>]]->Projection}->Projection",
+			best: "RightHashJoin{Table(t)->Projection->Index(t.c_d_e)[[<nil>,+inf]]->Projection}->Projection",
 		},
 		{
 			sql:  "select * from t a where exists(select * from t b where a.a = b.a) and a.c = 1 order by a.d limit 3",
@@ -291,11 +299,11 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select exists(select * from t b where a.a = b.a and b.c = 1) from t a order by a.c limit 3",
-			best: "SemiJoinWithAux{Index(t.c_d_e)[[<nil>,<nil>]]->Index(t.c_d_e)[[1,1]]}->Projection->Trim",
+			best: "SemiJoinWithAux{Index(t.c_d_e)[[<nil>,+inf]]->Index(t.c_d_e)[[1,1]]}->Projection->Trim",
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t where t.c = 1 union select t.c from t) k order by a limit 1",
-			best: "UnionAll{Table(t)->Projection->Index(t.c_d_e)[[1,1]]->Projection->Index(t.c_d_e)[[<nil>,<nil>]]->Projection}->Distinct->Limit->Projection",
+			best: "UnionAll{Table(t)->Projection->Index(t.c_d_e)[[1,1]]->Projection->Index(t.c_d_e)[[<nil>,+inf]]->Projection}->Distinct->Limit->Projection",
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t union select t.c from t) k order by a limit 1",
@@ -341,15 +349,15 @@ func (s *testPlanSuite) TestRefine(c *C) {
 	}{
 		{
 			sql:  "select a from t where c is not null",
-			best: "Table(t)->Selection->Projection",
+			best: "Index(t.c_d_e)[[-inf,+inf]]->Projection",
 		},
 		{
 			sql:  "select a from t where c >= 4",
-			best: "Index(t.c_d_e)[[4,<nil>]]->Projection",
+			best: "Index(t.c_d_e)[[4,+inf]]->Projection",
 		},
 		{
 			sql:  "select a from t where c <= 4",
-			best: "Index(t.c_d_e)[[<nil>,4]]->Projection",
+			best: "Index(t.c_d_e)[[-inf,4]]->Projection",
 		},
 		{
 			sql:  "select a from t where c = 4 and d = 5 and e = 6",
@@ -380,7 +388,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3]]->Projection",
 		},
 		{
-			sql:  "select a from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
+			sql:  "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
 			best: "Table(t)->Selection->Projection",
 		},
 		{
@@ -916,11 +924,18 @@ func (s *testPlanSuite) TestCoveringIndex(c *C) {
 		{[]string{"a", "b"}, []string{"b", "c"}, []int{-1, -1}, false},
 		{[]string{"a", "b"}, []string{"a", "b"}, []int{50, -1}, false},
 		{[]string{"a", "b"}, []string{"a", "c"}, []int{-1, -1}, false},
+		{[]string{"id", "a"}, []string{"a", "b"}, []int{-1, -1}, true},
 	}
 	for _, ca := range cases {
 		var columns []*model.ColumnInfo
+		var pkIsHandle bool
 		for _, cn := range ca.columnNames {
-			columns = append(columns, &model.ColumnInfo{Name: model.NewCIStr(cn)})
+			col := &model.ColumnInfo{Name: model.NewCIStr(cn)}
+			if cn == "id" {
+				pkIsHandle = true
+				col.Flag = mysql.PriKeyFlag
+			}
+			columns = append(columns, col)
 		}
 		var indexCols []*model.IndexColumn
 		for i := range ca.indexNames {
@@ -928,7 +943,7 @@ func (s *testPlanSuite) TestCoveringIndex(c *C) {
 			icl := ca.indexLens[i]
 			indexCols = append(indexCols, &model.IndexColumn{Name: model.NewCIStr(icn), Length: icl})
 		}
-		covering := isCoveringIndex(columns, indexCols)
+		covering := isCoveringIndex(columns, indexCols, pkIsHandle)
 		c.Assert(covering, Equals, ca.isCovering)
 	}
 }

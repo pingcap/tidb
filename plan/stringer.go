@@ -48,6 +48,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Index(%s.%s)%v", x.Table.Name.L, x.Index.Name.L, x.Ranges)
 	case *PhysicalTableScan:
 		str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
+	case *PhysicalDummyScan:
+		str = "Dummy"
 	case *PhysicalHashJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]

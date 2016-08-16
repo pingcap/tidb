@@ -182,13 +182,16 @@ func (p *DataSource) handleIndexScan(prop requiredProperty, index *model.IndexIn
 		rb := rangeBuilder{}
 		is.Ranges = rb.buildIndexRanges(fullRange)
 	}
-	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns)
+	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 	rowCounts := []uint64{rowCount}
 	return resultPlan.matchProperty(prop, rowCounts), resultPlan.matchProperty(nil, rowCounts), nil
 }
 
-func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn) bool {
+func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
 	for _, colInfo := range columns {
+		if pkIsHandle && mysql.HasPriKeyFlag(colInfo.Flag) {
+			continue
+		}
 		isIndexColumn := false
 		for _, indexCol := range indexColumns {
 			if colInfo.Name.L == indexCol.Name.L && indexCol.Length == types.UnspecifiedLength {
@@ -209,8 +212,27 @@ func (p *DataSource) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanI
 	if sortedRes != nil {
 		return sortedRes, unsortedRes, cnt, nil
 	}
-	indices, includeTableScan := availableIndices(p.table)
+	sel, isSel := p.GetParentByIndex(0).(*Selection)
 	var err error
+	if isSel {
+		for _, cond := range sel.Conditions {
+			if con, ok := cond.(*expression.Constant); ok {
+				var result bool
+				result, err = expression.EvalBool(con, nil, nil)
+				if err != nil {
+					return nil, nil, 0, errors.Trace(err)
+				}
+				if !result {
+					dummy := &PhysicalDummyScan{}
+					dummy.SetSchema(p.schema)
+					info := &physicalPlanInfo{p: dummy}
+					p.storePlanInfo(prop, info, info, 0)
+					return info, info, 0, nil
+				}
+			}
+		}
+	}
+	indices, includeTableScan := availableIndices(p.table)
 	if includeTableScan {
 		sortedRes, unsortedRes, err = p.handleTableScan(prop)
 		if err != nil {
