@@ -567,6 +567,7 @@ func (e *NewXSelectTableExec) doRequest() error {
 	// Aggregate Info
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
+	log.Infof("[TABLE_SCAN_CONCURRENT] %d", defaultConcurrency)
 	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency)
 	if err != nil {
 		return errors.Trace(err)
@@ -613,7 +614,7 @@ func (e *NewXSelectTableExec) Next() (*Row, error) {
 			if e.partialResult == nil {
 				return nil, nil
 			}
-			log.Debugf("[TIME_TABLE_SCAN] %v", time.Now().Sub(startTs))
+			log.Infof("[TIME_TABLE_SCAN] %v", time.Now().Sub(startTs))
 		}
 		h, rowData, err := e.partialResult.Next()
 		if err != nil {

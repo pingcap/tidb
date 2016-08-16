@@ -55,8 +55,8 @@ type HashJoinExec struct {
 
 	// Concurrent exec
 	concurrency  int
-	bigTableRows chan *Row  // channle for join workers to get big table rows
-	bigTableErr  chan error // channle for join workers to get big table Next() error
+	bigTableRows []chan []*Row // channle for join workers to get big table rows
+	bigTableErr  chan error    // channle for join workers to get big table Next() error
 
 	// output channel
 	resultErr  chan error
@@ -123,33 +123,52 @@ func (e *HashJoinExec) Fields() []*ast.ResultField {
 	return nil
 }
 
+var batchSize = 100
+
 // Worker to get big table rows.
 func (e *HashJoinExec) fetchBigExec() {
+	cnt := 0
+	defer func() {
+		for _, cn := range e.bigTableRows {
+			close(cn)
+		}
+		close(e.bigTableErr)
+	}()
 	for {
-
 		if e.finished {
-			close(e.bigTableRows)
-			close(e.bigTableErr)
-			return
-		}
-		row, err := e.bigExec.Next()
-		if err != nil {
-			e.bigTableErr <- errors.Trace(err)
 			break
 		}
-		if row == nil {
-			close(e.bigTableRows)
-			close(e.bigTableErr)
+		rows := make([]*Row, 0, batchSize)
+		done := false
+		for i := 0; i < batchSize; i++ {
+			row, err := e.bigExec.Next()
+			if err != nil {
+				e.bigTableErr <- errors.Trace(err)
+				done = true
+				break
+			}
+			if row == nil {
+				done = true
+				break
+			}
+			rows = append(rows, row)
+		}
+		idx := cnt % e.concurrency
+		e.bigTableRows[idx] <- rows
+		cnt++
+		if done {
 			break
 		}
-		e.bigTableRows <- row
 	}
 }
 
 func (e *HashJoinExec) prepare() error {
 	e.finished = false
-	e.concurrency = 10
-	e.bigTableRows = make(chan *Row, e.concurrency*10)
+	e.concurrency = 5
+	e.bigTableRows = make([]chan []*Row, e.concurrency)
+	for i := 0; i < e.concurrency; i++ {
+		e.bigTableRows[i] = make(chan []*Row, e.concurrency*100)
+	}
 	e.bigTableErr = make(chan error, 1)
 
 	// Start a worker to fetch big table rows.
@@ -191,13 +210,13 @@ func (e *HashJoinExec) prepare() error {
 		}
 	}
 
-	e.resultRows = make(chan *Row, e.concurrency*10)
+	e.resultRows = make(chan *Row, e.concurrency*1000)
 	e.resultErr = make(chan error, 1)
 
 	e.wg = sync.WaitGroup{}
 	for i := 0; i < e.concurrency; i++ {
 		e.wg.Add(1)
-		go e.doJoin()
+		go e.doJoin(i)
 	}
 	go e.closeChanWorker()
 
@@ -212,15 +231,15 @@ func (e *HashJoinExec) closeChanWorker() {
 }
 
 // do join job
-func (e *HashJoinExec) doJoin() {
+func (e *HashJoinExec) doJoin(idx int) {
 	for {
 		var (
-			bigRow *Row
-			ok     bool
-			err    error
+			bigRows []*Row
+			ok      bool
+			err     error
 		)
 		select {
-		case bigRow, ok = <-e.bigTableRows:
+		case bigRows, ok = <-e.bigTableRows[idx]:
 		case err = <-e.bigTableErr:
 		}
 		if err != nil {
@@ -231,31 +250,43 @@ func (e *HashJoinExec) doJoin() {
 			e.wg.Done()
 			break
 		}
-
-		var matchedRows []*Row
-		bigMatched := true
-		if e.bigFilter != nil {
-			bigMatched, err = expression.EvalBool(e.bigFilter, bigRow.Data, e.ctx)
-			if err != nil {
-				e.resultErr <- errors.Trace(err)
+		for _, bigRow := range bigRows {
+			succ := e.join(idx, bigRow)
+			if !succ {
 				break
 			}
-		}
-		if bigMatched {
-			matchedRows, err = e.constructMatchedRows(bigRow)
-			if err != nil {
-				e.resultErr <- errors.Trace(err)
-				break
-			}
-		}
-		for _, r := range matchedRows {
-			e.resultRows <- r
-		}
-		if len(matchedRows) == 0 && e.outer {
-			r := e.fillNullRow(bigRow)
-			e.resultRows <- r
 		}
 	}
+}
+
+func (e *HashJoinExec) join(idx int, bigRow *Row) bool {
+	var (
+		matchedRows []*Row
+		err         error
+	)
+	bigMatched := true
+	if e.bigFilter != nil {
+		bigMatched, err = expression.EvalBool(e.bigFilter, bigRow.Data, e.ctx)
+		if err != nil {
+			e.resultErr <- errors.Trace(err)
+			return false
+		}
+	}
+	if bigMatched {
+		matchedRows, err = e.constructMatchedRows(bigRow)
+		if err != nil {
+			e.resultErr <- errors.Trace(err)
+			return false
+		}
+	}
+	for _, r := range matchedRows {
+		e.resultRows <- r
+	}
+	if len(matchedRows) == 0 && e.outer {
+		r := e.fillNullRow(bigRow)
+		e.resultRows <- r
+	}
+	return true
 }
 
 func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, err error) {

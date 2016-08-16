@@ -190,7 +190,7 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (SelectR
 func composeRequest(req *tipb.SelectRequest, concurrency int) (*kv.Request, error) {
 	kvReq := &kv.Request{
 		Concurrency: concurrency,
-		KeepOrder:   true,
+		KeepOrder:   false,
 	}
 	if req.IndexInfo != nil {
 		kvReq.Tp = kv.ReqTypeIndex

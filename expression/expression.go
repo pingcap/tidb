@@ -303,14 +303,16 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Datum, error) {
-	var err error
+	args := make([]types.Datum, len(sf.Args))
 	for i, arg := range sf.Args {
-		sf.ArgValues[i], err = arg.Eval(row, ctx)
+		//sf.ArgValues[i], err = arg.Eval(row, ctx)
+		d, err := arg.Eval(row, ctx)
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
+		args[i] = d
 	}
-	return sf.Function(sf.ArgValues, ctx)
+	return sf.Function(args, ctx)
 }
 
 // Constant stands for a constant value.
