@@ -269,6 +269,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// For set names
 		{"set names utf8", true},
 		{"set names utf8 collate utf8_unicode_ci", true},
+		{"set names binary", true},
 
 		// For set names and set vars
 		{"set names utf8, @@session.sql_mode=1;", true},

@@ -2223,10 +2223,19 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 
 	// Test varchar type.
 	mustExecSQL(c, se, "drop table t;")
-	mustExecSQL(c, se, "create table t (c1 varchar(64), c2 varchar(64), index c1_c2 (c1, c2));")
-	mustExecSQL(c, se, "insert into t values ('abc', 'def')")
+	mustExecSQL(c, se, "create table t (id int unsigned primary key auto_increment, c1 varchar(64), c2 varchar(64), index c1_c2 (c1, c2));")
+	mustExecSQL(c, se, "insert into t (c1, c2) values ('abc', 'def')")
 	sql = "select c1 from t where c1 = 'abc'"
 	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}})
+
+	mustExecSQL(c, se, "insert into t (c1, c2) values ('abc', 'xyz')")
+	mustExecSQL(c, se, "insert into t (c1, c2) values ('abd', 'abc')")
+	mustExecSQL(c, se, "insert into t (c1, c2) values ('abd', 'def')")
+	sql = "select c1 from t where c1 >= 'abc' and c2 = 'def'"
+	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}, {[]byte("abd")}})
+
+	sql = "select c1, c2 from t where c1 = 'abc' and id < 2"
+	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc"), []byte("def")}})
 
 	err := se.Close()
 	c.Assert(err, IsNil)
@@ -2487,7 +2496,7 @@ func (s *testSessionSuite) TestXAggregateWithIndexScan(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecMultiSQL(c, se, initSQL)
-	sql := "SELECT COUNT(c) FROM t WHERE c IS NOT NULL;"
+	sql := "SELECT COUNT(c) FROM t WHERE c > 0;"
 	mustExecMatch(c, se, sql, [][]interface{}{{"2"}})
 
 	initSQL = `
@@ -2497,7 +2506,10 @@ func (s *testSessionSuite) TestXAggregateWithIndexScan(c *C) {
 	INSERT INTO tab1 VALUES(0,656,638.70,'zsiag',614,231.92,'dkfhp');
 	`
 	mustExecMultiSQL(c, se, initSQL)
-	sql = "SELECT DISTINCT + - COUNT( col3 ) AS col1 FROM tab1 AS cor0 WHERE col3 IS NOT NULL;"
+	sql = "SELECT DISTINCT + - COUNT( col3 ) AS col1 FROM tab1 AS cor0 WHERE col3 > 0;"
+	mustExecMatch(c, se, sql, [][]interface{}{{"-1"}})
+
+	sql = "SELECT DISTINCT + - COUNT( col3 ) AS col1 FROM tab1 AS cor0 WHERE col3 > 0 group by col0;"
 	mustExecMatch(c, se, sql, [][]interface{}{{"-1"}})
 }
 
