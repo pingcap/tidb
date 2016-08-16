@@ -14,7 +14,6 @@
 package tablecodec
 
 import (
-	"fmt"
 	"math/rand"
 	"testing"
 
@@ -73,7 +72,6 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	bs, err := EncodeRow(row, colIDs)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
-	fmt.Println(len(bs))
 
 	// Decode
 	colMap := make(map[int64]*types.FieldType, 3)
@@ -210,7 +208,6 @@ func BenchmarkRowCodec(b *testing.B) {
 	randrow[1] = types.NewBytesDatum([]byte("abc"))
 	ts, _ := mysql.ParseTimestamp("2016-06-23 11:30:45")
 	randrow[2] = types.NewDatum(ts)
-	// randrow[2] = types.NewBytesDatum([]byte("abc"))
 
 	cols := [30]column{}
 	row := [30]types.Datum{}
@@ -227,24 +224,15 @@ func BenchmarkRowCodec(b *testing.B) {
 		colIDs = append(colIDs, col.id)
 	}
 
-	// b.ResetTimer()
-	// for i := 0; i < b.N; i++ {
-	// 	EncodeRow(row, colIDs)
-	// }
-	// b.ReportAllocs()
-
-	xx, _ := EncodeRow1(row[:], colIDs)
+	xx, _ := EncodeRow(row[:], colIDs)
 	colMap := make(map[int64]*types.FieldType, 30)
-	// for i := 0; i < 30; i++ {
-	// 	colMap[cols[i].id] = cols[i].tp
-	// }
 	colMap[4] = cols[3].tp
 	colMap[7] = cols[6].tp
 	colMap[23] = cols[22].tp
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := DecodeRow1(xx, colMap)
+		_, err := DecodeRow(xx, colMap)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -37,6 +37,8 @@ const (
 	maxFlag          byte = 250
 )
 
+// EncodeOne appends the encoded value to byte slice b, returning the appended
+// slice.
 func EncodeOne(b []byte, val types.Datum, comparable bool) ([]byte, error) {
 	switch val.Kind() {
 	case types.KindInt64:
