@@ -327,7 +327,7 @@ func (e *NewXSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	} else if e.indexPlan.OutOfOrder {
 		concurrency = defaultConcurrency
 	}
-	return xapi.Select(txn.GetClient(), selIdxReq, concurrency)
+	return xapi.Select(txn.GetClient(), selIdxReq, concurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) {
@@ -487,7 +487,7 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
 	// Aggregate Info
-	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency)
+	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -567,7 +567,8 @@ func (e *NewXSelectTableExec) doRequest() error {
 	// Aggregate Info
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
-	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency)
+	keepOrder := false
+	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency, keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}
