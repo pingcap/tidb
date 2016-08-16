@@ -173,3 +173,25 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 		c.Assert(equal, Equals, 0)
 	}
 }
+
+func (s *testTableCodecSuite) TestCutKey(c *C) {
+	colIDs := []int64{1, 2, 3}
+	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
+	handle := types.NewIntDatum(100)
+	values = append(values, handle)
+	encodedValue, err := codec.EncodeKey(nil, values...)
+	c.Assert(err, IsNil)
+	tableID := int64(4)
+	indexID := int64(5)
+	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
+	valuesMap, handleBytes, err := CutIndexKey(indexKey, colIDs)
+	c.Assert(err, IsNil)
+	for i, colID := range colIDs {
+		valueBytes := valuesMap[colID]
+		var val types.Datum
+		_, val, _ = codec.DecodeOne(valueBytes)
+		c.Assert(val, DeepEquals, values[i])
+	}
+	_, handleVal, _ := codec.DecodeOne(handleBytes)
+	c.Assert(handleVal, DeepEquals, types.NewIntDatum(100))
+}
