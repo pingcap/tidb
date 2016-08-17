@@ -197,7 +197,10 @@ func (s *testTableCodecSuite) TestCutKey(c *C) {
 	c.Assert(handleVal, DeepEquals, types.NewIntDatum(100))
 }
 
-func BenchmarkRowCodec(b *testing.B) {
+func benchmarkRowCodec(b *testing.B,
+	encode func([]types.Datum, []int64) ([]byte, error),
+	decode func([]byte, map[int64]*types.FieldType) (map[int64]types.Datum, error),
+	fullRow bool) {
 	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
 	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeTimestamp)}
@@ -223,18 +226,58 @@ func BenchmarkRowCodec(b *testing.B) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
+	xx, _ := encode(row[:], colIDs)
 
-	xx, _ := EncodeRow(row[:], colIDs)
-	colMap := make(map[int64]*types.FieldType, 30)
-	colMap[4] = cols[3].tp
-	colMap[7] = cols[6].tp
-	colMap[23] = cols[22].tp
+	var colMap map[int64]*types.FieldType
+	if fullRow {
+		colMap = make(map[int64]*types.FieldType, 30)
+		for i := 0; i < 30; i++ {
+			colMap[cols[i].id] = cols[i].tp
+		}
+	} else {
+		colMap = make(map[int64]*types.FieldType, 3)
+		colMap[4] = cols[3].tp
+		colMap[7] = cols[6].tp
+		colMap[23] = cols[22].tp
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := DecodeRow(xx, colMap)
+		_, err := decode(xx, colMap)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
+}
+
+func Benchmark0(b *testing.B) {
+	benchmarkRowCodec(b, EncodeRow, DecodeRow, false)
+}
+
+func Benchmark1(b *testing.B) {
+	benchmarkRowCodec(b, EncodeRow1, DecodeRow1, false)
+}
+
+func Benchmark2(b *testing.B) {
+	benchmarkRowCodec(b, EncodeRow2, DecodeRow2, false)
+}
+
+func Benchmark3(b *testing.B) {
+	benchmarkRowCodec(b, EncodeRow3, DecodeRow3, false)
+}
+
+func Benchmark00(b *testing.B) {
+	benchmarkRowCodec(b, EncodeRow, DecodeRow, true)
+}
+
+func Benchmark11(b *testing.B) {
+	benchmarkRowCodec(b, EncodeRow1, DecodeRow1, true)
+}
+
+func Benchmark22(b *testing.B) {
+	benchmarkRowCodec(b, EncodeRow2, DecodeRow2, true)
+}
+
+func Benchmark33(b *testing.B) {
+	benchmarkRowCodec(b, EncodeRow3, DecodeRow3, true)
 }
