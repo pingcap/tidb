@@ -53,6 +53,10 @@ type HashJoinExec struct {
 	finished bool
 	wg       sync.WaitGroup // for sync multiple join workers
 
+	// Buffer
+	datumBuffer   [][]types.Datum
+	hashKeyBuffer [][]byte
+
 	// Concurrent exec
 	concurrency  int
 	bigTableRows []chan []*Row // channle for join workers to get big table rows
@@ -88,28 +92,27 @@ func joinTwoRow(a *Row, b *Row) *Row {
 
 // getHashKey gets the hash key when given a row and hash columns.
 // It will return a boolean value representing if the hash key has null, a byte slice representing the result hash code.
-func getHashKey(exprs []*expression.Column, row *Row, targetTypes []*types.FieldType) (bool, []byte, error) {
-	vals := make([]types.Datum, 0, len(exprs))
-	for i, expr := range exprs {
-		v, err := expr.Eval(row.Data, nil)
+func getHashKey(cols []*expression.Column, row *Row, targetTypes []*types.FieldType, vals []types.Datum, bytes []byte) (bool, []byte, error) {
+	var err error
+	for i, col := range cols {
+		vals[i], err = col.Eval(row.Data, nil)
 		if err != nil {
 			return false, nil, errors.Trace(err)
 		}
-		if v.IsNull() {
+		if vals[i].IsNull() {
 			return true, nil, nil
 		}
-		if targetTypes[i].Tp != expr.RetType.Tp {
-			v, err = v.ConvertTo(targetTypes[i])
+		if targetTypes[i].Tp != col.RetType.Tp {
+			vals[i], err = vals[i].ConvertTo(targetTypes[i])
 			if err != nil {
 				return false, nil, errors.Trace(err)
 			}
 		}
-		vals = append(vals, v)
 	}
 	if len(vals) == 0 {
 		return false, nil, nil
 	}
-	bytes, err := codec.EncodeValue([]byte{}, vals...)
+	bytes, err = codec.EncodeValue(bytes, vals...)
 	return false, bytes, errors.Trace(err)
 }
 
@@ -165,6 +168,14 @@ func (e *HashJoinExec) fetchBigExec() {
 func (e *HashJoinExec) prepare() error {
 	e.finished = false
 	e.concurrency = 5
+	e.datumBuffer = make([][]types.Datum, e.concurrency)
+	e.hashKeyBuffer = make([][]byte, e.concurrency)
+	for i := range e.datumBuffer {
+		e.datumBuffer[i] = make([]types.Datum, len(e.bigHashKey))
+	}
+	for i := range e.hashKeyBuffer {
+		e.hashKeyBuffer[i] = make([]byte, 0, 10000)
+	}
 	e.bigTableRows = make([]chan []*Row, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
 		e.bigTableRows[i] = make(chan []*Row, e.concurrency*100)
@@ -196,7 +207,7 @@ func (e *HashJoinExec) prepare() error {
 				continue
 			}
 		}
-		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes)
+		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes, e.datumBuffer[0], nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -273,7 +284,7 @@ func (e *HashJoinExec) join(idx int, bigRow *Row) bool {
 		}
 	}
 	if bigMatched {
-		matchedRows, err = e.constructMatchedRows(bigRow)
+		matchedRows, err = e.constructMatchedRows(idx, bigRow)
 		if err != nil {
 			e.resultErr <- errors.Trace(err)
 			return false
@@ -289,8 +300,8 @@ func (e *HashJoinExec) join(idx int, bigRow *Row) bool {
 	return true
 }
 
-func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, err error) {
-	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes)
+func (e *HashJoinExec) constructMatchedRows(idx int, bigRow *Row) (matchedRows []*Row, err error) {
+	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes, e.datumBuffer[idx], e.hashKeyBuffer[idx][0:0:cap(e.hashKeyBuffer[idx])])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -432,7 +443,7 @@ func (e *HashSemiJoinExec) prepare() error {
 				continue
 			}
 		}
-		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes)
+		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes, make([]types.Datum, len(e.smallHashKey)), nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -452,7 +463,7 @@ func (e *HashSemiJoinExec) prepare() error {
 }
 
 func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, hasNull bool, err error) {
-	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes)
+	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes, make([]types.Datum, len(e.smallHashKey)), nil)
 	if err != nil {
 		return false, false, errors.Trace(err)
 	}
