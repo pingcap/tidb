@@ -63,23 +63,46 @@ type selectResult struct {
 	aggregate bool
 	fields    []*types.FieldType
 	resp      kv.Response
+
+	results chan PartialResult
+	done    chan error
+}
+
+func (r *selectResult) fetch() {
+	defer close(r.results)
+	for {
+		reader, err := r.resp.Next()
+		if err != nil {
+			r.done <- errors.Trace(err)
+			return
+		}
+		if reader == nil {
+			return
+		}
+		pr := &partialResult{
+			index:     r.index,
+			fields:    r.fields,
+			reader:    reader,
+			aggregate: r.aggregate,
+			done:      make(chan error, 1),
+		}
+		go pr.fetch()
+		r.results <- pr
+	}
 }
 
 // Next returns the next row.
 func (r *selectResult) Next() (pr PartialResult, err error) {
-	var reader io.ReadCloser
-	reader, err = r.resp.Next()
+	var ok bool
+	select {
+	case pr, ok = <-r.results:
+	case err = <-r.done:
+	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	if reader == nil {
+	if !ok {
 		return nil, nil
-	}
-	pr = &partialResult{
-		index:     r.index,
-		fields:    r.fields,
-		reader:    reader,
-		aggregate: r.aggregate,
 	}
 	return
 }
@@ -91,6 +114,7 @@ func (r *selectResult) SetFields(fields []*types.FieldType) {
 
 // Close closes SelectResult.
 func (r *selectResult) Close() error {
+	close(r.done)
 	return r.resp.Close()
 }
 
@@ -102,25 +126,40 @@ type partialResult struct {
 	reader    io.ReadCloser
 	resp      *tipb.SelectResponse
 	cursor    int
+
+	done    chan error
+	fetched bool
+}
+
+func (r *partialResult) fetch() {
+	r.resp = new(tipb.SelectResponse)
+	b, err := ioutil.ReadAll(r.reader)
+	r.reader.Close()
+	if err != nil {
+		r.done <- errors.Trace(err)
+		return
+	}
+	err = r.resp.Unmarshal(b)
+	if err != nil {
+		r.done <- errors.Trace(err)
+		return
+	}
+	if r.resp.Error != nil {
+		r.done <- errInvalidResp.Gen("[%d %s]", r.resp.Error.GetCode(), r.resp.Error.GetMsg())
+	}
+	r.done <- nil
 }
 
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
 func (r *partialResult) Next() (handle int64, data []types.Datum, err error) {
-	if r.resp == nil {
-		r.resp = new(tipb.SelectResponse)
-		var b []byte
-		b, err = ioutil.ReadAll(r.reader)
-		r.reader.Close()
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+	if !r.fetched {
+		select {
+		case err = <-r.done:
 		}
-		err = r.resp.Unmarshal(b)
+		r.fetched = true
 		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		if r.resp.Error != nil {
-			return 0, nil, errInvalidResp.Gen("[%d %s]", r.resp.Error.GetCode(), r.resp.Error.GetMsg())
+			return 0, nil, err
 		}
 	}
 	if r.cursor >= len(r.resp.Rows) {
@@ -151,6 +190,7 @@ func (r *partialResult) Next() (handle int64, data []types.Datum, err error) {
 
 // Close closes the sub result.
 func (r *partialResult) Close() error {
+	close(r.done)
 	return nil
 }
 
@@ -168,7 +208,11 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrde
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
-	result := &selectResult{resp: resp}
+	result := &selectResult{
+		resp:    resp,
+		results: make(chan PartialResult, 5),
+		done:    make(chan error, 1),
+	}
 	// If Aggregates is not nil, we should set result fields latter.
 	if len(req.Aggregates) == 0 && len(req.GroupBy) == 0 {
 		if req.TableInfo != nil {
@@ -185,6 +229,7 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrde
 	} else {
 		result.aggregate = true
 	}
+	go result.fetch()
 	return result, nil
 }
 
