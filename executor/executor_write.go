@@ -65,7 +65,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 		e.fetched = true
 	}
 
-	columns, err := getUpdateColumns(e.OrderedList)
+	assignFlag, err := getUpdateColumns(e.OrderedList)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -92,7 +92,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 			continue
 		}
 		// Update row
-		err1 := updateRecord(e.ctx, handle, oldData, newTableData, columns, tbl, offset, false)
+		err1 := updateRecord(e.ctx, handle, oldData, newTableData, assignFlag, tbl, offset, false)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -102,12 +102,14 @@ func (e *UpdateExec) Next() (*Row, error) {
 	return &Row{}, nil
 }
 
-func getUpdateColumns(assignList []*ast.Assignment) (map[int]*ast.Assignment, error) {
-	m := make(map[int]*ast.Assignment, len(assignList))
+func getUpdateColumns(assignList []*ast.Assignment) (map[int]bool, error) {
+	assignFlag := make(map[int]bool, len(assignList))
 	for i, v := range assignList {
-		m[i] = v
+		if v != nil {
+			assignFlag[i] = true
+		}
 	}
-	return m, nil
+	return assignFlag, nil
 }
 
 func (e *UpdateExec) fetchRows() error {
@@ -156,14 +158,13 @@ func (e *UpdateExec) getTableOffset(t table.Table) int {
 	return 0
 }
 
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, updateColumns map[int]*ast.Assignment, t table.Table, offset int, onDuplicateUpdate bool) error {
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag map[int]bool, t table.Table, offset int, onDuplicateUpdate bool) error {
 	cols := t.Cols()
 	touched := make(map[int]bool, len(cols))
-
 	assignExists := false
 	var newHandle types.Datum
-	for i, asgn := range updateColumns {
-		if asgn == nil {
+	for i, hasSetExpr := range assignFlag {
+		if !hasSetExpr {
 			continue
 		}
 		if i < offset || i >= offset+len(cols) {
@@ -783,7 +784,13 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 		}
 		newData[i] = val
 	}
-	if err = updateRecord(e.ctx, h, data, newData, cols, e.Table, 0, true); err != nil {
+	assignFlag := make(map[int]bool, len(e.Table.Cols()))
+	for i, asgn := range cols {
+		if asgn != nil {
+			assignFlag[i] = true
+		}
+	}
+	if err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, 0, true); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

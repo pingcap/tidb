@@ -250,3 +250,15 @@ func (p *NewTableDual) PushLimit(l *Limit) PhysicalPlan {
 	}
 	return insertLimit(p, l)
 }
+
+// PushLimit implements PhysicalPlan PushLimit interface.
+func (p *NewUpdate) PushLimit(_ *Limit) PhysicalPlan {
+	if len(p.GetChildren()) == 0 {
+		return p
+	}
+	np := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(nil)
+	p.SetChildren(np)
+	p.SelectPlan = np
+	np.SetParents(p)
+	return p
+}

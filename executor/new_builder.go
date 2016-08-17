@@ -201,6 +201,7 @@ func (b *executorBuilder) toPBExpr(conditions []expression.Expression, tbl *mode
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	child := v.GetChildByIndex(0)
+	oldConditions := v.Conditions
 	var src Executor
 	switch x := child.(type) {
 	case *plan.PhysicalTableScan:
@@ -220,15 +221,18 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	}
 
 	if len(v.Conditions) == 0 {
+		v.Conditions = oldConditions
 		return src
 	}
 
-	return &SelectionExec{
+	exec := &SelectionExec{
 		Src:       src,
 		Condition: expression.ComposeCNFCondition(v.Conditions),
 		schema:    v.GetSchema(),
 		ctx:       b.ctx,
 	}
+	copy(v.Conditions, oldConditions)
+	return exec
 }
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
@@ -409,6 +413,11 @@ func (b *executorBuilder) buildNewUnion(v *plan.NewUnion) Executor {
 		e.Srcs[i] = selExec
 	}
 	return e
+}
+
+func (b *executorBuilder) buildNewUpdate(v *plan.NewUpdate) Executor {
+	selExec := b.build(v.SelectPlan)
+	return &NewUpdateExec{ctx: b.ctx, SelectExec: selExec, OrderedList: v.OrderedList}
 }
 
 func (b *executorBuilder) buildDummyScan(v *plan.PhysicalDummyScan) Executor {

@@ -112,6 +112,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildNewUnion(v)
 	case *plan.Update:
 		return b.buildUpdate(v)
+	case *plan.NewUpdate:
+		return b.buildNewUpdate(v)
 	case *plan.PhysicalHashJoin:
 		return b.buildJoin(v)
 	case *plan.PhysicalHashSemiJoin:

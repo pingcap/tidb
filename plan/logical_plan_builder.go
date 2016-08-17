@@ -1006,3 +1006,79 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	innerPlan.SetParents(joinPlan)
 	return joinPlan
 }
+
+func (b *planBuilder) buildNewUpdate(update *ast.UpdateStmt) LogicalPlan {
+	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
+
+	var p LogicalPlan
+
+	if sel.From != nil {
+		p = b.buildResultSetNode(sel.From.TableRefs)
+		if b.err != nil {
+			return nil
+		}
+	} else {
+		return nil
+	}
+
+	_, _ = b.resolveHavingAndOrderBy(sel, p)
+
+	if sel.Where != nil {
+		p = b.buildSelection(p, sel.Where, nil)
+		if b.err != nil {
+			return nil
+		}
+	}
+
+	if sel.OrderBy != nil {
+		p = b.buildNewSort(p, sel.OrderBy.Items, nil)
+		if b.err != nil {
+			return nil
+		}
+	}
+	if sel.Limit != nil {
+		p = b.buildNewLimit(p, sel.Limit)
+		if b.err != nil {
+			return nil
+		}
+	}
+
+	orderedList, np := b.buildNewUpdateLists(update.List, p)
+	if b.err != nil {
+		return nil
+	}
+	p = np
+	updt := &NewUpdate{OrderedList: orderedList, SelectPlan: p}
+	addChild(updt, p)
+	updt.SetSchema(p.GetSchema())
+
+	return updt
+}
+
+func (b *planBuilder) buildNewUpdateLists(list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
+	schema := p.GetSchema()
+	newList := make([]*expression.Assignment, len(schema))
+	for _, assign := range list {
+		col, err := schema.FindColumn(assign.Column)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil, nil
+		}
+		if col == nil {
+			b.err = errors.Trace(errors.Errorf("column %s not found", assign.Column.Name.O))
+			return nil, nil
+		}
+		offset := schema.GetIndex(col)
+		if offset == -1 {
+			b.err = errors.Trace(errors.Errorf("could not find column %s.%s", col.TblName, col.ColName))
+		}
+		newExpr, np, _, err := b.rewrite(assign.Expr, p, nil, false)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil, nil
+		}
+		p = np
+		newList[offset] = &expression.Assignment{col, newExpr}
+	}
+	return newList, p
+}
