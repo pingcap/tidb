@@ -85,6 +85,9 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	case *ast.DeallocateStmt:
 		return &Deallocate{Name: x.Name}
 	case *ast.DeleteStmt:
+		if UseNewPlanner {
+			return b.buildNewDelete(x)
+		}
 		return b.buildDelete(x)
 	case *ast.DropDatabaseStmt:
 		return b.buildDDL(x)

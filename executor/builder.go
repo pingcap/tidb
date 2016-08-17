@@ -65,6 +65,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildDeallocate(v)
 	case *plan.Delete:
 		return b.buildDelete(v)
+	case *plan.NewDelete:
+		return b.buildNewDelete(v)
 	case *plan.Distinct:
 		return b.buildDistinct(v)
 	case *plan.Execute:

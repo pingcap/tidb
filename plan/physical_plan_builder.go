@@ -755,3 +755,17 @@ func (p *NewUpdate) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanIn
 	}
 	return addPlanToResponse(p, sortedPlanInfo), addPlanToResponse(p, unSortedPlanInfo), count, nil
 }
+
+// convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
+func (p *NewDelete) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
+	if len(p.GetChildren()) == 0 {
+		planInfo := &physicalPlanInfo{p: p}
+		return planInfo, planInfo, 0, nil
+	}
+	child := p.GetChildByIndex(0).(LogicalPlan)
+	sortedPlanInfo, unSortedPlanInfo, count, err := child.convert2PhysicalPlan(prop)
+	if err != nil {
+		return nil, nil, 0, errors.Trace(err)
+	}
+	return addPlanToResponse(p, sortedPlanInfo), addPlanToResponse(p, unSortedPlanInfo), count, nil
+}

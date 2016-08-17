@@ -1009,27 +1009,17 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 
 func (b *planBuilder) buildNewUpdate(update *ast.UpdateStmt) LogicalPlan {
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
-
-	var p LogicalPlan
-
-	if sel.From != nil {
-		p = b.buildResultSetNode(sel.From.TableRefs)
-		if b.err != nil {
-			return nil
-		}
-	} else {
+	p := b.buildResultSetNode(sel.From.TableRefs)
+	if b.err != nil {
 		return nil
 	}
-
 	_, _ = b.resolveHavingAndOrderBy(sel, p)
-
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
 			return nil
 		}
 	}
-
 	if sel.OrderBy != nil {
 		p = b.buildNewSort(p, sel.OrderBy.Items, nil)
 		if b.err != nil {
@@ -1042,7 +1032,6 @@ func (b *planBuilder) buildNewUpdate(update *ast.UpdateStmt) LogicalPlan {
 			return nil
 		}
 	}
-
 	orderedList, np := b.buildNewUpdateLists(update.List, p)
 	if b.err != nil {
 		return nil
@@ -1051,7 +1040,6 @@ func (b *planBuilder) buildNewUpdate(update *ast.UpdateStmt) LogicalPlan {
 	updt := &NewUpdate{OrderedList: orderedList, SelectPlan: p}
 	addChild(updt, p)
 	updt.SetSchema(p.GetSchema())
-
 	return updt
 }
 
@@ -1081,4 +1069,44 @@ func (b *planBuilder) buildNewUpdateLists(list []*ast.Assignment, p LogicalPlan)
 		newList[offset] = &expression.Assignment{col, newExpr}
 	}
 	return newList, p
+}
+
+func (b *planBuilder) buildNewDelete(delete *ast.DeleteStmt) LogicalPlan {
+	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
+	p := b.buildResultSetNode(sel.From.TableRefs)
+	if b.err != nil {
+		return nil
+	}
+	_, _ = b.resolveHavingAndOrderBy(sel, p)
+	if sel.Where != nil {
+		p = b.buildSelection(p, sel.Where, nil)
+		if b.err != nil {
+			return nil
+		}
+	}
+	if sel.OrderBy != nil {
+		p = b.buildNewSort(p, sel.OrderBy.Items, nil)
+		if b.err != nil {
+			return nil
+		}
+	}
+	if sel.Limit != nil {
+		p = b.buildNewLimit(p, sel.Limit)
+		if b.err != nil {
+			return nil
+		}
+	}
+	var tables []*ast.TableName
+	if delete.Tables != nil {
+		tables = delete.Tables.Tables
+	}
+	del := &NewDelete{
+		Tables:       tables,
+		IsMultiTable: delete.IsMultiTable,
+		SelectPlan:   p,
+	}
+	del.SetSchema(p.GetSchema().DeepCopy())
+	addChild(del, p)
+	return del
+
 }

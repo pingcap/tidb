@@ -376,7 +376,6 @@ func (p *NewUpdate) PruneColumnsAndResolveIndices(parentUsedCols []*expression.C
 		}
 		orderedList[p.GetSchema().GetIndex(v.Col)] = v
 	}
-
 	for i := 0; i < len(orderedList); i++ {
 		if orderedList[i] == nil {
 			continue
@@ -389,7 +388,6 @@ func (p *NewUpdate) PruneColumnsAndResolveIndices(parentUsedCols []*expression.C
 }
 
 func initColumnIndexInExpr(expr expression.Expression, schema expression.Schema) {
-
 	switch assign := expr; assign.(type) {
 	case (*expression.Column):
 		assign.(*expression.Column).Index = schema.GetIndex(assign.(*expression.Column))
@@ -398,4 +396,13 @@ func initColumnIndexInExpr(expr expression.Expression, schema expression.Schema)
 			initColumnIndexInExpr(args[i], schema)
 		}
 	}
+}
+
+// PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
+func (p *NewDelete) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
+	outer, err := p.baseLogicalPlan.PruneColumnsAndResolveIndices(p.GetSchema())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return outer, nil
 }

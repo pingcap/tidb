@@ -425,3 +425,13 @@ func (b *executorBuilder) buildDummyScan(v *plan.PhysicalDummyScan) Executor {
 		schema: v.GetSchema(),
 	}
 }
+
+func (b *executorBuilder) buildNewDelete(v *plan.NewDelete) Executor {
+	selExec := b.build(v.SelectPlan)
+	return &DeleteExec{
+		ctx:          b.ctx,
+		SelectExec:   selExec,
+		Tables:       v.Tables,
+		IsMultiTable: v.IsMultiTable,
+	}
+}

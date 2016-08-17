@@ -94,6 +94,8 @@ func getNewUpdateColumns(assignList []*expression.Assignment) (map[int]bool, err
 	for i, v := range assignList {
 		if v != nil {
 			assignFlag[i] = true
+		} else {
+			assignFlag[i] = false
 		}
 	}
 	return assignFlag, nil

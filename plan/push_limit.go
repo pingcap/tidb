@@ -262,3 +262,15 @@ func (p *NewUpdate) PushLimit(_ *Limit) PhysicalPlan {
 	np.SetParents(p)
 	return p
 }
+
+// PushLimit implements PhysicalPlan PushLimit interface.
+func (p *NewDelete) PushLimit(_ *Limit) PhysicalPlan {
+	if len(p.GetChildren()) == 0 {
+		return p
+	}
+	np := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(nil)
+	p.SetChildren(np)
+	p.SelectPlan = np
+	np.SetParents(p)
+	return p
+}

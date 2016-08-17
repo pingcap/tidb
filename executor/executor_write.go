@@ -107,6 +107,8 @@ func getUpdateColumns(assignList []*ast.Assignment) (map[int]bool, error) {
 	for i, v := range assignList {
 		if v != nil {
 			assignFlag[i] = true
+		} else {
+			assignFlag[i] = false
 		}
 	}
 	return assignFlag, nil
@@ -303,12 +305,19 @@ func (e *DeleteExec) Next() (*Row, error) {
 	tblNames := make(map[string]string)
 	if e.IsMultiTable {
 		// Delete from multiple tables should consider table ident list.
-		fs := e.SelectExec.Fields()
-		for _, f := range fs {
-			if len(f.TableAsName.L) > 0 {
-				tblNames[f.TableAsName.L] = f.TableName.Name.L
-			} else {
-				tblNames[f.TableName.Name.L] = f.TableName.Name.L
+		if !plan.UseNewPlanner {
+			fs := e.SelectExec.Fields()
+			for _, f := range fs {
+				if len(f.TableAsName.L) > 0 {
+					tblNames[f.TableAsName.L] = f.TableName.Name.L
+				} else {
+					tblNames[f.TableName.Name.L] = f.TableName.Name.L
+				}
+			}
+		} else {
+			fs := e.SelectExec.Schema()
+			for _, f := range fs {
+				tblNames[f.TblName.L] = f.TblName.L
 			}
 		}
 		for _, t := range e.Tables {
@@ -788,6 +797,8 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 	for i, asgn := range cols {
 		if asgn != nil {
 			assignFlag[i] = true
+		} else {
+			assignFlag[i] = false
 		}
 	}
 	if err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, 0, true); err != nil {

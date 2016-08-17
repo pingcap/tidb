@@ -208,3 +208,8 @@ func (p *NewUpdate) matchProperty(_ requiredProperty, _ []uint64, _ ...*physical
 func (p *PhysicalDummyScan) matchProperty(_ requiredProperty, _ []uint64, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }
+
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *NewDelete) matchProperty(_ requiredProperty, _ []uint64, _ ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
+}
