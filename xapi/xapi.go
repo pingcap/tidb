@@ -160,7 +160,7 @@ func (r *partialResult) Close() error {
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
 func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrder bool) (SelectResult, error) {
-	// Convert tipb.*Request to kv.Request
+	// Convert tipb.*Request to kv.Request.
 	kvReq, err := composeRequest(req, concurrency, keepOrder)
 	if err != nil {
 		return nil, errors.Trace(err)
