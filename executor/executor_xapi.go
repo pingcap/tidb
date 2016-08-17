@@ -63,8 +63,8 @@ type XSelectTableExec struct {
 	tablePlan        *plan.TableScan
 	where            *tipb.Expr
 	ctx              context.Context
-	result           *xapi.SelectResult
-	subResult        *xapi.SubResult
+	result           xapi.SelectResult
+	subResult        xapi.PartialResult
 	supportDesc      bool
 	allFiltersPushed bool
 	aggFuncs         []*tipb.Expr
@@ -193,7 +193,7 @@ func (e *XSelectTableExec) doRequest() error {
 	// Aggregate Info
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
-	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency)
+	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -464,7 +464,7 @@ func (s *rowsSorter) Swap(i, j int) {
 	s.rows[i], s.rows[j] = s.rows[j], s.rows[i]
 }
 
-func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
+func (e *XSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -492,10 +492,10 @@ func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	if e.indexPlan.OutOfOrder {
 		concurrency = 10
 	}
-	return xapi.Select(txn.GetClient(), selIdxReq, concurrency)
+	return xapi.Select(txn.GetClient(), selIdxReq, concurrency, !e.indexPlan.OutOfOrder)
 }
 
-func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, error) {
+func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, error) {
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -529,7 +529,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, 
 	// Aggregate Info
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
-	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency)
+	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -666,7 +666,7 @@ func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType)
 	return nil
 }
 
-func extractHandlesFromIndexResult(idxResult *xapi.SelectResult) ([]int64, error) {
+func extractHandlesFromIndexResult(idxResult xapi.SelectResult) ([]int64, error) {
 	var handles []int64
 	for {
 		subResult, err := idxResult.Next()
@@ -685,7 +685,7 @@ func extractHandlesFromIndexResult(idxResult *xapi.SelectResult) ([]int64, error
 	return handles, nil
 }
 
-func extractHandlesFromIndexSubResult(subResult *xapi.SubResult) ([]int64, error) {
+func extractHandlesFromIndexSubResult(subResult xapi.PartialResult) ([]int64, error) {
 	var handles []int64
 	for {
 		h, data, err := subResult.Next()
@@ -700,7 +700,7 @@ func extractHandlesFromIndexSubResult(subResult *xapi.SubResult) ([]int64, error
 	return handles, nil
 }
 
-func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult *xapi.SelectResult) ([]*Row, error) {
+func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult xapi.SelectResult) ([]*Row, error) {
 	var rows []*Row
 	for {
 		subResult, err := tblResult.Next()
@@ -719,7 +719,7 @@ func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult *
 	return rows, nil
 }
 
-func (e *XSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult *xapi.SubResult) ([]*Row, error) {
+func (e *XSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult xapi.PartialResult) ([]*Row, error) {
 	var rows []*Row
 	for {
 		h, rowData, err := subResult.Next()
