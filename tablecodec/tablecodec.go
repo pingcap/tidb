@@ -631,3 +631,76 @@ const (
 	codeInvalidRecordKey   = 4
 	codeInvalidColumnCount = 5
 )
+
+// Row layout: data_offset | id1, len1, id2, len2 | data1, data2
+func EncodeRow3(row []types.Datum, colIDs []int64) ([]byte, error) {
+	if len(row) != len(colIDs) {
+		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
+	}
+	if len(row) == 0 {
+		// We could not set nil value into kv.
+		return []byte{codec.NilFlag}, nil
+	}
+
+	var err error
+	data := make([]byte, 0, 256)
+	meta := make([]byte, 4, 256)
+	for i, c := range row {
+		length := len(data)
+		data, err = codec.EncodeOne(data, c, false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		length = len(data) - length
+		meta = codec.EncodeVarint(meta, colIDs[i])
+		meta = codec.EncodeVarint(meta, int64(length))
+	}
+	// data offset
+	binary.BigEndian.PutUint32(meta[:], uint32(len(meta)))
+	return append(meta, data...), nil
+}
+
+func DecodeRow3(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum, error) {
+	if b == nil {
+		return nil, nil
+	}
+	if len(b) == 1 && b[0] == codec.NilFlag {
+		return nil, nil
+	}
+
+	dataOffset := binary.BigEndian.Uint32(b)
+	pos := int64(dataOffset)
+	meta := b[4:dataOffset]
+	ret := make(map[int64]types.Datum, len(cols))
+	var (
+		id     int64
+		err    error
+		length int64
+		d      types.Datum
+	)
+	for len(meta) > 0 && len(ret) < len(cols) {
+		meta, id, err = codec.DecodeVarint(meta)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		meta, length, err = codec.DecodeVarint(meta)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if ft, ok := cols[id]; ok {
+			_, d, err = codec.DecodeOne(b[pos:])
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			d, err = Unflatten(d, ft, false)
+			ret[id] = d
+		}
+
+		pos += length
+	}
+	return ret, nil
+}
