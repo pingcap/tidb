@@ -71,6 +71,9 @@ type HashJoinExec struct {
 func (e *HashJoinExec) Close() error {
 	e.prepared = false
 	e.cursor = 0
+	e.hashTable = nil
+	e.datumBuffer = nil
+	e.hashKeyBuffer = nil
 	err := e.smallExec.Close()
 	if err != nil {
 		return errors.Trace(err)
