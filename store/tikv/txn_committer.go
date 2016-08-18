@@ -319,6 +319,11 @@ func (c *txnCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.iterKeys(bo, keys, c.cleanupSingleRegion, c.keySize, false)
 }
 
+// The max time a Txn may use (in ms) from its startTS to commitTS.
+// We use it to guarantee GC worker will not influence any active txn. The value
+// should be less than `gcRunInterval`.
+const maxTxnTimeUse = 590000
+
 func (c *txnCommitter) Commit() error {
 	defer func() {
 		// Always clean up all written keys if the txn does not commit.
@@ -346,6 +351,11 @@ func (c *txnCommitter) Commit() error {
 		return errors.Trace(err)
 	}
 	c.commitTS = commitTS
+
+	if c.store.oracle.IsExpired(c.startTS, maxTxnTimeUse) {
+		err := errors.Errorf("txn takes too much time, start: %d, commit: %d", c.startTS, c.commitTS)
+		return errors.Annotate(err, txnRetryableMark)
+	}
 
 	err = c.commitKeys(NewBackoffer(commitMaxBackoff), c.keys)
 	if err != nil {
