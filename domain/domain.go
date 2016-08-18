@@ -298,11 +298,15 @@ func (s *schemaValidityInfo) SetValidity(v bool) {
 	s.mux.Lock()
 	if !v {
 		txnTS := s.getLastFailedTS()
+		log.Errorf("[ddl] SetValidity, v:%v txnTS:%v lastInvalidTS:%v", v, txnTS, s.lastInvalidTS)
 		if s.lastInvalidTS < txnTS {
 			s.lastInvalidTS = txnTS
 		}
 	}
-	s.isValid = v
+	if s.isValid != v {
+		log.Infof("[ddl] SetValidity, original:%v current:%v", s.isValid, v)
+		s.isValid = v
+	}
 	s.mux.Unlock()
 }
 
