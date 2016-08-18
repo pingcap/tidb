@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -140,30 +141,32 @@ func (d *ddl) runReorgJob(f func() error) error {
 	}
 }
 
-func (d *ddl) isReorgRunnable(txn kv.Transaction) error {
+func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 	if d.isClosed() {
 		// worker is closed, can't run reorganization.
 		return errors.Trace(errInvalidWorker.Gen("worker is closed"))
 	}
 
 	t := meta.NewMeta(txn)
-	owner, err := t.GetDDLJobOwner()
+	owner, err := d.getJobOwner(t, flag)
 	if err != nil {
 		return errors.Trace(err)
-	} else if owner == nil || owner.OwnerID != d.uuid {
+	}
+	if owner == nil || owner.OwnerID != d.uuid {
 		// if no owner, we will try later, so here just return error.
 		// or another server is owner, return error too.
+		log.Infof("[ddl] %s job, self id %s owner id %s, txnTS:%d", flag, d.uuid, owner.OwnerID, txn.StartTS())
 		return errors.Trace(errNotOwner)
 	}
 
 	return nil
 }
 
-func (d *ddl) delKeysWithPrefix(prefix kv.Key) error {
+func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
 	for {
 		keys := make([]kv.Key, 0, maxBatchSize)
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err1 := d.isReorgRunnable(txn); err1 != nil {
+			if err1 := d.isReorgRunnable(txn, jobType); err1 != nil {
 				return errors.Trace(err1)
 			}
 
