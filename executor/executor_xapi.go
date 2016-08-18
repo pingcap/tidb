@@ -549,7 +549,7 @@ func (b *executorBuilder) conditionsToPBExpr(client kv.Client, exprs []ast.ExprN
 				pbexpr = v
 			} else {
 				// merge multiple converted pb expression into an AND expression.
-				pbexpr = &tipb.Expr{Tp: tipb.ExprType_And.Enum(), Children: []*tipb.Expr{pbexpr, v}}
+				pbexpr = &tipb.Expr{Tp: tipb.ExprType_And, Children: []*tipb.Expr{pbexpr, v}}
 			}
 		}
 	}
@@ -816,7 +816,7 @@ func (b *executorBuilder) aggFuncToPBExpr(client kv.Client, af *ast.AggregateFun
 		}
 		children = append(children, pbArg)
 	}
-	return &tipb.Expr{Tp: tp.Enum(), Children: children}
+	return &tipb.Expr{Tp: tp, Children: children}
 }
 
 func (b *executorBuilder) columnNameToPBExpr(client kv.Client, column *ast.ColumnNameExpr, tn *ast.TableName) *tipb.Expr {
@@ -841,7 +841,7 @@ func (b *executorBuilder) columnNameToPBExpr(client kv.Client, column *ast.Colum
 	}
 	if matched {
 		pbExpr := new(tipb.Expr)
-		pbExpr.Tp = tipb.ExprType_ColumnRef.Enum()
+		pbExpr.Tp = tipb.ExprType_ColumnRef
 		pbExpr.Val = codec.EncodeInt(nil, column.Refer.Column.ID)
 		return pbExpr
 	}
@@ -886,7 +886,7 @@ func (b *executorBuilder) datumToPBExpr(client kv.Client, d types.Datum) *tipb.E
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
 		return nil
 	}
-	return &tipb.Expr{Tp: tp.Enum(), Val: val}
+	return &tipb.Expr{Tp: tp, Val: val}
 }
 
 func (b *executorBuilder) binopToPBExpr(client kv.Client, expr *ast.BinaryOperationExpr, tn *ast.TableName) *tipb.Expr {
@@ -928,7 +928,7 @@ func (b *executorBuilder) binopToPBExpr(client kv.Client, expr *ast.BinaryOperat
 	if rightExpr == nil {
 		return nil
 	}
-	return &tipb.Expr{Tp: tp.Enum(), Children: []*tipb.Expr{leftExpr, rightExpr}}
+	return &tipb.Expr{Tp: tp, Children: []*tipb.Expr{leftExpr, rightExpr}}
 }
 
 // Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
@@ -959,11 +959,11 @@ func (b *executorBuilder) likeToPBExpr(client kv.Client, expr *ast.PatternLikeEx
 	if targetExpr == nil {
 		return nil
 	}
-	likeExpr := &tipb.Expr{Tp: tipb.ExprType_Like.Enum(), Children: []*tipb.Expr{targetExpr, patternExpr}}
+	likeExpr := &tipb.Expr{Tp: tipb.ExprType_Like, Children: []*tipb.Expr{targetExpr, patternExpr}}
 	if !expr.Not {
 		return likeExpr
 	}
-	return &tipb.Expr{Tp: tipb.ExprType_Not.Enum(), Children: []*tipb.Expr{likeExpr}}
+	return &tipb.Expr{Tp: tipb.ExprType_Not, Children: []*tipb.Expr{likeExpr}}
 }
 
 func (b *executorBuilder) unaryToPBExpr(client kv.Client, expr *ast.UnaryOperationExpr, tn *ast.TableName) *tipb.Expr {
@@ -979,7 +979,7 @@ func (b *executorBuilder) unaryToPBExpr(client kv.Client, expr *ast.UnaryOperati
 	if child == nil {
 		return nil
 	}
-	return &tipb.Expr{Tp: tipb.ExprType_Not.Enum(), Children: []*tipb.Expr{child}}
+	return &tipb.Expr{Tp: tipb.ExprType_Not, Children: []*tipb.Expr{child}}
 }
 
 func (b *executorBuilder) subqueryToPBExpr(client kv.Client, expr *ast.SubqueryExpr) *tipb.Expr {
@@ -1019,11 +1019,11 @@ func (b *executorBuilder) patternInToPBExpr(client kv.Client, expr *ast.PatternI
 	if listExpr == nil {
 		return nil
 	}
-	inExpr := &tipb.Expr{Tp: tipb.ExprType_In.Enum(), Children: []*tipb.Expr{pbExpr, listExpr}}
+	inExpr := &tipb.Expr{Tp: tipb.ExprType_In, Children: []*tipb.Expr{pbExpr, listExpr}}
 	if !expr.Not {
 		return inExpr
 	}
-	return &tipb.Expr{Tp: tipb.ExprType_Not.Enum(), Children: []*tipb.Expr{inExpr}}
+	return &tipb.Expr{Tp: tipb.ExprType_Not, Children: []*tipb.Expr{inExpr}}
 }
 
 func (b *executorBuilder) exprListToPBExpr(client kv.Client, list []ast.ExprNode, tn *ast.TableName) *tipb.Expr {
@@ -1066,5 +1066,5 @@ func (b *executorBuilder) datumsToValueList(datums []types.Datum) *tipb.Expr {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	return &tipb.Expr{Tp: tipb.ExprType_ValueList.Enum(), Val: val}
+	return &tipb.Expr{Tp: tipb.ExprType_ValueList, Val: val}
 }

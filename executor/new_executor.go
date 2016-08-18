@@ -938,7 +938,7 @@ func (b *executorBuilder) newConditionExprToPBExpr(client kv.Client, exprs []exp
 		} else {
 			// merge multiple converted pb expression into an AND expression.
 			pbExpr = &tipb.Expr{
-				Tp:       tipb.ExprType_And.Enum(),
+				Tp:       tipb.ExprType_And,
 				Children: []*tipb.Expr{pbExpr, v}}
 		}
 	}
@@ -984,7 +984,7 @@ func (b *executorBuilder) newAggFuncToPBExpr(client kv.Client, aggFunc expressio
 		}
 		children = append(children, pbArg)
 	}
-	return &tipb.Expr{Tp: tp.Enum(), Children: children}
+	return &tipb.Expr{Tp: tp, Children: children}
 }
 
 // newExprToPBExpr converts an expression.Expression to a tipb.Expr, if not supported, nil will be returned.
@@ -1029,7 +1029,7 @@ func (b *executorBuilder) columnToPBExpr(client kv.Client, column *expression.Co
 	}
 
 	return &tipb.Expr{
-		Tp:  tipb.ExprType_ColumnRef.Enum(),
+		Tp:  tipb.ExprType_ColumnRef,
 		Val: codec.EncodeInt(nil, id)}
 }
 
@@ -1047,7 +1047,7 @@ func (b *executorBuilder) inToPBExpr(client kv.Client, expr *expression.ScalarFu
 		return nil
 	}
 	return &tipb.Expr{
-		Tp:       tipb.ExprType_In.Enum(),
+		Tp:       tipb.ExprType_In,
 		Children: []*tipb.Expr{pbExpr, listExpr}}
 }
 
@@ -1081,7 +1081,7 @@ func (b *executorBuilder) notToPBExpr(client kv.Client, expr *expression.ScalarF
 		return nil
 	}
 	return &tipb.Expr{
-		Tp:       tipb.ExprType_Not.Enum(),
+		Tp:       tipb.ExprType_Not,
 		Children: []*tipb.Expr{child}}
 }
 
@@ -1149,7 +1149,7 @@ func (b *executorBuilder) scalarFuncToPBExpr(client kv.Client, expr *expression.
 		return nil
 	}
 	return &tipb.Expr{
-		Tp:       tp.Enum(),
+		Tp:       tp,
 		Children: []*tipb.Expr{expr0, expr1}}
 }
 
