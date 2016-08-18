@@ -17,7 +17,6 @@ import (
 	"io"
 	"io/ioutil"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -116,7 +115,7 @@ func (r *partialResult) Next() (handle int64, data []types.Datum, err error) {
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		err = proto.Unmarshal(b, r.resp)
+		err = r.resp.Unmarshal(b)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -209,7 +208,7 @@ func composeRequest(req *tipb.SelectRequest, concurrency int, keepOrder bool) (*
 		kvReq.Desc = req.OrderBy[0].Desc
 	}
 	var err error
-	kvReq.Data, err = proto.Marshal(req)
+	kvReq.Data, err = req.Marshal()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
