@@ -155,7 +155,7 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 	if owner == nil || owner.OwnerID != d.uuid {
 		// if no owner, we will try later, so here just return error.
 		// or another server is owner, return error too.
-		log.Infof("[ddl] %s job, self id %s owner id %s, txnTS:%d", flag, d.uuid, owner.OwnerID, txn.StartTS())
+		log.Infof("[ddl] %s job, self id %s owner %s, txnTS:%d", flag, d.uuid, owner, txn.StartTS())
 		return errors.Trace(errNotOwner)
 	}
 
