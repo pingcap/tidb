@@ -301,6 +301,8 @@ func (p *Join) handleLeftJoin(prop requiredProperty, innerJoin bool) (*physicalP
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
 		SmallTable:      1,
+		// TODO: decide concurrency by data size.
+		Concurrency: 5,
 	}
 	join.SetSchema(p.schema)
 	if innerJoin {

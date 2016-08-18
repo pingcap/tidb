@@ -278,7 +278,7 @@ func (e *HashJoinExec) join(idx int, bigRow *Row) bool {
 	)
 	bigMatched := true
 	if e.bigFilter != nil {
-		bigMatched, err = expression.EvalBool(e.bigFilter, bigRow.Data, e.ctx)
+		bigMatched, err = expression.EvalBoolInShard(e.bigFilter, bigRow.Data, e.ctx, idx)
 		if err != nil {
 			e.resultErr <- errors.Trace(err)
 			return false
@@ -324,7 +324,7 @@ func (e *HashJoinExec) constructMatchedRows(idx int, bigRow *Row) (matchedRows [
 			matchedRow = joinTwoRow(bigRow, smallRow)
 		}
 		if e.otherFilter != nil {
-			otherMatched, err = expression.EvalBool(e.otherFilter, matchedRow.Data, e.ctx)
+			otherMatched, err = expression.EvalBoolInShard(e.otherFilter, matchedRow.Data, e.ctx, idx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

@@ -46,6 +46,7 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 		prepared:    false,
 		ctx:         b.ctx,
 		targetTypes: targetTypes,
+		concurrency: v.Concurrency,
 	}
 	if v.SmallTable == 1 {
 		e.smallFilter = expression.ComposeCNFCondition(v.RightConditions)
@@ -69,6 +70,12 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 	} else {
 		e.smallExec = b.build(v.GetChildByIndex(1))
 		e.bigExec = b.build(v.GetChildByIndex(0))
+	}
+	if e.bigFilter != nil {
+		e.bigFilter.InitArgsBuffer(e.concurrency)
+	}
+	if e.otherFilter != nil {
+		e.otherFilter.InitArgsBuffer(e.concurrency)
 	}
 	return e
 }

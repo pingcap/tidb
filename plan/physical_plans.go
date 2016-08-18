@@ -84,6 +84,7 @@ type PhysicalHashJoin struct {
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
 	SmallTable      int
+	Concurrency     int
 }
 
 // PhysicalHashSemiJoin represents hash join for semi join.
