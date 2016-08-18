@@ -22,7 +22,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
-	"github.com/twinj/uuid"
 )
 
 // GCWorker periodically triggers GC process on tikv server.
@@ -45,7 +44,7 @@ func NewGCWorker(store *tikvStore) (*GCWorker, error) {
 		return nil, errors.Trace(err)
 	}
 	worker := &GCWorker{
-		uuid:    uuid.NewV4().String(),
+		uuid:    fmt.Sprintf("gcworker_%d", ver.Ver),
 		store:   store,
 		session: session,
 		quit:    make(chan struct{}),
@@ -244,13 +243,23 @@ func (w *GCWorker) doGC(safePoint uint64) error {
 }
 
 func (w *GCWorker) checkLeader() (bool, error) {
+	_, err := w.session.Execute("BEGIN")
+	if err != nil {
+		return false, errors.Trace(err)
+	}
 	leader, err := w.loadValueFromSysTable(gcLeaderUUIDKey)
 	if err != nil {
+		w.session.Execute("ROLLBACK")
 		return false, errors.Trace(err)
 	}
 	log.Debugf("[gc worker] got leader: %s", leader)
 	if leader == w.uuid {
 		err = w.updateLease()
+		if err != nil {
+			w.session.Execute("ROLLBACK")
+			return false, errors.Trace(err)
+		}
+		_, err = w.session.Execute("COMMIT")
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -261,14 +270,21 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		log.Debugf("[gc worker] register %s as leader", w.uuid)
 		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid)
 		if err != nil {
+			w.session.Execute("ROLLBACK")
 			return false, errors.Trace(err)
 		}
 		err = w.updateLease()
+		if err != nil {
+			w.session.Execute("ROLLBACK")
+			return false, errors.Trace(err)
+		}
+		_, err = w.session.Execute("COMMIT")
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		return true, nil
 	}
+	w.session.Execute("ROLLBACK")
 	return false, nil
 }
 
@@ -294,7 +310,7 @@ func (w *GCWorker) loadLease() (time.Time, error) {
 }
 
 func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
-	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s'`, key)
+	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
 	rs, err := w.session.Execute(stmt)
 	if err != nil {
 		return "", errors.Trace(err)
