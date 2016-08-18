@@ -138,7 +138,6 @@ func (e *HashJoinExec) fetchBigExec() {
 		for _, cn := range e.bigTableRows {
 			close(cn)
 		}
-		close(e.bigTableErr)
 	}()
 	for {
 		if e.finished {
@@ -241,7 +240,6 @@ func (e *HashJoinExec) prepare() error {
 func (e *HashJoinExec) closeChanWorker() {
 	e.wg.Wait()
 	close(e.resultRows)
-	close(e.resultErr)
 }
 
 // do join job
