@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -166,14 +165,13 @@ func (e *XSelectTableExec) doRequest() error {
 		return errors.Trace(err)
 	}
 	selReq := new(tipb.SelectRequest)
-	startTs := txn.StartTS()
-	selReq.StartTs = &startTs
+	selReq.StartTs = txn.StartTS()
 	selReq.Fields = resultFieldsToPBExpression(e.tablePlan.Fields())
 	selReq.Where = e.where
 	selReq.Ranges = tableRangesToPBRanges(e.tablePlan.Ranges)
 	if e.supportDesc {
 		if e.tablePlan.Desc {
-			selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: &e.tablePlan.Desc})
+			selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: e.tablePlan.Desc})
 		}
 		// Limit can be pushed only if desc is supported.
 		if e.allFiltersPushed {
@@ -187,7 +185,7 @@ func (e *XSelectTableExec) doRequest() error {
 		}
 	}
 	selReq.TableInfo = &tipb.TableInfo{
-		TableId: proto.Int64(e.table.Meta().ID),
+		TableId: e.table.Meta().ID,
 	}
 	selReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
 	// Aggregate Info
@@ -470,15 +468,14 @@ func (e *XSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 		return nil, errors.Trace(err)
 	}
 	selIdxReq := new(tipb.SelectRequest)
-	startTs := txn.StartTS()
-	selIdxReq.StartTs = &startTs
+	selIdxReq.StartTs = txn.StartTS()
 	selIdxReq.IndexInfo = xapi.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	if len(e.indexPlan.FilterConditions) == 0 {
 		// Push limit to index request only if there is not filter conditions.
 		selIdxReq.Limit = e.indexPlan.LimitCount
 	}
 	if e.indexPlan.Desc {
-		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: &e.indexPlan.Desc})
+		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: e.indexPlan.Desc})
 	}
 	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
 	for i, v := range e.indexPlan.Index.Columns {
@@ -502,8 +499,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, e
 	}
 	// The handles are not in original index order, so we can't push limit here.
 	selTableReq := new(tipb.SelectRequest)
-	startTs := txn.StartTS()
-	selTableReq.StartTs = &startTs
+	selTableReq.StartTs = txn.StartTS()
 	columns := make([]*model.ColumnInfo, 0, len(e.indexPlan.Fields()))
 	for _, v := range e.indexPlan.Fields() {
 		if v.Referenced {
@@ -511,7 +507,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, e
 		}
 	}
 	selTableReq.TableInfo = &tipb.TableInfo{
-		TableId: proto.Int64(e.table.Meta().ID),
+		TableId: e.table.Meta().ID,
 	}
 	selTableReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
 	selTableReq.Fields = resultFieldsToPBExpression(e.indexPlan.Fields())
