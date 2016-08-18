@@ -182,6 +182,6 @@ func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, erro
 }
 
 func (d *ddl) dropTableData(t table.Table) error {
-	err := d.delKeysWithPrefix(tablecodec.EncodeTablePrefix(t.Meta().ID))
+	err := d.delKeysWithPrefix(tablecodec.EncodeTablePrefix(t.Meta().ID), bgJobFlag)
 	return errors.Trace(err)
 }

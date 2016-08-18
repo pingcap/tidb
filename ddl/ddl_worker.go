@@ -106,21 +106,10 @@ func asyncNotify(ch chan struct{}) {
 }
 
 func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
-	var owner *model.Owner
-	var err error
-
-	switch flag {
-	case ddlJobFlag:
-		owner, err = t.GetDDLJobOwner()
-	case bgJobFlag:
-		owner, err = t.GetBgJobOwner()
-	default:
-		err = errInvalidJobFlag
-	}
+	owner, err := d.getJobOwner(t, flag)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	if owner == nil {
 		owner = &model.Owner{}
 		// try to set onwer
@@ -132,7 +121,8 @@ func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	// the owner will update its owner status every 2 * lease time, so here we use
 	// 4 * lease to check its timeout.
 	maxTimeout := int64(4 * d.lease)
-	if owner.OwnerID == d.uuid || now-owner.LastUpdateTS > maxTimeout {
+	sub := now - owner.LastUpdateTS
+	if owner.OwnerID == d.uuid || sub > maxTimeout {
 		owner.OwnerID = d.uuid
 		owner.LastUpdateTS = now
 		// update status.
@@ -145,15 +135,31 @@ func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		log.Debugf("[ddl] become %s job owner %s", flag, owner.OwnerID)
+		log.Debugf("[ddl] become %s job owner, owner is %s sub %vs", flag, owner, sub/1e9)
 	}
 
 	if owner.OwnerID != d.uuid {
-		log.Debugf("[ddl] not %s job owner, owner is %s", flag, owner.OwnerID)
+		log.Debugf("[ddl] not %s job owner, self id %s owner is %s", flag, d.uuid, owner.OwnerID)
 		return nil, errors.Trace(errNotOwner)
 	}
 
 	return owner, nil
+}
+
+func (d *ddl) getJobOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
+	var owner *model.Owner
+	var err error
+
+	switch flag {
+	case ddlJobFlag:
+		owner, err = t.GetDDLJobOwner()
+	case bgJobFlag:
+		owner, err = t.GetBgJobOwner()
+	default:
+		err = errInvalidJobFlag
+	}
+
+	return owner, errors.Trace(err)
 }
 
 func (d *ddl) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
