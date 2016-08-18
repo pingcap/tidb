@@ -393,6 +393,10 @@
 		{
 			"ImportPath": "github.com/prometheus/common/internal/bitbucket.org/ww/goautoneg",
 			"Rev": "bc0a4460d0fc2693fcdebafafbf07c6d18913b97"
+		},
+		{
+			"ImportPath": "github.com/cznic/golex/lex",
+			"Rev": "da5a7153a51074477ecac5c45a7e5182a0c72448"
 		}
 	]
 }
