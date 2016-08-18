@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-const defaultConcurrency int = 3
+const defaultConcurrency int = 10
 
 var (
 	_ Executor  = &XSelectTableExec{}
