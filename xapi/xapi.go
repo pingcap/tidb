@@ -84,7 +84,7 @@ func (r *selectResult) fetch() {
 			fields:    r.fields,
 			reader:    reader,
 			aggregate: r.aggregate,
-			done:      make(chan error, 1),
+			done:      make(chan error),
 		}
 		go pr.fetch()
 		r.results <- pr
@@ -114,7 +114,6 @@ func (r *selectResult) SetFields(fields []*types.FieldType) {
 
 // Close closes SelectResult.
 func (r *selectResult) Close() error {
-	close(r.done)
 	return r.resp.Close()
 }
 
@@ -131,42 +130,42 @@ type partialResult struct {
 	fetched bool
 }
 
-func (r *partialResult) fetch() {
-	r.resp = new(tipb.SelectResponse)
-	b, err := ioutil.ReadAll(r.reader)
-	r.reader.Close()
+func (pr *partialResult) fetch() {
+	pr.resp = new(tipb.SelectResponse)
+	b, err := ioutil.ReadAll(pr.reader)
+	pr.reader.Close()
 	if err != nil {
-		r.done <- errors.Trace(err)
+		pr.done <- errors.Trace(err)
 		return
 	}
-	err = r.resp.Unmarshal(b)
+	err = pr.resp.Unmarshal(b)
 	if err != nil {
-		r.done <- errors.Trace(err)
+		pr.done <- errors.Trace(err)
 		return
 	}
-	if r.resp.Error != nil {
-		r.done <- errInvalidResp.Gen("[%d %s]", r.resp.Error.GetCode(), r.resp.Error.GetMsg())
+	if pr.resp.Error != nil {
+		pr.done <- errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
 	}
-	r.done <- nil
+	pr.done <- nil
 }
 
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
-func (r *partialResult) Next() (handle int64, data []types.Datum, err error) {
-	if !r.fetched {
+func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
+	if !pr.fetched {
 		select {
-		case err = <-r.done:
+		case err = <-pr.done:
 		}
-		r.fetched = true
+		pr.fetched = true
 		if err != nil {
 			return 0, nil, err
 		}
 	}
-	if r.cursor >= len(r.resp.Rows) {
+	if pr.cursor >= len(pr.resp.Rows) {
 		return 0, nil, nil
 	}
-	row := r.resp.Rows[r.cursor]
-	data, err = tablecodec.DecodeValues(row.Data, r.fields, r.index)
+	row := pr.resp.Rows[pr.cursor]
+	data, err = tablecodec.DecodeValues(row.Data, pr.fields, pr.index)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
@@ -176,7 +175,7 @@ func (r *partialResult) Next() (handle int64, data []types.Datum, err error) {
 		// as caller will check if data is nil to finish iteration.
 		data = make([]types.Datum, 0)
 	}
-	if !r.aggregate {
+	if !pr.aggregate {
 		handleBytes := row.GetHandle()
 		datums, err := codec.Decode(handleBytes)
 		if err != nil {
@@ -184,13 +183,12 @@ func (r *partialResult) Next() (handle int64, data []types.Datum, err error) {
 		}
 		handle = datums[0].GetInt64()
 	}
-	r.cursor++
+	pr.cursor++
 	return
 }
 
 // Close closes the sub result.
-func (r *partialResult) Close() error {
-	close(r.done)
+func (pr *partialResult) Close() error {
 	return nil
 }
 
