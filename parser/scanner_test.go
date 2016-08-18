@@ -14,8 +14,6 @@
 package parser
 
 import (
-	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -79,7 +77,7 @@ func (s *testLexerSuite) TestSysOrUserVar(c *C) {
 func (s *testLexerSuite) TestUnderscoreCS(c *C) {
 	defer testleak.AfterTest(c)()
 	var v yySymType
-	tok := NewLexer(`_utf8"string"`).Lex(&v)
+	tok := NewScanner(`_utf8"string"`).Lex(&v)
 	c.Check(tok, Equals, underscoreCS)
 }
 
@@ -125,25 +123,6 @@ SELECT`, selectKwd},
 		{"--5", int('-')},
 	}
 	runTest(c, table)
-}
-
-func (s *testLexerSuite) TestLexerCompatible(c *C) {
-	defer testleak.AfterTest(c)()
-
-	for _, str := range tableCompatible {
-		l1 := NewScanner(str)
-		l2 := NewLexer(str)
-		for {
-			var v1, v2 yySymType
-			tok1 := l1.Lex(&v1)
-			tok2 := l2.Lex(&v2)
-			fmt.Println(tok1, tok2, v1, v2)
-			c.Assert(tok1, Equals, tok2)
-			if tok1 == 0 {
-				break
-			}
-		}
-	}
 }
 
 func (s *testLexerSuite) TestscanQuotedIdent(c *C) {

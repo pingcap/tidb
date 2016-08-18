@@ -27,7 +27,6 @@ import (
 	"github.com/ngaut/systimemon"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/metric"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/server"
@@ -48,7 +47,6 @@ var (
 	enablePS     = flag.Bool("perfschema", false, "If enable performance schema.")
 	reportStatus = flag.Bool("report-status", true, "If enable status report HTTP service.")
 	useNewPlan   = flag.Bool("newplan", true, "If use new planner.")
-	useNewLexer  = flag.Bool("newlexer", true, "If use new lexer.")
 	logFile      = flag.String("log-file", "", "log file path")
 )
 
@@ -99,8 +97,6 @@ func main() {
 	if !*useNewPlan {
 		plan.UseNewPlanner = false
 	}
-
-	parser.UseNewLexer = *useNewLexer
 
 	// Create a session to load information schema.
 	se, err := tidb.CreateSession(store)
