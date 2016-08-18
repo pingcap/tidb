@@ -327,7 +327,7 @@ func (e *NewXSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	} else if e.indexPlan.OutOfOrder {
 		concurrency = defaultConcurrency
 	}
-	return xapi.Select(txn.GetClient(), selIdxReq, concurrency)
+	return xapi.Select(txn.GetClient(), selIdxReq, concurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) {
@@ -434,7 +434,7 @@ func (e *NewXSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResul
 		if partialResult == nil {
 			break
 		}
-		subRows, err := e.extractRowsFromSubResult(t, partialResult)
+		subRows, err := e.extractRowsFromPartialResult(t, partialResult)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -443,7 +443,7 @@ func (e *NewXSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResul
 	return rows, nil
 }
 
-func (e *NewXSelectIndexExec) extractRowsFromSubResult(t table.Table, partialResult xapi.PartialResult) ([]*Row, error) {
+func (e *NewXSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialResult xapi.PartialResult) ([]*Row, error) {
 	var rows []*Row
 	for {
 		h, rowData, err := partialResult.Next()
@@ -487,7 +487,7 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
 	// Aggregate Info
-	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency)
+	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -568,7 +568,8 @@ func (e *NewXSelectTableExec) doRequest() error {
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
 	log.Infof("[TABLE_SCAN_CONCURRENT] %d", defaultConcurrency)
-	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency)
+	keepOrder := false
+	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency, keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -95,7 +95,7 @@ func (r *selectResult) Close() error {
 	return r.resp.Close()
 }
 
-// SubResult represents a subset of select result.
+// partialResult represents a subset of select result.
 type partialResult struct {
 	index     bool
 	aggregate bool
@@ -156,9 +156,12 @@ func (r *partialResult) Close() error {
 }
 
 // Select do a select request, returns SelectResult.
-func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (SelectResult, error) {
-	// Convert tipb.*Request to kv.Request
-	kvReq, err := composeRequest(req, concurrency)
+// conncurrency: The max concurrency for underlying coprocessor request.
+// keepOrder: If the result should returned in key order. For example if we need keep data in order by
+//            scan index, we should set keepOrder to true.
+func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrder bool) (SelectResult, error) {
+	// Convert tipb.*Request to kv.Request.
+	kvReq, err := composeRequest(req, concurrency, keepOrder)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -187,10 +190,10 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (SelectR
 }
 
 // Convert tipb.Request to kv.Request.
-func composeRequest(req *tipb.SelectRequest, concurrency int) (*kv.Request, error) {
+func composeRequest(req *tipb.SelectRequest, concurrency int, keepOrder bool) (*kv.Request, error) {
 	kvReq := &kv.Request{
 		Concurrency: concurrency,
-		KeepOrder:   false,
+		KeepOrder:   keepOrder,
 	}
 	if req.IndexInfo != nil {
 		kvReq.Tp = kv.ReqTypeIndex
