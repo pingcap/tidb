@@ -792,7 +792,7 @@ func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
 		Args:      []expression.Expression{er.ctxStack[len(er.ctxStack)-1]},
 		FuncName:  model.NewCIStr("cast"),
 		RetType:   v.Tp,
-		Function:  bt}
-	function.InitArgsBuffer(1)
+		Function:  bt,
+		ArgValues: make([]types.Datum, 1)}
 	er.ctxStack[len(er.ctxStack)-1] = function
 }

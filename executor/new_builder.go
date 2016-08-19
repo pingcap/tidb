@@ -71,11 +71,17 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 		e.smallExec = b.build(v.GetChildByIndex(1))
 		e.bigExec = b.build(v.GetChildByIndex(0))
 	}
-	if e.bigFilter != nil {
-		e.bigFilter.InitArgsBuffer(e.concurrency)
-	}
-	if e.otherFilter != nil {
-		e.otherFilter.InitArgsBuffer(e.concurrency)
+	for i := 0; i < e.concurrency; i++ {
+		ctx := &hashJoinCtx{}
+		if e.bigFilter != nil {
+			ctx.bigFilter = e.bigFilter.DeepCopy()
+		}
+		if e.otherFilter != nil {
+			ctx.otherFilter = e.otherFilter.DeepCopy()
+		}
+		ctx.datumBuffer = make([]types.Datum, len(e.bigHashKey))
+		ctx.hashKeyBuffer = make([]byte, 0, 10000)
+		e.hashJoinContexts = append(e.hashJoinContexts, ctx)
 	}
 	return e
 }

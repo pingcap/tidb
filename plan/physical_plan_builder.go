@@ -343,6 +343,8 @@ func (p *Join) handleRightJoin(prop requiredProperty, innerJoin bool) (*physical
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
+		// TODO: decide concurrency by data size.
+		Concurrency: 5,
 	}
 	join.SetSchema(p.schema)
 	if innerJoin {

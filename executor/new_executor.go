@@ -53,18 +53,23 @@ type HashJoinExec struct {
 	finished bool
 	wg       sync.WaitGroup // for sync multiple join workers
 
-	// Buffer
-	datumBuffer   [][]types.Datum
-	hashKeyBuffer [][]byte
-
 	// Concurrent exec
-	concurrency  int
-	bigTableRows []chan []*Row // channle for join workers to get big table rows
-	bigTableErr  chan error    // channle for join workers to get big table Next() error
+	concurrency      int
+	bigTableRows     []chan []*Row // channel for join workers to get big table rows
+	bigTableErr      chan error    // channel for join workers to get big table Next() error
+	hashJoinContexts []*hashJoinCtx
 
 	// output channel
 	resultErr  chan error
 	resultRows chan *Row
+}
+
+type hashJoinCtx struct {
+	bigFilter   expression.Expression
+	otherFilter expression.Expression
+	// Buffer
+	datumBuffer   []types.Datum
+	hashKeyBuffer []byte
 }
 
 // Close implements Executor Close interface.
@@ -72,8 +77,6 @@ func (e *HashJoinExec) Close() error {
 	e.prepared = false
 	e.cursor = 0
 	e.hashTable = nil
-	e.datumBuffer = nil
-	e.hashKeyBuffer = nil
 	err := e.smallExec.Close()
 	if err != nil {
 		return errors.Trace(err)
@@ -169,15 +172,6 @@ func (e *HashJoinExec) fetchBigExec() {
 
 func (e *HashJoinExec) prepare() error {
 	e.finished = false
-	e.concurrency = 5
-	e.datumBuffer = make([][]types.Datum, e.concurrency)
-	e.hashKeyBuffer = make([][]byte, e.concurrency)
-	for i := range e.datumBuffer {
-		e.datumBuffer[i] = make([]types.Datum, len(e.bigHashKey))
-	}
-	for i := range e.hashKeyBuffer {
-		e.hashKeyBuffer[i] = make([]byte, 0, 10000)
-	}
 	e.bigTableRows = make([]chan []*Row, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
 		e.bigTableRows[i] = make(chan []*Row, e.concurrency*100)
@@ -209,7 +203,7 @@ func (e *HashJoinExec) prepare() error {
 				continue
 			}
 		}
-		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes, e.datumBuffer[0], nil)
+		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes, e.hashJoinContexts[0].datumBuffer, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -259,33 +253,33 @@ func (e *HashJoinExec) doJoin(idx int) {
 			break
 		}
 		if !ok {
-			e.wg.Done()
 			break
 		}
 		for _, bigRow := range bigRows {
-			succ := e.join(idx, bigRow)
+			succ := e.join(e.hashJoinContexts[idx], bigRow)
 			if !succ {
 				break
 			}
 		}
 	}
+	e.wg.Done()
 }
 
-func (e *HashJoinExec) join(idx int, bigRow *Row) bool {
+func (e *HashJoinExec) join(ctx *hashJoinCtx, bigRow *Row) bool {
 	var (
 		matchedRows []*Row
 		err         error
 	)
 	bigMatched := true
 	if e.bigFilter != nil {
-		bigMatched, err = expression.EvalBoolInShard(e.bigFilter, bigRow.Data, e.ctx, idx)
+		bigMatched, err = expression.EvalBool(ctx.bigFilter, bigRow.Data, e.ctx)
 		if err != nil {
 			e.resultErr <- errors.Trace(err)
 			return false
 		}
 	}
 	if bigMatched {
-		matchedRows, err = e.constructMatchedRows(idx, bigRow)
+		matchedRows, err = e.constructMatchedRows(ctx, bigRow)
 		if err != nil {
 			e.resultErr <- errors.Trace(err)
 			return false
@@ -301,8 +295,8 @@ func (e *HashJoinExec) join(idx int, bigRow *Row) bool {
 	return true
 }
 
-func (e *HashJoinExec) constructMatchedRows(idx int, bigRow *Row) (matchedRows []*Row, err error) {
-	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes, e.datumBuffer[idx], e.hashKeyBuffer[idx][0:0:cap(e.hashKeyBuffer[idx])])
+func (e *HashJoinExec) constructMatchedRows(ctx *hashJoinCtx, bigRow *Row) (matchedRows []*Row, err error) {
+	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes, ctx.datumBuffer, ctx.hashKeyBuffer[0:0:cap(ctx.hashKeyBuffer)])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -324,7 +318,7 @@ func (e *HashJoinExec) constructMatchedRows(idx int, bigRow *Row) (matchedRows [
 			matchedRow = joinTwoRow(bigRow, smallRow)
 		}
 		if e.otherFilter != nil {
-			otherMatched, err = expression.EvalBoolInShard(e.otherFilter, matchedRow.Data, e.ctx, idx)
+			otherMatched, err = expression.EvalBool(ctx.otherFilter, matchedRow.Data, e.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
