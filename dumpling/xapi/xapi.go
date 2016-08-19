@@ -46,6 +46,9 @@ type SelectResult interface {
 	SetFields(fields []*types.FieldType)
 	// Close closes the iterator.
 	Close() error
+	// Fetch fetches partial results from client.
+	// The caller should call SetFields() before call Fetch().
+	Fetch()
 }
 
 // PartialResult is the result from a single region server.
@@ -63,23 +66,50 @@ type selectResult struct {
 	aggregate bool
 	fields    []*types.FieldType
 	resp      kv.Response
+
+	results chan PartialResult
+	done    chan error
+}
+
+func (r *selectResult) Fetch() {
+	go r.fetch()
+}
+
+func (r *selectResult) fetch() {
+	defer close(r.results)
+	for {
+		reader, err := r.resp.Next()
+		if err != nil {
+			r.done <- errors.Trace(err)
+			return
+		}
+		if reader == nil {
+			return
+		}
+		pr := &partialResult{
+			index:     r.index,
+			fields:    r.fields,
+			reader:    reader,
+			aggregate: r.aggregate,
+			done:      make(chan error),
+		}
+		go pr.fetch()
+		r.results <- pr
+	}
 }
 
 // Next returns the next row.
 func (r *selectResult) Next() (pr PartialResult, err error) {
-	var reader io.ReadCloser
-	reader, err = r.resp.Next()
+	var ok bool
+	select {
+	case pr, ok = <-r.results:
+	case err = <-r.done:
+	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	if reader == nil {
+	if !ok {
 		return nil, nil
-	}
-	pr = &partialResult{
-		index:     r.index,
-		fields:    r.fields,
-		reader:    reader,
-		aggregate: r.aggregate,
 	}
 	return
 }
@@ -102,32 +132,47 @@ type partialResult struct {
 	reader    io.ReadCloser
 	resp      *tipb.SelectResponse
 	cursor    int
+
+	done    chan error
+	fetched bool
+}
+
+func (pr *partialResult) fetch() {
+	pr.resp = new(tipb.SelectResponse)
+	b, err := ioutil.ReadAll(pr.reader)
+	pr.reader.Close()
+	if err != nil {
+		pr.done <- errors.Trace(err)
+		return
+	}
+	err = pr.resp.Unmarshal(b)
+	if err != nil {
+		pr.done <- errors.Trace(err)
+		return
+	}
+	if pr.resp.Error != nil {
+		pr.done <- errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
+	}
+	pr.done <- nil
 }
 
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
-func (r *partialResult) Next() (handle int64, data []types.Datum, err error) {
-	if r.resp == nil {
-		r.resp = new(tipb.SelectResponse)
-		var b []byte
-		b, err = ioutil.ReadAll(r.reader)
-		r.reader.Close()
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
+	if !pr.fetched {
+		select {
+		case err = <-pr.done:
 		}
-		err = r.resp.Unmarshal(b)
+		pr.fetched = true
 		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		if r.resp.Error != nil {
-			return 0, nil, errInvalidResp.Gen("[%d %s]", r.resp.Error.GetCode(), r.resp.Error.GetMsg())
+			return 0, nil, err
 		}
 	}
-	if r.cursor >= len(r.resp.Rows) {
+	if pr.cursor >= len(pr.resp.Rows) {
 		return 0, nil, nil
 	}
-	row := r.resp.Rows[r.cursor]
-	data, err = tablecodec.DecodeValues(row.Data, r.fields, r.index)
+	row := pr.resp.Rows[pr.cursor]
+	data, err = tablecodec.DecodeValues(row.Data, pr.fields, pr.index)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
@@ -137,7 +182,7 @@ func (r *partialResult) Next() (handle int64, data []types.Datum, err error) {
 		// as caller will check if data is nil to finish iteration.
 		data = make([]types.Datum, 0)
 	}
-	if !r.aggregate {
+	if !pr.aggregate {
 		handleBytes := row.GetHandle()
 		datums, err := codec.Decode(handleBytes)
 		if err != nil {
@@ -145,12 +190,12 @@ func (r *partialResult) Next() (handle int64, data []types.Datum, err error) {
 		}
 		handle = datums[0].GetInt64()
 	}
-	r.cursor++
+	pr.cursor++
 	return
 }
 
 // Close closes the sub result.
-func (r *partialResult) Close() error {
+func (pr *partialResult) Close() error {
 	return nil
 }
 
@@ -168,7 +213,11 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrde
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
-	result := &selectResult{resp: resp}
+	result := &selectResult{
+		resp:    resp,
+		results: make(chan PartialResult, 5),
+		done:    make(chan error, 1),
+	}
 	// If Aggregates is not nil, we should set result fields latter.
 	if len(req.Aggregates) == 0 && len(req.GroupBy) == 0 {
 		if req.TableInfo != nil {

@@ -199,6 +199,7 @@ func (e *XSelectTableExec) doRequest() error {
 		// The returned rows should be aggregate partial result.
 		e.result.SetFields(e.aggFields)
 	}
+	e.result.Fetch()
 	return nil
 }
 
@@ -489,7 +490,12 @@ func (e *XSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	if e.indexPlan.OutOfOrder {
 		concurrency = 10
 	}
-	return xapi.Select(txn.GetClient(), selIdxReq, concurrency, !e.indexPlan.OutOfOrder)
+	sr, err := xapi.Select(txn.GetClient(), selIdxReq, concurrency, !e.indexPlan.OutOfOrder)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sr.Fetch()
+	return sr, nil
 }
 
 func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, error) {
@@ -533,6 +539,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, e
 		// The returned rows should be aggregate partial result.
 		resp.SetFields(e.aggFields)
 	}
+	resp.Fetch()
 	return resp, nil
 }
 

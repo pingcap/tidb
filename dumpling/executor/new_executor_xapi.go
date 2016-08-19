@@ -185,6 +185,7 @@ func (e *NewXSelectIndexExec) nextForSingleRead() (*Row, error) {
 			// The returned rows should be aggregate partial result.
 			e.result.SetFields(e.aggFields)
 		}
+		e.result.Fetch()
 	}
 	for {
 		if e.partialResult == nil {
@@ -282,6 +283,7 @@ func (e *NewXSelectIndexExec) fetchHandles() ([]int64, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	idxResult.Fetch()
 	handles, err := extractHandlesFromIndexResult(idxResult)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -492,6 +494,7 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult
 		// The returned rows should be aggregate partial result.
 		resp.SetFields(e.aggFields)
 	}
+	resp.Fetch()
 	return resp, nil
 }
 
@@ -573,6 +576,7 @@ func (e *NewXSelectTableExec) doRequest() error {
 		// The returned rows should be aggregate partial result.
 		e.result.SetFields(e.aggFields)
 	}
+	e.result.Fetch()
 	return nil
 }
 
