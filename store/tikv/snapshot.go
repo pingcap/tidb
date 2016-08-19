@@ -17,7 +17,6 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -107,10 +106,10 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 	pending := batch.keys
 	for {
 		req := &pb.Request{
-			Type: pb.MessageType_CmdBatchGet.Enum(),
+			Type: pb.MessageType_CmdBatchGet,
 			CmdBatchGetReq: &pb.CmdBatchGetRequest{
 				Keys:    pending,
-				Version: proto.Uint64(s.version.Ver),
+				Version: s.version.Ver,
 			},
 		}
 		resp, err := s.store.SendKVReq(bo, req, batch.region)
@@ -178,10 +177,10 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	req := &pb.Request{
-		Type: pb.MessageType_CmdGet.Enum(),
+		Type: pb.MessageType_CmdGet,
 		CmdGetReq: &pb.CmdGetRequest{
 			Key:     k,
-			Version: proto.Uint64(s.version.Ver),
+			Version: s.version.Ver,
 		},
 	}
 	for {
@@ -241,12 +240,12 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
 		return newLock(locked), nil
 	}
-	if keyErr.Retryable != nil {
+	if keyErr.Retryable != "" {
 		err := errors.Errorf("tikv restarts txn: %s", keyErr.GetRetryable())
 		log.Warn(err)
 		return nil, errors.Annotate(err, txnRetryableMark)
 	}
-	if keyErr.Abort != nil {
+	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
 		log.Warn(err)
 		return nil, errors.Trace(err)
