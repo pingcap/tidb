@@ -58,7 +58,7 @@ func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
 			b = EncodeInt(b, int64(val.GetMysqlDuration().Duration))
 		case types.KindMysqlDecimal:
 			b = append(b, decimalFlag)
-			b = EncodeDecimal(b, val.GetMysqlDecimal())
+			b = EncodeDecimal(b, val)
 		case types.KindMysqlHex:
 			b = encodeSignedInt(b, int64(val.GetMysqlHex().ToNumber()), comparable)
 		case types.KindMysqlBit:
@@ -116,6 +116,7 @@ func encodeUnsignedInt(b []byte, v uint64, comparable bool) []byte {
 
 // EncodeKey appends the encoded values to byte slice b, returns the appended
 // slice. It guarantees the encoded value is in ascending order for comparison.
+// For Decimal type, datum must set datum's length and frac.
 func EncodeKey(b []byte, v ...types.Datum) ([]byte, error) {
 	return encode(b, v, true)
 }
@@ -188,9 +189,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		b, v, err = DecodeCompactBytes(b)
 		d.SetBytes(v)
 	case decimalFlag:
-		var v mysql.Decimal
-		b, v, err = DecodeDecimal(b)
-		d.SetValue(v)
+		b, d, err = DecodeDecimal(b)
 	case durationFlag:
 		var r int64
 		b, r, err = DecodeInt(b)
@@ -238,7 +237,7 @@ func peek(b []byte) (length int, err error) {
 	case compactBytesFlag:
 		l, err = peekCompactBytes(b)
 	case decimalFlag:
-		l, err = peekDecimal(b)
+		l, err = mysql.DecimalPeak(b)
 	case varintFlag:
 		l, err = peekVarint(b)
 	case uvarintFlag:
@@ -290,25 +289,6 @@ func peekCompactBytes(b []byte) (int, error) {
 		return 0, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
 	}
 	return n + vi, nil
-}
-
-func peekDecimal(b []byte) (int, error) {
-	if len(b) < 1 || (len(b) < 9 && int64(b[0]) != zeroSign) {
-		return 0, errors.New("cutDecimal error: Invalid decimal data")
-	}
-	if int64(b[0]) == zeroSign {
-		return 1, nil
-	}
-	// The first byte is value sign.
-	// The following 8 bytes are exp value.
-	l := 9
-	desc := int64(b[l]) == negativeSign
-	// Abs value bytes
-	bl, err := peekBytes(b[l:], desc)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return l + bl, nil
 }
 
 func peekVarint(b []byte) (int, error) {

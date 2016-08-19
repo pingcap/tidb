@@ -158,13 +158,11 @@ func (e *Evaluator) evalFloat(val []byte, f32 bool) (types.Datum, error) {
 }
 
 func (e *Evaluator) evalDecimal(val []byte) (types.Datum, error) {
-	var d types.Datum
 	_, dec, err := codec.DecodeDecimal(val)
 	if err != nil {
-		return d, ErrInvalid.Gen("invalid decimal % x", val)
+		return dec, ErrInvalid.Gen("invalid decimal % x", val)
 	}
-	d.SetMysqlDecimal(dec)
-	return d, nil
+	return dec, nil
 }
 
 func (e *Evaluator) evalDuration(val []byte) (types.Datum, error) {

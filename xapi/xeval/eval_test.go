@@ -76,8 +76,8 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewDurationDatum(mysql.Duration{Duration: time.Hour}),
 		},
 		{
-			datumExpr(types.NewDecimalDatum(mysql.NewDecimalFromFloat(1.1))),
-			types.NewDecimalDatum(mysql.NewDecimalFromFloat(1.1)),
+			datumExpr(types.NewDecimalDatum(mysql.NewDecFromFloatForTest(1.1))),
+			types.NewDecimalDatum(mysql.NewDecFromFloatForTest(1.1)),
 		},
 		{
 			columnExpr(1),
@@ -272,7 +272,7 @@ func datumExpr(d types.Datum) *tipb.Expr {
 		expr.Val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal:
 		expr.Tp = tipb.ExprType_MysqlDecimal
-		expr.Val = codec.EncodeDecimal(nil, d.GetMysqlDecimal())
+		expr.Val = codec.EncodeDecimal(nil, d)
 	default:
 		expr.Tp = tipb.ExprType_Null
 	}
