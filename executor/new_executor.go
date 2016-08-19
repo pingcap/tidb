@@ -51,15 +51,16 @@ type HashJoinExec struct {
 	targetTypes []*types.FieldType
 
 	finished bool
-	wg       sync.WaitGroup // for sync multiple join workers
+	// for sync multiple join workers.
+	wg sync.WaitGroup
 
-	// Concurrent exec
+	// Concurrent channels.
 	concurrency      int
-	bigTableRows     []chan []*Row // channel for join workers to get big table rows
-	bigTableErr      chan error    // channel for join workers to get big table Next() error
+	bigTableRows     []chan []*Row
+	bigTableErr      chan error
 	hashJoinContexts []*hashJoinCtx
 
-	// output channel
+	// Channels for output.
 	resultErr  chan error
 	resultRows chan *Row
 }
@@ -67,7 +68,7 @@ type HashJoinExec struct {
 type hashJoinCtx struct {
 	bigFilter   expression.Expression
 	otherFilter expression.Expression
-	// Buffer
+	// Buffer used for encode hash keys.
 	datumBuffer   []types.Datum
 	hashKeyBuffer []byte
 }
@@ -252,7 +253,7 @@ func (e *HashJoinExec) doJoin(idx int) {
 			e.resultErr <- errors.Trace(err)
 			break
 		}
-		if !ok {
+		if !ok || e.finished {
 			break
 		}
 		for _, bigRow := range bigRows {
