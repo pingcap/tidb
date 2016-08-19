@@ -2,7 +2,6 @@ bin
 /interpreter/interpreter
 /interpreter/test
 /parser/parser.go
-/parser/scanner.go
 /tidb-server/tidb-server
 coverage.out
 .idea/

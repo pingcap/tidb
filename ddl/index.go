@@ -417,7 +417,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 		log.Debug("[ddl] building index...", handle)
 
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err := d.isReorgRunnable(txn); err != nil {
+			if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
 				return errors.Trace(err)
 			}
 
@@ -463,7 +463,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
 	prefix := tablecodec.EncodeTableIndexPrefix(t.Meta().ID, indexInfo.ID)
-	err := d.delKeysWithPrefix(prefix)
+	err := d.delKeysWithPrefix(prefix, ddlJobFlag)
 
 	return errors.Trace(err)
 }

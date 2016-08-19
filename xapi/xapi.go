@@ -17,7 +17,6 @@ import (
 	"io"
 	"io/ioutil"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -116,7 +115,7 @@ func (r *partialResult) Next() (handle int64, data []types.Datum, err error) {
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		err = proto.Unmarshal(b, r.resp)
+		err = r.resp.Unmarshal(b)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -206,10 +205,10 @@ func composeRequest(req *tipb.SelectRequest, concurrency int, keepOrder bool) (*
 		kvReq.KeyRanges = EncodeTableRanges(tid, req.Ranges)
 	}
 	if req.OrderBy != nil {
-		kvReq.Desc = *req.OrderBy[0].Desc
+		kvReq.Desc = req.OrderBy[0].Desc
 	}
 	var err error
-	kvReq.Data, err = proto.Marshal(req)
+	kvReq.Data, err = req.Marshal()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -240,15 +239,14 @@ func FieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
 
 func columnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
 	pc := &tipb.ColumnInfo{
-		ColumnId:  proto.Int64(c.ID),
-		Collation: proto.Int32(collationToProto(c.FieldType.Collate)),
-		ColumnLen: proto.Int32(int32(c.FieldType.Flen)),
-		Decimal:   proto.Int32(int32(c.FieldType.Decimal)),
-		Flag:      proto.Int32(int32(c.Flag)),
+		ColumnId:  c.ID,
+		Collation: collationToProto(c.FieldType.Collate),
+		ColumnLen: int32(c.FieldType.Flen),
+		Decimal:   int32(c.FieldType.Decimal),
+		Flag:      int32(c.Flag),
 		Elems:     c.Elems,
 	}
-	t := int32(c.FieldType.Tp)
-	pc.Tp = &t
+	pc.Tp = int32(c.FieldType.Tp)
 	return pc
 }
 
@@ -266,9 +264,9 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 	for _, c := range columns {
 		col := columnToProto(c)
 		if pkIsHandle && mysql.HasPriKeyFlag(c.Flag) {
-			col.PkHandle = proto.Bool(true)
+			col.PkHandle = true
 		} else {
-			col.PkHandle = proto.Bool(false)
+			col.PkHandle = false
 		}
 		cols = append(cols, col)
 	}
@@ -294,9 +292,9 @@ func ProtoColumnsToFieldTypes(pColumns []*tipb.ColumnInfo) []*types.FieldType {
 // IndexToProto converts a model.IndexInfo to a tipb.IndexInfo.
 func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
 	pi := &tipb.IndexInfo{
-		TableId: proto.Int64(t.ID),
-		IndexId: proto.Int64(idx.ID),
-		Unique:  proto.Bool(idx.Unique),
+		TableId: t.ID,
+		IndexId: idx.ID,
+		Unique:  idx.Unique,
 	}
 	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns)+1)
 	for _, c := range idx.Columns {
@@ -307,7 +305,7 @@ func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
 		for _, col := range t.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				colPB := columnToProto(col)
-				colPB.PkHandle = proto.Bool(true)
+				colPB.PkHandle = true
 				cols = append(cols, colPB)
 				break
 			}
