@@ -79,7 +79,7 @@ type Row struct {
 	RowKeys []*RowKeyEntry
 }
 
-// RowKeyEntry is designed for Delete statement in multi-table mode,
+// RowKeyEntry is designed for Update/Delete statement in multi-table mode,
 // we should know which table this row comes from.
 type RowKeyEntry struct {
 	// The table which this row come from.
@@ -817,7 +817,7 @@ type FilterExec struct {
 
 // Schema implements Executor Schema interface.
 func (e *FilterExec) Schema() expression.Schema {
-	return nil
+	return e.Src.Schema()
 }
 
 // Fields implements Executor Fields interface.
@@ -965,7 +965,7 @@ type SortExec struct {
 
 // Schema implements Executor Schema interface.
 func (e *SortExec) Schema() expression.Schema {
-	return nil
+	return e.Src.Schema()
 }
 
 // Fields implements Executor Fields interface.
@@ -1095,7 +1095,7 @@ type AggregateExec struct {
 
 // Schema implements Executor Schema interface.
 func (e *AggregateExec) Schema() expression.Schema {
-	return nil
+	return e.Src.Schema()
 }
 
 // Fields implements Executor Fields interface.
@@ -1327,7 +1327,7 @@ type ReverseExec struct {
 
 // Schema implements Executor Schema interface.
 func (e *ReverseExec) Schema() expression.Schema {
-	return nil
+	return e.Src.Schema()
 }
 
 // Fields implements Executor Fields interface.
