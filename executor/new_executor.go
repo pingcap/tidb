@@ -236,7 +236,7 @@ func (e *HashJoinExec) closeChanWorker() {
 	close(e.resultRows)
 }
 
-// do join job
+// doJoin does join job in one goroutine.
 func (e *HashJoinExec) doJoin(idx int) {
 	for {
 		var (
