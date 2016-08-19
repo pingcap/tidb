@@ -1,7 +1,7 @@
 {
 	"ImportPath": "github.com/pingcap/tidb",
 	"GoVersion": "go1.6",
-	"GodepVersion": "v66",
+	"GodepVersion": "v74",
 	"Packages": [
 		"./..."
 	],
@@ -209,7 +209,7 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-tipb",
-			"Rev": "dc302227931df1e204b537d318ef9f8f6f8e46dd"
+			"Rev": "81fd23ce3a1f12f80054c87a79cb2fbe8522ca71"
 		},
 		{
 			"ImportPath": "github.com/rcrowley/go-metrics",
@@ -393,6 +393,10 @@
 		{
 			"ImportPath": "github.com/prometheus/common/internal/bitbucket.org/ww/goautoneg",
 			"Rev": "bc0a4460d0fc2693fcdebafafbf07c6d18913b97"
+		},
+		{
+			"ImportPath": "github.com/cznic/golex/lex",
+			"Rev": "da5a7153a51074477ecac5c45a7e5182a0c72448"
 		}
 	]
 }

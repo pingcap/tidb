@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -166,14 +165,13 @@ func (e *XSelectTableExec) doRequest() error {
 		return errors.Trace(err)
 	}
 	selReq := new(tipb.SelectRequest)
-	startTs := txn.StartTS()
-	selReq.StartTs = &startTs
+	selReq.StartTs = txn.StartTS()
 	selReq.Fields = resultFieldsToPBExpression(e.tablePlan.Fields())
 	selReq.Where = e.where
 	selReq.Ranges = tableRangesToPBRanges(e.tablePlan.Ranges)
 	if e.supportDesc {
 		if e.tablePlan.Desc {
-			selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: &e.tablePlan.Desc})
+			selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: e.tablePlan.Desc})
 		}
 		// Limit can be pushed only if desc is supported.
 		if e.allFiltersPushed {
@@ -187,13 +185,13 @@ func (e *XSelectTableExec) doRequest() error {
 		}
 	}
 	selReq.TableInfo = &tipb.TableInfo{
-		TableId: proto.Int64(e.table.Meta().ID),
+		TableId: e.table.Meta().ID,
 	}
 	selReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
 	// Aggregate Info
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
-	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency)
+	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -470,15 +468,14 @@ func (e *XSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 		return nil, errors.Trace(err)
 	}
 	selIdxReq := new(tipb.SelectRequest)
-	startTs := txn.StartTS()
-	selIdxReq.StartTs = &startTs
+	selIdxReq.StartTs = txn.StartTS()
 	selIdxReq.IndexInfo = xapi.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	if len(e.indexPlan.FilterConditions) == 0 {
 		// Push limit to index request only if there is not filter conditions.
 		selIdxReq.Limit = e.indexPlan.LimitCount
 	}
 	if e.indexPlan.Desc {
-		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: &e.indexPlan.Desc})
+		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: e.indexPlan.Desc})
 	}
 	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
 	for i, v := range e.indexPlan.Index.Columns {
@@ -492,7 +489,7 @@ func (e *XSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	if e.indexPlan.OutOfOrder {
 		concurrency = 10
 	}
-	return xapi.Select(txn.GetClient(), selIdxReq, concurrency)
+	return xapi.Select(txn.GetClient(), selIdxReq, concurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, error) {
@@ -502,8 +499,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, e
 	}
 	// The handles are not in original index order, so we can't push limit here.
 	selTableReq := new(tipb.SelectRequest)
-	startTs := txn.StartTS()
-	selTableReq.StartTs = &startTs
+	selTableReq.StartTs = txn.StartTS()
 	columns := make([]*model.ColumnInfo, 0, len(e.indexPlan.Fields()))
 	for _, v := range e.indexPlan.Fields() {
 		if v.Referenced {
@@ -511,7 +507,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, e
 		}
 	}
 	selTableReq.TableInfo = &tipb.TableInfo{
-		TableId: proto.Int64(e.table.Meta().ID),
+		TableId: e.table.Meta().ID,
 	}
 	selTableReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
 	selTableReq.Fields = resultFieldsToPBExpression(e.indexPlan.Fields())
@@ -529,7 +525,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, e
 	// Aggregate Info
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
-	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency)
+	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -553,7 +549,7 @@ func (b *executorBuilder) conditionsToPBExpr(client kv.Client, exprs []ast.ExprN
 				pbexpr = v
 			} else {
 				// merge multiple converted pb expression into an AND expression.
-				pbexpr = &tipb.Expr{Tp: tipb.ExprType_And.Enum(), Children: []*tipb.Expr{pbexpr, v}}
+				pbexpr = &tipb.Expr{Tp: tipb.ExprType_And, Children: []*tipb.Expr{pbexpr, v}}
 			}
 		}
 	}
@@ -820,7 +816,7 @@ func (b *executorBuilder) aggFuncToPBExpr(client kv.Client, af *ast.AggregateFun
 		}
 		children = append(children, pbArg)
 	}
-	return &tipb.Expr{Tp: tp.Enum(), Children: children}
+	return &tipb.Expr{Tp: tp, Children: children}
 }
 
 func (b *executorBuilder) columnNameToPBExpr(client kv.Client, column *ast.ColumnNameExpr, tn *ast.TableName) *tipb.Expr {
@@ -832,7 +828,7 @@ func (b *executorBuilder) columnNameToPBExpr(client kv.Client, column *ast.Colum
 		return nil
 	}
 	switch column.Refer.Expr.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeDecimal, mysql.TypeGeometry,
+	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry,
 		mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeYear:
 		return nil
 	}
@@ -845,7 +841,7 @@ func (b *executorBuilder) columnNameToPBExpr(client kv.Client, column *ast.Colum
 	}
 	if matched {
 		pbExpr := new(tipb.Expr)
-		pbExpr.Tp = tipb.ExprType_ColumnRef.Enum()
+		pbExpr.Tp = tipb.ExprType_ColumnRef
 		pbExpr.Val = codec.EncodeInt(nil, column.Refer.Column.ID)
 		return pbExpr
 	}
@@ -890,7 +886,7 @@ func (b *executorBuilder) datumToPBExpr(client kv.Client, d types.Datum) *tipb.E
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
 		return nil
 	}
-	return &tipb.Expr{Tp: tp.Enum(), Val: val}
+	return &tipb.Expr{Tp: tp, Val: val}
 }
 
 func (b *executorBuilder) binopToPBExpr(client kv.Client, expr *ast.BinaryOperationExpr, tn *ast.TableName) *tipb.Expr {
@@ -932,7 +928,7 @@ func (b *executorBuilder) binopToPBExpr(client kv.Client, expr *ast.BinaryOperat
 	if rightExpr == nil {
 		return nil
 	}
-	return &tipb.Expr{Tp: tp.Enum(), Children: []*tipb.Expr{leftExpr, rightExpr}}
+	return &tipb.Expr{Tp: tp, Children: []*tipb.Expr{leftExpr, rightExpr}}
 }
 
 // Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
@@ -963,11 +959,11 @@ func (b *executorBuilder) likeToPBExpr(client kv.Client, expr *ast.PatternLikeEx
 	if targetExpr == nil {
 		return nil
 	}
-	likeExpr := &tipb.Expr{Tp: tipb.ExprType_Like.Enum(), Children: []*tipb.Expr{targetExpr, patternExpr}}
+	likeExpr := &tipb.Expr{Tp: tipb.ExprType_Like, Children: []*tipb.Expr{targetExpr, patternExpr}}
 	if !expr.Not {
 		return likeExpr
 	}
-	return &tipb.Expr{Tp: tipb.ExprType_Not.Enum(), Children: []*tipb.Expr{likeExpr}}
+	return &tipb.Expr{Tp: tipb.ExprType_Not, Children: []*tipb.Expr{likeExpr}}
 }
 
 func (b *executorBuilder) unaryToPBExpr(client kv.Client, expr *ast.UnaryOperationExpr, tn *ast.TableName) *tipb.Expr {
@@ -983,7 +979,7 @@ func (b *executorBuilder) unaryToPBExpr(client kv.Client, expr *ast.UnaryOperati
 	if child == nil {
 		return nil
 	}
-	return &tipb.Expr{Tp: tipb.ExprType_Not.Enum(), Children: []*tipb.Expr{child}}
+	return &tipb.Expr{Tp: tipb.ExprType_Not, Children: []*tipb.Expr{child}}
 }
 
 func (b *executorBuilder) subqueryToPBExpr(client kv.Client, expr *ast.SubqueryExpr) *tipb.Expr {
@@ -1023,11 +1019,11 @@ func (b *executorBuilder) patternInToPBExpr(client kv.Client, expr *ast.PatternI
 	if listExpr == nil {
 		return nil
 	}
-	inExpr := &tipb.Expr{Tp: tipb.ExprType_In.Enum(), Children: []*tipb.Expr{pbExpr, listExpr}}
+	inExpr := &tipb.Expr{Tp: tipb.ExprType_In, Children: []*tipb.Expr{pbExpr, listExpr}}
 	if !expr.Not {
 		return inExpr
 	}
-	return &tipb.Expr{Tp: tipb.ExprType_Not.Enum(), Children: []*tipb.Expr{inExpr}}
+	return &tipb.Expr{Tp: tipb.ExprType_Not, Children: []*tipb.Expr{inExpr}}
 }
 
 func (b *executorBuilder) exprListToPBExpr(client kv.Client, list []ast.ExprNode, tn *ast.TableName) *tipb.Expr {
@@ -1070,5 +1066,5 @@ func (b *executorBuilder) datumsToValueList(datums []types.Datum) *tipb.Expr {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	return &tipb.Expr{Tp: tipb.ExprType_ValueList.Enum(), Val: val}
+	return &tipb.Expr{Tp: tipb.ExprType_ValueList, Val: val}
 }

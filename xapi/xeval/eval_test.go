@@ -229,7 +229,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 
 func binaryExpr(left, right interface{}, tp tipb.ExprType) *tipb.Expr {
 	expr := new(tipb.Expr)
-	expr.Tp = tp.Enum()
+	expr.Tp = tp
 	expr.Children = make([]*tipb.Expr, 2)
 	switch x := left.(type) {
 	case types.Datum:
@@ -250,38 +250,38 @@ func datumExpr(d types.Datum) *tipb.Expr {
 	expr := new(tipb.Expr)
 	switch d.Kind() {
 	case types.KindInt64:
-		expr.Tp = tipb.ExprType_Int64.Enum()
+		expr.Tp = tipb.ExprType_Int64
 		expr.Val = codec.EncodeInt(nil, d.GetInt64())
 	case types.KindUint64:
-		expr.Tp = tipb.ExprType_Uint64.Enum()
+		expr.Tp = tipb.ExprType_Uint64
 		expr.Val = codec.EncodeUint(nil, d.GetUint64())
 	case types.KindString:
-		expr.Tp = tipb.ExprType_String.Enum()
+		expr.Tp = tipb.ExprType_String
 		expr.Val = d.GetBytes()
 	case types.KindBytes:
-		expr.Tp = tipb.ExprType_Bytes.Enum()
+		expr.Tp = tipb.ExprType_Bytes
 		expr.Val = d.GetBytes()
 	case types.KindFloat32:
-		expr.Tp = tipb.ExprType_Float32.Enum()
+		expr.Tp = tipb.ExprType_Float32
 		expr.Val = codec.EncodeFloat(nil, d.GetFloat64())
 	case types.KindFloat64:
-		expr.Tp = tipb.ExprType_Float64.Enum()
+		expr.Tp = tipb.ExprType_Float64
 		expr.Val = codec.EncodeFloat(nil, d.GetFloat64())
 	case types.KindMysqlDuration:
-		expr.Tp = tipb.ExprType_MysqlDuration.Enum()
+		expr.Tp = tipb.ExprType_MysqlDuration
 		expr.Val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal:
-		expr.Tp = tipb.ExprType_MysqlDecimal.Enum()
+		expr.Tp = tipb.ExprType_MysqlDecimal
 		expr.Val = codec.EncodeDecimal(nil, d.GetMysqlDecimal())
 	default:
-		expr.Tp = tipb.ExprType_Null.Enum()
+		expr.Tp = tipb.ExprType_Null
 	}
 	return expr
 }
 
 func columnExpr(columnID int64) *tipb.Expr {
 	expr := new(tipb.Expr)
-	expr.Tp = tipb.ExprType_ColumnRef.Enum()
+	expr.Tp = tipb.ExprType_ColumnRef
 	expr.Val = codec.EncodeInt(nil, columnID)
 	return expr
 }
@@ -289,12 +289,12 @@ func columnExpr(columnID int64) *tipb.Expr {
 func likeExpr(target, pattern string) *tipb.Expr {
 	targetExpr := datumExpr(types.NewStringDatum(target))
 	patternExpr := datumExpr(types.NewStringDatum(pattern))
-	return &tipb.Expr{Tp: tipb.ExprType_Like.Enum(), Children: []*tipb.Expr{targetExpr, patternExpr}}
+	return &tipb.Expr{Tp: tipb.ExprType_Like, Children: []*tipb.Expr{targetExpr, patternExpr}}
 }
 
 func notExpr(value interface{}) *tipb.Expr {
 	expr := new(tipb.Expr)
-	expr.Tp = tipb.ExprType_Not.Enum()
+	expr.Tp = tipb.ExprType_Not
 	switch x := value.(type) {
 	case types.Datum:
 		expr.Children = []*tipb.Expr{datumExpr(x)}
@@ -426,6 +426,6 @@ func inExpr(target interface{}, list ...interface{}) *tipb.Expr {
 	types.SortDatums(listDatums)
 	targetExpr := datumExpr(targetDatum)
 	val, _ := codec.EncodeValue(nil, listDatums...)
-	listExpr := &tipb.Expr{Tp: tipb.ExprType_ValueList.Enum(), Val: val}
-	return &tipb.Expr{Tp: tipb.ExprType_In.Enum(), Children: []*tipb.Expr{targetExpr, listExpr}}
+	listExpr := &tipb.Expr{Tp: tipb.ExprType_ValueList, Val: val}
+	return &tipb.Expr{Tp: tipb.ExprType_In, Children: []*tipb.Expr{targetExpr, listExpr}}
 }
