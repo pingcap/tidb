@@ -46,6 +46,9 @@ type SelectResult interface {
 	SetFields(fields []*types.FieldType)
 	// Close closes the iterator.
 	Close() error
+	// Fetch fetches partial results from client.
+	// The caller should call SetFields() before call Fetch().
+	Fetch()
 }
 
 // PartialResult is the result from a single region server.
@@ -66,6 +69,10 @@ type selectResult struct {
 
 	results chan PartialResult
 	done    chan error
+}
+
+func (r *selectResult) Fetch() {
+	go r.fetch()
 }
 
 func (r *selectResult) fetch() {
@@ -227,7 +234,6 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrde
 	} else {
 		result.aggregate = true
 	}
-	go result.fetch()
 	return result, nil
 }
 
