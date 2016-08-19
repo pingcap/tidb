@@ -65,6 +65,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildDeallocate(v)
 	case *plan.Delete:
 		return b.buildDelete(v)
+	case *plan.NewDelete:
+		return b.buildNewDelete(v)
 	case *plan.Distinct:
 		return b.buildDistinct(v)
 	case *plan.Execute:
@@ -112,6 +114,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildNewUnion(v)
 	case *plan.Update:
 		return b.buildUpdate(v)
+	case *plan.NewUpdate:
+		return b.buildNewUpdate(v)
 	case *plan.PhysicalHashJoin:
 		return b.buildJoin(v)
 	case *plan.PhysicalHashSemiJoin:

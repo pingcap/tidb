@@ -138,6 +138,23 @@ type NewSort struct {
 	ExecLimit *Limit
 }
 
+// NewUpdate represents NewUpdate plan.
+type NewUpdate struct {
+	baseLogicalPlan
+
+	SelectPlan  Plan
+	OrderedList []*expression.Assignment
+}
+
+// NewDelete represents a delete plan.
+type NewDelete struct {
+	baseLogicalPlan
+
+	SelectPlan   Plan
+	Tables       []*ast.TableName
+	IsMultiTable bool
+}
+
 // AddChild for parent.
 func addChild(parent Plan, child Plan) {
 	if child == nil || parent == nil {
