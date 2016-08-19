@@ -178,10 +178,9 @@ func toPBError(err error) *tipb.Error {
 		return nil
 	}
 	perr := new(tipb.Error)
-	code := int32(1)
-	perr.Code = &code
+	perr.Code = int32(1)
 	errStr := err.Error()
-	perr.Msg = &errStr
+	perr.Msg = errStr
 	return perr
 }
 
@@ -255,7 +254,7 @@ func (h *rpcHandler) extractKVRanges(sel *tipb.SelectRequest) (kvRanges []kv.Key
 		kvRanges = append(kvRanges, kvr)
 	}
 	if sel.OrderBy != nil {
-		desc = *sel.OrderBy[0].Desc
+		desc = sel.OrderBy[0].Desc
 	}
 	if desc {
 		reverseKVRanges(kvRanges)
