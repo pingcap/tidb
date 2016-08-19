@@ -15,7 +15,6 @@ package plan
 
 import (
 	"fmt"
-	"math"
 	"strings"
 )
 
@@ -27,7 +26,7 @@ func ToString(p Plan) string {
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch in.(type) {
-	case *JoinOuter, *JoinInner, *Join, *Union, *NewUnion, *PhysicalHashJoin, *PhysicalHashSemiJoin:
+	case *Join, *NewUnion, *PhysicalHashJoin, *PhysicalHashSemiJoin:
 		idxs = append(idxs, len(strs))
 	}
 
@@ -39,11 +38,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch x := in.(type) {
 	case *CheckTable:
 		str = "CheckTable"
-	case *IndexScan:
-		str = fmt.Sprintf("Index(%s.%s)", x.Table.Name.L, x.Index.Name.L)
-		if x.LimitCount != nil {
-			str += fmt.Sprintf(" + Limit(%v)", *x.LimitCount)
-		}
 	case *PhysicalIndexScan:
 		str = fmt.Sprintf("Index(%s.%s)%v", x.Table.Name.L, x.Index.Name.L, x.Ranges)
 	case *PhysicalTableScan:
@@ -87,52 +81,17 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "MaxOneRow"
 	case *Limit:
 		str = "Limit"
-	case *SelectFields:
-		str = "Fields"
 	case *SelectLock:
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
 	case *Filter:
 		str = "Filter"
-	case *Sort:
-		str = "Sort"
-		if x.ExecLimit != nil {
-			str += fmt.Sprintf(" + Limit(%v) + Offset(%v)", x.ExecLimit.Count, x.ExecLimit.Offset)
-		}
 	case *NewSort:
 		str = "Sort"
 		if x.ExecLimit != nil {
 			str += fmt.Sprintf(" + Limit(%v) + Offset(%v)", x.ExecLimit.Count, x.ExecLimit.Offset)
 		}
-	case *TableScan:
-		if len(x.Ranges) > 0 {
-			ran := x.Ranges[0]
-			if ran.LowVal != math.MinInt64 || ran.HighVal != math.MaxInt64 {
-				str = fmt.Sprintf("Range(%s)", x.Table.Name.L)
-			} else {
-				str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
-			}
-		} else {
-			str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
-		}
-		if x.LimitCount != nil {
-			str += fmt.Sprintf(" + Limit(%v)", *x.LimitCount)
-		}
-	case *JoinOuter:
-		last := len(idxs) - 1
-		idx := idxs[last]
-		children := strs[idx:]
-		strs = strs[:idx]
-		str = "OuterJoin{" + strings.Join(children, "->") + "}"
-		idxs = idxs[:last]
-	case *JoinInner:
-		last := len(idxs) - 1
-		idx := idxs[last]
-		children := strs[idx:]
-		strs = strs[:idx]
-		str = "InnerJoin{" + strings.Join(children, "->") + "}"
-		idxs = idxs[:last]
 	case *Join:
 		last := len(idxs) - 1
 		idx := idxs[last]
@@ -140,7 +99,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		str = "Join{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
-	case *Union, *NewUnion:
+	case *NewUnion:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -155,8 +114,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Projection"
 	case *Aggregation:
 		str = "Aggr"
-	case *Aggregate:
-		str = "Aggregate"
 	case *Distinct:
 		str = "Distinct"
 	case *Trim:
