@@ -400,7 +400,7 @@ func initColumnIndexInExpr(expr expression.Expression, schema expression.Schema)
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
 func (p *NewDelete) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
-	outer, err := p.baseLogicalPlan.PruneColumnsAndResolveIndices(p.GetSchema())
+	outer, err := p.baseLogicalPlan.PruneColumnsAndResolveIndices(nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

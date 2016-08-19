@@ -89,8 +89,8 @@ func (e *NewUpdateExec) Next() (*Row, error) {
 	return &Row{}, nil
 }
 
-func getNewUpdateColumns(assignList []*expression.Assignment) (map[int]bool, error) {
-	assignFlag := make(map[int]bool, len(assignList))
+func getNewUpdateColumns(assignList []*expression.Assignment) ([]bool, error) {
+	assignFlag := make([]bool, len(assignList))
 	for i, v := range assignList {
 		if v != nil {
 			assignFlag[i] = true

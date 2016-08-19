@@ -102,8 +102,8 @@ func (e *UpdateExec) Next() (*Row, error) {
 	return &Row{}, nil
 }
 
-func getUpdateColumns(assignList []*ast.Assignment) (map[int]bool, error) {
-	assignFlag := make(map[int]bool, len(assignList))
+func getUpdateColumns(assignList []*ast.Assignment) ([]bool, error) {
+	assignFlag := make([]bool, len(assignList))
 	for i, v := range assignList {
 		if v != nil {
 			assignFlag[i] = true
@@ -160,7 +160,7 @@ func (e *UpdateExec) getTableOffset(t table.Table) int {
 	return 0
 }
 
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag map[int]bool, t table.Table, offset int, onDuplicateUpdate bool) error {
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, offset int, onDuplicateUpdate bool) error {
 	cols := t.Cols()
 	touched := make(map[int]bool, len(cols))
 	assignExists := false
@@ -315,18 +315,24 @@ func (e *DeleteExec) Next() (*Row, error) {
 				}
 			}
 		} else {
-			fs := e.SelectExec.Schema()
-			for _, f := range fs {
-				tblNames[f.TblName.L] = f.TblName.L
+			schema := e.SelectExec.Schema()
+			for _, s := range schema {
+				tblNames[s.TblName.L] = s.TblName.L
 			}
 		}
-		for _, t := range e.Tables {
-			// Consider DBName.
-			_, ok := tblNames[t.Name.L]
-			if !ok {
-				return nil, errors.Errorf("Unknown table '%s' in MULTI DELETE", t.Name.O)
+		if len(tblNames) != 0 {
+			for _, t := range e.Tables {
+				// Consider DBName.
+				_, ok := tblNames[t.Name.L]
+				if !ok {
+					return nil, errors.Errorf("Unknown table '%s' in MULTI DELETE", t.Name.O)
+				}
+				tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
 			}
-			tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
+		} else { // all columns have been pruned
+			for _, t := range e.Tables {
+				tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
+			}
 		}
 	}
 
@@ -793,7 +799,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 		}
 		newData[i] = val
 	}
-	assignFlag := make(map[int]bool, len(e.Table.Cols()))
+	assignFlag := make([]bool, len(e.Table.Cols()))
 	for i, asgn := range cols {
 		if asgn != nil {
 			assignFlag[i] = true

@@ -1105,7 +1105,6 @@ func (b *planBuilder) buildNewDelete(delete *ast.DeleteStmt) LogicalPlan {
 		IsMultiTable: delete.IsMultiTable,
 		SelectPlan:   p,
 	}
-	del.SetSchema(p.GetSchema().DeepCopy())
 	addChild(del, p)
 	return del
 
