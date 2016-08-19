@@ -101,7 +101,7 @@ func (w *GCWorker) start(ver uint64) {
 			safePoint = ver.Ver
 		case <-w.quit:
 			log.Infof("[gc worker] (%s) quit.", w.uuid)
-			break
+			return
 		}
 	}
 }
