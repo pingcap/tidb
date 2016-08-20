@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"sync"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -44,13 +43,13 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
 			mutations[string(k)] = &pb.Mutation{
-				Op:    pb.Op_Put.Enum(),
+				Op:    pb.Op_Put,
 				Key:   k,
 				Value: v,
 			}
 		} else {
 			mutations[string(k)] = &pb.Mutation{
-				Op:  pb.Op_Del.Enum(),
+				Op:  pb.Op_Del,
 				Key: k,
 			}
 		}
@@ -68,7 +67,7 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	for _, lockKey := range txn.lockKeys {
 		if _, ok := mutations[string(lockKey)]; !ok {
 			mutations[string(lockKey)] = &pb.Mutation{
-				Op:  pb.Op_Lock.Enum(),
+				Op:  pb.Op_Lock,
 				Key: lockKey,
 			}
 			keys = append(keys, lockKey)
@@ -175,11 +174,11 @@ func (c *txnCommitter) prewriteSingleRegion(bo *Backoffer, batch batchKeys) erro
 		mutations[i] = c.mutations[string(k)]
 	}
 	req := &pb.Request{
-		Type: pb.MessageType_CmdPrewrite.Enum(),
+		Type: pb.MessageType_CmdPrewrite,
 		CmdPrewriteReq: &pb.CmdPrewriteRequest{
 			Mutations:    mutations,
 			PrimaryLock:  c.primary(),
-			StartVersion: proto.Uint64(c.startTS),
+			StartVersion: c.startTS,
 		},
 	}
 
@@ -231,11 +230,11 @@ func (c *txnCommitter) prewriteSingleRegion(bo *Backoffer, batch batchKeys) erro
 
 func (c *txnCommitter) commitSingleRegion(bo *Backoffer, batch batchKeys) error {
 	req := &pb.Request{
-		Type: pb.MessageType_CmdCommit.Enum(),
+		Type: pb.MessageType_CmdCommit,
 		CmdCommitReq: &pb.CmdCommitRequest{
-			StartVersion:  proto.Uint64(c.startTS),
+			StartVersion:  c.startTS,
 			Keys:          batch.keys,
-			CommitVersion: proto.Uint64(c.commitTS),
+			CommitVersion: c.commitTS,
 		},
 	}
 
@@ -281,10 +280,10 @@ func (c *txnCommitter) commitSingleRegion(bo *Backoffer, batch batchKeys) error 
 
 func (c *txnCommitter) cleanupSingleRegion(bo *Backoffer, batch batchKeys) error {
 	req := &pb.Request{
-		Type: pb.MessageType_CmdBatchRollback.Enum(),
+		Type: pb.MessageType_CmdBatchRollback,
 		CmdBatchRollbackReq: &pb.CmdBatchRollbackRequest{
 			Keys:         batch.keys,
-			StartVersion: proto.Uint64(c.startTS),
+			StartVersion: c.startTS,
 		},
 	}
 	resp, err := c.store.SendKVReq(bo, req, batch.region)
