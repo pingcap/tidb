@@ -515,6 +515,7 @@ type NewXSelectTableExec struct {
 	desc          bool
 	limitCount    *int64
 	returnedRows  uint64 // returned rowCount
+	keepOrder     bool
 
 	/*
 		The following attributes are used for aggregation push down.
@@ -566,8 +567,7 @@ func (e *NewXSelectTableExec) doRequest() error {
 	// Aggregate Info
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
-	keepOrder := false
-	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency, keepOrder)
+	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}
