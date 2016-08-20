@@ -244,9 +244,12 @@ func (it *copIterator) run() {
 
 // Return next coprocessor result.
 func (it *copIterator) Next() (io.ReadCloser, error) {
+	it.mu.RLock()
 	if it.mu.finished {
+		it.mu.RUnlock()
 		return nil, nil
 	}
+	it.mu.RUnlock()
 	var (
 		resp *coprocessor.Response
 		err  error
