@@ -14,12 +14,10 @@
 package executor
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -35,50 +33,6 @@ type explainEntry struct {
 	ref          string
 	rows         int64
 	extra        []string
-}
-
-func (e *explainEntry) setJoinTypeForTableScan(p *plan.TableScan) {
-	if len(p.AccessConditions) == 0 {
-		e.joinType = "ALL"
-		return
-	}
-	if p.RefAccess {
-		e.joinType = "eq_ref"
-		return
-	}
-	for _, con := range p.AccessConditions {
-		if x, ok := con.(*ast.BinaryOperationExpr); ok {
-			if x.Op == opcode.EQ {
-				e.joinType = "const"
-				return
-			}
-		}
-	}
-	e.joinType = "range"
-}
-
-func (e *explainEntry) setJoinTypeForIndexScan(p *plan.IndexScan) {
-	if len(p.AccessConditions) == 0 {
-		e.joinType = "index"
-		return
-	}
-	if len(p.AccessConditions) == p.AccessEqualCount {
-		if p.RefAccess {
-			if p.Index.Unique {
-				e.joinType = "eq_ref"
-			} else {
-				e.joinType = "ref"
-			}
-		} else {
-			if p.Index.Unique {
-				e.joinType = "const"
-			} else {
-				e.joinType = "range"
-			}
-		}
-		return
-	}
-	e.joinType = "range"
 }
 
 // ExplainExec represents an explain executor.
@@ -154,11 +108,11 @@ type explainVisitor struct {
 
 func (v *explainVisitor) explain(p plan.Plan) {
 	switch x := p.(type) {
-	case *plan.TableScan:
+	case *plan.PhysicalTableScan:
 		v.entries = append(v.entries, v.newEntryForTableScan(x))
-	case *plan.IndexScan:
+	case *plan.PhysicalIndexScan:
 		v.entries = append(v.entries, v.newEntryForIndexScan(x))
-	case *plan.Sort:
+	case *plan.NewSort:
 		v.sort = true
 	}
 
@@ -167,18 +121,17 @@ func (v *explainVisitor) explain(p plan.Plan) {
 	}
 }
 
-func (v *explainVisitor) newEntryForTableScan(p *plan.TableScan) *explainEntry {
+func (v *explainVisitor) newEntryForTableScan(p *plan.PhysicalTableScan) *explainEntry {
 	entry := &explainEntry{
 		ID:         v.id,
 		selectType: "SIMPLE",
 		table:      p.Table.Name.O,
 	}
-	entry.setJoinTypeForTableScan(p)
 	if entry.joinType != "ALL" {
 		entry.key = "PRIMARY"
 		entry.keyLen = "8"
 	}
-	if len(p.AccessConditions)+len(p.FilterConditions) > 0 {
+	if len(p.AccessCondition) > 0 {
 		entry.extra = append(entry.extra, "Using where")
 	}
 
@@ -186,27 +139,14 @@ func (v *explainVisitor) newEntryForTableScan(p *plan.TableScan) *explainEntry {
 	return entry
 }
 
-func (v *explainVisitor) newEntryForIndexScan(p *plan.IndexScan) *explainEntry {
+func (v *explainVisitor) newEntryForIndexScan(p *plan.PhysicalIndexScan) *explainEntry {
 	entry := &explainEntry{
 		ID:         v.id,
 		selectType: "SIMPLE",
 		table:      p.Table.Name.O,
 		key:        p.Index.Name.O,
 	}
-	if len(p.AccessConditions) != 0 {
-		keyLen := 0
-		for i := 0; i < len(p.Index.Columns); i++ {
-			if i < p.AccessEqualCount {
-				keyLen += p.Index.Columns[i].Length
-			} else if i < len(p.AccessConditions) {
-				keyLen += p.Index.Columns[i].Length
-				break
-			}
-		}
-		entry.keyLen = strconv.Itoa(keyLen)
-	}
-	entry.setJoinTypeForIndexScan(p)
-	if len(p.AccessConditions)+len(p.FilterConditions) > 0 {
+	if len(p.AccessCondition) > 0 {
 		entry.extra = append(entry.extra, "Using where")
 	}
 
