@@ -18,6 +18,7 @@ import (
 )
 
 func (s *testSuite) TestExplain(c *C) {
+	// TODO: Recover this test after supporting explain clause.
 	//defer testleak.AfterTest(c)()
 	//tk := testkit.NewTestKit(c, s.store)
 	//tk.MustExec("use test")
