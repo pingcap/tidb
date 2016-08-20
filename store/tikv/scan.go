@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -136,11 +135,11 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return errors.Trace(err)
 		}
 		req := &pb.Request{
-			Type: pb.MessageType_CmdScan.Enum(),
+			Type: pb.MessageType_CmdScan,
 			CmdScanReq: &pb.CmdScanRequest{
 				StartKey: []byte(s.nextStartKey),
-				Limit:    proto.Uint32(uint32(s.batchSize)),
-				Version:  proto.Uint64(s.startTS()),
+				Limit:    uint32(s.batchSize),
+				Version:  s.startTS(),
 			},
 		}
 		resp, err := s.snapshot.store.SendKVReq(bo, req, region.VerID())

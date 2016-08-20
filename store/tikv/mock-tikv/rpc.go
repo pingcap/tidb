@@ -194,7 +194,7 @@ func (h *rpcHandler) onCleanup(req *kvrpcpb.CmdCleanupRequest) *kvrpcpb.CmdClean
 	err := h.mvccStore.Cleanup(req.Key, req.GetStartVersion())
 	if err != nil {
 		if commitTS, ok := err.(ErrAlreadyCommitted); ok {
-			resp.CommitVersion = proto.Uint64(uint64(commitTS))
+			resp.CommitVersion = uint64(commitTS)
 		} else {
 			resp.Error = convertToKeyError(err)
 		}
@@ -272,17 +272,17 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 			Locked: &kvrpcpb.LockInfo{
 				Key:         locked.Key,
 				PrimaryLock: locked.Primary,
-				LockVersion: proto.Uint64(locked.StartTS),
+				LockVersion: locked.StartTS,
 			},
 		}
 	}
 	if retryable, ok := err.(ErrRetryable); ok {
 		return &kvrpcpb.KeyError{
-			Retryable: proto.String(retryable.Error()),
+			Retryable: retryable.Error(),
 		}
 	}
 	return &kvrpcpb.KeyError{
-		Abort: proto.String(err.Error()),
+		Abort: err.Error(),
 	}
 }
 
