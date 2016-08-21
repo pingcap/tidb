@@ -17,7 +17,6 @@ import (
 	"container/list"
 	"sync"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
@@ -139,10 +138,10 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	}
 	var status txnStatus
 	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdCleanup.Enum(),
+		Type: kvrpcpb.MessageType_CmdCleanup,
 		CmdCleanupReq: &kvrpcpb.CmdCleanupRequest{
 			Key:          primary,
-			StartVersion: proto.Uint64(txnID),
+			StartVersion: txnID,
 		},
 	}
 	for {
@@ -168,7 +167,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			return status, errors.Errorf("unexpected cleanup err: %s", keyErr)
 		}
-		if cmdResp.CommitVersion != nil {
+		if cmdResp.CommitVersion != 0 {
 			status = txnStatus(cmdResp.GetCommitVersion())
 		}
 		lr.saveResolved(txnID, status)
@@ -186,13 +185,13 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status txnStatus, cl
 			return nil
 		}
 		req := &kvrpcpb.Request{
-			Type: kvrpcpb.MessageType_CmdResolveLock.Enum(),
+			Type: kvrpcpb.MessageType_CmdResolveLock,
 			CmdResolveLockReq: &kvrpcpb.CmdResolveLockRequest{
-				StartVersion: proto.Uint64(l.TxnID),
+				StartVersion: l.TxnID,
 			},
 		}
 		if status.isCommitted() {
-			req.GetCmdResolveLockReq().CommitVersion = proto.Uint64(status.commitTS())
+			req.GetCmdResolveLockReq().CommitVersion = status.commitTS()
 		}
 		resp, err := lr.store.SendKVReq(bo, req, region.VerID())
 		if err != nil {

@@ -16,7 +16,6 @@ package mocktikv
 import (
 	"testing"
 
-	"github.com/gogo/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/util/codec"
@@ -48,7 +47,7 @@ func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
 	var mutations []*kvrpcpb.Mutation
 	for i := 0; i < len(kvpairs); i += 2 {
 		mutations = append(mutations, &kvrpcpb.Mutation{
-			Op:    kvrpcpb.Op_Put.Enum(),
+			Op:    kvrpcpb.Op_Put,
 			Key:   encodeKey(kvpairs[i]),
 			Value: []byte(kvpairs[i+1]),
 		})
@@ -60,7 +59,7 @@ func lock(key, primary string, ts uint64) *kvrpcpb.LockInfo {
 	return &kvrpcpb.LockInfo{
 		Key:         encodeKey(key),
 		PrimaryLock: encodeKey(primary),
-		LockVersion: proto.Uint64(ts),
+		LockVersion: ts,
 	}
 }
 
@@ -98,7 +97,7 @@ func (s *testMockTiKVSuite) mustPutOK(c *C, key, value string, startTS, commitTS
 func (s *testMockTiKVSuite) mustDeleteOK(c *C, key string, startTS, commitTS uint64) {
 	mutations := []*kvrpcpb.Mutation{
 		{
-			Op:  kvrpcpb.Op_Del.Enum(),
+			Op:  kvrpcpb.Op_Del,
 			Key: encodeKey(key),
 		},
 	}

@@ -201,6 +201,7 @@ func (b *executorBuilder) toPBExpr(conditions []expression.Expression, tbl *mode
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	child := v.GetChildByIndex(0)
+	oldConditions := v.Conditions
 	var src Executor
 	switch x := child.(type) {
 	case *plan.PhysicalTableScan:
@@ -220,15 +221,18 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	}
 
 	if len(v.Conditions) == 0 {
+		v.Conditions = oldConditions
 		return src
 	}
 
-	return &SelectionExec{
+	exec := &SelectionExec{
 		Src:       src,
 		Condition: expression.ComposeCNFCondition(v.Conditions),
 		schema:    v.GetSchema(),
 		ctx:       b.ctx,
 	}
+	copy(v.Conditions, oldConditions)
+	return exec
 }
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
@@ -271,6 +275,7 @@ func (b *executorBuilder) buildNewTableScan(v *plan.PhysicalTableScan, s *plan.S
 			ranges:      v.Ranges,
 			desc:        v.Desc,
 			limitCount:  v.LimitCount,
+			keepOrder:   v.KeepOrder,
 		}
 		ret = st
 		if !txn.IsReadOnly() {
@@ -411,8 +416,23 @@ func (b *executorBuilder) buildNewUnion(v *plan.NewUnion) Executor {
 	return e
 }
 
+func (b *executorBuilder) buildNewUpdate(v *plan.NewUpdate) Executor {
+	selExec := b.build(v.SelectPlan)
+	return &NewUpdateExec{ctx: b.ctx, SelectExec: selExec, OrderedList: v.OrderedList}
+}
+
 func (b *executorBuilder) buildDummyScan(v *plan.PhysicalDummyScan) Executor {
 	return &DummyScanExec{
 		schema: v.GetSchema(),
+	}
+}
+
+func (b *executorBuilder) buildNewDelete(v *plan.NewDelete) Executor {
+	selExec := b.build(v.SelectPlan)
+	return &DeleteExec{
+		ctx:          b.ctx,
+		SelectExec:   selExec,
+		Tables:       v.Tables,
+		IsMultiTable: v.IsMultiTable,
 	}
 }

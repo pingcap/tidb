@@ -57,6 +57,9 @@ type PhysicalTableScan struct {
 	TableAsName *model.CIStr
 
 	LimitCount *int64
+
+	// If sort data by scanning pkcol, KeepOrder should be true.
+	KeepOrder bool
 }
 
 // PhysicalDummyScan is a dummy table that returns nothing.
@@ -208,7 +211,19 @@ func (p *Aggregation) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
+func (p *NewUpdate) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalDummyScan) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *NewDelete) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }

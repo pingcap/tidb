@@ -66,7 +66,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		txn := newTxn(rs.store, kv.Version{Ver: uint64(*sel.StartTs)})
+		txn := newTxn(rs.store, kv.Version{Ver: uint64(sel.StartTs)})
 		ctx := &selectContext{
 			sel: sel,
 			txn: txn,
@@ -270,7 +270,7 @@ func (rs *localRegion) extractKVRanges(sel *tipb.SelectRequest) (kvRanges []kv.K
 		kvRanges = append(kvRanges, kvr)
 	}
 	if sel.OrderBy != nil {
-		desc = *sel.OrderBy[0].Desc
+		desc = sel.OrderBy[0].Desc
 	}
 	if desc {
 		reverseKVRanges(kvRanges)
@@ -370,7 +370,7 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 	for _, col := range columns {
 		if col.GetPkHandle() {
 			var handleDatum types.Datum
-			if mysql.HasUnsignedFlag(uint(*col.Flag)) {
+			if mysql.HasUnsignedFlag(uint(col.Flag)) {
 				// PK column is Unsigned
 				handleDatum = types.NewUintDatum(uint64(handle))
 			} else {
@@ -493,9 +493,9 @@ func toPBError(err error) *tipb.Error {
 	}
 	perr := new(tipb.Error)
 	code := int32(1)
-	perr.Code = &code
+	perr.Code = code
 	errStr := err.Error()
-	perr.Msg = &errStr
+	perr.Msg = errStr
 	return perr
 }
 

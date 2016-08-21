@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -186,6 +185,7 @@ func (e *NewXSelectIndexExec) nextForSingleRead() (*Row, error) {
 			// The returned rows should be aggregate partial result.
 			e.result.SetFields(e.aggFields)
 		}
+		e.result.Fetch()
 	}
 	for {
 		if e.partialResult == nil {
@@ -283,6 +283,7 @@ func (e *NewXSelectIndexExec) fetchHandles() ([]int64, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	idxResult.Fetch()
 	handles, err := extractHandlesFromIndexResult(idxResult)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -303,12 +304,11 @@ func (e *NewXSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 		return nil, errors.Trace(err)
 	}
 	selIdxReq := new(tipb.SelectRequest)
-	startTs := txn.StartTS()
-	selIdxReq.StartTs = &startTs
+	selIdxReq.StartTs = txn.StartTS()
 	selIdxReq.IndexInfo = xapi.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	selIdxReq.Limit = e.indexPlan.LimitCount
 	if e.indexPlan.Desc {
-		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: &e.indexPlan.Desc})
+		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: e.indexPlan.Desc})
 	}
 	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
 	for i, v := range e.indexPlan.Index.Columns {
@@ -327,7 +327,7 @@ func (e *NewXSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	} else if e.indexPlan.OutOfOrder {
 		concurrency = defaultConcurrency
 	}
-	return xapi.Select(txn.GetClient(), selIdxReq, concurrency)
+	return xapi.Select(txn.GetClient(), selIdxReq, concurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) {
@@ -466,10 +466,9 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult
 	}
 	// The handles are not in original index order, so we can't push limit here.
 	selTableReq := new(tipb.SelectRequest)
-	startTs := txn.StartTS()
-	selTableReq.StartTs = &startTs
+	selTableReq.StartTs = txn.StartTS()
 	selTableReq.TableInfo = &tipb.TableInfo{
-		TableId: proto.Int64(e.table.Meta().ID),
+		TableId: e.table.Meta().ID,
 	}
 	selTableReq.TableInfo.Columns = xapi.ColumnsToProto(e.indexPlan.Columns, e.table.Meta().PKIsHandle)
 	for _, h := range handles {
@@ -487,7 +486,7 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
 	// Aggregate Info
-	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency)
+	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -495,6 +494,7 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult
 		// The returned rows should be aggregate partial result.
 		resp.SetFields(e.aggFields)
 	}
+	resp.Fetch()
 	return resp, nil
 }
 
@@ -515,6 +515,7 @@ type NewXSelectTableExec struct {
 	desc          bool
 	limitCount    *int64
 	returnedRows  uint64 // returned rowCount
+	keepOrder     bool
 
 	/*
 		The following attributes are used for aggregation push down.
@@ -551,23 +552,22 @@ func (e *NewXSelectTableExec) doRequest() error {
 		return errors.Trace(err)
 	}
 	selReq := new(tipb.SelectRequest)
-	startTs := txn.StartTS()
-	selReq.StartTs = &startTs
+	selReq.StartTs = txn.StartTS()
 	selReq.Where = e.where
 	selReq.Ranges = tableRangesToPBRanges(e.ranges)
 	columns := e.Columns
 	selReq.TableInfo = &tipb.TableInfo{
-		TableId: proto.Int64(e.tableInfo.ID),
+		TableId: e.tableInfo.ID,
 	}
 	if e.supportDesc && e.desc {
-		selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: &e.desc})
+		selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: e.desc})
 	}
 	selReq.Limit = e.limitCount
 	selReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.tableInfo.PKIsHandle)
 	// Aggregate Info
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
-	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency)
+	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -576,6 +576,7 @@ func (e *NewXSelectTableExec) doRequest() error {
 		// The returned rows should be aggregate partial result.
 		e.result.SetFields(e.aggFields)
 	}
+	e.result.Fetch()
 	return nil
 }
 

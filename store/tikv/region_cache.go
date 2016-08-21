@@ -326,7 +326,7 @@ func (r *Region) GetAddress() string {
 // GetContext constructs kvprotopb.Context from region info.
 func (r *Region) GetContext() *kvrpcpb.Context {
 	return &kvrpcpb.Context{
-		RegionId:    r.meta.Id,
+		RegionId:    *r.meta.Id,
 		RegionEpoch: r.meta.RegionEpoch,
 		Peer:        r.peer,
 	}
