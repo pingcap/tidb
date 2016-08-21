@@ -853,6 +853,38 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 	UseNewPlanner = false
 }
 
+func (s *testPlanSuite) TestTableScanWithOrder(c *C) {
+	defer testleak.AfterTest(c)()
+	// Sort result by scanning PKHandle column.
+	sql := "select * from t order by a limit 1;"
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	ast.SetFlag(stmt)
+
+	err = newMockResolve(stmt)
+	c.Assert(err, IsNil)
+
+	builder := &planBuilder{
+		allocator: new(idAllocator),
+		ctx:       mock.NewContext(),
+		colMapper: make(map[*ast.ColumnNameExpr]int),
+	}
+	p := builder.build(stmt)
+	c.Assert(builder.err, IsNil)
+	logic, ok := p.(LogicalPlan)
+	c.Assert(ok, IsTrue)
+	// Get physical plan.
+	_, pp, _, err := logic.convert2PhysicalPlan(nil)
+	c.Assert(err, IsNil)
+	// Limit->Projection->PhysicalTableScan
+	// Get PhysicalTableScan plan.
+	cpp, ok := pp.p.GetChildByIndex(0).GetChildByIndex(0).(*PhysicalTableScan)
+	c.Assert(cpp, NotNil)
+	c.Assert(ok, IsTrue)
+	// Make sure KeepOrder is true.
+	c.Assert(cpp.KeepOrder, IsTrue)
+}
+
 func (s *testPlanSuite) TestConstantFolding(c *C) {
 	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
