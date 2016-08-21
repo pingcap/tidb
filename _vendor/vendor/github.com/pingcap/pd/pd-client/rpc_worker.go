@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/deadline"
 	"github.com/ngaut/log"
@@ -230,27 +229,28 @@ func newMsgID() uint64 {
 	return atomic.AddUint64(&msgID, 1)
 }
 
-func (w *rpcWorker) getTSFromRemote(conn *bufio.ReadWriter, n int) (*pdpb.Timestamp, error) {
+func (w *rpcWorker) getTSFromRemote(conn *bufio.ReadWriter, n int) (pdpb.Timestamp, error) {
+	var timestampHigh = pdpb.Timestamp{}
 	req := &pdpb.Request{
 		Header: &pdpb.RequestHeader{
 			Uuid:      uuid.NewV4().Bytes(),
-			ClusterId: proto.Uint64(w.clusterID),
+			ClusterId: w.clusterID,
 		},
-		CmdType: pdpb.CommandType_Tso.Enum(),
+		CmdType: pdpb.CommandType_Tso,
 		Tso: &pdpb.TsoRequest{
-			Count: proto.Uint32(uint32(n)),
+			Count: uint32(n),
 		},
 	}
 	resp, err := w.callRPC(conn, req)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return timestampHigh, errors.Trace(err)
 	}
 	if resp.GetTso() == nil {
-		return nil, errors.New("[pd] tso filed in rpc response not set")
+		return timestampHigh, errors.New("[pd] tso filed in rpc response not set")
 	}
-	timestampHigh := resp.GetTso().GetTimestamp()
+	timestampHigh = resp.GetTso().GetTimestamp()
 	if resp.GetTso().GetCount() != uint32(n) {
-		return nil, errors.New("[pd] tso length in rpc response is incorrect")
+		return timestampHigh, errors.New("[pd] tso length in rpc response is incorrect")
 	}
 	return timestampHigh, nil
 }
@@ -259,9 +259,9 @@ func (w *rpcWorker) getStoreFromRemote(conn *bufio.ReadWriter, storeReq *pdpb.Ge
 	req := &pdpb.Request{
 		Header: &pdpb.RequestHeader{
 			Uuid:      uuid.NewV4().Bytes(),
-			ClusterId: proto.Uint64(w.clusterID),
+			ClusterId: w.clusterID,
 		},
-		CmdType:  pdpb.CommandType_GetStore.Enum(),
+		CmdType:  pdpb.CommandType_GetStore,
 		GetStore: storeReq,
 	}
 	resp, err := w.callRPC(conn, req)
@@ -278,9 +278,9 @@ func (w *rpcWorker) getRegionFromRemote(conn *bufio.ReadWriter, regionReq *pdpb.
 	req := &pdpb.Request{
 		Header: &pdpb.RequestHeader{
 			Uuid:      uuid.NewV4().Bytes(),
-			ClusterId: proto.Uint64(w.clusterID),
+			ClusterId: w.clusterID,
 		},
-		CmdType:   pdpb.CommandType_GetRegion.Enum(),
+		CmdType:   pdpb.CommandType_GetRegion,
 		GetRegion: regionReq,
 	}
 	rsp, err := w.callRPC(conn, req)
@@ -297,9 +297,9 @@ func (w *rpcWorker) getClusterConfigFromRemote(conn *bufio.ReadWriter, clusterCo
 	req := &pdpb.Request{
 		Header: &pdpb.RequestHeader{
 			Uuid:      uuid.NewV4().Bytes(),
-			ClusterId: proto.Uint64(w.clusterID),
+			ClusterId: w.clusterID,
 		},
-		CmdType:          pdpb.CommandType_GetClusterConfig.Enum(),
+		CmdType:          pdpb.CommandType_GetClusterConfig,
 		GetClusterConfig: clusterConfigReq,
 	}
 	rsp, err := w.callRPC(conn, req)
@@ -314,7 +314,7 @@ func (w *rpcWorker) getClusterConfigFromRemote(conn *bufio.ReadWriter, clusterCo
 
 func (w *rpcWorker) callRPC(conn *bufio.ReadWriter, req *pdpb.Request) (*pdpb.Response, error) {
 	msg := &msgpb.Message{
-		MsgType: msgpb.MessageType_PdReq.Enum(),
+		MsgType: msgpb.MessageType_PdReq,
 		PdReq:   req,
 	}
 	if err := util.WriteMessage(conn, newMsgID(), msg); err != nil {
@@ -373,7 +373,15 @@ func rpcConnect(addr string) (net.Conn, error) {
 	}
 
 	for _, url := range urls {
-		conn, err := net.DialTimeout("tcp", url.Host, connectPDTimeout)
+		var conn net.Conn
+		switch url.Scheme {
+		// used in tests
+		case "unix", "unixs":
+			conn, err = net.DialTimeout("unix", url.Host, connectPDTimeout)
+		default:
+			conn, err = net.DialTimeout("tcp", url.Host, connectPDTimeout)
+		}
+
 		if err != nil {
 			continue
 		}

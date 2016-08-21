@@ -150,7 +150,7 @@ func (c *client) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, error) {
 func (c *client) GetStore(storeID uint64) (*metapb.Store, error) {
 	req := &storeRequest{
 		pbReq: &pdpb.GetStoreRequest{
-			StoreId: proto.Uint64(storeID),
+			StoreId: storeID,
 		},
 		done: make(chan error, 1),
 	}
