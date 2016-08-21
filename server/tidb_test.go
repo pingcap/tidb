@@ -94,6 +94,10 @@ func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	runTestStatusAPI(c)
 }
 
+func (ts *TidbTestSuite) TestMultiPacket(c *C) {
+	runTestMultiPacket(c)
+}
+
 func (ts *TidbTestSuite) TestSocket(c *C) {
 	cfg := &Config{
 		LogLevel:   "debug",
