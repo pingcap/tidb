@@ -98,7 +98,6 @@ func newMockResolve(node ast.Node) error {
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql   string
@@ -205,11 +204,9 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
-	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestJoinReOrder(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql  string
@@ -263,11 +260,9 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		p = res.p.PushLimit(nil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
-	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestCBO(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql  string
@@ -353,11 +348,9 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		p = res.p.PushLimit(nil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
-	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestRefine(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql  string
@@ -517,11 +510,9 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		np := res.p.PushLimit(nil)
 		c.Assert(ToString(np), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
-	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestColumnPruning(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql string
@@ -653,7 +644,6 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		c.Assert(err, IsNil)
 		check(p, c, ca.ans, comment)
 	}
-	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
@@ -667,7 +657,6 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 }
 
 func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	rb := &rangeBuilder{}
 
@@ -850,7 +839,6 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
 	}
-	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestTableScanWithOrder(c *C) {
@@ -886,7 +874,6 @@ func (s *testPlanSuite) TestTableScanWithOrder(c *C) {
 }
 
 func (s *testPlanSuite) TestConstantFolding(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 
 	cases := []struct {
@@ -956,7 +943,6 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 
 		c.Assert(expression.ComposeCNFCondition(selection.Conditions).ToString(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
 	}
-	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestCoveringIndex(c *C) {

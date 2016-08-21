@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/perfschema"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
@@ -46,7 +45,6 @@ var (
 	socket       = flag.String("socket", "", "The socket file to use for connection.")
 	enablePS     = flag.Bool("perfschema", false, "If enable performance schema.")
 	reportStatus = flag.Bool("report-status", true, "If enable status report HTTP service.")
-	useNewPlan   = flag.Bool("newplan", true, "If use new planner.")
 	logFile      = flag.String("log-file", "", "log file path")
 )
 
@@ -92,10 +90,6 @@ func main() {
 
 	if *enablePS {
 		perfschema.EnablePerfSchema()
-	}
-
-	if !*useNewPlan {
-		plan.UseNewPlanner = false
 	}
 
 	// Create a session to load information schema.

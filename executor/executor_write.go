@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -305,19 +304,12 @@ func (e *DeleteExec) Next() (*Row, error) {
 	tblNames := make(map[string]string)
 	if e.IsMultiTable {
 		// Delete from multiple tables should consider table ident list.
-		if !plan.UseNewPlanner {
-			fs := e.SelectExec.Fields()
-			for _, f := range fs {
-				if len(f.TableAsName.L) > 0 {
-					tblNames[f.TableAsName.L] = f.TableName.Name.L
-				} else {
-					tblNames[f.TableName.Name.L] = f.TableName.Name.L
-				}
-			}
-		} else {
-			schema := e.SelectExec.Schema()
-			for _, s := range schema {
-				tblNames[s.TblName.L] = s.TblName.L
+		fs := e.SelectExec.Fields()
+		for _, f := range fs {
+			if len(f.TableAsName.L) > 0 {
+				tblNames[f.TableAsName.L] = f.TableName.Name.L
+			} else {
+				tblNames[f.TableName.Name.L] = f.TableName.Name.L
 			}
 		}
 		if len(tblNames) != 0 {
