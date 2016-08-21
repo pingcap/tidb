@@ -93,13 +93,7 @@ func (p *packetIO) readPacket() ([]byte, error) {
 		return nil, err
 	}
 
-	length := len(data)
-
-	if length == 0 {
-		return nil, errInvalidPayloadLen.Gen("invalid empty payload")
-	}
-
-	if length < mysql.MaxPayloadLen {
+	if len(data) < mysql.MaxPayloadLen {
 		return data, nil
 	}
 
