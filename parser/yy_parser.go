@@ -26,9 +26,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-// UseNewLexer provides a switch for the tidb-server binary.
-var UseNewLexer bool
-
 // Error instances.
 var (
 	ErrSyntax = terror.ClassParser.New(CodeSyntaxErr, "syntax error")
@@ -106,12 +103,8 @@ func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, err
 	sql = handleMySQLSpecificCode(sql)
 
 	var l yyLexer
-	if UseNewLexer {
-		parser.lexer.reset(sql)
-		l = &parser.lexer
-	} else {
-		l = NewLexer(sql)
-	}
+	parser.lexer.reset(sql)
+	l = &parser.lexer
 	yyParse(l, parser)
 
 	if len(l.Errors()) != 0 {
@@ -144,24 +137,11 @@ func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 }
 
 func (parser *Parser) startOffset(v *yySymType) int {
-	if !UseNewLexer {
-		offset := v.offset
-		offset--
-		for unicode.IsSpace(rune(parser.src[offset])) {
-			offset++
-		}
-		return offset
-	}
-
 	return v.offset
 }
 
 func (parser *Parser) endOffset(v *yySymType) int {
 	offset := v.offset
-	if !UseNewLexer {
-		offset--
-	}
-
 	for offset > 0 && unicode.IsSpace(rune(parser.src[offset-1])) {
 		offset--
 	}

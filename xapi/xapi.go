@@ -17,7 +17,6 @@ import (
 	"io"
 	"io/ioutil"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -34,77 +33,146 @@ var (
 	errNilResp     = terror.ClassXEval.New(codeNilResp, "client returns nil response")
 )
 
+var (
+	_ SelectResult  = &selectResult{}
+	_ PartialResult = &partialResult{}
+)
+
+// SelectResult is an iterator of coprocessor partial results.
+type SelectResult interface {
+	// Next gets the next partial result.
+	Next() (PartialResult, error)
+	// SetFields sets the expected result type.
+	SetFields(fields []*types.FieldType)
+	// Close closes the iterator.
+	Close() error
+	// Fetch fetches partial results from client.
+	// The caller should call SetFields() before call Fetch().
+	Fetch()
+}
+
+// PartialResult is the result from a single region server.
+type PartialResult interface {
+	// Next returns the next row of the sub result.
+	// If no more row to return, data would be nil.
+	Next() (handle int64, data []types.Datum, err error)
+	// Close closes the partial result.
+	Close() error
+}
+
 // SelectResult is used to get response rows from SelectRequest.
-type SelectResult struct {
+type selectResult struct {
 	index     bool
 	aggregate bool
 	fields    []*types.FieldType
 	resp      kv.Response
+
+	results chan PartialResult
+	done    chan error
+}
+
+func (r *selectResult) Fetch() {
+	go r.fetch()
+}
+
+func (r *selectResult) fetch() {
+	defer close(r.results)
+	for {
+		reader, err := r.resp.Next()
+		if err != nil {
+			r.done <- errors.Trace(err)
+			return
+		}
+		if reader == nil {
+			return
+		}
+		pr := &partialResult{
+			index:     r.index,
+			fields:    r.fields,
+			reader:    reader,
+			aggregate: r.aggregate,
+			done:      make(chan error),
+		}
+		go pr.fetch()
+		r.results <- pr
+	}
 }
 
 // Next returns the next row.
-func (r *SelectResult) Next() (subResult *SubResult, err error) {
-	var reader io.ReadCloser
-	reader, err = r.resp.Next()
+func (r *selectResult) Next() (pr PartialResult, err error) {
+	var ok bool
+	select {
+	case pr, ok = <-r.results:
+	case err = <-r.done:
+	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	if reader == nil {
+	if !ok {
 		return nil, nil
-	}
-	subResult = &SubResult{
-		index:     r.index,
-		fields:    r.fields,
-		reader:    reader,
-		aggregate: r.aggregate,
 	}
 	return
 }
 
 // SetFields sets select result field types.
-func (r *SelectResult) SetFields(fields []*types.FieldType) {
+func (r *selectResult) SetFields(fields []*types.FieldType) {
 	r.fields = fields
 }
 
 // Close closes SelectResult.
-func (r *SelectResult) Close() error {
+func (r *selectResult) Close() error {
 	return r.resp.Close()
 }
 
-// SubResult represents a subset of select result.
-type SubResult struct {
+// partialResult represents a subset of select result.
+type partialResult struct {
 	index     bool
 	aggregate bool
 	fields    []*types.FieldType
 	reader    io.ReadCloser
 	resp      *tipb.SelectResponse
 	cursor    int
+
+	done    chan error
+	fetched bool
+}
+
+func (pr *partialResult) fetch() {
+	pr.resp = new(tipb.SelectResponse)
+	b, err := ioutil.ReadAll(pr.reader)
+	pr.reader.Close()
+	if err != nil {
+		pr.done <- errors.Trace(err)
+		return
+	}
+	err = pr.resp.Unmarshal(b)
+	if err != nil {
+		pr.done <- errors.Trace(err)
+		return
+	}
+	if pr.resp.Error != nil {
+		pr.done <- errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
+	}
+	pr.done <- nil
 }
 
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
-func (r *SubResult) Next() (handle int64, data []types.Datum, err error) {
-	if r.resp == nil {
-		r.resp = new(tipb.SelectResponse)
-		var b []byte
-		b, err = ioutil.ReadAll(r.reader)
-		r.reader.Close()
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
+	if !pr.fetched {
+		select {
+		case err = <-pr.done:
 		}
-		err = proto.Unmarshal(b, r.resp)
+		pr.fetched = true
 		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		if r.resp.Error != nil {
-			return 0, nil, errInvalidResp.Gen("[%d %s]", r.resp.Error.GetCode(), r.resp.Error.GetMsg())
+			return 0, nil, err
 		}
 	}
-	if r.cursor >= len(r.resp.Rows) {
+	if pr.cursor >= len(pr.resp.Rows) {
 		return 0, nil, nil
 	}
-	row := r.resp.Rows[r.cursor]
-	data, err = tablecodec.DecodeValues(row.Data, r.fields, r.index)
+	row := pr.resp.Rows[pr.cursor]
+	data, err = tablecodec.DecodeValues(row.Data, pr.fields, pr.index)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
@@ -114,7 +182,7 @@ func (r *SubResult) Next() (handle int64, data []types.Datum, err error) {
 		// as caller will check if data is nil to finish iteration.
 		data = make([]types.Datum, 0)
 	}
-	if !r.aggregate {
+	if !pr.aggregate {
 		handleBytes := row.GetHandle()
 		datums, err := codec.Decode(handleBytes)
 		if err != nil {
@@ -122,19 +190,22 @@ func (r *SubResult) Next() (handle int64, data []types.Datum, err error) {
 		}
 		handle = datums[0].GetInt64()
 	}
-	r.cursor++
+	pr.cursor++
 	return
 }
 
 // Close closes the sub result.
-func (r *SubResult) Close() error {
+func (pr *partialResult) Close() error {
 	return nil
 }
 
 // Select do a select request, returns SelectResult.
-func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (*SelectResult, error) {
-	// Convert tipb.*Request to kv.Request
-	kvReq, err := composeRequest(req, concurrency)
+// conncurrency: The max concurrency for underlying coprocessor request.
+// keepOrder: If the result should returned in key order. For example if we need keep data in order by
+//            scan index, we should set keepOrder to true.
+func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrder bool) (SelectResult, error) {
+	// Convert tipb.*Request to kv.Request.
+	kvReq, err := composeRequest(req, concurrency, keepOrder)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -142,13 +213,22 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (*Select
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
-	result := &SelectResult{resp: resp}
+	result := &selectResult{
+		resp:    resp,
+		results: make(chan PartialResult, 5),
+		done:    make(chan error, 1),
+	}
 	// If Aggregates is not nil, we should set result fields latter.
 	if len(req.Aggregates) == 0 && len(req.GroupBy) == 0 {
 		if req.TableInfo != nil {
 			result.fields = ProtoColumnsToFieldTypes(req.TableInfo.Columns)
 		} else {
 			result.fields = ProtoColumnsToFieldTypes(req.IndexInfo.Columns)
+			length := len(req.IndexInfo.Columns)
+			if req.IndexInfo.Columns[length-1].GetPkHandle() {
+				// Returned index row do not contains extra PKHandle column.
+				result.fields = result.fields[:length-1]
+			}
 			result.index = true
 		}
 	} else {
@@ -158,10 +238,10 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (*Select
 }
 
 // Convert tipb.Request to kv.Request.
-func composeRequest(req *tipb.SelectRequest, concurrency int) (*kv.Request, error) {
+func composeRequest(req *tipb.SelectRequest, concurrency int, keepOrder bool) (*kv.Request, error) {
 	kvReq := &kv.Request{
 		Concurrency: concurrency,
-		KeepOrder:   true,
+		KeepOrder:   keepOrder,
 	}
 	if req.IndexInfo != nil {
 		kvReq.Tp = kv.ReqTypeIndex
@@ -174,10 +254,10 @@ func composeRequest(req *tipb.SelectRequest, concurrency int) (*kv.Request, erro
 		kvReq.KeyRanges = EncodeTableRanges(tid, req.Ranges)
 	}
 	if req.OrderBy != nil {
-		kvReq.Desc = *req.OrderBy[0].Desc
+		kvReq.Desc = req.OrderBy[0].Desc
 	}
 	var err error
-	kvReq.Data, err = proto.Marshal(req)
+	kvReq.Data, err = req.Marshal()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -208,15 +288,14 @@ func FieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
 
 func columnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
 	pc := &tipb.ColumnInfo{
-		ColumnId:  proto.Int64(c.ID),
-		Collation: proto.Int32(collationToProto(c.FieldType.Collate)),
-		ColumnLen: proto.Int32(int32(c.FieldType.Flen)),
-		Decimal:   proto.Int32(int32(c.FieldType.Decimal)),
-		Flag:      proto.Int32(int32(c.Flag)),
+		ColumnId:  c.ID,
+		Collation: collationToProto(c.FieldType.Collate),
+		ColumnLen: int32(c.FieldType.Flen),
+		Decimal:   int32(c.FieldType.Decimal),
+		Flag:      int32(c.Flag),
 		Elems:     c.Elems,
 	}
-	t := int32(c.FieldType.Tp)
-	pc.Tp = &t
+	pc.Tp = int32(c.FieldType.Tp)
 	return pc
 }
 
@@ -234,9 +313,9 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 	for _, c := range columns {
 		col := columnToProto(c)
 		if pkIsHandle && mysql.HasPriKeyFlag(c.Flag) {
-			col.PkHandle = proto.Bool(true)
+			col.PkHandle = true
 		} else {
-			col.PkHandle = proto.Bool(false)
+			col.PkHandle = false
 		}
 		cols = append(cols, col)
 	}
@@ -262,13 +341,24 @@ func ProtoColumnsToFieldTypes(pColumns []*tipb.ColumnInfo) []*types.FieldType {
 // IndexToProto converts a model.IndexInfo to a tipb.IndexInfo.
 func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
 	pi := &tipb.IndexInfo{
-		TableId: proto.Int64(t.ID),
-		IndexId: proto.Int64(idx.ID),
-		Unique:  proto.Bool(idx.Unique),
+		TableId: t.ID,
+		IndexId: idx.ID,
+		Unique:  idx.Unique,
 	}
-	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns))
+	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns)+1)
 	for _, c := range idx.Columns {
 		cols = append(cols, columnToProto(t.Columns[c.Offset]))
+	}
+	if t.PKIsHandle {
+		// Coprocessor needs to know PKHandle column info, so we need to append it.
+		for _, col := range t.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				colPB := columnToProto(col)
+				colPB.PkHandle = true
+				cols = append(cols, colPB)
+				break
+			}
+		}
 	}
 	pi.Columns = cols
 	return pi

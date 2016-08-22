@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -51,17 +50,35 @@ type NewXExecutor interface {
 	AddLimit(l *plan.Limit) bool
 }
 
+// Closeable is a interface for closeable structures.
+type Closeable interface {
+	// Close closes the object.
+	Close() error
+}
+
+func closeAll(objs ...Closeable) error {
+	for _, obj := range objs {
+		if obj != nil {
+			err := obj.Close()
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
+}
+
 // NewXSelectIndexExec represents XAPI select index executor without result fields.
 type NewXSelectIndexExec struct {
-	tableInfo   *model.TableInfo
-	table       table.Table
-	asName      *model.CIStr
-	ctx         context.Context
-	supportDesc bool
-	isMemDB     bool
-	result      *xapi.SelectResult
-	subResult   *xapi.SubResult
-	where       *tipb.Expr
+	tableInfo     *model.TableInfo
+	table         table.Table
+	asName        *model.CIStr
+	ctx           context.Context
+	supportDesc   bool
+	isMemDB       bool
+	result        xapi.SelectResult
+	partialResult xapi.PartialResult
+	where         *tipb.Expr
 
 	tasks      []*lookupTableTask
 	taskCursor int
@@ -92,7 +109,15 @@ func (e *NewXSelectIndexExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.B
 	e.byItems = byItems
 	e.aggFields = fields
 	e.aggregate = true
-	e.indexPlan.DoubleRead = true
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		e.indexPlan.DoubleRead = true
+		return
+	}
+	client := txn.GetClient()
+	if !client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeGroupBy) {
+		e.indexPlan.DoubleRead = true
+	}
 }
 
 // AddLimit implements NewXExecutor interface.
@@ -122,8 +147,12 @@ func (e *NewXSelectIndexExec) Schema() expression.Schema {
 
 // Close implements Exec Close interface.
 func (e *NewXSelectIndexExec) Close() error {
+	err := closeAll(e.result, e.partialResult)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	e.result = nil
-	e.subResult = nil
+	e.partialResult = nil
 	e.taskCursor = 0
 	e.mu.Lock()
 	e.tasks = nil
@@ -152,29 +181,33 @@ func (e *NewXSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if e.aggregate {
+			// The returned rows should be aggregate partial result.
+			e.result.SetFields(e.aggFields)
+		}
+		e.result.Fetch()
 	}
 	for {
-		if e.subResult == nil {
+		if e.partialResult == nil {
 			var err error
-			e.subResult, err = e.result.Next()
+			e.partialResult, err = e.result.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if e.subResult == nil {
+			if e.partialResult == nil {
 				return nil, nil
 			}
 		}
-		h, rowData, err := e.subResult.Next()
+		h, rowData, err := e.partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if rowData == nil {
-			e.subResult = nil
+			e.partialResult = nil
 			continue
 		}
 		if e.aggregate {
-			// TODO: Implement aggregation push down in single read index
-			return nil, errors.New("Can't push aggr in a single read index executor!")
+			return &Row{Data: rowData}, nil
 		}
 		rowData = e.indexRowToTableRow(h, rowData)
 		return resultRowToRow(e.table, h, rowData, e.asName), nil
@@ -250,6 +283,7 @@ func (e *NewXSelectIndexExec) fetchHandles() ([]int64, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	idxResult.Fetch()
 	handles, err := extractHandlesFromIndexResult(idxResult)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -264,18 +298,17 @@ func (e *NewXSelectIndexExec) fetchHandles() ([]int64, error) {
 	return handles, nil
 }
 
-func (e *NewXSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
+func (e *NewXSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	selIdxReq := new(tipb.SelectRequest)
-	startTs := txn.StartTS()
-	selIdxReq.StartTs = &startTs
+	selIdxReq.StartTs = txn.StartTS()
 	selIdxReq.IndexInfo = xapi.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	selIdxReq.Limit = e.indexPlan.LimitCount
 	if e.indexPlan.Desc {
-		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: &e.indexPlan.Desc})
+		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: e.indexPlan.Desc})
 	}
 	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
 	for i, v := range e.indexPlan.Index.Columns {
@@ -288,10 +321,13 @@ func (e *NewXSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	concurrency := 1
 	if !e.indexPlan.DoubleRead {
 		concurrency = defaultConcurrency
+		selIdxReq.Aggregates = e.aggFuncs
+		selIdxReq.GroupBy = e.byItems
+		selIdxReq.Where = e.where
 	} else if e.indexPlan.OutOfOrder {
 		concurrency = defaultConcurrency
 	}
-	return xapi.Select(txn.GetClient(), selIdxReq, concurrency)
+	return xapi.Select(txn.GetClient(), selIdxReq, concurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) {
@@ -388,17 +424,17 @@ func (e *NewXSelectIndexExec) executeTask(task *lookupTableTask) error {
 	return nil
 }
 
-func (e *NewXSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult *xapi.SelectResult) ([]*Row, error) {
+func (e *NewXSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult xapi.SelectResult) ([]*Row, error) {
 	var rows []*Row
 	for {
-		subResult, err := tblResult.Next()
+		partialResult, err := tblResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if subResult == nil {
+		if partialResult == nil {
 			break
 		}
-		subRows, err := e.extractRowsFromSubResult(t, subResult)
+		subRows, err := e.extractRowsFromPartialResult(t, partialResult)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -407,10 +443,10 @@ func (e *NewXSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResul
 	return rows, nil
 }
 
-func (e *NewXSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult *xapi.SubResult) ([]*Row, error) {
+func (e *NewXSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialResult xapi.PartialResult) ([]*Row, error) {
 	var rows []*Row
 	for {
-		h, rowData, err := subResult.Next()
+		h, rowData, err := partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -423,17 +459,16 @@ func (e *NewXSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult 
 	return rows, nil
 }
 
-func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, error) {
+func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, error) {
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// The handles are not in original index order, so we can't push limit here.
 	selTableReq := new(tipb.SelectRequest)
-	startTs := txn.StartTS()
-	selTableReq.StartTs = &startTs
+	selTableReq.StartTs = txn.StartTS()
 	selTableReq.TableInfo = &tipb.TableInfo{
-		TableId: proto.Int64(e.table.Meta().ID),
+		TableId: e.table.Meta().ID,
 	}
 	selTableReq.TableInfo.Columns = xapi.ColumnsToProto(e.indexPlan.Columns, e.table.Meta().PKIsHandle)
 	for _, h := range handles {
@@ -451,7 +486,7 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResul
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
 	// Aggregate Info
-	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency)
+	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -459,26 +494,28 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResul
 		// The returned rows should be aggregate partial result.
 		resp.SetFields(e.aggFields)
 	}
+	resp.Fetch()
 	return resp, nil
 }
 
 // NewXSelectTableExec represents XAPI select executor without result fields.
 type NewXSelectTableExec struct {
-	tableInfo    *model.TableInfo
-	table        table.Table
-	asName       *model.CIStr
-	ctx          context.Context
-	supportDesc  bool
-	isMemDB      bool
-	result       *xapi.SelectResult
-	subResult    *xapi.SubResult
-	where        *tipb.Expr
-	Columns      []*model.ColumnInfo
-	schema       expression.Schema
-	ranges       []plan.TableRange
-	desc         bool
-	limitCount   *int64
-	returnedRows uint64 // returned rowCount
+	tableInfo     *model.TableInfo
+	table         table.Table
+	asName        *model.CIStr
+	ctx           context.Context
+	supportDesc   bool
+	isMemDB       bool
+	result        xapi.SelectResult
+	partialResult xapi.PartialResult
+	where         *tipb.Expr
+	Columns       []*model.ColumnInfo
+	schema        expression.Schema
+	ranges        []plan.TableRange
+	desc          bool
+	limitCount    *int64
+	returnedRows  uint64 // returned rowCount
+	keepOrder     bool
 
 	/*
 		The following attributes are used for aggregation push down.
@@ -515,23 +552,22 @@ func (e *NewXSelectTableExec) doRequest() error {
 		return errors.Trace(err)
 	}
 	selReq := new(tipb.SelectRequest)
-	startTs := txn.StartTS()
-	selReq.StartTs = &startTs
+	selReq.StartTs = txn.StartTS()
 	selReq.Where = e.where
 	selReq.Ranges = tableRangesToPBRanges(e.ranges)
 	columns := e.Columns
 	selReq.TableInfo = &tipb.TableInfo{
-		TableId: proto.Int64(e.tableInfo.ID),
+		TableId: e.tableInfo.ID,
 	}
 	if e.supportDesc && e.desc {
-		selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: &e.desc})
+		selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: e.desc})
 	}
 	selReq.Limit = e.limitCount
 	selReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.tableInfo.PKIsHandle)
 	// Aggregate Info
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
-	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency)
+	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -540,13 +576,18 @@ func (e *NewXSelectTableExec) doRequest() error {
 		// The returned rows should be aggregate partial result.
 		e.result.SetFields(e.aggFields)
 	}
+	e.result.Fetch()
 	return nil
 }
 
 // Close implements Executor Close interface.
 func (e *NewXSelectTableExec) Close() error {
+	err := closeAll(e.result, e.partialResult)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	e.result = nil
-	e.subResult = nil
+	e.partialResult = nil
 	e.returnedRows = 0
 	return nil
 }
@@ -563,24 +604,24 @@ func (e *NewXSelectTableExec) Next() (*Row, error) {
 		}
 	}
 	for {
-		if e.subResult == nil {
+		if e.partialResult == nil {
 			var err error
 			startTs := time.Now()
-			e.subResult, err = e.result.Next()
+			e.partialResult, err = e.result.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if e.subResult == nil {
+			if e.partialResult == nil {
 				return nil, nil
 			}
 			log.Debugf("[TIME_TABLE_SCAN] %v", time.Now().Sub(startTs))
 		}
-		h, rowData, err := e.subResult.Next()
+		h, rowData, err := e.partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if rowData == nil {
-			e.subResult = nil
+			e.partialResult = nil
 			continue
 		}
 		e.returnedRows++

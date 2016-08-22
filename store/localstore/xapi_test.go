@@ -125,19 +125,19 @@ type simpleTableInfo struct {
 
 func (s *simpleTableInfo) toPBTableInfo() *tipb.TableInfo {
 	tbInfo := new(tipb.TableInfo)
-	tbInfo.TableId = proto.Int64(s.tID)
+	tbInfo.TableId = s.tID
 	pkColumn := new(tipb.ColumnInfo)
-	pkColumn.Tp = proto.Int32(int32(mysql.TypeLonglong))
+	pkColumn.Tp = int32(mysql.TypeLonglong)
 	// It's ok to just use table ID for pk column ID, as it doesn't have a column kv.
 	pkColumn.ColumnId = tbInfo.TableId
-	pkColumn.PkHandle = proto.Bool(true)
-	pkColumn.Flag = proto.Int32(0)
+	pkColumn.PkHandle = true
+	pkColumn.Flag = 0
 	tbInfo.Columns = append(tbInfo.Columns, pkColumn)
 	for i, colTp := range s.cTypes {
 		coInfo := &tipb.ColumnInfo{
-			ColumnId: proto.Int64(s.cIDs[i]),
-			Tp:       proto.Int32(int32(colTp)),
-			PkHandle: proto.Bool(false),
+			ColumnId: s.cIDs[i],
+			Tp:       int32(colTp),
+			PkHandle: false,
 		}
 		tbInfo.Columns = append(tbInfo.Columns, coInfo)
 	}
@@ -146,14 +146,14 @@ func (s *simpleTableInfo) toPBTableInfo() *tipb.TableInfo {
 
 func (s *simpleTableInfo) toPBIndexInfo(idxOff int) *tipb.IndexInfo {
 	idxInfo := new(tipb.IndexInfo)
-	idxInfo.TableId = proto.Int64(s.tID)
-	idxInfo.IndexId = proto.Int64(s.iIDs[idxOff])
+	idxInfo.TableId = s.tID
+	idxInfo.IndexId = s.iIDs[idxOff]
 	colOff := s.indices[idxOff]
 	idxInfo.Columns = []*tipb.ColumnInfo{
 		{
-			ColumnId: proto.Int64(s.cIDs[colOff]),
-			Tp:       proto.Int32((int32(s.cTypes[colOff]))),
-			PkHandle: proto.Bool(false),
+			ColumnId: s.cIDs[colOff],
+			Tp:       int32(s.cTypes[colOff]),
+			PkHandle: false,
 		},
 	}
 	return idxInfo
@@ -218,7 +218,7 @@ func setRow(txn kv.Transaction, handle int64, tbl *simpleTableInfo, gen genValue
 func prepareSelectRequest(simpleInfo *simpleTableInfo, startTs uint64) (*kv.Request, error) {
 	selReq := new(tipb.SelectRequest)
 	selReq.TableInfo = simpleInfo.toPBTableInfo()
-	selReq.StartTs = proto.Uint64(startTs)
+	selReq.StartTs = startTs
 	selReq.Ranges = []*tipb.KeyRange{fullPBTableRange}
 	data, err := proto.Marshal(selReq)
 	if err != nil {
@@ -258,7 +258,7 @@ func fullIndexRange(tid int64, idxID int64) kv.KeyRange {
 func prepareIndexRequest(simpleInfo *simpleTableInfo, startTs uint64) (*kv.Request, error) {
 	selReq := new(tipb.SelectRequest)
 	selReq.IndexInfo = simpleInfo.toPBIndexInfo(0)
-	selReq.StartTs = proto.Uint64(startTs)
+	selReq.StartTs = startTs
 	selReq.Ranges = []*tipb.KeyRange{fullPBIndexRange}
 	data, err := proto.Marshal(selReq)
 	if err != nil {

@@ -25,74 +25,9 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// Refine tries to build index or table range.
-func Refine(p Plan) error {
-	return refine(p)
-}
-
-func refine(in Plan) error {
-	for _, c := range in.GetChildren() {
-		e := refine(c)
-		if e != nil {
-			return errors.Trace(e)
-		}
-	}
-
-	var err error
-	switch x := in.(type) {
-	case *IndexScan:
-		err = buildIndexRange(x)
-	case *Limit:
-		x.SetLimit(0)
-	case *TableScan:
-		err = buildTableRange(x)
-	case *PhysicalTableScan:
-		x.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
-	case *PhysicalIndexScan:
-		rb := rangeBuilder{}
-		x.Ranges = rb.buildIndexRanges(fullRange)
-	case *Selection:
-		err = buildSelection(x)
-	case *PhysicalApply:
-		err = refine(x.InnerPlan)
-	}
-	return errors.Trace(err)
-}
-
 var fullRange = []rangePoint{
 	{start: true},
 	{value: types.MaxValueDatum()},
-}
-
-func buildIndexRange(p *IndexScan) error {
-	rb := rangeBuilder{}
-	if p.AccessEqualCount > 0 {
-		// Build ranges for equal access conditions.
-		point := rb.build(p.AccessConditions[0])
-		p.Ranges = rb.buildIndexRanges(point)
-		for i := 1; i < p.AccessEqualCount; i++ {
-			point = rb.build(p.AccessConditions[i])
-			p.Ranges = rb.appendIndexRanges(p.Ranges, point)
-		}
-	}
-	rangePoints := fullRange
-	// Build rangePoints for non-equal access condtions.
-	for i := p.AccessEqualCount; i < len(p.AccessConditions); i++ {
-		rangePoints = rb.intersection(rangePoints, rb.build(p.AccessConditions[i]))
-	}
-	if p.AccessEqualCount == 0 {
-		p.Ranges = rb.buildIndexRanges(rangePoints)
-	} else if p.AccessEqualCount < len(p.AccessConditions) {
-		p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints)
-	}
-
-	// Take prefix index into consideration.
-	if p.Index.HasPrefixIndex() {
-		for i := 0; i < len(p.Ranges); i++ {
-			refineRange(p.Ranges[i], p.Index)
-		}
-	}
-	return errors.Trace(rb.err)
 }
 
 func buildNewIndexRange(p *PhysicalIndexScan) error {
@@ -146,20 +81,6 @@ func refineRangeDatum(v *types.Datum, ic *model.IndexColumn) {
 			v.SetBytes(v.GetBytes()[:ic.Length])
 		}
 	}
-}
-
-func buildTableRange(p *TableScan) error {
-	if len(p.AccessConditions) == 0 {
-		p.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
-		return nil
-	}
-	rb := rangeBuilder{}
-	rangePoints := fullRange
-	for _, cond := range p.AccessConditions {
-		rangePoints = rb.intersection(rangePoints, rb.build(cond))
-	}
-	p.Ranges = rb.buildTableRanges(rangePoints)
-	return errors.Trace(rb.err)
 }
 
 func buildSelection(p *Selection) error {

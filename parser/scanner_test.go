@@ -14,8 +14,6 @@
 package parser
 
 import (
-	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -79,7 +77,7 @@ func (s *testLexerSuite) TestSysOrUserVar(c *C) {
 func (s *testLexerSuite) TestUnderscoreCS(c *C) {
 	defer testleak.AfterTest(c)()
 	var v yySymType
-	tok := NewLexer(`_utf8"string"`).Lex(&v)
+	tok := NewScanner(`_utf8"string"`).Lex(&v)
 	c.Check(tok, Equals, underscoreCS)
 }
 
@@ -127,32 +125,13 @@ SELECT`, selectKwd},
 	runTest(c, table)
 }
 
-func (s *testLexerSuite) TestLexerCompatible(c *C) {
-	defer testleak.AfterTest(c)()
-
-	for _, str := range tableCompatible {
-		l1 := NewScanner(str)
-		l2 := NewLexer(str)
-		for {
-			var v1, v2 yySymType
-			tok1 := l1.Lex(&v1)
-			tok2 := l2.Lex(&v2)
-			fmt.Println(tok1, tok2, v1, v2)
-			c.Assert(tok1, Equals, tok2)
-			if tok1 == 0 {
-				break
-			}
-		}
-	}
-}
-
 func (s *testLexerSuite) TestscanQuotedIdent(c *C) {
 	defer testleak.AfterTest(c)()
 	l := NewScanner("`fk`")
 	l.r.peek()
 	tok, pos, lit := scanQuotedIdent(l)
 	c.Assert(pos.Offset, Equals, 0)
-	c.Assert(tok, Equals, identifier)
+	c.Assert(tok, Equals, quotedIdentifier)
 	c.Assert(lit, Equals, "fk")
 }
 
@@ -181,6 +160,8 @@ func (s *testLexerSuite) TestscanString(c *C) {
 		{`"\"hello"`, `"hello`},
 		{`'disappearing\ backslash'`, "disappearing backslash"},
 		{"'한국의中文UTF8およびテキストトラック'", "한국의中文UTF8およびテキストトラック"},
+		{"'\\a\x90'", "a\x90"},
+		{`"\aèàø»"`, `aèàø»`},
 	}
 
 	for _, v := range table {
@@ -194,15 +175,17 @@ func (s *testLexerSuite) TestscanString(c *C) {
 
 func (s *testLexerSuite) TestIdentifier(c *C) {
 	defer testleak.AfterTest(c)()
-	table := []string{
-		`哈哈`,
+	table := [][2]string{
+		{`哈哈`, "哈哈"},
+		{"`numeric`", "numeric"},
 		// `5number`,
 	}
 	l := &Scanner{}
-	for _, v := range table {
-		l.reset(v)
-		tok, _, lit := l.scan()
+	for _, item := range table {
+		l.reset(item[0])
+		var v yySymType
+		tok := l.Lex(&v)
 		c.Assert(tok, Equals, identifier)
-		c.Assert(lit, Equals, v)
+		c.Assert(v.ident, Equals, item[1])
 	}
 }

@@ -66,7 +66,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		txn := newTxn(rs.store, kv.Version{Ver: uint64(*sel.StartTs)})
+		txn := newTxn(rs.store, kv.Version{Ver: uint64(sel.StartTs)})
 		ctx := &selectContext{
 			sel: sel,
 			txn: txn,
@@ -101,7 +101,12 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		if req.Tp == kv.ReqTypeSelect {
 			rows, err = rs.getRowsFromSelectReq(ctx)
 		} else {
-			rows, err = rs.getRowsFromIndexReq(txn, sel)
+			// The PKHandle column info has been collected in ctx, so we can remove it in IndexInfo.
+			length := len(sel.IndexInfo.Columns)
+			if sel.IndexInfo.Columns[length-1].GetPkHandle() {
+				sel.IndexInfo.Columns = sel.IndexInfo.Columns[:length-1]
+			}
+			rows, err = rs.getRowsFromIndexReq(ctx)
 		}
 
 		selResp := new(tipb.SelectResponse)
@@ -158,7 +163,7 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, er
 	columns := ctx.sel.TableInfo.Columns
 	ctx.colTps = make(map[int64]*types.FieldType, len(columns))
 	for _, col := range columns {
-		if *col.PkHandle {
+		if col.GetPkHandle() {
 			continue
 		}
 		ctx.colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
@@ -265,7 +270,7 @@ func (rs *localRegion) extractKVRanges(sel *tipb.SelectRequest) (kvRanges []kv.K
 		kvRanges = append(kvRanges, kvr)
 	}
 	if sel.OrderBy != nil {
-		desc = *sel.OrderBy[0].Desc
+		desc = sel.OrderBy[0].Desc
 	}
 	if desc {
 		reverseKVRanges(kvRanges)
@@ -357,48 +362,46 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 //	3. Update aggregate functions.
 func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []byte) (*tipb.Row, error) {
 	columns := ctx.sel.TableInfo.Columns
-	row := new(tipb.Row)
-	var d types.Datum
-	d.SetInt64(handle)
-	var err error
-	row.Handle, err = codec.EncodeValue(nil, d)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rowData := make([][]byte, len(columns))
 	values, err := rs.getRowData(value, ctx.colTps)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for i, col := range columns {
-		if *col.PkHandle {
-			var colVal []byte
-			if mysql.HasUnsignedFlag(uint(*col.Flag)) {
+	// Fill handle and null columns.
+	for _, col := range columns {
+		if col.GetPkHandle() {
+			var handleDatum types.Datum
+			if mysql.HasUnsignedFlag(uint(col.Flag)) {
 				// PK column is Unsigned
-				var ud types.Datum
-				ud.SetUint64(uint64(handle))
-				var err1 error
-				colVal, err1 = codec.EncodeValue(nil, ud)
-				if err1 != nil {
-					return nil, errors.Trace(err1)
-				}
+				handleDatum = types.NewUintDatum(uint64(handle))
 			} else {
-				colVal = row.Handle
+				handleDatum = types.NewIntDatum(handle)
 			}
-			rowData[i] = colVal
-			continue
-		}
-		v, ok := values[col.GetColumnId()]
-		if !ok {
-			if mysql.HasNotNullFlag(uint(col.GetFlag())) {
-				return nil, errors.New("Miss column")
+			handleData, err1 := codec.EncodeValue(nil, handleDatum)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
 			}
-			v = []byte{codec.NilFlag}
-			values[col.GetColumnId()] = v
+			values[col.GetColumnId()] = handleData
+		} else {
+			_, ok := values[col.GetColumnId()]
+			if !ok {
+				if mysql.HasNotNullFlag(uint(col.GetFlag())) {
+					return nil, errors.New("Miss column")
+				}
+				values[col.GetColumnId()] = []byte{codec.NilFlag}
+			}
 		}
-		rowData[i] = v
 	}
-	// Evalue where
+	return rs.valuesToRow(ctx, handle, values)
+}
+
+func (rs *localRegion) valuesToRow(ctx *selectContext, handle int64, values map[int64][]byte) (*tipb.Row, error) {
+	var columns []*tipb.ColumnInfo
+	if ctx.sel.TableInfo != nil {
+		columns = ctx.sel.TableInfo.Columns
+	} else {
+		columns = ctx.sel.IndexInfo.Columns
+	}
+	// Evaluate where
 	match, err := rs.evalWhereForRow(ctx, handle, values)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -406,7 +409,7 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 	if !match {
 		return nil, nil
 	}
-
+	var row *tipb.Row
 	if ctx.aggregate {
 		// Update aggregate functions.
 		err = rs.aggregate(ctx, handle, values)
@@ -414,9 +417,16 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 			return nil, errors.Trace(err)
 		}
 	} else {
+		var handleData []byte
+		handleData, err = codec.EncodeValue(nil, types.NewIntDatum(handle))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		row = new(tipb.Row)
+		row.Handle = handleData
 		// If without aggregate functions, just return raw row data.
-		for _, d := range rowData {
-			row.Data = append(row.Data, d...)
+		for _, col := range columns {
+			row.Data = append(row.Data, values[col.GetColumnId()]...)
 		}
 	}
 	return row, nil
@@ -437,7 +447,11 @@ func (rs *localRegion) getRowData(value []byte, colTps map[int64]*types.FieldTyp
 func (rs *localRegion) setColumnValueToCtx(ctx *selectContext, h int64, row map[int64][]byte, cols map[int64]*tipb.ColumnInfo) error {
 	for colID, col := range cols {
 		if col.GetPkHandle() {
-			ctx.eval.Row[colID] = types.NewIntDatum(h)
+			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
+				ctx.eval.Row[colID] = types.NewUintDatum(uint64(h))
+			} else {
+				ctx.eval.Row[colID] = types.NewIntDatum(h)
+			}
 		} else {
 			data := row[colID]
 			ft := xapi.FieldTypeFromPBColumn(col)
@@ -479,29 +493,32 @@ func toPBError(err error) *tipb.Error {
 	}
 	perr := new(tipb.Error)
 	code := int32(1)
-	perr.Code = &code
+	perr.Code = code
 	errStr := err.Error()
-	perr.Msg = &errStr
+	perr.Msg = errStr
 	return perr
 }
 
-func (rs *localRegion) getRowsFromIndexReq(txn kv.Transaction, sel *tipb.SelectRequest) ([]*tipb.Row, error) {
-	kvRanges, desc := rs.extractKVRanges(sel)
+func (rs *localRegion) getRowsFromIndexReq(ctx *selectContext) ([]*tipb.Row, error) {
+	kvRanges, desc := rs.extractKVRanges(ctx.sel)
 	var rows []*tipb.Row
 	limit := int64(-1)
-	if sel.Limit != nil {
-		limit = sel.GetLimit()
+	if ctx.sel.Limit != nil {
+		limit = ctx.sel.GetLimit()
 	}
 	for _, ran := range kvRanges {
 		if limit == 0 {
 			break
 		}
-		ranRows, err := getIndexRowFromRange(sel.IndexInfo, txn, ran, desc, limit)
+		ranRows, err := rs.getIndexRowFromRange(ctx, ran, desc, limit)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		rows = append(rows, ranRows...)
 		limit -= int64(len(ranRows))
+	}
+	if ctx.aggregate {
+		return rs.getRowsFromAgg(ctx)
 	}
 	return rows, nil
 }
@@ -513,13 +530,19 @@ func reverseKVRanges(kvRanges []kv.KeyRange) {
 	}
 }
 
-func getIndexRowFromRange(idxInfo *tipb.IndexInfo, txn kv.Transaction, ran kv.KeyRange, desc bool, limit int64) ([]*tipb.Row, error) {
+func (rs *localRegion) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, desc bool, limit int64) ([]*tipb.Row, error) {
+	idxInfo := ctx.sel.IndexInfo
+	txn := ctx.txn
 	var rows []*tipb.Row
 	var seekKey kv.Key
 	if desc {
 		seekKey = ran.EndKey
 	} else {
 		seekKey = ran.StartKey
+	}
+	ids := make([]int64, len(idxInfo.Columns))
+	for i, col := range idxInfo.Columns {
+		ids[i] = col.GetColumnId()
 	}
 	for {
 		if limit == 0 {
@@ -552,36 +575,33 @@ func getIndexRowFromRange(idxInfo *tipb.IndexInfo, txn kv.Transaction, ran kv.Ke
 				break
 			}
 		}
-
-		datums, err := tablecodec.DecodeIndexKey(it.Key())
+		values, b, err := tablecodec.CutIndexKey(it.Key(), ids)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		var handle types.Datum
-		if len(datums) > len(idxInfo.Columns) {
-			handle = datums[len(idxInfo.Columns)]
-			datums = datums[:len(idxInfo.Columns)]
-		} else {
-			var intHandle int64
-			intHandle, err = decodeHandle(it.Value())
+		var handle int64
+		if len(b) > 0 {
+			var handleDatum types.Datum
+			_, handleDatum, err = codec.DecodeOne(b)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			handle.SetInt64(intHandle)
+			handle = handleDatum.GetInt64()
+		} else {
+			handle, err = decodeHandle(it.Value())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
-		data, err := codec.EncodeValue(nil, datums...)
+		row, err := rs.valuesToRow(ctx, handle, values)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		handleData, err := codec.EncodeValue(nil, handle)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if row != nil {
+			rows = append(rows, row)
+			limit--
 		}
-		row := &tipb.Row{Handle: handleData, Data: data}
-		rows = append(rows, row)
-		limit--
 	}
-
 	return rows, nil
 }
 

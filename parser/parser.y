@@ -406,6 +406,7 @@ import (
 	BeginTransactionStmt	"BEGIN TRANSACTION statement"
 	BinlogStmt		"Binlog base64 statement"
 	CastType		"Cast function target type"
+	CharsetName		"Charactor set name"
 	ColumnDef		"table column definition"
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
@@ -3757,14 +3758,14 @@ VariableAssignment:
 		v = strings.TrimPrefix(v, "@")
 		$$ = &ast.VariableAssignment{Name: v, Value: $3.(ast.ExprNode)}
 	}
-|	"NAMES" StringName
+|	"NAMES" CharsetName
 	{
 		$$ = &ast.VariableAssignment{
 			Name: ast.SetNames,
 			Value: ast.NewValueExpr($2.(string)),
 		}
 	}
-|	"NAMES" StringName "COLLATE" StringName
+|	"NAMES" CharsetName "COLLATE" StringName
 	{
 		$$ = &ast.VariableAssignment{
 			Name: ast.SetNames,
@@ -3778,6 +3779,16 @@ VariableAssignment:
 			Name: ast.SetNames,
 			Value: ast.NewValueExpr($2.(string)),
 		}
+	}
+
+CharsetName:
+	StringName
+	{
+		$$ = $1
+	}
+|	binaryType
+	{
+		$$ = charset.CharsetBin
 	}
 
 VariableAssignmentList:

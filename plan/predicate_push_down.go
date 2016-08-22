@@ -195,7 +195,13 @@ func (p *NewUnion) PredicatePushDown(predicates []expression.Expression) (ret []
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	// TODO: implement aggregation push down.
-	p.GetChildByIndex(0).(LogicalPlan).PredicatePushDown(nil)
+	var condsToPush []expression.Expression
+	for _, cond := range predicates {
+		if _, ok := cond.(*expression.Constant); ok {
+			condsToPush = append(condsToPush, cond)
+		}
+	}
+	p.baseLogicalPlan.PredicatePushDown(condsToPush)
 	return predicates, p, nil
 }
 
@@ -270,6 +276,18 @@ func (p *Insert) PredicatePushDown(predicates []expression.Expression) ([]expres
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *SelectLock) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
+	return ret, p, errors.Trace(err)
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *NewUpdate) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
+	return ret, p, errors.Trace(err)
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *NewDelete) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, errors.Trace(err)
 }

@@ -191,8 +191,7 @@ func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, er
 
 func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row) {
 	smallRow := &Row{
-		RowKeys: make([]*RowKeyEntry, len(e.smallExec.Schema())),
-		Data:    make([]types.Datum, len(e.smallExec.Schema())),
+		Data: make([]types.Datum, len(e.smallExec.Schema())),
 	}
 
 	for _, data := range smallRow.Data {
@@ -938,7 +937,7 @@ func (b *executorBuilder) newConditionExprToPBExpr(client kv.Client, exprs []exp
 		} else {
 			// merge multiple converted pb expression into an AND expression.
 			pbExpr = &tipb.Expr{
-				Tp:       tipb.ExprType_And.Enum(),
+				Tp:       tipb.ExprType_And,
 				Children: []*tipb.Expr{pbExpr, v}}
 		}
 	}
@@ -984,7 +983,7 @@ func (b *executorBuilder) newAggFuncToPBExpr(client kv.Client, aggFunc expressio
 		}
 		children = append(children, pbArg)
 	}
-	return &tipb.Expr{Tp: tp.Enum(), Children: children}
+	return &tipb.Expr{Tp: tp, Children: children}
 }
 
 // newExprToPBExpr converts an expression.Expression to a tipb.Expr, if not supported, nil will be returned.
@@ -1006,7 +1005,7 @@ func (b *executorBuilder) columnToPBExpr(client kv.Client, column *expression.Co
 		return nil
 	}
 	switch column.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeDecimal, mysql.TypeGeometry,
+	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry,
 		mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeYear:
 		return nil
 	}
@@ -1029,7 +1028,7 @@ func (b *executorBuilder) columnToPBExpr(client kv.Client, column *expression.Co
 	}
 
 	return &tipb.Expr{
-		Tp:  tipb.ExprType_ColumnRef.Enum(),
+		Tp:  tipb.ExprType_ColumnRef,
 		Val: codec.EncodeInt(nil, id)}
 }
 
@@ -1047,7 +1046,7 @@ func (b *executorBuilder) inToPBExpr(client kv.Client, expr *expression.ScalarFu
 		return nil
 	}
 	return &tipb.Expr{
-		Tp:       tipb.ExprType_In.Enum(),
+		Tp:       tipb.ExprType_In,
 		Children: []*tipb.Expr{pbExpr, listExpr}}
 }
 
@@ -1081,7 +1080,7 @@ func (b *executorBuilder) notToPBExpr(client kv.Client, expr *expression.ScalarF
 		return nil
 	}
 	return &tipb.Expr{
-		Tp:       tipb.ExprType_Not.Enum(),
+		Tp:       tipb.ExprType_Not,
 		Children: []*tipb.Expr{child}}
 }
 
@@ -1149,7 +1148,7 @@ func (b *executorBuilder) scalarFuncToPBExpr(client kv.Client, expr *expression.
 		return nil
 	}
 	return &tipb.Expr{
-		Tp:       tp.Enum(),
+		Tp:       tp,
 		Children: []*tipb.Expr{expr0, expr1}}
 }
 
@@ -1440,4 +1439,29 @@ func (e *NewUnionExec) Close() error {
 		}
 	}
 	return nil
+}
+
+// DummyScanExec represents a dummy table.
+type DummyScanExec struct {
+	schema expression.Schema
+}
+
+// Schema implements Executor Schema interface.
+func (e *DummyScanExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Close implements Executor Close interface.
+func (e *DummyScanExec) Close() error {
+	return nil
+}
+
+// Fields implements Executor Fields interface.
+func (e *DummyScanExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Next implements Executor Next interface.
+func (e *DummyScanExec) Next() (*Row, error) {
+	return nil, nil
 }

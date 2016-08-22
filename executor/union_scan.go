@@ -114,8 +114,7 @@ type UnionScanExec struct {
 
 // Schema implements Executor Schema interface.
 func (us *UnionScanExec) Schema() expression.Schema {
-	return nil
-
+	return us.Src.Schema()
 }
 
 // Fields implements Executor Fields interface.

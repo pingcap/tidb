@@ -46,15 +46,11 @@ func (h *rpcHandler) getGroupKey(ctx *selectContext) ([]byte, error) {
 }
 
 // Update aggregate functions with rows.
-func (h *rpcHandler) aggregate(ctx *selectContext, row [][]byte) error {
+func (h *rpcHandler) aggregate(ctx *selectContext, handle int64, row map[int64][]byte) error {
 	// Put row data into evaluate context for later evaluation.
-	cols := ctx.sel.TableInfo.Columns
-	for i, col := range cols {
-		_, datum, err := codec.DecodeOne(row[i])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		ctx.eval.Row[col.GetColumnId()] = datum
+	err := h.setColumnValueToCtx(ctx, handle, row, ctx.aggColumns)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	// Get group key.
 	gk, err := h.getGroupKey(ctx)

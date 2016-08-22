@@ -355,3 +355,10 @@ func ComposeCNFCondition(conditions []Expression) Expression {
 		ComposeCNFCondition(conditions[:length/2]))
 	return expr
 }
+
+// Assignment represents a set assignment in Update, such as
+// Update t set c1 = hex(12), c2 = c3 where c2 = 1
+type Assignment struct {
+	Col  *Column
+	Expr Expression
+}

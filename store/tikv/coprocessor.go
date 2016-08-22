@@ -19,7 +19,6 @@ import (
 	"io/ioutil"
 	"sync"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -35,17 +34,12 @@ type CopClient struct {
 // SupportRequestType checks whether reqType is supported.
 func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
 	switch reqType {
-	case kv.ReqTypeSelect:
+	case kv.ReqTypeSelect, kv.ReqTypeIndex:
 		switch subType {
-		case kv.ReqSubTypeGroupBy:
+		case kv.ReqSubTypeGroupBy, kv.ReqSubTypeBasic:
 			return true
 		default:
 			return supportExpr(tipb.ExprType(subType))
-		}
-	case kv.ReqTypeIndex:
-		switch subType {
-		case kv.ReqSubTypeDesc, kv.ReqSubTypeBasic:
-			return true
 		}
 	}
 	return false
@@ -249,9 +243,12 @@ func (it *copIterator) run() {
 
 // Return next coprocessor result.
 func (it *copIterator) Next() (io.ReadCloser, error) {
+	it.mu.RLock()
 	if it.mu.finished {
+		it.mu.RUnlock()
 		return nil, nil
 	}
+	it.mu.RUnlock()
 	var (
 		resp *coprocessor.Response
 		err  error
@@ -314,7 +311,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 
 		req := &coprocessor.Request{
 			Context: task.region.GetContext(),
-			Tp:      proto.Int64(it.req.Tp),
+			Tp:      it.req.Tp,
 			Data:    it.req.Data,
 			Ranges:  task.pbRanges(),
 		}

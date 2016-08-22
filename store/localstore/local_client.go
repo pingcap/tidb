@@ -38,17 +38,12 @@ func (c *dbClient) Send(req *kv.Request) kv.Response {
 
 func (c *dbClient) SupportRequestType(reqType, subType int64) bool {
 	switch reqType {
-	case kv.ReqTypeSelect:
+	case kv.ReqTypeSelect, kv.ReqTypeIndex:
 		switch subType {
-		case kv.ReqSubTypeGroupBy:
+		case kv.ReqSubTypeGroupBy, kv.ReqSubTypeBasic:
 			return true
 		default:
 			return supportExpr(tipb.ExprType(subType))
-		}
-	case kv.ReqTypeIndex:
-		switch subType {
-		case kv.ReqSubTypeDesc, kv.ReqSubTypeBasic:
-			return true
 		}
 	}
 	return false
