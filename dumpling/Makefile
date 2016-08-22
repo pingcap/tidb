@@ -37,7 +37,10 @@ TARGET = ""
 
 .PHONY: all build install update parser clean todo test gotest interpreter server goyacc dev
 
-default: server
+default: server buildsucc
+
+buildsucc:
+	@echo Build TiDB Server successfully!
 
 all: dev server install
 
