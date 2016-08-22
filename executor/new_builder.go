@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-//TODO: select join algorithm during cbo phase.
 func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 	var leftHashKey, rightHashKey []*expression.Column
 	var targetTypes []*types.FieldType
@@ -46,6 +45,7 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 		prepared:    false,
 		ctx:         b.ctx,
 		targetTypes: targetTypes,
+		concurrency: v.Concurrency,
 	}
 	if v.SmallTable == 1 {
 		e.smallFilter = expression.ComposeCNFCondition(v.RightConditions)
@@ -69,6 +69,18 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 	} else {
 		e.smallExec = b.build(v.GetChildByIndex(1))
 		e.bigExec = b.build(v.GetChildByIndex(0))
+	}
+	for i := 0; i < e.concurrency; i++ {
+		ctx := &hashJoinCtx{}
+		if e.bigFilter != nil {
+			ctx.bigFilter = e.bigFilter.DeepCopy()
+		}
+		if e.otherFilter != nil {
+			ctx.otherFilter = e.otherFilter.DeepCopy()
+		}
+		ctx.datumBuffer = make([]types.Datum, len(e.bigHashKey))
+		ctx.hashKeyBuffer = make([]byte, 0, 10000)
+		e.hashJoinContexts = append(e.hashJoinContexts, ctx)
 	}
 	return e
 }
@@ -267,6 +279,7 @@ func (b *executorBuilder) buildNewTableScan(v *plan.PhysicalTableScan, s *plan.S
 		st := &NewXSelectTableExec{
 			tableInfo:   v.Table,
 			ctx:         b.ctx,
+			txn:         txn,
 			supportDesc: supportDesc,
 			asName:      v.TableAsName,
 			table:       table,
@@ -330,6 +343,7 @@ func (b *executorBuilder) buildNewIndexScan(v *plan.PhysicalIndexScan, s *plan.S
 			asName:      v.TableAsName,
 			table:       table,
 			indexPlan:   v,
+			txn:         txn,
 		}
 		ret = st
 		if !txn.IsReadOnly() {

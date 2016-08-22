@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/perfschema"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
@@ -46,6 +47,7 @@ var (
 	enablePS     = flag.Bool("perfschema", false, "If enable performance schema.")
 	reportStatus = flag.Bool("report-status", true, "If enable status report HTTP service.")
 	logFile      = flag.String("log-file", "", "log file path")
+	joinCon      = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
 )
 
 func main() {
@@ -78,6 +80,10 @@ func main() {
 			log.Fatal(errors.ErrorStack(err))
 		}
 		log.SetRotateByDay()
+	}
+
+	if joinCon != nil && *joinCon > 0 {
+		plan.JoinConcurrency = *joinCon
 	}
 	// Call this before setting log level to make sure that TiDB info could be printed.
 	printer.PrintTiDBInfo()
