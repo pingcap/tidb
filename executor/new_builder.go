@@ -288,6 +288,7 @@ func (b *executorBuilder) buildNewTableScan(v *plan.PhysicalTableScan, s *plan.S
 			ranges:      v.Ranges,
 			desc:        v.Desc,
 			limitCount:  v.LimitCount,
+			keepOrder:   v.KeepOrder,
 		}
 		ret = st
 		if !txn.IsReadOnly() {

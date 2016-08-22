@@ -104,7 +104,7 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 		selResp.Error = toPBError(err)
 		selResp.Rows = rows
 		if err != nil {
-			resp.OtherError = proto.String(err.Error())
+			resp.OtherError = err.Error()
 		}
 		data, err := proto.Marshal(selResp)
 		if err != nil {

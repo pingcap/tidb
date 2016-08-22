@@ -6,7 +6,6 @@ import (
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/plan"
 )
 
 var smallCount = 100
@@ -218,22 +217,6 @@ func BenchmarkJoin(b *testing.B) {
 	}
 }
 
-func BenchmarkNewJoin(b *testing.B) {
-	b.StopTimer()
-	se := prepareBenchSession()
-	prepareJoinBenchData(se, "int", "%v", smallCount)
-	b.StartTimer()
-	plan.UseNewPlanner = true
-	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute("select * from t a join t b on a.col = b.col")
-		if err != nil {
-			b.Fatal(err)
-		}
-		readResult(rs[0], 100)
-	}
-	plan.UseNewPlanner = false
-}
-
 func BenchmarkJoinLimit(b *testing.B) {
 	b.StopTimer()
 	se := prepareBenchSession()
@@ -246,20 +229,4 @@ func BenchmarkJoinLimit(b *testing.B) {
 		}
 		readResult(rs[0], 1)
 	}
-}
-
-func BenchmarkNewJoinLimit(b *testing.B) {
-	b.StopTimer()
-	se := prepareBenchSession()
-	prepareJoinBenchData(se, "int", "%v", smallCount)
-	b.StartTimer()
-	plan.UseNewPlanner = true
-	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute("select * from t a join t b on a.col = b.col limit 1")
-		if err != nil {
-			b.Fatal(err)
-		}
-		readResult(rs[0], 1)
-	}
-	plan.UseNewPlanner = false
 }

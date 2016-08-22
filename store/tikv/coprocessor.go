@@ -19,7 +19,6 @@ import (
 	"io/ioutil"
 	"sync"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -312,7 +311,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 
 		req := &coprocessor.Request{
 			Context: task.region.GetContext(),
-			Tp:      proto.Int64(it.req.Tp),
+			Tp:      it.req.Tp,
 			Data:    it.req.Data,
 			Ranges:  task.pbRanges(),
 		}

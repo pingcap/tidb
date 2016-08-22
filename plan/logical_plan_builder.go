@@ -25,9 +25,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// UseNewPlanner means if use the new planner.
-var UseNewPlanner = true
-
 type idAllocator struct {
 	id int
 }

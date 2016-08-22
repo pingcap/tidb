@@ -29,6 +29,7 @@ func (ts *PhysicalTableScan) matchProperty(prop requiredProperty, rowCounts []ui
 	if len(prop) == 1 && ts.pkCol != nil && ts.pkCol == prop[0].col {
 		sortedTs := *ts
 		sortedTs.Desc = prop[0].desc
+		sortedTs.KeepOrder = true
 		return &physicalPlanInfo{p: &sortedTs, cost: cost}
 	}
 	return &physicalPlanInfo{p: ts, cost: math.MaxFloat64}

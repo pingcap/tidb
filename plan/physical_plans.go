@@ -57,6 +57,9 @@ type PhysicalTableScan struct {
 	TableAsName *model.CIStr
 
 	LimitCount *int64
+
+	// If sort data by scanning pkcol, KeepOrder should be true.
+	KeepOrder bool
 }
 
 // PhysicalDummyScan is a dummy table that returns nothing.
