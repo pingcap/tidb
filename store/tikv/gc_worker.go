@@ -111,6 +111,7 @@ func (w *GCWorker) runGCJob(safePoint uint64) {
 	err := w.resolveLocks(safePoint)
 	if err != nil {
 		w.done <- errors.Trace(err)
+		return
 	}
 	err = w.doGC(safePoint)
 	if err != nil {
@@ -169,10 +170,10 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 		}
 		ok, err1 := w.store.lockResolver.ResolveLocks(bo, locks)
 		if err1 != nil {
-			return errors.Trace(err)
+			return errors.Trace(err1)
 		}
 		if !ok {
-			err = bo.Backoff(boTxnLock, err1)
+			err = bo.Backoff(boTxnLock, errors.Errorf("remain locks: %d", len(locks)))
 			if err != nil {
 				return errors.Trace(err)
 			}
