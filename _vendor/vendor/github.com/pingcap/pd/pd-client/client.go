@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -150,7 +149,7 @@ func (c *client) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, error) {
 func (c *client) GetStore(storeID uint64) (*metapb.Store, error) {
 	req := &storeRequest{
 		pbReq: &pdpb.GetStoreRequest{
-			StoreId: proto.Uint64(storeID),
+			StoreId: storeID,
 		},
 		done: make(chan error, 1),
 	}
@@ -228,7 +227,7 @@ func getLeader(etcdClient *clientv3.Client, path string) (string, int64, error) 
 	}
 
 	var leader pdpb.Leader
-	if err = proto.Unmarshal(resp.Kvs[0].Value, &leader); err != nil {
+	if err = leader.Unmarshal(resp.Kvs[0].Value); err != nil {
 		return "", 0, errors.Trace(err)
 	}
 	return leader.GetAddr(), resp.Header.Revision, nil
