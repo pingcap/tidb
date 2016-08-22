@@ -23,9 +23,9 @@ import (
 	"math"
 
 	proto "github.com/golang/protobuf/proto"
-)
 
-import metapb "github.com/pingcap/kvproto/pkg/metapb"
+	metapb "github.com/pingcap/kvproto/pkg/metapb"
+)
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
