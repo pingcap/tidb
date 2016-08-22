@@ -207,8 +207,8 @@ type Region struct {
 
 func newPeerMeta(peerID, storeID uint64) *metapb.Peer {
 	return &metapb.Peer{
-		Id:      proto.Uint64(peerID),
-		StoreId: proto.Uint64(storeID),
+		Id:      peerID,
+		StoreId: storeID,
 	}
 }
 
@@ -221,7 +221,7 @@ func newRegion(regionID uint64, storeIDs, peerIDs []uint64, leaderPeerID uint64)
 		peers = append(peers, newPeerMeta(peerIDs[i], storeIDs[i]))
 	}
 	meta := &metapb.Region{
-		Id:    proto.Uint64(regionID),
+		Id:    regionID,
 		Peers: peers,
 	}
 	return &Region{
@@ -288,15 +288,15 @@ func (r *Region) updateKeyRange(start, end []byte) {
 
 func (r *Region) incConfVer() {
 	r.meta.RegionEpoch = &metapb.RegionEpoch{
-		ConfVer: proto.Uint64(r.meta.GetRegionEpoch().GetConfVer() + 1),
-		Version: proto.Uint64(r.meta.GetRegionEpoch().GetVersion()),
+		ConfVer: r.meta.GetRegionEpoch().GetConfVer() + 1,
+		Version: r.meta.GetRegionEpoch().GetVersion(),
 	}
 }
 
 func (r *Region) incVersion() {
 	r.meta.RegionEpoch = &metapb.RegionEpoch{
-		ConfVer: proto.Uint64(r.meta.GetRegionEpoch().GetConfVer()),
-		Version: proto.Uint64(r.meta.GetRegionEpoch().GetVersion() + 1),
+		ConfVer: r.meta.GetRegionEpoch().GetConfVer(),
+		Version: r.meta.GetRegionEpoch().GetVersion() + 1,
 	}
 }
 
@@ -308,8 +308,8 @@ type Store struct {
 func newStore(storeID uint64, addr string) *Store {
 	return &Store{
 		meta: &metapb.Store{
-			Id:      proto.Uint64(storeID),
-			Address: proto.String(addr),
+			Id:      storeID,
+			Address: addr,
 		},
 	}
 }

@@ -21,10 +21,11 @@ import (
 	"math"
 
 	proto "github.com/golang/protobuf/proto"
-)
 
-import errorpb "github.com/pingcap/kvproto/pkg/errorpb"
-import kvrpcpb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	errorpb "github.com/pingcap/kvproto/pkg/errorpb"
+
+	kvrpcpb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+)
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
