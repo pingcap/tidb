@@ -231,8 +231,11 @@ func (af *avgFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 		d.SetValue(t)
 	case types.KindMysqlDecimal:
 		x := ctx.Value.GetMysqlDecimal()
-		t := x.Div(mysql.NewDecimalFromUint(uint64(ctx.Count), 0))
-		d.SetMysqlDecimal(t)
+		y := mysql.NewDecFromInt(ctx.Count)
+		to := new(mysql.MyDecimal)
+		mysql.DecimalDiv(x, y, to, mysql.DivFracIncr)
+		to.Round(to, ctx.Value.Frac()+mysql.DivFracIncr)
+		d.SetMysqlDecimal(to)
 	}
 	return
 }

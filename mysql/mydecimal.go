@@ -14,11 +14,11 @@
 package mysql
 
 import (
-	"fmt"
 	"math"
 	"strconv"
 )
 
+// constant values.
 const (
 	ten0 = 1
 	ten1 = 10
@@ -38,6 +38,9 @@ const (
 	wordBase      = ten9
 	wordMax       = wordBase - 1
 	notFixedDec   = 31
+
+	MaxFraction = 30
+	DivFracIncr = 4
 )
 
 var (
@@ -54,7 +57,7 @@ var (
 		999999900,
 		999999990,
 	}
-	zeroMyDecimal = MyDecimal{digitsInt: 1}
+	zeroMyDecimal = MyDecimal{}
 )
 
 // add adds a and b and carry, returns the sum and new carry.
@@ -151,6 +154,9 @@ type MyDecimal struct {
 	// The number of decimal digits after the point.
 	digitsFrac int8
 
+	// result fraction digits.
+	resultFrac int8
+
 	negative bool
 
 	// An array of int32 words.
@@ -158,8 +164,11 @@ type MyDecimal struct {
 	wordBuf [maxWordBufLen]int32
 }
 
+// String returns the decimal string representation rounded to resultFrac.
 func (d *MyDecimal) String() string {
-	return fmt.Sprintf("di:%d, df:%d, neg:%v, buf:%v", d.digitsInt, d.digitsFrac, d.negative, d.wordBuf)
+	tmp := *d
+	tmp.Round(&tmp, int(tmp.resultFrac))
+	return string(tmp.ToString())
 }
 
 func (d *MyDecimal) stringSize() int {
@@ -183,25 +192,14 @@ func (d *MyDecimal) removeLeadingZeros() (wordIdx int, digitsInt int) {
 	return
 }
 
-// ToString converts decimal to its printable string representation.
-//
-//      fixedPrec - 0 if representation can be variable length and
-//                  fixed_decimals will not be checked in this case.
-//                  Put number as with fixed point position with this
-//                  number of digits (sign counted and decimal point is
-//                  counted)
-//      fixedFrac  - number digits after point.
+// ToString converts decimal to its printable string representation without rounding.
 //
 //  RETURN VALUE
 //
 //      str       - result string
 //      errCode   - eDecOK/eDecTruncate/eDecOverflow
 //
-func (d *MyDecimal) ToString(fixedPrec, fixedFrac int) (str []byte, err error) {
-	fixedDigitsInt := 0
-	if fixedPrec > 0 {
-		fixedDigitsInt = fixedPrec - fixedFrac
-	}
+func (d *MyDecimal) ToString() (str []byte) {
 	str = make([]byte, d.stringSize())
 	digitsFrac := int(d.digitsFrac)
 	wordStartIdx, digitsInt := d.removeLeadingZeros()
@@ -211,33 +209,16 @@ func (d *MyDecimal) ToString(fixedPrec, fixedFrac int) (str []byte, err error) {
 	}
 
 	digitsIntLen := digitsInt
-	if fixedPrec > 0 {
-		digitsIntLen = fixedDigitsInt
-	}
 	if digitsIntLen == 0 {
 		digitsIntLen = 1
 	}
 	digitsFracLen := digitsFrac
-	if fixedPrec > 0 {
-		digitsFracLen = fixedFrac
-	}
 	length := digitsIntLen + digitsFracLen
 	if d.negative {
 		length++
 	}
 	if digitsFrac > 0 {
 		length++
-	}
-
-	if fixedPrec > 0 {
-		if digitsFrac > fixedFrac {
-			err = ErrTruncated
-			digitsFrac = fixedFrac
-		}
-		if digitsInt > fixedDigitsInt {
-			err = ErrOverflow
-			digitsInt = fixedDigitsInt
-		}
 	}
 	str = str[:length]
 	strIdx := 0
@@ -405,6 +386,17 @@ func (d *MyDecimal) FromString(str []byte) error {
 			err = d.Shift(int(exponent))
 		}
 	}
+	allZero := true
+	for i := 0; i < wordBufLen; i++ {
+		if d.wordBuf[i] != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		d.negative = false
+	}
+	d.resultFrac = d.digitsFrac
 	return err
 }
 
@@ -681,6 +673,9 @@ func (d *MyDecimal) doMiniRightShift(shift, beg, end int) {
 // RETURN VALUE
 //  eDecOK/eDecTruncated
 func (d *MyDecimal) Round(to *MyDecimal, frac int) (err error) {
+	if frac > MaxFraction {
+		frac = MaxFraction
+	}
 	// wordsFracTo is the number of fraction words in buffer.
 	wordsFracTo := (frac + 1) / digitsPerWord
 	if frac > 0 {
@@ -713,10 +708,12 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int) (err error) {
 			idx++
 		}
 		to.digitsFrac = int8(frac)
+		to.resultFrac = to.digitsFrac
 		return
 	}
 	if frac >= int(d.digitsFrac) {
 		to.digitsFrac = int8(frac)
+		to.resultFrac = to.digitsFrac
 		return
 	}
 
@@ -828,6 +825,7 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int) (err error) {
 					to.wordBuf[toIdx] = 0
 					toIdx++
 				}
+				to.resultFrac = to.digitsFrac
 				return nil
 			}
 			toIdx--
@@ -842,11 +840,12 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int) (err error) {
 		frac = 0
 	}
 	to.digitsFrac = int8(frac)
+	to.resultFrac = to.digitsFrac
 	return
 }
 
 // FromInt sets the decimal value from int64.
-func (d *MyDecimal) FromInt(val int64) {
+func (d *MyDecimal) FromInt(val int64) *MyDecimal {
 	var uVal uint64
 	if val < 0 {
 		d.negative = true
@@ -854,11 +853,11 @@ func (d *MyDecimal) FromInt(val int64) {
 	} else {
 		uVal = uint64(val)
 	}
-	d.FromUint(uVal)
+	return d.FromUint(uVal)
 }
 
 // FromUint sets the decimal value from uint64.
-func (d *MyDecimal) FromUint(val uint64) {
+func (d *MyDecimal) FromUint(val uint64) *MyDecimal {
 	x := val
 	wordIdx := 1
 	for x >= wordBase {
@@ -874,6 +873,7 @@ func (d *MyDecimal) FromUint(val uint64) {
 		d.wordBuf[wordIdx] = int32(x - y*wordBase)
 		x = y
 	}
+	return d
 }
 
 // ToInt returns int part of the decimal, returns the result and errcode.
@@ -942,18 +942,14 @@ func (d *MyDecimal) ToUint() (uint64, error) {
 }
 
 // FromFloat64 creates a decimal from float64 value.
-func (d *MyDecimal) FromFloat64(f float64) {
+func (d *MyDecimal) FromFloat64(f float64) error {
 	s := strconv.FormatFloat(f, 'g', -1, 64)
-	d.FromString([]byte(s))
+	return d.FromString([]byte(s))
 }
 
 // ToFloat64 converts decimal to float64 value.
 func (d *MyDecimal) ToFloat64() (float64, error) {
-	str, err := d.ToString(0, 0)
-	if err != nil {
-		return 0, err
-	}
-	f, err := strconv.ParseFloat(string(str), 64)
+	f, err := strconv.ParseFloat(d.String(), 64)
 	if err != nil {
 		err = ErrOverflow
 	}
@@ -1037,19 +1033,12 @@ with the correct -1/0/+1 result
     And for -1234567890.1234 it would be
 
                 7E F2 04 C7 2D FB 2D
-
-    And we add precision and frac at the beginning of the encoded value, so we can decode it directly later.
 */
 func (d *MyDecimal) ToBin(precision, frac int) ([]byte, error) {
 	var err error
 	var mask int32
 	if d.negative {
 		mask = -1
-	}
-	if precision == 0 {
-		frac = int(d.digitsFrac)
-		_, digitsInt := d.removeLeadingZeros()
-		precision = digitsInt + frac
 	}
 	digitsInt := precision - frac
 	wordsInt := digitsInt / digitsPerWord
@@ -1064,11 +1053,7 @@ func (d *MyDecimal) ToBin(precision, frac int) ([]byte, error) {
 	fracSizeFrom := wordsFracFrom*wordSize + dig2bytes[trailingDigitsFrom]
 	originIntSize := intSize
 	originFracSize := fracSize
-
-	result := make([]byte, 2+intSize+fracSize)
-	result[0] = byte(precision)
-	result[1] = byte(frac)
-	bin := result[2:]
+	bin := make([]byte, intSize+fracSize)
 	binIdx := 0
 	wordIdxFrom, digitsIntFrom := d.removeLeadingZeros()
 	if digitsIntFrom+fracSizeFrom == 0 {
@@ -1153,19 +1138,26 @@ func (d *MyDecimal) ToBin(precision, frac int) ([]byte, error) {
 		}
 	}
 	bin[0] ^= 0x80
-	return result, err
+	return bin, err
+}
+
+// PrecisionAndFrac returns the internal precision and frac number.
+func (d *MyDecimal) PrecisionAndFrac() (precision, frac int) {
+	frac = int(d.digitsFrac)
+	_, digitsInt := d.removeLeadingZeros()
+	precision = digitsInt + frac
+	if precision == 0 {
+		precision = 1
+	}
+	return
 }
 
 // FromBin Restores decimal from its binary fixed-length representation.
-func (d *MyDecimal) FromBin(bin []byte) error {
-	if len(bin) < 3 {
+func (d *MyDecimal) FromBin(bin []byte, precision, frac int) (binSize int, err error) {
+	if len(bin) == 0 {
 		*d = zeroMyDecimal
-		return ErrBadNumber
+		return 0, ErrBadNumber
 	}
-	precision := int(bin[0])
-	frac := int(bin[1])
-	bin = bin[2:]
-	var err error
 	digitsInt := precision - frac
 	wordsInt := digitsInt / digitsPerWord
 	leadingDigits := digitsInt - wordsInt*digitsPerWord
@@ -1185,7 +1177,7 @@ func (d *MyDecimal) FromBin(bin []byte) error {
 	if bin[binIdx]&0x80 > 0 {
 		mask = 0
 	}
-	binSize := decimalBinSize(precision, frac)
+	binSize = decimalBinSize(precision, frac)
 	dCopy := make([]byte, binSize)
 	copy(dCopy, bin)
 	dCopy[0] ^= 0x80
@@ -1212,7 +1204,7 @@ func (d *MyDecimal) FromBin(bin []byte) error {
 		d.wordBuf[wordIdx] = x ^ mask
 		if uint64(d.wordBuf[wordIdx]) >= uint64(powers10[leadingDigits+1]) {
 			*d = zeroMyDecimal
-			return ErrBadNumber
+			return binSize, ErrBadNumber
 		}
 		if wordIdx > 0 || d.wordBuf[wordIdx] != 0 {
 			wordIdx++
@@ -1224,7 +1216,7 @@ func (d *MyDecimal) FromBin(bin []byte) error {
 		d.wordBuf[wordIdx] = readWord(bin[binIdx:], 4) ^ mask
 		if uint32(d.wordBuf[wordIdx]) > wordMax {
 			*d = zeroMyDecimal
-			return ErrBadNumber
+			return binSize, ErrBadNumber
 		}
 		if wordIdx > 0 || d.wordBuf[wordIdx] != 0 {
 			wordIdx++
@@ -1237,7 +1229,7 @@ func (d *MyDecimal) FromBin(bin []byte) error {
 		d.wordBuf[wordIdx] = readWord(bin[binIdx:], 4) ^ mask
 		if uint32(d.wordBuf[wordIdx]) > wordMax {
 			*d = zeroMyDecimal
-			return ErrBadNumber
+			return binSize, ErrBadNumber
 		}
 		wordIdx++
 	}
@@ -1248,7 +1240,7 @@ func (d *MyDecimal) FromBin(bin []byte) error {
 		d.wordBuf[wordIdx] = (x ^ mask) * powers10[digitsPerWord-trailingDigits]
 		if uint32(d.wordBuf[wordIdx]) > wordMax {
 			*d = zeroMyDecimal
-			return ErrBadNumber
+			return binSize, ErrBadNumber
 		}
 		wordIdx++
 	}
@@ -1256,7 +1248,8 @@ func (d *MyDecimal) FromBin(bin []byte) error {
 	if d.digitsInt == 0 && d.digitsFrac == 0 {
 		*d = zeroMyDecimal
 	}
-	return err
+	d.resultFrac = int8(frac)
+	return binSize, err
 }
 
 // decimalBinSize returns the size of array to hold a binary representation of a decimal.
@@ -1322,6 +1315,7 @@ func (d *MyDecimal) Compare(to *MyDecimal) int {
 
 // DecimalAdd adds two decimals, sets the result to 'to'.
 func DecimalAdd(from1, from2, to *MyDecimal) error {
+	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)
 	if from1.negative == from2.negative {
 		return doAdd(from1, from2, to)
 	}
@@ -1331,6 +1325,7 @@ func DecimalAdd(from1, from2, to *MyDecimal) error {
 
 // DecimalSub subs one decimal from another, sets the result to 'to'.
 func DecimalSub(from1, from2, to *MyDecimal) error {
+	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)
 	if from1.negative == from2.negative {
 		_, err := doSub(from1, from2, to)
 		return err
@@ -1535,7 +1530,7 @@ func doAdd(from1, from2, to *MyDecimal) error {
 	idxTo := wordsIntTo + wordsFracTo
 	to.negative = from1.negative
 	to.digitsInt = int8(wordsIntTo * digitsPerWord)
-	to.digitsFrac = int8(myMax(int(from1.digitsFrac), int(from2.digitsFrac)))
+	to.digitsFrac = myMaxInt8(from1.digitsFrac, from2.digitsFrac)
 
 	if err != nil {
 		if to.digitsFrac > int8(wordsFracTo*digitsPerWord) {
@@ -1672,7 +1667,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 		tmp1        = wordsIntTo
 		tmp2        = wordsFracTo
 	)
-
+	to.resultFrac = myMinInt8(from1.resultFrac+from2.resultFrac, MaxFraction)
 	wordsIntTo, wordsFracTo, err = fixWordCntError(wordsIntTo, wordsFracTo)
 	to.negative = from1.negative != from2.negative
 	to.digitsFrac = from1.digitsFrac + from2.digitsFrac
@@ -1787,6 +1782,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 // to       - quotient
 // fracIncr - increment of fraction
 func DecimalDiv(from1, from2, to *MyDecimal, fracIncr int) error {
+	to.resultFrac = myMinInt8(from1.resultFrac+int8(fracIncr), MaxFraction)
 	return doDivMod(from1, from2, to, nil, fracIncr)
 }
 
@@ -1815,6 +1811,7 @@ DecimalMod does modulus of two decimals.
    thus, there's no requirement for M or N to be integers
 */
 func DecimalMod(from1, from2, to *MyDecimal) error {
+	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)
 	return doDivMod(from1, from2, nil, to, 0)
 }
 
@@ -1882,7 +1879,7 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 		// digitsFrac=max(frac1, frac2), as for subtraction
 		// digitsInt=from2.digitsInt
 		to.negative = from1.negative
-		to.digitsFrac = int8(myMax(int(from1.digitsFrac), int(from2.digitsFrac)))
+		to.digitsFrac = myMaxInt8(from1.digitsFrac, from2.digitsFrac)
 	} else {
 		wordsFracTo = digitsToWords(frac1 + frac2 + fracIncr)
 		wordsIntTo, wordsFracTo, err = fixWordCntError(wordsIntTo, wordsFracTo)
@@ -2061,4 +2058,33 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 		copy(to.wordBuf[:], to.wordBuf[idxTo:])
 	}
 	return err
+}
+
+// DecimalPeak returns the length of the encoded decimal.
+func DecimalPeak(b []byte) (int, error) {
+	if len(b) < 3 {
+		return 0, ErrBadNumber
+	}
+	precision := int(b[0])
+	frac := int(b[1])
+	return decimalBinSize(precision, frac) + 2, nil
+}
+
+// NewDecFromInt creates a MyDecimal from int.
+func NewDecFromInt(i int64) *MyDecimal {
+	return new(MyDecimal).FromInt(i)
+}
+
+// NewDecFromFloatForTest creates a MyDecimal from float, as it returns no error, it should only be used in test.
+func NewDecFromFloatForTest(f float64) *MyDecimal {
+	dec := new(MyDecimal)
+	dec.FromFloat64(f)
+	return dec
+}
+
+// NewDecFromStringForTest creates a MyDecimal from string, as it returns no error, it should only be used in test.
+func NewDecFromStringForTest(s string) *MyDecimal {
+	dec := new(MyDecimal)
+	dec.FromString([]byte(s))
+	return dec
 }
