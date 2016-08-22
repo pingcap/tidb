@@ -63,7 +63,7 @@ func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request) (*coproces
 	}
 	defer c.p.PutConn(conn)
 	msg := msgpb.Message{
-		MsgType: msgpb.MessageType_CopReq.Enum(),
+		MsgType: msgpb.MessageType_CopReq,
 		CopReq:  req,
 	}
 	err = c.doSend(conn, &msg)
@@ -86,7 +86,7 @@ func (c *rpcClient) SendKVReq(addr string, req *kvrpcpb.Request) (*kvrpcpb.Respo
 	}
 	defer c.p.PutConn(conn)
 	msg := msgpb.Message{
-		MsgType: msgpb.MessageType_KvReq.Enum(),
+		MsgType: msgpb.MessageType_KvReq,
 		KvReq:   req,
 	}
 	err = c.doSend(conn, &msg)

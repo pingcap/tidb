@@ -98,7 +98,6 @@ func newMockResolve(node ast.Node) error {
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql   string
@@ -205,11 +204,9 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
-	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestJoinReOrder(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql  string
@@ -263,11 +260,9 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		p = res.p.PushLimit(nil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
-	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestCBO(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql  string
@@ -353,11 +348,9 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		p = res.p.PushLimit(nil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
-	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestRefine(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql  string
@@ -517,11 +510,9 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		np := res.p.PushLimit(nil)
 		c.Assert(ToString(np), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
-	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestColumnPruning(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql string
@@ -653,7 +644,6 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		c.Assert(err, IsNil)
 		check(p, c, ca.ans, comment)
 	}
-	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
@@ -667,7 +657,6 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 }
 
 func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	rb := &rangeBuilder{}
 
@@ -850,11 +839,41 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
 	}
-	UseNewPlanner = false
+}
+
+func (s *testPlanSuite) TestTableScanWithOrder(c *C) {
+	defer testleak.AfterTest(c)()
+	// Sort result by scanning PKHandle column.
+	sql := "select * from t order by a limit 1;"
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	ast.SetFlag(stmt)
+
+	err = newMockResolve(stmt)
+	c.Assert(err, IsNil)
+
+	builder := &planBuilder{
+		allocator: new(idAllocator),
+		ctx:       mock.NewContext(),
+		colMapper: make(map[*ast.ColumnNameExpr]int),
+	}
+	p := builder.build(stmt)
+	c.Assert(builder.err, IsNil)
+	logic, ok := p.(LogicalPlan)
+	c.Assert(ok, IsTrue)
+	// Get physical plan.
+	_, pp, _, err := logic.convert2PhysicalPlan(nil)
+	c.Assert(err, IsNil)
+	// Limit->Projection->PhysicalTableScan
+	// Get PhysicalTableScan plan.
+	cpp, ok := pp.p.GetChildByIndex(0).GetChildByIndex(0).(*PhysicalTableScan)
+	c.Assert(cpp, NotNil)
+	c.Assert(ok, IsTrue)
+	// Make sure KeepOrder is true.
+	c.Assert(cpp.KeepOrder, IsTrue)
 }
 
 func (s *testPlanSuite) TestConstantFolding(c *C) {
-	UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 
 	cases := []struct {
@@ -924,7 +943,6 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 
 		c.Assert(expression.ComposeCNFCondition(selection.Conditions).ToString(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
 	}
-	UseNewPlanner = false
 }
 
 func (s *testPlanSuite) TestCoveringIndex(c *C) {
