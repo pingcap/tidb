@@ -46,9 +46,9 @@ func handleRequest(conn net.Conn, c *C) {
 	req := msg.GetKvReq()
 	c.Assert(req, NotNil)
 	var resp pb.Response
-	resp.Type = req.Type.Enum()
+	resp.Type = req.Type
 	msg = msgpb.Message{
-		MsgType: msgpb.MessageType_KvResp.Enum(),
+		MsgType: msgpb.MessageType_KvResp,
 		KvResp:  &resp,
 	}
 	err = util.WriteMessage(conn, msgID, &msg)
@@ -61,11 +61,11 @@ func (s *testClientSuite) TestSendBySelf(c *C) {
 	defer l.Close()
 	cli := newRPCClient()
 	req := new(pb.Request)
-	req.Type = pb.MessageType_CmdGet.Enum()
+	req.Type = pb.MessageType_CmdGet
 	getReq := new(pb.CmdGetRequest)
 	getReq.Key = []byte("a")
 	ver := uint64(0)
-	getReq.Version = &ver
+	getReq.Version = ver
 	req.CmdGetReq = getReq
 	resp, err := cli.SendKVReq(":61234", req)
 	c.Assert(err, IsNil)
@@ -105,7 +105,7 @@ func (s *testClientSuite) TestRetryReadThenClose(c *C) {
 	defer l.Close()
 	cli := newRPCClient()
 	req := new(pb.Request)
-	req.Type = pb.MessageType_CmdGet.Enum()
+	req.Type = pb.MessageType_CmdGet
 	resp, err := cli.SendKVReq(":61236", req)
 	c.Assert(err, NotNil)
 	c.Assert(resp, IsNil)
@@ -117,9 +117,9 @@ func (s *testClientSuite) TestWrongMessageID(c *C) {
 		msgID, err := util.ReadMessage(conn, &msg)
 		c.Assert(err, IsNil)
 		resp := msgpb.Message{
-			MsgType: msgpb.MessageType_KvResp.Enum(),
+			MsgType: msgpb.MessageType_KvResp,
 			KvResp: &pb.Response{
-				Type: msg.GetKvReq().GetType().Enum(),
+				Type: msg.GetKvReq().GetType(),
 			},
 		}
 		// Send the request back to client, set wrong msgID for the 1st
@@ -134,7 +134,7 @@ func (s *testClientSuite) TestWrongMessageID(c *C) {
 	defer l.Close()
 	cli := newRPCClient()
 	req := &pb.Request{
-		Type: pb.MessageType_CmdGet.Enum(),
+		Type: pb.MessageType_CmdGet,
 	}
 	// Wrong ID for the first request, correct for the rests.
 	_, err := cli.SendKVReq(":61237", req)

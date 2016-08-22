@@ -185,6 +185,7 @@ func (e *NewXSelectIndexExec) nextForSingleRead() (*Row, error) {
 			// The returned rows should be aggregate partial result.
 			e.result.SetFields(e.aggFields)
 		}
+		e.result.Fetch()
 	}
 	for {
 		if e.partialResult == nil {
@@ -282,6 +283,7 @@ func (e *NewXSelectIndexExec) fetchHandles() ([]int64, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	idxResult.Fetch()
 	handles, err := extractHandlesFromIndexResult(idxResult)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -492,6 +494,7 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult
 		// The returned rows should be aggregate partial result.
 		resp.SetFields(e.aggFields)
 	}
+	resp.Fetch()
 	return resp, nil
 }
 
@@ -512,6 +515,7 @@ type NewXSelectTableExec struct {
 	desc          bool
 	limitCount    *int64
 	returnedRows  uint64 // returned rowCount
+	keepOrder     bool
 
 	/*
 		The following attributes are used for aggregation push down.
@@ -563,8 +567,7 @@ func (e *NewXSelectTableExec) doRequest() error {
 	// Aggregate Info
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
-	keepOrder := false
-	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency, keepOrder)
+	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -573,6 +576,7 @@ func (e *NewXSelectTableExec) doRequest() error {
 		// The returned rows should be aggregate partial result.
 		e.result.SetFields(e.aggFields)
 	}
+	e.result.Fetch()
 	return nil
 }
 

@@ -25,18 +25,12 @@ import (
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infoschema.InfoSchema) (Plan, error) {
+func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	// We have to infer type again because after parameter is set, the expression type may change.
 	if err := InferType(node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if _, ok := node.(*ast.SelectStmt); !ok || !UseNewPlanner {
-		if err := logicOptimize(ctx, node); err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
 	builder := &planBuilder{
-		sb:        sb,
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -45,7 +39,7 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)
 	}
-	if logic, ok := p.(LogicalPlan); UseNewPlanner && ok {
+	if logic, ok := p.(LogicalPlan); ok {
 		var err error
 		_, logic, err = logic.PredicatePushDown(nil)
 		if err != nil {
@@ -62,10 +56,6 @@ func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infosch
 		p = res.p.PushLimit(nil)
 		log.Debugf("[PLAN] %s", ToString(p))
 		return p, nil
-	}
-	err := Refine(p)
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 	return p, nil
 }

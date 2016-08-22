@@ -181,7 +181,7 @@ func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVer
 			// of date and already be cleaned up. We can skip the
 			// RPC by returning RegionError directly.
 			return &pb.Response{
-				Type:        req.GetType().Enum(),
+				Type:        req.GetType(),
 				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
 			}, nil
 		}

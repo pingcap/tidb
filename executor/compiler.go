@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -49,9 +48,7 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 	if err := plan.Validate(node, false); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sb := NewSubQueryBuilder(is)
-
-	p, err := plan.Optimize(ctx, node, sb, is)
+	p, err := plan.Optimize(ctx, node, is)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -63,9 +60,4 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 		isDDL: isDDL,
 	}
 	return sa, nil
-}
-
-// NewSubQueryBuilder builds and returns a new SubQuery builder.
-func NewSubQueryBuilder(is infoschema.InfoSchema) plan.SubQueryBuilder {
-	return &subqueryBuilder{is: is}
 }

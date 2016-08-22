@@ -191,8 +191,7 @@ func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, er
 
 func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row) {
 	smallRow := &Row{
-		RowKeys: make([]*RowKeyEntry, len(e.smallExec.Schema())),
-		Data:    make([]types.Datum, len(e.smallExec.Schema())),
+		Data: make([]types.Datum, len(e.smallExec.Schema())),
 	}
 
 	for _, data := range smallRow.Data {

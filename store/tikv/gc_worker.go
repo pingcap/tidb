@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -122,9 +121,9 @@ func (w *GCWorker) runGCJob(safePoint uint64) {
 
 func (w *GCWorker) resolveLocks(safePoint uint64) error {
 	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdScanLock.Enum(),
+		Type: kvrpcpb.MessageType_CmdScanLock,
 		CmdScanLockReq: &kvrpcpb.CmdScanLockRequest{
-			MaxVersion: proto.Uint64(safePoint),
+			MaxVersion: safePoint,
 		},
 	}
 	bo := NewBackoffer(gcResolveLockMaxBackoff)
@@ -192,9 +191,9 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 
 func (w *GCWorker) doGC(safePoint uint64) error {
 	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdGC.Enum(),
+		Type: kvrpcpb.MessageType_CmdGC,
 		CmdGcReq: &kvrpcpb.CmdGCRequest{
-			SafePoint: proto.Uint64(safePoint),
+			SafePoint: safePoint,
 		},
 	}
 	bo := NewBackoffer(gcMaxBackoff)
