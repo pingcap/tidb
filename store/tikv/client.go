@@ -38,7 +38,7 @@ type Client interface {
 
 const (
 	maxConnecion = 20
-	netTimeout   = 5 // seconds
+	netTimeout   = 20 // seconds
 )
 
 type rpcClient struct {
