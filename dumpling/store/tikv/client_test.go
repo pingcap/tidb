@@ -48,7 +48,7 @@ func handleRequest(conn net.Conn, c *C) {
 	var resp pb.Response
 	resp.Type = req.Type
 	msg = msgpb.Message{
-		MsgType: msgpb.MessageType_KvResp.Enum(),
+		MsgType: msgpb.MessageType_KvResp,
 		KvResp:  &resp,
 	}
 	err = util.WriteMessage(conn, msgID, &msg)
@@ -117,7 +117,7 @@ func (s *testClientSuite) TestWrongMessageID(c *C) {
 		msgID, err := util.ReadMessage(conn, &msg)
 		c.Assert(err, IsNil)
 		resp := msgpb.Message{
-			MsgType: msgpb.MessageType_KvResp.Enum(),
+			MsgType: msgpb.MessageType_KvResp,
 			KvResp: &pb.Response{
 				Type: msg.GetKvReq().GetType(),
 			},
