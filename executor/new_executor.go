@@ -77,12 +77,7 @@ type hashJoinCtx struct {
 func (e *HashJoinExec) Close() error {
 	e.prepared = false
 	e.cursor = 0
-	e.hashTable = nil
-	err := e.smallExec.Close()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return e.bigExec.Close()
+	return e.smallExec.Close()
 }
 
 func joinTwoRow(a *Row, b *Row) *Row {
@@ -142,6 +137,7 @@ func (e *HashJoinExec) fetchBigExec() {
 		for _, cn := range e.bigTableRows {
 			close(cn)
 		}
+		e.bigExec.Close()
 	}()
 	curBatchSize := 1
 	for {
@@ -239,6 +235,7 @@ func (e *HashJoinExec) prepare() error {
 func (e *HashJoinExec) closeChanWorker() {
 	e.wg.Wait()
 	close(e.resultRows)
+	e.hashTable = nil
 }
 
 // doJoin does join job in one goroutine.

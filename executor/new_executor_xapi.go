@@ -79,6 +79,7 @@ type NewXSelectIndexExec struct {
 	result        xapi.SelectResult
 	partialResult xapi.PartialResult
 	where         *tipb.Expr
+	txn   	      kv.Transaction
 
 	tasks      []*lookupTableTask
 	taskCursor int
@@ -109,12 +110,7 @@ func (e *NewXSelectIndexExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.B
 	e.byItems = byItems
 	e.aggFields = fields
 	e.aggregate = true
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		e.indexPlan.DoubleRead = true
-		return
-	}
-	client := txn.GetClient()
+	client := e.txn.GetClient()
 	if !client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeGroupBy) {
 		e.indexPlan.DoubleRead = true
 	}
@@ -299,12 +295,8 @@ func (e *NewXSelectIndexExec) fetchHandles() ([]int64, error) {
 }
 
 func (e *NewXSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	selIdxReq := new(tipb.SelectRequest)
-	selIdxReq.StartTs = txn.StartTS()
+	selIdxReq.StartTs = e.txn.StartTS()
 	selIdxReq.IndexInfo = xapi.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	selIdxReq.Limit = e.indexPlan.LimitCount
 	if e.indexPlan.Desc {
@@ -314,6 +306,7 @@ func (e *NewXSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	for i, v := range e.indexPlan.Index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
+	var err error
 	selIdxReq.Ranges, err = indexRangesToPBRanges(e.indexPlan.Ranges, fieldTypes)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -327,7 +320,7 @@ func (e *NewXSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	} else if e.indexPlan.OutOfOrder {
 		concurrency = defaultConcurrency
 	}
-	return xapi.Select(txn.GetClient(), selIdxReq, concurrency, !e.indexPlan.OutOfOrder)
+	return xapi.Select(e.txn.GetClient(), selIdxReq, concurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) {
@@ -460,13 +453,9 @@ func (e *NewXSelectIndexExec) extractRowsFromPartialResult(t table.Table, partia
 }
 
 func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, error) {
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	// The handles are not in original index order, so we can't push limit here.
 	selTableReq := new(tipb.SelectRequest)
-	selTableReq.StartTs = txn.StartTS()
+	selTableReq.StartTs = e.txn.StartTS()
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
 	}
@@ -486,7 +475,7 @@ func (e *NewXSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
 	// Aggregate Info
-	resp, err := xapi.Select(txn.GetClient(), selTableReq, defaultConcurrency, false)
+	resp, err := xapi.Select(e.txn.GetClient(), selTableReq, defaultConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -516,6 +505,7 @@ type NewXSelectTableExec struct {
 	limitCount    *int64
 	returnedRows  uint64 // returned rowCount
 	keepOrder     bool
+	txn           kv.Transaction
 
 	/*
 		The following attributes are used for aggregation push down.
@@ -547,12 +537,9 @@ func (e *NewXSelectTableExec) Schema() expression.Schema {
 }
 
 func (e *NewXSelectTableExec) doRequest() error {
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	var err error
 	selReq := new(tipb.SelectRequest)
-	selReq.StartTs = txn.StartTS()
+	selReq.StartTs = e.txn.StartTS()
 	selReq.Where = e.where
 	selReq.Ranges = tableRangesToPBRanges(e.ranges)
 	columns := e.Columns
@@ -567,7 +554,7 @@ func (e *NewXSelectTableExec) doRequest() error {
 	// Aggregate Info
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
-	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency, e.keepOrder)
+	e.result, err = xapi.Select(e.txn.GetClient(), selReq, defaultConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}
