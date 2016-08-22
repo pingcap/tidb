@@ -133,7 +133,7 @@ func (e *HashJoinExec) Fields() []*ast.ResultField {
 	return nil
 }
 
-var batchSize = 100
+var batchSize = 128
 
 // Worker to get big table rows.
 func (e *HashJoinExec) fetchBigExec() {
@@ -143,13 +143,14 @@ func (e *HashJoinExec) fetchBigExec() {
 			close(cn)
 		}
 	}()
+	curBatchSize := 1
 	for {
 		if e.finished {
 			break
 		}
 		rows := make([]*Row, 0, batchSize)
 		done := false
-		for i := 0; i < batchSize; i++ {
+		for i := 0; i < curBatchSize; i++ {
 			row, err := e.bigExec.Next()
 			if err != nil {
 				e.bigTableErr <- errors.Trace(err)
@@ -167,6 +168,9 @@ func (e *HashJoinExec) fetchBigExec() {
 		cnt++
 		if done {
 			break
+		}
+		if curBatchSize < batchSize {
+			curBatchSize *= 2
 		}
 	}
 }
