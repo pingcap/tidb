@@ -329,13 +329,13 @@ func runTestStatusAPI(c *C) {
 
 func runTestMultiPacket(c *C) {
 	runTests(c, dsn, func(dbt *DBTest) {
-		dbt.mustExec("set global max_allowed_packet=167772160") // 160M
+		dbt.mustExec("set global max_allowed_packet=16777216") // 16M
 	})
 
 	runTests(c, dsn, func(dbt *DBTest) {
 		dbt.mustExec("create table test (a longtext)")
 		for i := 0; i < 100; i++ {
-			dbt.mustExec("insert into test values ('" + strings.Repeat("x", 1024*1024*16-i) + "')")
+			dbt.mustExec("insert into test values ('" + strings.Repeat("x", 100*1024*16-i) + "')")
 		}
 	})
 }
