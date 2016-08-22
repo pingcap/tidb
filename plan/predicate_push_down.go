@@ -16,6 +16,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/opcode"
 )
 
 func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) error {
@@ -78,7 +79,9 @@ func (p *NewTableDual) PredicatePushDown(predicates []expression.Expression) ([]
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
 	//TODO: add null rejecter.
-	rejectNull(p)	//https://dev.mysql.com/doc/refman/5.7/en/outer-join-simplification.html
+	if p.JoinType != InnerJoin {
+		outerJoinSimplifier(p, predicates) //https://dev.mysql.com/doc/refman/5.7/en/outer-join-simplification.html
+	}
 	groups, valid := tryToGetJoinGroup(p)
 	if valid {
 		e := joinReOrderSolver{allocator: p.allocator}
@@ -139,9 +142,53 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 	return
 }
 
-// rejectNull simplify outer join
-func rejectNull(p *Join) {
+// outerJoinSimplifier simplify outer join
+func outerJoinSimplifier(p *Join, predicates []expression.Expression) {
+	var innerTable LogicalPlan
+	if p.JoinType == LeftOuterJoin {
+		innerTable = p.GetChildByIndex(1)
+	} else {
+		innerTable = p.GetChildByIndex(0)
+	}
+	canBeSimplified := false
+	switch innerTable.(type) {
+	case *DataSource:
+		for _, expr := range predicates {
+			if scalarFunc, ok := expr.(*expression.ScalarFunction); ok {// check whether conjunction containing a null-rejected condition as a conjunct
+				if isNullRejected(innerTable.GetSchema(), scalarFunc) {
+					canBeSimplified = true
+					break
+				}
+			}
+		}
+	case *Join:
+	}
+	if canBeSimplified{
+		p.JoinType = InnerJoin
+	}
+}
 
+// isNullRejected check whether a condition is null-rejected
+func isNullRejected(schema *expression.Schema, scalarFunc *expression.ScalarFunction) bool{
+	if scalarFunc.FuncName == opcode.OrOr { // check whether disjunction of null-rejected conditions
+		for _, v := range scalarFunc.Args {
+			if scalar, ok := v.(*expression.ScalarFunction); ok {
+				if !isNullRejected(schema, scalar) {
+					return false
+				}
+			}else {
+				return false
+			}
+		}
+		return true
+	}
+	if col, ok := scalarFunc.Args[0].(*expression.Column); ok {
+		if schema.GetIndex(col) == -1 || scalarFunc.FuncName == opcode.IsNull {
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.

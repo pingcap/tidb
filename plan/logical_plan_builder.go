@@ -212,9 +212,7 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) LogicalPlan {
 	if join.Tp == ast.LeftJoin {
 		joinPlan.JoinType = LeftOuterJoin
 	} else if join.Tp == ast.RightJoin { // convert RightJoin to LeftJoin for simplifying outer join
-		joinPlan.JoinType = LeftOuterJoin
-		joinPlan.anti = true
-		exchangeLeftRightPlansAndConds(leftPlan, rightPlan, joinPlan.LeftConditions, joinPlan.RightConditions)
+		joinPlan.JoinType = RightOuterJoin
 	} else {
 		joinPlan.JoinType = InnerJoin
 	}
@@ -223,7 +221,8 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) LogicalPlan {
 	return joinPlan
 }
 
-func exchangeLeftRightPlansAndConds(preLeftPlan, preRightPlan LogicalPlan, preLeftCond, preRightCond []expression.Expression) (leftPlan, rightPlan LogicalPlan, leftCond, rightCond []expression.Expression){
+// exchangeLeftRightPlansAndConds convert left outer join to right outer join
+func exchangeLeftRightPlansAndConds(preLeftPlan, preRightPlan LogicalPlan, preLeftCond, preRightCond []expression.Expression) (leftPlan, rightPlan LogicalPlan, leftCond, rightCond []expression.Expression) {
 	leftCond = preRightCond
 	rightCond = preLeftCond
 	leftPlan = preRightPlan
