@@ -79,7 +79,7 @@ type NewXSelectIndexExec struct {
 	result        xapi.SelectResult
 	partialResult xapi.PartialResult
 	where         *tipb.Expr
-	txn   	      kv.Transaction
+	txn           kv.Transaction
 
 	tasks      []*lookupTableTask
 	taskCursor int

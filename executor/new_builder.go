@@ -279,7 +279,7 @@ func (b *executorBuilder) buildNewTableScan(v *plan.PhysicalTableScan, s *plan.S
 		st := &NewXSelectTableExec{
 			tableInfo:   v.Table,
 			ctx:         b.ctx,
-			txn: 	     txn,
+			txn:         txn,
 			supportDesc: supportDesc,
 			asName:      v.TableAsName,
 			table:       table,
@@ -343,7 +343,7 @@ func (b *executorBuilder) buildNewIndexScan(v *plan.PhysicalIndexScan, s *plan.S
 			asName:      v.TableAsName,
 			table:       table,
 			indexPlan:   v,
-			txn: 	     txn,
+			txn:         txn,
 		}
 		ret = st
 		if !txn.IsReadOnly() {
