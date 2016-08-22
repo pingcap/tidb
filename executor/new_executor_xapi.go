@@ -16,7 +16,6 @@ package executor
 import (
 	"math"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -81,14 +80,14 @@ type NewXSelectIndexExec struct {
 	where         *tipb.Expr
 	txn           kv.Transaction
 
-	tasks      []*lookupTableTask
-	taskCursor int
+	tasks    chan *lookupTableTask
+	tasksErr error // tasks closed due to error.
+	taskCurr *lookupTableTask
+
 	indexOrder map[int64]int
 	indexPlan  *plan.PhysicalIndexScan
 
 	returnedRows uint64 // returned row count
-
-	mu sync.Mutex
 
 	/*
 		The following attributes are used for aggregation push down.
@@ -149,10 +148,8 @@ func (e *NewXSelectIndexExec) Close() error {
 	}
 	e.result = nil
 	e.partialResult = nil
-	e.taskCursor = 0
-	e.mu.Lock()
+	e.taskCurr = nil
 	e.tasks = nil
-	e.mu.Unlock()
 	e.indexOrder = make(map[int64]int)
 	e.returnedRows = 0
 	return nil
@@ -229,69 +226,79 @@ func (e *NewXSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.
 
 func (e *NewXSelectIndexExec) nextForDoubleRead() (*Row, error) {
 	if e.tasks == nil {
-		startTs := time.Now()
-		handles, err := e.fetchHandles()
+		idxResult, err := e.doIndexRequest()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		log.Debugf("[TIME_INDEX_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(handles))
-		e.buildTableTasks(handles)
-		limitCount := int64(-1)
-		if e.indexPlan.LimitCount != nil {
-			limitCount = *e.indexPlan.LimitCount
-		}
-		concurrency := 2
-		if limitCount == -1 {
-			concurrency = len(e.tasks)
-		} else if limitCount > int64(BaseLookupTableTaskSize) {
-			concurrency = int(limitCount/int64(BaseLookupTableTaskSize) + 1)
-		}
-		log.Debugf("[TIME_INDEX_TABLE_CONCURRENT_SCAN] start %d workers", concurrency)
-		e.runTableTasks(concurrency)
+		idxResult.Fetch()
+
+		// use a background goroutine to fetch index, put the result in e.tasks.
+		// e.tasks serves as a pipeline, so fetch index and get table data would
+		// run concurrency.
+		e.tasks = make(chan *lookupTableTask, 10)
+		go e.fetchHandles(idxResult, e.tasks)
 	}
+
 	for {
-		if e.taskCursor >= len(e.tasks) {
-			return nil, nil
-		}
-		task := e.tasks[e.taskCursor]
-		if !task.done {
-			startTs := time.Now()
-			err := <-task.doneCh
-			if err != nil {
-				return nil, errors.Trace(err)
+		if e.taskCurr == nil {
+			taskCurr, ok := <-e.tasks
+			if !ok {
+				return nil, e.tasksErr
 			}
-			task.done = true
-			log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(task.handles))
+			e.taskCurr = taskCurr
 		}
-		if task.cursor < len(task.rows) {
-			row := task.rows[task.cursor]
-			task.cursor++
+
+		row, err := e.taskCurr.next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row != nil {
 			return row, nil
 		}
-		e.taskCursor++
+
+		e.taskCurr = nil
 	}
 }
 
-// fetchHandle fetches all handles from the index.
-// This should be optimized to fetch handles in batch.
-func (e *NewXSelectIndexExec) fetchHandles() ([]int64, error) {
-	idxResult, err := e.doIndexRequest()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	idxResult.Fetch()
-	handles, err := extractHandlesFromIndexResult(idxResult)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if !e.indexPlan.OutOfOrder {
-		// Save the index order.
-		e.indexOrder = make(map[int64]int)
-		for i, h := range handles {
-			e.indexOrder[h] = i
+func (e *NewXSelectIndexExec) fetchHandles(idxResult xapi.SelectResult, ch chan<- *lookupTableTask) {
+	defer close(ch)
+	workCh := make(chan *lookupTableTask)
+	defer close(workCh)
+
+	// limitCount := int64(-1)
+	// if e.indexPlan.LimitCount != nil {
+	// 	limitCount = *e.indexPlan.LimitCount
+	// }
+	go e.pickAndExecTask(workCh)
+	go e.pickAndExecTask(workCh)
+
+	for {
+		handles, err := extractHandlesFromIndexResult(idxResult)
+		if err != nil || handles == nil {
+			e.tasksErr = errors.Trace(err)
+			return
+		}
+
+		if !e.indexPlan.OutOfOrder {
+			// Save the index order.
+			e.indexOrder = make(map[int64]int)
+			for i, h := range handles {
+				e.indexOrder[h] = i
+			}
+		}
+
+		tasks := e.buildTableTasks(handles)
+		// // limitCount = -1 means no limits, uint64(limitCount) would be 18446744073709551615.
+		// for concurrency < uint64(limitCount) {
+		// 	go e.pickAndExecTask(workCh)
+		// 	concurrency++
+		// }
+
+		for _, task := range tasks {
+			workCh <- task
+			ch <- task
 		}
 	}
-	return handles, nil
 }
 
 func (e *NewXSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
@@ -323,7 +330,7 @@ func (e *NewXSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	return xapi.Select(e.txn.GetClient(), selIdxReq, concurrency, !e.indexPlan.OutOfOrder)
 }
 
-func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) {
+func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
 	// Build tasks with increasing batch size.
 	var taskSizes []int
 	total := len(handles)
@@ -345,52 +352,36 @@ func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) {
 			taskSizes[i], taskSizes[j] = taskSizes[j], taskSizes[i]
 		}
 	}
-	e.tasks = make([]*lookupTableTask, len(taskSizes))
+
+	tasks := make([]*lookupTableTask, len(taskSizes))
 	for i, size := range taskSizes {
 		task := &lookupTableTask{
 			handles: handles[:size],
 		}
 		task.doneCh = make(chan error, 1)
 		handles = handles[size:]
-		e.tasks[i] = task
+
+		tasks[i] = task
 	}
 	if e.indexPlan.Desc && !e.supportDesc {
 		// Reverse tasks order.
-		for i := 0; i < len(e.tasks)/2; i++ {
-			j := len(e.tasks) - i - 1
-			e.tasks[i], e.tasks[j] = e.tasks[j], e.tasks[i]
+		for i := 0; i < len(tasks)/2; i++ {
+			j := len(tasks) - i - 1
+			tasks[i], tasks[j] = tasks[j], tasks[i]
 		}
 	}
+	return tasks
 }
 
-func (e *NewXSelectIndexExec) runTableTasks(n int) {
-	for i := 0; i < n && i < len(e.tasks); i++ {
-		go e.pickAndExecTask()
-	}
-}
+func (e *NewXSelectIndexExec) pickAndExecTask(ch <-chan *lookupTableTask) {
+	for task := range ch {
+		if task.status == taskNew {
+			task.status = taskRunning
+		}
 
-func (e *NewXSelectIndexExec) pickAndExecTask() {
-	for {
-		// Pick a new task.
-		var task *lookupTableTask
-		e.mu.Lock()
-		for _, t := range e.tasks {
-			if t.status == taskNew {
-				task = t
-				task.status = taskRunning
-				break
-			}
-		}
-		e.mu.Unlock()
-		if task == nil {
-			// No more task to run.
-			break
-		}
 		// Execute the picked task.
 		err := e.executeTask(task)
-		e.mu.Lock()
 		task.status = taskDone
-		e.mu.Unlock()
 		task.doneCh <- err
 	}
 }

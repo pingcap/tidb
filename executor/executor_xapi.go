@@ -16,8 +16,10 @@ package executor
 import (
 	"math"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/kv"
@@ -70,6 +72,26 @@ type lookupTableTask struct {
 	status  int
 	done    bool
 	doneCh  chan error
+}
+
+func (task *lookupTableTask) next() (*Row, error) {
+	if !task.done {
+		startTs := time.Now()
+		err := <-task.doneCh
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		task.done = true
+		log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(task.handles))
+	}
+
+	if task.cursor < len(task.rows) {
+		row := task.rows[task.cursor]
+		task.cursor++
+		return row, nil
+	}
+
+	return nil, nil
 }
 
 type rowsSorter struct {
@@ -193,23 +215,21 @@ func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType)
 	return nil
 }
 
+// extractHandlesFromIndexResult gets some handles from SelectResult.
+// it should be called in a loop until nil is returned.
 func extractHandlesFromIndexResult(idxResult xapi.SelectResult) ([]int64, error) {
-	var handles []int64
-	for {
-		subResult, err := idxResult.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if subResult == nil {
-			break
-		}
-		subHandles, err := extractHandlesFromIndexSubResult(subResult)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		handles = append(handles, subHandles...)
+	subResult, err := idxResult.Next()
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return handles, nil
+	if subResult == nil {
+		return nil, nil
+	}
+	subHandles, err := extractHandlesFromIndexSubResult(subResult)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return subHandles, nil
 }
 
 func extractHandlesFromIndexSubResult(subResult xapi.PartialResult) ([]int64, error) {
