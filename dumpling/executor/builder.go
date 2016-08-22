@@ -287,6 +287,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		InsertValues: ivs,
 		OnDuplicate:  v.OnDuplicate,
 		Priority:     v.Priority,
+		Ignore:       v.Ignore,
 	}
 	// fields is used to evaluate values expr.
 	insert.fields = ts.GetResultFields()
