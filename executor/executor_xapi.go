@@ -16,10 +16,8 @@ package executor
 import (
 	"math"
 	"strings"
-	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/kv"
@@ -59,30 +57,21 @@ var BaseLookupTableTaskSize = 1024
 // MaxLookupTableTaskSize represents max number of handles for a lookupTableTask.
 var MaxLookupTableTaskSize = 1024
 
-const (
-	taskNew int = iota
-	taskRunning
-	taskDone
-)
-
 type lookupTableTask struct {
 	handles []int64
 	rows    []*Row
 	cursor  int
-	status  int
 	done    bool
 	doneCh  chan error
 }
 
-func (task *lookupTableTask) next() (*Row, error) {
+func (task *lookupTableTask) getRow() (*Row, error) {
 	if !task.done {
-		startTs := time.Now()
 		err := <-task.doneCh
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		task.done = true
-		log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(task.handles))
 	}
 
 	if task.cursor < len(task.rows) {

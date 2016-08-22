@@ -81,7 +81,7 @@ type NewXSelectIndexExec struct {
 	txn           kv.Transaction
 
 	tasks    chan *lookupTableTask
-	tasksErr error // tasks closed due to error.
+	tasksErr error // not nil if tasks closed due to error.
 	taskCurr *lookupTableTask
 
 	indexOrder map[int64]int
@@ -248,29 +248,27 @@ func (e *NewXSelectIndexExec) nextForDoubleRead() (*Row, error) {
 			e.taskCurr = taskCurr
 		}
 
-		row, err := e.taskCurr.next()
-		if err != nil {
-			return nil, errors.Trace(err)
+		row, err := e.taskCurr.getRow()
+		if err != nil || row != nil {
+			return row, errors.Trace(err)
 		}
-		if row != nil {
-			return row, nil
-		}
-
 		e.taskCurr = nil
 	}
 }
 
 func (e *NewXSelectIndexExec) fetchHandles(idxResult xapi.SelectResult, ch chan<- *lookupTableTask) {
 	defer close(ch)
+
 	workCh := make(chan *lookupTableTask)
 	defer close(workCh)
-
-	// limitCount := int64(-1)
-	// if e.indexPlan.LimitCount != nil {
-	// 	limitCount = *e.indexPlan.LimitCount
-	// }
-	go e.pickAndExecTask(workCh)
-	go e.pickAndExecTask(workCh)
+	limitCount := -1
+	if e.indexPlan.LimitCount != nil {
+		limitCount = int(*e.indexPlan.LimitCount)
+	}
+	concurrency := 2
+	for i := 0; i < concurrency; i++ {
+		go e.pickAndExecTask(workCh)
+	}
 
 	for {
 		handles, err := extractHandlesFromIndexResult(idxResult)
@@ -288,11 +286,13 @@ func (e *NewXSelectIndexExec) fetchHandles(idxResult xapi.SelectResult, ch chan<
 		}
 
 		tasks := e.buildTableTasks(handles)
-		// // limitCount = -1 means no limits, uint64(limitCount) would be 18446744073709551615.
-		// for concurrency < uint64(limitCount) {
-		// 	go e.pickAndExecTask(workCh)
-		// 	concurrency++
-		// }
+		if limitCount == -1 {
+			limitCount = len(tasks)
+		}
+		for concurrency < limitCount {
+			go e.pickAndExecTask(workCh)
+			concurrency++
+		}
 
 		for _, task := range tasks {
 			workCh <- task
@@ -373,15 +373,11 @@ func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTas
 	return tasks
 }
 
+// pickAndExecTask is a worker function, the common usage is
+// go e.pickAndExecTask(ch)
 func (e *NewXSelectIndexExec) pickAndExecTask(ch <-chan *lookupTableTask) {
 	for task := range ch {
-		if task.status == taskNew {
-			task.status = taskRunning
-		}
-
-		// Execute the picked task.
 		err := e.executeTask(task)
-		task.status = taskDone
 		task.doneCh <- err
 	}
 }
