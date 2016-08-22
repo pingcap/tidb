@@ -165,47 +165,47 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/coprocessor",
-			"Rev": "d99ca0376324ec7b7f8b6fbc4d039f8272703bc9"
+			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/errorpb",
-			"Rev": "d99ca0376324ec7b7f8b6fbc4d039f8272703bc9"
+			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/eraftpb",
-			"Rev": "d99ca0376324ec7b7f8b6fbc4d039f8272703bc9"
+			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/kvrpcpb",
-			"Rev": "d99ca0376324ec7b7f8b6fbc4d039f8272703bc9"
+			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/metapb",
-			"Rev": "d99ca0376324ec7b7f8b6fbc4d039f8272703bc9"
+			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/msgpb",
-			"Rev": "d99ca0376324ec7b7f8b6fbc4d039f8272703bc9"
+			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/pdpb",
-			"Rev": "d99ca0376324ec7b7f8b6fbc4d039f8272703bc9"
+			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_cmdpb",
-			"Rev": "d99ca0376324ec7b7f8b6fbc4d039f8272703bc9"
+			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_serverpb",
-			"Rev": "d99ca0376324ec7b7f8b6fbc4d039f8272703bc9"
+			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/util",
-			"Rev": "d99ca0376324ec7b7f8b6fbc4d039f8272703bc9"
+			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
 		},
 		{
 			"ImportPath": "github.com/pingcap/pd/pd-client",
-			"Rev": "254dc638dfe37e5d1bd84d9aadba7f016b61cb23"
+			"Rev": "3736686db7ee10d537f05c0ef64ae8428521b585"
 		},
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-tipb",
