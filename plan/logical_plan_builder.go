@@ -214,14 +214,24 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) LogicalPlan {
 	}
 	if join.Tp == ast.LeftJoin {
 		joinPlan.JoinType = LeftOuterJoin
-	} else if join.Tp == ast.RightJoin {
-		joinPlan.JoinType = RightOuterJoin
+	} else if join.Tp == ast.RightJoin { // convert RightJoin to LeftJoin for simplifying outer join
+		joinPlan.JoinType = LeftOuterJoin
+		joinPlan.anti = true
+		exchangeLeftRightPlansAndConds(leftPlan, rightPlan, joinPlan.LeftConditions, joinPlan.RightConditions)
 	} else {
 		joinPlan.JoinType = InnerJoin
 	}
 	addChild(joinPlan, leftPlan)
 	addChild(joinPlan, rightPlan)
 	return joinPlan
+}
+
+func exchangeLeftRightPlansAndConds(preLeftPlan, preRightPlan LogicalPlan, preLeftCond, preRightCond []expression.Expression) (leftPlan, rightPlan LogicalPlan, leftCond, rightCond []expression.Expression){
+	leftCond = preRightCond
+	rightCond = preLeftCond
+	leftPlan = preRightPlan
+	rightPlan = preLeftPlan
+	return
 }
 
 func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {

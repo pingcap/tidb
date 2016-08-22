@@ -78,6 +78,7 @@ func (p *NewTableDual) PredicatePushDown(predicates []expression.Expression) ([]
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
 	//TODO: add null rejecter.
+	rejectNull(p)	//https://dev.mysql.com/doc/refman/5.7/en/outer-join-simplification.html
 	groups, valid := tryToGetJoinGroup(p)
 	if valid {
 		e := joinReOrderSolver{allocator: p.allocator}
@@ -136,6 +137,11 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 		p.OtherConditions = append(p.OtherConditions, otherCond...)
 	}
 	return
+}
+
+// rejectNull simplify outer join
+func rejectNull(p *Join) {
+
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
