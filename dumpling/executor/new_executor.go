@@ -175,7 +175,7 @@ func (e *HashJoinExec) prepare() error {
 	e.finished = false
 	e.bigTableRows = make([]chan []*Row, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		e.bigTableRows[i] = make(chan []*Row, e.concurrency*100)
+		e.bigTableRows[i] = make(chan []*Row, e.concurrency*batchSize)
 	}
 	e.bigTableErr = make(chan error, 1)
 
