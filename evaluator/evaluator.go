@@ -537,16 +537,24 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		case types.KindFloat32:
 			u.SetFloat32(-aDatum.GetFloat32())
 		case types.KindMysqlDuration:
-			u.SetMysqlDecimal(mysql.ZeroDecimal.Sub(aDatum.GetMysqlDuration().ToNumber()))
+			var to = new(mysql.MyDecimal)
+			var zero mysql.MyDecimal
+			mysql.DecimalSub(&zero, aDatum.GetMysqlDuration().ToNumber(), to)
+			u.SetMysqlDecimal(to)
 		case types.KindMysqlTime:
-			u.SetMysqlDecimal(mysql.ZeroDecimal.Sub(aDatum.GetMysqlTime().ToNumber()))
+			dec := aDatum.GetMysqlTime().ToNumber()
+			var zero, to mysql.MyDecimal
+			mysql.DecimalSub(&zero, dec, &to)
+			u.SetMysqlDecimal(&to)
 		case types.KindString, types.KindBytes:
 			f, err := types.StrToFloat(aDatum.GetString())
 			e.err = errors.Trace(err)
 			u.SetFloat64(-f)
 		case types.KindMysqlDecimal:
-			f, _ := aDatum.GetMysqlDecimal().Float64()
-			u.SetMysqlDecimal(mysql.NewDecimalFromFloat(-f))
+			dec := aDatum.GetMysqlDecimal()
+			var zero, to mysql.MyDecimal
+			mysql.DecimalSub(&zero, dec, &to)
+			u.SetMysqlDecimal(&to)
 		case types.KindMysqlHex:
 			u.SetFloat64(-aDatum.GetMysqlHex().ToNumber())
 		case types.KindMysqlBit:
@@ -714,8 +722,11 @@ func (e *Evaluator) evalAggAvg(v *ast.AggregateFuncExpr) {
 		v.SetValue(t)
 	case types.KindMysqlDecimal:
 		x := ctx.Value.GetMysqlDecimal()
-		t := x.Div(mysql.NewDecimalFromUint(uint64(ctx.Count), 0))
-		v.SetMysqlDecimal(t)
+		var y, to mysql.MyDecimal
+		y.FromUint(uint64(ctx.Count))
+		mysql.DecimalDiv(x, &y, &to, mysql.DivFracIncr)
+		to.Round(&to, ctx.Value.Frac()+mysql.DivFracIncr)
+		v.SetMysqlDecimal(&to)
 	}
 	ctx.Value = *v.GetDatum()
 }

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -309,19 +308,12 @@ func (e *DeleteExec) Next() (*Row, error) {
 	tblNames := make(map[string]string)
 	if e.IsMultiTable {
 		// Delete from multiple tables should consider table ident list.
-		if !plan.UseNewPlanner {
-			fs := e.SelectExec.Fields()
-			for _, f := range fs {
-				if len(f.TableAsName.L) > 0 {
-					tblNames[f.TableAsName.L] = f.TableName.Name.L
-				} else {
-					tblNames[f.TableName.Name.L] = f.TableName.Name.L
-				}
-			}
-		} else {
-			schema := e.SelectExec.Schema()
-			for _, s := range schema {
-				tblNames[s.TblName.L] = s.TblName.L
+		fs := e.SelectExec.Fields()
+		for _, f := range fs {
+			if len(f.TableAsName.L) > 0 {
+				tblNames[f.TableAsName.L] = f.TableName.Name.L
+			} else {
+				tblNames[f.TableName.Name.L] = f.TableName.Name.L
 			}
 		}
 		if len(tblNames) != 0 {
@@ -463,7 +455,7 @@ func (e *LoadDataInfo) InsertData(data1, data2 []byte) error {
 			}
 			data2 = data2[startingLen:]
 			end -= startingLen
-			log.Warnf("insert data end:%v, data2:%v", end, data2)
+			//log.Warnf("insert data end:%v, data2:%v", end, data2)
 		}
 		if shouldHandlePreData {
 			data1 = append(data1, data2[:end]...)
@@ -591,6 +583,7 @@ type InsertExec struct {
 	fields      []*ast.ResultField
 
 	Priority int
+	Ignore   bool
 
 	finished bool
 }
@@ -629,7 +622,7 @@ func (e *InsertExec) Next() (*Row, error) {
 	}
 
 	for _, row := range rows {
-		if len(e.OnDuplicate) == 0 {
+		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
 		h, err := e.Table.AddRecord(e.ctx, row)
@@ -640,6 +633,12 @@ func (e *InsertExec) Next() (*Row, error) {
 		}
 
 		if len(e.OnDuplicate) == 0 || !terror.ErrorEqual(err, kv.ErrKeyExists) {
+			// If you use the IGNORE keyword, errors that occur while executing the INSERT statement are ignored.
+			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
+			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
+			if e.Ignore {
+				continue
+			}
 			return nil, errors.Trace(err)
 		}
 		if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
@@ -450,4 +451,17 @@ func runTestStatusAPI(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.Version, Equals, tmysql.ServerVersion)
+}
+
+func runTestMultiPacket(c *C) {
+	runTests(c, dsn, func(dbt *DBTest) {
+		dbt.mustExec("set global max_allowed_packet=167772160") // 160M
+	})
+
+	runTests(c, dsn, func(dbt *DBTest) {
+		dbt.mustExec("create table test (a longtext)")
+		for i := 0; i < 100; i++ {
+			dbt.mustExec("insert into test values ('" + strings.Repeat("x", 1024*1024*16-i) + "')")
+		}
+	})
 }

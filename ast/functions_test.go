@@ -127,9 +127,9 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 		agg.Update()
 	}
 	ctx := agg.GetContext()
-	expect, _ := mysql.ConvertToDecimal(1)
+	expect := mysql.NewDecFromInt(1)
 	c.Assert(ctx.Value.Kind(), Equals, types.KindMysqlDecimal)
-	c.Assert(ctx.Value.GetMysqlDecimal().Equals(expect), IsTrue)
+	c.Assert(ctx.Value.GetMysqlDecimal().Compare(expect), Equals, 0)
 	// sum without distinct
 	agg = &AggregateFuncExpr{
 		Args: args,
@@ -145,7 +145,7 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 		agg.Update()
 	}
 	ctx = agg.GetContext()
-	expect, _ = mysql.ConvertToDecimal(4)
+	expect = mysql.NewDecFromInt(4)
 	c.Assert(ctx.Value.Kind(), Equals, types.KindMysqlDecimal)
-	c.Assert(ctx.Value.GetMysqlDecimal().Equals(expect), IsTrue)
+	c.Assert(ctx.Value.GetMysqlDecimal().Compare(expect), Equals, 0)
 }

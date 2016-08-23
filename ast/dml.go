@@ -681,6 +681,7 @@ type InsertStmt struct {
 	dmlNode
 
 	IsReplace   bool
+	Ignore      bool
 	Table       *TableRefsClause
 	Columns     []*ColumnName
 	Lists       [][]ExprNode

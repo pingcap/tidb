@@ -46,8 +46,8 @@ var (
 	socket       = flag.String("socket", "", "The socket file to use for connection.")
 	enablePS     = flag.Bool("perfschema", false, "If enable performance schema.")
 	reportStatus = flag.Bool("report-status", true, "If enable status report HTTP service.")
-	useNewPlan   = flag.Bool("newplan", true, "If use new planner.")
 	logFile      = flag.String("log-file", "", "log file path")
+	joinCon      = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
 )
 
 func main() {
@@ -81,6 +81,10 @@ func main() {
 		}
 		log.SetRotateByDay()
 	}
+
+	if joinCon != nil && *joinCon > 0 {
+		plan.JoinConcurrency = *joinCon
+	}
 	// Call this before setting log level to make sure that TiDB info could be printed.
 	printer.PrintTiDBInfo()
 	log.SetLevelByString(cfg.LogLevel)
@@ -92,10 +96,6 @@ func main() {
 
 	if *enablePS {
 		perfschema.EnablePerfSchema()
-	}
-
-	if !*useNewPlan {
-		plan.UseNewPlanner = false
 	}
 
 	// Create a session to load information schema.

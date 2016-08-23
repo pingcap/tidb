@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -66,10 +68,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildInsert(v)
 	case *plan.LoadData:
 		return b.buildLoadData(v)
-	case *plan.JoinInner:
-		return b.buildJoinInner(v)
-	case *plan.JoinOuter:
-		return b.buildJoinOuter(v)
 	case *plan.Limit:
 		return b.buildLimit(v)
 	case *plan.Prepare:
@@ -293,6 +291,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		InsertValues: ivs,
 		OnDuplicate:  v.OnDuplicate,
 		Priority:     v.Priority,
+		Ignore:       v.Ignore,
 	}
 	// fields is used to evaluate values expr.
 	insert.fields = ts.GetResultFields()

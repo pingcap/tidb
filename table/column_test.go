@@ -138,7 +138,7 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 		},
 		{
 			types.NewFieldType(mysql.TypeNewDecimal),
-			types.NewDecimalDatum(mysql.NewDecimalFromInt(0, 0)),
+			types.NewDecimalDatum(mysql.NewDecFromInt(0)),
 		},
 		{
 			types.NewFieldType(mysql.TypeVarchar),

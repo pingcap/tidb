@@ -385,6 +385,15 @@ func (s *testSuite) TestLoadData(c *C) {
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	c.Assert(err, IsNil)
+
+	se, err := tidb.CreateSession(s.store)
+	c.Check(err, IsNil)
+	ctx := se.(context.Context)
+	ld := &LoadDataInfo{
+		row:       make([]types.Datum, 4),
+		insertVal: &InsertValues{ctx: ctx, Table: tbl},
+		Table:     tbl,
+	}
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
@@ -469,6 +478,28 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 	r = tk.MustQuery("select * from insert_autoinc_test;")
 	rowStr6 = fmt.Sprintf("%v %v", "6", "6")
 	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
+}
+
+func (s *testSuite) TestInsertIgnore(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testSQL := `drop table if exists t;
+    create table t (id int PRIMARY KEY AUTO_INCREMENT, c1 int);`
+	tk.MustExec(testSQL)
+	testSQL = `insert into t values (1, 2);`
+	tk.MustExec(testSQL)
+
+	r := tk.MustQuery("select * from t;")
+	rowStr := fmt.Sprintf("%v %v", "1", "2")
+	r.Check(testkit.Rows(rowStr))
+
+	tk.MustExec("insert ignore into t values (1, 3), (2, 3)")
+
+	r = tk.MustQuery("select * from t;")
+	rowStr = fmt.Sprintf("%v %v", "1", "2")
+	rowStr1 := fmt.Sprintf("%v %v", "2", "3")
+	r.Check(testkit.Rows(rowStr, rowStr1))
 }
 
 func (s *testSuite) TestReplace(c *C) {
@@ -1105,7 +1136,7 @@ func (s *testSuite) TestJoin(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false")
 	result.Check(testkit.Rows())
-	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1")
+	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1")
 	result.Check(testkit.Rows("1 1 <nil> <nil>", "2 2 2 3"))
 
 	tk.MustExec("drop table if exists t1")

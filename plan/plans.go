@@ -193,6 +193,7 @@ type Insert struct {
 
 	IsReplace bool
 	Priority  int
+	Ignore    bool
 }
 
 // LoadData represents a loaddata plan.

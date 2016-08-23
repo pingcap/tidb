@@ -289,7 +289,7 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeDouble:
 		d.SetFloat64(0)
 	case mysql.TypeNewDecimal:
-		d.SetMysqlDecimal(mysql.NewDecimalFromInt(0, 0))
+		d.SetMysqlDecimal(new(mysql.MyDecimal))
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
 		d.SetString("")
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
