@@ -243,7 +243,7 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 		tok, lit = userVar, s.r.data(&pos)
 	} else if ch1 == '@' {
 		s.r.inc()
-		stream := s.r.s[pos.Offset+2:]
+		stream := strings.ToLower(s.r.s[pos.Offset+2:])
 		for _, v := range []string{"global.", "session.", "local."} {
 			if strings.HasPrefix(stream, v) {
 				s.r.incN(len(v))

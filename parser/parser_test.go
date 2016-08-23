@@ -204,6 +204,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// session system variables
 		{"SET SESSION autocommit = 1", true},
 		{"SET @@session.autocommit = 1", true},
+		{"SET @@SESSION.autocommit = 1", true},
+		{"SET @@GLOBAL.GTID_PURGED = '123'", true},
+		{"SET @MYSQLDUMP_TEMP_LOG_BIN = @@SESSION.SQL_LOG_BIN", true},
 		{"SET LOCAL autocommit = 1", true},
 		{"SET @@local.autocommit = 1", true},
 		{"SET @@autocommit = 1", true},
