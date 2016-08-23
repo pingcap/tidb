@@ -29,7 +29,7 @@ type TidbTestSuite struct {
 var _ = Suite(new(TidbTestSuite))
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
-	log.SetLevelByString("error")
+	log.SetLevelByString("info")
 	store, err := tidb.NewStore("memory:///tmp/tidb")
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
@@ -68,6 +68,10 @@ func (ts *TidbTestSuite) TestSpecialType(c *C) {
 
 func (ts *TidbTestSuite) TestPreparedString(c *C) {
 	runTestPreparedString(c)
+}
+
+func (ts *TidbTestSuite) TestLoadData(c *C) {
+	runTestLoadData(c)
 }
 
 func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {

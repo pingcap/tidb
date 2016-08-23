@@ -371,6 +371,22 @@ func (s *testSuite) TestInsert(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSuite) TestLoadData(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	_, err := tk.Exec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	c.Assert(err, NotNil)
+	createSQL := `drop table if exists load_data_test;
+		create table load_data_test (id int primary key auto_increment, c1 int);`
+	tk.MustExec(createSQL)
+	_, err = tk.Exec("load data infile '/tmp/nonexistence.csv' into table load_data_test")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	c.Assert(err, IsNil)
+}
+
 func (s *testSuite) TestInsertAutoInc(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)

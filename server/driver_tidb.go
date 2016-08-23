@@ -14,6 +14,8 @@
 package server
 
 import (
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
@@ -135,6 +137,16 @@ func (tc *TiDBContext) Status() uint16 {
 // LastInsertID implements IContext LastInsertID method.
 func (tc *TiDBContext) LastInsertID() uint64 {
 	return tc.session.LastInsertID()
+}
+
+// Value implements IContext Value method.
+func (tc *TiDBContext) Value(key fmt.Stringer) interface{} {
+	return tc.session.Value(key)
+}
+
+// SetValue implements IContext SetValue method.
+func (tc *TiDBContext) SetValue(key fmt.Stringer, value interface{}) {
+	tc.session.SetValue(key, value)
 }
 
 // AffectedRows implements IContext AffectedRows method.

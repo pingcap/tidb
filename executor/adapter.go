@@ -115,6 +115,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			f.ColumnAsName = f.Column.Name
 		}
 	}
+
 	return &recordSet{
 		executor: e,
 		fields:   fs,

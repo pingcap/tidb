@@ -13,7 +13,11 @@
 
 package server
 
-import "github.com/pingcap/tidb/util/types"
+import (
+	"fmt"
+
+	"github.com/pingcap/tidb/util/types"
+)
 
 // IDriver opens IContext.
 type IDriver interface {
@@ -31,6 +35,12 @@ type IContext interface {
 
 	// AffectedRows returns affected rows of last executed command.
 	AffectedRows() uint64
+
+	// Value returns the value associated with this context for key.
+	Value(key fmt.Stringer) interface{}
+
+	// SetValue saves a value associated with this context for key.
+	SetValue(key fmt.Stringer, value interface{})
 
 	// WarningCount returns warning count of last executed command.
 	WarningCount() uint16

@@ -40,6 +40,7 @@ import (
 	"net"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 )
 
@@ -65,6 +66,7 @@ func newPacketIO(conn net.Conn) *packetIO {
 }
 
 func (p *packetIO) readPacket() ([]byte, error) {
+	log.Warnf("read packet starting")
 	var header [4]byte
 
 	if _, err := io.ReadFull(p.rb, header[:]); err != nil {
@@ -73,12 +75,14 @@ func (p *packetIO) readPacket() ([]byte, error) {
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
 	if length < 1 {
-		return nil, errInvalidPayloadLen.Gen("invalid payload length %d", length)
+		log.Errorf("invalid payload length:%v", length)
+		// return nil, errInvalidPayloadLen.Gen("invalid payload length %d", length)
 	}
 
 	sequence := uint8(header[3])
 	if sequence != p.sequence {
-		return nil, errInvalidSequence.Gen("invalid sequence %d != %d", sequence, p.sequence)
+		log.Errorf("invalid sequence %d != %d", sequence, p.sequence)
+		// return nil, errInvalidSequence.Gen("invalid sequence %d != %d", sequence, p.sequence)
 	}
 
 	p.sequence++
@@ -87,6 +91,7 @@ func (p *packetIO) readPacket() ([]byte, error) {
 	if _, err := io.ReadFull(p.rb, data); err != nil {
 		return nil, errors.Trace(err)
 	}
+	log.Warnf("read packet length:%v", length)
 	if length < mysql.MaxPayloadLen {
 		return data, nil
 	}

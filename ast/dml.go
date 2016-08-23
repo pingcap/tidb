@@ -24,6 +24,7 @@ var (
 	_ DMLNode = &UpdateStmt{}
 	_ DMLNode = &SelectStmt{}
 	_ DMLNode = &ShowStmt{}
+	_ DMLNode = &LoadDataStmt{}
 
 	_ Node = &Assignment{}
 	_ Node = &ByItem{}
@@ -633,6 +634,46 @@ const (
 	HighPriority
 	DelayedPriority
 )
+
+// LoadData is a statement to load data from a specified file, then insert this rows into an existing table.
+// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
+type LoadDataStmt struct {
+	dmlNode
+
+	IsLocal    bool
+	Path       string
+	Table      *TableName
+	FieldsInfo *FieldsClause
+	LinesInfo  *LinesClause
+}
+
+// Accept implements Node Accept interface.
+func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*LoadDataStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
+type FieldsClause struct {
+	Terminated string
+	Enclosed   byte
+	Escaped    byte
+}
+
+type LinesClause struct {
+	Starting   string
+	Terminated string
+}
 
 // InsertStmt is a statement to insert new rows into an existing table.
 // See https://dev.mysql.com/doc/refman/5.7/en/insert.html

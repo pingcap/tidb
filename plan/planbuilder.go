@@ -93,6 +93,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildExplain(x)
 	case *ast.InsertStmt:
 		return b.buildInsert(x)
+	case *ast.LoadDataStmt:
+		return b.buildLoadData(x)
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
@@ -507,6 +509,16 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 	}
 	return insertPlan
+}
+
+func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
+	return &LoadData{
+		IsLocal:    ld.IsLocal,
+		Path:       ld.Path,
+		Table:      ld.Table,
+		FieldsInfo: ld.FieldsInfo,
+		LinesInfo:  ld.LinesInfo,
+	}
 }
 
 func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {

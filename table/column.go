@@ -88,12 +88,17 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 }
 
 // CastValues casts values based on columns type.
-func CastValues(ctx context.Context, rec []types.Datum, cols []*Column) (err error) {
+func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreErr bool) (err error) {
 	for _, c := range cols {
 		var converted types.Datum
 		converted, err = CastValue(ctx, rec[c.Offset], &c.ColumnInfo)
 		if err != nil {
-			return errors.Trace(err)
+			if ignoreErr {
+				log.Warnf("cast values failed:%v", err)
+				continue
+			} else {
+				return errors.Trace(err)
+			}
 		}
 		rec[c.Offset] = converted
 	}

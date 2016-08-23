@@ -240,6 +240,26 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"DO 1", true},
 		{"DO 1 from t", false},
 
+		// load data
+		{"load data infile '/tmp/t.csv' into table t", true},
+		{"load data infile '/tmp/t.csv' into table t fields terminated by 'ab'", true},
+		{"load data infile '/tmp/t.csv' into table t columns terminated by 'ab'", true},
+		{"load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b'", true},
+		{"load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*'", true},
+		{"load data infile '/tmp/t.csv' into table t lines starting by 'ab'", true},
+		{"load data infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy'", true},
+		{"load data infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy'", true},
+		{"load data infile '/tmp/t.csv' into table t terminated by 'xy' fields terminated by 'ab'", false},
+		{"load data local infile '/tmp/t.csv' into table t", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab'", true},
+		{"load data local infile '/tmp/t.csv' into table t columns terminated by 'ab'", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b'", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*'", true},
+		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab'", true},
+		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy'", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy'", true},
+		{"load data local infile '/tmp/t.csv' into table t terminated by 'xy' fields terminated by 'ab'", false},
+
 		// Select for update
 		{"SELECT * from t for update", true},
 		{"SELECT * from t lock in share mode", true},

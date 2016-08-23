@@ -46,6 +46,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
@@ -230,7 +231,7 @@ func (cc *clientConn) Run() {
 		data, err := cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				log.Error(err)
+				log.Error(errors.ErrorStack(err))
 			}
 			return
 		}
@@ -270,6 +271,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComQuit:
 		return io.EOF
 	case mysql.ComQuery:
+		log.Warnf("dispatch query")
 		return cc.handleQuery(hack.String(data))
 	case mysql.ComPing:
 		return cc.writeOK()
@@ -340,7 +342,7 @@ func (cc *clientConn) writeError(e error) error {
 		m = mysql.NewErrf(mysql.ErrUnknown, e.Error())
 	}
 
-	data := make([]byte, 4, 16+len(m.Message))
+	data := cc.alloc.AllocWithLen(4, 16+len(m.Message))
 	data = append(data, mysql.ErrHeader)
 	data = append(data, byte(m.Code), byte(m.Code>>8))
 	if cc.capability&mysql.ClientProtocol41 > 0 {
@@ -370,6 +372,61 @@ func (cc *clientConn) writeEOF() error {
 	return errors.Trace(err)
 }
 
+func (cc *clientConn) writeReq(filePath string) error {
+	data := cc.alloc.AllocWithLen(4, 5+len(filePath))
+	data = append(data, mysql.LocalInFileHeader)
+	data = append(data, filePath...)
+
+	err := cc.writePacket(data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return errors.Trace(cc.flush())
+}
+
+func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error {
+	log.Warnf("handleLoadData *******************************")
+	if loadDataInfo == nil {
+		return errors.Errorf("load data info is empty")
+	}
+	err := cc.writeReq(loadDataInfo.Path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var data1 []byte
+	var data2 []byte
+	count := 0
+	for {
+		log.Warnf("load data count:%v", count)
+		data2, err = cc.readPacket()
+		if err != nil {
+			log.Warnf("load data1 err:%v", err)
+			if terror.ErrorNotEqual(err, io.EOF) {
+				log.Error(errors.ErrorStack(err))
+				return errors.Trace(err)
+			}
+		}
+		if len(data2) == 0 {
+			log.Warnf("load data form file end")
+			break
+		}
+		// TODO: cc.lastCmd = hack.String(data)
+		// token
+		err = loadDataInfo.InsertData(data1, data2)
+		if err != nil {
+			log.Warnf("load data2 err:%v", err)
+			return errors.Trace(err)
+		}
+		count++
+		data1 = data2
+	}
+	log.Warnf("handleLoadData *******************************2")
+	cc.ctx.SetValue(executor.LoadDataVarKey, nil)
+	return nil
+}
+
 func (cc *clientConn) handleQuery(sql string) (err error) {
 	startTs := time.Now()
 	rs, err := cc.ctx.Execute(sql)
@@ -379,6 +436,12 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 	if rs != nil {
 		err = cc.writeResultset(rs, false)
 	} else {
+		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
+		if loadDataInfo != nil {
+			if err = cc.handleLoadData(loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+				return errors.Trace(err)
+			}
+		}
 		err = cc.writeOK()
 	}
 	costTime := time.Now().Sub(startTs)
