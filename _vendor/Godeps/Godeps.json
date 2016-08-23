@@ -165,51 +165,55 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/coprocessor",
-			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
+			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/errorpb",
-			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
+			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/eraftpb",
-			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
+			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/kvrpcpb",
-			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
+			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/metapb",
-			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
+			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/msgpb",
-			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
+			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/pdpb",
-			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
+			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_cmdpb",
-			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
+			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_serverpb",
-			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
+			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/util",
-			"Rev": "a5157c64a51a304161c5ec0b1d56cac387d540ec"
+			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
 		},
 		{
 			"ImportPath": "github.com/pingcap/pd/pd-client",
 			"Rev": "3736686db7ee10d537f05c0ef64ae8428521b585"
 		},
 		{
+			"ImportPath": "github.com/pingcap/tipb/go-binlog",
+			"Rev": "076169255d6d516f4a72d1648c085d872ff8bf48"
+		},
+		{
 			"ImportPath": "github.com/pingcap/tipb/go-tipb",
-			"Rev": "81fd23ce3a1f12f80054c87a79cb2fbe8522ca71"
+			"Rev": "076169255d6d516f4a72d1648c085d872ff8bf48"
 		},
 		{
 			"ImportPath": "github.com/rcrowley/go-metrics",
