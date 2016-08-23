@@ -278,7 +278,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{1, opcode.Plus, 1, 2},
 		{1, opcode.Plus, uint64(1), 2},
 		{1, opcode.Plus, "1", 2},
-		{1, opcode.Plus, mysql.NewDecimalFromInt(1, 0), 2},
+		{1, opcode.Plus, mysql.NewDecFromInt(1), 2},
 		{uint64(1), opcode.Plus, 1, 2},
 		{uint64(1), opcode.Plus, uint64(1), 2},
 		{1, opcode.Plus, []byte("1"), 2},
@@ -291,17 +291,17 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{1, opcode.Minus, 1, 0},
 		{1, opcode.Minus, uint64(1), 0},
 		{1, opcode.Minus, float64(1), 0},
-		{1, opcode.Minus, mysql.NewDecimalFromInt(1, 0), 0},
+		{1, opcode.Minus, mysql.NewDecFromInt(1), 0},
 		{uint64(1), opcode.Minus, 1, 0},
 		{uint64(1), opcode.Minus, uint64(1), 0},
-		{mysql.NewDecimalFromInt(1, 0), opcode.Minus, 1, 0},
+		{mysql.NewDecFromInt(1), opcode.Minus, 1, 0},
 		{"1", opcode.Minus, []byte("1"), 0},
 
 		// mul
 		{1, opcode.Mul, 1, 1},
 		{1, opcode.Mul, uint64(1), 1},
 		{1, opcode.Mul, float64(1), 1},
-		{1, opcode.Mul, mysql.NewDecimalFromInt(1, 0), 1},
+		{1, opcode.Mul, mysql.NewDecFromInt(1), 1},
 		{uint64(1), opcode.Mul, 1, 1},
 		{uint64(1), opcode.Mul, uint64(1), 1},
 		{mysql.Time{}, opcode.Mul, 0, 0},
@@ -341,8 +341,8 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{uint64(10), opcode.Mod, -2, 0},
 		{float64(10), opcode.Mod, 2, 0},
 		{float64(10), opcode.Mod, 0, nil},
-		{mysql.NewDecimalFromInt(10, 0), opcode.Mod, 2, 0},
-		{mysql.NewDecimalFromInt(10, 0), opcode.Mod, 0, nil},
+		{mysql.NewDecFromInt(10), opcode.Mod, 2, 0},
+		{mysql.NewDecFromInt(10), opcode.Mod, 0, nil},
 	}
 
 	for _, t := range tbl {
@@ -873,14 +873,14 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		op     opcode.Op
 		result interface{}
 	}{
-		{mysql.NewDecimalFromInt(1, 0), opcode.Plus, mysql.NewDecimalFromInt(1, 0)},
+		{mysql.NewDecFromInt(1), opcode.Plus, mysql.NewDecFromInt(1)},
 		{mysql.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: mysql.DefaultFsp}, opcode.Plus,
 			mysql.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: mysql.DefaultFsp}},
 		{mysql.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}, opcode.Plus, mysql.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}},
 
-		{mysql.NewDecimalFromInt(1, 0), opcode.Minus, mysql.NewDecimalFromInt(-1, 0)},
-		{mysql.ZeroDuration, opcode.Minus, mysql.NewDecimalFromInt(0, 0)},
-		{mysql.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}, opcode.Minus, mysql.NewDecimalFromInt(-20091110230000, 0)},
+		{mysql.NewDecFromInt(1), opcode.Minus, mysql.NewDecFromInt(-1)},
+		{mysql.ZeroDuration, opcode.Minus, new(mysql.MyDecimal)},
+		{mysql.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}, opcode.Minus, mysql.NewDecFromInt(-20091110230000)},
 	}
 
 	for _, t := range tbl {
@@ -934,9 +934,9 @@ func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
 
 	result, err = Eval(ctx, avg)
 	c.Assert(err, IsNil)
-	expect, _ := mysql.ConvertToDecimal(3)
+	expect := mysql.NewDecFromInt(3)
 	c.Assert(result.Kind(), Equals, types.KindMysqlDecimal)
-	c.Assert(result.GetMysqlDecimal().Equals(expect), IsTrue)
+	c.Assert(result.GetMysqlDecimal().Compare(expect), Equals, 0)
 }
 
 func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {

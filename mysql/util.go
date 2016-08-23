@@ -76,7 +76,21 @@ func myMax(a, b int) int {
 	return b
 }
 
+func myMaxInt8(a, b int8) int8 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func myMin(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func myMinInt8(a, b int8) int8 {
 	if a < b {
 		return a
 	}
