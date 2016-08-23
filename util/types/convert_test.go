@@ -201,7 +201,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft.Decimal = 5
 	v, err = Convert(3.1415926, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v.(mysql.Decimal).String(), Equals, "3.14159")
+	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "3.14159")
 
 	// For TypeYear
 	ft = NewFieldType(mysql.TypeYear)
@@ -508,8 +508,11 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, float32(123), "123")
 	signedAccept(c, mysql.TypeNewDecimal, 123.456, "123.456")
 	signedAccept(c, mysql.TypeNewDecimal, "-123.456", "-123.456")
-	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(123, 5), "12300000")
-	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(-123, -5), "-0.00123")
+	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecFromInt(12300000), "12300000")
+	dec := mysql.NewDecFromInt(-123)
+	dec.Shift(-5)
+	dec.Round(dec, 5)
+	signedAccept(c, mysql.TypeNewDecimal, dec, "-0.00123")
 }
 
 func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {

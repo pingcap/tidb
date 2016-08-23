@@ -671,7 +671,9 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 		oldIndexCol = index
 	}
 
+	d.m.Lock()
 	d.hook = tc
+	d.m.Unlock()
 
 	// Use local ddl for callback test.
 	s.d.close()

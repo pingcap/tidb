@@ -8,27 +8,12 @@ endif
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
-# Check the version of make and set env varirables/commands accordingly.
-version_list := $(subst ., ,$(MAKE_VERSION))
-major_version := $(firstword $(version_list))
-old_versions := 0 1 2 3
-ifeq "$(major_version)" "$(filter $(major_version),$(old_versions))"
-  # Old version of `make` installed. It fails to search golex/goyacc
-  # by using the modified `PATH`, so we specify these commands with full path.
-  GOLEX   = $$(which golex)
-  GOLINT  = $$(which golint)
-else
-  # After version 4, `make` could follow modified `PATH` to find
-  # golex/goyacc correctly.
-  GOLEX   := golex
-  GOLINT  := golint
-endif
-
 GO        := GO15VENDOREXPERIMENT="1" go
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
 PACKAGES  := $$(go list ./...| grep -vE 'vendor')
+FILES     := $$(find . | grep -vE 'vendor'| grep '\.go')
 
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
@@ -37,7 +22,10 @@ TARGET = ""
 
 .PHONY: all build install update parser clean todo test gotest interpreter server goyacc dev
 
-default: server
+default: server buildsucc
+
+buildsucc:
+	@echo Build TiDB Server successfully!
 
 all: dev server install
 
@@ -83,13 +71,13 @@ check:
 	go get github.com/golang/lint/golint
 
 	@echo "vet"
-	@ go tool vet . 2>&1 | grep -vE 'vendor|parser/scanner.*unreachable code' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ go tool vet $(FILES) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "vet --shadow"
-	@ go tool vet --shadow . 2>&1 | grep -vE 'vendor|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ go tool vet --shadow $(FILES) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "golint"
-	@ $(GOLINT) ./... 2>&1 | grep -vE 'vendor|LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ golint $(PACKGES) 2>&1 | grep -vE 'LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "gofmt (simplify)"
-	@ gofmt -s -l . 2>&1 | grep -vE 'vendor|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ gofmt -s -l -w $(FILES) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 
 errcheck:
 	go get github.com/kisielk/errcheck
@@ -100,10 +88,10 @@ clean:
 	rm -rf *.out
 
 todo:
-	@grep -n ^[[:space:]]*_[[:space:]]*=[[:space:]][[:alpha:]][[:alnum:]]* */*.go parser/scanner.l parser/parser.y || true
-	@grep -n TODO */*.go parser/scanner.l parser/parser.y || true
-	@grep -n BUG */*.go parser/scanner.l parser/parser.y || true
-	@grep -n println */*.go parser/scanner.l parser/parser.y || true
+	@grep -n ^[[:space:]]*_[[:space:]]*=[[:space:]][[:alpha:]][[:alnum:]]* */*.go parser/parser.y || true
+	@grep -n TODO */*.go parser/parser.y || true
+	@grep -n BUG */*.go parser/parser.y || true
+	@grep -n println */*.go parser/parser.y || true
 
 test: gotest
 
