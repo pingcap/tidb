@@ -107,6 +107,9 @@ func (p *PhysicalHashJoin) matchProperty(prop requiredProperty, rowCounts []uint
 	lCount, rCount := float64(rowCounts[0]), float64(rowCounts[1])
 	np := *p
 	np.SetChildren(lRes.p, rRes.p)
+	if len(prop) != 0 {
+		np.Concurrency = 1
+	}
 	cost := lRes.cost + rRes.cost
 	if p.SmallTable == 1 {
 		cost += lCount + memoryFactor*rCount
