@@ -328,7 +328,7 @@ func (p *Join) handleLeftJoin(prop requiredProperty, innerJoin bool) (*physicalP
 		return nil, nil, 0, errors.Trace(err)
 	}
 	sortedPlanInfo := join.matchProperty(prop, []uint64{lCount, rCount}, lSortedPlanInfo, rSortedPlanInfo)
-	unSortedPlanInfo := join.matchProperty(prop, []uint64{lCount, rCount}, lUnSortedPlanInfo, rUnSortedPlanInfo)
+	unSortedPlanInfo := join.matchProperty(nil, []uint64{lCount, rCount}, lUnSortedPlanInfo, rUnSortedPlanInfo)
 	return sortedPlanInfo, unSortedPlanInfo, estimateJoinCount(lCount, rCount), nil
 }
 
@@ -370,7 +370,7 @@ func (p *Join) handleRightJoin(prop requiredProperty, innerJoin bool) (*physical
 		rSortedPlanInfo.cost = math.MaxFloat64
 	}
 	sortedPlanInfo := join.matchProperty(prop, []uint64{lCount, rCount}, lSortedPlanInfo, rSortedPlanInfo)
-	unSortedPlanInfo := join.matchProperty(prop, []uint64{lCount, rCount}, lUnSortedPlanInfo, rUnSortedPlanInfo)
+	unSortedPlanInfo := join.matchProperty(nil, []uint64{lCount, rCount}, lUnSortedPlanInfo, rUnSortedPlanInfo)
 	return sortedPlanInfo, unSortedPlanInfo, estimateJoinCount(lCount, rCount), nil
 }
 
