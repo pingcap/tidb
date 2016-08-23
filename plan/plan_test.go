@@ -150,6 +150,41 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
 		},
 		{
+			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ta.d = 0",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where tb.d = 0",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where tb.c is not null and tb.c = 0 and ifnull(tb.d, 1)",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.a = tb.a left outer join t tc on tb.b = tc.b where tc.c > 0",
+			first: "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Selection->Projection",
+			best:  "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.a = tb.a left outer join t tc on tc.b = ta.b where tb.c > 0",
+			first: "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Selection->Projection",
+			best:  "Join{Join{DataScan(t)->DataScan(t)->Selection}->DataScan(t)}->Projection",
+		},
+		{
+			sql:   "select * from t as ta left outer join (t as tb left join t as tc on tc.b = tb.b) on tb.a = ta.a where tc.c > 0",
+			first: "Join{DataScan(t)->Join{DataScan(t)->DataScan(t)}}->Selection->Projection",
+			best:  "Join{DataScan(t)->Join{DataScan(t)->DataScan(t)}}->Selection->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ifnull(tb.d, null) or tb.d is null",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+		},
+		{
 			sql:   "select a, d from (select * from t union all select * from t union all select * from t) z where a < 10",
 			first: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Selection->Projection",
 			best:  "UnionAll{DataScan(t)->Selection->Projection->DataScan(t)->Selection->Projection->DataScan(t)->Selection->Projection}->Projection",

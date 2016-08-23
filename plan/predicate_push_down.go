@@ -80,10 +80,7 @@ func (p *NewTableDual) PredicatePushDown(predicates []expression.Expression) ([]
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
-	//TODO: add null rejecter.
-	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
-		outerJoinSimplifier(p, predicates) //https://dev.mysql.com/doc/refman/5.7/en/outer-join-simplification.html
-	}
+	outerJoinSimplifier(p, predicates)
 	groups, valid := tryToGetJoinGroup(p)
 	if valid {
 		e := joinReOrderSolver{allocator: p.allocator}
@@ -146,17 +143,32 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 
 // outerJoinSimplifier simplify outer join
 func outerJoinSimplifier(p *Join, predicates []expression.Expression) {
-	//对于innerJoin,判断左右的join plan是否有嵌套的outer join, 有的话, 再对嵌套的outer join进行化简(此时将inner join的where和on条件传进去)
-	//对于outer join, 存在嵌套的outer join的话, 也需要递归的将里面outer join都化简
-	var innerTable LogicalPlan
-	if p.JoinType == LeftOuterJoin {
-		innerTable = p.GetChildByIndex(1).(LogicalPlan)
-	} else {
-		innerTable = p.GetChildByIndex(0).(LogicalPlan)
+	var innerPlan, outerPlan LogicalPlan
+	child1 := p.GetChildByIndex(0).(LogicalPlan)
+	child2 := p.GetChildByIndex(1).(LogicalPlan)
+	var fullConditions []expression.Expression
+	if p.JoinType == InnerJoin {
+		if leftChild, ok := child1.(*Join); ok {
+			fullConditions = concatOnAndWhereConds(p.EqualConditions, p.LeftConditions, p.RightConditions, p.OtherConditions, predicates)
+			outerJoinSimplifier(leftChild, fullConditions)
+		}
+		if rightChild, ok := child2.(*Join); ok {
+			if fullConditions == nil {
+				fullConditions = concatOnAndWhereConds(p.EqualConditions, p.LeftConditions, p.RightConditions, p.OtherConditions, predicates)
+			}
+			outerJoinSimplifier(rightChild, fullConditions)
+		}
+		return
+	} else if p.JoinType == LeftOuterJoin {
+		innerPlan = child2
+		outerPlan = child1
+	} else if p.JoinType == RightOuterJoin {
+		innerPlan = child1
+		outerPlan = child2
 	}
-	canBeSimplified := false
-	switch innerTable.(type) {
+	switch innerPlan.(type) {
 	case *DataSource:
+		canBeSimplified := false
 		for _, expr := range predicates {
 			switch x := expr.(type) {
 			case *expression.Constant:
@@ -168,49 +180,27 @@ func outerJoinSimplifier(p *Join, predicates []expression.Expression) {
 					break
 				}
 			case *expression.ScalarFunction:
-				if isNullRejected(innerTable.GetSchema(), x) {
+				if isNullRejected(innerPlan.GetSchema(), x) {
 					canBeSimplified = true
 					break
 				}
 			}
 		}
-		// when trying to convert an embedded outer join operation in a query,
-		// we must take into account the join condition for the embedding outer join together with the WHERE condition.
-		//case *Join:
-		//	var (
-		//		embeddedJoinInnerTable LogicalPlan
-		//		expressions []expression.Expression
-		//	)
-		//	if x.JoinType == LeftOuterJoin {
-		//		embeddedJoinInnerTable = x.GetChildByIndex(1).(LogicalPlan)
-		//		expressions = append(predicates, p.RightConditions...)
-		//	} else if x.JoinType == RightOuterJoin {
-		//		embeddedJoinInnerTable = x.GetChildByIndex(1).(LogicalPlan)
-		//		expressions = append(predicates, p.LeftConditions...)
-		//	}else {
-		//		return
-		//	}
-		//	expressions = append(expressions, p.OtherConditions...)
-		//	for _, eqExpr := range p.EqualConditions {
-		//		expressions = append(expressions, eqExpr)
-		//	}
-		//	for _, expr := range expressions {
-		//		if scalarFunc, ok := expr.(*expression.ScalarFunction); ok {
-		//			if isNullRejected(embeddedJoinInnerTable.GetSchema(), scalarFunc) {
-		//				canBeSimplified = true
-		//				break
-		//			}
-		//		}
-		//	}
-		//	if canBeSimplified {
-		//		x.JoinType = InnerJoin
-		//	}
-		//	return
-		//
-	}
-	if canBeSimplified {
-		log.Error("can be simplified")
-		p.JoinType = InnerJoin
+		if canBeSimplified {
+			p.JoinType = InnerJoin
+			if _, ok := outerPlan.(*Join); ok {
+				fullConditions = concatOnAndWhereConds(p.EqualConditions, p.LeftConditions, p.RightConditions, p.OtherConditions, predicates)
+				outerJoinSimplifier(outerPlan.(*Join), fullConditions)
+			}
+		} else {
+			return
+		}
+	case *Join:
+		outerJoinSimplifier(innerPlan.(*Join), predicates)
+		if _, ok := outerPlan.(*Join); ok && innerPlan.(*Join).JoinType == InnerJoin {
+			fullConditions = concatOnAndWhereConds(p.EqualConditions, p.LeftConditions, p.RightConditions, p.OtherConditions, predicates)
+			outerJoinSimplifier(outerPlan.(*Join), fullConditions)
+		}
 	}
 }
 
@@ -250,6 +240,7 @@ func isNullRejected(schema expression.Schema, scalarFunc *expression.ScalarFunct
 		if !scalarFunc.Args[1].(*expression.Constant).Value.IsNull() {
 			return false
 		}
+		return true
 	}
 	x := rebuildScalarFuncToConstant(scalarFunc).(*expression.Constant)
 	if x.Value.IsNull() {
@@ -260,7 +251,7 @@ func isNullRejected(schema expression.Schema, scalarFunc *expression.ScalarFunct
 	return false
 }
 
-// rebuildScalarFuncToConstant set columns in a scalar function to null and calculate the finally result of the scalar function
+// rebuildScalarFuncToConstant set columns in a scalar function as null and calculate the finally result of the scalar function
 func rebuildScalarFuncToConstant(scalarFunc *expression.ScalarFunction) expression.Expression {
 	args := make([]expression.Expression, len(scalarFunc.Args))
 	for i, arg := range scalarFunc.Args {
@@ -277,6 +268,17 @@ func rebuildScalarFuncToConstant(scalarFunc *expression.ScalarFunction) expressi
 	}
 	constant, _ := expression.NewFunction(scalarFunc.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
 	return constant
+}
+
+// when trying to convert an embedded outer join operation in a query,
+// we must take into account the join condition for the embedding outer join together with the WHERE condition.
+func concatOnAndWhereConds(equalConditions []*expression.ScalarFunction, leftConditions, rightConditions, otherConditions, predicates []expression.Expression) []expression.Expression {
+	ans := make([]expression.Expression, 0, len(equalConditions)+len(leftConditions)+len(rightConditions)+len(predicates))
+	for _, v := range equalConditions {
+		ans = append(ans, v)
+	}
+	ans = append(ans, append(leftConditions, append(rightConditions, append(otherConditions, predicates...)...)...)...)
+	return ans
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
