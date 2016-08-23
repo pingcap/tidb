@@ -15,8 +15,10 @@ package plan
 import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) error {
@@ -79,7 +81,7 @@ func (p *NewTableDual) PredicatePushDown(predicates []expression.Expression) ([]
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
 	//TODO: add null rejecter.
-	if p.JoinType != InnerJoin {
+	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
 		outerJoinSimplifier(p, predicates) //https://dev.mysql.com/doc/refman/5.7/en/outer-join-simplification.html
 	}
 	groups, valid := tryToGetJoinGroup(p)
@@ -144,51 +146,137 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 
 // outerJoinSimplifier simplify outer join
 func outerJoinSimplifier(p *Join, predicates []expression.Expression) {
+	//对于innerJoin,判断左右的join plan是否有嵌套的outer join, 有的话, 再对嵌套的outer join进行化简(此时将inner join的where和on条件传进去)
+	//对于outer join, 存在嵌套的outer join的话, 也需要递归的将里面outer join都化简
 	var innerTable LogicalPlan
 	if p.JoinType == LeftOuterJoin {
-		innerTable = p.GetChildByIndex(1)
+		innerTable = p.GetChildByIndex(1).(LogicalPlan)
 	} else {
-		innerTable = p.GetChildByIndex(0)
+		innerTable = p.GetChildByIndex(0).(LogicalPlan)
 	}
 	canBeSimplified := false
 	switch innerTable.(type) {
 	case *DataSource:
 		for _, expr := range predicates {
-			if scalarFunc, ok := expr.(*expression.ScalarFunction); ok {// check whether conjunction containing a null-rejected condition as a conjunct
-				if isNullRejected(innerTable.GetSchema(), scalarFunc) {
+			switch x := expr.(type) {
+			case *expression.Constant:
+				if x.Value.IsNull() {
+					canBeSimplified = true
+					break
+				} else if isTrue, _ := x.Value.ToBool(); isTrue == 0 {
+					canBeSimplified = true
+					break
+				}
+			case *expression.ScalarFunction:
+				if isNullRejected(innerTable.GetSchema(), x) {
 					canBeSimplified = true
 					break
 				}
 			}
 		}
-	case *Join:
+		// when trying to convert an embedded outer join operation in a query,
+		// we must take into account the join condition for the embedding outer join together with the WHERE condition.
+		//case *Join:
+		//	var (
+		//		embeddedJoinInnerTable LogicalPlan
+		//		expressions []expression.Expression
+		//	)
+		//	if x.JoinType == LeftOuterJoin {
+		//		embeddedJoinInnerTable = x.GetChildByIndex(1).(LogicalPlan)
+		//		expressions = append(predicates, p.RightConditions...)
+		//	} else if x.JoinType == RightOuterJoin {
+		//		embeddedJoinInnerTable = x.GetChildByIndex(1).(LogicalPlan)
+		//		expressions = append(predicates, p.LeftConditions...)
+		//	}else {
+		//		return
+		//	}
+		//	expressions = append(expressions, p.OtherConditions...)
+		//	for _, eqExpr := range p.EqualConditions {
+		//		expressions = append(expressions, eqExpr)
+		//	}
+		//	for _, expr := range expressions {
+		//		if scalarFunc, ok := expr.(*expression.ScalarFunction); ok {
+		//			if isNullRejected(embeddedJoinInnerTable.GetSchema(), scalarFunc) {
+		//				canBeSimplified = true
+		//				break
+		//			}
+		//		}
+		//	}
+		//	if canBeSimplified {
+		//		x.JoinType = InnerJoin
+		//	}
+		//	return
+		//
 	}
-	if canBeSimplified{
+	if canBeSimplified {
+		log.Error("can be simplified")
 		p.JoinType = InnerJoin
 	}
 }
 
 // isNullRejected check whether a condition is null-rejected
-func isNullRejected(schema *expression.Schema, scalarFunc *expression.ScalarFunction) bool{
-	if scalarFunc.FuncName == opcode.OrOr { // check whether disjunction of null-rejected conditions
-		for _, v := range scalarFunc.Args {
-			if scalar, ok := v.(*expression.ScalarFunction); ok {
-				if !isNullRejected(schema, scalar) {
+// If it is of the form A IS NOT NULL, where A is an attribute of any of the inner tables
+// If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL
+// If it is a conjunction containing a null-rejected condition as a conjunct
+// If it is a disjunction of null-rejected conditions
+func isNullRejected(schema expression.Schema, scalarFunc *expression.ScalarFunction) bool {
+	if scalarFunc.FuncName.L == ast.OrOr {
+		for _, arg := range scalarFunc.Args {
+			switch x := arg.(type) {
+			case *expression.Constant:
+				if isTrue, _ := x.Value.ToBool(); isTrue == 1 {
 					return false
 				}
-			}else {
-				return false
+			case *expression.ScalarFunction:
+				if !isNullRejected(schema, x) {
+					return false
+				}
 			}
 		}
 		return true
 	}
-	if col, ok := scalarFunc.Args[0].(*expression.Column); ok {
-		if schema.GetIndex(col) == -1 || scalarFunc.FuncName == opcode.IsNull {
+	isOk := false
+	cols, _ := extractColumn(scalarFunc, nil, nil)
+	for _, col := range cols {
+		if schema.GetIndex(col) != -1 {
+			isOk = true
+			break
+		}
+	}
+	if !isOk {
+		return false
+	}
+	if scalarFunc.FuncName.L == "ifnull" {
+		if !scalarFunc.Args[1].(*expression.Constant).Value.IsNull() {
 			return false
 		}
+	}
+	x := rebuildScalarFuncToConstant(scalarFunc).(*expression.Constant)
+	if x.Value.IsNull() {
+		return true
+	} else if isTrue, _ := x.Value.ToBool(); isTrue == 0 {
 		return true
 	}
 	return false
+}
+
+// rebuildScalarFuncToConstant set columns in a scalar function to null and calculate the finally result of the scalar function
+func rebuildScalarFuncToConstant(scalarFunc *expression.ScalarFunction) expression.Expression {
+	args := make([]expression.Expression, len(scalarFunc.Args))
+	for i, arg := range scalarFunc.Args {
+		switch x := arg.(type) {
+		case *expression.ScalarFunction:
+			args[i] = rebuildScalarFuncToConstant(x)
+		case *expression.Constant:
+			args[i] = x.DeepCopy()
+		case *expression.Column:
+			constant := &expression.Constant{Value: types.Datum{}}
+			constant.Value.SetNull()
+			args[i] = constant
+		}
+	}
+	constant, _ := expression.NewFunction(scalarFunc.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+	return constant
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.

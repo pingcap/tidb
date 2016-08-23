@@ -221,15 +221,6 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) LogicalPlan {
 	return joinPlan
 }
 
-// exchangeLeftRightPlansAndConds convert left outer join to right outer join
-func exchangeLeftRightPlansAndConds(preLeftPlan, preRightPlan LogicalPlan, preLeftCond, preRightCond []expression.Expression) (leftPlan, rightPlan LogicalPlan, leftCond, rightCond []expression.Expression) {
-	leftCond = preRightCond
-	rightCond = preLeftCond
-	leftPlan = preRightPlan
-	rightPlan = preLeftPlan
-	return
-}
-
 func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
