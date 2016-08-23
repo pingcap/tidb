@@ -55,7 +55,8 @@ import (
 
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
-	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows
+	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
+	mysql.ClientMultiStatements | mysql.ClientMultiResults
 
 type clientConn struct {
 	pkg          *packetIO
@@ -291,6 +292,8 @@ func (cc *clientConn) dispatch(data []byte) error {
 		return cc.handleStmtSendLongData(data)
 	case mysql.ComStmtReset:
 		return cc.handleStmtReset(data)
+	case mysql.ComSetOption:
+		return cc.handleSetOption(data)
 	default:
 		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", cmd)
 	}
@@ -357,12 +360,16 @@ func (cc *clientConn) writeError(e error) error {
 	return errors.Trace(cc.flush())
 }
 
-func (cc *clientConn) writeEOF() error {
+func (cc *clientConn) writeEOF(more bool) error {
 	data := cc.alloc.AllocWithLen(4, 9)
 
 	data = append(data, mysql.EOFHeader)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
 		data = append(data, dumpUint16(cc.ctx.WarningCount())...)
+		status := cc.ctx.Status()
+		if more {
+			status |= mysql.ServerMoreResultsExists
+		}
 		data = append(data, dumpUint16(cc.ctx.Status())...)
 	}
 
@@ -377,7 +384,11 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 		return errors.Trace(err)
 	}
 	if rs != nil {
-		err = cc.writeResultset(rs, false)
+		if len(rs) == 1 {
+			err = cc.writeResultset(rs[0], false, false)
+		} else {
+			err = cc.writeMultiResultset(rs, false)
+		}
 	} else {
 		err = cc.writeOK()
 	}
@@ -408,13 +419,13 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 			return errors.Trace(err)
 		}
 	}
-	if err := cc.writeEOF(); err != nil {
+	if err := cc.writeEOF(false); err != nil {
 		return errors.Trace(err)
 	}
 	return errors.Trace(cc.flush())
 }
 
-func (cc *clientConn) writeResultset(rs ResultSet, binary bool) error {
+func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error {
 	defer rs.Close()
 	// We need to call Next before we get columns.
 	// Otherwise, we will get incorrect columns info.
@@ -442,7 +453,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool) error {
 		}
 	}
 
-	if err = cc.writeEOF(); err != nil {
+	if err = cc.writeEOF(false); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -482,10 +493,20 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool) error {
 		row, err = rs.Next()
 	}
 
-	err = cc.writeEOF()
+	err = cc.writeEOF(more)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	return errors.Trace(cc.flush())
+}
+
+func (cc *clientConn) writeMultiResultset(rss []ResultSet, binary bool) error {
+	for _, rs := range rss {
+		if err := cc.writeResultset(rs, binary, true); err != nil {
+			return err
+		}
+	}
+	cc.writeOK()
+	return nil
 }
