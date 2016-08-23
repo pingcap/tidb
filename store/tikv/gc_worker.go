@@ -289,7 +289,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 }
 
 func (w *GCWorker) updateLease() error {
-	lease := time.Now().Add(gcWorkerTickInterval * 2).Format(gcLeaderLeaseFormat)
+	lease := time.Now().Add(gcWorkerLease).Format(gcLeaderLeaseFormat)
 	log.Debugf("[gc worker] update leader lease to %s for worker %s", lease, w.uuid)
 	err := w.saveValueToSysTable(gcLeaderLeaseKey, lease)
 	return errors.Trace(err)
