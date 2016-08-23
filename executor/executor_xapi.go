@@ -310,8 +310,7 @@ func (b *executorBuilder) columnNameToPBExpr(client kv.Client, column *ast.Colum
 		return nil
 	}
 	switch column.Refer.Expr.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry,
-		mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeYear:
+	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry:
 		return nil
 	}
 	matched := false
