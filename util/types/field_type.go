@@ -157,7 +157,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeDuration
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-	case mysql.Decimal:
+	case *mysql.MyDecimal:
 		tp.Tp = mysql.TypeNewDecimal
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin

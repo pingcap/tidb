@@ -124,7 +124,7 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
 		{mysql.Hex{}, mysql.TypeVarchar},
 		{mysql.Time{Type: mysql.TypeDatetime}, mysql.TypeDatetime},
 		{mysql.Duration{}, mysql.TypeDuration},
-		{mysql.Decimal{}, mysql.TypeNewDecimal},
+		{&mysql.MyDecimal{}, mysql.TypeNewDecimal},
 		{mysql.Enum{}, mysql.TypeEnum},
 		{mysql.Set{}, mysql.TypeSet},
 		{nil, mysql.TypeNull},

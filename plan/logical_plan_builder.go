@@ -1063,7 +1063,7 @@ func (b *planBuilder) buildNewUpdateLists(list []*ast.Assignment, p LogicalPlan)
 			return nil, nil
 		}
 		p = np
-		newList[offset] = &expression.Assignment{col, newExpr}
+		newList[offset] = &expression.Assignment{Col: col, Expr: newExpr}
 	}
 	return newList, p
 }

@@ -361,7 +361,7 @@ func (b *executorBuilder) datumToPBExpr(client kv.Client, d types.Datum) *tipb.E
 		val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal:
 		tp = tipb.ExprType_MysqlDecimal
-		val = codec.EncodeDecimal(nil, d.GetMysqlDecimal())
+		val = codec.EncodeDecimal(nil, d)
 	default:
 		return nil
 	}

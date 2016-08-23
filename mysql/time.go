@@ -169,9 +169,9 @@ const dateFormat = "20060102"
 // 2012-12-12 -> 20121212
 // 2012-12-12T10:10:10 -> 20121212101010
 // 2012-12-12T10:10:10.123456 -> 20121212101010.123456
-func (t Time) ToNumber() Decimal {
+func (t Time) ToNumber() *MyDecimal {
 	if t.IsZero() {
-		return ZeroDecimal
+		return &MyDecimal{}
 	}
 
 	// Fix issue #1046
@@ -189,8 +189,9 @@ func (t Time) ToNumber() Decimal {
 
 	s := t.Time.Format(tfStr)
 	// We skip checking error here because time formatted string can be parsed certainly.
-	d, _ := ParseDecimal(s)
-	return d
+	dec := new(MyDecimal)
+	dec.FromString([]byte(s))
+	return dec
 }
 
 // Convert converts t with type tp.
@@ -580,7 +581,7 @@ func (d Duration) formatFrac(frac int) string {
 // ToNumber changes duration to number format.
 // e.g,
 // 10:10:10 -> 101010
-func (d Duration) ToNumber() Decimal {
+func (d Duration) ToNumber() *MyDecimal {
 	sign, hours, minutes, seconds, fraction := splitDuration(time.Duration(d.Duration))
 	var (
 		s       string
@@ -598,8 +599,9 @@ func (d Duration) ToNumber() Decimal {
 	}
 
 	// We skip checking error here because time formatted string can be parsed certainly.
-	v, _ := ParseDecimal(s)
-	return v
+	dec := new(MyDecimal)
+	dec.FromString([]byte(s))
+	return dec
 }
 
 // ConvertToTime converts duration to Time.
