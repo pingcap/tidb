@@ -16,6 +16,7 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -329,12 +330,13 @@ func runTestStatusAPI(c *C) {
 
 func runTestMultiPacket(c *C) {
 	runTests(c, dsn, func(dbt *DBTest) {
-		dbt.mustExec("set global max_allowed_packet=167772160") // 160M
+		dbt.mustExec(fmt.Sprintf("set global max_allowed_packet=%d", 1024*1024*160)) // 160M
 	})
 
 	runTests(c, dsn, func(dbt *DBTest) {
 		dbt.mustExec("create table test (a longtext)")
-		for i := 0; i < 100; i++ {
+		// When i == 30, packet size will be 16777215(2^24−1) bytes.
+		for i := 30; i < 32; i++ {
 			dbt.mustExec("insert into test values ('" + strings.Repeat("x", 1024*1024*16-i) + "')")
 		}
 	})
