@@ -205,7 +205,7 @@ func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType)
 }
 
 // extractHandlesFromIndexResult gets some handles from SelectResult.
-// it should be called in a loop until nil is returned.
+// It should be called in a loop until nil is returned.
 func extractHandlesFromIndexResult(idxResult xapi.SelectResult) ([]int64, error) {
 	subResult, err := idxResult.Next()
 	if err != nil {

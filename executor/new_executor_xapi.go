@@ -232,7 +232,7 @@ func (e *NewXSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		}
 		idxResult.Fetch()
 
-		// use a background goroutine to fetch index, put the result in e.tasks.
+		// Use a background goroutine to fetch index, put the result in e.tasks.
 		// e.tasks serves as a pipeline, so fetch index and get table data would
 		// run concurrency.
 		e.tasks = make(chan *lookupTableTask, 10)
@@ -261,10 +261,6 @@ func (e *NewXSelectIndexExec) fetchHandles(idxResult xapi.SelectResult, ch chan<
 
 	workCh := make(chan *lookupTableTask)
 	defer close(workCh)
-	limitCount := -1
-	if e.indexPlan.LimitCount != nil {
-		limitCount = int(*e.indexPlan.LimitCount)
-	}
 	concurrency := 2
 	for i := 0; i < concurrency; i++ {
 		go e.pickAndExecTask(workCh)
@@ -286,10 +282,7 @@ func (e *NewXSelectIndexExec) fetchHandles(idxResult xapi.SelectResult, ch chan<
 		}
 
 		tasks := e.buildTableTasks(handles)
-		if limitCount == -1 {
-			limitCount = len(tasks)
-		}
-		for concurrency < limitCount {
+		for concurrency < len(tasks) {
 			go e.pickAndExecTask(workCh)
 			concurrency++
 		}
