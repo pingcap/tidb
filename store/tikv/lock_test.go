@@ -121,7 +121,7 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 
 	var keys []kv.Key
 	for ch := byte('a'); ch <= byte('z'); ch++ {
-		keys = append(keys, kv.Key{ch})
+		keys = append(keys, []byte{ch})
 	}
 
 	ver, err := s.store.CurrentVersion()
