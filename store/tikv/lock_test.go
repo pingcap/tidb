@@ -25,9 +25,7 @@ type testLockSuite struct {
 var _ = Suite(&testLockSuite{})
 
 func (s *testLockSuite) SetUpTest(c *C) {
-	store, err := NewMockTikvStore()
-	c.Assert(err, IsNil)
-	s.store = store.(*tikvStore)
+	s.store = newTestStore(c)
 }
 
 func (s *testLockSuite) TearDownTest(c *C) {
@@ -79,14 +77,31 @@ func (s *testLockSuite) putKV(c *C, key, value []byte) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testLockSuite) TestScanLockResolve(c *C) {
-	s.putAlphabets(c)
+func (s *testLockSuite) prepareAlphabetLocks(c *C) {
 	s.putKV(c, []byte("c"), []byte("cc"))
 	s.lockKey(c, []byte("c"), []byte("c"), []byte("z1"), []byte("z1"), true)
 	s.lockKey(c, []byte("d"), []byte("dd"), []byte("z2"), []byte("z2"), false)
 	s.lockKey(c, []byte("foo"), []byte("foo"), []byte("z3"), []byte("z3"), false)
 	s.putKV(c, []byte("bar"), []byte("bar"))
 	s.lockKey(c, []byte("bar"), nil, []byte("z4"), []byte("z4"), true)
+}
+
+func (s *testLockSuite) TestScanLockResolveWithGet(c *C) {
+	s.putAlphabets(c)
+	s.prepareAlphabetLocks(c)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	for ch := byte('a'); ch <= byte('z'); ch++ {
+		v, err := txn.Get([]byte{ch})
+		c.Assert(err, IsNil)
+		c.Assert(v, BytesEquals, []byte{ch})
+	}
+}
+
+func (s *testLockSuite) TestScanLockResolveWithSeek(c *C) {
+	s.putAlphabets(c)
+	s.prepareAlphabetLocks(c)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -97,6 +112,26 @@ func (s *testLockSuite) TestScanLockResolve(c *C) {
 		c.Assert([]byte(iter.Key()), BytesEquals, []byte{ch})
 		c.Assert([]byte(iter.Value()), BytesEquals, []byte{ch})
 		c.Assert(iter.Next(), IsNil)
+	}
+}
+
+func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
+	s.putAlphabets(c)
+	s.prepareAlphabetLocks(c)
+
+	var keys []kv.Key
+	for ch := byte('a'); ch <= byte('z'); ch++ {
+		keys = append(keys, kv.Key{ch})
+	}
+
+	ver, err := s.store.CurrentVersion()
+	c.Assert(err, IsNil)
+	snapshot := newTiKVSnapshot(s.store, ver)
+	m, err := snapshot.BatchGet(keys)
+	c.Assert(len(m), Equals, int('z'-'a'+1))
+	for ch := byte('a'); ch <= byte('z'); ch++ {
+		k := []byte{ch}
+		c.Assert(m[string(k)], BytesEquals, k)
 	}
 }
 
@@ -112,20 +147,6 @@ func (s *testLockSuite) TestCleanLock(c *C) {
 		c.Assert(err, IsNil)
 	}
 	err = txn.Commit()
-	c.Assert(err, IsNil)
-}
-
-func (s *testLockSuite) TestBatchGetLock(c *C) {
-	var allKeys []kv.Key
-	for ch := byte('a'); ch <= byte('z'); ch++ {
-		k := []byte{ch}
-		s.lockKey(c, k, k, k, k, false)
-		allKeys = append(allKeys, kv.Key(k))
-	}
-	ver, err := s.store.CurrentVersion()
-	c.Assert(err, IsNil)
-	snapshot := newTiKVSnapshot(s.store, ver)
-	_, err = snapshot.BatchGet(allKeys)
 	c.Assert(err, IsNil)
 }
 
