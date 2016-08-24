@@ -149,6 +149,16 @@ func (tc *TiDBContext) SetValue(key fmt.Stringer, value interface{}) {
 	tc.session.SetValue(key, value)
 }
 
+// CommitTxn implements IContext CommitTxn method.
+func (tc *TiDBContext) CommitTxn() error {
+	return tc.session.CommitTxn()
+}
+
+// RollbackTxn implements IContext RollbackTxn method.
+func (tc *TiDBContext) RollbackTxn() error {
+	return tc.session.RollbackTxn()
+}
+
 // AffectedRows implements IContext AffectedRows method.
 func (tc *TiDBContext) AffectedRows() uint64 {
 	return tc.session.AffectedRows()

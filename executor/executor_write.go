@@ -411,11 +411,19 @@ func (e *DeleteExec) Close() error {
 	return e.SelectExec.Close()
 }
 
+// NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
+func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table) *LoadDataInfo {
+	return &LoadDataInfo{
+		row:       row,
+		insertVal: &InsertValues{ctx: ctx, Table: tbl},
+		Table:     tbl,
+	}
+}
+
 // LoadDataInfo saves the information of loading data operation.
 type LoadDataInfo struct {
-	row             []types.Datum
-	insertVal       *InsertValues
-	nextBeginColOff int
+	row       []types.Datum
+	insertVal *InsertValues
 
 	Path       string
 	Table      table.Table
@@ -423,29 +431,31 @@ type LoadDataInfo struct {
 	LinesInfo  *ast.LinesClause
 }
 
-func (e *LoadDataInfo) InsertData(data1, data2 []byte) error {
-	log.Errorf("insert data path:%v, fields:%v, lines:%v \n data1:%v data2:%v", e.Path,
-		e.FieldsInfo, e.LinesInfo, string(data1), string(data2))
+// InsertData inserts data into specified table according to the specified format.
+// If it has the rest of data isn't completed the processing, then is returns without completed data.
+func (e *LoadDataInfo) InsertData(data1, data2 []byte) ([]byte, error) {
 	// TODO: support enclosed and escape.
-	var isLastRow bool
-	var shouldHandlePreData bool
+	var isNoEndData bool
+	var isLastData bool
 	var cols []string
-	if data1 != nil {
-		shouldHandlePreData = true
+	if len(data1) > 0 && len(data2) <= 0 {
+		isLastData = true
+		data1, data2 = data2, data1
 	}
 	startingLen := len(e.LinesInfo.Starting)
 	terminatedLen := len(e.LinesInfo.Terminated)
 	for len(data2) > 0 {
 		end := strings.Index(string(data2), e.LinesInfo.Terminated)
-		log.Infof("data2:%v, idx:%v, terminated:%v, line start:%v", string(data2), end, e.FieldsInfo.Terminated, e.LinesInfo.Starting)
 		if end == -1 {
 			end = len(data2)
-			isLastRow = true
+			isNoEndData = true
 		}
-		if len(e.LinesInfo.Starting) != 0 && !shouldHandlePreData {
+		if len(e.LinesInfo.Starting) != 0 && len(data1) <= 0 {
 			idx := strings.Index(string(data2[:end]), e.LinesInfo.Starting)
-			log.Warnf("insert data idx:%v, end:%v, startingLen:%v", idx, end, startingLen)
 			if idx == -1 {
+				if isNoEndData {
+					break
+				}
 				if len(data2)-1 < end+terminatedLen {
 					data2 = nil
 					break
@@ -455,33 +465,29 @@ func (e *LoadDataInfo) InsertData(data1, data2 []byte) error {
 			}
 			data2 = data2[startingLen:]
 			end -= startingLen
-			//log.Warnf("insert data end:%v, data2:%v", end, data2)
 		}
-		if shouldHandlePreData {
+		if len(data1) > 0 {
 			data1 = append(data1, data2[:end]...)
-			cols = strings.Split(string(data1), e.FieldsInfo.Terminated)
+			if isNoEndData && !isLastData {
+				data2 = data1
+			} else {
+				cols = strings.Split(string(data1), e.FieldsInfo.Terminated)
+			}
+			data1 = nil
 		} else {
 			cols = strings.Split(string(data2[:end]), e.FieldsInfo.Terminated)
 		}
-		colRealLen := len(cols) - 1
-		if isLastRow && colRealLen >= 0 {
-			data2 = []byte(cols[colRealLen])
-			cols = cols[:colRealLen]
-			e.nextBeginColOff = colRealLen
-			colRealLen = len(cols) - 1
+		if isNoEndData && !isLastData {
+			break
 		}
 		for i := 0; i < len(e.row); i++ {
-			if (shouldHandlePreData && i < e.nextBeginColOff) || i > colRealLen {
+			if i > len(cols)-1 {
 				e.row[i].SetNull()
 				continue
 			}
-			log.Infof("i:%v, off:%v, len:%v, d:%v, cols:%d, isLastRow:%v",
-				i, e.nextBeginColOff, colRealLen, cols[i], len(cols), isLastRow)
 			e.row[i].SetString(cols[i])
 		}
-		// TODO: consider ddl
 		row, err := e.insertVal.fillRowData(e.Table.Cols(), e.row, true)
-		log.Warnf("insert data row:%v", row)
 		if err != nil {
 			log.Warnf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
 		}
@@ -490,22 +496,17 @@ func (e *LoadDataInfo) InsertData(data1, data2 []byte) error {
 			log.Warnf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
 		}
 		e.insertVal.currRow++
-		shouldHandlePreData = false
 		if len(data2) <= end+terminatedLen {
 			data2 = nil
 			break
 		}
 		data2 = data2[end+terminatedLen:]
-		if isLastRow {
-			break
-		}
 	}
-	log.Warnf("insert data, last_insert_id:%v", e.insertVal.lastInsertID)
 	if e.insertVal.lastInsertID != 0 {
 		variable.GetSessionVars(e.insertVal.ctx).LastInsertID = e.insertVal.lastInsertID
 	}
 
-	return nil
+	return data2, nil
 }
 
 // LoadData represents a load data executor.
@@ -522,20 +523,25 @@ func (k loadDataVarKeyType) String() string {
 	return "load_data_var"
 }
 
+// LoadDataVarKey is a variable key for load data.
 const LoadDataVarKey loadDataVarKeyType = 0
 
 // Next implements Executor Next interface.
 func (e *LoadData) Next() (*Row, error) {
 	// TODO: support load data without local field.
 	if !e.IsLocal {
-		return nil, errors.New("don't support load data without local field.")
+		return nil, errors.New("don't support load data without local field")
+	}
+	// TODO: support lines terminated is "".
+	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
+		return nil, errors.New("don't support load data terminated is nil")
 	}
 
 	ctx := e.loadDataInfo.insertVal.ctx
 	val := ctx.Value(LoadDataVarKey)
 	if val != nil {
 		ctx.SetValue(LoadDataVarKey, nil)
-		// return nil, errors.New("Load Data: previous load data option isn't close normal")
+		return nil, errors.New("Load Data: previous load data option isn't close normal")
 	}
 	if e.loadDataInfo.Path == "" {
 		return nil, errors.New("Load Data: infile path is empty")
@@ -875,7 +881,6 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			row[i].SetInt64(id)
 		}
 		if !row[i].IsNull() {
-			log.Infof("init default col:%v", row[i].GetString())
 			// Column value isn't nil and column isn't auto-increment, continue.
 			if !mysql.HasAutoIncrementFlag(c.Flag) {
 				continue
@@ -889,7 +894,6 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				continue
 			}
 		}
-		log.Infof("init default2 col:%v, no.:%v", row[i].GetString(), i)
 
 		// If the nil value is evaluated in insert list, we will use nil except auto increment column.
 		if _, ok := marked[i]; ok && !mysql.HasAutoIncrementFlag(c.Flag) && !mysql.HasTimestampFlag(c.Flag) {

@@ -386,44 +386,56 @@ func (cc *clientConn) writeReq(filePath string) error {
 }
 
 func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error {
-	log.Warnf("handleLoadData *******************************")
+	var err error
+	defer func() {
+		cc.ctx.SetValue(executor.LoadDataVarKey, nil)
+		if err == nil {
+			err = cc.ctx.CommitTxn()
+		}
+		if err == nil {
+			return
+		}
+		err1 := cc.ctx.RollbackTxn()
+		if err1 != nil {
+			log.Errorf("load data rollback failed: %v", err1)
+		}
+	}()
+
 	if loadDataInfo == nil {
-		return errors.Errorf("load data info is empty")
+		err = errors.Errorf("load data info is empty")
+		return errors.Trace(err)
 	}
-	err := cc.writeReq(loadDataInfo.Path)
+	err = cc.writeReq(loadDataInfo.Path)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	var data1 []byte
 	var data2 []byte
-	count := 0
+	var shouldBreak bool
 	for {
-		log.Warnf("load data count:%v", count)
 		data2, err = cc.readPacket()
 		if err != nil {
-			log.Warnf("load data1 err:%v", err)
 			if terror.ErrorNotEqual(err, io.EOF) {
 				log.Error(errors.ErrorStack(err))
 				return errors.Trace(err)
 			}
 		}
 		if len(data2) == 0 {
-			log.Warnf("load data form file end")
-			break
+			shouldBreak = true
+			if len(data1) == 0 {
+				break
+			}
 		}
-		// TODO: cc.lastCmd = hack.String(data)
-		// token
-		err = loadDataInfo.InsertData(data1, data2)
+		data1, err = loadDataInfo.InsertData(data1, data2)
 		if err != nil {
-			log.Warnf("load data2 err:%v", err)
 			return errors.Trace(err)
 		}
-		count++
-		data1 = data2
+		if shouldBreak {
+			break
+		}
 	}
-	log.Warnf("handleLoadData *******************************2")
-	cc.ctx.SetValue(executor.LoadDataVarKey, nil)
+
 	return nil
 }
 

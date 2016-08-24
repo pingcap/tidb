@@ -42,6 +42,12 @@ type IContext interface {
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})
 
+	// CommitTxn commits the transaction operations.
+	CommitTxn() error
+
+	// RollbackTxn undoes the transaction operations.
+	RollbackTxn() error
+
 	// WarningCount returns warning count of last executed command.
 	WarningCount() uint16
 

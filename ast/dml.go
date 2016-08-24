@@ -635,7 +635,7 @@ const (
 	DelayedPriority
 )
 
-// LoadData is a statement to load data from a specified file, then insert this rows into an existing table.
+// LoadDataStmt is a statement to load data from a specified file, then insert this rows into an existing table.
 // See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
 type LoadDataStmt struct {
 	dmlNode
@@ -664,12 +664,14 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// FieldsClause represents fields references clause in load data statement.
 type FieldsClause struct {
 	Terminated string
 	Enclosed   byte
 	Escaped    byte
 }
 
+// LinesClause represents lines references clause in load data statement.
 type LinesClause struct {
 	Starting   string
 	Terminated string

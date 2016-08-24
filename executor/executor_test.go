@@ -23,6 +23,7 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -30,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -63,7 +66,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		s.store = store
 	}
-	log.SetLevelByString("warn")
+	log.SetLevelByString("info")
 	executor.BaseLookupTableTaskSize = 2
 }
 
@@ -379,21 +382,121 @@ func (s *testSuite) TestLoadData(c *C) {
 	_, err := tk.Exec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	c.Assert(err, NotNil)
 	createSQL := `drop table if exists load_data_test;
-		create table load_data_test (id int primary key auto_increment, c1 int);`
+		create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int);`
+	tk.MustExec("commit")
 	tk.MustExec(createSQL)
 	_, err = tk.Exec("load data infile '/tmp/nonexistence.csv' into table load_data_test")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	c.Assert(err, IsNil)
 
-	se, err := tidb.CreateSession(s.store)
-	c.Check(err, IsNil)
-	ctx := se.(context.Context)
-	ld := &LoadDataInfo{
-		row:       make([]types.Datum, 4),
-		insertVal: &InsertValues{ctx: ctx, Table: tbl},
-		Table:     tbl,
+	ctx := mock.NewContext()
+	ctx.Store = s.store
+	variable.BindSessionVars(ctx)
+	domain, err := domain.NewDomain(s.store, 1*time.Second)
+	c.Assert(err, IsNil)
+	is := domain.InfoSchema()
+	c.Assert(is, NotNil)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("load_data_test"))
+	c.Assert(err, IsNil)
+	fields := &ast.FieldsClause{Terminated: "\t"}
+	lines := &ast.LinesClause{Starting: "", Terminated: "\n"}
+	ld := executor.NewLoadDataInfo(make([]types.Datum, 4), ctx, tbl)
+	ld.FieldsInfo = fields
+	ld.LinesInfo = lines
+
+	// data1 = nil, data2 = nil, fields and lines is default
+	_, err = ld.InsertData(nil, nil)
+	c.Assert(err, IsNil)
+	r := tk.MustQuery("select * from load_data_test;")
+	r.Check(nil)
+
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select * from load_data_test;"
+	type testCase struct {
+		data1    []byte
+		data2    []byte
+		expected []string
 	}
+	// fields and lines are default, InsertData returns data is nil
+	cases := []testCase{
+		// data1 = nil, data2 != nil
+		{nil, []byte("\n"), []string{fmt.Sprintf("%v %v %v %v", 1, nil, []byte("def"), nil)}},
+		{nil, []byte("\t\n"), []string{fmt.Sprintf("%v %v %v %v", 2, 0, []byte("def"), nil)}},
+		{nil, []byte("3\t2\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4)}},
+		{nil, []byte("4\t2\t\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 4, 2, []byte(""), 3)}},
+		{nil, []byte("\t1\t2\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 5, 1, []byte("2"), 3)}},
+		{nil, []byte("6\t2\t3\n"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("3"), nil)}},
+		{nil, []byte("\t2\t3\t4\n\t22\t33\t44\n"), []string{
+			fmt.Sprintf("%v %v %v %v", 7, 2, []byte("3"), 4),
+			fmt.Sprintf("%v %v %v %v", 8, 22, []byte("33"), 44)}},
+
+		// data1 != nil, data2 = nil
+		{[]byte("\t2\t3\t4"), nil, []string{fmt.Sprintf("%v %v %v %v", 9, 2, []byte("3"), 4)}},
+
+		// data1 != nil, data2 != nil
+		{[]byte("\t2\t3"), []byte("\t4\t5\n"), []string{fmt.Sprintf("%v %v %v %v", 10, 2, []byte("3"), 4)}},
+		{[]byte("\t2\t3"), []byte("4\t5\n"), []string{fmt.Sprintf("%v %v %v %v", 11, 2, []byte("34"), 5)}},
+	}
+	for _, ca := range cases {
+		data, err1 := ld.InsertData(ca.data1, ca.data2)
+		c.Assert(err1, IsNil)
+		c.Assert(data, IsNil)
+		err1 = ctx.CommitTxn()
+		c.Assert(err1, IsNil)
+		r = tk.MustQuery(selectSQL)
+		r.Check(testkit.Rows(ca.expected...))
+		tk.MustExec(deleteSQL)
+	}
+
+	// data1 != nil, data2 != nil, InsertData returns data isn't nil
+	data2, err := ld.InsertData([]byte("\t2\t3"), []byte("\t4\t5"))
+	c.Assert(err, IsNil)
+	c.Assert(string(data2), DeepEquals, "\t2\t3\t4\t5")
+
+	// fields and lines aren't default, InsertData returns data is nil
+	ld.FieldsInfo.Terminated = "\\"
+	ld.LinesInfo.Starting = "xxx"
+	ld.LinesInfo.Terminated = "|!#^"
+	cases = []testCase{
+		// data1 = nil, data2 != nil
+		{nil, []byte("xxx|!#^"), []string{fmt.Sprintf("%v %v %v %v", 12, nil, []byte("def"), nil)}},
+		{nil, []byte("xxx\\|!#^"), []string{fmt.Sprintf("%v %v %v %v", 13, 0, []byte("def"), nil)}},
+		{nil, []byte("xxx3\\2\\3\\4|!#^"), []string{fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4)}},
+		{nil, []byte("xxx4\\2\\\\3\\4|!#^"), []string{fmt.Sprintf("%v %v %v %v", 4, 2, []byte(""), 3)}},
+		{nil, []byte("xxx\\1\\2\\3\\4|!#^"), []string{fmt.Sprintf("%v %v %v %v", 14, 1, []byte("2"), 3)}},
+		{nil, []byte("xxx6\\2\\3|!#^"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("3"), nil)}},
+		{nil, []byte("xxx\\2\\3\\4|!#^xxx\\22\\33\\44|!#^"), []string{
+			fmt.Sprintf("%v %v %v %v", 15, 2, []byte("3"), 4),
+			fmt.Sprintf("%v %v %v %v", 16, 22, []byte("33"), 44)}},
+		{nil, []byte("\\2\\3\\4|!#^\\22\\33\\44|!#^xxx\\222\\333\\444|!#^"), []string{
+			fmt.Sprintf("%v %v %v %v", 17, 222, []byte("333"), 444)}},
+		{nil, []byte("\\2\\3\\4|!#^"), []string{}},
+
+		// data1 != nil, data2 = nil
+		{[]byte("xxx\\2\\3\\4"), nil, []string{fmt.Sprintf("%v %v %v %v", 18, 2, []byte("3"), 4)}},
+		{[]byte("\\2\\3\\4|!#^"), nil, []string{}},
+		{[]byte("\\2\\3\\4|!#^xxx18\\22\\33\\44|!#^"), nil, []string{fmt.Sprintf("%v %v %v %v", 18, 22, []byte("33"), 44)}},
+
+		// data1 != nil, data2 != nil
+		{[]byte("xxx\\2\\3"), []byte("\\4\\5|!#^"), []string{fmt.Sprintf("%v %v %v %v", 19, 2, []byte("3"), 4)}},
+		{[]byte("xxx\\2\\3"), []byte("4\\5|!#^"), []string{fmt.Sprintf("%v %v %v %v", 20, 2, []byte("34"), 5)}},
+	}
+	for _, ca := range cases {
+		data, err1 := ld.InsertData(ca.data1, ca.data2)
+		c.Assert(err1, IsNil)
+		c.Assert(data, IsNil)
+		err1 = ctx.CommitTxn()
+		c.Assert(err1, IsNil)
+		r = tk.MustQuery(selectSQL)
+		r.Check(testkit.Rows(ca.expected...))
+		tk.MustExec(deleteSQL)
+	}
+
+	// data1 == nil, data2 != nil, InsertData returns data isn't nil
+	data2, err = ld.InsertData(nil, []byte("\\4\\5"))
+	c.Assert(err, IsNil)
+	c.Assert(string(data2), DeepEquals, "\\4\\5")
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {

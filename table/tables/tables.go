@@ -357,9 +357,6 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 	if err = bs.SaveTo(txn); err != nil {
 		return 0, errors.Trace(err)
 	}
-	for i, c := range row {
-		log.Infof("add record id:%v, col:%v, ID:%v", recordID, c.GetString(), colIDs[i])
-	}
 
 	variable.GetSessionVars(ctx).AddAffectedRows(1)
 	return recordID, nil
