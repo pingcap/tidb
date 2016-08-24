@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 )
@@ -164,7 +163,6 @@ func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
 		"\n \"access condition\": %s,"+
 		"\n \"limit\": %d}",
 		p.DBName.O, p.Table.Name.O, p.Desc, p.KeepOrder, access, limit))
-	log.Warnf("tablescan %s", buffer)
 	return buffer.Bytes(), nil
 }
 
@@ -337,7 +335,6 @@ func (p *Projection) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf("\"type\": \"Projection\",\n"+
 		" \"child\": %s,\n"+
 		" \"exprs\": %s\n}", child, exprs))
-	log.Warnf("Projection %s", buffer)
 	return buffer.Bytes(), nil
 }
 
