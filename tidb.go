@@ -65,7 +65,15 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if !localstore.IsLocalStore(store) {
 		lease = schemaLease
 	}
-	d, err = domain.NewDomain(store, lease)
+	for i := 1; i <= defaultMaxRetries; i++ {
+		d, err = domain.NewDomain(store, lease)
+		if err == nil {
+			break
+		}
+		sleepTime := time.Duration(uint64(retrySleepInterval) * uint64(i))
+		log.Warnf("Waiting domain to get ready, sleep %v and try again...", sleepTime)
+		time.Sleep(sleepTime)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
