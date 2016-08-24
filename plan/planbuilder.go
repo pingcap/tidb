@@ -546,7 +546,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	col := &expression.Column{
 		RetType: types.NewFieldType(mysql.TypeString),
 	}
-	p.SetSchema(expression.Schema{col, col})
+	p.SetSchema([]*expression.Column{col, col})
 	return p
 }
 
