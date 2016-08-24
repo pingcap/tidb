@@ -186,7 +186,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			if err != nil {
 				return errors.Trace(err)
 			}
-			t.RebaseAutoID(val, true, true)
+			t.RebaseAutoID(val, true)
 		}
 
 		touched[colIndex] = true
@@ -419,10 +419,6 @@ type InsertValues struct {
 	Lists     [][]ast.ExprNode
 	Setlist   []*ast.Assignment
 	IsPrepare bool
-
-	// Used for rebase autoinc id.
-	needRebase bool
-	rebaseID   int64
 }
 
 // InsertExec represents an insert executor.
@@ -469,9 +465,6 @@ func (e *InsertExec) Next() (*Row, error) {
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if e.needRebase {
-		e.Table.RebaseAutoID(e.rebaseID, true, true)
 	}
 
 	for _, row := range rows {
@@ -735,11 +728,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				return errors.Trace(err)
 			}
 			if val != 0 {
-				e.needRebase = true
-				if e.rebaseID < val {
-					e.rebaseID = val
-				}
-				e.Table.RebaseAutoID(e.rebaseID, true, false)
+				e.Table.RebaseAutoID(val, true)
 				continue
 			}
 		}

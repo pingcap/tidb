@@ -249,8 +249,8 @@ func (t *MemoryTable) AllocAutoID() (int64, error) {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (t *MemoryTable) RebaseAutoID(newBase int64, isSetStep bool, updateKV bool) error {
-	return t.alloc.Rebase(t.ID, newBase, isSetStep, updateKV)
+func (t *MemoryTable) RebaseAutoID(newBase int64, isSetStep bool) error {
+	return t.alloc.Rebase(t.ID, newBase, isSetStep)
 }
 
 // IterRecords implements table.Table IterRecords interface.
