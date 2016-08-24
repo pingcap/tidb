@@ -268,9 +268,9 @@ func (e *NewXSelectIndexExec) fetchHandles(idxResult xapi.SelectResult, ch chan<
 			return
 		}
 
-		tasks, indexOrder := e.buildTableTasks(handles)
+		tasks := e.buildTableTasks(handles)
 		for concurrency < len(tasks) {
-			go e.pickAndExecTask(workCh, indexOrder)
+			go e.pickAndExecTask(workCh)
 			concurrency++
 		}
 
@@ -310,7 +310,7 @@ func (e *NewXSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	return xapi.Select(e.txn.GetClient(), selIdxReq, concurrency, !e.indexPlan.OutOfOrder)
 }
 
-func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) ([]*lookupTableTask, map[int64]int) {
+func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
 	// Build tasks with increasing batch size.
 	var taskSizes []int
 	total := len(handles)
@@ -326,17 +326,6 @@ func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) ([]*lookupTableTa
 		}
 	}
 
-	tasks := make([]*lookupTableTask, len(taskSizes))
-	for i, size := range taskSizes {
-		task := &lookupTableTask{
-			handles: handles[:size],
-		}
-		task.doneCh = make(chan error, 1)
-		handles = handles[size:]
-
-		tasks[i] = task
-	}
-
 	var indexOrder map[int64]int
 	if !e.indexPlan.OutOfOrder {
 		// Save the index order.
@@ -345,19 +334,32 @@ func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) ([]*lookupTableTa
 			indexOrder[h] = i
 		}
 	}
-	return tasks, indexOrder
+
+	tasks := make([]*lookupTableTask, len(taskSizes))
+	for i, size := range taskSizes {
+		task := &lookupTableTask{
+			handles:    handles[:size],
+			indexOrder: indexOrder,
+		}
+		task.doneCh = make(chan error, 1)
+		handles = handles[size:]
+
+		tasks[i] = task
+	}
+
+	return tasks
 }
 
 // pickAndExecTask is a worker function, the common usage is
 // go e.pickAndExecTask(ch)
-func (e *NewXSelectIndexExec) pickAndExecTask(ch <-chan *lookupTableTask, indexOrder map[int64]int) {
+func (e *NewXSelectIndexExec) pickAndExecTask(ch <-chan *lookupTableTask) {
 	for task := range ch {
-		err := e.executeTask(task, indexOrder)
+		err := e.executeTask(task)
 		task.doneCh <- err
 	}
 }
 
-func (e *NewXSelectIndexExec) executeTask(task *lookupTableTask, indexOrder map[int64]int) error {
+func (e *NewXSelectIndexExec) executeTask(task *lookupTableTask) error {
 	sort.Sort(int64Slice(task.handles))
 	tblResult, err := e.doTableRequest(task.handles)
 	if err != nil {
@@ -369,7 +371,7 @@ func (e *NewXSelectIndexExec) executeTask(task *lookupTableTask, indexOrder map[
 	}
 	if !e.indexPlan.OutOfOrder {
 		// Restore the index order.
-		sorter := &rowsSorter{order: indexOrder, rows: task.rows}
+		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows}
 		if e.indexPlan.Desc && !e.supportDesc {
 			sort.Sort(sort.Reverse(sorter))
 		} else {

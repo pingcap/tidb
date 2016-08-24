@@ -58,11 +58,12 @@ var BaseLookupTableTaskSize = 1024
 var MaxLookupTableTaskSize = 1024
 
 type lookupTableTask struct {
-	handles []int64
-	rows    []*Row
-	cursor  int
-	done    bool
-	doneCh  chan error
+	handles    []int64
+	rows       []*Row
+	cursor     int
+	done       bool
+	doneCh     chan error
+	indexOrder map[int64]int
 }
 
 func (task *lookupTableTask) getRow() (*Row, error) {
