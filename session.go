@@ -459,7 +459,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	}
 
 	if variable.GetSessionVars(s).ClientCapability&mysql.ClientMultiResults == 0 && len(rs) > 1 {
-		// return the first recordset if client don't support ClientMultiResults.
+		// return the first recordset if client doesn't support ClientMultiResults.
 		rs = rs[:1]
 	}
 	return rs, nil
