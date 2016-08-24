@@ -15,10 +15,10 @@ package expression
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 
-	"encoding/json"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
