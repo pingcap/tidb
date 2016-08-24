@@ -470,6 +470,9 @@ func (e *InsertExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if e.needRebase {
+		e.Table.RebaseAutoID(e.rebaseID, true, true)
+	}
 
 	for _, row := range rows {
 		if len(e.OnDuplicate) == 0 && !e.Ignore {
@@ -685,9 +688,6 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 			return nil, errors.Trace(err)
 		}
 		rows = append(rows, row)
-	}
-	if e.needRebase {
-		e.Table.RebaseAutoID(e.rebaseID, true, true)
 	}
 	return rows, nil
 }
