@@ -228,13 +228,14 @@ func (p *PhysicalHashSemiJoin) MarshalJSON() ([]byte, error) {
 		"\"type\": \"SemiJoin\",\n "+
 			"\"with aux\": %v,"+
 			"\"anti\": %v,"+
-			"\"leftPlan\": %s,\n "+
-			"\"rightPlan\": %s,\n "+
 			"\"eqCond\": %s,\n "+
 			"\"leftCond\": %s,\n "+
 			"\"rightCond\": %s,\n "+
-			"\"otherCond\": %s\n}",
-		p.WithAux, p.Anti, leftChild, rightChild, eqConds, leftConds, rightConds, otherConds))
+			"\"otherCond\": %s,\n"+
+			"\"leftPlan\": %s,\n "+
+			"\"rightPlan\": %s"+
+			"}",
+		p.WithAux, p.Anti, eqConds, leftConds, rightConds, otherConds, leftChild, rightChild))
 	return buffer.Bytes(), nil
 }
 
@@ -279,13 +280,14 @@ func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
 		"\"type\": \"%s\",\n "+
-			"\"leftPlan\": %s,\n "+
-			"\"rightPlan\": %s,\n "+
 			"\"eqCond\": %s,\n "+
 			"\"leftCond\": %s,\n "+
 			"\"rightCond\": %s,\n "+
-			"\"otherCond\": %s\n}",
-		tp, leftChild, rightChild, eqConds, leftConds, rightConds, otherConds))
+			"\"otherCond\": %s,\n"+
+			"\"leftPlan\": %s,\n "+
+			"\"rightPlan\": %s"+
+			"}",
+		tp, eqConds, leftConds, rightConds, otherConds, leftChild, rightChild))
 	return buffer.Bytes(), nil
 }
 
@@ -313,8 +315,8 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 	}
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf("\"type\": \"Selection\",\n"+
-		" \"child\": %s,\n"+
-		" \"condition\": %s\n}", child, conds))
+		" \"condition\": %s,\n"+
+		" \"child\": %s\n}", conds, child))
 	return buffer.Bytes(), nil
 }
 
@@ -336,8 +338,8 @@ func (p *Projection) MarshalJSON() ([]byte, error) {
 	}
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf("\"type\": \"Projection\",\n"+
-		" \"child\": %s,\n"+
-		" \"exprs\": %s\n}", child, exprs))
+		" \"exprs\": %s,\n"+
+		" \"child\": %s\n}", exprs, child))
 	return buffer.Bytes(), nil
 }
 
@@ -373,9 +375,9 @@ func (p *Limit) MarshalJSON() ([]byte, error) {
 	}
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf("\"type\": \"Limit\",\n"+
-		" \"child\": %s,\n"+
 		" \"limit\": %d,\n"+
-		" \"offset\": %d}", child, p.Count, p.Offset))
+		" \"offset\": %d,\n"+
+		" \"child\": %s}", p.Count, p.Offset, child))
 	return buffer.Bytes(), nil
 }
 
@@ -403,8 +405,8 @@ func (p *NewSort) MarshalJSON() ([]byte, error) {
 	}
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf("\"type\": \"Sort\",\n"+
-		" \"child\": %s,\n"+
-		" \"exprs\": %s}", child, exprs))
+		" \"exprs\": %s,\n"+
+		" \"child\": %s}", exprs, child))
 	return buffer.Bytes(), nil
 }
 

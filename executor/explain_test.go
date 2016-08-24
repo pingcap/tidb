@@ -35,6 +35,10 @@ func (s *testSuite) TestExplain(c *C) {
 			"select * from t1",
 			`{
     "type": "Projection",
+    "exprs": [
+        "test.t1.c1",
+        "test.t1.c2"
+    ],
     "child": {
         "type": "TableScan",
         "db": "test",
@@ -43,17 +47,17 @@ func (s *testSuite) TestExplain(c *C) {
         "keep order": false,
         "access condition": null,
         "limit": 0
-    },
-    "exprs": [
-        "test.t1.c1",
-        "test.t1.c2"
-    ]
+    }
 }`,
 		},
 		{
 			"select * from t1 order by c2",
 			`{
     "type": "Projection",
+    "exprs": [
+        "test.t1.c1",
+        "test.t1.c2"
+    ],
     "child": {
         "type": "IndexScan",
         "db": "test",
@@ -65,19 +69,25 @@ func (s *testSuite) TestExplain(c *C) {
         "double read": false,
         "access condition": null,
         "limit": 0
-    },
-    "exprs": [
-        "test.t1.c1",
-        "test.t1.c2"
-    ]
+    }
 }`,
 		},
 		{
 			"select * from t2 order by c2",
 			`{
     "type": "Sort",
+    "exprs": [
+        {
+            "Expr": "t2.c2",
+            "Desc": false
+        }
+    ],
     "child": {
         "type": "Projection",
+        "exprs": [
+            "test.t2.c1",
+            "test.t2.c2"
+        ],
         "child": {
             "type": "TableScan",
             "db": "test",
@@ -86,24 +96,18 @@ func (s *testSuite) TestExplain(c *C) {
             "keep order": false,
             "access condition": null,
             "limit": 0
-        },
-        "exprs": [
-            "test.t2.c1",
-            "test.t2.c2"
-        ]
-    },
-    "exprs": [
-        {
-            "Expr": "t2.c2",
-            "Desc": false
         }
-    ]
+    }
 }`,
 		},
 		{
 			"select * from t1 where t1.c1 > 0",
 			`{
     "type": "Projection",
+    "exprs": [
+        "test.t1.c1",
+        "test.t1.c2"
+    ],
     "child": {
         "type": "TableScan",
         "db": "test",
@@ -114,17 +118,17 @@ func (s *testSuite) TestExplain(c *C) {
             "\u003e(test.t1.c1,0,)"
         ],
         "limit": 0
-    },
-    "exprs": [
-        "test.t1.c1",
-        "test.t1.c2"
-    ]
+    }
 }`,
 		},
 		{
 			"select * from t1 where t1.c2 = 1",
 			`{
     "type": "Projection",
+    "exprs": [
+        "test.t1.c1",
+        "test.t1.c2"
+    ],
     "child": {
         "type": "IndexScan",
         "db": "test",
@@ -138,19 +142,27 @@ func (s *testSuite) TestExplain(c *C) {
             "=(test.t1.c2,1,)"
         ],
         "limit": 0
-    },
-    "exprs": [
-        "test.t1.c1",
-        "test.t1.c2"
-    ]
+    }
 }`,
 		},
 		{
 			"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
 			`{
     "type": "Projection",
+    "exprs": [
+        "test.t1.c1",
+        "test.t1.c2",
+        "test.t2.c1",
+        "test.t2.c2"
+    ],
     "child": {
         "type": "LeftJoin",
+        "eqCond": [
+            "=(test.t1.c2,test.t2.c1,)"
+        ],
+        "leftCond": null,
+        "rightCond": null,
+        "otherCond": null,
         "leftPlan": {
             "type": "TableScan",
             "db": "test",
@@ -170,20 +182,8 @@ func (s *testSuite) TestExplain(c *C) {
             "keep order": false,
             "access condition": null,
             "limit": 0
-        },
-        "eqCond": [
-            "=(test.t1.c2,test.t2.c1,)"
-        ],
-        "leftCond": null,
-        "rightCond": null,
-        "otherCond": null
-    },
-    "exprs": [
-        "test.t1.c1",
-        "test.t1.c2",
-        "test.t2.c1",
-        "test.t2.c2"
-    ]
+        }
+    }
 }`,
 		},
 		{
