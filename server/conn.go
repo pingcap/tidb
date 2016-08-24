@@ -504,7 +504,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 func (cc *clientConn) writeMultiResultset(rss []ResultSet, binary bool) error {
 	for _, rs := range rss {
 		if err := cc.writeResultset(rs, binary, true); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	cc.writeOK()
