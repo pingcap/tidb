@@ -859,7 +859,8 @@ func (d *Datum) convertToUint(target *FieldType) (Datum, error) {
 	case KindMysqlDuration:
 		dec := d.GetMysqlDuration().ToNumber()
 		dec.Round(dec, 0)
-		ival, err := dec.ToInt()
+		var ival int64
+		ival, err = dec.ToInt()
 		if err == nil {
 			val, err = convertIntToUint(ival, upperBound, tp)
 		}

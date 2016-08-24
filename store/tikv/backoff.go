@@ -90,15 +90,17 @@ func (t backoffType) createFn() func() int {
 
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
-	copBuildTaskMaxBackoff = 5000
-	tsoMaxBackoff          = 5000
-	scannerNextMaxBackoff  = 5000
-	batchGetMaxBackoff     = 10000
-	copNextMaxBackoff      = 10000
-	getMaxBackoff          = 10000
-	prewriteMaxBackoff     = 10000
-	commitMaxBackoff       = 10000
-	cleanupMaxBackoff      = 10000
+	copBuildTaskMaxBackoff  = 5000
+	tsoMaxBackoff           = 5000
+	scannerNextMaxBackoff   = 5000
+	batchGetMaxBackoff      = 10000
+	copNextMaxBackoff       = 10000
+	getMaxBackoff           = 10000
+	prewriteMaxBackoff      = 10000
+	commitMaxBackoff        = 10000
+	cleanupMaxBackoff       = 10000
+	gcMaxBackoff            = 100000
+	gcResolveLockMaxBackoff = 100000
 )
 
 // Backoffer is a utility for retrying queries.
