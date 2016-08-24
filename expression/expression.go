@@ -14,9 +14,11 @@
 package expression
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
+	"encoding/json"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -28,6 +30,8 @@ import (
 
 // Expression represents all scalar expression in SQL.
 type Expression interface {
+	fmt.Stringer
+	json.Marshaler
 	// Eval evaluates an expression through a row.
 	Eval(row []types.Datum, ctx context.Context) (types.Datum, error)
 
@@ -36,9 +40,6 @@ type Expression interface {
 
 	// DeepCopy copies an expression totally.
 	DeepCopy() Expression
-
-	// ToString converts an expression into a string.
-	ToString() string
 }
 
 // EvalBool evaluates expression to a boolean value.
@@ -87,8 +88,8 @@ func (col *Column) Equal(expr Expression) bool {
 	return false
 }
 
-// ToString implements Expression interface.
-func (col *Column) ToString() string {
+// String implements Stringer interface.
+func (col *Column) String() string {
 	result := col.ColName.L
 	if col.TblName.L != "" {
 		result = col.TblName.L + "." + result
@@ -97,6 +98,12 @@ func (col *Column) ToString() string {
 		result = col.DBName.L + "." + result
 	}
 	return result
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (col *Column) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString(fmt.Sprintf("\"%s\"", col))
+	return buffer.Bytes(), nil
 }
 
 // SetValue sets value for correlated columns.
@@ -129,11 +136,11 @@ func (col *Column) DeepCopy() Expression {
 // Schema stands for the row schema get from input.
 type Schema []*Column
 
-// ToString output the contents of schema, for debug.
-func (s Schema) ToString() string {
+// String output the contents of schema, for debug.
+func (s Schema) String() string {
 	strs := make([]string, 0, len(s))
 	for _, col := range s {
-		strs = append(strs, col.ToString())
+		strs = append(strs, col.String())
 	}
 	return "[" + strings.Join(strs, ",") + "]"
 }
@@ -160,7 +167,7 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 			if idx == -1 {
 				idx = i
 			} else {
-				return nil, errors.Errorf("Column %s is ambiguous", col.ToString())
+				return nil, errors.Errorf("Column %s is ambiguous", col.String())
 			}
 		}
 	}
@@ -206,15 +213,21 @@ type ScalarFunction struct {
 	ArgValues []types.Datum
 }
 
-// ToString implements Expression interface.
-func (sf *ScalarFunction) ToString() string {
+// String implements Stringer interface.
+func (sf *ScalarFunction) String() string {
 	result := sf.FuncName.L + "("
 	for _, arg := range sf.Args {
-		result += arg.ToString()
+		result += arg.String()
 		result += ","
 	}
 	result += ")"
 	return result
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString(fmt.Sprintf("\"%s\"", sf))
+	return buffer.Bytes(), nil
 }
 
 // NewFunction creates a new scalar function or constant.
@@ -319,9 +332,15 @@ type Constant struct {
 	RetType *types.FieldType
 }
 
-// ToString implements Expression interface.
-func (c *Constant) ToString() string {
+// String implements Stringer interface.
+func (c *Constant) String() string {
 	return fmt.Sprintf("%v", c.Value.GetValue())
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (c *Constant) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString(fmt.Sprintf("\"%s\"", c))
+	return buffer.Bytes(), nil
 }
 
 // DeepCopy implements Expression interface.

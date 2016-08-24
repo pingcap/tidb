@@ -522,26 +522,32 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
+	if logic, ok := targetPlan.(LogicalPlan); ok {
+		var err error
+		_, logic, err = logic.PredicatePushDown(nil)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		_, err = logic.PruneColumnsAndResolveIndices(logic.GetSchema())
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		_, res, _, err := logic.convert2PhysicalPlan(nil)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		targetPlan = res.p.PushLimit(nil)
+	}
 	p := &Explain{StmtPlan: targetPlan}
 	addChild(p, targetPlan)
-	p.SetFields(buildExplainFields())
+	col := &expression.Column{
+		RetType: types.NewFieldType(mysql.TypeString),
+	}
+	p.SetSchema(expression.Schema{col, col})
 	return p
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
-func buildExplainFields() []*ast.ResultField {
-	rfs := make([]*ast.ResultField, 0, 10)
-	rfs = append(rfs, buildResultField("", "id", mysql.TypeLonglong, 4))
-	rfs = append(rfs, buildResultField("", "select_type", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "table", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "type", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "possible_keys", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "key", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "key_len", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "ref", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "rows", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "Extra", mysql.TypeVarchar, 128))
-	return rfs
 }
 
 func buildShowProcedureFields() []*ast.ResultField {
