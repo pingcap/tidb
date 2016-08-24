@@ -109,7 +109,9 @@ type Table interface {
 	// RebaseAutoID rebases the auto_increment ID base.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
-	RebaseAutoID(newBase int64, allocIDs bool) error
+	// If updateKV is true, allocator should update global kv if necessary.
+	// If updateKV is false, allocator will not update global kv.
+	RebaseAutoID(newBase int64, allocIDs bool, updateKV bool) error
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
