@@ -308,6 +308,9 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	conds, err := json.Marshal(p.Conditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf("\"type\": \"Selection\",\n"+
 		" \"child\": %s,\n"+

@@ -23,8 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-var ExplainTestMode = false
-
 // ExplainExec represents an explain executor.
 // See https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
 type ExplainExec struct {
@@ -49,13 +47,7 @@ func (e *ExplainExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	e.evaluated = true
-	var explain []byte
-	var err error
-	if ExplainTestMode {
-		explain, err = json.Marshal(e.StmtPlan)
-	} else {
-		explain, err = json.MarshalIndent(e.StmtPlan, "", "    ")
-	}
+	explain, err := json.MarshalIndent(e.StmtPlan, "", "    ")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

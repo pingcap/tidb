@@ -136,7 +136,7 @@ func (col *Column) DeepCopy() Expression {
 // Schema stands for the row schema get from input.
 type Schema []*Column
 
-// String output the contents of schema, for debug.
+// String implements fmt.Stringer interface.
 func (s Schema) String() string {
 	strs := make([]string, 0, len(s))
 	for _, col := range s {
@@ -213,7 +213,7 @@ type ScalarFunction struct {
 	ArgValues []types.Datum
 }
 
-// String implements Stringer interface.
+// String implements fmt.Stringer interface.
 func (sf *ScalarFunction) String() string {
 	result := sf.FuncName.L + "("
 	for _, arg := range sf.Args {
@@ -332,7 +332,7 @@ type Constant struct {
 	RetType *types.FieldType
 }
 
-// String implements Stringer interface.
+// String implements fmt.Stringer interface.
 func (c *Constant) String() string {
 	return fmt.Sprintf("%v", c.Value.GetValue())
 }
