@@ -19,12 +19,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-var CntrlFuncs = map[string]bool{
-	"if":     true,
-	"nullif": true,
-	"ifnull": true,
-}
-
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
 func builtinIf(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// if(expr1, expr2, expr3)

@@ -16,7 +16,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
@@ -81,7 +80,7 @@ func (p *NewTableDual) PredicatePushDown(predicates []expression.Expression) ([]
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
-	err = outerJoinSimplifier(p, predicates)
+	err = outerJoinSimplify(p, predicates)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -145,8 +144,8 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 	return
 }
 
-// outerJoinSimplifier simplify outer join
-func outerJoinSimplifier(p *Join, predicates []expression.Expression) error {
+// outerJoinSimplifier simplify outer join.
+func outerJoinSimplify(p *Join, predicates []expression.Expression) error {
 	var innerTable, outerTable LogicalPlan
 	child1 := p.GetChildByIndex(0).(LogicalPlan)
 	child2 := p.GetChildByIndex(1).(LogicalPlan)
@@ -154,7 +153,7 @@ func outerJoinSimplifier(p *Join, predicates []expression.Expression) error {
 	if p.JoinType == InnerJoin {
 		if leftChild, ok := child1.(*Join); ok {
 			fullConditions = concatOnAndWhereConds(p, predicates)
-			err := outerJoinSimplifier(leftChild, fullConditions)
+			err := outerJoinSimplify(leftChild, fullConditions)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -163,7 +162,7 @@ func outerJoinSimplifier(p *Join, predicates []expression.Expression) error {
 			if fullConditions == nil {
 				fullConditions = concatOnAndWhereConds(p, predicates)
 			}
-			err := outerJoinSimplifier(rightChild, fullConditions)
+			err := outerJoinSimplify(rightChild, fullConditions)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -207,7 +206,7 @@ func outerJoinSimplifier(p *Join, predicates []expression.Expression) error {
 			p.JoinType = InnerJoin
 			if _, ok := outerTable.(*Join); ok {
 				fullConditions = concatOnAndWhereConds(p, predicates)
-				err := outerJoinSimplifier(outerTable.(*Join), fullConditions)
+				err := outerJoinSimplify(outerTable.(*Join), fullConditions)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -217,7 +216,7 @@ func outerJoinSimplifier(p *Join, predicates []expression.Expression) error {
 		}
 	case *Join:
 		fullConditions = concatOnAndWhereConds(p, predicates)
-		err := outerJoinSimplifier(innerPlan, fullConditions)
+		err := outerJoinSimplify(innerPlan, fullConditions)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -226,7 +225,7 @@ func outerJoinSimplifier(p *Join, predicates []expression.Expression) error {
 		}
 		if x, ok := outerTable.(*Join); ok {
 			fullConditions = concatOnAndWhereConds(innerPlan, fullConditions)
-			err := outerJoinSimplifier(x, fullConditions)
+			err := outerJoinSimplify(x, fullConditions)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -236,9 +235,10 @@ func outerJoinSimplifier(p *Join, predicates []expression.Expression) error {
 }
 
 // isNullRejected check whether a condition is null-rejected
-// If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL
-// If it is a conjunction containing a null-rejected condition as a conjunct
-// If it is a disjunction of null-rejected conditions
+// A condition would be null-rejected in one of following cases:
+// If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
+// If it is a conjunction containing a null-rejected condition as a conjunct.
+// If it is a disjunction of null-rejected conditions.
 func isNullRejected(schema expression.Schema, scalarFunc *expression.ScalarFunction) (bool, error) {
 	if scalarFunc.FuncName.L == ast.OrOr {
 		for _, arg := range scalarFunc.Args {
@@ -256,24 +256,13 @@ func isNullRejected(schema expression.Schema, scalarFunc *expression.ScalarFunct
 		}
 		return true, nil
 	}
-	// ignore control functions
-	if _, ok := evaluator.CntrlFuncs[scalarFunc.FuncName.L]; ok {
-		return false, nil
-	}
-	isOk := false
-	cols, _ := extractColumn(scalarFunc, nil, nil)
-	for _, col := range cols {
-		if schema.GetIndex(col) != -1 {
-			isOk = true
-			break
-		}
-	}
-	if !isOk {
-		return false, nil
-	}
-	x, err := calculateResultOfScalarFunc(scalarFunc)
+	result, err := calculateResultOfScalarFunc(schema, scalarFunc)
 	if err != nil {
 		return false, errors.Trace(err)
+	}
+	x, ok := result.(*expression.Constant)
+	if !ok {
+		return false, nil
 	}
 	if x.Value.IsNull() {
 		return true, nil
@@ -283,32 +272,36 @@ func isNullRejected(schema expression.Schema, scalarFunc *expression.ScalarFunct
 	return false, nil
 }
 
-// calculateResultOfScalarFunc set columns in a scalar function as null and calculate the finally result of the scalar function
-func calculateResultOfScalarFunc(scalarFunc *expression.ScalarFunction) (*expression.Constant, error) {
+// calculateResultOfScalarFunc set inner table columns in a scalar function as null and calculate the finally result of the scalar function.
+func calculateResultOfScalarFunc(schema expression.Schema, scalarFunc *expression.ScalarFunction) (expression.Expression, error) {
 	args := make([]expression.Expression, len(scalarFunc.Args))
 	for i, arg := range scalarFunc.Args {
 		switch x := arg.(type) {
 		case *expression.ScalarFunction:
 			var err error
-			args[i], err = calculateResultOfScalarFunc(x)
+			args[i], err = calculateResultOfScalarFunc(schema, x)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		case *expression.Constant:
 			args[i] = x.DeepCopy()
 		case *expression.Column:
+			if schema.GetIndex(x) == -1 {
+				return x, nil
+			}
 			constant := &expression.Constant{Value: types.Datum{}}
 			constant.Value.SetNull()
 			args[i] = constant
 		}
 	}
-	constant, err := expression.NewFunction(scalarFunc.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+	result, err := expression.NewFunction(scalarFunc.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return constant.(*expression.Constant), nil
+	return result, nil
 }
 
+// concatOnAndWhereConds concatenate ON conditions with WHERE conditions.
 // when trying to convert an embedded outer join operation in a query,
 // we must take into account the join condition for the embedding outer join together with the WHERE condition.
 func concatOnAndWhereConds(join *Join, predicates []expression.Expression) []expression.Expression {
