@@ -50,7 +50,7 @@ const (
 	Xor        = "bitxor"
 	Div        = "div"
 	Mul        = "mul"
-	UnaryNot   = "not"
+	UnaryNot   = "not" // Avoid name conflict with Not in github/pingcap/check.
 	BitNeg     = "bitneg"
 	IntDiv     = "intdiv"
 	LogicXor   = "xor"
@@ -62,8 +62,8 @@ const (
 	Case       = "case"
 	Regexp     = "regexp"
 	IsNull     = "isnull"
-	IsTruth    = "istrue"
-	IsFalsity  = "isfalse"
+	IsTruth    = "istrue"  // Avoid name conflict with IsTrue in github/pingcap/check.
+	IsFalsity  = "isfalse" // Avoid name conflict with IsFalse in github/pingcap/check.
 	RowFunc    = "row"
 	SetVar     = "setvar"
 	GetVar     = "getvar"
