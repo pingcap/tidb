@@ -169,7 +169,8 @@ func (cc *clientConn) readHandshakeResponse() error {
 
 	pos := 0
 	// capability
-	cc.capability = binary.LittleEndian.Uint32(data[:4])
+	capability := binary.LittleEndian.Uint32(data[:4])
+	cc.capability = defaultCapability & capability
 	pos += 4
 	// skip max packet size
 	pos += 4
