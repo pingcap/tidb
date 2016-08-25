@@ -347,11 +347,11 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 }
 
 func (cc *clientConn) handleSetOption(data []byte) (err error) {
-	if len(data) < 1 {
+	if len(data) < 2 {
 		return mysql.ErrMalformPacket
 	}
 
-	switch data[0] {
+	switch binary.LittleEndian.Uint16(data[:2]) {
 	case 0:
 		cc.capability |= mysql.ClientMultiStatements
 		cc.ctx.SetClientCapability(cc.capability)
@@ -361,5 +361,9 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 	default:
 		return mysql.ErrMalformPacket
 	}
-	return nil
+	if err = cc.writeEOF(false); err != nil {
+		return errors.Trace(err)
+	}
+
+	return errors.Trace(cc.flush())
 }
