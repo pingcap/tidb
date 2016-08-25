@@ -163,7 +163,7 @@ func DecodeValues(data []byte, fts []*types.FieldType, inIndex bool) ([]types.Da
 	if data == nil {
 		return nil, nil
 	}
-	values, err := codec.Decode(data)
+	values, err := codec.Decode(data, len(fts))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -348,7 +348,7 @@ func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key 
 // DecodeIndexKey decodes datums from an index key.
 func DecodeIndexKey(key kv.Key) ([]types.Datum, error) {
 	b := key[prefixLen+idLen:]
-	return codec.Decode(b)
+	return codec.Decode(b, 1)
 }
 
 // CutIndexKey cuts encoded index key into colIDs to bytes slices map.

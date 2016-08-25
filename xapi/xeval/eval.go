@@ -530,7 +530,7 @@ func (e *Evaluator) decodeValueList(valueListExpr *tipb.Expr) (*decodedValueList
 	if decoded != nil {
 		return decoded, nil
 	}
-	list, err := codec.Decode(valueListExpr.Val)
+	list, err := codec.Decode(valueListExpr.Val, 1)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

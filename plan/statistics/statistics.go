@@ -346,7 +346,7 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 	t.Columns = make([]*Column, len(tpb.GetColumns()))
 	for i, cInfo := range t.info.Columns {
 		cpb := tpb.Columns[i]
-		values, err := codec.Decode(cpb.GetValue())
+		values, err := codec.Decode(cpb.GetValue(), 1)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
