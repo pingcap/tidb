@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -81,19 +80,6 @@ func refineRangeDatum(v *types.Datum, ic *model.IndexColumn) {
 			v.SetBytes(v.GetBytes()[:ic.Length])
 		}
 	}
-}
-
-func buildSelection(p *Selection) error {
-	var err error
-	switch v := p.GetChildByIndex(0).(type) {
-	case *PhysicalTableScan:
-		v.AccessCondition, p.Conditions = detachTableScanConditions(p.Conditions, v.Table)
-		err = buildNewTableRange(v)
-	case *PhysicalIndexScan:
-		v.AccessCondition, p.Conditions = detachIndexScanConditions(p.Conditions, v)
-		err = buildNewIndexRange(v)
-	}
-	return errors.Trace(err)
 }
 
 // getEQFunctionOffset judge if the expression is a eq function like A = 1 where a is an index.
@@ -240,99 +226,6 @@ type conditionChecker struct {
 	columnOffset  int // the offset of the indexed column to be checked.
 	pkName        model.CIStr
 	shouldReserve bool // check if a access condition should be reserved in filter conditions.
-}
-
-func (c *conditionChecker) check(condition ast.ExprNode) bool {
-	switch x := condition.(type) {
-	case *ast.BinaryOperationExpr:
-		return c.checkBinaryOperation(x)
-	case *ast.BetweenExpr:
-		if ast.IsPreEvaluable(x.Left) && ast.IsPreEvaluable(x.Right) && c.checkColumnExpr(x.Expr) {
-			return true
-		}
-	case *ast.ColumnNameExpr:
-		return c.checkColumnExpr(x)
-	case *ast.IsNullExpr:
-		if c.checkColumnExpr(x.Expr) {
-			return true
-		}
-	case *ast.IsTruthExpr:
-		if c.checkColumnExpr(x.Expr) {
-			return true
-		}
-	case *ast.ParenthesesExpr:
-		return c.check(x.Expr)
-	case *ast.PatternInExpr:
-		if x.Sel != nil || x.Not {
-			return false
-		}
-		if !c.checkColumnExpr(x.Expr) {
-			return false
-		}
-		for _, val := range x.List {
-			if !ast.IsPreEvaluable(val) {
-				return false
-			}
-		}
-		return true
-	case *ast.PatternLikeExpr:
-		if x.Not {
-			return false
-		}
-		if !c.checkColumnExpr(x.Expr) {
-			return false
-		}
-		if !ast.IsPreEvaluable(x.Pattern) {
-			return false
-		}
-		patternVal := x.Pattern.GetValue()
-		if patternVal == nil {
-			return false
-		}
-		patternStr, err := types.ToString(patternVal)
-		if err != nil {
-			return false
-		}
-		if len(patternStr) == 0 {
-			return true
-		}
-		firstChar := patternStr[0]
-		return firstChar != '%' && firstChar != '_'
-	}
-	return false
-}
-
-func (c *conditionChecker) checkBinaryOperation(b *ast.BinaryOperationExpr) bool {
-	switch b.Op {
-	case opcode.OrOr:
-		return c.check(b.L) && c.check(b.R)
-	case opcode.AndAnd:
-		return c.check(b.L) && c.check(b.R)
-	case opcode.EQ, opcode.NE, opcode.GE, opcode.GT, opcode.LE, opcode.LT:
-		if ast.IsPreEvaluable(b.L) {
-			return c.checkColumnExpr(b.R)
-		} else if ast.IsPreEvaluable(b.R) {
-			return c.checkColumnExpr(b.L)
-		}
-	}
-	return false
-}
-
-func (c *conditionChecker) checkColumnExpr(expr ast.ExprNode) bool {
-	cn, ok := expr.(*ast.ColumnNameExpr)
-	if !ok {
-		return false
-	}
-	if cn.Refer.Table.Name.L != c.tableName.L {
-		return false
-	}
-	if c.pkName.L != "" {
-		return c.pkName.L == cn.Refer.Column.Name.L
-	}
-	if c.idx != nil {
-		return cn.Refer.Column.Name.L == c.idx.Columns[c.columnOffset].Name.L
-	}
-	return true
 }
 
 func (c *conditionChecker) newCheck(condition expression.Expression) bool {

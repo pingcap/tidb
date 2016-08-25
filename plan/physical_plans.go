@@ -125,7 +125,8 @@ func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf("\"type\": \"IndexScan\",\"db\": \"%s\","+
+	buffer.WriteString(fmt.Sprintf("\"type\": \"IndexScan\",\n"+
+		"\"db\": \"%s\","+
 		"\n \"table\": \"%s\","+
 		"\n \"index\": \"%s\","+
 		"\n \"ranges\": \"%s\","+

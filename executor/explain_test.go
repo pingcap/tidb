@@ -115,7 +115,7 @@ func (s *testSuite) TestExplain(c *C) {
         "desc": false,
         "keep order": false,
         "access condition": [
-            "\u003e(test.t1.c1,0,)"
+            "gt(test.t1.c1,0,)"
         ],
         "limit": 0
     }
@@ -139,7 +139,7 @@ func (s *testSuite) TestExplain(c *C) {
         "out of order": true,
         "double read": false,
         "access condition": [
-            "=(test.t1.c2,1,)"
+            "eq(test.t1.c2,1,)"
         ],
         "limit": 0
     }
@@ -158,7 +158,7 @@ func (s *testSuite) TestExplain(c *C) {
     "child": {
         "type": "LeftJoin",
         "eqCond": [
-            "=(test.t1.c2,test.t2.c1,)"
+            "eq(test.t1.c2,test.t2.c1,)"
         ],
         "leftCond": null,
         "rightCond": null,
@@ -170,7 +170,7 @@ func (s *testSuite) TestExplain(c *C) {
             "desc": false,
             "keep order": false,
             "access condition": [
-                "\u003e(test.t1.c1,1,)"
+                "gt(test.t1.c1,1,)"
             ],
             "limit": 0
         },
@@ -198,7 +198,7 @@ func (s *testSuite) TestExplain(c *C) {
             "desc": false,
             "keep order": false,
             "access condition": [
-                "=(test.t1.c1,1,)"
+                "eq(test.t1.c1,1,)"
             ],
             "limit": 0
         }
@@ -220,7 +220,7 @@ func (s *testSuite) TestExplain(c *C) {
             "out of order": true,
             "double read": false,
             "access condition": [
-                "=(test.t1.c2,1,)"
+                "eq(test.t1.c2,1,)"
             ],
             "limit": 0
         }
