@@ -223,7 +223,9 @@ func (e *NewXSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.
 }
 
 func (e *NewXSelectIndexExec) nextForDoubleRead() (*Row, error) {
+	var startTs time.Time
 	if e.tasks == nil {
+		startTs = time.Now()
 		idxResult, err := e.doIndexRequest()
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -233,7 +235,7 @@ func (e *NewXSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		// Use a background goroutine to fetch index, put the result in e.tasks.
 		// e.tasks serves as a pipeline, so fetch index and get table data would
 		// run concurrency.
-		e.tasks = make(chan *lookupTableTask, 10)
+		e.tasks = make(chan *lookupTableTask, 50)
 		go e.fetchHandles(idxResult, e.tasks)
 	}
 
@@ -241,6 +243,7 @@ func (e *NewXSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		if e.taskCurr == nil {
 			taskCurr, ok := <-e.tasks
 			if !ok {
+				log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v", time.Now().Sub(startTs))
 				return nil, e.tasksErr
 			}
 			e.taskCurr = taskCurr
@@ -257,25 +260,39 @@ func (e *NewXSelectIndexExec) nextForDoubleRead() (*Row, error) {
 func (e *NewXSelectIndexExec) fetchHandles(idxResult xapi.SelectResult, ch chan<- *lookupTableTask) {
 	defer close(ch)
 
-	workCh := make(chan *lookupTableTask, 10)
+	workCh := make(chan *lookupTableTask, 1)
 	defer close(workCh)
 
-	concurrency := 0
+	go e.pickAndExecTask(workCh)
+	concurrency := 1
+	totalHandles := 0
+	startTs := time.Now()
 	for {
 		handles, err := extractHandlesFromIndexResult(idxResult)
 		if err != nil || handles == nil {
 			e.tasksErr = errors.Trace(err)
+			log.Debugf("[TIME_INDEX_SCAN] time: %v handles: %d concurrency: %d",
+				time.Now().Sub(startTs),
+				totalHandles,
+				concurrency)
 			return
 		}
 
+		totalHandles += len(handles)
 		tasks := e.buildTableTasks(handles)
-		for concurrency < len(tasks) {
-			go e.pickAndExecTask(workCh)
-			concurrency++
-		}
-
 		for _, task := range tasks {
-			workCh <- task
+			if concurrency < len(tasks) {
+				go e.pickAndExecTask(workCh)
+				concurrency++
+			}
+
+			select {
+			case workCh <- task:
+			default:
+				go e.pickAndExecTask(workCh)
+				concurrency++
+				workCh <- task
+			}
 			ch <- task
 		}
 	}
