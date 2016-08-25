@@ -66,7 +66,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		s.store = store
 	}
-	log.SetLevelByString("info")
+	log.SetLevelByString("warn")
 	executor.BaseLookupTableTaskSize = 2
 }
 
