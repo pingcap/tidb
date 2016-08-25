@@ -216,9 +216,11 @@ type ScalarFunction struct {
 // String implements fmt.Stringer interface.
 func (sf *ScalarFunction) String() string {
 	result := sf.FuncName.L + "("
-	for _, arg := range sf.Args {
+	for i, arg := range sf.Args {
 		result += arg.String()
-		result += ","
+		if i+1 != len(sf.Args) {
+			result += ", "
+		}
 	}
 	result += ")"
 	return result
