@@ -507,6 +507,5 @@ func (cc *clientConn) writeMultiResultset(rss []ResultSet, binary bool) error {
 			return errors.Trace(err)
 		}
 	}
-	cc.writeOK()
-	return nil
+	return cc.writeOK()
 }
