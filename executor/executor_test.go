@@ -383,7 +383,6 @@ func (s *testSuite) TestLoadData(c *C) {
 	c.Assert(err, NotNil)
 	createSQL := `drop table if exists load_data_test;
 		create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int);`
-	tk.MustExec("commit")
 	tk.MustExec(createSQL)
 	_, err = tk.Exec("load data infile '/tmp/nonexistence.csv' into table load_data_test")
 	c.Assert(err, NotNil)
@@ -405,12 +404,6 @@ func (s *testSuite) TestLoadData(c *C) {
 	ld.FieldsInfo = fields
 	ld.LinesInfo = lines
 
-	// data1 = nil, data2 = nil, fields and lines is default
-	_, err = ld.InsertData(nil, nil)
-	c.Assert(err, IsNil)
-	r := tk.MustQuery("select * from load_data_test;")
-	r.Check(nil)
-
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	type testCase struct {
@@ -418,6 +411,12 @@ func (s *testSuite) TestLoadData(c *C) {
 		data2    []byte
 		expected []string
 	}
+	// data1 = nil, data2 = nil, fields and lines is default
+	_, err = ld.InsertData(nil, nil)
+	c.Assert(err, IsNil)
+	r := tk.MustQuery(selectSQL)
+	r.Check(nil)
+
 	// fields and lines are default, InsertData returns data is nil
 	cases := []testCase{
 		// data1 = nil, data2 != nil

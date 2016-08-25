@@ -54,6 +54,8 @@ const (
 	Dual = "TableDual"
 	// Lock is the type of SelectLock.
 	Lock = "SelectLock"
+	// Load is the type of LoadData.
+	Load = "LoadData"
 )
 
 // Plan is a description of an execution flow.

@@ -438,7 +438,7 @@ func (e *LoadDataInfo) InsertData(data1, data2 []byte) ([]byte, error) {
 	var isNoEndData bool
 	var isLastData bool
 	var cols []string
-	if len(data1) > 0 && len(data2) <= 0 {
+	if len(data1) > 0 && len(data2) == 0 {
 		isLastData = true
 		data1, data2 = data2, data1
 	}
@@ -450,7 +450,7 @@ func (e *LoadDataInfo) InsertData(data1, data2 []byte) ([]byte, error) {
 			end = len(data2)
 			isNoEndData = true
 		}
-		if len(e.LinesInfo.Starting) != 0 && len(data1) <= 0 {
+		if len(e.LinesInfo.Starting) != 0 && len(data1) == 0 {
 			idx := strings.Index(string(data2[:end]), e.LinesInfo.Starting)
 			if idx == -1 {
 				if isNoEndData {
@@ -530,18 +530,18 @@ const LoadDataVarKey loadDataVarKeyType = 0
 func (e *LoadData) Next() (*Row, error) {
 	// TODO: support load data without local field.
 	if !e.IsLocal {
-		return nil, errors.New("don't support load data without local field")
+		return nil, errors.New("Load Data: don't support load data without local field")
 	}
 	// TODO: support lines terminated is "".
 	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
-		return nil, errors.New("don't support load data terminated is nil")
+		return nil, errors.New("Load Data: don't support load data terminated is nil")
 	}
 
 	ctx := e.loadDataInfo.insertVal.ctx
 	val := ctx.Value(LoadDataVarKey)
 	if val != nil {
 		ctx.SetValue(LoadDataVarKey, nil)
-		return nil, errors.New("Load Data: previous load data option isn't close normal")
+		return nil, errors.New("Load Data: previous load data option isn't closed normal")
 	}
 	if e.loadDataInfo.Path == "" {
 		return nil, errors.New("Load Data: infile path is empty")

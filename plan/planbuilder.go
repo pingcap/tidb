@@ -513,13 +513,16 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 }
 
 func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
-	return &LoadData{
-		IsLocal:    ld.IsLocal,
-		Path:       ld.Path,
-		Table:      ld.Table,
-		FieldsInfo: ld.FieldsInfo,
-		LinesInfo:  ld.LinesInfo,
+	p := &LoadData{
+		baseLogicalPlan: newBaseLogicalPlan(Load, b.allocator),
+		IsLocal:         ld.IsLocal,
+		Path:            ld.Path,
+		Table:           ld.Table,
+		FieldsInfo:      ld.FieldsInfo,
+		LinesInfo:       ld.LinesInfo,
 	}
+	p.initID()
+	return p
 }
 
 func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {

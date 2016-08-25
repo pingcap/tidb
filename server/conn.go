@@ -271,7 +271,6 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComQuit:
 		return io.EOF
 	case mysql.ComQuery:
-		log.Warnf("dispatch query")
 		return cc.handleQuery(hack.String(data))
 	case mysql.ComPing:
 		return cc.writeOK()
@@ -402,7 +401,7 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 	}()
 
 	if loadDataInfo == nil {
-		err = errors.Errorf("load data info is empty")
+		err = errors.New("load data info is empty")
 		return errors.Trace(err)
 	}
 	err = cc.writeReq(loadDataInfo.Path)
