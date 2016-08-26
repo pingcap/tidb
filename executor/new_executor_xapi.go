@@ -16,7 +16,6 @@ package executor
 import (
 	"math"
 	"sort"
-	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -258,12 +257,14 @@ func (e *NewXSelectIndexExec) nextForDoubleRead() (*Row, error) {
 	}
 }
 
-const concurrencyLimit int32 = 1024
+const concurrencyLimit int = 30
 
-func addWorker(e *NewXSelectIndexExec, ch chan *lookupTableTask, concurrency *int32) {
-	if atomic.LoadInt32(concurrency) <= concurrencyLimit {
+// addWorker add a worker for lookupTableTask.
+// It's not thread-safe and should be called in fetchHandles goroutine only.
+func addWorker(e *NewXSelectIndexExec, ch chan *lookupTableTask, concurrency *int) {
+	if *concurrency <= concurrencyLimit {
 		go e.pickAndExecTask(ch)
-		atomic.AddInt32(concurrency, 1)
+		*concurrency = *concurrency + 1
 	}
 }
 
@@ -273,7 +274,7 @@ func (e *NewXSelectIndexExec) fetchHandles(idxResult xapi.SelectResult, ch chan<
 	workCh := make(chan *lookupTableTask, 1)
 	defer close(workCh)
 
-	var concurrency int32
+	var concurrency int
 	addWorker(e, workCh, &concurrency)
 
 	totalHandles := 0
@@ -285,14 +286,14 @@ func (e *NewXSelectIndexExec) fetchHandles(idxResult xapi.SelectResult, ch chan<
 			log.Debugf("[TIME_INDEX_SCAN] time: %v handles: %d concurrency: %d",
 				time.Now().Sub(startTs),
 				totalHandles,
-				atomic.LoadInt32(&concurrency))
+				concurrency)
 			return
 		}
 
 		totalHandles += len(handles)
 		tasks := e.buildTableTasks(handles)
 		for _, task := range tasks {
-			if int(atomic.LoadInt32(&concurrency)) < len(tasks) {
+			if concurrency < len(tasks) {
 				addWorker(e, workCh, &concurrency)
 			}
 
