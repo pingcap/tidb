@@ -475,6 +475,7 @@ func (s *testMyDecimalSuite) TestAdd(c *C) {
 		{"123.45", "-12345", "-12221.55", nil},
 		{"-123.45", "12345", "12221.55", nil},
 		{"5", "-6.0", "-1.0", nil},
+		{"2" + strings.Repeat("1", 71), strings.Repeat("8", 81), "8888888890" + strings.Repeat("9", 71), nil},
 	}
 	for _, ca := range cases {
 		a := NewDecFromStringForTest(ca.a)
@@ -485,14 +486,6 @@ func (s *testMyDecimalSuite) TestAdd(c *C) {
 		result := sum.ToString()
 		c.Assert(string(result), Equals, ca.result)
 	}
-
-	// This test covers the case that result digitsInt unnecessarily increased 9,
-	// which can cause overflow error if the result digits is more than 72.
-	a := NewDecFromInt(wordMax - 1)
-	b := NewDecFromInt((wordMax - 1) * wordBase)
-	var to MyDecimal
-	doAdd(a, b, &to)
-	c.Check(to.digitsInt, Equals, int8(18))
 }
 
 func (s *testMyDecimalSuite) TestSub(c *C) {
