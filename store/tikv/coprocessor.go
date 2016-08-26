@@ -19,7 +19,6 @@ import (
 	"io/ioutil"
 	"sync"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -49,7 +48,7 @@ func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
 func supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
-		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlDecimal,
+		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime,
 		tipb.ExprType_ColumnRef,
 		tipb.ExprType_And, tipb.ExprType_Or,
 		tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
@@ -59,7 +58,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 		return true
 	case tipb.ExprType_Plus:
 		return true
-	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum, tipb.ExprType_Avg, tipb.ExprType_Max, tipb.ExprType_Min:
+	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
@@ -244,9 +243,12 @@ func (it *copIterator) run() {
 
 // Return next coprocessor result.
 func (it *copIterator) Next() (io.ReadCloser, error) {
+	it.mu.RLock()
 	if it.mu.finished {
+		it.mu.RUnlock()
 		return nil, nil
 	}
+	it.mu.RUnlock()
 	var (
 		resp *coprocessor.Response
 		err  error
@@ -309,7 +311,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 
 		req := &coprocessor.Request{
 			Context: task.region.GetContext(),
-			Tp:      proto.Int64(it.req.Tp),
+			Tp:      it.req.Tp,
 			Data:    it.req.Data,
 			Ranges:  task.pbRanges(),
 		}

@@ -141,9 +141,6 @@ func flatten(data types.Datum) (types.Datum, error) {
 		// for mysql time type
 		data.SetInt64(int64(data.GetMysqlDuration().Duration))
 		return data, nil
-	case types.KindMysqlDecimal:
-		data.SetString(data.GetMysqlDecimal().String())
-		return data, nil
 	case types.KindMysqlEnum:
 		data.SetUint64(data.GetMysqlEnum().Value)
 		return data, nil
@@ -166,7 +163,7 @@ func DecodeValues(data []byte, fts []*types.FieldType, inIndex bool) ([]types.Da
 	if data == nil {
 		return nil, nil
 	}
-	values, err := codec.Decode(data)
+	values, err := codec.Decode(data, len(fts))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -317,23 +314,6 @@ func Unflatten(datum types.Datum, ft *types.FieldType, inIndex bool) (types.Datu
 		dur := mysql.Duration{Duration: time.Duration(datum.GetInt64())}
 		datum.SetValue(dur)
 		return datum, nil
-	case mysql.TypeNewDecimal:
-		if datum.Kind() == types.KindMysqlDecimal {
-			if ft.Decimal >= 0 {
-				dec := datum.GetMysqlDecimal().Truncate(int32(ft.Decimal))
-				datum.SetMysqlDecimal(dec)
-			}
-			return datum, nil
-		}
-		dec, err := mysql.ParseDecimal(datum.GetString())
-		if err != nil {
-			return datum, errors.Trace(err)
-		}
-		if ft.Decimal >= 0 {
-			dec = dec.Truncate(int32(ft.Decimal))
-		}
-		datum.SetValue(dec)
-		return datum, nil
 	case mysql.TypeEnum:
 		enum, err := mysql.ParseEnumValue(ft.Elems, datum.GetUint64())
 		if err != nil {
@@ -368,7 +348,7 @@ func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key 
 // DecodeIndexKey decodes datums from an index key.
 func DecodeIndexKey(key kv.Key) ([]types.Datum, error) {
 	b := key[prefixLen+idLen:]
-	return codec.Decode(b)
+	return codec.Decode(b, 1)
 }
 
 // CutIndexKey cuts encoded index key into colIDs to bytes slices map.

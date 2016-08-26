@@ -15,7 +15,9 @@ package parser
 
 import (
 	"bytes"
+	"strings"
 
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -454,4 +456,20 @@ func isTokenIdentifier(s string, buf *bytes.Buffer) int {
 	}
 	tok := tokenMap[hack.String(data)]
 	return tok
+}
+
+func handleIdent(lval *yySymType) int {
+	s := lval.ident
+	// A character string literal may have an optional character set introducer and COLLATE clause:
+	// [_charset_name]'string' [COLLATE collation_name]
+	// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
+	if !strings.HasPrefix(s, "_") {
+		return identifier
+	}
+	cs, _, err := charset.GetCharsetInfo(s[1:])
+	if err != nil {
+		return identifier
+	}
+	lval.item = cs
+	return underscoreCS
 }

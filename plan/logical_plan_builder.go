@@ -25,9 +25,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// UseNewPlanner means if use the new planner.
-var UseNewPlanner = true
-
 type idAllocator struct {
 	id int
 }
@@ -1005,4 +1002,110 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	outerPlan.SetParents(joinPlan)
 	innerPlan.SetParents(joinPlan)
 	return joinPlan
+}
+
+func (b *planBuilder) buildNewUpdate(update *ast.UpdateStmt) LogicalPlan {
+	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
+	p := b.buildResultSetNode(sel.From.TableRefs)
+	if b.err != nil {
+		return nil
+	}
+	_, _ = b.resolveHavingAndOrderBy(sel, p)
+	if sel.Where != nil {
+		p = b.buildSelection(p, sel.Where, nil)
+		if b.err != nil {
+			return nil
+		}
+	}
+	if sel.OrderBy != nil {
+		p = b.buildNewSort(p, sel.OrderBy.Items, nil)
+		if b.err != nil {
+			return nil
+		}
+	}
+	if sel.Limit != nil {
+		p = b.buildNewLimit(p, sel.Limit)
+		if b.err != nil {
+			return nil
+		}
+	}
+	orderedList, np := b.buildNewUpdateLists(update.List, p)
+	if b.err != nil {
+		return nil
+	}
+	p = np
+	updt := &NewUpdate{OrderedList: orderedList, SelectPlan: p, baseLogicalPlan: newBaseLogicalPlan(Up, b.allocator)}
+	updt.initID()
+	addChild(updt, p)
+	updt.SetSchema(p.GetSchema())
+	return updt
+}
+
+func (b *planBuilder) buildNewUpdateLists(list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
+	schema := p.GetSchema()
+	newList := make([]*expression.Assignment, len(schema))
+	for _, assign := range list {
+		col, err := schema.FindColumn(assign.Column)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil, nil
+		}
+		if col == nil {
+			b.err = errors.Trace(errors.Errorf("column %s not found", assign.Column.Name.O))
+			return nil, nil
+		}
+		offset := schema.GetIndex(col)
+		if offset == -1 {
+			b.err = errors.Trace(errors.Errorf("could not find column %s.%s", col.TblName, col.ColName))
+		}
+		newExpr, np, _, err := b.rewrite(assign.Expr, p, nil, false)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil, nil
+		}
+		p = np
+		newList[offset] = &expression.Assignment{Col: col, Expr: newExpr}
+	}
+	return newList, p
+}
+
+func (b *planBuilder) buildNewDelete(delete *ast.DeleteStmt) LogicalPlan {
+	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
+	p := b.buildResultSetNode(sel.From.TableRefs)
+	if b.err != nil {
+		return nil
+	}
+	_, _ = b.resolveHavingAndOrderBy(sel, p)
+	if sel.Where != nil {
+		p = b.buildSelection(p, sel.Where, nil)
+		if b.err != nil {
+			return nil
+		}
+	}
+	if sel.OrderBy != nil {
+		p = b.buildNewSort(p, sel.OrderBy.Items, nil)
+		if b.err != nil {
+			return nil
+		}
+	}
+	if sel.Limit != nil {
+		p = b.buildNewLimit(p, sel.Limit)
+		if b.err != nil {
+			return nil
+		}
+	}
+	var tables []*ast.TableName
+	if delete.Tables != nil {
+		tables = delete.Tables.Tables
+	}
+	del := &NewDelete{
+		Tables:          tables,
+		IsMultiTable:    delete.IsMultiTable,
+		SelectPlan:      p,
+		baseLogicalPlan: newBaseLogicalPlan(Del, b.allocator),
+	}
+	del.initID()
+	addChild(del, p)
+	return del
+
 }

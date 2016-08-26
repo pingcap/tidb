@@ -78,7 +78,7 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 			}
 		}
 
-		if err := cc.writeEOF(); err != nil {
+		if err := cc.writeEOF(false); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -93,7 +93,7 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 			}
 		}
 
-		if err := cc.writeEOF(); err != nil {
+		if err := cc.writeEOF(false); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -166,7 +166,7 @@ func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
 		return errors.Trace(cc.writeOK())
 	}
 
-	return errors.Trace(cc.writeResultset(rs, true))
+	return errors.Trace(cc.writeResultset(rs, true, false))
 }
 
 func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTypes, paramValues []byte) (err error) {
@@ -344,4 +344,27 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 	}
 	stmt.Reset()
 	return cc.writeOK()
+}
+
+// See https://dev.mysql.com/doc/internals/en/com-set-option.html
+func (cc *clientConn) handleSetOption(data []byte) (err error) {
+	if len(data) < 2 {
+		return mysql.ErrMalformPacket
+	}
+
+	switch binary.LittleEndian.Uint16(data[:2]) {
+	case 0:
+		cc.capability |= mysql.ClientMultiStatements
+		cc.ctx.SetClientCapability(cc.capability)
+	case 1:
+		cc.capability &^= mysql.ClientMultiStatements
+		cc.ctx.SetClientCapability(cc.capability)
+	default:
+		return mysql.ErrMalformPacket
+	}
+	if err = cc.writeEOF(false); err != nil {
+		return errors.Trace(err)
+	}
+
+	return errors.Trace(cc.flush())
 }

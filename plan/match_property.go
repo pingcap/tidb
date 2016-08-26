@@ -29,6 +29,7 @@ func (ts *PhysicalTableScan) matchProperty(prop requiredProperty, rowCounts []ui
 	if len(prop) == 1 && ts.pkCol != nil && ts.pkCol == prop[0].col {
 		sortedTs := *ts
 		sortedTs.Desc = prop[0].desc
+		sortedTs.KeepOrder = true
 		return &physicalPlanInfo{p: &sortedTs, cost: cost}
 	}
 	return &physicalPlanInfo{p: ts, cost: math.MaxFloat64}
@@ -106,6 +107,9 @@ func (p *PhysicalHashJoin) matchProperty(prop requiredProperty, rowCounts []uint
 	lCount, rCount := float64(rowCounts[0]), float64(rowCounts[1])
 	np := *p
 	np.SetChildren(lRes.p, rRes.p)
+	if len(prop) != 0 {
+		np.Concurrency = 1
+	}
 	cost := lRes.cost + rRes.cost
 	if p.SmallTable == 1 {
 		cost += lCount + memoryFactor*rCount
@@ -200,6 +204,16 @@ func (p *SelectLock) matchProperty(_ requiredProperty, _ []uint64, _ ...*physica
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
+func (p *NewUpdate) matchProperty(_ requiredProperty, _ []uint64, _ ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
+}
+
+// matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalDummyScan) matchProperty(_ requiredProperty, _ []uint64, _ ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
+}
+
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *NewDelete) matchProperty(_ requiredProperty, _ []uint64, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }

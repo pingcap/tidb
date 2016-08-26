@@ -258,7 +258,7 @@ func (s *testSuite) TestMultiTableDelete(c *C) {
 	c.Assert(r.Rows(), HasLen, 3)
 }
 
-func (s *testSuite) TestQualifedDelete(c *C) {
+func (s *testSuite) TestQualifiedDelete(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -453,6 +453,28 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 	r = tk.MustQuery("select * from insert_autoinc_test;")
 	rowStr6 = fmt.Sprintf("%v %v", "6", "6")
 	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
+}
+
+func (s *testSuite) TestInsertIgnore(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testSQL := `drop table if exists t;
+    create table t (id int PRIMARY KEY AUTO_INCREMENT, c1 int);`
+	tk.MustExec(testSQL)
+	testSQL = `insert into t values (1, 2);`
+	tk.MustExec(testSQL)
+
+	r := tk.MustQuery("select * from t;")
+	rowStr := fmt.Sprintf("%v %v", "1", "2")
+	r.Check(testkit.Rows(rowStr))
+
+	tk.MustExec("insert ignore into t values (1, 3), (2, 3)")
+
+	r = tk.MustQuery("select * from t;")
+	rowStr = fmt.Sprintf("%v %v", "1", "2")
+	rowStr1 := fmt.Sprintf("%v %v", "2", "3")
+	r.Check(testkit.Rows(rowStr, rowStr1))
 }
 
 func (s *testSuite) TestReplace(c *C) {
@@ -1089,7 +1111,7 @@ func (s *testSuite) TestJoin(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false")
 	result.Check(testkit.Rows())
-	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1")
+	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1")
 	result.Check(testkit.Rows("1 1 <nil> <nil>", "2 2 2 3"))
 
 	tk.MustExec("drop table if exists t1")
@@ -1121,6 +1143,14 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t1 values (1, 2), (1, NULL)")
 	result = tk.MustQuery("select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);")
 	result.Check(testkit.Rows("1 2 1 2"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int, index k(c1))")
+	tk.MustExec("create table t1(c1 int)")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7)")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5),(6),(7)")
+	result = tk.MustQuery("select a.c1 from t a , t1 b where a.c1 = b.c1 order by a.c1;")
+	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
 
 }
 
@@ -1718,7 +1748,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	result = tk.MustQuery("select c as a from t group by d having a < 0")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select c as a from t group by d having sum(a) = 2")
-	result.Check(testkit.Rows("<nil>"))
+	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select count(distinct c) from t group by d")
 	result.Check(testkit.Rows("1", "2", "2"))
 	result = tk.MustQuery("select sum(c) from t group by d")

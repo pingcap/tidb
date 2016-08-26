@@ -64,7 +64,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient())
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -81,9 +81,10 @@ type tikvStore struct {
 	client       Client
 	regionCache  *RegionCache
 	lockResolver *LockResolver
+	gcWorker     *GCWorker
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, client Client) (*tikvStore, error) {
+func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
 	oracle, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -96,6 +97,12 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client) (*tikvStore, e
 		regionCache: NewRegionCache(pdClient),
 	}
 	store.lockResolver = NewLockResolver(store)
+	if enableGC {
+		store.gcWorker, err = NewGCWorker(store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	return store, nil
 }
 
@@ -106,7 +113,7 @@ func NewMockTikvStore() (kv.Storage, error) {
 	mvccStore := mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
 	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
-	return newTikvStore(uuid, mocktikv.NewPDClient(cluster), client)
+	return newTikvStore(uuid, mocktikv.NewPDClient(cluster), client, false)
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {
@@ -131,6 +138,9 @@ func (s *tikvStore) Close() error {
 		return errors.Trace(err)
 	}
 	s.oracle.Close()
+	if s.gcWorker != nil {
+		s.gcWorker.Close()
+	}
 	return nil
 }
 
@@ -171,7 +181,7 @@ func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVer
 			// of date and already be cleaned up. We can skip the
 			// RPC by returning RegionError directly.
 			return &pb.Response{
-				Type:        req.GetType().Enum(),
+				Type:        req.GetType(),
 				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
 			}, nil
 		}

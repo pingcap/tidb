@@ -24,7 +24,6 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
@@ -2424,7 +2423,7 @@ func checkPlan(c *C, se Session, sql, explain string) {
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	err = plan.PrepareStmt(is, ctx, stmt)
 	c.Assert(err, IsNil)
-	p, err := plan.Optimize(ctx, stmt, executor.NewSubQueryBuilder(is), is)
+	p, err := plan.Optimize(ctx, stmt, is)
 	c.Assert(err, IsNil)
 	c.Assert(plan.ToString(p), Equals, explain)
 }

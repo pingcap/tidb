@@ -15,6 +15,7 @@ package executor
 
 import (
 	"sort"
+	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -45,22 +46,38 @@ type HashJoinExec struct {
 	schema       expression.Schema
 	outer        bool
 	leftSmall    bool
-	matchedRows  []*Row
 	cursor       int
 	// targetTypes means the target the type that both smallHashKey and bigHashKey should convert to.
 	targetTypes []*types.FieldType
+
+	finished bool
+	// for sync multiple join workers.
+	wg sync.WaitGroup
+
+	// Concurrent channels.
+	concurrency      int
+	bigTableRows     []chan []*Row
+	bigTableErr      chan error
+	hashJoinContexts []*hashJoinCtx
+
+	// Channels for output.
+	resultErr  chan error
+	resultRows chan *Row
+}
+
+type hashJoinCtx struct {
+	bigFilter   expression.Expression
+	otherFilter expression.Expression
+	// Buffer used for encode hash keys.
+	datumBuffer   []types.Datum
+	hashKeyBuffer []byte
 }
 
 // Close implements Executor Close interface.
 func (e *HashJoinExec) Close() error {
 	e.prepared = false
 	e.cursor = 0
-	e.matchedRows = nil
-	err := e.smallExec.Close()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return e.bigExec.Close()
+	return e.smallExec.Close()
 }
 
 func joinTwoRow(a *Row, b *Row) *Row {
@@ -77,28 +94,27 @@ func joinTwoRow(a *Row, b *Row) *Row {
 
 // getHashKey gets the hash key when given a row and hash columns.
 // It will return a boolean value representing if the hash key has null, a byte slice representing the result hash code.
-func getHashKey(exprs []*expression.Column, row *Row, targetTypes []*types.FieldType) (bool, []byte, error) {
-	vals := make([]types.Datum, 0, len(exprs))
-	for i, expr := range exprs {
-		v, err := expr.Eval(row.Data, nil)
+func getHashKey(cols []*expression.Column, row *Row, targetTypes []*types.FieldType, vals []types.Datum, bytes []byte) (bool, []byte, error) {
+	var err error
+	for i, col := range cols {
+		vals[i], err = col.Eval(row.Data, nil)
 		if err != nil {
 			return false, nil, errors.Trace(err)
 		}
-		if v.IsNull() {
+		if vals[i].IsNull() {
 			return true, nil, nil
 		}
-		if targetTypes[i].Tp != expr.RetType.Tp {
-			v, err = v.ConvertTo(targetTypes[i])
+		if targetTypes[i].Tp != col.RetType.Tp {
+			vals[i], err = vals[i].ConvertTo(targetTypes[i])
 			if err != nil {
 				return false, nil, errors.Trace(err)
 			}
 		}
-		vals = append(vals, v)
 	}
 	if len(vals) == 0 {
 		return false, nil, nil
 	}
-	bytes, err := codec.EncodeValue([]byte{}, vals...)
+	bytes, err = codec.EncodeValue(bytes, vals...)
 	return false, bytes, errors.Trace(err)
 }
 
@@ -112,7 +128,60 @@ func (e *HashJoinExec) Fields() []*ast.ResultField {
 	return nil
 }
 
+var batchSize = 128
+
+// Worker to get big table rows.
+func (e *HashJoinExec) fetchBigExec() {
+	cnt := 0
+	defer func() {
+		for _, cn := range e.bigTableRows {
+			close(cn)
+		}
+		e.bigExec.Close()
+	}()
+	curBatchSize := 1
+	for {
+		if e.finished {
+			break
+		}
+		rows := make([]*Row, 0, batchSize)
+		done := false
+		for i := 0; i < curBatchSize; i++ {
+			row, err := e.bigExec.Next()
+			if err != nil {
+				e.bigTableErr <- errors.Trace(err)
+				done = true
+				break
+			}
+			if row == nil {
+				done = true
+				break
+			}
+			rows = append(rows, row)
+		}
+		idx := cnt % e.concurrency
+		e.bigTableRows[idx] <- rows
+		cnt++
+		if done {
+			break
+		}
+		if curBatchSize < batchSize {
+			curBatchSize *= 2
+		}
+	}
+}
+
 func (e *HashJoinExec) prepare() error {
+	e.finished = false
+	e.bigTableRows = make([]chan []*Row, e.concurrency)
+	for i := 0; i < e.concurrency; i++ {
+		e.bigTableRows[i] = make(chan []*Row, e.concurrency*batchSize)
+	}
+	e.bigTableErr = make(chan error, 1)
+
+	// Start a worker to fetch big table rows.
+	go e.fetchBigExec()
+
 	e.hashTable = make(map[string][]*Row)
 	e.cursor = 0
 	for {
@@ -135,7 +204,7 @@ func (e *HashJoinExec) prepare() error {
 				continue
 			}
 		}
-		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes)
+		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes, e.hashJoinContexts[0].datumBuffer, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -149,12 +218,87 @@ func (e *HashJoinExec) prepare() error {
 		}
 	}
 
+	e.resultRows = make(chan *Row, e.concurrency*1000)
+	e.resultErr = make(chan error, 1)
+
+	e.wg = sync.WaitGroup{}
+	for i := 0; i < e.concurrency; i++ {
+		e.wg.Add(1)
+		go e.doJoin(i)
+	}
+	go e.closeChanWorker()
+
 	e.prepared = true
 	return nil
 }
 
-func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, err error) {
-	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes)
+func (e *HashJoinExec) closeChanWorker() {
+	e.wg.Wait()
+	close(e.resultRows)
+	e.hashTable = nil
+}
+
+// doJoin does join job in one goroutine.
+func (e *HashJoinExec) doJoin(idx int) {
+	for {
+		var (
+			bigRows []*Row
+			ok      bool
+			err     error
+		)
+		select {
+		case bigRows, ok = <-e.bigTableRows[idx]:
+		case err = <-e.bigTableErr:
+		}
+		if err != nil {
+			e.resultErr <- errors.Trace(err)
+			break
+		}
+		if !ok || e.finished {
+			break
+		}
+		for _, bigRow := range bigRows {
+			succ := e.join(e.hashJoinContexts[idx], bigRow)
+			if !succ {
+				break
+			}
+		}
+	}
+	e.wg.Done()
+}
+
+func (e *HashJoinExec) join(ctx *hashJoinCtx, bigRow *Row) bool {
+	var (
+		matchedRows []*Row
+		err         error
+	)
+	bigMatched := true
+	if e.bigFilter != nil {
+		bigMatched, err = expression.EvalBool(ctx.bigFilter, bigRow.Data, e.ctx)
+		if err != nil {
+			e.resultErr <- errors.Trace(err)
+			return false
+		}
+	}
+	if bigMatched {
+		matchedRows, err = e.constructMatchedRows(ctx, bigRow)
+		if err != nil {
+			e.resultErr <- errors.Trace(err)
+			return false
+		}
+	}
+	for _, r := range matchedRows {
+		e.resultRows <- r
+	}
+	if len(matchedRows) == 0 && e.outer {
+		r := e.fillNullRow(bigRow)
+		e.resultRows <- r
+	}
+	return true
+}
+
+func (e *HashJoinExec) constructMatchedRows(ctx *hashJoinCtx, bigRow *Row) (matchedRows []*Row, err error) {
+	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes, ctx.datumBuffer, ctx.hashKeyBuffer[0:0:cap(ctx.hashKeyBuffer)])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -176,7 +320,7 @@ func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, er
 			matchedRow = joinTwoRow(bigRow, smallRow)
 		}
 		if e.otherFilter != nil {
-			otherMatched, err = expression.EvalBool(e.otherFilter, matchedRow.Data, e.ctx)
+			otherMatched, err = expression.EvalBool(ctx.otherFilter, matchedRow.Data, e.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -191,8 +335,7 @@ func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, er
 
 func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row) {
 	smallRow := &Row{
-		RowKeys: make([]*RowKeyEntry, len(e.smallExec.Schema())),
-		Data:    make([]types.Datum, len(e.smallExec.Schema())),
+		Data: make([]types.Datum, len(e.smallExec.Schema())),
 	}
 
 	for _, data := range smallRow.Data {
@@ -206,14 +349,6 @@ func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row) {
 	return returnRow
 }
 
-func (e *HashJoinExec) returnRecord() (ret *Row, ok bool) {
-	if e.cursor >= len(e.matchedRows) {
-		return nil, false
-	}
-	e.cursor++
-	return e.matchedRows[e.cursor-1], true
-}
-
 // Next implements Executor Next interface.
 func (e *HashJoinExec) Next() (*Row, error) {
 	if !e.prepared {
@@ -221,46 +356,23 @@ func (e *HashJoinExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-
-	row, ok := e.returnRecord()
-	if ok {
-		return row, nil
+	var (
+		row *Row
+		err error
+		ok  bool
+	)
+	select {
+	case row, ok = <-e.resultRows:
+	case err, ok = <-e.resultErr:
 	}
-
-	for {
-		bigRow, err := e.bigExec.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if bigRow == nil {
-			e.bigExec.Close()
-			return nil, nil
-		}
-
-		var matchedRows []*Row
-		bigMatched := true
-		if e.bigFilter != nil {
-			bigMatched, err = expression.EvalBool(e.bigFilter, bigRow.Data, e.ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-		if bigMatched {
-			matchedRows, err = e.constructMatchedRows(bigRow)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-		e.matchedRows = matchedRows
-		e.cursor = 0
-		row, ok := e.returnRecord()
-		if ok {
-			return row, nil
-		} else if e.outer {
-			row = e.fillNullRow(bigRow)
-			return row, nil
-		}
+	if err != nil {
+		e.finished = true
+		return nil, errors.Trace(err)
 	}
+	if !ok {
+		return nil, nil
+	}
+	return row, nil
 }
 
 // HashSemiJoinExec implements the hash join algorithm for semi join.
@@ -327,7 +439,7 @@ func (e *HashSemiJoinExec) prepare() error {
 				continue
 			}
 		}
-		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes)
+		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes, make([]types.Datum, len(e.smallHashKey)), nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -347,7 +459,7 @@ func (e *HashSemiJoinExec) prepare() error {
 }
 
 func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, hasNull bool, err error) {
-	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes)
+	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes, make([]types.Datum, len(e.smallHashKey)), nil)
 	if err != nil {
 		return false, false, errors.Trace(err)
 	}
@@ -938,7 +1050,7 @@ func (b *executorBuilder) newConditionExprToPBExpr(client kv.Client, exprs []exp
 		} else {
 			// merge multiple converted pb expression into an AND expression.
 			pbExpr = &tipb.Expr{
-				Tp:       tipb.ExprType_And.Enum(),
+				Tp:       tipb.ExprType_And,
 				Children: []*tipb.Expr{pbExpr, v}}
 		}
 	}
@@ -984,7 +1096,7 @@ func (b *executorBuilder) newAggFuncToPBExpr(client kv.Client, aggFunc expressio
 		}
 		children = append(children, pbArg)
 	}
-	return &tipb.Expr{Tp: tp.Enum(), Children: children}
+	return &tipb.Expr{Tp: tp, Children: children}
 }
 
 // newExprToPBExpr converts an expression.Expression to a tipb.Expr, if not supported, nil will be returned.
@@ -1006,8 +1118,7 @@ func (b *executorBuilder) columnToPBExpr(client kv.Client, column *expression.Co
 		return nil
 	}
 	switch column.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry,
-		mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeYear:
+	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry, mysql.TypeNewDecimal:
 		return nil
 	}
 
@@ -1029,7 +1140,7 @@ func (b *executorBuilder) columnToPBExpr(client kv.Client, column *expression.Co
 	}
 
 	return &tipb.Expr{
-		Tp:  tipb.ExprType_ColumnRef.Enum(),
+		Tp:  tipb.ExprType_ColumnRef,
 		Val: codec.EncodeInt(nil, id)}
 }
 
@@ -1047,7 +1158,7 @@ func (b *executorBuilder) inToPBExpr(client kv.Client, expr *expression.ScalarFu
 		return nil
 	}
 	return &tipb.Expr{
-		Tp:       tipb.ExprType_In.Enum(),
+		Tp:       tipb.ExprType_In,
 		Children: []*tipb.Expr{pbExpr, listExpr}}
 }
 
@@ -1081,7 +1192,7 @@ func (b *executorBuilder) notToPBExpr(client kv.Client, expr *expression.ScalarF
 		return nil
 	}
 	return &tipb.Expr{
-		Tp:       tipb.ExprType_Not.Enum(),
+		Tp:       tipb.ExprType_Not,
 		Children: []*tipb.Expr{child}}
 }
 
@@ -1149,7 +1260,7 @@ func (b *executorBuilder) scalarFuncToPBExpr(client kv.Client, expr *expression.
 		return nil
 	}
 	return &tipb.Expr{
-		Tp:       tp.Enum(),
+		Tp:       tp,
 		Children: []*tipb.Expr{expr0, expr1}}
 }
 

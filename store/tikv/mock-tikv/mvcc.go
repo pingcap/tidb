@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"sync"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -418,7 +417,7 @@ func (s *MvccStore) ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.
 		if ent.lock != nil && ent.lock.startTS <= maxTS {
 			locks = append(locks, &kvrpcpb.LockInfo{
 				PrimaryLock: ent.lock.primary,
-				LockVersion: proto.Uint64(ent.lock.startTS),
+				LockVersion: ent.lock.startTS,
 				Key:         ent.key,
 			})
 		}

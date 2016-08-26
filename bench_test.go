@@ -1,3 +1,16 @@
+// Copyright 2016 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tidb
 
 import (
@@ -6,7 +19,6 @@ import (
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/plan"
 )
 
 var smallCount = 100
@@ -218,22 +230,6 @@ func BenchmarkJoin(b *testing.B) {
 	}
 }
 
-func BenchmarkNewJoin(b *testing.B) {
-	b.StopTimer()
-	se := prepareBenchSession()
-	prepareJoinBenchData(se, "int", "%v", smallCount)
-	b.StartTimer()
-	plan.UseNewPlanner = true
-	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute("select * from t a join t b on a.col = b.col")
-		if err != nil {
-			b.Fatal(err)
-		}
-		readResult(rs[0], 100)
-	}
-	plan.UseNewPlanner = false
-}
-
 func BenchmarkJoinLimit(b *testing.B) {
 	b.StopTimer()
 	se := prepareBenchSession()
@@ -246,20 +242,4 @@ func BenchmarkJoinLimit(b *testing.B) {
 		}
 		readResult(rs[0], 1)
 	}
-}
-
-func BenchmarkNewJoinLimit(b *testing.B) {
-	b.StopTimer()
-	se := prepareBenchSession()
-	prepareJoinBenchData(se, "int", "%v", smallCount)
-	b.StartTimer()
-	plan.UseNewPlanner = true
-	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute("select * from t a join t b on a.col = b.col limit 1")
-		if err != nil {
-			b.Fatal(err)
-		}
-		readResult(rs[0], 1)
-	}
-	plan.UseNewPlanner = false
 }

@@ -32,6 +32,9 @@ const (
 	cpuFactor       = 0.9
 )
 
+// JoinConcurrency means the number of goroutines that participate joining.
+var JoinConcurrency = 5
+
 func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, indexInfo *model.IndexInfo) (uint64, error) {
 	count := float64(table.Count)
 	for i := 0; i < len(indexRange.LowVal); i++ {
@@ -301,6 +304,8 @@ func (p *Join) handleLeftJoin(prop requiredProperty, innerJoin bool) (*physicalP
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
 		SmallTable:      1,
+		// TODO: decide concurrency by data size.
+		Concurrency: JoinConcurrency,
 	}
 	join.SetSchema(p.schema)
 	if innerJoin {
@@ -323,7 +328,7 @@ func (p *Join) handleLeftJoin(prop requiredProperty, innerJoin bool) (*physicalP
 		return nil, nil, 0, errors.Trace(err)
 	}
 	sortedPlanInfo := join.matchProperty(prop, []uint64{lCount, rCount}, lSortedPlanInfo, rSortedPlanInfo)
-	unSortedPlanInfo := join.matchProperty(prop, []uint64{lCount, rCount}, lUnSortedPlanInfo, rUnSortedPlanInfo)
+	unSortedPlanInfo := join.matchProperty(nil, []uint64{lCount, rCount}, lUnSortedPlanInfo, rUnSortedPlanInfo)
 	return sortedPlanInfo, unSortedPlanInfo, estimateJoinCount(lCount, rCount), nil
 }
 
@@ -341,6 +346,8 @@ func (p *Join) handleRightJoin(prop requiredProperty, innerJoin bool) (*physical
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
+		// TODO: decide concurrency by data size.
+		Concurrency: JoinConcurrency,
 	}
 	join.SetSchema(p.schema)
 	if innerJoin {
@@ -363,7 +370,7 @@ func (p *Join) handleRightJoin(prop requiredProperty, innerJoin bool) (*physical
 		rSortedPlanInfo.cost = math.MaxFloat64
 	}
 	sortedPlanInfo := join.matchProperty(prop, []uint64{lCount, rCount}, lSortedPlanInfo, rSortedPlanInfo)
-	unSortedPlanInfo := join.matchProperty(prop, []uint64{lCount, rCount}, lUnSortedPlanInfo, rUnSortedPlanInfo)
+	unSortedPlanInfo := join.matchProperty(nil, []uint64{lCount, rCount}, lUnSortedPlanInfo, rUnSortedPlanInfo)
 	return sortedPlanInfo, unSortedPlanInfo, estimateJoinCount(lCount, rCount), nil
 }
 
@@ -730,6 +737,34 @@ func (p *SelectLock) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanI
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
 func (p *Insert) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
+	if len(p.GetChildren()) == 0 {
+		planInfo := &physicalPlanInfo{p: p}
+		return planInfo, planInfo, 0, nil
+	}
+	child := p.GetChildByIndex(0).(LogicalPlan)
+	sortedPlanInfo, unSortedPlanInfo, count, err := child.convert2PhysicalPlan(prop)
+	if err != nil {
+		return nil, nil, 0, errors.Trace(err)
+	}
+	return addPlanToResponse(p, sortedPlanInfo), addPlanToResponse(p, unSortedPlanInfo), count, nil
+}
+
+// convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
+func (p *NewUpdate) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
+	if len(p.GetChildren()) == 0 {
+		planInfo := &physicalPlanInfo{p: p}
+		return planInfo, planInfo, 0, nil
+	}
+	child := p.GetChildByIndex(0).(LogicalPlan)
+	sortedPlanInfo, unSortedPlanInfo, count, err := child.convert2PhysicalPlan(prop)
+	if err != nil {
+		return nil, nil, 0, errors.Trace(err)
+	}
+	return addPlanToResponse(p, sortedPlanInfo), addPlanToResponse(p, unSortedPlanInfo), count, nil
+}
+
+// convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
+func (p *NewDelete) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
 	if len(p.GetChildren()) == 0 {
 		planInfo := &physicalPlanInfo{p: p}
 		return planInfo, planInfo, 0, nil

@@ -243,8 +243,7 @@ func (e *ExecuteExec) Build() error {
 		}
 		prepared.SchemaVersion = e.IS.SchemaMetaVersion()
 	}
-	sb := &subqueryBuilder{is: e.IS}
-	p, err := plan.Optimize(e.Ctx, prepared.Stmt, sb, e.IS)
+	p, err := plan.Optimize(e.Ctx, prepared.Stmt, e.IS)
 	if err != nil {
 		return errors.Trace(err)
 	}

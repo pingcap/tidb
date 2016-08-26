@@ -27,18 +27,16 @@ import (
 	"github.com/ngaut/log"
 	"github.com/peterh/liner"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
 )
 
 var (
-	logLevel   = flag.String("L", "error", "log level")
-	store      = flag.String("store", "goleveldb", "the name for the registered storage, e.g. memory, goleveldb, boltdb")
-	dbPath     = flag.String("dbpath", "test", "db path")
-	dbName     = flag.String("dbname", "test", "default db name")
-	lease      = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
-	useNewPlan = flag.Int("newplan", 1, "If use new planner.")
+	logLevel = flag.String("L", "error", "log level")
+	store    = flag.String("store", "goleveldb", "the name for the registered storage, e.g. memory, goleveldb, boltdb")
+	dbPath   = flag.String("dbpath", "test", "db path")
+	dbName   = flag.String("dbname", "test", "default db name")
+	lease    = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
 
 	line        *liner.State
 	historyPath = "/tmp/tidb_interpreter"
@@ -179,10 +177,6 @@ func main() {
 	openHistory()
 
 	tidb.SetSchemaLease(time.Duration(*lease) * time.Second)
-
-	if *useNewPlan == 0 {
-		plan.UseNewPlanner = false
-	}
 
 	// use test as default DB.
 	mdb, err := sql.Open(tidb.DriverName, *store+"://"+*dbPath+"/"+*dbName)

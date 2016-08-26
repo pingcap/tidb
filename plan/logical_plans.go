@@ -61,7 +61,7 @@ type Projection struct {
 // Aggregation represents an aggregate plan.
 type Aggregation struct {
 	baseLogicalPlan
-	// TODO: implement hash aggregation and streamed aggreagtion
+	// TODO: implement hash aggregation and streamed aggregation
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
 }
@@ -136,6 +136,23 @@ type NewSort struct {
 	ByItems []*ByItems
 
 	ExecLimit *Limit
+}
+
+// NewUpdate represents NewUpdate plan.
+type NewUpdate struct {
+	baseLogicalPlan
+
+	SelectPlan  Plan
+	OrderedList []*expression.Assignment
+}
+
+// NewDelete represents a delete plan.
+type NewDelete struct {
+	baseLogicalPlan
+
+	SelectPlan   Plan
+	Tables       []*ast.TableName
+	IsMultiTable bool
 }
 
 // AddChild for parent.

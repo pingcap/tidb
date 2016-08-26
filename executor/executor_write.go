@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -65,7 +64,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 		e.fetched = true
 	}
 
-	columns, err := getUpdateColumns(e.OrderedList)
+	assignFlag, err := getUpdateColumns(e.OrderedList)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -92,7 +91,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 			continue
 		}
 		// Update row
-		err1 := updateRecord(e.ctx, handle, oldData, newTableData, columns, tbl, offset, false)
+		err1 := updateRecord(e.ctx, handle, oldData, newTableData, assignFlag, tbl, offset, false)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -102,12 +101,16 @@ func (e *UpdateExec) Next() (*Row, error) {
 	return &Row{}, nil
 }
 
-func getUpdateColumns(assignList []*ast.Assignment) (map[int]*ast.Assignment, error) {
-	m := make(map[int]*ast.Assignment, len(assignList))
+func getUpdateColumns(assignList []*ast.Assignment) ([]bool, error) {
+	assignFlag := make([]bool, len(assignList))
 	for i, v := range assignList {
-		m[i] = v
+		if v != nil {
+			assignFlag[i] = true
+		} else {
+			assignFlag[i] = false
+		}
 	}
-	return m, nil
+	return assignFlag, nil
 }
 
 func (e *UpdateExec) fetchRows() error {
@@ -156,14 +159,13 @@ func (e *UpdateExec) getTableOffset(t table.Table) int {
 	return 0
 }
 
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, updateColumns map[int]*ast.Assignment, t table.Table, offset int, onDuplicateUpdate bool) error {
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, offset int, onDuplicateUpdate bool) error {
 	cols := t.Cols()
 	touched := make(map[int]bool, len(cols))
-
 	assignExists := false
 	var newHandle types.Datum
-	for i, asgn := range updateColumns {
-		if asgn == nil {
+	for i, hasSetExpr := range assignFlag {
+		if !hasSetExpr {
 			continue
 		}
 		if i < offset || i >= offset+len(cols) {
@@ -310,13 +312,19 @@ func (e *DeleteExec) Next() (*Row, error) {
 				tblNames[f.TableName.Name.L] = f.TableName.Name.L
 			}
 		}
-		for _, t := range e.Tables {
-			// Consider DBName.
-			_, ok := tblNames[t.Name.L]
-			if !ok {
-				return nil, errors.Errorf("Unknown table '%s' in MULTI DELETE", t.Name.O)
+		if len(tblNames) != 0 {
+			for _, t := range e.Tables {
+				// Consider DBName.
+				_, ok := tblNames[t.Name.L]
+				if !ok {
+					return nil, errors.Errorf("Unknown table '%s' in MULTI DELETE", t.Name.O)
+				}
+				tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
 			}
-			tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
+		} else { // all columns have been pruned
+			for _, t := range e.Tables {
+				tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
+			}
 		}
 	}
 
@@ -421,6 +429,7 @@ type InsertExec struct {
 	fields      []*ast.ResultField
 
 	Priority int
+	Ignore   bool
 
 	finished bool
 }
@@ -459,7 +468,7 @@ func (e *InsertExec) Next() (*Row, error) {
 	}
 
 	for _, row := range rows {
-		if len(e.OnDuplicate) == 0 {
+		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
 		h, err := e.Table.AddRecord(e.ctx, row)
@@ -470,6 +479,12 @@ func (e *InsertExec) Next() (*Row, error) {
 		}
 
 		if len(e.OnDuplicate) == 0 || !terror.ErrorEqual(err, kv.ErrKeyExists) {
+			// If you use the IGNORE keyword, errors that occur while executing the INSERT statement are ignored.
+			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
+			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
+			if e.Ignore {
+				continue
+			}
 			return nil, errors.Trace(err)
 		}
 		if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
@@ -648,9 +663,7 @@ func (e *InsertValues) getRow(cols []*table.Column, list []ast.ExprNode, default
 
 func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
-	if !plan.UseNewPlanner && len(e.SelectExec.Fields()) != len(cols) {
-		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Fields()))
-	} else if plan.UseNewPlanner && len(e.SelectExec.Schema()) != len(cols) {
+	if len(e.SelectExec.Schema()) != len(cols) {
 		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Schema()))
 	}
 	var rows [][]types.Datum
@@ -783,7 +796,15 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 		}
 		newData[i] = val
 	}
-	if err = updateRecord(e.ctx, h, data, newData, cols, e.Table, 0, true); err != nil {
+	assignFlag := make([]bool, len(e.Table.Cols()))
+	for i, asgn := range cols {
+		if asgn != nil {
+			assignFlag[i] = true
+		} else {
+			assignFlag[i] = false
+		}
+	}
+	if err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, 0, true); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

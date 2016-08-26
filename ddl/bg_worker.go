@@ -90,7 +90,7 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 
 	if err != nil {
 		if job.State != model.JobCancelled {
-			log.Errorf("run background job err %v", errors.ErrorStack(err))
+			log.Errorf("[ddl] run background job err %v", errors.ErrorStack(err))
 		}
 
 		job.Error = err.Error()
