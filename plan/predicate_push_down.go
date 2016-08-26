@@ -252,7 +252,10 @@ func concatOnAndWhereConds(join *Join, predicates []expression.Expression) []exp
 	for _, v := range equalConds {
 		ans = append(ans, v)
 	}
-	ans = append(ans, append(leftConds, append(rightConds, append(otherConds, predicates...)...)...)...)
+	ans = append(ans, leftConds...)
+	ans = append(ans, rightConds...)
+	ans = append(ans, otherConds...)
+	ans = append(ans, predicates...)
 	return ans
 }
 
