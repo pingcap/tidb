@@ -153,7 +153,7 @@ func (tc *TiDBContext) WarningCount() uint16 {
 }
 
 // Execute implements IContext Execute method.
-func (tc *TiDBContext) Execute(sql string) (rs ResultSet, err error) {
+func (tc *TiDBContext) Execute(sql string) (rs []ResultSet, err error) {
 	rsList, err := tc.session.Execute(sql)
 	if err != nil {
 		return
@@ -161,10 +161,18 @@ func (tc *TiDBContext) Execute(sql string) (rs ResultSet, err error) {
 	if len(rsList) == 0 { // result ok
 		return
 	}
-	rs = &tidbResultSet{
-		recordSet: rsList[0],
+	rs = make([]ResultSet, len(rsList))
+	for i := 0; i < len(rsList); i++ {
+		rs[i] = &tidbResultSet{
+			recordSet: rsList[i],
+		}
 	}
 	return
+}
+
+// SetClientCapability implements IContext SetClientCapability method.
+func (tc *TiDBContext) SetClientCapability(flags uint32) {
+	tc.session.SetClientCapability(flags)
 }
 
 // Close implements IContext Close method.
@@ -183,7 +191,7 @@ func (tc *TiDBContext) FieldList(table string) (colums []*ColumnInfo, err error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	colums, err = rs.Columns()
+	colums, err = rs[0].Columns()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
