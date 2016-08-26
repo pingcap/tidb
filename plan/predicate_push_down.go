@@ -34,7 +34,7 @@ func columnSubstitute(expr expression.Expression, schema expression.Schema, newE
 	case *expression.Column:
 		id := schema.GetIndex(v)
 		if id == -1 {
-			log.Errorf("Can't find columns %s in schema %s", v.ToString(), schema.ToString())
+			log.Errorf("Can't find columns %s in schema %s", v, schema)
 		}
 		return newExprs[id]
 	case *expression.ScalarFunction:
