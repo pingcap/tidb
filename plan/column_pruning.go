@@ -34,7 +34,7 @@ func retrieveColumnsInExpression(expr expression.Expression, schema expression.S
 		if !v.Correlated {
 			newColumn := schema.RetrieveColumn(v)
 			if newColumn == nil {
-				return nil, errors.Errorf("Can't Find column %s from schema %s.", expr.ToString(), schema.ToString())
+				return nil, errors.Errorf("Can't Find column %s from schema %s.", expr, schema)
 			}
 			return newColumn, nil
 		}
@@ -47,7 +47,7 @@ func makeUsedList(usedCols []*expression.Column, schema expression.Schema) []boo
 	for _, col := range usedCols {
 		idx := schema.GetIndex(col)
 		if idx == -1 {
-			log.Errorf("Can't find column %s from schema %s.", col.ToString(), schema.ToString())
+			log.Errorf("Can't find column %s from schema %s.", col, schema)
 		}
 		used[idx] = true
 	}

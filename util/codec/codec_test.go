@@ -78,13 +78,13 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		comment := Commentf("%d %v", i, t)
 		b, err := EncodeKey(nil, t.Input...)
 		c.Assert(err, IsNil, comment)
-		args, err := Decode(b)
+		args, err := Decode(b, 1)
 		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
 
 		b, err = EncodeValue(nil, t.Input...)
 		c.Assert(err, IsNil)
-		args, err = Decode(b)
+		args, err = Decode(b, 1)
 		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
 	}
@@ -492,7 +492,7 @@ func (s *testCodecSuite) TestTime(c *C) {
 
 		b, err := EncodeKey(nil, m)
 		c.Assert(err, IsNil)
-		v, err := Decode(b)
+		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
 		var t mysql.Time
 		t.Type = mysql.TypeDatetime
@@ -537,7 +537,7 @@ func (s *testCodecSuite) TestDuration(c *C) {
 
 		b, err := EncodeKey(nil, types.NewDatum(m))
 		c.Assert(err, IsNil)
-		v, err := Decode(b)
+		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
 		m.Fsp = mysql.MaxFsp
 		c.Assert(v, DeepEquals, types.MakeDatums(m))
@@ -592,7 +592,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		c.Assert(err, IsNil)
 		b, err := EncodeKey(nil, types.NewDatum(dec))
 		c.Assert(err, IsNil)
-		v, err := Decode(b)
+		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
 		c.Assert(v, HasLen, 1)
 		vv := v[0].GetMysqlDecimal()
