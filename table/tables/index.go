@@ -68,7 +68,7 @@ func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 	}
 	// get indexedValues
 	buf := c.it.Key()[len(c.prefix):]
-	vv, err := codec.Decode(buf)
+	vv, err := codec.Decode(buf, len(c.idx.idxInfo.Columns))
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
