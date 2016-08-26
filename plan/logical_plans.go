@@ -61,7 +61,7 @@ type Projection struct {
 // Aggregation represents an aggregate plan.
 type Aggregation struct {
 	baseLogicalPlan
-	// TODO: implement hash aggregation and streamed aggreagtion
+	// TODO: implement hash aggregation and streamed aggregation
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
 }

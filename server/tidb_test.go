@@ -99,6 +99,10 @@ func (ts *TidbTestSuite) TestMultiPacket(c *C) {
 	runTestMultiPacket(c)
 }
 
+func (ts *TidbTestSuite) TestMultiStatements(c *C) {
+	runTestMultiStatements(c)
+}
+
 func (ts *TidbTestSuite) TestSocket(c *C) {
 	cfg := &Config{
 		LogLevel:   "debug",

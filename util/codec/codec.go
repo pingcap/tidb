@@ -129,14 +129,15 @@ func EncodeValue(b []byte, v ...types.Datum) ([]byte, error) {
 
 // Decode decodes values from a byte slice generated with EncodeKey or EncodeValue
 // before.
-func Decode(b []byte) ([]types.Datum, error) {
+// size is the size of decoded datum slice.
+func Decode(b []byte, size int) ([]types.Datum, error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid encoded key")
 	}
 
 	var (
 		err    error
-		values = make([]types.Datum, 0, 1)
+		values = make([]types.Datum, 0, size)
 	)
 
 	for len(b) > 0 {

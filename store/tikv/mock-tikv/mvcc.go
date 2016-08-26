@@ -22,10 +22,19 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
+type mvccValueType int
+
+const (
+	typePut mvccValueType = iota
+	typeDelete
+	typeRollback
+)
+
 type mvccValue struct {
-	startTS  uint64
-	commitTS uint64
-	value    []byte
+	valueType mvccValueType
+	startTS   uint64
+	commitTS  uint64
+	value     []byte
 }
 
 type mvccLock struct {
@@ -52,9 +61,10 @@ func (e *mvccEntry) Clone() *mvccEntry {
 	entry.key = append([]byte(nil), e.key...)
 	for _, v := range e.values {
 		entry.values = append(entry.values, mvccValue{
-			startTS:  v.startTS,
-			commitTS: v.commitTS,
-			value:    append([]byte(nil), v.value...),
+			valueType: v.valueType,
+			startTS:   v.startTS,
+			commitTS:  v.commitTS,
+			value:     append([]byte(nil), v.value...),
 		})
 	}
 	if e.lock != nil {
@@ -87,7 +97,7 @@ func (e *mvccEntry) Get(ts uint64) ([]byte, error) {
 		}
 	}
 	for _, v := range e.values {
-		if v.commitTS <= ts {
+		if v.commitTS <= ts && v.valueType != typeRollback {
 			return v.value, nil
 		}
 	}
@@ -117,7 +127,7 @@ func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary
 
 func (e *mvccEntry) checkTxnCommitted(startTS uint64) (uint64, bool) {
 	for _, v := range e.values {
-		if v.startTS == startTS {
+		if v.startTS == startTS && v.valueType != typeRollback {
 			return v.commitTS, true
 		}
 	}
@@ -132,10 +142,17 @@ func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 		return ErrRetryable("txn not found")
 	}
 	if e.lock.op != kvrpcpb.Op_Lock {
+		var valueType mvccValueType
+		if e.lock.op == kvrpcpb.Op_Put {
+			valueType = typePut
+		} else {
+			valueType = typeDelete
+		}
 		e.values = append([]mvccValue{{
-			startTS:  startTS,
-			commitTS: commitTS,
-			value:    e.lock.value,
+			valueType: valueType,
+			startTS:   startTS,
+			commitTS:  commitTS,
+			value:     e.lock.value,
 		}}, e.values...)
 	}
 	e.lock = nil
@@ -149,6 +166,11 @@ func (e *mvccEntry) Rollback(startTS uint64) error {
 		}
 		return nil
 	}
+	e.values = append([]mvccValue{{
+		valueType: typeRollback,
+		startTS:   startTS,
+		commitTS:  startTS,
+	}}, e.values...)
 	e.lock = nil
 	return nil
 }
