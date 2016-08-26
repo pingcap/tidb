@@ -34,7 +34,7 @@ func BenchmarkDecodeWithSize(b *testing.B) {
 	b.StopTimer()
 	bs := composeEncodedData(valueCnt)
 	b.StartTimer()
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < b.N; i++ {
 		Decode(bs, valueCnt)
 	}
 }
@@ -43,7 +43,7 @@ func BenchmarkDecodeWithOutSize(b *testing.B) {
 	b.StopTimer()
 	bs := composeEncodedData(valueCnt)
 	b.StartTimer()
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < b.N; i++ {
 		Decode(bs, 1)
 	}
 }
