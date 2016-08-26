@@ -14,8 +14,9 @@
 package mysql
 
 import (
-	. "github.com/pingcap/check"
 	"strings"
+
+	. "github.com/pingcap/check"
 )
 
 var _ = Suite(&testMyDecimalSuite{})
@@ -484,6 +485,14 @@ func (s *testMyDecimalSuite) TestAdd(c *C) {
 		result := sum.ToString()
 		c.Assert(string(result), Equals, ca.result)
 	}
+
+	// This test covers the case that result digitsInt unnecessarily increased 9,
+	// which can cause overflow error if the result digits is more than 72.
+	a := NewDecFromInt(wordMax - 1)
+	b := NewDecFromInt((wordMax - 1) * wordBase)
+	var to MyDecimal
+	doAdd(a, b, &to)
+	c.Check(to.digitsInt, Equals, int8(18))
 }
 
 func (s *testMyDecimalSuite) TestSub(c *C) {

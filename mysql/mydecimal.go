@@ -1512,7 +1512,7 @@ func doAdd(from1, from2, to *MyDecimal) error {
 	var x int32
 	if wordsInt1 > wordsInt2 {
 		x = from1.wordBuf[0]
-	} else if wordsInt2 < wordsInt1 {
+	} else if wordsInt2 > wordsInt1 {
 		x = from2.wordBuf[0]
 	} else {
 		x = from1.wordBuf[0] + from2.wordBuf[0]
