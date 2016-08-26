@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -65,15 +66,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if !localstore.IsLocalStore(store) {
 		lease = schemaLease
 	}
-	for i := 1; i <= defaultMaxRetries; i++ {
-		d, err = domain.NewDomain(store, lease)
-		if err == nil {
-			break
-		}
-		sleepTime := time.Duration(uint64(retrySleepInterval) * uint64(i))
-		log.Warnf("Waiting domain to get ready, sleep %v and try again...", sleepTime)
-		time.Sleep(sleepTime)
-	}
+	err = util.RunWithRetry(defaultMaxRetries, uint64(retrySleepInterval), func() (retry bool, err1 error) {
+		d, err1 = domain.NewDomain(store, lease)
+		return true, err1
+	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
