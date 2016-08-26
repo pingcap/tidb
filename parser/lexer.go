@@ -245,7 +245,10 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 		s.r.inc()
 		stream := s.r.s[pos.Offset+2:]
 		for _, v := range []string{"global.", "session.", "local."} {
-			if strings.HasPrefix(stream, v) {
+			if len(v) > len(stream) {
+				continue
+			}
+			if strings.EqualFold(stream[:len(v)], v) {
 				s.r.incN(len(v))
 				break
 			}

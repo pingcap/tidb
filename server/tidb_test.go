@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// +build !race
 
 package server
 
@@ -100,6 +101,10 @@ func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 
 func (ts *TidbTestSuite) TestMultiPacket(c *C) {
 	runTestMultiPacket(c)
+}
+
+func (ts *TidbTestSuite) TestMultiStatements(c *C) {
+	runTestMultiStatements(c)
 }
 
 func (ts *TidbTestSuite) TestSocket(c *C) {

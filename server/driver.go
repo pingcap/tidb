@@ -55,7 +55,10 @@ type IContext interface {
 	CurrentDB() string
 
 	// Execute executes a SQL statement.
-	Execute(sql string) (ResultSet, error)
+	Execute(sql string) ([]ResultSet, error)
+
+	// SetClientCapability sets client capability flags
+	SetClientCapability(uint32)
 
 	// Prepare prepares a statement.
 	Prepare(sql string) (statement IStatement, columns, params []*ColumnInfo, err error)

@@ -142,12 +142,57 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		{
 			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
 			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
-			best:  "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
 		},
 		{
 			sql:   "select * from t ta right outer join t tb on ta.d = tb.d and ta.a > 1 where tb.a = 0",
 			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
 			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ta.d = 0",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where tb.d = 0",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where tb.c is not null and tb.c = 0 and ifnull(tb.d, 1)",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.a = tb.a left outer join t tc on tb.b = tc.b where tc.c > 0",
+			first: "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Selection->Projection",
+			best:  "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.a = tb.a left outer join t tc on tc.b = ta.b where tb.c > 0",
+			first: "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Selection->Projection",
+			best:  "Join{Join{DataScan(t)->DataScan(t)->Selection}->DataScan(t)}->Projection",
+		},
+		{
+			sql:   "select * from t as ta left outer join (t as tb left join t as tc on tc.b = tb.b) on tb.a = ta.a where tc.c > 0",
+			first: "Join{DataScan(t)->Join{DataScan(t)->DataScan(t)}}->Selection->Projection",
+			best:  "Join{DataScan(t)->Join{DataScan(t)->DataScan(t)->Selection}}->Projection",
+		},
+		{
+			sql:   "select * from ( t as ta left outer join t as tb on ta.a = tb.a) join ( t as tc left join t as td on tc.b = td.b) on ta.c = td.c where tb.c = 2 and td.a = 1",
+			first: "Join{Join{DataScan(t)->DataScan(t)}->Join{DataScan(t)->DataScan(t)}}->Selection->Projection",
+			best:  "Join{Join{DataScan(t)->DataScan(t)->Selection}->Join{DataScan(t)->DataScan(t)->Selection}}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join (t tb left outer join t tc on tc.b = tb.b) on tb.a = ta.a and tc.c = ta.c where tc.d > 0 or ta.d > 0",
+			first: "Join{DataScan(t)->Join{DataScan(t)->DataScan(t)}}->Selection->Projection",
+			best:  "Join{DataScan(t)->Join{DataScan(t)->DataScan(t)}}->Selection->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ifnull(tb.d, null) or tb.d is null",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
 		},
 		{
 			sql:   "select a, d from (select * from t union all select * from t union all select * from t) z where a < 10",
@@ -882,26 +927,26 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 	}{
 		{
 			exprStr:   "a < 1 + 2",
-			resultStr: "<(test.t.a,3,)",
+			resultStr: "lt(test.t.a, 3)",
 		},
 		{
 			exprStr:   "a < greatest(1, 2)",
-			resultStr: "<(test.t.a,2,)",
+			resultStr: "lt(test.t.a, 2)",
 		},
 		{
 			exprStr:   "a <  1 + 2 + 3 + b",
-			resultStr: "<(test.t.a,+(6,test.t.b,),)",
+			resultStr: "lt(test.t.a, plus(6, test.t.b))",
 		},
 		{
 			exprStr: "a = CASE 1+2 " +
 				"WHEN 3 THEN 'a' " +
 				"WHEN 1 THEN 'b' " +
 				"END;",
-			resultStr: "=(test.t.a,a,)",
+			resultStr: "eq(test.t.a, a)",
 		},
 		{
 			exprStr:   "a in (hex(12), 'a', '9')",
-			resultStr: "in(test.t.a,C,a,9,)",
+			resultStr: "in(test.t.a, C, a, 9)",
 		},
 		{
 			exprStr:   "'string' is not null",
@@ -913,15 +958,15 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 		},
 		{
 			exprStr:   "a = !(1+1)",
-			resultStr: "=(test.t.a,0,)",
+			resultStr: "eq(test.t.a, 0)",
 		},
 		{
 			exprStr:   "a = rand()",
-			resultStr: "=(test.t.a,rand(),)",
+			resultStr: "eq(test.t.a, rand())",
 		},
 		{
 			exprStr:   "a = version()",
-			resultStr: "=(test.t.a,version(),)",
+			resultStr: "eq(test.t.a, version())",
 		},
 	}
 
@@ -941,7 +986,7 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 		selection := p.GetChildByIndex(0).(*Selection)
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
 
-		c.Assert(expression.ComposeCNFCondition(selection.Conditions).ToString(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
+		c.Assert(expression.ComposeCNFCondition(selection.Conditions).String(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
 	}
 }
 

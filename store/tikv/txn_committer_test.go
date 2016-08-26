@@ -32,7 +32,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
 	mvccStore := mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
-	store, err := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), client)
+	store, err := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), client, false)
 	c.Assert(err, IsNil)
 	s.store = store
 }
@@ -117,4 +117,49 @@ func (s *testCommitterSuite) TestCommitRollback(c *C) {
 		"b": "b",
 		"c": "c2",
 	})
+}
+
+func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
+	s.mustCommit(c, map[string]string{
+		"a": "a0",
+		"b": "b0",
+	})
+
+	txn1 := s.begin(c)
+	err := txn1.Set([]byte("a"), []byte("a1"))
+	c.Assert(err, IsNil)
+	err = txn1.Set([]byte("b"), []byte("b1"))
+	c.Assert(err, IsNil)
+	committer, err := newTxnCommitter(txn1)
+	c.Assert(err, IsNil)
+	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff), committer.keys)
+	c.Assert(err, IsNil)
+
+	txn2 := s.begin(c)
+	v, err := txn2.Get([]byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(v, BytesEquals, []byte("a0"))
+
+	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff), committer.keys)
+	if err != nil {
+		// Retry.
+		txn1 = s.begin(c)
+		err = txn1.Set([]byte("a"), []byte("a1"))
+		c.Assert(err, IsNil)
+		err = txn1.Set([]byte("b"), []byte("b1"))
+		c.Assert(err, IsNil)
+		committer, err = newTxnCommitter(txn1)
+		c.Assert(err, IsNil)
+		err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff), committer.keys)
+		c.Assert(err, IsNil)
+	}
+	committer.commitTS, err = s.store.oracle.GetTimestamp()
+	c.Assert(err, IsNil)
+	err = committer.commitKeys(NewBackoffer(commitMaxBackoff), [][]byte{[]byte("a")})
+	c.Assert(err, IsNil)
+
+	txn3 := s.begin(c)
+	v, err = txn3.Get([]byte("b"))
+	c.Assert(err, IsNil)
+	c.Assert(v, BytesEquals, []byte("b1"))
 }

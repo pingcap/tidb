@@ -261,7 +261,7 @@ func (s *testSuite) TestMultiTableDelete(c *C) {
 	c.Assert(r.Rows(), HasLen, 3)
 }
 
-func (s *testSuite) TestQualifedDelete(c *C) {
+func (s *testSuite) TestQualifiedDelete(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1329,6 +1329,14 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t1 values (1, 2), (1, NULL)")
 	result = tk.MustQuery("select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);")
 	result.Check(testkit.Rows("1 2 1 2"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int, index k(c1))")
+	tk.MustExec("create table t1(c1 int)")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7)")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5),(6),(7)")
+	result = tk.MustQuery("select a.c1 from t a , t1 b where a.c1 = b.c1 order by a.c1;")
+	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
 
 }
 
@@ -1926,7 +1934,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	result = tk.MustQuery("select c as a from t group by d having a < 0")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select c as a from t group by d having sum(a) = 2")
-	result.Check(testkit.Rows("<nil>"))
+	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select count(distinct c) from t group by d")
 	result.Check(testkit.Rows("1", "2", "2"))
 	result = tk.MustQuery("select sum(c) from t group by d")

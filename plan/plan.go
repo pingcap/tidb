@@ -14,6 +14,9 @@
 package plan
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"math"
 
 	"github.com/juju/errors"
@@ -56,6 +59,10 @@ const (
 	Lock = "SelectLock"
 	// Load is the type of LoadData.
 	Load = "LoadData"
+	// Up is the type of Update.
+	Up = "Update"
+	// Del is the type of Delete.
+	Del = "Delete"
 )
 
 // Plan is a description of an execution flow.
@@ -140,6 +147,7 @@ type LogicalPlan interface {
 
 // PhysicalPlan is a tree of physical operators.
 type PhysicalPlan interface {
+	json.Marshaler
 	Plan
 
 	// matchProperty means that this physical plan will try to return the best plan that matches the required property.
@@ -154,11 +162,11 @@ type PhysicalPlan interface {
 }
 
 type baseLogicalPlan struct {
+	basePlan
 	propLen          int
 	sortedPlanInfo   *physicalPlanInfo
 	unSortedPlanInfo *physicalPlanInfo
 	count            uint64
-	basePlan
 }
 
 func (p *baseLogicalPlan) getPlanInfo(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64) {
@@ -237,6 +245,18 @@ type basePlan struct {
 	tp        string
 	id        string
 	allocator *idAllocator
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (p *basePlan) MarshalJSON() ([]byte, error) {
+	children, err := json.Marshal(p.children)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"id\": \"%s\",\n \"children\": %s", p.id, children))
+	buffer.WriteString("}")
+	return buffer.Bytes(), nil
 }
 
 // IsCorrelated implements Plan IsCorrelated interface.

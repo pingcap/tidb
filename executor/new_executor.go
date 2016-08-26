@@ -175,7 +175,7 @@ func (e *HashJoinExec) prepare() error {
 	e.finished = false
 	e.bigTableRows = make([]chan []*Row, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		e.bigTableRows[i] = make(chan []*Row, e.concurrency*100)
+		e.bigTableRows[i] = make(chan []*Row, e.concurrency*batchSize)
 	}
 	e.bigTableErr = make(chan error, 1)
 
@@ -1118,8 +1118,7 @@ func (b *executorBuilder) columnToPBExpr(client kv.Client, column *expression.Co
 		return nil
 	}
 	switch column.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry,
-		mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeYear:
+	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry, mysql.TypeNewDecimal:
 		return nil
 	}
 
