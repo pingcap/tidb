@@ -409,24 +409,24 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 		return errors.Trace(err)
 	}
 
-	var data1 []byte
-	var data2 []byte
+	var prevData []byte
+	var curData []byte
 	var shouldBreak bool
 	for {
-		data2, err = cc.readPacket()
+		curData, err = cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				log.Error(errors.ErrorStack(err))
 				return errors.Trace(err)
 			}
 		}
-		if len(data2) == 0 {
+		if len(curData) == 0 {
 			shouldBreak = true
-			if len(data1) == 0 {
+			if len(prevData) == 0 {
 				break
 			}
 		}
-		data1, err = loadDataInfo.InsertData(data1, data2)
+		prevData, err = loadDataInfo.InsertData(prevData, curData)
 		if err != nil {
 			return errors.Trace(err)
 		}

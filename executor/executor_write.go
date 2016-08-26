@@ -433,80 +433,98 @@ type LoadDataInfo struct {
 
 // InsertData inserts data into specified table according to the specified format.
 // If it has the rest of data isn't completed the processing, then is returns without completed data.
-func (e *LoadDataInfo) InsertData(data1, data2 []byte) ([]byte, error) {
+// If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
+func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
 	// TODO: support enclosed and escape.
-	var isNoEndData bool
-	var isLastData bool
-	var cols []string
-	if len(data1) > 0 && len(data2) == 0 {
-		isLastData = true
-		data1, data2 = data2, data1
-	}
+	var isEOF bool
+	var notLineEnd bool
+	cols := make([]string, 0, len(e.row))
 	startingLen := len(e.LinesInfo.Starting)
 	terminatedLen := len(e.LinesInfo.Terminated)
-	for len(data2) > 0 {
-		end := strings.Index(string(data2), e.LinesInfo.Terminated)
-		if end == -1 {
-			end = len(data2)
-			isNoEndData = true
-		}
-		if len(e.LinesInfo.Starting) != 0 && len(data1) == 0 {
-			idx := strings.Index(string(data2[:end]), e.LinesInfo.Starting)
-			if idx == -1 {
-				if isNoEndData {
-					break
-				}
-				if len(data2)-1 < end+terminatedLen {
-					data2 = nil
-					break
-				}
-				data2 = data2[end+terminatedLen:]
-				continue
+	if len(prevData) > 0 && len(curData) == 0 {
+		isEOF = true
+		prevData, curData = curData, prevData
+	}
+	for len(curData) > 0 {
+		endIdx := strings.Index(string(curData), e.LinesInfo.Terminated)
+		if endIdx == -1 {
+			if len(prevData) > 0 {
+				curData = append(prevData, curData...)
 			}
-			data2 = data2[startingLen:]
-			end -= startingLen
-		}
-		if len(data1) > 0 {
-			data1 = append(data1, data2[:end]...)
-			if isNoEndData && !isLastData {
-				data2 = data1
-			} else {
-				cols = strings.Split(string(data1), e.FieldsInfo.Terminated)
-			}
-			data1 = nil
+			endIdx = len(curData)
+			notLineEnd = true
 		} else {
-			cols = strings.Split(string(data2[:end]), e.FieldsInfo.Terminated)
+			endIdx += terminatedLen
 		}
-		if isNoEndData && !isLastData {
+		line := curData[:endIdx]
+		restDataIdx := endIdx
+		if len(prevData) > 0 {
+			if !notLineEnd {
+				line = append(prevData, line...)
+			}
+			idx := strings.Index(string(line), e.LinesInfo.Terminated)
+			if idx != -1 {
+				endIdx = idx + terminatedLen
+				restDataIdx = endIdx
+				if !notLineEnd {
+					restDataIdx -= len(prevData)
+				}
+				notLineEnd = false
+				prevData = nil
+			}
+		}
+		if len(curData) <= restDataIdx {
+			curData = nil
+		} else {
+			curData = curData[restDataIdx:]
+		}
+		// If it doesn't find the terminated symbol and this data isn't the last data,
+		// the data can't be inserted.
+		if notLineEnd && !isEOF {
+			curData = line
 			break
 		}
-		for i := 0; i < len(e.row); i++ {
-			if i > len(cols)-1 {
-				e.row[i].SetNull()
+		if startingLen != 0 {
+			idx := strings.Index(string(line), e.LinesInfo.Starting)
+			// If doesn't find starting symbol, this data can't be inserted.
+			if idx == -1 {
+				if notLineEnd {
+					break
+				}
 				continue
 			}
-			e.row[i].SetString(cols[i])
 		}
-		row, err := e.insertVal.fillRowData(e.Table.Cols(), e.row, true)
-		if err != nil {
-			log.Warnf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
+		endIdx -= terminatedLen
+		if notLineEnd {
+			endIdx += terminatedLen
 		}
-		_, err = e.Table.AddRecord(e.insertVal.ctx, row)
-		if err != nil {
-			log.Warnf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
-		}
+		cols = strings.Split(string(line[startingLen:endIdx]), e.FieldsInfo.Terminated)
+		e.insertData(cols)
 		e.insertVal.currRow++
-		if len(data2) <= end+terminatedLen {
-			data2 = nil
-			break
-		}
-		data2 = data2[end+terminatedLen:]
 	}
 	if e.insertVal.lastInsertID != 0 {
 		variable.GetSessionVars(e.insertVal.ctx).LastInsertID = e.insertVal.lastInsertID
 	}
 
-	return data2, nil
+	return curData, nil
+}
+
+func (e *LoadDataInfo) insertData(cols []string) {
+	for i := 0; i < len(e.row); i++ {
+		if i > len(cols)-1 {
+			e.row[i].SetNull()
+			continue
+		}
+		e.row[i].SetString(cols[i])
+	}
+	row, err := e.insertVal.fillRowData(e.Table.Cols(), e.row, true)
+	if err != nil {
+		log.Warnf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
+	}
+	_, err = e.Table.AddRecord(e.insertVal.ctx, row)
+	if err != nil {
+		log.Warnf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
+	}
 }
 
 // LoadData represents a load data executor.

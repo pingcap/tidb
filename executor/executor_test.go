@@ -429,6 +429,8 @@ func (s *testSuite) TestLoadData(c *C) {
 		{nil, []byte("\t2\t3\t4\n\t22\t33\t44\n"), []string{
 			fmt.Sprintf("%v %v %v %v", 7, 2, []byte("3"), 4),
 			fmt.Sprintf("%v %v %v %v", 8, 22, []byte("33"), 44)}},
+		{nil, []byte("7\t2\t3\t4\n7\t22\t33\t44\n"), []string{
+			fmt.Sprintf("%v %v %v %v", 7, 2, []byte("3"), 4)}},
 
 		// data1 != nil, data2 = nil
 		{[]byte("\t2\t3\t4"), nil, []string{fmt.Sprintf("%v %v %v %v", 9, 2, []byte("3"), 4)}},
@@ -440,7 +442,7 @@ func (s *testSuite) TestLoadData(c *C) {
 	for _, ca := range cases {
 		data, err1 := ld.InsertData(ca.data1, ca.data2)
 		c.Assert(err1, IsNil)
-		c.Assert(data, IsNil)
+		c.Assert(data, IsNil, Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
 		err1 = ctx.CommitTxn()
 		c.Assert(err1, IsNil)
 		r = tk.MustQuery(selectSQL)
@@ -453,38 +455,85 @@ func (s *testSuite) TestLoadData(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(string(data2), DeepEquals, "\t2\t3\t4\t5")
 
+	// lines starting symbol is "" and terminated symbol length is 2, InsertData returns data is nil
+	ld.LinesInfo.Terminated = "||"
+	cases = []testCase{
+		// data1 != nil, data2 != nil
+		{[]byte("0\t2\t3"), []byte("\t4\t5||"), []string{fmt.Sprintf("%v %v %v %v", 12, 2, []byte("3"), 4)}},
+		{[]byte("1\t2\t3\t4\t5|"), []byte("|"), []string{fmt.Sprintf("%v %v %v %v", 1, 2, []byte("3"), 4)}},
+		{[]byte("2\t2\t3\t4\t5|"), []byte("|3\t22\t33\t44\t55||"), []string{
+			fmt.Sprintf("%v %v %v %v", 2, 2, []byte("3"), 4),
+			fmt.Sprintf("%v %v %v %v", 3, 22, []byte("33"), 44)}},
+		{[]byte("3\t2\t3\t4\t5|"), []byte("|4\t22\t33||"), []string{
+			fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4),
+			fmt.Sprintf("%v %v %v %v", 4, 22, []byte("33"), nil)}},
+		{[]byte("4\t2\t3\t4\t5|"), []byte("|5\t22\t33||6\t222||"), []string{
+			fmt.Sprintf("%v %v %v %v", 4, 2, []byte("3"), 4),
+			fmt.Sprintf("%v %v %v %v", 5, 22, []byte("33"), nil),
+			fmt.Sprintf("%v %v %v %v", 6, 222, []byte("def"), nil)}},
+		{[]byte("6\t2\t3"), []byte("4\t5||"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("34"), 5)}},
+	}
+	for _, ca := range cases {
+		data, err1 := ld.InsertData(ca.data1, ca.data2)
+		c.Assert(err1, IsNil)
+		c.Assert(data, IsNil, Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+		err1 = ctx.CommitTxn()
+		c.Assert(err1, IsNil)
+		r = tk.MustQuery(selectSQL)
+		r.Check(testkit.Rows(ca.expected...))
+		tk.MustExec(deleteSQL)
+	}
+
 	// fields and lines aren't default, InsertData returns data is nil
 	ld.FieldsInfo.Terminated = "\\"
 	ld.LinesInfo.Starting = "xxx"
 	ld.LinesInfo.Terminated = "|!#^"
 	cases = []testCase{
 		// data1 = nil, data2 != nil
-		{nil, []byte("xxx|!#^"), []string{fmt.Sprintf("%v %v %v %v", 12, nil, []byte("def"), nil)}},
-		{nil, []byte("xxx\\|!#^"), []string{fmt.Sprintf("%v %v %v %v", 13, 0, []byte("def"), nil)}},
+		{nil, []byte("xxx|!#^"), []string{fmt.Sprintf("%v %v %v %v", 13, nil, []byte("def"), nil)}},
+		{nil, []byte("xxx\\|!#^"), []string{fmt.Sprintf("%v %v %v %v", 14, 0, []byte("def"), nil)}},
 		{nil, []byte("xxx3\\2\\3\\4|!#^"), []string{fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4)}},
 		{nil, []byte("xxx4\\2\\\\3\\4|!#^"), []string{fmt.Sprintf("%v %v %v %v", 4, 2, []byte(""), 3)}},
-		{nil, []byte("xxx\\1\\2\\3\\4|!#^"), []string{fmt.Sprintf("%v %v %v %v", 14, 1, []byte("2"), 3)}},
+		{nil, []byte("xxx\\1\\2\\3\\4|!#^"), []string{fmt.Sprintf("%v %v %v %v", 15, 1, []byte("2"), 3)}},
 		{nil, []byte("xxx6\\2\\3|!#^"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("3"), nil)}},
 		{nil, []byte("xxx\\2\\3\\4|!#^xxx\\22\\33\\44|!#^"), []string{
-			fmt.Sprintf("%v %v %v %v", 15, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 16, 22, []byte("33"), 44)}},
+			fmt.Sprintf("%v %v %v %v", 16, 2, []byte("3"), 4),
+			fmt.Sprintf("%v %v %v %v", 17, 22, []byte("33"), 44)}},
 		{nil, []byte("\\2\\3\\4|!#^\\22\\33\\44|!#^xxx\\222\\333\\444|!#^"), []string{
-			fmt.Sprintf("%v %v %v %v", 17, 222, []byte("333"), 444)}},
+			fmt.Sprintf("%v %v %v %v", 18, 222, []byte("333"), 444)}},
 		{nil, []byte("\\2\\3\\4|!#^"), []string{}},
 
 		// data1 != nil, data2 = nil
-		{[]byte("xxx\\2\\3\\4"), nil, []string{fmt.Sprintf("%v %v %v %v", 18, 2, []byte("3"), 4)}},
+		{[]byte("xxx\\2\\3\\4"), nil, []string{fmt.Sprintf("%v %v %v %v", 19, 2, []byte("3"), 4)}},
 		{[]byte("\\2\\3\\4|!#^"), nil, []string{}},
 		{[]byte("\\2\\3\\4|!#^xxx18\\22\\33\\44|!#^"), nil, []string{fmt.Sprintf("%v %v %v %v", 18, 22, []byte("33"), 44)}},
 
 		// data1 != nil, data2 != nil
-		{[]byte("xxx\\2\\3"), []byte("\\4\\5|!#^"), []string{fmt.Sprintf("%v %v %v %v", 19, 2, []byte("3"), 4)}},
-		{[]byte("xxx\\2\\3"), []byte("4\\5|!#^"), []string{fmt.Sprintf("%v %v %v %v", 20, 2, []byte("34"), 5)}},
+		{[]byte("xxx10\\2\\3"), []byte("\\4\\5|!#^"), []string{fmt.Sprintf("%v %v %v %v", 10, 2, []byte("3"), 4)}},
+		{[]byte("xxx21\\2\\3\\4\\5|!"), []byte("#^"), []string{fmt.Sprintf("%v %v %v %v", 21, 2, []byte("3"), 4)}},
+		{[]byte("xxx22\\2\\3\\4\\5|!"), []byte("#^xxx23\\22\\33\\44\\55|!#^"), []string{
+			fmt.Sprintf("%v %v %v %v", 22, 2, []byte("3"), 4),
+			fmt.Sprintf("%v %v %v %v", 23, 22, []byte("33"), 44)}},
+		{[]byte("xxx23\\2\\3\\4\\5|!"), []byte("#^xxx24\\22\\33|!#^"), []string{
+			fmt.Sprintf("%v %v %v %v", 23, 2, []byte("3"), 4),
+			fmt.Sprintf("%v %v %v %v", 24, 22, []byte("33"), nil)}},
+		{[]byte("xxx24\\2\\3\\4\\5|!"), []byte("#^xxx25\\22\\33|!#^xxx26\\222|!#^"), []string{
+			fmt.Sprintf("%v %v %v %v", 24, 2, []byte("3"), 4),
+			fmt.Sprintf("%v %v %v %v", 25, 22, []byte("33"), nil),
+			fmt.Sprintf("%v %v %v %v", 26, 222, []byte("def"), nil)}},
+		{[]byte("xxx25\\2\\3\\4\\5|!"), []byte("#^26\\22\\33|!#^27xxx\\222|!#^"), []string{
+			fmt.Sprintf("%v %v %v %v", 25, 2, []byte("3"), 4),
+			fmt.Sprintf("%v %v %v %v", 27, 222, []byte("def"), nil)}},
+		{[]byte("xxx26\\2\\3\\4\\5|!"), []byte("#^xxx27\\22\\33|!#^28\\222|!#^"), []string{
+			fmt.Sprintf("%v %v %v %v", 26, 2, []byte("3"), 4),
+			fmt.Sprintf("%v %v %v %v", 27, 22, []byte("33"), nil)}},
+		{[]byte("xx10\\2\\3"), []byte("\\4\\5|!#^"), []string{}},
+		{[]byte("xxx\\2\\3"), []byte("4\\5|!#^"), []string{fmt.Sprintf("%v %v %v %v", 28, 2, []byte("34"), 5)}},
 	}
 	for _, ca := range cases {
 		data, err1 := ld.InsertData(ca.data1, ca.data2)
 		c.Assert(err1, IsNil)
-		c.Assert(data, IsNil)
+		c.Assert(data, IsNil, Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
 		err1 = ctx.CommitTxn()
 		c.Assert(err1, IsNil)
 		r = tk.MustQuery(selectSQL)
@@ -496,6 +545,16 @@ func (s *testSuite) TestLoadData(c *C) {
 	data2, err = ld.InsertData(nil, []byte("\\4\\5"))
 	c.Assert(err, IsNil)
 	c.Assert(string(data2), DeepEquals, "\\4\\5")
+	data2, err = ld.InsertData([]byte("\\2\\3"), []byte("\\4\\5"))
+	c.Assert(err, IsNil)
+	c.Assert(string(data2), DeepEquals, "\\2\\3\\4\\5")
+	data2, err = ld.InsertData([]byte("xxx1\\2\\3|"), []byte("!#^\\4\\5|!#"))
+	c.Assert(err, IsNil)
+	c.Assert(string(data2), DeepEquals, "\\4\\5|!#")
+	err = ctx.CommitTxn()
+	c.Assert(err, IsNil)
+	r = tk.MustQuery(selectSQL)
+	r.Check(testkit.Rows(fmt.Sprintf("%v %v %v %v", 1, 2, []byte("3"), nil)))
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
