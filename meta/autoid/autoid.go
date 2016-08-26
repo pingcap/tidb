@@ -79,8 +79,8 @@ func (alloc *allocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 			return errors.Trace(err)
 		}
 
-		if newBase <= end {
-			return nil
+		if newBase < end {
+			newBase = end
 		}
 		newStep := newBase - end + step
 		if !allocIDs {

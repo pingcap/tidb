@@ -927,26 +927,26 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 	}{
 		{
 			exprStr:   "a < 1 + 2",
-			resultStr: "<(test.t.a,3,)",
+			resultStr: "lt(test.t.a, 3)",
 		},
 		{
 			exprStr:   "a < greatest(1, 2)",
-			resultStr: "<(test.t.a,2,)",
+			resultStr: "lt(test.t.a, 2)",
 		},
 		{
 			exprStr:   "a <  1 + 2 + 3 + b",
-			resultStr: "<(test.t.a,+(6,test.t.b,),)",
+			resultStr: "lt(test.t.a, plus(6, test.t.b))",
 		},
 		{
 			exprStr: "a = CASE 1+2 " +
 				"WHEN 3 THEN 'a' " +
 				"WHEN 1 THEN 'b' " +
 				"END;",
-			resultStr: "=(test.t.a,a,)",
+			resultStr: "eq(test.t.a, a)",
 		},
 		{
 			exprStr:   "a in (hex(12), 'a', '9')",
-			resultStr: "in(test.t.a,C,a,9,)",
+			resultStr: "in(test.t.a, C, a, 9)",
 		},
 		{
 			exprStr:   "'string' is not null",
@@ -958,15 +958,15 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 		},
 		{
 			exprStr:   "a = !(1+1)",
-			resultStr: "=(test.t.a,0,)",
+			resultStr: "eq(test.t.a, 0)",
 		},
 		{
 			exprStr:   "a = rand()",
-			resultStr: "=(test.t.a,rand(),)",
+			resultStr: "eq(test.t.a, rand())",
 		},
 		{
 			exprStr:   "a = version()",
-			resultStr: "=(test.t.a,version(),)",
+			resultStr: "eq(test.t.a, version())",
 		},
 	}
 
@@ -986,7 +986,7 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 		selection := p.GetChildByIndex(0).(*Selection)
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
 
-		c.Assert(expression.ComposeCNFCondition(selection.Conditions).ToString(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
+		c.Assert(expression.ComposeCNFCondition(selection.Conditions).String(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
 	}
 }
 

@@ -317,7 +317,7 @@ func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 	return &ExplainExec{
 		StmtPlan: v.StmtPlan,
-		fields:   v.Fields(),
+		schema:   v.GetSchema(),
 	}
 }
 
