@@ -142,12 +142,57 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		{
 			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
 			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
-			best:  "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
 		},
 		{
 			sql:   "select * from t ta right outer join t tb on ta.d = tb.d and ta.a > 1 where tb.a = 0",
 			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
 			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ta.d = 0",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where tb.d = 0",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where tb.c is not null and tb.c = 0 and ifnull(tb.d, 1)",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.a = tb.a left outer join t tc on tb.b = tc.b where tc.c > 0",
+			first: "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Selection->Projection",
+			best:  "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.a = tb.a left outer join t tc on tc.b = ta.b where tb.c > 0",
+			first: "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Selection->Projection",
+			best:  "Join{Join{DataScan(t)->DataScan(t)->Selection}->DataScan(t)}->Projection",
+		},
+		{
+			sql:   "select * from t as ta left outer join (t as tb left join t as tc on tc.b = tb.b) on tb.a = ta.a where tc.c > 0",
+			first: "Join{DataScan(t)->Join{DataScan(t)->DataScan(t)}}->Selection->Projection",
+			best:  "Join{DataScan(t)->Join{DataScan(t)->DataScan(t)->Selection}}->Projection",
+		},
+		{
+			sql:   "select * from ( t as ta left outer join t as tb on ta.a = tb.a) join ( t as tc left join t as td on tc.b = td.b) on ta.c = td.c where tb.c = 2 and td.a = 1",
+			first: "Join{Join{DataScan(t)->DataScan(t)}->Join{DataScan(t)->DataScan(t)}}->Selection->Projection",
+			best:  "Join{Join{DataScan(t)->DataScan(t)->Selection}->Join{DataScan(t)->DataScan(t)->Selection}}->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join (t tb left outer join t tc on tc.b = tb.b) on tb.a = ta.a and tc.c = ta.c where tc.d > 0 or ta.d > 0",
+			first: "Join{DataScan(t)->Join{DataScan(t)->DataScan(t)}}->Selection->Projection",
+			best:  "Join{DataScan(t)->Join{DataScan(t)->DataScan(t)}}->Selection->Projection",
+		},
+		{
+			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ifnull(tb.d, null) or tb.d is null",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
 		},
 		{
 			sql:   "select a, d from (select * from t union all select * from t union all select * from t) z where a < 10",
