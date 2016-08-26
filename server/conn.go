@@ -360,6 +360,11 @@ func (cc *clientConn) writeError(e error) error {
 	return errors.Trace(cc.flush())
 }
 
+// writeEOF writes an EOF packet.
+// Note this function won't flush the stream because maybe there are more
+// packets following it, the "more" argument would indicates that case.
+// If "more" is true, a mysql.ServerMoreResultsExists bit would be set
+// in the packet.
 func (cc *clientConn) writeEOF(more bool) error {
 	data := cc.alloc.AllocWithLen(4, 9)
 
@@ -425,6 +430,10 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 	return errors.Trace(cc.flush())
 }
 
+// writeResultset writes a resultset.
+// If binary is true, the data would be encoded in BINARY format.
+// If more is true, a flag bit would be set to indicate there are more
+// resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
 func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error {
 	defer rs.Close()
 	// We need to call Next before we get columns.

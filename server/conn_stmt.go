@@ -346,6 +346,7 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 	return cc.writeOK()
 }
 
+// See https://dev.mysql.com/doc/internals/en/com-set-option.html
 func (cc *clientConn) handleSetOption(data []byte) (err error) {
 	if len(data) < 2 {
 		return mysql.ErrMalformPacket
