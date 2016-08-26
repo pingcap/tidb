@@ -21,7 +21,7 @@ import (
 
 // RunWithRetry will run the f with backoff and retry.
 // retryCnt: Max retry count
-// backoff: When run f failed, it will sleep backoff * triedCount Millisecond.
+// backoff: When run f failed, it will sleep backoff * triedCount nanoseconds.
 // Function f should have two return value. The first one is an bool which indicate if the err if retryable.
 // The second is if the f meet any error.
 func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err error) {
