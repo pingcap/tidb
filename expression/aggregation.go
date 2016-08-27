@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 // AggregationFunction stands for aggregate functions.
@@ -31,8 +32,13 @@ type AggregationFunction interface {
 	// Update during executing.
 	Update(row []types.Datum, groupKey []byte, ctx context.Context) error
 
+	// StreamUpdate updates data using streaming algo.
+	StreamUpdate(row []types.Datum, groupKey []byte, ctx context.Context) (bool, error)
+
 	// GetGroupResult will be called when all data have been processed.
 	GetGroupResult(groupKey []byte) types.Datum
+
+	GetStreamResult() types.Datum
 
 	// GetArgs stands for getting all arguments.
 	GetArgs() []Expression
@@ -81,6 +87,10 @@ type aggFunction struct {
 	Args         []Expression
 	Distinct     bool
 	resultMapper aggCtxMapper
+	streamCtx    *ast.AggEvaluateContext
+	resultCtx    *ast.AggEvaluateContext
+	lastGroup    []byte
+	lastRowEncode []byte
 }
 
 func newAggFunc(name string, args []Expression, dist bool) aggFunction {
@@ -126,6 +136,38 @@ func (af *aggFunction) getContext(groupKey []byte) *ast.AggEvaluateContext {
 	return ctx
 }
 
+func (af *aggFunction) checkDistinct(values ...types.Datum) (bool, error) {
+	bytes, err := codec.EncodeValue(nil, values...)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if string(bytes) == string(af.lastRowEncode) {
+		return false
+	}
+	af.lastRowEncode = bytes
+	return true, nil
+}
+
+func (af *aggFunction) getStreamedContext(groupKey []byte) (*ast.AggEvaluateContext, bool) {
+	end := false
+	if len(af.lastGroup) == 0 {
+		af.lastGroup = groupKey
+	} else if string(af.lastGroup) != string(groupKey) {
+		end = true
+	}
+	if af.streamCtx != nil {
+		return af.streamCtx
+	}
+	if end {
+		af.streamCtx = &ast.AggEvaluateContext{}
+		if af.resultCtx == nil {
+			af.resultCtx = af.streamCtx
+		}
+		af.lastRowEncode = nil
+	}
+	return af.streamCtx, end
+}
+
 func (af *aggFunction) SetContext(ctx map[string](*ast.AggEvaluateContext)) {
 	af.resultMapper = ctx
 }
@@ -157,6 +199,27 @@ func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx contex
 	return nil
 }
 
+func (af *aggFunction) streamUpdateSum(row []types.Datum, groupKey []byte, ectx context.Context) (bool, error) {
+	ctx, end := af.getStreamedContext(groupKey)
+	a := af.Args[0]
+	value, err := a.Eval(row, ectx)
+	if af.Distinct {
+		distinct, err := af.checkDistinct(value)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !distinct {
+			return false, nil
+		}
+	}
+	ctx.Value, err = types.CalculateSum(ctx.Value, value)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx.Count ++
+	return end, nil
+}
+
 type sumFunction struct {
 	aggFunction
 }
@@ -166,9 +229,19 @@ func (sf *sumFunction) Update(row []types.Datum, groupKey []byte, ctx context.Co
 	return sf.updateSum(row, groupKey, ctx)
 }
 
+func (sf *sumFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx context.Context) (bool, error) {
+	return sf.streamUpdateSum(row, groupKey, ectx)
+}
+
 // GetGroupResult implements AggregationFunction interface.
 func (sf *sumFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return sf.getContext(groupKey).Value
+}
+
+func (cf *sumFunction) GetStreamResult() (d types.Datum) {
+	d.SetInt64(cf.resultCtx.Count)
+	cf.resultCtx = cf.streamCtx
+	return
 }
 
 type countFunction struct {
@@ -207,10 +280,47 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, ectx context
 	return nil
 }
 
+func (cf *countFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx context.Context) (bool, error) {
+	ctx, end := cf.getStreamedContext(groupKey)
+	var vals []types.Datum
+	if cf.Distinct {
+		vals = make([]types.Datum, 0, len(cf.Args))
+	}
+	for _, a := range cf.Args {
+		value, err := a.Eval(row, ectx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if value.GetValue() == nil {
+			return nil
+		}
+		if cf.Distinct {
+			vals = append(vals, value)
+		}
+	}
+	if cf.Distinct {
+		distinct, err := cf.checkDistinct(vals...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !distinct {
+			return false, nil
+		}
+	}
+	ctx.Count ++
+	return end, nil
+}
+
 // GetGroupResult implements AggregationFunction interface.
 func (cf *countFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	d.SetInt64(cf.getContext(groupKey).Count)
 	return d
+}
+
+func (cf *countFunction) GetStreamResult() (d types.Datum) {
+	d.SetInt64(cf.resultCtx.Count)
+	cf.resultCtx = cf.streamCtx
+	return
 }
 
 type avgFunction struct {
@@ -222,9 +332,11 @@ func (af *avgFunction) Update(row []types.Datum, groupKey []byte, ctx context.Co
 	return af.updateSum(row, groupKey, ctx)
 }
 
-// GetGroupResult implements AggregationFunction interface.
-func (af *avgFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
-	ctx := af.getContext(groupKey)
+func (af *avgFunction) StreamUpdate(row []types.Datum, groupKey []byte, ctx context.Context) (bool, error) {
+	return af.streamUpdateSum(row, groupKey, ctx)
+}
+
+func (af *avgFunction) calculateResult(ctx *ast.AggEvaluateContext) (d types.Datum) {
 	switch ctx.Value.Kind() {
 	case types.KindFloat64:
 		t := ctx.Value.GetFloat64() / float64(ctx.Count)
@@ -238,6 +350,17 @@ func (af *avgFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 		d.SetMysqlDecimal(to)
 	}
 	return
+}
+
+// GetGroupResult implements AggregationFunction interface.
+func (af *avgFunction) GetGroupResult(groupKey []byte) (types.Datum) {
+	ctx := af.getContext(groupKey)
+	return af.calculateResult(ctx)
+}
+
+func (af *avgFunction) GetStreamResult() (types.Datum) {
+	ctx := af.resultCtx
+	return af.calculateResult(ctx)
 }
 
 type concatFunction struct {
@@ -280,6 +403,44 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, ectx contex
 	return nil
 }
 
+func (cf *concatFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx context.Context) (bool, error) {
+	ctx, end := cf.getStreamedContext(groupKey)
+	var vals []types.Datum
+	if cf.Distinct {
+		vals = make([]types.Datum, 0, len(cf.Args))
+	}
+	for _, a := range cf.Args {
+		value, err := a.Eval(row, ectx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if value.GetValue() == nil {
+			return nil
+		}
+		vals = append(vals, value.GetValue())
+	}
+	if cf.Distinct {
+		distinct, err := cf.checkDistinct(vals...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !distinct {
+			return false, nil
+		}
+	}
+	if ctx.Buffer == nil {
+		ctx.Buffer = &bytes.Buffer{}
+	} else {
+		// now use comma separator
+		ctx.Buffer.WriteString(",")
+	}
+	for _, val := range vals {
+		ctx.Buffer.WriteString(fmt.Sprintf("%v", val.GetValue()))
+	}
+	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
+	return end, nil
+}
+
 // GetGroupResult implements AggregationFunction interface.
 func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	ctx := cf.getContext(groupKey)
@@ -291,6 +452,15 @@ func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return d
 }
 
+func (cf *concatFunction) GetStreamResult() (d types.Datum) {
+	if cf.resultCtx.Buffer != nil {
+		d.SetString(cf.resultCtx.Buffer.String())
+	} else {
+		d.SetNull()
+	}
+	return
+}
+
 type maxMinFunction struct {
 	aggFunction
 	isMax bool
@@ -299,6 +469,10 @@ type maxMinFunction struct {
 // GetGroupResult implements AggregationFunction interface.
 func (mmf *maxMinFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return mmf.getContext(groupKey).Value
+}
+
+func (mmf *maxMinFunction) GetStreamResult(groupKey []byte) (d types.Datum) {
+	return mmf.streamCtx.Value
 }
 
 // Update implements AggregationFunction interface.
@@ -329,6 +503,30 @@ func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte, ectx conte
 	return nil
 }
 
+func (mmf *maxMinFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx context.Context) (bool, error) {
+	ctx, end := mmf.getStreamedContext(groupKey)
+	a := mmf.Args[0]
+	value, err := a.Eval(row, ectx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ctx.Value.IsNull() {
+		ctx.Value = value
+	}
+	if value.IsNull() {
+		return nil
+	}
+	var c int
+	c, err = ctx.Value.CompareDatum(value)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if (mmf.isMax && c == -1) || (!mmf.isMax && c == 1) {
+		ctx.Value = value
+	}
+	return end, nil
+}
+
 type firstRowFunction struct {
 	aggFunction
 }
@@ -350,7 +548,28 @@ func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx cont
 	return nil
 }
 
+// Update implements AggregationFunction interface.
+func (ff *firstRowFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx context.Context) (bool, error) {
+	ctx, end := ff.getStreamedContext(groupKey)
+	if !ctx.Value.IsNull() {
+		return nil
+	}
+	if len(ff.Args) != 1 {
+		return errors.New("Wrong number of args for AggFuncMaxMin")
+	}
+	value, err := ff.Args[0].Eval(row, ectx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx.Value = value
+	return end, nil
+}
+
 // GetGroupResult implements AggregationFunction interface.
-func (ff *firstRowFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
+func (ff *firstRowFunction) GetGroupResult(groupKey []byte) (types.Datum) {
 	return ff.getContext(groupKey).Value
+}
+
+func (ff *firstRowFunction) GetStreamResult() (types.Datum) {
+	return ff.resultCtx.Value
 }

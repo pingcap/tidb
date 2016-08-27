@@ -165,7 +165,17 @@ func (p *PhysicalApply) PushLimit(l *Limit) PhysicalPlan {
 }
 
 // PushLimit implements PhysicalPlan PushLimit interface.
-func (p *Aggregation) PushLimit(l *Limit) PhysicalPlan {
+func (p *PhysicalHashAggregation) PushLimit(l *Limit) PhysicalPlan {
+	newChild := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(nil)
+	p.SetChildren(newChild)
+	newChild.SetParents(p)
+	if l != nil {
+		return insertLimit(p, l)
+	}
+	return p
+}
+
+func (p *PhysicalStreamedAggregation) PushLimit(l *Limit) PhysicalPlan {
 	newChild := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(nil)
 	p.SetChildren(newChild)
 	newChild.SetParents(p)

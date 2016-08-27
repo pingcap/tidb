@@ -103,6 +103,20 @@ type PhysicalHashSemiJoin struct {
 	OtherConditions []expression.Expression
 }
 
+type PhysicalHashAggregation struct {
+	basePlan
+
+	AggFuncs     []expression.AggregationFunction
+	GroupByItems []expression.Expression
+}
+
+type PhysicalStreamedAggregation struct {
+	basePlan
+
+	AggFuncs     []expression.AggregationFunction
+	GroupByItems []expression.Expression
+}
+
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalIndexScan) Copy() PhysicalPlan {
 	np := *p

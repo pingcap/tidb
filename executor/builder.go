@@ -88,7 +88,9 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSemiJoin(v)
 	case *plan.Selection:
 		return b.buildSelection(v)
-	case *plan.Aggregation:
+	case *plan.PhysicalHashAggregation:
+		return b.buildHashAgg(v)
+	case *plan.PhysicalStreamedAggregation:
 		return b.buildAggregation(v)
 	case *plan.Projection:
 		return b.buildProjection(v)

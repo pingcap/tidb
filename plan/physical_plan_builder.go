@@ -265,6 +265,18 @@ func addPlanToResponse(p PhysicalPlan, planInfo *physicalPlanInfo) *physicalPlan
 	return &physicalPlanInfo{p: np, cost: planInfo.cost}
 }
 
+func addSortToPlanInfo(info *physicalPlanInfo, cnt uint64, prop requiredProperty) *physicalPlanInfo {
+	byItems := make([]*ByItems, 0, len(prop))
+	for _, p := range prop {
+		byItems = append(byItems, &ByItems{Expr: p.col, Desc: p.desc})
+	}
+	sort := &NewSort{ByItems: byItems}
+	sort.SetChildren(info.p)
+	info.p = sort
+	info.cost += float64(cnt) * math.Log2(float64(cnt)) * cpuFactor + float64(cnt) * memoryFactor
+	return info.p
+}
+
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
 func (p *Limit) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
 	sortedPlanInfo, unSortedPlanInfo, count := p.getPlanInfo(prop)
@@ -461,13 +473,91 @@ func (p *Aggregation) convert2PhysicalPlan(prop requiredProperty) (*physicalPlan
 	if planInfo != nil {
 		return planInfo, planInfo, cnt, nil
 	}
-	_, planInfo, cnt, err = p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(nil)
-	if len(prop) != 0 {
-		return &physicalPlanInfo{cost: math.MaxFloat64}, addPlanToResponse(p, planInfo), cnt / 3, errors.Trace(err)
+	var streamedPlanInfo, hashedPlanInfo, matchPropPlanInfo, unSortedPlanInfo *physicalPlanInfo
+	streamedPlanInfo, matchPropPlanInfo, cnt, err = p.handleStreamedAgg(prop)
+	if err != nil {
+		return nil, nil, cnt, errors.Trace(err)
 	}
-	planInfo = addPlanToResponse(p, planInfo)
-	p.storePlanInfo(prop, planInfo, planInfo, cnt/3)
-	return planInfo, planInfo, cnt / 3, errors.Trace(err)
+	hashedPlanInfo, cnt, err = p.handleHashedAgg()
+	if err != nil {
+		return nil, nil, cnt, errors.Trace(err)
+	}
+	if hashedPlanInfo.cost > streamedPlanInfo.cost {
+		unSortedPlanInfo = streamedPlanInfo
+	} else {
+		unSortedPlanInfo = hashedPlanInfo
+	}
+	p.storePlanInfo(prop, matchPropPlanInfo, unSortedPlanInfo, cnt / 3)
+	return matchPropPlanInfo, unSortedPlanInfo, cnt / 3, errors.Trace(err)
+}
+
+func (p *Aggregation) handleSortedPlan(prop requiredProperty) (*physicalPlanInfo, uint64, error) {
+	child := p.children[0].(LogicalPlan)
+	sortedPropPlanInfo, unsortedPlanInfo, cnt ,err := child.convert2PhysicalPlan(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	unsortedPlanInfo = addSortToPlanInfo(unsortedPlanInfo, cnt, prop)
+	if unsortedPlanInfo.cost < sortedPropPlanInfo.cost {
+		sortedPropPlanInfo = unsortedPlanInfo
+	}
+	streamed := &PhysicalStreamedAggregation{AggFuncs: p.AggFuncs, GroupByItems: p.GroupByItems}
+	streamed.SetChildren(sortedPropPlanInfo.p)
+	sortedPropPlanInfo.p = streamed
+	return sortedPropPlanInfo, cnt, nil
+}
+
+func (p *Aggregation) handleStreamedAgg(prop requiredProperty) (streamedPlanInfo *physicalPlanInfo, matchPropPlanInfo *physicalPlanInfo, cnt uint64, err error) {
+	for _, item := range p.GroupByItems {
+		if _, ok := item.(*expression.Column); !ok {
+			info := &physicalPlanInfo{
+				cost: math.MaxFloat64,
+			}
+			return info, info, cnt, nil
+		}
+	}
+	matched := true
+	if len(p.GroupByItems) < len(prop) {
+		matched = false
+	} else {
+		for i, property := range prop {
+			col := p.GroupByItems[i].(*expression.Column)
+			if property.col.FromID != col.FromID || property.col.Index != col.Index {
+				matched = false
+				break
+			}
+		}
+	}
+	if !matched {
+		matchPropPlanInfo = &physicalPlanInfo{
+			cost: math.MaxFloat64,
+		}
+	} else {
+		matchPropPlanInfo, cnt, err = p.handleSortedPlan(prop)
+		if err != nil {
+			return nil, nil, cnt, errors.Trace(err)
+		}
+	}
+	newProp := make(requiredProperty, 0, len(p.GroupByItems))
+	for _, item := range p.GroupByItems {
+		newProp = append(newProp, &columnProp{col: item.(*expression.Column)})
+	}
+	streamedPlanInfo, cnt, err = p.handleSortedPlan(newProp)
+	err = errors.Trace(err)
+	return
+}
+
+func (p *Aggregation) handleHashedAgg() (*physicalPlanInfo, uint64, error) {
+	child := p.children[0].(LogicalPlan)
+	_, unsortedPlanInfo, cnt, err := child.convert2PhysicalPlan(nil)
+	unsortedPlanInfo.cost += cnt * memoryFactor
+	agg := PhysicalHashAggregation{
+		AggFuncs: p.AggFuncs,
+		GroupByItems: p.GroupByItems,
+	}
+	agg.SetChildren(unsortedPlanInfo.p)
+	unsortedPlanInfo.p = agg
+	return unsortedPlanInfo, cnt, errors.Trace(err)
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.

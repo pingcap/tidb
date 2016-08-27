@@ -113,9 +113,9 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
+func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAggregation) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	e := &AggregationExec{
+	e := &HashAggregationExec{
 		Src:          src,
 		schema:       v.GetSchema(),
 		ctx:          b.ctx,
