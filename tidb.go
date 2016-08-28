@@ -43,9 +43,9 @@ import (
 
 // Engine prefix name
 const (
-	EngineGoLevelDBMemory = "memory://"
-	defaultMaxRetries     = 30
-	retrySleepInterval    = 500 * time.Millisecond
+	EngineGoLevelDBMemory        = "memory://"
+	defaultMaxRetries            = 30
+	retrySleepInterval    uint64 = 500
 )
 
 type domainMap struct {
@@ -66,7 +66,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if !localstore.IsLocalStore(store) {
 		lease = schemaLease
 	}
-	err = util.RunWithRetry(defaultMaxRetries, uint64(retrySleepInterval), func() (retry bool, err1 error) {
+	err = util.RunWithRetry(defaultMaxRetries, retrySleepInterval, func() (retry bool, err1 error) {
 		d, err1 = domain.NewDomain(store, lease)
 		return true, err1
 	})
@@ -234,15 +234,10 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	}
 
 	var s kv.Storage
-	for i := 1; i <= maxRetries; i++ {
+	util.RunWithRetry(maxRetries, retrySleepInterval, func() (bool, error) {
 		s, err = d.Open(path)
-		if err == nil || !kv.IsRetryableError(err) {
-			break
-		}
-		sleepTime := time.Duration(uint64(retrySleepInterval) * uint64(i))
-		log.Warnf("Waiting store to get ready, sleep %v and try again...", sleepTime)
-		time.Sleep(sleepTime)
-	}
+		return kv.IsRetryableError(err), err
+	})
 	return s, errors.Trace(err)
 }
 

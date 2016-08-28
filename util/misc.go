@@ -21,18 +21,18 @@ import (
 
 // RunWithRetry will run the f with backoff and retry.
 // retryCnt: Max retry count
-// backoff: When run f failed, it will sleep backoff * triedCount nanoseconds.
+// backoff: When run f failed, it will sleep backoff * triedCount time.Millisecond.
 // Function f should have two return value. The first one is an bool which indicate if the err if retryable.
 // The second is if the f meet any error.
 func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err error) {
-	for i := 0; i < retryCnt; i++ {
+	for i := 1; i <= retryCnt; i++ {
 		var retryAble bool
 		retryAble, err = f()
 		if err != nil {
 			if !retryAble {
 				break
 			}
-			sleepTime := time.Duration(backoff * uint64(i))
+			sleepTime := time.Duration(backoff*uint64(i)) * time.Millisecond
 			time.Sleep(sleepTime)
 			continue
 		}
