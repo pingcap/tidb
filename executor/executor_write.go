@@ -431,74 +431,145 @@ type LoadDataInfo struct {
 	LinesInfo  *ast.LinesClause
 }
 
+// getStartingInfo returns prevData, curData and the start index of curData valid data.
+// The index is curData start after removing starting symbol.
+func (e *LoadDataInfo) getStartingInfo(prevData, curData []byte) ([]byte, []byte, int) {
+	startingLen := len(e.LinesInfo.Starting)
+	if startingLen == 0 {
+		return prevData, curData, 0
+	}
+
+	// starting symbol in the prevData
+	idx := strings.Index(string(prevData), e.LinesInfo.Starting)
+	if idx != -1 {
+		return prevData[idx:], curData, 0
+	}
+
+	// starting symbol in the middle of prevData and curData
+	restStart := make([]byte, 0, startingLen-1)
+	if len(curData) < startingLen-1 {
+		restStart = curData
+	} else {
+		restStart = curData[:startingLen-1]
+	}
+	prevLen := len(prevData)
+	prevData = append(prevData, restStart...)
+	idx = strings.Index(string(prevData), e.LinesInfo.Starting)
+	if idx != -1 {
+		return prevData[idx:prevLen], curData, idx + startingLen - prevLen
+	}
+
+	// starting symbol in the curData
+	idx = strings.Index(string(curData), e.LinesInfo.Starting)
+	if idx != -1 {
+		return nil, curData[idx:], startingLen
+	}
+
+	// no starting symbol
+	if len(curData) < startingLen {
+		restStart = curData
+	} else {
+		restStart = curData[len(curData)-startingLen+1:]
+	}
+	return nil, restStart, -1
+}
+
+// getLine returns a line, curData, the next data start index and a bool value.
+// If it has starting symbol the bool is true, otherwise is false.
+func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, int, bool) {
+	prevData, curData, curStartIdx := e.getStartingInfo(prevData, curData)
+	if curStartIdx == -1 {
+		return nil, curData, 0, false
+	}
+
+	prevLen := len(prevData)
+	startingLen := len(e.LinesInfo.Starting)
+	terminatedLen := len(e.LinesInfo.Terminated)
+	endIdx := -1
+	if len(curData) >= curStartIdx {
+		endIdx = strings.Index(string(curData[curStartIdx:]), e.LinesInfo.Terminated)
+	}
+	if endIdx == -1 {
+		// no terminated symbol
+		if len(prevData) == 0 {
+			return nil, curData, 0, true
+		}
+
+		// terminated symbol in the middle of prevData and curData
+		curData = append(prevData, curData...)
+		endIdx = strings.Index(string(curData[startingLen:]), e.LinesInfo.Terminated)
+		if endIdx != -1 {
+			nextDataIdx := startingLen + endIdx + terminatedLen
+			return curData[startingLen : startingLen+endIdx], curData, nextDataIdx, true
+		}
+		// no terminated symbol
+		return nil, curData, 0, true
+	}
+
+	// terminated symbol in the curData
+	if len(prevData) == 0 {
+		nextDataIdx := curStartIdx + endIdx + terminatedLen
+		return curData[curStartIdx : curStartIdx+endIdx], curData, nextDataIdx, true
+	}
+
+	// terminated symbol in the curData
+	prevData = append(prevData, curData[:curStartIdx+endIdx+terminatedLen]...)
+	endIdx = strings.Index(string(prevData[startingLen:]), e.LinesInfo.Terminated)
+	lineLen := startingLen + endIdx + terminatedLen
+	if endIdx >= prevLen {
+		return prevData[startingLen : startingLen+endIdx], prevData, lineLen, true
+	}
+
+	// terminated symbol in the middle of prevData and curData
+	return prevData[startingLen : startingLen+endIdx], curData, lineLen - prevLen, true
+}
+
 // InsertData inserts data into specified table according to the specified format.
 // If it has the rest of data isn't completed the processing, then is returns without completed data.
 // If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
 func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
 	// TODO: support enclosed and escape.
-	var isEOF bool
-	var notLineEnd bool
+	if len(prevData) == 0 && len(curData) == 0 {
+		return nil, nil
+	}
+
+	var (
+		line               []byte
+		nextDataIdx        int
+		isEOF, hasStarting bool
+	)
 	cols := make([]string, 0, len(e.row))
-	startingLen := len(e.LinesInfo.Starting)
-	terminatedLen := len(e.LinesInfo.Terminated)
 	if len(prevData) > 0 && len(curData) == 0 {
 		isEOF = true
 		prevData, curData = curData, prevData
 	}
 	for len(curData) > 0 {
-		endIdx := strings.Index(string(curData), e.LinesInfo.Terminated)
-		if endIdx == -1 {
-			if len(prevData) > 0 {
-				curData = append(prevData, curData...)
-			}
-			endIdx = len(curData)
-			notLineEnd = true
-		} else {
-			endIdx += terminatedLen
-		}
-		line := curData[:endIdx]
-		restDataIdx := endIdx
-		if len(prevData) > 0 {
-			if !notLineEnd {
-				line = append(prevData, line...)
-			}
-			idx := strings.Index(string(line), e.LinesInfo.Terminated)
-			if idx != -1 {
-				endIdx = idx + terminatedLen
-				restDataIdx = endIdx
-				if !notLineEnd {
-					restDataIdx -= len(prevData)
-				}
-				notLineEnd = false
-				prevData = nil
-			}
-		}
-		if len(curData) <= restDataIdx {
+		line, curData, nextDataIdx, hasStarting = e.getLine(prevData, curData)
+		prevData = nil
+		if nextDataIdx >= len(curData) {
 			curData = nil
 		} else {
-			curData = curData[restDataIdx:]
+			curData = curData[nextDataIdx:]
 		}
+
 		// If it doesn't find the terminated symbol and this data isn't the last data,
 		// the data can't be inserted.
-		if notLineEnd && !isEOF {
-			curData = line
+		if line == nil && !isEOF {
 			break
 		}
-		if startingLen != 0 {
-			idx := strings.Index(string(line), e.LinesInfo.Starting)
-			// If doesn't find starting symbol, this data can't be inserted.
-			if idx == -1 {
-				if notLineEnd {
-					break
-				}
-				continue
+		// If doesn't find starting symbol, this data can't be inserted.
+		if !hasStarting {
+			if isEOF {
+				curData = nil
 			}
+			break
 		}
-		endIdx -= terminatedLen
-		if notLineEnd {
-			endIdx += terminatedLen
+		if line == nil && isEOF {
+			line = curData[len(e.LinesInfo.Starting):]
+			curData = nil
 		}
-		cols = strings.Split(string(line[startingLen:endIdx]), e.FieldsInfo.Terminated)
+
+		cols = strings.Split(string(line), e.FieldsInfo.Terminated)
 		e.insertData(cols)
 		e.insertVal.currRow++
 	}
@@ -511,7 +582,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
 
 func (e *LoadDataInfo) insertData(cols []string) {
 	for i := 0; i < len(e.row); i++ {
-		if i > len(cols)-1 {
+		if i >= len(cols) {
 			e.row[i].SetNull()
 			continue
 		}
