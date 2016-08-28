@@ -99,7 +99,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	handles := make([]int, 0, 10)
 	for _, row := range idxResp.Rows {
 		var err error
-		datums, err := codec.Decode(row.Handle)
+		datums, err := codec.Decode(row.Handle, 1)
 		c.Check(err, IsNil)
 		c.Check(datums, HasLen, 1)
 		handles = append(handles, int(datums[0].GetInt64()))

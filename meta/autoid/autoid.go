@@ -40,9 +40,7 @@ type Allocator interface {
 	// Rebase rebases the autoID base for table with tableID and the new base value.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
-	// If updateKV is true, allocator should update global kv if necessary.
-	// If updateKV is false, allocator will not update global kv.
-	Rebase(tableID, newBase int64, allocIDs bool, updateKV bool) error
+	Rebase(tableID, newBase int64, allocIDs bool) error
 }
 
 type allocator struct {
@@ -59,7 +57,7 @@ func GetStep() int64 {
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
-func (alloc *allocator) Rebase(tableID, newBase int64, allocIDs bool, updateKV bool) error {
+func (alloc *allocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 	if tableID == 0 {
 		return errInvalidTableID.Gen("Invalid tableID")
 	}
@@ -73,13 +71,6 @@ func (alloc *allocator) Rebase(tableID, newBase int64, allocIDs bool, updateKV b
 		alloc.base = newBase
 		return nil
 	}
-	if !updateKV {
-		alloc.base = newBase
-		if newBase > alloc.end {
-			alloc.end = newBase
-		}
-		return nil
-	}
 
 	return kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
@@ -88,8 +79,8 @@ func (alloc *allocator) Rebase(tableID, newBase int64, allocIDs bool, updateKV b
 			return errors.Trace(err)
 		}
 
-		if newBase <= end {
-			return nil
+		if newBase < end {
+			newBase = end
 		}
 		newStep := newBase - end + step
 		if !allocIDs {
@@ -160,7 +151,7 @@ type memoryAllocator struct {
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
-func (alloc *memoryAllocator) Rebase(tableID, newBase int64, allocIDs bool, updateKV bool) error {
+func (alloc *memoryAllocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 	// TODO: implement it.
 	return nil
 }
