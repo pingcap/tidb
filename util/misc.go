@@ -28,15 +28,11 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 	for i := 1; i <= retryCnt; i++ {
 		var retryAble bool
 		retryAble, err = f()
-		if err != nil {
-			if !retryAble {
-				break
-			}
-			sleepTime := time.Duration(backoff*uint64(i)) * time.Millisecond
-			time.Sleep(sleepTime)
-			continue
+		if err == nil || !retryAble {
+			return errors.Trace(err)
 		}
-		break
+		sleepTime := time.Duration(backoff*uint64(i)) * time.Millisecond
+		time.Sleep(sleepTime)
 	}
 	return errors.Trace(err)
 }
