@@ -66,7 +66,7 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 		return conditions
 	}
 	isHandled := make([]bool, len(conditions))
-	equalities := make(map[*expression.Column]*expression.Constant, 0)
+	equalities := make(map[string]map[int]*expression.Constant, 0)
 	for i := 0; i < len(conditions); i++ {
 		if isHandled[i] {
 			continue
@@ -87,28 +87,29 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 			}
 			conditions[i] = composeDNFConditions(newExpression)
 			isHandled[i] = true
-			continue
-		}
-		if expr.FuncName.L == ast.AndAnd {
+		} else if expr.FuncName.L == ast.AndAnd {
 			newExpression := propagateConstant(splitCNFItems(conditions[i]))
 			conditions[i] = expression.ComposeCNFCondition(newExpression)
 			isHandled[i] = true
-			continue
+		} else if expr.FuncName.L == ast.EQ {
+			left, ok1 := expr.Args[0].(*expression.Constant)
+			right, ok2 := expr.Args[1].(*expression.Constant)
+			if col, isLeftColumn := expr.Args[0].(*expression.Column); ok2 && isLeftColumn {
+				if _, ok = equalities[col.FromID]; !ok {
+					equalities[col.FromID] = make(map[int]*expression.Constant, 0)
+				}
+				equalities[col.FromID][col.Position] = right
+			} else if col, isRightColumn := expr.Args[1].(*expression.Column); ok1 && isRightColumn {
+				if _, ok = equalities[col.FromID]; !ok {
+					equalities[col.FromID] = make(map[int]*expression.Constant, 0)
+				}
+				equalities[col.FromID][col.Position] = left
+			} else {
+				continue
+			}
+			isHandled[i] = true
+			i = -1
 		}
-		if expr.FuncName.L != ast.EQ {
-			continue
-		}
-		left, ok1 := expr.Args[0].(*expression.Constant)
-		right, ok2 := expr.Args[1].(*expression.Constant)
-		if col, isLeftColumn := expr.Args[0].(*expression.Column); ok2 && isLeftColumn {
-			equalities[col] = right
-		} else if col, isRightColumn := expr.Args[1].(*expression.Column); ok1 && isRightColumn {
-			equalities[col] = left
-		} else {
-			continue
-		}
-		isHandled[i] = true
-		i = -1
 	}
 	// remove useless predicates, such as "1 and a = 1" ==> "a=1".
 	for i := 0; i < len(conditions); i++ {
@@ -132,11 +133,11 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 	return conditions
 }
 
-// constantSubstitute substitute column expression in a condition instead of an equivalent constant
-func constantSubstitute(equalities map[*expression.Column]*expression.Constant, condition expression.Expression) expression.Expression {
+// constantSubstitute substitute column expression in a condition by an equivalent constant
+func constantSubstitute(equalities map[string]map[int]*expression.Constant, condition expression.Expression) expression.Expression {
 	switch expr := condition.(type) {
 	case *expression.Column:
-		if v, ok := equalities[expr]; ok {
+		if v, ok := equalities[expr.FromID][expr.Position]; ok {
 			return v
 		}
 	case *expression.ScalarFunction:
@@ -407,7 +408,6 @@ func concatOnAndWhereConds(join *Join, predicates []expression.Expression) []exp
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
-	//log.Error("Projection")
 	retPlan = p
 	var push []expression.Expression
 	for _, cond := range predicates {
