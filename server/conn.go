@@ -261,7 +261,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	startTs := time.Now()
 	defer func() {
 		cc.server.releaseToken(token)
-		log.Debugf("[TIME_CMD] %v %d", time.Now().Sub(startTs), cmd)
+		log.Debugf("[TIME_CMD] %v %d", time.Since(startTs), cmd)
 	}()
 
 	switch cmd {
@@ -472,7 +472,7 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 		}
 		err = cc.writeOK()
 	}
-	costTime := time.Now().Sub(startTs)
+	costTime := time.Since(startTs)
 	if len(sql) > 1024 {
 		sql = sql[:1024]
 	}

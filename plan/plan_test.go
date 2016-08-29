@@ -44,7 +44,7 @@ func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 }
 
-func newMockResolve(node ast.Node) error {
+func mockResolve(node ast.Node) error {
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("c_d_e"),
@@ -231,7 +231,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		err = newMockResolve(stmt)
+		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -284,7 +284,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		err = newMockResolve(stmt)
+		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -372,7 +372,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		err = newMockResolve(stmt)
+		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -536,7 +536,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		err = newMockResolve(stmt)
+		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -672,7 +672,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		err = newMockResolve(stmt)
+		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -861,7 +861,7 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
 		stmt := stmts[0].(*ast.SelectStmt)
 
-		err = newMockResolve(stmt)
+		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{allocator: new(idAllocator), ctx: mock.NewContext()}
@@ -894,7 +894,7 @@ func (s *testPlanSuite) TestTableScanWithOrder(c *C) {
 	c.Assert(err, IsNil)
 	ast.SetFlag(stmt)
 
-	err = newMockResolve(stmt)
+	err = mockResolve(stmt)
 	c.Assert(err, IsNil)
 
 	builder := &planBuilder{
@@ -976,7 +976,7 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
 		stmt := stmts[0].(*ast.SelectStmt)
 
-		err = newMockResolve(stmt)
+		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{allocator: new(idAllocator), ctx: mock.NewContext()}

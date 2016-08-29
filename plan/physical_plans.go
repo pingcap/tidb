@@ -383,19 +383,19 @@ func (p *Limit) MarshalJSON() ([]byte, error) {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *NewUnion) Copy() PhysicalPlan {
+func (p *Union) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *NewSort) Copy() PhysicalPlan {
+func (p *Sort) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
 // MarshalJSON implements json.Marshaler interface.
-func (p *NewSort) MarshalJSON() ([]byte, error) {
+func (p *Sort) MarshalJSON() ([]byte, error) {
 	child, err := json.Marshal(p.children[0].(PhysicalPlan))
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -412,7 +412,7 @@ func (p *NewSort) MarshalJSON() ([]byte, error) {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *NewTableDual) Copy() PhysicalPlan {
+func (p *TableDual) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
@@ -436,7 +436,7 @@ func (p *Aggregation) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *NewUpdate) Copy() PhysicalPlan {
+func (p *Update) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
@@ -448,7 +448,7 @@ func (p *PhysicalDummyScan) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *NewDelete) Copy() PhysicalPlan {
+func (p *Delete) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }

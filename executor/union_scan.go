@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
@@ -252,46 +251,16 @@ func (us *UnionScanExec) compare(a, b *Row) (int, error) {
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CIStr) error {
 	us.addedRows = make([]*Row, 0, len(us.dirty.addedRows))
 	for h, data := range us.dirty.addedRows {
-		for i, field := range us.Src.Fields() {
-			field.Expr.SetDatum(data[i])
-		}
-		if us.condition != nil {
-			matched, err := evaluator.EvalBool(us.ctx, us.condition)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if !matched {
-				continue
-			}
-		}
-		rowKeyEntry := &RowKeyEntry{Handle: h, Tbl: t, TableAsName: asName}
-		row := &Row{Data: data, RowKeys: []*RowKeyEntry{rowKeyEntry}}
-		us.addedRows = append(us.addedRows, row)
-	}
-	if us.desc {
-		sort.Sort(sort.Reverse(us))
-	} else {
-		sort.Sort(us)
-	}
-	if us.sortErr != nil {
-		return errors.Trace(us.sortErr)
-	}
-	return nil
-}
-
-func (us *UnionScanExec) newBuildAndSortAddedRows(t table.Table, asName *model.CIStr) error {
-	us.addedRows = make([]*Row, 0, len(us.dirty.addedRows))
-	for h, data := range us.dirty.addedRows {
 		var newData []types.Datum
 		if len(us.Src.Schema()) == len(data) {
 			newData = data
 		} else {
 			newData = make([]types.Datum, 0, len(us.Src.Schema()))
 			var columns []*model.ColumnInfo
-			if t, ok := us.Src.(*NewXSelectTableExec); ok {
+			if t, ok := us.Src.(*XSelectTableExec); ok {
 				columns = t.Columns
 			} else {
-				columns = us.Src.(*NewXSelectIndexExec).indexPlan.Columns
+				columns = us.Src.(*XSelectIndexExec).indexPlan.Columns
 			}
 			for _, col := range columns {
 				newData = append(newData, data[col.Offset])

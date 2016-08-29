@@ -69,14 +69,14 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 	switch x := node.(type) {
 	case *ast.Join:
-		return b.buildNewJoin(x)
+		return b.buildJoin(x)
 	case *ast.TableSource:
 		var p LogicalPlan
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
-			p = b.buildNewSelect(v)
+			p = b.buildSelect(v)
 		case *ast.UnionStmt:
-			p = b.buildNewUnion(v)
+			p = b.buildUnion(v)
 		case *ast.TableName:
 			p = b.buildDataSource(v)
 		default:
@@ -98,9 +98,9 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 		}
 		return p
 	case *ast.SelectStmt:
-		return b.buildNewSelect(x)
+		return b.buildSelect(x)
 	case *ast.UnionStmt:
-		return b.buildNewUnion(x)
+		return b.buildUnion(x)
 	default:
 		b.err = ErrUnsupportedType.Gen("unsupported table source type %T", x)
 		return nil
@@ -180,7 +180,7 @@ func splitCNFItems(onExpr expression.Expression) []expression.Expression {
 	return []expression.Expression{onExpr}
 }
 
-func (b *planBuilder) buildNewJoin(join *ast.Join) LogicalPlan {
+func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	if join.Right == nil {
 		return b.buildResultSetNode(join.Left)
 	}
@@ -310,7 +310,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	return proj, oldLen
 }
 
-func (b *planBuilder) buildNewDistinct(src LogicalPlan) LogicalPlan {
+func (b *planBuilder) buildDistinct(src LogicalPlan) LogicalPlan {
 	d := &Distinct{baseLogicalPlan: newBaseLogicalPlan(Dis, b.allocator)}
 	d.initID()
 	addChild(d, src)
@@ -319,12 +319,12 @@ func (b *planBuilder) buildNewDistinct(src LogicalPlan) LogicalPlan {
 	return d
 }
 
-func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) LogicalPlan {
-	u := &NewUnion{baseLogicalPlan: newBaseLogicalPlan(Un, b.allocator)}
+func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
+	u := &Union{baseLogicalPlan: newBaseLogicalPlan(Un, b.allocator)}
 	u.initID()
 	u.children = make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
-		u.children[i] = b.buildNewSelect(sel)
+		u.children[i] = b.buildSelect(sel)
 		u.correlated = u.correlated || u.children[i].IsCorrelated()
 	}
 	firstSchema := u.children[0].GetSchema().DeepCopy()
@@ -364,13 +364,13 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt) LogicalPlan {
 	var p LogicalPlan
 	p = u
 	if union.Distinct {
-		p = b.buildNewDistinct(u)
+		p = b.buildDistinct(u)
 	}
 	if union.OrderBy != nil {
-		p = b.buildNewSort(p, union.OrderBy.Items, nil)
+		p = b.buildSort(p, union.OrderBy.Items, nil)
 	}
 	if union.Limit != nil {
-		p = b.buildNewLimit(p, union.Limit)
+		p = b.buildLimit(p, union.Limit)
 	}
 	return p
 }
@@ -381,9 +381,9 @@ type ByItems struct {
 	Desc bool
 }
 
-func (b *planBuilder) buildNewSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
+func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	var exprs []*ByItems
-	sort := &NewSort{baseLogicalPlan: newBaseLogicalPlan(Srt, b.allocator)}
+	sort := &Sort{baseLogicalPlan: newBaseLogicalPlan(Srt, b.allocator)}
 	sort.initID()
 	sort.correlated = p.IsCorrelated()
 	for _, item := range byItems {
@@ -402,7 +402,7 @@ func (b *planBuilder) buildNewSort(p LogicalPlan, byItems []*ast.ByItem, aggMapp
 	return sort
 }
 
-func (b *planBuilder) buildNewLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
+func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
 	li := &Limit{
 		Offset:          limit.Offset,
 		Count:           limit.Count,
@@ -737,7 +737,7 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return
 }
 
-func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
+func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	hasAgg := b.detectSelectAgg(sel)
 	var (
 		p                             LogicalPlan
@@ -749,7 +749,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 	if sel.From != nil {
 		p = b.buildResultSetNode(sel.From.TableRefs)
 	} else {
-		p = b.buildNewTableDual()
+		p = b.buildTableDual()
 	}
 	if b.err != nil {
 		return nil
@@ -796,19 +796,19 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 	if sel.Distinct {
-		p = b.buildNewDistinct(p)
+		p = b.buildDistinct(p)
 		if b.err != nil {
 			return nil
 		}
 	}
 	if sel.OrderBy != nil {
-		p = b.buildNewSort(p, sel.OrderBy.Items, orderMap)
+		p = b.buildSort(p, sel.OrderBy.Items, orderMap)
 		if b.err != nil {
 			return nil
 		}
 	}
 	if sel.Limit != nil {
-		p = b.buildNewLimit(p, sel.Limit)
+		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
 			return nil
 		}
@@ -828,8 +828,8 @@ func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
 	return trim
 }
 
-func (b *planBuilder) buildNewTableDual() LogicalPlan {
-	dual := &NewTableDual{baseLogicalPlan: newBaseLogicalPlan(Dual, b.allocator)}
+func (b *planBuilder) buildTableDual() LogicalPlan {
+	dual := &TableDual{baseLogicalPlan: newBaseLogicalPlan(Dual, b.allocator)}
 	dual.initID()
 	return dual
 }
@@ -931,7 +931,7 @@ out:
 		switch p.(type) {
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
-		case *Trim, *Projection, *NewSort, *Aggregation:
+		case *Trim, *Projection, *Sort, *Aggregation:
 			p = p.GetChildByIndex(0).(LogicalPlan)
 			p.SetParents()
 		default:
@@ -1004,7 +1004,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	return joinPlan
 }
 
-func (b *planBuilder) buildNewUpdate(update *ast.UpdateStmt) LogicalPlan {
+func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
@@ -1018,30 +1018,30 @@ func (b *planBuilder) buildNewUpdate(update *ast.UpdateStmt) LogicalPlan {
 		}
 	}
 	if sel.OrderBy != nil {
-		p = b.buildNewSort(p, sel.OrderBy.Items, nil)
+		p = b.buildSort(p, sel.OrderBy.Items, nil)
 		if b.err != nil {
 			return nil
 		}
 	}
 	if sel.Limit != nil {
-		p = b.buildNewLimit(p, sel.Limit)
+		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
 			return nil
 		}
 	}
-	orderedList, np := b.buildNewUpdateLists(update.List, p)
+	orderedList, np := b.buildUpdateLists(update.List, p)
 	if b.err != nil {
 		return nil
 	}
 	p = np
-	updt := &NewUpdate{OrderedList: orderedList, SelectPlan: p, baseLogicalPlan: newBaseLogicalPlan(Up, b.allocator)}
+	updt := &Update{OrderedList: orderedList, SelectPlan: p, baseLogicalPlan: newBaseLogicalPlan(Up, b.allocator)}
 	updt.initID()
 	addChild(updt, p)
 	updt.SetSchema(p.GetSchema())
 	return updt
 }
 
-func (b *planBuilder) buildNewUpdateLists(list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
+func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
 	schema := p.GetSchema()
 	newList := make([]*expression.Assignment, len(schema))
 	for _, assign := range list {
@@ -1069,7 +1069,7 @@ func (b *planBuilder) buildNewUpdateLists(list []*ast.Assignment, p LogicalPlan)
 	return newList, p
 }
 
-func (b *planBuilder) buildNewDelete(delete *ast.DeleteStmt) LogicalPlan {
+func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
@@ -1083,13 +1083,13 @@ func (b *planBuilder) buildNewDelete(delete *ast.DeleteStmt) LogicalPlan {
 		}
 	}
 	if sel.OrderBy != nil {
-		p = b.buildNewSort(p, sel.OrderBy.Items, nil)
+		p = b.buildSort(p, sel.OrderBy.Items, nil)
 		if b.err != nil {
 			return nil
 		}
 	}
 	if sel.Limit != nil {
-		p = b.buildNewLimit(p, sel.Limit)
+		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
 			return nil
 		}
@@ -1098,7 +1098,7 @@ func (b *planBuilder) buildNewDelete(delete *ast.DeleteStmt) LogicalPlan {
 	if delete.Tables != nil {
 		tables = delete.Tables.Tables
 	}
-	del := &NewDelete{
+	del := &Delete{
 		Tables:          tables,
 		IsMultiTable:    delete.IsMultiTable,
 		SelectPlan:      p,
