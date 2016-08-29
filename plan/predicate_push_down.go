@@ -48,10 +48,142 @@ func columnSubstitute(expr expression.Expression, schema expression.Schema, newE
 	return expr
 }
 
+// propagateConstant propagate constant values in a condition.
+// e.g. for condition: "a = b and b = c and c = a and a = 1";
+// we propagate constant as the following step:
+// first: "1 = b and b = c and c = 1 and a = 1";
+// next:  "1 = b and 1 = c and c = 1 and a = 1";
+// next:  "1 = b and 1 = c and 1 = 1 and a = 1";
+// next:  "1 = b and 1 = c and a = 1";
+
+// e.g for condition: "a = b and b = c and b = 2 and a = 1";
+// we propagate constant as the following step:
+// first: "a = 2 and 2 = c and b = 2 and a = 1";
+// next:  "a = 2 and 2 = c and b = 2 and 2 = 1";
+// next:  "0"
+func propagateConstant(conditions []expression.Expression) []expression.Expression {
+	if len(conditions) == 0 {
+		return conditions
+	}
+	isHandled := make([]bool, len(conditions))
+	equalities := make(map[*expression.Column]*expression.Constant, 0)
+	for i := 0; i < len(conditions); i++ {
+		if isHandled[i] {
+			continue
+		}
+		if len(equalities) != 0 {
+			conditions[i] = constantSubstitute(equalities, conditions[i])
+		}
+		expr, ok := conditions[i].(*expression.ScalarFunction)
+		if !ok {
+			continue
+		}
+		// process the included OR conditions recursively to do the same for CNF item.
+		if expr.FuncName.L == ast.OrOr {
+			expressions := splitDNFItems(conditions[i])
+			newExpression := make([]expression.Expression, 0)
+			for _, v := range expressions {
+				newExpression = append(newExpression, propagateConstant([]expression.Expression{v})...)
+			}
+			conditions[i] = composeDNFConditions(newExpression)
+			isHandled[i] = true
+			continue
+		}
+		if expr.FuncName.L == ast.AndAnd {
+			newExpression := propagateConstant(splitCNFItems(conditions[i]))
+			conditions[i] = expression.ComposeCNFCondition(newExpression)
+			isHandled[i] = true
+			continue
+		}
+		if expr.FuncName.L != ast.EQ {
+			continue
+		}
+		left, ok1 := expr.Args[0].(*expression.Constant)
+		right, ok2 := expr.Args[1].(*expression.Constant)
+		if col, isLeftColumn := expr.Args[0].(*expression.Column); ok2 && isLeftColumn {
+			equalities[col] = right
+		} else if col, isRightColumn := expr.Args[1].(*expression.Column); ok1 && isRightColumn {
+			equalities[col] = left
+		} else {
+			continue
+		}
+		isHandled[i] = true
+		i = -1
+	}
+	// remove useless predicates, such as "1 and a = 1" ==> "a=1".
+	for i := 0; i < len(conditions); i++ {
+		if v, ok := conditions[i].(*expression.Constant); ok {
+			if v.Value.IsNull() {
+				continue
+			}
+			intVal, _ := v.Value.ToInt64()
+			if intVal < 1 && intVal > -1 {
+				conditions = []expression.Expression{&expression.Constant{Value: types.NewIntDatum(0)}}
+				break
+			} else {
+				conditions = append(conditions[:i], conditions[i+1:]...)
+				i--
+			}
+		}
+	}
+	if len(conditions) == 0 {
+		conditions = []expression.Expression{&expression.Constant{Value: types.NewIntDatum(1)}}
+	}
+	return conditions
+}
+
+// constantSubstitute substitute column expression in a condition instead of an equivalent constant
+func constantSubstitute(equalities map[*expression.Column]*expression.Constant, condition expression.Expression) expression.Expression {
+	switch expr := condition.(type) {
+	case *expression.Column:
+		if v, ok := equalities[expr]; ok {
+			return v
+		}
+	case *expression.ScalarFunction:
+		newArgs := make([]expression.Expression, len(expr.Args))
+		for i, arg := range expr.Args {
+			newArgs[i] = constantSubstitute(equalities, arg)
+		}
+		condition, _ = expression.NewFunction(expr.FuncName.L, expr.RetType, newArgs...)
+		return condition
+	}
+	return condition
+}
+
+// composeDNFCondition composes DNF items into a balanced deep DNF tree
+func composeDNFConditions(conditions []expression.Expression) expression.Expression {
+	length := len(conditions)
+	if length == 0 {
+		return nil
+	}
+	if length == 1 {
+		return conditions[0]
+	}
+	expr, _ := expression.NewFunction(ast.OrOr,
+		types.NewFieldType(mysql.TypeTiny),
+		composeDNFConditions(conditions[length/2:]),
+		composeDNFConditions(conditions[:length/2]))
+	return expr
+}
+
+// DNF means disjunctive normal form, e.g. a or b or c.
+func splitDNFItems(expr expression.Expression) []expression.Expression {
+	switch v := expr.(type) {
+	case *expression.ScalarFunction:
+		if v.FuncName.L == ast.OrOr {
+			var ret []expression.Expression
+			for _, arg := range v.Args {
+				ret = append(ret, splitDNFItems(arg)...)
+			}
+			return ret
+		}
+	}
+	return []expression.Expression{expr}
+}
+
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Selection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retP LogicalPlan, err error) {
-	conditions := p.Conditions
-	retConditions, child, err1 := p.GetChildByIndex(0).(LogicalPlan).PredicatePushDown(append(conditions, predicates...))
+	retConditions, child, err1 := p.GetChildByIndex(0).(LogicalPlan).PredicatePushDown(propagateConstant(append(p.Conditions, predicates...)))
 	if err1 != nil {
 		return nil, nil, errors.Trace(err1)
 	}
@@ -70,12 +202,7 @@ func (p *Selection) PredicatePushDown(predicates []expression.Expression) (ret [
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	var err error
-	predicates, err = propagateConstant(predicates)
-	if err != nil {
-		err = errors.Trace(err)
-	}
-	return predicates, p, err
+	return predicates, p, nil
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
@@ -92,11 +219,6 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 	groups, valid := tryToGetJoinGroup(p)
 	if valid {
 		e := joinReOrderSolver{allocator: p.allocator}
-		predicates, err = propagateConstant(predicates)
-		if err != nil {
-			err = errors.Trace(err)
-			return
-		}
 		e.reorderJoin(groups, predicates)
 		newJoin := e.resultJoin
 		parent := p.parents[0]
@@ -108,22 +230,35 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 	retPlan = p
 	leftPlan := p.GetChildByIndex(0).(LogicalPlan)
 	rightPlan := p.GetChildByIndex(1).(LogicalPlan)
-	equalCond, leftPushCond, rightPushCond, otherCond := extractOnCondition(predicates, leftPlan, rightPlan)
-	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoinWithAux {
+	var (
+		equalCond                              []*expression.ScalarFunction
+		leftPushCond, rightPushCond, otherCond []expression.Expression
+	)
+	switch p.JoinType {
+	case LeftOuterJoin, SemiJoinWithAux:
+		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan)
 		rightCond = p.RightConditions
 		p.RightConditions = nil
 		leftCond = leftPushCond
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
-	} else if p.JoinType == RightOuterJoin {
+	case RightOuterJoin:
+		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan)
 		leftCond = p.LeftConditions
 		p.LeftConditions = nil
 		rightCond = rightPushCond
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
-	} else {
-		leftCond = append(p.LeftConditions, leftPushCond...)
-		rightCond = append(p.RightConditions, rightPushCond...)
+	default:
+		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions))
+		tempCond = append(tempCond, predicates...)
+		tempCond = append(tempCond, p.LeftConditions...)
+		tempCond = append(tempCond, p.RightConditions...)
+		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
+		tempCond = append(tempCond, p.OtherConditions...)
+		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(propagateConstant(tempCond), leftPlan, rightPlan)
+		leftCond = leftPushCond
+		rightCond = rightPushCond
 		p.LeftConditions = nil
 		p.RightConditions = nil
 	}
@@ -272,6 +407,7 @@ func concatOnAndWhereConds(join *Join, predicates []expression.Expression) []exp
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
+	//log.Error("Projection")
 	retPlan = p
 	var push []expression.Expression
 	for _, cond := range predicates {
@@ -291,7 +427,7 @@ func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret 
 		}
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
-	restConds, _, err1 := child.PredicatePushDown(push)
+	restConds, _, err1 := child.PredicatePushDown(propagateConstant(push))
 	if err1 != nil {
 		return nil, nil, errors.Trace(err1)
 	}
@@ -422,168 +558,4 @@ func (p *Update) PredicatePushDown(predicates []expression.Expression) ([]expres
 func (p *Delete) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, errors.Trace(err)
-}
-
-// propagateConstant propagate constant values in a condition.
-func propagateConstant(conditions []expression.Expression) ([]expression.Expression, error) {
-	// mep is multiple equality predicates.
-	// e.g "a = b and b = c and c = a" can be build to =(a, b, c) which is a mep item.
-	// scan every CNF item for all equality predicate (=) items.
-	// use union-find to build them into disjoint multiple equality predicates (mep).
-	mep := make(map[*expression.Column]expression.Expression, 0) // union-find
-	union := func(leftExpr *expression.Column, rightExpr expression.Expression) {
-		right, rightIsColumn := rightExpr.(*expression.Column)
-		rootOfLeftExpr, leftAlreadyInMep := mep[leftExpr]
-		if !rightIsColumn {
-			if rightExpr.(*expression.Constant).Value.IsNull() {
-				return
-			}
-			mep[leftExpr] = rightExpr
-		} else if !leftAlreadyInMep && rightIsColumn {
-			if unionRoot, ok := mep[right]; ok {
-				mep[leftExpr] = unionRoot
-			} else {
-				mep[leftExpr] = leftExpr
-				mep[right] = leftExpr
-			}
-		} else if leftAlreadyInMep && rightIsColumn {
-			mep[right] = rootOfLeftExpr
-		}
-	}
-	// e.g. for condition: "a = b and b = c and c = a";
-	// we first get: =(a, b);
-	// next: =(a, b, c);
-	// next: =(a, b, c);
-	// then we substitute the origin condition instead of "a = a and a = a and a = a";
-	// thus, the origin condition can be converted to "1".
-
-	// e.g. for condition: "a = b and b = c and c = a and a = 1";
-	// we first get: =(a, b);
-	// next: =(a, b, c);
-	// next: =(a, b, c);
-	// next: =(1, a, b, c);
-	// then we substitute the origin condition instead of "1 = 1 and 1 = 1 and 1 = 1 and 1 = 1";
-	// thus, the origin condition can be converted to "1".
-
-	// e.g for condition: "a = b and b = c and b = 2 and a = 1";
-	// we first get: =(a, b, c);
-	// next: =(a, a), =(2, b, c);
-	// next: =(1, a), =(2, b, c);
-	// thus, the origin condition can be converted to "0".
-	for _, cond := range conditions {
-		expr, ok := cond.(*expression.ScalarFunction)
-		if !ok {
-			continue
-		}
-		// process the included OR conditions recursively to do the same for CNF item.
-		if expr.FuncName.L == ast.OrOr {
-			expressions := splitOrOr(cond)
-			for _, v := range expressions {
-				propagateConstant([]expression.Expression{v})
-			}
-		}
-		if expr.FuncName.L == ast.AndAnd {
-			propagateConstant(splitCNFItems(cond))
-		}
-		if expr.FuncName.L != ast.EQ {
-			break
-		}
-		leftArg := expr.Args[0]
-		rightArg := expr.Args[1]
-		_, isLeftScalar := leftArg.(*expression.ScalarFunction)
-		_, isRightScalar := rightArg.(*expression.ScalarFunction)
-		if isLeftScalar || isRightScalar {
-			return conditions, nil
-		}
-		if l, ok := leftArg.(*expression.Column); ok {
-			union(l, rightArg)
-		} else if r, ok := rightArg.(*expression.Column); ok {
-			union(r, leftArg)
-		}
-	}
-	// here we replaces all equality predicates in a condition by mep items.
-	// e.g. for condition: "a = b and b = c and c = a", we get "1" above;
-	// then we append the mep to the new condition, and we get "1 and a = a and b = a and c = a".
-
-	// e.g. for condition: "a = b and b = c and c = a and a = 1", we get "1" above;
-	// then we append the mep to the new condition, and we get "1 and a = 1 and b = 1 and c = 1".
-
-	// e.g for condition: "a = b and b = c and b = 2 and a = 1", we get "0" above;
-	// then we append the mep to the new condition, and we get "0 and a = 1 and b = 2 and c = 2"
-	if len(mep) > 0 {
-		var err error
-		for i, cond := range conditions {
-			conditions[i], err = buildNewConditon(cond, mep)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-		for k, v := range mep {
-			var newEquality expression.Expression
-			newEquality, err = expression.NewFunction(ast.EQ, types.NewFieldType(mysql.BinaryFlag), k, v)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			conditions = append(conditions, newEquality)
-		}
-	}
-	// remove useless predicates.
-	// e.g. for condition: "a = b and b = c and c = a", we finally get "b = a and c = a";
-	// e.g. for condition: "a = b and b = c and c = a and a = 1", we finally get "a = 1 and b = 1 and c = 1";
-	// e.g. for condition: "a = b and b = c and b = 2 and a = 1", we finally get "0".
-	for i := 0; i < len(conditions); i++ {
-		if v, ok := conditions[i].(*expression.Constant); ok {
-			if v.Value.IsNull() {
-				continue
-			}
-			intVal, err := v.Value.ToInt64()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if intVal < 1 && intVal > -1 {
-				conditions = []expression.Expression{&expression.Constant{Value: types.NewIntDatum(0)}}
-				break
-			} else {
-				conditions = append(conditions[:i], conditions[i+1:]...)
-				i--
-			}
-		}
-	}
-	return conditions, nil
-}
-
-// buildNewCondition replaces all equality predicates in a condition by multiple equality items.
-func buildNewConditon(condition expression.Expression, mep map[*expression.Column]expression.Expression) (expression.Expression, error) {
-	switch expr := condition.(type) {
-	case *expression.Column:
-		equalItem, ok := mep[expr]
-		if !ok {
-			break
-		}
-		if col, isCol := equalItem.(*expression.Column); isCol && !expr.Equal(equalItem) {
-			mep[expr] = mep[col]
-			return mep[expr], nil
-		} else {
-			return equalItem, nil
-		}
-	case *expression.ScalarFunction:
-		var err error
-		newArgs := make([]expression.Expression, len(expr.Args))
-		for i, arg := range expr.Args {
-			newArgs[i], err = buildNewConditon(arg, mep)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-		condition, err = expression.NewFunction(expr.FuncName.L, expr.RetType, newArgs...)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return condition, nil
-	}
-	return condition, nil
-}
-
-func splitOrOr(expr expression.Expression) []expression.Expression {
-	return nil
 }
