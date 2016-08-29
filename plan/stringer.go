@@ -26,7 +26,7 @@ func ToString(p Plan) string {
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch in.(type) {
-	case *Join, *NewUnion, *PhysicalHashJoin, *PhysicalHashSemiJoin:
+	case *Join, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin:
 		idxs = append(idxs, len(strs))
 	}
 
@@ -87,7 +87,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "ShowDDL"
 	case *Filter:
 		str = "Filter"
-	case *NewSort:
+	case *Sort:
 		str = "Sort"
 		if x.ExecLimit != nil {
 			str += fmt.Sprintf(" + Limit(%v) + Offset(%v)", x.ExecLimit.Count, x.ExecLimit.Offset)
@@ -99,7 +99,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		str = "Join{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
-	case *NewUnion:
+	case *Union:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
