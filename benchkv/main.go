@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	_ "net/http/pprof"
 	"sync"
@@ -17,7 +18,7 @@ import (
 var (
 	store     kv.Storage
 	dataCnt   = flag.Int("N", 1000000, "data num")
-	workerCnt = flag.Int("C", 300, "concurrent num")
+	workerCnt = flag.Int("C", 400, "concurrent num")
 	pdAddr    = flag.String("pd", "localhost:2379", "pd address:localhost:2379")
 
 	txnCounter = prometheus.NewCounterVec(
@@ -58,7 +59,7 @@ func Init() {
 	prometheus.MustRegister(txnRolledbackCounter)
 	prometheus.MustRegister(txnDurations)
 
-	go http.ListenAndServe(":9191", nil)
+	go http.ListenAndServe(":9191", prometheus.Handler())
 }
 
 // without conflict
@@ -99,5 +100,18 @@ func main() {
 
 	t := time.Now()
 	batchRW()
-	fmt.Printf("\nelapse:%v\n", time.Since(t))
+	resp, err := http.Get("http://localhost:9191/")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer resp.Body.Close()
+	text, err1 := ioutil.ReadAll(resp.Body)
+	if err1 != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(string(text))
+
+	fmt.Printf("\nelapse:%v, total %v\n", time.Since(t), *dataCnt)
 }
