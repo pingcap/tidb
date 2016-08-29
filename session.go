@@ -706,7 +706,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 
-	ok := isBoostrapped(store)
+	ok := isBootstrapped(store)
 	if !ok {
 		// if no bootstrap and storage is remote, we must use a little lease time to
 		// bootstrap quickly, after bootstrapped, we will reset the lease time.
@@ -723,7 +723,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 			sessionctx.GetDomain(s).SetLease(schemaLease)
 		}
 
-		finishBoostrap(store)
+		finishBootstrap(store)
 	}
 
 	// TODO: Add auth here
@@ -732,7 +732,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 	return s, nil
 }
 
-func isBoostrapped(store kv.Storage) bool {
+func isBootstrapped(store kv.Storage) bool {
 	// check in memory
 	_, ok := storeBootstrapped[store.UUID()]
 	if ok {
@@ -759,7 +759,7 @@ func isBoostrapped(store kv.Storage) bool {
 	return ok
 }
 
-func finishBoostrap(store kv.Storage) {
+func finishBootstrap(store kv.Storage) {
 	storeBootstrapped[store.UUID()] = true
 
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
