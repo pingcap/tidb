@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
@@ -36,7 +37,8 @@ func CoerceArithmetic(a Datum) (d Datum, err error) {
 		t := a.GetMysqlTime()
 		de := t.ToNumber()
 		if t.Fsp == 0 {
-			d.SetInt64(de.IntPart())
+			iVal, _ := de.ToInt()
+			d.SetInt64(iVal)
 			return d, nil
 		}
 		d.SetMysqlDecimal(de)
@@ -46,7 +48,8 @@ func CoerceArithmetic(a Datum) (d Datum, err error) {
 		du := a.GetMysqlDuration()
 		de := du.ToNumber()
 		if du.Fsp == 0 {
-			d.SetInt64(de.IntPart())
+			iVal, _ := de.ToInt()
+			d.SetInt64(iVal)
 			return d, nil
 		}
 		d.SetMysqlDecimal(de)
@@ -103,9 +106,10 @@ func ComputePlus(a, b Datum) (d Datum, err error) {
 	case KindMysqlDecimal:
 		switch b.Kind() {
 		case KindMysqlDecimal:
-			r := a.GetMysqlDecimal().Add(b.GetMysqlDecimal())
+			r := new(mysql.MyDecimal)
+			err = mysql.DecimalAdd(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
 			d.SetMysqlDecimal(r)
-			return d, nil
+			return d, err
 		}
 	}
 	_, err = InvOp2(a.GetValue(), b.GetValue(), opcode.Plus)
@@ -147,9 +151,10 @@ func ComputeMinus(a, b Datum) (d Datum, err error) {
 	case KindMysqlDecimal:
 		switch b.Kind() {
 		case KindMysqlDecimal:
-			r := a.GetMysqlDecimal().Sub(b.GetMysqlDecimal())
+			r := new(mysql.MyDecimal)
+			err = mysql.DecimalSub(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
 			d.SetMysqlDecimal(r)
-			return d, nil
+			return d, err
 		}
 	}
 	_, err = InvOp2(a.GetValue(), b.GetValue(), opcode.Minus)
@@ -191,7 +196,8 @@ func ComputeMul(a, b Datum) (d Datum, err error) {
 	case KindMysqlDecimal:
 		switch b.Kind() {
 		case KindMysqlDecimal:
-			r := a.GetMysqlDecimal().Mul(b.GetMysqlDecimal())
+			r := new(mysql.MyDecimal)
+			err = mysql.DecimalMul(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
 			d.SetMysqlDecimal(r)
 			return d, nil
 		}
@@ -233,13 +239,15 @@ func ComputeDiv(a, b Datum) (d Datum, err error) {
 		if err1 != nil {
 			return d, errors.Trace(err1)
 		}
-		if f, _ := xb.Float64(); f == 0 {
-			// division by zero return null
-			return d, nil
+		// division by zero return null
+		to := new(mysql.MyDecimal)
+		err = mysql.DecimalDiv(xa, xb, to, mysql.DivFracIncr)
+		if err != mysql.ErrDivByZero {
+			d.SetMysqlDecimal(to)
+		} else {
+			err = nil
 		}
-
-		d.SetMysqlDecimal(xa.Div(xb))
-		return d, nil
+		return d, err
 	}
 }
 
@@ -306,13 +314,15 @@ func ComputeMod(a, b Datum) (d Datum, err error) {
 		switch b.Kind() {
 		case KindMysqlDecimal:
 			y := b.GetMysqlDecimal()
-			xf, _ := x.Float64()
-			yf, _ := y.Float64()
-			if yf == 0 {
-				return d, nil
+			to := new(mysql.MyDecimal)
+			err = mysql.DecimalMod(x, y, to)
+			if err != mysql.ErrDivByZero {
+				d.SetMysqlDecimal(to)
+			} else {
+				// div by zero returns nil without error.
+				err = nil
 			}
-			d.SetFloat64(math.Mod(xf, yf))
-			return d, nil
+			return d, err
 		}
 	}
 	_, err = InvOp2(a.GetValue(), b.GetValue(), opcode.Mod)
@@ -373,11 +383,15 @@ func ComputeIntDiv(a, b Datum) (d Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
-	if f, _ := y.Float64(); f == 0 {
+	to := new(mysql.MyDecimal)
+	err = mysql.DecimalDiv(x, y, to, mysql.DivFracIncr)
+	if err == mysql.ErrDivByZero {
 		return d, nil
 	}
-
-	d.SetInt64(x.Div(y).IntPart())
+	iVal, err1 := to.ToInt()
+	if err == nil {
+		err = err1
+	}
+	d.SetInt64(iVal)
 	return d, nil
 }

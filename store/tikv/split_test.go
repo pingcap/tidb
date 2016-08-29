@@ -32,7 +32,7 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	mvccStore := mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
-	store, err := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), client)
+	store, err := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), client, false)
 	c.Assert(err, IsNil)
 	s.store = store
 	s.bo = NewBackoffer(5000)

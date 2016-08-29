@@ -328,7 +328,7 @@ func (p *Join) handleLeftJoin(prop requiredProperty, innerJoin bool) (*physicalP
 		return nil, nil, 0, errors.Trace(err)
 	}
 	sortedPlanInfo := join.matchProperty(prop, []uint64{lCount, rCount}, lSortedPlanInfo, rSortedPlanInfo)
-	unSortedPlanInfo := join.matchProperty(prop, []uint64{lCount, rCount}, lUnSortedPlanInfo, rUnSortedPlanInfo)
+	unSortedPlanInfo := join.matchProperty(nil, []uint64{lCount, rCount}, lUnSortedPlanInfo, rUnSortedPlanInfo)
 	return sortedPlanInfo, unSortedPlanInfo, estimateJoinCount(lCount, rCount), nil
 }
 
@@ -370,7 +370,7 @@ func (p *Join) handleRightJoin(prop requiredProperty, innerJoin bool) (*physical
 		rSortedPlanInfo.cost = math.MaxFloat64
 	}
 	sortedPlanInfo := join.matchProperty(prop, []uint64{lCount, rCount}, lSortedPlanInfo, rSortedPlanInfo)
-	unSortedPlanInfo := join.matchProperty(prop, []uint64{lCount, rCount}, lUnSortedPlanInfo, rUnSortedPlanInfo)
+	unSortedPlanInfo := join.matchProperty(nil, []uint64{lCount, rCount}, lUnSortedPlanInfo, rUnSortedPlanInfo)
 	return sortedPlanInfo, unSortedPlanInfo, estimateJoinCount(lCount, rCount), nil
 }
 
@@ -471,7 +471,7 @@ func (p *Aggregation) convert2PhysicalPlan(prop requiredProperty) (*physicalPlan
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *NewUnion) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
+func (p *Union) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
 	var err error
 	sortedPlanInfo, unSortedPlanInfo, count := p.getPlanInfo(prop)
 	if sortedPlanInfo != nil {
@@ -578,7 +578,7 @@ func matchProp(target, new requiredProperty) bool {
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *NewSort) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
+func (p *Sort) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
 	var err error
 	sortedPlanInfo, unSortedPlanInfo, count := p.getPlanInfo(prop)
 	if sortedPlanInfo != nil {
@@ -662,7 +662,7 @@ func (p *Distinct) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInf
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *NewTableDual) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
+func (p *TableDual) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
 	planInfo := &physicalPlanInfo{p: p, cost: 1.0}
 	return planInfo, planInfo, 1, nil
 }
@@ -750,7 +750,7 @@ func (p *Insert) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo,
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *NewUpdate) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
+func (p *Update) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
 	if len(p.GetChildren()) == 0 {
 		planInfo := &physicalPlanInfo{p: p}
 		return planInfo, planInfo, 0, nil
@@ -764,7 +764,7 @@ func (p *NewUpdate) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanIn
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-func (p *NewDelete) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
+func (p *Delete) convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error) {
 	if len(p.GetChildren()) == 0 {
 		planInfo := &physicalPlanInfo{p: p}
 		return planInfo, planInfo, 0, nil

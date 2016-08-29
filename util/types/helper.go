@@ -96,7 +96,7 @@ func CalculateSum(sum Datum, v Datum) (Datum, error) {
 	switch v.Kind() {
 	case KindNull:
 	case KindInt64, KindUint64:
-		var d mysql.Decimal
+		var d *mysql.MyDecimal
 		d, err = v.ToDecimal()
 		if err == nil {
 			data = NewDecimalDatum(d)
