@@ -48,7 +48,7 @@ func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
 func supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
-		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime,
+		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
 		tipb.ExprType_ColumnRef,
 		tipb.ExprType_And, tipb.ExprType_Or,
 		tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
@@ -58,7 +58,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 		return true
 	case tipb.ExprType_Plus:
 		return true
-	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min:
+	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
