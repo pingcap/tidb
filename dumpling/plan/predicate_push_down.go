@@ -73,7 +73,7 @@ func (p *DataSource) PredicatePushDown(predicates []expression.Expression) ([]ex
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *NewTableDual) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+func (p *TableDual) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	return predicates, p, nil
 }
 
@@ -294,7 +294,7 @@ func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret 
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *NewUnion) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
+func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
 	retPlan = p
 	for _, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
@@ -360,7 +360,7 @@ func (p *Limit) PredicatePushDown(predicates []expression.Expression) ([]express
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *NewSort) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+func (p *Sort) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, errors.Trace(err)
 }
@@ -402,13 +402,13 @@ func (p *SelectLock) PredicatePushDown(predicates []expression.Expression) ([]ex
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *NewUpdate) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+func (p *Update) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, errors.Trace(err)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *NewDelete) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+func (p *Delete) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	ret, _, err := p.baseLogicalPlan.PredicatePushDown(predicates)
 	return ret, p, errors.Trace(err)
 }
