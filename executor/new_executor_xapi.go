@@ -356,7 +356,7 @@ func (e *NewXSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTas
 	var indexOrder map[int64]int
 	if !e.indexPlan.OutOfOrder {
 		// Save the index order.
-		indexOrder = make(map[int64]int)
+		indexOrder = make(map[int64]int, len(handles))
 		for i, h := range handles {
 			indexOrder[h] = i
 		}
