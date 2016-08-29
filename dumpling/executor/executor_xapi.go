@@ -1115,7 +1115,12 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			if e.partialResult == nil {
 				return nil, nil
 			}
-			log.Infof("[TIME_TABLE_SCAN] %v", time.Now().Sub(startTs))
+			duration := time.Now().Sub(startTs)
+			if duration > 30*time.Millisecond {
+				log.Infof("[TIME_TABLE_SCAN] %v", duration)
+			} else {
+				log.Debugf("[TIME_TABLE_SCAN] %v", duration)
+			}
 		}
 		h, rowData, err := e.partialResult.Next()
 		if err != nil {
