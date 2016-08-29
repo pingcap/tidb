@@ -766,7 +766,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		if e.taskCurr == nil {
 			taskCurr, ok := <-e.tasks
 			if !ok {
-				log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v", time.Now().Sub(startTs))
+				log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v", time.Since(startTs))
 				return nil, e.tasksErr
 			}
 			e.taskCurr = taskCurr
@@ -807,7 +807,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult xapi.SelectResult, ch chan<- *
 		if err != nil || finish {
 			e.tasksErr = errors.Trace(err)
 			log.Debugf("[TIME_INDEX_SCAN] time: %v handles: %d concurrency: %d",
-				time.Now().Sub(startTs),
+				time.Since(startTs),
 				totalHandles,
 				concurrency)
 			return
@@ -1115,7 +1115,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			if e.partialResult == nil {
 				return nil, nil
 			}
-			duration := time.Now().Sub(startTs)
+			duration := time.Since(startTs)
 			if duration > 30*time.Millisecond {
 				log.Infof("[TIME_TABLE_SCAN] %v", duration)
 			} else {
