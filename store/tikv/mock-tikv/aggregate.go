@@ -202,7 +202,7 @@ func (n *aggregateFuncExpr) updateCount(ctx *selectContext, args []types.Datum) 
 
 func (n *aggregateFuncExpr) updateFirst(ctx *selectContext, args []types.Datum) error {
 	aggItem := n.getAggItem()
-	if aggItem.evaluated {
+	if aggItem.evaluated && !aggItem.value.IsNull() {
 		return nil
 	}
 	if len(args) != 1 {
