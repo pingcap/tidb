@@ -421,12 +421,12 @@ func (s *testSuite) TestLoadData(c *C) {
 	// fields and lines are default, InsertData returns data is nil
 	cases := []testCase{
 		// data1 = nil, data2 != nil
-		{nil, []byte("\n"), []string{fmt.Sprintf("%v %v %v %v", 1, nil, []byte("def"), nil)}, nil},
-		{nil, []byte("\t\n"), []string{fmt.Sprintf("%v %v %v %v", 2, 0, []byte("def"), nil)}, nil},
+		{nil, []byte("\n"), []string{fmt.Sprintf("%v %v %v %v", 1, 0, []byte(""), 0)}, nil},
+		{nil, []byte("\t\n"), []string{fmt.Sprintf("%v %v %v %v", 2, 0, []byte(""), 0)}, nil},
 		{nil, []byte("3\t2\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4)}, nil},
 		{nil, []byte("4\t2\t\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 4, 2, []byte(""), 3)}, nil},
 		{nil, []byte("\t1\t2\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 5, 1, []byte("2"), 3)}, nil},
-		{nil, []byte("6\t2\t3\n"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("3"), nil)}, nil},
+		{nil, []byte("6\t2\t3\n"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("3"), 0)}, nil},
 		{nil, []byte("\t2\t3\t4\n\t22\t33\t44\n"), []string{
 			fmt.Sprintf("%v %v %v %v", 7, 2, []byte("3"), 4),
 			fmt.Sprintf("%v %v %v %v", 8, 22, []byte("33"), 44)}, nil},
@@ -471,11 +471,11 @@ func (s *testSuite) TestLoadData(c *C) {
 			fmt.Sprintf("%v %v %v %v", 3, 22, []byte("33"), 44)}, nil},
 		{[]byte("3\t2\t3\t4\t5|"), []byte("|4\t22\t33||"), []string{
 			fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 4, 22, []byte("33"), nil)}, nil},
+			fmt.Sprintf("%v %v %v %v", 4, 22, []byte("33"), 0)}, nil},
 		{[]byte("4\t2\t3\t4\t5|"), []byte("|5\t22\t33||6\t222||"), []string{
 			fmt.Sprintf("%v %v %v %v", 4, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 5, 22, []byte("33"), nil),
-			fmt.Sprintf("%v %v %v %v", 6, 222, []byte("def"), nil)}, nil},
+			fmt.Sprintf("%v %v %v %v", 5, 22, []byte("33"), 0),
+			fmt.Sprintf("%v %v %v %v", 6, 222, []byte(""), 0)}, nil},
 		{[]byte("6\t2\t3"), []byte("4\t5||"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("34"), 5)}, nil},
 	}
 	for _, ca := range cases {
@@ -496,12 +496,12 @@ func (s *testSuite) TestLoadData(c *C) {
 	ld.LinesInfo.Terminated = "|!#^"
 	cases = []testCase{
 		// data1 = nil, data2 != nil
-		{nil, []byte("xxx|!#^"), []string{fmt.Sprintf("%v %v %v %v", 13, nil, []byte("def"), nil)}, nil},
-		{nil, []byte("xxx\\|!#^"), []string{fmt.Sprintf("%v %v %v %v", 14, 0, []byte("def"), nil)}, nil},
+		{nil, []byte("xxx|!#^"), []string{fmt.Sprintf("%v %v %v %v", 13, 0, []byte(""), 0)}, nil},
+		{nil, []byte("xxx\\|!#^"), []string{fmt.Sprintf("%v %v %v %v", 14, 0, []byte(""), 0)}, nil},
 		{nil, []byte("xxx3\\2\\3\\4|!#^"), []string{fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4)}, nil},
 		{nil, []byte("xxx4\\2\\\\3\\4|!#^"), []string{fmt.Sprintf("%v %v %v %v", 4, 2, []byte(""), 3)}, nil},
 		{nil, []byte("xxx\\1\\2\\3\\4|!#^"), []string{fmt.Sprintf("%v %v %v %v", 15, 1, []byte("2"), 3)}, nil},
-		{nil, []byte("xxx6\\2\\3|!#^"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("3"), nil)}, nil},
+		{nil, []byte("xxx6\\2\\3|!#^"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("3"), 0)}, nil},
 		{nil, []byte("xxx\\2\\3\\4|!#^xxx\\22\\33\\44|!#^"), []string{
 			fmt.Sprintf("%v %v %v %v", 16, 2, []byte("3"), 4),
 			fmt.Sprintf("%v %v %v %v", 17, 22, []byte("33"), 44)}, nil},
@@ -518,7 +518,7 @@ func (s *testSuite) TestLoadData(c *C) {
 		{[]byte("xxx10\\2\\3"), []byte("\\4|!#^"),
 			[]string{fmt.Sprintf("%v %v %v %v", 10, 2, []byte("3"), 4)}, nil},
 		{[]byte("10\\2\\3xx"), []byte("x11\\4\\5|!#^"),
-			[]string{fmt.Sprintf("%v %v %v %v", 11, 4, []byte("5"), nil)}, nil},
+			[]string{fmt.Sprintf("%v %v %v %v", 11, 4, []byte("5"), 0)}, nil},
 		{[]byte("xxx21\\2\\3\\4\\5|!"), []byte("#^"),
 			[]string{fmt.Sprintf("%v %v %v %v", 21, 2, []byte("3"), 4)}, nil},
 		{[]byte("xxx22\\2\\3\\4\\5|!"), []byte("#^xxx23\\22\\33\\44\\55|!#^"), []string{
@@ -526,14 +526,14 @@ func (s *testSuite) TestLoadData(c *C) {
 			fmt.Sprintf("%v %v %v %v", 23, 22, []byte("33"), 44)}, nil},
 		{[]byte("xxx23\\2\\3\\4\\5|!"), []byte("#^xxx24\\22\\33|!#^"), []string{
 			fmt.Sprintf("%v %v %v %v", 23, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 24, 22, []byte("33"), nil)}, nil},
+			fmt.Sprintf("%v %v %v %v", 24, 22, []byte("33"), 0)}, nil},
 		{[]byte("xxx24\\2\\3\\4\\5|!"), []byte("#^xxx25\\22\\33|!#^xxx26\\222|!#^"), []string{
 			fmt.Sprintf("%v %v %v %v", 24, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 25, 22, []byte("33"), nil),
-			fmt.Sprintf("%v %v %v %v", 26, 222, []byte("def"), nil)}, nil},
+			fmt.Sprintf("%v %v %v %v", 25, 22, []byte("33"), 0),
+			fmt.Sprintf("%v %v %v %v", 26, 222, []byte(""), 0)}, nil},
 		{[]byte("xxx25\\2\\3\\4\\5|!"), []byte("#^26\\22\\33|!#^xxx27\\222|!#^"), []string{
 			fmt.Sprintf("%v %v %v %v", 25, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 27, 222, []byte("def"), nil)}, nil},
+			fmt.Sprintf("%v %v %v %v", 27, 222, []byte(""), 0)}, nil},
 		{[]byte("xxx\\2\\3"), []byte("4\\5|!#^"),
 			[]string{fmt.Sprintf("%v %v %v %v", 28, 2, []byte("34"), 5)}, nil},
 
@@ -542,10 +542,10 @@ func (s *testSuite) TestLoadData(c *C) {
 		{nil, []byte("\\4\\5"), nil, []byte("\\5")},
 		{[]byte("\\2\\3"), []byte("\\4\\5"), nil, []byte("\\5")},
 		{[]byte("xxx1\\2\\3|"), []byte("!#^\\4\\5|!#"),
-			[]string{fmt.Sprintf("%v %v %v %v", 1, 2, []byte("3"), nil)}, []byte("!#")},
+			[]string{fmt.Sprintf("%v %v %v %v", 1, 2, []byte("3"), 0)}, []byte("!#")},
 		{[]byte("xxx1\\2\\3\\4\\5|!"), []byte("#^xxx2\\22\\33|!#^3\\222|!#^"), []string{
 			fmt.Sprintf("%v %v %v %v", 1, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 2, 22, []byte("33"), nil)}, []byte("#^")},
+			fmt.Sprintf("%v %v %v %v", 2, 22, []byte("33"), 0)}, []byte("#^")},
 		{[]byte("xx1\\2\\3"), []byte("\\4\\5|!#^"), nil, []byte("#^")},
 	}
 	for _, ca := range cases {
@@ -569,7 +569,7 @@ func (s *testSuite) TestLoadData(c *C) {
 	ld.LinesInfo.Terminated = "xxx"
 	cases = []testCase{
 		// data1 = nil, data2 != nil
-		{nil, []byte("xxxxxx"), []string{fmt.Sprintf("%v %v %v %v", 29, nil, []byte("def"), nil)}, nil},
+		{nil, []byte("xxxxxx"), []string{fmt.Sprintf("%v %v %v %v", 29, 0, []byte(""), 0)}, nil},
 		{nil, []byte("xxx3\\2\\3\\4xxx"), []string{fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4)}, nil},
 		{nil, []byte("xxx\\2\\3\\4xxxxxx\\22\\33\\44xxx"), []string{
 			fmt.Sprintf("%v %v %v %v", 30, 2, []byte("3"), 4),
@@ -590,25 +590,25 @@ func (s *testSuite) TestLoadData(c *C) {
 			fmt.Sprintf("%v %v %v %v", 33, 22, []byte("33"), 44)}, nil},
 		{[]byte("xxx33\\2\\3\\4\\5xxx"), []byte("xxx34\\22\\33xxx"), []string{
 			fmt.Sprintf("%v %v %v %v", 33, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 34, 22, []byte("33"), nil)}, nil},
+			fmt.Sprintf("%v %v %v %v", 34, 22, []byte("33"), 0)}, nil},
 		{[]byte("xxx34\\2\\3\\4\\5xx"), []byte("xxxx35\\22\\33xxxxxx36\\222xxx"), []string{
 			fmt.Sprintf("%v %v %v %v", 34, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 35, 22, []byte("33"), nil),
-			fmt.Sprintf("%v %v %v %v", 36, 222, []byte("def"), nil)}, nil},
+			fmt.Sprintf("%v %v %v %v", 35, 22, []byte("33"), 0),
+			fmt.Sprintf("%v %v %v %v", 36, 222, []byte(""), 0)}, nil},
 
 		// InsertData returns data isn't nil
 		{nil, []byte("\\2\\3\\4xxxx"), nil, []byte("xxxx")},
 		{[]byte("\\2\\3\\4xxx"), nil,
-			[]string{fmt.Sprintf("%v %v %v %v", 37, nil, []byte("def"), nil)}, nil},
+			[]string{fmt.Sprintf("%v %v %v %v", 37, 0, []byte(""), 0)}, nil},
 		{[]byte("\\2\\3\\4xxxxxx11\\22\\33\\44xxx"), nil, []string{
-			fmt.Sprintf("%v %v %v %v", 38, nil, []byte("def"), nil),
-			fmt.Sprintf("%v %v %v %v", 39, nil, []byte("def"), nil)}, nil},
+			fmt.Sprintf("%v %v %v %v", 38, 0, []byte(""), 0),
+			fmt.Sprintf("%v %v %v %v", 39, 0, []byte(""), 0)}, nil},
 		{[]byte("xx10\\2\\3"), []byte("\\4\\5xxx"), nil, []byte("xxx")},
 		{[]byte("xxx10\\2\\3"), []byte("\\4xxxx"),
 			[]string{fmt.Sprintf("%v %v %v %v", 10, 2, []byte("3"), 4)}, []byte("x")},
 		{[]byte("xxx10\\2\\3\\4\\5x"), []byte("xx11\\22\\33xxxxxx12\\222xxx"), []string{
 			fmt.Sprintf("%v %v %v %v", 10, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 40, nil, []byte("def"), nil)}, []byte("xxx")},
+			fmt.Sprintf("%v %v %v %v", 40, 0, []byte(""), 0)}, []byte("xxx")},
 	}
 	for _, ca := range cases {
 		data, err1 := ld.InsertData(ca.data1, ca.data2)

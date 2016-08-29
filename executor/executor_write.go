@@ -441,7 +441,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
 func (e *LoadDataInfo) insertData(cols []string) {
 	for i := 0; i < len(e.row); i++ {
 		if i >= len(cols) {
-			e.row[i].SetNull()
+			e.row[i].SetString("")
 			continue
 		}
 		e.row[i].SetString(cols[i])
