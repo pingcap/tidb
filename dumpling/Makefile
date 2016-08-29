@@ -20,14 +20,14 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 
 TARGET = ""
 
-.PHONY: all build install update parser clean todo test gotest interpreter server goyacc dev
+.PHONY: all build install update parser clean todo test gotest interpreter server goyacc dev benchkv
 
-default: server buildsucc
+default: server benchkv buildsucc
 
 buildsucc:
 	@echo Build TiDB Server successfully!
 
-all: dev server install
+all: dev server install benchkv
 
 dev: parser build test check
 
@@ -115,7 +115,7 @@ interpreter:
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
 	rm -rf vendor
 
-server: parser
+server: parser 
 ifeq ($(TARGET), "")
 	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) build -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
@@ -125,3 +125,10 @@ else
 	$(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
 	rm -rf vendor
 endif
+
+benchkv: 
+	rm -rf vendor && ln -s _vendor/vendor vendor
+	$(GO) build -ldflags '$(LDFLAGS)' -o bin/benchkv benchkv/main.go
+	rm -rf vendor
+
+
