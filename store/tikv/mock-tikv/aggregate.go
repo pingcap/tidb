@@ -86,8 +86,6 @@ type aggItem struct {
 	value types.Datum
 	// TODO: support group_concat
 	buffer *bytes.Buffer // Buffer is used for group_concat.
-	// Used by FirstRow aggregate function.
-	evaluated bool
 }
 
 // This is similar to ast.AggregateFuncExpr but use tipb.Expr.
@@ -202,14 +200,13 @@ func (n *aggregateFuncExpr) updateCount(ctx *selectContext, args []types.Datum) 
 
 func (n *aggregateFuncExpr) updateFirst(ctx *selectContext, args []types.Datum) error {
 	aggItem := n.getAggItem()
-	if aggItem.evaluated && !aggItem.value.IsNull() {
+	if !aggItem.value.IsNull() {
 		return nil
 	}
 	if len(args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
 	aggItem.value = args[0]
-	aggItem.evaluated = true
 	return nil
 }
 
@@ -224,9 +221,8 @@ func (n *aggregateFuncExpr) updateSum(ctx *selectContext, args []types.Datum) er
 		return nil
 	}
 	aggItem := n.getAggItem()
-	if !aggItem.evaluated {
+	if aggItem.value.IsNull() {
 		aggItem.value = arg
-		aggItem.evaluated = true
 		aggItem.count = 1
 		return nil
 	}
@@ -254,9 +250,8 @@ func (n *aggregateFuncExpr) updateMaxMin(ctx *selectContext, args []types.Datum,
 		return nil
 	}
 	aggItem := n.getAggItem()
-	if !aggItem.evaluated {
+	if aggItem.value.IsNull() {
 		aggItem.value = arg
-		aggItem.evaluated = true
 		return nil
 	}
 	c, err := aggItem.value.CompareDatum(arg)
