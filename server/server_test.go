@@ -341,3 +341,36 @@ func runTestMultiPacket(c *C) {
 		}
 	})
 }
+
+func runTestMultiStatements(c *C) {
+	runTests(c, dsn, func(dbt *DBTest) {
+		// Create Table
+		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
+
+		// Create Data
+		res := dbt.mustExec("INSERT INTO test VALUES (1, 1)")
+		count, err := res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+
+		// Update
+		res = dbt.mustExec("UPDATE test SET value = 3 WHERE id = 1; UPDATE test SET value = 4 WHERE id = 1; UPDATE test SET value = 5 WHERE id = 1;")
+		count, err = res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+
+		// Read
+		var out int
+		rows := dbt.mustQuery("SELECT value FROM test WHERE id=1;")
+		if rows.Next() {
+			rows.Scan(&out)
+			c.Assert(out, Equals, 5)
+
+			if rows.Next() {
+				dbt.Error("unexpected data")
+			}
+		} else {
+			dbt.Error("no data")
+		}
+	})
+}

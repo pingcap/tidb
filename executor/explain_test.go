@@ -15,79 +15,221 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite) TestExplain(c *C) {
-	// TODO: Recover this test after supporting explain clause.
-	//defer testleak.AfterTest(c)()
-	//tk := testkit.NewTestKit(c, s.store)
-	//tk.MustExec("use test")
-	//tk.MustExec("drop table if exists t1, t2")
-	//tk.MustExec("create table t1 (c1 int primary key, c2 int, index c2 (c2))")
-	//tk.MustExec("create table t2 (c1 int unique, c2 int)")
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, index c2 (c2))")
+	tk.MustExec("create table t2 (c1 int unique, c2 int)")
 
-	//cases := []struct {
-	//	sql    string
-	//	result []string
-	//}{
-	//	{
-	//		"select * from t1",
-	//		[]string{
-	//			"1 | SIMPLE | t1 | ALL | <nil> | <nil> | <nil> | <nil> | 0 | <nil>",
-	//		},
-	//	},
-	//	{
-	//		"select * from t1 order by c2",
-	//		[]string{
-	//			"1 | SIMPLE | t1 | index | c2 | c2 | <nil> | <nil> | 0 | <nil>",
-	//		},
-	//	},
-	//	{
-	//		"select * from t2 order by c2",
-	//		[]string{
-	//			"1 | SIMPLE | t2 | ALL | <nil> | <nil> | <nil> | <nil> | 0 | Using filesort",
-	//		},
-	//	},
-	//	{
-	//		"select * from t1 where t1.c1 > 0",
-	//		[]string{
-	//			"1 | SIMPLE | t1 | range | PRIMARY | PRIMARY | 8 | <nil> | 0 | Using where",
-	//		},
-	//	},
-	//	{
-	//		"select * from t1 where t1.c1 = 1",
-	//		[]string{
-	//			"1 | SIMPLE | t1 | const | PRIMARY | PRIMARY | 8 | <nil> | 0 | Using where",
-	//		},
-	//	},
-	//	{
-	//		"select * from t1 where t1.c2 = 1",
-	//		[]string{
-	//			"1 | SIMPLE | t1 | range | c2 | c2 | -1 | <nil> | 0 | Using where",
-	//		},
-	//	},
-	//	{
-	//		"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
-	//		[]string{
-	//			"1 | SIMPLE | t1 | range | PRIMARY | PRIMARY | 8 | <nil> | 0 | Using where",
-	//			"1 | SIMPLE | t2 | eq_ref | c1 | c1 | -1 | <nil> | 0 | Using where",
-	//		},
-	//	},
-	//	{
-	//		"update t1 set t1.c2 = 2 where t1.c1 = 1",
-	//		[]string{
-	//			"1 | SIMPLE | t1 | const | PRIMARY | PRIMARY | 8 | <nil> | 0 | Using where",
-	//		},
-	//	},
-	//	{
-	//		"delete from t1 where t1.c2 = 1",
-	//		[]string{
-	//			"1 | SIMPLE | t1 | range | c2 | c2 | -1 | <nil> | 0 | Using where",
-	//		},
-	//	},
-	//}
-	//for _, ca := range cases {
-	//	result := tk.MustQuery("explain " + ca.sql)
-	//	result.Check(testutil.RowsWithSep(" | ", ca.result...))
-	//}
+	cases := []struct {
+		sql    string
+		result string
+	}{
+		{
+			"select * from t1",
+			`{
+    "type": "Projection",
+    "exprs": [
+        "test.t1.c1",
+        "test.t1.c2"
+    ],
+    "child": {
+        "type": "TableScan",
+        "db": "test",
+        "table": "t1",
+        "desc": false,
+        "keep order": false,
+        "access condition": null,
+        "limit": 0
+    }
+}`,
+		},
+		{
+			"select * from t1 order by c2",
+			`{
+    "type": "Projection",
+    "exprs": [
+        "test.t1.c1",
+        "test.t1.c2"
+    ],
+    "child": {
+        "type": "IndexScan",
+        "db": "test",
+        "table": "t1",
+        "index": "c2",
+        "ranges": "[[\u003cnil\u003e,+inf]]",
+        "desc": false,
+        "out of order": false,
+        "double read": false,
+        "access condition": null,
+        "limit": 0
+    }
+}`,
+		},
+		{
+			"select * from t2 order by c2",
+			`{
+    "type": "Sort",
+    "exprs": [
+        {
+            "Expr": "t2.c2",
+            "Desc": false
+        }
+    ],
+    "child": {
+        "type": "Projection",
+        "exprs": [
+            "test.t2.c1",
+            "test.t2.c2"
+        ],
+        "child": {
+            "type": "TableScan",
+            "db": "test",
+            "table": "t2",
+            "desc": false,
+            "keep order": false,
+            "access condition": null,
+            "limit": 0
+        }
+    }
+}`,
+		},
+		{
+			"select * from t1 where t1.c1 > 0",
+			`{
+    "type": "Projection",
+    "exprs": [
+        "test.t1.c1",
+        "test.t1.c2"
+    ],
+    "child": {
+        "type": "TableScan",
+        "db": "test",
+        "table": "t1",
+        "desc": false,
+        "keep order": false,
+        "access condition": [
+            "gt(test.t1.c1, 0)"
+        ],
+        "limit": 0
+    }
+}`,
+		},
+		{
+			"select * from t1 where t1.c2 = 1",
+			`{
+    "type": "Projection",
+    "exprs": [
+        "test.t1.c1",
+        "test.t1.c2"
+    ],
+    "child": {
+        "type": "IndexScan",
+        "db": "test",
+        "table": "t1",
+        "index": "c2",
+        "ranges": "[[1,1]]",
+        "desc": false,
+        "out of order": true,
+        "double read": false,
+        "access condition": [
+            "eq(test.t1.c2, 1)"
+        ],
+        "limit": 0
+    }
+}`,
+		},
+		{
+			"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
+			`{
+    "type": "Projection",
+    "exprs": [
+        "test.t1.c1",
+        "test.t1.c2",
+        "test.t2.c1",
+        "test.t2.c2"
+    ],
+    "child": {
+        "type": "LeftJoin",
+        "eqCond": [
+            "eq(test.t1.c2, test.t2.c1)"
+        ],
+        "leftCond": null,
+        "rightCond": null,
+        "otherCond": null,
+        "leftPlan": {
+            "type": "TableScan",
+            "db": "test",
+            "table": "t1",
+            "desc": false,
+            "keep order": false,
+            "access condition": [
+                "gt(test.t1.c1, 1)"
+            ],
+            "limit": 0
+        },
+        "rightPlan": {
+            "type": "TableScan",
+            "db": "test",
+            "table": "t2",
+            "desc": false,
+            "keep order": false,
+            "access condition": null,
+            "limit": 0
+        }
+    }
+}`,
+		},
+		{
+			"update t1 set t1.c2 = 2 where t1.c1 = 1",
+			`{
+    "id": "Update_3",
+    "children": [
+        {
+            "type": "TableScan",
+            "db": "test",
+            "table": "t1",
+            "desc": false,
+            "keep order": false,
+            "access condition": [
+                "eq(test.t1.c1, 1)"
+            ],
+            "limit": 0
+        }
+    ]
+}`,
+		},
+		{
+			"delete from t1 where t1.c2 = 1",
+			`{
+    "id": "Delete_3",
+    "children": [
+        {
+            "type": "IndexScan",
+            "db": "test",
+            "table": "t1",
+            "index": "c2",
+            "ranges": "[[1,1]]",
+            "desc": false,
+            "out of order": true,
+            "double read": false,
+            "access condition": [
+                "eq(test.t1.c2, 1)"
+            ],
+            "limit": 0
+        }
+    ]
+}`,
+		},
+	}
+	for _, ca := range cases {
+		result := tk.MustQuery("explain " + ca.sql)
+		result.Check(testkit.Rows("EXPLAIN " + ca.result))
+	}
 }

@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -33,131 +32,6 @@ var (
 	_ Executor = &DeleteExec{}
 	_ Executor = &InsertExec{}
 )
-
-// UpdateExec represents an update executor.
-type UpdateExec struct {
-	SelectExec  Executor
-	OrderedList []*ast.Assignment
-
-	// Map for unique (Table, handle) pair.
-	updatedRowKeys map[table.Table]map[int64]struct{}
-	ctx            context.Context
-
-	rows        []*Row          // The rows fetched from TableExec.
-	newRowsData [][]types.Datum // The new values to be set.
-	fetched     bool
-	cursor      int
-}
-
-// Schema implements Executor Schema interface.
-func (e *UpdateExec) Schema() expression.Schema {
-	return nil
-}
-
-// Next implements Executor Next interface.
-func (e *UpdateExec) Next() (*Row, error) {
-	if !e.fetched {
-		err := e.fetchRows()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.fetched = true
-	}
-
-	assignFlag, err := getUpdateColumns(e.OrderedList)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if e.cursor >= len(e.rows) {
-		return nil, nil
-	}
-	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[table.Table]map[int64]struct{})
-	}
-	row := e.rows[e.cursor]
-	newData := e.newRowsData[e.cursor]
-	for _, entry := range row.RowKeys {
-		tbl := entry.Tbl
-		if e.updatedRowKeys[tbl] == nil {
-			e.updatedRowKeys[tbl] = make(map[int64]struct{})
-		}
-		offset := e.getTableOffset(tbl)
-		handle := entry.Handle
-		oldData := row.Data[offset : offset+len(tbl.WritableCols())]
-		newTableData := newData[offset : offset+len(tbl.WritableCols())]
-		_, ok := e.updatedRowKeys[tbl][handle]
-		if ok {
-			// Each matching row is updated once, even if it matches the conditions multiple times.
-			continue
-		}
-		// Update row
-		err1 := updateRecord(e.ctx, handle, oldData, newTableData, assignFlag, tbl, offset, false)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
-		}
-		e.updatedRowKeys[tbl][handle] = struct{}{}
-	}
-	e.cursor++
-	return &Row{}, nil
-}
-
-func getUpdateColumns(assignList []*ast.Assignment) ([]bool, error) {
-	assignFlag := make([]bool, len(assignList))
-	for i, v := range assignList {
-		if v != nil {
-			assignFlag[i] = true
-		} else {
-			assignFlag[i] = false
-		}
-	}
-	return assignFlag, nil
-}
-
-func (e *UpdateExec) fetchRows() error {
-	for {
-		row, err := e.SelectExec.Next()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if row == nil {
-			return nil
-		}
-		data := make([]types.Datum, len(e.SelectExec.Fields()))
-		newData := make([]types.Datum, len(e.SelectExec.Fields()))
-		for i, f := range e.SelectExec.Fields() {
-			data[i] = types.NewDatum(f.Expr.GetValue())
-			newData[i] = data[i]
-			if e.OrderedList[i] != nil {
-				val, err := evaluator.Eval(e.ctx, e.OrderedList[i].Expr)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				newData[i] = val
-			}
-		}
-		row.Data = data
-		e.rows = append(e.rows, row)
-		e.newRowsData = append(e.newRowsData, newData)
-	}
-}
-
-func (e *UpdateExec) getTableOffset(t table.Table) int {
-	fields := e.SelectExec.Fields()
-	i := 0
-	for i < len(fields) {
-		field := fields[i]
-		if field.Table.Name.L == t.Meta().Name.L {
-			return i
-		}
-		for _, col := range field.Table.Columns {
-			if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
-				continue
-			}
-			i++
-		}
-	}
-	return 0
-}
 
 func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, offset int, onDuplicateUpdate bool) error {
 	cols := t.Cols()
@@ -186,7 +60,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			if err != nil {
 				return errors.Trace(err)
 			}
-			t.RebaseAutoID(val, true, true)
+			t.RebaseAutoID(val, true)
 		}
 
 		touched[colIndex] = true
@@ -257,17 +131,6 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		variable.GetSessionVars(ctx).AddAffectedRows(2)
 	}
 	return nil
-}
-
-// Fields implements Executor Fields interface.
-// Returns nil to indicate there is no output.
-func (e *UpdateExec) Fields() []*ast.ResultField {
-	return nil
-}
-
-// Close implements Executor Close interface.
-func (e *UpdateExec) Close() error {
-	return e.SelectExec.Close()
 }
 
 // DeleteExec represents a delete executor.
@@ -419,10 +282,6 @@ type InsertValues struct {
 	Lists     [][]ast.ExprNode
 	Setlist   []*ast.Assignment
 	IsPrepare bool
-
-	// Used for rebase autoinc id.
-	needRebase bool
-	rebaseID   int64
 }
 
 // InsertExec represents an insert executor.
@@ -469,9 +328,6 @@ func (e *InsertExec) Next() (*Row, error) {
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if e.needRebase {
-		e.Table.RebaseAutoID(e.rebaseID, true, true)
 	}
 
 	for _, row := range rows {
@@ -735,11 +591,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				return errors.Trace(err)
 			}
 			if val != 0 {
-				e.needRebase = true
-				if e.rebaseID < val {
-					e.rebaseID = val
-				}
-				e.Table.RebaseAutoID(e.rebaseID, true, false)
+				e.Table.RebaseAutoID(val, true)
 				continue
 			}
 		}
@@ -949,4 +801,143 @@ func (e *ReplaceExec) Next() (*Row, error) {
 	}
 	e.finished = true
 	return nil, nil
+}
+
+// UpdateExec represents a new update executor.
+type UpdateExec struct {
+	SelectExec  Executor
+	OrderedList []*expression.Assignment
+
+	// Map for unique (Table, handle) pair.
+	updatedRowKeys map[table.Table]map[int64]struct{}
+	ctx            context.Context
+
+	rows        []*Row          // The rows fetched from TableExec.
+	newRowsData [][]types.Datum // The new values to be set.
+	fetched     bool
+	cursor      int
+}
+
+// Schema implements Executor Schema interface.
+func (e *UpdateExec) Schema() expression.Schema {
+	return nil
+}
+
+// Next implements Executor Next interface.
+func (e *UpdateExec) Next() (*Row, error) {
+	if !e.fetched {
+		err := e.fetchRows()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.fetched = true
+	}
+
+	assignFlag, err := getUpdateColumns(e.OrderedList)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if e.cursor >= len(e.rows) {
+		return nil, nil
+	}
+	if e.updatedRowKeys == nil {
+		e.updatedRowKeys = make(map[table.Table]map[int64]struct{})
+	}
+	row := e.rows[e.cursor]
+	newData := e.newRowsData[e.cursor]
+	for _, entry := range row.RowKeys {
+		tbl := entry.Tbl
+		if e.updatedRowKeys[tbl] == nil {
+			e.updatedRowKeys[tbl] = make(map[int64]struct{})
+		}
+		offset := e.getTableOffset(*entry)
+		handle := entry.Handle
+		oldData := row.Data[offset : offset+len(tbl.WritableCols())]
+		newTableData := newData[offset : offset+len(tbl.WritableCols())]
+		_, ok := e.updatedRowKeys[tbl][handle]
+		if ok {
+			// Each matched row is updated once, even if it matches the conditions multiple times.
+			continue
+		}
+		// Update row
+		err1 := updateRecord(e.ctx, handle, oldData, newTableData, assignFlag, tbl, offset, false)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		e.updatedRowKeys[tbl][handle] = struct{}{}
+	}
+	e.cursor++
+	return &Row{}, nil
+}
+
+func getUpdateColumns(assignList []*expression.Assignment) ([]bool, error) {
+	assignFlag := make([]bool, len(assignList))
+	for i, v := range assignList {
+		if v != nil {
+			assignFlag[i] = true
+		} else {
+			assignFlag[i] = false
+		}
+	}
+	return assignFlag, nil
+}
+
+func (e *UpdateExec) fetchRows() error {
+	for {
+		row, err := e.SelectExec.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if row == nil {
+			return nil
+		}
+		data := make([]types.Datum, len(e.SelectExec.Schema()))
+		newData := make([]types.Datum, len(e.SelectExec.Schema()))
+		for i, s := range e.SelectExec.Schema() {
+			data[i], err = s.Eval(row.Data, e.ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			newData[i] = data[i]
+			if e.OrderedList[i] != nil {
+				val, err := e.OrderedList[i].Expr.Eval(row.Data, e.ctx)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				newData[i] = val
+			}
+		}
+		row.Data = data
+		e.rows = append(e.rows, row)
+		e.newRowsData = append(e.newRowsData, newData)
+	}
+}
+
+func (e *UpdateExec) getTableOffset(entry RowKeyEntry) int {
+	t := entry.Tbl
+	var tblName string
+	if entry.TableAsName == nil || len(entry.TableAsName.L) == 0 {
+		tblName = t.Meta().Name.L
+	} else {
+		tblName = entry.TableAsName.L
+	}
+	schema := e.SelectExec.Schema()
+	for i := 0; i < len(schema); i++ {
+		s := schema[i]
+		if s.TblName.L == tblName {
+			return i
+		}
+	}
+	return 0
+}
+
+// Fields implements Executor Fields interface.
+// Returns nil to indicate there is no output.
+func (e *UpdateExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Close implements Executor Close interface.
+func (e *UpdateExec) Close() error {
+	return e.SelectExec.Close()
 }

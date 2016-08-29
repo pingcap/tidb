@@ -97,8 +97,8 @@ type MaxOneRow struct {
 	baseLogicalPlan
 }
 
-// NewTableDual represents a dual table plan.
-type NewTableDual struct {
+// TableDual represents a dual table plan.
+type TableDual struct {
 	baseLogicalPlan
 }
 
@@ -124,13 +124,13 @@ type Trim struct {
 	baseLogicalPlan
 }
 
-// NewUnion represents Union plan.
-type NewUnion struct {
+// Union represents Union plan.
+type Union struct {
 	baseLogicalPlan
 }
 
-// NewSort stands for the order by plan.
-type NewSort struct {
+// Sort stands for the order by plan.
+type Sort struct {
 	baseLogicalPlan
 
 	ByItems []*ByItems
@@ -138,16 +138,16 @@ type NewSort struct {
 	ExecLimit *Limit
 }
 
-// NewUpdate represents NewUpdate plan.
-type NewUpdate struct {
+// Update represents Update plan.
+type Update struct {
 	baseLogicalPlan
 
 	SelectPlan  Plan
 	OrderedList []*expression.Assignment
 }
 
-// NewDelete represents a delete plan.
-type NewDelete struct {
+// Delete represents a delete plan.
+type Delete struct {
 	baseLogicalPlan
 
 	SelectPlan   Plan

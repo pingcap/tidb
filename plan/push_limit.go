@@ -35,7 +35,7 @@ func (p *Limit) PushLimit(l *Limit) PhysicalPlan {
 }
 
 // PushLimit implements PhysicalPlan PushLimit interface.
-func (p *NewSort) PushLimit(l *Limit) PhysicalPlan {
+func (p *Sort) PushLimit(l *Limit) PhysicalPlan {
 	child := p.GetChildByIndex(0).(PhysicalPlan)
 	newChild := child.PushLimit(nil)
 	p.ExecLimit = l
@@ -116,7 +116,7 @@ func (p *PhysicalHashJoin) PushLimit(l *Limit) PhysicalPlan {
 }
 
 // PushLimit implements PhysicalPlan PushLimit interface.
-func (p *NewUnion) PushLimit(l *Limit) PhysicalPlan {
+func (p *Union) PushLimit(l *Limit) PhysicalPlan {
 	for i, child := range p.GetChildren() {
 		if l != nil {
 			p.children[i] = child.(PhysicalPlan).PushLimit(&Limit{Count: l.Count + l.Offset})
@@ -254,7 +254,7 @@ func (p *Insert) PushLimit(_ *Limit) PhysicalPlan {
 }
 
 // PushLimit implements PhysicalPlan PushLimit interface.
-func (p *NewTableDual) PushLimit(l *Limit) PhysicalPlan {
+func (p *TableDual) PushLimit(l *Limit) PhysicalPlan {
 	if l == nil {
 		return p
 	}
@@ -262,7 +262,7 @@ func (p *NewTableDual) PushLimit(l *Limit) PhysicalPlan {
 }
 
 // PushLimit implements PhysicalPlan PushLimit interface.
-func (p *NewUpdate) PushLimit(_ *Limit) PhysicalPlan {
+func (p *Update) PushLimit(_ *Limit) PhysicalPlan {
 	if len(p.GetChildren()) == 0 {
 		return p
 	}
@@ -274,7 +274,7 @@ func (p *NewUpdate) PushLimit(_ *Limit) PhysicalPlan {
 }
 
 // PushLimit implements PhysicalPlan PushLimit interface.
-func (p *NewDelete) PushLimit(_ *Limit) PhysicalPlan {
+func (p *Delete) PushLimit(_ *Limit) PhysicalPlan {
 	if len(p.GetChildren()) == 0 {
 		return p
 	}

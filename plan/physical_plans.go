@@ -14,6 +14,11 @@
 package plan
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 )
@@ -123,10 +128,57 @@ func (p *PhysicalIndexScan) Copy() PhysicalPlan {
 	return &np
 }
 
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
+	limit := 0
+	if p.LimitCount != nil {
+		limit = int(*p.LimitCount)
+	}
+	access, err := json.Marshal(p.AccessCondition)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"type\": \"IndexScan\",\n"+
+		"\"db\": \"%s\","+
+		"\n \"table\": \"%s\","+
+		"\n \"index\": \"%s\","+
+		"\n \"ranges\": \"%s\","+
+		"\n \"desc\": %v,"+
+		"\n \"out of order\": %v,"+
+		"\n \"double read\": %v,"+
+		"\n \"access condition\": %s,"+
+		"\n \"limit\": %d\n}",
+		p.DBName.O, p.Table.Name.O, p.Index.Name.O, p.Ranges, p.Desc, p.OutOfOrder, p.DoubleRead, access, limit))
+	return buffer.Bytes(), nil
+}
+
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalTableScan) Copy() PhysicalPlan {
 	np := *p
 	return &np
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
+	limit := 0
+	if p.LimitCount != nil {
+		limit = int(*p.LimitCount)
+	}
+	access, err := json.Marshal(p.AccessCondition)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"type\": \"TableScan\",\n"+
+		" \"db\": \"%s\","+
+		"\n \"table\": \"%s\","+
+		"\n \"desc\": %v,"+
+		"\n \"keep order\": %v,"+
+		"\n \"access condition\": %s,"+
+		"\n \"limit\": %d}",
+		p.DBName.O, p.Table.Name.O, p.Desc, p.KeepOrder, access, limit))
+	return buffer.Bytes(), nil
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -135,16 +187,123 @@ func (p *PhysicalApply) Copy() PhysicalPlan {
 	return &np
 }
 
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
+	innerPlan, err := json.Marshal(p.InnerPlan.(PhysicalPlan))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	outerPlan, err := json.Marshal(p.children[0].(PhysicalPlan))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	cond := "null"
+	if p.Checker != nil {
+		cond = "\"" + p.Checker.Condition.String() + "\""
+	}
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"type\": \"Apply\",\"innerPlan\": %v,\n \"outerPlan\": %v,\n \"condition\": %s\n}", innerPlan, outerPlan, cond))
+	return buffer.Bytes(), nil
+}
+
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalHashSemiJoin) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalHashSemiJoin) MarshalJSON() ([]byte, error) {
+	leftChild, err := json.Marshal(p.children[0].(PhysicalPlan))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rightChild, err := json.Marshal(p.children[1].(PhysicalPlan))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	eqConds, err := json.Marshal(p.EqualConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	leftConds, err := json.Marshal(p.LeftConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rightConds, err := json.Marshal(p.RightConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	otherConds, err := json.Marshal(p.OtherConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf(
+		"\"type\": \"SemiJoin\",\n "+
+			"\"with aux\": %v,"+
+			"\"anti\": %v,"+
+			"\"eqCond\": %s,\n "+
+			"\"leftCond\": %s,\n "+
+			"\"rightCond\": %s,\n "+
+			"\"otherCond\": %s,\n"+
+			"\"leftPlan\": %s,\n "+
+			"\"rightPlan\": %s"+
+			"}",
+		p.WithAux, p.Anti, eqConds, leftConds, rightConds, otherConds, leftChild, rightChild))
+	return buffer.Bytes(), nil
+}
+
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalHashJoin) Copy() PhysicalPlan {
 	np := *p
 	return &np
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
+	leftChild, err := json.Marshal(p.children[0].(PhysicalPlan))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rightChild, err := json.Marshal(p.children[1].(PhysicalPlan))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tp := "InnerJoin"
+	if p.JoinType == LeftOuterJoin {
+		tp = "LeftJoin"
+	} else if p.JoinType == RightOuterJoin {
+		tp = "RightJoin"
+	}
+	eqConds, err := json.Marshal(p.EqualConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	leftConds, err := json.Marshal(p.LeftConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rightConds, err := json.Marshal(p.RightConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	otherConds, err := json.Marshal(p.OtherConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf(
+		"\"type\": \"%s\",\n "+
+			"\"eqCond\": %s,\n "+
+			"\"leftCond\": %s,\n "+
+			"\"rightCond\": %s,\n "+
+			"\"otherCond\": %s,\n"+
+			"\"leftPlan\": %s,\n "+
+			"\"rightPlan\": %s"+
+			"}",
+		tp, eqConds, leftConds, rightConds, otherConds, leftChild, rightChild))
+	return buffer.Bytes(), nil
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -159,10 +318,44 @@ func (p *Selection) Copy() PhysicalPlan {
 	return &np
 }
 
+// MarshalJSON implements json.Marshaler interface.
+func (p *Selection) MarshalJSON() ([]byte, error) {
+	child, err := json.Marshal(p.children[0].(PhysicalPlan))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	conds, err := json.Marshal(p.Conditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"type\": \"Selection\",\n"+
+		" \"condition\": %s,\n"+
+		" \"child\": %s\n}", conds, child))
+	return buffer.Bytes(), nil
+}
+
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Projection) Copy() PhysicalPlan {
 	np := *p
 	return &np
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (p *Projection) MarshalJSON() ([]byte, error) {
+	child, err := json.Marshal(p.children[0].(PhysicalPlan))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	exprs, err := json.Marshal(p.Exprs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"type\": \"Projection\",\n"+
+		" \"exprs\": %s,\n"+
+		" \"child\": %s\n}", exprs, child))
+	return buffer.Bytes(), nil
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -189,20 +382,51 @@ func (p *Limit) Copy() PhysicalPlan {
 	return &np
 }
 
+// MarshalJSON implements json.Marshaler interface.
+func (p *Limit) MarshalJSON() ([]byte, error) {
+	child, err := json.Marshal(p.children[0].(PhysicalPlan))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"type\": \"Limit\",\n"+
+		" \"limit\": %d,\n"+
+		" \"offset\": %d,\n"+
+		" \"child\": %s}", p.Count, p.Offset, child))
+	return buffer.Bytes(), nil
+}
+
 // Copy implements the PhysicalPlan Copy interface.
-func (p *NewUnion) Copy() PhysicalPlan {
+func (p *Union) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *NewSort) Copy() PhysicalPlan {
+func (p *Sort) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
 
+// MarshalJSON implements json.Marshaler interface.
+func (p *Sort) MarshalJSON() ([]byte, error) {
+	child, err := json.Marshal(p.children[0].(PhysicalPlan))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	exprs, err := json.Marshal(p.ByItems)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"type\": \"Sort\",\n"+
+		" \"exprs\": %s,\n"+
+		" \"child\": %s}", exprs, child))
+	return buffer.Bytes(), nil
+}
+
 // Copy implements the PhysicalPlan Copy interface.
-func (p *NewTableDual) Copy() PhysicalPlan {
+func (p *TableDual) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
@@ -226,7 +450,7 @@ func (p *Aggregation) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *NewUpdate) Copy() PhysicalPlan {
+func (p *Update) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
@@ -238,7 +462,7 @@ func (p *PhysicalDummyScan) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *NewDelete) Copy() PhysicalPlan {
+func (p *Delete) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }

@@ -184,7 +184,7 @@ func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 	}
 	if !pr.aggregate {
 		handleBytes := row.GetHandle()
-		datums, err := codec.Decode(handleBytes)
+		datums, err := codec.Decode(handleBytes, 1)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}

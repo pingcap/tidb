@@ -80,7 +80,7 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	case *ast.DeallocateStmt:
 		return &Deallocate{Name: x.Name}
 	case *ast.DeleteStmt:
-		return b.buildNewDelete(x)
+		return b.buildDelete(x)
 	case *ast.DropDatabaseStmt:
 		return b.buildDDL(x)
 	case *ast.DropIndexStmt:
@@ -96,11 +96,11 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
-		return b.buildNewSelect(x)
+		return b.buildSelect(x)
 	case *ast.UnionStmt:
-		return b.buildNewUnion(x)
+		return b.buildUnion(x)
 	case *ast.UpdateStmt:
-		return b.buildNewUpdate(x)
+		return b.buildUpdate(x)
 	case *ast.UseStmt:
 		return b.buildSimple(x)
 	case *ast.SetStmt:
@@ -384,73 +384,6 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 	return conditions
 }
 
-func (b *planBuilder) buildDistinct(src Plan) Plan {
-	d := &Distinct{}
-	addChild(d, src)
-	d.SetFields(src.Fields())
-	return d
-}
-
-func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, fields []*ast.ResultField) []*ast.Assignment {
-	newList := make([]*ast.Assignment, len(fields))
-	for _, assign := range list {
-		offset, err := columnOffsetInFields(assign.Column, fields)
-		if err != nil {
-			b.err = errors.Trace(err)
-			return nil
-		}
-		newList[offset] = assign
-	}
-	return newList
-}
-
-func columnOffsetInFields(cn *ast.ColumnName, fields []*ast.ResultField) (int, error) {
-	offset := -1
-	tableNameL := cn.Table.L
-	columnNameL := cn.Name.L
-	if tableNameL != "" {
-		for i, f := range fields {
-			// Check table name.
-			if f.TableAsName.L != "" {
-				if tableNameL != f.TableAsName.L {
-					continue
-				}
-			} else {
-				if tableNameL != f.Table.Name.L {
-					continue
-				}
-			}
-			// Check column name.
-			if f.ColumnAsName.L != "" {
-				if columnNameL != f.ColumnAsName.L {
-					continue
-				}
-			} else {
-				if columnNameL != f.Column.Name.L {
-					continue
-				}
-			}
-
-			offset = i
-		}
-	} else {
-		for i, f := range fields {
-			matchAsName := f.ColumnAsName.L != "" && f.ColumnAsName.L == columnNameL
-			matchColumnName := f.ColumnAsName.L == "" && f.Column.Name.L == columnNameL
-			if matchAsName || matchColumnName {
-				if offset != -1 {
-					return -1, errors.Errorf("column %s is ambiguous.", cn.Name.O)
-				}
-				offset = i
-			}
-		}
-	}
-	if offset == -1 {
-		return -1, errors.Errorf("column %s not found", cn.Name.O)
-	}
-	return offset, nil
-}
-
 func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	var p Plan
 	p = &Show{
@@ -522,26 +455,32 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
+	if logic, ok := targetPlan.(LogicalPlan); ok {
+		var err error
+		_, logic, err = logic.PredicatePushDown(nil)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		_, err = logic.PruneColumnsAndResolveIndices(logic.GetSchema())
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		_, res, _, err := logic.convert2PhysicalPlan(nil)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		targetPlan = res.p.PushLimit(nil)
+	}
 	p := &Explain{StmtPlan: targetPlan}
 	addChild(p, targetPlan)
-	p.SetFields(buildExplainFields())
+	col := &expression.Column{
+		RetType: types.NewFieldType(mysql.TypeString),
+	}
+	p.SetSchema([]*expression.Column{col, col})
 	return p
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
-func buildExplainFields() []*ast.ResultField {
-	rfs := make([]*ast.ResultField, 0, 10)
-	rfs = append(rfs, buildResultField("", "id", mysql.TypeLonglong, 4))
-	rfs = append(rfs, buildResultField("", "select_type", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "table", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "type", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "possible_keys", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "key", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "key_len", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "ref", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "rows", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "Extra", mysql.TypeVarchar, 128))
-	return rfs
 }
 
 func buildShowProcedureFields() []*ast.ResultField {

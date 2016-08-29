@@ -37,14 +37,15 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
 
 // Engine prefix name
 const (
-	EngineGoLevelDBMemory = "memory://"
-	defaultMaxRetries     = 30
-	retrySleepInterval    = 500 * time.Millisecond
+	EngineGoLevelDBMemory        = "memory://"
+	defaultMaxRetries            = 30
+	retryInterval         uint64 = 500
 )
 
 type domainMap struct {
@@ -65,7 +66,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if !localstore.IsLocalStore(store) {
 		lease = schemaLease
 	}
-	d, err = domain.NewDomain(store, lease)
+	err = util.RunWithRetry(defaultMaxRetries, retryInterval, func() (retry bool, err1 error) {
+		d, err1 = domain.NewDomain(store, lease)
+		return true, err1
+	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -230,15 +234,10 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	}
 
 	var s kv.Storage
-	for i := 1; i <= maxRetries; i++ {
+	util.RunWithRetry(maxRetries, retryInterval, func() (bool, error) {
 		s, err = d.Open(path)
-		if err == nil || !kv.IsRetryableError(err) {
-			break
-		}
-		sleepTime := time.Duration(uint64(retrySleepInterval) * uint64(i))
-		log.Warnf("Waiting store to get ready, sleep %v and try again...", sleepTime)
-		time.Sleep(sleepTime)
-	}
+		return kv.IsRetryableError(err), err
+	})
 	return s, errors.Trace(err)
 }
 
