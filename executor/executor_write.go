@@ -431,37 +431,37 @@ type LoadDataInfo struct {
 	LinesInfo  *ast.LinesClause
 }
 
-// getVaildData returns prevData and curData that starts from starting symbol.
+// getValidData returns prevData and curData that starts from starting symbol.
 // If the data doesn't have starting symbol, prevData is nil and curData is curData[len(curData)-startingLen+1:].
 // If curData size less than startingLen, curData is returned directly.
-func (e *LoadDataInfo) getVaildData(prevData, curData []byte) ([]byte, []byte) {
+func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 	startingLen := len(e.LinesInfo.Starting)
 	if startingLen == 0 {
 		return prevData, curData
 	}
 
-	// starting symbol in the prevData
-	idx := strings.Index(string(prevData), e.LinesInfo.Starting)
-	if idx != -1 {
-		return prevData[idx:], curData
-	}
-
-	// starting symbol in the middle of prevData and curData
-	restStart := make([]byte, 0, startingLen-1)
-	if len(curData) < startingLen-1 {
-		restStart = curData
-	} else {
-		restStart = curData[:startingLen-1]
-	}
 	prevLen := len(prevData)
-	prevData = append(prevData, restStart...)
-	idx = strings.Index(string(prevData), e.LinesInfo.Starting)
-	if idx != -1 {
-		return prevData[idx:prevLen], curData
+	if prevLen > 0 {
+		// starting symbol in the prevData
+		idx := strings.Index(string(prevData), e.LinesInfo.Starting)
+		if idx != -1 {
+			return prevData[idx:], curData
+		}
+
+		// starting symbol in the middle of prevData and curData
+		restStart := curData
+		if len(curData) >= startingLen {
+			restStart = curData[:startingLen-1]
+		}
+		prevData = append(prevData, restStart...)
+		idx = strings.Index(string(prevData), e.LinesInfo.Starting)
+		if idx != -1 {
+			return prevData[idx:prevLen], curData
+		}
 	}
 
 	// starting symbol in the curData
-	idx = strings.Index(string(curData), e.LinesInfo.Starting)
+	idx := strings.Index(string(curData), e.LinesInfo.Starting)
 	if idx != -1 {
 		return nil, curData[idx:]
 	}
@@ -475,11 +475,11 @@ func (e *LoadDataInfo) getVaildData(prevData, curData []byte) ([]byte, []byte) {
 
 // getLine returns a line, curData, the next data start index and a bool value.
 // If it has starting symbol the bool is true, otherwise is false.
-func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, int, bool) {
+func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) {
 	startingLen := len(e.LinesInfo.Starting)
-	prevData, curData = e.getVaildData(prevData, curData)
+	prevData, curData = e.getValidData(prevData, curData)
 	if prevData == nil && len(curData) < startingLen {
-		return nil, curData, 0, false
+		return nil, curData, false
 	}
 
 	prevLen := len(prevData)
@@ -495,7 +495,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, int, b
 	if endIdx == -1 {
 		// no terminated symbol
 		if len(prevData) == 0 {
-			return nil, curData, 0, true
+			return nil, curData, true
 		}
 
 		// terminated symbol in the middle of prevData and curData
@@ -503,28 +503,28 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, int, b
 		endIdx = strings.Index(string(curData[startingLen:]), e.LinesInfo.Terminated)
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
-			return curData[startingLen : startingLen+endIdx], curData, nextDataIdx, true
+			return curData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
 		}
 		// no terminated symbol
-		return nil, curData, 0, true
+		return nil, curData, true
 	}
 
 	// terminated symbol in the curData
+	nextDataIdx := curStartIdx + endIdx + terminatedLen
 	if len(prevData) == 0 {
-		nextDataIdx := curStartIdx + endIdx + terminatedLen
-		return curData[curStartIdx : curStartIdx+endIdx], curData, nextDataIdx, true
+		return curData[curStartIdx : curStartIdx+endIdx], curData[nextDataIdx:], true
 	}
 
 	// terminated symbol in the curData
-	prevData = append(prevData, curData[:curStartIdx+endIdx+terminatedLen]...)
+	prevData = append(prevData, curData[:nextDataIdx]...)
 	endIdx = strings.Index(string(prevData[startingLen:]), e.LinesInfo.Terminated)
-	lineLen := startingLen + endIdx + terminatedLen
 	if endIdx >= prevLen {
-		return prevData[startingLen : startingLen+endIdx], prevData, lineLen, true
+		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
 	}
 
 	// terminated symbol in the middle of prevData and curData
-	return prevData[startingLen : startingLen+endIdx], curData, lineLen - prevLen, true
+	lineLen := startingLen + endIdx + terminatedLen
+	return prevData[startingLen : startingLen+endIdx], curData[lineLen-prevLen:], true
 }
 
 // InsertData inserts data into specified table according to the specified format.
@@ -536,24 +536,16 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
 		return nil, nil
 	}
 
-	var (
-		line               []byte
-		nextDataIdx        int
-		isEOF, hasStarting bool
-	)
+	var line []byte
+	var isEOF, hasStarting bool
 	cols := make([]string, 0, len(e.row))
 	if len(prevData) > 0 && len(curData) == 0 {
 		isEOF = true
 		prevData, curData = curData, prevData
 	}
 	for len(curData) > 0 {
-		line, curData, nextDataIdx, hasStarting = e.getLine(prevData, curData)
+		line, curData, hasStarting = e.getLine(prevData, curData)
 		prevData = nil
-		if nextDataIdx >= len(curData) {
-			curData = nil
-		} else {
-			curData = curData[nextDataIdx:]
-		}
 
 		// If it doesn't find the terminated symbol and this data isn't the last data,
 		// the data can't be inserted.

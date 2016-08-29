@@ -446,7 +446,13 @@ func (s *testSuite) TestLoadData(c *C) {
 	for _, ca := range cases {
 		data, err1 := ld.InsertData(ca.data1, ca.data2)
 		c.Assert(err1, IsNil)
-		c.Assert(data, DeepEquals, ca.restData)
+		if ca.restData == nil {
+			c.Assert(data, HasLen, 0,
+				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+		} else {
+			c.Assert(data, DeepEquals, ca.restData,
+				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+		}
 		err1 = ctx.CommitTxn()
 		c.Assert(err1, IsNil)
 		r = tk.MustQuery(selectSQL)
@@ -475,7 +481,8 @@ func (s *testSuite) TestLoadData(c *C) {
 	for _, ca := range cases {
 		data, err1 := ld.InsertData(ca.data1, ca.data2)
 		c.Assert(err1, IsNil)
-		c.Assert(data, IsNil, Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+		c.Assert(data, HasLen, 0,
+			Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
 		err1 = ctx.CommitTxn()
 		c.Assert(err1, IsNil)
 		r = tk.MustQuery(selectSQL)
@@ -544,7 +551,13 @@ func (s *testSuite) TestLoadData(c *C) {
 	for _, ca := range cases {
 		data, err1 := ld.InsertData(ca.data1, ca.data2)
 		c.Assert(err1, IsNil)
-		c.Assert(data, DeepEquals, ca.restData)
+		if ca.restData == nil {
+			c.Assert(data, HasLen, 0,
+				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+		} else {
+			c.Assert(data, DeepEquals, ca.restData,
+				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+		}
 		err1 = ctx.CommitTxn()
 		c.Assert(err1, IsNil)
 		r = tk.MustQuery(selectSQL)
@@ -600,7 +613,13 @@ func (s *testSuite) TestLoadData(c *C) {
 	for _, ca := range cases {
 		data, err1 := ld.InsertData(ca.data1, ca.data2)
 		c.Assert(err1, IsNil)
-		c.Assert(data, DeepEquals, ca.restData)
+		if ca.restData == nil {
+			c.Assert(data, HasLen, 0,
+				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+		} else {
+			c.Assert(data, DeepEquals, ca.restData,
+				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+		}
 		err1 = ctx.CommitTxn()
 		c.Assert(err1, IsNil)
 		r = tk.MustQuery(selectSQL)
