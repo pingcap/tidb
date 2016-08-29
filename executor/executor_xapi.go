@@ -206,20 +206,24 @@ func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType)
 }
 
 // extractHandlesFromIndexResult gets some handles from SelectResult.
-// It should be called in a loop until nil is returned.
-func extractHandlesFromIndexResult(idxResult xapi.SelectResult) ([]int64, error) {
-	subResult, err := idxResult.Next()
-	if err != nil {
-		return nil, errors.Trace(err)
+// It should be called in a loop until finish or error.
+func extractHandlesFromIndexResult(idxResult xapi.SelectResult) (handles []int64, finish bool, err error) {
+	subResult, e0 := idxResult.Next()
+	if e0 != nil {
+		err = errors.Trace(e0)
+		return
 	}
 	if subResult == nil {
-		return nil, nil
+		finish = true
+		return
 	}
-	subHandles, err := extractHandlesFromIndexSubResult(subResult)
-	if err != nil {
-		return nil, errors.Trace(err)
+	subHandles, e1 := extractHandlesFromIndexSubResult(subResult)
+	if e1 != nil {
+		err = errors.Trace(e1)
+		return
 	}
-	return subHandles, nil
+	handles = subHandles
+	return
 }
 
 func extractHandlesFromIndexSubResult(subResult xapi.PartialResult) ([]int64, error) {

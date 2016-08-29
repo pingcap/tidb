@@ -280,8 +280,8 @@ func (e *NewXSelectIndexExec) fetchHandles(idxResult xapi.SelectResult, ch chan<
 	totalHandles := 0
 	startTs := time.Now()
 	for {
-		handles, err := extractHandlesFromIndexResult(idxResult)
-		if err != nil || handles == nil {
+		handles, finish, err := extractHandlesFromIndexResult(idxResult)
+		if err != nil || finish == true {
 			e.tasksErr = errors.Trace(err)
 			log.Debugf("[TIME_INDEX_SCAN] time: %v handles: %d concurrency: %d",
 				time.Now().Sub(startTs),
