@@ -431,18 +431,19 @@ type LoadDataInfo struct {
 	LinesInfo  *ast.LinesClause
 }
 
-// getStartingInfo returns prevData, curData and the start index of curData valid data.
-// The index is curData start after removing starting symbol.
-func (e *LoadDataInfo) getStartingInfo(prevData, curData []byte) ([]byte, []byte, int) {
+// getVaildData returns prevData and curData that starts from starting symbol.
+// If the data doesn't have starting symbol, prevData is nil and curData is curData[len(curData)-startingLen+1:].
+// If curData size less than startingLen, curData is returned directly.
+func (e *LoadDataInfo) getVaildData(prevData, curData []byte) ([]byte, []byte) {
 	startingLen := len(e.LinesInfo.Starting)
 	if startingLen == 0 {
-		return prevData, curData, 0
+		return prevData, curData
 	}
 
 	// starting symbol in the prevData
 	idx := strings.Index(string(prevData), e.LinesInfo.Starting)
 	if idx != -1 {
-		return prevData[idx:], curData, 0
+		return prevData[idx:], curData
 	}
 
 	// starting symbol in the middle of prevData and curData
@@ -456,35 +457,37 @@ func (e *LoadDataInfo) getStartingInfo(prevData, curData []byte) ([]byte, []byte
 	prevData = append(prevData, restStart...)
 	idx = strings.Index(string(prevData), e.LinesInfo.Starting)
 	if idx != -1 {
-		return prevData[idx:prevLen], curData, idx + startingLen - prevLen
+		return prevData[idx:prevLen], curData
 	}
 
 	// starting symbol in the curData
 	idx = strings.Index(string(curData), e.LinesInfo.Starting)
 	if idx != -1 {
-		return nil, curData[idx:], startingLen
+		return nil, curData[idx:]
 	}
 
 	// no starting symbol
-	if len(curData) < startingLen {
-		restStart = curData
-	} else {
-		restStart = curData[len(curData)-startingLen+1:]
+	if len(curData) >= startingLen {
+		curData = curData[len(curData)-startingLen+1:]
 	}
-	return nil, restStart, -1
+	return nil, curData
 }
 
 // getLine returns a line, curData, the next data start index and a bool value.
 // If it has starting symbol the bool is true, otherwise is false.
 func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, int, bool) {
-	prevData, curData, curStartIdx := e.getStartingInfo(prevData, curData)
-	if curStartIdx == -1 {
+	startingLen := len(e.LinesInfo.Starting)
+	prevData, curData = e.getVaildData(prevData, curData)
+	if prevData == nil && len(curData) < startingLen {
 		return nil, curData, 0, false
 	}
 
 	prevLen := len(prevData)
-	startingLen := len(e.LinesInfo.Starting)
 	terminatedLen := len(e.LinesInfo.Terminated)
+	curStartIdx := 0
+	if prevLen < startingLen {
+		curStartIdx = startingLen - prevLen
+	}
 	endIdx := -1
 	if len(curData) >= curStartIdx {
 		endIdx = strings.Index(string(curData[curStartIdx:]), e.LinesInfo.Terminated)
