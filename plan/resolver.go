@@ -195,6 +195,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.currentContext().inHaving = true
 	case *ast.InsertStmt:
 		nr.pushContext()
+	case *ast.LoadDataStmt:
+		nr.pushContext()
 	case *ast.Join:
 		nr.pushJoin(v)
 	case *ast.OnCondition:
@@ -316,6 +318,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	case *ast.UnionSelectList:
 		nr.handleUnionSelectList(v)
 	case *ast.InsertStmt:
+		nr.popContext()
+	case *ast.LoadDataStmt:
 		nr.popContext()
 	case *ast.DeleteStmt:
 		nr.popContext()
