@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"strings"
 
 	"github.com/juju/errors"
@@ -427,7 +428,8 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
 			curData = nil
 		}
 
-		cols = strings.Split(string(line), e.FieldsInfo.Terminated)
+		rawCols := bytes.Split(line, []byte(e.FieldsInfo.Terminated))
+		cols = escapeCols(rawCols)
 		e.insertData(cols)
 		e.insertVal.currRow++
 	}
@@ -436,6 +438,40 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
 	}
 
 	return curData, nil
+}
+
+func escapeCols(strs [][]byte) []string {
+	ret := make([]string, len(strs))
+	for i, v := range strs {
+		ret[i] = string(escape(v))
+	}
+	return ret
+}
+
+func escape(str []byte) []byte {
+	pos := 0
+	for i := 0; i < len(str); i++ {
+		c := str[i]
+		if c == '\\' {
+			if i+1 < len(str) {
+				switch str[i+1] {
+				case 't':
+					c = '\t'
+					i++
+				case 'n':
+					c = '\n'
+					i++
+				case '\\':
+					c = '\\'
+					i++
+				}
+			}
+		}
+
+		str[pos] = c
+		pos++
+	}
+	return str[:pos]
 }
 
 func (e *LoadDataInfo) insertData(cols []string) {
