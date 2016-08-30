@@ -973,6 +973,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, e
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
 	}
+	selTableReq.Ranges = make([]*tipb.KeyRange, 0, len(handles))
 	selTableReq.TableInfo.Columns = xapi.ColumnsToProto(e.indexPlan.Columns, e.table.Meta().PKIsHandle)
 	for _, h := range handles {
 		if h == math.MaxInt64 {

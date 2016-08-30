@@ -130,30 +130,73 @@ type partialResult struct {
 	aggregate bool
 	fields    []*types.FieldType
 	reader    io.ReadCloser
-	resp      *tipb.SelectResponse
+	rows      []selectResponseRow
 	cursor    int
 
 	done    chan error
 	fetched bool
 }
 
+type selectResponseRow struct {
+	handle int64
+	data   []types.Datum
+}
+
 func (pr *partialResult) fetch() {
-	pr.resp = new(tipb.SelectResponse)
+	resp := new(tipb.SelectResponse)
 	b, err := ioutil.ReadAll(pr.reader)
 	pr.reader.Close()
 	if err != nil {
 		pr.done <- errors.Trace(err)
 		return
 	}
-	err = pr.resp.Unmarshal(b)
+	err = resp.Unmarshal(b)
 	if err != nil {
 		pr.done <- errors.Trace(err)
 		return
 	}
-	if pr.resp.Error != nil {
-		pr.done <- errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
+	if resp.Error != nil {
+		pr.done <- errInvalidResp.Gen("[%d %s]", resp.Error.GetCode(), resp.Error.GetMsg())
+		return
 	}
+
+	pr.rows = make([]selectResponseRow, len(resp.Rows))
+	for i, row := range resp.Rows {
+		handle, data, err := pr.decodeRow(row)
+		if err != nil {
+			pr.done <- errors.Trace(err)
+			return
+		}
+		pr.rows[i].data = data
+		pr.rows[i].handle = handle
+	}
+
 	pr.done <- nil
+}
+
+func (pr *partialResult) decodeRow(row *tipb.Row) (handle int64, data []types.Datum, err error) {
+	data, err = tablecodec.DecodeValues(row.Data, pr.fields, pr.index)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	if data == nil {
+		// When no column is referenced, the data may be nil, like 'select count(*) from t'.
+		// In this case, we need to create a zero length datum slice,
+		// as caller will check if data is nil to finish iteration.
+		data = make([]types.Datum, 0)
+	}
+
+	if !pr.aggregate {
+		handleBytes := row.GetHandle()
+		datums, err0 := codec.Decode(handleBytes, 1)
+		if err0 != nil {
+			err = errors.Trace(err0)
+			return
+		}
+		handle = datums[0].GetInt64()
+	}
+	return
 }
 
 // Next returns the next row of the sub result.
@@ -168,28 +211,12 @@ func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 			return 0, nil, err
 		}
 	}
-	if pr.cursor >= len(pr.resp.Rows) {
+	if pr.cursor >= len(pr.rows) {
 		return 0, nil, nil
 	}
-	row := pr.resp.Rows[pr.cursor]
-	data, err = tablecodec.DecodeValues(row.Data, pr.fields, pr.index)
-	if err != nil {
-		return 0, nil, errors.Trace(err)
-	}
-	if data == nil {
-		// When no column is referenced, the data may be nil, like 'select count(*) from t'.
-		// In this case, we need to create a zero length datum slice,
-		// as caller will check if data is nil to finish iteration.
-		data = make([]types.Datum, 0)
-	}
-	if !pr.aggregate {
-		handleBytes := row.GetHandle()
-		datums, err := codec.Decode(handleBytes, 1)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		handle = datums[0].GetInt64()
-	}
+
+	row := pr.rows[pr.cursor]
+	handle, data = row.handle, row.data
 	pr.cursor++
 	return
 }
