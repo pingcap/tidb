@@ -53,7 +53,7 @@ func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *mod
 var BaseLookupTableTaskSize = 1024
 
 // MaxLookupTableTaskSize represents max number of handles for a lookupTableTask.
-var MaxLookupTableTaskSize = 1024
+var MaxLookupTableTaskSize = 20480
 
 type lookupTableTask struct {
 	handles    []int64
