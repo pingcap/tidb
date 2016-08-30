@@ -628,6 +628,70 @@ func (s *testSuite) TestLoadData(c *C) {
 	}
 }
 
+func (s *testSuite) TestLoadDataEscape(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
+	_, err := tk.Exec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	c.Assert(err, IsNil)
+
+	ctx := mock.NewContext()
+	ctx.Store = s.store
+	variable.BindSessionVars(ctx)
+	domain, err := domain.NewDomain(s.store, 1*time.Second)
+	c.Assert(err, IsNil)
+	is := domain.InfoSchema()
+	c.Assert(is, NotNil)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("load_data_test"))
+	c.Assert(err, IsNil)
+	fields := &ast.FieldsClause{Terminated: "\t"}
+	lines := &ast.LinesClause{Starting: "", Terminated: "\n"}
+	ld := executor.NewLoadDataInfo(make([]types.Datum, 2), ctx, tbl)
+	ld.FieldsInfo = fields
+	ld.LinesInfo = lines
+
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select * from load_data_test;"
+	type testCase struct {
+		data1    []byte
+		data2    []byte
+		expected []string
+		restData []byte
+	}
+	// data1 = nil, data2 = nil, fields and lines is default
+	_, err = ld.InsertData(nil, nil)
+	c.Assert(err, IsNil)
+	r := tk.MustQuery(selectSQL)
+	r.Check(nil)
+
+	// test escape
+	cases := []testCase{
+		// data1 = nil, data2 != nil
+		{nil, []byte("1\ta string\n"), []string{fmt.Sprintf("%v %v", 1, []byte("a string"))}, nil},
+		{nil, []byte("2\tstr \\t\n"), []string{fmt.Sprintf("%v %v", 2, []byte("str \t"))}, nil},
+		{nil, []byte("3\tstr \\n\n"), []string{fmt.Sprintf("%v %v", 3, []byte("str \n"))}, nil},
+		{nil, []byte("4\tboth \\t\\n\n"), []string{fmt.Sprintf("%v %v", 4, []byte("both \t\n"))}, nil},
+		{nil, []byte("5\tstr \\\\\n"), []string{fmt.Sprintf("%v %v", 5, []byte("str \\"))}, nil},
+	}
+	for _, ca := range cases {
+		data, err1 := ld.InsertData(ca.data1, ca.data2)
+		c.Assert(err1, IsNil)
+		if ca.restData == nil {
+			c.Assert(data, HasLen, 0,
+				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+		} else {
+			c.Assert(data, DeepEquals, ca.restData,
+				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+		}
+		err1 = ctx.CommitTxn()
+		c.Assert(err1, IsNil)
+		r = tk.MustQuery(selectSQL)
+		r.Check(testkit.Rows(ca.expected...))
+		tk.MustExec(deleteSQL)
+	}
+}
+
 func (s *testSuite) TestInsertAutoInc(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
