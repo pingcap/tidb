@@ -185,7 +185,7 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 			break
 		}
 	}
-	log.Infof("[gc worker] %s finish resolve locks, safePoint: %v, regions: %v, total resolved: %v, cost time: %s", w.uuid, safePoint, regions, totalResolvedLocks, time.Now().Sub(startTime))
+	log.Infof("[gc worker] %s finish resolve locks, safePoint: %v, regions: %v, total resolved: %v, cost time: %s", w.uuid, safePoint, regions, totalResolvedLocks, time.Since(startTime))
 	return nil
 }
 
@@ -238,7 +238,7 @@ func (w *GCWorker) doGC(safePoint uint64) error {
 			break
 		}
 	}
-	log.Infof("[gc worker] %s finish gc, safePoint: %v, regions: %v, cost time: %s", w.uuid, safePoint, regions, time.Now().Sub(startTime))
+	log.Infof("[gc worker] %s finish gc, safePoint: %v, regions: %v, cost time: %s", w.uuid, safePoint, regions, time.Since(startTime))
 	return nil
 }
 

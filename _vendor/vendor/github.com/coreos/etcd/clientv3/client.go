@@ -29,6 +29,7 @@ import (
 
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 )
@@ -46,9 +47,11 @@ type Client struct {
 	Auth
 	Maintenance
 
-	conn  *grpc.ClientConn
-	cfg   Config
-	creds *credentials.TransportCredentials
+	conn         *grpc.ClientConn
+	cfg          Config
+	creds        *credentials.TransportCredentials
+	balancer     *simpleBalancer
+	retryWrapper retryRpcFunc
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -138,11 +141,10 @@ func (c *Client) dialTarget(endpoint string) (proto string, host string, creds *
 	return
 }
 
-// dialSetupOpts gives the dial opts prioer to any authentication
-func (c *Client) dialSetupOpts(endpoint string, dopts ...grpc.DialOption) []grpc.DialOption {
-	opts := []grpc.DialOption{
-		grpc.WithBlock(),
-		grpc.WithTimeout(c.cfg.DialTimeout),
+// dialSetupOpts gives the dial opts prior to any authentication
+func (c *Client) dialSetupOpts(endpoint string, dopts ...grpc.DialOption) (opts []grpc.DialOption) {
+	if c.cfg.DialTimeout > 0 {
+		opts = []grpc.DialOption{grpc.WithTimeout(c.cfg.DialTimeout)}
 	}
 	opts = append(opts, dopts...)
 
@@ -240,12 +242,30 @@ func newClient(cfg *Config) (*Client, error) {
 		client.Password = cfg.Password
 	}
 
-	b := newSimpleBalancer(cfg.Endpoints)
-	conn, err := client.dial(cfg.Endpoints[0], grpc.WithBalancer(b))
+	client.balancer = newSimpleBalancer(cfg.Endpoints)
+	conn, err := client.dial(cfg.Endpoints[0], grpc.WithBalancer(client.balancer))
 	if err != nil {
 		return nil, err
 	}
 	client.conn = conn
+	client.retryWrapper = client.newRetryWrapper()
+
+	// wait for a connection
+	if cfg.DialTimeout > 0 {
+		hasConn := false
+		waitc := time.After(cfg.DialTimeout)
+		select {
+		case <-client.balancer.readyc:
+			hasConn = true
+		case <-ctx.Done():
+		case <-waitc:
+		}
+		if !hasConn {
+			client.cancel()
+			conn.Close()
+			return nil, grpc.ErrClientConnTimeout
+		}
+	}
 
 	client.Cluster = NewCluster(client)
 	client.KV = NewKV(client)
@@ -275,8 +295,14 @@ func isHaltErr(ctx context.Context, err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.HasPrefix(grpc.ErrorDesc(err), "etcdserver: ") ||
-		strings.Contains(err.Error(), grpc.ErrClientConnClosing.Error())
+	code := grpc.Code(err)
+	// Unavailable codes mean the system will be right back.
+	// (e.g., can't connect, lost leader)
+	// Treat Internal codes as if something failed, leaving the
+	// system in an inconsistent state, but retrying could make progress.
+	// (e.g., failed in middle of send, corrupted frame)
+	// TODO: are permanent Internal errors possible from grpc?
+	return code != codes.Unavailable && code != codes.Internal
 }
 
 func toErr(ctx context.Context, err error) error {
@@ -284,9 +310,20 @@ func toErr(ctx context.Context, err error) error {
 		return nil
 	}
 	err = rpctypes.Error(err)
-	if ctx.Err() != nil && strings.Contains(err.Error(), "context") {
-		err = ctx.Err()
-	} else if strings.Contains(err.Error(), grpc.ErrClientConnClosing.Error()) {
+	if _, ok := err.(rpctypes.EtcdError); ok {
+		return err
+	}
+	code := grpc.Code(err)
+	switch code {
+	case codes.DeadlineExceeded:
+		fallthrough
+	case codes.Canceled:
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+	case codes.Unavailable:
+		err = ErrNoAvailableEndpoints
+	case codes.FailedPrecondition:
 		err = grpc.ErrClientConnClosing
 	}
 	return err

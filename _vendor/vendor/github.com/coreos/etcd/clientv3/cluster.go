@@ -17,6 +17,7 @@ package clientv3
 import (
 	pb "github.com/coreos/etcd/etcdserver/etcdserverpb"
 	"golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 type (
@@ -46,7 +47,7 @@ type cluster struct {
 }
 
 func NewCluster(c *Client) Cluster {
-	return &cluster{remote: pb.NewClusterClient(c.conn)}
+	return &cluster{remote: RetryClusterClient(c)}
 }
 
 func (c *cluster) MemberAdd(ctx context.Context, peerAddrs []string) (*MemberAddResponse, error) {
@@ -90,7 +91,7 @@ func (c *cluster) MemberUpdate(ctx context.Context, id uint64, peerAddrs []strin
 func (c *cluster) MemberList(ctx context.Context) (*MemberListResponse, error) {
 	// it is safe to retry on list.
 	for {
-		resp, err := c.remote.MemberList(ctx, &pb.MemberListRequest{})
+		resp, err := c.remote.MemberList(ctx, &pb.MemberListRequest{}, grpc.FailFast(false))
 		if err == nil {
 			return (*MemberListResponse)(resp), nil
 		}
