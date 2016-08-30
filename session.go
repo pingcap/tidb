@@ -52,19 +52,21 @@ import (
 
 // Session context
 type Session interface {
-	Status() uint16                              // Flag of current status, such as autocommit
-	LastInsertID() uint64                        // Last inserted auto_increment id
-	AffectedRows() uint64                        // Affected rows by latest executed stmt
-	Execute(sql string) ([]ast.RecordSet, error) // Execute a sql statement
-	String() string                              // For debug
+	Status() uint16                               // Flag of current status, such as autocommit.
+	LastInsertID() uint64                         // Last inserted auto_increment id.
+	AffectedRows() uint64                         // Affected rows by latest executed stmt.
+	SetValue(key fmt.Stringer, value interface{}) // SetValue saves a value associated with this session for key.
+	Value(key fmt.Stringer) interface{}           // Value returns the value associated with this session for key.
+	Execute(sql string) ([]ast.RecordSet, error)  // Execute a sql statement.
+	String() string                               // For debug
 	CommitTxn() error
 	RollbackTxn() error
-	// For execute prepare statement in binary protocol
+	// For execute prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
-	// Execute a prepared statement
+	// Execute a prepared statement.
 	ExecutePreparedStmt(stmtID uint32, param ...interface{}) (ast.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
-	SetClientCapability(uint32) // Set client capability flags
+	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	Close() error
 	Retry() error
