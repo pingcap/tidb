@@ -106,12 +106,7 @@ func (s *testDBSuite) testAddIndex(c *C) {
 	}
 
 	go func() {
-		se, err := tidb.CreateSession(s.store)
-		c.Assert(err, IsNil)
-		_, err = se.Execute("use test_db")
-		rs, err := se.Execute("create index c3_index on t1 (c3)")
-		c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
-		c.Assert(rs, IsNil)
+		sessionExec(c, s.store, "create index c3_index on t1 (c3)")
 		done <- struct{}{}
 	}()
 
@@ -313,6 +308,16 @@ func (s *testDBSuite) TestColumn(c *C) {
 	s.testDropColumn(c)
 }
 
+func sessionExec(c *C, s kv.Storage, sql string) {
+	se, err := tidb.CreateSession(s)
+	c.Assert(err, IsNil)
+	_, err = se.Execute("use test_db")
+	rs, err := se.Execute(sql)
+	c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+	c.Assert(rs, IsNil)
+	se.Close()
+}
+
 func (s *testDBSuite) testAddColumn(c *C) {
 	done := make(chan struct{}, 1)
 
@@ -323,12 +328,7 @@ func (s *testDBSuite) testAddColumn(c *C) {
 	}
 
 	go func() {
-		se, err := tidb.CreateSession(s.store)
-		c.Assert(err, IsNil)
-		_, err = se.Execute("use test_db")
-		rs, err := se.Execute("alter table t2 add column c4 int default -1")
-		c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
-		c.Assert(rs, IsNil)
+		sessionExec(c, s.store, "alter table t2 add column c4 int default -1")
 		done <- struct{}{}
 	}()
 
