@@ -21,6 +21,7 @@ import (
 	"github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes"
 	pb "github.com/coreos/etcd/etcdserver/etcdserverpb"
 	"golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 type (
@@ -109,7 +110,7 @@ func NewLease(c *Client) Lease {
 	l := &lessor{
 		donec:                 make(chan struct{}),
 		keepAlives:            make(map[LeaseID]*keepAlive),
-		remote:                pb.NewLeaseClient(c.conn),
+		remote:                RetryLeaseClient(c),
 		firstKeepAliveTimeout: c.cfg.DialTimeout + time.Second,
 	}
 	if l.firstKeepAliveTimeout == time.Second {
@@ -261,7 +262,7 @@ func (l *lessor) keepAliveOnce(ctx context.Context, id LeaseID) (*LeaseKeepAlive
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	stream, err := l.remote.LeaseKeepAlive(cctx)
+	stream, err := l.remote.LeaseKeepAlive(cctx, grpc.FailFast(false))
 	if err != nil {
 		return nil, toErr(ctx, err)
 	}
@@ -418,7 +419,7 @@ func (l *lessor) getKeepAliveStream() pb.Lease_LeaseKeepAliveClient {
 
 func (l *lessor) newStream() error {
 	sctx, cancel := context.WithCancel(l.stopCtx)
-	stream, err := l.remote.LeaseKeepAlive(sctx)
+	stream, err := l.remote.LeaseKeepAlive(sctx, grpc.FailFast(false))
 	if err != nil {
 		cancel()
 		return toErr(sctx, err)
