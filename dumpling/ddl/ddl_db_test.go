@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	_ "github.com/pingcap/tidb"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
@@ -59,6 +61,7 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.store, err = tidb.NewStore(uri)
 	c.Assert(err, IsNil)
 
+	localstore.MockRemoteStore = true
 	s.db, err = sql.Open("tidb", fmt.Sprintf("%s/%s", uri, s.schemaName))
 	c.Assert(err, IsNil)
 
@@ -103,7 +106,7 @@ func (s *testDBSuite) testAddIndex(c *C) {
 	}
 
 	go func() {
-		s.mustExec(c, "create index c3_index on t1 (c3)")
+		sessionExec(c, s.store, "create index c3_index on t1 (c3)")
 		done <- struct{}{}
 	}()
 
@@ -305,6 +308,16 @@ func (s *testDBSuite) TestColumn(c *C) {
 	s.testDropColumn(c)
 }
 
+func sessionExec(c *C, s kv.Storage, sql string) {
+	se, err := tidb.CreateSession(s)
+	c.Assert(err, IsNil)
+	_, err = se.Execute("use test_db")
+	rs, err := se.Execute(sql)
+	c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+	c.Assert(rs, IsNil)
+	se.Close()
+}
+
 func (s *testDBSuite) testAddColumn(c *C) {
 	done := make(chan struct{}, 1)
 
@@ -315,7 +328,7 @@ func (s *testDBSuite) testAddColumn(c *C) {
 	}
 
 	go func() {
-		s.mustExec(c, "alter table t2 add column c4 int default -1")
+		sessionExec(c, s.store, "alter table t2 add column c4 int default -1")
 		done <- struct{}{}
 	}()
 
