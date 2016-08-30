@@ -974,13 +974,15 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, e
 		TableId: e.table.Meta().ID,
 	}
 	selTableReq.TableInfo.Columns = xapi.ColumnsToProto(e.indexPlan.Columns, e.table.Meta().PKIsHandle)
+	selTableReq.Ranges = make([]*tipb.KeyRange, 0, len(handles))
 	for _, h := range handles {
 		if h == math.MaxInt64 {
 			// We can't convert MaxInt64 into an left closed, right open range.
 			continue
 		}
 		pbRange := new(tipb.KeyRange)
-		pbRange.Low = codec.EncodeInt(nil, h)
+		bs := make([]byte, 0, 8)
+		pbRange.Low = codec.EncodeInt(bs, h)
 		pbRange.High = kv.Key(pbRange.Low).PrefixNext()
 		selTableReq.Ranges = append(selTableReq.Ranges, pbRange)
 	}
