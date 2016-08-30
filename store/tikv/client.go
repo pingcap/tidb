@@ -37,7 +37,7 @@ type Client interface {
 }
 
 const (
-	maxConnecion = 20
+	maxConnecion = 150
 	netTimeout   = 20 // seconds
 )
 
