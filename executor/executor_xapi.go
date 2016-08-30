@@ -981,7 +981,8 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, e
 			continue
 		}
 		pbRange := new(tipb.KeyRange)
-		pbRange.Low = codec.EncodeInt(nil, h)
+		bs := make([]byte, 0, 8)
+		pbRange.Low = codec.EncodeInt(bs, h)
 		pbRange.High = kv.Key(pbRange.Low).PrefixNext()
 		selTableReq.Ranges = append(selTableReq.Ranges, pbRange)
 	}
