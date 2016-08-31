@@ -16,7 +16,6 @@ package xapi
 import (
 	"io"
 	"io/ioutil"
-	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -79,17 +78,14 @@ func (r *selectResult) Fetch() {
 }
 
 func (r *selectResult) decode() {
-	defer close(r.results)
 	for pr := range r.temporary {
 		pr.decodeData()
-		r.results <- pr
 	}
 }
 
 func (r *selectResult) fetch() {
-	defer close(r.temporary)
+	defer close(r.results)
 
-	var wg sync.WaitGroup
 	for {
 		reader, err := r.resp.Next()
 		if err != nil {
@@ -97,7 +93,6 @@ func (r *selectResult) fetch() {
 			return
 		}
 		if reader == nil {
-			wg.Wait()
 			return
 		}
 		pr := &partialResult{
@@ -108,8 +103,8 @@ func (r *selectResult) fetch() {
 			done:      make(chan error, 1),
 		}
 
-		wg.Add(1)
-		go pr.fetch(r.temporary, &wg)
+		go pr.fetch(r.temporary)
+		r.results <- pr
 	}
 }
 
@@ -158,8 +153,7 @@ type selectResponseRow struct {
 	data   []types.Datum
 }
 
-func (pr *partialResult) fetch(ch chan<- *partialResult, wg *sync.WaitGroup) {
-	defer wg.Done()
+func (pr *partialResult) fetch(ch chan<- *partialResult) {
 	b, err := ioutil.ReadAll(pr.reader)
 	pr.reader.Close()
 	pr.reader = nil
@@ -263,8 +257,8 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrde
 	}
 	result := &selectResult{
 		resp:      resp,
-		temporary: make(chan *partialResult, 10),
-		results:   make(chan PartialResult, 1),
+		temporary: make(chan *partialResult, 1),
+		results:   make(chan PartialResult, 5),
 		done:      make(chan error, 1),
 	}
 	// If Aggregates is not nil, we should set result fields latter.
