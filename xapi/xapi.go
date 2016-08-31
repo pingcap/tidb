@@ -16,6 +16,7 @@ package xapi
 import (
 	"io"
 	"io/ioutil"
+	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -84,6 +85,9 @@ func (r *selectResult) decode() {
 }
 
 func (r *selectResult) fetch() {
+	defer close(r.temporary)
+	var wg sync.WaitGroup
+	defer wg.Wait()
 	defer close(r.results)
 
 	for {
@@ -103,7 +107,8 @@ func (r *selectResult) fetch() {
 			done:      make(chan error, 1),
 		}
 
-		go pr.fetch(r.temporary)
+		wg.Add(1)
+		go pr.fetch(r.temporary, &wg)
 		r.results <- pr
 	}
 }
@@ -153,7 +158,7 @@ type selectResponseRow struct {
 	data   []types.Datum
 }
 
-func (pr *partialResult) fetch(ch chan<- *partialResult) {
+func (pr *partialResult) fetch(ch chan<- *partialResult, wg *sync.WaitGroup) {
 	b, err := ioutil.ReadAll(pr.reader)
 	pr.reader.Close()
 	pr.reader = nil
@@ -163,6 +168,7 @@ func (pr *partialResult) fetch(ch chan<- *partialResult) {
 	}
 	pr.data = b
 	ch <- pr
+	wg.Done()
 }
 
 func (pr *partialResult) decodeData() {
