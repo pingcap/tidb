@@ -254,7 +254,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			0,                // Cardinality
 			nil,              // Sub_part
 			nil,              // Packed
-			"YES",            // Null
+			"",               // Null
 			"BTREE",          // Index_type
 			"",               // Comment
 			"",               // Index_comment

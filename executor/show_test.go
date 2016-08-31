@@ -55,7 +55,7 @@ func (s *testSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 2)
 	expectedRow = []interface{}{
 		"show_index", int64(0), "PRIMARY", int64(1), "id", "utf8_bin",
-		int64(0), nil, nil, "YES", "BTREE", "", ""}
+		int64(0), nil, nil, "", "BTREE", "", ""}
 	row = result.Rows()[0]
 	c.Check(row, HasLen, len(expectedRow))
 	for i, r := range row {
