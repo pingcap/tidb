@@ -20,6 +20,7 @@ var (
 	dataCnt   = flag.Int("N", 1000000, "data num")
 	workerCnt = flag.Int("C", 400, "concurrent num")
 	pdAddr    = flag.String("pd", "localhost:2379", "pd address:localhost:2379")
+	valueSize = flag.Int("V", -1, "value size in byte")
 
 	txnCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -79,7 +80,7 @@ func batchRW() {
 					log.Fatal(err)
 				}
 				key := fmt.Sprintf("key_%d", k)
-				txn.Set([]byte(key), []byte("value"))
+				txn.Set([]byte(key), value)
 				err = txn.Commit()
 				if err != nil {
 					txnRolledbackCounter.WithLabelValues("txn").Inc()
@@ -93,11 +94,16 @@ func batchRW() {
 	wg.Wait()
 }
 
+var value []byte = []byte("value")
+
 func main() {
 	flag.Parse()
 	log.SetLevelByString("error")
 	Init()
 
+	if *valueSize > 0 {
+		value = make([]byte, *valueSize)
+	}
 	t := time.Now()
 	batchRW()
 	resp, err := http.Get("http://localhost:9191/")
