@@ -231,7 +231,7 @@ func (s *testDBSuite) testDropIndex(c *C) {
 	c.Assert(c3idx, NotNil)
 
 	go func() {
-		s.mustExec(c, "drop index c3_index on t1")
+		sessionExec(c, s.store, "drop index c3_index on t1")
 		done <- struct{}{}
 	}()
 
@@ -416,7 +416,7 @@ func (s *testDBSuite) testDropColumn(c *C) {
 	ctx := s.s.(context.Context)
 
 	go func() {
-		s.mustExec(c, "alter table t2 drop column c4")
+		sessionExec(c, s.store, "alter table t2 drop column c4")
 		done <- struct{}{}
 	}()
 
