@@ -1380,8 +1380,9 @@ func (d *Datum) convergeType(hasUint, hasDecimal, hasFloat *bool) (x Datum) {
 }
 
 // CoerceDatum changes type.
-// If a or b is Decimal, changes the both to Decimal.
-// Else if a or b is Float, changes the both to Float.
+// If a or b is Float, changes the both to Float.
+// Else if a or b is Decimal, changes the both to Decimal.
+// Else if a or b is Uint and op is not div, mod, or intDiv changes the both to Uint.
 func CoerceDatum(a, b Datum, op opcode.Op) (x, y Datum, err error) {
 	if a.IsNull() || b.IsNull() {
 		return x, y, nil
