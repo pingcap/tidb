@@ -16,6 +16,7 @@ package xapi
 import (
 	"io"
 	"io/ioutil"
+	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -67,16 +68,28 @@ type selectResult struct {
 	fields    []*types.FieldType
 	resp      kv.Response
 
-	results chan PartialResult
-	done    chan error
+	temporary chan *partialResult
+	results   chan PartialResult
+	done      chan error
 }
 
 func (r *selectResult) Fetch() {
+	go r.decode()
 	go r.fetch()
 }
 
-func (r *selectResult) fetch() {
+func (r *selectResult) decode() {
 	defer close(r.results)
+	for pr := range r.temporary {
+		pr.decodeData()
+		r.results <- pr
+	}
+}
+
+func (r *selectResult) fetch() {
+	defer close(r.temporary)
+
+	var wg sync.WaitGroup
 	for {
 		reader, err := r.resp.Next()
 		if err != nil {
@@ -84,6 +97,7 @@ func (r *selectResult) fetch() {
 			return
 		}
 		if reader == nil {
+			wg.Wait()
 			return
 		}
 		pr := &partialResult{
@@ -91,10 +105,11 @@ func (r *selectResult) fetch() {
 			fields:    r.fields,
 			reader:    reader,
 			aggregate: r.aggregate,
-			done:      make(chan error),
+			done:      make(chan error, 1),
 		}
-		go pr.fetch()
-		r.results <- pr
+
+		wg.Add(1)
+		go pr.fetch(r.temporary, &wg)
 	}
 }
 
@@ -130,6 +145,7 @@ type partialResult struct {
 	aggregate bool
 	fields    []*types.FieldType
 	reader    io.ReadCloser
+	data      []byte
 	rows      []selectResponseRow
 	cursor    int
 
@@ -142,15 +158,22 @@ type selectResponseRow struct {
 	data   []types.Datum
 }
 
-func (pr *partialResult) fetch() {
-	resp := new(tipb.SelectResponse)
+func (pr *partialResult) fetch(ch chan<- *partialResult, wg *sync.WaitGroup) {
+	defer wg.Done()
 	b, err := ioutil.ReadAll(pr.reader)
 	pr.reader.Close()
+	pr.reader = nil
 	if err != nil {
 		pr.done <- errors.Trace(err)
 		return
 	}
-	err = resp.Unmarshal(b)
+	pr.data = b
+	ch <- pr
+}
+
+func (pr *partialResult) decodeData() {
+	resp := new(tipb.SelectResponse)
+	err := resp.Unmarshal(pr.data)
 	if err != nil {
 		pr.done <- errors.Trace(err)
 		return
@@ -203,9 +226,7 @@ func (pr *partialResult) decodeRow(row *tipb.Row) (handle int64, data []types.Da
 // If no more row to return, data would be nil.
 func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 	if !pr.fetched {
-		select {
-		case err = <-pr.done:
-		}
+		err = <-pr.done
 		pr.fetched = true
 		if err != nil {
 			return 0, nil, err
@@ -241,9 +262,10 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrde
 		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
-		resp:    resp,
-		results: make(chan PartialResult, 5),
-		done:    make(chan error, 1),
+		resp:      resp,
+		temporary: make(chan *partialResult, 10),
+		results:   make(chan PartialResult, 1),
+		done:      make(chan error, 1),
 	}
 	// If Aggregates is not nil, we should set result fields latter.
 	if len(req.Aggregates) == 0 && len(req.GroupBy) == 0 {
