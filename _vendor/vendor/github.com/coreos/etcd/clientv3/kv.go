@@ -17,6 +17,7 @@ package clientv3
 import (
 	pb "github.com/coreos/etcd/etcdserver/etcdserverpb"
 	"golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 type (
@@ -81,7 +82,11 @@ type kv struct {
 }
 
 func NewKV(c *Client) KV {
-	return &kv{remote: pb.NewKVClient(c.conn)}
+	return &kv{remote: RetryKVClient(c)}
+}
+
+func NewKVFromKVClient(remote pb.KVClient) KV {
+	return &kv{remote: remote}
 }
 
 func (kv *kv) Put(ctx context.Context, key, val string, opts ...OpOption) (*PutResponse, error) {
@@ -100,7 +105,7 @@ func (kv *kv) Delete(ctx context.Context, key string, opts ...OpOption) (*Delete
 }
 
 func (kv *kv) Compact(ctx context.Context, rev int64, opts ...CompactOption) (*CompactResponse, error) {
-	resp, err := kv.remote.Compact(ctx, OpCompact(rev, opts...).toRequest())
+	resp, err := kv.remote.Compact(ctx, OpCompact(rev, opts...).toRequest(), grpc.FailFast(false))
 	if err != nil {
 		return nil, toErr(ctx, err)
 	}
@@ -150,7 +155,7 @@ func (kv *kv) do(ctx context.Context, op Op) (OpResponse, error) {
 			r.SortTarget = pb.RangeRequest_SortTarget(op.sort.Target)
 		}
 
-		resp, err = kv.remote.Range(ctx, r)
+		resp, err = kv.remote.Range(ctx, r, grpc.FailFast(false))
 		if err == nil {
 			return OpResponse{get: (*GetResponse)(resp)}, nil
 		}
