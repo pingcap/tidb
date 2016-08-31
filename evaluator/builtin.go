@@ -47,11 +47,13 @@ var Funcs = map[string]Func{
 	"greatest": {builtinGreatest, 2, -1},
 
 	// math functions
-	"abs":   {builtinAbs, 1, 1},
-	"pow":   {builtinPow, 2, 2},
-	"power": {builtinPow, 2, 2},
-	"rand":  {builtinRand, 0, 1},
-	"round": {builtinRound, 1, 2},
+	"abs":     {builtinAbs, 1, 1},
+	"ceil":    {builtinCeil, 1, 1},
+	"ceiling": {builtinCeil, 1, 1},
+	"pow":     {builtinPow, 2, 2},
+	"power":   {builtinPow, 2, 2},
+	"rand":    {builtinRand, 0, 1},
+	"round":   {builtinRound, 1, 2},
 
 	// time functions
 	"curdate":           {builtinCurrentDate, 0, 0},
