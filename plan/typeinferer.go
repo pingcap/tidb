@@ -270,6 +270,15 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 				mergeArithType(tp.Tp, x.Args[i].GetType().Tp)
 			}
 		}
+	case "ceil", "ceiling":
+		t := x.Args[0].GetType().Tp
+		if t == mysql.TypeNull || t == mysql.TypeFloat || t == mysql.TypeDouble || t == mysql.TypeVarchar ||
+			t == mysql.TypeTinyBlob || t == mysql.TypeMediumBlob || t == mysql.TypeLongBlob ||
+			t == mysql.TypeBlob || t == mysql.TypeVarString || t == mysql.TypeString {
+			tp = types.NewFieldType(mysql.TypeDouble)
+		} else {
+			tp = types.NewFieldType(mysql.TypeLonglong)
+		}
 	case "pow", "power", "rand":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "curdate", "current_date", "date":
