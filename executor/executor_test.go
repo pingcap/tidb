@@ -16,6 +16,7 @@ package executor_test
 import (
 	"flag"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -66,7 +67,8 @@ func (s *testSuite) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		s.store = store
 	}
-	log.SetLevelByString("warn")
+	logLevel := os.Getenv("log_level")
+	log.SetLevelByString(logLevel)
 	executor.BaseLookupTableTaskSize = 2
 }
 

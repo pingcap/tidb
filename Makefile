@@ -97,12 +97,20 @@ test: gotest
 
 gotest:
 	rm -rf vendor && ln -s _vendor/vendor vendor
+	@export log_level=error
 	$(GO) test -cover $(PACKAGES)
 	rm -rf vendor
 
 race:
 	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) test --race $(PACKAGES)
+	@export log_level=debug
+	@dirs=`go list ./... | grep -vE 'vendor' | awk '{sub("github.com/pingcap/tidb/",""); print}'`;\
+	for dir in $$dirs; do \
+		cd $$dir;\
+		go test -race;\
+		cd -;\
+	done;
+	@export log_level=error
 	rm -rf vendor
 
 tikv_integration_test:
