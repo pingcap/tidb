@@ -631,7 +631,7 @@ func (s *testSuite) TestLoadData(c *C) {
 func (s *testSuite) TestLoadDataEscape(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	_, err := tk.Exec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	c.Assert(err, IsNil)
