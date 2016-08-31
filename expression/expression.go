@@ -234,17 +234,6 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 
 // NewFunction creates a new scalar function or constant.
 func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	if funcName == ast.EQ { // convert a = a to 1
-		arg1, ok1 := args[0].(*Column)
-		arg2, ok2 := args[1].(*Column)
-		if ok1 && ok2 && arg1.Equal(arg2) {
-			return &Constant{
-				Value:   types.NewIntDatum(1),
-				RetType: retType,
-			}, nil
-		}
-	}
-
 	_, canConstantFolding := evaluator.DynamicFuncs[funcName]
 	canConstantFolding = !canConstantFolding
 

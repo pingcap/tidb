@@ -48,25 +48,26 @@ func columnSubstitute(expr expression.Expression, schema expression.Schema, newE
 	return expr
 }
 
-// propagateConstant propagate constant values in a condition.
-// e.g. for condition: "a = b and b = c and c = a and a = 1";
-// we propagate constant as the following step:
-// first: "1 = b and b = c and c = 1 and a = 1";
-// next:  "1 = b and 1 = c and c = 1 and a = 1";
-// next:  "1 = b and 1 = c and 1 = 1 and a = 1";
-// next:  "1 = b and 1 = c and a = 1";
-
-// e.g for condition: "a = b and b = c and b = 2 and a = 1";
-// we propagate constant as the following step:
-// first: "a = 2 and 2 = c and b = 2 and a = 1";
-// next:  "a = 2 and 2 = c and b = 2 and 2 = 1";
-// next:  "0"
+// propagateConstant propagate constant values of equality predicates and inequality predicates in a condition.
 func propagateConstant(conditions []expression.Expression) []expression.Expression {
 	if len(conditions) == 0 {
 		return conditions
 	}
+	// Propagate constants in equality predicates.
+	// e.g. for condition: "a = b and b = c and c = a and a = 1";
+	// we propagate constant as the following step:
+	// first: "1 = b and b = c and c = 1 and a = 1";
+	// next:  "1 = b and 1 = c and c = 1 and a = 1";
+	// next:  "1 = b and 1 = c and 1 = 1 and a = 1";
+	// next:  "1 = b and 1 = c and a = 1";
+
+	// e.g for condition: "a = b and b = c and b = 2 and a = 1";
+	// we propagate constant as the following step:
+	// first: "a = 2 and 2 = c and b = 2 and a = 1";
+	// next:  "a = 2 and 2 = c and b = 2 and 2 = 1";
+	// next:  "0"
 	isHandled := make([]bool, len(conditions))
-	equalities := make(map[string]map[int]*expression.Constant, 0)
+	equalities := make(map[string]map[int]*expression.Constant, 0) // transitive equality predicates between one column and one constant
 	for i := 0; i < len(conditions); i++ {
 		if isHandled[i] {
 			continue
@@ -92,35 +93,42 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 			conditions[i] = expression.ComposeCNFCondition(newExpression)
 			isHandled[i] = true
 		} else if expr.FuncName.L == ast.EQ {
+			var (
+				col      *expression.Column
+				fromID   string
+				position int
+				val      *expression.Constant
+				isColumn bool
+			)
 			left, ok1 := expr.Args[0].(*expression.Constant)
 			right, ok2 := expr.Args[1].(*expression.Constant)
-			if col, isLeftColumn := expr.Args[0].(*expression.Column); ok2 && isLeftColumn {
-				if _, ok = equalities[col.FromID]; !ok {
-					equalities[col.FromID] = make(map[int]*expression.Constant, 0)
-				}
-				equalities[col.FromID][col.Position] = right
-			} else if col, isRightColumn := expr.Args[1].(*expression.Column); ok1 && isRightColumn {
-				if _, ok = equalities[col.FromID]; !ok {
-					equalities[col.FromID] = make(map[int]*expression.Constant, 0)
-				}
-				equalities[col.FromID][col.Position] = left
+			if col, isColumn = expr.Args[0].(*expression.Column); ok2 && isColumn {
+				val = right
+			} else if col, isColumn = expr.Args[1].(*expression.Column); ok1 && isColumn {
+				val = left
 			} else {
 				continue
 			}
+			fromID = col.FromID
+			position = col.Position
+			if _, ok = equalities[fromID]; !ok {
+				equalities[fromID] = make(map[int]*expression.Constant, 1)
+			}
+			equalities[fromID][position] = val
 			isHandled[i] = true
 			i = -1
 		}
 	}
-	// remove useless predicates, such as "1 and a = 1" ==> "a=1".
-	for i := 0; i < len(conditions); i++ {
+	for i := 0; i < len(conditions); i++ { // remove useless predicates, such as "1 and a = 1" ==> "a=1".
 		if v, ok := conditions[i].(*expression.Constant); ok {
 			if v.Value.IsNull() {
-				continue
+				conditions = []expression.Expression{v}
+				return conditions
 			}
 			intVal, _ := v.Value.ToInt64()
 			if intVal < 1 && intVal > -1 {
 				conditions = []expression.Expression{&expression.Constant{Value: types.NewIntDatum(0)}}
-				break
+				return conditions
 			} else {
 				conditions = append(conditions[:i], conditions[i+1:]...)
 				i--
@@ -129,11 +137,142 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 	}
 	if len(conditions) == 0 {
 		conditions = []expression.Expression{&expression.Constant{Value: types.NewIntDatum(1)}}
+		return conditions
+	}
+	// Propagate transitive inequality predicates.
+	// e.g for conditions "a = b and c = d and a = c and g = h and b > 0 and e != 0 and g like 'abc'",
+	//     we propagate constant as the following step:
+	// 1. build multiple equality predicates(mep):
+	//    =(a, b, c, d), =(g, h).
+	// 2. extract inequality predicates between one constant and one column,
+	//    and rewrite them using the root column of a multiple equality predicate:
+	//    b > 0, e != 0, g like 'abc' ==> a > 0, g like 'abc'.
+	//    ATTENTION: here column 'e' doesn't belong to any mep, so we skip "e != 0".
+	// 3. propagate constants in these inequality predicates, and we finally get:
+	//    "a = b and c = d and a = c and e = f and g = h and e != 0 and a > 0 and b > 0 and c > 0 and d > 0 and g like 'abc' and h like 'abc' ".
+	multipleEqualities := make(map[*expression.Column]*expression.Column, 0)
+	union := func(leftExpr *expression.Column, rightExpr *expression.Column) {
+		rootOfLeftExpr, ok1 := multipleEqualities[leftExpr]
+		rootOfRightExpr, ok2 := multipleEqualities[rightExpr]
+		if !ok1 && !ok2 {
+			multipleEqualities[leftExpr] = leftExpr
+			multipleEqualities[rightExpr] = leftExpr
+		} else if ok1 && !ok2 {
+			multipleEqualities[rightExpr] = rootOfLeftExpr
+		} else if !ok1 && ok2 {
+			multipleEqualities[leftExpr] = rootOfRightExpr
+		} else if !rootOfLeftExpr.Equal(rootOfRightExpr) {
+			for k, v := range multipleEqualities {
+				if v.Equal(rootOfRightExpr) {
+					multipleEqualities[k] = v
+				}
+			}
+		}
+	}
+	for _, cond := range conditions { // build multiple equality predicates.
+		expr, ok := cond.(*expression.ScalarFunction)
+		if !ok || expr.FuncName.L != ast.EQ {
+			continue
+		}
+		left, ok1 := expr.Args[0].(*expression.Column)
+		right, ok2 := expr.Args[1].(*expression.Column)
+		if ok1 && ok2 {
+			union(left, right)
+		}
+	}
+	if len(multipleEqualities) == 0 {
+		return conditions
+	}
+	inequalityFuncs := map[string]string{
+		ast.LT:   ast.LT,
+		ast.GT:   ast.GT,
+		ast.LE:   ast.LE,
+		ast.GE:   ast.GE,
+		ast.NE:   ast.NE,
+		ast.Like: ast.Like,
+	}
+	inequalities := make(map[string]map[int]map[string][]*expression.Constant, 0) // transitive inequality predicates between one column and one constant.
+	for i := 0; i < len(conditions); i++ {                                        // extract inequality predicates.
+		expr, ok := conditions[i].(*expression.ScalarFunction)
+		if !ok {
+			continue
+		}
+		var (
+			col      *expression.Column
+			equalCol *expression.Column // the root column corresponding to a column in a multiple equality predicate.
+			fromID   string
+			position int
+			val      *expression.Constant
+			isColumn bool
+			funcName string
+		)
+		left, ok1 := expr.Args[0].(*expression.Constant)
+		right, ok2 := expr.Args[1].(*expression.Constant)
+		if col, isColumn = expr.Args[0].(*expression.Column); ok2 && isColumn {
+			val = right
+		} else if col, isColumn = expr.Args[1].(*expression.Column); ok1 && isColumn {
+			val = left
+		} else {
+			continue
+		}
+		funcName, ok = inequalityFuncs[expr.FuncName.L]
+		if !ok {
+			continue
+		}
+		equalCol, ok = multipleEqualities[col]
+		if !ok { // no need to propagate inequality predicates whose column is only equal to itself.
+			continue
+		}
+		fromID, position = equalCol.FromID, equalCol.Position
+		if _, ok = inequalities[fromID]; !ok {
+			inequalities[fromID] = make(map[int]map[string][]*expression.Constant, 1)
+		}
+		if _, ok = inequalities[fromID][position]; !ok {
+			inequalities[fromID][position] = make(map[string][]*expression.Constant, 1)
+		}
+		if funcName == ast.Like { // func 'LIKE' need 3 input arguments, so here we handle it alone.
+			inequalities[fromID][position][ast.Like] = append(inequalities[fromID][position][ast.Like], val, expr.Args[2].(*expression.Constant))
+		} else {
+			var preVal []*expression.Constant
+			if preVal, ok = inequalities[fromID][position][funcName]; !ok {
+				inequalities[fromID][position][funcName] = append(inequalities[fromID][position][funcName], val)
+			} else {
+				if funcName == ast.GE || funcName == ast.GT && preVal[0].Value.GetInt64() < val.Value.GetInt64() { // "a > 0 and a > 3" ==> "a > 3".
+					inequalities[fromID][position][funcName][0] = val
+				} else if funcName == ast.LE || funcName == ast.LT && preVal[0].Value.GetInt64() > val.Value.GetInt64() { // "a < 0 and a < 3" ==> "a < 0".
+					inequalities[fromID][position][funcName][0] = val
+				} else if funcName == ast.NE {
+					inequalities[fromID][position][funcName] = append(preVal, val)
+				}
+			}
+		}
+		conditions = append(conditions[:i], conditions[i+1:]...)
+		i--
+	}
+	if len(inequalities) == 0 {
+		return conditions
+	}
+	for k, v := range multipleEqualities { // propagate constants in inequality predicates.
+		fromID, position := v.FromID, v.Position
+		for funcName, predicate := range inequalities[fromID][position] {
+			if funcName == ast.Like {
+				for i := 0; i < len(predicate); i += 2 {
+					newFunc, _ := expression.NewFunction(funcName, types.NewFieldType(mysql.TypeTiny), k, predicate[i], predicate[i+1])
+					conditions = append(conditions, newFunc)
+				}
+			} else {
+				for i := 0; i < len(predicate); i++ {
+					newFunc, _ := expression.NewFunction(funcName, types.NewFieldType(mysql.TypeTiny), k, predicate[i])
+					conditions = append(conditions, newFunc)
+					i++
+				}
+			}
+		}
 	}
 	return conditions
 }
 
-// constantSubstitute substitute column expression in a condition by an equivalent constant
+// constantSubstitute substitute column expression in a condition by an equivalent constant.
 func constantSubstitute(equalities map[string]map[int]*expression.Constant, condition expression.Expression) expression.Expression {
 	switch expr := condition.(type) {
 	case *expression.Column:
@@ -141,17 +280,16 @@ func constantSubstitute(equalities map[string]map[int]*expression.Constant, cond
 			return v
 		}
 	case *expression.ScalarFunction:
-		newArgs := make([]expression.Expression, len(expr.Args))
 		for i, arg := range expr.Args {
-			newArgs[i] = constantSubstitute(equalities, arg)
+			expr.Args[i] = constantSubstitute(equalities, arg)
 		}
-		condition, _ = expression.NewFunction(expr.FuncName.L, expr.RetType, newArgs...)
+		condition, _ = expression.NewFunction(expr.FuncName.L, expr.RetType, expr.Args...)
 		return condition
 	}
 	return condition
 }
 
-// composeDNFCondition composes DNF items into a balanced deep DNF tree
+// composeDNFCondition composes DNF items into a balanced deep DNF tree.
 func composeDNFConditions(conditions []expression.Expression) expression.Expression {
 	length := len(conditions)
 	if length == 0 {
@@ -235,33 +373,47 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 		equalCond                              []*expression.ScalarFunction
 		leftPushCond, rightPushCond, otherCond []expression.Expression
 	)
+	if p.JoinType != InnerJoin {
+		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan)
+	} else {
+		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions))
+		tempCond = append(tempCond, p.LeftConditions...)
+		tempCond = append(tempCond, p.RightConditions...)
+		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
+		tempCond = append(tempCond, p.OtherConditions...)
+		if len(tempCond) != 0 {
+			tempCond = append(tempCond, predicates...)
+			equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(propagateConstant(tempCond), leftPlan, rightPlan)
+		} else { // "on" is not used.
+			equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan)
+		}
+	}
 	switch p.JoinType {
 	case LeftOuterJoin, SemiJoinWithAux:
-		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan)
 		rightCond = p.RightConditions
 		p.RightConditions = nil
 		leftCond = leftPushCond
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
-		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan)
 		leftCond = p.LeftConditions
 		p.LeftConditions = nil
 		rightCond = rightPushCond
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
-	default:
-		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions))
-		tempCond = append(tempCond, predicates...)
-		tempCond = append(tempCond, p.LeftConditions...)
-		tempCond = append(tempCond, p.RightConditions...)
-		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
-		tempCond = append(tempCond, p.OtherConditions...)
-		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(propagateConstant(tempCond), leftPlan, rightPlan)
-		leftCond = leftPushCond
-		rightCond = rightPushCond
+	case SemiJoin:
+		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan)
+		leftCond = propagateConstant(append(p.LeftConditions, leftPushCond...))
+		rightCond = propagateConstant(append(p.RightConditions, rightPushCond...))
 		p.LeftConditions = nil
 		p.RightConditions = nil
+	case InnerJoin:
+		p.LeftConditions = nil
+		p.RightConditions = nil
+		p.EqualConditions = equalCond
+		p.OtherConditions = otherCond
+		leftCond = leftPushCond
+		rightCond = rightPushCond
 	}
 	leftRet, _, err1 := leftPlan.PredicatePushDown(leftCond)
 	if err1 != nil {
@@ -282,10 +434,6 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 		if err2 != nil {
 			return nil, nil, errors.Trace(err2)
 		}
-	}
-	if p.JoinType == InnerJoin {
-		p.EqualConditions = append(p.EqualConditions, equalCond...)
-		p.OtherConditions = append(p.OtherConditions, otherCond...)
 	}
 	return
 }
