@@ -659,7 +659,6 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 	}
 }
 func (s *testEvaluatorSuite) TestHexFunc(c *C) {
-
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  interface{}
@@ -685,7 +684,6 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 	}
 }
 func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
-
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  interface{}
