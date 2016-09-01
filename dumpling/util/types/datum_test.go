@@ -16,7 +16,6 @@ package types
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 )
 
 var _ = Suite(&testDatumSuite{})
@@ -203,13 +202,12 @@ func (ts *testDatumSuite) TestCoerceDatum(c *C) {
 		kind byte
 	}{
 		{NewIntDatum(1), NewIntDatum(1), KindInt64},
-		{NewUintDatum(1), NewIntDatum(1), KindUint64},
 		{NewUintDatum(1), NewDecimalDatum(mysql.NewDecFromInt(1)), KindMysqlDecimal},
 		{NewFloat64Datum(1), NewDecimalDatum(mysql.NewDecFromInt(1)), KindFloat64},
 		{NewFloat64Datum(1), NewFloat64Datum(1), KindFloat64},
 	}
 	for _, ca := range testCases {
-		x, y, err := CoerceDatum(ca.a, ca.b, opcode.Plus)
+		x, y, err := CoerceDatum(ca.a, ca.b)
 		c.Check(err, IsNil)
 		c.Check(x.Kind(), Equals, y.Kind())
 		c.Check(x.Kind(), Equals, ca.kind)
