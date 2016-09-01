@@ -20,7 +20,7 @@ var (
 	dataCnt   = flag.Int("N", 1000000, "data num")
 	workerCnt = flag.Int("C", 400, "concurrent num")
 	pdAddr    = flag.String("pd", "localhost:2379", "pd address:localhost:2379")
-	valueSize = flag.Int("V", -1, "value size in byte")
+	valueSize = flag.Int("V", 5, "value size in byte")
 
 	txnCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -99,10 +99,7 @@ func main() {
 	log.SetLevelByString("error")
 	Init()
 
-	value := []byte("value")
-	if *valueSize > 0 {
-		value = make([]byte, *valueSize)
-	}
+	value := make([]byte, *valueSize)
 	t := time.Now()
 	batchRW(value)
 	resp, err := http.Get("http://localhost:9191/")
