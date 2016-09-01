@@ -20,7 +20,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -567,7 +566,7 @@ func ComputeArithmetic(op tipb.ExprType, left types.Datum, right types.Datum) (t
 	if err != nil {
 		return result, errors.Trace(err)
 	}
-	a, b, err = types.CoerceDatum(a, b, pbTypeToOp(op))
+	a, b, err = types.CoerceDatum(a, b)
 	if err != nil {
 		return result, errors.Trace(err)
 	}
@@ -583,20 +582,4 @@ func ComputeArithmetic(op tipb.ExprType, left types.Datum, right types.Datum) (t
 	default:
 		return result, errors.Errorf("Unknown binop type: %v", op)
 	}
-}
-
-func pbTypeToOp(op tipb.ExprType) opcode.Op {
-	switch op {
-	case tipb.ExprType_Plus:
-		return opcode.Plus
-	case tipb.ExprType_Div:
-		return opcode.Div
-	case tipb.ExprType_IntDiv:
-		return opcode.IntDiv
-	case tipb.ExprType_Mul:
-		return opcode.Mul
-	case tipb.ExprType_Mod:
-		return opcode.Mod
-	}
-	return opcode.EQ
 }

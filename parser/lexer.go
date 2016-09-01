@@ -125,7 +125,7 @@ func (s *Scanner) skipWhitespace() rune {
 
 func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 	ch0 := s.r.peek()
-	if isWhitespace(ch0) {
+	if unicode.IsSpace(ch0) {
 		ch0 = s.skipWhitespace()
 	}
 	pos = s.r.pos()

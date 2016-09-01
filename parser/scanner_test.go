@@ -178,6 +178,7 @@ func (s *testLexerSuite) TestIdentifier(c *C) {
 	table := [][2]string{
 		{`哈哈`, "哈哈"},
 		{"`numeric`", "numeric"},
+		{"\r\n \r \n \tthere\t \n", "there"},
 		// `5number`,
 	}
 	l := &Scanner{}

@@ -149,7 +149,7 @@ func (e *Evaluator) handleComparisonOp(o *ast.BinaryOperationExpr) bool {
 	var a, b = *o.L.GetDatum(), *o.R.GetDatum()
 	var err error
 	if o.Op != opcode.NullEQ {
-		a, b, err = types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum(), o.Op)
+		a, b, err = types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum())
 		if err != nil {
 			e.err = errors.Trace(err)
 			return false
@@ -212,7 +212,7 @@ func getCompResult(op opcode.Op, value int) (bool, error) {
 }
 
 func (e *Evaluator) handleBitOp(o *ast.BinaryOperationExpr) bool {
-	a, b, err := types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum(), o.Op)
+	a, b, err := types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum())
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
@@ -265,7 +265,7 @@ func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
 		return false
 	}
 
-	a, b, err = types.CoerceDatum(a, b, o.Op)
+	a, b, err = types.CoerceDatum(a, b)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
