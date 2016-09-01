@@ -158,6 +158,8 @@ var tokenMap = map[string]int{
 	"BYTE":                byteType,
 	"CASE":                caseKwd,
 	"CAST":                cast,
+	"CEIL":                ceil,
+	"CEILING":             ceiling,
 	"CHARACTER":           character,
 	"CHARSET":             charsetKwd,
 	"CHECK":               check,

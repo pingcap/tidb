@@ -422,6 +422,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT MOD(10, 2);", true},
 		{"SELECT ROUND(-1.23);", true},
 		{"SELECT ROUND(1.23, 1);", true},
+		{"SELECT CEIL(-1.23);", true},
+		{"SELECT CEILING(1.23);", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
