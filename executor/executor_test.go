@@ -1693,6 +1693,20 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast('11:11:11' as time)")
 	result.Check(testkit.Rows("11:11:11"))
 
+	// test unhex and hex
+	result = tk.MustQuery("select unhex('4D7953514C')")
+	result.Check(testkit.Rows("MySQL"))
+	result = tk.MustQuery("select unhex(hex('string'))")
+	result.Check(testkit.Rows("string"))
+	result = tk.MustQuery("select unhex('ggg')")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select unhex(-1)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select hex(unhex('1267'))")
+	result.Check(testkit.Rows("1267"))
+	result = tk.MustQuery("select hex(unhex(1267))")
+	result.Check(testkit.Rows("1267"))
+
 	// for case
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(255), b int)")

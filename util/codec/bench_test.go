@@ -47,3 +47,16 @@ func BenchmarkDecodeWithOutSize(b *testing.B) {
 		Decode(bs, 1)
 	}
 }
+
+func BenchmarkEncodeIntWithSize(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		data := make([]byte, 0, 8)
+		EncodeInt(data, 10)
+	}
+}
+
+func BenchmarkEncodeIntWithOutSize(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		EncodeInt(nil, 10)
+	}
+}

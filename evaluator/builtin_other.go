@@ -211,7 +211,10 @@ func builtinIn(args []types.Datum, _ context.Context) (d types.Datum, err error)
 			continue
 		}
 
-		a, b := types.CoerceDatum(args[0], v)
+		a, b, err := types.CoerceDatum(args[0], v)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
 		ret, err := a.CompareDatum(b)
 		if err != nil {
 			return d, errors.Trace(err)
@@ -256,7 +259,13 @@ func builtinLogicXor(args []types.Datum, _ context.Context) (d types.Datum, err 
 
 func compareFuncFactory(op opcode.Op) BuiltinFunc {
 	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		a, b := types.CoerceDatum(args[0], args[1])
+		var a, b = args[0], args[1]
+		if op != opcode.NullEQ {
+			a, b, err = types.CoerceDatum(a, b)
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+		}
 		if a.IsNull() || b.IsNull() {
 			// for <=>, if a and b are both nil, return true.
 			// if a or b is nil, return false.
@@ -302,7 +311,10 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 
 func bitOpFactory(op opcode.Op) BuiltinFunc {
 	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		a, b := types.CoerceDatum(args[0], args[1])
+		a, b, err := types.CoerceDatum(args[0], args[1])
+		if err != nil {
+			return d, errors.Trace(err)
+		}
 		if a.IsNull() || b.IsNull() {
 			return
 		}
@@ -347,8 +359,10 @@ func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-
-		a, b = types.CoerceDatum(a, b)
+		a, b, err = types.CoerceDatum(a, b)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
 		if a.IsNull() || b.IsNull() {
 			return
 		}

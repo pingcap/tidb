@@ -21,10 +21,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-func isWhitespace(ch rune) bool {
-	return ch == ' ' || ch == '\t' || ch == '\n'
-}
-
 func isLetter(ch rune) bool {
 	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
@@ -158,6 +154,8 @@ var tokenMap = map[string]int{
 	"BYTE":                byteType,
 	"CASE":                caseKwd,
 	"CAST":                cast,
+	"CEIL":                ceil,
+	"CEILING":             ceiling,
 	"CHARACTER":           character,
 	"CHARSET":             charsetKwd,
 	"CHECK":               check,
@@ -251,6 +249,7 @@ var tokenMap = map[string]int{
 	"HIGH_PRIORITY":       highPriority,
 	"HOUR":                hour,
 	"HEX":                 hex,
+	"UNHEX":               unhex,
 	"IDENTIFIED":          identified,
 	"IGNORE":              ignore,
 	"IF":                  ifKwd,
