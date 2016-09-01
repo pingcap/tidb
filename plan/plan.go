@@ -17,11 +17,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/types"
 )
 
 const (
@@ -71,14 +72,6 @@ type Plan interface {
 	Fields() []*ast.ResultField
 	// SetFields sets the results fields of the plan.
 	SetFields(fields []*ast.ResultField)
-	// The cost before returning fhe first row.
-	StartupCost() float64
-	// The cost after returning all the rows.
-	TotalCost() float64
-	// The expected row count.
-	RowCount() float64
-	// SetLimit is used to push limit to upstream to estimate the cost.
-	SetLimit(limit float64)
 	// AddParent means append a parent for plan.
 	AddParent(parent Plan)
 	// AddChild means append a child for plan.
@@ -109,11 +102,15 @@ type Plan interface {
 	SetChildren(...Plan)
 }
 
-type requiredProperty []*columnProp
+type requiredProperty struct {
+	props []*columnProp
+	group bool
+}
 
 type physicalPlanInfo struct {
-	p    PhysicalPlan
-	cost float64
+	p     PhysicalPlan
+	cost  float64
+	count *uint64 // count is a unique value
 }
 
 type columnProp struct {
@@ -140,7 +137,7 @@ type LogicalPlan interface {
 	// convert2PhysicalPlan converts logical plan to physical plan. The arg prop means the required sort property.
 	// This function returns two response. The first one is the best plan that matches the required property strictly.
 	// The second one is the best plan that needn't matches the required property.
-	convert2PhysicalPlan(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64, error)
+	convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error)
 }
 
 // PhysicalPlan is a tree of physical operators.
@@ -150,7 +147,7 @@ type PhysicalPlan interface {
 
 	// matchProperty means that this physical plan will try to return the best plan that matches the required property.
 	// rowCounts means the child row counts, and childPlanInfo means the plan infos returned by children.
-	matchProperty(prop requiredProperty, rowCounts []uint64, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo
+	matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo
 
 	// Copy copies the current plan.
 	Copy() PhysicalPlan
@@ -161,34 +158,37 @@ type PhysicalPlan interface {
 
 type baseLogicalPlan struct {
 	basePlan
-	propLen          int
-	sortedPlanInfo   *physicalPlanInfo
-	unSortedPlanInfo *physicalPlanInfo
-	count            uint64
+	planMap map[string]*physicalPlanInfo
+	count   uint64
 }
 
-func (p *baseLogicalPlan) getPlanInfo(prop requiredProperty) (*physicalPlanInfo, *physicalPlanInfo, uint64) {
-	if p.sortedPlanInfo == nil {
-		return nil, nil, 0
+func (p *requiredProperty) getHashKey() ([]byte, error) {
+	datums := make([]types.Datum, 0, len(p.props)*3+1)
+	datums = append(datums, types.NewDatum(p.group))
+	for _, c := range p.props {
+		datums = append(datums, types.NewDatum(c.desc), types.NewDatum(c.col.FromID), types.NewDatum(c.col.Index))
 	}
-	if len(prop) > p.propLen {
-		return nil, nil, 0
-	}
-	if len(prop) == p.propLen {
-		return p.sortedPlanInfo, p.unSortedPlanInfo, p.count
-	}
-	return p.unSortedPlanInfo, p.unSortedPlanInfo, p.count
+	bytes, err := codec.EncodeValue(nil, datums)
+	return bytes, errors.Trace(err)
 }
 
-func (p *baseLogicalPlan) storePlanInfo(prop requiredProperty, sortedPlanInfo, unSortedPlanInfo *physicalPlanInfo, cnt uint64) {
-	p.propLen = len(prop)
-	p.sortedPlanInfo = sortedPlanInfo
-	p.unSortedPlanInfo = unSortedPlanInfo
-	p.count = cnt
+func (p *baseLogicalPlan) getPlanInfo(prop *requiredProperty) (*physicalPlanInfo, error) {
+	key, err := prop.getHashKey()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return p.planMap[string(key)], nil
+}
+
+func (p *baseLogicalPlan) storePlanInfo(prop *requiredProperty, info *physicalPlanInfo) {
+	key, _ := prop.getHashKey()
+	p.planMap[string(key)] = info
 }
 
 func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
 	return baseLogicalPlan{
+		count:   -1,
+		planMap: make(map[string]*physicalPlanInfo),
 		basePlan: basePlan{
 			tp:        tp,
 			allocator: a,
@@ -275,29 +275,6 @@ func (p *basePlan) SetSchema(schema expression.Schema) {
 // GetSchema implements Plan GetSchema interface.
 func (p *basePlan) GetSchema() expression.Schema {
 	return p.schema
-}
-
-// StartupCost implements Plan StartupCost interface.
-func (p *basePlan) StartupCost() float64 {
-	return p.startupCost
-}
-
-// TotalCost implements Plan TotalCost interface.
-func (p *basePlan) TotalCost() float64 {
-	return p.totalCost
-}
-
-// RowCount implements Plan RowCount interface.
-func (p *basePlan) RowCount() float64 {
-	if p.limit == 0 {
-		return p.rowCount
-	}
-	return math.Min(p.rowCount, p.limit)
-}
-
-// SetLimit implements Plan SetLimit interface.
-func (p *basePlan) SetLimit(limit float64) {
-	p.limit = limit
 }
 
 // Fields implements Plan Fields interface.

@@ -671,7 +671,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		// args:  condition1, result1,
 		//        condition2, result2,
 		//        ...
-		//        else clasue
+		//        else clause
 		args = er.ctxStack[stkLen-argsLen : stkLen]
 	}
 	function, err := expression.NewFunction(ast.Case, &v.Type, args...)

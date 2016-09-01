@@ -845,12 +845,13 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		return nil
 	}
 	p := &DataSource{
-		table:           tn,
+		ctx:             b.ctx,
 		Table:           tn.TableInfo,
 		baseLogicalPlan: newBaseLogicalPlan(Ts, b.allocator),
 		statisticTable:  statisticTable,
 	}
 	p.initID()
+	p.table, _ = b.is.TableByID(tn.TableInfo.ID)
 	// Equal condition contains a column from previous joined table.
 	rfs := tn.GetResultFields()
 	schema := make([]*expression.Column, 0, len(rfs))
@@ -858,6 +859,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		p.DBName = &rf.DBName
 		p.Columns = append(p.Columns, rf.Column)
 		schema = append(schema, &expression.Column{
+			ID:       rf.Column.ID,
 			FromID:   p.id,
 			ColName:  rf.Column.Name,
 			TblName:  rf.Table.Name,

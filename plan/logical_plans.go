@@ -16,9 +16,11 @@ package plan
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/statistics"
+	"github.com/pingcap/tidb/table"
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -106,7 +108,8 @@ type TableDual struct {
 type DataSource struct {
 	baseLogicalPlan
 
-	table   *ast.TableName
+	ctx     context.Context
+	table   table.Table
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
 	DBName  *model.CIStr
@@ -133,8 +136,7 @@ type Union struct {
 type Sort struct {
 	baseLogicalPlan
 
-	ByItems []*ByItems
-
+	ByItems   []*ByItems
 	ExecLimit *Limit
 }
 

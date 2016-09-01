@@ -97,9 +97,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSemiJoin(v)
 	case *plan.Selection:
 		return b.buildSelection(v)
-	case *plan.PhysicalHashAggregation:
-		return b.buildHashAgg(v)
-	case *plan.PhysicalStreamedAggregation:
+	case *plan.PhysicalAggregation:
 		return b.buildAggregation(v)
 	case *plan.Projection:
 		return b.buildProjection(v)
@@ -338,7 +336,7 @@ func (b *executorBuilder) buildUnionScanExec(src Executor, condition expression.
 	case *XSelectTableExec:
 		us.desc = x.desc
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
-		us.newCondition = condition
+		us.condition = condition
 		us.buildAndSortAddedRows(x.table, x.asName)
 	case *XSelectIndexExec:
 		us.desc = x.indexPlan.Desc
@@ -351,7 +349,7 @@ func (b *executorBuilder) buildUnionScanExec(src Executor, condition expression.
 			}
 		}
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
-		us.newCondition = condition
+		us.condition = condition
 		us.buildAndSortAddedRows(x.table, x.asName)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", src)
@@ -443,7 +441,7 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
+func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor {
 	src := b.build(v.GetChildByIndex(0))
 	e := &AggregationExec{
 		Src:          src,
@@ -528,17 +526,6 @@ func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
 	}
 	log.Debugf("Use XAggregateExec with %d aggs", len(v.AggFuncs))
 	return xe
-}
-
-func (b *executorBuilder) toPBExpr(conditions []expression.Expression, tbl *model.TableInfo) (
-	*tipb.Expr, []expression.Expression) {
-	txn, err := b.ctx.GetTxn(false)
-	if err != nil {
-		b.err = err
-		return nil, nil
-	}
-	client := txn.GetClient()
-	return b.ConditionExprToPBExpr(client, conditions, tbl)
 }
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {

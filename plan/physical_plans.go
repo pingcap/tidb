@@ -19,14 +19,19 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
 	basePlan
+	physicalTableSource
 
+	ctx        context.Context
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
 	Ranges     []*IndexRange
@@ -46,10 +51,44 @@ type PhysicalIndexScan struct {
 	LimitCount *int64
 }
 
+type physicalTableSource struct {
+	Aggregated bool
+	AggFuncs   []*tipb.Expr
+	GbyItems   []*tipb.ByItem
+
+	conditionPBExpr []*tipb.Expr
+}
+
+func (p *physicalTableSource) addAggregation(agg *Aggregation, ctx context.Context) error {
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	client := txn.GetClient()
+	for _, f := range agg.AggFuncs {
+		pb, err := AggFuncToPBExpr(client, f)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		p.AggFuncs = append(p.AggFuncs, pb)
+	}
+	for _, i := range agg.GroupByItems {
+		pb, err := GroupByItemToPB(client, i)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		p.GbyItems = append(p.GbyItems, pb)
+	}
+	p.AggFuncs = true
+	return nil
+}
+
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
 	basePlan
+	physicalTableSource
 
+	ctx     context.Context
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
 	DBName  *model.CIStr
@@ -108,16 +147,26 @@ type PhysicalHashSemiJoin struct {
 	OtherConditions []expression.Expression
 }
 
-type PhysicalHashAggregation struct {
+type PhysicalUnionScan struct {
 	basePlan
 
-	AggFuncs     []expression.AggregationFunction
-	GroupByItems []expression.Expression
+	table     table.Table
+	desc      bool
+	condition expression.Expression
 }
 
-type PhysicalStreamedAggregation struct {
+type AggregationType int
+
+const (
+	Streamed AggregationType = 0
+	Final
+	Complete
+)
+
+type PhysicalAggregation struct {
 	basePlan
 
+	aggType      AggregationType
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
 }

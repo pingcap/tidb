@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 // AggregationFunction stands for aggregate functions.
@@ -38,6 +38,7 @@ type AggregationFunction interface {
 	// GetGroupResult will be called when all data have been processed.
 	GetGroupResult(groupKey []byte) types.Datum
 
+	// GetStreamResult gets a result using streaming agg.
 	GetStreamResult() types.Datum
 
 	// GetArgs stands for getting all arguments.
@@ -83,13 +84,13 @@ func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) Aggre
 type aggCtxMapper map[string]*ast.AggEvaluateContext
 
 type aggFunction struct {
-	name         string
-	Args         []Expression
-	Distinct     bool
-	resultMapper aggCtxMapper
-	streamCtx    *ast.AggEvaluateContext
-	resultCtx    *ast.AggEvaluateContext
-	lastGroup    []byte
+	name          string
+	Args          []Expression
+	Distinct      bool
+	resultMapper  aggCtxMapper
+	streamCtx     *ast.AggEvaluateContext
+	resultCtx     *ast.AggEvaluateContext
+	lastGroup     []byte
 	lastRowEncode []byte
 }
 
@@ -216,7 +217,7 @@ func (af *aggFunction) streamUpdateSum(row []types.Datum, groupKey []byte, ectx 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.Count ++
+	ctx.Count++
 	return end, nil
 }
 
@@ -307,7 +308,7 @@ func (cf *countFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx c
 			return false, nil
 		}
 	}
-	ctx.Count ++
+	ctx.Count++
 	return end, nil
 }
 
@@ -353,12 +354,12 @@ func (af *avgFunction) calculateResult(ctx *ast.AggEvaluateContext) (d types.Dat
 }
 
 // GetGroupResult implements AggregationFunction interface.
-func (af *avgFunction) GetGroupResult(groupKey []byte) (types.Datum) {
+func (af *avgFunction) GetGroupResult(groupKey []byte) types.Datum {
 	ctx := af.getContext(groupKey)
 	return af.calculateResult(ctx)
 }
 
-func (af *avgFunction) GetStreamResult() (types.Datum) {
+func (af *avgFunction) GetStreamResult() types.Datum {
 	ctx := af.resultCtx
 	return af.calculateResult(ctx)
 }
@@ -566,10 +567,10 @@ func (ff *firstRowFunction) StreamUpdate(row []types.Datum, groupKey []byte, ect
 }
 
 // GetGroupResult implements AggregationFunction interface.
-func (ff *firstRowFunction) GetGroupResult(groupKey []byte) (types.Datum) {
+func (ff *firstRowFunction) GetGroupResult(groupKey []byte) types.Datum {
 	return ff.getContext(groupKey).Value
 }
 
-func (ff *firstRowFunction) GetStreamResult() (types.Datum) {
+func (ff *firstRowFunction) GetStreamResult() types.Datum {
 	return ff.resultCtx.Value
 }

@@ -29,7 +29,7 @@ var fullRange = []rangePoint{
 	{value: types.MaxValueDatum()},
 }
 
-func buildNewIndexRange(p *PhysicalIndexScan) error {
+func buildIndexRange(p *PhysicalIndexScan) error {
 	rb := rangeBuilder{}
 	if p.accessEqualCount > 0 {
 		// Build ranges for equal access conditions.
@@ -201,7 +201,7 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 	return accessConditions, filterConditions
 }
 
-func buildNewTableRange(p *PhysicalTableScan) error {
+func buildTableRange(p *PhysicalTableScan) error {
 	if len(p.AccessCondition) == 0 {
 		p.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
 		return nil
