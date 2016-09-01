@@ -58,8 +58,9 @@ func Init() {
 	prometheus.MustRegister(txnCounter)
 	prometheus.MustRegister(txnRolledbackCounter)
 	prometheus.MustRegister(txnDurations)
+	http.Handle("/metrics", prometheus.Handler())
 
-	go http.ListenAndServe(":9191", prometheus.Handler())
+	go http.ListenAndServe(":9191", nil)
 }
 
 // without conflict
