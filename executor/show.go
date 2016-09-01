@@ -236,6 +236,31 @@ func (e *ShowExec) fetchShowIndex() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if tb.Meta().PKIsHandle {
+		var pkCol *table.Column
+		for _, col := range tb.Cols() {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				pkCol = col
+				break
+			}
+		}
+		data := types.MakeDatums(
+			tb.Meta().Name.O, // Table
+			0,                // Non_unique
+			"PRIMARY",        // Key_name
+			1,                // Seq_in_index
+			pkCol.Name.O,     // Column_name
+			"utf8_bin",       // Colation
+			0,                // Cardinality
+			nil,              // Sub_part
+			nil,              // Packed
+			"",               // Null
+			"BTREE",          // Index_type
+			"",               // Comment
+			"",               // Index_comment
+		)
+		e.rows = append(e.rows, &Row{Data: data})
+	}
 	for _, idx := range tb.Indices() {
 		for i, col := range idx.Meta().Columns {
 			nonUniq := 1
