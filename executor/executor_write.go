@@ -448,24 +448,17 @@ func escapeCols(strs [][]byte) []string {
 	return ret
 }
 
-// TODO: escape is still very naive now, should be improved.
+// TODO: escape need to be improved, it should support ESCAPED BY to specify
+// the escape character and handle \N escape.
+// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
 func escape(str []byte) []byte {
 	pos := 0
 	for i := 0; i < len(str); i++ {
 		c := str[i]
-		if c == '\\' {
-			if i+1 < len(str) {
-				switch str[i+1] {
-				case 't':
-					c = '\t'
-					i++
-				case 'n':
-					c = '\n'
-					i++
-				case '\\':
-					c = '\\'
-					i++
-				}
+		if c == '\\' && i+1 < len(str) {
+			var ok bool
+			if c, ok = escapeChar(str[i+1]); ok {
+				i++
 			}
 		}
 
@@ -473,6 +466,26 @@ func escape(str []byte) []byte {
 		pos++
 	}
 	return str[:pos]
+}
+
+func escapeChar(c byte) (byte, bool) {
+	switch c {
+	case '0':
+		return 0, true
+	case 'b':
+		return '\b', true
+	case 'n':
+		return '\n', true
+	case 'r':
+		return '\r', true
+	case 't':
+		return '\t', true
+	case 'Z':
+		return 26, true
+	case '\\':
+		return '\\', true
+	}
+	return c, false
 }
 
 func (e *LoadDataInfo) insertData(cols []string) {

@@ -613,6 +613,7 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 		{nil, []byte("3\tstr \\n\n"), []string{fmt.Sprintf("%v %v", 3, []byte("str \n"))}, nil},
 		{nil, []byte("4\tboth \\t\\n\n"), []string{fmt.Sprintf("%v %v", 4, []byte("both \t\n"))}, nil},
 		{nil, []byte("5\tstr \\\\\n"), []string{fmt.Sprintf("%v %v", 5, []byte("str \\"))}, nil},
+		{nil, []byte("6\t\\r\\t\\n\\0\\Z\\b\n"), []string{fmt.Sprintf("%v %v", 6, []byte{'\r', '\t', '\n', 0, 26, '\b'})}, nil},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
