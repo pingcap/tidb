@@ -448,6 +448,7 @@ func escapeCols(strs [][]byte) []string {
 	return ret
 }
 
+// TODO: escape is still very naive now, should be improved.
 func escape(str []byte) []byte {
 	pos := 0
 	for i := 0; i < len(str); i++ {
