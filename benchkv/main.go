@@ -64,7 +64,7 @@ func Init() {
 }
 
 // without conflict
-func batchRW() {
+func batchRW(value []byte) {
 	wg := sync.WaitGroup{}
 	base := *dataCnt / *workerCnt
 	wg.Add(*workerCnt)
@@ -94,18 +94,17 @@ func batchRW() {
 	wg.Wait()
 }
 
-var value []byte = []byte("value")
-
 func main() {
 	flag.Parse()
 	log.SetLevelByString("error")
 	Init()
 
+	value := []byte("value")
 	if *valueSize > 0 {
 		value = make([]byte, *valueSize)
 	}
 	t := time.Now()
-	batchRW()
+	batchRW(value)
 	resp, err := http.Get("http://localhost:9191/")
 	if err != nil {
 		log.Fatal(err)
