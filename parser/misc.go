@@ -249,6 +249,7 @@ var tokenMap = map[string]int{
 	"HIGH_PRIORITY":       highPriority,
 	"HOUR":                hour,
 	"HEX":                 hex,
+	"UNHEX":               unhex,
 	"IDENTIFIED":          identified,
 	"IGNORE":              ignore,
 	"IF":                  ifKwd,

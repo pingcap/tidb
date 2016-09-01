@@ -483,6 +483,38 @@ func builtinHex(args []types.Datum, _ context.Context) (d types.Datum, err error
 	}
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_unhex
+func builtinUnHex(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	switch args[0].Kind() {
+	case types.KindNull:
+		return d, nil
+	case types.KindString:
+		x, err := args[0].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		bytes, err := hex.DecodeString(x)
+		if err != nil {
+			return d, nil
+		}
+		d.SetString(string(bytes))
+		return d, nil
+	case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+		x, _ := args[0].Cast(types.NewFieldType(mysql.TypeString))
+		if x.IsNull() {
+			return d, nil
+		}
+		bytes, err := hex.DecodeString(x.GetString())
+		if err != nil {
+			return d, nil
+		}
+		d.SetString(string(bytes))
+		return d, nil
+	default:
+		return d, errors.Errorf("Unhex invalid args, need int or string but get %T", args[0].GetValue())
+	}
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
 func builtinTrim(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// args[0] -> Str
