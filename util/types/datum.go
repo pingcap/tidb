@@ -21,6 +21,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"sort"
@@ -1361,9 +1362,11 @@ func invalidConv(d *Datum, tp byte) (Datum, error) {
 	return Datum{}, errors.Errorf("cannot convert %v to type %s", d, TypeStr(tp))
 }
 
-func (d *Datum) convergeType(hasDecimal, hasFloat *bool) (x Datum) {
+func (d *Datum) convergeType(hasUint, hasDecimal, hasFloat *bool) (x Datum) {
 	x = *d
 	switch d.Kind() {
+	case KindUint64:
+		*hasUint = true
 	case KindFloat32:
 		f := d.GetFloat32()
 		x.SetFloat64(float64(f))
@@ -1377,23 +1380,21 @@ func (d *Datum) convergeType(hasDecimal, hasFloat *bool) (x Datum) {
 }
 
 // CoerceDatum changes type.
-// If a or b is Decimal, changes the both to Decimal.
-// Else if a or b is Float, changes the both to Float.
-func CoerceDatum(a, b Datum) (x, y Datum) {
-	var hasDecimal bool
-	var hasFloat bool
-	x = a.convergeType(&hasDecimal, &hasFloat)
-	y = b.convergeType(&hasDecimal, &hasFloat)
-	if hasDecimal {
-		d, err := ConvertDatumToDecimal(x)
-		if err == nil {
-			x.SetMysqlDecimal(d)
-		}
-		d, err = ConvertDatumToDecimal(y)
-		if err == nil {
-			y.SetMysqlDecimal(d)
-		}
-	} else if hasFloat {
+// If a or b is Float, changes the both to Float.
+// Else if a or b is Decimal, changes the both to Decimal.
+// Else if a or b is Uint and op is not div, mod, or intDiv changes the both to Uint.
+func CoerceDatum(a, b Datum, op opcode.Op) (x, y Datum, err error) {
+	if a.IsNull() || b.IsNull() {
+		return x, y, nil
+	}
+	var (
+		hasUint    bool
+		hasDecimal bool
+		hasFloat   bool
+	)
+	x = a.convergeType(&hasUint, &hasDecimal, &hasFloat)
+	y = b.convergeType(&hasUint, &hasDecimal, &hasFloat)
+	if hasFloat {
 		switch x.Kind() {
 		case KindInt64:
 			x.SetFloat64(float64(x.GetInt64()))
@@ -1407,7 +1408,12 @@ func CoerceDatum(a, b Datum) (x, y Datum) {
 			x.SetFloat64(x.GetMysqlEnum().ToNumber())
 		case KindMysqlSet:
 			x.SetFloat64(x.GetMysqlSet().ToNumber())
-
+		case KindMysqlDecimal:
+			fval, err := x.ToFloat64()
+			if err != nil {
+				return x, y, errors.Trace(err)
+			}
+			x.SetFloat64(fval)
 		}
 		switch y.Kind() {
 		case KindInt64:
@@ -1422,6 +1428,36 @@ func CoerceDatum(a, b Datum) (x, y Datum) {
 			y.SetFloat64(y.GetMysqlEnum().ToNumber())
 		case KindMysqlSet:
 			y.SetFloat64(y.GetMysqlSet().ToNumber())
+		case KindMysqlDecimal:
+			fval, err := y.ToFloat64()
+			if err != nil {
+				return x, y, errors.Trace(err)
+			}
+			y.SetFloat64(fval)
+		}
+	} else if hasDecimal {
+		var dec *mysql.MyDecimal
+		dec, err = ConvertDatumToDecimal(x)
+		if err != nil {
+			return x, y, errors.Trace(err)
+		}
+		x.SetMysqlDecimal(dec)
+		dec, err = ConvertDatumToDecimal(y)
+		if err != nil {
+			return x, y, errors.Trace(err)
+		}
+		y.SetMysqlDecimal(dec)
+	} else if hasUint {
+		switch op {
+		case opcode.Plus, opcode.Minus, opcode.Mul:
+			x, err = x.convertToUint(NewFieldType(mysql.TypeLonglong))
+			if err != nil {
+				return x, y, errors.Trace(err)
+			}
+			y, err = y.convertToUint(NewFieldType(mysql.TypeLonglong))
+			if err != nil {
+				return x, y, errors.Trace(err)
+			}
 		}
 	}
 	return
