@@ -511,7 +511,7 @@ func builtinUnHex(args []types.Datum, _ context.Context) (d types.Datum, err err
 		d.SetString(string(bytes))
 		return d, nil
 	default:
-		return d, errors.Errorf("Hex invalid args, need int or string but get %T", args[0].GetValue())
+		return d, errors.Errorf("Unhex invalid args, need int or string but get %T", args[0].GetValue())
 	}
 }
 
