@@ -684,3 +684,24 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 
 	}
 }
+func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
+
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input  interface{}
+		Expect string
+	}{
+		{"4D7953514C", "MySQL"},
+		{"31323334", "1234"},
+		{"", ""},
+	}
+
+	dtbl := tblToDtbl(tbl)
+
+	for _, t := range dtbl {
+		d, err := builtinUnHex(t["Input"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
+
+	}
+}
