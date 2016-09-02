@@ -47,5 +47,5 @@ func (ts *testSuite) SetUpSuite(c *C) {
 
 func init() {
 	log.SetLevelByString("warn")
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 }

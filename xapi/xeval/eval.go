@@ -566,7 +566,10 @@ func ComputeArithmetic(op tipb.ExprType, left types.Datum, right types.Datum) (t
 	if err != nil {
 		return result, errors.Trace(err)
 	}
-	a, b = types.CoerceDatum(a, b)
+	a, b, err = types.CoerceDatum(a, b)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
 	if a.IsNull() || b.IsNull() {
 		return result, nil
 	}
