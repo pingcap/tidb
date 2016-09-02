@@ -16,7 +16,6 @@ package xapi
 import (
 	"io"
 	"io/ioutil"
-	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -68,26 +67,15 @@ type selectResult struct {
 	fields    []*types.FieldType
 	resp      kv.Response
 
-	temporary chan *partialResult
-	results   chan PartialResult
-	done      chan error
+	results chan PartialResult
+	done    chan error
 }
 
 func (r *selectResult) Fetch() {
-	go r.decode()
 	go r.fetch()
 }
 
-func (r *selectResult) decode() {
-	for pr := range r.temporary {
-		pr.decodeData()
-	}
-}
-
 func (r *selectResult) fetch() {
-	defer close(r.temporary)
-	var wg sync.WaitGroup
-	defer wg.Wait()
 	defer close(r.results)
 
 	for {
@@ -104,11 +92,11 @@ func (r *selectResult) fetch() {
 			fields:    r.fields,
 			reader:    reader,
 			aggregate: r.aggregate,
-			done:      make(chan error, 1),
+			done:      make(chan error),
+			ch:        make(chan []selectResponseRow),
 		}
 
-		wg.Add(1)
-		go pr.fetch(r.temporary, &wg)
+		go pr.fetch()
 		r.results <- pr
 	}
 }
@@ -145,12 +133,13 @@ type partialResult struct {
 	aggregate bool
 	fields    []*types.FieldType
 	reader    io.ReadCloser
-	data      []byte
-	rows      []selectResponseRow
-	cursor    int
 
 	done    chan error
 	fetched bool
+
+	ch     chan []selectResponseRow
+	rows   []selectResponseRow
+	cursor int
 }
 
 type selectResponseRow struct {
@@ -158,7 +147,10 @@ type selectResponseRow struct {
 	data   []types.Datum
 }
 
-func (pr *partialResult) fetch(ch chan<- *partialResult, wg *sync.WaitGroup) {
+const decodeBatchSize = 1024
+
+func (pr *partialResult) fetch() {
+	defer close(pr.ch)
 	b, err := ioutil.ReadAll(pr.reader)
 	pr.reader.Close()
 	pr.reader = nil
@@ -166,15 +158,9 @@ func (pr *partialResult) fetch(ch chan<- *partialResult, wg *sync.WaitGroup) {
 		pr.done <- errors.Trace(err)
 		return
 	}
-	pr.data = b
-	ch <- pr
-	wg.Done()
-}
 
-func (pr *partialResult) decodeData() {
 	resp := new(tipb.SelectResponse)
-	err := resp.Unmarshal(pr.data)
-	if err != nil {
+	if err = resp.Unmarshal(b); err != nil {
 		pr.done <- errors.Trace(err)
 		return
 	}
@@ -182,19 +168,36 @@ func (pr *partialResult) decodeData() {
 		pr.done <- errInvalidResp.Gen("[%d %s]", resp.Error.GetCode(), resp.Error.GetMsg())
 		return
 	}
+	pr.done <- nil
 
-	pr.rows = make([]selectResponseRow, len(resp.Rows))
-	for i, row := range resp.Rows {
-		handle, data, err := pr.decodeRow(row)
+	for rowIdx := 0; rowIdx < len(resp.Rows); rowIdx += decodeBatchSize {
+		rowEnd := rowIdx + decodeBatchSize
+		if rowEnd > len(resp.Rows) {
+			rowEnd = len(resp.Rows)
+		}
+		rows := resp.Rows[rowIdx:rowEnd]
+
+		resultRows, err := pr.decodeRows(rows)
 		if err != nil {
 			pr.done <- errors.Trace(err)
 			return
 		}
-		pr.rows[i].data = data
-		pr.rows[i].handle = handle
-	}
 
-	pr.done <- nil
+		pr.ch <- resultRows
+	}
+}
+
+func (pr *partialResult) decodeRows(input []*tipb.Row) ([]selectResponseRow, error) {
+	output := make([]selectResponseRow, len(input))
+	for i, row := range input {
+		handle, data, err := pr.decodeRow(row)
+		if err != nil {
+			return output, errors.Trace(err)
+		}
+		output[i].data = data
+		output[i].handle = handle
+	}
+	return output, nil
 }
 
 func (pr *partialResult) decodeRow(row *tipb.Row) (handle int64, data []types.Datum, err error) {
@@ -231,8 +234,13 @@ func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 			return 0, nil, err
 		}
 	}
+
 	if pr.cursor >= len(pr.rows) {
-		return 0, nil, nil
+		rows, ok := <-pr.ch
+		if !ok {
+			return 0, nil, nil
+		}
+		pr.rows = rows
 	}
 
 	row := pr.rows[pr.cursor]
@@ -261,10 +269,9 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrde
 		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
-		resp:      resp,
-		temporary: make(chan *partialResult, 1),
-		results:   make(chan PartialResult, 5),
-		done:      make(chan error, 1),
+		resp:    resp,
+		results: make(chan PartialResult, 5),
+		done:    make(chan error, 1),
 	}
 	// If Aggregates is not nil, we should set result fields latter.
 	if len(req.Aggregates) == 0 && len(req.GroupBy) == 0 {
