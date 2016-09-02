@@ -835,7 +835,6 @@ func (e *XSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
 	selIdxReq.StartTs = e.txn.StartTS()
 	selIdxReq.IndexInfo = xapi.IndexToProto(e.table.Meta(), e.indexPlan.Index)
-	selIdxReq.Limit = e.indexPlan.LimitCount
 	if e.indexPlan.Desc {
 		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: e.indexPlan.Desc})
 	}
@@ -854,6 +853,7 @@ func (e *XSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 		selIdxReq.Aggregates = e.aggFuncs
 		selIdxReq.GroupBy = e.byItems
 		selIdxReq.Where = e.where
+		selIdxReq.Limit = e.indexPlan.LimitCount
 	} else if e.indexPlan.OutOfOrder {
 		concurrency = defaultConcurrency
 	}
@@ -969,6 +969,9 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, error) {
 	// The handles are not in original index order, so we can't push limit here.
 	selTableReq := new(tipb.SelectRequest)
+	if e.indexPlan.OutOfOrder {
+		selTableReq.Limit = e.indexPlan.LimitCount
+	}
 	selTableReq.StartTs = e.txn.StartTS()
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
