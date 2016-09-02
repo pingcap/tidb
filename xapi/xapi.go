@@ -241,6 +241,7 @@ func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 			return 0, nil, nil
 		}
 		pr.rows = rows
+		pr.cursor = 0
 	}
 
 	row := pr.rows[pr.cursor]
