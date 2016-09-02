@@ -95,7 +95,7 @@ func constructBinaryOpFunction(l expression.Expression, r expression.Expression,
 			return nil, errors.Trace(err)
 		}
 	}
-	return expression.ComposeConditionWithBinaryOp(funcs, ast.AndAnd), nil
+	return expression.ComposeCNFCondition(funcs), nil
 }
 
 func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (LogicalPlan, expression.Schema) {

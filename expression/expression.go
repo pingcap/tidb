@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -40,6 +41,9 @@ type Expression interface {
 
 	// DeepCopy copies an expression totally.
 	DeepCopy() Expression
+
+	// HashCode create the hashcode for expression
+	HashCode() string
 }
 
 // EvalBool evaluates expression to a boolean value.
@@ -83,7 +87,7 @@ type Column struct {
 // Equal checks if two columns are equal
 func (col *Column) Equal(expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
-		return col.FromID == newCol.FromID && col.ColName == newCol.ColName
+		return col.HashCode() == newCol.HashCode()
 	}
 	return false
 }
@@ -131,6 +135,13 @@ func (col *Column) DeepCopy() Expression {
 	}
 	newCol := *col
 	return &newCol
+}
+
+// HashCode implements Expression interface.
+func (col *Column) HashCode() string {
+	var bytes []byte
+	bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(col.FromID), types.NewIntDatum(int64(col.Position)))
+	return string(bytes)
 }
 
 // Schema stands for the row schema get from input.
@@ -327,6 +338,18 @@ func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Da
 	return sf.Function(sf.ArgValues, ctx)
 }
 
+// HashCode implements Expression interface.
+func (sf *ScalarFunction) HashCode() string {
+	v := make([]types.Datum, len(sf.Args)+1)
+	v = append(v, types.NewStringDatum(sf.FuncName.L))
+	for _, arg := range sf.Args {
+		v = append(v, types.NewStringDatum(arg.HashCode()))
+	}
+	var bytes []byte
+	bytes, _ = codec.EncodeValue(bytes, v...)
+	return string(bytes)
+}
+
 // Constant stands for a constant value.
 type Constant struct {
 	Value   types.Datum
@@ -360,8 +383,15 @@ func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error)
 	return c.Value, nil
 }
 
-// ComposeConditionWithBinaryOp composes CNF or items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeConditionWithBinaryOp(conditions []Expression, funcName string) Expression {
+// HashCode implements Expression interface.
+func (c *Constant) HashCode() string {
+	var bytes []byte
+	bytes, _ = codec.EncodeValue(bytes, c.Value)
+	return string(bytes)
+}
+
+// composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
+func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expression {
 	length := len(conditions)
 	if length == 0 {
 		return nil
@@ -371,9 +401,19 @@ func ComposeConditionWithBinaryOp(conditions []Expression, funcName string) Expr
 	}
 	expr, _ := NewFunction(funcName,
 		types.NewFieldType(mysql.TypeTiny),
-		ComposeConditionWithBinaryOp(conditions[length/2:], funcName),
-		ComposeConditionWithBinaryOp(conditions[:length/2], funcName))
+		composeConditionWithBinaryOp(conditions[length/2:], funcName),
+		composeConditionWithBinaryOp(conditions[:length/2], funcName))
 	return expr
+}
+
+// ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
+func ComposeCNFCondition(conditions []Expression) Expression {
+	return composeConditionWithBinaryOp(conditions, ast.AndAnd)
+}
+
+// ComposeDNFCondition composes DNF items into a balance deep DNF tree.
+func ComposeDNFCondition(conditions []Expression) Expression {
+	return composeConditionWithBinaryOp(conditions, ast.OrOr)
 }
 
 // Assignment represents a set assignment in Update, such as

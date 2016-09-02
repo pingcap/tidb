@@ -69,52 +69,61 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 	// next:  "0"
 	isHandled := make([]bool, len(conditions))
 	type transitiveEqualityPredicate map[string]*expression.Constant // transitive equality predicates between one column and one constant
-	equalities := make(transitiveEqualityPredicate, 0)
-	for i := 0; i < len(conditions); i++ {
-		if isHandled[i] {
-			continue
-		}
-		if len(equalities) != 0 {
-			conditions[i] = constantSubstitute(equalities, conditions[i])
-		}
-		expr, ok := conditions[i].(*expression.ScalarFunction)
-		if !ok {
-			continue
-		}
-		// process the included OR conditions recursively to do the same for CNF item.
-		switch expr.FuncName.L {
-		case ast.OrOr:
-			expressions := expression.SplitNormalFormItems(conditions[i], ast.OrOr)
-			newExpression := make([]expression.Expression, 0)
-			for _, v := range expressions {
-				newExpression = append(newExpression, propagateConstant([]expression.Expression{v})...)
-			}
-			conditions[i] = expression.ComposeConditionWithBinaryOp(newExpression, ast.OrOr)
-			isHandled[i] = true
-		case ast.AndAnd:
-			newExpression := propagateConstant(expression.SplitNormalFormItems(conditions[i], ast.AndAnd))
-			conditions[i] = expression.ComposeConditionWithBinaryOp(newExpression, ast.AndAnd)
-			isHandled[i] = true
-		case ast.EQ:
-			var (
-				col      *expression.Column
-				val      *expression.Constant
-				isColumn bool
-				bytes    []byte
-			)
-			left, ok1 := expr.Args[0].(*expression.Constant)
-			right, ok2 := expr.Args[1].(*expression.Constant)
-			if col, isColumn = expr.Args[0].(*expression.Column); ok2 && isColumn {
-				val = right
-			} else if col, isColumn = expr.Args[1].(*expression.Column); ok1 && isColumn {
-				val = left
-			} else {
+	for true {
+		equalities := make(transitiveEqualityPredicate, 0)
+		for i := 0; i < len(conditions); i++ {
+			if isHandled[i] {
 				continue
 			}
-			bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(col.FromID), types.NewIntDatum(int64(col.Position)))
-			equalities[string(bytes)] = val
-			isHandled[i] = true
-			i = -1
+			expr, ok := conditions[i].(*expression.ScalarFunction)
+			if !ok {
+				continue
+			}
+			// process the included OR conditions recursively to do the same for CNF item.
+			switch expr.FuncName.L {
+			case ast.OrOr:
+				expressions := expression.SplitNormalFormItems(conditions[i], ast.OrOr)
+				newExpression := make([]expression.Expression, 0)
+				for _, v := range expressions {
+					newExpression = append(newExpression, propagateConstant([]expression.Expression{v})...)
+				}
+				conditions[i] = expression.ComposeDNFCondition(newExpression)
+				isHandled[i] = true
+			case ast.AndAnd:
+				newExpression := propagateConstant(expression.SplitNormalFormItems(conditions[i], ast.AndAnd))
+				conditions[i] = expression.ComposeCNFCondition(newExpression)
+				isHandled[i] = true
+			case ast.EQ:
+				var (
+					col      *expression.Column
+					val      *expression.Constant
+					isColumn bool
+					bytes    []byte
+				)
+				left, ok1 := expr.Args[0].(*expression.Constant)
+				right, ok2 := expr.Args[1].(*expression.Constant)
+				if col, isColumn = expr.Args[0].(*expression.Column); ok2 && isColumn {
+					val = right
+				} else if col, isColumn = expr.Args[1].(*expression.Column); ok1 && isColumn {
+					val = left
+				} else {
+					continue
+				}
+				bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(col.FromID), types.NewIntDatum(int64(col.Position)))
+				equalities[string(bytes)] = val
+				isHandled[i] = true
+			}
+		}
+		if len(equalities) == 0 {
+			break
+		}
+		for i := 0; i < len(conditions); i++ {
+			if isHandled[i] {
+				continue
+			}
+			if len(equalities) != 0 {
+				conditions[i] = constantSubstitute(equalities, conditions[i])
+			}
 		}
 	}
 	// Propagate transitive inequality predicates.
@@ -169,7 +178,11 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 		ast.NE:   ast.NE,
 		ast.Like: ast.Like,
 	}
-	type transitiveInEqualityPredicate map[string]map[string][]*expression.Constant // transitive inequality predicates between one column and one constant.
+	type inequalityFactor struct {
+		FuncName string
+		Factor   []*expression.Constant
+	}
+	type transitiveInEqualityPredicate map[string][]inequalityFactor // transitive inequality predicates between one column and one constant.
 	inequalities := make(transitiveInEqualityPredicate, 0)
 	for i := 0; i < len(conditions); i++ { // extract inequality predicates.
 		var (
@@ -200,27 +213,14 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 		if !ok { // no need to propagate inequality predicates whose column is only equal to itself.
 			continue
 		}
-		var bytes []byte
-		bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(equalCol.FromID), types.NewIntDatum(int64(equalCol.Position)))
-		col := string(bytes)
-		if _, ok = inequalities[col]; !ok {
-			inequalities[col] = make(map[string][]*expression.Constant, 1)
+		colHashCode := equalCol.HashCode()
+		if _, ok = inequalities[colHashCode]; !ok {
+			inequalities[colHashCode] = make([]inequalityFactor, 1)
 		}
 		if funcName == ast.Like { // func 'LIKE' need 3 input arguments, so here we handle it alone.
-			inequalities[col][ast.Like] = append(inequalities[col][ast.Like], val, expr.Args[2].(*expression.Constant))
+			inequalities[colHashCode] = append(inequalities[colHashCode], inequalityFactor{FuncName: ast.Like, Factor: []*expression.Constant{val, expr.Args[2].(*expression.Constant)}})
 		} else {
-			var preVal []*expression.Constant
-			if preVal, ok = inequalities[col][funcName]; !ok {
-				inequalities[col][funcName] = append(inequalities[col][funcName], val)
-			} else {
-				if funcName == ast.GE || funcName == ast.GT && preVal[0].Value.GetInt64() < val.Value.GetInt64() { // "a > 0 and a > 3" ==> "a > 3".
-					inequalities[col][funcName][0] = val
-				} else if funcName == ast.LE || funcName == ast.LT && preVal[0].Value.GetInt64() > val.Value.GetInt64() { // "a < 0 and a < 3" ==> "a < 0".
-					inequalities[col][funcName][0] = val
-				} else if funcName == ast.NE {
-					inequalities[col][funcName] = append(preVal, val)
-				}
-			}
+			inequalities[colHashCode] = append(inequalities[colHashCode], inequalityFactor{FuncName: funcName, Factor: []*expression.Constant{val}})
 		}
 		conditions = append(conditions[:i], conditions[i+1:]...)
 		i--
@@ -229,18 +229,16 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 		return conditions
 	}
 	for k, v := range multipleEqualities { // propagate constants in inequality predicates.
-		var bytes []byte
-		bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(v.FromID), types.NewIntDatum(int64(v.Position)))
-		col := string(bytes)
-		for funcName, predicate := range inequalities[col] {
+		for _, x := range inequalities[v.HashCode()] {
+			funcName, factors := x.FuncName, x.Factor
 			if funcName == ast.Like {
-				for i := 0; i < len(predicate); i += 2 {
-					newFunc, _ := expression.NewFunction(funcName, types.NewFieldType(mysql.TypeTiny), k, predicate[i], predicate[i+1])
+				for i := 0; i < len(factors); i += 2 {
+					newFunc, _ := expression.NewFunction(funcName, types.NewFieldType(mysql.TypeTiny), k, factors[i], factors[i+1])
 					conditions = append(conditions, newFunc)
 				}
 			} else {
-				for i := 0; i < len(predicate); i++ {
-					newFunc, _ := expression.NewFunction(funcName, types.NewFieldType(mysql.TypeTiny), k, predicate[i])
+				for i := 0; i < len(factors); i++ {
+					newFunc, _ := expression.NewFunction(funcName, types.NewFieldType(mysql.TypeTiny), k, factors[i])
 					conditions = append(conditions, newFunc)
 					i++
 				}
@@ -254,9 +252,7 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 func constantSubstitute(equalities map[string]*expression.Constant, condition expression.Expression) expression.Expression {
 	switch expr := condition.(type) {
 	case *expression.Column:
-		var bytes []byte
-		bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(expr.FromID), types.NewIntDatum(int64(expr.Position)))
-		if v, ok := equalities[string(bytes)]; ok {
+		if v, ok := equalities[expr.HashCode()]; ok {
 			return v
 		}
 	case *expression.ScalarFunction:

@@ -391,22 +391,22 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 	}
 	e := &HashJoinExec{
 		schema:      v.GetSchema(),
-		otherFilter: expression.ComposeConditionWithBinaryOp(v.OtherConditions, ast.AndAnd),
+		otherFilter: expression.ComposeCNFCondition(v.OtherConditions),
 		prepared:    false,
 		ctx:         b.ctx,
 		targetTypes: targetTypes,
 		concurrency: v.Concurrency,
 	}
 	if v.SmallTable == 1 {
-		e.smallFilter = expression.ComposeConditionWithBinaryOp(v.RightConditions, ast.AndAnd)
-		e.bigFilter = expression.ComposeConditionWithBinaryOp(v.LeftConditions, ast.AndAnd)
+		e.smallFilter = expression.ComposeCNFCondition(v.RightConditions)
+		e.bigFilter = expression.ComposeCNFCondition(v.LeftConditions)
 		e.smallHashKey = rightHashKey
 		e.bigHashKey = leftHashKey
 		e.leftSmall = false
 	} else {
 		e.leftSmall = true
-		e.smallFilter = expression.ComposeConditionWithBinaryOp(v.LeftConditions, ast.AndAnd)
-		e.bigFilter = expression.ComposeConditionWithBinaryOp(v.RightConditions, ast.AndAnd)
+		e.smallFilter = expression.ComposeCNFCondition(v.LeftConditions)
+		e.bigFilter = expression.ComposeCNFCondition(v.RightConditions)
 		e.smallHashKey = leftHashKey
 		e.bigHashKey = rightHashKey
 	}
@@ -447,9 +447,9 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 	}
 	e := &HashSemiJoinExec{
 		schema:       v.GetSchema(),
-		otherFilter:  expression.ComposeConditionWithBinaryOp(v.OtherConditions, ast.AndAnd),
-		bigFilter:    expression.ComposeConditionWithBinaryOp(v.LeftConditions, ast.AndAnd),
-		smallFilter:  expression.ComposeConditionWithBinaryOp(v.RightConditions, ast.AndAnd),
+		otherFilter:  expression.ComposeCNFCondition(v.OtherConditions),
+		bigFilter:    expression.ComposeCNFCondition(v.LeftConditions),
+		smallFilter:  expression.ComposeCNFCondition(v.RightConditions),
 		bigExec:      b.build(v.GetChildByIndex(0)),
 		smallExec:    b.build(v.GetChildByIndex(1)),
 		prepared:     false,
@@ -589,7 +589,7 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 
 	exec := &SelectionExec{
 		Src:       src,
-		Condition: expression.ComposeConditionWithBinaryOp(v.Conditions, ast.AndAnd),
+		Condition: expression.ComposeCNFCondition(v.Conditions),
 		schema:    v.GetSchema(),
 		ctx:       b.ctx,
 	}
@@ -644,9 +644,9 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Sele
 		if !txn.IsReadOnly() {
 			if s != nil {
 				ret = b.buildUnionScanExec(ret,
-					expression.ComposeConditionWithBinaryOp(append(s.Conditions, v.AccessCondition...), ast.AndAnd))
+					expression.ComposeCNFCondition(append(s.Conditions, v.AccessCondition...)))
 			} else {
-				ret = b.buildUnionScanExec(ret, expression.ComposeConditionWithBinaryOp(v.AccessCondition, ast.AndAnd))
+				ret = b.buildUnionScanExec(ret, expression.ComposeCNFCondition(v.AccessCondition))
 			}
 		}
 		if s != nil {
@@ -699,9 +699,9 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan, s *plan.Sele
 		if !txn.IsReadOnly() {
 			if s != nil {
 				ret = b.buildUnionScanExec(ret,
-					expression.ComposeConditionWithBinaryOp(append(s.Conditions, v.AccessCondition...), ast.AndAnd))
+					expression.ComposeCNFCondition(append(s.Conditions, v.AccessCondition...)))
 			} else {
-				ret = b.buildUnionScanExec(ret, expression.ComposeConditionWithBinaryOp(v.AccessCondition, ast.AndAnd))
+				ret = b.buildUnionScanExec(ret, expression.ComposeCNFCondition(v.AccessCondition))
 			}
 		}
 		// It will forbid limit and aggregation to push down.
