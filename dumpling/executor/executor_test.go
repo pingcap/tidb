@@ -1511,6 +1511,17 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("insert t values (0)")
 	result = tk.MustQuery("select NULL from t ")
 	result.Check(testkit.Rows("<nil>"))
+	// test for double read
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int unique, b int)")
+	tk.MustExec("insert t values (0, 1)")
+	tk.MustExec("insert t values (1, 2)")
+	tk.MustExec("insert t values (2, 1)")
+	tk.MustExec("insert t values (3, 2)")
+	tk.MustExec("insert t values (4, 1)")
+	tk.MustExec("insert t values (5, 2)")
+	result = tk.MustQuery("select * from t where a < 5 and b = 1 limit 2")
+	result.Check(testkit.Rows("0 1", "2 1"))
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
