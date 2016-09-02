@@ -93,7 +93,7 @@ func (r *selectResult) fetch() {
 			reader:    reader,
 			aggregate: r.aggregate,
 			done:      make(chan error),
-			ch:        make(chan []selectResponseRow),
+			ch:        make(chan []selectResponseRow, 1),
 		}
 
 		go pr.fetch()
