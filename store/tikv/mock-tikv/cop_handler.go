@@ -233,11 +233,11 @@ func (h *rpcHandler) extractKVRanges(sel *tipb.SelectRequest) (kvRanges []kv.Key
 	for _, kran := range sel.Ranges {
 		var upperKey, lowerKey kv.Key
 		if idxID == 0 {
-			upperKey = tablecodec.EncodeRowKey(tid, kran.GetHigh())
+			_, upperKey = tablecodec.EncodeRowKey(nil, tid, kran.GetHigh())
 			if bytes.Compare(upperKey, h.startKey) <= 0 {
 				continue
 			}
-			lowerKey = tablecodec.EncodeRowKey(tid, kran.GetLow())
+			_, lowerKey = tablecodec.EncodeRowKey(nil, tid, kran.GetLow())
 		} else {
 			upperKey = tablecodec.EncodeIndexSeekKey(tid, idxID, kran.GetHigh())
 			if bytes.Compare(upperKey, h.startKey) <= 0 {
