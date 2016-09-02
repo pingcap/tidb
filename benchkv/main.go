@@ -1,3 +1,16 @@
+// Copyright 2016 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package main
 
 import (
@@ -20,6 +33,7 @@ var (
 	dataCnt   = flag.Int("N", 1000000, "data num")
 	workerCnt = flag.Int("C", 400, "concurrent num")
 	pdAddr    = flag.String("pd", "localhost:2379", "pd address:localhost:2379")
+	valueSize = flag.Int("V", 5, "value size in byte")
 
 	txnCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -63,7 +77,7 @@ func Init() {
 }
 
 // without conflict
-func batchRW() {
+func batchRW(value []byte) {
 	wg := sync.WaitGroup{}
 	base := *dataCnt / *workerCnt
 	wg.Add(*workerCnt)
@@ -79,7 +93,7 @@ func batchRW() {
 					log.Fatal(err)
 				}
 				key := fmt.Sprintf("key_%d", k)
-				txn.Set([]byte(key), []byte("value"))
+				txn.Set([]byte(key), value)
 				err = txn.Commit()
 				if err != nil {
 					txnRolledbackCounter.WithLabelValues("txn").Inc()
@@ -98,8 +112,9 @@ func main() {
 	log.SetLevelByString("error")
 	Init()
 
+	value := make([]byte, *valueSize)
 	t := time.Now()
-	batchRW()
+	batchRW(value)
 	resp, err := http.Get("http://localhost:9191/")
 	if err != nil {
 		log.Fatal(err)
