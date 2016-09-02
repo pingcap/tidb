@@ -360,8 +360,8 @@ func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error)
 	return c.Value, nil
 }
 
-// ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeCNFCondition(conditions []Expression) Expression {
+// ComposeConditionWithBinaryOp composes CNF or items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
+func ComposeConditionWithBinaryOp(conditions []Expression, funcName string) Expression {
 	length := len(conditions)
 	if length == 0 {
 		return nil
@@ -369,26 +369,10 @@ func ComposeCNFCondition(conditions []Expression) Expression {
 	if length == 1 {
 		return conditions[0]
 	}
-	expr, _ := NewFunction(ast.AndAnd,
+	expr, _ := NewFunction(funcName,
 		types.NewFieldType(mysql.TypeTiny),
-		ComposeCNFCondition(conditions[length/2:]),
-		ComposeCNFCondition(conditions[:length/2]))
-	return expr
-}
-
-// composeDNFCondition composes DNF items into a balanced deep DNF tree.
-func ComposeDNFConditions(conditions []Expression) Expression {
-	length := len(conditions)
-	if length == 0 {
-		return nil
-	}
-	if length == 1 {
-		return conditions[0]
-	}
-	expr, _ := NewFunction(ast.OrOr,
-		types.NewFieldType(mysql.TypeTiny),
-		ComposeDNFConditions(conditions[length/2:]),
-		ComposeDNFConditions(conditions[:length/2]))
+		ComposeConditionWithBinaryOp(conditions[length/2:], funcName),
+		ComposeConditionWithBinaryOp(conditions[:length/2], funcName))
 	return expr
 }
 
@@ -397,4 +381,19 @@ func ComposeDNFConditions(conditions []Expression) Expression {
 type Assignment struct {
 	Col  *Column
 	Expr Expression
+}
+
+// splitNormalFormItems split CNF(conjunctive normal form) like "a and b and c", or DNF(disjunctive normal form) like "a or b or c"
+func SplitNormalFormItems(onExpr Expression, funcName string) []Expression {
+	switch v := onExpr.(type) {
+	case *ScalarFunction:
+		if v.FuncName.L == funcName {
+			var ret []Expression
+			for _, arg := range v.Args {
+				ret = append(ret, SplitNormalFormItems(arg, funcName)...)
+			}
+			return ret
+		}
+	}
+	return []Expression{onExpr}
 }

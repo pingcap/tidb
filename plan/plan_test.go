@@ -1000,7 +1000,7 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 		selection := p.GetChildByIndex(0).(*Selection)
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
 
-		c.Assert(expression.ComposeCNFCondition(selection.Conditions).String(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
+		c.Assert(expression.ComposeConditionWithBinaryOp(selection.Conditions, ast.AndAnd).String(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
 	}
 }
 
