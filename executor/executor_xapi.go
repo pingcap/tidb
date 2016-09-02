@@ -969,7 +969,9 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, error) {
 	// The handles are not in original index order, so we can't push limit here.
 	selTableReq := new(tipb.SelectRequest)
-	selTableReq.Limit = e.indexPlan.LimitCount
+	if e.indexPlan.OutOfOrder {
+		selTableReq.Limit = e.indexPlan.LimitCount
+	}
 	selTableReq.StartTs = e.txn.StartTS()
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
