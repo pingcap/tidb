@@ -52,6 +52,8 @@ import (
 	abs		"ABS"
 	addDate		"ADDDATE"
 	admin		"ADMIN"
+	ceil		"CEIL"
+	ceiling		"CEILING"
 	coalesce	"COALESCE"
 	concat		"CONCAT"
 	concatWs	"CONCAT_WS"
@@ -71,6 +73,7 @@ import (
 	greatest	"GREATEST"
 	hour		"HOUR"
 	hex         	"HEX"
+	unhex         	"UNHEX"
 	ifNull		"IFNULL"
 	isNull		"ISNULL"
 	lastInsertID	"LAST_INSERT_ID"
@@ -135,6 +138,7 @@ import (
 	compressed	"COMPRESSED"
 	compression	"COMPRESSION"
 	connection 	"CONNECTION"
+	data 		"DATA"
 	dateType	"DATE"
 	datetimeType	"DATETIME"
 	deallocate	"DEALLOCATE"
@@ -237,7 +241,6 @@ import (
 	create		"CREATE"
 	cross 		"CROSS"
 	curDate 	"CURDATE"
-	utcDate 	"UTC_DATE"
 	currentDate 	"CURRENT_DATE"
 	currentTime 	"CURRENT_TIME"
 	currentUser	"CURRENT_USER"
@@ -255,8 +258,10 @@ import (
 	dual 		"DUAL"
 	duplicate	"DUPLICATE"
 	elseKwd		"ELSE"
+	enclosed	"ENCLOSED"
 	enum 		"ENUM"
 	eq		"="
+	escaped 	"ESCAPED"
 	exists		"EXISTS"
 	explain		"EXPLAIN"
 	extract		"EXTRACT"
@@ -275,6 +280,7 @@ import (
 	ifKwd		"IF"
 	in		"IN"
 	index		"INDEX"
+	infile		"INFILE"
 	inner 		"INNER"
 	insert		"INSERT"
 	interval	"INTERVAL"
@@ -288,6 +294,8 @@ import (
 	left		"LEFT"
 	like		"LIKE"
 	limit		"LIMIT"
+	lines 		"LINES"
+	load		"LOAD"
 	lock		"LOCK"
 	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
@@ -320,10 +328,12 @@ import (
 	set		"SET"
 	share		"SHARE"
 	show		"SHOW"
+	starting	"STARTING"
 	strcmp		"STRCMP"
 	sysVar		"SYS_VAR"
 	sysDate		"SYSDATE"
 	tableKwd	"TABLE"
+	terminated	"TERMINATED"
 	then		"THEN"
 	to		"TO"
 	trailing	"TRAILING"
@@ -335,8 +345,9 @@ import (
 	unsigned	"UNSIGNED"
 	update		"UPDATE"
 	use		"USE"
-	using		"USING"
 	userVar		"USER_VAR"
+	using		"USING"
+	utcDate 	"UTC_DATE"
 	values		"VALUES"
 	when		"WHEN"
 	where		"WHERE"
@@ -450,8 +461,10 @@ import (
 	DropIndexStmt		"DROP INDEX statement"
 	DropTableStmt		"DROP TABLE statement"
 	EmptyStmt		"empty statement"
+	Enclosed		"Enclosed by"
 	EqOpt			"= or empty"
 	EscapedTableRef 	"escaped table reference"
+	Escaped			"Escaped by"
 	ExecuteStmt		"Execute statement"
 	ExplainSym		"EXPLAIN or DESCRIBE or DESC"
 	ExplainStmt		"EXPLAIN statement"
@@ -463,9 +476,12 @@ import (
 	Factor			"expression factor"
 	PredicateExpr		"Predicate expression factor"
 	Field			"field expression"
+	Fields			"Fields clause"
+	FieldsTerminated	"Fields terminated by"
 	FieldAsName		"Field alias name"
 	FieldAsNameOpt		"Field alias name opt"
 	FieldList		"field expression list"
+	FieldsOrColumns 	"Fields or columns"
 	TableRefsClause		"Table references clause"
 	Function		"function expr"
 	FunctionCallAgg		"Function call on aggregate data"
@@ -503,7 +519,11 @@ import (
 	KeyOrIndex		"{KEY|INDEX}"
 	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
+	Lines			"Lines clause"
+	LinesTerminated		"Lines terminated by"
 	Literal			"literal value"
+	LoadDataStmt		"Load data statement"
+	LocalOpt		"Local opt"
 	LockTablesStmt		"Lock tables statement"
 	LockType		"Table locks type"
 	logAnd			"logical and operator"
@@ -563,6 +583,7 @@ import (
 	ShowTableAliasOpt       "Show table alias option"
 	ShowLikeOrWhereOpt	"Show like or where clause option"
 	SignedLiteral		"Literal or NumLiteral with sign"
+	Starting		"Starting by"
 	Statement		"statement"
 	StatementList		"statement list"
 	StatsPersistentVal	"stats_persistent value"
@@ -1923,16 +1944,25 @@ Identifier:
 identifier | UnReservedKeyword | NotKeywordToken
 
 UnReservedKeyword:
- "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET" | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "DYNAMIC" | "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FULL" | "HASH" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION" | "SIGNED" | "START" | "STATUS" | "GLOBAL" | "TABLES" | "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG"
+ "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
+|	"COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "DYNAMIC"
+|	"END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FULL" | "HASH" | "LOCAL"
+|	"NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION"
+|	"SIGNED" | "START" | "STATUS" | "GLOBAL" | "TABLES" | "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE"
+|	"UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
+|	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
+|	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
+|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE"
+|	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
 |	"DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS"
-|	"GROUP_CONCAT"| "GREATEST" | "HOUR" | "HEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
+|	"GROUP_CONCAT"| "GREATEST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 |	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX"
 |	"SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
-|	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK"
+|	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING"
 
 /************************************************************************************
  *
@@ -2431,9 +2461,17 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|	"CEIL" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"CEILING" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"DAY" '(' Expression ')'
 	{
-		$$ =  &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DAYNAME" '(' Expression ')'
 	{
@@ -2514,6 +2552,10 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"HEX" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"UNHEX" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
@@ -4090,6 +4132,7 @@ Statement:
 |	DropTableStmt
 |	GrantStmt
 |	InsertIntoStmt
+|	LoadDataStmt
 |	PreparedStmt
 |	RollbackStmt
 |	ReplaceIntoStmt
@@ -5020,6 +5063,126 @@ PrivLevel:
 			TableName: $1,
 		}
 	}
+
+/**************************************LoadDataStmt*****************************************
+ * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
+ *******************************************************************************************/
+LoadDataStmt:
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName Fields Lines
+	{
+		x := &ast.LoadDataStmt{
+			Path:       $5,
+			Table:      $8.(*ast.TableName),
+		}
+		if $3 != nil {
+			x.IsLocal = true
+		}
+		if $9 != nil {
+			x.FieldsInfo = $9.(*ast.FieldsClause)
+		}
+		if $10 != nil {
+			x.LinesInfo = $10.(*ast.LinesClause)
+		}
+		$$ = x
+	}
+
+LocalOpt:
+	{
+		$$ = nil 
+	}
+|	"LOCAL"
+	{
+		$$ = $1
+	}
+
+Fields:
+     	{
+		escape := "\\"
+		$$ = &ast.FieldsClause{
+			Terminated: "\t",
+			Escaped:    escape[0],
+		}
+	}
+|	FieldsOrColumns FieldsTerminated Enclosed Escaped
+	{
+		escape := $4.(string)
+		if escape != "\\" && len(escape) > 1 {
+			yylex.Errorf("Incorrect arguments %s to ESCAPE", escape)
+			return 1
+		}
+		var enclosed byte
+		str := $3.(string)
+		if len(str) > 1 {
+			yylex.Errorf("Incorrect arguments %s to ENCLOSED", escape)
+			return 1
+		}else if len(str) != 0 {
+			enclosed = str[0]
+		}
+		$$ = &ast.FieldsClause{
+			Terminated: $2.(string),
+			Enclosed:   enclosed,
+			Escaped:    escape[0],
+		}
+	}
+
+FieldsOrColumns:
+	"FIELDS"{}
+|	"COLUMNS"{}
+
+FieldsTerminated:
+	{
+		$$ = "\t"
+	}
+|	"TERMINATED" "BY" stringLit
+	{
+		$$ = $3
+	}
+
+Enclosed:
+	{
+		$$ = ""
+	}
+|	"ENCLOSED" "BY" stringLit
+	{
+		$$ = $3
+	}
+
+Escaped:
+	{
+		$$ = "\\"
+	}
+|	"ESCAPED" "BY" stringLit
+	{
+		$$ = $3
+	}
+
+Lines:
+	{
+		$$ = &ast.LinesClause{Terminated: "\n"}
+	}
+|	"LINES" Starting LinesTerminated
+	{
+		$$ = &ast.LinesClause{Starting: $2.(string), Terminated: $3.(string)}
+	}
+
+Starting:
+	{
+		$$ = ""
+	}
+|	"STARTING" "BY" stringLit
+	{
+		$$ = $3
+	}
+
+LinesTerminated:
+	{
+		$$ = "\n"
+	}
+|	"TERMINATED" "BY" stringLit
+	{
+		$$ = $3
+	}
+
 
 /*********************************************************************
  * Lock/Unlock Tables

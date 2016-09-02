@@ -90,7 +90,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 func (p *packetIO) readPacket() ([]byte, error) {
 	data, err := p.readOnePacket()
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if len(data) < mysql.MaxPayloadLen {
@@ -101,7 +101,7 @@ func (p *packetIO) readPacket() ([]byte, error) {
 	for {
 		buf, err := p.readOnePacket()
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 
 		data = append(data, buf...)

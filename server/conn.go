@@ -46,6 +46,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
@@ -232,7 +233,7 @@ func (cc *clientConn) Run() {
 		data, err := cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				log.Error(err)
+				log.Error(errors.ErrorStack(err))
 			}
 			return
 		}
@@ -260,7 +261,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	startTs := time.Now()
 	defer func() {
 		cc.server.releaseToken(token)
-		log.Debugf("[TIME_CMD] %v %d", time.Now().Sub(startTs), cmd)
+		log.Debugf("[TIME_CMD] %v %d", time.Since(startTs), cmd)
 	}()
 
 	switch cmd {
@@ -344,7 +345,7 @@ func (cc *clientConn) writeError(e error) error {
 		m = mysql.NewErrf(mysql.ErrUnknown, e.Error())
 	}
 
-	data := make([]byte, 4, 16+len(m.Message))
+	data := cc.alloc.AllocWithLen(4, 16+len(m.Message))
 	data = append(data, mysql.ErrHeader)
 	data = append(data, byte(m.Code), byte(m.Code>>8))
 	if cc.capability&mysql.ClientProtocol41 > 0 {
@@ -383,6 +384,73 @@ func (cc *clientConn) writeEOF(more bool) error {
 	return errors.Trace(err)
 }
 
+func (cc *clientConn) writeReq(filePath string) error {
+	data := cc.alloc.AllocWithLen(4, 5+len(filePath))
+	data = append(data, mysql.LocalInFileHeader)
+	data = append(data, filePath...)
+
+	err := cc.writePacket(data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return errors.Trace(cc.flush())
+}
+
+func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error {
+	var err error
+	defer func() {
+		cc.ctx.SetValue(executor.LoadDataVarKey, nil)
+		if err == nil {
+			err = cc.ctx.CommitTxn()
+		}
+		if err == nil {
+			return
+		}
+		err1 := cc.ctx.RollbackTxn()
+		if err1 != nil {
+			log.Errorf("load data rollback failed: %v", err1)
+		}
+	}()
+
+	if loadDataInfo == nil {
+		err = errors.New("load data info is empty")
+		return errors.Trace(err)
+	}
+	err = cc.writeReq(loadDataInfo.Path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var prevData []byte
+	var curData []byte
+	var shouldBreak bool
+	for {
+		curData, err = cc.readPacket()
+		if err != nil {
+			if terror.ErrorNotEqual(err, io.EOF) {
+				log.Error(errors.ErrorStack(err))
+				return errors.Trace(err)
+			}
+		}
+		if len(curData) == 0 {
+			shouldBreak = true
+			if len(prevData) == 0 {
+				break
+			}
+		}
+		prevData, err = loadDataInfo.InsertData(prevData, curData)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if shouldBreak {
+			break
+		}
+	}
+
+	return nil
+}
+
 func (cc *clientConn) handleQuery(sql string) (err error) {
 	startTs := time.Now()
 	rs, err := cc.ctx.Execute(sql)
@@ -396,9 +464,15 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 			err = cc.writeMultiResultset(rs, false)
 		}
 	} else {
+		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
+		if loadDataInfo != nil {
+			if err = cc.handleLoadData(loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+				return errors.Trace(err)
+			}
+		}
 		err = cc.writeOK()
 	}
-	costTime := time.Now().Sub(startTs)
+	costTime := time.Since(startTs)
 	if len(sql) > 1024 {
 		sql = sql[:1024]
 	}

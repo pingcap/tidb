@@ -13,7 +13,11 @@
 
 package server
 
-import "github.com/pingcap/tidb/util/types"
+import (
+	"fmt"
+
+	"github.com/pingcap/tidb/util/types"
+)
 
 // IDriver opens IContext.
 type IDriver interface {
@@ -21,7 +25,7 @@ type IDriver interface {
 	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string) (IContext, error)
 }
 
-// IContext is the interface to execute commant.
+// IContext is the interface to execute command.
 type IContext interface {
 	// Status returns server status code.
 	Status() uint16
@@ -31,6 +35,18 @@ type IContext interface {
 
 	// AffectedRows returns affected rows of last executed command.
 	AffectedRows() uint64
+
+	// Value returns the value associated with this context for key.
+	Value(key fmt.Stringer) interface{}
+
+	// SetValue saves a value associated with this context for key.
+	SetValue(key fmt.Stringer, value interface{})
+
+	// CommitTxn commits the transaction operations.
+	CommitTxn() error
+
+	// RollbackTxn undoes the transaction operations.
+	RollbackTxn() error
 
 	// WarningCount returns warning count of last executed command.
 	WarningCount() uint16

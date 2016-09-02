@@ -14,7 +14,11 @@
 package executor
 
 import (
+	"bytes"
+	"strings"
+
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
@@ -31,6 +35,7 @@ var (
 	_ Executor = &UpdateExec{}
 	_ Executor = &DeleteExec{}
 	_ Executor = &InsertExec{}
+	_ Executor = &LoadData{}
 )
 
 func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, offset int, onDuplicateUpdate bool) error {
@@ -73,7 +78,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	}
 
 	// Check whether new value is valid.
-	if err := table.CastValues(ctx, newData, cols); err != nil {
+	if err := table.CastValues(ctx, newData, cols, false); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -268,6 +273,295 @@ func (e *DeleteExec) Fields() []*ast.ResultField {
 // Close implements Executor Close interface.
 func (e *DeleteExec) Close() error {
 	return e.SelectExec.Close()
+}
+
+// NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
+func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table) *LoadDataInfo {
+	return &LoadDataInfo{
+		row:       row,
+		insertVal: &InsertValues{ctx: ctx, Table: tbl},
+		Table:     tbl,
+	}
+}
+
+// LoadDataInfo saves the information of loading data operation.
+type LoadDataInfo struct {
+	row       []types.Datum
+	insertVal *InsertValues
+
+	Path       string
+	Table      table.Table
+	FieldsInfo *ast.FieldsClause
+	LinesInfo  *ast.LinesClause
+}
+
+// getValidData returns prevData and curData that starts from starting symbol.
+// If the data doesn't have starting symbol, prevData is nil and curData is curData[len(curData)-startingLen+1:].
+// If curData size less than startingLen, curData is returned directly.
+func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
+	startingLen := len(e.LinesInfo.Starting)
+	if startingLen == 0 {
+		return prevData, curData
+	}
+
+	prevLen := len(prevData)
+	if prevLen > 0 {
+		// starting symbol in the prevData
+		idx := strings.Index(string(prevData), e.LinesInfo.Starting)
+		if idx != -1 {
+			return prevData[idx:], curData
+		}
+
+		// starting symbol in the middle of prevData and curData
+		restStart := curData
+		if len(curData) >= startingLen {
+			restStart = curData[:startingLen-1]
+		}
+		prevData = append(prevData, restStart...)
+		idx = strings.Index(string(prevData), e.LinesInfo.Starting)
+		if idx != -1 {
+			return prevData[idx:prevLen], curData
+		}
+	}
+
+	// starting symbol in the curData
+	idx := strings.Index(string(curData), e.LinesInfo.Starting)
+	if idx != -1 {
+		return nil, curData[idx:]
+	}
+
+	// no starting symbol
+	if len(curData) >= startingLen {
+		curData = curData[len(curData)-startingLen+1:]
+	}
+	return nil, curData
+}
+
+// getLine returns a line, curData, the next data start index and a bool value.
+// If it has starting symbol the bool is true, otherwise is false.
+func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) {
+	startingLen := len(e.LinesInfo.Starting)
+	prevData, curData = e.getValidData(prevData, curData)
+	if prevData == nil && len(curData) < startingLen {
+		return nil, curData, false
+	}
+
+	prevLen := len(prevData)
+	terminatedLen := len(e.LinesInfo.Terminated)
+	curStartIdx := 0
+	if prevLen < startingLen {
+		curStartIdx = startingLen - prevLen
+	}
+	endIdx := -1
+	if len(curData) >= curStartIdx {
+		endIdx = strings.Index(string(curData[curStartIdx:]), e.LinesInfo.Terminated)
+	}
+	if endIdx == -1 {
+		// no terminated symbol
+		if len(prevData) == 0 {
+			return nil, curData, true
+		}
+
+		// terminated symbol in the middle of prevData and curData
+		curData = append(prevData, curData...)
+		endIdx = strings.Index(string(curData[startingLen:]), e.LinesInfo.Terminated)
+		if endIdx != -1 {
+			nextDataIdx := startingLen + endIdx + terminatedLen
+			return curData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
+		}
+		// no terminated symbol
+		return nil, curData, true
+	}
+
+	// terminated symbol in the curData
+	nextDataIdx := curStartIdx + endIdx + terminatedLen
+	if len(prevData) == 0 {
+		return curData[curStartIdx : curStartIdx+endIdx], curData[nextDataIdx:], true
+	}
+
+	// terminated symbol in the curData
+	prevData = append(prevData, curData[:nextDataIdx]...)
+	endIdx = strings.Index(string(prevData[startingLen:]), e.LinesInfo.Terminated)
+	if endIdx >= prevLen {
+		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
+	}
+
+	// terminated symbol in the middle of prevData and curData
+	lineLen := startingLen + endIdx + terminatedLen
+	return prevData[startingLen : startingLen+endIdx], curData[lineLen-prevLen:], true
+}
+
+// InsertData inserts data into specified table according to the specified format.
+// If it has the rest of data isn't completed the processing, then is returns without completed data.
+// If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
+func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
+	// TODO: support enclosed and escape.
+	if len(prevData) == 0 && len(curData) == 0 {
+		return nil, nil
+	}
+
+	var line []byte
+	var isEOF, hasStarting bool
+	cols := make([]string, 0, len(e.row))
+	if len(prevData) > 0 && len(curData) == 0 {
+		isEOF = true
+		prevData, curData = curData, prevData
+	}
+	for len(curData) > 0 {
+		line, curData, hasStarting = e.getLine(prevData, curData)
+		prevData = nil
+
+		// If it doesn't find the terminated symbol and this data isn't the last data,
+		// the data can't be inserted.
+		if line == nil && !isEOF {
+			break
+		}
+		// If doesn't find starting symbol, this data can't be inserted.
+		if !hasStarting {
+			if isEOF {
+				curData = nil
+			}
+			break
+		}
+		if line == nil && isEOF {
+			line = curData[len(e.LinesInfo.Starting):]
+			curData = nil
+		}
+
+		rawCols := bytes.Split(line, []byte(e.FieldsInfo.Terminated))
+		cols = escapeCols(rawCols)
+		e.insertData(cols)
+		e.insertVal.currRow++
+	}
+	if e.insertVal.lastInsertID != 0 {
+		variable.GetSessionVars(e.insertVal.ctx).LastInsertID = e.insertVal.lastInsertID
+	}
+
+	return curData, nil
+}
+
+func escapeCols(strs [][]byte) []string {
+	ret := make([]string, len(strs))
+	for i, v := range strs {
+		ret[i] = string(escape(v))
+	}
+	return ret
+}
+
+// TODO: escape need to be improved, it should support ESCAPED BY to specify
+// the escape character and handle \N escape.
+// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
+func escape(str []byte) []byte {
+	pos := 0
+	for i := 0; i < len(str); i++ {
+		c := str[i]
+		if c == '\\' && i+1 < len(str) {
+			var ok bool
+			if c, ok = escapeChar(str[i+1]); ok {
+				i++
+			}
+		}
+
+		str[pos] = c
+		pos++
+	}
+	return str[:pos]
+}
+
+func escapeChar(c byte) (byte, bool) {
+	switch c {
+	case '0':
+		return 0, true
+	case 'b':
+		return '\b', true
+	case 'n':
+		return '\n', true
+	case 'r':
+		return '\r', true
+	case 't':
+		return '\t', true
+	case 'Z':
+		return 26, true
+	case '\\':
+		return '\\', true
+	}
+	return c, false
+}
+
+func (e *LoadDataInfo) insertData(cols []string) {
+	for i := 0; i < len(e.row); i++ {
+		if i >= len(cols) {
+			e.row[i].SetString("")
+			continue
+		}
+		e.row[i].SetString(cols[i])
+	}
+	row, err := e.insertVal.fillRowData(e.Table.Cols(), e.row, true)
+	if err != nil {
+		log.Warnf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
+	}
+	_, err = e.Table.AddRecord(e.insertVal.ctx, row)
+	if err != nil {
+		log.Warnf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
+	}
+}
+
+// LoadData represents a load data executor.
+type LoadData struct {
+	IsLocal      bool
+	loadDataInfo *LoadDataInfo
+}
+
+// loadDataVarKeyType is a dummy type to avoid naming collision in context.
+type loadDataVarKeyType int
+
+// String defines a Stringer function for debugging and pretty printing.
+func (k loadDataVarKeyType) String() string {
+	return "load_data_var"
+}
+
+// LoadDataVarKey is a variable key for load data.
+const LoadDataVarKey loadDataVarKeyType = 0
+
+// Next implements Executor Next interface.
+func (e *LoadData) Next() (*Row, error) {
+	// TODO: support load data without local field.
+	if !e.IsLocal {
+		return nil, errors.New("Load Data: don't support load data without local field")
+	}
+	// TODO: support lines terminated is "".
+	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
+		return nil, errors.New("Load Data: don't support load data terminated is nil")
+	}
+
+	ctx := e.loadDataInfo.insertVal.ctx
+	val := ctx.Value(LoadDataVarKey)
+	if val != nil {
+		ctx.SetValue(LoadDataVarKey, nil)
+		return nil, errors.New("Load Data: previous load data option isn't closed normal")
+	}
+	if e.loadDataInfo.Path == "" {
+		return nil, errors.New("Load Data: infile path is empty")
+	}
+	ctx.SetValue(LoadDataVarKey, e.loadDataInfo)
+
+	return nil, nil
+}
+
+// Schema implements Executor Schema interface.
+func (e *LoadData) Schema() expression.Schema {
+	return nil
+}
+
+// Fields implements Executor Fields interface.
+// Returns nil to indicate there is no output.
+func (e *LoadData) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Close implements Executor Close interface.
+func (e *LoadData) Close() error {
+	return nil
 }
 
 // InsertValues is the data to insert.
@@ -503,14 +797,14 @@ func (e *InsertValues) getRow(cols []*table.Column, list []ast.ExprNode, default
 	for i, expr := range list {
 		if d, ok := expr.(*ast.DefaultExpr); ok {
 			cn := d.Name
-			if cn != nil {
-				var found bool
-				vals[i], found = defaultVals[cn.Name.L]
-				if !found {
-					return nil, errors.Errorf("default column not found - %s", cn.Name.O)
-				}
-			} else {
+			if cn == nil {
 				vals[i] = defaultVals[cols[i].Name.L]
+				continue
+			}
+			var found bool
+			vals[i], found = defaultVals[cn.Name.L]
+			if !found {
+				return nil, errors.Errorf("default column not found - %s", cn.Name.O)
 			}
 		} else {
 			var val types.Datum
@@ -521,7 +815,7 @@ func (e *InsertValues) getRow(cols []*table.Column, list []ast.ExprNode, default
 			}
 		}
 	}
-	return e.fillRowData(cols, vals)
+	return e.fillRowData(cols, vals, false)
 }
 
 func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
@@ -539,7 +833,7 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 			break
 		}
 		e.currRow = len(rows)
-		row, err := e.fillRowData(cols, innerRow.Data)
+		row, err := e.fillRowData(cols, innerRow.Data, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -548,19 +842,21 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 	return rows, nil
 }
 
-func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]types.Datum, error) {
+func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ignoreCastErr bool) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	marked := make(map[int]struct{}, len(vals))
 	for i, v := range vals {
 		offset := cols[i].Offset
 		row[offset] = v
-		marked[offset] = struct{}{}
+		if !ignoreCastErr {
+			marked[offset] = struct{}{}
+		}
 	}
-	err := e.initDefaultValues(row, marked)
+	err := e.initDefaultValues(row, marked, ignoreCastErr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = table.CastValues(e.ctx, row, cols); err != nil {
+	if err = table.CastValues(e.ctx, row, cols, ignoreCastErr); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err = table.CheckNotNull(e.Table.Cols(), row); err != nil {
@@ -569,7 +865,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]
 	return row, nil
 }
 
-func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}) error {
+func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}, ignoreErr bool) error {
 	var defaultValueCols []*table.Column
 	for i, c := range e.Table.Cols() {
 		// It's used for retry.
@@ -587,7 +883,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				continue
 			}
 			val, err := row[i].ToInt64()
-			if err != nil {
+			if err != nil && !ignoreErr {
 				return errors.Trace(err)
 			}
 			if val != 0 {
@@ -625,7 +921,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 
 		defaultValueCols = append(defaultValueCols, c)
 	}
-	if err := table.CastValues(e.ctx, row, defaultValueCols); err != nil {
+	if err := table.CastValues(e.ctx, row, defaultValueCols, ignoreErr); err != nil {
 		return errors.Trace(err)
 	}
 

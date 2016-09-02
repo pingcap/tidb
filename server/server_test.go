@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
@@ -199,6 +200,132 @@ func runTestPreparedString(t *C) {
 		t.Assert(err, IsNil)
 		t.Assert(outA, Equals, "abcdeabcde")
 		t.Assert(outB, Equals, "abcde")
+	})
+}
+
+func runTestLoadData(c *C) {
+	path := "/tmp/load_data_test.csv"
+	runTests(c, dsn+"&allowAllFiles=true", func(dbt *DBTest) {
+		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
+		fp, err := os.Create(path)
+		dbt.Assert(err, IsNil)
+		dbt.Assert(fp, NotNil)
+		defer func() {
+			err = fp.Close()
+			dbt.Assert(err, IsNil)
+			err = os.Remove(path)
+			dbt.Assert(err, IsNil)
+		}()
+		_, err = fp.WriteString(`
+xxx row1_col1	- row1_col2	1
+xxx row2_col1	- row2_col2	
+xxxy row3_col1	- row3_col2	
+xxx row4_col1	- 		900
+xxx row5_col1	- 	row5_col3`)
+		dbt.Assert(err, IsNil)
+		rs, err := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
+		dbt.Assert(err, IsNil)
+		lastID, err := rs.LastInsertId()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(lastID, Equals, int64(1))
+		affectedRows, err := rs.RowsAffected()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(affectedRows, Equals, int64(5))
+		var (
+			a  string
+			b  string
+			bb sql.NullString
+			c  int
+		)
+		rows := dbt.mustQuery("select * from test")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &bb, &c)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, DeepEquals, "")
+		dbt.Check(bb.String, DeepEquals, "")
+		dbt.Check(c, DeepEquals, 1)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &c)
+		dbt.Check(a, DeepEquals, "xxx row2_col1")
+		dbt.Check(b, DeepEquals, "- row2_col2")
+		dbt.Check(c, DeepEquals, 2)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &c)
+		dbt.Check(a, DeepEquals, "xxxy row3_col1")
+		dbt.Check(b, DeepEquals, "- row3_col2")
+		dbt.Check(c, DeepEquals, 3)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &c)
+		dbt.Check(a, DeepEquals, "xxx row4_col1")
+		dbt.Check(b, DeepEquals, "- ")
+		dbt.Check(c, DeepEquals, 4)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &c)
+		dbt.Check(a, DeepEquals, "xxx row5_col1")
+		dbt.Check(b, DeepEquals, "- ")
+		dbt.Check(c, DeepEquals, 5)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		rows.Close()
+
+		// specify faileds and lines
+		dbt.mustExec("delete from test")
+		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
+		dbt.Assert(err, IsNil)
+		lastID, err = rs.LastInsertId()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(lastID, Equals, int64(6))
+		affectedRows, err = rs.RowsAffected()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(affectedRows, Equals, int64(4))
+		rows = dbt.mustQuery("select * from test")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &c)
+		dbt.Check(a, DeepEquals, "row1_col1")
+		dbt.Check(b, DeepEquals, "row1_col2\t1")
+		dbt.Check(c, DeepEquals, 6)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &c)
+		dbt.Check(a, DeepEquals, "row2_col1")
+		dbt.Check(b, DeepEquals, "row2_col2\t")
+		dbt.Check(c, DeepEquals, 7)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &c)
+		dbt.Check(a, DeepEquals, "row4_col1")
+		dbt.Check(b, DeepEquals, "\t\t900")
+		dbt.Check(c, DeepEquals, 8)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &c)
+		dbt.Check(a, DeepEquals, "row5_col1")
+		dbt.Check(b, DeepEquals, "\trow5_col3")
+		dbt.Check(c, DeepEquals, 9)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+
+		// infile size more than a packet size(16K)
+		dbt.mustExec("delete from test")
+		_, err = fp.WriteString("\n")
+		dbt.Assert(err, IsNil)
+		for i := 6; i <= 800; i++ {
+			_, err = fp.WriteString(fmt.Sprintf("xxx row%d_col1	- row%d_col2\n", i, i))
+			dbt.Assert(err, IsNil)
+		}
+		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
+		dbt.Assert(err, IsNil)
+		lastID, err = rs.LastInsertId()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(lastID, Equals, int64(10))
+		affectedRows, err = rs.RowsAffected()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(affectedRows, Equals, int64(799))
+		rows = dbt.mustQuery("select * from test")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+
+		// don't support lines terminated is ""
+		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test lines terminated by ''")
+		dbt.Assert(err, NotNil)
+
+		// infile doesn't exist
+		rs, err = dbt.db.Exec("load data local infile '/tmp/nonexistence.csv' into table test")
+		dbt.Assert(err, NotNil)
 	})
 }
 

@@ -258,8 +258,14 @@ type Driver struct {
 	engine.Driver
 }
 
+// MockRemoteStore mocks remote store. It makes IsLocalStore return false.
+var MockRemoteStore bool
+
 // IsLocalStore checks whether a storage is local or not.
 func IsLocalStore(s kv.Storage) bool {
+	if MockRemoteStore {
+		return false
+	}
 	_, ok := s.(*dbStore)
 	return ok
 }

@@ -71,6 +71,10 @@ func (ts *TidbTestSuite) TestPreparedString(c *C) {
 	runTestPreparedString(c)
 }
 
+func (ts *TidbTestSuite) TestLoadData(c *C) {
+	runTestLoadData(c)
+}
+
 func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
 	runTestConcurrentUpdate(c)
 }

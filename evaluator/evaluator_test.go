@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
@@ -112,7 +113,7 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	ret, err = builtinSleep(d, ctx)
 	c.Assert(err, IsNil)
 	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
-	sub := time.Now().Sub(start)
+	sub := time.Since(start)
 	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(0.5*1e9))
 }
 
@@ -281,6 +282,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{1, opcode.Plus, mysql.NewDecFromInt(1), 2},
 		{uint64(1), opcode.Plus, 1, 2},
 		{uint64(1), opcode.Plus, uint64(1), 2},
+		{uint64(1), opcode.Plus, -1, 0},
 		{1, opcode.Plus, []byte("1"), 2},
 		{1, opcode.Plus, mysql.Hex{Value: 1}, 2},
 		{1, opcode.Plus, mysql.Bit{Value: 1, Width: 1}, 2},

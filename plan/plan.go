@@ -58,6 +58,8 @@ const (
 	Dual = "TableDual"
 	// Lock is the type of SelectLock.
 	Lock = "SelectLock"
+	// Load is the type of LoadData.
+	Load = "LoadData"
 	// Up is the type of Update.
 	Up = "Update"
 	// Del is the type of Delete.

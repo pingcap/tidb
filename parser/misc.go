@@ -21,10 +21,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-func isWhitespace(ch rune) bool {
-	return ch == ' ' || ch == '\t' || ch == '\n'
-}
-
 func isLetter(ch rune) bool {
 	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
@@ -158,6 +154,8 @@ var tokenMap = map[string]int{
 	"BYTE":                byteType,
 	"CASE":                caseKwd,
 	"CAST":                cast,
+	"CEIL":                ceil,
+	"CEILING":             ceiling,
 	"CHARACTER":           character,
 	"CHARSET":             charsetKwd,
 	"CHECK":               check,
@@ -188,6 +186,7 @@ var tokenMap = map[string]int{
 	"CURTIME":             curTime,
 	"CURRENT_TIME":        currentTime,
 	"CURRENT_USER":        currentUser,
+	"DATA":                data,
 	"DATABASE":            database,
 	"DATABASES":           databases,
 	"DATE_ADD":            dateAdd,
@@ -216,11 +215,13 @@ var tokenMap = map[string]int{
 	"DYNAMIC":             dynamic,
 	"ELSE":                elseKwd,
 	"ENABLE":              enable,
+	"ENCLOSED":            enclosed,
 	"END":                 end,
 	"ENGINE":              engine,
 	"ENGINES":             engines,
 	"ENUM":                enum,
 	"ESCAPE":              escape,
+	"ESCAPED":             escaped,
 	"EXECUTE":             execute,
 	"EXISTS":              exists,
 	"EXPLAIN":             explain,
@@ -248,12 +249,14 @@ var tokenMap = map[string]int{
 	"HIGH_PRIORITY":       highPriority,
 	"HOUR":                hour,
 	"HEX":                 hex,
+	"UNHEX":               unhex,
 	"IDENTIFIED":          identified,
 	"IGNORE":              ignore,
 	"IF":                  ifKwd,
 	"IFNULL":              ifNull,
 	"IN":                  in,
 	"INDEX":               index,
+	"INFILE":              infile,
 	"INNER":               inner,
 	"INSERT":              insert,
 	"INTERVAL":            interval,
@@ -272,6 +275,8 @@ var tokenMap = map[string]int{
 	"LEVEL":               level,
 	"LIKE":                like,
 	"LIMIT":               limit,
+	"LINES":               lines,
+	"LOAD":                load,
 	"LOCAL":               local,
 	"LOCATE":              locate,
 	"LOCK":                lock,
@@ -341,6 +346,7 @@ var tokenMap = map[string]int{
 	"SOME":                some,
 	"SPACE":               space,
 	"START":               start,
+	"STARTING":            starting,
 	"STATS_PERSISTENT":    statsPersistent,
 	"STATUS":              status,
 	"SUBDATE":             subDate,
@@ -352,6 +358,7 @@ var tokenMap = map[string]int{
 	"SYSDATE":             sysDate,
 	"TABLE":               tableKwd,
 	"TABLES":              tables,
+	"TERMINATED":          terminated,
 	"THEN":                then,
 	"TO":                  to,
 	"TRAILING":            trailing,

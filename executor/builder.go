@@ -73,6 +73,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildFilter(src, v.Conditions)
 	case *plan.Insert:
 		return b.buildInsert(v)
+	case *plan.LoadData:
+		return b.buildLoadData(v)
 	case *plan.Limit:
 		return b.buildLimit(v)
 	case *plan.Prepare:
@@ -301,6 +303,26 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	// fields is used to evaluate values expr.
 	insert.fields = ts.GetResultFields()
 	return insert
+}
+
+func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
+	tbl, ok := b.is.TableByID(v.Table.TableInfo.ID)
+	if !ok {
+		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
+		return nil
+	}
+
+	return &LoadData{
+		IsLocal: v.IsLocal,
+		loadDataInfo: &LoadDataInfo{
+			row:        make([]types.Datum, len(tbl.Cols())),
+			insertVal:  &InsertValues{ctx: b.ctx, Table: tbl},
+			Path:       v.Path,
+			Table:      tbl,
+			FieldsInfo: v.FieldsInfo,
+			LinesInfo:  v.LinesInfo,
+		},
+	}
 }
 
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {

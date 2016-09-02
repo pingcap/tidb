@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_abs
 func builtinAbs(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	d = args[0]
 	switch d.Kind() {
@@ -51,6 +51,22 @@ func builtinAbs(args []types.Datum, _ context.Context) (d types.Datum, err error
 	}
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_ceiling
+func builtinCeil(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() ||
+		args[0].Kind() == types.KindUint64 || args[0].Kind() == types.KindInt64 {
+		return args[0], nil
+	}
+
+	f, err := args[0].ToFloat64()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetFloat64(math.Ceil(f))
+	return
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
 func builtinRand(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	if len(args) == 1 && !args[0].IsNull() {
 		seed, err := args[0].ToInt64()
@@ -63,6 +79,7 @@ func builtinRand(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	return d, nil
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_pow
 func builtinPow(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	x, err := args[0].ToFloat64()
 	if err != nil {
