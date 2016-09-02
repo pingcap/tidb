@@ -376,6 +376,22 @@ func ComposeCNFCondition(conditions []Expression) Expression {
 	return expr
 }
 
+// composeDNFCondition composes DNF items into a balanced deep DNF tree.
+func ComposeDNFConditions(conditions []Expression) Expression {
+	length := len(conditions)
+	if length == 0 {
+		return nil
+	}
+	if length == 1 {
+		return conditions[0]
+	}
+	expr, _ := NewFunction(ast.OrOr,
+		types.NewFieldType(mysql.TypeTiny),
+		ComposeDNFConditions(conditions[length/2:]),
+		ComposeDNFConditions(conditions[:length/2]))
+	return expr
+}
+
 // Assignment represents a set assignment in Update, such as
 // Update t set c1 = hex(12), c2 = c3 where c2 = 1
 type Assignment struct {

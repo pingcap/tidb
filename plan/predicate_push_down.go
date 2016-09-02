@@ -67,7 +67,8 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 	// next:  "a = 2 and 2 = c and b = 2 and 2 = 1";
 	// next:  "0"
 	isHandled := make([]bool, len(conditions))
-	equalities := make(map[string]map[int]*expression.Constant, 0) // transitive equality predicates between one column and one constant
+	type transitiveEqualityPredicate map[string]map[int]*expression.Constant // transitive equality predicates between one column and one constant
+	equalities := make(transitiveEqualityPredicate, 0)
 	for i := 0; i < len(conditions); i++ {
 		if isHandled[i] {
 			continue
@@ -80,19 +81,20 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 			continue
 		}
 		// process the included OR conditions recursively to do the same for CNF item.
-		if expr.FuncName.L == ast.OrOr {
+		switch expr.FuncName.L {
+		case ast.OrOr:
 			expressions := splitDNFItems(conditions[i])
 			newExpression := make([]expression.Expression, 0)
 			for _, v := range expressions {
 				newExpression = append(newExpression, propagateConstant([]expression.Expression{v})...)
 			}
-			conditions[i] = composeDNFConditions(newExpression)
+			conditions[i] = expression.ComposeDNFConditions(newExpression)
 			isHandled[i] = true
-		} else if expr.FuncName.L == ast.AndAnd {
+		case ast.AndAnd:
 			newExpression := propagateConstant(splitCNFItems(conditions[i]))
 			conditions[i] = expression.ComposeCNFCondition(newExpression)
 			isHandled[i] = true
-		} else if expr.FuncName.L == ast.EQ {
+		case ast.EQ:
 			var (
 				col      *expression.Column
 				fromID   string
@@ -118,26 +120,6 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 			isHandled[i] = true
 			i = -1
 		}
-	}
-	for i := 0; i < len(conditions); i++ { // remove useless predicates, such as "1 and a = 1" ==> "a=1".
-		if v, ok := conditions[i].(*expression.Constant); ok {
-			if v.Value.IsNull() {
-				conditions = []expression.Expression{v}
-				return conditions
-			}
-			intVal, _ := v.Value.ToInt64()
-			if intVal < 1 && intVal > -1 {
-				conditions = []expression.Expression{&expression.Constant{Value: types.NewIntDatum(0)}}
-				return conditions
-			} else {
-				conditions = append(conditions[:i], conditions[i+1:]...)
-				i--
-			}
-		}
-	}
-	if len(conditions) == 0 {
-		conditions = []expression.Expression{&expression.Constant{Value: types.NewIntDatum(1)}}
-		return conditions
 	}
 	// Propagate transitive inequality predicates.
 	// e.g for conditions "a = b and c = d and a = c and g = h and b > 0 and e != 0 and g like 'abc'",
@@ -191,8 +173,9 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 		ast.NE:   ast.NE,
 		ast.Like: ast.Like,
 	}
-	inequalities := make(map[string]map[int]map[string][]*expression.Constant, 0) // transitive inequality predicates between one column and one constant.
-	for i := 0; i < len(conditions); i++ {                                        // extract inequality predicates.
+	type transitiveInEqualityPredicate map[string]map[int]map[string][]*expression.Constant // transitive inequality predicates between one column and one constant.
+	inequalities := make(transitiveInEqualityPredicate, 0)
+	for i := 0; i < len(conditions); i++ { // extract inequality predicates.
 		expr, ok := conditions[i].(*expression.ScalarFunction)
 		if !ok {
 			continue
@@ -287,22 +270,6 @@ func constantSubstitute(equalities map[string]map[int]*expression.Constant, cond
 		return condition
 	}
 	return condition
-}
-
-// composeDNFCondition composes DNF items into a balanced deep DNF tree.
-func composeDNFConditions(conditions []expression.Expression) expression.Expression {
-	length := len(conditions)
-	if length == 0 {
-		return nil
-	}
-	if length == 1 {
-		return conditions[0]
-	}
-	expr, _ := expression.NewFunction(ast.OrOr,
-		types.NewFieldType(mysql.TypeTiny),
-		composeDNFConditions(conditions[length/2:]),
-		composeDNFConditions(conditions[:length/2]))
-	return expr
 }
 
 // DNF means disjunctive normal form, e.g. a or b or c.
