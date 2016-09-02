@@ -194,3 +194,22 @@ func testIsNull(c *C, data interface{}, isnull bool) {
 	d := NewDatum(data)
 	c.Assert(d.IsNull(), Equals, isnull, Commentf("data: %v, isnull: %v", data, isnull))
 }
+
+func (ts *testDatumSuite) TestCoerceDatum(c *C) {
+	testCases := []struct {
+		a    Datum
+		b    Datum
+		kind byte
+	}{
+		{NewIntDatum(1), NewIntDatum(1), KindInt64},
+		{NewUintDatum(1), NewDecimalDatum(mysql.NewDecFromInt(1)), KindMysqlDecimal},
+		{NewFloat64Datum(1), NewDecimalDatum(mysql.NewDecFromInt(1)), KindFloat64},
+		{NewFloat64Datum(1), NewFloat64Datum(1), KindFloat64},
+	}
+	for _, ca := range testCases {
+		x, y, err := CoerceDatum(ca.a, ca.b)
+		c.Check(err, IsNil)
+		c.Check(x.Kind(), Equals, y.Kind())
+		c.Check(x.Kind(), Equals, ca.kind)
+	}
+}

@@ -212,12 +212,11 @@ func (pr *partialResult) decodeRow(row *tipb.Row) (handle int64, data []types.Da
 
 	if !pr.aggregate {
 		handleBytes := row.GetHandle()
-		datums, err0 := codec.Decode(handleBytes, 1)
-		if err0 != nil {
-			err = errors.Trace(err0)
-			return
+		_, datum, err := codec.DecodeOne(handleBytes)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
 		}
-		handle = datums[0].GetInt64()
+		handle = datum.GetInt64()
 	}
 	return
 }
