@@ -847,13 +847,16 @@ func (e *XSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if !e.indexPlan.DoubleRead || e.where == nil {
+		// TODO: when where condition is all index columns limit can be pushed too.
+		selIdxReq.Limit = e.indexPlan.LimitCount
+	}
 	concurrency := 1
 	if !e.indexPlan.DoubleRead {
 		concurrency = defaultConcurrency
 		selIdxReq.Aggregates = e.aggFuncs
 		selIdxReq.GroupBy = e.byItems
 		selIdxReq.Where = e.where
-		selIdxReq.Limit = e.indexPlan.LimitCount
 	} else if e.indexPlan.OutOfOrder {
 		concurrency = defaultConcurrency
 	}
