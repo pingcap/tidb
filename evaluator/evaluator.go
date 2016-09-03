@@ -366,7 +366,11 @@ func (e *Evaluator) checkInList(not bool, in types.Datum, list []types.Datum) (d
 			continue
 		}
 
-		a, b := types.CoerceDatum(in, v)
+		a, b, err := types.CoerceDatum(in, v)
+		if err != nil {
+			e.err = errors.Trace(err)
+			return d
+		}
 		r, err := a.CompareDatum(b)
 		if err != nil {
 			e.err = errors.Trace(err)

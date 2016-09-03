@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"strings"
 
 	"github.com/juju/errors"
@@ -427,7 +428,8 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
 			curData = nil
 		}
 
-		cols = strings.Split(string(line), e.FieldsInfo.Terminated)
+		rawCols := bytes.Split(line, []byte(e.FieldsInfo.Terminated))
+		cols = escapeCols(rawCols)
 		e.insertData(cols)
 		e.insertVal.currRow++
 	}
@@ -436,6 +438,54 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
 	}
 
 	return curData, nil
+}
+
+func escapeCols(strs [][]byte) []string {
+	ret := make([]string, len(strs))
+	for i, v := range strs {
+		ret[i] = string(escape(v))
+	}
+	return ret
+}
+
+// TODO: escape need to be improved, it should support ESCAPED BY to specify
+// the escape character and handle \N escape.
+// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
+func escape(str []byte) []byte {
+	pos := 0
+	for i := 0; i < len(str); i++ {
+		c := str[i]
+		if c == '\\' && i+1 < len(str) {
+			var ok bool
+			if c, ok = escapeChar(str[i+1]); ok {
+				i++
+			}
+		}
+
+		str[pos] = c
+		pos++
+	}
+	return str[:pos]
+}
+
+func escapeChar(c byte) (byte, bool) {
+	switch c {
+	case '0':
+		return 0, true
+	case 'b':
+		return '\b', true
+	case 'n':
+		return '\n', true
+	case 'r':
+		return '\r', true
+	case 't':
+		return '\t', true
+	case 'Z':
+		return 26, true
+	case '\\':
+		return '\\', true
+	}
+	return c, false
 }
 
 func (e *LoadDataInfo) insertData(cols []string) {

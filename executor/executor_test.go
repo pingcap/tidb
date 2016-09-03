@@ -374,25 +374,38 @@ func (s *testSuite) TestInsert(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite) TestLoadData(c *C) {
-	defer testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+type testCase struct {
+	data1    []byte
+	data2    []byte
+	expected []string
+	restData []byte
+}
 
-	_, err := tk.Exec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
-	c.Assert(err, NotNil)
-	createSQL := `drop table if exists load_data_test;
-		create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int);`
-	tk.MustExec(createSQL)
-	_, err = tk.Exec("load data infile '/tmp/nonexistence.csv' into table load_data_test")
-	c.Assert(err, NotNil)
-	_, err = tk.Exec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
-	c.Assert(err, IsNil)
+func checkCases(cases []testCase, ld *executor.LoadDataInfo,
+	c *C, tk *testkit.TestKit, ctx context.Context, selectSQL, deleteSQL string) {
+	for _, ca := range cases {
+		data, err1 := ld.InsertData(ca.data1, ca.data2)
+		c.Assert(err1, IsNil)
+		if ca.restData == nil {
+			c.Assert(data, HasLen, 0,
+				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+		} else {
+			c.Assert(data, DeepEquals, ca.restData,
+				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+		}
+		err1 = ctx.CommitTxn()
+		c.Assert(err1, IsNil)
+		r := tk.MustQuery(selectSQL)
+		r.Check(testkit.Rows(ca.expected...))
+		tk.MustExec(deleteSQL)
+	}
+}
 
-	ctx := mock.NewContext()
-	ctx.Store = s.store
+func makeLoadDataInfo(column int, store kv.Storage, c *C) (ld *executor.LoadDataInfo, ctx *mock.Context) {
+	ctx = mock.NewContext()
+	ctx.Store = store
 	variable.BindSessionVars(ctx)
-	domain, err := domain.NewDomain(s.store, 1*time.Second)
+	domain, err := domain.NewDomain(store, 1*time.Second)
 	c.Assert(err, IsNil)
 	is := domain.InfoSchema()
 	c.Assert(is, NotNil)
@@ -400,18 +413,29 @@ func (s *testSuite) TestLoadData(c *C) {
 	c.Assert(err, IsNil)
 	fields := &ast.FieldsClause{Terminated: "\t"}
 	lines := &ast.LinesClause{Starting: "", Terminated: "\n"}
-	ld := executor.NewLoadDataInfo(make([]types.Datum, 4), ctx, tbl)
+	ld = executor.NewLoadDataInfo(make([]types.Datum, column), ctx, tbl)
 	ld.FieldsInfo = fields
 	ld.LinesInfo = lines
+	return
+}
+
+func (s *testSuite) TestLoadData(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	createSQL := `drop table if exists load_data_test;
+		create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int);`
+	_, err := tk.Exec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	c.Assert(err, NotNil)
+	tk.MustExec(createSQL)
+	_, err = tk.Exec("load data infile '/tmp/nonexistence.csv' into table load_data_test")
+	c.Assert(err, NotNil)
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+
+	ld, ctx := makeLoadDataInfo(4, s.store, c)
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
-	type testCase struct {
-		data1    []byte
-		data2    []byte
-		expected []string
-		restData []byte
-	}
 	// data1 = nil, data2 = nil, fields and lines is default
 	_, err = ld.InsertData(nil, nil)
 	c.Assert(err, IsNil)
@@ -443,22 +467,7 @@ func (s *testSuite) TestLoadData(c *C) {
 		// data1 != nil, data2 != nil, InsertData returns data isn't nil
 		{[]byte("\t2\t3"), []byte("\t4\t5"), nil, []byte("\t2\t3\t4\t5")},
 	}
-	for _, ca := range cases {
-		data, err1 := ld.InsertData(ca.data1, ca.data2)
-		c.Assert(err1, IsNil)
-		if ca.restData == nil {
-			c.Assert(data, HasLen, 0,
-				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
-		} else {
-			c.Assert(data, DeepEquals, ca.restData,
-				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
-		}
-		err1 = ctx.CommitTxn()
-		c.Assert(err1, IsNil)
-		r = tk.MustQuery(selectSQL)
-		r.Check(testkit.Rows(ca.expected...))
-		tk.MustExec(deleteSQL)
-	}
+	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
 
 	// lines starting symbol is "" and terminated symbol length is 2, InsertData returns data is nil
 	ld.LinesInfo.Terminated = "||"
@@ -478,17 +487,7 @@ func (s *testSuite) TestLoadData(c *C) {
 			fmt.Sprintf("%v %v %v %v", 6, 222, []byte(""), 0)}, nil},
 		{[]byte("6\t2\t3"), []byte("4\t5||"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("34"), 5)}, nil},
 	}
-	for _, ca := range cases {
-		data, err1 := ld.InsertData(ca.data1, ca.data2)
-		c.Assert(err1, IsNil)
-		c.Assert(data, HasLen, 0,
-			Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
-		err1 = ctx.CommitTxn()
-		c.Assert(err1, IsNil)
-		r = tk.MustQuery(selectSQL)
-		r.Check(testkit.Rows(ca.expected...))
-		tk.MustExec(deleteSQL)
-	}
+	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
 
 	// fields and lines aren't default, InsertData returns data is nil
 	ld.FieldsInfo.Terminated = "\\"
@@ -548,22 +547,7 @@ func (s *testSuite) TestLoadData(c *C) {
 			fmt.Sprintf("%v %v %v %v", 2, 22, []byte("33"), 0)}, []byte("#^")},
 		{[]byte("xx1\\2\\3"), []byte("\\4\\5|!#^"), nil, []byte("#^")},
 	}
-	for _, ca := range cases {
-		data, err1 := ld.InsertData(ca.data1, ca.data2)
-		c.Assert(err1, IsNil)
-		if ca.restData == nil {
-			c.Assert(data, HasLen, 0,
-				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
-		} else {
-			c.Assert(data, DeepEquals, ca.restData,
-				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
-		}
-		err1 = ctx.CommitTxn()
-		c.Assert(err1, IsNil)
-		r = tk.MustQuery(selectSQL)
-		r.Check(testkit.Rows(ca.expected...))
-		tk.MustExec(deleteSQL)
-	}
+	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
 
 	// lines starting symbol is the same as terminated symbol, InsertData returns data is nil
 	ld.LinesInfo.Terminated = "xxx"
@@ -610,22 +594,30 @@ func (s *testSuite) TestLoadData(c *C) {
 			fmt.Sprintf("%v %v %v %v", 10, 2, []byte("3"), 4),
 			fmt.Sprintf("%v %v %v %v", 40, 0, []byte(""), 0)}, []byte("xxx")},
 	}
-	for _, ca := range cases {
-		data, err1 := ld.InsertData(ca.data1, ca.data2)
-		c.Assert(err1, IsNil)
-		if ca.restData == nil {
-			c.Assert(data, HasLen, 0,
-				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
-		} else {
-			c.Assert(data, DeepEquals, ca.restData,
-				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
-		}
-		err1 = ctx.CommitTxn()
-		c.Assert(err1, IsNil)
-		r = tk.MustQuery(selectSQL)
-		r.Check(testkit.Rows(ca.expected...))
-		tk.MustExec(deleteSQL)
+	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
+}
+
+func (s *testSuite) TestLoadDataEscape(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+
+	ld, ctx := makeLoadDataInfo(2, s.store, c)
+	// test escape
+	cases := []testCase{
+		// data1 = nil, data2 != nil
+		{nil, []byte("1\ta string\n"), []string{fmt.Sprintf("%v %v", 1, []byte("a string"))}, nil},
+		{nil, []byte("2\tstr \\t\n"), []string{fmt.Sprintf("%v %v", 2, []byte("str \t"))}, nil},
+		{nil, []byte("3\tstr \\n\n"), []string{fmt.Sprintf("%v %v", 3, []byte("str \n"))}, nil},
+		{nil, []byte("4\tboth \\t\\n\n"), []string{fmt.Sprintf("%v %v", 4, []byte("both \t\n"))}, nil},
+		{nil, []byte("5\tstr \\\\\n"), []string{fmt.Sprintf("%v %v", 5, []byte("str \\"))}, nil},
+		{nil, []byte("6\t\\r\\t\\n\\0\\Z\\b\n"), []string{fmt.Sprintf("%v %v", 6, []byte{'\r', '\t', '\n', 0, 26, '\b'})}, nil},
 	}
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select * from load_data_test;"
+	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
@@ -1519,6 +1511,27 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("insert t values (0)")
 	result = tk.MustQuery("select NULL from t ")
 	result.Check(testkit.Rows("<nil>"))
+	// test for double read
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int unique, b int)")
+	tk.MustExec("insert t values (5, 0)")
+	tk.MustExec("insert t values (4, 0)")
+	tk.MustExec("insert t values (3, 0)")
+	tk.MustExec("insert t values (2, 0)")
+	tk.MustExec("insert t values (1, 0)")
+	tk.MustExec("insert t values (0, 0)")
+	result = tk.MustQuery("select * from t order by a limit 3")
+	result.Check(testkit.Rows("0 0", "1 0", "2 0"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int unique, b int)")
+	tk.MustExec("insert t values (0, 1)")
+	tk.MustExec("insert t values (1, 2)")
+	tk.MustExec("insert t values (2, 1)")
+	tk.MustExec("insert t values (3, 2)")
+	tk.MustExec("insert t values (4, 1)")
+	tk.MustExec("insert t values (5, 2)")
+	result = tk.MustQuery("select * from t where a < 5 and b = 1 limit 2")
+	result.Check(testkit.Rows("0 1", "2 1"))
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
@@ -1700,6 +1713,20 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1991-09-05 11:11:11"))
 	result = tk.MustQuery("select cast('11:11:11' as time)")
 	result.Check(testkit.Rows("11:11:11"))
+
+	// test unhex and hex
+	result = tk.MustQuery("select unhex('4D7953514C')")
+	result.Check(testkit.Rows("MySQL"))
+	result = tk.MustQuery("select unhex(hex('string'))")
+	result.Check(testkit.Rows("string"))
+	result = tk.MustQuery("select unhex('ggg')")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select unhex(-1)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select hex(unhex('1267'))")
+	result.Check(testkit.Rows("1267"))
+	result = tk.MustQuery("select hex(unhex(1267))")
+	result.Check(testkit.Rows("1267"))
 
 	// for case
 	tk.MustExec("drop table if exists t")
