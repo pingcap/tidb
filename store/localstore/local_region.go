@@ -229,8 +229,7 @@ func (rs *localRegion) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
 	return rows, nil
 }
 
-// extractKVRanges extracts kv.KeyRanges slice from a SelectRequest, and also returns if it is in descending order.
-// func (rs *localRegion) extractKVRanges(sel *tipb.SelectRequest) (kvRanges []kv.KeyRange, desc bool) {
+// extractKVRanges extracts kv.KeyRanges slice from ctx.keyRanges, and also returns if it is in descending order.
 func (rs *localRegion) extractKVRanges(ctx *selectContext) (kvRanges []kv.KeyRange, desc bool) {
 	sel := ctx.sel
 	for _, kran := range ctx.keyRanges {

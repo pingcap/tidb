@@ -769,6 +769,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		idxResult.IgnoreData()
 		idxResult.Fetch()
 
 		// Use a background goroutine to fetch index, put the result in e.tasks.

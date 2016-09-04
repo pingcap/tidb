@@ -49,6 +49,9 @@ type SelectResult interface {
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
 	Fetch()
+	// IgnoreData sets ignore data attr to true.
+	// For index double scan, we do not need row data when scanning index.
+	IgnoreData()
 }
 
 // PartialResult is the result from a single region server.
@@ -62,10 +65,11 @@ type PartialResult interface {
 
 // SelectResult is used to get response rows from SelectRequest.
 type selectResult struct {
-	index     bool
-	aggregate bool
-	fields    []*types.FieldType
-	resp      kv.Response
+	index      bool
+	aggregate  bool
+	fields     []*types.FieldType
+	resp       kv.Response
+	ignoreData bool
 
 	results chan PartialResult
 	done    chan error
@@ -87,11 +91,12 @@ func (r *selectResult) fetch() {
 			return
 		}
 		pr := &partialResult{
-			index:     r.index,
-			fields:    r.fields,
-			reader:    reader,
-			aggregate: r.aggregate,
-			done:      make(chan error),
+			index:      r.index,
+			fields:     r.fields,
+			reader:     reader,
+			aggregate:  r.aggregate,
+			ignoreData: r.ignoreData,
+			done:       make(chan error),
 		}
 		go pr.fetch()
 		r.results <- pr
@@ -119,6 +124,10 @@ func (r *selectResult) SetFields(fields []*types.FieldType) {
 	r.fields = fields
 }
 
+func (r *selectResult) IgnoreData() {
+	r.ignoreData = true
+}
+
 // Close closes SelectResult.
 func (r *selectResult) Close() error {
 	return r.resp.Close()
@@ -126,12 +135,13 @@ func (r *selectResult) Close() error {
 
 // partialResult represents a subset of select result.
 type partialResult struct {
-	index     bool
-	aggregate bool
-	fields    []*types.FieldType
-	reader    io.ReadCloser
-	resp      *tipb.SelectResponse
-	cursor    int
+	index      bool
+	aggregate  bool
+	fields     []*types.FieldType
+	reader     io.ReadCloser
+	resp       *tipb.SelectResponse
+	cursor     int
+	ignoreData bool
 
 	done    chan error
 	fetched bool
@@ -156,6 +166,8 @@ func (pr *partialResult) fetch() {
 	pr.done <- nil
 }
 
+var dummyData = make([]types.Datum, 0)
+
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
 func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
@@ -172,15 +184,18 @@ func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 		return 0, nil, nil
 	}
 	row := pr.resp.Rows[pr.cursor]
-	data, err = tablecodec.DecodeValues(row.Data, pr.fields, pr.index)
-	if err != nil {
-		return 0, nil, errors.Trace(err)
+	if !pr.ignoreData {
+		data, err = tablecodec.DecodeValues(row.Data, pr.fields, pr.index)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
 	}
 	if data == nil {
 		// When no column is referenced, the data may be nil, like 'select count(*) from t'.
 		// In this case, we need to create a zero length datum slice,
 		// as caller will check if data is nil to finish iteration.
-		data = make([]types.Datum, 0)
+		// data = make([]types.Datum, 0)
+		data = dummyData
 	}
 	if !pr.aggregate {
 		handleBytes := row.GetHandle()
