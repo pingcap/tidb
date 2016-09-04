@@ -30,6 +30,7 @@ type regionRequest struct {
 	data     []byte
 	startKey []byte
 	endKey   []byte
+	ranges   []kv.KeyRange
 }
 
 type regionResponse struct {
@@ -51,6 +52,7 @@ type selectContext struct {
 	groupKeys    [][]byte
 	aggregates   []*aggregateFuncExpr
 	aggregate    bool
+	keyRanges    []kv.KeyRange
 
 	// Use for DecodeRow.
 	colTps map[int64]*types.FieldType
@@ -68,8 +70,9 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		}
 		txn := newTxn(rs.store, kv.Version{Ver: uint64(sel.StartTs)})
 		ctx := &selectContext{
-			sel: sel,
-			txn: txn,
+			sel:       sel,
+			txn:       txn,
+			keyRanges: req.ranges,
 		}
 		ctx.eval = &xeval.Evaluator{Row: make(map[int64]types.Datum)}
 		if sel.Where != nil {
@@ -169,7 +172,7 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, er
 		ctx.colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
 	}
 
-	kvRanges, desc := rs.extractKVRanges(ctx.sel)
+	kvRanges, desc := rs.extractKVRanges(ctx)
 	var rows []*tipb.Row
 	limit := int64(-1)
 	if ctx.sel.Limit != nil {
@@ -227,32 +230,15 @@ func (rs *localRegion) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
 }
 
 // extractKVRanges extracts kv.KeyRanges slice from a SelectRequest, and also returns if it is in descending order.
-func (rs *localRegion) extractKVRanges(sel *tipb.SelectRequest) (kvRanges []kv.KeyRange, desc bool) {
-	var (
-		tid   int64
-		idxID int64
-	)
-	if sel.IndexInfo != nil {
-		tid = sel.IndexInfo.GetTableId()
-		idxID = sel.IndexInfo.GetIndexId()
-	} else {
-		tid = sel.TableInfo.GetTableId()
-	}
-	for _, kran := range sel.Ranges {
-		var upperKey, lowerKey kv.Key
-		if idxID == 0 {
-			upperKey = tablecodec.EncodeRowKey(tid, kran.GetHigh())
-			if bytes.Compare(upperKey, rs.startKey) <= 0 {
-				continue
-			}
-			lowerKey = tablecodec.EncodeRowKey(tid, kran.GetLow())
-		} else {
-			upperKey = tablecodec.EncodeIndexSeekKey(tid, idxID, kran.GetHigh())
-			if bytes.Compare(upperKey, rs.startKey) <= 0 {
-				continue
-			}
-			lowerKey = tablecodec.EncodeIndexSeekKey(tid, idxID, kran.GetLow())
+// func (rs *localRegion) extractKVRanges(sel *tipb.SelectRequest) (kvRanges []kv.KeyRange, desc bool) {
+func (rs *localRegion) extractKVRanges(ctx *selectContext) (kvRanges []kv.KeyRange, desc bool) {
+	sel := ctx.sel
+	for _, kran := range ctx.keyRanges {
+		upperKey := kran.EndKey
+		if bytes.Compare(upperKey, rs.startKey) <= 0 {
+			continue
 		}
+		lowerKey := kran.StartKey
 		if bytes.Compare(lowerKey, rs.endKey) >= 0 {
 			break
 		}
@@ -500,7 +486,7 @@ func toPBError(err error) *tipb.Error {
 }
 
 func (rs *localRegion) getRowsFromIndexReq(ctx *selectContext) ([]*tipb.Row, error) {
-	kvRanges, desc := rs.extractKVRanges(ctx.sel)
+	kvRanges, desc := rs.extractKVRanges(ctx)
 	var rows []*tipb.Row
 	limit := int64(-1)
 	if ctx.sel.Limit != nil {

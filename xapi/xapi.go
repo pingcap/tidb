@@ -203,9 +203,9 @@ func (pr *partialResult) Close() error {
 // conncurrency: The max concurrency for underlying coprocessor request.
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
-func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrder bool) (SelectResult, error) {
+func Select(client kv.Client, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (SelectResult, error) {
 	// Convert tipb.*Request to kv.Request.
-	kvReq, err := composeRequest(req, concurrency, keepOrder)
+	kvReq, err := composeRequest(req, keyRanges, concurrency, keepOrder)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -238,20 +238,16 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrde
 }
 
 // Convert tipb.Request to kv.Request.
-func composeRequest(req *tipb.SelectRequest, concurrency int, keepOrder bool) (*kv.Request, error) {
+func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (*kv.Request, error) {
 	kvReq := &kv.Request{
 		Concurrency: concurrency,
 		KeepOrder:   keepOrder,
+		KeyRanges:   keyRanges,
 	}
 	if req.IndexInfo != nil {
 		kvReq.Tp = kv.ReqTypeIndex
-		tid := req.IndexInfo.GetTableId()
-		idxID := req.IndexInfo.GetIndexId()
-		kvReq.KeyRanges = EncodeIndexRanges(tid, idxID, req.Ranges)
 	} else {
 		kvReq.Tp = kv.ReqTypeSelect
-		tid := req.GetTableInfo().GetTableId()
-		kvReq.KeyRanges = EncodeTableRanges(tid, req.Ranges)
 	}
 	if req.OrderBy != nil {
 		kvReq.Desc = req.OrderBy[0].Desc
@@ -362,35 +358,4 @@ func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
 	}
 	pi.Columns = cols
 	return pi
-}
-
-// EncodeTableRanges encodes table ranges into kv.KeyRanges.
-func EncodeTableRanges(tid int64, rans []*tipb.KeyRange) []kv.KeyRange {
-	keyRanges := make([]kv.KeyRange, 0, len(rans))
-	for _, r := range rans {
-		start := tablecodec.EncodeRowKey(tid, r.Low)
-		end := tablecodec.EncodeRowKey(tid, r.High)
-		nr := kv.KeyRange{
-			StartKey: start,
-			EndKey:   end,
-		}
-		keyRanges = append(keyRanges, nr)
-	}
-	return keyRanges
-}
-
-// EncodeIndexRanges encodes index ranges into kv.KeyRanges.
-func EncodeIndexRanges(tid, idxID int64, rans []*tipb.KeyRange) []kv.KeyRange {
-	keyRanges := make([]kv.KeyRange, 0, len(rans))
-	for _, r := range rans {
-		// Convert range to kv.KeyRange
-		start := tablecodec.EncodeIndexSeekKey(tid, idxID, r.Low)
-		end := tablecodec.EncodeIndexSeekKey(tid, idxID, r.High)
-		nr := kv.KeyRange{
-			StartKey: start,
-			EndKey:   end,
-		}
-		keyRanges = append(keyRanges, nr)
-	}
-	return keyRanges
 }
