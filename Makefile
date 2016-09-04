@@ -7,8 +7,8 @@ endif
 
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
-
 GO        := GO15VENDOREXPERIMENT="1" go
+
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
@@ -97,20 +97,19 @@ test: gotest
 
 gotest:
 	rm -rf vendor && ln -s _vendor/vendor vendor
-	@export log_level=error
+	@export log_level=error;\
 	$(GO) test -cover $(PACKAGES)
 	rm -rf vendor
 
 race:
 	rm -rf vendor && ln -s _vendor/vendor vendor
-	@export log_level=debug
-	@dirs=`go list ./... | grep -vE 'vendor' | awk '{sub("github.com/pingcap/tidb/",""); print}'`;\
+	@export log_level=debug; \
+	dirs=`go list ./... | grep -vE 'vendor' | awk '{sub("github.com/pingcap/tidb/",""); print}'`;\
 	for dir in $$dirs; do \
 		cd $$dir;\
-		go test -race;\
+		go test -race | awk 'END{if($$1=="FAIL") {exit 1}}' || exit 1;\
 		cd -;\
 	done;
-	@export log_level=error
 	rm -rf vendor
 
 tikv_integration_test:
