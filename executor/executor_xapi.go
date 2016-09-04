@@ -124,7 +124,7 @@ func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 			continue
 		}
 		startKey := tablecodec.EncodeRowKeyWithHandle(tid, h)
-		endKey := startKey.PrefixNext()
+		endKey := tablecodec.EncodeRowKeyWithHandle(tid, h+1)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	return krs
