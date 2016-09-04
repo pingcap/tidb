@@ -19,10 +19,14 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -51,36 +55,90 @@ type PhysicalIndexScan struct {
 	LimitCount *int64
 }
 
+type physicalXPlan interface {
+	addAggregation(agg *PhysicalAggregation, ctx context.Context) (expression.Schema, error)
+}
+
 type physicalTableSource struct {
 	Aggregated bool
+	AggFields  []*types.FieldType
 	AggFuncs   []*tipb.Expr
 	GbyItems   []*tipb.ByItem
 
-	conditionPBExpr []*tipb.Expr
+	ConditionPBExpr *tipb.Expr
 }
 
-func (p *physicalTableSource) addAggregation(agg *Aggregation, ctx context.Context) error {
+func (p *physicalTableSource) clear() {
+	p.AggFields = nil
+	p.AggFuncs = nil
+	p.GbyItems = nil
+	p.Aggregated = false
+}
+
+func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation, ctx context.Context) (expression.Schema, error) {
+	log.Warnf("add agg")
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	client := txn.GetClient()
 	for _, f := range agg.AggFuncs {
 		pb, err := AggFuncToPBExpr(client, f)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
+		}
+		if pb == nil {
+			p.clear()
+			return nil, nil
 		}
 		p.AggFuncs = append(p.AggFuncs, pb)
 	}
-	for _, i := range agg.GroupByItems {
-		pb, err := GroupByItemToPB(client, i)
+	for _, item := range agg.GroupByItems {
+		pb, err := GroupByItemToPB(client, item)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
+		}
+		if pb == nil {
+			p.clear()
+			return nil, nil
 		}
 		p.GbyItems = append(p.GbyItems, pb)
 	}
-	p.AggFuncs = true
-	return nil
+	p.Aggregated = true
+	gk := types.NewFieldType(mysql.TypeBlob)
+	gk.Charset = charset.CharsetBin
+	gk.Collate = charset.CollationBin
+	p.AggFields = append(p.AggFields, gk)
+	var schema expression.Schema
+	cursor := 0
+	schema = append(schema, &expression.Column{Index: cursor})
+	agg.GroupByItems = []expression.Expression{schema[cursor]}
+	newAggFuncs := make([]expression.AggregationFunction, len(agg.AggFuncs))
+	for i, aggFun := range agg.AggFuncs {
+		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
+		var args []expression.Expression
+		if fun.NeedCount() {
+			cursor++
+			schema = append(schema, &expression.Column{Index: cursor})
+			args = append(args, schema[cursor])
+			ft := types.NewFieldType(mysql.TypeLonglong)
+			ft.Flen = 21
+			ft.Charset = charset.CharsetBin
+			ft.Collate = charset.CollationBin
+			p.AggFields = append(p.AggFields, ft)
+		}
+		if fun.NeedValue() {
+			cursor++
+			schema = append(schema, &expression.Column{Index: cursor})
+			args = append(args, schema[cursor])
+			p.AggFields = append(p.AggFields, agg.schema[i].GetType())
+		}
+		fun.SetArgs(args)
+		fun.SetMode(expression.FinalMode)
+		newAggFuncs[i] = fun
+	}
+	agg.AggFuncs = newAggFuncs
+	return schema, nil
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -150,23 +208,24 @@ type PhysicalHashSemiJoin struct {
 type PhysicalUnionScan struct {
 	basePlan
 
-	table     table.Table
-	desc      bool
-	condition expression.Expression
+	Table     table.Table
+	Desc      bool
+	Condition expression.Expression
 }
 
 type AggregationType int
 
 const (
-	Streamed AggregationType = 0
-	Final
-	Complete
+	StreamedAgg AggregationType = iota
+	FinalAgg
+	CompleteAgg
 )
 
 type PhysicalAggregation struct {
 	basePlan
 
-	aggType      AggregationType
+	HasGby       bool
+	AggType      AggregationType
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
 }
@@ -232,6 +291,11 @@ func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalApply) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
@@ -493,7 +557,7 @@ func (p *SelectLock) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *Aggregation) Copy() PhysicalPlan {
+func (p *PhysicalAggregation) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }

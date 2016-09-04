@@ -1985,7 +1985,7 @@ func (s *testSuite) TestNewTableDual(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestNewTableScan(c *C) {
+func (s *testSuite) TestTableScan(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use information_schema")

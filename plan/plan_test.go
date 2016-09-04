@@ -300,9 +300,9 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		c.Assert(err, IsNil)
 		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
 		c.Assert(err, IsNil)
-		_, res, _, err := lp.convert2PhysicalPlan(nil)
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		p = res.p.PushLimit(nil)
+		p = info.p.PushLimit(nil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
@@ -388,9 +388,9 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		c.Assert(err, IsNil)
 		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
 		c.Assert(err, IsNil)
-		_, res, _, err := lp.convert2PhysicalPlan(nil)
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		p = res.p.PushLimit(nil)
+		p = info.p.PushLimit(nil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
@@ -550,9 +550,9 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		c.Assert(err, IsNil)
 		_, err = p.PruneColumnsAndResolveIndices(p.GetSchema())
 		c.Assert(err, IsNil)
-		_, res, _, err := p.convert2PhysicalPlan(nil)
+		info, err := p.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		np := res.p.PushLimit(nil)
+		np := info.p.PushLimit(nil)
 		c.Assert(ToString(np), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
@@ -907,11 +907,11 @@ func (s *testPlanSuite) TestTableScanWithOrder(c *C) {
 	logic, ok := p.(LogicalPlan)
 	c.Assert(ok, IsTrue)
 	// Get physical plan.
-	_, pp, _, err := logic.convert2PhysicalPlan(nil)
+	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	c.Assert(err, IsNil)
 	// Limit->Projection->PhysicalTableScan
 	// Get PhysicalTableScan plan.
-	cpp, ok := pp.p.GetChildByIndex(0).GetChildByIndex(0).(*PhysicalTableScan)
+	cpp, ok := info.p.GetChildByIndex(0).GetChildByIndex(0).(*PhysicalTableScan)
 	c.Assert(cpp, NotNil)
 	c.Assert(ok, IsTrue)
 	// Make sure KeepOrder is true.

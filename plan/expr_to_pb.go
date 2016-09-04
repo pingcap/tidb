@@ -2,6 +2,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -42,7 +43,7 @@ func exprToPB(client kv.Client, expr expression.Expression) (*tipb.Expr, error) 
 	case *expression.ScalarFunction:
 		return scalarFuncToPBExpr(client, x)
 	}
-	return nil
+	return nil, nil
 }
 
 func datumToPBExpr(client kv.Client, d types.Datum) (*tipb.Expr, error) {
@@ -86,25 +87,26 @@ func datumToPBExpr(client kv.Client, d types.Datum) (*tipb.Expr, error) {
 
 func columnToPBExpr(client kv.Client, column *expression.Column) (*tipb.Expr, error) {
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
-		return nil
+		return nil, nil
 	}
+	log.Warnf("col %s", column)
 	switch column.GetType().Tp {
 	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry, mysql.TypeDecimal:
-		return nil
+		return nil, nil
 	}
 
 	if column.Correlated {
-		return nil
+		return nil, nil
 	}
 
 	id := column.ID
 	// Zero Column ID is not a column from table, can not support for now.
 	if id == 0 {
-		return nil
+		return nil, nil
 	}
 	// its value is available to use.
 	if id == -1 {
-		return nil
+		return nil, nil
 	}
 
 	return &tipb.Expr{
@@ -141,19 +143,19 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) (*tip
 		// Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
 		escape := expr.Args[2].(*expression.Constant).Value
 		if escape.IsNull() || byte(escape.GetInt64()) != '\\' {
-			return nil
+			return nil, nil
 		}
 		pattern, ok := expr.Args[1].(*expression.Constant)
 		if !ok || pattern.Value.Kind() != types.KindString {
-			return nil
+			return nil, nil
 		}
 		for i, b := range pattern.Value.GetString() {
 			switch b {
 			case '\\', '_':
-				return nil
+				return nil, nil
 			case '%':
 				if i != 0 && i != len(pattern.Value.GetString())-1 {
-					return nil
+					return nil, nil
 				}
 			}
 		}
@@ -187,7 +189,7 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) (*tip
 
 func inToPBExpr(client kv.Client, expr *expression.ScalarFunction) (*tipb.Expr, error) {
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_In)) {
-		return nil
+		return nil, nil
 	}
 
 	pbExpr, err := exprToPB(client, expr.Args[0])
@@ -195,7 +197,7 @@ func inToPBExpr(client kv.Client, expr *expression.ScalarFunction) (*tipb.Expr, 
 		return nil, errors.Trace(err)
 	}
 	if pbExpr == nil {
-		return nil
+		return nil, nil
 	}
 	listExpr, err := constListToPB(client, expr.Args[1:])
 	if err != nil {
@@ -211,7 +213,7 @@ func inToPBExpr(client kv.Client, expr *expression.ScalarFunction) (*tipb.Expr, 
 
 func notToPBExpr(client kv.Client, expr *expression.ScalarFunction) (*tipb.Expr, error) {
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_Not)) {
-		return nil
+		return nil, nil
 	}
 
 	child, err := exprToPB(client, expr.Args[0])
@@ -219,7 +221,7 @@ func notToPBExpr(client kv.Client, expr *expression.ScalarFunction) (*tipb.Expr,
 		return nil, errors.Trace(err)
 	}
 	if child == nil {
-		return nil
+		return nil, nil
 	}
 	return &tipb.Expr{
 		Tp:       tipb.ExprType_Not,
@@ -228,7 +230,7 @@ func notToPBExpr(client kv.Client, expr *expression.ScalarFunction) (*tipb.Expr,
 
 func constListToPB(client kv.Client, list []expression.Expression) (*tipb.Expr, error) {
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ValueList)) {
-		return nil
+		return nil, nil
 	}
 
 	// Only list of *expression.Constant can be push down.
@@ -238,7 +240,9 @@ func constListToPB(client kv.Client, list []expression.Expression) (*tipb.Expr, 
 		if !ok {
 			return nil, nil
 		}
-		if datumToPBExpr(client, v.Value) == nil {
+		if d, err := datumToPBExpr(client, v.Value); err != nil {
+			return nil, errors.Trace(err)
+		} else if d == nil {
 			return nil, nil
 		}
 		datums = append(datums, v.Value)
@@ -301,6 +305,7 @@ func AggFuncToPBExpr(client kv.Client, aggFunc expression.AggregationFunction) (
 		return nil, nil
 	}
 
+	log.Warnf("name %s", aggFunc.GetName())
 	children := make([]*tipb.Expr, 0, len(aggFunc.GetArgs()))
 	for _, arg := range aggFunc.GetArgs() {
 		pbArg, err := exprToPB(client, arg)

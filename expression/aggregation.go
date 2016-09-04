@@ -35,6 +35,12 @@ type AggregationFunction interface {
 	// StreamUpdate updates data using streaming algo.
 	StreamUpdate(row []types.Datum, groupKey []byte, ctx context.Context) (bool, error)
 
+	NeedCount() bool
+
+	NeedValue() bool
+
+	SetMode(mode AggFunctionMode)
+
 	// GetGroupResult will be called when all data have been processed.
 	GetGroupResult(groupKey []byte) types.Datum
 
@@ -48,7 +54,7 @@ type AggregationFunction interface {
 	GetName() string
 
 	// SetArgs set argument by index.
-	SetArgs(idx int, expr Expression)
+	SetArgs(args []Expression)
 
 	// Clear collects the mapper's memory.
 	Clear()
@@ -83,8 +89,16 @@ func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) Aggre
 
 type aggCtxMapper map[string]*ast.AggEvaluateContext
 
+type AggFunctionMode int
+
+const (
+	CompleteMode AggFunctionMode = iota
+	FinalMode
+)
+
 type aggFunction struct {
 	name          string
+	mode          AggFunctionMode
 	Args          []Expression
 	Distinct      bool
 	resultMapper  aggCtxMapper
@@ -115,14 +129,27 @@ func (af *aggFunction) GetName() string {
 	return af.name
 }
 
+func (af *aggFunction) NeedCount() bool {
+	return af.name == ast.AggFuncCount || af.name == ast.AggFuncAvg
+}
+
+func (af *aggFunction) NeedValue() bool {
+	return af.name == ast.AggFuncSum || af.name == ast.AggFuncAvg || af.name == ast.AggFuncFirstRow ||
+		af.name == ast.AggFuncMax || af.name == ast.AggFuncMin || af.name == ast.AggFuncGroupConcat
+}
+
+func (af *aggFunction) SetMode(mode AggFunctionMode) {
+	af.mode = mode
+}
+
 // GetArgs implements AggregationFunction interface.
 func (af *aggFunction) GetArgs() []Expression {
 	return af.Args
 }
 
 // SetArgs implements AggregationFunction interface.
-func (af *aggFunction) SetArgs(idx int, expr Expression) {
-	af.Args[idx] = expr
+func (af *aggFunction) SetArgs(args []Expression) {
+	af.Args = args
 }
 
 func (af *aggFunction) getContext(groupKey []byte) *ast.AggEvaluateContext {
@@ -143,7 +170,7 @@ func (af *aggFunction) checkDistinct(values ...types.Datum) (bool, error) {
 		return false, errors.Trace(err)
 	}
 	if string(bytes) == string(af.lastRowEncode) {
-		return false
+		return false, nil
 	}
 	af.lastRowEncode = bytes
 	return true, nil
@@ -157,7 +184,9 @@ func (af *aggFunction) getStreamedContext(groupKey []byte) (*ast.AggEvaluateCont
 		end = true
 	}
 	if af.streamCtx != nil {
-		return af.streamCtx
+		return af.streamCtx, end
+	} else {
+		af.streamCtx = &ast.AggEvaluateContext{}
 	}
 	if end {
 		af.streamCtx = &ast.AggEvaluateContext{}
@@ -207,7 +236,7 @@ func (af *aggFunction) streamUpdateSum(row []types.Datum, groupKey []byte, ectx 
 	if af.Distinct {
 		distinct, err := af.checkDistinct(value)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		if !distinct {
 			return false, nil
@@ -215,7 +244,7 @@ func (af *aggFunction) streamUpdateSum(row []types.Datum, groupKey []byte, ectx 
 	}
 	ctx.Value, err = types.CalculateSum(ctx.Value, value)
 	if err != nil {
-		return errors.Trace(err)
+		return end, errors.Trace(err)
 	}
 	ctx.Count++
 	return end, nil
@@ -264,6 +293,9 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, ectx context
 		if value.GetValue() == nil {
 			return nil
 		}
+		if cf.mode == FinalMode {
+			ctx.Count += value.GetInt64()
+		}
 		if cf.Distinct {
 			vals = append(vals, value.GetValue())
 		}
@@ -277,7 +309,9 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, ectx context
 			return nil
 		}
 	}
-	ctx.Count++
+	if cf.mode == CompleteMode {
+		ctx.Count++
+	}
 	return nil
 }
 
@@ -290,10 +324,10 @@ func (cf *countFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx c
 	for _, a := range cf.Args {
 		value, err := a.Eval(row, ectx)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		if value.GetValue() == nil {
-			return nil
+			return end, nil
 		}
 		if cf.Distinct {
 			vals = append(vals, value)
@@ -302,7 +336,7 @@ func (cf *countFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx c
 	if cf.Distinct {
 		distinct, err := cf.checkDistinct(vals...)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		if !distinct {
 			return false, nil
@@ -328,8 +362,42 @@ type avgFunction struct {
 	aggFunction
 }
 
+func (af *avgFunction) updateAvg(row []types.Datum, groupKey []byte, ectx context.Context) error {
+	ctx := af.getContext(groupKey)
+	a := af.Args[1]
+	value, err := a.Eval(row, ectx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if value.IsNull() {
+		return nil
+	}
+	if af.Distinct {
+		d, err1 := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		if !d {
+			return nil
+		}
+	}
+	ctx.Value, err = types.CalculateSum(ctx.Value, value)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	count, err := af.Args[0].Eval(row, ectx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx.Count += count.GetInt64()
+	return nil
+}
+
 // Update implements AggregationFunction interface.
 func (af *avgFunction) Update(row []types.Datum, groupKey []byte, ctx context.Context) error {
+	if af.mode == FinalMode && af.name == ast.AggFuncAvg {
+		return af.updateAvg(row, groupKey, ctx)
+	}
 	return af.updateSum(row, groupKey, ctx)
 }
 
@@ -406,24 +474,21 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, ectx contex
 
 func (cf *concatFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx context.Context) (bool, error) {
 	ctx, end := cf.getStreamedContext(groupKey)
-	var vals []types.Datum
-	if cf.Distinct {
-		vals = make([]types.Datum, 0, len(cf.Args))
-	}
+	vals := make([]types.Datum, 0, len(cf.Args))
 	for _, a := range cf.Args {
 		value, err := a.Eval(row, ectx)
 		if err != nil {
-			return errors.Trace(err)
+			return end, errors.Trace(err)
 		}
 		if value.GetValue() == nil {
-			return nil
+			return end, nil
 		}
-		vals = append(vals, value.GetValue())
+		vals = append(vals, value)
 	}
 	if cf.Distinct {
 		distinct, err := cf.checkDistinct(vals...)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		if !distinct {
 			return false, nil
@@ -472,7 +537,7 @@ func (mmf *maxMinFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return mmf.getContext(groupKey).Value
 }
 
-func (mmf *maxMinFunction) GetStreamResult(groupKey []byte) (d types.Datum) {
+func (mmf *maxMinFunction) GetStreamResult() (d types.Datum) {
 	return mmf.streamCtx.Value
 }
 
@@ -509,18 +574,18 @@ func (mmf *maxMinFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx
 	a := mmf.Args[0]
 	value, err := a.Eval(row, ectx)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	if ctx.Value.IsNull() {
 		ctx.Value = value
 	}
 	if value.IsNull() {
-		return nil
+		return end, nil
 	}
 	var c int
 	c, err = ctx.Value.CompareDatum(value)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	if (mmf.isMax && c == -1) || (!mmf.isMax && c == 1) {
 		ctx.Value = value
@@ -553,14 +618,14 @@ func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx cont
 func (ff *firstRowFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx context.Context) (bool, error) {
 	ctx, end := ff.getStreamedContext(groupKey)
 	if !ctx.Value.IsNull() {
-		return nil
+		return end, nil
 	}
 	if len(ff.Args) != 1 {
-		return errors.New("Wrong number of args for AggFuncMaxMin")
+		return false, errors.New("Wrong number of args for AggFuncMaxMin")
 	}
 	value, err := ff.Args[0].Eval(row, ectx)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	ctx.Value = value
 	return end, nil

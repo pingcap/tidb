@@ -60,6 +60,8 @@ const (
 	Lock = "SelectLock"
 	// Load is the type of LoadData.
 	Load = "LoadData"
+	// Ins is the type of Insert
+	Ins = "Insert"
 	// Up is the type of Update.
 	Up = "Update"
 	// Del is the type of Delete.
@@ -104,20 +106,35 @@ type Plan interface {
 	SetChildren(...Plan)
 }
 
+type columnProp struct {
+	col  *expression.Column
+	desc bool
+}
+
+func (c *columnProp) equal(nc *columnProp) bool {
+	return c.col.Equal(nc.col) && c.desc == nc.desc
+}
+
 type requiredProperty struct {
-	props []*columnProp
-	group bool
+	props      []*columnProp
+	sortKeyLen int
+}
+
+// getHashKey encode a requiredProperty to a unique hash code.
+func (p *requiredProperty) getHashKey() ([]byte, error) {
+	datums := make([]types.Datum, 0, len(p.props)*3+1)
+	datums = append(datums, types.NewDatum(p.sortKeyLen))
+	for _, c := range p.props {
+		datums = append(datums, types.NewDatum(c.desc), types.NewDatum(c.col.FromID), types.NewDatum(c.col.Index))
+	}
+	bytes, err := codec.EncodeValue(nil, datums...)
+	return bytes, errors.Trace(err)
 }
 
 type physicalPlanInfo struct {
 	p     PhysicalPlan
 	cost  float64
-	count *uint64 // count is a unique value
-}
-
-type columnProp struct {
-	col  *expression.Column
-	desc bool
+	count uint64
 }
 
 // LogicalPlan is a tree of logical operators.
@@ -161,17 +178,7 @@ type PhysicalPlan interface {
 type baseLogicalPlan struct {
 	basePlan
 	planMap map[string]*physicalPlanInfo
-	count   uint64
-}
-
-func (p *requiredProperty) getHashKey() ([]byte, error) {
-	datums := make([]types.Datum, 0, len(p.props)*3+1)
-	datums = append(datums, types.NewDatum(p.group))
-	for _, c := range p.props {
-		datums = append(datums, types.NewDatum(c.desc), types.NewDatum(c.col.FromID), types.NewDatum(c.col.Index))
-	}
-	bytes, err := codec.EncodeValue(nil, datums)
-	return bytes, errors.Trace(err)
+	proxy   Plan
 }
 
 func (p *baseLogicalPlan) getPlanInfo(prop *requiredProperty) (*physicalPlanInfo, error) {
@@ -181,15 +188,38 @@ func (p *baseLogicalPlan) getPlanInfo(prop *requiredProperty) (*physicalPlanInfo
 	}
 	return p.planMap[string(key)], nil
 }
+func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
+	info, err := p.getPlanInfo(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if info != nil {
+		return info, nil
+	}
+	if len(p.children) == 0 {
+		return &physicalPlanInfo{p: p.proxy.(PhysicalPlan)}, nil
+	}
+	child := p.children[0].(LogicalPlan)
+	info, err = child.convert2PhysicalPlan(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	info = addPlanToResponse(p.proxy.(PhysicalPlan), info)
+	return info, p.storePlanInfo(prop, info)
+}
 
-func (p *baseLogicalPlan) storePlanInfo(prop *requiredProperty, info *physicalPlanInfo) {
-	key, _ := prop.getHashKey()
-	p.planMap[string(key)] = info
+func (p *baseLogicalPlan) storePlanInfo(prop *requiredProperty, info *physicalPlanInfo) error {
+	key, err := prop.getHashKey()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newInfo := *info // copy it
+	p.planMap[string(key)] = &newInfo
+	return nil
 }
 
 func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
 	return baseLogicalPlan{
-		count:   -1,
 		planMap: make(map[string]*physicalPlanInfo),
 		basePlan: basePlan{
 			tp:        tp,

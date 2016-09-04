@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/statistics"
-	"github.com/pingcap/tidb/table"
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -66,6 +65,7 @@ type Aggregation struct {
 
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
+	ctx          context.Context
 }
 
 // Selection means a filter.
@@ -109,7 +109,7 @@ type DataSource struct {
 	baseLogicalPlan
 
 	ctx     context.Context
-	table   table.Table
+	table   *ast.TableName
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
 	DBName  *model.CIStr

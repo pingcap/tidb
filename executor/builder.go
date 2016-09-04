@@ -15,7 +15,6 @@ package executor
 
 import (
 	"math"
-	"strings"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -25,14 +24,11 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -93,6 +89,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildUnion(v)
 	case *plan.Update:
 		return b.buildUpdate(v)
+	case *plan.PhysicalUnionScan:
+		return b.buildUnionScanExec(v)
 	case *plan.PhysicalHashJoin:
 		return b.buildJoin(v)
 	case *plan.PhysicalHashSemiJoin:
@@ -352,13 +350,17 @@ func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 	}
 }
 
-func (b *executorBuilder) buildUnionScanExec(src Executor, condition expression.Expression) *UnionScanExec {
+func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) *UnionScanExec {
+	src := b.build(v.GetChildByIndex(0))
+	if b.err != nil {
+		return nil
+	}
 	us := &UnionScanExec{ctx: b.ctx, Src: src}
 	switch x := src.(type) {
 	case *XSelectTableExec:
 		us.desc = x.desc
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
-		us.condition = condition
+		us.condition = v.Condition
 		us.buildAndSortAddedRows(x.table, x.asName)
 	case *XSelectIndexExec:
 		us.desc = x.indexPlan.Desc
@@ -371,7 +373,7 @@ func (b *executorBuilder) buildUnionScanExec(src Executor, condition expression.
 			}
 		}
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
-		us.condition = condition
+		us.condition = v.Condition
 		us.buildAndSortAddedRows(x.table, x.asName)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", src)
@@ -465,89 +467,17 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 
 func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	e := &AggregationExec{
+	log.Warnf("mode %v", v.AggType)
+	e := &HashAggExec{
 		Src:          src,
 		schema:       v.GetSchema(),
 		ctx:          b.ctx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
+		mode:         v.AggType,
+		hasGby:       v.HasGby,
 	}
-	// Check if the underlying is xapi executor, we should try to push aggregate function down.
-	xSrc, ok := src.(XExecutor)
-	if !ok {
-		return e
-	}
-	txn, err := b.ctx.GetTxn(false)
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	client := txn.GetClient()
-	if len(v.GroupByItems) > 0 && !client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy) {
-		return e
-	}
-	// Convert aggregate function exprs to pb.
-	pbAggFuncs := make([]*tipb.Expr, 0, len(v.AggFuncs))
-	for _, af := range v.AggFuncs {
-		if af.IsDistinct() {
-			// We do not support distinct push down.
-			return e
-		}
-		pbAggFunc := b.AggFuncToPBExpr(client, af, xSrc.GetTable())
-		if pbAggFunc == nil {
-			return e
-		}
-		pbAggFuncs = append(pbAggFuncs, pbAggFunc)
-	}
-	pbByItems := make([]*tipb.ByItem, 0, len(v.GroupByItems))
-	// Convert groupby to pb
-	for _, item := range v.GroupByItems {
-		pbByItem := b.GroupByItemToPB(client, item, xSrc.GetTable())
-		if pbByItem == nil {
-			return e
-		}
-		pbByItems = append(pbByItems, pbByItem)
-	}
-	// compose aggregate info
-	// We should infer fields type.
-	// Each agg item will be splitted into two datums: count and value
-	// The first field should be group key.
-	fields := make([]*types.FieldType, 0, 1+2*len(v.AggFuncs))
-	gk := types.NewFieldType(mysql.TypeBlob)
-	gk.Charset = charset.CharsetBin
-	gk.Collate = charset.CollationBin
-	fields = append(fields, gk)
-	// There will be one or two fields in the result row for each AggregateFuncExpr.
-	// Count needs count partial result field.
-	// Sum, FirstRow, Max, Min, GroupConcat need value partial result field.
-	// Avg needs both count and value partial result field.
-	for i, agg := range v.AggFuncs {
-		name := strings.ToLower(agg.GetName())
-		if needCount(name) {
-			// count partial result field
-			ft := types.NewFieldType(mysql.TypeLonglong)
-			ft.Flen = 21
-			ft.Charset = charset.CharsetBin
-			ft.Collate = charset.CollationBin
-			fields = append(fields, ft)
-		}
-		if needValue(name) {
-			// value partial result field
-			col := v.GetSchema()[i]
-			fields = append(fields, col.GetType())
-		}
-	}
-	xSrc.AddAggregate(pbAggFuncs, pbByItems, fields)
-	hasGroupBy := len(v.GroupByItems) > 0
-	xe := &XAggregateExec{
-		Src:        src,
-		ctx:        b.ctx,
-		AggFuncs:   v.AggFuncs,
-		hasGroupBy: hasGroupBy,
-		schema:     v.GetSchema(),
-	}
-	log.Debugf("Use XAggregateExec with %d aggs", len(v.AggFuncs))
-	return xe
+	return e
 }
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
@@ -614,7 +544,6 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Sele
 	}
 	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-		var ret Executor
 		st := &XSelectTableExec{
 			tableInfo:   v.Table,
 			ctx:         b.ctx,
@@ -628,20 +557,13 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Sele
 			desc:        v.Desc,
 			limitCount:  v.LimitCount,
 			keepOrder:   v.KeepOrder,
+			where:       v.ConditionPBExpr,
+			aggregate:   v.Aggregated,
+			aggFuncs:    v.AggFuncs,
+			aggFields:   v.AggFields,
+			byItems:     v.GbyItems,
 		}
-		ret = st
-		if !txn.IsReadOnly() {
-			if s != nil {
-				ret = b.buildUnionScanExec(ret,
-					expression.ComposeCNFCondition(append(s.Conditions, v.AccessCondition...)))
-			} else {
-				ret = b.buildUnionScanExec(ret, expression.ComposeCNFCondition(v.AccessCondition))
-			}
-		}
-		if s != nil {
-			st.where, s.Conditions = b.toPBExpr(s.Conditions, st.tableInfo)
-		}
-		return ret
+		return st
 	}
 
 	ts := &TableScanExec{
@@ -674,7 +596,6 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan, s *plan.Sele
 	}
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
-		var ret Executor
 		st := &XSelectIndexExec{
 			tableInfo:   v.Table,
 			ctx:         b.ctx,
@@ -683,23 +604,14 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan, s *plan.Sele
 			table:       table,
 			indexPlan:   v,
 			txn:         txn,
+			where:       v.ConditionPBExpr,
+			aggregate:   v.Aggregated,
+			aggFuncs:    v.AggFuncs,
+			aggFields:   v.AggFields,
+			byItems:     v.GbyItems,
 		}
-		ret = st
-		if !txn.IsReadOnly() {
-			if s != nil {
-				ret = b.buildUnionScanExec(ret,
-					expression.ComposeCNFCondition(append(s.Conditions, v.AccessCondition...)))
-			} else {
-				ret = b.buildUnionScanExec(ret, expression.ComposeCNFCondition(v.AccessCondition))
-			}
-		}
-		// It will forbid limit and aggregation to push down.
-		if s != nil {
-			st.where, s.Conditions = b.toPBExpr(s.Conditions, st.tableInfo)
-		}
-		return ret
+		return st
 	}
-
 	b.err = errors.New("Not implement yet.")
 	return nil
 }

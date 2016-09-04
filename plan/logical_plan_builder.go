@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -37,7 +38,9 @@ func (a *idAllocator) allocID() string {
 func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gby []expression.Expression, correlated bool) LogicalPlan {
 	agg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(aggFuncList)),
+		ctx:             b.ctx,
 		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator)}
+	agg.proxy = agg
 	agg.initID()
 	agg.correlated = p.IsCorrelated() || correlated
 	addChild(agg, p)
@@ -52,6 +55,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			}
 			p = np
 			agg.correlated = correlated || agg.correlated
+			log.Warnf("name %s newarg %s %v", aggFunc.F, newArg, newArg.GetType())
 			newArgList = append(newArgList, newArg)
 		}
 		agg.AggFuncs = append(agg.AggFuncs, expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct))
@@ -188,6 +192,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	rightPlan := b.buildResultSetNode(join.Right)
 	newSchema := append(leftPlan.GetSchema().DeepCopy(), rightPlan.GetSchema().DeepCopy()...)
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
+	joinPlan.proxy = joinPlan
 	joinPlan.initID()
 	joinPlan.SetSchema(newSchema)
 	joinPlan.correlated = leftPlan.IsCorrelated() || rightPlan.IsCorrelated()
@@ -225,6 +230,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := &Selection{baseLogicalPlan: newBaseLogicalPlan(Sel, b.allocator)}
+	selection.proxy = selection
 	selection.initID()
 	selection.correlated = p.IsCorrelated()
 	for _, cond := range conditions {
@@ -254,6 +260,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		Exprs:           make([]expression.Expression, 0, len(fields)),
 		baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
 	}
+	proj.proxy = proj
 	proj.initID()
 	proj.correlated = p.IsCorrelated()
 	schema := make(expression.Schema, 0, len(fields))
@@ -312,6 +319,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 
 func (b *planBuilder) buildDistinct(src LogicalPlan) LogicalPlan {
 	d := &Distinct{baseLogicalPlan: newBaseLogicalPlan(Dis, b.allocator)}
+	d.proxy = d
 	d.initID()
 	addChild(d, src)
 	d.SetSchema(src.GetSchema())
@@ -321,6 +329,7 @@ func (b *planBuilder) buildDistinct(src LogicalPlan) LogicalPlan {
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	u := &Union{baseLogicalPlan: newBaseLogicalPlan(Un, b.allocator)}
+	u.proxy = u
 	u.initID()
 	u.children = make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
@@ -384,6 +393,7 @@ type ByItems struct {
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	var exprs []*ByItems
 	sort := &Sort{baseLogicalPlan: newBaseLogicalPlan(Srt, b.allocator)}
+	sort.proxy = sort
 	sort.initID()
 	sort.correlated = p.IsCorrelated()
 	for _, item := range byItems {
@@ -408,6 +418,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 		Count:           limit.Count,
 		baseLogicalPlan: newBaseLogicalPlan(Lim, b.allocator),
 	}
+	li.proxy = li
 	li.initID()
 	li.correlated = src.IsCorrelated()
 	addChild(li, src)
@@ -821,6 +832,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 
 func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
 	trim := &Trim{baseLogicalPlan: newBaseLogicalPlan(Trm, b.allocator)}
+	trim.proxy = trim
 	trim.initID()
 	addChild(trim, p)
 	trim.SetSchema(p.GetSchema().DeepCopy()[:len])
@@ -830,6 +842,7 @@ func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
 
 func (b *planBuilder) buildTableDual() LogicalPlan {
 	dual := &TableDual{baseLogicalPlan: newBaseLogicalPlan(Dual, b.allocator)}
+	dual.proxy = dual
 	dual.initID()
 	return dual
 }
@@ -846,12 +859,13 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	p := &DataSource{
 		ctx:             b.ctx,
+		table:           tn,
 		Table:           tn.TableInfo,
 		baseLogicalPlan: newBaseLogicalPlan(Ts, b.allocator),
 		statisticTable:  statisticTable,
 	}
+	p.proxy = p
 	p.initID()
-	p.table, _ = b.is.TableByID(tn.TableInfo.ID)
 	// Equal condition contains a column from previous joined table.
 	rfs := tn.GetResultFields()
 	schema := make([]*expression.Column, 0, len(rfs))
@@ -884,6 +898,7 @@ func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema,
 		Checker:         checker,
 		baseLogicalPlan: newBaseLogicalPlan(App, b.allocator),
 	}
+	ap.proxy = ap
 	ap.initID()
 	addChild(ap, p)
 	_, inner, b.err = inner.PredicatePushDown(nil)
@@ -941,6 +956,7 @@ out:
 		}
 	}
 	exists := &Exists{baseLogicalPlan: newBaseLogicalPlan(Ext, b.allocator)}
+	exists.proxy = exists
 	exists.initID()
 	addChild(exists, p)
 	newCol := &expression.Column{
@@ -954,6 +970,7 @@ out:
 
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	maxOneRow := &MaxOneRow{baseLogicalPlan: newBaseLogicalPlan(MOR, b.allocator)}
+	maxOneRow.proxy = maxOneRow
 	maxOneRow.initID()
 	addChild(maxOneRow, p)
 	maxOneRow.SetSchema(p.GetSchema().DeepCopy())
@@ -977,6 +994,7 @@ func tryDecorrelated(expr expression.Expression, outerPlan Plan) bool {
 
 func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) LogicalPlan {
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
+	joinPlan.proxy = joinPlan
 	joinPlan.initID()
 	joinPlan.correlated = outerPlan.IsCorrelated() || innerPlan.IsCorrelated()
 	for _, expr := range onCondition {
@@ -1037,6 +1055,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	}
 	p = np
 	updt := &Update{OrderedList: orderedList, SelectPlan: p, baseLogicalPlan: newBaseLogicalPlan(Up, b.allocator)}
+	updt.proxy = updt
 	updt.initID()
 	addChild(updt, p)
 	updt.SetSchema(p.GetSchema())
@@ -1106,6 +1125,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 		SelectPlan:      p,
 		baseLogicalPlan: newBaseLogicalPlan(Del, b.allocator),
 	}
+	del.proxy = del
 	del.initID()
 	addChild(del, p)
 	return del

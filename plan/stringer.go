@@ -112,7 +112,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Selection"
 	case *Projection:
 		str = "Projection"
-	case *Aggregation:
+	case *Aggregation, *PhysicalAggregation:
 		str = "Aggr"
 	case *Distinct:
 		str = "Distinct"

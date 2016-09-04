@@ -14,95 +14,88 @@
 package plan
 
 import (
+	"github.com/ngaut/log"
 	"math"
-
-	"github.com/pingcap/tidb/util/types"
 )
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*physicalPlanInfo) *physicalPlanInfo {
-	rowCount := float64(*infos[0].count)
+	log.Warnf("count %v", infos[0].count)
+	rowCount := float64(infos[0].count)
 	cost := rowCount * netWorkFactor
-	if len(prop) == 0 {
-		return &physicalPlanInfo{p: ts, cost: cost}
+	if len(prop.props) == 0 {
+		return &physicalPlanInfo{p: ts, cost: cost, count: infos[0].count}
 	}
-	if len(prop) == 1 && ts.pkCol != nil && ts.pkCol == prop.props[0].col {
+	if len(prop.props) == 1 && ts.pkCol != nil && ts.pkCol == prop.props[0].col {
 		sortedTs := *ts
 		sortedTs.Desc = prop.props[0].desc
 		sortedTs.KeepOrder = true
-		return &physicalPlanInfo{p: &sortedTs, cost: cost}
+		return &physicalPlanInfo{p: &sortedTs, cost: cost, count: infos[0].count}
 	}
-	return &physicalPlanInfo{p: ts, cost: math.MaxFloat64}
+	return &physicalPlanInfo{p: ts, cost: math.MaxFloat64, count: infos[0].count}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*physicalPlanInfo) *physicalPlanInfo {
-	rowCount := float64(*infos[0].count)
+	rowCount := float64(infos[0].count)
 	// currently index read from kv 2 times.
 	cost := rowCount * netWorkFactor
 	if is.DoubleRead {
 		cost *= 2
 	}
-	if len(prop) == 0 {
-		return &physicalPlanInfo{p: is, cost: cost}
+	if len(prop.props) == 0 {
+		return &physicalPlanInfo{p: is, cost: cost, count: infos[0].count}
 	}
-	matched := 0
+	matchedIdx := 0
+	isMatch := true
 	allDesc, allAsc := true, true
-	if prop.group {
-		allDesc = false
-		for _, c := range prop.props {
-			isMatch := false
-			for _, indexCol := range is.Index.Columns {
-				if indexCol.Length != types.UnspecifiedLength {
+	for i, propCol := range prop.props {
+		findMatched := false
+		if i < prop.sortKeyLen {
+			for matchedIdx < len(is.Index.Columns) {
+				if is.Index.Columns[matchedIdx].Name.L == propCol.col.ColName.L {
+					findMatched = true
+					break
+				}
+				if matchedIdx < is.accessEqualCount {
+					matchedIdx++
 					continue
 				}
-				if c.col.ColName.L == indexCol.Name.L {
-					isMatch = true
-					break
-				}
-			}
-			if isMatch {
-				matched++
-			} else {
 				break
 			}
-		}
-	} else {
-		for i, indexCol := range is.Index.Columns {
-			if indexCol.Length != types.UnspecifiedLength {
-				break
-			}
-			if prop.props[matched].col.ColName.L != indexCol.Name.L {
-				if !(matched == 0 && i < is.accessEqualCount) {
-					break
-				}
-			}
-			if prop.props[matched].desc {
+			if propCol.desc {
 				allAsc = false
 			} else {
 				allDesc = false
 			}
-			matched++
-			if matched == len(prop.props) {
-				break
+		} else {
+			for _, idxCol := range is.Columns {
+				if idxCol.Name.L == propCol.col.ColName.L {
+					findMatched = true
+					break
+				}
 			}
 		}
+		if !findMatched {
+			isMatch = false
+			break
+		}
 	}
-	if matched == len(prop.props) {
+	if isMatch {
 		sortedCost := cost + rowCount*math.Log2(rowCount)*cpuFactor
+		if allAsc {
+			sortedIs := *is
+			sortedIs.OutOfOrder = false
+			return &physicalPlanInfo{p: &sortedIs, cost: sortedCost, count: infos[0].count}
+		}
 		if allDesc {
 			sortedIs := *is
 			sortedIs.Desc = true
 			sortedIs.OutOfOrder = false
-			return &physicalPlanInfo{p: &sortedIs, cost: sortedCost}
-		}
-		if allAsc {
-			sortedIs := *is
-			sortedIs.OutOfOrder = false
-			return &physicalPlanInfo{p: &sortedIs, cost: sortedCost}
+			return &physicalPlanInfo{p: &sortedIs, cost: sortedCost, count: infos[0].count}
 		}
 	}
-	return &physicalPlanInfo{p: is, cost: math.MaxFloat64}
+	return &physicalPlanInfo{p: is, cost: math.MaxFloat64, count: infos[0].count}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
@@ -121,10 +114,14 @@ func (p *PhysicalApply) matchProperty(_ *requiredProperty, childPlanInfo ...*phy
 	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
 }
 
+func estimateJoinCount(lc uint64, rc uint64) uint64 {
+	return lc * rc / 3
+}
+
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalHashJoin) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	lRes, rRes := childPlanInfo[0], childPlanInfo[1]
-	lCount, rCount := float64(*lRes.count), float64(*rRes.count)
+	lCount, rCount := float64(lRes.count), float64(rRes.count)
 	np := *p
 	np.SetChildren(lRes.p, rRes.p)
 	if len(prop.props) != 0 {
@@ -136,7 +133,7 @@ func (p *PhysicalHashJoin) matchProperty(prop *requiredProperty, childPlanInfo .
 	} else {
 		cost += rCount + memoryFactor*lCount
 	}
-	return &physicalPlanInfo{p: &np, cost: cost}
+	return &physicalPlanInfo{p: &np, cost: cost, count: estimateJoinCount(lRes.count, rRes.count)}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
@@ -159,11 +156,14 @@ func (p *Selection) matchProperty(prop *requiredProperty, childPlanInfo ...*phys
 		sel := *p
 		sel.SetChildren(res.p)
 		res.p = &sel
+		res.count = uint64(float64(res.count) * selectionFactor)
 		return res
 	}
 	np := *p
 	np.SetChildren(childPlanInfo[0].p)
-	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
+	count := uint64(float64(childPlanInfo[0].count) * selectionFactor)
+	log.Warnf("sel count %v", count)
+	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost, count: count}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
@@ -203,8 +203,8 @@ func (p *Trim) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physi
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Aggregation) matchProperty(prop *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-
+func (p *PhysicalAggregation) matchProperty(prop *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
