@@ -39,10 +39,10 @@ func prepareBenchSession() Session {
 
 func prepareBenchData(se Session, colType string, valueFormat string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
-	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s, index idx (col))", colType))
+	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s, col2 int, index idx (col))", colType))
 	mustExecute(se, "begin")
 	for i := 0; i < valueCount; i++ {
-		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, i)+")")
+		mustExecute(se, "insert t (col, col2) values ("+fmt.Sprintf(valueFormat, i)+", 0)")
 	}
 	mustExecute(se, "commit")
 }

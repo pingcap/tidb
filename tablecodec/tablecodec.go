@@ -39,12 +39,12 @@ var (
 const (
 	idLen           = 8
 	prefixLen       = 1 + idLen /*tableID*/ + 2
-	recordRowKeyLen = prefixLen + idLen /*handle*/
+	RecordRowKeyLen = prefixLen + idLen /*handle*/
 )
 
 // EncodeRowKey encodes the table id and record handle into a kv.Key
 func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
-	buf := make([]byte, 0, recordRowKeyLen)
+	buf := make([]byte, 0, RecordRowKeyLen)
 	buf = appendTableRecordPrefix(buf, tableID)
 	buf = append(buf, encodedHandle...)
 	return buf
@@ -52,7 +52,7 @@ func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 
 // EncodeRowKeyWithHandle encodes the table id, row handle into a kv.Key
 func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
-	buf := make([]byte, 0, recordRowKeyLen+idLen)
+	buf := make([]byte, 0, RecordRowKeyLen+idLen)
 	buf = appendTableRecordPrefix(buf, tableID)
 	buf = EncodeRecordKey(buf, handle)
 	return buf
@@ -414,8 +414,8 @@ func GenTableIndexPrefix(tableID int64) kv.Key {
 
 // TruncateToRowKeyLen truncates the key to row key length if the key is longer than row key.
 func TruncateToRowKeyLen(key kv.Key) kv.Key {
-	if len(key) > recordRowKeyLen {
-		return key[:recordRowKeyLen]
+	if len(key) > RecordRowKeyLen {
+		return key[:RecordRowKeyLen]
 	}
 	return key
 }

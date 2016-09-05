@@ -233,9 +233,11 @@ func prepareSelectRequest(simpleInfo *simpleTableInfo, startTs uint64) (*kv.Requ
 }
 
 func fullTableRange(tid int64) kv.KeyRange {
+	startKey := tablecodec.EncodeRowKey(tid, codec.EncodeInt(nil, math.MinInt64))
+	endKey := tablecodec.EncodeRowKey(tid, codec.EncodeInt(nil, math.MaxInt64))
 	return kv.KeyRange{
-		StartKey: tablecodec.EncodeRowKey(tid, codec.EncodeInt(nil, math.MinInt64)),
-		EndKey:   tablecodec.EncodeRowKey(tid, codec.EncodeInt(nil, math.MaxInt64)),
+		StartKey: startKey,
+		EndKey:   endKey,
 	}
 }
 
