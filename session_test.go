@@ -2203,7 +2203,7 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	mustExecSQL(c, se, "insert into t values (1, 5)")
 
 	sql := "select c1 from t where c1 in (1) and c2 < 10"
-	expectedExplain := "Index(t.idx_c1_c2)[[1,1]]->Selection->Projection"
+	expectedExplain := "Index(t.idx_c1_c2)[[1,1]]->Projection"
 	checkPlan(c, se, sql, expectedExplain)
 	mustExecMatch(c, se, sql, [][]interface{}{{1}})
 
@@ -2216,7 +2216,7 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	mustExecMatch(c, se, sql, [][]interface{}{{1}})
 
 	sql = "select c1 from t where c1 in (1.1) and c2 > 3"
-	expectedExplain = "Index(t.idx_c1_c2)[[1.1,1.1]]->Selection->Projection"
+	expectedExplain = "Index(t.idx_c1_c2)[[1.1,1.1]]->Projection"
 	checkPlan(c, se, sql, expectedExplain)
 	mustExecMatch(c, se, sql, [][]interface{}{})
 

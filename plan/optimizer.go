@@ -55,7 +55,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 			return nil, errors.Trace(err)
 		}
 		p = info.p.PushLimit(nil)
-		log.Debugf("[PLAN] %s", ToString(p))
+		log.Warnf("[PLAN] %s", ToString(p))
 		return p, nil
 	}
 	return p, nil

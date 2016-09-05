@@ -17,7 +17,6 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -467,7 +466,6 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 
 func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	log.Warnf("mode %v", v.AggType)
 	e := &HashAggExec{
 		Src:          src,
 		schema:       v.GetSchema(),

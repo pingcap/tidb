@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -76,7 +75,6 @@ func (p *physicalTableSource) clear() {
 }
 
 func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation, ctx context.Context) (expression.Schema, error) {
-	log.Warnf("add agg")
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return nil, errors.Trace(err)

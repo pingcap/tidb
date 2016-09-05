@@ -17,8 +17,8 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
@@ -94,7 +94,6 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 		return nil, errors.Trace(err)
 	}
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
-		log.Warnf("got a sel!")
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
 		oldConditions = sel.Conditions
@@ -106,7 +105,15 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 			return nil, errors.Trace(err)
 		}
 		if txn != nil {
-			ts.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, txn.GetClient())
+			client := txn.GetClient()
+			var memDB bool
+			switch p.DBName.L {
+			case "information_schema", "performance_schema":
+				memDB = true
+			}
+			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
+				ts.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, txn.GetClient())
+			}
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -115,7 +122,6 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		log.Warnf("conds len %d", len(newSel.Conditions))
 		if len(newSel.Conditions) > 0 {
 			newSel.SetChildren(ts)
 			resultPlan = &newSel
@@ -649,6 +655,9 @@ func (p *Aggregation) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 	planInfo, err = p.handleHashAgg()
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if len(prop.props) > 0 {
+		planInfo.cost = math.MaxFloat64
 	}
 	streamInfo, err := p.handleStreamAgg(prop)
 	if streamInfo.cost < planInfo.cost {
