@@ -37,9 +37,10 @@ var (
 )
 
 const (
-	idLen           = 8
-	prefixLen       = 1 + idLen /*tableID*/ + 2
-	recordRowKeyLen = prefixLen + idLen /*handle*/
+	idLen               = 8
+	prefixLen           = 1 + idLen /*tableID*/ + 2
+	recordRowKeyLen     = prefixLen + idLen /*handle*/
+	RowKeyWithHandleLen = recordRowKeyLen + idLen
 )
 
 // EncodeRowKey encodes the table id and record handle into a kv.Key
@@ -51,8 +52,8 @@ func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 }
 
 // EncodeRowKeyWithHandle encodes the table id, row handle into a kv.Key
-func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
-	buf := make([]byte, 0, recordRowKeyLen+idLen)
+// Providing that buf is make([]byte, 0, RowKeyWithHandleLen), this function would be zero allocation
+func EncodeRowKeyWithHandle(tableID int64, handle int64, buf []byte) kv.Key {
 	buf = appendTableRecordPrefix(buf, tableID)
 	buf = codec.EncodeInt(buf, handle)
 	return buf

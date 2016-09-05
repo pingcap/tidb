@@ -649,7 +649,8 @@ func (t *Table) RebaseAutoID(newBase int64, isSetStep bool) error {
 
 // Seek implements table.Table Seek interface.
 func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
-	seekKey := tablecodec.EncodeRowKeyWithHandle(t.ID, h)
+	buf := make([]byte, 0, tablecodec.RowKeyWithHandleLen)
+	seekKey := tablecodec.EncodeRowKeyWithHandle(t.ID, h, buf)
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return 0, false, errors.Trace(err)

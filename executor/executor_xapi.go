@@ -33,11 +33,18 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xapi"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+var allocPool = sync.Pool{
+	New: func() interface{} {
+		return arena.NewAllocator(1024)
+	},
+}
 
 const defaultConcurrency int = 10
 
@@ -102,32 +109,37 @@ func (s *rowsSorter) Swap(i, j int) {
 	s.rows[i], s.rows[j] = s.rows[j], s.rows[i]
 }
 
-func tableRangesToKVRanges(tid int64, tableRanges []plan.TableRange) []kv.KeyRange {
+func tableRangesToKVRanges(tid int64, tableRanges []plan.TableRange, alloc arena.Allocator) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(tableRanges))
 	for _, tableRange := range tableRanges {
-		startKey := tablecodec.EncodeRowKeyWithHandle(tid, tableRange.LowVal)
+		startKey := encodeRowKeyWithHandle(tid, tableRange.LowVal, alloc)
 		hi := tableRange.HighVal
 		if hi != math.MaxInt64 {
 			hi++
 		}
-		endKey := tablecodec.EncodeRowKeyWithHandle(tid, hi)
+		endKey := encodeRowKeyWithHandle(tid, hi, alloc)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	return krs
 }
 
-func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
+func tableHandlesToKVRanges(tid int64, handles []int64, alloc arena.Allocator) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	for _, h := range handles {
 		if h == math.MaxInt64 {
 			// We can't convert MaxInt64 into an left closed, right open range.
 			continue
 		}
-		startKey := tablecodec.EncodeRowKeyWithHandle(tid, h)
-		endKey := tablecodec.EncodeRowKeyWithHandle(tid, h+1)
+		startKey := encodeRowKeyWithHandle(tid, h, alloc)
+		endKey := encodeRowKeyWithHandle(tid, h+1, alloc)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	return krs
+}
+
+func encodeRowKeyWithHandle(tableID int64, handle int64, alloc arena.Allocator) kv.Key {
+	buf := alloc.AllocWithLen(0, tablecodec.RowKeyWithHandleLen)
+	return tablecodec.EncodeRowKeyWithHandle(tableID, handle, buf)
 }
 
 func indexRangesToKVRanges(tid, idxID int64, ranges []*plan.IndexRange, fieldTypes []*types.FieldType) ([]kv.KeyRange, error) {
@@ -872,6 +884,7 @@ func (e *XSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	} else if e.indexPlan.OutOfOrder {
 		concurrency = defaultConcurrency
 	}
+
 	keyRanges, err := indexRangesToKVRanges(e.table.Meta().ID, e.indexPlan.Index.ID, e.indexPlan.Ranges, fieldTypes)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1000,8 +1013,11 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, e
 	// Aggregate Info
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
-	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles)
+
+	allocator := allocPool.Get().(arena.Allocator)
+	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles, allocator)
 	resp, err := xapi.Select(e.txn.GetClient(), selTableReq, keyRanges, defaultConcurrency, false)
+	allocPool.Put(allocator)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1080,8 +1096,10 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
 
-	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges)
+	allocator := allocPool.Get().(arena.Allocator)
+	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges, allocator)
 	e.result, err = xapi.Select(e.txn.GetClient(), selReq, kvRanges, defaultConcurrency, e.keepOrder)
+	allocPool.Put(allocator)
 	if err != nil {
 		return errors.Trace(err)
 	}
