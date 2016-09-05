@@ -174,6 +174,7 @@ func buildRegionTasks(client *dbClient, req *kv.Request) (tasks []*task) {
 				startKey: info.startKey,
 				endKey:   info.endKey,
 				data:     req.Data,
+				ranges:   req.KeyRanges,
 			}
 			task := &task{
 				region:  info.rs,
