@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xapi"
@@ -101,23 +102,36 @@ func (s *rowsSorter) Swap(i, j int) {
 	s.rows[i], s.rows[j] = s.rows[j], s.rows[i]
 }
 
-func tableRangesToPBRanges(tableRanges []plan.TableRange) []*tipb.KeyRange {
-	hrs := make([]*tipb.KeyRange, 0, len(tableRanges))
+func tableRangesToKVRanges(tid int64, tableRanges []plan.TableRange) []kv.KeyRange {
+	krs := make([]kv.KeyRange, 0, len(tableRanges))
 	for _, tableRange := range tableRanges {
-		pbRange := new(tipb.KeyRange)
-		pbRange.Low = codec.EncodeInt(nil, tableRange.LowVal)
+		startKey := tablecodec.EncodeRowKeyWithHandle(tid, tableRange.LowVal)
 		hi := tableRange.HighVal
 		if hi != math.MaxInt64 {
 			hi++
 		}
-		pbRange.High = codec.EncodeInt(nil, hi)
-		hrs = append(hrs, pbRange)
+		endKey := tablecodec.EncodeRowKeyWithHandle(tid, hi)
+		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
-	return hrs
+	return krs
 }
 
-func indexRangesToPBRanges(ranges []*plan.IndexRange, fieldTypes []*types.FieldType) ([]*tipb.KeyRange, error) {
-	keyRanges := make([]*tipb.KeyRange, 0, len(ranges))
+func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
+	krs := make([]kv.KeyRange, 0, len(handles))
+	for _, h := range handles {
+		if h == math.MaxInt64 {
+			// We can't convert MaxInt64 into an left closed, right open range.
+			continue
+		}
+		startKey := tablecodec.EncodeRowKeyWithHandle(tid, h)
+		endKey := tablecodec.EncodeRowKeyWithHandle(tid, h+1)
+		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+	}
+	return krs
+}
+
+func indexRangesToKVRanges(tid, idxID int64, ranges []*plan.IndexRange, fieldTypes []*types.FieldType) ([]kv.KeyRange, error) {
+	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		err := convertIndexRangeTypes(ran, fieldTypes)
 		if err != nil {
@@ -138,9 +152,11 @@ func indexRangesToPBRanges(ranges []*plan.IndexRange, fieldTypes []*types.FieldT
 		if !ran.HighExclude {
 			high = []byte(kv.Key(high).PrefixNext())
 		}
-		keyRanges = append(keyRanges, &tipb.KeyRange{Low: low, High: high})
+		startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
+		endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)
+		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
-	return keyRanges, nil
+	return krs, nil
 }
 
 func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType) error {
@@ -753,6 +769,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		idxResult.IgnoreData()
 		idxResult.Fetch()
 
 		// Use a background goroutine to fetch index, put the result in e.tasks.
@@ -842,11 +859,6 @@ func (e *XSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	for i, v := range e.indexPlan.Index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
-	var err error
-	selIdxReq.Ranges, err = indexRangesToPBRanges(e.indexPlan.Ranges, fieldTypes)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	if !e.indexPlan.DoubleRead || e.where == nil {
 		// TODO: when where condition is all index columns limit can be pushed too.
 		selIdxReq.Limit = e.indexPlan.LimitCount
@@ -860,7 +872,11 @@ func (e *XSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	} else if e.indexPlan.OutOfOrder {
 		concurrency = defaultConcurrency
 	}
-	return xapi.Select(e.txn.GetClient(), selIdxReq, concurrency, !e.indexPlan.OutOfOrder)
+	keyRanges, err := indexRangesToKVRanges(e.table.Meta().ID, e.indexPlan.Index.ID, e.indexPlan.Ranges, fieldTypes)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return xapi.Select(e.txn.GetClient(), selIdxReq, keyRanges, concurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
@@ -980,24 +996,12 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, e
 		TableId: e.table.Meta().ID,
 	}
 	selTableReq.TableInfo.Columns = xapi.ColumnsToProto(e.indexPlan.Columns, e.table.Meta().PKIsHandle)
-	selTableReq.Ranges = make([]*tipb.KeyRange, 0, len(handles))
-	for _, h := range handles {
-		if h == math.MaxInt64 {
-			// We can't convert MaxInt64 into an left closed, right open range.
-			continue
-		}
-		pbRange := new(tipb.KeyRange)
-		bs := make([]byte, 0, 8)
-		pbRange.Low = codec.EncodeInt(bs, h)
-		pbRange.High = kv.Key(pbRange.Low).PrefixNext()
-		selTableReq.Ranges = append(selTableReq.Ranges, pbRange)
-	}
 	selTableReq.Where = e.where
 	// Aggregate Info
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
-	// Aggregate Info
-	resp, err := xapi.Select(e.txn.GetClient(), selTableReq, defaultConcurrency, false)
+	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles)
+	resp, err := xapi.Select(e.txn.GetClient(), selTableReq, keyRanges, defaultConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1063,7 +1067,6 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq := new(tipb.SelectRequest)
 	selReq.StartTs = e.txn.StartTS()
 	selReq.Where = e.where
-	selReq.Ranges = tableRangesToPBRanges(e.ranges)
 	columns := e.Columns
 	selReq.TableInfo = &tipb.TableInfo{
 		TableId: e.tableInfo.ID,
@@ -1076,7 +1079,9 @@ func (e *XSelectTableExec) doRequest() error {
 	// Aggregate Info
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
-	e.result, err = xapi.Select(e.txn.GetClient(), selReq, defaultConcurrency, e.keepOrder)
+
+	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges)
+	e.result, err = xapi.Select(e.txn.GetClient(), selReq, kvRanges, defaultConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}
