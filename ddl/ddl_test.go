@@ -14,6 +14,7 @@
 package ddl_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/ngaut/log"
@@ -46,6 +47,7 @@ func (ts *testSuite) SetUpSuite(c *C) {
 }
 
 func init() {
-	log.SetLevelByString("warn")
+	logLevel := os.Getenv("log_level")
+	log.SetLevelByString(logLevel)
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 }
