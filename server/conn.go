@@ -165,60 +165,113 @@ func (cc *clientConn) writePacket(data []byte) error {
 	return cc.pkg.writePacket(data)
 }
 
+type HandshakeResponse41 struct {
+	Capability uint32
+	Collation  uint8
+	User       string
+	DBName     string
+	Auth       []byte
+	Attrs      map[string]string
+}
+
+func handshakeResponseFromData(packet *HandshakeResponse41, data []byte) error {
+	pos := 0
+	// capability
+	capability := binary.LittleEndian.Uint32(data[:4])
+	packet.Capability = capability
+	pos += 4
+	// skip max packet size
+	pos += 4
+	// charset, skip, if you want to use another charset, use set names
+	packet.Collation = data[pos]
+	pos++
+	// skip reserved 23[00]
+	pos += 23
+	// user name
+	packet.User = string(data[pos : pos+bytes.IndexByte(data[pos:], 0)])
+	pos += len(packet.User) + 1
+
+	if capability&mysql.ClientPluginAuthLenencClientData > 0 {
+		// TODO support mysql.ClientPluginAuthLenencClientData, skip it now
+		if num, null, off := parseLengthEncodedInt(data[pos:]); !null {
+			pos = pos + off + int(num)
+		}
+	} else if capability&mysql.ClientSecureConnection > 0 {
+		// auth length and auth
+		authLen := int(data[pos])
+		pos++
+		packet.Auth = data[pos : pos+authLen]
+		pos += authLen
+	} else {
+		packet.Auth = data[pos : pos+bytes.IndexByte(data[pos:], 0)]
+		pos += len(packet.Auth) + 1
+	}
+
+	if capability&mysql.ClientConnectWithDB > 0 {
+		if len(data[pos:]) > 0 {
+			idx := bytes.IndexByte(data[pos:], 0)
+			packet.DBName = string(data[pos : pos+idx])
+			pos = pos + idx + 1
+		}
+	}
+
+	if capability&mysql.ClientPluginAuth > 0 {
+		// TODO Support mysql.ClientPluginAuth, skip it now
+		idx := bytes.IndexByte(data[pos:], 0)
+		pos = pos + idx + 1
+	}
+
+	if capability&mysql.ClientConnectAtts > 0 {
+		if num, null, off := parseLengthEncodedInt(data[pos:]); !null {
+			pos += off
+			kv := data[pos : pos+int(num)]
+			attrs, err := parseAttrs(kv)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			packet.Attrs = attrs
+			pos += int(num)
+		}
+	}
+	return nil
+}
+
+func parseAttrs(data []byte) (map[string]string, error) {
+	attrs := make(map[string]string)
+	pos := 0
+	for pos < len(data) {
+		key, _, off, err := parseLengthEncodedBytes(data[pos:])
+		if err != nil {
+			return attrs, errors.Trace(err)
+		}
+		pos += off
+		value, _, off, err := parseLengthEncodedBytes(data[pos:])
+		if err != nil {
+			return attrs, errors.Trace(err)
+		}
+		pos += off
+
+		attrs[string(key)] = string(value)
+	}
+	return attrs, nil
+}
+
 func (cc *clientConn) readHandshakeResponse() error {
 	data, err := cc.readPacket()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	pos := 0
-	// capability
-	capability := binary.LittleEndian.Uint32(data[:4])
-	cc.capability = defaultCapability & capability
-	pos += 4
-	// skip max packet size
-	pos += 4
-	// charset, skip, if you want to use another charset, use set names
-	cc.collation = data[pos]
-	pos++
-	// skip reserved 23[00]
-	pos += 23
-	// user name
-	cc.user = string(data[pos : pos+bytes.IndexByte(data[pos:], 0)])
-	pos += len(cc.user) + 1
-	// auth length and auth
-	authLen := int(data[pos])
-	pos++
-	auth := data[pos : pos+authLen]
-	pos += authLen
-	if cc.capability&mysql.ClientConnectWithDB > 0 {
-		if len(data[pos:]) > 0 {
-			idx := bytes.IndexByte(data[pos:], 0)
-			cc.dbname = string(data[pos : pos+idx])
-			pos = pos + idx + 1
-		}
+	var p HandshakeResponse41
+	if err = handshakeResponseFromData(&p, data); err != nil {
+		return errors.Trace(err)
 	}
-	if cc.capability&mysql.ClientConnectAtts > 0 {
-		if num, null, off := parseLengthEncodedInt(data[pos:]); !null {
-			pos += off
+	cc.capability = p.Capability & defaultCapability
+	cc.user = p.User
+	cc.dbname = p.DBName
+	cc.collation = p.Collation
+	cc.attrs = p.Attrs
 
-			cc.attrs = make(map[string]string, num)
-			for i := uint64(0); i < num; i++ {
-				key, _, off, err := parseLengthEncodedBytes(data[pos:])
-				if err != nil {
-					return errors.Trace(err)
-				}
-				pos += off
-				value, _, off, err := parseLengthEncodedBytes(data[pos:])
-				if err != nil {
-					return errors.Trace(err)
-				}
-				pos += off
-
-				cc.attrs[string(key)] = string(value)
-			}
-		}
-	}
 	// Open session and do auth
 	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname)
 	if err != nil {
@@ -233,7 +286,7 @@ func (cc *clientConn) readHandshakeResponse() error {
 			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, addr, "Yes"))
 		}
 		user := fmt.Sprintf("%s@%s", cc.user, host)
-		if !cc.ctx.Auth(user, auth, cc.salt) {
+		if !cc.ctx.Auth(user, p.Auth, cc.salt) {
 			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, host, "Yes"))
 		}
 	}
