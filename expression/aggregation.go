@@ -41,6 +41,8 @@ type AggregationFunction interface {
 
 	SetMode(mode AggFunctionMode)
 
+	UpdateStreamResult()
+
 	// GetGroupResult will be called when all data have been processed.
 	GetGroupResult(groupKey []byte) types.Datum
 
@@ -122,6 +124,10 @@ func (af *aggFunction) IsDistinct() bool {
 
 func (af *aggFunction) Clear() {
 	af.resultMapper = make(aggCtxMapper, 0)
+	af.streamCtx = nil
+	af.resultCtx = nil
+	af.lastGroup = nil
+	af.lastRowEncode = nil
 }
 
 // GetName implements AggregationFunction interface.
@@ -176,6 +182,12 @@ func (af *aggFunction) checkDistinct(values ...types.Datum) (bool, error) {
 	return true, nil
 }
 
+func (af *aggFunction) UpdateStreamResult() {
+	af.resultCtx = af.streamCtx
+	af.streamCtx = &ast.AggEvaluateContext{}
+	af.lastRowEncode = nil
+}
+
 func (af *aggFunction) getStreamedContext(groupKey []byte) (*ast.AggEvaluateContext, bool) {
 	end := false
 	if len(af.lastGroup) == 0 {
@@ -189,11 +201,7 @@ func (af *aggFunction) getStreamedContext(groupKey []byte) (*ast.AggEvaluateCont
 		af.streamCtx = &ast.AggEvaluateContext{}
 	}
 	if end {
-		af.streamCtx = &ast.AggEvaluateContext{}
-		if af.resultCtx == nil {
-			af.resultCtx = af.streamCtx
-		}
-		af.lastRowEncode = nil
+		af.UpdateStreamResult()
 	}
 	return af.streamCtx, end
 }
@@ -268,10 +276,11 @@ func (sf *sumFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return sf.getContext(groupKey).Value
 }
 
-func (cf *sumFunction) GetStreamResult() (d types.Datum) {
-	d.SetInt64(cf.resultCtx.Count)
-	cf.resultCtx = cf.streamCtx
-	return
+func (sf *sumFunction) GetStreamResult() (d types.Datum) {
+	if sf.resultCtx == nil {
+		sf.resultCtx = &ast.AggEvaluateContext{}
+	}
+	return sf.resultCtx.Value
 }
 
 type countFunction struct {
@@ -353,8 +362,10 @@ func (cf *countFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 }
 
 func (cf *countFunction) GetStreamResult() (d types.Datum) {
+	if cf.resultCtx == nil {
+		cf.resultCtx = &ast.AggEvaluateContext{}
+	}
 	d.SetInt64(cf.resultCtx.Count)
-	cf.resultCtx = cf.streamCtx
 	return
 }
 
@@ -428,8 +439,10 @@ func (af *avgFunction) GetGroupResult(groupKey []byte) types.Datum {
 }
 
 func (af *avgFunction) GetStreamResult() types.Datum {
-	ctx := af.resultCtx
-	return af.calculateResult(ctx)
+	if af.resultCtx == nil {
+		af.resultCtx = &ast.AggEvaluateContext{}
+	}
+	return af.calculateResult(af.resultCtx)
 }
 
 type concatFunction struct {
@@ -519,6 +532,9 @@ func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 }
 
 func (cf *concatFunction) GetStreamResult() (d types.Datum) {
+	if cf.resultCtx == nil {
+		cf.resultCtx = &ast.AggEvaluateContext{}
+	}
 	if cf.resultCtx.Buffer != nil {
 		d.SetString(cf.resultCtx.Buffer.String())
 	} else {
@@ -538,6 +554,9 @@ func (mmf *maxMinFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 }
 
 func (mmf *maxMinFunction) GetStreamResult() (d types.Datum) {
+	if mmf.resultCtx == nil {
+		mmf.resultCtx = &ast.AggEvaluateContext{}
+	}
 	return mmf.streamCtx.Value
 }
 
@@ -637,5 +656,8 @@ func (ff *firstRowFunction) GetGroupResult(groupKey []byte) types.Datum {
 }
 
 func (ff *firstRowFunction) GetStreamResult() types.Datum {
+	if ff.resultCtx == nil {
+		ff.resultCtx = &ast.AggEvaluateContext{}
+	}
 	return ff.resultCtx.Value
 }

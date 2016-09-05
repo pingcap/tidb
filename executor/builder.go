@@ -466,7 +466,16 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 
 func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	e := &HashAggExec{
+	if v.AggType == plan.StreamedAgg {
+		return &StreamAggExec{
+			Src:          src,
+			schema:       v.GetSchema(),
+			ctx:          b.ctx,
+			AggFuncs:     v.AggFuncs,
+			GroupByItems: v.GroupByItems,
+		}
+	}
+	return &HashAggExec{
 		Src:          src,
 		schema:       v.GetSchema(),
 		ctx:          b.ctx,
@@ -475,7 +484,6 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 		mode:         v.AggType,
 		hasGby:       v.HasGby,
 	}
-	return e
 }
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {

@@ -79,6 +79,10 @@ func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation, ctx conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if txn == nil {
+		// for plan test
+		return nil, nil
+	}
 	client := txn.GetClient()
 	for _, f := range agg.AggFuncs {
 		pb, err := AggFuncToPBExpr(client, f)

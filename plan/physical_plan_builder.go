@@ -529,6 +529,7 @@ func (p *Aggregation) handleStreamAgg(prop *requiredProperty) (*physicalPlanInfo
 				// sum(distinct a), count(distinct b) is not interested in any orders.
 				return info, nil
 			}
+			isDistinct = true
 			for _, arg := range fun.GetArgs() {
 				if col, ok := arg.(*expression.Column); ok {
 					gbyCols = append(gbyCols, col)

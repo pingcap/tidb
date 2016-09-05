@@ -988,7 +988,7 @@ func (e *HashSemiJoinExec) Next() (*Row, error) {
 	}
 }
 
-// AggregationExec deals with all the aggregate functions.
+// HashAggExec deals with all the aggregate functions.
 // It is built from Aggregate Plan. When Next() is called, it reads all the data from Src and updates all the items in AggFuncs.
 type HashAggExec struct {
 	Src               Executor
@@ -1118,6 +1118,102 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 		af.Update(srcRow.Data, groupKey, e.ctx)
 	}
 	return true, nil
+}
+
+// StreamAggExec deals with all the aggregate functions.
+// It is built from Aggregate Plan. When Next() is called, it reads all the data from Src and updates all the items in AggFuncs.
+type StreamAggExec struct {
+	Src          Executor
+	schema       expression.Schema
+	ResultFields []*ast.ResultField
+	executed     bool
+	mode         plan.AggregationType
+	ctx          context.Context
+	AggFuncs     []expression.AggregationFunction
+	GroupByItems []expression.Expression
+}
+
+// Close implements Executor Close interface.
+func (e *StreamAggExec) Close() error {
+	e.executed = false
+	for _, agg := range e.AggFuncs {
+		agg.Clear()
+	}
+	return e.Src.Close()
+}
+
+// Schema implements Executor Schema interface.
+func (e *StreamAggExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Fields implements Executor Fields interface.
+func (e *StreamAggExec) Fields() []*ast.ResultField {
+	return e.ResultFields
+}
+
+// Next implements Executor Next interface.
+func (e *StreamAggExec) Next() (*Row, error) {
+	// In this stage we consider all data from src as a single group.
+	if !e.executed {
+		var groupKey []byte
+		for {
+			row, err := e.Src.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if row == nil {
+				for _, af := range e.AggFuncs {
+					af.UpdateStreamResult()
+				}
+				e.executed = true
+				break
+			}
+			groupKey, err = e.getGroupKey(row)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			var end bool
+			for _, af := range e.AggFuncs {
+				end, err = af.StreamUpdate(row.Data, groupKey, e.ctx)
+			}
+			if end {
+				break
+			}
+		}
+		retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}
+		for _, af := range e.AggFuncs {
+			retRow.Data = append(retRow.Data, af.GetStreamResult())
+		}
+		return retRow, nil
+	}
+	return nil, nil
+}
+
+func (e *StreamAggExec) getGroupKey(row *Row) ([]byte, error) {
+	if e.mode == plan.FinalAgg {
+		val, err := e.GroupByItems[0].Eval(row.Data, e.ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return val.GetBytes(), nil
+	}
+	if len(e.GroupByItems) == 0 {
+		return []byte{}, nil
+	}
+	vals := make([]types.Datum, 0, len(e.GroupByItems))
+	for _, item := range e.GroupByItems {
+		v, err := item.Eval(row.Data, e.ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		vals = append(vals, v)
+	}
+	bs, err := codec.EncodeValue([]byte{}, vals...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return bs, nil
 }
 
 // ProjectionExec represents a select fields executor.

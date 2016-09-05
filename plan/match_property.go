@@ -47,42 +47,47 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 		return &physicalPlanInfo{p: is, cost: cost, count: infos[0].count}
 	}
 	matchedIdx := 0
-	isMatch := true
 	allDesc, allAsc := true, true
-	for i, propCol := range prop.props {
+	matchedList := make([]bool, len(prop.props))
+	for i, idxCol := range is.Index.Columns {
 		findMatched := false
-		if i < prop.sortKeyLen {
-			for matchedIdx < len(is.Index.Columns) {
-				if is.Index.Columns[matchedIdx].Name.L == propCol.col.ColName.L {
-					findMatched = true
-					break
+		if matchedIdx < prop.sortKeyLen {
+			propCol := prop.props[matchedIdx]
+			if idxCol.Name.L == propCol.col.ColName.L {
+				findMatched = true
+				matchedList[matchedIdx] = true
+				if propCol.desc {
+					allAsc = false
+				} else {
+					allDesc = false
 				}
-				if matchedIdx < is.accessEqualCount {
-					matchedIdx++
-					continue
-				}
-				break
-			}
-			if propCol.desc {
-				allAsc = false
-			} else {
-				allDesc = false
+				matchedIdx++
 			}
 		} else {
-			for _, idxCol := range is.Columns {
+			for j, propCol := range prop.props {
 				if idxCol.Name.L == propCol.col.ColName.L {
+					matchedList[j] = true
 					findMatched = true
 					break
 				}
 			}
 		}
-		if !findMatched {
-			isMatch = false
+		log.Warnf("idx i %d %v %d", i, findMatched, is.accessEqualCount)
+		if !findMatched && i >= is.accessEqualCount {
 			break
 		}
 	}
+	isMatch := true
+	for _, matched := range matchedList {
+		log.Warnf("match %v", matched)
+		if !matched {
+			isMatch = false
+		}
+	}
+	log.Warnf("Index %v %v", cost, is.DoubleRead)
 	if isMatch {
-		sortedCost := cost + rowCount*math.Log2(rowCount)*cpuFactor
+		sortedCost := cost + rowCount*cpuFactor
+		log.Warnf("Index cost %v", sortedCost)
 		if allAsc {
 			sortedIs := *is
 			sortedIs.OutOfOrder = false
