@@ -192,7 +192,7 @@ func handshakeResponseFromData(packet *HandshakeResponse41, data []byte) error {
 	pos += len(packet.User) + 1
 
 	if capability&mysql.ClientPluginAuthLenencClientData > 0 {
-		// TODO support mysql.ClientPluginAuthLenencClientData, skip it now
+		// TODO: Support mysql.ClientPluginAuthLenencClientData, skip it now
 		if num, null, off := parseLengthEncodedInt(data[pos:]); !null {
 			pos = pos + off + int(num)
 		}
@@ -216,7 +216,7 @@ func handshakeResponseFromData(packet *HandshakeResponse41, data []byte) error {
 	}
 
 	if capability&mysql.ClientPluginAuth > 0 {
-		// TODO Support mysql.ClientPluginAuth, skip it now
+		// TODO: Support mysql.ClientPluginAuth, skip it now
 		idx := bytes.IndexByte(data[pos:], 0)
 		pos = pos + idx + 1
 	}
