@@ -57,7 +57,8 @@ import (
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
-	mysql.ClientMultiStatements | mysql.ClientMultiResults
+	mysql.ClientMultiStatements | mysql.ClientMultiResults |
+	mysql.ClientConnectAtts
 
 type clientConn struct {
 	pkg          *packetIO
@@ -73,6 +74,7 @@ type clientConn struct {
 	alloc        arena.Allocator
 	lastCmd      string
 	ctx          IContext
+	attrs        map[string]string
 }
 
 func (cc *clientConn) String() string {
@@ -193,6 +195,28 @@ func (cc *clientConn) readHandshakeResponse() error {
 		if len(data[pos:]) > 0 {
 			idx := bytes.IndexByte(data[pos:], 0)
 			cc.dbname = string(data[pos : pos+idx])
+			pos = pos + idx + 1
+		}
+	}
+	if cc.capability&mysql.ClientConnectAtts > 0 {
+		if num, null, off := parseLengthEncodedInt(data[pos:]); !null {
+			pos += off
+
+			cc.attrs = make(map[string]string, num)
+			for i := uint64(0); i < num; i++ {
+				key, _, off, err := parseLengthEncodedBytes(data[pos:])
+				if err != nil {
+					return errors.Trace(err)
+				}
+				pos += off
+				value, _, off, err := parseLengthEncodedBytes(data[pos:])
+				if err != nil {
+					return errors.Trace(err)
+				}
+				pos += off
+
+				cc.attrs[string(key)] = string(value)
+			}
 		}
 	}
 	// Open session and do auth
