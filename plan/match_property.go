@@ -14,13 +14,11 @@
 package plan
 
 import (
-	"github.com/ngaut/log"
 	"math"
 )
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*physicalPlanInfo) *physicalPlanInfo {
-	log.Warnf("count %v", infos[0].count)
 	rowCount := float64(infos[0].count)
 	cost := rowCount * netWorkFactor
 	if len(prop.props) == 0 {
@@ -72,22 +70,18 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 				}
 			}
 		}
-		log.Warnf("idx i %d %v %d", i, findMatched, is.accessEqualCount)
 		if !findMatched && i >= is.accessEqualCount {
 			break
 		}
 	}
 	isMatch := true
 	for _, matched := range matchedList {
-		log.Warnf("match %v", matched)
 		if !matched {
 			isMatch = false
 		}
 	}
-	log.Warnf("Index %v %v", cost, is.DoubleRead)
 	if isMatch {
 		sortedCost := cost + rowCount*cpuFactor
-		log.Warnf("Index cost %v", sortedCost)
 		if allAsc {
 			sortedIs := *is
 			sortedIs.OutOfOrder = false
@@ -167,7 +161,6 @@ func (p *Selection) matchProperty(prop *requiredProperty, childPlanInfo ...*phys
 	np := *p
 	np.SetChildren(childPlanInfo[0].p)
 	count := uint64(float64(childPlanInfo[0].count) * selectionFactor)
-	log.Warnf("sel count %v", count)
 	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost, count: count}
 }
 

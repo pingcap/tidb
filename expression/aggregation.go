@@ -193,15 +193,13 @@ func (af *aggFunction) getStreamedContext(groupKey []byte) (*ast.AggEvaluateCont
 	if len(af.lastGroup) == 0 {
 		af.lastGroup = groupKey
 	} else if string(af.lastGroup) != string(groupKey) {
+		af.lastGroup = groupKey
 		end = true
-	}
-	if af.streamCtx != nil {
-		return af.streamCtx, end
-	} else {
-		af.streamCtx = &ast.AggEvaluateContext{}
 	}
 	if end {
 		af.UpdateStreamResult()
+	} else if af.streamCtx == nil {
+		af.streamCtx = &ast.AggEvaluateContext{}
 	}
 	return af.streamCtx, end
 }
@@ -557,7 +555,7 @@ func (mmf *maxMinFunction) GetStreamResult() (d types.Datum) {
 	if mmf.resultCtx == nil {
 		mmf.resultCtx = &ast.AggEvaluateContext{}
 	}
-	return mmf.streamCtx.Value
+	return mmf.resultCtx.Value
 }
 
 // Update implements AggregationFunction interface.
@@ -590,6 +588,9 @@ func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte, ectx conte
 
 func (mmf *maxMinFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx context.Context) (bool, error) {
 	ctx, end := mmf.getStreamedContext(groupKey)
+	if len(mmf.Args) != 1 {
+		return end, errors.New("Wrong number of args for AggFuncMaxMin")
+	}
 	a := mmf.Args[0]
 	value, err := a.Eval(row, ectx)
 	if err != nil {

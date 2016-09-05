@@ -49,13 +49,12 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		log.Warnf("logic type %T", logic)
 		info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		p = info.p.PushLimit(nil)
-		log.Warnf("[PLAN] %s", ToString(p))
+		log.Debug("[PLAN] %s", ToString(p))
 		return p, nil
 	}
 	return p, nil
