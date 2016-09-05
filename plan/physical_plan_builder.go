@@ -345,6 +345,9 @@ func (p *Join) handleLeftJoin(prop *requiredProperty, innerJoin bool) (*physical
 			allLeft = false
 		}
 	}
+	if !allLeft {
+		return &physicalPlanInfo{cost: math.MaxFloat64}, nil
+	}
 	join := &PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
@@ -388,6 +391,9 @@ func (p *Join) handleRightJoin(prop *requiredProperty, innerJoin bool) (*physica
 			allRight = false
 		}
 	}
+	if !allRight {
+		return &physicalPlanInfo{cost: math.MaxFloat64}, nil
+	}
 	join := &PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
@@ -406,15 +412,9 @@ func (p *Join) handleRightJoin(prop *requiredProperty, innerJoin bool) (*physica
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !allRight {
-		prop = &requiredProperty{}
-	}
 	rInfo, err := rChild.convert2PhysicalPlan(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if !allRight {
-		rInfo.cost = math.MaxFloat64
 	}
 	sortedPlanInfo := join.matchProperty(prop, lInfo, rInfo)
 	return sortedPlanInfo, nil
