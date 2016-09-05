@@ -31,7 +31,7 @@ const (
 	selectionFactor = 0.8
 	distinctFactor  = 0.7
 	cpuFactor       = 0.9
-	aggFactor 	= 0.2
+	aggFactor       = 0.2
 )
 
 // JoinConcurrency means the number of goroutines that participate joining.
@@ -416,8 +416,8 @@ func (p *Join) handleRightJoin(prop *requiredProperty, innerJoin bool) (*physica
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	resultINfo := join.matchProperty(prop, lInfo, rInfo)
-	return resultINfo, nil
+	resultInfo := join.matchProperty(prop, lInfo, rInfo)
+	return resultInfo, nil
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
