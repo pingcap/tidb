@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -71,7 +70,7 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 	type transitiveEqualityPredicate map[string]*expression.Constant // transitive equality predicates between one column and one constant
 	for true {
 		equalities := make(transitiveEqualityPredicate, 0)
-		for i := 0; i < len(conditions); i++ {
+		for i, getOneEquality := 0, false; i < len(conditions) && !getOneEquality; i++ {
 			if isHandled[i] {
 				continue
 			}
@@ -82,7 +81,7 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 			// process the included OR conditions recursively to do the same for CNF item.
 			switch expr.FuncName.L {
 			case ast.OrOr:
-				expressions := expression.SplitNormalFormItems(conditions[i], ast.OrOr)
+				expressions := expression.SplitDNFItems(conditions[i])
 				newExpression := make([]expression.Expression, 0)
 				for _, v := range expressions {
 					newExpression = append(newExpression, propagateConstant([]expression.Expression{v})...)
@@ -90,7 +89,7 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 				conditions[i] = expression.ComposeDNFCondition(newExpression)
 				isHandled[i] = true
 			case ast.AndAnd:
-				newExpression := propagateConstant(expression.SplitNormalFormItems(conditions[i], ast.AndAnd))
+				newExpression := propagateConstant(expression.SplitCNFItems(conditions[i]))
 				conditions[i] = expression.ComposeCNFCondition(newExpression)
 				isHandled[i] = true
 			case ast.EQ:
@@ -98,7 +97,6 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 					col      *expression.Column
 					val      *expression.Constant
 					isColumn bool
-					bytes    []byte
 				)
 				left, ok1 := expr.Args[0].(*expression.Constant)
 				right, ok2 := expr.Args[1].(*expression.Constant)
@@ -109,9 +107,9 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 				} else {
 					continue
 				}
-				bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(col.FromID), types.NewIntDatum(int64(col.Position)))
-				equalities[string(bytes)] = val
+				equalities[string(col.HashCode())] = val
 				isHandled[i] = true
+				getOneEquality = true
 			}
 		}
 		if len(equalities) == 0 {
@@ -213,9 +211,9 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 		if !ok { // no need to propagate inequality predicates whose column is only equal to itself.
 			continue
 		}
-		colHashCode := equalCol.HashCode()
+		colHashCode := string(equalCol.HashCode())
 		if _, ok = inequalities[colHashCode]; !ok {
-			inequalities[colHashCode] = make([]inequalityFactor, 1)
+			inequalities[colHashCode] = make([]inequalityFactor, 0)
 		}
 		if funcName == ast.Like { // func 'LIKE' need 3 input arguments, so here we handle it alone.
 			inequalities[colHashCode] = append(inequalities[colHashCode], inequalityFactor{FuncName: ast.Like, Factor: []*expression.Constant{val, expr.Args[2].(*expression.Constant)}})
@@ -229,7 +227,7 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 		return conditions
 	}
 	for k, v := range multipleEqualities { // propagate constants in inequality predicates.
-		for _, x := range inequalities[v.HashCode()] {
+		for _, x := range inequalities[string(v.HashCode())] {
 			funcName, factors := x.FuncName, x.Factor
 			if funcName == ast.Like {
 				for i := 0; i < len(factors); i += 2 {
@@ -252,7 +250,7 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 func constantSubstitute(equalities map[string]*expression.Constant, condition expression.Expression) expression.Expression {
 	switch expr := condition.(type) {
 	case *expression.Column:
-		if v, ok := equalities[expr.HashCode()]; ok {
+		if v, ok := equalities[string(expr.HashCode())]; ok {
 			return v
 		}
 	case *expression.ScalarFunction:

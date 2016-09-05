@@ -185,7 +185,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		if correlated {
 			b.err = errors.New("On condition doesn't support subqueries yet.")
 		}
-		onCondition := expression.SplitNormalFormItems(onExpr, ast.AndAnd)
+		onCondition := expression.SplitCNFItems(onExpr)
 		eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, leftPlan, rightPlan)
 		joinPlan.EqualConditions = eqCond
 		joinPlan.LeftConditions = leftCond
@@ -221,7 +221,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		p = np
 		selection.correlated = selection.correlated || correlated
 		if expr != nil {
-			expressions = append(expressions, expression.SplitNormalFormItems(expr, ast.AndAnd)...)
+			expressions = append(expressions, expression.SplitCNFItems(expr)...)
 		}
 	}
 	if len(expressions) == 0 {

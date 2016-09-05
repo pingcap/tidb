@@ -43,7 +43,7 @@ type Expression interface {
 	DeepCopy() Expression
 
 	// HashCode create the hashcode for expression
-	HashCode() string
+	HashCode() []byte
 }
 
 // EvalBool evaluates expression to a boolean value.
@@ -87,7 +87,7 @@ type Column struct {
 // Equal checks if two columns are equal
 func (col *Column) Equal(expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
-		return col.HashCode() == newCol.HashCode()
+		return string(col.HashCode()) == string(newCol.HashCode())
 	}
 	return false
 }
@@ -138,10 +138,10 @@ func (col *Column) DeepCopy() Expression {
 }
 
 // HashCode implements Expression interface.
-func (col *Column) HashCode() string {
+func (col *Column) HashCode() []byte {
 	var bytes []byte
 	bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(col.FromID), types.NewIntDatum(int64(col.Position)))
-	return string(bytes)
+	return bytes
 }
 
 // Schema stands for the row schema get from input.
@@ -339,15 +339,17 @@ func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Da
 }
 
 // HashCode implements Expression interface.
-func (sf *ScalarFunction) HashCode() string {
-	v := make([]types.Datum, len(sf.Args)+1)
-	v = append(v, types.NewStringDatum(sf.FuncName.L))
-	for _, arg := range sf.Args {
-		v = append(v, types.NewStringDatum(arg.HashCode()))
-	}
+func (sf *ScalarFunction) HashCode() []byte {
 	var bytes []byte
+	v := make([]types.Datum, 0, len(sf.Args)+1)
+	bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(sf.FuncName.L))
+	v = append(v, types.NewBytesDatum(bytes))
+	for _, arg := range sf.Args {
+		v = append(v, types.NewBytesDatum(arg.HashCode()))
+	}
+	bytes = make([]byte, 0)
 	bytes, _ = codec.EncodeValue(bytes, v...)
-	return string(bytes)
+	return bytes
 }
 
 // Constant stands for a constant value.
@@ -384,10 +386,10 @@ func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error)
 }
 
 // HashCode implements Expression interface.
-func (c *Constant) HashCode() string {
+func (c *Constant) HashCode() []byte {
 	var bytes []byte
 	bytes, _ = codec.EncodeValue(bytes, c.Value)
-	return string(bytes)
+	return bytes
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
@@ -424,16 +426,26 @@ type Assignment struct {
 }
 
 // splitNormalFormItems split CNF(conjunctive normal form) like "a and b and c", or DNF(disjunctive normal form) like "a or b or c"
-func SplitNormalFormItems(onExpr Expression, funcName string) []Expression {
+func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
 	switch v := onExpr.(type) {
 	case *ScalarFunction:
 		if v.FuncName.L == funcName {
 			var ret []Expression
 			for _, arg := range v.Args {
-				ret = append(ret, SplitNormalFormItems(arg, funcName)...)
+				ret = append(ret, splitNormalFormItems(arg, funcName)...)
 			}
 			return ret
 		}
 	}
 	return []Expression{onExpr}
+}
+
+// CNF means conjunctive normal form, e.g. "a and b and c"
+func SplitCNFItems(onExpr Expression) []Expression {
+	return splitNormalFormItems(onExpr, ast.AndAnd)
+}
+
+// DNF means disjunctive normal form, e.g. "a or b or c"
+func SplitDNFItems(onExpr Expression) []Expression {
+	return splitNormalFormItems(onExpr, ast.OrOr)
 }
