@@ -190,7 +190,7 @@ func prepareTableData(store kv.Storage, tbl *simpleTableInfo, count int64, gen g
 }
 
 func setRow(txn kv.Transaction, handle int64, tbl *simpleTableInfo, gen genValueFunc) error {
-	_, rowKey := tablecodec.EncodeRowKey(nil, tbl.tID, codec.EncodeInt(nil, handle))
+	rowKey := tablecodec.EncodeRowKey(tbl.tID, codec.EncodeInt(nil, handle))
 	columnValues := gen(handle, tbl)
 	value, err := tablecodec.EncodeRow(columnValues, tbl.cIDs)
 	if err != nil {
@@ -233,8 +233,8 @@ func prepareSelectRequest(simpleInfo *simpleTableInfo, startTs uint64) (*kv.Requ
 }
 
 func fullTableRange(tid int64) kv.KeyRange {
-	_, startKey := tablecodec.EncodeRowKey(nil, tid, codec.EncodeInt(nil, math.MinInt64))
-	_, endKey := tablecodec.EncodeRowKey(nil, tid, codec.EncodeInt(nil, math.MaxInt64))
+	startKey := tablecodec.EncodeRowKey(tid, codec.EncodeInt(nil, math.MinInt64))
+	endKey := tablecodec.EncodeRowKey(tid, codec.EncodeInt(nil, math.MaxInt64))
 	return kv.KeyRange{
 		StartKey: startKey,
 		EndKey:   endKey,

@@ -34,7 +34,7 @@ type testTableCodecSuite struct{}
 // TODO: add more tests.
 func (s *testTableCodecSuite) TestTableCodec(c *C) {
 	defer testleak.AfterTest(c)()
-	_, key := EncodeRowKey(nil, 1, codec.EncodeInt(nil, 2))
+	key := EncodeRowKey(1, codec.EncodeInt(nil, 2))
 	h, err := DecodeRowKey(key)
 	c.Assert(err, IsNil)
 	c.Assert(h, Equals, int64(2))

@@ -367,11 +367,9 @@ func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
 // EncodeTableRanges encodes table ranges into kv.KeyRanges.
 func EncodeTableRanges(tid int64, rans []*tipb.KeyRange) []kv.KeyRange {
 	keyRanges := make([]kv.KeyRange, 0, len(rans))
-	buf := make([]byte, 0, tablecodec.RecordRowKeyLen*len(rans)*2)
 	for _, r := range rans {
-		var start, end kv.Key
-		buf, start = tablecodec.EncodeRowKey(buf, tid, r.Low)
-		buf, end = tablecodec.EncodeRowKey(buf, tid, r.High)
+		start := tablecodec.EncodeRowKey(tid, r.Low)
+		end := tablecodec.EncodeRowKey(tid, r.High)
 		nr := kv.KeyRange{
 			StartKey: start,
 			EndKey:   end,

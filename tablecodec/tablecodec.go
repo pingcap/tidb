@@ -43,14 +43,11 @@ const (
 )
 
 // EncodeRowKey encodes the table id and record handle into a kv.Key
-func EncodeRowKey(buf []byte, tableID int64, encodedHandle []byte) ([]byte, kv.Key) {
-	if buf == nil {
-		buf = make([]byte, 0, RecordRowKeyLen)
-	}
-	beforeLen := len(buf)
+func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
+	buf := make([]byte, 0, RecordRowKeyLen)
 	buf = appendTableRecordPrefix(buf, tableID)
 	buf = append(buf, encodedHandle...)
-	return buf, buf[beforeLen:]
+	return buf
 }
 
 // EncodeRowKeyWithHandle encodes the table id, row handle into a kv.Key
