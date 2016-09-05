@@ -17,7 +17,6 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -55,7 +54,6 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			}
 			p = np
 			agg.correlated = correlated || agg.correlated
-			log.Warnf("name %s newarg %s %v", aggFunc.F, newArg, newArg.GetType())
 			newArgList = append(newArgList, newArg)
 		}
 		agg.AggFuncs = append(agg.AggFuncs, expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct))

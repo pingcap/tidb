@@ -580,7 +580,6 @@ func (p *Aggregation) handleFinalAgg(x physicalXPlan, childInfo *physicalPlanInf
 		GroupByItems: p.GroupByItems,
 	}
 	agg.SetSchema(p.schema)
-	log.Warnf("handle final")
 	agg.HasGby = len(p.GroupByItems) > 0
 	schema, err := x.addAggregation(agg, p.ctx)
 	if err != nil {
@@ -634,7 +633,6 @@ func (p *Aggregation) handleHashAgg() (*physicalPlanInfo, error) {
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 	}
-	log.Warnf("handle complete %v %v %v", agg.AggType, CompleteAgg, FinalAgg)
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
 	info := addPlanToResponse(agg, childInfo)
@@ -813,12 +811,10 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	}
 	selfProp.sortKeyLen = len(selfProp.props)
 	sortedPlanInfo, err := p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(selfProp)
-	log.Warnf("sort plan %v cnt %v", sortedPlanInfo.cost, sortedPlanInfo.count)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	unSortedPlanInfo, err := p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})
-	log.Warnf("unsort plan %v cnt %v", unSortedPlanInfo.cost, unSortedPlanInfo.count)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
