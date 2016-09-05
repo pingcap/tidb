@@ -31,6 +31,7 @@ const (
 	selectionFactor = 0.8
 	distinctFactor  = 0.7
 	cpuFactor       = 0.9
+	aggFactor 	= 0.2
 )
 
 // JoinConcurrency means the number of goroutines that participate joining.
@@ -377,9 +378,8 @@ func (p *Join) handleLeftJoin(prop *requiredProperty, innerJoin bool) (*physical
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sortedPlanInfo := join.matchProperty(prop, lInfo, rInfo)
-
-	return sortedPlanInfo, nil
+	resultInfo := join.matchProperty(prop, lInfo, rInfo)
+	return resultInfo, nil
 }
 
 func (p *Join) handleRightJoin(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
@@ -416,8 +416,8 @@ func (p *Join) handleRightJoin(prop *requiredProperty, innerJoin bool) (*physica
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sortedPlanInfo := join.matchProperty(prop, lInfo, rInfo)
-	return sortedPlanInfo, nil
+	resultINfo := join.matchProperty(prop, lInfo, rInfo)
+	return resultINfo, nil
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
@@ -591,7 +591,7 @@ func (p *Aggregation) handleFinalAgg(x physicalXPlan, childInfo *physicalPlanInf
 	}
 	x.(PhysicalPlan).SetSchema(schema)
 	info := addPlanToResponse(agg, childInfo)
-	info.count = info.count / 3
+	info.count = uint64(float64(info.count) * aggFactor)
 	// if we build a final agg, it must be the best plan.
 	info.cost = 0
 	return info, nil
@@ -638,7 +638,7 @@ func (p *Aggregation) handleHashAgg() (*physicalPlanInfo, error) {
 	agg.SetSchema(p.schema)
 	info := addPlanToResponse(agg, childInfo)
 	info.cost += float64(info.count) * memoryFactor
-	info.count = info.count / 3
+	info.count = uint64(float64(info.count) * aggFactor)
 	return info, nil
 }
 
