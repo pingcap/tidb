@@ -19,9 +19,12 @@ import (
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"math/rand"
+	"time"
 )
 
 var smallCount = 100
+var bigCount = 10000
 
 func prepareBenchSession() Session {
 	store, err := NewStore("memory://bench")
@@ -43,6 +46,17 @@ func prepareBenchData(se Session, colType string, valueFormat string, valueCount
 	mustExecute(se, "begin")
 	for i := 0; i < valueCount; i++ {
 		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, i)+")")
+	}
+	mustExecute(se, "commit")
+}
+
+func prepareSortBenchData(se Session, colType string, valueFormat string, valueCount int) {
+	mustExecute(se, "drop table if exists t")
+	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s)", colType))
+	mustExecute(se, "begin")
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for i := 0; i < valueCount; i++ {
+		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, r.Intn(valueCount))+")")
 	}
 	mustExecute(se, "commit")
 }
@@ -215,6 +229,21 @@ func BenchmarkInsertNoIndex(b *testing.B) {
 		mustExecute(se, fmt.Sprintf("insert t values (%d, %d)", i, i))
 	}
 }
+
+func BenchmarkSort(b *testing.B) {
+	b.StopTimer()
+	se := prepareBenchSession()
+	prepareSortBenchData(se, "int", "%v", bigCount)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute("select * from t order by col limit 50")
+		if err != nil {
+			b.Fatal(err)
+		}
+		readResult(rs[0], 50)
+	}
+}
+
 
 func BenchmarkJoin(b *testing.B) {
 	b.StopTimer()
