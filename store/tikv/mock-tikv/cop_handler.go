@@ -40,6 +40,7 @@ type selectContext struct {
 	groupKeys    [][]byte
 	aggregates   []*aggregateFuncExpr
 	aggregate    bool
+	keyRanges    []*coprocessor.KeyRange
 
 	// Use for DecodeRow.
 	colTps map[int64]*types.FieldType
@@ -61,7 +62,8 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 			return nil, errors.Trace(err)
 		}
 		ctx := &selectContext{
-			sel: sel,
+			sel:       sel,
+			keyRanges: req.Ranges,
 		}
 		ctx.eval = &xeval.Evaluator{Row: make(map[int64]types.Datum)}
 		if sel.Where != nil {
@@ -195,7 +197,7 @@ func (h *rpcHandler) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, erro
 		ctx.colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
 	}
 
-	kvRanges, desc := h.extractKVRanges(ctx.sel)
+	kvRanges, desc := h.extractKVRanges(ctx)
 	var rows []*tipb.Row
 	limit := int64(-1)
 	if ctx.sel.Limit != nil {
@@ -219,32 +221,14 @@ func (h *rpcHandler) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, erro
 }
 
 // extractKVRanges extracts kv.KeyRanges slice from a SelectRequest, and also returns if it is in descending order.
-func (h *rpcHandler) extractKVRanges(sel *tipb.SelectRequest) (kvRanges []kv.KeyRange, desc bool) {
-	var (
-		tid   int64
-		idxID int64
-	)
-	if sel.IndexInfo != nil {
-		tid = sel.IndexInfo.GetTableId()
-		idxID = sel.IndexInfo.GetIndexId()
-	} else {
-		tid = sel.TableInfo.GetTableId()
-	}
-	for _, kran := range sel.Ranges {
-		var upperKey, lowerKey kv.Key
-		if idxID == 0 {
-			upperKey = tablecodec.EncodeRowKey(tid, kran.GetHigh())
-			if bytes.Compare(upperKey, h.startKey) <= 0 {
-				continue
-			}
-			lowerKey = tablecodec.EncodeRowKey(tid, kran.GetLow())
-		} else {
-			upperKey = tablecodec.EncodeIndexSeekKey(tid, idxID, kran.GetHigh())
-			if bytes.Compare(upperKey, h.startKey) <= 0 {
-				continue
-			}
-			lowerKey = tablecodec.EncodeIndexSeekKey(tid, idxID, kran.GetLow())
+func (h *rpcHandler) extractKVRanges(ctx *selectContext) (kvRanges []kv.KeyRange, desc bool) {
+	sel := ctx.sel
+	for _, kran := range ctx.keyRanges {
+		upperKey := kran.GetEnd()
+		if bytes.Compare(upperKey, h.startKey) <= 0 {
+			continue
 		}
+		lowerKey := kran.GetStart()
 		if len(h.endKey) != 0 && bytes.Compare([]byte(lowerKey), h.endKey) >= 0 {
 			break
 		}
@@ -485,7 +469,7 @@ func (h *rpcHandler) evalWhereForRow(ctx *selectContext, handle int64, row map[i
 }
 
 func (h *rpcHandler) getRowsFromIndexReq(ctx *selectContext) ([]*tipb.Row, error) {
-	kvRanges, desc := h.extractKVRanges(ctx.sel)
+	kvRanges, desc := h.extractKVRanges(ctx)
 	var rows []*tipb.Row
 	limit := int64(-1)
 	if ctx.sel.Limit != nil {

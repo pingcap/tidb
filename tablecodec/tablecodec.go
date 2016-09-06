@@ -54,7 +54,7 @@ func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
 	buf := make([]byte, 0, recordRowKeyLen+idLen)
 	buf = appendTableRecordPrefix(buf, tableID)
-	buf = EncodeRecordKey(buf, handle)
+	buf = codec.EncodeInt(buf, handle)
 	return buf
 }
 
