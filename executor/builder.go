@@ -732,7 +732,6 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 		ByItems: v.ByItems,
 		ctx:     b.ctx,
 		schema:  v.GetSchema(),
-		//Limit:   v.ExecLimit,
 	}
 }
 
