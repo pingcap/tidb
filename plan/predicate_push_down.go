@@ -68,7 +68,7 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 	// next:  "0"
 	isHandled := make([]bool, len(conditions))
 	type transitiveEqualityPredicate map[string]*expression.Constant // transitive equality predicates between one column and one constant
-	for true {
+	for {
 		equalities := make(transitiveEqualityPredicate, 0)
 		for i, getOneEquality := 0, false; i < len(conditions) && !getOneEquality; i++ {
 			if isHandled[i] {
@@ -136,33 +136,14 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 	// 3. propagate constants in these inequality predicates, and we finally get:
 	//    "a = b and c = d and a = c and e = f and g = h and e != 0 and a > 0 and b > 0 and c > 0 and d > 0 and g like 'abc' and h like 'abc' ".
 	multipleEqualities := make(map[*expression.Column]*expression.Column, 0)
-	union := func(leftExpr *expression.Column, rightExpr *expression.Column) {
-		rootOfLeftExpr, ok1 := multipleEqualities[leftExpr]
-		rootOfRightExpr, ok2 := multipleEqualities[rightExpr]
-		if !ok1 && !ok2 {
-			multipleEqualities[leftExpr] = leftExpr
-			multipleEqualities[rightExpr] = leftExpr
-		} else if ok1 && !ok2 {
-			multipleEqualities[rightExpr] = rootOfLeftExpr
-		} else if !ok1 && ok2 {
-			multipleEqualities[leftExpr] = rootOfRightExpr
-		} else if !rootOfLeftExpr.Equal(rootOfRightExpr) {
-			for k, v := range multipleEqualities {
-				if v.Equal(rootOfRightExpr) {
-					multipleEqualities[k] = v
-				}
-			}
-		}
-	}
 	for _, cond := range conditions { // build multiple equality predicates.
 		expr, ok := cond.(*expression.ScalarFunction)
-		if !ok || expr.FuncName.L != ast.EQ {
-			continue
-		}
-		left, ok1 := expr.Args[0].(*expression.Column)
-		right, ok2 := expr.Args[1].(*expression.Column)
-		if ok1 && ok2 {
-			union(left, right)
+		if ok && expr.FuncName.L == ast.EQ {
+			left, ok1 := expr.Args[0].(*expression.Column)
+			right, ok2 := expr.Args[1].(*expression.Column)
+			if ok1 && ok2 {
+				UnionColumns(left, right, multipleEqualities)
+			}
 		}
 	}
 	if len(multipleEqualities) == 0 {
@@ -244,6 +225,26 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 		}
 	}
 	return conditions
+}
+
+// UnionColumns uses union-find to build multiple equality predicates.
+func UnionColumns(leftExpr *expression.Column, rightExpr *expression.Column, multipleEqualities map[*expression.Column]*expression.Column) {
+	rootOfLeftExpr, ok1 := multipleEqualities[leftExpr]
+	rootOfRightExpr, ok2 := multipleEqualities[rightExpr]
+	if !ok1 && !ok2 {
+		multipleEqualities[leftExpr] = leftExpr
+		multipleEqualities[rightExpr] = leftExpr
+	} else if ok1 && !ok2 {
+		multipleEqualities[rightExpr] = rootOfLeftExpr
+	} else if !ok1 && ok2 {
+		multipleEqualities[leftExpr] = rootOfRightExpr
+	} else if !rootOfLeftExpr.Equal(rootOfRightExpr) {
+		for k, v := range multipleEqualities {
+			if v.Equal(rootOfRightExpr) {
+				multipleEqualities[k] = v
+			}
+		}
+	}
 }
 
 // constantSubstitute substitute column expression in a condition by an equivalent constant.
