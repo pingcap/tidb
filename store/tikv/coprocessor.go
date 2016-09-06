@@ -173,7 +173,12 @@ func (r *copRanges) slice(from, to int) *copRanges {
 	if to <= len(r.mid) {
 		ran.mid = r.mid[from:to]
 	} else {
-		ran.mid, ran.last = r.mid[from:], r.last
+		if from <= len(r.mid) {
+			ran.mid = r.mid[from:]
+		}
+		if from < to {
+			ran.last = r.last
+		}
 	}
 	return &ran
 }
