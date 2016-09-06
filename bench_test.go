@@ -15,12 +15,12 @@ package tidb
 
 import (
 	"fmt"
+	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"math/rand"
-	"time"
 )
 
 var smallCount = 100
@@ -243,7 +243,6 @@ func BenchmarkSort(b *testing.B) {
 		readResult(rs[0], 50)
 	}
 }
-
 
 func BenchmarkJoin(b *testing.B) {
 	b.StopTimer()
