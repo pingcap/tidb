@@ -717,12 +717,22 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan, s *plan.Sele
 
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 	src := b.build(v.GetChildByIndex(0))
+	if v.ExecLimit != nil {
+		return &TopnExec{
+			SortExec: SortExec{
+				Src:     src,
+				ByItems: v.ByItems,
+				ctx:     b.ctx,
+				schema:  v.GetSchema()},
+			limit: v.ExecLimit,
+		}
+	}
 	return &SortExec{
 		Src:     src,
 		ByItems: v.ByItems,
 		ctx:     b.ctx,
 		schema:  v.GetSchema(),
-		Limit:   v.ExecLimit,
+		//Limit:   v.ExecLimit,
 	}
 }
 

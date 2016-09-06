@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/distinct"
+	"github.com/pingcap/tidb/util/heap"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -363,9 +364,6 @@ type orderByRow struct {
 	key []types.Datum
 	row *Row
 }
-
-// SortBufferSize represents the total extra row count that sort can use.
-var SortBufferSize = 500
 
 // For select stmt with aggregate function but without groupby clasue,
 // We consider there is a single group with key singleGroup.
@@ -1372,7 +1370,6 @@ type SortExec struct {
 	ByItems []*plan.ByItems
 	Rows    []*orderByRow
 	ctx     context.Context
-	Limit   *plan.Limit
 	Idx     int
 	fetched bool
 	err     error
@@ -1435,12 +1432,6 @@ func (e *SortExec) Less(i, j int) bool {
 // Next implements Executor Next interface.
 func (e *SortExec) Next() (*Row, error) {
 	if !e.fetched {
-		offset := -1
-		totalCount := -1
-		if e.Limit != nil {
-			offset = int(e.Limit.Offset)
-			totalCount = offset + int(e.Limit.Count)
-		}
 		for {
 			srcRow, err := e.Src.Next()
 			if err != nil {
@@ -1460,21 +1451,8 @@ func (e *SortExec) Next() (*Row, error) {
 				}
 			}
 			e.Rows = append(e.Rows, orderRow)
-			if totalCount != -1 && e.Len() >= totalCount+SortBufferSize {
-				sort.Sort(e)
-				e.Rows = e.Rows[:totalCount]
-			}
 		}
 		sort.Sort(e)
-		if offset >= 0 && offset < e.Len() {
-			if totalCount > e.Len() {
-				e.Rows = e.Rows[offset:]
-			} else {
-				e.Rows = e.Rows[offset:totalCount]
-			}
-		} else if offset != -1 {
-			e.Rows = e.Rows[:0]
-		}
 		e.fetched = true
 	}
 	if e.err != nil {
@@ -1484,6 +1462,62 @@ func (e *SortExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	row := e.Rows[e.Idx].row
+	e.Idx++
+	return row, nil
+}
+
+type TopnExec struct {
+	SortExec
+	limit      *plan.Limit
+	resultRows []*orderByRow
+}
+
+func (e *TopnExec) Next() (*Row, error) {
+	if !e.fetched {
+		e.Idx = 1 + int(e.limit.Offset)
+		totalCount := int(e.limit.Offset + e.limit.Count)
+		e.Rows = make([]*orderByRow, 1, totalCount+2)
+		for {
+			srcRow, err := e.Src.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if srcRow == nil {
+				break
+			}
+			orderRow := &orderByRow{
+				row: srcRow,
+				key: make([]types.Datum, len(e.ByItems)),
+			}
+			for i, byItem := range e.ByItems {
+				orderRow.key[i], err = byItem.Expr.Eval(srcRow.Data, e.ctx)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+			e.Rows = append(e.Rows, orderRow)
+			if len(e.Rows)-1 <= totalCount {
+				heap.Update(e)
+			} else if e.Less(e.Len()-1, 1) {
+				e.Swap(1, e.Len()-1)
+				e.Rows = e.Rows[:e.Len()-1]
+				heap.Heapify(e)
+			} else {
+				e.Rows = e.Rows[:e.Len()-1]
+			}
+		}
+		e.resultRows = e.Rows
+		for e.Len() > 1+int(e.limit.Offset) {
+			e.Swap(1, e.Len()-1)
+			e.Rows = e.Rows[:e.Len()-1]
+			heap.Heapify(e)
+		}
+		e.fetched = true
+	}
+	if e.Idx >= len(e.resultRows) {
+		return nil, nil
+	}
+	row := e.resultRows[e.Idx].row
 	e.Idx++
 	return row, nil
 }
