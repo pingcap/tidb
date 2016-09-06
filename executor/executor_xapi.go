@@ -54,9 +54,13 @@ func init() {
 // getAllocPool returns a suitable alloc pool using the estimated size. it's thread-safe
 // because allocPools is read-only and the returned sync.Pool is thread-safe.
 func getAllocPool(estimateSize int) *sync.Pool {
-	idx := (estimateSize - 1) / 128
-	if idx < 0 {
-		idx = 0
+	idx := 0
+	// is there any O(1) algorithm?
+	for poolSize := 128; idx < 8; poolSize = poolSize << 1 {
+		if poolSize >= estimateSize {
+			break
+		}
+		idx++
 	}
 	return &allocPools[idx]
 }
