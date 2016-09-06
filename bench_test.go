@@ -226,7 +226,7 @@ func BenchmarkJoin(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], 100)
+		readResult(rs[0], smallCount)
 	}
 }
 

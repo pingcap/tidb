@@ -140,7 +140,9 @@ type partialResult struct {
 	fields     []*types.FieldType
 	reader     io.ReadCloser
 	resp       *tipb.SelectResponse
+	chunkIdx   int
 	cursor     int
+	dataOffset int64
 	ignoreData bool
 
 	done    chan error
@@ -180,6 +182,30 @@ func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 			return 0, nil, err
 		}
 	}
+	if len(pr.resp.Chunks) > 0 {
+		// For new resp rows structure.
+		chunk := pr.getChunk()
+		if chunk == nil {
+			return 0, nil, nil
+		}
+		rowMeta := chunk.RowsMeta[pr.cursor]
+		if !pr.ignoreData {
+			rowData := chunk.RowsData[pr.dataOffset : pr.dataOffset+rowMeta.Length]
+			data, err = tablecodec.DecodeValues(rowData, pr.fields, pr.index)
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+		}
+		pr.dataOffset += rowMeta.Length
+		if data == nil {
+			data = dummyData
+		}
+		if !pr.aggregate {
+			handle = rowMeta.Handle
+		}
+		pr.cursor++
+		return
+	}
 	if pr.cursor >= len(pr.resp.Rows) {
 		return 0, nil, nil
 	}
@@ -207,6 +233,21 @@ func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 	}
 	pr.cursor++
 	return
+}
+
+func (pr *partialResult) getChunk() *tipb.Chunk {
+	for {
+		if pr.chunkIdx >= len(pr.resp.Chunks) {
+			return nil
+		}
+		chunk := &pr.resp.Chunks[pr.chunkIdx]
+		if pr.cursor < len(chunk.RowsMeta) {
+			return chunk
+		}
+		pr.cursor = 0
+		pr.dataOffset = 0
+		pr.chunkIdx++
+	}
 }
 
 // Close closes the sub result.
