@@ -1064,29 +1064,30 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 		after string
 	}{
 		{
-			sql:   "select * from t where a = b and b = c and c = d and d = 1",
+			sql:   "a = b and b = c and c = d and d = 1",
 			after: "eq(test.t.a, 1), eq(test.t.b, 1), eq(test.t.c, 1), eq(test.t.d, 1)",
 		},
 		{
-			sql:   "select * from t where a = b and b = 1 and a = null and c = d and c > 2 and c != 4 and d != 5",
+			sql:   "a = b and b = 1 and a = null and c = d and c > 2 and c != 4 and d != 5",
 			after: "<nil>, eq(test.t.a, 1), eq(test.t.b, 1), eq(test.t.c, test.t.d), gt(test.t.c, 2), gt(test.t.d, 2), ne(test.t.c, 4), ne(test.t.c, 5), ne(test.t.d, 4), ne(test.t.d, 5)",
 		},
 		{
-			sql:   "select * from t where a = b and b > 0 and a = c",
+			sql:   "a = b and b > 0 and a = c",
 			after: "eq(test.t.a, test.t.b), eq(test.t.a, test.t.c), gt(test.t.a, 0), gt(test.t.b, 0), gt(test.t.c, 0)",
 		},
 		{
-			sql:   "select * from t where a = b and b = c and c LIKE 'abc%'",
+			sql:   "a = b and b = c and c LIKE 'abc%'",
 			after: "eq(test.t.a, test.t.b), eq(test.t.b, test.t.c), like(test.t.a, abc%, 92), like(test.t.b, abc%, 92), like(test.t.c, abc%, 92)",
 		},
 		{
-			sql:   "select * from t where a = b and a > 2 and b > 3 and a < 1 and b < 2",
+			sql:   "a = b and a > 2 and b > 3 and a < 1 and b < 2",
 			after: "eq(test.t.a, test.t.b), gt(test.t.a, 2), gt(test.t.a, 3), gt(test.t.b, 2), gt(test.t.b, 3), lt(test.t.a, 1), lt(test.t.a, 2), lt(test.t.b, 1), lt(test.t.b, 2)",
 		},
 	}
 	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		sql := "select * from t where " + ca.sql
+		comment := Commentf("for %s", sql)
+		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 		err = mockResolve(stmt)
