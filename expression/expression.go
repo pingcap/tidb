@@ -347,7 +347,7 @@ func (sf *ScalarFunction) HashCode() []byte {
 	for _, arg := range sf.Args {
 		v = append(v, types.NewBytesDatum(arg.HashCode()))
 	}
-	bytes = make([]byte, 0)
+	bytes = bytes[:0]
 	bytes, _ = codec.EncodeValue(bytes, v...)
 	return bytes
 }
@@ -403,8 +403,8 @@ func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expr
 	}
 	expr, _ := NewFunction(funcName,
 		types.NewFieldType(mysql.TypeTiny),
-		composeConditionWithBinaryOp(conditions[length/2:], funcName),
-		composeConditionWithBinaryOp(conditions[:length/2], funcName))
+		composeConditionWithBinaryOp(conditions[:length/2], funcName),
+		composeConditionWithBinaryOp(conditions[length/2:], funcName))
 	return expr
 }
 
