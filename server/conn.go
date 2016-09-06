@@ -165,7 +165,7 @@ func (cc *clientConn) writePacket(data []byte) error {
 	return cc.pkg.writePacket(data)
 }
 
-type HandshakeResponse41 struct {
+type handshakeResponse41 struct {
 	Capability uint32
 	Collation  uint8
 	User       string
@@ -174,7 +174,7 @@ type HandshakeResponse41 struct {
 	Attrs      map[string]string
 }
 
-func handshakeResponseFromData(packet *HandshakeResponse41, data []byte) error {
+func handshakeResponseFromData(packet *handshakeResponse41, data []byte) error {
 	pos := 0
 	// capability
 	capability := binary.LittleEndian.Uint32(data[:4])
@@ -262,7 +262,7 @@ func (cc *clientConn) readHandshakeResponse() error {
 		return errors.Trace(err)
 	}
 
-	var p HandshakeResponse41
+	var p handshakeResponse41
 	if err = handshakeResponseFromData(&p, data); err != nil {
 		return errors.Trace(err)
 	}
