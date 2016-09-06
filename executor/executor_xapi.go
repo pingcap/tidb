@@ -40,10 +40,25 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-var allocPool = sync.Pool{
-	New: func() interface{} {
-		return arena.NewAllocator(1024)
-	},
+// pool size: 128 256 512 1K 2K 4K 8K 16K
+var allocPools [8]sync.Pool
+
+func init() {
+	for i := 0; i < 8; i++ {
+		allocPools[i].New = func() interface{} {
+			return arena.NewAllocator(128 << uint(i))
+		}
+	}
+}
+
+// getAllocPool returns a suitable alloc pool using the estimated size. it's thread-safe
+// because allocPools is read-only and the returned sync.Pool is thread-safe.
+func getAllocPool(estimateSize int) *sync.Pool {
+	idx := (estimateSize - 1) / 128
+	if idx < 0 {
+		idx = 0
+	}
+	return &allocPools[idx]
 }
 
 const defaultConcurrency int = 10
@@ -1014,19 +1029,79 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, e
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
 
-	allocator := allocPool.Get().(arena.Allocator)
-	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles, allocator)
-	resp, err := xapi.Select(e.txn.GetClient(), selTableReq, keyRanges, defaultConcurrency, false)
-	allocPool.Put(allocator)
+	keyRanges := tableHandleRanger{e.table.Meta().ID, handles}
+	resp, err := xapiSelect(e.txn.GetClient(), selTableReq, &keyRanges, defaultConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	if e.aggregate {
 		// The returned rows should be aggregate partial result.
 		resp.SetFields(e.aggFields)
 	}
 	resp.Fetch()
 	return resp, nil
+}
+
+// keyRanger can provide []kv.KeyRange and estimate the size of
+// memory needed to encode []kv.KeyRange
+type keyRanger interface {
+	estimateSize() int
+	keyRanges(arena.Allocator) []kv.KeyRange
+}
+
+type tableHandleRanger struct {
+	tid     int64
+	handles []int64
+}
+
+func (tr *tableHandleRanger) estimateSize() int {
+	return 2*len(tr.handles)*tablecodec.RowKeyWithHandleLen + 20
+}
+
+func (tr *tableHandleRanger) keyRanges(allocator arena.Allocator) []kv.KeyRange {
+	return tableHandlesToKVRanges(tr.tid, tr.handles, allocator)
+}
+
+type tableRangeRanger struct {
+	tid         int64
+	tableRanges []plan.TableRange
+}
+
+func (tr *tableRangeRanger) estimateSize() int {
+	return 2*len(tr.tableRanges)*tablecodec.RowKeyWithHandleLen + 20
+}
+
+func (tr *tableRangeRanger) keyRanges(allocator arena.Allocator) []kv.KeyRange {
+	return tableRangesToKVRanges(tr.tid, tr.tableRanges, allocator)
+}
+
+// xapiSelect is a wrapper of xapi.Select, it provides a allocator for generating []kv.KeyRange.
+// prepare []kv.KeyRange and call xapi.Select is conceptually equivalent to provide a keyRanger
+// and call xapiSelect.
+func xapiSelect(client kv.Client, req *tipb.SelectRequest, kr keyRanger, concurrency int, keepOrder bool) (xapi.SelectResult, error) {
+	allocPool := getAllocPool(kr.estimateSize())
+	allocator := allocPool.Get().(arena.Allocator)
+
+	keyRanges := kr.keyRanges(allocator)
+	resp, err := xapi.Select(client, req, keyRanges, concurrency, keepOrder)
+
+	return selectResultFinalize{
+		resp, allocator, allocPool,
+	}, err
+}
+
+type selectResultFinalize struct {
+	xapi.SelectResult
+	allocator arena.Allocator
+	allocPool *sync.Pool
+}
+
+func (s selectResultFinalize) Close() error {
+	err := s.SelectResult.Close()
+	s.allocator.Reset()
+	s.allocPool.Put(s.allocator)
+	return err
 }
 
 // XSelectTableExec represents XAPI select executor without result fields.
@@ -1096,10 +1171,8 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
 
-	allocator := allocPool.Get().(arena.Allocator)
-	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges, allocator)
-	e.result, err = xapi.Select(e.txn.GetClient(), selReq, kvRanges, defaultConcurrency, e.keepOrder)
-	allocPool.Put(allocator)
+	kvRanges := tableRangeRanger{e.table.Meta().ID, e.ranges}
+	e.result, err = xapiSelect(e.txn.GetClient(), selReq, &kvRanges, defaultConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}
