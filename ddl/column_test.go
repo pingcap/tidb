@@ -823,7 +823,6 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 
 	checkOK := false
 	var mu sync.Mutex
-	oldCol := &table.Column{}
 
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
@@ -838,7 +837,6 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 			mu.Unlock()
 			return
 		}
-		oldCol = col
 	}
 
 	d.hook = tc
