@@ -1474,7 +1474,7 @@ type TopnExec struct {
 	heapSize   int
 }
 
-// Less implements sort.Interface Less interface.
+// Less implements heap.Interface Less interface.
 func (e *TopnExec) Less(i, j int) bool {
 	for index, by := range e.ByItems {
 		v1 := e.Rows[i].key[index]
@@ -1500,11 +1500,12 @@ func (e *TopnExec) Less(i, j int) bool {
 	return false
 }
 
-// Len implements sort.Interface Len interface.
+// Len implements heap.Interface Len interface.
 func (e *TopnExec) Len() int {
 	return e.heapSize
 }
 
+// Push implements heap.Interface Push interface.
 func (e *TopnExec) Push(x interface{}) {
 	e.Rows = append(e.Rows, x.(*orderByRow))
 	if e.totalCount == e.heapSize {
@@ -1518,6 +1519,7 @@ func (e *TopnExec) Push(x interface{}) {
 	}
 }
 
+// Pop implements heap.Interface Pop interface.
 func (e *TopnExec) Pop() interface{} {
 	e.heapSize--
 	return nil
