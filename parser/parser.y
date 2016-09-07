@@ -155,6 +155,7 @@ import (
 	fields		"FIELDS"
 	first		"FIRST"
 	fixed		"FIXED"
+	flush		"FLUSH"
 	full		"FULL"
 	grants		"GRANTS"
 	hash		"HASH"
@@ -166,6 +167,7 @@ import (
 	mode		"MODE"
 	maxRows		"MAX_ROWS"
 	minRows		"MIN_ROWS"
+	noWriteToBinLog "NO_WRITE_TO_BINLOG"
 	names		"NAMES"
 	national	"NATIONAL"
 	no		"NO"
@@ -206,6 +208,7 @@ import (
 	variables	"VARIABLES"
 	warnings	"WARNINGS"
 	week		"WEEK"
+	with		"WITH"
 	yearType	"YEAR"
 
 %token	<item>
@@ -482,6 +485,7 @@ import (
 	FieldAsNameOpt		"Field alias name opt"
 	FieldList		"field expression list"
 	FieldsOrColumns 	"Fields or columns"
+	FlushStmt		"Flush statement"
 	TableRefsClause		"Table references clause"
 	Function		"function expr"
 	FunctionCallAgg		"Function call on aggregate data"
@@ -533,6 +537,7 @@ import (
 	NotOpt			"optional NOT"
 	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
+	NoWriteToBinLogAliasOpt "NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType		"Grant statement object type"
 	OnDuplicateKeyUpdate	"ON DUPLICATE KEY UPDATE value list"
 	Operand			"operand"
@@ -602,6 +607,7 @@ import (
 	TableLockList		"Table lock list"
 	TableName		"Table name"
 	TableNameList		"Table name list"
+	TableNameListOpt	"Table name list opt"
 	TableOption		"create table option"
 	TableOptionList		"create table option list"
 	TableOptionListOpt	"create table option list opt"
@@ -632,6 +638,7 @@ import (
 	WhereClauseOptional	"Optinal WHERE clause"
 	WhenClause		"When clause"
 	WhenClauseList		"When clause list"
+	WithReadLockOpt		"With Read Lock opt"
 	ElseOpt			"Optional else clause"
 	ExpressionOpt		"Optional expression"
 	Type			"Types"
@@ -4110,6 +4117,48 @@ ShowTableAliasOpt:
 		$$ = $2.(*ast.TableName)
 	}
 
+FlushStmt:
+	"FLUSH" NoWriteToBinLogAliasOpt TableOrTables TableNameListOpt WithReadLockOpt
+	{
+		$$ = &ast.FlushTableStmt{
+			Tables: $4.([]*ast.TableName),
+			NoWriteToBinLog: $2.(bool),
+			ReadLock: $5.(bool),
+		}
+	}
+
+NoWriteToBinLogAliasOpt:
+	"NO_WRITE_TO_BINLOG"
+	{
+		$$ = true
+	}
+|	"LOCAL"
+	{
+		$$ = true
+	}
+|
+	{
+		$$ = false
+	}
+
+TableNameListOpt:
+	{
+		$$ = []*ast.TableName{}
+	}
+|	TableNameList
+	{
+		$$ = $1
+	}
+
+WithReadLockOpt:
+	"WITH" "READ" "LOCK"
+	{
+		$$ = true
+	}
+|	{
+		$$ = false
+	}
+
 Statement:
 	EmptyStmt
 |	AdminStmt
@@ -4130,6 +4179,7 @@ Statement:
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
+|	FlushStmt
 |	GrantStmt
 |	InsertIntoStmt
 |	LoadDataStmt

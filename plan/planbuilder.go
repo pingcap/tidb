@@ -95,6 +95,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildInsert(x)
 	case *ast.LoadDataStmt:
 		return b.buildLoadData(x)
+	case *ast.FlushTableStmt:
+		return b.buildSimple(x)
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
