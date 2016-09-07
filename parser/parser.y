@@ -4128,17 +4128,16 @@ FlushStmt:
 	}
 
 NoWriteToBinLogAliasOpt:
-	"NO_WRITE_TO_BINLOG"
+	{
+		$$ = false
+	}
+|	"NO_WRITE_TO_BINLOG"
 	{
 		$$ = true
 	}
 |	"LOCAL"
 	{
 		$$ = true
-	}
-|
-	{
-		$$ = false
 	}
 
 TableNameListOpt:
@@ -4151,12 +4150,12 @@ TableNameListOpt:
 	}
 
 WithReadLockOpt:
-	"WITH" "READ" "LOCK"
+	{
+		$$ = false
+	}
+|	"WITH" "READ" "LOCK"
 	{
 		$$ = true
-	}
-|	{
-		$$ = false
 	}
 
 Statement:

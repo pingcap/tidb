@@ -196,11 +196,6 @@ type Insert struct {
 	Ignore    bool
 }
 
-// FlushTable represents a flush table plan.
-type FlushTable struct {
-	baseLogicalPlan
-}
-
 // LoadData represents a loaddata plan.
 type LoadData struct {
 	baseLogicalPlan
