@@ -40,19 +40,20 @@ func getExpectedRanges(tid int64, hrs []*handleRange) []kv.KeyRange {
 }
 
 func (s *testExecSuite) TestMergeHandles(c *C) {
-
 	handles := []int64{0, 2, 3, 4, 5, 10, 11, 100}
 
+	// Build expected key ranges.
 	hrs := make([]*handleRange, 0, len(handles))
 	hrs = append(hrs, &handleRange{start: 0, end: 1})
 	hrs = append(hrs, &handleRange{start: 2, end: 6})
 	hrs = append(hrs, &handleRange{start: 10, end: 12})
 	hrs = append(hrs, &handleRange{start: 100, end: 101})
-
 	expectedKrs := getExpectedRanges(1, hrs)
 
+	// Build key ranges.
 	krs := tableHandlesToKVRanges(1, handles)
 
+	// Compare key ranges and expected key ranges.
 	c.Assert(len(krs), Equals, len(expectedKrs))
 	for i, kr := range krs {
 		ekr := expectedKrs[i]
