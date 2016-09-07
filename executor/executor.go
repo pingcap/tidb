@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"container/heap"
 	"sort"
 	"sync"
 
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/distinct"
-	"github.com/pingcap/tidb/util/heap"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -1470,15 +1470,66 @@ func (e *SortExec) Next() (*Row, error) {
 type TopnExec struct {
 	SortExec
 	limit      *plan.Limit
-	resultRows []*orderByRow
+	totalCount int
+	heapSize   int
+}
+
+// Less implements sort.Interface Less interface.
+func (e *TopnExec) Less(i, j int) bool {
+	for index, by := range e.ByItems {
+		v1 := e.Rows[i].key[index]
+		v2 := e.Rows[j].key[index]
+
+		ret, err := v1.CompareDatum(v2)
+		if err != nil {
+			e.err = err
+			return true
+		}
+
+		if by.Desc {
+			ret = -ret
+		}
+
+		if ret > 0 {
+			return true
+		} else if ret < 0 {
+			return false
+		}
+	}
+
+	return false
+}
+
+// Len implements sort.Interface Len interface.
+func (e *TopnExec) Len() int {
+	return e.heapSize
+}
+
+func (e *TopnExec) Push(x interface{}) {
+	e.Rows = append(e.Rows, x.(*orderByRow))
+	if e.totalCount == e.heapSize {
+		if e.Less(0, e.heapSize) {
+			e.Swap(0, e.heapSize)
+			heap.Fix(e, 0)
+		}
+		e.Rows = e.Rows[:e.heapSize]
+	} else {
+		e.heapSize++
+	}
+}
+
+func (e *TopnExec) Pop() interface{} {
+	e.heapSize--
+	return nil
 }
 
 // Next implements Executor Next interface.
 func (e *TopnExec) Next() (*Row, error) {
 	if !e.fetched {
-		e.Idx = 1 + int(e.limit.Offset)
-		totalCount := int(e.limit.Offset + e.limit.Count)
-		e.Rows = make([]*orderByRow, 1, totalCount+2)
+		e.Idx = int(e.limit.Offset)
+		e.totalCount = int(e.limit.Offset + e.limit.Count)
+		e.Rows = make([]*orderByRow, 0, e.totalCount+1)
+		e.heapSize = 0
 		for {
 			srcRow, err := e.Src.Next()
 			if err != nil {
@@ -1497,29 +1548,17 @@ func (e *TopnExec) Next() (*Row, error) {
 					return nil, errors.Trace(err)
 				}
 			}
-			e.Rows = append(e.Rows, orderRow)
-			if len(e.Rows)-1 <= totalCount {
-				heap.Update(e)
-			} else if e.Less(e.Len()-1, 1) {
-				e.Swap(1, e.Len()-1)
-				e.Rows = e.Rows[:e.Len()-1]
-				heap.Heapify(e)
-			} else {
-				e.Rows = e.Rows[:e.Len()-1]
-			}
+			heap.Push(e, orderRow)
 		}
-		e.resultRows = e.Rows
-		for e.Len() > 1+int(e.limit.Offset) {
-			e.Swap(1, e.Len()-1)
-			e.Rows = e.Rows[:e.Len()-1]
-			heap.Heapify(e)
+		for i := 0; i < int(e.limit.Count) && e.Len() > 0; i++ {
+			heap.Pop(e)
 		}
 		e.fetched = true
 	}
-	if e.Idx >= len(e.resultRows) {
+	if e.Idx >= len(e.Rows) {
 		return nil, nil
 	}
-	row := e.resultRows[e.Idx].row
+	row := e.Rows[e.Idx].row
 	e.Idx++
 	return row, nil
 }
