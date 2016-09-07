@@ -132,11 +132,6 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			best:  "Join{DataScan(t)->DataScan(t)}->Projection",
 		},
 		{
-			sql:   "select * from t where a = b and b = 1 and a = null and c = d and c > 2 and c != 4",
-			first: "DataScan(t)->Selection->Projection",
-			best:  "DataScan(t)->Selection->Projection",
-		},
-		{
 			sql:   "select * from t t1, t t2 where t1.a = t2.b and t2.b > 0 and t1.a = t1.c and t1.d like 'abc' and t2.d = t1.d",
 			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
 			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",

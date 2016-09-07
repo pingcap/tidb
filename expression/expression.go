@@ -87,7 +87,7 @@ type Column struct {
 // Equal checks if two columns are equal
 func (col *Column) Equal(expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
-		return string(col.HashCode()) == string(newCol.HashCode())
+		return newCol.FromID == col.FromID && newCol.Position == col.Position
 	}
 	return false
 }

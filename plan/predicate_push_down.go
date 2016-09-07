@@ -66,12 +66,12 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 	// first: "a = 2 and 2 = c and b = 2 and a = 1";
 	// next:  "a = 2 and 2 = c and b = 2 and 2 = 1";
 	// next:  "0"
-	isHandled := make([]bool, len(conditions))
+	isSource := make([]bool, len(conditions))
 	type transitiveEqualityPredicate map[string]*expression.Constant // transitive equality predicates between one column and one constant
 	for {
 		equalities := make(transitiveEqualityPredicate, 0)
 		for i, getOneEquality := 0, false; i < len(conditions) && !getOneEquality; i++ {
-			if isHandled[i] {
+			if isSource[i] {
 				continue
 			}
 			expr, ok := conditions[i].(*expression.ScalarFunction)
@@ -87,28 +87,31 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 					newExpression = append(newExpression, propagateConstant([]expression.Expression{v})...)
 				}
 				conditions[i] = expression.ComposeDNFCondition(newExpression)
-				isHandled[i] = true
+				isSource[i] = true
 			case ast.AndAnd:
 				newExpression := propagateConstant(expression.SplitCNFItems(conditions[i]))
 				conditions[i] = expression.ComposeCNFCondition(newExpression)
-				isHandled[i] = true
+				isSource[i] = true
 			case ast.EQ:
 				var (
-					col      *expression.Column
-					val      *expression.Constant
-					isColumn bool
+					col *expression.Column
+					val *expression.Constant
 				)
-				left, ok1 := expr.Args[0].(*expression.Constant)
-				right, ok2 := expr.Args[1].(*expression.Constant)
-				if col, isColumn = expr.Args[0].(*expression.Column); ok2 && isColumn {
-					val = right
-				} else if col, isColumn = expr.Args[1].(*expression.Column); ok1 && isColumn {
-					val = left
+				leftConst, leftIsConst := expr.Args[0].(*expression.Constant)
+				rightConst, rightIsConst := expr.Args[1].(*expression.Constant)
+				leftCol, leftIsCol := expr.Args[0].(*expression.Column)
+				rightCol, rightIsCol := expr.Args[1].(*expression.Column)
+				if rightIsConst && leftIsCol {
+					col = leftCol
+					val = rightConst
+				} else if leftIsConst && rightIsCol {
+					col = rightCol
+					val = leftConst
 				} else {
 					continue
 				}
 				equalities[string(col.HashCode())] = val
-				isHandled[i] = true
+				isSource[i] = true
 				getOneEquality = true
 			}
 		}
@@ -116,7 +119,7 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 			break
 		}
 		for i := 0; i < len(conditions); i++ {
-			if isHandled[i] {
+			if isSource[i] {
 				continue
 			}
 			if len(equalities) != 0 {
@@ -168,7 +171,6 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 			column   *expression.Column
 			equalCol *expression.Column // the root column corresponding to a column in a multiple equality predicate.
 			val      *expression.Constant
-			isColumn bool
 			funcName string
 		)
 		expr, ok := conditions[i].(*expression.ScalarFunction)
@@ -179,12 +181,16 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 		if !ok {
 			continue
 		}
-		left, ok1 := expr.Args[0].(*expression.Constant)
-		right, ok2 := expr.Args[1].(*expression.Constant)
-		if column, isColumn = expr.Args[0].(*expression.Column); ok2 && isColumn {
-			val = right
-		} else if column, isColumn = expr.Args[1].(*expression.Column); ok1 && isColumn {
-			val = left
+		leftConst, leftIsConst := expr.Args[0].(*expression.Constant)
+		rightConst, rightIsConst := expr.Args[1].(*expression.Constant)
+		leftCol, leftIsCol := expr.Args[0].(*expression.Column)
+		rightCol, rightIsCol := expr.Args[1].(*expression.Column)
+		if rightIsConst && leftIsCol {
+			column = leftCol
+			val = rightConst
+		} else if leftIsConst && rightIsCol {
+			column = rightCol
+			val = leftConst
 		} else {
 			continue
 		}
@@ -193,9 +199,6 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 			continue
 		}
 		colHashCode := string(equalCol.HashCode())
-		if _, ok = inequalities[colHashCode]; !ok {
-			inequalities[colHashCode] = make([]inequalityFactor, 0)
-		}
 		if funcName == ast.Like { // func 'LIKE' need 3 input arguments, so here we handle it alone.
 			inequalities[colHashCode] = append(inequalities[colHashCode], inequalityFactor{FuncName: ast.Like, Factor: []*expression.Constant{val, expr.Args[2].(*expression.Constant)}})
 		} else {
@@ -241,7 +244,7 @@ func UnionColumns(leftExpr *expression.Column, rightExpr *expression.Column, mul
 	} else if !rootOfLeftExpr.Equal(rootOfRightExpr) {
 		for k, v := range multipleEqualities {
 			if v.Equal(rootOfRightExpr) {
-				multipleEqualities[k] = v
+				multipleEqualities[k] = rootOfLeftExpr
 			}
 		}
 	}
