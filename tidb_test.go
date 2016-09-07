@@ -35,7 +35,8 @@ import (
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
 
 func TestT(t *testing.T) {
-	log.SetLevelByString("error")
+	logLevel := os.Getenv("log_level")
+	log.SetLevelByString(logLevel)
 	TestingT(t)
 }
 
