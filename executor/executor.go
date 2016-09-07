@@ -1466,12 +1466,14 @@ func (e *SortExec) Next() (*Row, error) {
 	return row, nil
 }
 
+// TopnExec implements a top n algo.
 type TopnExec struct {
 	SortExec
 	limit      *plan.Limit
 	resultRows []*orderByRow
 }
 
+// Next implements Executor Next interface.
 func (e *TopnExec) Next() (*Row, error) {
 	if !e.fetched {
 		e.Idx = 1 + int(e.limit.Offset)

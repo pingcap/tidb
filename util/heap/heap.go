@@ -17,6 +17,7 @@ import (
 	"sort"
 )
 
+// Heapify will put the top element to the right position in heap, which cost log2n time.
 func Heapify(heapPool sort.Interface) {
 	pos := 1
 	curSize := heapPool.Len()
@@ -44,6 +45,7 @@ func cas(i, j int, heapPool sort.Interface) bool {
 	return false
 }
 
+// Update will be called when appending a element to end of heap, which costs log2n time.
 func Update(heapPool sort.Interface) {
 	pos := heapPool.Len() - 1
 	for pos > 1 {
