@@ -1508,15 +1508,7 @@ func (e *TopnExec) Len() int {
 // Push implements heap.Interface Push interface.
 func (e *TopnExec) Push(x interface{}) {
 	e.Rows = append(e.Rows, x.(*orderByRow))
-	if e.totalCount == e.heapSize {
-		if e.Less(0, e.heapSize) {
-			e.Swap(0, e.heapSize)
-			heap.Fix(e, 0)
-		}
-		e.Rows = e.Rows[:e.heapSize]
-	} else {
-		e.heapSize++
-	}
+	e.heapSize++
 }
 
 // Pop implements heap.Interface Pop interface.
@@ -1550,10 +1542,23 @@ func (e *TopnExec) Next() (*Row, error) {
 					return nil, errors.Trace(err)
 				}
 			}
-			heap.Push(e, orderRow)
+			if e.totalCount == e.heapSize {
+				e.Rows = append(e.Rows, orderRow)
+				if e.Less(0, e.heapSize) {
+					e.Swap(0, e.heapSize)
+					heap.Fix(e, 0)
+				}
+				e.Rows = e.Rows[:e.heapSize]
+			} else {
+				heap.Push(e, orderRow)
+			}
 		}
-		for i := 0; i < int(e.limit.Count) && e.Len() > 0; i++ {
-			heap.Pop(e)
+		if e.limit.Offset == 0 {
+			sort.Sort(&e.SortExec)
+		} else {
+			for i := 0; i < int(e.limit.Count) && e.Len() > 0; i++ {
+				heap.Pop(e)
+			}
 		}
 		e.fetched = true
 	}
