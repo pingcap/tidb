@@ -91,6 +91,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
+	case *ast.FlushTableStmt:
+		return b.buildSimple(x)
 	case *ast.InsertStmt:
 		return b.buildInsert(x)
 	case *ast.LoadDataStmt:
