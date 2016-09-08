@@ -48,6 +48,8 @@ import (
 	/*yy:token "%c"     */	identifier      "identifier"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 
+	with		"WITH"
+
 	/* the following tokens belong to NotKeywordToken*/
 	abs		"ABS"
 	addDate		"ADDDATE"
@@ -138,6 +140,7 @@ import (
 	compressed	"COMPRESSED"
 	compression	"COMPRESSION"
 	connection 	"CONNECTION"
+	consistent	"CONSISTENT"
 	data 		"DATA"
 	dateType	"DATE"
 	datetimeType	"DATETIME"
@@ -185,6 +188,7 @@ import (
 	serializable	"SERIALIZABLE"
 	session		"SESSION"
 	signed		"SIGNED"
+	snapshot	"SNAPSHOT"
 	space 		"SPACE"
 	sqlCache	"SQL_CACHE"
 	sqlNoCache	"SQL_NO_CACHE"
@@ -879,6 +883,10 @@ BeginTransactionStmt:
 		$$ = &ast.BeginStmt{}
 	}
 |	"START" "TRANSACTION"
+	{
+		$$ = &ast.BeginStmt{}
+	}
+|	"START" "TRANSACTION" "WITH" "CONSISTENT" "SNAPSHOT"
 	{
 		$$ = &ast.BeginStmt{}
 	}
@@ -1945,13 +1953,13 @@ identifier | UnReservedKeyword | NotKeywordToken
 
 UnReservedKeyword:
  "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
-|	"COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "DYNAMIC"
-|	"END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FULL" | "HASH" | "LOCAL"
-|	"NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION"
-|	"SIGNED" | "START" | "STATUS" | "GLOBAL" | "TABLES" | "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE"
-|	"UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
-|	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
+|	"COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO"
+|	"DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FULL" |"GLOBAL"
+|	"HASH" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK"
+|	"SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION"
+|	"TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
+|	"COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
+|	"MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE"
 |	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG"
 
