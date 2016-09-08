@@ -39,7 +39,6 @@ var (
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &UseStmt{}
 	_ StmtNode = &AnalyzeTableStmt{}
-	_ StmtNode = &FlushStmt{}
 	_ StmtNode = &FlushTableStmt{}
 
 	_ Node = &PrivElem{}
@@ -280,21 +279,6 @@ func (n *VariableAssignment) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Value = node.(ExprNode)
-	return v.Leave(n)
-}
-
-// FlushStmt is the general flush statement.
-type FlushStmt struct {
-	stmtNode
-}
-
-// Accept implements Node Accept interface.
-func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FlushStmt)
 	return v.Leave(n)
 }
 
