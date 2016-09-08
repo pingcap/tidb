@@ -388,6 +388,10 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		it.mu.finished = true
 		return nil, errors.Trace(err)
 	}
+	if it.mu.finished {
+		// resp will be nil if iterator is finished.
+		return nil, nil
+	}
 	it.mu.respGot++
 	if it.mu.respGot == len(it.mu.tasks) {
 		it.mu.finished = true
