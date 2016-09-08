@@ -388,15 +388,13 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		it.mu.finished = true
 		return nil, errors.Trace(err)
 	}
+	if it.mu.finished {
+		// resp will be nil if iterator is finished.
+		return nil, nil
+	}
 	it.mu.respGot++
 	if it.mu.respGot == len(it.mu.tasks) {
 		it.mu.finished = true
-	}
-	if resp == nil {
-		if !it.mu.finished {
-			log.Error("unexpected nil response when iterator is not finished")
-		}
-		return nil, nil
 	}
 	return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
 }
