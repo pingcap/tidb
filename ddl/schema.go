@@ -109,7 +109,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 	}
 	if dbInfo == nil {
 		job.State = model.JobCancelled
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
+		return errors.Trace(infoschema.ErrDatabaseDropExists)
 	}
 
 	_, err = t.GenSchemaVersion()
