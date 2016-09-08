@@ -195,8 +195,8 @@ func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
+			pr.dataOffset += rowMeta.Length
 		}
-		pr.dataOffset += rowMeta.Length
 		if data == nil {
 			data = dummyData
 		}
