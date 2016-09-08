@@ -212,7 +212,6 @@ import (
 	variables	"VARIABLES"
 	warnings	"WARNINGS"
 	week		"WEEK"
-	with		"WITH"
 	yearType	"YEAR"
 
 %token	<item>
