@@ -68,6 +68,8 @@ func (e *SimpleExec) Next() (*Row, error) {
 	switch x := e.Statement.(type) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
+	case *ast.FlushTableStmt:
+		err = e.executeFlushTable(x)
 	case *ast.SetStmt:
 		err = e.executeSet(x)
 	case *ast.DoStmt:
@@ -346,6 +348,11 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, util.EncodePassword(s.Password), userName, host)
 	_, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
+}
+
+func (e *SimpleExec) executeFlushTable(s *ast.FlushTableStmt) error {
+	// TODO: A dummy implement
+	return nil
 }
 
 func (e *SimpleExec) executeAnalyzeTable(s *ast.AnalyzeTableStmt) error {
