@@ -393,6 +393,9 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		it.mu.finished = true
 	}
 	if resp == nil {
+		if !it.mu.finished {
+			log.Error("unexpected nil response when iterator is not finished")
+		}
 		return nil, nil
 	}
 	return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
