@@ -245,6 +245,3 @@ func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []inte
 
 	return job
 }
-
-func (s *testDDLSuite) TestSyncMode(c *C) {
-}
