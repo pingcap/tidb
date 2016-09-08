@@ -16,6 +16,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
@@ -261,7 +262,9 @@ func constantSubstitute(equalities map[string]*expression.Constant, condition ex
 		for i, arg := range expr.Args {
 			expr.Args[i] = constantSubstitute(equalities, arg)
 		}
-		condition, _ = expression.NewFunction(expr.FuncName.L, expr.RetType, expr.Args...)
+		if _, ok := evaluator.Funcs[expr.FuncName.L]; ok {
+			condition, _ = expression.NewFunction(expr.FuncName.L, expr.RetType, expr.Args...)
+		}
 		return condition
 	}
 	return condition
