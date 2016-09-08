@@ -392,6 +392,9 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	if it.mu.respGot == len(it.mu.tasks) {
 		it.mu.finished = true
 	}
+	if resp == nil {
+		return nil, nil
+	}
 	return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
 }
 
