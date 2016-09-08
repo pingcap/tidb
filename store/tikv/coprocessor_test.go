@@ -189,3 +189,30 @@ func (s *testCoprocessorSuite) taskEqual(c *C, task *copTask, regionID uint64, k
 		c.Assert(string(r.EndKey), Equals, keys[2*i+1])
 	}
 }
+
+func (s *testCoprocessorSuite) TestCopRanges(c *C) {
+	ranges := []kv.KeyRange{
+		{StartKey: []byte("a"), EndKey: []byte("b")},
+		{StartKey: []byte("c"), EndKey: []byte("d")},
+		{StartKey: []byte("e"), EndKey: []byte("f")},
+	}
+
+	s.checkEqual(c, &copRanges{mid: ranges}, ranges, true)
+	s.checkEqual(c, &copRanges{first: &ranges[0], mid: ranges[1:]}, ranges, true)
+	s.checkEqual(c, &copRanges{mid: ranges[:2], last: &ranges[2]}, ranges, true)
+	s.checkEqual(c, &copRanges{first: &ranges[0], mid: ranges[1:2], last: &ranges[2]}, ranges, true)
+}
+
+func (s *testCoprocessorSuite) checkEqual(c *C, copRanges *copRanges, ranges []kv.KeyRange, slice bool) {
+	c.Assert(copRanges.len(), Equals, len(ranges))
+	for i := range ranges {
+		c.Assert(copRanges.at(i), DeepEquals, ranges[i])
+	}
+	if slice {
+		for i := 0; i <= copRanges.len(); i++ {
+			for j := i; j <= copRanges.len(); j++ {
+				s.checkEqual(c, copRanges.slice(i, j), ranges[i:j], false)
+			}
+		}
+	}
+}

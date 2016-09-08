@@ -942,6 +942,7 @@ func (s *testParserSuite) TestComment(c *C) {
 		{"create table t (c int) comment 'comment'", true},
 		{"create table t (c int) comment comment", false},
 		{"create table t (comment text)", true},
+		{"START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */", true},
 		// For comment in query
 		{"/*comment*/ /*comment*/ select c /* this is a comment */ from t;", true},
 	}
