@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"container/heap"
 	"sort"
 	"sync"
 
@@ -363,9 +364,6 @@ type orderByRow struct {
 	key []types.Datum
 	row *Row
 }
-
-// SortBufferSize represents the total extra row count that sort can use.
-var SortBufferSize = 500
 
 // For select stmt with aggregate function but without groupby clasue,
 // We consider there is a single group with key singleGroup.
@@ -1372,7 +1370,6 @@ type SortExec struct {
 	ByItems []*plan.ByItems
 	Rows    []*orderByRow
 	ctx     context.Context
-	Limit   *plan.Limit
 	Idx     int
 	fetched bool
 	err     error
@@ -1414,7 +1411,7 @@ func (e *SortExec) Less(i, j int) bool {
 
 		ret, err := v1.CompareDatum(v2)
 		if err != nil {
-			e.err = err
+			e.err = errors.Trace(err)
 			return true
 		}
 
@@ -1435,12 +1432,6 @@ func (e *SortExec) Less(i, j int) bool {
 // Next implements Executor Next interface.
 func (e *SortExec) Next() (*Row, error) {
 	if !e.fetched {
-		offset := -1
-		totalCount := -1
-		if e.Limit != nil {
-			offset = int(e.Limit.Offset)
-			totalCount = offset + int(e.Limit.Count)
-		}
 		for {
 			srcRow, err := e.Src.Next()
 			if err != nil {
@@ -1460,25 +1451,116 @@ func (e *SortExec) Next() (*Row, error) {
 				}
 			}
 			e.Rows = append(e.Rows, orderRow)
-			if totalCount != -1 && e.Len() >= totalCount+SortBufferSize {
-				sort.Sort(e)
-				e.Rows = e.Rows[:totalCount]
-			}
 		}
 		sort.Sort(e)
-		if offset >= 0 && offset < e.Len() {
-			if totalCount > e.Len() {
-				e.Rows = e.Rows[offset:]
-			} else {
-				e.Rows = e.Rows[offset:totalCount]
-			}
-		} else if offset != -1 {
-			e.Rows = e.Rows[:0]
-		}
 		e.fetched = true
 	}
 	if e.err != nil {
 		return nil, errors.Trace(e.err)
+	}
+	if e.Idx >= len(e.Rows) {
+		return nil, nil
+	}
+	row := e.Rows[e.Idx].row
+	e.Idx++
+	return row, nil
+}
+
+// TopnExec implements a top n algo.
+type TopnExec struct {
+	SortExec
+	limit      *plan.Limit
+	totalCount int
+	heapSize   int
+}
+
+// Less implements heap.Interface Less interface.
+func (e *TopnExec) Less(i, j int) bool {
+	for index, by := range e.ByItems {
+		v1 := e.Rows[i].key[index]
+		v2 := e.Rows[j].key[index]
+
+		ret, err := v1.CompareDatum(v2)
+		if err != nil {
+			e.err = errors.Trace(err)
+			return true
+		}
+
+		if by.Desc {
+			ret = -ret
+		}
+
+		if ret > 0 {
+			return true
+		} else if ret < 0 {
+			return false
+		}
+	}
+
+	return false
+}
+
+// Len implements heap.Interface Len interface.
+func (e *TopnExec) Len() int {
+	return e.heapSize
+}
+
+// Push implements heap.Interface Push interface.
+func (e *TopnExec) Push(x interface{}) {
+	e.Rows = append(e.Rows, x.(*orderByRow))
+	e.heapSize++
+}
+
+// Pop implements heap.Interface Pop interface.
+func (e *TopnExec) Pop() interface{} {
+	e.heapSize--
+	return nil
+}
+
+// Next implements Executor Next interface.
+func (e *TopnExec) Next() (*Row, error) {
+	if !e.fetched {
+		e.Idx = int(e.limit.Offset)
+		e.totalCount = int(e.limit.Offset + e.limit.Count)
+		e.Rows = make([]*orderByRow, 0, e.totalCount+1)
+		e.heapSize = 0
+		for {
+			srcRow, err := e.Src.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if srcRow == nil {
+				break
+			}
+			orderRow := &orderByRow{
+				row: srcRow,
+				key: make([]types.Datum, len(e.ByItems)),
+			}
+			for i, byItem := range e.ByItems {
+				orderRow.key[i], err = byItem.Expr.Eval(srcRow.Data, e.ctx)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+			if e.totalCount == e.heapSize {
+				e.Rows = append(e.Rows, orderRow)
+				if e.Less(0, e.heapSize) {
+					e.Swap(0, e.heapSize)
+					heap.Fix(e, 0)
+				}
+				e.Rows = e.Rows[:e.heapSize]
+			} else {
+				heap.Push(e, orderRow)
+			}
+		}
+		if e.limit.Offset == 0 {
+			sort.Sort(&e.SortExec)
+		} else {
+			for i := 0; i < int(e.limit.Count) && e.Len() > 0; i++ {
+				heap.Pop(e)
+			}
+		}
+		e.fetched = true
 	}
 	if e.Idx >= len(e.Rows) {
 		return nil, nil
