@@ -197,41 +197,6 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 			SELECT * from tmp;
 		ROLLBACK;`, true},
 
-		// set
-		// user defined
-		{"SET @a = 1", true},
-		{"SET @b := 1", true},
-		// session system variables
-		{"SET SESSION autocommit = 1", true},
-		{"SET @@session.autocommit = 1", true},
-		{"SET @@SESSION.autocommit = 1", true},
-		{"SET @@GLOBAL.GTID_PURGED = '123'", true},
-		{"SET @MYSQLDUMP_TEMP_LOG_BIN = @@SESSION.SQL_LOG_BIN", true},
-		{"SET LOCAL autocommit = 1", true},
-		{"SET @@local.autocommit = 1", true},
-		{"SET @@autocommit = 1", true},
-		{"SET autocommit = 1", true},
-		// global system variables
-		{"SET GLOBAL autocommit = 1", true},
-		{"SET @@global.autocommit = 1", true},
-		// Set default value
-		{"SET @@global.autocommit = default", true},
-		{"SET @@session.autocommit = default", true},
-		// SET CHARACTER SET
-		{"SET CHARACTER SET utf8mb4;", true},
-		{"SET CHARACTER SET 'utf8mb4';", true},
-		// Set password
-		{"SET PASSWORD = 'password';", true},
-		{"SET PASSWORD FOR 'root'@'localhost' = 'password';", true},
-		// SET TRANSACTION Syntax
-		{"SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", true},
-		{"SET GLOBAL TRANSACTION ISOLATION LEVEL REPEATABLE READ", true},
-		{"SET SESSION TRANSACTION READ WRITE", true},
-		{"SET SESSION TRANSACTION READ ONLY", true},
-		{"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", true},
-		{"SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED", true},
-		{"SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE", true},
-
 		// qualified select
 		{"SELECT a.b.c FROM t", true},
 		{"SELECT a.b.*.c FROM t", false},
@@ -280,52 +245,13 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3 on t3.id = t2.id", true},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3", false},
 
-		// For show full columns
-		{"show columns in t;", true},
-		{"show full columns in t;", true},
-
 		// For admin
 		{"admin show ddl;", true},
 		{"admin check table t1, t2;", true},
 
-		// For set names
-		{"set names utf8", true},
-		{"set names utf8 collate utf8_unicode_ci", true},
-		{"set names binary", true},
-
-		// For set names and set vars
-		{"set names utf8, @@session.sql_mode=1;", true},
-		{"set @@session.sql_mode=1, names utf8, charset utf8;", true},
-
-		// For show character set
-		{"show character set;", true},
 		// For on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
 		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
-
-		// For SHOW statement
-		{"SHOW VARIABLES LIKE 'character_set_results'", true},
-		{"SHOW GLOBAL VARIABLES LIKE 'character_set_results'", true},
-		{"SHOW SESSION VARIABLES LIKE 'character_set_results'", true},
-		{"SHOW VARIABLES", true},
-		{"SHOW GLOBAL VARIABLES", true},
-		{"SHOW GLOBAL VARIABLES WHERE Variable_name = 'autocommit'", true},
-		{"SHOW STATUS", true},
-		{"SHOW GLOBAL STATUS", true},
-		{"SHOW SESSION STATUS", true},
-		{"SHOW STATUS LIKE 'Up%'", true},
-		{"SHOW STATUS WHERE Variable_name LIKE 'Up%'", true},
-		{`SHOW FULL TABLES FROM icar_qa LIKE play_evolutions`, true},
-		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
-		{`SHOW GRANTS`, true},
-		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
-		{`SHOW COLUMNS FROM City;`, true},
-		{`SHOW FIELDS FROM City;`, true},
-		{`SHOW TRIGGERS LIKE 't'`, true},
-		{`SHOW DATABASES LIKE 'test2'`, true},
-		{`SHOW PROCEDURE STATUS WHERE Db='test'`, true},
-		{`SHOW INDEX FROM t;`, true},
-		{`SHOW KEYS FROM t;`, true},
 
 		// For default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
@@ -349,20 +275,11 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// For select with where clause
 		{"SELECT * FROM t WHERE 1 = 1", true},
 
-		// For show collation
-		{"show collation", true},
-		{"show collation like 'utf8%'", true},
-		{"show collation where Charset = 'utf8' and Collation = 'utf8_bin'", true},
-
 		// For dual
 		{"select 1 from dual", true},
 		{"select 1 from dual limit 1", true},
 		{"select 1 where exists (select 2)", false},
 		{"select 1 from dual where not exists (select 2)", true},
-
-		// For show create table
-		{"show create table test.t", true},
-		{"show create table t", true},
 
 		// For https://github.com/pingcap/tidb/issues/320
 		{`(select 1);`, true},
@@ -382,6 +299,112 @@ AAAAAAAAAAAA5gm5Mg==
 '/*!*/;`, true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestDBAStmt(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		// For SHOW statement
+		{"SHOW VARIABLES LIKE 'character_set_results'", true},
+		{"SHOW GLOBAL VARIABLES LIKE 'character_set_results'", true},
+		{"SHOW SESSION VARIABLES LIKE 'character_set_results'", true},
+		{"SHOW VARIABLES", true},
+		{"SHOW GLOBAL VARIABLES", true},
+		{"SHOW GLOBAL VARIABLES WHERE Variable_name = 'autocommit'", true},
+		{"SHOW STATUS", true},
+		{"SHOW GLOBAL STATUS", true},
+		{"SHOW SESSION STATUS", true},
+		{"SHOW STATUS LIKE 'Up%'", true},
+		{"SHOW STATUS WHERE Variable_name LIKE 'Up%'", true},
+		{`SHOW FULL TABLES FROM icar_qa LIKE play_evolutions`, true},
+		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
+		{`SHOW GRANTS`, true},
+		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
+		{`SHOW COLUMNS FROM City;`, true},
+		{`SHOW FIELDS FROM City;`, true},
+		{`SHOW TRIGGERS LIKE 't'`, true},
+		{`SHOW DATABASES LIKE 'test2'`, true},
+		{`SHOW PROCEDURE STATUS WHERE Db='test'`, true},
+		{`SHOW INDEX FROM t;`, true},
+		{`SHOW KEYS FROM t;`, true},
+		// For show character set
+		{"show character set;", true},
+		// For show collation
+		{"show collation", true},
+		{"show collation like 'utf8%'", true},
+		{"show collation where Charset = 'utf8' and Collation = 'utf8_bin'", true},
+		// For show full columns
+		{"show columns in t;", true},
+		{"show full columns in t;", true},
+		// For show create table
+		{"show create table test.t", true},
+		{"show create table t", true},
+
+		// set
+		// user defined
+		{"SET @a = 1", true},
+		{"SET @b := 1", true},
+		// session system variables
+		{"SET SESSION autocommit = 1", true},
+		{"SET @@session.autocommit = 1", true},
+		{"SET @@SESSION.autocommit = 1", true},
+		{"SET @@GLOBAL.GTID_PURGED = '123'", true},
+		{"SET @MYSQLDUMP_TEMP_LOG_BIN = @@SESSION.SQL_LOG_BIN", true},
+		{"SET LOCAL autocommit = 1", true},
+		{"SET @@local.autocommit = 1", true},
+		{"SET @@autocommit = 1", true},
+		{"SET autocommit = 1", true},
+		// global system variables
+		{"SET GLOBAL autocommit = 1", true},
+		{"SET @@global.autocommit = 1", true},
+		// Set default value
+		{"SET @@global.autocommit = default", true},
+		{"SET @@session.autocommit = default", true},
+		// SET CHARACTER SET
+		{"SET CHARACTER SET utf8mb4;", true},
+		{"SET CHARACTER SET 'utf8mb4';", true},
+		// Set password
+		{"SET PASSWORD = 'password';", true},
+		{"SET PASSWORD FOR 'root'@'localhost' = 'password';", true},
+		// SET TRANSACTION Syntax
+		{"SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", true},
+		{"SET GLOBAL TRANSACTION ISOLATION LEVEL REPEATABLE READ", true},
+		{"SET SESSION TRANSACTION READ WRITE", true},
+		{"SET SESSION TRANSACTION READ ONLY", true},
+		{"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", true},
+		{"SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED", true},
+		{"SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE", true},
+		// For set names
+		{"set names utf8", true},
+		{"set names utf8 collate utf8_unicode_ci", true},
+		{"set names binary", true},
+		// For set names and set vars
+		{"set names utf8, @@session.sql_mode=1;", true},
+		{"set @@session.sql_mode=1, names utf8, charset utf8;", true},
+
+		// For FLUSH statement
+		{"flush no_write_to_binlog tables tbl1 with read lock", true},
+		{"flush table", true},
+		{"flush tables", true},
+		{"flush tables tbl1", true},
+		{"flush no_write_to_binlog tables tbl1", true},
+		{"flush local tables tbl1", true},
+		{"flush table with read lock", true},
+		{"flush tables tbl1, tbl2, tbl3", true},
+		{"flush tables tbl1, tbl2, tbl3 with read lock", true},
+	}
+	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestFlushTable(c *C) {
+	parser := New()
+	stmt, err := parser.Parse("flush local tables tbl1,tbl2 with read lock", "", "")
+	c.Assert(err, IsNil)
+	flushTable := stmt[0].(*ast.FlushTableStmt)
+	c.Assert(flushTable.Tables[0].Name.L, Equals, "tbl1")
+	c.Assert(flushTable.Tables[1].Name.L, Equals, "tbl2")
+	c.Assert(flushTable.NoWriteToBinLog, IsTrue)
+	c.Assert(flushTable.ReadLock, IsTrue)
 }
 
 func (s *testParserSuite) TestExpression(c *C) {
