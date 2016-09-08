@@ -1411,7 +1411,7 @@ func (e *SortExec) Less(i, j int) bool {
 
 		ret, err := v1.CompareDatum(v2)
 		if err != nil {
-			e.err = err
+			e.err = errors.Trace(err)
 			return true
 		}
 
@@ -1482,7 +1482,7 @@ func (e *TopnExec) Less(i, j int) bool {
 
 		ret, err := v1.CompareDatum(v2)
 		if err != nil {
-			e.err = err
+			e.err = errors.Trace(err)
 			return true
 		}
 
