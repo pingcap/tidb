@@ -130,7 +130,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 	// set up hook
 	prevState := model.StateNone
 	var checkErr error
-	var writeOnlyTable, publicTable table.Table
+	var writeOnlyTable table.Table
 	tc.onJobUpdated = func(job *model.Job) {
 		if job.SchemaState == prevState {
 			return
@@ -144,7 +144,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 				checkErr = errors.Trace(err)
 			}
 		case model.StatePublic:
-			publicTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			_, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -185,6 +185,7 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx context.Context, d *ddl
 	}
 	d.hook = tc
 	d.start()
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }
 

@@ -116,16 +116,33 @@ func tableRangesToKVRanges(tid int64, tableRanges []plan.TableRange) []kv.KeyRan
 	return krs
 }
 
+/*
+ * Convert sorted handle to kv ranges.
+ * For continuous handles, we should merge them to a single key range.
+ */
 func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(handles))
-	for _, h := range handles {
+	i := 0
+	for i < len(handles) {
+		h := handles[i]
 		if h == math.MaxInt64 {
 			// We can't convert MaxInt64 into an left closed, right open range.
+			i++
 			continue
 		}
+		j := i + 1
+		endHandle := h + 1
+		for ; j < len(handles); j++ {
+			if handles[j] == endHandle {
+				endHandle = handles[j] + 1
+				continue
+			}
+			break
+		}
 		startKey := tablecodec.EncodeRowKeyWithHandle(tid, h)
-		endKey := tablecodec.EncodeRowKeyWithHandle(tid, h+1)
+		endKey := tablecodec.EncodeRowKeyWithHandle(tid, endHandle)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		i = j
 	}
 	return krs
 }
