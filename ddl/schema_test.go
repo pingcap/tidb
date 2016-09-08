@@ -157,7 +157,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	}
 
 	err := d1.doDDLJob(ctx, job)
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseNotExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), IsTrue)
 }
 
 func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
