@@ -1078,6 +1078,10 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 			sql:   "a = b and a > 2 and b > 3 and a < 1 and b < 2",
 			after: "eq(test.t.a, test.t.b), gt(test.t.a, 2), gt(test.t.a, 3), gt(test.t.b, 2), gt(test.t.b, 3), lt(test.t.a, 1), lt(test.t.a, 2), lt(test.t.b, 1), lt(test.t.b, 2)",
 		},
+		{
+			sql:   "a = null and cast(null as SIGNED) is null",
+			after: "eq(test.t.a, <nil>), isnull(cast(<nil>))",
+		},
 	}
 	for _, ca := range cases {
 		sql := "select * from t where " + ca.sql
