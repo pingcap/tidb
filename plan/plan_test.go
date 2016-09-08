@@ -329,6 +329,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Dummy->Projection",
 		},
 		{
+			sql:  "select * from t t1 where c in (1,2,3,4,5,6,7,8,9,0)",
+			best: "Index(t.c_d_e)[[0,0] [1,1] [2,2] [3,3] [4,4] [5,5] [6,6] [7,7] [8,8] [9,9]]->Projection",
+		},
+		{
 			sql:  "select count(*) from t t1 having 1 = 0",
 			best: "Dummy->Aggr->Selection->Projection",
 		},
@@ -454,7 +458,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
-			best: "Table(t)->Selection->Projection",
+			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3] [4,4] [5,5]]->Projection",
 		},
 		{
 			sql:  "select a from t where c = 5",
