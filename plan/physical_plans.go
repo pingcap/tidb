@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -74,6 +75,15 @@ func (p *physicalTableSource) clear() {
 	p.Aggregated = false
 }
 
+func needCount(af expression.AggregationFunction) bool {
+	return af.GetName() == ast.AggFuncCount || af.GetName() == ast.AggFuncAvg
+}
+
+func needValue(af expression.AggregationFunction) bool {
+	return af.GetName() == ast.AggFuncSum || af.GetName() == ast.AggFuncAvg || af.GetName() == ast.AggFuncFirstRow ||
+		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat
+}
+
 func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation, ctx context.Context) (expression.Schema, error) {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
@@ -119,7 +129,7 @@ func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation, ctx conte
 	for i, aggFun := range agg.AggFuncs {
 		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
-		if fun.NeedCount() {
+		if needCount(fun) {
 			cursor++
 			schema = append(schema, &expression.Column{Index: cursor})
 			args = append(args, schema[cursor])
@@ -129,7 +139,7 @@ func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation, ctx conte
 			ft.Collate = charset.CollationBin
 			p.AggFields = append(p.AggFields, ft)
 		}
-		if fun.NeedValue() {
+		if needValue(fun) {
 			cursor++
 			schema = append(schema, &expression.Column{Index: cursor})
 			args = append(args, schema[cursor])

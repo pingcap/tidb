@@ -1164,9 +1164,6 @@ func (e *StreamAggExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if row == nil {
-			for _, af := range e.AggFuncs {
-				af.UpdateStreamResult()
-			}
 			e.executed = true
 			break
 		}
