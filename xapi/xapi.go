@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
-	// "github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -97,7 +96,7 @@ func (r *selectResult) fetch() {
 			aggregate:  r.aggregate,
 			ignoreData: r.ignoreData,
 			done:       make(chan error),
-			ch:         make(chan []selectResponseRow),
+			ch:         make(chan []selectResponseRow, 1),
 		}
 		go pr.fetch()
 		r.results <- pr
@@ -155,7 +154,7 @@ type selectResponseRow struct {
 	data   []types.Datum
 }
 
-const decodeBatchSize = 1024
+const batchDecodeSize = 1024
 
 func (pr *partialResult) fetch() {
 	defer close(pr.ch)
@@ -178,38 +177,93 @@ func (pr *partialResult) fetch() {
 	}
 	pr.done <- nil
 
+	// an optimize for allocation, ringBuffer for big rows.
+	if size, ok := onlyFewRows(resp.Chunks); ok {
+		var err error
+		rows := make([]selectResponseRow, 0, size)
+		for chunkIdx := 0; chunkIdx < len(resp.Chunks); chunkIdx++ {
+			chunk := &resp.Chunks[chunkIdx]
+			rows, err = pr.decodeChunk(chunk, rows)
+			if err != nil {
+				pr.done <- errors.Trace(err)
+				return
+			}
+		}
+		if len(rows) > 0 {
+			pr.ch <- rows
+		}
+		return
+	}
+
+	// var buf ringBuffer
+	// rows := buf.get()
+	rows := make([]selectResponseRow, 0, batchDecodeSize)
 	for chunkIdx := 0; chunkIdx < len(resp.Chunks); chunkIdx++ {
 		chunk := &resp.Chunks[chunkIdx]
-		rows, err := pr.decodeChunk(chunk)
+		rows, err := pr.decodeChunk(chunk, rows)
 		if err != nil {
 			pr.done <- errors.Trace(err)
 			return
 		}
+		if len(rows) >= batchDecodeSize {
+			// when it collect enough rows, send to channel in a batch
+			pr.ch <- rows
+			rows = make([]selectResponseRow, 0, batchDecodeSize)
+			// rows = buf.get()
+		}
+	}
+	// don't forget the last batch that may small than batchDecodeSize
+	if len(rows) > 0 {
 		pr.ch <- rows
 	}
 }
 
+// onlyFewRows returns (count, true) if there are few chunks rows, otherwist (_, false)
+func onlyFewRows(chunks []tipb.Chunk) (int, bool) {
+	totalRows := 0
+	for chunkIdx := 0; chunkIdx < len(chunks); chunkIdx++ {
+		chunk := &chunks[chunkIdx]
+		if totalRows >= batchDecodeSize {
+			return 0, false
+		}
+		totalRows += len(chunk.RowsMeta)
+	}
+	return totalRows, true
+}
+
+type ringBuffer struct {
+	data [2][batchDecodeSize + 64]selectResponseRow
+	cur  int
+}
+
+func (r *ringBuffer) get() []selectResponseRow {
+	r.cur = (r.cur + 1) % 2
+	return r.data[r.cur][:]
+}
+
 var dummyData = make([]types.Datum, 0)
 
-func (pr *partialResult) decodeChunk(chunk *tipb.Chunk) ([]selectResponseRow, error) {
-	rows := make([]selectResponseRow, len(chunk.RowsMeta))
+func (pr *partialResult) decodeChunk(chunk *tipb.Chunk, rows []selectResponseRow) ([]selectResponseRow, error) {
 	dataOffset := 0
-	for i, rowMeta := range chunk.RowsMeta {
+	for _, rowMeta := range chunk.RowsMeta {
+		var data []types.Datum
+		var err error
 		if !pr.ignoreData {
 			rowData := chunk.RowsData[dataOffset : dataOffset+int(rowMeta.Length)]
-			data, err := tablecodec.DecodeValues(rowData, pr.fields, pr.index)
+			data, err = tablecodec.DecodeValues(rowData, pr.fields, pr.index)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			rows[i].data = data
 			dataOffset += int(rowMeta.Length)
 		}
-		if rows[i].data == nil {
-			rows[i].data = dummyData
+		if data == nil {
+			data = dummyData
 		}
-		if !pr.aggregate {
-			rows[i].handle = rowMeta.Handle
-		}
+
+		rows = append(rows, selectResponseRow{
+			handle: rowMeta.Handle,
+			data:   data,
+		})
 	}
 	return rows, nil
 }
