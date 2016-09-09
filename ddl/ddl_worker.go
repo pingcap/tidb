@@ -81,7 +81,7 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 			return nil
 		}
 
-		return errors.Errorf(historyJob.Error)
+		return errors.Trace(historyJob.Error)
 	}
 }
 
@@ -379,9 +379,20 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 			log.Errorf("run ddl job err %v", errors.ErrorStack(err))
 		}
 
-		job.Error = err.Error()
+		job.Error = toTError(err)
 		job.ErrorCount++
 	}
+}
+
+func toTError(err error) *terror.Error {
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	if ok {
+		return tErr
+	}
+
+	// TODO: add the error code
+	return terror.ClassDDL.New(terror.CodeUnknown, err.Error())
 }
 
 // for every lease seconds, we will re-update the whole schema, so we will wait 2 * lease time
