@@ -424,7 +424,7 @@ import (
 	BeginTransactionStmt	"BEGIN TRANSACTION statement"
 	BinlogStmt		"Binlog base64 statement"
 	CastType		"Cast function target type"
-	CharsetName		"Charactor set name"
+	CharsetName		"Character set name"
 	ColumnDef		"table column definition"
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
