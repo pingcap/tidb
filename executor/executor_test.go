@@ -960,7 +960,6 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 
 	// Test limit + order by
 	tk.MustExec("begin")
-	executor.SortBufferSize = 10
 	for i := 3; i <= 10; i += 1 {
 		tk.MustExec(fmt.Sprintf("insert INTO select_order_test VALUES (%d, \"zz\");", i))
 	}
@@ -975,7 +974,6 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 3;")
 	rowStr = fmt.Sprintf("%v %v", 11, []byte("hh"))
 	r.Check(testkit.Rows(rowStr))
-	executor.SortBufferSize = 500
 	tk.MustExec("drop table select_order_test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")

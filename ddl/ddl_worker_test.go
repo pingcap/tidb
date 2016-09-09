@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -109,18 +110,9 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 
 	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
-
-	job := &model.Job{
-		SchemaID: 1,
-		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{1},
-	}
-
 	ctx := testNewContext(c, d)
 
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
+	doDDLJobErr(c, 1, 0, model.ActionCreateSchema, []interface{}{1}, ctx, d)
 }
 
 func (s *testDDLSuite) TestTableError(c *C) {
@@ -131,50 +123,25 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
 
-	job := &model.Job{
-		SchemaID: 1,
-		TableID:  1,
-		Type:     model.ActionCreateTable,
-		Args:     []interface{}{1},
-	}
-
 	ctx := testNewContext(c, d)
 
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
+	job := doDDLJobErr(c, 1, 1, model.ActionCreateTable, []interface{}{1}, ctx, d)
 
 	job.SchemaID = -1
 	job.State = 0
 	tblInfo := testTableInfo(c, d, "t", 3)
 	job.Args = []interface{}{tblInfo}
 
-	err = d.doDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
-	job = &model.Job{
-		SchemaID: 1,
-		TableID:  1,
-		Type:     model.ActionDropTable,
-	}
-
-	err = d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
+	doDDLJobErr(c, 1, 1, model.ActionDropTable, nil, ctx, d)
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	testCreateSchema(c, testNewContext(c, d), d, dbInfo)
 
-	job = &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  -1,
-		Type:     model.ActionDropTable,
-	}
-
-	err = d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
+	job = doDDLJobErr(c, dbInfo.ID, -1, model.ActionDropTable, nil, ctx, d)
 
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 
@@ -202,25 +169,8 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 
 	ctx := testNewContext(c, d)
 
-	job := &model.Job{
-		SchemaID: -1,
-		TableID:  1,
-		Type:     model.ActionAddIndex,
-	}
-
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
-
-	job = &model.Job{
-		SchemaID: -1,
-		TableID:  1,
-		Type:     model.ActionDropIndex,
-	}
-
-	err = d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
+	doDDLJobErr(c, -1, 1, model.ActionAddIndex, nil, ctx, d)
+	doDDLJobErr(c, -1, 1, model.ActionDropIndex, nil, ctx, d)
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	tblInfo := testTableInfo(c, d, "t", 3)
@@ -228,69 +178,21 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 	testCreateSchema(c, ctx, d, dbInfo)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 
-	job = &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionAddIndex,
-		Args:     []interface{}{1},
-	}
-	err = d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
-
-	job = &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionAddIndex,
-		Args:     []interface{}{false, model.NewCIStr("t"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}},
-	}
-	err = d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
-
-	job = &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionAddIndex,
-		Args:     []interface{}{false, model.NewCIStr("c1_index"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}},
-	}
-	err = d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, []interface{}{1}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
+		[]interface{}{false, model.NewCIStr("t"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
+		[]interface{}{false, model.NewCIStr("c1_index"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}}, ctx, d)
 
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "c1_index", "c1")
 
-	job = &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionAddIndex,
-		Args:     []interface{}{false, model.NewCIStr("c1_index"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c1")}, Length: 256}}},
-	}
-	err = d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
-
-	job = &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionDropIndex,
-		Args:     []interface{}{1},
-	}
-	err = d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
+		[]interface{}{false, model.NewCIStr("c1_index"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c1")}, Length: 256}}}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, []interface{}{1}, ctx, d)
 
 	testDropIndex(c, ctx, d, dbInfo, tblInfo, "c1_index")
 
-	job = &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionDropIndex,
-		Args:     []interface{}{model.NewCIStr("c1_index")},
-	}
-	err = d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, []interface{}{model.NewCIStr("c1_index")}, ctx, d)
 }
 
 func (s *testDDLSuite) TestColumnError(c *C) {
@@ -303,25 +205,8 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 
 	ctx := testNewContext(c, d)
 
-	job := &model.Job{
-		SchemaID: -1,
-		TableID:  1,
-		Type:     model.ActionAddColumn,
-	}
-
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
-
-	job = &model.Job{
-		SchemaID: -1,
-		TableID:  1,
-		Type:     model.ActionDropColumn,
-	}
-
-	err = d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
+	doDDLJobErr(c, -1, 1, model.ActionAddColumn, nil, ctx, d)
+	doDDLJobErr(c, -1, 1, model.ActionDropColumn, nil, ctx, d)
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	tblInfo := testTableInfo(c, d, "t", 3)
@@ -335,31 +220,28 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		DefaultValue: 0,
 	}
 
+	var err error
 	col.ID, err = d.genGlobalID()
 	c.Assert(err, IsNil)
 
 	col.FieldType = *types.NewFieldType(mysql.TypeLong)
 	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c5")}}
 
-	job = &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionAddColumn,
-		Args:     []interface{}{col, pos, 0},
-	}
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(c, -1, 1, model.ActionDropColumn, []interface{}{1}, ctx, d)
+}
 
-	err = d.doDDLJob(ctx, job)
+func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []interface{},
+	ctx context.Context, d *ddl) *model.Job {
+	job := &model.Job{
+		SchemaID: schemaID,
+		TableID:  tableID,
+		Type:     tp,
+		Args:     args,
+	}
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
-	job = &model.Job{
-		SchemaID: -1,
-		TableID:  1,
-		Type:     model.ActionDropColumn,
-		Args:     []interface{}{1},
-	}
-
-	err = d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
+	return job
 }

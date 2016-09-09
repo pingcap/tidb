@@ -116,7 +116,7 @@ func main() {
 	value := make([]byte, *valueSize)
 	t := time.Now()
 	batchRW(value)
-	resp, err := http.Get("http://localhost:9191/")
+	resp, err := http.Get("http://localhost:9191/metrics")
 	if err != nil {
 		log.Fatal(err)
 	}

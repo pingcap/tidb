@@ -173,7 +173,12 @@ func (r *copRanges) slice(from, to int) *copRanges {
 	if to <= len(r.mid) {
 		ran.mid = r.mid[from:to]
 	} else {
-		ran.mid, ran.last = r.mid[from:], r.last
+		if from <= len(r.mid) {
+			ran.mid = r.mid[from:]
+		}
+		if from < to {
+			ran.last = r.last
+		}
 	}
 	return &ran
 }
@@ -382,6 +387,10 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	if err != nil {
 		it.mu.finished = true
 		return nil, errors.Trace(err)
+	}
+	if it.mu.finished {
+		// resp will be nil if iterator is finished.
+		return nil, nil
 	}
 	it.mu.respGot++
 	if it.mu.respGot == len(it.mu.tasks) {

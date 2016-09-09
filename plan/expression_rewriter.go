@@ -307,7 +307,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	// a not in (subq) will be rewrited as a != all(subq).
 	checkCondition, err := constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
 	if !np.IsCorrelated() {
-		er.p = er.b.buildSemiJoin(er.p, np, splitCNFItems(checkCondition), asScalar, v.Not)
+		er.p = er.b.buildSemiJoin(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
 		if asScalar {
 			col := er.p.GetSchema()[len(er.p.GetSchema())-1]
 			er.ctxStack[len(er.ctxStack)-1] = col
