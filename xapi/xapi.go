@@ -49,6 +49,9 @@ type SelectResult interface {
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
 	Fetch()
+	// IgnoreData sets ignore data attr to true.
+	// For index double scan, we do not need row data when scanning index.
+	IgnoreData()
 }
 
 // PartialResult is the result from a single region server.
@@ -62,10 +65,11 @@ type PartialResult interface {
 
 // SelectResult is used to get response rows from SelectRequest.
 type selectResult struct {
-	index     bool
-	aggregate bool
-	fields    []*types.FieldType
-	resp      kv.Response
+	index      bool
+	aggregate  bool
+	fields     []*types.FieldType
+	resp       kv.Response
+	ignoreData bool
 
 	results chan PartialResult
 	done    chan error
@@ -87,11 +91,12 @@ func (r *selectResult) fetch() {
 			return
 		}
 		pr := &partialResult{
-			index:     r.index,
-			fields:    r.fields,
-			reader:    reader,
-			aggregate: r.aggregate,
-			done:      make(chan error),
+			index:      r.index,
+			fields:     r.fields,
+			reader:     reader,
+			aggregate:  r.aggregate,
+			ignoreData: r.ignoreData,
+			done:       make(chan error),
 		}
 		go pr.fetch()
 		r.results <- pr
@@ -119,6 +124,10 @@ func (r *selectResult) SetFields(fields []*types.FieldType) {
 	r.fields = fields
 }
 
+func (r *selectResult) IgnoreData() {
+	r.ignoreData = true
+}
+
 // Close closes SelectResult.
 func (r *selectResult) Close() error {
 	return r.resp.Close()
@@ -126,12 +135,15 @@ func (r *selectResult) Close() error {
 
 // partialResult represents a subset of select result.
 type partialResult struct {
-	index     bool
-	aggregate bool
-	fields    []*types.FieldType
-	reader    io.ReadCloser
-	resp      *tipb.SelectResponse
-	cursor    int
+	index      bool
+	aggregate  bool
+	fields     []*types.FieldType
+	reader     io.ReadCloser
+	resp       *tipb.SelectResponse
+	chunkIdx   int
+	cursor     int
+	dataOffset int64
+	ignoreData bool
 
 	done    chan error
 	fetched bool
@@ -156,6 +168,8 @@ func (pr *partialResult) fetch() {
 	pr.done <- nil
 }
 
+var dummyData = make([]types.Datum, 0)
+
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
 func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
@@ -168,19 +182,46 @@ func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 			return 0, nil, err
 		}
 	}
+	if len(pr.resp.Chunks) > 0 {
+		// For new resp rows structure.
+		chunk := pr.getChunk()
+		if chunk == nil {
+			return 0, nil, nil
+		}
+		rowMeta := chunk.RowsMeta[pr.cursor]
+		if !pr.ignoreData {
+			rowData := chunk.RowsData[pr.dataOffset : pr.dataOffset+rowMeta.Length]
+			data, err = tablecodec.DecodeValues(rowData, pr.fields, pr.index)
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			pr.dataOffset += rowMeta.Length
+		}
+		if data == nil {
+			data = dummyData
+		}
+		if !pr.aggregate {
+			handle = rowMeta.Handle
+		}
+		pr.cursor++
+		return
+	}
 	if pr.cursor >= len(pr.resp.Rows) {
 		return 0, nil, nil
 	}
 	row := pr.resp.Rows[pr.cursor]
-	data, err = tablecodec.DecodeValues(row.Data, pr.fields, pr.index)
-	if err != nil {
-		return 0, nil, errors.Trace(err)
+	if !pr.ignoreData {
+		data, err = tablecodec.DecodeValues(row.Data, pr.fields, pr.index)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
 	}
 	if data == nil {
 		// When no column is referenced, the data may be nil, like 'select count(*) from t'.
 		// In this case, we need to create a zero length datum slice,
 		// as caller will check if data is nil to finish iteration.
-		data = make([]types.Datum, 0)
+		// data = make([]types.Datum, 0)
+		data = dummyData
 	}
 	if !pr.aggregate {
 		handleBytes := row.GetHandle()
@@ -194,6 +235,21 @@ func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 	return
 }
 
+func (pr *partialResult) getChunk() *tipb.Chunk {
+	for {
+		if pr.chunkIdx >= len(pr.resp.Chunks) {
+			return nil
+		}
+		chunk := &pr.resp.Chunks[pr.chunkIdx]
+		if pr.cursor < len(chunk.RowsMeta) {
+			return chunk
+		}
+		pr.cursor = 0
+		pr.dataOffset = 0
+		pr.chunkIdx++
+	}
+}
+
 // Close closes the sub result.
 func (pr *partialResult) Close() error {
 	return nil
@@ -203,9 +259,9 @@ func (pr *partialResult) Close() error {
 // conncurrency: The max concurrency for underlying coprocessor request.
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
-func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrder bool) (SelectResult, error) {
+func Select(client kv.Client, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (SelectResult, error) {
 	// Convert tipb.*Request to kv.Request.
-	kvReq, err := composeRequest(req, concurrency, keepOrder)
+	kvReq, err := composeRequest(req, keyRanges, concurrency, keepOrder)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -238,20 +294,16 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int, keepOrde
 }
 
 // Convert tipb.Request to kv.Request.
-func composeRequest(req *tipb.SelectRequest, concurrency int, keepOrder bool) (*kv.Request, error) {
+func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (*kv.Request, error) {
 	kvReq := &kv.Request{
 		Concurrency: concurrency,
 		KeepOrder:   keepOrder,
+		KeyRanges:   keyRanges,
 	}
 	if req.IndexInfo != nil {
 		kvReq.Tp = kv.ReqTypeIndex
-		tid := req.IndexInfo.GetTableId()
-		idxID := req.IndexInfo.GetIndexId()
-		kvReq.KeyRanges = EncodeIndexRanges(tid, idxID, req.Ranges)
 	} else {
 		kvReq.Tp = kv.ReqTypeSelect
-		tid := req.GetTableInfo().GetTableId()
-		kvReq.KeyRanges = EncodeTableRanges(tid, req.Ranges)
 	}
 	if req.OrderBy != nil {
 		kvReq.Desc = req.OrderBy[0].Desc
@@ -362,35 +414,4 @@ func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
 	}
 	pi.Columns = cols
 	return pi
-}
-
-// EncodeTableRanges encodes table ranges into kv.KeyRanges.
-func EncodeTableRanges(tid int64, rans []*tipb.KeyRange) []kv.KeyRange {
-	keyRanges := make([]kv.KeyRange, 0, len(rans))
-	for _, r := range rans {
-		start := tablecodec.EncodeRowKey(tid, r.Low)
-		end := tablecodec.EncodeRowKey(tid, r.High)
-		nr := kv.KeyRange{
-			StartKey: start,
-			EndKey:   end,
-		}
-		keyRanges = append(keyRanges, nr)
-	}
-	return keyRanges
-}
-
-// EncodeIndexRanges encodes index ranges into kv.KeyRanges.
-func EncodeIndexRanges(tid, idxID int64, rans []*tipb.KeyRange) []kv.KeyRange {
-	keyRanges := make([]kv.KeyRange, 0, len(rans))
-	for _, r := range rans {
-		// Convert range to kv.KeyRange
-		start := tablecodec.EncodeIndexSeekKey(tid, idxID, r.Low)
-		end := tablecodec.EncodeIndexSeekKey(tid, idxID, r.High)
-		nr := kv.KeyRange{
-			StartKey: start,
-			EndKey:   end,
-		}
-		keyRanges = append(keyRanges, nr)
-	}
-	return keyRanges
 }

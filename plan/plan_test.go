@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	"sort"
+	"strings"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -128,6 +130,11 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			sql:   "select * from t ta, t tb where (ta.d, ta.a) = (tb.b, tb.c)",
 			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
 			best:  "Join{DataScan(t)->DataScan(t)}->Projection",
+		},
+		{
+			sql:   "select * from t t1, t t2 where t1.a = t2.b and t2.b > 0 and t1.a = t1.c and t1.d like 'abc' and t2.d = t1.d",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
 		},
 		{
 			sql:   "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
@@ -271,11 +278,15 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
-			best: "LeftHashJoin{LeftHashJoin{LeftHashJoin{LeftHashJoin{Table(t)->Selection->Table(t)}(t3.a,t4.a)->Table(t)}(t4.a,t5.a)->Table(t)}(t5.a,t1.a)(t3.a,t1.a)->Table(t)}(t3.a,t2.a)(t1.a,t2.a)(t4.a,t2.a)->Projection",
+			best: "LeftHashJoin{LeftHashJoin{LeftHashJoin{Table(t)->Selection->Table(t)}->LeftHashJoin{Table(t)->Table(t)}}->Table(t)}->Projection",
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
 			best: "Table(t)->Apply(LeftHashJoin{RightHashJoin{Table(t)->Selection->Table(t)}(t2.a,t3.a)->Table(t)}(t3.a,t1.a)->Projection)->Selection->Projection",
+		},
+		{
+			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)",
+			best: "Table(t)->Apply(LeftHashJoin{LeftHashJoin{Table(t)->Table(t)}->Table(t)->Selection}->Projection)->Selection->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -316,6 +327,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		{
 			sql:  "select * from t t1 where 1 = 0",
 			best: "Dummy->Projection",
+		},
+		{
+			sql:  "select * from t t1 where c in (1,2,3,4,5,6,7,8,9,0)",
+			best: "Index(t.c_d_e)[[0,0] [1,1] [2,2] [3,3] [4,4] [5,5] [6,6] [7,7] [8,8] [9,9]]->Projection",
 		},
 		{
 			sql:  "select count(*) from t t1 having 1 = 0",
@@ -468,7 +483,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
-			best: "Table(t)->Selection->Projection",
+			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3] [4,4] [5,5]]->Projection",
 		},
 		{
 			sql:  "select a from t where c = 5",
@@ -1063,5 +1078,74 @@ func check(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
 	}
 	for _, child := range p.GetChildren() {
 		check(child, c, ans, comment)
+	}
+}
+
+func (s *testPlanSuite) TestConstantPropagation(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql   string
+		after string
+	}{
+		{
+			sql:   "a = b and b = c and c = d and d = 1",
+			after: "eq(test.t.a, 1), eq(test.t.b, 1), eq(test.t.c, 1), eq(test.t.d, 1)",
+		},
+		{
+			sql:   "a = b and b = 1 and a = null and c = d and c > 2 and c != 4 and d != 5",
+			after: "<nil>, eq(test.t.a, 1), eq(test.t.b, 1), eq(test.t.c, test.t.d), gt(test.t.c, 2), gt(test.t.d, 2), ne(test.t.c, 4), ne(test.t.c, 5), ne(test.t.d, 4), ne(test.t.d, 5)",
+		},
+		{
+			sql:   "a = b and b > 0 and a = c",
+			after: "eq(test.t.a, test.t.b), eq(test.t.a, test.t.c), gt(test.t.a, 0), gt(test.t.b, 0), gt(test.t.c, 0)",
+		},
+		{
+			sql:   "a = b and b = c and c LIKE 'abc%'",
+			after: "eq(test.t.a, test.t.b), eq(test.t.b, test.t.c), like(test.t.a, abc%, 92), like(test.t.b, abc%, 92), like(test.t.c, abc%, 92)",
+		},
+		{
+			sql:   "a = b and a > 2 and b > 3 and a < 1 and b < 2",
+			after: "eq(test.t.a, test.t.b), gt(test.t.a, 2), gt(test.t.a, 3), gt(test.t.b, 2), gt(test.t.b, 3), lt(test.t.a, 1), lt(test.t.a, 2), lt(test.t.b, 1), lt(test.t.b, 2)",
+		},
+		{
+			sql:   "a = null and cast(null as SIGNED) is null",
+			after: "eq(test.t.a, <nil>), isnull(cast(<nil>))",
+		},
+	}
+	for _, ca := range cases {
+		sql := "select * from t where " + ca.sql
+		comment := Commentf("for %s", sql)
+		stmt, err := s.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mock.NewContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		var (
+			sel    *Selection
+			ok     bool
+			result []string
+		)
+		v := lp
+		for {
+			if sel, ok = v.(*Selection); ok {
+				break
+			}
+			v = v.GetChildByIndex(0).(LogicalPlan)
+		}
+		for _, v := range sel.Conditions {
+			result = append(result, v.String())
+		}
+		sort.Strings(result)
+		c.Assert(strings.Join(result, ", "), Equals, ca.after, Commentf("for %s", ca.sql))
 	}
 }

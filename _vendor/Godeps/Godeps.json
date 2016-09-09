@@ -213,7 +213,7 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-tipb",
-			"Rev": "076169255d6d516f4a72d1648c085d872ff8bf48"
+			"Rev": "89d447d2cc7b0019e697fb95e65981d3a641b7ec"
 		},
 		{
 			"ImportPath": "github.com/rcrowley/go-metrics",

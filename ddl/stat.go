@@ -89,7 +89,11 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 		m[ddlJobAction] = ddlInfo.Job.Type.String()
 		m[ddlJobLastUpdateTS] = ddlInfo.Job.LastUpdateTS / 1e9
 		m[ddlJobState] = ddlInfo.Job.State.String()
-		m[ddlJobError] = ddlInfo.Job.Error
+		if ddlInfo.Job.Error == nil {
+			m[ddlJobError] = ""
+		} else {
+			m[ddlJobError] = ddlInfo.Job.Error.Error()
+		}
 		m[ddlJobSchemaState] = ddlInfo.Job.SchemaState.String()
 		m[ddlJobSchemaID] = ddlInfo.Job.SchemaID
 		m[ddlJobTableID] = ddlInfo.Job.TableID
@@ -110,7 +114,11 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 		m[bgJobAction] = bgInfo.Job.Type.String()
 		m[bgJobLastUpdateTS] = bgInfo.Job.LastUpdateTS / 1e9
 		m[bgJobState] = bgInfo.Job.State.String()
-		m[bgJobError] = bgInfo.Job.Error
+		if bgInfo.Job.Error == nil {
+			m[bgJobError] = ""
+		} else {
+			m[bgJobError] = bgInfo.Job.Error.Error()
+		}
 		m[bgJobSchemaState] = bgInfo.Job.SchemaState.String()
 		m[bgJobSchemaID] = bgInfo.Job.SchemaID
 		m[bgJobTableID] = bgInfo.Job.TableID

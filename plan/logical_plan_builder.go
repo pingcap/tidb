@@ -167,21 +167,6 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 	return
 }
 
-// CNF means conjunctive normal form, e.g. a and b and c.
-func splitCNFItems(onExpr expression.Expression) []expression.Expression {
-	switch v := onExpr.(type) {
-	case *expression.ScalarFunction:
-		if v.FuncName.L == ast.AndAnd {
-			var ret []expression.Expression
-			for _, arg := range v.Args {
-				ret = append(ret, splitCNFItems(arg)...)
-			}
-			return ret
-		}
-	}
-	return []expression.Expression{onExpr}
-}
-
 func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	if join.Right == nil {
 		return b.buildResultSetNode(join.Left)
@@ -203,7 +188,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		if correlated {
 			b.err = errors.New("On condition doesn't support subqueries yet.")
 		}
-		onCondition := splitCNFItems(onExpr)
+		onCondition := expression.SplitCNFItems(onExpr)
 		eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, leftPlan, rightPlan)
 		joinPlan.EqualConditions = eqCond
 		joinPlan.LeftConditions = leftCond
@@ -240,7 +225,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		p = np
 		selection.correlated = selection.correlated || correlated
 		if expr != nil {
-			expressions = append(expressions, splitCNFItems(expr)...)
+			expressions = append(expressions, expression.SplitCNFItems(expr)...)
 		}
 	}
 	if len(expressions) == 0 {

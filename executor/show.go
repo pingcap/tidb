@@ -411,10 +411,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if pkCol != nil {
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
-		buf.WriteString(fmt.Sprintf(" PRIMARY KEY (`%s`) ", pkCol.Name.O))
+		buf.WriteString(fmt.Sprintf(" PRIMARY KEY (`%s`)", pkCol.Name.O))
 	}
 
-	if len(tb.Indices()) > 0 {
+	if len(tb.Indices()) > 0 || len(tb.Meta().ForeignKeys) > 0 {
 		buf.WriteString(",\n")
 	}
 
@@ -438,12 +438,15 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 	}
 
+	if len(tb.Indices()) > 0 && len(tb.Meta().ForeignKeys) > 0 {
+		buf.WriteString(",\n")
+	}
+
 	for _, fk := range tb.Meta().ForeignKeys {
 		if fk.State != model.StatePublic {
 			continue
 		}
 
-		buf.WriteString("\n")
 		cols := make([]string, 0, len(fk.Cols))
 		for _, c := range fk.Cols {
 			cols = append(cols, c.L)

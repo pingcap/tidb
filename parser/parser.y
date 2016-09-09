@@ -48,6 +48,8 @@ import (
 	/*yy:token "%c"     */	identifier      "identifier"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 
+	with		"WITH"
+
 	/* the following tokens belong to NotKeywordToken*/
 	abs		"ABS"
 	addDate		"ADDDATE"
@@ -138,6 +140,7 @@ import (
 	compressed	"COMPRESSED"
 	compression	"COMPRESSION"
 	connection 	"CONNECTION"
+	consistent	"CONSISTENT"
 	data 		"DATA"
 	dateType	"DATE"
 	datetimeType	"DATETIME"
@@ -155,6 +158,7 @@ import (
 	fields		"FIELDS"
 	first		"FIRST"
 	fixed		"FIXED"
+	flush		"FLUSH"
 	full		"FULL"
 	grants		"GRANTS"
 	hash		"HASH"
@@ -166,6 +170,7 @@ import (
 	mode		"MODE"
 	maxRows		"MAX_ROWS"
 	minRows		"MIN_ROWS"
+	noWriteToBinLog "NO_WRITE_TO_BINLOG"
 	names		"NAMES"
 	national	"NATIONAL"
 	no		"NO"
@@ -185,6 +190,7 @@ import (
 	serializable	"SERIALIZABLE"
 	session		"SESSION"
 	signed		"SIGNED"
+	snapshot	"SNAPSHOT"
 	space 		"SPACE"
 	sqlCache	"SQL_CACHE"
 	sqlNoCache	"SQL_NO_CACHE"
@@ -482,6 +488,7 @@ import (
 	FieldAsNameOpt		"Field alias name opt"
 	FieldList		"field expression list"
 	FieldsOrColumns 	"Fields or columns"
+	FlushStmt		"Flush statement"
 	TableRefsClause		"Table references clause"
 	Function		"function expr"
 	FunctionCallAgg		"Function call on aggregate data"
@@ -533,6 +540,7 @@ import (
 	NotOpt			"optional NOT"
 	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
+	NoWriteToBinLogAliasOpt "NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType		"Grant statement object type"
 	OnDuplicateKeyUpdate	"ON DUPLICATE KEY UPDATE value list"
 	Operand			"operand"
@@ -602,6 +610,7 @@ import (
 	TableLockList		"Table lock list"
 	TableName		"Table name"
 	TableNameList		"Table name list"
+	TableNameListOpt	"Table name list opt"
 	TableOption		"create table option"
 	TableOptionList		"create table option list"
 	TableOptionListOpt	"create table option list opt"
@@ -632,6 +641,7 @@ import (
 	WhereClauseOptional	"Optinal WHERE clause"
 	WhenClause		"When clause"
 	WhenClauseList		"When clause list"
+	WithReadLockOpt		"With Read Lock opt"
 	ElseOpt			"Optional else clause"
 	ExpressionOpt		"Optional expression"
 	Type			"Types"
@@ -879,6 +889,10 @@ BeginTransactionStmt:
 		$$ = &ast.BeginStmt{}
 	}
 |	"START" "TRANSACTION"
+	{
+		$$ = &ast.BeginStmt{}
+	}
+|	"START" "TRANSACTION" "WITH" "CONSISTENT" "SNAPSHOT"
 	{
 		$$ = &ast.BeginStmt{}
 	}
@@ -1945,13 +1959,13 @@ identifier | UnReservedKeyword | NotKeywordToken
 
 UnReservedKeyword:
  "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
-|	"COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "DYNAMIC"
-|	"END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FULL" | "HASH" | "LOCAL"
-|	"NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION"
-|	"SIGNED" | "START" | "STATUS" | "GLOBAL" | "TABLES" | "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE"
-|	"UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
-|	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
+|	"COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO"
+|	"DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FULL" |"GLOBAL"
+|	"HASH" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK"
+|	"SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION"
+|	"TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
+|	"COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
+|	"MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE"
 |	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG"
 
@@ -4110,6 +4124,47 @@ ShowTableAliasOpt:
 		$$ = $2.(*ast.TableName)
 	}
 
+FlushStmt:
+	"FLUSH" NoWriteToBinLogAliasOpt TableOrTables TableNameListOpt WithReadLockOpt
+	{
+		$$ = &ast.FlushTableStmt{
+			Tables: $4.([]*ast.TableName),
+			NoWriteToBinLog: $2.(bool),
+			ReadLock: $5.(bool),
+		}
+	}
+
+NoWriteToBinLogAliasOpt:
+	{
+		$$ = false
+	}
+|	"NO_WRITE_TO_BINLOG"
+	{
+		$$ = true
+	}
+|	"LOCAL"
+	{
+		$$ = true
+	}
+
+TableNameListOpt:
+	{
+		$$ = []*ast.TableName{}
+	}
+|	TableNameList
+	{
+		$$ = $1
+	}
+
+WithReadLockOpt:
+	{
+		$$ = false
+	}
+|	"WITH" "READ" "LOCK"
+	{
+		$$ = true
+	}
+
 Statement:
 	EmptyStmt
 |	AdminStmt
@@ -4130,6 +4185,7 @@ Statement:
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
+|	FlushStmt
 |	GrantStmt
 |	InsertIntoStmt
 |	LoadDataStmt
