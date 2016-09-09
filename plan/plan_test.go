@@ -340,7 +340,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		{
 			// Multi distinct column can't apply stream agg.
 			sql:  "select count(distinct e), sum(distinct c) from t where c = 1 group by d",
-			best: "Index(t.c_d_e)[[1,1]]->HashAgg->Projection",
+			best: "Index(t.c_d_e)[[1,1]]->StreamAgg->Projection",
 		},
 		{
 			sql:  "select * from t a where a.c = 1 order by a.d limit 2",

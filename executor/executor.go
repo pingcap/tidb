@@ -1069,7 +1069,7 @@ func (e *HashAggExec) getGroupKey(row *Row) ([]byte, error) {
 		}
 		return val.GetBytes(), nil
 	}
-	if len(e.GroupByItems) == 0 {
+	if !e.hasGby {
 		return []byte{}, nil
 	}
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
@@ -1154,40 +1154,42 @@ func (e *StreamAggExec) Fields() []*ast.ResultField {
 
 // Next implements Executor Next interface.
 func (e *StreamAggExec) Next() (*Row, error) {
-	// In this stage we consider all data from src as a single group.
-	if !e.executed {
-		var groupKey []byte
-		for {
-			row, err := e.Src.Next()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if row == nil {
-				for _, af := range e.AggFuncs {
-					af.UpdateStreamResult()
-				}
-				e.executed = true
-				break
-			}
-			groupKey, err = e.getGroupKey(row)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			var end bool
-			for _, af := range e.AggFuncs {
-				end, err = af.StreamUpdate(row.Data, groupKey, e.ctx)
-			}
-			if end {
-				break
-			}
-		}
-		retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}
-		for _, af := range e.AggFuncs {
-			retRow.Data = append(retRow.Data, af.GetStreamResult())
-		}
-		return retRow, nil
+	if e.executed {
+		return nil, nil
 	}
-	return nil, nil
+	var groupKey []byte
+	for {
+		row, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			for _, af := range e.AggFuncs {
+				af.UpdateStreamResult()
+			}
+			e.executed = true
+			break
+		}
+		groupKey, err = e.getGroupKey(row)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var end bool
+		for _, af := range e.AggFuncs {
+			end, err = af.StreamUpdate(row.Data, groupKey, e.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		if end {
+			break
+		}
+	}
+	retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}
+	for _, af := range e.AggFuncs {
+		retRow.Data = append(retRow.Data, af.GetStreamResult())
+	}
+	return retRow, nil
 }
 
 func (e *StreamAggExec) getGroupKey(row *Row) ([]byte, error) {

@@ -154,8 +154,7 @@ type LogicalPlan interface {
 	PruneColumnsAndResolveIndices([]*expression.Column) ([]*expression.Column, error)
 
 	// convert2PhysicalPlan converts logical plan to physical plan. The arg prop means the required sort property.
-	// This function returns two response. The first one is the best plan that matches the required property strictly.
-	// The second one is the best plan that needn't matches the required property.
+	// This function returns the best plan that matches the required property strictly containing the info of count, cost and plan.
 	convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error)
 }
 
@@ -165,7 +164,7 @@ type PhysicalPlan interface {
 	Plan
 
 	// matchProperty means that this physical plan will try to return the best plan that matches the required property.
-	// rowCounts means the child row counts, and childPlanInfo means the plan infos returned by children.
+	// childPlanInfo means the plan infos returned by children.
 	matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo
 
 	// Copy copies the current plan.

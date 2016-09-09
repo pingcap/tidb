@@ -509,7 +509,7 @@ func (p *Aggregation) handleStreamAgg(prop *requiredProperty) (*physicalPlanInfo
 	}
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
-	isDistinct := false
+	// TODO: Consider distinct key.
 	gbyCols := make([]*expression.Column, 0, len(p.GroupByItems)+1)
 	info := &physicalPlanInfo{cost: math.MaxFloat64}
 	// TODO: extract columns in monotonic functions.
@@ -521,23 +521,6 @@ func (p *Aggregation) handleStreamAgg(prop *requiredProperty) (*physicalPlanInfo
 		} else {
 			// group by a + b is not interested in any orders.
 			return info, nil
-		}
-	}
-	for _, fun := range p.AggFuncs {
-		if fun.IsDistinct() {
-			if isDistinct {
-				// sum(distinct a), count(distinct b) is not interested in any orders.
-				return info, nil
-			}
-			isDistinct = true
-			for _, arg := range fun.GetArgs() {
-				if col, ok := arg.(*expression.Column); ok {
-					gbyCols = append(gbyCols, col)
-				} else {
-					// sum(distinct a + b) is not interested in any orders.
-					return info, nil
-				}
-			}
 		}
 	}
 	isSortKey := make([]bool, len(gbyCols))

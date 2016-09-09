@@ -2141,6 +2141,19 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("4", "2", "5"))
 	result = tk.MustQuery("select min(distinct b) from (select * from t1) t group by a")
 	result.Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index(b, a))")
+	tk.MustExec("insert into t1 (a, b) values (1, 1),(2, 2),(3, 3),(1, 4), (1,1),(3, 5), (2,2), (3,5), (3,3)")
+	result = tk.MustQuery("select avg(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("2.5000", "2.0000", "4.0000"))
+	result = tk.MustQuery("select sum(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("5", "2", "8"))
+	result = tk.MustQuery("select count(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("2", "1", "2"))
+	result = tk.MustQuery("select max(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("4", "2", "5"))
+	result = tk.MustQuery("select min(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("1", "2", "3"))
 }
 
 func (s *testSuite) TestAdapterStatement(c *C) {

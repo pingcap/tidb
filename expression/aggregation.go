@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -99,15 +98,14 @@ const (
 )
 
 type aggFunction struct {
-	name          string
-	mode          AggFunctionMode
-	Args          []Expression
-	Distinct      bool
-	resultMapper  aggCtxMapper
-	streamCtx     *ast.AggEvaluateContext
-	resultCtx     *ast.AggEvaluateContext
-	lastGroup     []byte
-	lastRowEncode []byte
+	name         string
+	mode         AggFunctionMode
+	Args         []Expression
+	Distinct     bool
+	resultMapper aggCtxMapper
+	streamCtx    *ast.AggEvaluateContext
+	resultCtx    *ast.AggEvaluateContext
+	lastGroup    []byte
 }
 
 func newAggFunc(name string, args []Expression, dist bool) aggFunction {
@@ -127,7 +125,6 @@ func (af *aggFunction) Clear() {
 	af.streamCtx = nil
 	af.resultCtx = nil
 	af.lastGroup = nil
-	af.lastRowEncode = nil
 }
 
 // GetName implements AggregationFunction interface.
@@ -170,29 +167,19 @@ func (af *aggFunction) getContext(groupKey []byte) *ast.AggEvaluateContext {
 	return ctx
 }
 
-func (af *aggFunction) checkDistinct(values ...types.Datum) (bool, error) {
-	bytes, err := codec.EncodeValue(nil, values...)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if string(bytes) == string(af.lastRowEncode) {
-		return false, nil
-	}
-	af.lastRowEncode = bytes
-	return true, nil
-}
-
 func (af *aggFunction) UpdateStreamResult() {
 	af.resultCtx = af.streamCtx
 	af.streamCtx = &ast.AggEvaluateContext{}
-	af.lastRowEncode = nil
+	if af.Distinct {
+		af.streamCtx.DistinctChecker = distinct.CreateDistinctChecker()
+	}
 }
 
 func (af *aggFunction) getStreamedContext(groupKey []byte) (*ast.AggEvaluateContext, bool) {
 	end := false
 	if len(af.lastGroup) == 0 {
 		af.lastGroup = groupKey
-	} else if string(af.lastGroup) != string(groupKey) {
+	} else if bytes.Compare(af.lastGroup, groupKey) != 0 {
 		af.lastGroup = groupKey
 		end = true
 	}
@@ -200,6 +187,9 @@ func (af *aggFunction) getStreamedContext(groupKey []byte) (*ast.AggEvaluateCont
 		af.UpdateStreamResult()
 	} else if af.streamCtx == nil {
 		af.streamCtx = &ast.AggEvaluateContext{}
+		if af.Distinct {
+			af.streamCtx.DistinctChecker = distinct.CreateDistinctChecker()
+		}
 	}
 	return af.streamCtx, end
 }
@@ -240,11 +230,11 @@ func (af *aggFunction) streamUpdateSum(row []types.Datum, groupKey []byte, ectx 
 	a := af.Args[0]
 	value, err := a.Eval(row, ectx)
 	if af.Distinct {
-		distinct, err := af.checkDistinct(value)
-		if err != nil {
-			return false, errors.Trace(err)
+		d, err1 := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
+		if err1 != nil {
+			return false, errors.Trace(err1)
 		}
-		if !distinct {
+		if !d {
 			return false, nil
 		}
 	}
@@ -324,9 +314,9 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, ectx context
 
 func (cf *countFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx context.Context) (bool, error) {
 	ctx, end := cf.getStreamedContext(groupKey)
-	var vals []types.Datum
+	var vals []interface{}
 	if cf.Distinct {
-		vals = make([]types.Datum, 0, len(cf.Args))
+		vals = make([]interface{}, 0, len(cf.Args))
 	}
 	for _, a := range cf.Args {
 		value, err := a.Eval(row, ectx)
@@ -337,15 +327,15 @@ func (cf *countFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx c
 			return end, nil
 		}
 		if cf.Distinct {
-			vals = append(vals, value)
+			vals = append(vals, value.GetValue())
 		}
 	}
 	if cf.Distinct {
-		distinct, err := cf.checkDistinct(vals...)
+		d, err := ctx.DistinctChecker.Check(vals)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		if !distinct {
+		if !d {
 			return false, nil
 		}
 	}
@@ -485,7 +475,7 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, ectx contex
 
 func (cf *concatFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx context.Context) (bool, error) {
 	ctx, end := cf.getStreamedContext(groupKey)
-	vals := make([]types.Datum, 0, len(cf.Args))
+	vals := make([]interface{}, 0, len(cf.Args))
 	for _, a := range cf.Args {
 		value, err := a.Eval(row, ectx)
 		if err != nil {
@@ -497,11 +487,11 @@ func (cf *concatFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx 
 		vals = append(vals, value)
 	}
 	if cf.Distinct {
-		distinct, err := cf.checkDistinct(vals...)
+		d, err := ctx.DistinctChecker.Check(vals)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		if !distinct {
+		if !d {
 			return false, nil
 		}
 	}
@@ -512,7 +502,7 @@ func (cf *concatFunction) StreamUpdate(row []types.Datum, groupKey []byte, ectx 
 		ctx.Buffer.WriteString(",")
 	}
 	for _, val := range vals {
-		ctx.Buffer.WriteString(fmt.Sprintf("%v", val.GetValue()))
+		ctx.Buffer.WriteString(fmt.Sprintf("%v", val))
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
 	return end, nil
