@@ -424,6 +424,7 @@ var tokenMap = map[string]int{
 	"DATETIME":            datetimeType,
 	"TIMESTAMP":           timestampType,
 	"YEAR":                yearType,
+	"MODIFY":              modify,
 	"CHAR":                charType,
 	"VARCHAR":             varcharType,
 	"BINARY":              binaryType,

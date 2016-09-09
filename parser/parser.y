@@ -49,6 +49,7 @@ import (
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 
 	with		"WITH"
+	modify		"MODIFY"
 
 	/* the following tokens belong to NotKeywordToken*/
 	abs		"ABS"
@@ -797,6 +798,14 @@ AlterTableSpec:
 |	"ENABLE" "KEYS"
 	{
 		$$ = &ast.AlterTableSpec{}
+	}
+|	"MODIFY" ColumnKeywordOpt ColumnDef ColumnPosition
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:		ast.AlterTableModifyColumn,
+			Column:		$3.(*ast.ColumnDef),
+			Position:	$4.(*ast.ColumnPosition),
+		}
 	}
 
 KeyOrIndex:

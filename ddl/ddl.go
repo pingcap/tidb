@@ -936,6 +936,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 		switch spec.Tp {
 		case ast.AlterTableAddColumn:
 			err = d.AddColumn(ctx, ident, spec)
+		case ast.AlterTableModifyColumn:
+			err = d.ModifyColumn(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec.DropColumn.Name)
 		case ast.AlterTableDropIndex:
@@ -974,6 +976,12 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 		}
 	}
 
+	return nil
+}
+
+// ModifyColumn will add a new column to the table.
+func (d *ddl) ModifyColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+	// TODO: implement it
 	return nil
 }
 
