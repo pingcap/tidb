@@ -160,6 +160,7 @@ import (
 	fixed		"FIXED"
 	flush		"FLUSH"
 	full		"FULL"
+	function	"FUNCTION"
 	grants		"GRANTS"
 	hash		"HASH"
 	identified	"IDENTIFIED"
@@ -1967,7 +1968,7 @@ UnReservedKeyword:
 |	"COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
 |	"MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE"
-|	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG"
+|	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
@@ -4058,6 +4059,16 @@ ShowTargetFilterable:
 	}
 |	"PROCEDURE" "STATUS"
 	{
+		$$ = &ast.ShowStmt {
+			Tp: ast.ShowProcedureStatus,
+		}
+	}
+|	"FUNCTION" "STATUS"
+	{
+		// This statement is similar to SHOW PROCEDURE STATUS but for stored functions.
+		// See http://dev.mysql.com/doc/refman/5.7/en/show-function-status.html
+		// We do not support neither stored functions nor stored procedures.
+		// So we reuse show procedure status process logic.
 		$$ = &ast.ShowStmt {
 			Tp: ast.ShowProcedureStatus,
 		}
