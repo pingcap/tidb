@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/terror"
 )
 
 // ActionType is the type for DDL action.
@@ -67,12 +68,12 @@ func (action ActionType) String() string {
 
 // Job is for a DDL operation.
 type Job struct {
-	ID       int64      `json:"id"`
-	Type     ActionType `json:"type"`
-	SchemaID int64      `json:"schema_id"`
-	TableID  int64      `json:"table_id"`
-	State    JobState   `json:"state"`
-	Error    string     `json:"err"`
+	ID       int64         `json:"id"`
+	Type     ActionType    `json:"type"`
+	SchemaID int64         `json:"schema_id"`
+	TableID  int64         `json:"table_id"`
+	State    JobState      `json:"state"`
+	Error    *terror.Error `json:"err"`
 	// every time we meet an error when running job, we will increase it
 	ErrorCount int64         `json:"err_count"`
 	Args       []interface{} `json:"-"`

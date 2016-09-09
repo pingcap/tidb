@@ -93,7 +93,7 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 			log.Errorf("[ddl] run background job err %v", errors.ErrorStack(err))
 		}
 
-		job.Error = err.Error()
+		job.Error = toTError(err)
 		job.ErrorCount++
 	}
 }

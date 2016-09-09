@@ -16,6 +16,7 @@ package executor_test
 import (
 	"flag"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -66,7 +67,8 @@ func (s *testSuite) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		s.store = store
 	}
-	log.SetLevelByString("warn")
+	logLevel := os.Getenv("log_level")
+	log.SetLevelByString(logLevel)
 	executor.BaseLookupTableTaskSize = 2
 }
 
@@ -958,7 +960,6 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 
 	// Test limit + order by
 	tk.MustExec("begin")
-	executor.SortBufferSize = 10
 	for i := 3; i <= 10; i += 1 {
 		tk.MustExec(fmt.Sprintf("insert INTO select_order_test VALUES (%d, \"zz\");", i))
 	}
@@ -973,7 +974,6 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 3;")
 	rowStr = fmt.Sprintf("%v %v", 11, []byte("hh"))
 	r.Check(testkit.Rows(rowStr))
-	executor.SortBufferSize = 500
 	tk.MustExec("drop table select_order_test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
@@ -1511,6 +1511,27 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("insert t values (0)")
 	result = tk.MustQuery("select NULL from t ")
 	result.Check(testkit.Rows("<nil>"))
+	// test for double read
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int unique, b int)")
+	tk.MustExec("insert t values (5, 0)")
+	tk.MustExec("insert t values (4, 0)")
+	tk.MustExec("insert t values (3, 0)")
+	tk.MustExec("insert t values (2, 0)")
+	tk.MustExec("insert t values (1, 0)")
+	tk.MustExec("insert t values (0, 0)")
+	result = tk.MustQuery("select * from t order by a limit 3")
+	result.Check(testkit.Rows("0 0", "1 0", "2 0"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int unique, b int)")
+	tk.MustExec("insert t values (0, 1)")
+	tk.MustExec("insert t values (1, 2)")
+	tk.MustExec("insert t values (2, 1)")
+	tk.MustExec("insert t values (3, 2)")
+	tk.MustExec("insert t values (4, 1)")
+	tk.MustExec("insert t values (5, 2)")
+	result = tk.MustQuery("select * from t where a < 5 and b = 1 limit 2")
+	result.Check(testkit.Rows("0 1", "2 1"))
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {

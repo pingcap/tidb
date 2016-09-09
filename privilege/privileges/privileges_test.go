@@ -15,6 +15,7 @@ package privileges_test
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/ngaut/log"
@@ -53,7 +54,8 @@ type testPrivilegeSuite struct {
 }
 
 func (s *testPrivilegeSuite) SetUpSuit(c *C) {
-	log.SetLevelByString("error")
+	logLevel := os.Getenv("log_level")
+	log.SetLevelByString(logLevel)
 }
 
 func (s *testPrivilegeSuite) SetUpTest(c *C) {
