@@ -603,6 +603,7 @@ const (
 	AlterTableDropPrimaryKey
 	AlterTableDropIndex
 	AlterTableDropForeignKey
+	AlterTableModifyColumn
 
 // TODO: Add more actions
 )
