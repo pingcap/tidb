@@ -78,7 +78,7 @@ func closeRequest(conn net.Conn, c *C) {
 	c.Assert(err, IsNil)
 }
 
-// Server close connection directly if new connection is comming.
+// Server close connection directly if new connection is coming.
 func (s *testClientSuite) TestRetryClose(c *C) {
 	l := startServer(":61235", c, closeRequest)
 	defer l.Close()

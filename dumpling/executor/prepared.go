@@ -239,7 +239,7 @@ func (e *ExecuteExec) Build() error {
 		// if this time it failed, the real reason for the error is schema changed.
 		err := plan.PrepareStmt(e.IS, e.Ctx, prepared.Stmt)
 		if err != nil {
-			return ErrSchemaChanged.Gen("Schema change casued error: %s", err.Error())
+			return ErrSchemaChanged.Gen("Schema change caused error: %s", err.Error())
 		}
 		prepared.SchemaVersion = e.IS.SchemaMetaVersion()
 	}

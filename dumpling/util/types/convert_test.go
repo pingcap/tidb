@@ -517,8 +517,8 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 
 func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	cases := []struct {
-		orgin string
-		valid string
+		origin string
+		valid  string
 	}{
 		{"-100", "-100"},
 		{"1abc", "1"},
@@ -530,6 +530,6 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		{"1.1e-13a", "1.1e-13"},
 	}
 	for _, ca := range cases {
-		c.Assert(getValidFloatPrefix(ca.orgin), Equals, ca.valid)
+		c.Assert(getValidFloatPrefix(ca.origin), Equals, ca.valid)
 	}
 }

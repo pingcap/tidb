@@ -129,7 +129,7 @@ var columnsCols = []columnInfo{
 	{"IS_NULLABLE", mysql.TypeVarchar, 3, 0, nil, nil},
 	{"DATA_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"CHARACTER_MAXIMUM_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"CHARACTOR_OCTET_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"CHARACTER_OCTET_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"NUMERIC_PRECISION", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"NUMERIC_SCALE", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"DATETIME_PRECISION", mysql.TypeLonglong, 21, 0, nil, nil},
@@ -391,7 +391,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDesc.Null,                      // IS_NULLABLE
 			types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
 			colLen,                            // CHARACTER_MAXIMUM_LENGTH
-			colLen,                            // CHARACTOR_OCTET_LENGTH
+			colLen,                            // CHARACTER_OCTET_LENGTH
 			decimal,                           // NUMERIC_PRECISION
 			0,                                 // NUMERIC_SCALE
 			0,                                 // DATETIME_PRECISION
