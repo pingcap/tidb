@@ -278,7 +278,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
-			best: "LeftHashJoin{LeftHashJoin{LeftHashJoin{Table(t)->Selection->Table(t)}->LeftHashJoin{Table(t)->Table(t)}}->Table(t)}->Projection",
+			best: "LeftHashJoin{RightHashJoin{RightHashJoin{Table(t)->Selection->Table(t)}->LeftHashJoin{Table(t)->Table(t)}}->Table(t)}->Projection",
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
