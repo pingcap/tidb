@@ -34,7 +34,7 @@ const (
 	// It has row count 10000, equal condition selects 1/10 of total rows, less condition selects 1/3 of total rows,
 	// between condition selects 1/4 of total rows.
 	pseudoRowCount    = 10000
-	pseudoEqualRate   = 10
+	pseudoEqualRate   = 200
 	pseudoLessRate    = 3
 	pseudoBetweenRate = 4
 	pseudoTimestamp   = 1
