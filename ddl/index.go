@@ -409,7 +409,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
 	kvX := tables.NewIndex(t.Meta(), indexInfo)
-	log.Infof("[ddl] backfill index rows %v", len(handles))
+	log.Infof("[ddl] backfill index %v rows ", len(handles))
 
 	for _, handle := range handles {
 		log.Debug("[ddl] backfill index...", handle)

@@ -191,7 +191,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
 				}
 			}
 
-			log.Infof("[ddl] delete keys %v with prefix %q", len(keys), prefix)
+			log.Infof("[ddl] delete %v keys with prefix %q", len(keys), prefix)
 			for _, key := range keys {
 				err := txn.Delete(key)
 				// must skip ErrNotExist
