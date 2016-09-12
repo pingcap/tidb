@@ -22,40 +22,37 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/deadline"
 )
 
 const defaultBufSize = 4 * 1024
 
 // Conn is a simple wrapper of net.Conn.
 type Conn struct {
-	addr       string
-	nc         net.Conn
-	closed     bool
-	r          *bufio.Reader
-	w          *bufio.Writer
-	netTimeout int //second
+	addr   string
+	nc     net.Conn
+	closed bool
+	r      *bufio.Reader
+	w      *bufio.Writer
 }
 
-// NewConnection creates a Conn with network timeout..
-func NewConnection(addr string, netTimeout int) (*Conn, error) {
-	return NewConnectionWithSize(addr, netTimeout, defaultBufSize, defaultBufSize)
+// NewConnection creates a Conn with dial timeout.
+func NewConnection(addr string, dialTimeout time.Duration) (*Conn, error) {
+	return NewConnectionWithSize(addr, dialTimeout, defaultBufSize, defaultBufSize)
 }
 
-// NewConnectionWithSize creates a Conn with network timeout and read/write buffer size.
-func NewConnectionWithSize(addr string, netTimeout int, readSize int, writeSize int) (*Conn, error) {
-	conn, err := net.DialTimeout("tcp", addr, time.Duration(netTimeout)*time.Second)
+// NewConnectionWithSize creates a Conn with dial timeout and read/write buffer size.
+func NewConnectionWithSize(addr string, dialTimeout time.Duration, readSize int, writeSize int) (*Conn, error) {
+	conn, err := net.DialTimeout("tcp", addr, dialTimeout)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	return &Conn{
-		addr:       addr,
-		nc:         conn,
-		closed:     false,
-		r:          bufio.NewReaderSize(deadline.NewDeadlineReader(conn, time.Duration(netTimeout)*time.Second), readSize),
-		w:          bufio.NewWriterSize(deadline.NewDeadlineWriter(conn, time.Duration(netTimeout)*time.Second), writeSize),
-		netTimeout: netTimeout,
+		addr:   addr,
+		nc:     conn,
+		closed: false,
+		r:      bufio.NewReaderSize(conn, readSize),
+		w:      bufio.NewWriterSize(conn, writeSize),
 	}, nil
 }
 
@@ -72,6 +69,16 @@ func (c *Conn) Write(p []byte) (int, error) {
 // BufioReader returns a bufio.Reader for writing.
 func (c *Conn) BufioReader() *bufio.Reader {
 	return c.r
+}
+
+// SetReadDeadline sets the deadline for future Read calls.
+func (c *Conn) SetReadDeadline(t time.Time) error {
+	return c.nc.SetReadDeadline(t)
+}
+
+// SetWriteDeadline sets the deadline for future Write calls.
+func (c *Conn) SetWriteDeadline(t time.Time) error {
+	return c.nc.SetWriteDeadline(t)
 }
 
 // Close closes the net.Conn.

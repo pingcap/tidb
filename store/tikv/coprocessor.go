@@ -415,7 +415,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 			Data:    it.req.Data,
 			Ranges:  task.ranges.toPBRanges(),
 		}
-		resp, err := it.store.client.SendCopReq(task.region.GetAddress(), req)
+		resp, err := it.store.client.SendCopReq(task.region.GetAddress(), req, readTimeoutLong)
 		if err != nil {
 			it.store.regionCache.NextPeer(task.region.VerID())
 			err = bo.Backoff(boTiKVRPC, err)

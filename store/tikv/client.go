@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"sync/atomic"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -31,14 +32,18 @@ type Client interface {
 	// Close should release all data.
 	Close() error
 	// SendKVReq sends kv request.
-	SendKVReq(addr string, req *kvrpcpb.Request) (*kvrpcpb.Response, error)
+	SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error)
 	// SendCopReq sends coprocessor request.
-	SendCopReq(addr string, req *coprocessor.Request) (*coprocessor.Response, error)
+	SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error)
 }
 
 const (
-	maxConnecion = 150
-	netTimeout   = 20 // seconds
+	maxConnecion        = 150
+	dialTimeout         = time.Duration(5) * time.Second
+	writeTimeout        = time.Duration(10) * time.Second
+	readTimeoutShort    = time.Duration(20) * time.Second  // For requests that read/write several key-values.
+	readTimeoutLong     = time.Duration(60) * time.Second  // For requests that may need scan region.
+	readTimeoutVeryLong = time.Duration(150) * time.Second // For requests that may need scan region multiple times.
 )
 
 type rpcClient struct {
@@ -50,13 +55,13 @@ func newRPCClient() *rpcClient {
 	return &rpcClient{
 		msgID: 0,
 		p: NewPools(maxConnecion, func(addr string) (*Conn, error) {
-			return NewConnection(addr, netTimeout)
+			return NewConnection(addr, dialTimeout)
 		}),
 	}
 }
 
 // SendCopReq sends a Request to co-processor and receives Response.
-func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request) (*coprocessor.Response, error) {
+func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
 	conn, err := c.p.GetConn(addr)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -66,7 +71,7 @@ func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request) (*coproces
 		MsgType: msgpb.MessageType_CopReq,
 		CopReq:  req,
 	}
-	err = c.doSend(conn, &msg)
+	err = c.doSend(conn, &msg, writeTimeout, timeout)
 	if err != nil {
 		conn.Close()
 		return nil, errors.Trace(err)
@@ -79,7 +84,7 @@ func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request) (*coproces
 }
 
 // SendKVReq sends a Request to kv server and receives Response.
-func (c *rpcClient) SendKVReq(addr string, req *kvrpcpb.Request) (*kvrpcpb.Response, error) {
+func (c *rpcClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
 	conn, err := c.p.GetConn(addr)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -89,7 +94,7 @@ func (c *rpcClient) SendKVReq(addr string, req *kvrpcpb.Request) (*kvrpcpb.Respo
 		MsgType: msgpb.MessageType_KvReq,
 		KvReq:   req,
 	}
-	err = c.doSend(conn, &msg)
+	err = c.doSend(conn, &msg, writeTimeout, timeout)
 	if err != nil {
 		conn.Close()
 		return nil, errors.Trace(err)
@@ -101,15 +106,17 @@ func (c *rpcClient) SendKVReq(addr string, req *kvrpcpb.Request) (*kvrpcpb.Respo
 	return msg.GetKvResp(), nil
 }
 
-func (c *rpcClient) doSend(conn *Conn, msg *msgpb.Message) error {
+func (c *rpcClient) doSend(conn *Conn, msg *msgpb.Message, writeTimeout time.Duration, readTimeout time.Duration) error {
 	curMsgID := atomic.AddUint64(&c.msgID, 1)
 	log.Debugf("Send request msgID[%d] type[%v]", curMsgID, msg.GetMsgType())
+	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 	if err := util.WriteMessage(conn, curMsgID, msg); err != nil {
 		return errors.Trace(err)
 	}
 	if err := conn.Flush(); err != nil {
 		return errors.Trace(err)
 	}
+	conn.SetReadDeadline(time.Now().Add(readTimeout))
 	msgID, err := util.ReadMessage(conn.BufioReader(), msg)
 	if err != nil {
 		return errors.Trace(err)

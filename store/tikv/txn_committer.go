@@ -183,7 +183,7 @@ func (c *txnCommitter) prewriteSingleRegion(bo *Backoffer, batch batchKeys) erro
 	}
 
 	for {
-		resp, err := c.store.SendKVReq(bo, req, batch.region)
+		resp, err := c.store.SendKVReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -238,7 +238,7 @@ func (c *txnCommitter) commitSingleRegion(bo *Backoffer, batch batchKeys) error 
 		},
 	}
 
-	resp, err := c.store.SendKVReq(bo, req, batch.region)
+	resp, err := c.store.SendKVReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -286,7 +286,7 @@ func (c *txnCommitter) cleanupSingleRegion(bo *Backoffer, batch batchKeys) error
 			StartVersion: c.startTS,
 		},
 	}
-	resp, err := c.store.SendKVReq(bo, req, batch.region)
+	resp, err := c.store.SendKVReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -142,7 +142,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				Version:  s.startTS(),
 			},
 		}
-		resp, err := s.snapshot.store.SendKVReq(bo, req, region.VerID())
+		resp, err := s.snapshot.store.SendKVReq(bo, req, region.VerID(), readTimeoutLong)
 		if err != nil {
 			return errors.Trace(err)
 		}

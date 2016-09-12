@@ -149,7 +149,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		if err != nil {
 			return status, errors.Trace(err)
 		}
-		resp, err := lr.store.SendKVReq(bo, req, region.VerID())
+		resp, err := lr.store.SendKVReq(bo, req, region.VerID(), readTimeoutShort)
 		if err != nil {
 			return status, errors.Trace(err)
 		}
@@ -193,7 +193,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status txnStatus, cl
 		if status.isCommitted() {
 			req.GetCmdResolveLockReq().CommitVersion = status.commitTS()
 		}
-		resp, err := lr.store.SendKVReq(bo, req, region.VerID())
+		resp, err := lr.store.SendKVReq(bo, req, region.VerID(), readTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
 		}
