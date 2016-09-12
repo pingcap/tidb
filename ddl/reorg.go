@@ -130,12 +130,15 @@ func (d *ddl) runReorgJob(f func() error) error {
 	// wait reorganization job done or timeout
 	select {
 	case err := <-d.reorgDoneCh:
+		log.Info("[ddl] run reorg job done")
 		d.reorgDoneCh = nil
 		return errors.Trace(err)
 	case <-d.quitCh:
+		log.Info("[ddl] run reorg job ddl quit")
 		// we return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
+		log.Infof("[ddl] run reorg job wait timeout :%v", waitTimeout)
 		// if timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}
@@ -174,8 +177,8 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-
 			defer iter.Close()
+
 			for i := 0; i < maxBatchSize; i++ {
 				if iter.Valid() && iter.Key().HasPrefix(prefix) {
 					keys = append(keys, iter.Key().Clone())
@@ -188,6 +191,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
 				}
 			}
 
+			log.Infof("[ddl] delete keys %v with prefix %q", len(keys), prefix)
 			for _, key := range keys {
 				err := txn.Delete(key)
 				// must skip ErrNotExist

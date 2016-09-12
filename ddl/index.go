@@ -409,9 +409,10 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
 	kvX := tables.NewIndex(t.Meta(), indexInfo)
+	log.Infof("[ddl] backfill index rows %v", len(handles))
 
 	for _, handle := range handles {
-		log.Debug("[ddl] building index...", handle)
+		log.Debug("[ddl] backfill index...", handle)
 
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
