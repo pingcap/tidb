@@ -50,7 +50,7 @@ func (e *Evaluator) handleLogicOperation(o *ast.BinaryOperationExpr) bool {
 	case opcode.LogicXor:
 		return e.handleXor(o)
 	default:
-		e.err = ErrInvalidOperation.Gen("unkown operator %s", o.Op)
+		e.err = ErrInvalidOperation.Gen("unknown operator %s", o.Op)
 		return false
 	}
 }
@@ -207,7 +207,7 @@ func getCompResult(op opcode.Op, value int) (bool, error) {
 	case opcode.NullEQ:
 		return value == 0, nil
 	default:
-		return false, ErrInvalidOperation.Gen("invalid op %v in comparision operation", op)
+		return false, ErrInvalidOperation.Gen("invalid op %v in comparison operation", op)
 	}
 }
 

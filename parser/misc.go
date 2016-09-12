@@ -238,6 +238,7 @@ var tokenMap = map[string]int{
 	"FROM":                from,
 	"FULL":                full,
 	"FULLTEXT":            fulltext,
+	"FUNCTION":            function,
 	"FLUSH":               flush,
 	"GET_LOCK":            getLock,
 	"GLOBAL":              global,

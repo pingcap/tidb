@@ -402,7 +402,7 @@ func (s *dbStore) unLockKeys(txn *dbTxn) error {
 	for k := range txn.lockedKeys {
 		if tid, ok := s.keysLocked[k]; !ok || tid != txn.tid {
 			debug.PrintStack()
-			return errors.Errorf("should never happend:%v, %v", tid, txn.tid)
+			return errors.Errorf("should never happened:%v, %v", tid, txn.tid)
 		}
 
 		delete(s.keysLocked, k)
