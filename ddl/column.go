@@ -322,6 +322,7 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 }
 
 func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, handles []int64, reorgInfo *reorgInfo) error {
+	log.Infof("[ddl] backfill column handles %v", len(handles))
 	var (
 		defaultVal types.Datum
 		err        error
@@ -339,7 +340,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 		colMap[col.ID] = &col.FieldType
 	}
 	for _, handle := range handles {
-		log.Info("[ddl] backfill column...", handle)
+		log.Debug("[ddl] backfill column...", handle)
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
 				return errors.Trace(err)
