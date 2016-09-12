@@ -78,8 +78,9 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
-	s.db.Close()
+	localstore.MockRemoteStore = false
 
+	s.db.Close()
 	s.s.Close()
 }
 
