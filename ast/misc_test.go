@@ -45,14 +45,14 @@ func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
 		(&RollbackStmt{}),
 		(&SetPwdStmt{}),
 		(&SetStmt{Variables: []*VariableAssignment{
-			&VariableAssignment{
+			{
 				Value: &ValueExpr{},
 			},
 		}}),
 		(&UseStmt{}),
 		(&AnalyzeTableStmt{
 			TableNames: []*TableName{
-				&TableName{},
+				{},
 			},
 		}),
 		(&FlushTableStmt{}),
