@@ -135,11 +135,11 @@ func (r *copRanges) String() string {
 func (r *copRanges) len() int {
 	var l int
 	if r.first != nil {
-		l += 1
+		l++
 	}
 	l += len(r.mid)
 	if r.last != nil {
-		l += 1
+		l++
 	}
 	return l
 }
