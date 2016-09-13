@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/msgpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/kvproto/pkg/util"
+	"github.com/pingcap/pd/pkg/metrics"
 	"github.com/twinj/uuid"
 )
 
@@ -96,7 +97,8 @@ func (w *rpcWorker) stop(err error) {
 	close(w.quit)
 	w.wg.Wait()
 
-	for i := 0; i < len(w.requests); i++ {
+	n := len(w.requests)
+	for i := 0; i < n; i++ {
 		req := <-w.requests
 		switch r := req.(type) {
 		case *tsoRequest:
@@ -312,23 +314,36 @@ func (w *rpcWorker) getClusterConfigFromRemote(conn *bufio.ReadWriter, clusterCo
 	return rsp.GetGetClusterConfig(), nil
 }
 
-func (w *rpcWorker) callRPC(conn *bufio.ReadWriter, req *pdpb.Request) (*pdpb.Response, error) {
+func (w *rpcWorker) callRPC(conn *bufio.ReadWriter, req *pdpb.Request) (resp *pdpb.Response, err error) {
+	// Record some metrics.
+	start := time.Now()
+	label := metrics.GetCmdLabel(req)
+	defer func() {
+		if err == nil {
+			cmdCounter.WithLabelValues(label).Inc()
+			cmdDuration.WithLabelValues(label).Observe(time.Since(start).Seconds())
+		} else {
+			cmdFailedCounter.WithLabelValues(label).Inc()
+			cmdFailedDuration.WithLabelValues(label).Observe(time.Since(start).Seconds())
+		}
+	}()
+
 	msg := &msgpb.Message{
 		MsgType: msgpb.MessageType_PdReq,
 		PdReq:   req,
 	}
-	if err := util.WriteMessage(conn, newMsgID(), msg); err != nil {
+	if err = util.WriteMessage(conn, newMsgID(), msg); err != nil {
 		return nil, errors.Errorf("[pd] rpc failed: %v", err)
 	}
 	conn.Flush()
-	if _, err := util.ReadMessage(conn, msg); err != nil {
+	if _, err = util.ReadMessage(conn, msg); err != nil {
 		return nil, errors.Errorf("[pd] rpc failed: %v", err)
 	}
 	if msg.GetMsgType() != msgpb.MessageType_PdResp {
 		return nil, errors.Trace(errInvalidResponse)
 	}
-	resp := msg.GetPdResp()
-	if err := w.checkResponse(resp); err != nil {
+	resp = msg.GetPdResp()
+	if err = w.checkResponse(resp); err != nil {
 		return nil, errors.Trace(err)
 	}
 
