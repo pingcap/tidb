@@ -166,6 +166,8 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 }
 
 func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
+	count := 0
+
 	for {
 		keys := make([]kv.Key, 0, maxBatchSize)
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
@@ -191,7 +193,6 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
 				}
 			}
 
-			log.Infof("[ddl] delete %v keys with prefix %q", len(keys), prefix)
 			for _, key := range keys {
 				err := txn.Delete(key)
 				// must skip ErrNotExist
@@ -201,6 +202,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
 				}
 			}
 
+			count += len(keys)
 			return nil
 		})
 
@@ -208,6 +210,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
 			return errors.Trace(err)
 		}
 
+		log.Infof("[ddl] deleted %v keys with prefix %q", count, prefix)
 		// delete no keys, return.
 		if len(keys) == 0 {
 			return nil
