@@ -149,3 +149,41 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 	c.Assert(ctx.Value.Kind(), Equals, types.KindMysqlDecimal)
 	c.Assert(ctx.Value.GetMysqlDecimal().Compare(expect), Equals, 0)
 }
+
+func (ts *testFunctionsSuite) TestAggFuncMaxMin(c *C) {
+	args := make([]ExprNode, 1)
+	// test max
+	agg := &AggregateFuncExpr{
+		Args: args,
+		F:    AggFuncMax,
+	}
+	agg.CurrentGroup = []byte("xx")
+	expr := NewValueExpr(1)
+	expr1 := NewValueExpr(2)
+	expr2 := NewValueExpr(3)
+	exprs := []ExprNode{expr, expr1, expr2}
+	for _, e := range exprs {
+		args[0] = e
+		agg.Update()
+	}
+	ctx := agg.GetContext()
+	c.Assert(ctx.Value.Kind(), Equals, types.KindInt64)
+	c.Assert(ctx.Value.GetInt64(), Equals, int64(3))
+	// test min
+	agg = &AggregateFuncExpr{
+		Args: args,
+		F:    AggFuncMin,
+	}
+	agg.CurrentGroup = []byte("xx")
+	expr = NewValueExpr(1)
+	expr1 = NewValueExpr(2)
+	expr2 = NewValueExpr(3)
+	exprs = []ExprNode{expr, expr1, expr2}
+	for _, e := range exprs {
+		args[0] = e
+		agg.Update()
+	}
+	ctx = agg.GetContext()
+	c.Assert(ctx.Value.Kind(), Equals, types.KindInt64)
+	c.Assert(ctx.Value.GetInt64(), Equals, int64(1))
+}
