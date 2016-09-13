@@ -217,6 +217,9 @@ func (af *aggFunction) streamUpdateSum(row []types.Datum, groupKey []byte, ectx 
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	if value.IsNull() {
+		return end, nil
+	}
 	if af.Distinct {
 		d, err1 := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
 		if err1 != nil {

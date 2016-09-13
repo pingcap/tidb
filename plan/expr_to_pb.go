@@ -49,7 +49,7 @@ func expressionsToPB(exprs []expression.Expression, client kv.Client) (pbExpr *t
 func exprToPB(client kv.Client, expr expression.Expression) (*tipb.Expr, error) {
 	switch x := expr.(type) {
 	case *expression.Constant:
-		return datumToPBExpr(client, expr.(*expression.Constant).Value)
+		return datumToPBExpr(client, x.Value)
 	case *expression.Column:
 		return columnToPBExpr(client, x)
 	case *expression.ScalarFunction:
