@@ -347,6 +347,8 @@ const maxBatchSize = 1024
 func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	seekHandle := reorgInfo.Handle
 	version := reorgInfo.SnapshotVer
+	count := 0
+
 	for {
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
 		if err != nil {
@@ -356,11 +358,13 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		}
 
 		seekHandle = handles[len(handles)-1] + 1
-
 		err = d.backfillTableIndex(t, indexInfo, handles, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		count += len(handles)
+		log.Infof("[ddl] added index for %v rows", count)
 	}
 }
 
@@ -409,7 +413,6 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
 	kvX := tables.NewIndex(t.Meta(), indexInfo)
-	log.Infof("[ddl] backfill index %v rows ", len(handles))
 
 	for _, handle := range handles {
 		log.Debug("[ddl] backfill index...", handle)
