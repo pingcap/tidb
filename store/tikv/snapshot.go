@@ -112,7 +112,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 				Version: s.version.Ver,
 			},
 		}
-		resp, err := s.store.SendKVReq(bo, req, batch.region, readTimeoutLong)
+		resp, err := s.store.SendKVReq(bo, req, batch.region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}

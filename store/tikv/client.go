@@ -38,12 +38,12 @@ type Client interface {
 }
 
 const (
-	maxConnecion        = 150
-	dialTimeout         = time.Duration(5) * time.Second
-	writeTimeout        = time.Duration(10) * time.Second
-	readTimeoutShort    = time.Duration(20) * time.Second  // For requests that read/write several key-values.
-	readTimeoutLong     = time.Duration(60) * time.Second  // For requests that may need scan region.
-	readTimeoutVeryLong = time.Duration(150) * time.Second // For requests that may need scan region multiple times.
+	maxConnecion      = 150
+	dialTimeout       = 5 * time.Second
+	writeTimeout      = 10 * time.Second
+	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
+	readTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
+	readTimeoutLong   = 150 * time.Second // For requests that may need scan region multiple times.
 )
 
 type rpcClient struct {
