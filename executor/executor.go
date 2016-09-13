@@ -1202,7 +1202,7 @@ func (e *StreamAggExec) getGroupKey(row *Row) ([]byte, error) {
 		return val.GetBytes(), nil
 	}
 	if len(e.GroupByItems) == 0 {
-		return []byte{}, nil
+		return nil, nil
 	}
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
@@ -1212,7 +1212,7 @@ func (e *StreamAggExec) getGroupKey(row *Row) ([]byte, error) {
 		}
 		vals = append(vals, v)
 	}
-	bs, err := codec.EncodeValue([]byte{}, vals...)
+	bs, err := codec.EncodeValue(nil, vals...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
