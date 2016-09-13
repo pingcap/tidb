@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -97,6 +96,7 @@ func (r *selectResult) fetch() {
 			aggregate:  r.aggregate,
 			ignoreData: r.ignoreData,
 			done:       make(chan error),
+			ch:         make(chan []selectResponseRow, 1),
 		}
 		go pr.fetch()
 		r.results <- pr
@@ -139,115 +139,159 @@ type partialResult struct {
 	aggregate  bool
 	fields     []*types.FieldType
 	reader     io.ReadCloser
-	resp       *tipb.SelectResponse
-	chunkIdx   int
-	cursor     int
-	dataOffset int64
 	ignoreData bool
 
 	done    chan error
 	fetched bool
+
+	ch     chan []selectResponseRow
+	rows   []selectResponseRow
+	cursor int
 }
 
+type selectResponseRow struct {
+	handle int64
+	data   []types.Datum
+}
+
+const batchDecodeSize = 1024
+
 func (pr *partialResult) fetch() {
-	pr.resp = new(tipb.SelectResponse)
+	defer close(pr.ch)
 	b, err := ioutil.ReadAll(pr.reader)
 	pr.reader.Close()
+	pr.reader = nil
 	if err != nil {
 		pr.done <- errors.Trace(err)
 		return
 	}
-	err = pr.resp.Unmarshal(b)
-	if err != nil {
+
+	resp := new(tipb.SelectResponse)
+	if err = resp.Unmarshal(b); err != nil {
 		pr.done <- errors.Trace(err)
 		return
 	}
-	if pr.resp.Error != nil {
-		pr.done <- errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
+	if resp.Error != nil {
+		pr.done <- errInvalidResp.Gen("[%d %s]", resp.Error.GetCode(), resp.Error.GetMsg())
+		return
 	}
 	pr.done <- nil
+
+	// an optimize for allocation, ringBuffer for big rows.
+	if size, ok := onlyFewRows(resp.Chunks); ok {
+		var err error
+		rows := make([]selectResponseRow, 0, size)
+		for chunkIdx := 0; chunkIdx < len(resp.Chunks); chunkIdx++ {
+			chunk := &resp.Chunks[chunkIdx]
+			rows, err = pr.decodeChunk(chunk, rows)
+			if err != nil {
+				pr.done <- errors.Trace(err)
+				return
+			}
+		}
+		if len(rows) > 0 {
+			pr.ch <- rows
+		}
+		return
+	}
+
+	// var buf ringBuffer
+	// rows := buf.get()
+	rows := make([]selectResponseRow, 0, batchDecodeSize)
+	for chunkIdx := 0; chunkIdx < len(resp.Chunks); chunkIdx++ {
+		chunk := &resp.Chunks[chunkIdx]
+		rows, err := pr.decodeChunk(chunk, rows)
+		if err != nil {
+			pr.done <- errors.Trace(err)
+			return
+		}
+		if len(rows) >= batchDecodeSize {
+			// when it collect enough rows, send to channel in a batch
+			pr.ch <- rows
+			rows = make([]selectResponseRow, 0, batchDecodeSize)
+			// rows = buf.get()
+		}
+	}
+	// don't forget the last batch that may small than batchDecodeSize
+	if len(rows) > 0 {
+		pr.ch <- rows
+	}
+}
+
+// onlyFewRows returns (count, true) if there are few chunks rows, otherwist (_, false)
+func onlyFewRows(chunks []tipb.Chunk) (int, bool) {
+	totalRows := 0
+	for chunkIdx := 0; chunkIdx < len(chunks); chunkIdx++ {
+		chunk := &chunks[chunkIdx]
+		if totalRows >= batchDecodeSize {
+			return 0, false
+		}
+		totalRows += len(chunk.RowsMeta)
+	}
+	return totalRows, true
+}
+
+type ringBuffer struct {
+	data [2][batchDecodeSize + 64]selectResponseRow
+	cur  int
+}
+
+func (r *ringBuffer) get() []selectResponseRow {
+	r.cur = (r.cur + 1) % 2
+	return r.data[r.cur][:]
 }
 
 var dummyData = make([]types.Datum, 0)
+
+func (pr *partialResult) decodeChunk(chunk *tipb.Chunk, rows []selectResponseRow) ([]selectResponseRow, error) {
+	dataOffset := 0
+	for _, rowMeta := range chunk.RowsMeta {
+		var data []types.Datum
+		var err error
+		if !pr.ignoreData {
+			rowData := chunk.RowsData[dataOffset : dataOffset+int(rowMeta.Length)]
+			data, err = tablecodec.DecodeValues(rowData, pr.fields, pr.index)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			dataOffset += int(rowMeta.Length)
+		}
+		if data == nil {
+			data = dummyData
+		}
+
+		rows = append(rows, selectResponseRow{
+			handle: rowMeta.Handle,
+			data:   data,
+		})
+	}
+	return rows, nil
+}
 
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
 func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 	if !pr.fetched {
-		select {
-		case err = <-pr.done:
-		}
+		err = <-pr.done
 		pr.fetched = true
 		if err != nil {
 			return 0, nil, err
 		}
 	}
-	if len(pr.resp.Chunks) > 0 {
-		// For new resp rows structure.
-		chunk := pr.getChunk()
-		if chunk == nil {
+
+	if pr.cursor >= len(pr.rows) {
+		rows, ok := <-pr.ch
+		if !ok {
 			return 0, nil, nil
 		}
-		rowMeta := chunk.RowsMeta[pr.cursor]
-		if !pr.ignoreData {
-			rowData := chunk.RowsData[pr.dataOffset : pr.dataOffset+rowMeta.Length]
-			data, err = tablecodec.DecodeValues(rowData, pr.fields, pr.index)
-			if err != nil {
-				return 0, nil, errors.Trace(err)
-			}
-			pr.dataOffset += rowMeta.Length
-		}
-		if data == nil {
-			data = dummyData
-		}
-		if !pr.aggregate {
-			handle = rowMeta.Handle
-		}
-		pr.cursor++
-		return
+		pr.rows = rows
+		pr.cursor = 0
 	}
-	if pr.cursor >= len(pr.resp.Rows) {
-		return 0, nil, nil
-	}
-	row := pr.resp.Rows[pr.cursor]
-	if !pr.ignoreData {
-		data, err = tablecodec.DecodeValues(row.Data, pr.fields, pr.index)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-	}
-	if data == nil {
-		// When no column is referenced, the data may be nil, like 'select count(*) from t'.
-		// In this case, we need to create a zero length datum slice,
-		// as caller will check if data is nil to finish iteration.
-		// data = make([]types.Datum, 0)
-		data = dummyData
-	}
-	if !pr.aggregate {
-		handleBytes := row.GetHandle()
-		_, datum, err := codec.DecodeOne(handleBytes)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		handle = datum.GetInt64()
-	}
+
+	row := pr.rows[pr.cursor]
+	handle, data = row.handle, row.data
 	pr.cursor++
 	return
-}
-
-func (pr *partialResult) getChunk() *tipb.Chunk {
-	for {
-		if pr.chunkIdx >= len(pr.resp.Chunks) {
-			return nil
-		}
-		chunk := &pr.resp.Chunks[pr.chunkIdx]
-		if pr.cursor < len(chunk.RowsMeta) {
-			return chunk
-		}
-		pr.cursor = 0
-		pr.dataOffset = 0
-		pr.chunkIdx++
-	}
 }
 
 // Close closes the sub result.
