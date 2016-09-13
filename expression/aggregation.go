@@ -253,13 +253,12 @@ func (sf *sumFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 }
 
 func (sf *sumFunction) GetStreamResult() (d types.Datum) {
-	defer func() {
-		sf.resultCtx = sf.streamCtx
-	}()
 	if sf.resultCtx == nil {
 		sf.resultCtx = &ast.AggEvaluateContext{}
 	}
-	return sf.resultCtx.Value
+	d = sf.resultCtx.Value
+	sf.resultCtx = sf.streamCtx
+	return
 }
 
 type countFunction struct {
@@ -341,13 +340,11 @@ func (cf *countFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 }
 
 func (cf *countFunction) GetStreamResult() (d types.Datum) {
-	defer func() {
-		cf.resultCtx = cf.streamCtx
-	}()
 	if cf.resultCtx == nil {
 		cf.resultCtx = &ast.AggEvaluateContext{}
 	}
 	d.SetInt64(cf.resultCtx.Count)
+	cf.resultCtx = cf.streamCtx
 	return
 }
 
@@ -420,14 +417,13 @@ func (af *avgFunction) GetGroupResult(groupKey []byte) types.Datum {
 	return af.calculateResult(ctx)
 }
 
-func (af *avgFunction) GetStreamResult() types.Datum {
-	defer func() {
-		af.resultCtx = af.streamCtx
-	}()
+func (af *avgFunction) GetStreamResult() (d types.Datum) {
 	if af.resultCtx == nil {
 		af.resultCtx = &ast.AggEvaluateContext{}
 	}
-	return af.calculateResult(af.resultCtx)
+	d = af.calculateResult(af.resultCtx)
+	af.resultCtx = af.streamCtx
+	return
 }
 
 type concatFunction struct {
@@ -517,9 +513,6 @@ func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 }
 
 func (cf *concatFunction) GetStreamResult() (d types.Datum) {
-	defer func() {
-		cf.resultCtx = cf.streamCtx
-	}()
 	if cf.resultCtx == nil {
 		cf.resultCtx = &ast.AggEvaluateContext{}
 	}
@@ -528,6 +521,7 @@ func (cf *concatFunction) GetStreamResult() (d types.Datum) {
 	} else {
 		d.SetNull()
 	}
+	cf.resultCtx = cf.streamCtx
 	return
 }
 
@@ -542,13 +536,12 @@ func (mmf *maxMinFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 }
 
 func (mmf *maxMinFunction) GetStreamResult() (d types.Datum) {
-	defer func() {
-		mmf.resultCtx = mmf.streamCtx
-	}()
 	if mmf.resultCtx == nil {
 		mmf.resultCtx = &ast.AggEvaluateContext{}
 	}
-	return mmf.resultCtx.Value
+	d = mmf.resultCtx.Value
+	mmf.resultCtx = mmf.streamCtx
+	return
 }
 
 // Update implements AggregationFunction interface.
@@ -649,12 +642,11 @@ func (ff *firstRowFunction) GetGroupResult(groupKey []byte) types.Datum {
 	return ff.getContext(groupKey).Value
 }
 
-func (ff *firstRowFunction) GetStreamResult() types.Datum {
-	defer func() {
-		ff.resultCtx = ff.streamCtx
-	}()
+func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 	if ff.resultCtx == nil {
 		ff.resultCtx = &ast.AggEvaluateContext{}
 	}
-	return ff.resultCtx.Value
+	d = ff.resultCtx.Value
+	ff.resultCtx = ff.streamCtx
+	return
 }
