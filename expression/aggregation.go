@@ -88,7 +88,9 @@ type aggCtxMapper map[string]*ast.AggEvaluateContext
 type AggFunctionMode int
 
 const (
+	// CompleteMode function accepts origin data.
 	CompleteMode AggFunctionMode = iota
+	// Final function accepts partial data.
 	FinalMode
 )
 
@@ -212,6 +214,9 @@ func (af *aggFunction) streamUpdateSum(row []types.Datum, groupKey []byte, ectx 
 	ctx, end := af.getStreamedContext(groupKey)
 	a := af.Args[0]
 	value, err := a.Eval(row, ectx)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
 	if af.Distinct {
 		d, err1 := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
 		if err1 != nil {
