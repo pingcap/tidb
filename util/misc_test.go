@@ -35,7 +35,7 @@ func (s testMiscSuite) TestRunWithRetry(c *C) {
 	// Run succ.
 	cnt := 0
 	err := RunWithRetry(3, 1, func() (bool, error) {
-		cnt += 1
+		cnt++
 		if cnt < 2 {
 			return true, errors.New("err")
 		}
@@ -47,7 +47,7 @@ func (s testMiscSuite) TestRunWithRetry(c *C) {
 	// Run failed.
 	cnt = 0
 	err = RunWithRetry(3, 1, func() (bool, error) {
-		cnt += 1
+		cnt++
 		if cnt < 4 {
 			return true, errors.New("err")
 		}
@@ -59,7 +59,7 @@ func (s testMiscSuite) TestRunWithRetry(c *C) {
 	// Run failed.
 	cnt = 0
 	err = RunWithRetry(3, 1, func() (bool, error) {
-		cnt += 1
+		cnt++
 		if cnt < 2 {
 			return false, errors.New("err")
 		}

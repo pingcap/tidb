@@ -440,12 +440,14 @@ func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
 	return []Expression{onExpr}
 }
 
-// CNF means conjunctive normal form, e.g. "a and b and c"
+// SplitCNFItems splits CNF items.
+// CNF means conjunctive normal form, e.g. "a and b and c".
 func SplitCNFItems(onExpr Expression) []Expression {
 	return splitNormalFormItems(onExpr, ast.AndAnd)
 }
 
-// DNF means disjunctive normal form, e.g. "a or b or c"
+// SplitDNFItems splits DNF items.
+// DNF means disjunctive normal form, e.g. "a or b or c".
 func SplitDNFItems(onExpr Expression) []Expression {
 	return splitNormalFormItems(onExpr, ast.OrOr)
 }

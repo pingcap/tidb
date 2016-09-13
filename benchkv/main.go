@@ -61,6 +61,7 @@ var (
 		}, []string{"type"})
 )
 
+// Init initializes informations.
 func Init() {
 	driver := tikv.Driver{}
 	var err error
