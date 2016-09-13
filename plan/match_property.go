@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"github.com/pingcap/tidb/util/types"
 	"math"
 )
 
@@ -36,7 +37,6 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*physicalPlanInfo) *physicalPlanInfo {
 	rowCount := float64(infos[0].count)
-	// currently index read from kv 2 times.
 	cost := rowCount * netWorkFactor
 	if is.DoubleRead {
 		cost *= 2
@@ -48,6 +48,9 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 	allDesc, allAsc := true, true
 	matchedList := make([]bool, len(prop.props))
 	for i, idxCol := range is.Index.Columns {
+		if idxCol.Length != types.UnspecifiedLength {
+			break
+		}
 		findMatched := false
 		if matchedIdx < prop.sortKeyLen {
 			propCol := prop.props[matchedIdx]

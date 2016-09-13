@@ -1125,6 +1125,7 @@ type StreamAggExec struct {
 	schema       expression.Schema
 	ResultFields []*ast.ResultField
 	executed     bool
+	hasData      bool
 	mode         plan.AggregationType
 	ctx          context.Context
 	AggFuncs     []expression.AggregationFunction
@@ -1134,6 +1135,7 @@ type StreamAggExec struct {
 // Close implements Executor Close interface.
 func (e *StreamAggExec) Close() error {
 	e.executed = false
+	e.hasData = false
 	for _, agg := range e.AggFuncs {
 		agg.Clear()
 	}
@@ -1165,6 +1167,7 @@ func (e *StreamAggExec) Next() (*Row, error) {
 			e.executed = true
 			break
 		}
+		e.hasData = true
 		groupKey, err = e.getGroupKey(row)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1179,6 +1182,9 @@ func (e *StreamAggExec) Next() (*Row, error) {
 		if end {
 			break
 		}
+	}
+	if !e.hasData && len(e.GroupByItems) > 0 {
+		return nil, nil
 	}
 	retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}
 	for _, af := range e.AggFuncs {

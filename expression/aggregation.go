@@ -100,7 +100,7 @@ type aggFunction struct {
 	resultMapper aggCtxMapper
 	streamCtx    *ast.AggEvaluateContext
 	resultCtx    *ast.AggEvaluateContext
-	lastGroup    []byte
+	curGroup     []byte
 }
 
 func newAggFunc(name string, args []Expression, dist bool) aggFunction {
@@ -119,7 +119,7 @@ func (af *aggFunction) Clear() {
 	af.resultMapper = make(aggCtxMapper, 0)
 	af.streamCtx = nil
 	af.resultCtx = nil
-	af.lastGroup = nil
+	af.curGroup = nil
 }
 
 // GetName implements AggregationFunction interface.
@@ -155,10 +155,10 @@ func (af *aggFunction) getContext(groupKey []byte) *ast.AggEvaluateContext {
 
 func (af *aggFunction) getStreamedContext(groupKey []byte) (*ast.AggEvaluateContext, bool) {
 	end := false
-	if len(af.lastGroup) == 0 {
-		af.lastGroup = groupKey
-	} else if bytes.Compare(af.lastGroup, groupKey) != 0 {
-		af.lastGroup = groupKey
+	if len(af.curGroup) == 0 {
+		af.curGroup = groupKey
+	} else if bytes.Compare(af.curGroup, groupKey) != 0 {
+		af.curGroup = groupKey
 		end = true
 	}
 	if end {

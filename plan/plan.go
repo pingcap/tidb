@@ -187,6 +187,7 @@ func (p *baseLogicalPlan) getPlanInfo(prop *requiredProperty) (*physicalPlanInfo
 	}
 	return p.planMap[string(key)], nil
 }
+
 func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
 	if err != nil {
