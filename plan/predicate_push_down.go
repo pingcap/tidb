@@ -83,7 +83,7 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 			switch expr.FuncName.L {
 			case ast.OrOr:
 				expressions := expression.SplitDNFItems(conditions[i])
-				newExpression := make([]expression.Expression)
+				var newExpression []expression.Expression
 				for _, v := range expressions {
 					newExpression = append(newExpression, propagateConstant([]expression.Expression{v})...)
 				}
