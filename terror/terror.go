@@ -167,6 +167,7 @@ func (e *Error) Code() ErrCode {
 	return e.code
 }
 
+// MarshalJSON implements json.Marshaler interface.
 func (e *Error) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&struct {
 		Class ErrClass `json:"class"`
@@ -179,6 +180,7 @@ func (e *Error) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// UnmarshalJSON implements json.Unmarshaler interface.
 func (e *Error) UnmarshalJSON(data []byte) error {
 	err := &struct {
 		Class ErrClass `json:"class"`
