@@ -1,3 +1,16 @@
+// Copyright 2016 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package ast_test
 
 import (
@@ -71,14 +84,14 @@ func (ts *testMiscSuite) TestDDLVisitorCover(c *C) {
 create table t (c1 smallint unsigned, c2 int unsigned);
 alter table t add column a smallint unsigned after b;
 create index t_i on t (id);
-create database test CHARACTER SET utf8;
+create database test character set utf8;
 drop database test;
 drop index t_i on t;
 drop table t;
 truncate t;
-CREATE TABLE t (
-jobAbbr char(4) NOT NULL,
-CONSTRAINT FOREIGN KEY (jobAbbr) REFERENCES ffxi_jobType (jobAbbr) ON DELETE CASCADE ON UPDATE CASCADE
+create table t (
+jobAbbr char(4) not null,
+constraint foreign key (jobabbr) references ffxi_jobtype (jobabbr) on delete cascade on update cascade
 );
 `
 	parser := parser.New()
@@ -91,13 +104,13 @@ CONSTRAINT FOREIGN KEY (jobAbbr) REFERENCES ffxi_jobType (jobAbbr) ON DELETE CAS
 }
 
 func (ts *testMiscSuite) TestDMLVistorCover(c *C) {
-	sql := `DELETE FROM somelog WHERE user = 'jcole' ORDER BY timestamp_column LIMIT 1;
+	sql := `delete from somelog where user = 'jcole' order by timestamp_column limit 1;
 delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;
 select * from t where exists(select * from t k where t.c = k.c having sum(c) = 1);
-INSERT INTO t_copy SELECT * FROM t WHERE t.x > 5;
-(SELECT a FROM t1 WHERE a=10 AND B=1) UNION (SELECT a FROM t2 WHERE a=11 AND B=2) ORDER BY a LIMIT 10;
-UPDATE t1 SET col1 = col1 + 1, col2 = col1;
-SHOW CREATE TABLE t;
+insert into t_copy select * from t where t.x > 5;
+(select a from t1 where a=10 and b=1) union (select a from t2 where a=11 and b=2) order by a limit 10;
+update t1 set col1 = col1 + 1, col2 = col1;
+show create table t;
 load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b';`
 
 	parser := parser.New()
