@@ -216,10 +216,6 @@
 			"Rev": "89d447d2cc7b0019e697fb95e65981d3a641b7ec"
 		},
 		{
-			"ImportPath": "github.com/rcrowley/go-metrics",
-			"Rev": "1ce93efbc8f9c568886b2ef85ce305b2217b3de3"
-		},
-		{
 			"ImportPath": "github.com/twinj/uuid",
 			"Rev": "70cac2bcd273ef6a371bb96cde363d28b68734c3"
 		},
