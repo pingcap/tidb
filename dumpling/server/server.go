@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/printer"
 	// For prometheus init
 	_ "github.com/pingcap/tidb/util/metrics"
 	"github.com/prometheus/client_golang/prometheus"
@@ -213,7 +214,12 @@ func (s *Server) startStatusHTTP() {
 		go func() {
 			http.HandleFunc("/status", func(w http.ResponseWriter, req *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				s := status{TPS: tidb.GetTPS(), Connections: s.ConnectionCount(), Version: mysql.ServerVersion}
+				s := status{
+					TPS:         tidb.GetTPS(),
+					Connections: s.ConnectionCount(),
+					Version:     mysql.ServerVersion,
+					GitHash:     printer.TiDBGitHash,
+				}
 				js, err := json.Marshal(s)
 				if err != nil {
 					w.WriteHeader(http.StatusInternalServerError)
@@ -243,6 +249,7 @@ type status struct {
 	TPS         int64  `json:"tps"`
 	Connections int    `json:"connections"`
 	Version     string `json:"version"`
+	GitHash     string `json:"git_hash"`
 }
 
 // Server error codes.
