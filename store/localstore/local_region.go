@@ -6,14 +6,14 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi"
-	"github.com/pingcap/tidb/xapi/xeval"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -170,7 +170,7 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) error {
 		if col.GetPkHandle() {
 			continue
 		}
-		ctx.colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
+		ctx.colTps[col.GetColumnId()] = distsql.FieldTypeFromPBColumn(col)
 	}
 
 	kvRanges, desc := rs.extractKVRanges(ctx)
@@ -450,7 +450,7 @@ func (rs *localRegion) setColumnValueToCtx(ctx *selectContext, h int64, row map[
 			}
 		} else {
 			data := row[colID]
-			ft := xapi.FieldTypeFromPBColumn(col)
+			ft := distsql.FieldTypeFromPBColumn(col)
 			datum, err := tablecodec.DecodeColumnValue(data, ft)
 			if err != nil {
 				return errors.Trace(err)

@@ -17,9 +17,9 @@ import (
 	"bytes"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi/xeval"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
