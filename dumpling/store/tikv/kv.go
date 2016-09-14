@@ -96,7 +96,7 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 		client:      client,
 		regionCache: NewRegionCache(pdClient),
 	}
-	store.lockResolver = NewLockResolver(store)
+	store.lockResolver = newLockResolver(store)
 	if enableGC {
 		store.gcWorker, err = NewGCWorker(store)
 		if err != nil {
