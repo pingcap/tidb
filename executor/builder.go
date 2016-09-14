@@ -472,7 +472,7 @@ func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 	}
-	// Check if the underlying is xapi executor, we should try to push aggregate function down.
+	// Check if the underlying is distsql executor, we should try to push aggregate function down.
 	xSrc, ok := src.(XExecutor)
 	if !ok {
 		return e
