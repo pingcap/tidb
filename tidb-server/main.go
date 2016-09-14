@@ -26,7 +26,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/ngaut/systimemon"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/server"
@@ -54,7 +53,6 @@ func main() {
 	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
 	tidb.RegisterStore("tikv", tikv.Driver{})
 
-	metric.RunMetric(3 * time.Second)
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	flag.Parse()
