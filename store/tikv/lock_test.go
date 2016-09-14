@@ -32,7 +32,7 @@ func (s *testLockSuite) TearDownTest(c *C) {
 	s.store.Close()
 }
 
-func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byte, commitPrimary bool) {
+func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byte, commitPrimary bool) (uint64, uint64) {
 	txn, err := newTiKVTxn(s.store)
 	c.Assert(err, IsNil)
 	if len(value) > 0 {
@@ -60,6 +60,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 		err = committer.commitKeys(NewBackoffer(commitMaxBackoff), [][]byte{primaryKey})
 		c.Assert(err, IsNil)
 	}
+	return txn.startTS, committer.commitTS
 }
 
 func (s *testLockSuite) putAlphabets(c *C) {
@@ -68,13 +69,14 @@ func (s *testLockSuite) putAlphabets(c *C) {
 	}
 }
 
-func (s *testLockSuite) putKV(c *C, key, value []byte) {
+func (s *testLockSuite) putKV(c *C, key, value []byte) (uint64, uint64) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
 	err = txn.Commit()
 	c.Assert(err, IsNil)
+	return txn.StartTS(), txn.(*tikvTxn).commitTS
 }
 
 func (s *testLockSuite) prepareAlphabetLocks(c *C) {
@@ -148,6 +150,25 @@ func (s *testLockSuite) TestCleanLock(c *C) {
 	}
 	err = txn.Commit()
 	c.Assert(err, IsNil)
+}
+
+func (s *testLockSuite) TestGetTxnStatus(c *C) {
+	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
+	status, err := s.store.lockResolver.GetTxnStatus(startTS, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(status.IsCommitted(), IsTrue)
+	c.Assert(status.CommitTS(), Equals, commitTS)
+
+	startTS, commitTS = s.lockKey(c, []byte("a"), []byte("a"), []byte("a"), []byte("a"), true)
+	status, err = s.store.lockResolver.GetTxnStatus(startTS, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(status.IsCommitted(), IsTrue)
+	c.Assert(status.CommitTS(), Equals, commitTS)
+
+	startTS, _ = s.lockKey(c, []byte("a"), []byte("a"), []byte("a"), []byte("a"), false)
+	status, err = s.store.lockResolver.GetTxnStatus(startTS, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(status.IsCommitted(), IsFalse)
 }
 
 func init() {
