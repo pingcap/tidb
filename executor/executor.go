@@ -1111,6 +1111,124 @@ func (e *AggregationExec) innerNext() (ret bool, err error) {
 	return true, nil
 }
 
+// StreamAggExec deals with all the aggregate functions.
+// It is built from Aggregate Plan. When Next() is called, it reads all the data from Src and updates all the items in AggFuncs.
+type StreamAggExec struct {
+	Src                Executor
+	schema             expression.Schema
+	ResultFields       []*ast.ResultField
+	executed           bool
+	hasData            bool
+	ctx                context.Context
+	AggFuncs           []expression.AggregationFunction
+	GroupByItems       []expression.Expression
+	curGroupEncodedKey []byte
+	curGroupKey        []types.Datum
+	tmpGroupKeyBuffer  []types.Datum
+}
+
+// Close implements Executor Close interface.
+func (e *StreamAggExec) Close() error {
+	e.executed = false
+	e.hasData = false
+	for _, agg := range e.AggFuncs {
+		agg.Clear()
+	}
+	return e.Src.Close()
+}
+
+// Schema implements Executor Schema interface.
+func (e *StreamAggExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Fields implements Executor Fields interface.
+func (e *StreamAggExec) Fields() []*ast.ResultField {
+	return e.ResultFields
+}
+
+// Next implements Executor Next interface.
+func (e *StreamAggExec) Next() (*Row, error) {
+	if e.executed {
+		return nil, nil
+	}
+	retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}
+	for {
+		row, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var updated bool
+		if row == nil {
+			updated = true
+			e.executed = true
+		} else {
+			e.hasData = true
+			updated, err = e.updateGroupKey(row)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		if updated {
+			for _, af := range e.AggFuncs {
+				retRow.Data = append(retRow.Data, af.GetStreamResult())
+			}
+
+		}
+		if e.executed {
+			break
+		}
+		for _, af := range e.AggFuncs {
+			err = af.StreamUpdate(row.Data, e.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		if updated {
+			break
+		}
+	}
+	if !e.hasData && len(e.GroupByItems) > 0 {
+		return nil, nil
+	}
+	return retRow, nil
+}
+
+func (e *StreamAggExec) updateGroupKey(row *Row) (bool, error) {
+	if len(e.GroupByItems) == 0 {
+		return false, nil
+	}
+	e.tmpGroupKeyBuffer = e.tmpGroupKeyBuffer[:0]
+	matched, firstGroup := true, false
+	if len(e.curGroupKey) == 0 {
+		matched, firstGroup = false, true
+	}
+	for i, item := range e.GroupByItems {
+		v, err := item.Eval(row.Data, e.ctx)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if matched {
+			c, err := v.CompareDatum(e.curGroupKey[i])
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			matched = c == 0
+		}
+		e.tmpGroupKeyBuffer = append(e.tmpGroupKeyBuffer, v)
+	}
+	if matched {
+		return false, nil
+	}
+	e.curGroupKey = e.tmpGroupKeyBuffer
+	var err error
+	e.curGroupEncodedKey, err = codec.EncodeValue(e.curGroupEncodedKey[0:0:cap(e.curGroupEncodedKey)], e.tmpGroupKeyBuffer...)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return !firstGroup, nil
+}
+
 // ProjectionExec represents a select fields executor.
 type ProjectionExec struct {
 	Src          Executor
