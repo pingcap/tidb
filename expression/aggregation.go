@@ -371,7 +371,7 @@ func (af *avgFunction) updateAvg(row []types.Datum, groupKey []byte, ectx contex
 
 // Update implements AggregationFunction interface.
 func (af *avgFunction) Update(row []types.Datum, groupKey []byte, ctx context.Context) error {
-	if af.mode == FinalMode && af.name == ast.AggFuncAvg {
+	if af.mode == FinalMode {
 		return af.updateAvg(row, groupKey, ctx)
 	}
 	return af.updateSum(row, groupKey, ctx)

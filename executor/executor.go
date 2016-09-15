@@ -1164,7 +1164,7 @@ func (e *StreamAggExec) Next() (*Row, error) {
 			e.executed = true
 		} else {
 			e.hasData = true
-			updated, err = e.updateGroupKey(row)
+			updated, err = e.meetNewGroup(row)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1194,7 +1194,8 @@ func (e *StreamAggExec) Next() (*Row, error) {
 	return retRow, nil
 }
 
-func (e *StreamAggExec) updateGroupKey(row *Row) (bool, error) {
+// meetNewGroup returns a value that represents if the new group is different from last group.
+func (e *StreamAggExec) meetNewGroup(row *Row) (bool, error) {
 	if len(e.GroupByItems) == 0 {
 		return false, nil
 	}
