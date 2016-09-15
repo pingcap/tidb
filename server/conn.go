@@ -534,13 +534,12 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 	startTs := time.Now()
 	defer func() {
 		// Add metrics
-		t := time.Since(startTs)
-		queryHistgram.Observe(float64(t))
-		lable := querySucc
+		queryHistgram.Observe(float64(time.Since(startTs)))
+		label := querySucc
 		if err != nil {
-			lable = queryFailed
+			label = queryFailed
 		}
-		queryCounter.WithLabelValues(lable).Inc()
+		queryCounter.WithLabelValues(label).Inc()
 	}()
 
 	rs, err := cc.ctx.Execute(sql)
