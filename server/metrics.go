@@ -22,8 +22,8 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "handle_query_duration_seconds",
-			Help:      "Bucketed histogram of processing time (s) of handled queries.",
+			Name:      "handle_query_duration_nanoseconds",
+			Help:      "Bucketed histogram of processing time (ns) of handled queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 13),
 		})
 
