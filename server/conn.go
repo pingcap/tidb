@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/metrics"
 )
 
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
@@ -113,6 +112,7 @@ func (cc *clientConn) Close() error {
 	delete(cc.server.clients, cc.connectionID)
 	cc.server.rwlock.Unlock()
 	cc.conn.Close()
+	connGauge.Dec()
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -304,6 +304,8 @@ func (cc *clientConn) Run() {
 		}
 		cc.Close()
 	}()
+
+	connGauge.Inc()
 
 	for {
 		cc.alloc.Reset()
@@ -530,6 +532,16 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 
 func (cc *clientConn) handleQuery(sql string) (err error) {
 	startTs := time.Now()
+	defer func() {
+		// Add metrics
+		queryHistgram.Observe(time.Since(startTs).Seconds())
+		label := querySucc
+		if err != nil {
+			label = queryFailed
+		}
+		queryCounter.WithLabelValues(label).Inc()
+	}()
+
 	rs, err := cc.ctx.Execute(sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -558,7 +570,6 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 	} else {
 		log.Warnf("[TIME_QUERY] %v %s", costTime, sql)
 	}
-	metrics.Query(costTime)
 	return errors.Trace(err)
 }
 
