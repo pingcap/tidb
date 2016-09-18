@@ -293,26 +293,6 @@ func (s *testMainSuite) TestParseDSN(c *C) {
 	}
 }
 
-func (s *testMainSuite) TestTPS(c *C) {
-	store := newStore(c, s.dbName)
-	se := newSession(c, store, s.dbName)
-	defer store.Close()
-
-	mustExecSQL(c, se, "set @@autocommit=0;")
-	for i := 1; i < 6; i++ {
-		for j := 0; j < 5; j++ {
-			for k := 0; k < i; k++ {
-				mustExecSQL(c, se, "begin;")
-				mustExecSQL(c, se, "select 1;")
-				mustExecSQL(c, se, "commit;")
-			}
-			time.Sleep(220 * time.Millisecond)
-		}
-		// It is hard to get the accurate tps because there is another timeline in tpsMetrics.
-		// We could only get the upper/lower boundary for tps
-		c.Assert(GetTPS(), GreaterEqual, int64(4*(i-1)))
-	}
-}
 func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {
 	se.Execute("BEGIN;")
 	r, err := se.Execute(sql)

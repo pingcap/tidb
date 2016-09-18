@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
@@ -86,14 +87,34 @@ func (p *DataSource) handleTableScan(prop requiredProperty) (*physicalPlanInfo, 
 	}
 	ts.SetSchema(p.GetSchema())
 	resultPlan = ts
+	var oldConditions []expression.Expression
+	txn, err := p.ctx.GetTxn(false)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
+		oldConditions = sel.Conditions
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.DeepCopy())
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
-		err := buildNewTableRange(ts)
+		if txn != nil {
+			client := txn.GetClient()
+			var memDB bool
+			switch p.DBName.L {
+			case "information_schema", "performance_schema":
+				memDB = true
+			}
+			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
+				ts.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, txn.GetClient())
+			}
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+		}
+		err := buildTableRange(ts)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -104,7 +125,13 @@ func (p *DataSource) handleTableScan(prop requiredProperty) (*physicalPlanInfo, 
 	} else {
 		ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
 	}
-
+	if txn != nil && !txn.IsReadOnly() {
+		us := &PhysicalUnionScan{
+			Condition: expression.ComposeCNFCondition(oldConditions),
+		}
+		us.SetChildren(resultPlan)
+		resultPlan = us
+	}
 	statsTbl := p.statisticTable
 	rowCount := uint64(statsTbl.Count)
 	if table.PKIsHandle {
@@ -158,15 +185,35 @@ func (p *DataSource) handleIndexScan(prop requiredProperty, index *model.IndexIn
 	is.SetSchema(p.schema)
 	rowCount := uint64(statsTbl.Count)
 	resultPlan = is
+	var oldConditions []expression.Expression
+	txn, err := p.ctx.GetTxn(false)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
 		rowCount = 0
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
+		oldConditions = sel.Conditions
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.DeepCopy())
 		}
 		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
-		err := buildNewIndexRange(is)
+		if txn != nil {
+			client := txn.GetClient()
+			var memDB bool
+			switch p.DBName.L {
+			case "information_schema", "performance_schema":
+				memDB = true
+			}
+			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
+				is.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, txn.GetClient())
+			}
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+		}
+		err := buildIndexRange(is)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -184,6 +231,13 @@ func (p *DataSource) handleIndexScan(prop requiredProperty, index *model.IndexIn
 	} else {
 		rb := rangeBuilder{}
 		is.Ranges = rb.buildIndexRanges(fullRange)
+	}
+	if txn != nil && !txn.IsReadOnly() {
+		us := &PhysicalUnionScan{
+			Condition: expression.ComposeCNFCondition(oldConditions),
+		}
+		us.SetChildren(resultPlan)
+		resultPlan = us
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 	rowCounts := []uint64{rowCount}
