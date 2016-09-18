@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
@@ -76,7 +77,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	wg.Wait()
 }
 
-func (s *testStoreSuite) TestBusyServer(c *C) {
+func (s *testStoreSuite) TestBusyServerKV(c *C) {
 	client := newBusyClient(s.store.client)
 	s.store.client = client
 
@@ -104,6 +105,36 @@ func (s *testStoreSuite) TestBusyServer(c *C) {
 		val, err := txn.Get([]byte("key"))
 		c.Assert(err, IsNil)
 		c.Assert(val, BytesEquals, []byte("value"))
+	}()
+
+	wg.Wait()
+}
+
+func (s *testStoreSuite) TestBusyServerCop(c *C) {
+	client := newBusyClient(s.store.client)
+	s.store.client = client
+
+	session, err := tidb.CreateSession(s.store)
+	c.Assert(err, IsNil)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	client.setBusy(true)
+	go func() {
+		defer wg.Done()
+		time.Sleep(time.Millisecond * 100)
+		client.setBusy(false)
+	}()
+
+	go func() {
+		defer wg.Done()
+		rs, err := session.Execute(`SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
+		c.Assert(err, IsNil)
+		row, err := rs[0].Next()
+		c.Assert(err, IsNil)
+		c.Assert(row, NotNil)
+		c.Assert(row.Data[0].GetString(), Equals, "True")
 	}()
 
 	wg.Wait()
