@@ -14,11 +14,14 @@
 package variable
 
 import (
+	"strings"
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
-	"strings"
 )
 
 const (
@@ -107,6 +110,9 @@ type SessionVars struct {
 
 	// InUpdateStmt indicates if the session is handling update stmt.
 	InUpdateStmt bool
+
+	// SnapshotTS is used for reading history data. for simplicity, SnapshotTS only supports distsql request,
+	SnapshotTS uint64
 }
 
 // sessionVarsKeyType is a dummy type to avoid naming collision in context.
@@ -160,6 +166,12 @@ func GetCharsetInfo(ctx context.Context) (charset, collation string) {
 	charset = sessionVars.systems[characterSetConnection]
 	collation = sessionVars.systems[collationConnection]
 	return
+}
+
+// GetSnapshotTS gets snapshot timestamp that has been set by set variable statement.
+func GetSnapshotTS(ctx context.Context) uint64 {
+	sessionVars := GetSessionVars(ctx)
+	return sessionVars.SnapshotTS
 }
 
 // SetLastInsertID saves the last insert id to the session context.
@@ -226,8 +238,29 @@ func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 		} else {
 			s.StrictSQLMode = false
 		}
+	} else if key == "tidb_snapshot" {
+		err = s.setSnapshotTS(sVal)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	s.systems[key] = sVal
+	return nil
+}
+
+const epochShiftBits = 18
+
+func (s *SessionVars) setSnapshotTS(sVal string) error {
+	if sVal == "" {
+		s.SnapshotTS = 0
+		return nil
+	}
+	t, err := mysql.ParseTime(sVal, mysql.TypeTimestamp, mysql.MaxFsp)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
+	s.SnapshotTS = uint64(ts)
 	return nil
 }
 

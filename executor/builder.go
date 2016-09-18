@@ -483,12 +483,7 @@ func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
 	if !ok {
 		return e
 	}
-	txn, err := b.ctx.GetTxn(false)
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	client := txn.GetClient()
+	client := b.ctx.GetClient()
 	if len(v.GroupByItems) > 0 && !client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy) {
 		return e
 	}
@@ -606,13 +601,19 @@ func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
 }
 
 func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Selection) Executor {
-	txn, err := b.ctx.GetTxn(false)
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
+	var txn kv.Transaction
+	var err error
+	startTS := variable.GetSnapshotTS(b.ctx)
+	if startTS == 0 {
+		txn, err = b.ctx.GetTxn(false)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		startTS = txn.StartTS()
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
-	client := txn.GetClient()
+	client := b.ctx.GetClient()
 	var memDB bool
 	switch v.DBName.L {
 	case "information_schema", "performance_schema":
@@ -623,7 +624,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Sele
 		st := &XSelectTableExec{
 			tableInfo:   v.Table,
 			ctx:         b.ctx,
-			txn:         txn,
+			startTS:     startTS,
 			supportDesc: supportDesc,
 			asName:      v.TableAsName,
 			table:       table,
@@ -654,13 +655,19 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Sele
 }
 
 func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan, s *plan.Selection) Executor {
-	txn, err := b.ctx.GetTxn(false)
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
+	var txn kv.Transaction
+	var err error
+	startTS := variable.GetSnapshotTS(b.ctx)
+	if startTS == 0 {
+		txn, err = b.ctx.GetTxn(false)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		startTS = txn.StartTS()
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
-	client := txn.GetClient()
+	client := b.ctx.GetClient()
 	var memDB bool
 	switch v.DBName.L {
 	case "information_schema", "performance_schema":
@@ -675,7 +682,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan, s *plan.Sele
 			asName:      v.TableAsName,
 			table:       table,
 			indexPlan:   v,
-			txn:         txn,
+			startTS:     startTS,
 			where:       v.ConditionPBExpr,
 		}
 		return st
