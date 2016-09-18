@@ -149,7 +149,7 @@ func pushMetric(addr string, interval time.Duration) {
 	}
 	log.Infof("start Prometheus push client with server addr %s and interval %d", addr, interval)
 	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
-	name := fmt.Sprintf("TiDB-%s:%s", *host, *port)
+	name := fmt.Sprintf("TiDB_%s:%s", *host, *port)
 	go prometheusPushClient(name, addr, interval)
 }
 
