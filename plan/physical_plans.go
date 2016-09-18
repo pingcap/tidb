@@ -41,7 +41,8 @@ type PhysicalIndexScan struct {
 
 	accessEqualCount int
 	AccessCondition  []expression.Expression
-	ConditionPBExpr  *tipb.Expr
+	// ConditionPBExpr is the pb structure of conditions that pushed down.
+	ConditionPBExpr *tipb.Expr
 
 	TableAsName *model.CIStr
 
@@ -60,6 +61,7 @@ type PhysicalTableScan struct {
 	pkCol   *expression.Column
 
 	AccessCondition []expression.Expression
+	// ConditionPBExpr is the pb structure of conditions that pushed down.
 	ConditionPBExpr *tipb.Expr
 
 	TableAsName *model.CIStr
