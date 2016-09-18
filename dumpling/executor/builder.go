@@ -93,6 +93,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildUnion(v)
 	case *plan.Update:
 		return b.buildUpdate(v)
+	case *plan.PhysicalUnionScan:
+		return b.buildUnionScanExec(v)
 	case *plan.PhysicalHashJoin:
 		return b.buildJoin(v)
 	case *plan.PhysicalHashSemiJoin:
@@ -352,13 +354,17 @@ func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 	}
 }
 
-func (b *executorBuilder) buildUnionScanExec(src Executor, condition expression.Expression) *UnionScanExec {
+func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) *UnionScanExec {
+	src := b.build(v.GetChildByIndex(0))
+	if b.err != nil {
+		return nil
+	}
 	us := &UnionScanExec{ctx: b.ctx, Src: src}
 	switch x := src.(type) {
 	case *XSelectTableExec:
 		us.desc = x.desc
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
-		us.newCondition = condition
+		us.condition = v.Condition
 		us.buildAndSortAddedRows(x.table, x.asName)
 	case *XSelectIndexExec:
 		us.desc = x.indexPlan.Desc
@@ -371,7 +377,7 @@ func (b *executorBuilder) buildUnionScanExec(src Executor, condition expression.
 			}
 		}
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
-		us.newCondition = condition
+		us.condition = v.Condition
 		us.buildAndSortAddedRows(x.table, x.asName)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", src)
@@ -550,17 +556,6 @@ func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
 	return xe
 }
 
-func (b *executorBuilder) toPBExpr(conditions []expression.Expression, tbl *model.TableInfo) (
-	*tipb.Expr, []expression.Expression) {
-	txn, err := b.ctx.GetTxn(false)
-	if err != nil {
-		b.err = err
-		return nil, nil
-	}
-	client := txn.GetClient()
-	return b.ConditionExprToPBExpr(client, conditions, tbl)
-}
-
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	child := v.GetChildByIndex(0)
 	oldConditions := v.Conditions
@@ -625,7 +620,6 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Sele
 	}
 	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-		var ret Executor
 		st := &XSelectTableExec{
 			tableInfo:   v.Table,
 			ctx:         b.ctx,
@@ -639,20 +633,9 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Sele
 			desc:        v.Desc,
 			limitCount:  v.LimitCount,
 			keepOrder:   v.KeepOrder,
+			where:       v.ConditionPBExpr,
 		}
-		ret = st
-		if !txn.IsReadOnly() {
-			if s != nil {
-				ret = b.buildUnionScanExec(ret,
-					expression.ComposeCNFCondition(append(s.Conditions, v.AccessCondition...)))
-			} else {
-				ret = b.buildUnionScanExec(ret, expression.ComposeCNFCondition(v.AccessCondition))
-			}
-		}
-		if s != nil {
-			st.where, s.Conditions = b.toPBExpr(s.Conditions, st.tableInfo)
-		}
-		return ret
+		return st
 	}
 
 	ts := &TableScanExec{
@@ -685,7 +668,6 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan, s *plan.Sele
 	}
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
-		var ret Executor
 		st := &XSelectIndexExec{
 			tableInfo:   v.Table,
 			ctx:         b.ctx,
@@ -694,23 +676,10 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan, s *plan.Sele
 			table:       table,
 			indexPlan:   v,
 			txn:         txn,
+			where:       v.ConditionPBExpr,
 		}
-		ret = st
-		if !txn.IsReadOnly() {
-			if s != nil {
-				ret = b.buildUnionScanExec(ret,
-					expression.ComposeCNFCondition(append(s.Conditions, v.AccessCondition...)))
-			} else {
-				ret = b.buildUnionScanExec(ret, expression.ComposeCNFCondition(v.AccessCondition))
-			}
-		}
-		// It will forbid limit and aggregation to push down.
-		if s != nil {
-			st.where, s.Conditions = b.toPBExpr(s.Conditions, st.tableInfo)
-		}
-		return ret
+		return st
 	}
-
 	b.err = errors.New("Not implement yet.")
 	return nil
 }
