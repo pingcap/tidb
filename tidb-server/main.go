@@ -154,7 +154,7 @@ func pushMetric(addr string, interval time.Duration) {
 // PrometheusPushClient pushs metrics to Prometheus Pushgateway.
 func prometheusPushClient(addr string, interval time.Duration) {
 	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
-	job := "TiDB"
+	job := "tidb"
 	grouping := map[string]string{"instance": fmt.Sprintf("%s:%s", *host, *port)}
 	for {
 		err := push.FromGatherer(
