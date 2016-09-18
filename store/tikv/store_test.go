@@ -19,6 +19,10 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
@@ -73,6 +77,69 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	wg.Wait()
 }
 
+func (s *testStoreSuite) TestBusyServerKV(c *C) {
+	client := newBusyClient(s.store.client)
+	s.store.client = client
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("key"), []byte("value"))
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	client.setBusy(true)
+	go func() {
+		defer wg.Done()
+		time.Sleep(time.Millisecond * 100)
+		client.setBusy(false)
+	}()
+
+	go func() {
+		defer wg.Done()
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		val, err := txn.Get([]byte("key"))
+		c.Assert(err, IsNil)
+		c.Assert(val, BytesEquals, []byte("value"))
+	}()
+
+	wg.Wait()
+}
+
+func (s *testStoreSuite) TestBusyServerCop(c *C) {
+	client := newBusyClient(s.store.client)
+	s.store.client = client
+
+	session, err := tidb.CreateSession(s.store)
+	c.Assert(err, IsNil)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	client.setBusy(true)
+	go func() {
+		defer wg.Done()
+		time.Sleep(time.Millisecond * 100)
+		client.setBusy(false)
+	}()
+
+	go func() {
+		defer wg.Done()
+		rs, err := session.Execute(`SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
+		c.Assert(err, IsNil)
+		row, err := rs[0].Next()
+		c.Assert(err, IsNil)
+		c.Assert(row, NotNil)
+		c.Assert(row.Data[0].GetString(), Equals, "True")
+	}()
+
+	wg.Wait()
+}
+
 type mockOracle struct {
 	oracle.Oracle
 	mu struct {
@@ -112,4 +179,57 @@ func (o *mockOracle) IsExpired(lockTimestamp uint64, TTL uint64) bool {
 	defer o.mu.RUnlock()
 
 	return o.Oracle.IsExpired(lockTimestamp, TTL)
+}
+
+type busyClient struct {
+	client Client
+	mu     struct {
+		sync.RWMutex
+		isBusy bool
+	}
+}
+
+func newBusyClient(client Client) *busyClient {
+	return &busyClient{
+		client: client,
+	}
+}
+
+func (c *busyClient) setBusy(busy bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.mu.isBusy = busy
+}
+
+func (c *busyClient) Close() error {
+	return c.client.Close()
+}
+
+func (c *busyClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &kvrpcpb.Response{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.SendKVReq(addr, req, timeout)
+}
+
+func (c *busyClient) SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &coprocessor.Response{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.SendCopReq(addr, req, timeout)
 }
