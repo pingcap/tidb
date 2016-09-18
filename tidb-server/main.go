@@ -148,16 +148,17 @@ func pushMetric(addr string, interval time.Duration) {
 		return
 	}
 	log.Infof("start Prometheus push client with server addr %s and interval %d", addr, interval)
-	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
-	name := fmt.Sprintf("TiDB_%s:%s", *host, *port)
-	go prometheusPushClient(name, addr, interval)
+	go prometheusPushClient(addr, interval)
 }
 
 // PrometheusPushClient pushs metrics to Prometheus Pushgateway.
-func prometheusPushClient(job, addr string, interval time.Duration) {
+func prometheusPushClient(addr string, interval time.Duration) {
+	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
+	job := "TiDB"
+	grouping := map[string]string{"instance": fmt.Sprintf("%s:%s", *host, *port)}
 	for {
 		err := push.FromGatherer(
-			job, push.HostnameGroupingKey(),
+			job, grouping,
 			addr,
 			prometheus.DefaultGatherer,
 		)
