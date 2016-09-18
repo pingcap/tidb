@@ -45,8 +45,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/printer"
-	// For prometheus init
-	_ "github.com/pingcap/tidb/util/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

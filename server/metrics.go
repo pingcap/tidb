@@ -11,30 +11,45 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metrics
+package server
 
 import (
-	"time"
-
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
-	queryMetric = prometheus.NewHistogram(
+	queryHistgram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
-			Subsystem: "query",
+			Subsystem: "server",
 			Name:      "handle_query_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 13),
 		})
+
+	queryCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "query_total",
+			Help:      "Counter of queries.",
+		}, []string{"type"})
+
+	// Query handle result status.
+	querySucc   = "query_succ"
+	queryFailed = "query_failed"
+
+	connGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "connections",
+			Help:      "Number of connections.",
+		})
 )
 
-// Query is used for add query cost time into metrics.
-func Query(costTime time.Duration) {
-	queryMetric.Observe(float64(costTime))
-}
-
 func init() {
-	prometheus.MustRegister(queryMetric)
+	prometheus.MustRegister(queryHistgram)
+	prometheus.MustRegister(queryCounter)
+	prometheus.MustRegister(connGauge)
 }
