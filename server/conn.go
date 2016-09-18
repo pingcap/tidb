@@ -534,7 +534,7 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 	startTs := time.Now()
 	defer func() {
 		// Add metrics
-		queryHistgram.Observe(time.Since(startTs).Seconds())
+		queryHistogram.Observe(time.Since(startTs).Seconds())
 		label := querySucc
 		if err != nil {
 			label = queryFailed
