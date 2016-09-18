@@ -185,6 +185,7 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *Join {
 		reordered:       true,
 		baseLogicalPlan: newBaseLogicalPlan(Jn, e.allocator),
 	}
+	join.proxy = join
 	join.initID()
 	join.SetChildren(lChild, rChild)
 	join.SetSchema(append(lChild.GetSchema().DeepCopy(), rChild.GetSchema().DeepCopy()...))

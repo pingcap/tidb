@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
@@ -37,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -988,13 +986,15 @@ func (e *HashSemiJoinExec) Next() (*Row, error) {
 	}
 }
 
-// AggregationExec deals with all the aggregate functions.
+// HashAggExec deals with all the aggregate functions.
 // It is built from Aggregate Plan. When Next() is called, it reads all the data from Src and updates all the items in AggFuncs.
-type AggregationExec struct {
+type HashAggExec struct {
 	Src               Executor
 	schema            expression.Schema
 	ResultFields      []*ast.ResultField
 	executed          bool
+	hasGby            bool
+	mode              plan.AggregationType
 	ctx               context.Context
 	AggFuncs          []expression.AggregationFunction
 	groupMap          map[string]bool
@@ -1004,7 +1004,7 @@ type AggregationExec struct {
 }
 
 // Close implements Executor Close interface.
-func (e *AggregationExec) Close() error {
+func (e *HashAggExec) Close() error {
 	e.executed = false
 	e.groups = nil
 	e.currentGroupIndex = 0
@@ -1015,17 +1015,17 @@ func (e *AggregationExec) Close() error {
 }
 
 // Schema implements Executor Schema interface.
-func (e *AggregationExec) Schema() expression.Schema {
+func (e *HashAggExec) Schema() expression.Schema {
 	return e.schema
 }
 
 // Fields implements Executor Fields interface.
-func (e *AggregationExec) Fields() []*ast.ResultField {
+func (e *HashAggExec) Fields() []*ast.ResultField {
 	return e.ResultFields
 }
 
 // Next implements Executor Next interface.
-func (e *AggregationExec) Next() (*Row, error) {
+func (e *HashAggExec) Next() (*Row, error) {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		e.groupMap = make(map[string]bool)
@@ -1039,7 +1039,7 @@ func (e *AggregationExec) Next() (*Row, error) {
 			}
 		}
 		e.executed = true
-		if (len(e.groups) == 0) && (len(e.GroupByItems) == 0) {
+		if (len(e.groups) == 0) && !e.hasGby {
 			// If no groupby and no data, we should add an empty group.
 			// For example:
 			// "select count(c) from t;" should return one row [0]
@@ -1059,8 +1059,15 @@ func (e *AggregationExec) Next() (*Row, error) {
 	return retRow, nil
 }
 
-func (e *AggregationExec) getGroupKey(row *Row) ([]byte, error) {
-	if len(e.GroupByItems) == 0 {
+func (e *HashAggExec) getGroupKey(row *Row) ([]byte, error) {
+	if e.mode == plan.FinalAgg {
+		val, err := e.GroupByItems[0].Eval(row.Data, e.ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return val.GetBytes(), nil
+	}
+	if !e.hasGby {
 		return []byte{}, nil
 	}
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
@@ -1080,7 +1087,7 @@ func (e *AggregationExec) getGroupKey(row *Row) ([]byte, error) {
 
 // Fetch a single row from src and update each aggregate function.
 // If the first return value is false, it means there is no more data from src.
-func (e *AggregationExec) innerNext() (ret bool, err error) {
+func (e *HashAggExec) innerNext() (ret bool, err error) {
 	var srcRow *Row
 	if e.Src != nil {
 		srcRow, err = e.Src.Next()
@@ -1173,7 +1180,6 @@ func (e *StreamAggExec) Next() (*Row, error) {
 			for _, af := range e.AggFuncs {
 				retRow.Data = append(retRow.Data, af.GetStreamResult())
 			}
-
 		}
 		if e.executed {
 			break
@@ -1687,233 +1693,6 @@ func (e *TopnExec) Next() (*Row, error) {
 	row := e.Rows[e.Idx].row
 	e.Idx++
 	return row, nil
-}
-
-func (b *executorBuilder) ConditionExprToPBExpr(client kv.Client, exprs []expression.Expression,
-	tbl *model.TableInfo) (pbExpr *tipb.Expr, remained []expression.Expression) {
-	for _, expr := range exprs {
-		v := b.ExprToPBExpr(client, expr, tbl)
-		if v == nil {
-			remained = append(remained, expr)
-			continue
-		}
-		if pbExpr == nil {
-			pbExpr = v
-		} else {
-			// merge multiple converted pb expression into an AND expression.
-			pbExpr = &tipb.Expr{
-				Tp:       tipb.ExprType_And,
-				Children: []*tipb.Expr{pbExpr, v}}
-		}
-	}
-	return
-}
-
-func (b *executorBuilder) GroupByItemToPB(client kv.Client, expr expression.Expression, tbl *model.TableInfo) *tipb.ByItem {
-	e := b.ExprToPBExpr(client, expr, tbl)
-	if e == nil {
-		return nil
-	}
-	return &tipb.ByItem{Expr: e}
-}
-
-func (b *executorBuilder) AggFuncToPBExpr(client kv.Client, aggFunc expression.AggregationFunction,
-	tbl *model.TableInfo) *tipb.Expr {
-	var tp tipb.ExprType
-	switch aggFunc.GetName() {
-	case ast.AggFuncCount:
-		tp = tipb.ExprType_Count
-	case ast.AggFuncFirstRow:
-		tp = tipb.ExprType_First
-	case ast.AggFuncGroupConcat:
-		tp = tipb.ExprType_GroupConcat
-	case ast.AggFuncMax:
-		tp = tipb.ExprType_Max
-	case ast.AggFuncMin:
-		tp = tipb.ExprType_Min
-	case ast.AggFuncSum:
-		tp = tipb.ExprType_Sum
-	case ast.AggFuncAvg:
-		tp = tipb.ExprType_Avg
-	}
-	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
-		return nil
-	}
-
-	children := make([]*tipb.Expr, 0, len(aggFunc.GetArgs()))
-	for _, arg := range aggFunc.GetArgs() {
-		pbArg := b.ExprToPBExpr(client, arg, tbl)
-		if pbArg == nil {
-			return nil
-		}
-		children = append(children, pbArg)
-	}
-	return &tipb.Expr{Tp: tp, Children: children}
-}
-
-// ExprToPBExpr converts an expression.Expression to a tipb.Expr, if not supported, nil will be returned.
-func (b *executorBuilder) ExprToPBExpr(client kv.Client, expr expression.Expression, tbl *model.TableInfo) *tipb.Expr {
-	switch x := expr.(type) {
-	case *expression.Constant:
-		return b.datumToPBExpr(client, expr.(*expression.Constant).Value)
-	case *expression.Column:
-		return b.columnToPBExpr(client, x, tbl)
-	case *expression.ScalarFunction:
-		return b.scalarFuncToPBExpr(client, x, tbl)
-	}
-
-	return nil
-}
-
-func (b *executorBuilder) columnToPBExpr(client kv.Client, column *expression.Column, tbl *model.TableInfo) *tipb.Expr {
-	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
-		return nil
-	}
-	switch column.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry, mysql.TypeDecimal:
-		return nil
-	}
-
-	id := int64(-1)
-	for _, col := range tbl.Columns {
-		if !column.Correlated && col.Name == column.ColName {
-			id = col.ID
-			break
-		}
-	}
-	// Zero Column ID is not a column from table, can not support for now.
-	if id == 0 {
-		return nil
-	}
-	// TODO：If the column ID isn't in fields, it means the column is from an outer table,
-	// its value is available to use.
-	if id == -1 {
-		return nil
-	}
-
-	return &tipb.Expr{
-		Tp:  tipb.ExprType_ColumnRef,
-		Val: codec.EncodeInt(nil, id)}
-}
-
-func (b *executorBuilder) inToPBExpr(client kv.Client, expr *expression.ScalarFunction, tbl *model.TableInfo) *tipb.Expr {
-	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_In)) {
-		return nil
-	}
-
-	pbExpr := b.ExprToPBExpr(client, expr.Args[0], tbl)
-	if pbExpr == nil {
-		return nil
-	}
-	listExpr := b.constListToPBExpr(client, expr.Args[1:], tbl)
-	if listExpr == nil {
-		return nil
-	}
-	return &tipb.Expr{
-		Tp:       tipb.ExprType_In,
-		Children: []*tipb.Expr{pbExpr, listExpr}}
-}
-
-func (b *executorBuilder) constListToPBExpr(client kv.Client, list []expression.Expression, tbl *model.TableInfo) *tipb.Expr {
-	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ValueList)) {
-		return nil
-	}
-
-	// Only list of *expression.Constant can be push down.
-	datums := make([]types.Datum, 0, len(list))
-	for _, expr := range list {
-		v, ok := expr.(*expression.Constant)
-		if !ok {
-			return nil
-		}
-		if b.datumToPBExpr(client, v.Value) == nil {
-			return nil
-		}
-		datums = append(datums, v.Value)
-	}
-	return b.datumsToValueList(datums)
-}
-
-func (b *executorBuilder) notToPBExpr(client kv.Client, expr *expression.ScalarFunction, tbl *model.TableInfo) *tipb.Expr {
-	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_Not)) {
-		return nil
-	}
-
-	child := b.ExprToPBExpr(client, expr.Args[0], tbl)
-	if child == nil {
-		return nil
-	}
-	return &tipb.Expr{
-		Tp:       tipb.ExprType_Not,
-		Children: []*tipb.Expr{child}}
-}
-
-func (b *executorBuilder) scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction,
-	tbl *model.TableInfo) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.LT:
-		tp = tipb.ExprType_LT
-	case ast.LE:
-		tp = tipb.ExprType_LE
-	case ast.EQ:
-		tp = tipb.ExprType_EQ
-	case ast.NE:
-		tp = tipb.ExprType_NE
-	case ast.GE:
-		tp = tipb.ExprType_GE
-	case ast.GT:
-		tp = tipb.ExprType_GT
-	case ast.NullEQ:
-		tp = tipb.ExprType_NullEQ
-	case ast.And:
-		tp = tipb.ExprType_And
-	case ast.Or:
-		tp = tipb.ExprType_Or
-	case ast.UnaryNot:
-		return b.notToPBExpr(client, expr, tbl)
-	case ast.In:
-		return b.inToPBExpr(client, expr, tbl)
-	case ast.Like:
-		// Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
-		escape := expr.Args[2].(*expression.Constant).Value
-		if escape.IsNull() || byte(escape.GetInt64()) != '\\' {
-			return nil
-		}
-		pattern, ok := expr.Args[1].(*expression.Constant)
-		if !ok || pattern.Value.Kind() != types.KindString {
-			return nil
-		}
-		for i, b := range pattern.Value.GetString() {
-			switch b {
-			case '\\', '_':
-				return nil
-			case '%':
-				if i != 0 && i != len(pattern.Value.GetString())-1 {
-					return nil
-				}
-			}
-		}
-		tp = tipb.ExprType_Like
-	default:
-		return nil
-	}
-
-	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
-		return nil
-	}
-
-	expr0 := b.ExprToPBExpr(client, expr.Args[0], tbl)
-	if expr0 == nil {
-		return nil
-	}
-	expr1 := b.ExprToPBExpr(client, expr.Args[1], tbl)
-	if expr1 == nil {
-		return nil
-	}
-	return &tipb.Expr{
-		Tp:       tp,
-		Children: []*tipb.Expr{expr0, expr1}}
 }
 
 // ApplyExec represents apply executor.
