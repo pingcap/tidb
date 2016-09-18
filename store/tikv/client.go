@@ -38,7 +38,7 @@ type Client interface {
 }
 
 const (
-	maxConnecion      = 150
+	maxConnection     = 150
 	dialTimeout       = 5 * time.Second
 	writeTimeout      = 10 * time.Second
 	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
@@ -54,7 +54,7 @@ type rpcClient struct {
 func newRPCClient() *rpcClient {
 	return &rpcClient{
 		msgID: 0,
-		p: NewPools(maxConnecion, func(addr string) (*Conn, error) {
+		p: NewPools(maxConnection, func(addr string) (*Conn, error) {
 			return NewConnection(addr, dialTimeout)
 		}),
 	}
@@ -62,6 +62,10 @@ func newRPCClient() *rpcClient {
 
 // SendCopReq sends a Request to co-processor and receives Response.
 func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+	sendReqCounter.WithLabelValues("cop").Inc()
+	start := time.Now()
+	defer func() { sendReqHistogram.WithLabelValues("cop").Observe(time.Since(start).Seconds()) }()
+
 	conn, err := c.p.GetConn(addr)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -85,6 +89,10 @@ func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request, timeout ti
 
 // SendKVReq sends a Request to kv server and receives Response.
 func (c *rpcClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+	sendReqCounter.WithLabelValues("kv").Inc()
+	start := time.Now()
+	defer func() { sendReqHistogram.WithLabelValues("kv").Observe(time.Since(start).Seconds()) }()
+
 	conn, err := c.p.GetConn(addr)
 	if err != nil {
 		return nil, errors.Trace(err)

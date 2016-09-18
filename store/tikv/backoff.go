@@ -88,6 +88,20 @@ func (t backoffType) createFn() func() int {
 	return nil
 }
 
+func (t backoffType) String() string {
+	switch t {
+	case boTiKVRPC:
+		return "tikvRPC"
+	case boTxnLock:
+		return "txnLock"
+	case boPDRPC:
+		return "pdRPC"
+	case boRegionMiss:
+		return "regionMiss"
+	}
+	return ""
+}
+
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
 	copBuildTaskMaxBackoff  = 5000
@@ -121,6 +135,9 @@ func NewBackoffer(maxSleep int) *Backoffer {
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	backoffCounter.WithLabelValues(typ.String()).Inc()
+	start := time.Now()
+	defer func() { backoffHistogram.WithLabelValues(typ.String()).Observe(time.Since(start).Seconds()) }()
 	// Lazy initialize.
 	if b.fn == nil {
 		b.fn = make(map[backoffType]func() int)
