@@ -112,7 +112,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 				Version: s.version.Ver,
 			},
 		}
-		resp, err := s.store.SendKVReq(bo, req, batch.region)
+		resp, err := s.store.SendKVReq(bo, req, batch.region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -188,7 +188,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := s.store.SendKVReq(bo, req, region.VerID())
+		resp, err := s.store.SendKVReq(bo, req, region.VerID(), readTimeoutShort)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

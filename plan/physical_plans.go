@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -49,6 +48,8 @@ type PhysicalIndexScan struct {
 
 	accessEqualCount int
 	AccessCondition  []expression.Expression
+	// ConditionPBExpr is the pb structure of conditions that pushed down.
+	ConditionPBExpr *tipb.Expr
 
 	TableAsName *model.CIStr
 
@@ -95,7 +96,7 @@ func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation, ctx conte
 	}
 	client := txn.GetClient()
 	for _, f := range agg.AggFuncs {
-		pb, err := AggFuncToPBExpr(client, f)
+		pb, err := aggFuncToPBExpr(client, f)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -106,7 +107,7 @@ func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation, ctx conte
 		p.AggFuncs = append(p.AggFuncs, pb)
 	}
 	for _, item := range agg.GroupByItems {
-		pb, err := GroupByItemToPB(client, item)
+		pb, err := groupByItemToPB(client, item)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -167,6 +168,8 @@ type PhysicalTableScan struct {
 	pkCol   *expression.Column
 
 	AccessCondition []expression.Expression
+	// ConditionPBExpr is the pb structure of conditions that pushed down.
+	ConditionPBExpr *tipb.Expr
 
 	TableAsName *model.CIStr
 
@@ -217,22 +220,19 @@ type PhysicalHashSemiJoin struct {
 	OtherConditions []expression.Expression
 }
 
-type PhysicalUnionScan struct {
-	basePlan
-
-	Table     table.Table
-	Desc      bool
-	Condition expression.Expression
-}
-
+// AggregationType stands for the mode of aggregation plan.
 type AggregationType int
 
 const (
+	// StreamedAgg supposes its input is sorted by group by key.
 	StreamedAgg AggregationType = iota
+	// FinalAgg supposes its input is partial results.
 	FinalAgg
+	// CompleteAgg supposes its input is original results.
 	CompleteAgg
 )
 
+// PhysicalAggregation is Aggregation's physical plan.
 type PhysicalAggregation struct {
 	basePlan
 
@@ -240,6 +240,13 @@ type PhysicalAggregation struct {
 	AggType      AggregationType
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
+}
+
+// PhysicalUnionScan represents a union scan operator.
+type PhysicalUnionScan struct {
+	basePlan
+
+	Condition expression.Expression
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -303,11 +310,6 @@ func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalApply) Copy() PhysicalPlan {
-	np := *p
-	return &np
-}
-
-func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
@@ -588,6 +590,12 @@ func (p *PhysicalDummyScan) Copy() PhysicalPlan {
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Delete) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }

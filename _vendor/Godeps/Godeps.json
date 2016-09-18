@@ -165,47 +165,47 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/coprocessor",
-			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
+			"Rev": "294d57c6b301fcf3f64edcc2ee1a988308169ffc"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/errorpb",
-			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
+			"Rev": "294d57c6b301fcf3f64edcc2ee1a988308169ffc"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/eraftpb",
-			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
+			"Rev": "294d57c6b301fcf3f64edcc2ee1a988308169ffc"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/kvrpcpb",
-			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
+			"Rev": "294d57c6b301fcf3f64edcc2ee1a988308169ffc"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/metapb",
-			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
+			"Rev": "294d57c6b301fcf3f64edcc2ee1a988308169ffc"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/msgpb",
-			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
+			"Rev": "294d57c6b301fcf3f64edcc2ee1a988308169ffc"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/pdpb",
-			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
+			"Rev": "294d57c6b301fcf3f64edcc2ee1a988308169ffc"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_cmdpb",
-			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
+			"Rev": "294d57c6b301fcf3f64edcc2ee1a988308169ffc"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_serverpb",
-			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
+			"Rev": "294d57c6b301fcf3f64edcc2ee1a988308169ffc"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/util",
-			"Rev": "192d51bb92528d5690a2c0bea1b08e51d0085aa9"
+			"Rev": "294d57c6b301fcf3f64edcc2ee1a988308169ffc"
 		},
 		{
 			"ImportPath": "github.com/pingcap/pd/pd-client",
-			"Rev": "3736686db7ee10d537f05c0ef64ae8428521b585"
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
 		},
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-binlog",
@@ -214,10 +214,6 @@
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-tipb",
 			"Rev": "89d447d2cc7b0019e697fb95e65981d3a641b7ec"
-		},
-		{
-			"ImportPath": "github.com/rcrowley/go-metrics",
-			"Rev": "1ce93efbc8f9c568886b2ef85ce305b2217b3de3"
 		},
 		{
 			"ImportPath": "github.com/twinj/uuid",
@@ -410,6 +406,210 @@
 		{
 			"ImportPath": "github.com/cznic/golex/lex",
 			"Rev": "da5a7153a51074477ecac5c45a7e5182a0c72448"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/coreos/etcd/clientv3",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/juju/errors",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/ngaut/deadline",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/ngaut/log",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/pingcap/kvproto/pkg/metapb",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/pingcap/kvproto/pkg/msgpb",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/pingcap/kvproto/pkg/pdpb",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/pingcap/kvproto/pkg/util",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/pkg/metrics",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/prometheus/client_golang/prometheus",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/twinj/uuid",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/golang.org/x/net/context",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/coreos/etcd/auth/authpb",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/coreos/etcd/etcdserver/etcdserverpb",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/coreos/etcd/mvcc/mvccpb",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/coreos/etcd/pkg/tlsutil",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/ghodss/yaml",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/google.golang.org/grpc",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/google.golang.org/grpc/codes",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/google.golang.org/grpc/credentials",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/google.golang.org/grpc/grpclog",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/google.golang.org/grpc/metadata",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/golang/protobuf/proto",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/pingcap/kvproto/pkg/coprocessor",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/pingcap/kvproto/pkg/kvrpcpb",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/pingcap/kvproto/pkg/raft_cmdpb",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/pingcap/kvproto/pkg/raft_serverpb",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/pingcap/kvproto/pkg/eraftpb",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/beorn7/perks/quantile",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/prometheus/client_model/go",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/prometheus/common/expfmt",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/prometheus/procfs",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/grpc-ecosystem/grpc-gateway/runtime",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/grpc-ecosystem/grpc-gateway/utilities",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/cloudfoundry-incubator/candiedyaml",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/golang.org/x/net/http2",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/golang.org/x/net/trace",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/google.golang.org/grpc/internal",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/google.golang.org/grpc/naming",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/google.golang.org/grpc/transport",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/pingcap/kvproto/pkg/errorpb",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/matttproud/golang_protobuf_extensions/pbutil",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/prometheus/common/internal/bitbucket.org/ww/goautoneg",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/prometheus/common/model",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/golang/protobuf/jsonpb",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/github.com/grpc-ecosystem/grpc-gateway/runtime/internal",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/golang.org/x/net/http2/hpack",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/golang.org/x/net/lex/httplex",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/golang.org/x/net/internal/timeseries",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
+		},
+		{
+			"ImportPath": "github.com/pingcap/pd/vendor/google.golang.org/grpc/peer",
+			"Rev": "1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477"
 		}
 	]
 }

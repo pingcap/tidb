@@ -283,7 +283,7 @@ func datumsToValueList(datums []types.Datum) (*tipb.Expr, error) {
 	return &tipb.Expr{Tp: tipb.ExprType_ValueList, Val: val}, nil
 }
 
-func GroupByItemToPB(client kv.Client, expr expression.Expression) (*tipb.ByItem, error) {
+func groupByItemToPB(client kv.Client, expr expression.Expression) (*tipb.ByItem, error) {
 	e, err := exprToPB(client, expr)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -294,7 +294,7 @@ func GroupByItemToPB(client kv.Client, expr expression.Expression) (*tipb.ByItem
 	return &tipb.ByItem{Expr: e}, nil
 }
 
-func AggFuncToPBExpr(client kv.Client, aggFunc expression.AggregationFunction) (*tipb.Expr, error) {
+func aggFuncToPBExpr(client kv.Client, aggFunc expression.AggregationFunction) (*tipb.Expr, error) {
 	var tp tipb.ExprType
 	switch aggFunc.GetName() {
 	case ast.AggFuncCount:

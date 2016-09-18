@@ -298,7 +298,7 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 		case opcode.NE:
 			result = n != 0
 		default:
-			return d, ErrInvalidOperation.Gen("invalid op %v in comparision operation", op)
+			return d, ErrInvalidOperation.Gen("invalid op %v in comparison operation", op)
 		}
 		if result {
 			d.SetInt64(oneI64)

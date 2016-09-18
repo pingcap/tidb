@@ -30,32 +30,35 @@ func (s *testAggFuncSuite) SetUpSuite(c *C) {
 func (s *testAggFuncSuite) TearDownSuite(c *C) {
 }
 
-type mockExec struct {
+type MockExec struct {
 	fields    []*ast.ResultField
-	rows      []*Row
+	Rows      []*Row
 	curRowIdx int
 }
 
-func (m *mockExec) Schema() expression.Schema {
+func (m *MockExec) Schema() expression.Schema {
 	return nil
 }
 
-func (m *mockExec) Fields() []*ast.ResultField {
+func (m *MockExec) Fields() []*ast.ResultField {
 	return m.fields
 }
 
-func (m *mockExec) Next() (*Row, error) {
-	if m.curRowIdx >= len(m.rows) {
+func (m *MockExec) Next() (*Row, error) {
+	if m.curRowIdx >= len(m.Rows) {
 		return nil, nil
 	}
-	r := m.rows[m.curRowIdx]
+	r := m.Rows[m.curRowIdx]
 	m.curRowIdx++
-	for i, d := range r.Data {
-		m.fields[i].Expr.SetValue(d.GetValue())
+	if len(m.fields) > 0 {
+		for i, d := range r.Data {
+			m.fields[i].Expr.SetValue(d.GetValue())
+		}
 	}
 	return r, nil
 }
 
-func (m *mockExec) Close() error {
+func (m *MockExec) Close() error {
+	m.curRowIdx = 0
 	return nil
 }

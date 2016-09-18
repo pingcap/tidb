@@ -582,7 +582,7 @@ func (nr *nameResolver) resolveColumnNameInOnCondition(cn *ast.ColumnNameExpr) {
 	join := ctx.joinNodeStack[len(ctx.joinNodeStack)-1]
 	tableSources := appendTableSources(nil, join)
 	if !nr.resolveColumnInTableSources(cn, tableSources) {
-		nr.Err = errors.Errorf("unkown column name %s", cn.Name.Name.O)
+		nr.Err = errors.Errorf("unknown column name %s", cn.Name.Name.O)
 	}
 }
 

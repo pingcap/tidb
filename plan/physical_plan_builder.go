@@ -102,9 +102,6 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 			conds = append(conds, cond.DeepCopy())
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		if txn != nil {
 			client := txn.GetClient()
 			var memDB bool
@@ -202,14 +199,12 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 		rowCount = 0
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
+		oldConditions = sel.Conditions
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.DeepCopy())
 		}
 		oldConditions = sel.Conditions
 		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		if txn != nil {
 			is.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, txn.GetClient())
 			if err != nil {
@@ -537,9 +532,8 @@ func (p *Aggregation) handleStreamAgg(prop *requiredProperty) (*physicalPlanInfo
 		}
 		if !isMatch {
 			return info, nil
-		} else {
-			newProp.props = append(newProp.props, pro)
 		}
+		newProp.props = append(newProp.props, pro)
 	}
 	newProp.sortKeyLen = len(newProp.props)
 	for i, col := range gbyCols {

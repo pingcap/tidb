@@ -1121,15 +1121,17 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 // StreamAggExec deals with all the aggregate functions.
 // It is built from Aggregate Plan. When Next() is called, it reads all the data from Src and updates all the items in AggFuncs.
 type StreamAggExec struct {
-	Src          Executor
-	schema       expression.Schema
-	ResultFields []*ast.ResultField
-	executed     bool
-	hasData      bool
-	mode         plan.AggregationType
-	ctx          context.Context
-	AggFuncs     []expression.AggregationFunction
-	GroupByItems []expression.Expression
+	Src                Executor
+	schema             expression.Schema
+	ResultFields       []*ast.ResultField
+	executed           bool
+	hasData            bool
+	ctx                context.Context
+	AggFuncs           []expression.AggregationFunction
+	GroupByItems       []expression.Expression
+	curGroupEncodedKey []byte
+	curGroupKey        []types.Datum
+	tmpGroupKey        []types.Datum
 }
 
 // Close implements Executor Close interface.
@@ -1157,66 +1159,82 @@ func (e *StreamAggExec) Next() (*Row, error) {
 	if e.executed {
 		return nil, nil
 	}
-	var groupKey []byte
+	retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}
 	for {
 		row, err := e.Src.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		var newGroup bool
 		if row == nil {
+			newGroup = true
 			e.executed = true
-			break
-		}
-		e.hasData = true
-		groupKey, err = e.getGroupKey(row)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		var end bool
-		for _, af := range e.AggFuncs {
-			end, err = af.StreamUpdate(row.Data, groupKey, e.ctx)
+		} else {
+			e.hasData = true
+			newGroup, err = e.meetNewGroup(row)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		if end {
+		if newGroup {
+			for _, af := range e.AggFuncs {
+				retRow.Data = append(retRow.Data, af.GetStreamResult())
+			}
+
+		}
+		if e.executed {
+			break
+		}
+		for _, af := range e.AggFuncs {
+			err = af.StreamUpdate(row.Data, e.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		if newGroup {
 			break
 		}
 	}
 	if !e.hasData && len(e.GroupByItems) > 0 {
 		return nil, nil
 	}
-	retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}
-	for _, af := range e.AggFuncs {
-		retRow.Data = append(retRow.Data, af.GetStreamResult())
-	}
 	return retRow, nil
 }
 
-func (e *StreamAggExec) getGroupKey(row *Row) ([]byte, error) {
-	if e.mode == plan.FinalAgg {
-		val, err := e.GroupByItems[0].Eval(row.Data, e.ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return val.GetBytes(), nil
-	}
+// meetNewGroup returns a value that represents if the new group is different from last group.
+func (e *StreamAggExec) meetNewGroup(row *Row) (bool, error) {
 	if len(e.GroupByItems) == 0 {
-		return nil, nil
+		return false, nil
 	}
-	vals := make([]types.Datum, 0, len(e.GroupByItems))
-	for _, item := range e.GroupByItems {
+	e.tmpGroupKey = e.tmpGroupKey[:0]
+	matched, firstGroup := true, false
+	if len(e.curGroupKey) == 0 {
+		matched, firstGroup = false, true
+	}
+	for i, item := range e.GroupByItems {
 		v, err := item.Eval(row.Data, e.ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return false, errors.Trace(err)
 		}
-		vals = append(vals, v)
+		if matched {
+			c, err := v.CompareDatum(e.curGroupKey[i])
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			matched = c == 0
+		}
+		e.tmpGroupKey = append(e.tmpGroupKey, v)
 	}
-	bs, err := codec.EncodeValue(nil, vals...)
+	if matched {
+		return false, nil
+	}
+	e.curGroupKey = e.tmpGroupKey
+	var err error
+	e.curGroupEncodedKey, err = codec.EncodeValue(e.curGroupEncodedKey[0:0:cap(e.curGroupEncodedKey)], e.curGroupKey...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return false, errors.Trace(err)
 	}
-	return bs, nil
+	return !firstGroup, nil
 }
 
 // ProjectionExec represents a select fields executor.

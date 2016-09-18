@@ -108,12 +108,12 @@ type TableDual struct {
 type DataSource struct {
 	baseLogicalPlan
 
-	ctx     context.Context
 	table   *ast.TableName
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
 	DBName  *model.CIStr
 	Desc    bool
+	ctx     context.Context
 
 	TableAsName *model.CIStr
 

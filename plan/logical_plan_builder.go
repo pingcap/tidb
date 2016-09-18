@@ -856,13 +856,13 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		p.DBName = &rf.DBName
 		p.Columns = append(p.Columns, rf.Column)
 		schema = append(schema, &expression.Column{
-			ID:       rf.Column.ID,
 			FromID:   p.id,
 			ColName:  rf.Column.Name,
 			TblName:  rf.Table.Name,
 			DBName:   rf.DBName,
 			RetType:  &rf.Column.FieldType,
-			Position: i})
+			Position: i,
+			ID:       rf.Column.ID})
 	}
 	p.SetSchema(schema)
 	return p

@@ -58,7 +58,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_In, tipb.ExprType_ValueList,
 		tipb.ExprType_Like, tipb.ExprType_Not:
 		return true
-	case tipb.ExprType_Plus:
+	case tipb.ExprType_Plus, tipb.ExprType_Div:
 		return true
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg:
 		return true
@@ -135,11 +135,11 @@ func (r *copRanges) String() string {
 func (r *copRanges) len() int {
 	var l int
 	if r.first != nil {
-		l += 1
+		l++
 	}
 	l += len(r.mid)
 	if r.last != nil {
-		l += 1
+		l++
 	}
 	return l
 }
@@ -415,7 +415,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 			Data:    it.req.Data,
 			Ranges:  task.ranges.toPBRanges(),
 		}
-		resp, err := it.store.client.SendCopReq(task.region.GetAddress(), req)
+		resp, err := it.store.client.SendCopReq(task.region.GetAddress(), req, readTimeoutMedium)
 		if err != nil {
 			it.store.regionCache.NextPeer(task.region.VerID())
 			err = bo.Backoff(boTiKVRPC, err)
