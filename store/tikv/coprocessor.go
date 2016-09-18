@@ -429,6 +429,14 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 			log.Warnf("send coprocessor request error: %v, try next peer later", err)
 			continue
 		}
+		if e := resp.GetRegionError().GetServerIsBusy(); e != nil {
+			log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", req.Context)
+			err = bo.Backoff(boServerBusy, errors.Errorf("server is busy"))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			continue
+		}
 		if e := resp.GetRegionError(); e != nil {
 			if notLeader := e.GetNotLeader(); notLeader != nil {
 				it.store.regionCache.UpdateLeader(task.region.VerID(), notLeader.GetLeader().GetId())
