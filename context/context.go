@@ -24,7 +24,7 @@ type Context interface {
 	// GetTxn gets a transaction for further execution.
 	GetTxn(forceNew bool) (kv.Transaction, error)
 
-	// GetClient gets a kv.Client
+	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 
 	// RollbackTxn rolls back the current transaction.

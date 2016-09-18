@@ -111,7 +111,7 @@ type SessionVars struct {
 	// InUpdateStmt indicates if the session is handling update stmt.
 	InUpdateStmt bool
 
-	// SnapshotTS is used for reading history data. for simplicity, SnapshotTS only supports distsql request,
+	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
 }
 
@@ -217,11 +217,18 @@ func (s *SessionVars) SetCurrentUser(user string) {
 	s.User = user
 }
 
+// special session variables.
+const (
+	tidbSnapshot        = "tidb_snapshot"
+	sqlMode             = "sql_mode"
+	characterSetResults = "character_set_results"
+)
+
 // SetSystemVar sets a system variable.
 func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 	key = strings.ToLower(key)
 	if value.IsNull() {
-		if key != "character_set_results" {
+		if key != characterSetResults {
 			return errCantSetToNull
 		}
 		delete(s.systems, key)
@@ -231,14 +238,14 @@ func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if key == "sql_mode" {
+	if key == sqlMode {
 		sVal = strings.ToUpper(sVal)
 		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
 			s.StrictSQLMode = true
 		} else {
 			s.StrictSQLMode = false
 		}
-	} else if key == "tidb_snapshot" {
+	} else if key == tidbSnapshot {
 		err = s.setSnapshotTS(sVal)
 		if err != nil {
 			return errors.Trace(err)
@@ -248,6 +255,7 @@ func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 	return nil
 }
 
+// epochShiftBits is used to reserve logical part of the timestamp.
 const epochShiftBits = 18
 
 func (s *SessionVars) setSnapshotTS(sVal string) error {

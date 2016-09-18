@@ -600,17 +600,23 @@ func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
 	return &TableDualExec{schema: v.GetSchema()}
 }
 
-func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Selection) Executor {
-	var txn kv.Transaction
-	var err error
+func (b *executorBuilder) getStartTS() uint64 {
 	startTS := variable.GetSnapshotTS(b.ctx)
 	if startTS == 0 {
-		txn, err = b.ctx.GetTxn(false)
+		txn, err := b.ctx.GetTxn(false)
 		if err != nil {
 			b.err = errors.Trace(err)
-			return nil
+			return 0
 		}
 		startTS = txn.StartTS()
+	}
+	return startTS
+}
+
+func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Selection) Executor {
+	startTS := b.getStartTS()
+	if b.err != nil {
+		return nil
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
@@ -655,16 +661,9 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Sele
 }
 
 func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan, s *plan.Selection) Executor {
-	var txn kv.Transaction
-	var err error
-	startTS := variable.GetSnapshotTS(b.ctx)
-	if startTS == 0 {
-		txn, err = b.ctx.GetTxn(false)
-		if err != nil {
-			b.err = errors.Trace(err)
-			return nil
-		}
-		startTS = txn.StartTS()
+	startTS := b.getStartTS()
+	if b.err != nil {
+		return nil
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
