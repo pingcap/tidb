@@ -49,8 +49,8 @@ var (
 	reportStatus    = flag.Bool("report-status", true, "If enable status report HTTP service.")
 	logFile         = flag.String("log-file", "", "log file path")
 	joinCon         = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
-	metricsAddr     = flag.String("metrics-addr", "", "prometheus pushgateway address, leaves it empty will disable prometheus.")
-	metricsInterval = flag.String("metrics-interval", "0s", "prometheus client push interval, set \"0s\" to disable prometheus.")
+	metricsAddr     = flag.String("metrics-addr", "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
+	metricsInterval = flag.Int("metrics-interval", 0, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 )
 
 func main() {
@@ -133,6 +133,8 @@ func main() {
 		log.Error("error: system time jump backward")
 	})
 
+	pushMetric(*metricsAddr, time.Duration(*metricsInterval)*time.Second)
+
 	log.Error(svr.Run())
 }
 
@@ -145,7 +147,7 @@ func pushMetric(addr string, interval time.Duration) {
 		log.Info("disable Prometheus push client")
 		return
 	}
-	log.Info("start Prometheus push client")
+	log.Infof("start Prometheus push client with server addr %s and interval %d", addr, interval)
 	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
 	name := fmt.Sprintf("TiDB-%s:%s", *host, *port)
 	go prometheusPushClient(name, addr, interval)
