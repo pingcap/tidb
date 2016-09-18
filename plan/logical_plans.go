@@ -16,6 +16,7 @@ package plan
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/statistics"
@@ -111,6 +112,7 @@ type DataSource struct {
 	Columns []*model.ColumnInfo
 	DBName  *model.CIStr
 	Desc    bool
+	ctx     context.Context
 
 	TableAsName *model.CIStr
 

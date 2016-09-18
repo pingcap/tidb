@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // PhysicalIndexScan represents an index scan plan.
@@ -40,6 +41,8 @@ type PhysicalIndexScan struct {
 
 	accessEqualCount int
 	AccessCondition  []expression.Expression
+	// ConditionPBExpr is the pb structure of conditions that pushed down.
+	ConditionPBExpr *tipb.Expr
 
 	TableAsName *model.CIStr
 
@@ -58,6 +61,8 @@ type PhysicalTableScan struct {
 	pkCol   *expression.Column
 
 	AccessCondition []expression.Expression
+	// ConditionPBExpr is the pb structure of conditions that pushed down.
+	ConditionPBExpr *tipb.Expr
 
 	TableAsName *model.CIStr
 
@@ -106,6 +111,13 @@ type PhysicalHashSemiJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
+}
+
+// PhysicalUnionScan represents a union scan operator.
+type PhysicalUnionScan struct {
+	basePlan
+
+	Condition expression.Expression
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -449,6 +461,12 @@ func (p *PhysicalDummyScan) Copy() PhysicalPlan {
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Delete) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }

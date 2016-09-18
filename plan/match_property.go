@@ -194,6 +194,15 @@ func (p *Sort) matchProperty(_ requiredProperty, _ []uint64, _ ...*physicalPlanI
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
+func (p *PhysicalUnionScan) matchProperty(prop requiredProperty, counts []uint64, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+	res := p.GetChildByIndex(0).(PhysicalPlan).matchProperty(prop, counts, childPlanInfo...)
+	np := *p
+	np.SetChildren(res.p)
+	res.p = &np
+	return res
+}
+
+// matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Insert) matchProperty(_ requiredProperty, _ []uint64, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }
