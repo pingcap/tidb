@@ -830,6 +830,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		return nil
 	}
 	p := &DataSource{
+		ctx:             b.ctx,
 		table:           tn,
 		Table:           tn.TableInfo,
 		baseLogicalPlan: newBaseLogicalPlan(Ts, b.allocator),
@@ -848,7 +849,8 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			TblName:  rf.Table.Name,
 			DBName:   rf.DBName,
 			RetType:  &rf.Column.FieldType,
-			Position: i})
+			Position: i,
+			ID:       rf.Column.ID})
 	}
 	p.SetSchema(schema)
 	return p

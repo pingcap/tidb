@@ -29,7 +29,7 @@ var fullRange = []rangePoint{
 	{value: types.MaxValueDatum()},
 }
 
-func buildNewIndexRange(p *PhysicalIndexScan) error {
+func buildIndexRange(p *PhysicalIndexScan) error {
 	rb := rangeBuilder{}
 	if p.accessEqualCount > 0 {
 		// Build ranges for equal access conditions.
@@ -150,7 +150,7 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 		}
 		cond = pushDownNot(cond, false)
 		if indexScan.accessEqualCount >= len(indexScan.Index.Columns) ||
-			!checker.newCheck(cond) {
+			!checker.check(cond) {
 			filterConds = append(filterConds, cond)
 			continue
 		}
@@ -186,7 +186,7 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 		pkName:    pkName}
 	for _, cond := range conditions {
 		cond = pushDownNot(cond, false)
-		if !checker.newCheck(cond) {
+		if !checker.check(cond) {
 			filterConditions = append(filterConditions, cond)
 			continue
 		}
@@ -201,7 +201,7 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 	return accessConditions, filterConditions
 }
 
-func buildNewTableRange(p *PhysicalTableScan) error {
+func buildTableRange(p *PhysicalTableScan) error {
 	if len(p.AccessCondition) == 0 {
 		p.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
 		return nil
@@ -228,7 +228,7 @@ type conditionChecker struct {
 	shouldReserve bool // check if a access condition should be reserved in filter conditions.
 }
 
-func (c *conditionChecker) newCheck(condition expression.Expression) bool {
+func (c *conditionChecker) check(condition expression.Expression) bool {
 	switch x := condition.(type) {
 	case *expression.ScalarFunction:
 		return c.checkScalarFunction(x)
@@ -243,7 +243,7 @@ func (c *conditionChecker) newCheck(condition expression.Expression) bool {
 func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
 	switch scalar.FuncName.L {
 	case ast.OrOr, ast.AndAnd:
-		return c.newCheck(scalar.Args[0]) && c.newCheck(scalar.Args[1])
+		return c.check(scalar.Args[0]) && c.check(scalar.Args[1])
 	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT:
 		if _, ok := scalar.Args[0].(*expression.Constant); ok {
 			return c.checkColumn(scalar.Args[1])
@@ -260,7 +260,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 				return false
 			}
 		}
-		return c.newCheck(scalar.Args[0])
+		return c.check(scalar.Args[0])
 	case ast.In:
 		if !c.checkColumn(scalar.Args[0]) {
 			return false
