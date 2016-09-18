@@ -1124,7 +1124,7 @@ type StreamAggExec struct {
 	GroupByItems       []expression.Expression
 	curGroupEncodedKey []byte
 	curGroupKey        []types.Datum
-	tmpGroupKeyBuffer  []types.Datum
+	tmpGroupKey        []types.Datum
 }
 
 // Close implements Executor Close interface.
@@ -1199,7 +1199,7 @@ func (e *StreamAggExec) meetNewGroup(row *Row) (bool, error) {
 	if len(e.GroupByItems) == 0 {
 		return false, nil
 	}
-	e.tmpGroupKeyBuffer = e.tmpGroupKeyBuffer[:0]
+	e.tmpGroupKey = e.tmpGroupKey[:0]
 	matched, firstGroup := true, false
 	if len(e.curGroupKey) == 0 {
 		matched, firstGroup = false, true
@@ -1216,14 +1216,14 @@ func (e *StreamAggExec) meetNewGroup(row *Row) (bool, error) {
 			}
 			matched = c == 0
 		}
-		e.tmpGroupKeyBuffer = append(e.tmpGroupKeyBuffer, v)
+		e.tmpGroupKey = append(e.tmpGroupKey, v)
 	}
 	if matched {
 		return false, nil
 	}
-	e.curGroupKey = e.tmpGroupKeyBuffer
+	e.curGroupKey = e.tmpGroupKey
 	var err error
-	e.curGroupEncodedKey, err = codec.EncodeValue(e.curGroupEncodedKey[0:0:cap(e.curGroupEncodedKey)], e.tmpGroupKeyBuffer...)
+	e.curGroupEncodedKey, err = codec.EncodeValue(e.curGroupEncodedKey[0:0:cap(e.curGroupEncodedKey)], e.curGroupKey...)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
