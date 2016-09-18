@@ -328,7 +328,7 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 			return nil, errors.Trace(err)
 		}
 		if row != nil {
-			chunks = appendRow(chunks, 0, row)
+			chunks = appendRow(chunks, handle, row)
 			(*limit)--
 		}
 	}
