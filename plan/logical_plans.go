@@ -62,9 +62,10 @@ type Projection struct {
 // Aggregation represents an aggregate plan.
 type Aggregation struct {
 	baseLogicalPlan
-	// TODO: implement hash aggregation and streamed aggregation
+
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
+	ctx          context.Context
 }
 
 // Selection means a filter.
@@ -135,8 +136,7 @@ type Union struct {
 type Sort struct {
 	baseLogicalPlan
 
-	ByItems []*ByItems
-
+	ByItems   []*ByItems
 	ExecLimit *Limit
 }
 

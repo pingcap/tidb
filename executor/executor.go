@@ -988,13 +988,15 @@ func (e *HashSemiJoinExec) Next() (*Row, error) {
 	}
 }
 
-// AggregationExec deals with all the aggregate functions.
+// HashAggExec deals with all the aggregate functions.
 // It is built from Aggregate Plan. When Next() is called, it reads all the data from Src and updates all the items in AggFuncs.
-type AggregationExec struct {
+type HashAggExec struct {
 	Src               Executor
 	schema            expression.Schema
 	ResultFields      []*ast.ResultField
 	executed          bool
+	hasGby            bool
+	mode              plan.AggregationType
 	ctx               context.Context
 	AggFuncs          []expression.AggregationFunction
 	groupMap          map[string]bool
@@ -1004,7 +1006,7 @@ type AggregationExec struct {
 }
 
 // Close implements Executor Close interface.
-func (e *AggregationExec) Close() error {
+func (e *HashAggExec) Close() error {
 	e.executed = false
 	e.groups = nil
 	e.currentGroupIndex = 0
@@ -1015,17 +1017,17 @@ func (e *AggregationExec) Close() error {
 }
 
 // Schema implements Executor Schema interface.
-func (e *AggregationExec) Schema() expression.Schema {
+func (e *HashAggExec) Schema() expression.Schema {
 	return e.schema
 }
 
 // Fields implements Executor Fields interface.
-func (e *AggregationExec) Fields() []*ast.ResultField {
+func (e *HashAggExec) Fields() []*ast.ResultField {
 	return e.ResultFields
 }
 
 // Next implements Executor Next interface.
-func (e *AggregationExec) Next() (*Row, error) {
+func (e *HashAggExec) Next() (*Row, error) {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		e.groupMap = make(map[string]bool)
@@ -1039,7 +1041,7 @@ func (e *AggregationExec) Next() (*Row, error) {
 			}
 		}
 		e.executed = true
-		if (len(e.groups) == 0) && (len(e.GroupByItems) == 0) {
+		if (len(e.groups) == 0) && !e.hasGby {
 			// If no groupby and no data, we should add an empty group.
 			// For example:
 			// "select count(c) from t;" should return one row [0]
@@ -1059,8 +1061,15 @@ func (e *AggregationExec) Next() (*Row, error) {
 	return retRow, nil
 }
 
-func (e *AggregationExec) getGroupKey(row *Row) ([]byte, error) {
-	if len(e.GroupByItems) == 0 {
+func (e *HashAggExec) getGroupKey(row *Row) ([]byte, error) {
+	if e.mode == plan.FinalAgg {
+		val, err := e.GroupByItems[0].Eval(row.Data, e.ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return val.GetBytes(), nil
+	}
+	if !e.hasGby {
 		return []byte{}, nil
 	}
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
@@ -1080,7 +1089,7 @@ func (e *AggregationExec) getGroupKey(row *Row) ([]byte, error) {
 
 // Fetch a single row from src and update each aggregate function.
 // If the first return value is false, it means there is no more data from src.
-func (e *AggregationExec) innerNext() (ret bool, err error) {
+func (e *HashAggExec) innerNext() (ret bool, err error) {
 	var srcRow *Row
 	if e.Src != nil {
 		srcRow, err = e.Src.Next()
@@ -1173,7 +1182,6 @@ func (e *StreamAggExec) Next() (*Row, error) {
 			for _, af := range e.AggFuncs {
 				retRow.Data = append(retRow.Data, af.GetStreamResult())
 			}
-
 		}
 		if e.executed {
 			break

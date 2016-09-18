@@ -278,7 +278,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
-			best: "LeftHashJoin{LeftHashJoin{LeftHashJoin{Table(t)->Selection->Table(t)}->LeftHashJoin{Table(t)->Table(t)}}->Table(t)}->Projection",
+			best: "LeftHashJoin{RightHashJoin{RightHashJoin{Table(t)->Selection->Table(t)}->LeftHashJoin{Table(t)->Table(t)}}->Table(t)}->Projection",
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
@@ -311,9 +311,9 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		c.Assert(err, IsNil)
 		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
 		c.Assert(err, IsNil)
-		_, res, _, err := lp.convert2PhysicalPlan(nil)
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		p = res.p.PushLimit(nil)
+		p = info.p.PushLimit(nil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
@@ -334,11 +334,36 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select count(*) from t t1 having 1 = 0",
-			best: "Dummy->Aggr->Selection->Projection",
+			best: "Dummy->HashAgg->Selection->Projection",
+		},
+		{
+			sql:  "select count(*) from t group by c",
+			best: "Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg->Projection",
+		},
+		{
+			sql:  "select count(*) from t group by a",
+			best: "Table(t)->StreamAgg->Projection",
+		},
+		{
+			sql:  "select count(distinct e) from t where c = 1 group by d",
+			best: "Index(t.c_d_e)[[1,1]]->StreamAgg->Projection",
+		},
+		{
+			sql:  "select count(distinct e) from t group by d",
+			best: "Table(t)->HashAgg->Projection",
+		},
+		{
+			// Multi distinct column can't apply stream agg.
+			sql:  "select count(distinct e), sum(distinct c) from t where c = 1 group by d",
+			best: "Index(t.c_d_e)[[1,1]]->StreamAgg->Projection",
 		},
 		{
 			sql:  "select * from t a where a.c = 1 order by a.d limit 2",
 			best: "Index(t.c_d_e)[[1,1]]->Projection",
+		},
+		{
+			sql:  "select * from t t1, t t2 right join t t3 on t2.a = t3.b order by t1.a, t1.b, t2.a, t2.b, t3.a, t3.b",
+			best: "RightHashJoin{Table(t)->RightHashJoin{Table(t)->Table(t)}(t2.a,t3.b)}->Projection->Sort",
 		},
 		{
 			sql:  "select * from t a where 1 = a.c and a.d > 1 order by a.d desc limit 2",
@@ -403,9 +428,9 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		c.Assert(err, IsNil)
 		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
 		c.Assert(err, IsNil)
-		_, res, _, err := lp.convert2PhysicalPlan(nil)
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		p = res.p.PushLimit(nil)
+		p = info.p.PushLimit(nil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
@@ -565,9 +590,9 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		c.Assert(err, IsNil)
 		_, err = p.PruneColumnsAndResolveIndices(p.GetSchema())
 		c.Assert(err, IsNil)
-		_, res, _, err := p.convert2PhysicalPlan(nil)
+		info, err := p.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		np := res.p.PushLimit(nil)
+		np := info.p.PushLimit(nil)
 		c.Assert(ToString(np), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
@@ -922,11 +947,11 @@ func (s *testPlanSuite) TestTableScanWithOrder(c *C) {
 	logic, ok := p.(LogicalPlan)
 	c.Assert(ok, IsTrue)
 	// Get physical plan.
-	_, pp, _, err := logic.convert2PhysicalPlan(nil)
+	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	c.Assert(err, IsNil)
 	// Limit->Projection->PhysicalTableScan
 	// Get PhysicalTableScan plan.
-	cpp, ok := pp.p.GetChildByIndex(0).GetChildByIndex(0).(*PhysicalTableScan)
+	cpp, ok := info.p.GetChildByIndex(0).GetChildByIndex(0).(*PhysicalTableScan)
 	c.Assert(cpp, NotNil)
 	c.Assert(ok, IsTrue)
 	// Make sure KeepOrder is true.

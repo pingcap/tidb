@@ -243,7 +243,7 @@ func (sf *sumFunction) GetStreamResult() (d types.Datum) {
 		sf.streamCtx = &ast.AggEvaluateContext{}
 	}
 	d = sf.streamCtx.Value
-	sf.streamCtx = &ast.AggEvaluateContext{}
+	sf.streamCtx = nil
 	return
 }
 
@@ -330,7 +330,7 @@ func (cf *countFunction) GetStreamResult() (d types.Datum) {
 		cf.streamCtx = &ast.AggEvaluateContext{}
 	}
 	d.SetInt64(cf.streamCtx.Count)
-	cf.streamCtx = &ast.AggEvaluateContext{}
+	cf.streamCtx = nil
 	return
 }
 
@@ -408,7 +408,7 @@ func (af *avgFunction) GetStreamResult() (d types.Datum) {
 		af.streamCtx = &ast.AggEvaluateContext{}
 	}
 	d = af.calculateResult(af.streamCtx)
-	af.streamCtx = &ast.AggEvaluateContext{}
+	af.streamCtx = nil
 	return
 }
 
@@ -507,7 +507,7 @@ func (cf *concatFunction) GetStreamResult() (d types.Datum) {
 	} else {
 		d.SetNull()
 	}
-	cf.streamCtx = &ast.AggEvaluateContext{}
+	cf.streamCtx = nil
 	return
 }
 
@@ -526,7 +526,7 @@ func (mmf *maxMinFunction) GetStreamResult() (d types.Datum) {
 		mmf.streamCtx = &ast.AggEvaluateContext{}
 	}
 	d = mmf.streamCtx.Value
-	mmf.streamCtx = &ast.AggEvaluateContext{}
+	mmf.streamCtx = nil
 	return
 }
 
@@ -633,6 +633,6 @@ func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 		ff.streamCtx = &ast.AggEvaluateContext{}
 	}
 	d = ff.streamCtx.Value
-	ff.streamCtx = &ast.AggEvaluateContext{}
+	ff.streamCtx = nil
 	return
 }
