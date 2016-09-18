@@ -1158,18 +1158,18 @@ func (e *StreamAggExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		var updated bool
+		var newGroup bool
 		if row == nil {
-			updated = true
+			newGroup = true
 			e.executed = true
 		} else {
 			e.hasData = true
-			updated, err = e.meetNewGroup(row)
+			newGroup, err = e.meetNewGroup(row)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		if updated {
+		if newGroup {
 			for _, af := range e.AggFuncs {
 				retRow.Data = append(retRow.Data, af.GetStreamResult())
 			}
@@ -1184,7 +1184,7 @@ func (e *StreamAggExec) Next() (*Row, error) {
 				return nil, errors.Trace(err)
 			}
 		}
-		if updated {
+		if newGroup {
 			break
 		}
 	}
