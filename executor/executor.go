@@ -1180,7 +1180,6 @@ func (e *StreamAggExec) Next() (*Row, error) {
 			for _, af := range e.AggFuncs {
 				retRow.Data = append(retRow.Data, af.GetStreamResult())
 			}
-
 		}
 		if e.executed {
 			break
