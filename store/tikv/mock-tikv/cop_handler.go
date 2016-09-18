@@ -102,6 +102,7 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 			}
 			chunks, err = h.getChunksFromIndexReq(ctx)
 		}
+
 		selResp := new(tipb.SelectResponse)
 		selResp.Error = toPBError(err)
 		selResp.Chunks = chunks
@@ -255,13 +256,13 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 	startKey := maxStartKey(ran.StartKey, h.startKey)
 	endKey := minEndKey(ran.EndKey, h.endKey)
 	if (*limit) == 0 || bytes.Compare(startKey, endKey) >= 0 {
-		return nil, nil
+		return chunks, nil
 	}
 
 	if ran.IsPoint() {
 		val, err := h.mvccStore.Get(startKey, ctx.sel.GetStartTs())
 		if len(val) == 0 {
-			return nil, nil
+			return chunks, nil
 		} else if err != nil {
 			return nil, errors.Trace(err)
 		}
