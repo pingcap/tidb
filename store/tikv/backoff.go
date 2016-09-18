@@ -72,6 +72,7 @@ const (
 	boTxnLock
 	boPDRPC
 	boRegionMiss
+	boServerBusy
 )
 
 func (t backoffType) createFn() func() int {
@@ -84,6 +85,8 @@ func (t backoffType) createFn() func() int {
 		return NewBackoffFn(500, 3000, EqualJitter)
 	case boRegionMiss:
 		return NewBackoffFn(100, 500, NoJitter)
+	case boServerBusy:
+		return NewBackoffFn(2000, 10000, EqualJitter)
 	}
 	return nil
 }
@@ -98,6 +101,8 @@ func (t backoffType) String() string {
 		return "pdRPC"
 	case boRegionMiss:
 		return "regionMiss"
+	case boServerBusy:
+		return "serverBusy"
 	}
 	return ""
 }
