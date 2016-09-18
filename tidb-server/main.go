@@ -32,21 +32,25 @@ import (
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/push"
 )
 
 var (
-	store        = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
-	storePath    = flag.String("path", "/tmp/tidb", "tidb storage path")
-	logLevel     = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
-	host         = flag.String("host", "0.0.0.0", "tidb server host")
-	port         = flag.String("P", "4000", "tidb server port")
-	statusPort   = flag.String("status", "10080", "tidb server status port")
-	lease        = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
-	socket       = flag.String("socket", "", "The socket file to use for connection.")
-	enablePS     = flag.Bool("perfschema", false, "If enable performance schema.")
-	reportStatus = flag.Bool("report-status", true, "If enable status report HTTP service.")
-	logFile      = flag.String("log-file", "", "log file path")
-	joinCon      = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
+	store           = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
+	storePath       = flag.String("path", "/tmp/tidb", "tidb storage path")
+	logLevel        = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
+	host            = flag.String("host", "0.0.0.0", "tidb server host")
+	port            = flag.String("P", "4000", "tidb server port")
+	statusPort      = flag.String("status", "10080", "tidb server status port")
+	lease           = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
+	socket          = flag.String("socket", "", "The socket file to use for connection.")
+	enablePS        = flag.Bool("perfschema", false, "If enable performance schema.")
+	reportStatus    = flag.Bool("report-status", true, "If enable status report HTTP service.")
+	logFile         = flag.String("log-file", "", "log file path")
+	joinCon         = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
+	metricsAddr     = flag.String("metrics-addr", "", "prometheus pushgateway address, leaves it empty will disable prometheus.")
+	metricsInterval = flag.String("metrics-interval", "0s", "prometheus client push interval, set \"0s\" to disable prometheus.")
 )
 
 func main() {
@@ -130,4 +134,34 @@ func main() {
 	})
 
 	log.Error(svr.Run())
+}
+
+// Prometheus push.
+const zeroDuration = time.Duration(0)
+
+// PushMetric pushs metircs in background.
+func pushMetric(addr string, interval time.Duration) {
+	if interval == zeroDuration || len(addr) == 0 {
+		log.Info("disable Prometheus push client")
+		return
+	}
+	log.Info("start Prometheus push client")
+	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
+	name := fmt.Sprintf("TiDB-%s:%s", *host, *port)
+	go prometheusPushClient(name, addr, interval)
+}
+
+// PrometheusPushClient pushs metrics to Prometheus Pushgateway.
+func prometheusPushClient(job, addr string, interval time.Duration) {
+	for {
+		err := push.FromGatherer(
+			job, push.HostnameGroupingKey(),
+			addr,
+			prometheus.DefaultGatherer,
+		)
+		if err != nil {
+			log.Errorf("could not push metrics to Prometheus Pushgateway: %v", err)
+		}
+		time.Sleep(interval)
+	}
 }
