@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -2001,6 +2002,94 @@ func (s *testSuite) TestNewTableScan(c *C) {
 	result.Check(testkit.Rows(rowStr1))
 	result = tk.MustQuery("select * from schemata where schema_name like 'my%'")
 	result.Check(testkit.Rows(rowStr1, rowStr2))
+}
+
+func (s *testSuite) TestStreamAgg(c *C) {
+	col := &expression.Column{
+		Index: 1,
+	}
+	gbyCol := &expression.Column{
+		Index: 0,
+	}
+	sumAgg := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{col}, false)
+	cntAgg := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{col}, false)
+	avgAgg := expression.NewAggFunction(ast.AggFuncAvg, []expression.Expression{col}, false)
+	maxAgg := expression.NewAggFunction(ast.AggFuncMax, []expression.Expression{col}, false)
+	cases := []struct {
+		aggFunc expression.AggregationFunction
+		result  string
+		input   [][]interface{}
+		result1 []string
+	}{
+		{
+			sumAgg,
+			"<nil>",
+			[][]interface{}{
+				{0, 1}, {0, nil}, {1, 2}, {1, 3},
+			},
+			[]string{
+				"1", "5",
+			},
+		},
+		{
+			cntAgg,
+			"0",
+			[][]interface{}{
+				{0, 1}, {0, nil}, {1, 2}, {1, 3},
+			},
+			[]string{
+				"1", "2",
+			},
+		},
+		{
+			avgAgg,
+			"<nil>",
+			[][]interface{}{
+				{0, 1}, {0, nil}, {1, 2}, {1, 3},
+			},
+			[]string{
+				"1.0000", "2.5000",
+			},
+		},
+		{
+			maxAgg,
+			"<nil>",
+			[][]interface{}{
+				{0, 1}, {0, nil}, {1, 2}, {1, 3},
+			},
+			[]string{
+				"1", "3",
+			},
+		},
+	}
+	for _, ca := range cases {
+		mock := &executor.MockExec{}
+		e := &executor.StreamAggExec{
+			AggFuncs: []expression.AggregationFunction{ca.aggFunc},
+			Src:      mock,
+		}
+		row, err := e.Next()
+		c.Check(err, IsNil)
+		c.Check(row, NotNil)
+		c.Assert(fmt.Sprintf("%v", row.Data[0].GetValue()), Equals, ca.result)
+		e.GroupByItems = append(e.GroupByItems, gbyCol)
+		e.Close()
+		row, err = e.Next()
+		c.Check(err, IsNil)
+		c.Check(row, IsNil)
+		e.Close()
+		for _, input := range ca.input {
+			data := types.MakeDatums(input...)
+			mock.Rows = append(mock.Rows, &executor.Row{Data: data})
+		}
+		for _, res := range ca.result1 {
+			row, err = e.Next()
+			c.Check(err, IsNil)
+			c.Check(row, NotNil)
+			c.Assert(fmt.Sprintf("%v", row.Data[0].GetValue()), Equals, res)
+		}
+	}
+
 }
 
 func (s *testSuite) TestAggregation(c *C) {
