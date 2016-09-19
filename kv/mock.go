@@ -53,10 +53,6 @@ func (t *mockTxn) IsReadOnly() bool {
 	return true
 }
 
-func (t *mockTxn) GetClient() Client {
-	return nil
-}
-
 func (t *mockTxn) StartTS() uint64 {
 	return uint64(0)
 }
@@ -104,6 +100,10 @@ func (s *mockStorage) UUID() string {
 // CurrentVersion returns current max committed version.
 func (s *mockStorage) CurrentVersion() (Version, error) {
 	return Version{uint64(1)}, nil
+}
+
+func (s *mockStorage) GetClient() Client {
+	return nil
 }
 
 // MockTxn is used for test cases that need more interfaces than Transaction.

@@ -224,6 +224,10 @@ func (s *session) RollbackTxn() error {
 	return s.finishTxn(true)
 }
 
+func (s *session) GetClient() kv.Client {
+	return s.store.GetClient()
+}
+
 func (s *session) String() string {
 	// TODO: how to print binded context in values appropriately?
 	data := map[string]interface{}{
