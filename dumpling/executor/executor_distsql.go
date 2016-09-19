@@ -632,7 +632,7 @@ type XSelectIndexExec struct {
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 	where         *tipb.Expr
-	txn           kv.Transaction
+	startTS       uint64
 
 	tasks    chan *lookupTableTask
 	tasksErr error // not nil if tasks closed due to error.
@@ -664,7 +664,7 @@ func (e *XSelectIndexExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByIt
 	e.byItems = byItems
 	e.aggFields = fields
 	e.aggregate = true
-	client := e.txn.GetClient()
+	client := e.ctx.GetClient()
 	if !client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeGroupBy) {
 		e.indexPlan.DoubleRead = true
 	}
@@ -867,7 +867,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 
 func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
-	selIdxReq.StartTs = e.txn.StartTS()
+	selIdxReq.StartTs = e.startTS
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	if e.indexPlan.Desc {
 		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: e.indexPlan.Desc})
@@ -893,7 +893,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return distsql.Select(e.txn.GetClient(), selIdxReq, keyRanges, concurrency, !e.indexPlan.OutOfOrder)
+	return distsql.Select(e.ctx.GetClient(), selIdxReq, keyRanges, concurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
@@ -1008,7 +1008,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	if e.indexPlan.OutOfOrder {
 		selTableReq.Limit = e.indexPlan.LimitCount
 	}
-	selTableReq.StartTs = e.txn.StartTS()
+	selTableReq.StartTs = e.startTS
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
 	}
@@ -1018,7 +1018,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
 	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles)
-	resp, err := distsql.Select(e.txn.GetClient(), selTableReq, keyRanges, defaultConcurrency, false)
+	resp, err := distsql.Select(e.ctx.GetClient(), selTableReq, keyRanges, defaultConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1048,7 +1048,7 @@ type XSelectTableExec struct {
 	limitCount    *int64
 	returnedRows  uint64 // returned rowCount
 	keepOrder     bool
-	txn           kv.Transaction
+	startTS       uint64
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -1082,7 +1082,7 @@ func (e *XSelectTableExec) Schema() expression.Schema {
 func (e *XSelectTableExec) doRequest() error {
 	var err error
 	selReq := new(tipb.SelectRequest)
-	selReq.StartTs = e.txn.StartTS()
+	selReq.StartTs = e.startTS
 	selReq.Where = e.where
 	columns := e.Columns
 	selReq.TableInfo = &tipb.TableInfo{
@@ -1098,7 +1098,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.GroupBy = e.byItems
 
 	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges)
-	e.result, err = distsql.Select(e.txn.GetClient(), selReq, kvRanges, defaultConcurrency, e.keepOrder)
+	e.result, err = distsql.Select(e.ctx.GetClient(), selReq, kvRanges, defaultConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}

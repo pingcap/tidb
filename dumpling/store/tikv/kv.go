@@ -170,6 +170,12 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	}
 }
 
+func (s *tikvStore) GetClient() kv.Client {
+	return &CopClient{
+		store: s,
+	}
+}
+
 // sendKVReq sends req to tikv server. It will retry internally to find the right
 // region leader if i) fails to establish a connection to server or ii) server
 // returns `NotLeader`.
