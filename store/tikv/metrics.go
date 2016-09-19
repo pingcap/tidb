@@ -20,8 +20,8 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "txn_action_total",
-			Help:      "Counter of txn actions.",
+			Name:      "txn_total",
+			Help:      "Counter of created txns.",
 		})
 
 	snapshotCounter = prometheus.NewCounter(

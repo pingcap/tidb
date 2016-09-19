@@ -14,11 +14,14 @@
 package variable
 
 import (
+	"strings"
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
-	"strings"
 )
 
 const (
@@ -107,6 +110,9 @@ type SessionVars struct {
 
 	// InUpdateStmt indicates if the session is handling update stmt.
 	InUpdateStmt bool
+
+	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
+	SnapshotTS uint64
 }
 
 // sessionVarsKeyType is a dummy type to avoid naming collision in context.
@@ -162,6 +168,12 @@ func GetCharsetInfo(ctx context.Context) (charset, collation string) {
 	return
 }
 
+// GetSnapshotTS gets snapshot timestamp that has been set by set variable statement.
+func GetSnapshotTS(ctx context.Context) uint64 {
+	sessionVars := GetSessionVars(ctx)
+	return sessionVars.SnapshotTS
+}
+
 // SetLastInsertID saves the last insert id to the session context.
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
@@ -205,11 +217,18 @@ func (s *SessionVars) SetCurrentUser(user string) {
 	s.User = user
 }
 
+// special session variables.
+const (
+	tidbSnapshot        = "tidb_snapshot"
+	sqlMode             = "sql_mode"
+	characterSetResults = "character_set_results"
+)
+
 // SetSystemVar sets a system variable.
 func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 	key = strings.ToLower(key)
 	if value.IsNull() {
-		if key != "character_set_results" {
+		if key != characterSetResults {
 			return errCantSetToNull
 		}
 		delete(s.systems, key)
@@ -219,15 +238,37 @@ func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if key == "sql_mode" {
+	if key == sqlMode {
 		sVal = strings.ToUpper(sVal)
 		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
 			s.StrictSQLMode = true
 		} else {
 			s.StrictSQLMode = false
 		}
+	} else if key == tidbSnapshot {
+		err = s.setSnapshotTS(sVal)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	s.systems[key] = sVal
+	return nil
+}
+
+// epochShiftBits is used to reserve logical part of the timestamp.
+const epochShiftBits = 18
+
+func (s *SessionVars) setSnapshotTS(sVal string) error {
+	if sVal == "" {
+		s.SnapshotTS = 0
+		return nil
+	}
+	t, err := mysql.ParseTime(sVal, mysql.TypeTimestamp, mysql.MaxFsp)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
+	s.SnapshotTS = uint64(ts)
 	return nil
 }
 

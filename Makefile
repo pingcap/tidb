@@ -22,14 +22,14 @@ TARGET = ""
 
 .PHONY: all build install update parser clean todo test gotest interpreter server goyacc dev benchkv
 
-default: server benchkv buildsucc
+default: server buildsucc
 
 buildsucc:
 	@echo Build TiDB Server successfully!
 
 all: dev server install benchkv
 
-dev: parser build test check
+dev: parser build benchkv test check
 
 build:
 	rm -rf vendor && ln -s _vendor/vendor vendor
