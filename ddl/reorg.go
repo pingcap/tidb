@@ -83,6 +83,10 @@ func (c *reorgContext) CommitTxn() error {
 	return c.finishTxn(false)
 }
 
+func (c *reorgContext) GetClient() kv.Client {
+	return c.store.GetClient()
+}
+
 func (c *reorgContext) SetValue(key fmt.Stringer, value interface{}) {
 	c.m[key] = value
 }

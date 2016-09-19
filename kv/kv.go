@@ -85,8 +85,6 @@ type Transaction interface {
 	DelOption(opt Option)
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
-	// GetClient gets a client instance.
-	GetClient() Client
 	// StartTS returns the transaction start timestamp.
 	StartTS() uint64
 }
@@ -169,6 +167,8 @@ type Storage interface {
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) (Snapshot, error)
+	// GetClient gets a client instance.
+	GetClient() Client
 	// Close store
 	Close() error
 	// Storage's unique ID
