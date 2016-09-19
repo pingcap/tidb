@@ -177,7 +177,7 @@ type PhysicalPlan interface {
 type baseLogicalPlan struct {
 	basePlan
 	planMap map[string]*physicalPlanInfo
-	proxy   Plan
+	self    Plan
 }
 
 func (p *baseLogicalPlan) getPlanInfo(prop *requiredProperty) (*physicalPlanInfo, error) {
@@ -197,14 +197,14 @@ func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProperty) (*physica
 		return info, nil
 	}
 	if len(p.children) == 0 {
-		return &physicalPlanInfo{p: p.proxy.(PhysicalPlan)}, nil
+		return &physicalPlanInfo{p: p.self.(PhysicalPlan)}, nil
 	}
 	child := p.children[0].(LogicalPlan)
 	info, err = child.convert2PhysicalPlan(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	info = addPlanToResponse(p.proxy.(PhysicalPlan), info)
+	info = addPlanToResponse(p.self.(PhysicalPlan), info)
 	return info, p.storePlanInfo(prop, info)
 }
 

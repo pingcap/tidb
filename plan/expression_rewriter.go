@@ -22,6 +22,8 @@ var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Cont
 // rewrite function rewrites ast expr to expression.Expression.
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
 // asScalar means whether this expression must be treated as a scalar expression.
+// And this function returns a result expression, a new plan that may have apply or semi-join, and bool value that
+// standing for if the expression containing a correlated column.
 func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (
 	expression.Expression, LogicalPlan, bool, error) {
 	er := &expressionRewriter{

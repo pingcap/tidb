@@ -288,7 +288,7 @@ func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *Select
 		Lock:            lock,
 		baseLogicalPlan: newBaseLogicalPlan(Lock, b.allocator),
 	}
-	selectLock.proxy = selectLock
+	selectLock.self = selectLock
 	selectLock.initID()
 	addChild(selectLock, src)
 	selectLock.SetSchema(src.GetSchema())
@@ -440,7 +440,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		baseLogicalPlan: newBaseLogicalPlan(Ins, b.allocator),
 	}
 	insertPlan.initID()
-	insertPlan.proxy = insertPlan
+	insertPlan.self = insertPlan
 	if insert.Select != nil {
 		insertPlan.SelectPlan = b.build(insert.Select)
 		addChild(insertPlan, insertPlan.SelectPlan)

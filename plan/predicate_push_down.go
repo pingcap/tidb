@@ -26,7 +26,7 @@ func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression,
 	selection := &Selection{
 		Conditions:      conditions,
 		baseLogicalPlan: newBaseLogicalPlan(Sel, allocator)}
-	selection.proxy = selection
+	selection.self = selection
 	selection.initID()
 	selection.SetSchema(child.GetSchema().DeepCopy())
 	return InsertPlan(p, child, selection)

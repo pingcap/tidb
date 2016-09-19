@@ -996,7 +996,7 @@ type HashAggExec struct {
 	ResultFields      []*ast.ResultField
 	executed          bool
 	hasGby            bool
-	mode              plan.AggregationType
+	aggType           plan.AggregationType
 	ctx               context.Context
 	AggFuncs          []expression.AggregationFunction
 	groupMap          map[string]bool
@@ -1062,7 +1062,7 @@ func (e *HashAggExec) Next() (*Row, error) {
 }
 
 func (e *HashAggExec) getGroupKey(row *Row) ([]byte, error) {
-	if e.mode == plan.FinalAgg {
+	if e.aggType == plan.FinalAgg {
 		val, err := e.GroupByItems[0].Eval(row.Data, e.ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
