@@ -1360,7 +1360,18 @@ func (e *SelectionExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if match {
-			return srcRow, nil
+			row := &Row{
+				RowKeys: srcRow.RowKeys,
+				Data:    make([]types.Datum, 0, len(srcRow.Data)),
+			}
+			for _, v := range e.Schema() {
+				val, err := v.Eval(srcRow.Data, e.ctx)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				row.Data = append(row.Data, val)
+			}
+			return row, nil
 		}
 	}
 }

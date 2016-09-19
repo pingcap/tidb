@@ -571,12 +571,23 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	default:
 		src = b.build(x)
 	}
-
 	if len(v.Conditions) == 0 {
 		v.Conditions = oldConditions
+		switch x := src.(type) {
+		case *XSelectTableExec:
+			x.schema = v.GetSchema()
+			newColumn := make([]*model.ColumnInfo, len(x.Columns))
+			for i, s := range x.Schema() { // reorder DataSource's columns
+				for _, c := range x.Columns {
+					if c.Offset == s.Position {
+						newColumn[i] = c
+					}
+				}
+			}
+			x.Columns = newColumn
+		}
 		return src
 	}
-
 	exec := &SelectionExec{
 		Src:       src,
 		Condition: expression.ComposeCNFCondition(v.Conditions),
