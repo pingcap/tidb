@@ -240,7 +240,7 @@ func (sf *sumFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 
 func (sf *sumFunction) GetStreamResult() (d types.Datum) {
 	if sf.streamCtx == nil {
-		sf.streamCtx = &ast.AggEvaluateContext{}
+		return
 	}
 	d = sf.streamCtx.Value
 	sf.streamCtx = nil
@@ -327,7 +327,7 @@ func (cf *countFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 
 func (cf *countFunction) GetStreamResult() (d types.Datum) {
 	if cf.streamCtx == nil {
-		cf.streamCtx = &ast.AggEvaluateContext{}
+		return types.NewDatum(0)
 	}
 	d.SetInt64(cf.streamCtx.Count)
 	cf.streamCtx = nil
@@ -405,7 +405,7 @@ func (af *avgFunction) GetGroupResult(groupKey []byte) types.Datum {
 
 func (af *avgFunction) GetStreamResult() (d types.Datum) {
 	if af.streamCtx == nil {
-		af.streamCtx = &ast.AggEvaluateContext{}
+		return
 	}
 	d = af.calculateResult(af.streamCtx)
 	af.streamCtx = nil
@@ -500,7 +500,7 @@ func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 
 func (cf *concatFunction) GetStreamResult() (d types.Datum) {
 	if cf.streamCtx == nil {
-		cf.streamCtx = &ast.AggEvaluateContext{}
+		return
 	}
 	if cf.streamCtx.Buffer != nil {
 		d.SetString(cf.streamCtx.Buffer.String())
@@ -523,7 +523,7 @@ func (mmf *maxMinFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 
 func (mmf *maxMinFunction) GetStreamResult() (d types.Datum) {
 	if mmf.streamCtx == nil {
-		mmf.streamCtx = &ast.AggEvaluateContext{}
+		return
 	}
 	d = mmf.streamCtx.Value
 	mmf.streamCtx = nil
@@ -630,7 +630,7 @@ func (ff *firstRowFunction) GetGroupResult(groupKey []byte) types.Datum {
 
 func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 	if ff.streamCtx == nil {
-		ff.streamCtx = &ast.AggEvaluateContext{}
+		return
 	}
 	d = ff.streamCtx.Value
 	ff.streamCtx = nil
