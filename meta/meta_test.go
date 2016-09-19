@@ -15,6 +15,7 @@ package meta_test
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/meta"
@@ -161,6 +162,37 @@ func (s *testSuite) TestMeta(c *C) {
 
 	err = txn.Commit()
 	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestSnapshot(c *C) {
+	defer testleak.AfterTest(c)()
+	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
+	store, err := driver.Open("memory")
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	txn, _ := store.Begin()
+	m := meta.NewMeta(txn)
+	m.GenGlobalID()
+	n, _ := m.GetGlobalID()
+	c.Assert(n, Equals, int64(1))
+	txn.Commit()
+
+	ver1, _ := store.CurrentVersion()
+	time.Sleep(time.Millisecond)
+	txn, _ = store.Begin()
+	m = meta.NewMeta(txn)
+	m.GenGlobalID()
+	n, _ = m.GetGlobalID()
+	c.Assert(n, Equals, int64(2))
+	txn.Commit()
+
+	snapshot, _ := store.GetSnapshot(ver1)
+	snapMeta := meta.NewSnapshotMeta(snapshot)
+	n, _ = snapMeta.GetGlobalID()
+	c.Assert(n, Equals, int64(1))
+	_, err = snapMeta.GenGlobalID()
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestDDL(c *C) {

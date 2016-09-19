@@ -83,7 +83,13 @@ type Meta struct {
 
 // NewMeta creates a Meta in transaction txn.
 func NewMeta(txn kv.Transaction) *Meta {
-	t := structure.NewStructure(txn, []byte{'m'})
+	t := structure.NewStructure(txn, txn, []byte{'m'})
+	return &Meta{txn: t}
+}
+
+// NewSnapshotMeta create a Meta with snapshot.
+func NewSnapshotMeta(snapshot kv.Snapshot) *Meta {
+	t := structure.NewStructure(snapshot, nil, []byte{'m'})
 	return &Meta{txn: t}
 }
 
