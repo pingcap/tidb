@@ -60,7 +60,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	// Select Table request.
 	txn, err := store.Begin()
 	c.Check(err, IsNil)
-	client := txn.GetClient()
+	client := store.GetClient()
 	req, err := prepareSelectRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
 	resp := client.Send(req)
@@ -89,7 +89,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	// Select Index request.
 	txn, err = store.Begin()
 	c.Check(err, IsNil)
-	client = txn.GetClient()
+	client = store.GetClient()
 	req, err = prepareIndexRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
 	resp = client.Send(req)

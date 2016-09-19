@@ -144,12 +144,6 @@ func (txn *tikvTxn) LockKeys(keys ...kv.Key) error {
 	return nil
 }
 
-func (txn *tikvTxn) GetClient() kv.Client {
-	return &CopClient{
-		store: txn.store,
-	}
-}
-
 func (txn *tikvTxn) IsReadOnly() bool {
 	return !txn.dirty
 }

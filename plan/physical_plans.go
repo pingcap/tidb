@@ -86,15 +86,10 @@ func needValue(af expression.AggregationFunction) bool {
 }
 
 func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation, ctx context.Context) (expression.Schema, error) {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if txn == nil {
-		// for plan test
+	client := ctx.GetClient()
+	if client == nil {
 		return nil, nil
 	}
-	client := txn.GetClient()
 	for _, f := range agg.AggFuncs {
 		pb, err := aggFuncToPBExpr(client, f)
 		if err != nil {

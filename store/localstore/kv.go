@@ -346,6 +346,10 @@ func (s *dbStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	}, nil
 }
 
+func (s *dbStore) GetClient() kv.Client {
+	return &dbClient{store: s, regionInfo: s.pd.GetRegionInfo()}
+}
+
 func (s *dbStore) CurrentVersion() (kv.Version, error) {
 	return globalVersionProvider.CurrentVersion()
 }

@@ -535,14 +535,26 @@ func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
 	return &TableDualExec{schema: v.GetSchema()}
 }
 
+func (b *executorBuilder) getStartTS() uint64 {
+	startTS := variable.GetSnapshotTS(b.ctx)
+	if startTS == 0 {
+		txn, err := b.ctx.GetTxn(false)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return 0
+		}
+		startTS = txn.StartTS()
+	}
+	return startTS
+}
+
 func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Selection) Executor {
-	txn, err := b.ctx.GetTxn(false)
-	if err != nil {
-		b.err = errors.Trace(err)
+	startTS := b.getStartTS()
+	if b.err != nil {
 		return nil
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
-	client := txn.GetClient()
+	client := b.ctx.GetClient()
 	var memDB bool
 	switch v.DBName.L {
 	case "information_schema", "performance_schema":
@@ -553,7 +565,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Sele
 		st := &XSelectTableExec{
 			tableInfo:   v.Table,
 			ctx:         b.ctx,
-			txn:         txn,
+			startTS:     startTS,
 			supportDesc: supportDesc,
 			asName:      v.TableAsName,
 			table:       table,
@@ -588,13 +600,12 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Sele
 }
 
 func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan, s *plan.Selection) Executor {
-	txn, err := b.ctx.GetTxn(false)
-	if err != nil {
-		b.err = errors.Trace(err)
+	startTS := b.getStartTS()
+	if b.err != nil {
 		return nil
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
-	client := txn.GetClient()
+	client := b.ctx.GetClient()
 	var memDB bool
 	switch v.DBName.L {
 	case "information_schema", "performance_schema":
@@ -609,7 +620,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan, s *plan.Sele
 			asName:      v.TableAsName,
 			table:       table,
 			indexPlan:   v,
-			txn:         txn,
+			startTS:     startTS,
 			where:       v.ConditionPBExpr,
 			aggregate:   v.Aggregated,
 			aggFuncs:    v.AggFuncs,

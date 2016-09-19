@@ -90,10 +90,7 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 	ts.SetSchema(p.GetSchema())
 	resultPlan = ts
 	var oldConditions []expression.Expression
-	txn, err := p.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	var err error
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
@@ -102,15 +99,15 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 			conds = append(conds, cond.DeepCopy())
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
-		if txn != nil {
-			client := txn.GetClient()
+		client := p.ctx.GetClient()
+		if client != nil {
 			var memDB bool
 			switch p.DBName.L {
 			case "information_schema", "performance_schema":
 				memDB = true
 			}
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-				ts.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, txn.GetClient())
+				ts.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, client)
 			}
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -126,6 +123,10 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 		}
 	} else {
 		ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
+	}
+	txn, err := p.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	if txn != nil && !txn.IsReadOnly() {
 		us := &PhysicalUnionScan{
@@ -190,11 +191,8 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 	is.SetSchema(p.schema)
 	rowCount := uint64(statsTbl.Count)
 	resultPlan = is
-	txn, err := p.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	var oldConditions []expression.Expression
+	var err error
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
 		rowCount = 0
 		newSel := *sel
@@ -205,8 +203,16 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 		}
 		oldConditions = sel.Conditions
 		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
-		if txn != nil {
-			is.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, txn.GetClient())
+		client := p.ctx.GetClient()
+		if client != nil {
+			var memDB bool
+			switch p.DBName.L {
+			case "information_schema", "performance_schema":
+				memDB = true
+			}
+			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
+				is.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, client)
+			}
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -229,6 +235,10 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 	} else {
 		rb := rangeBuilder{}
 		is.Ranges = rb.buildIndexRanges(fullRange)
+	}
+	txn, err := p.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	if txn != nil && !txn.IsReadOnly() {
 		us := &PhysicalUnionScan{
