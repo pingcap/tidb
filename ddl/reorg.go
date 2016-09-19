@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/juju/errors"
@@ -173,6 +174,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
 	count := 0
 
 	for {
+		startTS := time.Now()
 		keys := make([]kv.Key, 0, maxBatchSize)
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err1 := d.isReorgRunnable(txn, jobType); err1 != nil {
@@ -209,12 +211,14 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
 			count += len(keys)
 			return nil
 		})
-
+		sub := time.Since(startTS).Seconds()
 		if err != nil {
+			log.Warnf("[ddl] deleted %v keys with prefix %q failed, take time %v", count, prefix, sub)
 			return errors.Trace(err)
 		}
 
-		log.Infof("[ddl] deleted %v keys with prefix %q", count, prefix)
+		batchHandleDataHistogram.WithLabelValues(batchDelData, strconv.Itoa(len(keys))).Observe(sub)
+		log.Infof("[ddl] deleted %v keys with prefix %q take time %v", count, prefix, sub)
 		// delete no keys, return.
 		if len(keys) == 0 {
 			return nil
