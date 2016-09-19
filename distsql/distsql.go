@@ -274,9 +274,9 @@ func Select(client kv.Client, req *tipb.SelectRequest, keyRanges []kv.KeyRange, 
 	}()
 
 	// Convert tipb.*Request to kv.Request.
-	kvReq, e := composeRequest(req, keyRanges, concurrency, keepOrder)
-	if e != nil {
-		err = errors.Trace(e)
+	kvReq, err1 := composeRequest(req, keyRanges, concurrency, keepOrder)
+	if err1 != nil {
+		err = errors.Trace(err1)
 		return nil, err
 	}
 
