@@ -16,6 +16,7 @@ package distsql
 import (
 	"io"
 	"io/ioutil"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -260,14 +261,29 @@ func (pr *partialResult) Close() error {
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
 func Select(client kv.Client, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (SelectResult, error) {
+	var err error
+	startTs := time.Now()
+	defer func() {
+		// Add metrics
+		queryHistgram.Observe(time.Since(startTs).Seconds())
+		if err != nil {
+			queryCounter.WithLabelValues(queryFailed).Inc()
+		} else {
+			queryCounter.WithLabelValues(querySucc).Inc()
+		}
+	}()
+
 	// Convert tipb.*Request to kv.Request.
-	kvReq, err := composeRequest(req, keyRanges, concurrency, keepOrder)
-	if err != nil {
-		return nil, errors.Trace(err)
+	kvReq, e := composeRequest(req, keyRanges, concurrency, keepOrder)
+	if e != nil {
+		err = errors.Trace(e)
+		return nil, err
 	}
+
 	resp := client.Send(kvReq)
 	if resp == nil {
-		return nil, errors.New("client returns nil response")
+		err = errors.New("client returns nil response")
+		return nil, err
 	}
 	result := &selectResult{
 		resp:    resp,
