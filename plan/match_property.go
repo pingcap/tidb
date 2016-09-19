@@ -35,6 +35,15 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 	return &physicalPlanInfo{p: ts, cost: math.MaxFloat64, count: infos[0].count}
 }
 
+func anyMatch(matchedList []bool) bool {
+	for _, matched := range matchedList {
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*physicalPlanInfo) *physicalPlanInfo {
 	rowCount := float64(infos[0].count)
@@ -78,13 +87,7 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 			break
 		}
 	}
-	isMatch := true
-	for _, matched := range matchedList {
-		if !matched {
-			isMatch = false
-		}
-	}
-	if isMatch {
+	if anyMatch(matchedList) {
 		sortedCost := cost + rowCount*cpuFactor
 		if allAsc {
 			sortedIs := *is

@@ -315,6 +315,9 @@ func addPlanToResponse(p PhysicalPlan, planInfo *physicalPlanInfo) *physicalPlan
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
 func (p *Limit) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if info != nil {
 		return info, nil
 	}
@@ -323,11 +326,10 @@ func (p *Limit) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		return nil, errors.Trace(err)
 	}
 	count := p.Offset + p.Count
-	if count < info.count {
-		count = p.Offset + p.Count
-	}
 	info = addPlanToResponse(p, info)
-	info.count = count
+	if count < info.count {
+		info.count = count
+	}
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
