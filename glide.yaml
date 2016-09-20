@@ -87,7 +87,7 @@ import:
   - encoding/unicode
   - transform
 - package: google.golang.org/grpc
-  version: 79b7c349179cdd6efd8bac4a1ce7f01b98c16e9b
+  version: 02fca896ff5f50c6bbbee0860345a49344b37a03
   subpackages:
   - codes
   - credentials
