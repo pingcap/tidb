@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -40,6 +41,9 @@ type Expression interface {
 
 	// DeepCopy copies an expression totally.
 	DeepCopy() Expression
+
+	// HashCode create the hashcode for expression
+	HashCode() []byte
 }
 
 // EvalBool evaluates expression to a boolean value.
@@ -66,6 +70,7 @@ type Column struct {
 	DBName  model.CIStr
 	TblName model.CIStr
 	RetType *types.FieldType
+	ID      int64
 	// Position means the position of this column that appears in the select fields.
 	// e.g. SELECT name as id , 1 - id as id , 1 + name as id, name as id from src having id = 1;
 	// There are four ids in the same schema, so you can't identify the column through the FromID and ColName.
@@ -83,7 +88,7 @@ type Column struct {
 // Equal checks if two columns are equal
 func (col *Column) Equal(expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
-		return col.FromID == newCol.FromID && col.ColName == newCol.ColName
+		return newCol.FromID == col.FromID && newCol.Position == col.Position
 	}
 	return false
 }
@@ -131,6 +136,13 @@ func (col *Column) DeepCopy() Expression {
 	}
 	newCol := *col
 	return &newCol
+}
+
+// HashCode implements Expression interface.
+func (col *Column) HashCode() []byte {
+	var bytes []byte
+	bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(col.FromID), types.NewIntDatum(int64(col.Position)))
+	return bytes
 }
 
 // Schema stands for the row schema get from input.
@@ -234,7 +246,6 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 
 // NewFunction creates a new scalar function or constant.
 func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-
 	_, canConstantFolding := evaluator.DynamicFuncs[funcName]
 	canConstantFolding = !canConstantFolding
 
@@ -328,6 +339,20 @@ func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Da
 	return sf.Function(sf.ArgValues, ctx)
 }
 
+// HashCode implements Expression interface.
+func (sf *ScalarFunction) HashCode() []byte {
+	var bytes []byte
+	v := make([]types.Datum, 0, len(sf.Args)+1)
+	bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(sf.FuncName.L))
+	v = append(v, types.NewBytesDatum(bytes))
+	for _, arg := range sf.Args {
+		v = append(v, types.NewBytesDatum(arg.HashCode()))
+	}
+	bytes = bytes[:0]
+	bytes, _ = codec.EncodeValue(bytes, v...)
+	return bytes
+}
+
 // Constant stands for a constant value.
 type Constant struct {
 	Value   types.Datum
@@ -361,8 +386,15 @@ func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error)
 	return c.Value, nil
 }
 
-// ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeCNFCondition(conditions []Expression) Expression {
+// HashCode implements Expression interface.
+func (c *Constant) HashCode() []byte {
+	var bytes []byte
+	bytes, _ = codec.EncodeValue(bytes, c.Value)
+	return bytes
+}
+
+// composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
+func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expression {
 	length := len(conditions)
 	if length == 0 {
 		return nil
@@ -370,11 +402,21 @@ func ComposeCNFCondition(conditions []Expression) Expression {
 	if length == 1 {
 		return conditions[0]
 	}
-	expr, _ := NewFunction(ast.AndAnd,
+	expr, _ := NewFunction(funcName,
 		types.NewFieldType(mysql.TypeTiny),
-		ComposeCNFCondition(conditions[length/2:]),
-		ComposeCNFCondition(conditions[:length/2]))
+		composeConditionWithBinaryOp(conditions[:length/2], funcName),
+		composeConditionWithBinaryOp(conditions[length/2:], funcName))
 	return expr
+}
+
+// ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
+func ComposeCNFCondition(conditions []Expression) Expression {
+	return composeConditionWithBinaryOp(conditions, ast.AndAnd)
+}
+
+// ComposeDNFCondition composes DNF items into a balance deep DNF tree.
+func ComposeDNFCondition(conditions []Expression) Expression {
+	return composeConditionWithBinaryOp(conditions, ast.OrOr)
 }
 
 // Assignment represents a set assignment in Update, such as
@@ -382,4 +424,31 @@ func ComposeCNFCondition(conditions []Expression) Expression {
 type Assignment struct {
 	Col  *Column
 	Expr Expression
+}
+
+// splitNormalFormItems split CNF(conjunctive normal form) like "a and b and c", or DNF(disjunctive normal form) like "a or b or c"
+func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
+	switch v := onExpr.(type) {
+	case *ScalarFunction:
+		if v.FuncName.L == funcName {
+			var ret []Expression
+			for _, arg := range v.Args {
+				ret = append(ret, splitNormalFormItems(arg, funcName)...)
+			}
+			return ret
+		}
+	}
+	return []Expression{onExpr}
+}
+
+// SplitCNFItems splits CNF items.
+// CNF means conjunctive normal form, e.g. "a and b and c".
+func SplitCNFItems(onExpr Expression) []Expression {
+	return splitNormalFormItems(onExpr, ast.AndAnd)
+}
+
+// SplitDNFItems splits DNF items.
+// DNF means disjunctive normal form, e.g. "a or b or c".
+func SplitDNFItems(onExpr Expression) []Expression {
+	return splitNormalFormItems(onExpr, ast.OrOr)
 }

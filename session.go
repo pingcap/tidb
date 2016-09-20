@@ -188,10 +188,6 @@ func (s *session) finishTxn(rollback bool) error {
 		s.ClearValue(executor.DirtyDBKey)
 		s.txn = nil
 		variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, false)
-		// Update tps metrics
-		if !variable.GetSessionVars(s).RetryInfo.Retrying {
-			tpsMetrics.Add(1)
-		}
 	}()
 
 	if rollback {
@@ -226,6 +222,10 @@ func (s *session) CommitTxn() error {
 
 func (s *session) RollbackTxn() error {
 	return s.finishTxn(true)
+}
+
+func (s *session) GetClient() kv.Client {
+	return s.store.GetClient()
 }
 
 func (s *session) String() string {

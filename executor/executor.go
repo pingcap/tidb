@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"container/heap"
 	"sort"
 	"sync"
 
@@ -363,9 +364,6 @@ type orderByRow struct {
 	key []types.Datum
 	row *Row
 }
-
-// SortBufferSize represents the total extra row count that sort can use.
-var SortBufferSize = 500
 
 // For select stmt with aggregate function but without groupby clasue,
 // We consider there is a single group with key singleGroup.
@@ -990,13 +988,15 @@ func (e *HashSemiJoinExec) Next() (*Row, error) {
 	}
 }
 
-// AggregationExec deals with all the aggregate functions.
+// HashAggExec deals with all the aggregate functions.
 // It is built from Aggregate Plan. When Next() is called, it reads all the data from Src and updates all the items in AggFuncs.
-type AggregationExec struct {
+type HashAggExec struct {
 	Src               Executor
 	schema            expression.Schema
 	ResultFields      []*ast.ResultField
 	executed          bool
+	hasGby            bool
+	aggType           plan.AggregationType
 	ctx               context.Context
 	AggFuncs          []expression.AggregationFunction
 	groupMap          map[string]bool
@@ -1006,7 +1006,7 @@ type AggregationExec struct {
 }
 
 // Close implements Executor Close interface.
-func (e *AggregationExec) Close() error {
+func (e *HashAggExec) Close() error {
 	e.executed = false
 	e.groups = nil
 	e.currentGroupIndex = 0
@@ -1017,17 +1017,17 @@ func (e *AggregationExec) Close() error {
 }
 
 // Schema implements Executor Schema interface.
-func (e *AggregationExec) Schema() expression.Schema {
+func (e *HashAggExec) Schema() expression.Schema {
 	return e.schema
 }
 
 // Fields implements Executor Fields interface.
-func (e *AggregationExec) Fields() []*ast.ResultField {
+func (e *HashAggExec) Fields() []*ast.ResultField {
 	return e.ResultFields
 }
 
 // Next implements Executor Next interface.
-func (e *AggregationExec) Next() (*Row, error) {
+func (e *HashAggExec) Next() (*Row, error) {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		e.groupMap = make(map[string]bool)
@@ -1041,7 +1041,7 @@ func (e *AggregationExec) Next() (*Row, error) {
 			}
 		}
 		e.executed = true
-		if (len(e.groups) == 0) && (len(e.GroupByItems) == 0) {
+		if (len(e.groups) == 0) && !e.hasGby {
 			// If no groupby and no data, we should add an empty group.
 			// For example:
 			// "select count(c) from t;" should return one row [0]
@@ -1061,8 +1061,15 @@ func (e *AggregationExec) Next() (*Row, error) {
 	return retRow, nil
 }
 
-func (e *AggregationExec) getGroupKey(row *Row) ([]byte, error) {
-	if len(e.GroupByItems) == 0 {
+func (e *HashAggExec) getGroupKey(row *Row) ([]byte, error) {
+	if e.aggType == plan.FinalAgg {
+		val, err := e.GroupByItems[0].Eval(row.Data, e.ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return val.GetBytes(), nil
+	}
+	if !e.hasGby {
 		return []byte{}, nil
 	}
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
@@ -1082,7 +1089,7 @@ func (e *AggregationExec) getGroupKey(row *Row) ([]byte, error) {
 
 // Fetch a single row from src and update each aggregate function.
 // If the first return value is false, it means there is no more data from src.
-func (e *AggregationExec) innerNext() (ret bool, err error) {
+func (e *HashAggExec) innerNext() (ret bool, err error) {
 	var srcRow *Row
 	if e.Src != nil {
 		srcRow, err = e.Src.Next()
@@ -1111,6 +1118,125 @@ func (e *AggregationExec) innerNext() (ret bool, err error) {
 		af.Update(srcRow.Data, groupKey, e.ctx)
 	}
 	return true, nil
+}
+
+// StreamAggExec deals with all the aggregate functions.
+// It assumes all the input datas is sorted by group by key.
+// When Next() is called, it will return a result for the same group.
+type StreamAggExec struct {
+	Src                Executor
+	schema             expression.Schema
+	ResultFields       []*ast.ResultField
+	executed           bool
+	hasData            bool
+	ctx                context.Context
+	AggFuncs           []expression.AggregationFunction
+	GroupByItems       []expression.Expression
+	curGroupEncodedKey []byte
+	curGroupKey        []types.Datum
+	tmpGroupKey        []types.Datum
+}
+
+// Close implements Executor Close interface.
+func (e *StreamAggExec) Close() error {
+	e.executed = false
+	e.hasData = false
+	for _, agg := range e.AggFuncs {
+		agg.Clear()
+	}
+	return e.Src.Close()
+}
+
+// Schema implements Executor Schema interface.
+func (e *StreamAggExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Fields implements Executor Fields interface.
+func (e *StreamAggExec) Fields() []*ast.ResultField {
+	return e.ResultFields
+}
+
+// Next implements Executor Next interface.
+func (e *StreamAggExec) Next() (*Row, error) {
+	if e.executed {
+		return nil, nil
+	}
+	retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}
+	for {
+		row, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var newGroup bool
+		if row == nil {
+			newGroup = true
+			e.executed = true
+		} else {
+			e.hasData = true
+			newGroup, err = e.meetNewGroup(row)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		if newGroup {
+			for _, af := range e.AggFuncs {
+				retRow.Data = append(retRow.Data, af.GetStreamResult())
+			}
+		}
+		if e.executed {
+			break
+		}
+		for _, af := range e.AggFuncs {
+			err = af.StreamUpdate(row.Data, e.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		if newGroup {
+			break
+		}
+	}
+	if !e.hasData && len(e.GroupByItems) > 0 {
+		return nil, nil
+	}
+	return retRow, nil
+}
+
+// meetNewGroup returns a value that represents if the new group is different from last group.
+func (e *StreamAggExec) meetNewGroup(row *Row) (bool, error) {
+	if len(e.GroupByItems) == 0 {
+		return false, nil
+	}
+	e.tmpGroupKey = e.tmpGroupKey[:0]
+	matched, firstGroup := true, false
+	if len(e.curGroupKey) == 0 {
+		matched, firstGroup = false, true
+	}
+	for i, item := range e.GroupByItems {
+		v, err := item.Eval(row.Data, e.ctx)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if matched {
+			c, err := v.CompareDatum(e.curGroupKey[i])
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			matched = c == 0
+		}
+		e.tmpGroupKey = append(e.tmpGroupKey, v)
+	}
+	if matched {
+		return false, nil
+	}
+	e.curGroupKey = e.tmpGroupKey
+	var err error
+	e.curGroupEncodedKey, err = codec.EncodeValue(e.curGroupEncodedKey[0:0:cap(e.curGroupEncodedKey)], e.curGroupKey...)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return !firstGroup, nil
 }
 
 // ProjectionExec represents a select fields executor.
@@ -1372,7 +1498,6 @@ type SortExec struct {
 	ByItems []*plan.ByItems
 	Rows    []*orderByRow
 	ctx     context.Context
-	Limit   *plan.Limit
 	Idx     int
 	fetched bool
 	err     error
@@ -1414,7 +1539,7 @@ func (e *SortExec) Less(i, j int) bool {
 
 		ret, err := v1.CompareDatum(v2)
 		if err != nil {
-			e.err = err
+			e.err = errors.Trace(err)
 			return true
 		}
 
@@ -1435,12 +1560,6 @@ func (e *SortExec) Less(i, j int) bool {
 // Next implements Executor Next interface.
 func (e *SortExec) Next() (*Row, error) {
 	if !e.fetched {
-		offset := -1
-		totalCount := -1
-		if e.Limit != nil {
-			offset = int(e.Limit.Offset)
-			totalCount = offset + int(e.Limit.Count)
-		}
 		for {
 			srcRow, err := e.Src.Next()
 			if err != nil {
@@ -1460,25 +1579,116 @@ func (e *SortExec) Next() (*Row, error) {
 				}
 			}
 			e.Rows = append(e.Rows, orderRow)
-			if totalCount != -1 && e.Len() >= totalCount+SortBufferSize {
-				sort.Sort(e)
-				e.Rows = e.Rows[:totalCount]
-			}
 		}
 		sort.Sort(e)
-		if offset >= 0 && offset < e.Len() {
-			if totalCount > e.Len() {
-				e.Rows = e.Rows[offset:]
-			} else {
-				e.Rows = e.Rows[offset:totalCount]
-			}
-		} else if offset != -1 {
-			e.Rows = e.Rows[:0]
-		}
 		e.fetched = true
 	}
 	if e.err != nil {
 		return nil, errors.Trace(e.err)
+	}
+	if e.Idx >= len(e.Rows) {
+		return nil, nil
+	}
+	row := e.Rows[e.Idx].row
+	e.Idx++
+	return row, nil
+}
+
+// TopnExec implements a top n algo.
+type TopnExec struct {
+	SortExec
+	limit      *plan.Limit
+	totalCount int
+	heapSize   int
+}
+
+// Less implements heap.Interface Less interface.
+func (e *TopnExec) Less(i, j int) bool {
+	for index, by := range e.ByItems {
+		v1 := e.Rows[i].key[index]
+		v2 := e.Rows[j].key[index]
+
+		ret, err := v1.CompareDatum(v2)
+		if err != nil {
+			e.err = errors.Trace(err)
+			return true
+		}
+
+		if by.Desc {
+			ret = -ret
+		}
+
+		if ret > 0 {
+			return true
+		} else if ret < 0 {
+			return false
+		}
+	}
+
+	return false
+}
+
+// Len implements heap.Interface Len interface.
+func (e *TopnExec) Len() int {
+	return e.heapSize
+}
+
+// Push implements heap.Interface Push interface.
+func (e *TopnExec) Push(x interface{}) {
+	e.Rows = append(e.Rows, x.(*orderByRow))
+	e.heapSize++
+}
+
+// Pop implements heap.Interface Pop interface.
+func (e *TopnExec) Pop() interface{} {
+	e.heapSize--
+	return nil
+}
+
+// Next implements Executor Next interface.
+func (e *TopnExec) Next() (*Row, error) {
+	if !e.fetched {
+		e.Idx = int(e.limit.Offset)
+		e.totalCount = int(e.limit.Offset + e.limit.Count)
+		e.Rows = make([]*orderByRow, 0, e.totalCount+1)
+		e.heapSize = 0
+		for {
+			srcRow, err := e.Src.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if srcRow == nil {
+				break
+			}
+			orderRow := &orderByRow{
+				row: srcRow,
+				key: make([]types.Datum, len(e.ByItems)),
+			}
+			for i, byItem := range e.ByItems {
+				orderRow.key[i], err = byItem.Expr.Eval(srcRow.Data, e.ctx)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+			if e.totalCount == e.heapSize {
+				e.Rows = append(e.Rows, orderRow)
+				if e.Less(0, e.heapSize) {
+					e.Swap(0, e.heapSize)
+					heap.Fix(e, 0)
+				}
+				e.Rows = e.Rows[:e.heapSize]
+			} else {
+				heap.Push(e, orderRow)
+			}
+		}
+		if e.limit.Offset == 0 {
+			sort.Sort(&e.SortExec)
+		} else {
+			for i := 0; i < int(e.limit.Count) && e.Len() > 0; i++ {
+				heap.Pop(e)
+			}
+		}
+		e.fetched = true
 	}
 	if e.Idx >= len(e.Rows) {
 		return nil, nil

@@ -144,7 +144,7 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		resp, err := w.store.SendKVReq(bo, req, region.VerID())
+		resp, err := w.store.SendKVReq(bo, req, region.VerID(), readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -214,7 +214,7 @@ func (w *GCWorker) doGC(safePoint uint64) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		resp, err := w.store.SendKVReq(bo, req, region.VerID())
+		resp, err := w.store.SendKVReq(bo, req, region.VerID(), readTimeoutLong)
 		if err != nil {
 			return errors.Trace(err)
 		}

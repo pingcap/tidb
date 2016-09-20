@@ -346,6 +346,10 @@ func (s *dbStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	}, nil
 }
 
+func (s *dbStore) GetClient() kv.Client {
+	return &dbClient{store: s, regionInfo: s.pd.GetRegionInfo()}
+}
+
 func (s *dbStore) CurrentVersion() (kv.Version, error) {
 	return globalVersionProvider.CurrentVersion()
 }
@@ -402,7 +406,7 @@ func (s *dbStore) unLockKeys(txn *dbTxn) error {
 	for k := range txn.lockedKeys {
 		if tid, ok := s.keysLocked[k]; !ok || tid != txn.tid {
 			debug.PrintStack()
-			return errors.Errorf("should never happend:%v, %v", tid, txn.tid)
+			return errors.Errorf("should never happened:%v, %v", tid, txn.tid)
 		}
 
 		delete(s.keysLocked, k)

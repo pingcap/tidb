@@ -11,11 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package xapi
+package distsql
 
 import (
 	"io"
 	"io/ioutil"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -140,7 +141,9 @@ type partialResult struct {
 	fields     []*types.FieldType
 	reader     io.ReadCloser
 	resp       *tipb.SelectResponse
+	chunkIdx   int
 	cursor     int
+	dataOffset int64
 	ignoreData bool
 
 	done    chan error
@@ -180,6 +183,30 @@ func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 			return 0, nil, err
 		}
 	}
+	if len(pr.resp.Chunks) > 0 {
+		// For new resp rows structure.
+		chunk := pr.getChunk()
+		if chunk == nil {
+			return 0, nil, nil
+		}
+		rowMeta := chunk.RowsMeta[pr.cursor]
+		if !pr.ignoreData {
+			rowData := chunk.RowsData[pr.dataOffset : pr.dataOffset+rowMeta.Length]
+			data, err = tablecodec.DecodeValues(rowData, pr.fields, pr.index)
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			pr.dataOffset += rowMeta.Length
+		}
+		if data == nil {
+			data = dummyData
+		}
+		if !pr.aggregate {
+			handle = rowMeta.Handle
+		}
+		pr.cursor++
+		return
+	}
 	if pr.cursor >= len(pr.resp.Rows) {
 		return 0, nil, nil
 	}
@@ -209,6 +236,21 @@ func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 	return
 }
 
+func (pr *partialResult) getChunk() *tipb.Chunk {
+	for {
+		if pr.chunkIdx >= len(pr.resp.Chunks) {
+			return nil
+		}
+		chunk := &pr.resp.Chunks[pr.chunkIdx]
+		if pr.cursor < len(chunk.RowsMeta) {
+			return chunk
+		}
+		pr.cursor = 0
+		pr.dataOffset = 0
+		pr.chunkIdx++
+	}
+}
+
 // Close closes the sub result.
 func (pr *partialResult) Close() error {
 	return nil
@@ -219,14 +261,29 @@ func (pr *partialResult) Close() error {
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
 func Select(client kv.Client, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (SelectResult, error) {
+	var err error
+	startTs := time.Now()
+	defer func() {
+		// Add metrics
+		queryHistgram.Observe(time.Since(startTs).Seconds())
+		if err != nil {
+			queryCounter.WithLabelValues(queryFailed).Inc()
+		} else {
+			queryCounter.WithLabelValues(querySucc).Inc()
+		}
+	}()
+
 	// Convert tipb.*Request to kv.Request.
-	kvReq, err := composeRequest(req, keyRanges, concurrency, keepOrder)
-	if err != nil {
-		return nil, errors.Trace(err)
+	kvReq, err1 := composeRequest(req, keyRanges, concurrency, keepOrder)
+	if err1 != nil {
+		err = errors.Trace(err1)
+		return nil, err
 	}
+
 	resp := client.Send(kvReq)
 	if resp == nil {
-		return nil, errors.New("client returns nil response")
+		err = errors.New("client returns nil response")
+		return nil, err
 	}
 	result := &selectResult{
 		resp:    resp,

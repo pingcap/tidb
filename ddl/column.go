@@ -304,6 +304,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
 	seekHandle := reorgInfo.Handle
 	version := reorgInfo.SnapshotVer
+	count := 0
 
 	for {
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
@@ -318,6 +319,9 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		count += len(handles)
+		log.Infof("[ddl] added column for %v rows", count)
 	}
 }
 
@@ -339,7 +343,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 		colMap[col.ID] = &col.FieldType
 	}
 	for _, handle := range handles {
-		log.Info("[ddl] backfill column...", handle)
+		log.Debug("[ddl] backfill column...", handle)
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
 				return errors.Trace(err)

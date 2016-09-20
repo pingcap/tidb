@@ -310,7 +310,8 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 	}
 }
 
-func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo *model.IndexInfo) ([]types.Datum, error) {
+func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo *model.IndexInfo) (
+	kv.Key, []types.Datum, error) {
 	// fetch datas
 	cols := t.Cols()
 	colMap := make(map[int64]*types.FieldType)
@@ -321,18 +322,18 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 	rowKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 	rowVal, err := txn.Get(rowKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	row, err := tablecodec.DecodeRow(rowVal, colMap)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	vals := make([]types.Datum, 0, len(indexInfo.Columns))
 	for _, v := range indexInfo.Columns {
 		col := cols[v.Offset]
 		vals = append(vals, row[col.ID])
 	}
-	return vals, nil
+	return rowKey, vals, nil
 }
 
 const maxBatchSize = 1024
@@ -346,6 +347,8 @@ const maxBatchSize = 1024
 func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	seekHandle := reorgInfo.Handle
 	version := reorgInfo.SnapshotVer
+	count := 0
+
 	for {
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
 		if err != nil {
@@ -355,24 +358,24 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		}
 
 		seekHandle = handles[len(handles)-1] + 1
-
 		err = d.backfillTableIndex(t, indexInfo, handles, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		count += len(handles)
+		log.Infof("[ddl] added index for %v rows", count)
 	}
 }
 
 func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) ([]int64, error) {
 	ver := kv.Version{Ver: version}
-
 	snap, err := d.store.GetSnapshot(ver)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	firstKey := t.RecordKey(seekHandle)
-
 	it, err := snap.Seek(firstKey)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -380,7 +383,6 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 	defer it.Close()
 
 	handles := make([]int64, 0, maxBatchSize)
-
 	for it.Valid() {
 		if !it.Key().HasPrefix(t.RecordPrefix()) {
 			break
@@ -392,13 +394,12 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 			return nil, errors.Trace(err)
 		}
 
-		rk := t.RecordKey(handle)
-
 		handles = append(handles, handle)
 		if len(handles) == maxBatchSize {
 			break
 		}
 
+		rk := t.RecordKey(handle)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			break
@@ -414,14 +415,14 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 	kvX := tables.NewIndex(t.Meta(), indexInfo)
 
 	for _, handle := range handles {
-		log.Debug("[ddl] building index...", handle)
+		log.Debug("[ddl] backfill index...", handle)
 
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
 				return errors.Trace(err)
 			}
 
-			vals, err1 := fetchRowColVals(txn, t, handle, indexInfo)
+			rowKey, vals, err1 := fetchRowColVals(txn, t, handle, indexInfo)
 			if terror.ErrorEqual(err1, kv.ErrNotExist) {
 				// row doesn't exist, skip it.
 				return nil
@@ -437,7 +438,6 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 				// index already exists, skip it.
 				return nil
 			}
-			rowKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 			err1 = txn.LockKeys(rowKey)
 			if err1 != nil {
 				return errors.Trace(err1)

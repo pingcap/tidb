@@ -26,35 +26,37 @@ import (
 	"github.com/ngaut/log"
 	"github.com/ngaut/systimemon"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/push"
 )
 
 var (
-	store        = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
-	storePath    = flag.String("path", "/tmp/tidb", "tidb storage path")
-	logLevel     = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
-	host         = flag.String("host", "0.0.0.0", "tidb server host")
-	port         = flag.String("P", "4000", "tidb server port")
-	statusPort   = flag.String("status", "10080", "tidb server status port")
-	lease        = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
-	socket       = flag.String("socket", "", "The socket file to use for connection.")
-	enablePS     = flag.Bool("perfschema", false, "If enable performance schema.")
-	reportStatus = flag.Bool("report-status", true, "If enable status report HTTP service.")
-	logFile      = flag.String("log-file", "", "log file path")
-	joinCon      = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
+	store           = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
+	storePath       = flag.String("path", "/tmp/tidb", "tidb storage path")
+	logLevel        = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
+	host            = flag.String("host", "0.0.0.0", "tidb server host")
+	port            = flag.String("P", "4000", "tidb server port")
+	statusPort      = flag.String("status", "10080", "tidb server status port")
+	lease           = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
+	socket          = flag.String("socket", "", "The socket file to use for connection.")
+	enablePS        = flag.Bool("perfschema", false, "If enable performance schema.")
+	reportStatus    = flag.Bool("report-status", true, "If enable status report HTTP service.")
+	logFile         = flag.String("log-file", "", "log file path")
+	joinCon         = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
+	metricsAddr     = flag.String("metrics-addr", "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
+	metricsInterval = flag.Int("metrics-interval", 0, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 )
 
 func main() {
 	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
 	tidb.RegisterStore("tikv", tikv.Driver{})
 
-	metric.RunMetric(3 * time.Second)
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	flag.Parse()
@@ -131,5 +133,38 @@ func main() {
 		log.Error("error: system time jump backward")
 	})
 
+	pushMetric(*metricsAddr, time.Duration(*metricsInterval)*time.Second)
+
 	log.Error(svr.Run())
+}
+
+// Prometheus push.
+const zeroDuration = time.Duration(0)
+
+// PushMetric pushs metircs in background.
+func pushMetric(addr string, interval time.Duration) {
+	if interval == zeroDuration || len(addr) == 0 {
+		log.Info("disable Prometheus push client")
+		return
+	}
+	log.Infof("start Prometheus push client with server addr %s and interval %d", addr, interval)
+	go prometheusPushClient(addr, interval)
+}
+
+// PrometheusPushClient pushs metrics to Prometheus Pushgateway.
+func prometheusPushClient(addr string, interval time.Duration) {
+	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
+	job := "tidb"
+	grouping := map[string]string{"instance": fmt.Sprintf("%s:%s", *host, *port)}
+	for {
+		err := push.FromGatherer(
+			job, grouping,
+			addr,
+			prometheus.DefaultGatherer,
+		)
+		if err != nil {
+			log.Errorf("could not push metrics to Prometheus Pushgateway: %v", err)
+		}
+		time.Sleep(interval)
+	}
 }

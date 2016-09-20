@@ -91,6 +91,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
+	case *ast.FlushTableStmt:
+		return b.buildSimple(x)
 	case *ast.InsertStmt:
 		return b.buildInsert(x)
 	case *ast.LoadDataStmt:
@@ -286,6 +288,7 @@ func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *Select
 		Lock:            lock,
 		baseLogicalPlan: newBaseLogicalPlan(Lock, b.allocator),
 	}
+	selectLock.self = selectLock
 	selectLock.initID()
 	addChild(selectLock, src)
 	selectLock.SetSchema(src.GetSchema())
@@ -426,15 +429,18 @@ func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 
 func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	insertPlan := &Insert{
-		Table:       insert.Table,
-		Columns:     insert.Columns,
-		Lists:       insert.Lists,
-		Setlist:     insert.Setlist,
-		OnDuplicate: insert.OnDuplicate,
-		IsReplace:   insert.IsReplace,
-		Priority:    insert.Priority,
-		Ignore:      insert.Ignore,
+		Table:           insert.Table,
+		Columns:         insert.Columns,
+		Lists:           insert.Lists,
+		Setlist:         insert.Setlist,
+		OnDuplicate:     insert.OnDuplicate,
+		IsReplace:       insert.IsReplace,
+		Priority:        insert.Priority,
+		Ignore:          insert.Ignore,
+		baseLogicalPlan: newBaseLogicalPlan(Ins, b.allocator),
 	}
+	insertPlan.initID()
+	insertPlan.self = insertPlan
 	if insert.Select != nil {
 		insertPlan.SelectPlan = b.build(insert.Select)
 		addChild(insertPlan, insertPlan.SelectPlan)
@@ -447,14 +453,12 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 
 func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 	p := &LoadData{
-		baseLogicalPlan: newBaseLogicalPlan(Load, b.allocator),
-		IsLocal:         ld.IsLocal,
-		Path:            ld.Path,
-		Table:           ld.Table,
-		FieldsInfo:      ld.FieldsInfo,
-		LinesInfo:       ld.LinesInfo,
+		IsLocal:    ld.IsLocal,
+		Path:       ld.Path,
+		Table:      ld.Table,
+		FieldsInfo: ld.FieldsInfo,
+		LinesInfo:  ld.LinesInfo,
 	}
-	p.initID()
 	return p
 }
 
@@ -482,12 +486,12 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		_, res, _, err := logic.convert2PhysicalPlan(nil)
+		info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		targetPlan = res.p.PushLimit(nil)
+		targetPlan = info.p.PushLimit(nil)
 	}
 	p := &Explain{StmtPlan: targetPlan}
 	addChild(p, targetPlan)

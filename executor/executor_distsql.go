@@ -24,6 +24,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -142,16 +142,33 @@ func tableRangesToKVRanges(tid int64, tableRanges []plan.TableRange, alloc arena
 	return krs
 }
 
+/*
+ * Convert sorted handle to kv ranges.
+ * For continuous handles, we should merge them to a single key range.
+ */
 func tableHandlesToKVRanges(tid int64, handles []int64, alloc arena.Allocator) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(handles))
-	for _, h := range handles {
+	i := 0
+	for i < len(handles) {
+		h := handles[i]
 		if h == math.MaxInt64 {
 			// We can't convert MaxInt64 into an left closed, right open range.
+			i++
 			continue
 		}
+		j := i + 1
+		endHandle := h + 1
+		for ; j < len(handles); j++ {
+			if handles[j] == endHandle {
+				endHandle = handles[j] + 1
+				continue
+			}
+			break
+		}
 		startKey := encodeRowKeyWithHandle(tid, h, alloc)
-		endKey := encodeRowKeyWithHandle(tid, h+1, alloc)
+		endKey := encodeRowKeyWithHandle(tid, endHandle, alloc)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		i = j
 	}
 	return krs
 }
@@ -252,7 +269,7 @@ func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType)
 
 // extractHandlesFromIndexResult gets some handles from SelectResult.
 // It should be called in a loop until finished or error happened.
-func extractHandlesFromIndexResult(idxResult xapi.SelectResult) (handles []int64, finish bool, err error) {
+func extractHandlesFromIndexResult(idxResult distsql.SelectResult) (handles []int64, finish bool, err error) {
 	subResult, e0 := idxResult.Next()
 	if e0 != nil {
 		err = errors.Trace(e0)
@@ -269,7 +286,7 @@ func extractHandlesFromIndexResult(idxResult xapi.SelectResult) (handles []int64
 	return
 }
 
-func extractHandlesFromIndexSubResult(subResult xapi.PartialResult) ([]int64, error) {
+func extractHandlesFromIndexSubResult(subResult distsql.PartialResult) ([]int64, error) {
 	var handles []int64
 	for {
 		h, data, err := subResult.Next()
@@ -643,10 +660,10 @@ type XSelectIndexExec struct {
 	ctx           context.Context
 	supportDesc   bool
 	isMemDB       bool
-	result        xapi.SelectResult
-	partialResult xapi.PartialResult
+	result        distsql.SelectResult
+	partialResult distsql.PartialResult
 	where         *tipb.Expr
-	txn           kv.Transaction
+	startTS       uint64
 
 	tasks    chan *lookupTableTask
 	tasksErr error // not nil if tasks closed due to error.
@@ -660,9 +677,9 @@ type XSelectIndexExec struct {
 
 	/*
 	   The following attributes are used for aggregation push down.
-	   aggFuncs is the aggregation functions in protobuf format. They will be added to xapi request msg.
-	   byItem is the groupby items in protobuf format. They will be added to xapi request msg.
-	   aggFields is used to decode returned rows from xapi.
+	   aggFuncs is the aggregation functions in protobuf format. They will be added to distsql request msg.
+	   byItem is the groupby items in protobuf format. They will be added to distsql request msg.
+	   aggFields is used to decode returned rows from distsql.
 	   aggregate indicates of the executor is handling aggregate result.
 	   It is more convenient to use a single varible than use a long condition.
 	*/
@@ -678,7 +695,7 @@ func (e *XSelectIndexExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByIt
 	e.byItems = byItems
 	e.aggFields = fields
 	e.aggregate = true
-	client := e.txn.GetClient()
+	client := e.ctx.GetClient()
 	if !client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeGroupBy) {
 		e.indexPlan.DoubleRead = true
 	}
@@ -839,7 +856,7 @@ func addWorker(e *XSelectIndexExec, ch chan *lookupTableTask, concurrency *int) 
 	}
 }
 
-func (e *XSelectIndexExec) fetchHandles(idxResult xapi.SelectResult, ch chan<- *lookupTableTask) {
+func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<- *lookupTableTask) {
 	defer close(ch)
 
 	workCh := make(chan *lookupTableTask, 1)
@@ -879,10 +896,10 @@ func (e *XSelectIndexExec) fetchHandles(idxResult xapi.SelectResult, ch chan<- *
 	}
 }
 
-func (e *XSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
+func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
-	selIdxReq.StartTs = e.txn.StartTS()
-	selIdxReq.IndexInfo = xapi.IndexToProto(e.table.Meta(), e.indexPlan.Index)
+	selIdxReq.StartTs = e.startTS
+	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	if e.indexPlan.Desc {
 		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: e.indexPlan.Desc})
 	}
@@ -908,7 +925,7 @@ func (e *XSelectIndexExec) doIndexRequest() (xapi.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return xapi.Select(e.txn.GetClient(), selIdxReq, keyRanges, concurrency, !e.indexPlan.OutOfOrder)
+	return distsql.Select(e.ctx.GetClient(), selIdxReq, keyRanges, concurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
@@ -982,7 +999,7 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 	return nil
 }
 
-func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult xapi.SelectResult) ([]*Row, error) {
+func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult distsql.SelectResult) ([]*Row, error) {
 	var rows []*Row
 	for {
 		partialResult, err := tblResult.Next()
@@ -1001,7 +1018,7 @@ func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult x
 	return rows, nil
 }
 
-func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialResult xapi.PartialResult) ([]*Row, error) {
+func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialResult distsql.PartialResult) ([]*Row, error) {
 	var rows []*Row
 	for {
 		h, rowData, err := partialResult.Next()
@@ -1017,24 +1034,23 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 	return rows, nil
 }
 
-func (e *XSelectIndexExec) doTableRequest(handles []int64) (xapi.SelectResult, error) {
+func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult, error) {
 	// The handles are not in original index order, so we can't push limit here.
 	selTableReq := new(tipb.SelectRequest)
 	if e.indexPlan.OutOfOrder {
 		selTableReq.Limit = e.indexPlan.LimitCount
 	}
-	selTableReq.StartTs = e.txn.StartTS()
+	selTableReq.StartTs = e.startTS
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
 	}
-	selTableReq.TableInfo.Columns = xapi.ColumnsToProto(e.indexPlan.Columns, e.table.Meta().PKIsHandle)
+	selTableReq.TableInfo.Columns = distsql.ColumnsToProto(e.indexPlan.Columns, e.table.Meta().PKIsHandle)
 	selTableReq.Where = e.where
 	// Aggregate Info
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
-
-	keyRanges := tableHandleRanger{e.table.Meta().ID, handles}
-	resp, err := xapiSelect(e.txn.GetClient(), selTableReq, &keyRanges, defaultConcurrency, false)
+	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles, arena.StdAllocator)
+	resp, err := distsql.Select(e.ctx.GetClient(), selTableReq, keyRanges, defaultConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1080,15 +1096,15 @@ func (tr *tableRangeRanger) keyRanges(allocator arena.Allocator) []kv.KeyRange {
 	return tableRangesToKVRanges(tr.tid, tr.tableRanges, allocator)
 }
 
-// xapiSelect is a wrapper of xapi.Select, it provides a allocator for generating []kv.KeyRange.
-// prepare []kv.KeyRange and call xapi.Select is conceptually equivalent to provide a keyRanger
-// and call xapiSelect.
-func xapiSelect(client kv.Client, req *tipb.SelectRequest, kr keyRanger, concurrency int, keepOrder bool) (xapi.SelectResult, error) {
+// distsqlSelect is a wrapper of distsql.Select, it provides a allocator for generating []kv.KeyRange.
+// prepare []kv.KeyRange and call distsql.Select is conceptually equivalent to provide a keyRanger
+// and call distsqlSelect.
+func distsqlSelect(client kv.Client, req *tipb.SelectRequest, kr keyRanger, concurrency int, keepOrder bool) (distsql.SelectResult, error) {
 	allocPool := getAllocPool(kr.estimateSize())
 	allocator := allocPool.Get().(arena.Allocator)
 
 	keyRanges := kr.keyRanges(allocator)
-	resp, err := xapi.Select(client, req, keyRanges, concurrency, keepOrder)
+	resp, err := distsql.Select(client, req, keyRanges, concurrency, keepOrder)
 
 	return selectResultFinalize{
 		resp, allocator, allocPool,
@@ -1096,7 +1112,7 @@ func xapiSelect(client kv.Client, req *tipb.SelectRequest, kr keyRanger, concurr
 }
 
 type selectResultFinalize struct {
-	xapi.SelectResult
+	distsql.SelectResult
 	allocator arena.Allocator
 	allocPool *sync.Pool
 }
@@ -1116,8 +1132,8 @@ type XSelectTableExec struct {
 	ctx           context.Context
 	supportDesc   bool
 	isMemDB       bool
-	result        xapi.SelectResult
-	partialResult xapi.PartialResult
+	result        distsql.SelectResult
+	partialResult distsql.PartialResult
 	where         *tipb.Expr
 	Columns       []*model.ColumnInfo
 	schema        expression.Schema
@@ -1126,13 +1142,13 @@ type XSelectTableExec struct {
 	limitCount    *int64
 	returnedRows  uint64 // returned rowCount
 	keepOrder     bool
-	txn           kv.Transaction
+	startTS       uint64
 
 	/*
 	   The following attributes are used for aggregation push down.
-	   aggFuncs is the aggregation functions in protobuf format. They will be added to xapi request msg.
-	   byItem is the groupby items in protobuf format. They will be added to xapi request msg.
-	   aggFields is used to decode returned rows from xapi.
+	   aggFuncs is the aggregation functions in protobuf format. They will be added to distsql request msg.
+	   byItem is the groupby items in protobuf format. They will be added to distsql request msg.
+	   aggFields is used to decode returned rows from distsql.
 	   aggregate indicates of the executor is handling aggregate result.
 	   It is more convenient to use a single varible than use a long condition.
 	*/
@@ -1160,7 +1176,7 @@ func (e *XSelectTableExec) Schema() expression.Schema {
 func (e *XSelectTableExec) doRequest() error {
 	var err error
 	selReq := new(tipb.SelectRequest)
-	selReq.StartTs = e.txn.StartTS()
+	selReq.StartTs = e.startTS
 	selReq.Where = e.where
 	columns := e.Columns
 	selReq.TableInfo = &tipb.TableInfo{
@@ -1170,13 +1186,13 @@ func (e *XSelectTableExec) doRequest() error {
 		selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: e.desc})
 	}
 	selReq.Limit = e.limitCount
-	selReq.TableInfo.Columns = xapi.ColumnsToProto(columns, e.tableInfo.PKIsHandle)
+	selReq.TableInfo.Columns = distsql.ColumnsToProto(columns, e.tableInfo.PKIsHandle)
 	// Aggregate Info
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
 
-	kvRanges := tableRangeRanger{e.table.Meta().ID, e.ranges}
-	e.result, err = xapiSelect(e.txn.GetClient(), selReq, &kvRanges, defaultConcurrency, e.keepOrder)
+	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges, arena.StdAllocator)
+	e.result, err = distsql.Select(e.ctx.GetClient(), selReq, kvRanges, defaultConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -96,7 +96,7 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 		client:      client,
 		regionCache: NewRegionCache(pdClient),
 	}
-	store.lockResolver = NewLockResolver(store)
+	store.lockResolver = newLockResolver(store)
 	if enableGC {
 		store.gcWorker, err = NewGCWorker(store)
 		if err != nil {
@@ -170,10 +170,16 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	}
 }
 
+func (s *tikvStore) GetClient() kv.Client {
+	return &CopClient{
+		store: s,
+	}
+}
+
 // sendKVReq sends req to tikv server. It will retry internally to find the right
 // region leader if i) fails to establish a connection to server or ii) server
 // returns `NotLeader`.
-func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVerID) (*pb.Response, error) {
+func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVerID, timeout time.Duration) (*pb.Response, error) {
 	for {
 		region := s.regionCache.GetRegionByVerID(regionID)
 		if region == nil {
@@ -186,7 +192,7 @@ func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVer
 			}, nil
 		}
 		req.Context = region.GetContext()
-		resp, err := s.client.SendKVReq(region.GetAddress(), req)
+		resp, err := s.client.SendKVReq(region.GetAddress(), req, timeout)
 		if err != nil {
 			s.regionCache.NextPeer(region.VerID())
 			err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, req.Context))
@@ -205,6 +211,15 @@ func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVer
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
+				}
+				continue
+			}
+			// Retry if error is `ServerIsBusy`.
+			if regionErr.GetServerIsBusy() != nil {
+				log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", req.Context)
+				err = bo.Backoff(boServerBusy, errors.Errorf("server is busy"))
+				if err != nil {
+					return nil, errors.Trace(err)
 				}
 				continue
 			}

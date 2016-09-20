@@ -20,14 +20,14 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi"
-	"github.com/pingcap/tidb/xapi/xeval"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -91,20 +91,21 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 			}
 		}
 
-		var rows []*tipb.Row
+		var chunks []tipb.Chunk
 		if req.GetTp() == kv.ReqTypeSelect {
-			rows, err = h.getRowsFromSelectReq(ctx)
+			chunks, err = h.getChunksFromSelectReq(ctx)
 		} else {
 			// The PKHandle column info has been collected in ctx, so we can remove it in IndexInfo.
 			length := len(sel.IndexInfo.Columns)
 			if sel.IndexInfo.Columns[length-1].GetPkHandle() {
 				sel.IndexInfo.Columns = sel.IndexInfo.Columns[:length-1]
 			}
-			rows, err = h.getRowsFromIndexReq(ctx)
+			chunks, err = h.getChunksFromIndexReq(ctx)
 		}
+
 		selResp := new(tipb.SelectResponse)
 		selResp.Error = toPBError(err)
-		selResp.Rows = rows
+		selResp.Chunks = chunks
 		if err != nil {
 			resp.OtherError = err.Error()
 		}
@@ -117,10 +118,9 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 	return resp, nil
 }
 
-func (h *rpcHandler) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
-	rows := make([]*tipb.Row, 0, len(ctx.groupKeys))
+func (h *rpcHandler) getRowsFromAgg(ctx *selectContext) ([]tipb.Chunk, error) {
+	chunks := make([]tipb.Chunk, 0, len(ctx.groupKeys)/rowsPerChunk+1)
 	for _, gk := range ctx.groupKeys {
-		row := new(tipb.Row)
 		// Each aggregate partial result will be converted to one or two datums.
 		rowData := make([]types.Datum, 0, 1+2*len(ctx.aggregates))
 		// The first column is group key.
@@ -133,14 +133,13 @@ func (h *rpcHandler) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
 			}
 			rowData = append(rowData, ds...)
 		}
-		var err error
-		row.Data, err = codec.EncodeValue(nil, rowData...)
+		row, err := codec.EncodeValue(nil, rowData...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rows = append(rows, row)
+		chunks = appendRow(chunks, 0, row)
 	}
-	return rows, nil
+	return chunks, nil
 }
 
 func collectColumnsInExpr(expr *tipb.Expr, ctx *selectContext, collector map[int64]*tipb.ColumnInfo) error {
@@ -186,7 +185,7 @@ func toPBError(err error) *tipb.Error {
 	return perr
 }
 
-func (h *rpcHandler) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, error) {
+func (h *rpcHandler) getChunksFromSelectReq(ctx *selectContext) ([]tipb.Chunk, error) {
 	// Init ctx.colTps and use it to decode all the rows.
 	columns := ctx.sel.TableInfo.Columns
 	ctx.colTps = make(map[int64]*types.FieldType, len(columns))
@@ -194,30 +193,30 @@ func (h *rpcHandler) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, erro
 		if col.GetPkHandle() {
 			continue
 		}
-		ctx.colTps[col.GetColumnId()] = xapi.FieldTypeFromPBColumn(col)
+		ctx.colTps[col.GetColumnId()] = distsql.FieldTypeFromPBColumn(col)
 	}
 
 	kvRanges, desc := h.extractKVRanges(ctx)
-	var rows []*tipb.Row
 	limit := int64(-1)
 	if ctx.sel.Limit != nil {
 		limit = ctx.sel.GetLimit()
 	}
+
+	var chunks []tipb.Chunk
+	var err error
 	for _, ran := range kvRanges {
 		if limit == 0 {
 			break
 		}
-		ranRows, err := h.getRowsFromRange(ctx, ran, limit, desc)
+		chunks, err = h.getRowsFromRange(ctx, ran, &limit, desc, chunks)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rows = append(rows, ranRows...)
-		limit -= int64(len(ranRows))
 	}
 	if ctx.aggregate {
 		return h.getRowsFromAgg(ctx)
 	}
-	return rows, nil
+	return chunks, nil
 }
 
 // extractKVRanges extracts kv.KeyRanges slice from a SelectRequest, and also returns if it is in descending order.
@@ -253,17 +252,17 @@ func reverseKVRanges(kvRanges []kv.KeyRange) {
 	}
 }
 
-func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit int64, desc bool) ([]*tipb.Row, error) {
+func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit *int64, desc bool, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
 	startKey := maxStartKey(ran.StartKey, h.startKey)
 	endKey := minEndKey(ran.EndKey, h.endKey)
-	if limit == 0 || bytes.Compare(startKey, endKey) >= 0 {
-		return nil, nil
+	if (*limit) == 0 || bytes.Compare(startKey, endKey) >= 0 {
+		return chunks, nil
 	}
-	var rows []*tipb.Row
+
 	if ran.IsPoint() {
 		val, err := h.mvccStore.Get(startKey, ctx.sel.GetStartTs())
 		if len(val) == 0 {
-			return nil, nil
+			return chunks, nil
 		} else if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -276,9 +275,9 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 			return nil, errors.Trace(err)
 		}
 		if row != nil {
-			rows = append(rows, row)
+			chunks = appendRow(chunks, handle, row)
 		}
-		return rows, nil
+		return chunks, nil
 	}
 	var seekKey []byte
 	if desc {
@@ -287,7 +286,7 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 		seekKey = startKey
 	}
 	for {
-		if limit == 0 {
+		if (*limit) == 0 {
 			break
 		}
 		var (
@@ -330,18 +329,18 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 			return nil, errors.Trace(err)
 		}
 		if row != nil {
-			rows = append(rows, row)
-			limit--
+			chunks = appendRow(chunks, handle, row)
+			(*limit)--
 		}
 	}
-	return rows, nil
+	return chunks, nil
 }
 
 // handleRowData deals with raw row data:
 //	1. Decodes row from raw byte slice.
 //	2. Checks if it fit where condition.
 //	3. Update aggregate functions.
-func (h *rpcHandler) handleRowData(ctx *selectContext, handle int64, value []byte) (*tipb.Row, error) {
+func (h *rpcHandler) handleRowData(ctx *selectContext, handle int64, value []byte) ([]byte, error) {
 	columns := ctx.sel.TableInfo.Columns
 	values, err := h.getRowData(value, ctx.colTps)
 	if err != nil {
@@ -375,7 +374,9 @@ func (h *rpcHandler) handleRowData(ctx *selectContext, handle int64, value []byt
 	return h.valuesToRow(ctx, handle, values)
 }
 
-func (h *rpcHandler) valuesToRow(ctx *selectContext, handle int64, values map[int64][]byte) (*tipb.Row, error) {
+var dummySlice = make([]byte, 0)
+
+func (h *rpcHandler) valuesToRow(ctx *selectContext, handle int64, values map[int64][]byte) ([]byte, error) {
 	var columns []*tipb.ColumnInfo
 	if ctx.sel.TableInfo != nil {
 		columns = ctx.sel.TableInfo.Columns
@@ -390,7 +391,7 @@ func (h *rpcHandler) valuesToRow(ctx *selectContext, handle int64, values map[in
 	if !match {
 		return nil, nil
 	}
-	var row *tipb.Row
+	data := dummySlice
 	if ctx.aggregate {
 		// Update aggregate functions.
 		err = h.aggregate(ctx, handle, values)
@@ -398,19 +399,12 @@ func (h *rpcHandler) valuesToRow(ctx *selectContext, handle int64, values map[in
 			return nil, errors.Trace(err)
 		}
 	} else {
-		var handleData []byte
-		handleData, err = codec.EncodeValue(nil, types.NewIntDatum(handle))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		row = new(tipb.Row)
-		row.Handle = handleData
 		// If without aggregate functions, just return raw row data.
 		for _, col := range columns {
-			row.Data = append(row.Data, values[col.GetColumnId()]...)
+			data = append(data, values[col.GetColumnId()]...)
 		}
 	}
-	return row, nil
+	return data, nil
 }
 
 func (h *rpcHandler) getRowData(value []byte, colTps map[int64]*types.FieldType) (map[int64][]byte, error) {
@@ -435,7 +429,7 @@ func (h *rpcHandler) setColumnValueToCtx(ctx *selectContext, handle int64, row m
 			}
 		} else {
 			data := row[colID]
-			ft := xapi.FieldTypeFromPBColumn(col)
+			ft := distsql.FieldTypeFromPBColumn(col)
 			datum, err := tablecodec.DecodeColumnValue(data, ft)
 			if err != nil {
 				return errors.Trace(err)
@@ -468,38 +462,36 @@ func (h *rpcHandler) evalWhereForRow(ctx *selectContext, handle int64, row map[i
 	return boolResult == 1, nil
 }
 
-func (h *rpcHandler) getRowsFromIndexReq(ctx *selectContext) ([]*tipb.Row, error) {
+func (h *rpcHandler) getChunksFromIndexReq(ctx *selectContext) ([]tipb.Chunk, error) {
 	kvRanges, desc := h.extractKVRanges(ctx)
-	var rows []*tipb.Row
 	limit := int64(-1)
 	if ctx.sel.Limit != nil {
 		limit = ctx.sel.GetLimit()
 	}
+	var chunks []tipb.Chunk
+	var err error
 	for _, ran := range kvRanges {
 		if limit == 0 {
 			break
 		}
-		ranRows, err := h.getIndexRowFromRange(ctx, ran, desc, limit)
+		chunks, err = h.getIndexRowFromRange(ctx, ran, desc, &limit, chunks)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rows = append(rows, ranRows...)
-		limit -= int64(len(ranRows))
 	}
 	if ctx.aggregate {
 		return h.getRowsFromAgg(ctx)
 	}
-	return rows, nil
+	return chunks, nil
 }
 
-func (h *rpcHandler) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, desc bool, limit int64) ([]*tipb.Row, error) {
+func (h *rpcHandler) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, desc bool, limit *int64, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
 	idxInfo := ctx.sel.IndexInfo
 	startKey := maxStartKey(ran.StartKey, h.startKey)
 	endKey := minEndKey(ran.EndKey, h.endKey)
-	if limit == 0 || bytes.Compare(startKey, endKey) >= 0 {
+	if (*limit) == 0 || bytes.Compare(startKey, endKey) >= 0 {
 		return nil, nil
 	}
-	var rows []*tipb.Row
 	var seekKey kv.Key
 	if desc {
 		seekKey = endKey
@@ -511,7 +503,7 @@ func (h *rpcHandler) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, d
 		ids[i] = col.GetColumnId()
 	}
 	for {
-		if limit == 0 {
+		if *limit == 0 {
 			break
 		}
 		var (
@@ -565,11 +557,23 @@ func (h *rpcHandler) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, d
 			return nil, errors.Trace(err)
 		}
 		if row != nil {
-			rows = append(rows, row)
-			limit--
+			chunks = appendRow(chunks, handle, row)
+			(*limit)--
 		}
 	}
-	return rows, nil
+	return chunks, nil
+}
+
+const rowsPerChunk = 64
+
+func appendRow(chunks []tipb.Chunk, handle int64, data []byte) []tipb.Chunk {
+	if len(chunks) == 0 || len(chunks[len(chunks)-1].RowsMeta) >= rowsPerChunk {
+		chunks = append(chunks, tipb.Chunk{})
+	}
+	cur := &chunks[len(chunks)-1]
+	cur.RowsMeta = append(cur.RowsMeta, tipb.RowMeta{Handle: handle, Length: int64(len(data))})
+	cur.RowsData = append(cur.RowsData, data...)
+	return chunks
 }
 
 func maxStartKey(rangeStartKey kv.Key, regionStartKey []byte) []byte {

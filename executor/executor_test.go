@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -960,7 +961,6 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 
 	// Test limit + order by
 	tk.MustExec("begin")
-	executor.SortBufferSize = 10
 	for i := 3; i <= 10; i += 1 {
 		tk.MustExec(fmt.Sprintf("insert INTO select_order_test VALUES (%d, \"zz\");", i))
 	}
@@ -975,7 +975,6 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 3;")
 	rowStr = fmt.Sprintf("%v %v", 11, []byte("hh"))
 	r.Check(testkit.Rows(rowStr))
-	executor.SortBufferSize = 500
 	tk.MustExec("drop table select_order_test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
@@ -1987,7 +1986,7 @@ func (s *testSuite) TestNewTableDual(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestNewTableScan(c *C) {
+func (s *testSuite) TestTableScan(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use information_schema")
@@ -2003,6 +2002,94 @@ func (s *testSuite) TestNewTableScan(c *C) {
 	result.Check(testkit.Rows(rowStr1))
 	result = tk.MustQuery("select * from schemata where schema_name like 'my%'")
 	result.Check(testkit.Rows(rowStr1, rowStr2))
+}
+
+func (s *testSuite) TestStreamAgg(c *C) {
+	col := &expression.Column{
+		Index: 1,
+	}
+	gbyCol := &expression.Column{
+		Index: 0,
+	}
+	sumAgg := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{col}, false)
+	cntAgg := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{col}, false)
+	avgAgg := expression.NewAggFunction(ast.AggFuncAvg, []expression.Expression{col}, false)
+	maxAgg := expression.NewAggFunction(ast.AggFuncMax, []expression.Expression{col}, false)
+	cases := []struct {
+		aggFunc expression.AggregationFunction
+		result  string
+		input   [][]interface{}
+		result1 []string
+	}{
+		{
+			sumAgg,
+			"<nil>",
+			[][]interface{}{
+				{0, 1}, {0, nil}, {1, 2}, {1, 3},
+			},
+			[]string{
+				"1", "5",
+			},
+		},
+		{
+			cntAgg,
+			"0",
+			[][]interface{}{
+				{0, 1}, {0, nil}, {1, 2}, {1, 3},
+			},
+			[]string{
+				"1", "2",
+			},
+		},
+		{
+			avgAgg,
+			"<nil>",
+			[][]interface{}{
+				{0, 1}, {0, nil}, {1, 2}, {1, 3},
+			},
+			[]string{
+				"1.0000", "2.5000",
+			},
+		},
+		{
+			maxAgg,
+			"<nil>",
+			[][]interface{}{
+				{0, 1}, {0, nil}, {1, 2}, {1, 3},
+			},
+			[]string{
+				"1", "3",
+			},
+		},
+	}
+	for _, ca := range cases {
+		mock := &executor.MockExec{}
+		e := &executor.StreamAggExec{
+			AggFuncs: []expression.AggregationFunction{ca.aggFunc},
+			Src:      mock,
+		}
+		row, err := e.Next()
+		c.Check(err, IsNil)
+		c.Check(row, NotNil)
+		c.Assert(fmt.Sprintf("%v", row.Data[0].GetValue()), Equals, ca.result)
+		e.GroupByItems = append(e.GroupByItems, gbyCol)
+		e.Close()
+		row, err = e.Next()
+		c.Check(err, IsNil)
+		c.Check(row, IsNil)
+		e.Close()
+		for _, input := range ca.input {
+			data := types.MakeDatums(input...)
+			mock.Rows = append(mock.Rows, &executor.Row{Data: data})
+		}
+		for _, res := range ca.result1 {
+			row, err = e.Next()
+			c.Check(err, IsNil)
+			c.Check(row, NotNil)
+			c.Assert(fmt.Sprintf("%v", row.Data[0].GetValue()), Equals, res)
+		}
+	}
+
 }
 
 func (s *testSuite) TestAggregation(c *C) {
@@ -2112,11 +2199,55 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t1 (a) values (2), (11), (8)")
 	result = tk.MustQuery("select min(a), min(case when 1=1 then a else NULL end), min(case when 1!=1 then NULL else a end) from t1 where b=3 group by b")
 	result.Check(testkit.Rows("2 2 2"))
+	// The following cases use streamed aggregation.
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, index(a))")
 	tk.MustExec("insert into t1 (a) values (1),(2),(3),(4),(5)")
 	result = tk.MustQuery("select count(a) from t1 where a < 3")
 	result.Check(testkit.Rows("2"))
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index(a))")
+	result = tk.MustQuery("select sum(b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select sum(b) from (select * from t1) t")
+	result.Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into t1 (a, b) values (1, 1),(2, 2),(3, 3),(1, 4),(3, 5)")
+	result = tk.MustQuery("select avg(b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("2.5000", "2.0000", "4.0000"))
+	result = tk.MustQuery("select sum(b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("5", "2", "8"))
+	result = tk.MustQuery("select count(b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("2", "1", "2"))
+	result = tk.MustQuery("select max(b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("4", "2", "5"))
+	result = tk.MustQuery("select min(b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index(a,b))")
+	tk.MustExec("insert into t1 (a, b) values (1, 1),(2, 2),(3, 3),(1, 4), (1,1),(3, 5), (2,2), (3,5), (3,3)")
+	result = tk.MustQuery("select avg(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("2.5000", "2.0000", "4.0000"))
+	result = tk.MustQuery("select sum(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("5", "2", "8"))
+	result = tk.MustQuery("select count(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("2", "1", "2"))
+	result = tk.MustQuery("select max(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("4", "2", "5"))
+	result = tk.MustQuery("select min(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index(b, a))")
+	tk.MustExec("insert into t1 (a, b) values (1, 1),(2, 2),(3, 3),(1, 4), (1,1),(3, 5), (2,2), (3,5), (3,3)")
+	result = tk.MustQuery("select avg(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("2.5000", "2.0000", "4.0000"))
+	result = tk.MustQuery("select sum(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("5", "2", "8"))
+	result = tk.MustQuery("select count(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("2", "1", "2"))
+	result = tk.MustQuery("select max(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("4", "2", "5"))
+	result = tk.MustQuery("select min(distinct b) from (select * from t1) t group by a")
+	result.Check(testkit.Rows("1", "2", "3"))
 }
 
 func (s *testSuite) TestAdapterStatement(c *C) {
@@ -2193,4 +2324,37 @@ func (s *testSuite) TestSelectVar(c *C) {
 	result = tk.MustQuery("select @a, @a := d+1 from t")
 	result.Check(testkit.Rows("2 2", "2 3", "3 2"))
 
+}
+
+func (s *testSuite) TestHistoryRead(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists history_read")
+	tk.MustExec("create table history_read (a int)")
+	tk.MustExec("insert history_read values (1)")
+	curVer1, _ := s.store.CurrentVersion()
+	time.Sleep(time.Millisecond)
+	snapshotTime := time.Now()
+	time.Sleep(time.Millisecond)
+	curVer2, _ := s.store.CurrentVersion()
+	tk.MustExec("insert history_read values (2)")
+	tk.MustQuery("select * from history_read").Check(testkit.Rows("1", "2"))
+	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
+	ctx := tk.Se.(context.Context)
+	snapshotTS := variable.GetSnapshotTS(ctx)
+	c.Assert(snapshotTS, Greater, curVer1.Ver)
+	c.Assert(snapshotTS, Less, curVer2.Ver)
+	tk.MustQuery("select * from history_read").Check(testkit.Rows("1"))
+	_, err := tk.Exec("insert history_read values (2)")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("update history_read set a = 3 where a = 1")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("delete from history_read where a = 1")
+	c.Assert(err, NotNil)
+	tk.MustExec("set @@tidb_snapshot = ''")
+	tk.MustQuery("select * from history_read").Check(testkit.Rows("1", "2"))
+	tk.MustExec("insert history_read values (3)")
+	tk.MustExec("update history_read set a = 4 where a = 3")
+	tk.MustExec("delete from history_read where a = 1")
 }

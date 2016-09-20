@@ -99,11 +99,10 @@ type UnionScanExec struct {
 	ctx   context.Context
 	Src   Executor
 	dirty *dirtyTable
-	// srcUsedIndex is the column offsets of the index which Src executor has used.
-	usedIndex    []int
-	desc         bool
-	condition    ast.ExprNode
-	newCondition expression.Expression
+	// usedIndex is the column offsets of the index which Src executor has used.
+	usedIndex []int
+	desc      bool
+	condition expression.Expression
 
 	addedRows   []*Row
 	cursor      int
@@ -266,8 +265,8 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 				newData = append(newData, data[col.Offset])
 			}
 		}
-		if us.newCondition != nil {
-			matched, err := expression.EvalBool(us.newCondition, newData, us.ctx)
+		if us.condition != nil {
+			matched, err := expression.EvalBool(us.condition, newData, us.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}

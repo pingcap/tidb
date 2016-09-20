@@ -126,15 +126,17 @@ func (p *Aggregation) PruneColumnsAndResolveIndices(parentUsedCols []*expression
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, aggrFunc := range p.AggFuncs {
-		for i, arg := range aggrFunc.GetArgs() {
+	for _, aggFunc := range p.AggFuncs {
+		newArgs := make([]expression.Expression, 0, len(aggFunc.GetArgs()))
+		for _, arg := range aggFunc.GetArgs() {
 			var newArg expression.Expression
 			newArg, err = retrieveColumnsInExpression(arg, child.GetSchema())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			aggrFunc.SetArgs(i, newArg)
+			newArgs = append(newArgs, newArg)
 		}
+		aggFunc.SetArgs(newArgs)
 	}
 	for i, expr := range p.GroupByItems {
 		p.GroupByItems[i], err = retrieveColumnsInExpression(expr, child.GetSchema())

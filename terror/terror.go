@@ -14,6 +14,7 @@
 package terror
 
 import (
+	"encoding/json"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -38,7 +39,8 @@ type ErrCode int
 
 // Executor error codes.
 const (
-	CodeCommitNotInTransaction   ErrCode = 1
+	CodeUnknown                  ErrCode = -1
+	CodeCommitNotInTransaction           = 1
 	CodeRollbackNotInTransaction         = 2
 	CodeExecResultIsEmpty                = 3
 )
@@ -163,6 +165,37 @@ func (e *Error) Class() ErrClass {
 // Code returns ErrCode
 func (e *Error) Code() ErrCode {
 	return e.code
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (e *Error) MarshalJSON() ([]byte, error) {
+	return json.Marshal(&struct {
+		Class ErrClass `json:"class"`
+		Code  ErrCode  `json:"code"`
+		Msg   string   `json:"message"`
+	}{
+		Class: e.class,
+		Code:  e.code,
+		Msg:   e.message,
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler interface.
+func (e *Error) UnmarshalJSON(data []byte) error {
+	err := &struct {
+		Class ErrClass `json:"class"`
+		Code  ErrCode  `json:"code"`
+		Msg   string   `json:"message"`
+	}{}
+
+	if err := json.Unmarshal(data, &err); err != nil {
+		return errors.Trace(err)
+	}
+
+	e.class = err.Class
+	e.code = err.Code
+	e.message = err.Msg
+	return nil
 }
 
 // Location returns the location where the error is created,

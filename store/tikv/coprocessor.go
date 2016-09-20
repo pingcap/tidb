@@ -58,7 +58,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_In, tipb.ExprType_ValueList,
 		tipb.ExprType_Like, tipb.ExprType_Not:
 		return true
-	case tipb.ExprType_Plus:
+	case tipb.ExprType_Plus, tipb.ExprType_Div:
 		return true
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg:
 		return true
@@ -135,11 +135,11 @@ func (r *copRanges) String() string {
 func (r *copRanges) len() int {
 	var l int
 	if r.first != nil {
-		l += 1
+		l++
 	}
 	l += len(r.mid)
 	if r.last != nil {
-		l += 1
+		l++
 	}
 	return l
 }
@@ -173,7 +173,12 @@ func (r *copRanges) slice(from, to int) *copRanges {
 	if to <= len(r.mid) {
 		ran.mid = r.mid[from:to]
 	} else {
-		ran.mid, ran.last = r.mid[from:], r.last
+		if from <= len(r.mid) {
+			ran.mid = r.mid[from:]
+		}
+		if from < to {
+			ran.last = r.last
+		}
 	}
 	return &ran
 }
@@ -383,6 +388,10 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		it.mu.finished = true
 		return nil, errors.Trace(err)
 	}
+	if it.mu.finished {
+		// resp will be nil if iterator is finished.
+		return nil, nil
+	}
 	it.mu.respGot++
 	if it.mu.respGot == len(it.mu.tasks) {
 		it.mu.finished = true
@@ -406,7 +415,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 			Data:    it.req.Data,
 			Ranges:  task.ranges.toPBRanges(),
 		}
-		resp, err := it.store.client.SendCopReq(task.region.GetAddress(), req)
+		resp, err := it.store.client.SendCopReq(task.region.GetAddress(), req, readTimeoutMedium)
 		if err != nil {
 			it.store.regionCache.NextPeer(task.region.VerID())
 			err = bo.Backoff(boTiKVRPC, err)
@@ -418,6 +427,14 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 				return nil, errors.Trace(err)
 			}
 			log.Warnf("send coprocessor request error: %v, try next peer later", err)
+			continue
+		}
+		if e := resp.GetRegionError().GetServerIsBusy(); e != nil {
+			log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", req.Context)
+			err = bo.Backoff(boServerBusy, errors.Errorf("server is busy"))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			continue
 		}
 		if e := resp.GetRegionError(); e != nil {

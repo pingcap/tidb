@@ -72,7 +72,7 @@ func add(a, b, carry int32) (int32, int32) {
 	return sum, carry
 }
 
-// sub substracts b and carry from a, returns the diff and new carry.
+// sub subtracts b and carry from a, returns the diff and new carry.
 func sub(a, b, carry int32) (int32, int32) {
 	diff := a - b - carry
 	if diff < 0 {
@@ -84,7 +84,7 @@ func sub(a, b, carry int32) (int32, int32) {
 	return diff, carry
 }
 
-// sub2 substracts b and carry from a, returns the diff and new carry.
+// sub2 subtracts b and carry from a, returns the diff and new carry.
 // the new carry may be 2.
 func sub2(a, b, carry int32) (int32, int32) {
 	diff := a - b - carry
@@ -575,7 +575,7 @@ func (d *MyDecimal) digitBounds() (start, end int) {
 	bufLen := digitsToWords(int(d.digitsInt)) + digitsToWords(int(d.digitsFrac))
 	bufEnd := bufLen - 1
 
-	/* find non-zero digit from number begining */
+	/* find non-zero digit from number beginning */
 	for bufBeg < bufLen && d.wordBuf[bufBeg] == 0 {
 		bufBeg++
 	}
@@ -583,7 +583,7 @@ func (d *MyDecimal) digitBounds() (start, end int) {
 		return 0, 0
 	}
 
-	/* find non-zero decimal digit from number begining */
+	/* find non-zero decimal digit from number beginning */
 	if bufBeg == 0 && d.digitsInt > 0 {
 		i = (int(d.digitsInt) - 1) % digitsPerWord
 		start = digitsPerWord - i - 1

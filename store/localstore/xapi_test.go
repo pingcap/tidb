@@ -60,7 +60,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	// Select Table request.
 	txn, err := store.Begin()
 	c.Check(err, IsNil)
-	client := txn.GetClient()
+	client := store.GetClient()
 	req, err := prepareSelectRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
 	resp := client.Send(req)
@@ -70,22 +70,26 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	c.Check(err, IsNil)
 	selResp := new(tipb.SelectResponse)
 	proto.Unmarshal(data, selResp)
-	c.Check(selResp.Rows, HasLen, int(count))
-	for i, row := range selResp.Rows {
+	c.Check(selResp.Chunks, HasLen, 1)
+	chunk := &selResp.Chunks[0]
+	c.Check(chunk.RowsMeta, HasLen, int(count))
+	var dataOffset int64
+	for i, rowMeta := range chunk.RowsMeta {
 		handle := int64(i + 1)
 		expectedDatums := []types.Datum{types.NewDatum(handle)}
 		expectedDatums = append(expectedDatums, genValues(handle, tbInfo)...)
 		var expectedEncoded []byte
 		expectedEncoded, err = codec.EncodeValue(nil, expectedDatums...)
 		c.Assert(err, IsNil)
-		c.Assert(row.Data, BytesEquals, expectedEncoded)
+		c.Assert(chunk.RowsData[dataOffset:dataOffset+rowMeta.Length], BytesEquals, expectedEncoded)
+		dataOffset += rowMeta.Length
 	}
 	txn.Commit()
 
 	// Select Index request.
 	txn, err = store.Begin()
 	c.Check(err, IsNil)
-	client = txn.GetClient()
+	client = store.GetClient()
 	req, err = prepareIndexRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
 	resp = client.Send(req)
@@ -95,14 +99,11 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	c.Check(err, IsNil)
 	idxResp := new(tipb.SelectResponse)
 	proto.Unmarshal(data, idxResp)
-	c.Check(idxResp.Rows, HasLen, int(count))
+	chunk = &idxResp.Chunks[0]
+	c.Check(chunk.RowsMeta, HasLen, int(count))
 	handles := make([]int, 0, 10)
-	for _, row := range idxResp.Rows {
-		var err error
-		datums, err := codec.Decode(row.Handle, 1)
-		c.Check(err, IsNil)
-		c.Check(datums, HasLen, 1)
-		handles = append(handles, int(datums[0].GetInt64()))
+	for _, rowMeta := range chunk.RowsMeta {
+		handles = append(handles, int(rowMeta.Handle))
 	}
 	sort.Ints(handles)
 	for i, h := range handles {

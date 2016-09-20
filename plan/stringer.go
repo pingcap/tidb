@@ -112,6 +112,13 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Selection"
 	case *Projection:
 		str = "Projection"
+	case *PhysicalAggregation:
+		switch x.AggType {
+		case StreamedAgg:
+			str = "StreamAgg"
+		default:
+			str = "HashAgg"
+		}
 	case *Aggregation:
 		str = "Aggr"
 	case *Distinct:
