@@ -1121,7 +1121,8 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 }
 
 // StreamAggExec deals with all the aggregate functions.
-// It is built from Aggregate Plan. When Next() is called, it reads all the data from Src and updates all the items in AggFuncs.
+// It assumes all the input datas is sorted by group by key.
+// When Next() is called, it will return a result for the same group.
 type StreamAggExec struct {
 	Src                Executor
 	schema             expression.Schema

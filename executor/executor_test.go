@@ -2199,6 +2199,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t1 (a) values (2), (11), (8)")
 	result = tk.MustQuery("select min(a), min(case when 1=1 then a else NULL end), min(case when 1!=1 then NULL else a end) from t1 where b=3 group by b")
 	result.Check(testkit.Rows("2 2 2"))
+	// The following cases use streamed aggregation.
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, index(a))")
 	tk.MustExec("insert into t1 (a) values (1),(2),(3),(4),(5)")
