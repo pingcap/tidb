@@ -21,6 +21,9 @@ import (
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tipb/go-binlog"
+	"golang.org/x/net/context"
 )
 
 type txnCommitter struct {
@@ -338,21 +341,31 @@ func (c *txnCommitter) Commit() error {
 		}
 	}()
 
+	binlogChan := c.prewriteBinlog()
 	err := c.prewriteKeys(NewBackoffer(prewriteMaxBackoff), c.keys)
+	if binlogChan != nil {
+		binlogErr := <-binlogChan
+		if binlogErr != nil {
+			return errors.Trace(binlogErr)
+		}
+	}
 	if err != nil {
 		log.Warnf("txn commit failed on prewrite: %v, tid: %d", err, c.startTS)
+		c.rollbackBinlog()
 		return errors.Trace(err)
 	}
 
 	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff))
 	if err != nil {
 		log.Warnf("txn get commitTS failed: %v, tid: %d", err, c.startTS)
+		c.rollbackBinlog()
 		return errors.Trace(err)
 	}
 	c.commitTS = commitTS
 
 	if c.store.oracle.IsExpired(c.startTS, maxTxnTimeUse) {
 		err = errors.Errorf("txn takes too much time, start: %d, commit: %d", c.startTS, c.commitTS)
+		c.rollbackBinlog()
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
@@ -360,11 +373,96 @@ func (c *txnCommitter) Commit() error {
 	if err != nil {
 		if !c.mu.committed {
 			log.Warnf("txn commit failed on commit: %v, tid: %d", err, c.startTS)
+			c.rollbackBinlog()
 			return errors.Trace(err)
 		}
 		log.Warnf("txn commit succeed with error: %v, tid: %d", err, c.startTS)
 	}
+	c.writeCommitBinlog()
 	return nil
+}
+
+func (c *txnCommitter) prewriteBinlog() chan error {
+	if !c.shouldWriteBinlog() {
+		return nil
+	}
+	ch := make(chan error, 1)
+	go func() {
+		prewriteValue := c.txn.us.GetOption(kv.BinlogData)
+		var err error
+		if prewriteValue != nil {
+			binPrewrite := &binlog.Binlog{
+				Tp:            binlog.BinlogType_Prewrite,
+				StartTs:       int64(c.startTS),
+				PrewriteKey:   c.keys[0],
+				PrewriteValue: prewriteValue.([]byte),
+			}
+			prewriteData, _ := binPrewrite.Marshal()
+			req := &binlog.WriteBinlogReq{ClusterID: binloginfo.ClusterID, Payload: prewriteData}
+			var resp *binlog.WriteBinlogResp
+			resp, err = binloginfo.PumpClient.WriteBinlog(context.Background(), req)
+			if err == nil && resp.Errmsg != "" {
+				err = errors.New(resp.Errmsg)
+			}
+		}
+		ch <- errors.Trace(err)
+	}()
+	return ch
+}
+
+func (c *txnCommitter) rollbackBinlog() {
+	if !c.shouldWriteBinlog() {
+		return
+	}
+	go func() {
+		binRollback := &binlog.Binlog{
+			Tp:          binlog.BinlogType_Rollback,
+			StartTs:     int64(c.startTS),
+			PrewriteKey: c.keys[0],
+		}
+		rollbackData, _ := binRollback.Marshal()
+		req := &binlog.WriteBinlogReq{ClusterID: binloginfo.ClusterID, Payload: rollbackData}
+		resp, err := binloginfo.PumpClient.WriteBinlog(context.Background(), req)
+		if err != nil {
+			log.Errorf("failed to write binlog: %v", err)
+			return
+		}
+		if resp != nil && resp.Errmsg != "" {
+			log.Errorf("write binlog resp error: %v", resp.Errmsg)
+		}
+	}()
+}
+
+func (c *txnCommitter) writeCommitBinlog() {
+	if !c.shouldWriteBinlog() {
+		return
+	}
+	go func() {
+		binCommit := &binlog.Binlog{
+			Tp:          binlog.BinlogType_Commit,
+			StartTs:     int64(c.startTS),
+			CommitTs:    int64(c.commitTS),
+			PrewriteKey: c.keys[0],
+		}
+		commitData, _ := binCommit.Marshal()
+		req := &binlog.WriteBinlogReq{ClusterID: binloginfo.ClusterID, Payload: commitData}
+		resp, err := binloginfo.PumpClient.WriteBinlog(context.Background(), req)
+		if err != nil {
+			log.Errorf("failed to write binlog: %v", err)
+			return
+		}
+		if resp.Errmsg != "" {
+			log.Errorf("write binlog resp error: %v", resp.Errmsg)
+		}
+	}()
+}
+
+func (c *txnCommitter) shouldWriteBinlog() bool {
+	if binloginfo.PumpClient == nil {
+		return false
+	}
+	prewriteValue := c.txn.us.GetOption(kv.BinlogData)
+	return prewriteValue != nil
 }
 
 // TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's
