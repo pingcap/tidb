@@ -33,17 +33,17 @@ func buildIndexRange(p *PhysicalIndexScan) error {
 	rb := rangeBuilder{}
 	if p.accessEqualCount > 0 {
 		// Build ranges for equal access conditions.
-		point := rb.newBuild(p.AccessCondition[0])
+		point := rb.build(p.AccessCondition[0])
 		p.Ranges = rb.buildIndexRanges(point)
 		for i := 1; i < p.accessEqualCount; i++ {
-			point = rb.newBuild(p.AccessCondition[i])
+			point = rb.build(p.AccessCondition[i])
 			p.Ranges = rb.appendIndexRanges(p.Ranges, point)
 		}
 	}
 	rangePoints := fullRange
 	// Build rangePoints for non-equal access condtions.
 	for i := p.accessEqualCount; i < len(p.AccessCondition); i++ {
-		rangePoints = rb.intersection(rangePoints, rb.newBuild(p.AccessCondition[i]))
+		rangePoints = rb.intersection(rangePoints, rb.build(p.AccessCondition[i]))
 	}
 	if p.accessEqualCount == 0 {
 		p.Ranges = rb.buildIndexRanges(rangePoints)
@@ -210,7 +210,7 @@ func buildTableRange(p *PhysicalTableScan) error {
 	rb := rangeBuilder{}
 	rangePoints := fullRange
 	for _, cond := range p.AccessCondition {
-		rangePoints = rb.intersection(rangePoints, rb.newBuild(cond))
+		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
 			return errors.Trace(rb.err)
 		}
