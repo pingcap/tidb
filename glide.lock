@@ -1,0 +1,233 @@
+hash: b08e2f16994cd1e211dbee4655857d41d30d46e40532500e4679d5feabd69741
+updated: 2016-09-20T13:17:18.99324796+08:00
+imports:
+- name: bitbucket.org/ww/goautoneg
+  version: ""
+- name: github.com/beorn7/perks
+  version: ""
+  subpackages:
+  - quantile
+- name: github.com/boltdb/bolt
+  version: ""
+- name: github.com/cloudfoundry-incubator/candiedyaml
+  version: ""
+- name: github.com/coreos/etcd
+  version: ""
+  subpackages:
+  - auth/authpb
+  - clientv3
+  - etcdserver/api/v3rpc/rpctypes
+  - etcdserver/etcdserverpb
+  - mvcc/mvccpb
+  - pkg/tlsutil
+- name: github.com/cznic/golex
+  version: ""
+  subpackages:
+  - lex
+- name: github.com/cznic/mathutil
+  version: ""
+- name: github.com/cznic/parser
+  version: ""
+  subpackages:
+  - yacc
+- name: github.com/cznic/sortutil
+  version: ""
+- name: github.com/cznic/strutil
+  version: ""
+- name: github.com/cznic/y
+  version: ""
+- name: github.com/gengo/grpc-gateway
+  version: ""
+  subpackages:
+  - runtime
+  - runtime/internal
+  - utilities
+- name: github.com/ghodss/yaml
+  version: ""
+- name: github.com/go-sql-driver/mysql
+  version: ""
+- name: github.com/gogo/protobuf
+  version: ""
+  subpackages:
+  - proto
+- name: github.com/golang/protobuf
+  version: ""
+  subpackages:
+  - jsonpb
+  - proto
+- name: github.com/golang/snappy
+  version: ""
+- name: github.com/grpc-ecosystem/grpc-gateway
+  version: ""
+  subpackages:
+  - runtime
+  - utilities
+  - runtime/internal
+- name: github.com/juju/errors
+  version: ""
+- name: github.com/matttproud/golang_protobuf_extensions
+  version: ""
+  subpackages:
+  - pbutil
+- name: github.com/ngaut/deadline
+  version: ""
+- name: github.com/ngaut/log
+  version: ""
+- name: github.com/ngaut/pools
+  version: ""
+- name: github.com/ngaut/sync2
+  version: ""
+- name: github.com/ngaut/systimemon
+  version: ""
+- name: github.com/petar/GoLLRB
+  version: ""
+  subpackages:
+  - llrb
+- name: github.com/peterh/liner
+  version: ""
+- name: github.com/pingcap/check
+  version: ""
+- name: github.com/pingcap/goleveldb
+  version: ""
+  subpackages:
+  - leveldb
+  - leveldb/cache
+  - leveldb/comparer
+  - leveldb/errors
+  - leveldb/filter
+  - leveldb/iterator
+  - leveldb/journal
+  - leveldb/memdb
+  - leveldb/opt
+  - leveldb/storage
+  - leveldb/table
+  - leveldb/util
+- name: github.com/pingcap/kvproto
+  version: ""
+  subpackages:
+  - pkg/coprocessor
+  - pkg/errorpb
+  - pkg/eraftpb
+  - pkg/kvrpcpb
+  - pkg/metapb
+  - pkg/msgpb
+  - pkg/pdpb
+  - pkg/raft_cmdpb
+  - pkg/raft_serverpb
+  - pkg/util
+- name: github.com/pingcap/pd
+  version: ""
+  subpackages:
+  - pd-client
+  - vendor/github.com/coreos/etcd/clientv3
+  - vendor/github.com/juju/errors
+  - vendor/github.com/ngaut/deadline
+  - vendor/github.com/ngaut/log
+  - vendor/github.com/pingcap/kvproto/pkg/metapb
+  - vendor/github.com/pingcap/kvproto/pkg/msgpb
+  - vendor/github.com/pingcap/kvproto/pkg/pdpb
+  - vendor/github.com/pingcap/kvproto/pkg/util
+  - pkg/metrics
+  - vendor/github.com/prometheus/client_golang/prometheus
+  - vendor/github.com/twinj/uuid
+  - vendor/golang.org/x/net/context
+  - vendor/github.com/coreos/etcd/auth/authpb
+  - vendor/github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes
+  - vendor/github.com/coreos/etcd/etcdserver/etcdserverpb
+  - vendor/github.com/coreos/etcd/mvcc/mvccpb
+  - vendor/github.com/coreos/etcd/pkg/tlsutil
+  - vendor/github.com/ghodss/yaml
+  - vendor/google.golang.org/grpc
+  - vendor/google.golang.org/grpc/codes
+  - vendor/google.golang.org/grpc/credentials
+  - vendor/google.golang.org/grpc/grpclog
+  - vendor/google.golang.org/grpc/metadata
+  - vendor/github.com/golang/protobuf/proto
+  - vendor/github.com/pingcap/kvproto/pkg/coprocessor
+  - vendor/github.com/pingcap/kvproto/pkg/kvrpcpb
+  - vendor/github.com/pingcap/kvproto/pkg/raft_cmdpb
+  - vendor/github.com/pingcap/kvproto/pkg/raft_serverpb
+  - vendor/github.com/pingcap/kvproto/pkg/eraftpb
+  - vendor/github.com/beorn7/perks/quantile
+  - vendor/github.com/prometheus/client_model/go
+  - vendor/github.com/prometheus/common/expfmt
+  - vendor/github.com/prometheus/procfs
+  - vendor/github.com/grpc-ecosystem/grpc-gateway/runtime
+  - vendor/github.com/grpc-ecosystem/grpc-gateway/utilities
+  - vendor/github.com/cloudfoundry-incubator/candiedyaml
+  - vendor/golang.org/x/net/http2
+  - vendor/golang.org/x/net/trace
+  - vendor/google.golang.org/grpc/internal
+  - vendor/google.golang.org/grpc/naming
+  - vendor/google.golang.org/grpc/transport
+  - vendor/github.com/pingcap/kvproto/pkg/errorpb
+  - vendor/github.com/matttproud/golang_protobuf_extensions/pbutil
+  - vendor/github.com/prometheus/common/internal/bitbucket.org/ww/goautoneg
+  - vendor/github.com/prometheus/common/model
+  - vendor/github.com/golang/protobuf/jsonpb
+  - vendor/github.com/grpc-ecosystem/grpc-gateway/runtime/internal
+  - vendor/golang.org/x/net/http2/hpack
+  - vendor/golang.org/x/net/lex/httplex
+  - vendor/golang.org/x/net/internal/timeseries
+  - vendor/google.golang.org/grpc/peer
+- name: github.com/pingcap/tipb
+  version: ""
+  subpackages:
+  - go-binlog
+  - go-tipb
+- name: github.com/prometheus/client_golang
+  version: ""
+  subpackages:
+  - prometheus
+  - prometheus/push
+- name: github.com/prometheus/client_model
+  version: ""
+  subpackages:
+  - go
+- name: github.com/prometheus/common
+  version: ""
+  subpackages:
+  - expfmt
+  - model
+  - internal/bitbucket.org/ww/goautoneg
+- name: github.com/prometheus/procfs
+  version: ""
+- name: github.com/twinj/uuid
+  version: ""
+- name: golang.org/x/net
+  version: ""
+  subpackages:
+  - context
+  - http2
+  - http2/hpack
+  - internal/timeseries
+  - trace
+- name: golang.org/x/sys
+  version: 8f0908ab3b2457e2e15403d3697c9ef5cb4b57a9
+  subpackages:
+  - unix
+- name: golang.org/x/text
+  version: ""
+  subpackages:
+  - encoding
+  - encoding/charmap
+  - encoding/internal
+  - encoding/internal/identifier
+  - encoding/japanese
+  - encoding/korean
+  - encoding/simplifiedchinese
+  - encoding/traditionalchinese
+  - encoding/unicode
+  - transform
+- name: google.golang.org/grpc
+  version: ""
+  subpackages:
+  - codes
+  - credentials
+  - grpclog
+  - internal
+  - metadata
+  - naming
+  - peer
+  - transport
+testImports: []
