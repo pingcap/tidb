@@ -15,24 +15,19 @@ package executor
 
 import (
 	"math"
-	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -101,7 +96,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSemiJoin(v)
 	case *plan.Selection:
 		return b.buildSelection(v)
-	case *plan.Aggregation:
+	case *plan.PhysicalAggregation:
 		return b.buildAggregation(v)
 	case *plan.Projection:
 		return b.buildProjection(v)
@@ -469,86 +464,26 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildAggregation(v *plan.Aggregation) Executor {
+func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	e := &AggregationExec{
+	if v.AggType == plan.StreamedAgg {
+		return &StreamAggExec{
+			Src:          src,
+			schema:       v.GetSchema(),
+			ctx:          b.ctx,
+			AggFuncs:     v.AggFuncs,
+			GroupByItems: v.GroupByItems,
+		}
+	}
+	return &HashAggExec{
 		Src:          src,
 		schema:       v.GetSchema(),
 		ctx:          b.ctx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
+		aggType:      v.AggType,
+		hasGby:       v.HasGby,
 	}
-	// Check if the underlying is distsql executor, we should try to push aggregate function down.
-	xSrc, ok := src.(XExecutor)
-	if !ok {
-		return e
-	}
-	client := b.ctx.GetClient()
-	if len(v.GroupByItems) > 0 && !client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy) {
-		return e
-	}
-	// Convert aggregate function exprs to pb.
-	pbAggFuncs := make([]*tipb.Expr, 0, len(v.AggFuncs))
-	for _, af := range v.AggFuncs {
-		if af.IsDistinct() {
-			// We do not support distinct push down.
-			return e
-		}
-		pbAggFunc := b.AggFuncToPBExpr(client, af, xSrc.GetTable())
-		if pbAggFunc == nil {
-			return e
-		}
-		pbAggFuncs = append(pbAggFuncs, pbAggFunc)
-	}
-	pbByItems := make([]*tipb.ByItem, 0, len(v.GroupByItems))
-	// Convert groupby to pb
-	for _, item := range v.GroupByItems {
-		pbByItem := b.GroupByItemToPB(client, item, xSrc.GetTable())
-		if pbByItem == nil {
-			return e
-		}
-		pbByItems = append(pbByItems, pbByItem)
-	}
-	// compose aggregate info
-	// We should infer fields type.
-	// Each agg item will be splitted into two datums: count and value
-	// The first field should be group key.
-	fields := make([]*types.FieldType, 0, 1+2*len(v.AggFuncs))
-	gk := types.NewFieldType(mysql.TypeBlob)
-	gk.Charset = charset.CharsetBin
-	gk.Collate = charset.CollationBin
-	fields = append(fields, gk)
-	// There will be one or two fields in the result row for each AggregateFuncExpr.
-	// Count needs count partial result field.
-	// Sum, FirstRow, Max, Min, GroupConcat need value partial result field.
-	// Avg needs both count and value partial result field.
-	for i, agg := range v.AggFuncs {
-		name := strings.ToLower(agg.GetName())
-		if needCount(name) {
-			// count partial result field
-			ft := types.NewFieldType(mysql.TypeLonglong)
-			ft.Flen = 21
-			ft.Charset = charset.CharsetBin
-			ft.Collate = charset.CollationBin
-			fields = append(fields, ft)
-		}
-		if needValue(name) {
-			// value partial result field
-			col := v.GetSchema()[i]
-			fields = append(fields, col.GetType())
-		}
-	}
-	xSrc.AddAggregate(pbAggFuncs, pbByItems, fields)
-	hasGroupBy := len(v.GroupByItems) > 0
-	xe := &XAggregateExec{
-		Src:        src,
-		ctx:        b.ctx,
-		AggFuncs:   v.AggFuncs,
-		hasGroupBy: hasGroupBy,
-		schema:     v.GetSchema(),
-	}
-	log.Debugf("Use XAggregateExec with %d aggs", len(v.AggFuncs))
-	return xe
 }
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
@@ -641,6 +576,10 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Sele
 			limitCount:  v.LimitCount,
 			keepOrder:   v.KeepOrder,
 			where:       v.ConditionPBExpr,
+			aggregate:   v.Aggregated,
+			aggFuncs:    v.AggFuncs,
+			aggFields:   v.AggFields,
+			byItems:     v.GbyItems,
 		}
 		return st
 	}
@@ -683,6 +622,10 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan, s *plan.Sele
 			indexPlan:   v,
 			startTS:     startTS,
 			where:       v.ConditionPBExpr,
+			aggregate:   v.Aggregated,
+			aggFuncs:    v.AggFuncs,
+			aggFields:   v.AggFields,
+			byItems:     v.GbyItems,
 		}
 		return st
 	}
