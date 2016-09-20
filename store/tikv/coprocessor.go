@@ -274,6 +274,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
 	}
 	copBuildTaskHistogram.Observe(time.Since(start).Seconds())
+	copTaskLenHistogram.Observe(float64(len(tasks)))
 	return tasks, nil
 }
 

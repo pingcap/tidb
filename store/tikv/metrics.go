@@ -88,6 +88,15 @@ var (
 			Help:      "Coprocessor buildTask cost time.",
 		})
 
+	copTaskLenHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "cop_task_len",
+			Help:      "Coprocessor task length.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 11),
+		})
+
 	coprocessorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -132,6 +141,7 @@ func init() {
 	prometheus.MustRegister(sendReqCounter)
 	prometheus.MustRegister(sendReqHistogram)
 	prometheus.MustRegister(copBuildTaskHistogram)
+	prometheus.MustRegister(copTaskLenHistogram)
 	prometheus.MustRegister(coprocessorCounter)
 	prometheus.MustRegister(gcWorkerCounter)
 	prometheus.MustRegister(gcHistogram)
