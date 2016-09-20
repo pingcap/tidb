@@ -351,21 +351,18 @@ func (c *txnCommitter) Commit() error {
 	}
 	if err != nil {
 		log.Warnf("txn commit failed on prewrite: %v, tid: %d", err, c.startTS)
-		c.rollbackBinlog()
 		return errors.Trace(err)
 	}
 
 	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff))
 	if err != nil {
 		log.Warnf("txn get commitTS failed: %v, tid: %d", err, c.startTS)
-		c.rollbackBinlog()
 		return errors.Trace(err)
 	}
 	c.commitTS = commitTS
 
 	if c.store.oracle.IsExpired(c.startTS, maxTxnTimeUse) {
 		err = errors.Errorf("txn takes too much time, start: %d, commit: %d", c.startTS, c.commitTS)
-		c.rollbackBinlog()
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
@@ -373,12 +370,10 @@ func (c *txnCommitter) Commit() error {
 	if err != nil {
 		if !c.mu.committed {
 			log.Warnf("txn commit failed on commit: %v, tid: %d", err, c.startTS)
-			c.rollbackBinlog()
 			return errors.Trace(err)
 		}
 		log.Warnf("txn commit succeed with error: %v, tid: %d", err, c.startTS)
 	}
-	c.writeCommitBinlog()
 	return nil
 }
 

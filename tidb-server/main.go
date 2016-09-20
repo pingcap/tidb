@@ -29,6 +29,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/ngaut/systimemon"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/server"
@@ -98,35 +99,13 @@ func main() {
 	printer.PrintTiDBInfo()
 	log.SetLevelByString(cfg.LogLevel)
 
-	fullPath := fmt.Sprintf("%s://%s", *store, *storePath)
-	u, err := url.Parse(fullPath)
-	if err != nil {
-		log.Fatal(errors.ErrorStack(err))
-	}
-	if cluster := u.Query().Get("cluster"); cluster != "" {
-		id, err1 := strconv.ParseUint(cluster, 10, 64)
-		if err1 != nil {
-			log.Fatal(errors.ErrorStack(err1))
-		}
-		binloginfo.ClusterID = id
-	}
-	store, err := tidb.NewStore(fullPath)
-	if err != nil {
-		log.Fatal(errors.ErrorStack(err))
-	}
+	store := createStore()
 
 	if *enablePS {
 		perfschema.EnablePerfSchema()
 	}
 	if *binlogSocket != "" {
-		dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
-			return net.DialTimeout("unix", addr, timeout)
-		})
-		clientCon, err := grpc.Dial(*binlogSocket, dialerOpt, grpc.WithInsecure())
-		if err != nil {
-			log.Fatal(errors.ErrorStack(err))
-		}
-		binloginfo.PumpClient = binlog.NewPumpClient(clientCon)
+		createBinlogClient()
 	}
 
 	// Create a session to load information schema.
@@ -165,6 +144,37 @@ func main() {
 	pushMetric(*metricsAddr, time.Duration(*metricsInterval)*time.Second)
 
 	log.Error(svr.Run())
+}
+
+func createStore() kv.Storage {
+	fullPath := fmt.Sprintf("%s://%s", *store, *storePath)
+	u, err := url.Parse(fullPath)
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
+	if cluster := u.Query().Get("cluster"); cluster != "" {
+		id, err1 := strconv.ParseUint(cluster, 10, 64)
+		if err1 != nil {
+			log.Fatal(errors.ErrorStack(err1))
+		}
+		binloginfo.ClusterID = id
+	}
+	store, err := tidb.NewStore(fullPath)
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
+	return store
+}
+
+func createBinlogClient() {
+	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
+		return net.DialTimeout("unix", addr, timeout)
+	})
+	clientCon, err := grpc.Dial(*binlogSocket, dialerOpt, grpc.WithInsecure())
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
+	binloginfo.PumpClient = binlog.NewPumpClient(clientCon)
 }
 
 // Prometheus push.
