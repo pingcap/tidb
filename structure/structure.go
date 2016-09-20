@@ -35,19 +35,19 @@ var (
 	errWriteOnSnapshot      = terror.ClassStructure.New(codeWriteOnSnapshot, "write on snapshot")
 )
 
-// NewStructure creates a TxStructure and with Retriever, RetrieverMutator and key prefix.
-func NewStructure(retr kv.Retriever, remu kv.RetrieverMutator, prefix []byte) *TxStructure {
+// NewStructure creates a TxStructure with Retriever, RetrieverMutator and key prefix.
+func NewStructure(reader kv.Retriever, readWriter kv.RetrieverMutator, prefix []byte) *TxStructure {
 	return &TxStructure{
-		retr:   retr,
-		remu:   remu,
-		prefix: prefix,
+		reader:     reader,
+		readWriter: readWriter,
+		prefix:     prefix,
 	}
 }
 
 // TxStructure supports some simple data structures like string, hash, list, etc... and
 // you can use these in a transaction.
 type TxStructure struct {
-	retr   kv.Retriever
-	remu   kv.RetrieverMutator
-	prefix []byte
+	reader     kv.Retriever
+	readWriter kv.RetrieverMutator
+	prefix     []byte
 }

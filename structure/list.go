@@ -48,7 +48,7 @@ func (t *TxStructure) RPush(key []byte, values ...[]byte) error {
 }
 
 func (t *TxStructure) listPush(key []byte, left bool, values ...[]byte) error {
-	if t.remu == nil {
+	if t.readWriter == nil {
 		return errWriteOnSnapshot
 	}
 	if len(values) == 0 {
@@ -72,12 +72,12 @@ func (t *TxStructure) listPush(key []byte, left bool, values ...[]byte) error {
 		}
 
 		dataKey := t.encodeListDataKey(key, index)
-		if err = t.remu.Set(dataKey, v); err != nil {
+		if err = t.readWriter.Set(dataKey, v); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	return t.remu.Set(metaKey, meta.Value())
+	return t.readWriter.Set(metaKey, meta.Value())
 }
 
 // LPop removes and gets the first element in a list.
@@ -91,7 +91,7 @@ func (t *TxStructure) RPop(key []byte) ([]byte, error) {
 }
 
 func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
-	if t.remu == nil {
+	if t.readWriter == nil {
 		return nil, errWriteOnSnapshot
 	}
 	metaKey := t.encodeListMetaKey(key)
@@ -112,19 +112,19 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 	dataKey := t.encodeListDataKey(key, index)
 
 	var data []byte
-	data, err = t.retr.Get(dataKey)
+	data, err = t.reader.Get(dataKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if err = t.remu.Delete(dataKey); err != nil {
+	if err = t.readWriter.Delete(dataKey); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	if !meta.IsEmpty() {
-		err = t.remu.Set(metaKey, meta.Value())
+		err = t.readWriter.Set(metaKey, meta.Value())
 	} else {
-		err = t.remu.Delete(metaKey)
+		err = t.readWriter.Delete(metaKey)
 	}
 
 	return data, errors.Trace(err)
@@ -148,14 +148,14 @@ func (t *TxStructure) LIndex(key []byte, index int64) ([]byte, error) {
 	index = adjustIndex(index, meta.LIndex, meta.RIndex)
 
 	if index >= meta.LIndex && index < meta.RIndex {
-		return t.retr.Get(t.encodeListDataKey(key, index))
+		return t.reader.Get(t.encodeListDataKey(key, index))
 	}
 	return nil, nil
 }
 
 // LSet updates an element in the list by its index.
 func (t *TxStructure) LSet(key []byte, index int64, value []byte) error {
-	if t.remu == nil {
+	if t.readWriter == nil {
 		return errWriteOnSnapshot
 	}
 	metaKey := t.encodeListMetaKey(key)
@@ -167,14 +167,14 @@ func (t *TxStructure) LSet(key []byte, index int64, value []byte) error {
 	index = adjustIndex(index, meta.LIndex, meta.RIndex)
 
 	if index >= meta.LIndex && index < meta.RIndex {
-		return t.remu.Set(t.encodeListDataKey(key, index), value)
+		return t.readWriter.Set(t.encodeListDataKey(key, index), value)
 	}
 	return errInvalidListIndex.Gen("invalid list index %d", index)
 }
 
 // LClear removes the list of the key.
 func (t *TxStructure) LClear(key []byte) error {
-	if t.remu == nil {
+	if t.readWriter == nil {
 		return errWriteOnSnapshot
 	}
 	metaKey := t.encodeListMetaKey(key)
@@ -185,16 +185,16 @@ func (t *TxStructure) LClear(key []byte) error {
 
 	for index := meta.LIndex; index < meta.RIndex; index++ {
 		dataKey := t.encodeListDataKey(key, index)
-		if err = t.remu.Delete(dataKey); err != nil {
+		if err = t.readWriter.Delete(dataKey); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	return t.remu.Delete(metaKey)
+	return t.readWriter.Delete(metaKey)
 }
 
 func (t *TxStructure) loadListMeta(metaKey []byte) (listMeta, error) {
-	v, err := t.retr.Get(metaKey)
+	v, err := t.reader.Get(metaKey)
 	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
 	} else if err != nil {

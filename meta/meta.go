@@ -52,6 +52,7 @@ var (
 //
 
 var (
+	mMetaPrefix       = []byte("m")
 	mNextGlobalIDKey  = []byte("NextGlobalID")
 	mSchemaVersionKey = []byte("SchemaVersionKey")
 	mDBs              = []byte("DBs")
@@ -83,13 +84,13 @@ type Meta struct {
 
 // NewMeta creates a Meta in transaction txn.
 func NewMeta(txn kv.Transaction) *Meta {
-	t := structure.NewStructure(txn, txn, []byte{'m'})
+	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	return &Meta{txn: t}
 }
 
-// NewSnapshotMeta create a Meta with snapshot.
+// NewSnapshotMeta creates a Meta with snapshot.
 func NewSnapshotMeta(snapshot kv.Snapshot) *Meta {
-	t := structure.NewStructure(snapshot, nil, []byte{'m'})
+	t := structure.NewStructure(snapshot, nil, mMetaPrefix)
 	return &Meta{txn: t}
 }
 
