@@ -35,6 +35,7 @@ var (
 	_ Executor = &UpdateExec{}
 	_ Executor = &DeleteExec{}
 	_ Executor = &InsertExec{}
+	_ Executor = &ReplaceExec{}
 	_ Executor = &LoadData{}
 )
 

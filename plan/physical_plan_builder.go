@@ -101,14 +101,14 @@ func (p *DataSource) handleTableScan(prop requiredProperty) (*physicalPlanInfo, 
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
 		if txn != nil {
-			client := txn.GetClient()
+			client := p.ctx.GetClient()
 			var memDB bool
 			switch p.DBName.L {
 			case "information_schema", "performance_schema":
 				memDB = true
 			}
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-				ts.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, txn.GetClient())
+				ts.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, client)
 			}
 			if err != nil {
 				return nil, nil, errors.Trace(err)
@@ -200,14 +200,14 @@ func (p *DataSource) handleIndexScan(prop requiredProperty, index *model.IndexIn
 		}
 		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
 		if txn != nil {
-			client := txn.GetClient()
+			client := p.ctx.GetClient()
 			var memDB bool
 			switch p.DBName.L {
 			case "information_schema", "performance_schema":
 				memDB = true
 			}
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-				is.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, txn.GetClient())
+				is.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, client)
 			}
 			if err != nil {
 				return nil, nil, errors.Trace(err)

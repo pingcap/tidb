@@ -170,6 +170,12 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	}
 }
 
+func (s *tikvStore) GetClient() kv.Client {
+	return &CopClient{
+		store: s,
+	}
+}
+
 // sendKVReq sends req to tikv server. It will retry internally to find the right
 // region leader if i) fails to establish a connection to server or ii) server
 // returns `NotLeader`.
@@ -205,6 +211,15 @@ func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVer
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
+				}
+				continue
+			}
+			// Retry if error is `ServerIsBusy`.
+			if regionErr.GetServerIsBusy() != nil {
+				log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", req.Context)
+				err = bo.Backoff(boServerBusy, errors.Errorf("server is busy"))
+				if err != nil {
+					return nil, errors.Trace(err)
 				}
 				continue
 			}

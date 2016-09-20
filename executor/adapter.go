@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 // recordSet wraps an executor, implements ast.RecordSet interface
@@ -96,6 +97,15 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}
 
 	if len(e.Fields()) == 0 && len(e.Schema()) == 0 {
+		// Write statements do not have record set, check if snapshot ts is set.
+		switch e.(type) {
+		case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadData, *DDLExec:
+			snapshotTS := variable.GetSnapshotTS(ctx)
+			if snapshotTS != 0 {
+				return nil, errors.New("Can not execute write statement when 'tidb_snapshot' is set.")
+			}
+		}
+
 		// No result fields means no Recordset.
 		defer e.Close()
 		for {

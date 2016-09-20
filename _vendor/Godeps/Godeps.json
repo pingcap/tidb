@@ -209,11 +209,11 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-binlog",
-			"Rev": "076169255d6d516f4a72d1648c085d872ff8bf48"
+			"Rev": "c3409ad509cfadfe2318739bade8fe8c7f4e000e"
 		},
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-tipb",
-			"Rev": "89d447d2cc7b0019e697fb95e65981d3a641b7ec"
+			"Rev": "c3409ad509cfadfe2318739bade8fe8c7f4e000e"
 		},
 		{
 			"ImportPath": "github.com/twinj/uuid",
@@ -374,8 +374,13 @@
 		},
 		{
 			"ImportPath": "github.com/prometheus/client_golang/prometheus",
-			"Comment": "0.7.0-87-g28be158",
-			"Rev": "28be15864ef9ba05d74fa6fd13b928fd250e8f01"
+			"Comment": "v0.8.0-7-g5636dc6",
+			"Rev": "5636dc67ae776adf5590da7349e70fbb9559972d"
+		},
+		{
+			"ImportPath": "github.com/prometheus/client_golang/prometheus/push",
+			"Comment": "v0.8.0-7-g5636dc6",
+			"Rev": "5636dc67ae776adf5590da7349e70fbb9559972d"
 		},
 		{
 			"ImportPath": "github.com/prometheus/client_model/go",
@@ -384,11 +389,11 @@
 		},
 		{
 			"ImportPath": "github.com/prometheus/common/expfmt",
-			"Rev": "bc0a4460d0fc2693fcdebafafbf07c6d18913b97"
+			"Rev": "9a94032291f2192936512bab367bc45e77990d6a"
 		},
 		{
 			"ImportPath": "github.com/prometheus/common/model",
-			"Rev": "bc0a4460d0fc2693fcdebafafbf07c6d18913b97"
+			"Rev": "9a94032291f2192936512bab367bc45e77990d6a"
 		},
 		{
 			"ImportPath": "github.com/prometheus/procfs",
@@ -401,7 +406,7 @@
 		},
 		{
 			"ImportPath": "github.com/prometheus/common/internal/bitbucket.org/ww/goautoneg",
-			"Rev": "bc0a4460d0fc2693fcdebafafbf07c6d18913b97"
+			"Rev": "9a94032291f2192936512bab367bc45e77990d6a"
 		},
 		{
 			"ImportPath": "github.com/cznic/golex/lex",
