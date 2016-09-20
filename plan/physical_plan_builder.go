@@ -563,7 +563,7 @@ func (p *Aggregation) handleStreamAgg(prop *requiredProperty) (*physicalPlanInfo
 	return info, nil
 }
 
-func (p *Aggregation) handleFinalAgg(x physicalXPlan, childInfo *physicalPlanInfo) (*physicalPlanInfo, error) {
+func (p *Aggregation) handleFinalAgg(x physicalDistSQLPlan, childInfo *physicalPlanInfo) (*physicalPlanInfo, error) {
 	agg := &PhysicalAggregation{
 		AggType:      FinalAgg,
 		AggFuncs:     p.AggFuncs,
@@ -599,16 +599,7 @@ func (p *Aggregation) handleHashAgg() (*physicalPlanInfo, error) {
 		}
 	}
 	if !distinct {
-		switch x := childInfo.p.(type) {
-		case *PhysicalTableScan:
-			info, err := p.handleFinalAgg(x, childInfo)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if info != nil {
-				return info, nil
-			}
-		case *PhysicalIndexScan:
+		if x, ok := childInfo.p.(physicalDistSQLPlan); ok {
 			info, err := p.handleFinalAgg(x, childInfo)
 			if err != nil {
 				return nil, errors.Trace(err)

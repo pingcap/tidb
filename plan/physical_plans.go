@@ -56,7 +56,7 @@ type PhysicalIndexScan struct {
 	LimitCount *int64
 }
 
-type physicalXPlan interface {
+type physicalDistSQLPlan interface {
 	addAggregation(agg *PhysicalAggregation, ctx context.Context) (expression.Schema, error)
 }
 

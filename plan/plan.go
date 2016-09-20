@@ -120,7 +120,7 @@ type requiredProperty struct {
 	sortKeyLen int
 }
 
-// getHashKey encode a requiredProperty to a unique hash code.
+// getHashKey encodes a requiredProperty to a unique hash code.
 func (p *requiredProperty) getHashKey() ([]byte, error) {
 	datums := make([]types.Datum, 0, len(p.props)*3+1)
 	datums = append(datums, types.NewDatum(p.sortKeyLen))
