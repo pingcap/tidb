@@ -3,7 +3,7 @@ import:
 - package: github.com/boltdb/bolt
   version: d97499360d1ecebc492ea66c7447ea948f417620
 - package: github.com/cloudfoundry-incubator/candiedyaml
-  version: 99c3df83b51532e3615f851d8c2dbb638f5313bf
+  version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - package: github.com/coreos/etcd
   version: e53b99588a05d1f4ef172c178d4ed8e8106b8be4
   subpackages:
@@ -14,7 +14,7 @@ import:
   - mvcc/mvccpb
   - pkg/tlsutil
 - package: github.com/gengo/grpc-gateway
-  version: ^1.0.0
+  version: f52d055dc48aec25854ed7d31862f78913cf17d1
   subpackages:
   - runtime
   - runtime/internal
@@ -23,10 +23,6 @@ import:
   version: 1a6f069841556a7bcaff4a397ca6e8328d266c2f
 - package: github.com/go-sql-driver/mysql
   version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
-- package: github.com/gogo/protobuf
-  version: c3995ae437bb78d1189f4f147dfe5f87ad3596e4
-  subpackages:
-  - proto
 - package: github.com/golang/protobuf
   version: 3852dcfda249c2097355a6aabb199a28d97b30df
   subpackages:
@@ -67,83 +63,10 @@ import:
   - leveldb/storage
   - leveldb/table
   - leveldb/util
-- package: github.com/pingcap/kvproto
-  version: 294d57c6b301fcf3f64edcc2ee1a988308169ffc
-  subpackages:
-  - pkg/coprocessor
-  - pkg/errorpb
-  - pkg/eraftpb
-  - pkg/kvrpcpb
-  - pkg/metapb
-  - pkg/msgpb
-  - pkg/pdpb
-  - pkg/raft_cmdpb
-  - pkg/raft_serverpb
-  - pkg/util
-- package: github.com/pingcap/pd
-  version: 1bc8ea71f9e54d2eb1a8b8d4dae8c32394ce4477
-  subpackages:
-  - pd-client
-  - vendor/github.com/coreos/etcd/clientv3
-  - vendor/github.com/juju/errors
-  - vendor/github.com/ngaut/deadline
-  - vendor/github.com/ngaut/log
-  - vendor/github.com/pingcap/kvproto/pkg/metapb
-  - vendor/github.com/pingcap/kvproto/pkg/msgpb
-  - vendor/github.com/pingcap/kvproto/pkg/pdpb
-  - vendor/github.com/pingcap/kvproto/pkg/util
-  - pkg/metrics
-  - vendor/github.com/prometheus/client_golang/prometheus
-  - vendor/github.com/twinj/uuid
-  - vendor/golang.org/x/net/context
-  - vendor/github.com/coreos/etcd/auth/authpb
-  - vendor/github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes
-  - vendor/github.com/coreos/etcd/etcdserver/etcdserverpb
-  - vendor/github.com/coreos/etcd/mvcc/mvccpb
-  - vendor/github.com/coreos/etcd/pkg/tlsutil
-  - vendor/github.com/ghodss/yaml
-  - vendor/google.golang.org/grpc
-  - vendor/google.golang.org/grpc/codes
-  - vendor/google.golang.org/grpc/credentials
-  - vendor/google.golang.org/grpc/grpclog
-  - vendor/google.golang.org/grpc/metadata
-  - vendor/github.com/golang/protobuf/proto
-  - vendor/github.com/pingcap/kvproto/pkg/coprocessor
-  - vendor/github.com/pingcap/kvproto/pkg/kvrpcpb
-  - vendor/github.com/pingcap/kvproto/pkg/raft_cmdpb
-  - vendor/github.com/pingcap/kvproto/pkg/raft_serverpb
-  - vendor/github.com/pingcap/kvproto/pkg/eraftpb
-  - vendor/github.com/beorn7/perks/quantile
-  - vendor/github.com/prometheus/client_model/go
-  - vendor/github.com/prometheus/common/expfmt
-  - vendor/github.com/prometheus/procfs
-  - vendor/github.com/grpc-ecosystem/grpc-gateway/runtime
-  - vendor/github.com/grpc-ecosystem/grpc-gateway/utilities
-  - vendor/github.com/cloudfoundry-incubator/candiedyaml
-  - vendor/golang.org/x/net/http2
-  - vendor/golang.org/x/net/trace
-  - vendor/google.golang.org/grpc/internal
-  - vendor/google.golang.org/grpc/naming
-  - vendor/google.golang.org/grpc/transport
-  - vendor/github.com/pingcap/kvproto/pkg/errorpb
-  - vendor/github.com/matttproud/golang_protobuf_extensions/pbutil
-  - vendor/github.com/prometheus/common/internal/bitbucket.org/ww/goautoneg
-  - vendor/github.com/prometheus/common/model
-  - vendor/github.com/golang/protobuf/jsonpb
-  - vendor/github.com/grpc-ecosystem/grpc-gateway/runtime/internal
-  - vendor/golang.org/x/net/http2/hpack
-  - vendor/golang.org/x/net/lex/httplex
-  - vendor/golang.org/x/net/internal/timeseries
-  - vendor/google.golang.org/grpc/peer
-- package: github.com/pingcap/tipb
-  version: 076169255d6d516f4a72d1648c085d872ff8bf48
-  subpackages:
-  - go-binlog
-  - go-tipb
 - package: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - package: golang.org/x/net
-  version: b797637b7aeeed133049c7281bfa31dcc9ca42d6
+  version: e90d6d0afc4c315a0d87a568ae68577cc15149a0
   subpackages:
   - context
   - http2
@@ -202,11 +125,6 @@ import:
   version: c12348ce28de40eed0136aa2b644d0ee0650e56c
   subpackages:
   - pbutil
-- package: github.com/prometheus/client_golang
-  version: 5636dc67ae776adf5590da7349e70fbb9559972d
-  subpackages:
-  - prometheus
-  - prometheus/push
 - package: github.com/prometheus/client_model
   version: fa8ad6fec33561be4280a8f0514318c79d7f6cb6
   subpackages:
@@ -225,3 +143,13 @@ import:
   version: da5a7153a51074477ecac5c45a7e5182a0c72448
   subpackages:
   - lex
+- package: github.com/pingcap/pd
+  version: f71db789594e91f558a1becdd987f3ecd0a57712
+- package: github.com/pingcap/tipb
+  subpackages:
+  - '...'
+  - go-tipb
+- package: github.com/pingcap/kvproto
+  version: 294d57c6b301fcf3f64edcc2ee1a988308169ffc
+  subpackages:
+  - '...'
