@@ -32,6 +32,7 @@ const (
 	distinctFactor  = 0.7
 	cpuFactor       = 0.9
 	aggFactor       = 0.2
+	joinFactor      = 0.3
 )
 
 // JoinConcurrency means the number of goroutines that participate joining.
@@ -559,7 +560,7 @@ func (p *Aggregation) handleStreamAgg(prop *requiredProperty) (*physicalPlanInfo
 	}
 	info = addPlanToResponse(agg, childInfo)
 	info.cost += float64(info.count) * cpuFactor
-	info.count = info.count / 3
+	info.count = uint64(float64(info.count) * aggFactor)
 	return info, nil
 }
 

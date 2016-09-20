@@ -132,7 +132,7 @@ func (p *PhysicalApply) matchProperty(_ *requiredProperty, childPlanInfo ...*phy
 }
 
 func estimateJoinCount(lc uint64, rc uint64) uint64 {
-	return lc * rc / 3
+	return uint64(float64(lc*rc) * joinFactor)
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
