@@ -101,9 +101,9 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	case *plan.Projection:
 		return b.buildProjection(v)
 	case *plan.PhysicalTableScan:
-		return b.buildTableScan(v, nil)
+		return b.buildTableScan(v)
 	case *plan.PhysicalIndexScan:
-		return b.buildIndexScan(v, nil)
+		return b.buildIndexScan(v)
 	case *plan.TableDual:
 		return b.buildTableDual(v)
 	case *plan.PhysicalApply:
@@ -195,11 +195,6 @@ func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 
 func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	if x, ok := src.(XExecutor); ok {
-		if x.AddLimit(v) && v.Offset == 0 {
-			return src
-		}
-	}
 	e := &LimitExec{
 		Src:    src,
 		Offset: v.Offset,
@@ -487,38 +482,12 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 }
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
-	child := v.GetChildByIndex(0)
-	oldConditions := v.Conditions
-	var src Executor
-	switch x := child.(type) {
-	case *plan.PhysicalTableScan:
-		if x.LimitCount == nil {
-			src = b.buildTableScan(x, v)
-		} else {
-			src = b.buildTableScan(x, nil)
-		}
-	case *plan.PhysicalIndexScan:
-		if x.LimitCount == nil {
-			src = b.buildIndexScan(x, v)
-		} else {
-			src = b.buildIndexScan(x, nil)
-		}
-	default:
-		src = b.build(x)
-	}
-
-	if len(v.Conditions) == 0 {
-		v.Conditions = oldConditions
-		return src
-	}
-
 	exec := &SelectionExec{
-		Src:       src,
+		Src:       b.build(v.GetChildByIndex(0)),
 		Condition: expression.ComposeCNFCondition(v.Conditions),
 		schema:    v.GetSchema(),
 		ctx:       b.ctx,
 	}
-	copy(v.Conditions, oldConditions)
 	return exec
 }
 
@@ -548,7 +517,7 @@ func (b *executorBuilder) getStartTS() uint64 {
 	return startTS
 }
 
-func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Selection) Executor {
+func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	startTS := b.getStartTS()
 	if b.err != nil {
 		return nil
@@ -599,7 +568,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan, s *plan.Sele
 	return ts
 }
 
-func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan, s *plan.Selection) Executor {
+func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	startTS := b.getStartTS()
 	if b.err != nil {
 		return nil
