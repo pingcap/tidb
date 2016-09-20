@@ -16,6 +16,7 @@ package plan
 import (
 	"math"
 
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -44,6 +45,27 @@ func anyMatch(matchedList []bool) bool {
 	return true
 }
 
+// matchPropColumn checks if the idxCol match one of columns in required property and return the matched index.
+// If no column is matched, return -1.
+func matchPropColumn(prop *requiredProperty, matchedIdx int, idxCol *model.IndexColumn) int {
+	// When walking through the first sorKeyLen column, we should make sure to match them as the columns order exactly.
+	// So we must check the column in position of matchedIdx.
+	if matchedIdx < prop.sortKeyLen {
+		propCol := prop.props[matchedIdx]
+		if idxCol.Name.L == propCol.col.ColName.L {
+			return matchedIdx
+		}
+		// When walking outside the first sorKeyLen column, we can match the columns as any order.
+	} else {
+		for j, propCol := range prop.props {
+			if idxCol.Name.L == propCol.col.ColName.L {
+				return j
+			}
+		}
+	}
+	return -1
+}
+
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*physicalPlanInfo) *physicalPlanInfo {
 	rowCount := float64(infos[0].count)
@@ -55,39 +77,27 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 		return &physicalPlanInfo{p: is, cost: cost, count: infos[0].count}
 	}
 	matchedIdx := 0
-	allDesc, allAsc := true, true
 	matchedList := make([]bool, len(prop.props))
 	for i, idxCol := range is.Index.Columns {
 		if idxCol.Length != types.UnspecifiedLength {
 			break
 		}
-		findMatched := false
-		if matchedIdx < prop.sortKeyLen {
-			propCol := prop.props[matchedIdx]
-			if idxCol.Name.L == propCol.col.ColName.L {
-				findMatched = true
-				matchedList[matchedIdx] = true
-				if propCol.desc {
-					allAsc = false
-				} else {
-					allDesc = false
-				}
-				matchedIdx++
-			}
-		} else {
-			for j, propCol := range prop.props {
-				if idxCol.Name.L == propCol.col.ColName.L {
-					matchedList[j] = true
-					findMatched = true
-					break
-				}
-			}
-		}
-		if !findMatched && i >= is.accessEqualCount {
+		if idx := matchPropColumn(prop, matchedIdx, idxCol); idx >= 0 {
+			matchedList[idx] = true
+			matchedIdx++
+		} else if i >= is.accessEqualCount {
 			break
 		}
 	}
 	if anyMatch(matchedList) {
+		allDesc, allAsc := true, true
+		for i := 0; i < prop.sortKeyLen; i++ {
+			if prop.props[i].desc {
+				allAsc = false
+			} else {
+				allDesc = false
+			}
+		}
 		sortedCost := cost + rowCount*cpuFactor
 		if allAsc {
 			sortedIs := *is
