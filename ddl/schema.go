@@ -17,9 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -74,7 +72,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) delReorgSchema(t *meta.Meta, job *model.Job) error {
+func (d *ddl) dropSchemaData(t *meta.Meta, job *model.Job) error {
 	dbInfo := &model.DBInfo{}
 	if err := job.DecodeArgs(dbInfo); err != nil {
 		// arg error, cancel this job.
@@ -90,15 +88,12 @@ func (d *ddl) delReorgSchema(t *meta.Meta, job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	if err = d.dropSchemaData(dbInfo, tables); err != nil {
-		return errors.Trace(err)
+	for _, tblInfo := range tables {
+		err := d.dropTableData(tblInfo.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-
-	// finish this background job
-	job.SchemaState = model.StateNone
-	job.State = model.JobDone
-
 	return nil
 }
 
@@ -144,20 +139,4 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 	}
 
 	return errors.Trace(err)
-}
-
-func (d *ddl) dropSchemaData(dbInfo *model.DBInfo, tables []*model.TableInfo) error {
-	for _, tblInfo := range tables {
-		alloc := autoid.NewAllocator(d.store, dbInfo.ID)
-		t, err := table.TableFromMeta(alloc, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = d.dropTableData(t)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
 }

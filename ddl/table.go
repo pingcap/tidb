@@ -77,32 +77,6 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
-	tblInfo := &model.TableInfo{}
-	err := job.DecodeArgs(tblInfo)
-	if err != nil {
-		// arg error, cancel this job.
-		job.State = model.JobCancelled
-		return errors.Trace(err)
-	}
-	tblInfo.State = model.StateDeleteReorganization
-	tbl, err := d.getTable(job.SchemaID, tblInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = d.dropTableData(tbl)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// finish this background job
-	job.SchemaState = model.StateNone
-	job.State = model.JobDone
-
-	return nil
-}
-
 func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tableID := job.TableID
@@ -181,7 +155,46 @@ func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, erro
 	return tblInfo, nil
 }
 
-func (d *ddl) dropTableData(t table.Table) error {
-	err := d.delKeysWithPrefix(tablecodec.EncodeTablePrefix(t.Meta().ID), bgJobFlag)
+func (d *ddl) dropTableData(tableID int64) error {
+	err := d.delKeysWithPrefix(tablecodec.EncodeTablePrefix(tableID), bgJobFlag)
 	return errors.Trace(err)
+}
+
+func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
+	schemaID := job.SchemaID
+	tableID := job.TableID
+	var newTableID int64
+	err := job.DecodeArgs(&newTableID)
+	if err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+	tblInfo, err := t.GetTable(schemaID, tableID)
+	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+		job.State = model.JobCancelled
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	} else if err != nil {
+		return errors.Trace(err)
+	}
+	if tblInfo == nil {
+		job.State = model.JobCancelled
+		return errors.Trace(infoschema.ErrTableNotExists)
+	}
+	err = t.DropTable(schemaID, tableID)
+	if err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+	tblInfo.ID = newTableID
+	err = t.CreateTable(schemaID, tblInfo)
+	if err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+	_, err = t.GenSchemaVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job.State = model.JobDone
+	return nil
 }
