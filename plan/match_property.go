@@ -48,15 +48,16 @@ func anyMatch(matchedList []bool) bool {
 // matchPropColumn checks if the idxCol match one of columns in required property and return the matched index.
 // If no column is matched, return -1.
 func matchPropColumn(prop *requiredProperty, matchedIdx int, idxCol *model.IndexColumn) int {
-	// When walking through the first sorKeyLen column, we should make sure to match them as the columns order exactly.
-	// So we must check the column in position of matchedIdx.
 	if matchedIdx < prop.sortKeyLen {
+		// When walking through the first sorKeyLen column,
+		// we should make sure to match them as the columns order exactly.
+		// So we must check the column in position of matchedIdx.
 		propCol := prop.props[matchedIdx]
 		if idxCol.Name.L == propCol.col.ColName.L {
 			return matchedIdx
 		}
-		// When walking outside the first sorKeyLen column, we can match the columns as any order.
 	} else {
+		// When walking outside the first sorKeyLen column, we can match the columns as any order.
 		for j, propCol := range prop.props {
 			if idxCol.Name.L == propCol.col.ColName.L {
 				return j
