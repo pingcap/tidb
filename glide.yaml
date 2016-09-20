@@ -153,3 +153,7 @@ import:
   version: 294d57c6b301fcf3f64edcc2ee1a988308169ffc
   subpackages:
   - '...'
+- package: github.com/gogo/protobuf
+  version: ^0.3.0
+  subpackages:
+  - proto
