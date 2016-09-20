@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/juju/errors"
@@ -217,7 +216,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
 			return errors.Trace(err)
 		}
 
-		batchHandleDataHistogram.WithLabelValues(batchDelData, strconv.Itoa(len(keys))).Observe(sub)
+		batchHandleDataHistogram.WithLabelValues(batchDelData).Observe(sub)
 		log.Infof("[ddl] deleted %v keys with prefix %q take time %v", count, prefix, sub)
 		// delete no keys, return.
 		if len(keys) == 0 {

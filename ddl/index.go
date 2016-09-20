@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"strconv"
 	"time"
 
 	"github.com/juju/errors"
@@ -370,7 +369,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 			return errors.Trace(err)
 		}
 
-		batchHandleDataHistogram.WithLabelValues(batchAddIdx, strconv.Itoa(len(handles))).Observe(sub)
+		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
 		log.Infof("[ddl] added index for %v rows, take time %v", count, sub)
 
 	}

@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"strconv"
 	"time"
 
 	"github.com/juju/errors"
@@ -327,7 +326,7 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 			return errors.Trace(err)
 		}
 
-		batchHandleDataHistogram.WithLabelValues(batchAddCol, strconv.Itoa(len(handles))).Observe(sub)
+		batchHandleDataHistogram.WithLabelValues(batchAddCol).Observe(sub)
 		log.Infof("[ddl] added column for %v rows, take time %v", count, sub)
 	}
 }
