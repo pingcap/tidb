@@ -23,13 +23,13 @@ var (
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "session_execute_duration",
-			Help:      "Bucketed histogram of processing time (ms) in each stage of a SQL executation.",
-			Buckets:   prometheus.ExponentialBuckets(0.5, 2, 15),
+			Help:      "Bucketed histogram of processing time (s) in each stage of a SQL executation.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 13),
 		}, []string{"stage"})
 
 	// Step of each stage in a SQL executation.
 	stageParse   = "stage_parse"
-	stageCompile = "stage_plan"
+	stageCompile = "stage_compile"
 	stageRun     = "stage_run"
 )
 
