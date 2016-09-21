@@ -83,7 +83,7 @@ func NewServerHandlerTransport(w http.ResponseWriter, r *http.Request) (ServerTr
 	}
 
 	if v := r.Header.Get("grpc-timeout"); v != "" {
-		to, err := decodeTimeout(v)
+		to, err := timeoutDecode(v)
 		if err != nil {
 			return nil, StreamErrorf(codes.Internal, "malformed time-out: %v", err)
 		}
@@ -194,7 +194,7 @@ func (ht *serverHandlerTransport) WriteStatus(s *Stream, statusCode codes.Code, 
 		h := ht.rw.Header()
 		h.Set("Grpc-Status", fmt.Sprintf("%d", statusCode))
 		if statusDesc != "" {
-			h.Set("Grpc-Message", encodeGrpcMessage(statusDesc))
+			h.Set("Grpc-Message", statusDesc)
 		}
 		if md := s.Trailer(); len(md) > 0 {
 			for k, vv := range md {
@@ -370,10 +370,6 @@ func (ht *serverHandlerTransport) runStream() {
 	}
 }
 
-func (ht *serverHandlerTransport) Drain() {
-	panic("Drain() is not implemented")
-}
-
 // mapRecvMsgError returns the non-nil err into the appropriate
 // error value as expected by callers of *grpc.parser.recvMsg.
 // In particular, in can only be:
@@ -393,5 +389,5 @@ func mapRecvMsgError(err error) error {
 			}
 		}
 	}
-	return ConnectionErrorf(true, err, err.Error())
+	return ConnectionError{Desc: err.Error()}
 }

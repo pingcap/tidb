@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"golang.org/x/net/http2/hpack"
+	"golang.org/x/net/lex/httplex"
 )
 
 const frameHeaderLen = 9
@@ -453,7 +454,7 @@ func terminalReadFrameError(err error) bool {
 //
 // If the frame is larger than previously set with SetMaxReadFrameSize, the
 // returned error is ErrFrameTooLarge. Other errors may be of type
-// ConnectionError, StreamError, or anything else from from the underlying
+// ConnectionError, StreamError, or anything else from the underlying
 // reader.
 func (fr *Framer) ReadFrame() (Frame, error) {
 	fr.errDetail = nil
@@ -590,7 +591,14 @@ func parseDataFrame(fh FrameHeader, payload []byte) (Frame, error) {
 	return f, nil
 }
 
-var errStreamID = errors.New("invalid streamid")
+var (
+	errStreamID    = errors.New("invalid stream ID")
+	errDepStreamID = errors.New("invalid dependent stream ID")
+)
+
+func validStreamIDOrZero(streamID uint32) bool {
+	return streamID&(1<<31) == 0
+}
 
 func validStreamID(streamID uint32) bool {
 	return streamID != 0 && streamID&(1<<31) == 0
@@ -977,8 +985,8 @@ func (f *Framer) WriteHeaders(p HeadersFrameParam) error {
 	}
 	if !p.Priority.IsZero() {
 		v := p.Priority.StreamDep
-		if !validStreamID(v) && !f.AllowIllegalWrites {
-			return errors.New("invalid dependent stream id")
+		if !validStreamIDOrZero(v) && !f.AllowIllegalWrites {
+			return errDepStreamID
 		}
 		if p.Priority.Exclusive {
 			v |= 1 << 31
@@ -1045,6 +1053,9 @@ func parsePriorityFrame(fh FrameHeader, payload []byte) (Frame, error) {
 func (f *Framer) WritePriority(streamID uint32, p PriorityParam) error {
 	if !validStreamID(streamID) && !f.AllowIllegalWrites {
 		return errStreamID
+	}
+	if !validStreamIDOrZero(p.StreamDep) {
+		return errDepStreamID
 	}
 	f.startWrite(FramePriority, 0, streamID)
 	v := p.StreamDep
@@ -1385,7 +1396,7 @@ func (fr *Framer) readMetaFrame(hf *HeadersFrame) (*MetaHeadersFrame, error) {
 	hdec.SetEmitEnabled(true)
 	hdec.SetMaxStringLength(fr.maxHeaderStringLen())
 	hdec.SetEmitFunc(func(hf hpack.HeaderField) {
-		if !validHeaderFieldValue(hf.Value) {
+		if !httplex.ValidHeaderFieldValue(hf.Value) {
 			invalid = headerFieldValueError(hf.Value)
 		}
 		isPseudo := strings.HasPrefix(hf.Name, ":")
@@ -1395,7 +1406,7 @@ func (fr *Framer) readMetaFrame(hf *HeadersFrame) (*MetaHeadersFrame, error) {
 			}
 		} else {
 			sawRegular = true
-			if !validHeaderFieldName(hf.Name) {
+			if !validWireHeaderFieldName(hf.Name) {
 				invalid = headerFieldNameError(hf.Name)
 			}
 		}

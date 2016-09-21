@@ -812,10 +812,21 @@ func (w *errWriter) write(str string) {
 // The easiest way to sort them in some deterministic order is to use fmt.
 // If this turns out to be inefficient we can always consider other options,
 // such as doing a Schwartzian transform.
+//
+// Numeric keys are sorted in numeric order per
+// https://developers.google.com/protocol-buffers/docs/proto#maps.
 type mapKeys []reflect.Value
 
 func (s mapKeys) Len() int      { return len(s) }
 func (s mapKeys) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 func (s mapKeys) Less(i, j int) bool {
+	if k := s[i].Kind(); k == s[j].Kind() {
+		switch k {
+		case reflect.Int32, reflect.Int64:
+			return s[i].Int() < s[j].Int()
+		case reflect.Uint32, reflect.Uint64:
+			return s[i].Uint() < s[j].Uint()
+		}
+	}
 	return fmt.Sprint(s[i].Interface()) < fmt.Sprint(s[j].Interface())
 }

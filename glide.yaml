@@ -1,0 +1,166 @@
+package: github.com/pingcap/tidb
+import:
+- package: github.com/boltdb/bolt
+  version: d97499360d1ecebc492ea66c7447ea948f417620
+- package: github.com/cloudfoundry-incubator/candiedyaml
+  version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
+- package: github.com/coreos/etcd
+  version: e53b99588a05d1f4ef172c178d4ed8e8106b8be4
+  subpackages:
+  - auth/authpb
+  - clientv3
+  - etcdserver/api/v3rpc/rpctypes
+  - etcdserver/etcdserverpb
+  - mvcc/mvccpb
+  - pkg/tlsutil
+- package: github.com/gengo/grpc-gateway
+  version: f52d055dc48aec25854ed7d31862f78913cf17d1
+  subpackages:
+  - runtime
+  - runtime/internal
+  - utilities
+- package: github.com/ghodss/yaml
+  version: 1a6f069841556a7bcaff4a397ca6e8328d266c2f
+- package: github.com/go-sql-driver/mysql
+  version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
+- package: github.com/golang/protobuf
+  version: 874264fbbb43f4d91e999fecb4b40143ed611400
+  subpackages:
+  - jsonpb
+  - proto
+- package: github.com/golang/snappy
+  version: 723cc1e459b8eea2dea4583200fd60757d40097a
+- package: github.com/juju/errors
+  version: b2c7a7da5b2995941048f60146e67702a292e468
+- package: github.com/ngaut/deadline
+  version: fae8f9dfd7048de16575b9d4c255278e38c28a4f
+- package: github.com/ngaut/log
+  version: cec23d3e10b016363780d894a0eb732a12c06e02
+- package: github.com/ngaut/pools
+  version: 6352e005618615ffaf1cb1c6622b8e91435751fe
+- package: github.com/ngaut/sync2
+  version: 7a24ed77b2efb460c1468b7dc917821c66e80e55
+- package: github.com/petar/GoLLRB
+  version: 53be0d36a84c2a886ca057d34b6aa4468df9ccb4
+  subpackages:
+  - llrb
+- package: github.com/peterh/liner
+  version: 3f3a91ddf7d2784892a58e27ddf48d70e3304bb7
+- package: github.com/pingcap/check
+  version: ce8a2f822ab1e245a4eefcef2996531c79c943f1
+- package: github.com/pingcap/goleveldb
+  version: c131135d59a38f4212f627cde570dddfe5261c43
+  subpackages:
+  - leveldb
+  - leveldb/cache
+  - leveldb/comparer
+  - leveldb/errors
+  - leveldb/filter
+  - leveldb/iterator
+  - leveldb/journal
+  - leveldb/memdb
+  - leveldb/opt
+  - leveldb/storage
+  - leveldb/table
+  - leveldb/util
+- package: github.com/twinj/uuid
+  version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
+- package: golang.org/x/net
+  version: e90d6d0afc4c315a0d87a568ae68577cc15149a0
+  subpackages:
+  - context
+  - http2
+  - http2/hpack
+  - internal/timeseries
+  - trace
+- package: golang.org/x/text
+  version: 723492b65e225eafcba054e76ba18bb9c5ac1ea2
+  subpackages:
+  - encoding
+  - encoding/charmap
+  - encoding/internal
+  - encoding/internal/identifier
+  - encoding/japanese
+  - encoding/korean
+  - encoding/simplifiedchinese
+  - encoding/traditionalchinese
+  - encoding/unicode
+  - transform
+- package: google.golang.org/grpc
+  version: 02fca896ff5f50c6bbbee0860345a49344b37a03
+  subpackages:
+  - codes
+  - credentials
+  - grpclog
+  - internal
+  - metadata
+  - naming
+  - peer
+  - transport
+- package: github.com/ngaut/systimemon
+  version: c2ca1c75c6af5556eb6ce67994120adf12f2ccef
+- package: github.com/cznic/mathutil
+  version: 78ad7f262603437f0ecfebc835d80094f89c8f54
+- package: github.com/cznic/parser
+  version: 31edd927e5b19d1c4a260c41a397e7f81d6694d9
+  subpackages:
+  - yacc
+- package: github.com/cznic/sortutil
+  version: 4c7342852e65c2088c981288f2c5610d10b9f7f4
+- package: github.com/cznic/strutil
+  version: 1eb03e3cc9d345307a45ec82bd3016cde4bd4464
+- package: github.com/cznic/y
+  version: 9fdf92d4aac058959f814606bb729ed50f5e4240
+- package: github.com/grpc-ecosystem/grpc-gateway
+  version: c8ec92d0481dd77d9b8c1808eb6476d190aa039a
+  subpackages:
+  - runtime
+  - utilities
+  - runtime/internal
+- package: github.com/beorn7/perks
+  version: 3ac7bf7a47d159a033b107610db8a1b6575507a4
+  subpackages:
+  - quantile
+- package: github.com/matttproud/golang_protobuf_extensions
+  version: c12348ce28de40eed0136aa2b644d0ee0650e56c
+  subpackages:
+  - pbutil
+- package: github.com/prometheus/client_model
+  version: fa8ad6fec33561be4280a8f0514318c79d7f6cb6
+  subpackages:
+  - go
+- package: github.com/prometheus/common
+  version: 4402f4e5ea79ec15f3c574773b6a5198fbea215f
+  subpackages:
+  - expfmt
+  - model
+  - internal/bitbucket.org/ww/goautoneg
+- package: github.com/prometheus/procfs
+  version: abf152e5f3e97f2fafac028d2cc06c1feb87ffa5
+- package: bitbucket.org/ww/goautoneg
+  version: '''75cd24fc2f2c2a2088577d12123ddee5f54e0675'''
+- package: github.com/cznic/golex
+  version: da5a7153a51074477ecac5c45a7e5182a0c72448
+  subpackages:
+  - lex
+- package: github.com/pingcap/pd
+  version: f71db789594e91f558a1becdd987f3ecd0a57712
+- package: github.com/pingcap/tipb
+  subpackages:
+  - '...'
+  - go-tipb
+- package: github.com/pingcap/kvproto
+  version: b67cb2eae50058de05fb22c5c0118571c8f98404
+  subpackages:
+  - '...'
+- package: github.com/gogo/protobuf
+  version: ^0.3.0
+  subpackages:
+  - proto
+- package: github.com/prometheus/client_golang
+  version: ^0.8.0
+  subpackages:
+  - prometheus/push
+- package: golang.org/x/time
+  subpackages:
+  - rate

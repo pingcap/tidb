@@ -34,7 +34,7 @@
 //
 // See http://blog.golang.org/context for example code for a server that uses
 // Contexts.
-package context
+package context // import "golang.org/x/net/context"
 
 import "time"
 
@@ -61,7 +61,7 @@ type Context interface {
 	//
 	//  // Stream generates values with DoSomething and sends them to out
 	//  // until DoSomething returns an error or ctx.Done is closed.
-	//  func Stream(ctx context.Context, out <-chan Value) error {
+	//  func Stream(ctx context.Context, out chan<- Value) error {
 	//  	for {
 	//  		v, err := DoSomething(ctx)
 	//  		if err != nil {
