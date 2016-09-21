@@ -452,7 +452,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		log.Warnf("compiling %s, error: %v", sql, err)
 		return nil, errors.Trace(err)
 	}
-	sessionExecuteDuration.WithLabelValues(stageParse).Observe(time.Since(startTS).Seconds())
+	sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
 	var rs []ast.RecordSet
 	ph := sessionctx.GetDomain(s).PerfSchema()
@@ -464,7 +464,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 			log.Errorf("Error occurs at %s.", err1)
 			return nil, errors.Trace(err1)
 		}
-		sessionExecuteDuration.WithLabelValues(stageCompile).Observe(time.Since(startTS).Seconds())
+		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 		id := variable.GetSessionVars(s).ConnectionID
 		s.stmtState = ph.StartStatement(sql, id, perfschema.CallerNameSessionExecute, rawStmts[i])
 
@@ -475,7 +475,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 			log.Warnf("session:%v, err:%v", s, err)
 			return nil, errors.Trace(err)
 		}
-		sessionExecuteDuration.WithLabelValues(stageRun).Observe(time.Since(startTS).Seconds())
+		sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
 		if r != nil {
 			rs = append(rs, r)
 		}

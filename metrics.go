@@ -18,21 +18,36 @@ import (
 )
 
 var (
-	sessionExecuteDuration = prometheus.NewHistogramVec(
+	sessionExecuteParseDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "session_execute_duration",
-			Help:      "Bucketed histogram of processing time (s) in each stage of a SQL executation.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 13),
-		}, []string{"stage"})
-
-	// Step of each stage in a SQL executation.
-	stageParse   = "stage_parse"
-	stageCompile = "stage_compile"
-	stageRun     = "stage_run"
+			Name:      "session_execute_parse_duration",
+			Help:      "Bucketed histogram of processing time (s) in parse SQL.",
+			// parse takes 0.085ms on average and 95% within 0.15ms.
+			Buckets: prometheus.LinearBuckets(0.00004, 0.00001, 13),
+		})
+	sessionExecuteCompileDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "session_execute_compile_duration",
+			Help:      "Bucketed histogram of processing time (s) in query optimize.",
+			// query optimize takes 0.069ms on average and 95% within 0.12ms.
+			Buckets: prometheus.LinearBuckets(0.00004, 0.00001, 13),
+		})
+	sessionExecuteRunDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "session_execute_run_duration",
+			Help:      "Bucketed histogram of processing time (s) in running executor.",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 13),
+		})
 )
 
 func init() {
-	prometheus.MustRegister(sessionExecuteDuration)
+	prometheus.MustRegister(sessionExecuteParseDuration)
+	prometheus.MustRegister(sessionExecuteCompileDuration)
+	prometheus.MustRegister(sessionExecuteRunDuration)
 }
