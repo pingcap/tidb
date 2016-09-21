@@ -194,10 +194,9 @@ func pushMetric(addr string, interval time.Duration) {
 func prometheusPushClient(addr string, interval time.Duration) {
 	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
 	job := "tidb"
-	grouping := map[string]string{"instance": fmt.Sprintf("%s:%s", *host, *port)}
 	for {
 		err := push.FromGatherer(
-			job, grouping,
+			job, push.HostnameGroupingKey(),
 			addr,
 			prometheus.DefaultGatherer,
 		)
