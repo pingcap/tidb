@@ -463,6 +463,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		}
 		id := variable.GetSessionVars(s).ConnectionID
 		s.stmtState = ph.StartStatement(sql, id, perfschema.CallerNameSessionExecute, rawStmts[i])
+		s.SetValue(context.QueryString, sql)
 		r, err := runStmt(s, st)
 		ph.EndStatement(s.stmtState)
 		if err != nil {

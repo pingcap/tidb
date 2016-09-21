@@ -54,6 +54,7 @@ var (
 	ErrSchemaChanged   = terror.ClassExecutor.New(CodeSchemaChanged, "Schema has changed")
 	ErrWrongParamCount = terror.ClassExecutor.New(CodeWrongParamCount, "Wrong parameter count")
 	ErrRowKeyCount     = terror.ClassExecutor.New(CodeRowKeyCount, "Wrong row key entry count")
+	ErrPrepareDDL      = terror.ClassExecutor.New(CodePrepareDDL, "Can not prepare DDL statements")
 )
 
 // Error codes.
@@ -64,6 +65,7 @@ const (
 	CodeSchemaChanged   terror.ErrCode = 4
 	CodeWrongParamCount terror.ErrCode = 5
 	CodeRowKeyCount     terror.ErrCode = 6
+	CodePrepareDDL      terror.ErrCode = 7
 )
 
 // Row represents a record row.

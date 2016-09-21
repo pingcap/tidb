@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 )
 
 type txnCommitter struct {
@@ -390,12 +389,7 @@ func (c *txnCommitter) prewriteBinlog() chan error {
 			PrewriteKey:   c.keys[0],
 			PrewriteValue: prewriteValue.([]byte),
 		}
-		prewriteData, _ := binPrewrite.Marshal()
-		req := &binlog.WriteBinlogReq{ClusterID: binloginfo.ClusterID, Payload: prewriteData}
-		resp, err := binloginfo.PumpClient.WriteBinlog(context.Background(), req)
-		if err == nil && resp.Errmsg != "" {
-			err = errors.New(resp.Errmsg)
-		}
+		err := binloginfo.WriteBinlog(binPrewrite)
 		ch <- errors.Trace(err)
 	}()
 	return ch
@@ -412,15 +406,9 @@ func (c *txnCommitter) writeFinisheBinlog(tp binlog.BinlogType, commitTS int64) 
 			CommitTs:    commitTS,
 			PrewriteKey: c.keys[0],
 		}
-		commitData, _ := binCommit.Marshal()
-		req := &binlog.WriteBinlogReq{ClusterID: binloginfo.ClusterID, Payload: commitData}
-		resp, err := binloginfo.PumpClient.WriteBinlog(context.Background(), req)
+		err := binloginfo.WriteBinlog(binCommit)
 		if err != nil {
 			log.Errorf("failed to write binlog: %v", err)
-			return
-		}
-		if resp.Errmsg != "" {
-			log.Errorf("write binlog resp error: %v", resp.Errmsg)
 		}
 	}()
 }

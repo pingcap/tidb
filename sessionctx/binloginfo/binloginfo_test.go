@@ -94,10 +94,13 @@ func (s *testBinlogSuite) TearDownSuite(c *C) {
 func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists local_binlog")
-	tk.MustExec("create table local_binlog (id int primary key, name varchar(10))")
-	tk.MustExec("insert local_binlog values (1, 'abc'), (2, 'cde')")
 	pump := s.pump
+	tk.MustExec("drop table if exists local_binlog")
+	ddlQuery := "create table local_binlog (id int primary key, name varchar(10))"
+	tk.MustExec(ddlQuery)
+	c.Assert(getLatestBinlogDDLQuery(c, pump), Equals, ddlQuery)
+
+	tk.MustExec("insert local_binlog values (1, 'abc'), (2, 'cde')")
 	prewriteVal := getLatestBinlogPrewriteValue(c, pump)
 	c.Assert(prewriteVal.SchemaVersion, Greater, int64(0))
 	c.Assert(prewriteVal.Mutations[0].TableId, Greater, int64(0))
@@ -133,7 +136,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	deletedRow2, _ := codec.Decode(prewriteVal.Mutations[0].DeletedRows[1], 2)
 	c.Assert(deletedRow2[1], DeepEquals, types.NewIntDatum(3))
 
-	checkPrewriteMatchHalfBinlogCount(c, pump)
+	checkBinlogCount(c, pump)
 
 	pump.mu.Lock()
 	originBinlogLen := len(pump.mu.payloads)
@@ -164,9 +167,28 @@ func getLatestBinlogPrewriteValue(c *C, pump *mockBinlogPump) *binlog.PrewriteVa
 	return preVal
 }
 
-func checkPrewriteMatchHalfBinlogCount(c *C, pump *mockBinlogPump) {
+func getLatestBinlogDDLQuery(c *C, pump *mockBinlogPump) string {
+	var bin *binlog.Binlog
+	pump.mu.Lock()
+	for i := len(pump.mu.payloads) - 1; i >= 0; i-- {
+		payload := pump.mu.payloads[i]
+		bin = new(binlog.Binlog)
+		bin.Unmarshal(payload)
+		if bin.Tp == binlog.BinlogType_PreDDL {
+			break
+		}
+	}
+	pump.mu.Unlock()
+	c.Assert(bin.DdlJobId, Greater, int64(0))
+	c.Assert(bin.StartTs, Greater, int64(0))
+	c.Assert(bin.CommitTs, Equals, int64(0))
+	return string(bin.DdlQuery)
+}
+
+func checkBinlogCount(c *C, pump *mockBinlogPump) {
 	var bin *binlog.Binlog
 	prewriteCount := 0
+	ddlCount := 0
 	pump.mu.Lock()
 	length := len(pump.mu.payloads)
 	for i := length - 1; i >= 0; i-- {
@@ -175,15 +197,18 @@ func checkPrewriteMatchHalfBinlogCount(c *C, pump *mockBinlogPump) {
 		bin.Unmarshal(payload)
 		if bin.Tp == binlog.BinlogType_Prewrite {
 			prewriteCount++
+		} else if bin.Tp == binlog.BinlogType_PreDDL {
+			ddlCount++
 		}
 	}
 	pump.mu.Unlock()
+	c.Assert(ddlCount, Greater, 0)
 	match := false
 	for i := 0; i < 10; i++ {
 		pump.mu.Lock()
 		length = len(pump.mu.payloads)
 		pump.mu.Unlock()
-		if prewriteCount*2 == length {
+		if (prewriteCount+ddlCount)*2 == length {
 			match = true
 			break
 		}

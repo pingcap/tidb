@@ -148,6 +148,11 @@ func (s *testSuite) TestPrepared(c *C) {
 	// Prepare multiple statement is not allowed.
 	_, err := tk.Exec(`prepare stmt_test_3 from 'select id from prepare_test where id > ?;select id from prepare_test where id > ?;'`)
 	c.Assert(executor.ErrPrepareMulti.Equal(err), IsTrue)
+
+	// Prepare DDL statement is not allowed.
+	_, err = tk.Exec(`prepare stmt_test_3 from 'create table prepare_ddl (a int);'`)
+	c.Assert(executor.ErrPrepareDDL.Equal(err), IsTrue)
+
 	// The variable count does not match.
 	_, err = tk.Exec(`prepare stmt_test_4 from 'select id from prepare_test where id > ? and id < ?'; set @a = 1; execute stmt_test_4 using @a;`)
 	c.Assert(executor.ErrWrongParamCount.Equal(err), IsTrue)
