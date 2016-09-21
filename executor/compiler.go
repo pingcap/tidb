@@ -31,7 +31,7 @@ type Compiler struct {
 // If it is supported to use new plan and executer, it optimizes the node to
 // a plan, and we wrap the plan in an adapter as stmt.Statement.
 // If it is not supported, the node will be converted to old statement.
-func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
+func (c Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
 	ast.SetFlag(node)
 	if _, ok := node.(*ast.UpdateStmt); ok {
 		sVars := variable.GetSessionVars(ctx)
