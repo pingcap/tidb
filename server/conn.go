@@ -110,9 +110,9 @@ func (cc *clientConn) handshake() error {
 func (cc *clientConn) Close() error {
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
+	connGauge.Set(float64(len(cc.server.clients)))
 	cc.server.rwlock.Unlock()
 	cc.conn.Close()
-	connGauge.Dec()
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -304,8 +304,6 @@ func (cc *clientConn) Run() {
 		}
 		cc.Close()
 	}()
-
-	connGauge.Inc()
 
 	for {
 		cc.alloc.Reset()

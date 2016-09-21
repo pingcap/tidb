@@ -197,6 +197,7 @@ func (s *Server) onConn(c net.Conn) {
 
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
+	connGauge.Set(float64(len(s.clients)))
 	s.rwlock.Unlock()
 
 	conn.Run()
