@@ -118,10 +118,15 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err
 		return true, nil
 	}
 
+	lockResolverCounter.WithLabelValues("resolve").Inc()
+
 	var expiredLocks []*Lock
 	for _, l := range locks {
 		if lr.store.oracle.IsExpired(l.TxnID, lockTTL) {
+			lockResolverCounter.WithLabelValues("expired").Inc()
 			expiredLocks = append(expiredLocks, l)
+		} else {
+			lockResolverCounter.WithLabelValues("not_expired").Inc()
 		}
 	}
 	if len(expiredLocks) == 0 {
@@ -165,6 +170,9 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
 	}
+
+	lockResolverCounter.WithLabelValues("query_txn_status").Inc()
+
 	var status TxnStatus
 	req := &kvrpcpb.Request{
 		Type: kvrpcpb.MessageType_CmdCleanup,
@@ -198,6 +206,9 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		}
 		if cmdResp.CommitVersion != 0 {
 			status = TxnStatus(cmdResp.GetCommitVersion())
+			lockResolverCounter.WithLabelValues("query_txn_status_committed").Inc()
+		} else {
+			lockResolverCounter.WithLabelValues("query_txn_status_rolled_back").Inc()
 		}
 		lr.saveResolved(txnID, status)
 		return status, nil
@@ -205,6 +216,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 }
 
 func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cleanRegions map[RegionVerID]struct{}) error {
+	lockResolverCounter.WithLabelValues("query_resolve_locks").Inc()
 	for {
 		region, err := lr.store.regionCache.GetRegion(bo, l.Key)
 		if err != nil {
