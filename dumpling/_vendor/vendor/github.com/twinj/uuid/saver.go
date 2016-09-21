@@ -63,7 +63,7 @@ func (o *FileSystemSaver) Save(pState *State) {
 		// do the save
 		o.encode(pState)
 		// a tick is 100 nano seconds
-		pState.next = pState.past + Timestamp(o.saveSchedule/100)
+		pState.next = pState.past + Timestamp(o.saveSchedule / 100)
 		if o.saveReport {
 			log.Printf("UUID STATE: SAVED %d", pState.past)
 		}
