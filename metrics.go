@@ -24,8 +24,7 @@ var (
 			Subsystem: "server",
 			Name:      "session_execute_parse_duration",
 			Help:      "Bucketed histogram of processing time (s) in parse SQL.",
-			// parse takes 0.085ms on average and 95% within 0.15ms.
-			Buckets: prometheus.LinearBuckets(0.00004, 0.00001, 13),
+			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
 		})
 	sessionExecuteCompileDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -33,8 +32,7 @@ var (
 			Subsystem: "server",
 			Name:      "session_execute_compile_duration",
 			Help:      "Bucketed histogram of processing time (s) in query optimize.",
-			// query optimize takes 0.069ms on average and 95% within 0.12ms.
-			Buckets: prometheus.LinearBuckets(0.00004, 0.00001, 13),
+			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
 		})
 	sessionExecuteRunDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
