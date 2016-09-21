@@ -6,9 +6,9 @@ ifeq "$(GOPATH)" ""
 endif
 
 CURDIR := $(shell pwd)
+export GOPATH := $(CURDIR)/_vendor:$(GOPATH)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
-export GOPATH := $(CURDIR)/_vendor:$(GOPATH)
 GO        := GO15VENDOREXPERIMENT="1" go
 
 ARCH      := "`uname -s`"
