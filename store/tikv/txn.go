@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tipb/go-binlog"
 )
 
 var (
@@ -116,10 +117,10 @@ func (txn *tikvTxn) Commit() error {
 	}
 	err = committer.Commit()
 	if err != nil {
-		committer.rollbackBinlog()
+		committer.writeFinisheBinlog(binlog.BinlogType_Rollback, 0)
 		return errors.Trace(err)
 	}
-	committer.writeCommitBinlog()
+	committer.writeFinisheBinlog(binlog.BinlogType_Commit, int64(committer.commitTS))
 	txn.commitTS = committer.commitTS
 	log.Debugf("[kv] finish commit txn %d", txn.StartTS())
 	return nil

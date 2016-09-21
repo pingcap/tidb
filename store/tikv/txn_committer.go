@@ -384,59 +384,32 @@ func (c *txnCommitter) prewriteBinlog() chan error {
 	ch := make(chan error, 1)
 	go func() {
 		prewriteValue := c.txn.us.GetOption(kv.BinlogData)
-		var err error
-		if prewriteValue != nil {
-			binPrewrite := &binlog.Binlog{
-				Tp:            binlog.BinlogType_Prewrite,
-				StartTs:       int64(c.startTS),
-				PrewriteKey:   c.keys[0],
-				PrewriteValue: prewriteValue.([]byte),
-			}
-			prewriteData, _ := binPrewrite.Marshal()
-			req := &binlog.WriteBinlogReq{ClusterID: binloginfo.ClusterID, Payload: prewriteData}
-			var resp *binlog.WriteBinlogResp
-			resp, err = binloginfo.PumpClient.WriteBinlog(context.Background(), req)
-			if err == nil && resp.Errmsg != "" {
-				err = errors.New(resp.Errmsg)
-			}
+		binPrewrite := &binlog.Binlog{
+			Tp:            binlog.BinlogType_Prewrite,
+			StartTs:       int64(c.startTS),
+			PrewriteKey:   c.keys[0],
+			PrewriteValue: prewriteValue.([]byte),
+		}
+		prewriteData, _ := binPrewrite.Marshal()
+		req := &binlog.WriteBinlogReq{ClusterID: binloginfo.ClusterID, Payload: prewriteData}
+		resp, err := binloginfo.PumpClient.WriteBinlog(context.Background(), req)
+		if err == nil && resp.Errmsg != "" {
+			err = errors.New(resp.Errmsg)
 		}
 		ch <- errors.Trace(err)
 	}()
 	return ch
 }
 
-func (c *txnCommitter) rollbackBinlog() {
-	if !c.shouldWriteBinlog() {
-		return
-	}
-	go func() {
-		binRollback := &binlog.Binlog{
-			Tp:          binlog.BinlogType_Rollback,
-			StartTs:     int64(c.startTS),
-			PrewriteKey: c.keys[0],
-		}
-		rollbackData, _ := binRollback.Marshal()
-		req := &binlog.WriteBinlogReq{ClusterID: binloginfo.ClusterID, Payload: rollbackData}
-		resp, err := binloginfo.PumpClient.WriteBinlog(context.Background(), req)
-		if err != nil {
-			log.Errorf("failed to write binlog: %v", err)
-			return
-		}
-		if resp != nil && resp.Errmsg != "" {
-			log.Errorf("write binlog resp error: %v", resp.Errmsg)
-		}
-	}()
-}
-
-func (c *txnCommitter) writeCommitBinlog() {
+func (c *txnCommitter) writeFinisheBinlog(tp binlog.BinlogType, commitTS int64) {
 	if !c.shouldWriteBinlog() {
 		return
 	}
 	go func() {
 		binCommit := &binlog.Binlog{
-			Tp:          binlog.BinlogType_Commit,
+			Tp:          tp,
 			StartTs:     int64(c.startTS),
-			CommitTs:    int64(c.commitTS),
+			CommitTs:    commitTS,
 			PrewriteKey: c.keys[0],
 		}
 		commitData, _ := binCommit.Marshal()
