@@ -1,5 +1,5 @@
-hash: 7ba7163b82c10c7394aa6654f3b840b01466f8c21c050e4c5bdab30dd0db224b
-updated: 2016-09-20T20:17:56.736122923+08:00
+hash: 4767f1df20a73e869623ba87ecb4895f007ef450e555eed11f31b1f0dc0e839a
+updated: 2016-09-21T13:32:50.201235277+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -51,7 +51,7 @@ imports:
   subpackages:
   - proto
 - name: github.com/golang/protobuf
-  version: 3852dcfda249c2097355a6aabb199a28d97b30df
+  version: 874264fbbb43f4d91e999fecb4b40143ed611400
   subpackages:
   - jsonpb
   - proto
@@ -103,7 +103,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: 294d57c6b301fcf3f64edcc2ee1a988308169ffc
+  version: b67cb2eae50058de05fb22c5c0118571c8f98404
   subpackages:
   - '...'
   - pkg/coprocessor
@@ -136,7 +136,7 @@ imports:
   subpackages:
   - go
 - name: github.com/prometheus/common
-  version: 9a94032291f2192936512bab367bc45e77990d6a
+  version: 4402f4e5ea79ec15f3c574773b6a5198fbea215f
   subpackages:
   - expfmt
   - model

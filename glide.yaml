@@ -24,7 +24,7 @@ import:
 - package: github.com/go-sql-driver/mysql
   version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
 - package: github.com/golang/protobuf
-  version: 3852dcfda249c2097355a6aabb199a28d97b30df
+  version: 874264fbbb43f4d91e999fecb4b40143ed611400
   subpackages:
   - jsonpb
   - proto
@@ -130,7 +130,7 @@ import:
   subpackages:
   - go
 - package: github.com/prometheus/common
-  version: 9a94032291f2192936512bab367bc45e77990d6a
+  version: 4402f4e5ea79ec15f3c574773b6a5198fbea215f
   subpackages:
   - expfmt
   - model
@@ -150,7 +150,7 @@ import:
   - '...'
   - go-tipb
 - package: github.com/pingcap/kvproto
-  version: 294d57c6b301fcf3f64edcc2ee1a988308169ffc
+  version: b67cb2eae50058de05fb22c5c0118571c8f98404
   subpackages:
   - '...'
 - package: github.com/gogo/protobuf
