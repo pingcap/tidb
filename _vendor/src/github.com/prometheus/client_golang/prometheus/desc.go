@@ -78,7 +78,7 @@ type Desc struct {
 	// Help string. Each Desc with the same fqName must have the same
 	// dimHash.
 	dimHash uint64
-	// err is an error that occurred during construction. It is reported on
+	// err is an error that occured during construction. It is reported on
 	// registration time.
 	err error
 }

@@ -22,7 +22,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 
 TARGET = ""
 
-.PHONY: all build install update parser clean todo test gotest interpreter server goyacc dev benchkv
+.PHONY: all build install update parser clean todo test gotest interpreter server dev benchkv check
 
 default: server buildsucc
 
@@ -42,10 +42,9 @@ install:
 TEMP_FILE = temp_parser_file
 
 goyacc:
-	$(GO) build -o bin/goyacc github.com/pingcap/tidb/parser/goyacc
+	$(GO) build -o bin/goyacc parser/goyacc/main.go
 
 parser: goyacc
-	rm -rf parser/scanner.go
 	bin/goyacc -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
 	bin/goyacc -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}'
 	rm -f $(TEMP_FILE)
@@ -120,4 +119,17 @@ endif
 benchkv:
 	$(GO) build -ldflags '$(LDFLAGS)' -o bin/benchkv benchkv/main.go
 
-
+update:
+	which glide >/dev/null || curl https://glide.sh/get | sh
+	which glide-vc || go get -v -u github.com/sgotti/glide-vc
+	rm -r vendor && mv _vendor/src vendor || true
+	rm -rf _vendor
+ifdef PKG
+	glide get -s -v --skip-test ${PKG}
+else
+	glide update -s -v --skip-test
+endif
+	@echo "removing test files"
+	glide vc --only-code --no-tests
+	mkdir -p _vendor
+	mv vendor _vendor/src

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -188,6 +189,7 @@ func (s *session) finishTxn(rollback bool) error {
 		s.ClearValue(executor.DirtyDBKey)
 		s.txn = nil
 		variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, false)
+		binloginfo.ClearBinlog(s)
 	}()
 
 	if rollback {
@@ -195,7 +197,16 @@ func (s *session) finishTxn(rollback bool) error {
 		s.cleanRetryInfo()
 		return s.txn.Rollback()
 	}
-
+	if binloginfo.PumpClient != nil {
+		bin := binloginfo.GetPrewriteValue(s, false)
+		if bin != nil {
+			binlogData, err := bin.Marshal()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			s.txn.SetOption(kv.BinlogData, binlogData)
+		}
+	}
 	err := s.txn.Commit()
 	if err != nil {
 		if !variable.GetSessionVars(s).RetryInfo.Retrying && kv.IsRetryableError(err) {
@@ -326,7 +337,10 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.Record
 	// For example only support DML on system meta table.
 	// TODO: Add more restrictions.
 	log.Debugf("Executing %s [%s]", st.OriginText(), sql)
+	sessVar := variable.GetSessionVars(ctx)
+	sessVar.InRestrictedSQL = true
 	rs, err := st.Exec(ctx)
+	sessVar.InRestrictedSQL = false
 	return rs, errors.Trace(err)
 }
 
