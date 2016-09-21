@@ -107,6 +107,8 @@ func (w *GCWorker) start(ver uint64) {
 
 func (w *GCWorker) runGCJob(safePoint uint64) {
 	log.Infof("[gc worker] %s starts GC job, safePoint: %v", w.uuid, safePoint)
+	gcWorkerCounter.WithLabelValues("run_job").Inc()
+
 	err := w.resolveLocks(safePoint)
 	if err != nil {
 		w.done <- errors.Trace(err)
@@ -120,6 +122,8 @@ func (w *GCWorker) runGCJob(safePoint uint64) {
 }
 
 func (w *GCWorker) resolveLocks(safePoint uint64) error {
+	gcWorkerCounter.WithLabelValues("resolve_locks").Inc()
+
 	req := &kvrpcpb.Request{
 		Type: kvrpcpb.MessageType_CmdScanLock,
 		CmdScanLockReq: &kvrpcpb.CmdScanLockRequest{
@@ -186,10 +190,13 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 		}
 	}
 	log.Infof("[gc worker] %s finish resolve locks, safePoint: %v, regions: %v, total resolved: %v, cost time: %s", w.uuid, safePoint, regions, totalResolvedLocks, time.Since(startTime))
+	gcHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
 	return nil
 }
 
 func (w *GCWorker) doGC(safePoint uint64) error {
+	gcWorkerCounter.WithLabelValues("do_gc").Inc()
+
 	req := &kvrpcpb.Request{
 		Type: kvrpcpb.MessageType_CmdGC,
 		CmdGcReq: &kvrpcpb.CmdGCRequest{
@@ -239,10 +246,13 @@ func (w *GCWorker) doGC(safePoint uint64) error {
 		}
 	}
 	log.Infof("[gc worker] %s finish gc, safePoint: %v, regions: %v, cost time: %s", w.uuid, safePoint, regions, time.Since(startTime))
+	gcHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
 	return nil
 }
 
 func (w *GCWorker) checkLeader() (bool, error) {
+	gcWorkerCounter.WithLabelValues("check_leader").Inc()
+
 	_, err := w.session.Execute("BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
@@ -268,6 +278,8 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	lease, err := w.loadLease()
 	if err != nil || lease.Before(time.Now()) {
 		log.Debugf("[gc worker] register %s as leader", w.uuid)
+		gcWorkerCounter.WithLabelValues("register_leader").Inc()
+
 		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid)
 		if err != nil {
 			w.session.Execute("ROLLBACK")
