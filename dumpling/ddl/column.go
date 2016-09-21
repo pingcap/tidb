@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -307,6 +309,7 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	count := 0
 
 	for {
+		startTS := time.Now()
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
 		if err != nil {
 			return errors.Trace(err)
@@ -314,14 +317,17 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 			return nil
 		}
 
+		count += len(handles)
 		seekHandle = handles[len(handles)-1] + 1
+		sub := time.Since(startTS).Seconds()
 		err = d.backfillColumnData(t, columnInfo, handles, reorgInfo)
 		if err != nil {
+			log.Warnf("[ddl] added column for %v rows failed, take time %v", count, sub)
 			return errors.Trace(err)
 		}
 
-		count += len(handles)
-		log.Infof("[ddl] added column for %v rows", count)
+		batchHandleDataHistogram.WithLabelValues(batchAddCol).Observe(sub)
+		log.Infof("[ddl] added column for %v rows, take time %v", count, sub)
 	}
 }
 

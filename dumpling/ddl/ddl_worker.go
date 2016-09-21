@@ -43,7 +43,6 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 		err = t.EnQueueDDLJob(job)
 		return errors.Trace(err)
 	})
-
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -53,14 +52,23 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 
 	log.Warnf("[ddl] start DDL job %v", job)
 
-	jobID := job.ID
-
 	var historyJob *model.Job
-
+	jobID := job.ID
 	// for a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// for every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 10*time.Second))
-	defer ticker.Stop()
+	startTS := time.Now()
+	jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Inc()
+	defer func() {
+		ticker.Stop()
+		jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Desc()
+		retLabel := handleJobSucc
+		if err != nil {
+			retLabel = handleJobFailed
+		}
+		handleJobHistogram.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String(),
+			retLabel).Observe(time.Since(startTS).Seconds())
+	}()
 	for {
 		select {
 		case <-d.ddlJobDoneCh:
