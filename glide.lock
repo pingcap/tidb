@@ -1,5 +1,5 @@
-hash: 4767f1df20a73e869623ba87ecb4895f007ef450e555eed11f31b1f0dc0e839a
-updated: 2016-09-21T13:32:50.201235277+08:00
+hash: e9c6b9f6d2d9953f71ef83d8029374b8f6f887627a623b088ee76dbf6bd9b801
+updated: 2016-09-21T15:11:47.067277667+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -126,11 +126,12 @@ imports:
   subpackages:
   - '...'
   - go-tipb
+  - go-binlog
 - name: github.com/prometheus/client_golang
-  version: 5636dc67ae776adf5590da7349e70fbb9559972d
+  version: c5b7fccd204277076155f10851dad72b76a49317
   subpackages:
-  - prometheus
   - prometheus/push
+  - prometheus
 - name: github.com/prometheus/client_model
   version: fa8ad6fec33561be4280a8f0514318c79d7f6cb6
   subpackages:
@@ -171,6 +172,10 @@ imports:
   - encoding/traditionalchinese
   - encoding/unicode
   - transform
+- name: golang.org/x/time
+  version: 2bc1b4fbcc7c3eda9a26f6e523cac1196c6fecd7
+  subpackages:
+  - rate
 - name: google.golang.org/grpc
   version: 02fca896ff5f50c6bbbee0860345a49344b37a03
   subpackages:
