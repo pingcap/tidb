@@ -196,7 +196,7 @@ func prometheusPushClient(addr string, interval time.Duration) {
 	job := "tidb"
 	for {
 		err := push.FromGatherer(
-			job, nil,
+			job, push.HostnameGroupingKey(),
 			addr,
 			prometheus.DefaultGatherer,
 		)
