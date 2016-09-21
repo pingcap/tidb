@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -350,6 +352,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	count := 0
 
 	for {
+		startTS := time.Now()
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
 		if err != nil {
 			return errors.Trace(err)
@@ -357,14 +360,18 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 			return nil
 		}
 
+		count += len(handles)
 		seekHandle = handles[len(handles)-1] + 1
 		err = d.backfillTableIndex(t, indexInfo, handles, reorgInfo)
+		sub := time.Since(startTS).Seconds()
 		if err != nil {
+			log.Warnf("[ddl] added index for %v rows failed, take time %v", count, sub)
 			return errors.Trace(err)
 		}
 
-		count += len(handles)
-		log.Infof("[ddl] added index for %v rows", count)
+		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
+		log.Infof("[ddl] added index for %v rows, take time %v", count, sub)
+
 	}
 }
 

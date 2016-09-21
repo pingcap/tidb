@@ -99,7 +99,7 @@ type UnionScanExec struct {
 	ctx   context.Context
 	Src   Executor
 	dirty *dirtyTable
-	// srcUsedIndex is the column offsets of the index which Src executor has used.
+	// usedIndex is the column offsets of the index which Src executor has used.
 	usedIndex []int
 	desc      bool
 	condition expression.Expression

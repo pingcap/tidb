@@ -21,6 +21,9 @@ import (
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tipb/go-binlog"
+	"golang.org/x/net/context"
 )
 
 type txnCommitter struct {
@@ -338,7 +341,14 @@ func (c *txnCommitter) Commit() error {
 		}
 	}()
 
+	binlogChan := c.prewriteBinlog()
 	err := c.prewriteKeys(NewBackoffer(prewriteMaxBackoff), c.keys)
+	if binlogChan != nil {
+		binlogErr := <-binlogChan
+		if binlogErr != nil {
+			return errors.Trace(binlogErr)
+		}
+	}
 	if err != nil {
 		log.Warnf("txn commit failed on prewrite: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
@@ -365,6 +375,62 @@ func (c *txnCommitter) Commit() error {
 		log.Warnf("txn commit succeed with error: %v, tid: %d", err, c.startTS)
 	}
 	return nil
+}
+
+func (c *txnCommitter) prewriteBinlog() chan error {
+	if !c.shouldWriteBinlog() {
+		return nil
+	}
+	ch := make(chan error, 1)
+	go func() {
+		prewriteValue := c.txn.us.GetOption(kv.BinlogData)
+		binPrewrite := &binlog.Binlog{
+			Tp:            binlog.BinlogType_Prewrite,
+			StartTs:       int64(c.startTS),
+			PrewriteKey:   c.keys[0],
+			PrewriteValue: prewriteValue.([]byte),
+		}
+		prewriteData, _ := binPrewrite.Marshal()
+		req := &binlog.WriteBinlogReq{ClusterID: binloginfo.ClusterID, Payload: prewriteData}
+		resp, err := binloginfo.PumpClient.WriteBinlog(context.Background(), req)
+		if err == nil && resp.Errmsg != "" {
+			err = errors.New(resp.Errmsg)
+		}
+		ch <- errors.Trace(err)
+	}()
+	return ch
+}
+
+func (c *txnCommitter) writeFinisheBinlog(tp binlog.BinlogType, commitTS int64) {
+	if !c.shouldWriteBinlog() {
+		return
+	}
+	go func() {
+		binCommit := &binlog.Binlog{
+			Tp:          tp,
+			StartTs:     int64(c.startTS),
+			CommitTs:    commitTS,
+			PrewriteKey: c.keys[0],
+		}
+		commitData, _ := binCommit.Marshal()
+		req := &binlog.WriteBinlogReq{ClusterID: binloginfo.ClusterID, Payload: commitData}
+		resp, err := binloginfo.PumpClient.WriteBinlog(context.Background(), req)
+		if err != nil {
+			log.Errorf("failed to write binlog: %v", err)
+			return
+		}
+		if resp.Errmsg != "" {
+			log.Errorf("write binlog resp error: %v", resp.Errmsg)
+		}
+	}()
+}
+
+func (c *txnCommitter) shouldWriteBinlog() bool {
+	if binloginfo.PumpClient == nil {
+		return false
+	}
+	prewriteValue := c.txn.us.GetOption(kv.BinlogData)
+	return prewriteValue != nil
 }
 
 // TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's

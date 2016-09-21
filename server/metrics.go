@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	queryHistgram = prometheus.NewHistogram(
+	queryHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -49,7 +49,7 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(queryHistgram)
+	prometheus.MustRegister(queryHistogram)
 	prometheus.MustRegister(queryCounter)
 	prometheus.MustRegister(connGauge)
 }

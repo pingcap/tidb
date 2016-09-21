@@ -111,6 +111,9 @@ type SessionVars struct {
 	// InUpdateStmt indicates if the session is handling update stmt.
 	InUpdateStmt bool
 
+	// InRestrictedSQL indicates if the session is handling restricted SQL execution.
+	InRestrictedSQL bool
+
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
@@ -41,6 +42,7 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 	}
 
 	is := sessionctx.GetDomain(ctx).InfoSchema()
+	binloginfo.SetSchemaVersion(ctx, is.SchemaMetaVersion())
 	if err := plan.Preprocess(node, is, ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
