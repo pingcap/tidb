@@ -5,8 +5,10 @@ ifeq "$(GOPATH)" ""
   $(error Please set the environment variable GOPATH before running `make`)
 endif
 
+CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
+export GOPATH := $(CURDIR)/_vendor:$(GOPATH)
 GO        := GO15VENDOREXPERIMENT="1" go
 
 ARCH      := "`uname -s`"
@@ -32,21 +34,15 @@ all: dev server install benchkv
 dev: parser build benchkv test check
 
 build:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) build
-	rm -rf vendor
 
 install:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) install ./...
-	rm -rf vendor
 
 TEMP_FILE = temp_parser_file
 
 goyacc:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) build -o bin/goyacc github.com/pingcap/tidb/parser/goyacc
-	rm -rf vendor
 
 parser: goyacc
 	rm -rf parser/scanner.go
@@ -96,13 +92,10 @@ todo:
 test: gotest
 
 gotest:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	@export log_level=error;\
 	$(GO) test -cover $(PACKAGES)
-	rm -rf vendor
 
 race:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	@export log_level=debug; \
 	dirs=`go list ./... | grep -vE 'vendor' | awk '{sub("github.com/pingcap/tidb/",""); print}'`;\
 	for dir in $$dirs; do \
@@ -110,32 +103,21 @@ race:
 		go test -race | awk 'END{if($$1=="FAIL") {exit 1}}' || exit 1;\
 		cd -;\
 	done;
-	rm -rf vendor
 
 tikv_integration_test:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) test ./store/tikv/. -with-tikv=true
-	rm -rf vendor
 
 interpreter:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
-	rm -rf vendor
 
-server: parser 
+server: parser
 ifeq ($(TARGET), "")
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) build -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
-	rm -rf vendor
 else
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
-	rm -rf vendor
 endif
 
-benchkv: 
-	rm -rf vendor && ln -s _vendor/vendor vendor
+benchkv:
 	$(GO) build -ldflags '$(LDFLAGS)' -o bin/benchkv benchkv/main.go
-	rm -rf vendor
 
 
