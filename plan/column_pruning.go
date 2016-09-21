@@ -93,7 +93,7 @@ func (p *Selection) PruneColumnsAndResolveIndices(parentUsedCols []*expression.C
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p.SetSchema(child.GetSchema())
+	p.SetSchema(child.GetSchema().DeepCopy())
 	for i, cond := range p.Conditions {
 		p.Conditions[i], err = retrieveColumnsInExpression(cond, child.GetSchema())
 		if err != nil {
@@ -159,7 +159,7 @@ func (p *Sort) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p.SetSchema(p.GetChildByIndex(0).GetSchema())
+	p.SetSchema(p.GetChildByIndex(0).GetSchema().DeepCopy())
 	for _, item := range p.ByItems {
 		item.Expr, err = retrieveColumnsInExpression(item.Expr, child.GetSchema())
 		if err != nil {

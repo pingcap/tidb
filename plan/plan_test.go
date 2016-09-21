@@ -253,7 +253,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(err, IsNil)
 		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
 		c.Assert(err, IsNil)
-		p = EliminateProjection(lp)
+		p = EliminateProjection(lp, false, nil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
@@ -346,7 +346,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t a where a.c < 10000 order by a.a limit 2",
-			best: "Table(t)->Selection->Limit->Projection",
+			best: "Index(t.c_d_e)[[-inf,10000)]->Projection->Sort + Limit(2) + Offset(0)",
 		},
 		{
 			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by a.c",

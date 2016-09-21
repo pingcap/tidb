@@ -55,7 +55,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		}
 		p = res.p.PushLimit(nil)
 		log.Debugf("[PLAN] %s", ToString(p))
-		logic = EliminateProjection(logic)
+		logic = EliminateProjection(logic, false, nil)
 		return p, nil
 	}
 	return p, nil

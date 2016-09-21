@@ -19,94 +19,110 @@ import (
 )
 
 // EliminateProjection eliminate projection operator to avoid the cost of memory copy in the iterator of projection.
-func EliminateProjection(p LogicalPlan) LogicalPlan {
-	children := make([]Plan, 0, len(p.GetChildren()))
-	for _, child := range p.GetChildren() {
-		children = append(children, EliminateProjection(child.(LogicalPlan)))
-	}
-	p.SetChildren(children...)
-	if _, ok := p.(*Projection); !ok {
-		return p
-	}
-	exprs := p.(*Projection).Exprs
-	newSchema := make(expression.Schema, 0, len(exprs))
-	canBeEliminated := true
-	// only fields in PROJECTION are all Columns might be eliminated.
-	for _, expr := range exprs {
-		if col, ok := expr.(*expression.Column); ok {
-			newSchema = append(newSchema, col.DeepCopy().(*expression.Column))
-		} else {
-			canBeEliminated = false
-			break
-		}
-	}
-	if !canBeEliminated {
-		return p
-	}
-	child := p.GetChildByIndex(0)
-	// detect expression like "SELECT c AS a, c AS b FROM t" which cannot be eliminated.
-	if len(newSchema) != len(child.GetSchema()) {
-		canBeEliminated = false
-	}
-	if !canBeEliminated {
-		return p
-	}
-	// detect expression like "SELECT c AS a, c AS b FROM t WHERE d = 1" which cannot be eliminated.
-	for _, col := range child.GetSchema() {
-		for j, v := range newSchema {
-			if v.TblName == col.TblName && v.ColName == col.ColName {
-				canBeEliminated = true
-				newSchema[j].FromID = col.FromID
-				newSchema[j].Position = col.Position
-				newSchema[j].Index = col.Index
-				newSchema[j].TblName = p.GetSchema()[j].TblName
-				newSchema[j].ColName = p.GetSchema()[j].ColName
-				break
-			}
-			canBeEliminated = false
-		}
-		if !canBeEliminated {
-			return p
-		}
-	}
-	if v, ok := child.(*DataSource); ok { // reorder columns of DataSource
-		newColumn := make([]*model.ColumnInfo, len(v.Columns))
-		for i, x := range newSchema {
-			for _, col := range v.Columns {
-				if col.Offset == x.Position {
-					newColumn[i] = col
+func EliminateProjection(p LogicalPlan, reorder bool, orderedSchema expression.Schema) LogicalPlan {
+	if reorder {
+		newSchema := make(expression.Schema, len(orderedSchema))
+		for i, v1 := range orderedSchema {
+			for j, v2 := range p.GetSchema() {
+				if v1.TblName == v2.TblName && v1.ColName == v2.ColName {
+					newSchema[i] = p.GetSchema()[j]
+					break
 				}
 			}
 		}
-		v.Columns = newColumn
+		p.SetSchema(newSchema)
 	}
-	child.SetSchema(newSchema)
-	if len(p.GetParents()) != 0 {
-		if parent, ok := p.GetParents()[0].(*Projection); ok {
-			originFromID := p.GetID()
-			for i, expr := range parent.Exprs {
-				parent.Exprs[i] = resetParentExprs(expr, originFromID, newSchema)
-				parent.Exprs[i], _ = retrieveColumnsInExpression(parent.Exprs[i], newSchema)
+	switch plan := p.(type) {
+	case *Projection:
+		canBeEliminated := true
+		child := p.GetChildByIndex(0).(LogicalPlan)
+		// only fields in PROJECTION are all Columns might be eliminated.
+		for _, expr := range plan.Exprs {
+			if _, ok := expr.(*expression.Column); !ok {
+				canBeEliminated = false
+				break
 			}
 		}
+		// detect expression like "SELECT c AS a, c AS b FROM t"which cannot be eliminated.
+		if canBeEliminated && len(plan.GetSchema()) != len(child.GetSchema()) {
+			canBeEliminated = false
+		}
+		if !canBeEliminated {
+			break
+		}
+		// detect expression like "SELECT c AS a, c AS b FROM t WHERE d = 1" which cannot be eliminated.
+		for _, col := range child.GetSchema() {
+			if !canBeEliminated {
+				break
+			}
+			for _, expr := range plan.Exprs {
+				if col.TblName == expr.(*expression.Column).TblName && col.ColName == expr.(*expression.Column).ColName {
+					canBeEliminated = true
+					break
+				}
+				canBeEliminated = false
+			}
+		}
+		if !canBeEliminated {
+			break
+		}
+		// eliminate projection.
+		reorder = false
+		orderedSchema = make(expression.Schema, len(plan.Exprs))
+		newSchema := make(expression.Schema, len(child.GetSchema()))
+		for j, col := range child.GetSchema() {
+			for i, expr := range plan.Exprs {
+				if col.TblName == expr.(*expression.Column).TblName && col.ColName == expr.(*expression.Column).ColName {
+					if i != j {
+						reorder = true
+					}
+					orderedSchema[i] = expr.(*expression.Column)
+					newSchema[i] = shallowCopyColumn(plan.GetSchema()[i], col)
+					break
+				}
+			}
+		}
+		newSchema.InitIndices()
+		child.SetSchema(newSchema)
+		RemovePlan(p)
+		p = EliminateProjection(child, reorder, orderedSchema)
+	case *DataSource:
+		if !reorder {
+			break
+		}
+		newColumns := make([]*model.ColumnInfo, len(plan.Columns))
+		for i, s := range orderedSchema { // reorder DataSource's columns.
+			isMultiTable := false
+			for _, col := range plan.Columns {
+				if s.TblName.O == plan.Table.Name.O && s.ColName == col.Name {
+					newColumns[i] = col
+					isMultiTable = false
+					break
+				}
+				isMultiTable = true
+			}
+			if isMultiTable {
+				return p
+			}
+		}
+		plan.Columns = newColumns
+	default:
+		children := make([]Plan, 0, len(p.GetChildren()))
+		for _, child := range p.GetChildren() {
+			children = append(children, EliminateProjection(child.(LogicalPlan), reorder, orderedSchema))
+		}
+		p.SetChildren(children...)
 	}
-	RemovePlan(p)
-	return child.(LogicalPlan)
+	return p
 }
 
-func resetParentExprs(expr expression.Expression, origin string, schema expression.Schema) expression.Expression {
-	switch v := expr.(type) {
-	case *expression.ScalarFunction:
-		for i, arg := range v.Args {
-			newExpr := resetParentExprs(arg, origin, schema)
-			v.Args[i] = newExpr
-		}
-	case *expression.Column:
-		if v.FromID == origin {
-			v.FromID = schema[v.Index].FromID
-			v.Position = schema[v.Index].Position
-			return v
-		}
-	}
-	return expr
+func shallowCopyColumn(colDest, colSrc *expression.Column) *expression.Column {
+	colDest.Correlated = colSrc.Correlated
+	colDest.FromID = colSrc.FromID
+	colDest.Position = colSrc.Position
+	colDest.ID = colSrc.ID
+	colDest.IsAggOrSubq = colSrc.IsAggOrSubq
+	colDest.RetType = colSrc.RetType
+
+	return colDest
 }
