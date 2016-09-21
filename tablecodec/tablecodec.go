@@ -160,7 +160,7 @@ func flatten(data types.Datum) (types.Datum, error) {
 
 // DecodeValues decodes a byte slice into datums with column types.
 func DecodeValues(data []byte, fts []*types.FieldType, inIndex bool) ([]types.Datum, error) {
-	if data == nil {
+	if len(data) == 0 {
 		return nil, nil
 	}
 	values, err := codec.Decode(data, len(fts))

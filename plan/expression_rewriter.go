@@ -22,8 +22,10 @@ var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Cont
 // rewrite function rewrites ast expr to expression.Expression.
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
 // asScalar means whether this expression must be treated as a scalar expression.
+// And this function returns a result expression, a new plan that may have apply or semi-join, and bool value that
+// standing for if the expression containing a correlated column.
 func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (
-	newExpr expression.Expression, newPlan LogicalPlan, correlated bool, err error) {
+	expression.Expression, LogicalPlan, bool, error) {
 	er := &expressionRewriter{
 		p:        p,
 		aggrMap:  aggMapper,
@@ -250,12 +252,12 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 			er.err = errors.Trace(err)
 			return v, true
 		}
-		_, res, _, err := np.convert2PhysicalPlan(nil)
+		info, err := np.convert2PhysicalPlan(&requiredProperty{})
 		if err != nil {
 			er.err = errors.Trace(err)
 			return v, true
 		}
-		phyPlan := res.p.PushLimit(nil)
+		phyPlan := info.p.PushLimit(nil)
 		d, err := EvalSubquery(phyPlan, er.b.is, er.b.ctx)
 		if err != nil {
 			er.err = errors.Trace(err)
@@ -369,12 +371,12 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	_, res, _, err := np.convert2PhysicalPlan(nil)
+	info, err := np.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	phyPlan := res.p.PushLimit(nil)
+	phyPlan := info.p.PushLimit(nil)
 	d, err := EvalSubquery(phyPlan, er.b.is, er.b.ctx)
 	if err != nil {
 		er.err = errors.Trace(err)
@@ -671,7 +673,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		// args:  condition1, result1,
 		//        condition2, result2,
 		//        ...
-		//        else clasue
+		//        else clause
 		args = er.ctxStack[stkLen-argsLen : stkLen]
 	}
 	function, err := expression.NewFunction(ast.Case, &v.Type, args...)

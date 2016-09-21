@@ -165,7 +165,7 @@ func (p *PhysicalApply) PushLimit(l *Limit) PhysicalPlan {
 }
 
 // PushLimit implements PhysicalPlan PushLimit interface.
-func (p *Aggregation) PushLimit(l *Limit) PhysicalPlan {
+func (p *PhysicalAggregation) PushLimit(l *Limit) PhysicalPlan {
 	newChild := p.GetChildByIndex(0).(PhysicalPlan).PushLimit(nil)
 	p.SetChildren(newChild)
 	newChild.SetParents(p)
@@ -281,7 +281,7 @@ func (p *PhysicalUnionScan) PushLimit(l *Limit) PhysicalPlan {
 	p.SetChildren(np)
 	np.SetParents(p)
 	if l != nil {
-		insertLimit(p, l)
+		return insertLimit(p, l)
 	}
 	return p
 }
