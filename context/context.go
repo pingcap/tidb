@@ -53,6 +53,8 @@ func (t basicCtxType) String() string {
 	return "unknown"
 }
 
+// Context keys.
 const (
+	// QueryString is the key for original query string.
 	QueryString basicCtxType = 1
 )
