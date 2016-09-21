@@ -28,12 +28,15 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-binlog"
 )
 
 // Table implements table.Table interface.
@@ -230,7 +233,14 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	if shouldWriteBinlog(ctx) {
+		mutation := t.getMutation(ctx)
+		bin, err := codec.EncodeValue(nil, newData...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		mutation.UpdatedRows = append(mutation.UpdatedRows, bin)
+	}
 	return nil
 }
 
@@ -357,7 +367,14 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 	if err = bs.SaveTo(txn); err != nil {
 		return 0, errors.Trace(err)
 	}
-
+	if shouldWriteBinlog(ctx) {
+		mutation := t.getMutation(ctx)
+		bin, err := codec.EncodeValue(nil, r...)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		mutation.InsertedRows = append(mutation.InsertedRows, bin)
+	}
 	variable.GetSessionVars(ctx).AddAffectedRows(1)
 	return recordID, nil
 }
@@ -515,7 +532,46 @@ func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if shouldWriteBinlog(ctx) {
+		err = t.addDeleteBinlog(ctx, h, r)
+	}
+	return errors.Trace(err)
+}
 
+func (t *Table) addDeleteBinlog(ctx context.Context, h int64, r []types.Datum) error {
+	mutation := t.getMutation(ctx)
+	if t.meta.PKIsHandle {
+		mutation.DeletedIds = append(mutation.DeletedIds, h)
+		return nil
+	}
+
+	var primaryIdx *model.IndexInfo
+	for _, idx := range t.meta.Indices {
+		if idx.Primary {
+			primaryIdx = idx
+			break
+		}
+	}
+	var data []byte
+	var err error
+	if primaryIdx != nil {
+		indexedValues := make([]types.Datum, len(primaryIdx.Columns))
+		for i := range indexedValues {
+			indexedValues[i] = r[primaryIdx.Columns[i].Offset]
+		}
+		data, err = codec.EncodeKey(nil, indexedValues...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		mutation.DeletedPks = append(mutation.DeletedPks, data)
+		return nil
+	}
+
+	data, err = codec.EncodeValue(nil, r...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	mutation.DeletedRows = append(mutation.DeletedRows, data)
 	return nil
 }
 
@@ -664,6 +720,26 @@ func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 		return 0, false, errors.Trace(err)
 	}
 	return handle, true, nil
+}
+
+func shouldWriteBinlog(ctx context.Context) bool {
+	if binloginfo.PumpClient == nil {
+		return false
+	}
+	sessVar := variable.GetSessionVars(ctx)
+	return !sessVar.InRestrictedSQL
+}
+
+func (t *Table) getMutation(ctx context.Context) *binlog.TableMutation {
+	bin := binloginfo.GetPrewriteValue(ctx, true)
+	for i := range bin.Mutations {
+		if bin.Mutations[i].TableId == t.ID {
+			return &bin.Mutations[i]
+		}
+	}
+	idx := len(bin.Mutations)
+	bin.Mutations = append(bin.Mutations, binlog.TableMutation{TableId: t.ID})
+	return &bin.Mutations[idx]
 }
 
 var (
