@@ -447,7 +447,7 @@ func (r *Registry) Gather() ([]*dto.MetricFamily, error) {
 
 	// Drain metricChan in case of premature return.
 	defer func() {
-		for range metricChan {
+		for _ = range metricChan {
 		}
 	}()
 
@@ -683,7 +683,7 @@ func (s metricSorter) Less(i, j int) bool {
 	return s[i].GetTimestampMs() < s[j].GetTimestampMs()
 }
 
-// normalizeMetricFamilies returns a MetricFamily slice with empty
+// normalizeMetricFamilies returns a MetricFamily slice whith empty
 // MetricFamilies pruned and the remaining MetricFamilies sorted by name within
 // the slice, with the contained Metrics sorted within each MetricFamily.
 func normalizeMetricFamilies(metricFamiliesByName map[string]*dto.MetricFamily) []*dto.MetricFamily {

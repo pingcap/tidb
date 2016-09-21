@@ -267,7 +267,12 @@ func InstrumentHandlerFuncWithOpts(opts SummaryOpts, handlerFunc func(http.Respo
 		now := time.Now()
 
 		delegate := &responseWriterDelegator{ResponseWriter: w}
-		out := computeApproximateRequestSize(r)
+		out := make(chan int)
+		urlLen := 0
+		if r.URL != nil {
+			urlLen = len(r.URL.String())
+		}
+		go computeApproximateRequestSize(r, out, urlLen)
 
 		_, cn := w.(http.CloseNotifier)
 		_, fl := w.(http.Flusher)
@@ -292,37 +297,23 @@ func InstrumentHandlerFuncWithOpts(opts SummaryOpts, handlerFunc func(http.Respo
 	})
 }
 
-func computeApproximateRequestSize(r *http.Request) <-chan int {
-	// Get URL length in current go routine for avoiding a race condition.
-	// HandlerFunc that runs in parallel may modify the URL.
-	s := 0
-	if r.URL != nil {
-		s += len(r.URL.String())
+func computeApproximateRequestSize(r *http.Request, out chan int, s int) {
+	s += len(r.Method)
+	s += len(r.Proto)
+	for name, values := range r.Header {
+		s += len(name)
+		for _, value := range values {
+			s += len(value)
+		}
 	}
+	s += len(r.Host)
 
-	out := make(chan int, 1)
+	// N.B. r.Form and r.MultipartForm are assumed to be included in r.URL.
 
-	go func() {
-		s += len(r.Method)
-		s += len(r.Proto)
-		for name, values := range r.Header {
-			s += len(name)
-			for _, value := range values {
-				s += len(value)
-			}
-		}
-		s += len(r.Host)
-
-		// N.B. r.Form and r.MultipartForm are assumed to be included in r.URL.
-
-		if r.ContentLength != -1 {
-			s += int(r.ContentLength)
-		}
-		out <- s
-		close(out)
-	}()
-
-	return out
+	if r.ContentLength != -1 {
+		s += int(r.ContentLength)
+	}
+	out <- s
 }
 
 type responseWriterDelegator struct {
