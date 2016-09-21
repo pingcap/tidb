@@ -32,7 +32,7 @@ type pdOracle struct {
 	c  pd.Client
 	mu struct {
 		sync.RWMutex
-		lastTs uint64
+		lastTS uint64
 	}
 	quit    chan struct{}
 	updated chan struct{}
@@ -59,13 +59,13 @@ func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracl
 	return o, nil
 }
 
-// IsExpired returns whether lockTs+TTL is expired, both are ms. It uses `lastTS`
+// IsExpired returns whether lockTS+TTL is expired, both are ms. It uses `lastTS`
 // to compare, may return false negative result temporarily.
-func (o *pdOracle) IsExpired(lockTs, TTL uint64) bool {
+func (o *pdOracle) IsExpired(lockTS, TTL uint64) bool {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 
-	return (o.mu.lastTs >> epochShiftBits) >= (lockTs>>epochShiftBits)+TTL
+	return oracle.ExtractPhysical(o.mu.lastTS) >= oracle.ExtractPhysical(lockTS)+int64(TTL)
 }
 
 // GetTimestamp gets a new increasing time.
@@ -89,15 +89,15 @@ func (o *pdOracle) getTimestamp() (uint64, error) {
 	if dist > slowDist {
 		log.Warnf("get timestamp too slow: %s", dist)
 	}
-	return uint64((physical << epochShiftBits) + logical), nil
+	return oracle.ComposeTS(physical, logical), nil
 }
 
 func (o *pdOracle) setLastTS(ts uint64) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	if ts >= o.mu.lastTs {
-		o.mu.lastTs = ts
+	if ts >= o.mu.lastTS {
+		o.mu.lastTS = ts
 	}
 }
 
