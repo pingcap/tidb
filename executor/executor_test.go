@@ -1086,6 +1086,14 @@ func (s *testSuite) TestUpdate(c *C) {
 	c.Assert(err.Error(), DeepEquals, "Column 'id' cannot be null")
 
 	tk.MustExec("drop table update_test")
+	tk.MustExec("create table update_test(id int)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into update_test(id) values (1)")
+	tk.MustExec("update update_test set id = 2 where id = 1 limit 1")
+	r = tk.MustQuery("select * from update_test;")
+	r.Check(testkit.Rows("2"))
+	tk.MustExec("commit")
+	tk.MustExec("drop table update_test")
 }
 
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
