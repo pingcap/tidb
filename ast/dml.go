@@ -977,36 +977,36 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // String implements fmt.Stringer interface.
-func (_ *DeleteStmt) String() string {
+func (n *DeleteStmt) String() string {
 	return "DeleteStmt"
 }
 
 // String implements fmt.Stringer interface.
-func (_ *InsertStmt) String() string {
+func (n *InsertStmt) String() string {
 	return "InsertStmt"
 }
 
 // String implements fmt.Stringer interface.
-func (_ *UnionStmt) String() string {
+func (n *UnionStmt) String() string {
 	return "UnionStmt"
 }
 
 // String implements fmt.Stringer interface.
-func (_ *UpdateStmt) String() string {
+func (n *UpdateStmt) String() string {
 	return "UpdateStmt"
 }
 
 // String implements fmt.Stringer interface.
-func (_ *SelectStmt) String() string {
+func (n *SelectStmt) String() string {
 	return "SelectStmt"
 }
 
 // String implements fmt.Stringer interface.
-func (_ *ShowStmt) String() string {
+func (n *ShowStmt) String() string {
 	return "ShowStmt"
 }
 
 // String implements fmt.Stringer interface.
-func (_ *LoadDataStmt) String() string {
+func (n *LoadDataStmt) String() string {
 	return "LoadDataStmt"
 }
