@@ -491,7 +491,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		targetPlan = info.p.PushLimit(nil)
+		targetPlan = info.p
 	}
 	p := &Explain{StmtPlan: targetPlan}
 	addChild(p, targetPlan)

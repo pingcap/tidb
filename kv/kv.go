@@ -106,6 +106,7 @@ const (
 	ReqSubTypeBasic   = 0
 	ReqSubTypeDesc    = 10000
 	ReqSubTypeGroupBy = 10001
+	ReqSubTypeTopN    = 10002
 )
 
 // KeyRange represents a range where StartKey <= key < EndKey.

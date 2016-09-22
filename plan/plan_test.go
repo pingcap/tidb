@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -313,8 +314,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		c.Assert(err, IsNil)
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		p = info.p.PushLimit(nil)
-		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
 
@@ -371,7 +371,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t a where a.c < 10000 order by a.a limit 2",
-			best: "Table(t)->Selection->Limit->Projection",
+			best: "Index(t.c_d_e)[[-inf,10000)]->Sort + Limit(2) + Offset(0)->Projection",
 		},
 		{
 			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by a.c",
@@ -430,8 +430,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		c.Assert(err, IsNil)
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		p = info.p.PushLimit(nil)
-		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
 
@@ -592,8 +591,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		c.Assert(err, IsNil)
 		info, err := p.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		np := info.p.PushLimit(nil)
-		c.Assert(ToString(np), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
 
@@ -951,7 +949,8 @@ func (s *testPlanSuite) TestTableScanWithOrder(c *C) {
 	c.Assert(err, IsNil)
 	// Limit->Projection->PhysicalTableScan
 	// Get PhysicalTableScan plan.
-	cpp, ok := info.p.GetChildByIndex(0).GetChildByIndex(0).(*PhysicalTableScan)
+	cpp, ok := info.p.GetChildByIndex(0).(*PhysicalTableScan)
+	log.Warnf("%s", ToString(info.p))
 	c.Assert(cpp, NotNil)
 	c.Assert(ok, IsTrue)
 	// Make sure KeepOrder is true.

@@ -22,11 +22,17 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+)
+
+var (
+	_ physicalDistSQLPlan = &PhysicalTableScan{}
+	_ physicalDistSQLPlan = &PhysicalIndexScan{}
 )
 
 // PhysicalIndexScan represents an index scan plan.
@@ -52,21 +58,26 @@ type PhysicalIndexScan struct {
 	ConditionPBExpr *tipb.Expr
 
 	TableAsName *model.CIStr
-
-	LimitCount *int64
 }
 
 type physicalDistSQLPlan interface {
-	addAggregation(agg *PhysicalAggregation, ctx context.Context) (expression.Schema, error)
+	addAggregation(agg *PhysicalAggregation) expression.Schema
+	addTopN(prop *requiredProperty)
+	addLimit(limit *Limit)
 }
 
 type physicalTableSource struct {
+	client kv.Client
+
 	Aggregated bool
 	AggFields  []*types.FieldType
 	AggFuncs   []*tipb.Expr
 	GbyItems   []*tipb.ByItem
 
 	ConditionPBExpr *tipb.Expr
+
+	LimitCount *int64
+	SortItems  []*tipb.ByItem
 }
 
 func (p *physicalTableSource) clear() {
@@ -85,30 +96,41 @@ func needValue(af expression.AggregationFunction) bool {
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat
 }
 
-func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation, ctx context.Context) (expression.Schema, error) {
-	client := ctx.GetClient()
-	if client == nil {
-		return nil, nil
+func (p *physicalTableSource) addLimit(l *Limit) {
+	count := int64(l.Count + l.Offset)
+	p.LimitCount = &count
+}
+
+func (p *physicalTableSource) addTopN(prop *requiredProperty) {
+	if p.client == nil || !p.client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeTopN) {
+		return
+	}
+	if prop.limit != nil {
+		count := int64(prop.limit.Count + prop.limit.Offset)
+		p.LimitCount = &count
+	}
+	for _, item := range prop.props {
+		p.SortItems = append(p.SortItems, sortByItemToPB(p.client, item.col, item.desc))
+	}
+}
+
+func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation) expression.Schema {
+	if p.client == nil {
+		return nil
 	}
 	for _, f := range agg.AggFuncs {
-		pb, err := aggFuncToPBExpr(client, f)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		pb := aggFuncToPBExpr(p.client, f)
 		if pb == nil {
 			p.clear()
-			return nil, nil
+			return nil
 		}
 		p.AggFuncs = append(p.AggFuncs, pb)
 	}
 	for _, item := range agg.GroupByItems {
-		pb, err := groupByItemToPB(client, item)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		pb := groupByItemToPB(p.client, item)
 		if pb == nil {
 			p.clear()
-			return nil, nil
+			return nil
 		}
 		p.GbyItems = append(p.GbyItems, pb)
 	}
@@ -146,7 +168,7 @@ func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation, ctx conte
 		newAggFuncs[i] = fun
 	}
 	agg.AggFuncs = newAggFuncs
-	return schema, nil
+	return schema
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -167,8 +189,6 @@ type PhysicalTableScan struct {
 	ConditionPBExpr *tipb.Expr
 
 	TableAsName *model.CIStr
-
-	LimitCount *int64
 
 	// If sort data by scanning pkcol, KeepOrder should be true.
 	KeepOrder bool
@@ -506,7 +526,11 @@ func (p *Limit) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *Limit) MarshalJSON() ([]byte, error) {
-	child, err := json.Marshal(p.children[0].(PhysicalPlan))
+	var child PhysicalPlan
+	if len(p.children) > 0 {
+		child = p.children[0].(PhysicalPlan)
+	}
+	childStr, err := json.Marshal(child)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -514,7 +538,7 @@ func (p *Limit) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf("\"type\": \"Limit\",\n"+
 		" \"limit\": %d,\n"+
 		" \"offset\": %d,\n"+
-		" \"child\": %s}", p.Count, p.Offset, child))
+		" \"child\": %s}", p.Count, p.Offset, childStr))
 	return buffer.Bytes(), nil
 }
 
@@ -536,6 +560,10 @@ func (p *Sort) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	limit, err := json.Marshal(p.ExecLimit)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	exprs, err := json.Marshal(p.ByItems)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -543,7 +571,8 @@ func (p *Sort) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf("\"type\": \"Sort\",\n"+
 		" \"exprs\": %s,\n"+
-		" \"child\": %s}", exprs, child))
+		" \"limit\": %s,\n"+
+		" \"child\": %s}", exprs, limit, child))
 	return buffer.Bytes(), nil
 }
 
