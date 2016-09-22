@@ -194,7 +194,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		}
 
 		err = d.runReorgJob(func() error {
-			return d.addTableIndex(tbl, indexInfo, reorgInfo)
+			return d.addTableIndex(tbl, indexInfo, reorgInfo, job)
 		})
 
 		if terror.ErrorEqual(err, errWaitReorgTimeout) {
@@ -278,7 +278,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		}
 
 		err = d.runReorgJob(func() error {
-			return d.dropTableIndex(tbl, indexInfo)
+			return d.dropTableIndex(tbl, indexInfo, job)
 		})
 
 		if terror.ErrorEqual(err, errWaitReorgTimeout) {
@@ -346,10 +346,10 @@ const maxBatchSize = 1024
 //  3. For one row, if the row has been already deleted, skip to next row.
 //  4. If not deleted, check whether index has existed, if existed, skip to next row.
 //  5. If index doesn't exist, create the index and then continue to handle next row.
-func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
+func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
 	seekHandle := reorgInfo.Handle
 	version := reorgInfo.SnapshotVer
-	count := 0
+	count := job.GetRowCount()
 
 	for {
 		startTS := time.Now()
@@ -360,7 +360,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 			return nil
 		}
 
-		count += len(handles)
+		count += int64(len(handles))
 		seekHandle = handles[len(handles)-1] + 1
 		err = d.backfillTableIndex(t, indexInfo, handles, reorgInfo)
 		sub := time.Since(startTS).Seconds()
@@ -369,6 +369,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 			return errors.Trace(err)
 		}
 
+		job.SetRowCount(count)
 		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
 		log.Infof("[ddl] added index for %v rows, take time %v", count, sub)
 
@@ -468,9 +469,10 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 	return nil
 }
 
-func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
+func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo, job *model.Job) error {
 	prefix := tablecodec.EncodeTableIndexPrefix(t.Meta().ID, indexInfo.ID)
-	err := d.delKeysWithPrefix(prefix, ddlJobFlag)
+	// It's asynchronous so it doesn't need to consider if it completes.
+	_, err := d.delKeysWithPrefix(prefix, ddlJobFlag, job)
 
 	return errors.Trace(err)
 }

@@ -16,6 +16,7 @@ package ddl
 import (
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testSchemaSuite{})
@@ -131,32 +133,75 @@ func testCheckJobCancelled(c *C, d *ddl, job *model.Job) {
 	})
 }
 
-func (s *testSchemaSuite) TestSchema(c *C) {
+func (s *testSchemaSuite) TestSchemaT(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema")
 	defer store.Close()
+	d := newDDL(store, nil, nil, testLease)
+	defer d.close()
+	ctx := testNewContext(c, d)
+	dbInfo := testSchemaInfo(c, d, "test")
 
-	d1 := newDDL(store, nil, nil, testLease)
-	defer d1.close()
+	// create a table.
+	job := testCreateSchema(c, ctx, d, dbInfo)
+	testCheckSchemaState(c, d, dbInfo, model.StatePublic)
+	testCheckJobDone(c, d, job, true)
 
-	ctx := mock.NewContext()
+	/*** to drop the schema with two tables. ***/
+	// create table t with 100 records.
+	tblInfo1 := testTableInfo(c, d, "t", 3)
+	tJob1 := testCreateTable(c, ctx, d, dbInfo, tblInfo1)
+	testCheckTableState(c, d, dbInfo, tblInfo1, model.StatePublic)
+	testCheckJobDone(c, d, tJob1, true)
+	tbl1 := testGetTable(c, d, dbInfo.ID, tblInfo1.ID)
+	for i := 1; i <= 100; i++ {
+		_, err := tbl1.AddRecord(ctx, types.MakeDatums(i, i, i))
+		c.Assert(err, IsNil)
+	}
+	// create table t1 with maxBatchSize+10 records.
+	tblInfo2 := testTableInfo(c, d, "t1", 3)
+	tJob2 := testCreateTable(c, ctx, d, dbInfo, tblInfo2)
+	testCheckTableState(c, d, dbInfo, tblInfo2, model.StatePublic)
+	testCheckJobDone(c, d, tJob2, true)
+	tbl2 := testGetTable(c, d, dbInfo.ID, tblInfo2.ID)
+	for i := 1; i <= maxBatchSize+10; i++ {
+		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i))
+		c.Assert(err, IsNil)
+	}
+	tc := &testDDLCallback{}
+	var checkErr error
+	var updatedCount int
+	tc.onBgJobUpdated = func(job *model.Job) {
+		if job == nil || checkErr != nil {
+			return
+		}
+		job.Mu.Lock()
+		count := job.RowCount
+		job.Mu.Unlock()
+		if updatedCount == 0 && count != maxBatchSize+100 {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, maxBatchSize+100)
+			return
+		}
+		if updatedCount == 1 && count != maxBatchSize+110 {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, maxBatchSize+110)
+		}
+		updatedCount++
+	}
+	d.setHookWithLock(tc)
+	job = testDropSchema(c, ctx, d, dbInfo)
+	testCheckSchemaState(c, d, dbInfo, model.StateNone)
+	// check background ddl info
+	time.Sleep(testLease * 400)
+	verifyBgJobState(c, d, job, model.JobDone)
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(updatedCount, Equals, 2)
 
-	dbInfo := testSchemaInfo(c, d1, "test")
-	job := testCreateSchema(c, ctx, d1, dbInfo)
-
-	testCheckSchemaState(c, d1, dbInfo, model.StatePublic)
-	testCheckJobDone(c, d1, job, true)
-
-	job = testDropSchema(c, ctx, d1, dbInfo)
-	testCheckSchemaState(c, d1, dbInfo, model.StateNone)
-	testCheckJobDone(c, d1, job, false)
-
+	// drop a table doesn't exist.
 	job = &model.Job{
 		SchemaID: dbInfo.ID,
 		Type:     model.ActionDropSchema,
 	}
-
-	err := d1.doDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), IsTrue)
 }
 

@@ -597,7 +597,7 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 		}
 	}
 
-	d.hook = tc
+	d.setHookWithLock(tc)
 
 	// Use local ddl for callback test.
 	s.d.close()
@@ -671,9 +671,9 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 		oldIndexCol = index
 	}
 
-	d.m.Lock()
+	d.hookMu.Lock()
 	d.hook = tc
-	d.m.Unlock()
+	d.hookMu.Unlock()
 
 	// Use local ddl for callback test.
 	s.d.close()
@@ -740,7 +740,9 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 		}
 	}
 
+	d.hookMu.Lock()
 	d.hook = tc
+	d.hookMu.Unlock()
 
 	// Use local ddl for callback test.
 	s.d.close()

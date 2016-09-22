@@ -169,8 +169,9 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 	return nil
 }
 
-func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
-	count := 0
+func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job) (bool, error) {
+	count := job.GetRowCount()
+	var isFinished bool
 
 	for {
 		startTS := time.Now()
@@ -207,22 +208,31 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
 				}
 			}
 
-			count += len(keys)
+			count += int64(len(keys))
 			return nil
 		})
 		sub := time.Since(startTS).Seconds()
 		if err != nil {
 			log.Warnf("[ddl] deleted %v keys with prefix %q failed, take time %v", count, prefix, sub)
-			return errors.Trace(err)
+			return isFinished, errors.Trace(err)
 		}
 
+		job.SetRowCount(count)
 		batchHandleDataHistogram.WithLabelValues(batchDelData).Observe(sub)
 		log.Infof("[ddl] deleted %v keys with prefix %q take time %v", count, prefix, sub)
+
 		// delete no keys, return.
-		if len(keys) == 0 {
-			return nil
+		if len(keys) < maxBatchSize {
+			isFinished = true
+			break
+		}
+		if jobType == bgJobFlag {
+			isFinished = false
+			break
 		}
 	}
+
+	return isFinished, nil
 }
 
 type reorgInfo struct {

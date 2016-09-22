@@ -15,7 +15,9 @@ package ddl
 
 import (
 	"fmt"
+	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -155,11 +157,11 @@ func (s *testTableSuite) TestTable(c *C) {
 	defer ctx.RollbackTxn()
 
 	tblInfo := testTableInfo(c, d, "t", 3)
-
 	job := testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
+	// create an existing table.
 	newTblInfo := testTableInfo(c, d, "t", 3)
 	job = &model.Job{
 		SchemaID: s.dbInfo.ID,
@@ -167,21 +169,45 @@ func (s *testTableSuite) TestTable(c *C) {
 		Type:     model.ActionCreateTable,
 		Args:     []interface{}{newTblInfo},
 	}
-
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
+	// to drop a table with maxBatchSize+10 records.
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	for i := 1; i <= maxBatchSize+10; i++ {
+		_, err = tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
+		c.Assert(err, IsNil)
+	}
 
-	_, err = tbl.AddRecord(ctx, types.MakeDatums(1, 1, 1))
-	c.Assert(err, IsNil)
-
-	_, err = tbl.AddRecord(ctx, types.MakeDatums(2, 2, 2))
-	c.Assert(err, IsNil)
-
+	tc := &testDDLCallback{}
+	var checkErr error
+	var updatedCount int
+	tc.onBgJobUpdated = func(job *model.Job) {
+		if job == nil || checkErr != nil {
+			return
+		}
+		job.Mu.Lock()
+		count := job.RowCount
+		job.Mu.Unlock()
+		if updatedCount == 0 && count != maxBatchSize {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, maxBatchSize)
+			return
+		}
+		if updatedCount == 1 && count != maxBatchSize+10 {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, maxBatchSize+10)
+		}
+		updatedCount++
+	}
+	d.setHookWithLock(tc)
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
+
+	// check background ddl info
+	time.Sleep(testLease * 200)
+	verifyBgJobState(c, d, job, model.JobDone)
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(updatedCount, Equals, 2)
 }
 
 func (s *testTableSuite) TestTableResume(c *C) {

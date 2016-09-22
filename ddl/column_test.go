@@ -737,7 +737,6 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
@@ -774,7 +773,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 		}
 	}
 
-	d.hook = tc
+	d.setHookWithLock(tc)
 
 	// Use local ddl for callback test.
 	s.d.close()
@@ -839,7 +838,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 		}
 	}
 
-	d.hook = tc
+	d.setHookWithLock(tc)
 
 	// Use local ddl for callback test.
 	s.d.close()
