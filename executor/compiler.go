@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -32,6 +34,14 @@ type Compiler struct {
 // a plan, and we wrap the plan in an adapter as stmt.Statement.
 // If it is not supported, the node will be converted to old statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
+	var stmtName string
+	if stringer, ok := node.(fmt.Stringer); ok {
+		stmtName = stringer.String()
+	} else {
+		stmtName = "unknown"
+	}
+	stmtNodeCounter.WithLabelValues(stmtName).Inc()
+
 	ast.SetFlag(node)
 	if _, ok := node.(*ast.UpdateStmt); ok {
 		sVars := variable.GetSessionVars(ctx)

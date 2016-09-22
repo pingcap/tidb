@@ -711,3 +711,43 @@ func (n *TruncateTableStmt) Accept(v Visitor) (Node, bool) {
 	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
+
+// String implements fmt.Stringer interface.
+func (_ *AlterTableStmt) String() string {
+	return "AlterTableStmt"
+}
+
+// String implements fmt.Stringer interface.
+func (_ *CreateDatabaseStmt) String() string {
+	return "CreateDatabaseStmt"
+}
+
+// String implements fmt.Stringer interface.
+func (_ *CreateIndexStmt) String() string {
+	return "CreateIndexStmt"
+}
+
+// String implements fmt.Stringer interface.
+func (_ *CreateTableStmt) String() string {
+	return "CreateTableStmt"
+}
+
+// String implements fmt.Stringer interface.
+func (_ *DropDatabaseStmt) String() string {
+	return "DropDatabaseStmt"
+}
+
+// String implements fmt.Stringer interface.
+func (_ *DropIndexStmt) String() string {
+	return "DropIndexStmt"
+}
+
+// String implements fmt.Stringer interface.
+func (_ *DropTableStmt) String() string {
+	return "DropTableStmt"
+}
+
+// String implements fmt.Stringer interface.
+func (_ *TruncateTableStmt) String() string {
+	return "TruncateTableStmt"
+}
