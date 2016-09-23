@@ -445,30 +445,37 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	if err := s.checkSchemaValidOrRollback(); err != nil {
 		return nil, errors.Trace(err)
 	}
+	startTS := time.Now()
 	charset, collation := getCtxCharsetInfo(s)
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", sql, err)
 		return nil, errors.Trace(err)
 	}
+	sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
 	var rs []ast.RecordSet
 	ph := sessionctx.GetDomain(s).PerfSchema()
 	for i, rst := range rawStmts {
+		startTS := time.Now()
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
 			log.Errorf("Syntax error: %s", sql)
 			log.Errorf("Error occurs at %s.", err1)
 			return nil, errors.Trace(err1)
 		}
+		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 		id := variable.GetSessionVars(s).ConnectionID
 		s.stmtState = ph.StartStatement(sql, id, perfschema.CallerNameSessionExecute, rawStmts[i])
+
+		startTS = time.Now()
 		r, err := runStmt(s, st)
 		ph.EndStatement(s.stmtState)
 		if err != nil {
 			log.Warnf("session:%v, err:%v", s, err)
 			return nil, errors.Trace(err)
 		}
+		sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
 		if r != nil {
 			rs = append(rs, r)
 		}
