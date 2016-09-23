@@ -32,7 +32,7 @@
  */
 
 // Package metadata define the structure of the metadata supported by gRPC library.
-package metadata
+package metadata // import "google.golang.org/grpc/metadata"
 
 import (
 	"encoding/base64"
@@ -60,21 +60,15 @@ func encodeKeyValue(k, v string) (string, string) {
 
 // DecodeKeyValue returns the original key and value corresponding to the
 // encoded data in k, v.
-// If k is a binary header and v contains comma, v is split on comma before decoded,
-// and the decoded v will be joined with comma before returned.
 func DecodeKeyValue(k, v string) (string, string, error) {
 	if !strings.HasSuffix(k, binHdrSuffix) {
 		return k, v, nil
 	}
-	vvs := strings.Split(v, ",")
-	for i, vv := range vvs {
-		val, err := base64.StdEncoding.DecodeString(vv)
-		if err != nil {
-			return "", "", err
-		}
-		vvs[i] = string(val)
+	val, err := base64.StdEncoding.DecodeString(v)
+	if err != nil {
+		return "", "", err
 	}
-	return k, strings.Join(vvs, ","), nil
+	return k, string(val), nil
 }
 
 // MD is a mapping from metadata keys to values. Users should use the following

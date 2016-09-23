@@ -30,6 +30,8 @@ const (
 	PresumeKeyNotExistsError
 	// RetryAttempts is the number of txn retry attempt.
 	RetryAttempts
+	// BinlogData is the serialized bytes of Binlog prewrite value.
+	BinlogData
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.

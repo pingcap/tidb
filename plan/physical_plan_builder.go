@@ -131,6 +131,7 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 			Condition: expression.ComposeCNFCondition(oldConditions),
 		}
 		us.SetChildren(resultPlan)
+		us.SetSchema(resultPlan.GetSchema())
 		resultPlan = us
 	}
 	statsTbl := p.statisticTable
@@ -240,6 +241,7 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 			Condition: expression.ComposeCNFCondition(oldConditions),
 		}
 		us.SetChildren(resultPlan)
+		us.SetSchema(resultPlan.GetSchema())
 		resultPlan = us
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
