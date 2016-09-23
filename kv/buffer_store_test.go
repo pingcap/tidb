@@ -35,7 +35,7 @@ func (s testBufferStoreSuite) TestGetSet(c *C) {
 
 	value, err = bs.Get(key)
 	c.Check(err, IsNil)
-	c.Check(0, Equals, bytes.Compare(value, []byte("value")))
+	c.Check(bytes.Compare(value, []byte("value")), Equals, 0)
 }
 
 func (s testBufferStoreSuite) TestSaveTo(c *C) {

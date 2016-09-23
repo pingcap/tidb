@@ -34,7 +34,8 @@ func (s testMockSuite) TestInterface(c *C) {
 
 	transaction, err := storage.Begin()
 	c.Check(err, IsNil)
-	transaction.LockKeys(Key("lock"))
+	err = transaction.LockKeys(Key("lock"))
+	c.Check(err, IsNil)
 	transaction.SetOption(Option(23), struct{}{})
 	if mock, ok := transaction.(*mockTxn); ok {
 		mock.GetOption(Option(23))
@@ -50,10 +51,13 @@ func (s testMockSuite) TestInterface(c *C) {
 	transaction.Commit()
 
 	transaction, err = storage.Begin()
+	c.Check(err, IsNil)
 	transaction.String()
-	transaction.Rollback()
+	err = transaction.Rollback()
+	c.Check(err, IsNil)
 
-	storage.Close()
+	err = storage.Close()
+	c.Check(err, IsNil)
 }
 
 func (s testMockSuite) TestIsPoint(c *C) {
