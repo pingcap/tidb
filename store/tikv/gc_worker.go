@@ -104,7 +104,7 @@ func (w *GCWorker) start() {
 			if isLeader {
 				err = w.leaderTick()
 				if err != nil {
-					log.Warnf("[gc worker] leader tikc err: %v", err)
+					log.Warnf("[gc worker] leader tick err: %v", err)
 				}
 			}
 		case err := <-w.done:
@@ -132,7 +132,7 @@ func (w *GCWorker) leaderTick() error {
 		return nil
 	}
 
-	ok, safePoint, err := w.prepareGC()
+	ok, safePoint, err := w.prepare()
 	if err != nil || !ok {
 		return errors.Trace(err)
 	}
@@ -143,7 +143,9 @@ func (w *GCWorker) leaderTick() error {
 	return nil
 }
 
-func (w *GCWorker) prepareGC() (bool, uint64, error) {
+// prepare checks required conditions for starting a GC job. It returns a bool
+// that indicates whether the GC job should start and the new safePoint.
+func (w *GCWorker) prepare() (bool, uint64, error) {
 	now, err := w.getOracleTime()
 	if err != nil {
 		return false, 0, errors.Trace(err)
@@ -152,19 +154,19 @@ func (w *GCWorker) prepareGC() (bool, uint64, error) {
 	if err != nil || !ok {
 		return false, 0, errors.Trace(err)
 	}
-	safePoint, err := w.calculateSafePoint(now)
-	if err != nil || safePoint == nil {
+	newSafePoint, err := w.calculateNewSafePoint(now)
+	if err != nil || newSafePoint == nil {
 		return false, 0, errors.Trace(err)
 	}
 	err = w.saveTime(gcLastRunTimeKey, now)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
-	err = w.saveTime(gcSafePointKey, *safePoint)
+	err = w.saveTime(gcSafePointKey, *newSafePoint)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
-	return true, oracle.ComposeTS(oracle.GetPhysical(*safePoint), 0), nil
+	return true, oracle.ComposeTS(oracle.GetPhysical(*newSafePoint), 0), nil
 }
 
 func (w *GCWorker) getOracleTime() (time.Time, error) {
@@ -192,7 +194,7 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	return true, nil
 }
 
-func (w *GCWorker) calculateSafePoint(now time.Time) (*time.Time, error) {
+func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	lifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 	if err != nil {
 		return nil, errors.Trace(err)
