@@ -134,12 +134,19 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	// Test Table don't have primary key.
 	tk.MustExec("create table local_binlog3 (c1 int, c2 int)")
 	tk.MustExec("insert local_binlog3 values (1, 2), (1, 3), (2, 3)")
-	tk.MustExec("delete from local_binlog3 where c2 = 3")
+	tk.MustExec("update local_binlog3 set c1 = 3 where c1 = 2")
+	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 5, 7)
+	expected = [][]types.Datum{
+		{types.NewIntDatum(3), types.NewIntDatum(3)},
+	}
+	c.Assert(gotRows, DeepEquals, expected)
+
+	tk.MustExec("delete from local_binlog3 where c1 = 3 and c2 = 3")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3)
 	expected = [][]types.Datum{
-		{types.NewIntDatum(1), types.NewIntDatum(3)},
-		{types.NewIntDatum(2), types.NewIntDatum(3)},
+		{types.NewIntDatum(3), types.NewIntDatum(3)},
 	}
 	c.Assert(gotRows, DeepEquals, expected)
 
