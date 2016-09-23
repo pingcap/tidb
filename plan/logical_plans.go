@@ -77,6 +77,7 @@ type Selection struct {
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
 
+	// aboveTableScan means if this selection's child is a table scan or index scan.
 	aboveTableScan bool
 }
 

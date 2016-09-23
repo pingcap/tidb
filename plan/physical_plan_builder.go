@@ -351,6 +351,10 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 	return info
 }
 
+// removeLimit removes limit from prop. For example, When handling Sort,Limit -> Selection, we can't pass the Limit
+// across the selection, because selection decreases the size of data, but we can pass the Sort below the selection. In
+// this case, we set removeAll true. When handling Limit(1,1) -> LeftOuterJoin, we can pass the limit across join's left
+// path, because the left outer join increases the size of data, but we can't pass offset value. So we set remove All to false.
 func removeLimit(prop *requiredProperty, removeAll bool) *requiredProperty {
 	ret := &requiredProperty{
 		props:      prop.props,
@@ -367,6 +371,10 @@ func removeLimit(prop *requiredProperty, removeAll bool) *requiredProperty {
 	return ret
 }
 
+func limitProperty(limit *Limit) *requiredProperty {
+	return &requiredProperty{limit: limit}
+}
+
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
 func (p *Limit) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
@@ -376,7 +384,7 @@ func (p *Limit) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	if info != nil {
 		return info, nil
 	}
-	info, err = p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(&requiredProperty{limit: &Limit{Offset: p.Offset, Count: p.Count}})
+	info, err = p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(limitProperty(&Limit{Offset: p.Offset, Count: p.Count}))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -428,7 +436,7 @@ func (p *Join) handleLeftJoin(prop *requiredProperty, innerJoin bool) (*physical
 	if !allLeft {
 		resultInfo = enforceProperty(prop, resultInfo)
 	} else {
-		resultInfo = enforceProperty(&requiredProperty{limit: prop.limit}, resultInfo)
+		resultInfo = enforceProperty(limitProperty(prop.limit), resultInfo)
 	}
 	return resultInfo, nil
 }
@@ -475,7 +483,7 @@ func (p *Join) handleRightJoin(prop *requiredProperty, innerJoin bool) (*physica
 	if !allRight {
 		resultInfo = enforceProperty(prop, resultInfo)
 	} else {
-		resultInfo = enforceProperty(&requiredProperty{limit: prop.limit}, resultInfo)
+		resultInfo = enforceProperty(limitProperty(prop.limit), resultInfo)
 	}
 	return resultInfo, nil
 }
@@ -532,7 +540,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 		if !allLeft {
 			resultInfo = enforceProperty(prop, resultInfo)
 		} else if p.JoinType == SemiJoin {
-			resultInfo = enforceProperty(&requiredProperty{limit: prop.limit}, resultInfo)
+			resultInfo = enforceProperty(limitProperty(prop.limit), resultInfo)
 		}
 		p.storePlanInfo(prop, resultInfo)
 		return resultInfo, nil
@@ -695,7 +703,7 @@ func (p *Aggregation) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 	if planInfo == nil || streamInfo.cost < planInfo.cost {
 		planInfo = streamInfo
 	}
-	planInfo = enforceProperty(&requiredProperty{limit: limit}, planInfo)
+	planInfo = enforceProperty(limitProperty(limit), planInfo)
 	err = p.storePlanInfo(prop, planInfo)
 	return planInfo, errors.Trace(err)
 }
@@ -727,7 +735,7 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		childInfos = append(childInfos, info)
 	}
 	info = p.matchProperty(prop, childInfos...)
-	info = enforceProperty(&requiredProperty{limit: limit}, info)
+	info = enforceProperty(limitProperty(limit), info)
 	info.count = count
 	p.storePlanInfo(prop, info)
 	return info, nil
@@ -785,11 +793,7 @@ func (p *Selection) handlePushNothing(prop *requiredProperty) (*physicalPlanInfo
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// TODO: Because we haven't support DAG push down, we can only push down topn by this ugly way.
 	if prop.limit != nil && len(prop.props) > 0 {
-		if np, ok := info.p.(physicalDistSQLPlan); ok {
-			np.addTopN(prop)
-		}
 		info = enforceProperty(prop, info)
 	} else if len(prop.props) != 0 {
 		info.cost = math.MaxFloat64
@@ -810,8 +814,6 @@ func (p *Projection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 		props:      make([]*columnProp, 0, len(prop.props)),
 		sortKeyLen: prop.sortKeyLen,
 		limit:      prop.limit}
-	if len(prop.props) > 0 {
-	}
 	childSchema := p.GetChildByIndex(0).GetSchema()
 	usedCols := make([]bool, len(childSchema))
 	canPassSort := true
@@ -946,7 +948,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		return nil, errors.Trace(err)
 	}
 	info = addPlanToResponse(np, info)
-	info = enforceProperty(&requiredProperty{limit: limit}, info)
+	info = enforceProperty(limitProperty(limit), info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
@@ -969,7 +971,7 @@ func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanIn
 	}
 	info = addPlanToResponse(p, info)
 	info.count = uint64(float64(info.count) * distinctFactor)
-	info = enforceProperty(&requiredProperty{limit: limit}, info)
+	info = enforceProperty(limitProperty(limit), info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
