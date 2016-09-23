@@ -14,8 +14,6 @@
 package executor
 
 import (
-	"fmt"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -29,18 +27,32 @@ import (
 type Compiler struct {
 }
 
+func statementLabel(node ast.StmtNode) string {
+	switch node.(type) {
+	case *ast.SelectStmt:
+		return "Select"
+	case *ast.DeleteStmt:
+		return "Delete"
+	case *ast.InsertStmt:
+		return "Insert"
+	case *ast.UnionStmt:
+		return "Union"
+	case *ast.UpdateStmt:
+		return "Update"
+	case *ast.CreateIndexStmt:
+		return "CreateIndex"
+	case *ast.CreateTableStmt:
+		return "CreateTable"
+	}
+	return "unknown"
+}
+
 // Compile compiles an ast.StmtNode to a stmt.Statement.
 // If it is supported to use new plan and executer, it optimizes the node to
 // a plan, and we wrap the plan in an adapter as stmt.Statement.
 // If it is not supported, the node will be converted to old statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
-	var stmtName string
-	if stringer, ok := node.(fmt.Stringer); ok {
-		stmtName = stringer.String()
-	} else {
-		stmtName = "unknown"
-	}
-	stmtNodeCounter.WithLabelValues(stmtName).Inc()
+	stmtNodeCounter.WithLabelValues(statementLabel(node)).Inc()
 
 	ast.SetFlag(node)
 	if _, ok := node.(*ast.UpdateStmt); ok {
