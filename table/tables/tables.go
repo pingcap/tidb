@@ -235,10 +235,9 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	}
 	if shouldWriteBinlog(ctx) {
 		mutation := t.getMutation(ctx)
-		bin, err := codec.EncodeValue(nil, newData...)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		// prepend handle to the row value
+		handleVal, _ := codec.EncodeValue(nil, types.NewIntDatum(h))
+		bin := append(handleVal, value...)
 		mutation.UpdatedRows = append(mutation.UpdatedRows, bin)
 	}
 	return nil
@@ -369,10 +368,10 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 	}
 	if shouldWriteBinlog(ctx) {
 		mutation := t.getMutation(ctx)
-		bin, err := codec.EncodeValue(nil, r...)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
+		// prepend handle to the row value
+		handleVal, _ := codec.EncodeValue(nil, types.NewIntDatum(recordID))
+		log.Errorf("handle value %x", handleVal)
+		bin := append(handleVal, value...)
 		mutation.InsertedRows = append(mutation.InsertedRows, bin)
 	}
 	variable.GetSessionVars(ctx).AddAffectedRows(1)
@@ -566,8 +565,11 @@ func (t *Table) addDeleteBinlog(ctx context.Context, h int64, r []types.Datum) e
 		mutation.DeletedPks = append(mutation.DeletedPks, data)
 		return nil
 	}
-
-	data, err = codec.EncodeValue(nil, r...)
+	colIDs := make([]int64, len(t.Cols()))
+	for i, col := range t.Cols() {
+		colIDs[i] = col.ID
+	}
+	data, err = tablecodec.EncodeRow(r, colIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}
