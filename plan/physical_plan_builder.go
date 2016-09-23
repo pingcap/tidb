@@ -931,6 +931,15 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	if info != nil {
 		return info, nil
 	}
+	allFromOuter := true
+	for _, col := range prop.props {
+		if p.InnerPlan.GetSchema().GetIndex(col.col) != -1 {
+			allFromOuter = false
+		}
+	}
+	if !allFromOuter {
+		return &physicalPlanInfo{cost: math.MaxFloat64}, err
+	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	innerInfo, err := p.InnerPlan.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
