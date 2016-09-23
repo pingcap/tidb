@@ -1037,7 +1037,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		return nil
 	}
 	p = np
-	updt := &Update{OrderedList: orderedList, SelectPlan: p, baseLogicalPlan: newBaseLogicalPlan(Up, b.allocator)}
+	updt := &Update{OrderedList: orderedList, baseLogicalPlan: newBaseLogicalPlan(Up, b.allocator)}
 	updt.self = updt
 	updt.initID()
 	addChild(updt, p)
@@ -1105,7 +1105,6 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	del := &Delete{
 		Tables:          tables,
 		IsMultiTable:    delete.IsMultiTable,
-		SelectPlan:      p,
 		baseLogicalPlan: newBaseLogicalPlan(Del, b.allocator),
 	}
 	del.self = del

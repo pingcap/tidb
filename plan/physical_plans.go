@@ -97,8 +97,10 @@ func needValue(af expression.AggregationFunction) bool {
 }
 
 func (p *physicalTableSource) addLimit(l *Limit) {
-	count := int64(l.Count + l.Offset)
-	p.LimitCount = &count
+	if l != nil {
+		count := int64(l.Count + l.Offset)
+		p.LimitCount = &count
+	}
 }
 
 func (p *physicalTableSource) addTopN(prop *requiredProperty) {

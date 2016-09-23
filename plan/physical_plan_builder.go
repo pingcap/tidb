@@ -90,6 +90,7 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
+	ts.addLimit(prop.limit)
 	ts.SetSchema(p.GetSchema())
 	resultPlan = ts
 	var oldConditions []expression.Expression
@@ -117,6 +118,7 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 		}
 		if len(newSel.Conditions) > 0 {
 			newSel.SetChildren(ts)
+			newSel.aboveTableScan = true
 			resultPlan = &newSel
 		}
 	} else {
@@ -189,6 +191,7 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
+	is.addLimit(prop.limit)
 	is.SetSchema(p.schema)
 	rowCount := uint64(statsTbl.Count)
 	resultPlan = is
@@ -226,6 +229,7 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 		}
 		if len(newSel.Conditions) > 0 {
 			newSel.SetChildren(is)
+			newSel.aboveTableScan = true
 			resultPlan = &newSel
 		}
 	} else {
@@ -329,6 +333,7 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 			ByItems:   items,
 			ExecLimit: prop.limit,
 		}
+		sort.SetSchema(info.p.GetSchema())
 		info = addPlanToResponse(sort, info)
 		count := info.count
 		if prop.limit != nil {
@@ -336,7 +341,9 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		}
 		info.cost += float64(info.count)*cpuFactor + float64(count)*memoryFactor
 	} else if prop.limit != nil {
-		info = addPlanToResponse(prop.limit, info)
+		limit := prop.limit.Copy()
+		limit.SetSchema(info.p.GetSchema())
+		info = addPlanToResponse(limit, info)
 	}
 	if prop.limit != nil && prop.limit.Count < info.count {
 		info.count = prop.limit.Count
@@ -420,8 +427,8 @@ func (p *Join) handleLeftJoin(prop *requiredProperty, innerJoin bool) (*physical
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
 	if !allLeft {
 		resultInfo = enforceProperty(prop, resultInfo)
-	} else if prop.limit != nil {
-		resultInfo = addPlanToResponse(prop.limit, resultInfo)
+	} else {
+		resultInfo = enforceProperty(&requiredProperty{limit: prop.limit}, resultInfo)
 	}
 	return resultInfo, nil
 }
@@ -467,8 +474,8 @@ func (p *Join) handleRightJoin(prop *requiredProperty, innerJoin bool) (*physica
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
 	if !allRight {
 		resultInfo = enforceProperty(prop, resultInfo)
-	} else if prop.limit != nil {
-		resultInfo = addPlanToResponse(prop.limit, resultInfo)
+	} else {
+		resultInfo = enforceProperty(&requiredProperty{limit: prop.limit}, resultInfo)
 	}
 	return resultInfo, nil
 }
@@ -524,8 +531,8 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 		}
 		if !allLeft {
 			resultInfo = enforceProperty(prop, resultInfo)
-		} else if prop.limit != nil && p.JoinType == SemiJoin {
-			resultInfo = addPlanToResponse(prop.limit, resultInfo)
+		} else if p.JoinType == SemiJoin {
+			resultInfo = enforceProperty(&requiredProperty{limit: prop.limit}, resultInfo)
 		}
 		p.storePlanInfo(prop, resultInfo)
 		return resultInfo, nil
@@ -677,19 +684,18 @@ func (p *Aggregation) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 	if planInfo != nil {
 		return planInfo, nil
 	}
-	planInfo, err = p.handleHashAgg()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	enforceProperty(prop, planInfo)
 	limit := prop.limit
-	streamInfo, err := p.handleStreamAgg(removeLimit(prop, true))
-	if limit != nil {
-		streamInfo = addPlanToResponse(limit, streamInfo)
+	if len(prop.props) == 0 {
+		planInfo, err = p.handleHashAgg()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
-	if streamInfo.cost < planInfo.cost {
+	streamInfo, err := p.handleStreamAgg(removeLimit(prop, true))
+	if planInfo == nil || streamInfo.cost < planInfo.cost {
 		planInfo = streamInfo
 	}
+	planInfo = enforceProperty(&requiredProperty{limit: limit}, planInfo)
 	err = p.storePlanInfo(prop, planInfo)
 	return planInfo, errors.Trace(err)
 }
@@ -721,9 +727,7 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		childInfos = append(childInfos, info)
 	}
 	info = p.matchProperty(prop, childInfos...)
-	if limit != nil {
-		info = addPlanToResponse(limit, info)
-	}
+	info = enforceProperty(&requiredProperty{limit: limit}, info)
 	info.count = count
 	p.storePlanInfo(prop, info)
 	return info, nil
@@ -769,7 +773,7 @@ func (p *Selection) handlePushOrder(prop *requiredProperty) (*physicalPlanInfo, 
 			np.addLimit(limit)
 			info.count = limit.Count
 		} else {
-			info = addPlanToResponse(limit, info)
+			info = enforceProperty(&requiredProperty{limit: limit}, info)
 		}
 	}
 	return info, nil
@@ -787,6 +791,8 @@ func (p *Selection) handlePushNothing(prop *requiredProperty) (*physicalPlanInfo
 			np.addTopN(prop)
 		}
 		info = enforceProperty(prop, info)
+	} else if len(prop.props) != 0 {
+		info.cost = math.MaxFloat64
 	}
 	return info, nil
 }
@@ -897,12 +903,15 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	}
 	cnt := float64(unSortedPlanInfo.count)
 	sortCost := cnt*math.Log2(cnt)*cpuFactor + memoryFactor*cnt
-	if sortCost+unSortedPlanInfo.cost < sortedPlanInfo.cost {
+	if len(selfProp.props) == 0 {
+		np := p.Copy().(*Sort)
+		np.ExecLimit = selfProp.limit
+		sortedPlanInfo = addPlanToResponse(np, sortedPlanInfo)
+	} else if sortCost+unSortedPlanInfo.cost < sortedPlanInfo.cost {
 		sortedPlanInfo.cost = sortCost + unSortedPlanInfo.cost
 		np := *p
 		np.ExecLimit = selfProp.limit
 		sortedPlanInfo = addPlanToResponse(&np, unSortedPlanInfo)
-
 	}
 	if !matchProp(prop, selfProp) {
 		sortedPlanInfo.cost = math.MaxFloat64
@@ -937,9 +946,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		return nil, errors.Trace(err)
 	}
 	info = addPlanToResponse(np, info)
-	if limit != nil {
-		info = addPlanToResponse(limit, info)
-	}
+	info = enforceProperty(&requiredProperty{limit: limit}, info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
@@ -962,9 +969,7 @@ func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanIn
 	}
 	info = addPlanToResponse(p, info)
 	info.count = uint64(float64(info.count) * distinctFactor)
-	if limit != nil {
-		info = addPlanToResponse(limit, info)
-	}
+	info = enforceProperty(&requiredProperty{limit: limit}, info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }

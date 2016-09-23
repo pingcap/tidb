@@ -15,9 +15,10 @@ package plan
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"testing"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -29,8 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"sort"
-	"strings"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -395,7 +394,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select exists(select * from t b where a.a = b.a and b.c = 1) from t a order by a.c limit 3",
-			best: "SemiJoinWithAux{Index(t.c_d_e)[[<nil>,+inf]]->Index(t.c_d_e)[[1,1]]}->Projection->Trim",
+			best: "SemiJoinWithAux{Index(t.c_d_e)[[<nil>,+inf]]->Limit->Index(t.c_d_e)[[1,1]]}->Projection->Trim",
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t where t.c = 1 union select t.c from t) k order by a limit 1",
@@ -949,8 +948,7 @@ func (s *testPlanSuite) TestTableScanWithOrder(c *C) {
 	c.Assert(err, IsNil)
 	// Limit->Projection->PhysicalTableScan
 	// Get PhysicalTableScan plan.
-	cpp, ok := info.p.GetChildByIndex(0).(*PhysicalTableScan)
-	log.Warnf("%s", ToString(info.p))
+	cpp, ok := info.p.GetChildByIndex(0).GetChildByIndex(0).(*PhysicalTableScan)
 	c.Assert(cpp, NotNil)
 	c.Assert(ok, IsTrue)
 	// Make sure KeepOrder is true.

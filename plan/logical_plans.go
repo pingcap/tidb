@@ -76,6 +76,8 @@ type Selection struct {
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
+
+	aboveTableScan bool
 }
 
 // Apply gets one row from outer executor and gets one row from inner executor according to outer row.
@@ -144,7 +146,6 @@ type Sort struct {
 type Update struct {
 	baseLogicalPlan
 
-	SelectPlan  Plan
 	OrderedList []*expression.Assignment
 }
 
@@ -152,7 +153,6 @@ type Update struct {
 type Delete struct {
 	baseLogicalPlan
 
-	SelectPlan   Plan
 	Tables       []*ast.TableName
 	IsMultiTable bool
 }

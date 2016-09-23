@@ -82,6 +82,7 @@ func (s *testSuite) TestExplain(c *C) {
             "Desc": false
         }
     ],
+    "limit": null,
     "child": {
         "type": "Projection",
         "exprs": [
