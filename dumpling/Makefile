@@ -5,6 +5,8 @@ ifeq "$(GOPATH)" ""
   $(error Please set the environment variable GOPATH before running `make`)
 endif
 
+CURDIR := $(shell pwd)
+export GOPATH := $(CURDIR)/_vendor:$(GOPATH)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 GO        := GO15VENDOREXPERIMENT="1" go
@@ -32,21 +34,15 @@ all: dev server install benchkv
 dev: parser build benchkv test check
 
 build:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) build
-	rm -rf vendor
 
 install:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) install ./...
-	rm -rf vendor
 
 TEMP_FILE = temp_parser_file
 
 goyacc:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) build -o bin/goyacc parser/goyacc/main.go
-	rm -rf vendor
 
 parser: goyacc
 	bin/goyacc -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
@@ -95,13 +91,10 @@ todo:
 test: gotest
 
 gotest:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	@export log_level=error;\
 	$(GO) test -cover $(PACKAGES)
-	rm -rf vendor
 
 race:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	@export log_level=debug; \
 	dirs=`go list ./... | grep -vE 'vendor' | awk '{sub("github.com/pingcap/tidb/",""); print}'`;\
 	for dir in $$dirs; do \
@@ -109,38 +102,27 @@ race:
 		go test -race | awk 'END{if($$1=="FAIL") {exit 1}}' || exit 1;\
 		cd -;\
 	done;
-	rm -rf vendor
 
 tikv_integration_test:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) test ./store/tikv/. -with-tikv=true
-	rm -rf vendor
 
 interpreter:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
-	rm -rf vendor
 
 server: parser
 ifeq ($(TARGET), "")
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) build -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
-	rm -rf vendor
 else
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
-	rm -rf vendor
 endif
 
 benchkv:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) build -ldflags '$(LDFLAGS)' -o bin/benchkv benchkv/main.go
-	rm -rf vendor
 
 update:
 	which glide >/dev/null || curl https://glide.sh/get | sh
 	which glide-vc || go get -v -u github.com/sgotti/glide-vc
-	rm -r vendor && mv _vendor/vendor vendor || true
+	rm -r vendor && mv _vendor/src vendor || true
 	rm -rf _vendor
 ifdef PKG
 	glide get -s -v --skip-test ${PKG}
@@ -150,4 +132,4 @@ endif
 	@echo "removing test files"
 	glide vc --only-code --no-tests
 	mkdir -p _vendor
-	mv vendor _vendor/vendor
+	mv vendor _vendor/src
