@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"golang.org/x/net/http2/hpack"
+	"golang.org/x/net/lex/httplex"
 )
 
 // writeFramer is implemented by any type that is used to write frames.
@@ -240,14 +241,15 @@ func encodeHeaders(enc *hpack.Encoder, h http.Header, keys []string) {
 	for _, k := range keys {
 		vv := h[k]
 		k = lowerHeader(k)
-		if !validHeaderFieldName(k) {
-			// TODO: return an error? golang.org/issue/14048
-			// For now just omit it.
+		if !validWireHeaderFieldName(k) {
+			// Skip it as backup paranoia. Per
+			// golang.org/issue/14048, these should
+			// already be rejected at a higher level.
 			continue
 		}
 		isTE := k == "transfer-encoding"
 		for _, v := range vv {
-			if !validHeaderFieldValue(v) {
+			if !httplex.ValidHeaderFieldValue(v) {
 				// TODO: return an error? golang.org/issue/14048
 				// For now just omit it.
 				continue

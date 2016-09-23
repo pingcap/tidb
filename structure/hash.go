@@ -45,6 +45,9 @@ func (meta hashMeta) IsEmpty() bool {
 
 // HSet sets the string value of a hash field.
 func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
+	if t.readWriter == nil {
+		return errWriteOnSnapshot
+	}
 	return t.updateHash(key, field, func([]byte) ([]byte, error) {
 		return value, nil
 	})
@@ -53,7 +56,7 @@ func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 // HGet gets the value of a hash field.
 func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	dataKey := t.encodeHashDataKey(key, field)
-	value, err := t.txn.Get(dataKey)
+	value, err := t.reader.Get(dataKey)
 	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
 	}
@@ -63,6 +66,9 @@ func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 // HInc increments the integer value of a hash field, by step, returns
 // the value after the increment.
 func (t *TxStructure) HInc(key []byte, field []byte, step int64) (int64, error) {
+	if t.readWriter == nil {
+		return 0, errWriteOnSnapshot
+	}
 	base := int64(0)
 	err := t.updateHash(key, field, func(oldValue []byte) ([]byte, error) {
 		if oldValue != nil {
@@ -108,7 +114,7 @@ func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []by
 		return nil
 	}
 
-	if err = t.txn.Set(dataKey, newValue); err != nil {
+	if err = t.readWriter.Set(dataKey, newValue); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -120,7 +126,7 @@ func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []by
 
 	if oldValue == nil {
 		meta.FieldCount++
-		if err = t.txn.Set(metaKey, meta.Value()); err != nil {
+		if err = t.readWriter.Set(metaKey, meta.Value()); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -140,6 +146,9 @@ func (t *TxStructure) HLen(key []byte) (int64, error) {
 
 // HDel deletes one or more hash fields.
 func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
+	if t.readWriter == nil {
+		return errWriteOnSnapshot
+	}
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
@@ -156,7 +165,7 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 		}
 
 		if value != nil {
-			if err = t.txn.Delete(dataKey); err != nil {
+			if err = t.readWriter.Delete(dataKey); err != nil {
 				return errors.Trace(err)
 			}
 
@@ -165,9 +174,9 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 	}
 
 	if meta.IsEmpty() {
-		err = t.txn.Delete(metaKey)
+		err = t.readWriter.Delete(metaKey)
 	} else {
-		err = t.txn.Set(metaKey, meta.Value())
+		err = t.readWriter.Set(metaKey, meta.Value())
 	}
 
 	return errors.Trace(err)
@@ -209,19 +218,19 @@ func (t *TxStructure) HClear(key []byte) error {
 
 	err = t.iterateHash(key, func(field []byte, value []byte) error {
 		k := t.encodeHashDataKey(key, field)
-		return errors.Trace(t.txn.Delete(k))
+		return errors.Trace(t.readWriter.Delete(k))
 	})
 
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(t.txn.Delete(metaKey))
+	return errors.Trace(t.readWriter.Delete(metaKey))
 }
 
 func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) error {
 	dataPrefix := t.hashDataKeyPrefix(key)
-	it, err := t.txn.Seek(dataPrefix)
+	it, err := t.reader.Seek(dataPrefix)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -252,7 +261,7 @@ func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error)
 }
 
 func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
-	v, err := t.txn.Get(metaKey)
+	v, err := t.reader.Get(metaKey)
 	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
 	} else if err != nil {
@@ -273,7 +282,7 @@ func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 }
 
 func (t *TxStructure) loadHashValue(dataKey []byte) ([]byte, error) {
-	v, err := t.txn.Get(dataKey)
+	v, err := t.reader.Get(dataKey)
 	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
 		v = nil

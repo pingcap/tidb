@@ -19,15 +19,22 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
 	basePlan
+	physicalTableSource
 
+	ctx        context.Context
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
 	Ranges     []*IndexRange
@@ -49,10 +56,105 @@ type PhysicalIndexScan struct {
 	LimitCount *int64
 }
 
+type physicalDistSQLPlan interface {
+	addAggregation(agg *PhysicalAggregation, ctx context.Context) (expression.Schema, error)
+}
+
+type physicalTableSource struct {
+	Aggregated bool
+	AggFields  []*types.FieldType
+	AggFuncs   []*tipb.Expr
+	GbyItems   []*tipb.ByItem
+
+	ConditionPBExpr *tipb.Expr
+}
+
+func (p *physicalTableSource) clear() {
+	p.AggFields = nil
+	p.AggFuncs = nil
+	p.GbyItems = nil
+	p.Aggregated = false
+}
+
+func needCount(af expression.AggregationFunction) bool {
+	return af.GetName() == ast.AggFuncCount || af.GetName() == ast.AggFuncAvg
+}
+
+func needValue(af expression.AggregationFunction) bool {
+	return af.GetName() == ast.AggFuncSum || af.GetName() == ast.AggFuncAvg || af.GetName() == ast.AggFuncFirstRow ||
+		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat
+}
+
+func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation, ctx context.Context) (expression.Schema, error) {
+	client := ctx.GetClient()
+	if client == nil {
+		return nil, nil
+	}
+	for _, f := range agg.AggFuncs {
+		pb, err := aggFuncToPBExpr(client, f)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if pb == nil {
+			p.clear()
+			return nil, nil
+		}
+		p.AggFuncs = append(p.AggFuncs, pb)
+	}
+	for _, item := range agg.GroupByItems {
+		pb, err := groupByItemToPB(client, item)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if pb == nil {
+			p.clear()
+			return nil, nil
+		}
+		p.GbyItems = append(p.GbyItems, pb)
+	}
+	p.Aggregated = true
+	gk := types.NewFieldType(mysql.TypeBlob)
+	gk.Charset = charset.CharsetBin
+	gk.Collate = charset.CollationBin
+	p.AggFields = append(p.AggFields, gk)
+	var schema expression.Schema
+	cursor := 0
+	schema = append(schema, &expression.Column{Index: cursor})
+	agg.GroupByItems = []expression.Expression{schema[cursor]}
+	newAggFuncs := make([]expression.AggregationFunction, len(agg.AggFuncs))
+	for i, aggFun := range agg.AggFuncs {
+		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
+		var args []expression.Expression
+		if needCount(fun) {
+			cursor++
+			schema = append(schema, &expression.Column{Index: cursor})
+			args = append(args, schema[cursor])
+			ft := types.NewFieldType(mysql.TypeLonglong)
+			ft.Flen = 21
+			ft.Charset = charset.CharsetBin
+			ft.Collate = charset.CollationBin
+			p.AggFields = append(p.AggFields, ft)
+		}
+		if needValue(fun) {
+			cursor++
+			schema = append(schema, &expression.Column{Index: cursor})
+			args = append(args, schema[cursor])
+			p.AggFields = append(p.AggFields, agg.schema[i].GetType())
+		}
+		fun.SetArgs(args)
+		fun.SetMode(expression.FinalMode)
+		newAggFuncs[i] = fun
+	}
+	agg.AggFuncs = newAggFuncs
+	return schema, nil
+}
+
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
 	basePlan
+	physicalTableSource
 
+	ctx     context.Context
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
 	DBName  *model.CIStr
@@ -111,6 +213,28 @@ type PhysicalHashSemiJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
+}
+
+// AggregationType stands for the mode of aggregation plan.
+type AggregationType int
+
+const (
+	// StreamedAgg supposes its input is sorted by group by key.
+	StreamedAgg AggregationType = iota
+	// FinalAgg supposes its input is partial results.
+	FinalAgg
+	// CompleteAgg supposes its input is original results.
+	CompleteAgg
+)
+
+// PhysicalAggregation is Aggregation's physical plan.
+type PhysicalAggregation struct {
+	basePlan
+
+	HasGby       bool
+	AggType      AggregationType
+	AggFuncs     []expression.AggregationFunction
+	GroupByItems []expression.Expression
 }
 
 // PhysicalUnionScan represents a union scan operator.
@@ -442,7 +566,7 @@ func (p *SelectLock) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *Aggregation) Copy() PhysicalPlan {
+func (p *PhysicalAggregation) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }

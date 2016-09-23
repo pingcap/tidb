@@ -150,13 +150,6 @@ type Filter struct {
 	Conditions []ast.ExprNode
 }
 
-// SetLimit implements Plan SetLimit interface.
-func (p *Filter) SetLimit(limit float64) {
-	p.limit = limit
-	// We assume 50% of the GetChildByIndex(0) row is filtered out.
-	p.GetChildByIndex(0).SetLimit(limit * 2)
-}
-
 // Show represents a show plan.
 type Show struct {
 	basePlan
@@ -198,7 +191,7 @@ type Insert struct {
 
 // LoadData represents a loaddata plan.
 type LoadData struct {
-	baseLogicalPlan
+	basePlan
 
 	IsLocal    bool
 	Path       string

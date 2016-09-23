@@ -14,7 +14,12 @@
 package metrics
 
 import (
+	"time"
+
+	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/push"
 )
 
 var (
@@ -54,4 +59,20 @@ func convertName(str string) string {
 		}
 	}
 	return string(name)
+}
+
+// PrometheusPushClient pushs metrics to Prometheus Pushgateway.
+func PrometheusPushClient(job, addr string, interval time.Duration) {
+	for {
+		err := push.FromGatherer(
+			job, push.HostnameGroupingKey(),
+			addr,
+			prometheus.DefaultGatherer,
+		)
+		if err != nil {
+			log.Errorf("could not push metrics to Prometheus Pushgateway: %v", err)
+		}
+
+		time.Sleep(interval)
+	}
 }
