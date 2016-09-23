@@ -302,7 +302,6 @@ type copIterator struct {
 
 // Pick the next new copTask and send request to tikv-server.
 func (it *copIterator) work() {
-	bo := NewBackoffer(copNextMaxBackoff)
 	for {
 		it.mu.Lock()
 		if it.mu.finished {
@@ -323,6 +322,7 @@ func (it *copIterator) work() {
 		}
 		task.status = taskRunning
 		it.mu.Unlock()
+		bo := NewBackoffer(copNextMaxBackoff)
 		resp, err := it.handleTask(bo, task)
 		if err != nil {
 			it.errChan <- err
