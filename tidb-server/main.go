@@ -57,7 +57,7 @@ var (
 	logFile         = flag.String("log-file", "", "log file path")
 	joinCon         = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
 	metricsAddr     = flag.String("metrics-addr", "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
-	metricsInterval = flag.Int("metrics-interval", 0, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
+	metricsInterval = flag.Int("metrics-interval", 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 	binlogSocket    = flag.String("binlog-socket", "", "socket file to write binlog")
 )
 
@@ -194,10 +194,9 @@ func pushMetric(addr string, interval time.Duration) {
 func prometheusPushClient(addr string, interval time.Duration) {
 	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
 	job := "tidb"
-	grouping := map[string]string{"instance": fmt.Sprintf("%s:%s", *host, *port)}
 	for {
 		err := push.FromGatherer(
-			job, grouping,
+			job, push.HostnameGroupingKey(),
 			addr,
 			prometheus.DefaultGatherer,
 		)
