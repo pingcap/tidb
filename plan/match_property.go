@@ -194,7 +194,7 @@ func (p *Selection) matchProperty(prop *requiredProperty, childPlanInfo ...*phys
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalUnionScan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	limit := prop.limit
-	res := p.GetChildByIndex(0).(PhysicalPlan).matchProperty(removeLimit(prop, false), childPlanInfo...)
+	res := p.GetChildByIndex(0).(PhysicalPlan).matchProperty(convertLimitOffsetToCount(prop), childPlanInfo...)
 	np := *p
 	np.SetChildren(res.p)
 	res.p = &np

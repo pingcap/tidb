@@ -352,17 +352,20 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 	return info
 }
 
-// removeLimit removes limit from prop. For example, When handling Sort,Limit -> Selection, we can't pass the Limit
-// across the selection, because selection decreases the size of data, but we can pass the Sort below the selection. In
-// this case, we set removeAll true. When handling Limit(1,1) -> LeftOuterJoin, we can pass the limit across join's left
-// path, because the left outer join increases the size of data, but we can't pass offset value. So we set removeAll to false.
-func removeLimit(prop *requiredProperty, removeAll bool) *requiredProperty {
+// removeLimit removes limit from prop.
+func removeLimit(prop *requiredProperty) *requiredProperty {
 	ret := &requiredProperty{
 		props:      prop.props,
 		sortKeyLen: prop.sortKeyLen,
 	}
-	if removeAll {
-		return ret
+	return ret
+}
+
+// convertLimitOffsetToCount change limit(offset, count) in prop to limit(0, offset + count)
+func convertLimitOffsetToCount(prop *requiredProperty) *requiredProperty {
+	ret := &requiredProperty{
+		props:      prop.props,
+		sortKeyLen: prop.sortKeyLen,
 	}
 	if prop.limit != nil {
 		ret.limit = &Limit{
@@ -425,7 +428,13 @@ func (p *Join) handleLeftJoin(prop *requiredProperty, innerJoin bool) (*physical
 	if !allLeft {
 		lProp = &requiredProperty{}
 	}
-	lInfo, err := lChild.convert2PhysicalPlan(removeLimit(lProp, innerJoin))
+	var lInfo *physicalPlanInfo
+	var err error
+	if innerJoin {
+		lInfo, err = lChild.convert2PhysicalPlan(removeLimit(lProp))
+	} else {
+		lInfo, err = lChild.convert2PhysicalPlan(convertLimitOffsetToCount(lProp))
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -476,7 +485,12 @@ func (p *Join) handleRightJoin(prop *requiredProperty, innerJoin bool) (*physica
 	if !allRight {
 		rProp = &requiredProperty{}
 	}
-	rInfo, err := rChild.convert2PhysicalPlan(removeLimit(rProp, innerJoin))
+	var rInfo *physicalPlanInfo
+	if innerJoin {
+		rInfo, err = rChild.convert2PhysicalPlan(removeLimit(rProp))
+	} else {
+		rInfo, err = rChild.convert2PhysicalPlan(convertLimitOffsetToCount(rProp))
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -522,7 +536,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 			lProp = &requiredProperty{}
 		}
 		if p.JoinType == SemiJoin {
-			lProp = removeLimit(lProp, true)
+			lProp = removeLimit(lProp)
 		}
 		lInfo, err := lChild.convert2PhysicalPlan(lProp)
 		if err != nil {
@@ -700,7 +714,7 @@ func (p *Aggregation) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 			return nil, errors.Trace(err)
 		}
 	}
-	streamInfo, err := p.handleStreamAgg(removeLimit(prop, true))
+	streamInfo, err := p.handleStreamAgg(removeLimit(prop))
 	if planInfo == nil || streamInfo.cost < planInfo.cost {
 		planInfo = streamInfo
 	}
@@ -722,7 +736,7 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	childInfos := make([]*physicalPlanInfo, 0, len(p.children))
 	var count uint64
 	for _, child := range p.GetChildren() {
-		newProp := removeLimit(prop, false)
+		newProp := convertLimitOffsetToCount(prop)
 		newProp.props = make([]*columnProp, 0, len(prop.props))
 		for _, c := range prop.props {
 			idx := p.GetSchema().GetIndex(c.col)
@@ -774,7 +788,7 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 func (p *Selection) handlePushOrder(prop *requiredProperty) (*physicalPlanInfo, error) {
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	limit := prop.limit
-	info, err := child.convert2PhysicalPlan(removeLimit(prop, true))
+	info, err := child.convert2PhysicalPlan(removeLimit(prop))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -954,7 +968,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	}
 	np.SetSchema(p.GetSchema())
 	limit := prop.limit
-	info, err = child.convert2PhysicalPlan(removeLimit(prop, true))
+	info, err = child.convert2PhysicalPlan(removeLimit(prop))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -976,7 +990,7 @@ func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanIn
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	limit := prop.limit
-	info, err = child.convert2PhysicalPlan(removeLimit(prop, true))
+	info, err = child.convert2PhysicalPlan(removeLimit(prop))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
