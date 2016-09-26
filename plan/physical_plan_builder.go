@@ -118,7 +118,7 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 		}
 		if len(newSel.Conditions) > 0 {
 			newSel.SetChildren(ts)
-			newSel.aboveTableScan = true
+			newSel.onTable = true
 			resultPlan = &newSel
 		}
 	} else {
@@ -229,7 +229,7 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 		}
 		if len(newSel.Conditions) > 0 {
 			newSel.SetChildren(is)
-			newSel.aboveTableScan = true
+			newSel.onTable = true
 			resultPlan = &newSel
 		}
 	} else {
@@ -323,6 +323,7 @@ func addPlanToResponse(p PhysicalPlan, planInfo *physicalPlanInfo) *physicalPlan
 	return &physicalPlanInfo{p: np, cost: planInfo.cost, count: planInfo.count}
 }
 
+// enforceProperty add an topN or sort upon current operator.
 func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPlanInfo {
 	if len(prop.props) != 0 {
 		items := make([]*ByItems, 0, len(prop.props))
@@ -354,7 +355,7 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 // removeLimit removes limit from prop. For example, When handling Sort,Limit -> Selection, we can't pass the Limit
 // across the selection, because selection decreases the size of data, but we can pass the Sort below the selection. In
 // this case, we set removeAll true. When handling Limit(1,1) -> LeftOuterJoin, we can pass the limit across join's left
-// path, because the left outer join increases the size of data, but we can't pass offset value. So we set remove All to false.
+// path, because the left outer join increases the size of data, but we can't pass offset value. So we set removeAll to false.
 func removeLimit(prop *requiredProperty, removeAll bool) *requiredProperty {
 	ret := &requiredProperty{
 		props:      prop.props,
@@ -755,6 +756,7 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Secondly, we will push nothing and enforce this prop.
 	infoEnforce, err := p.handlePushNothing(prop)
 	if err != nil {
 		return nil, errors.Trace(err)

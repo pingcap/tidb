@@ -77,8 +77,8 @@ type Selection struct {
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
 
-	// aboveTableScan means if this selection's child is a table scan or index scan.
-	aboveTableScan bool
+	// onTable means if this selection's child is a table scan or index scan.
+	onTable bool
 }
 
 // Apply gets one row from outer executor and gets one row from inner executor according to outer row.

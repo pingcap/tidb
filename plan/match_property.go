@@ -177,7 +177,7 @@ func (p *Union) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPla
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Selection) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
-	if p.aboveTableScan {
+	if p.onTable {
 		res := p.GetChildByIndex(0).(PhysicalPlan).matchProperty(prop, childPlanInfo...)
 		sel := *p
 		sel.SetChildren(res.p)
