@@ -323,7 +323,7 @@ func addPlanToResponse(p PhysicalPlan, planInfo *physicalPlanInfo) *physicalPlan
 	return &physicalPlanInfo{p: np, cost: planInfo.cost, count: planInfo.count}
 }
 
-// enforceProperty add an topN or sort upon current operator.
+// enforceProperty add an topN or sort or limit upon current operator.
 func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPlanInfo {
 	if len(prop.props) != 0 {
 		items := make([]*ByItems, 0, len(prop.props))
