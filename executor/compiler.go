@@ -34,6 +34,9 @@ func statementLabel(node ast.StmtNode) string {
 	case *ast.DeleteStmt:
 		return "Delete"
 	case *ast.InsertStmt:
+		if node.(*ast.InsertStmt).IsReplace {
+			return "Replace"
+		}
 		return "Insert"
 	case *ast.UnionStmt:
 		return "Union"
@@ -43,6 +46,14 @@ func statementLabel(node ast.StmtNode) string {
 		return "CreateIndex"
 	case *ast.CreateTableStmt:
 		return "CreateTable"
+	case *ast.CreateDatabaseStmt:
+		return "CreateDatabase"
+	case *ast.DropDatabaseStmt:
+		return "DropDatabase"
+	case *ast.DropTableStmt:
+		return "DropTable"
+	case *ast.DropIndexStmt:
+		return "DropIndex"
 	}
 	return "unknown"
 }
