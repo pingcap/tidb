@@ -447,6 +447,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 			continue
 		}
 		if e := resp.GetRegionError(); e != nil {
+			reportRegionError(e)
 			if notLeader := e.GetNotLeader(); notLeader != nil {
 				it.store.regionCache.UpdateLeader(task.region.VerID(), notLeader.GetLeader().GetId())
 			} else {
