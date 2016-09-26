@@ -109,11 +109,7 @@ func columnToPBExpr(client kv.Client, column *expression.Column) *tipb.Expr {
 
 	id := column.ID
 	// Zero Column ID is not a column from table, can not support for now.
-	if id == 0 {
-		return nil
-	}
-	// its value is available to use.
-	if id == -1 {
+	if id == 0 || id == -1 {
 		return nil
 	}
 
