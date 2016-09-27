@@ -16,6 +16,7 @@ package tikv
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/juju/errors"
@@ -28,6 +29,7 @@ import (
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
 	uuid        string
+	desc        string
 	store       *tikvStore
 	session     tidb.Session
 	gcIsRunning bool
@@ -51,7 +53,8 @@ func NewGCWorker(store *tikvStore) (*GCWorker, error) {
 		hostName = "unknown"
 	}
 	worker := &GCWorker{
-		uuid:        fmt.Sprintf("%s_%d_%d", hostName, os.Getpid(), ver.Ver),
+		uuid:        strconv.FormatUint(ver.Ver, 16),
+		desc:        fmt.Sprintf("host:%s pid:%d", hostName, os.Getpid()),
 		store:       store,
 		session:     session,
 		gcIsRunning: false,
@@ -74,6 +77,7 @@ const (
 	gcWorkerTickInterval = time.Minute
 	gcWorkerLease        = time.Minute * 2
 	gcLeaderUUIDKey      = "tikv_gc_leader_uuid"
+	gcLeaderDescKey      = "tikv_gc_leader_desc"
 	gcLeaderLeaseKey     = "tikv_gc_leader_lease"
 
 	gcLastRunTimeKey     = "tikv_gc_last_run_time"
@@ -88,6 +92,7 @@ const (
 
 var gcVariableComments = map[string]string{
 	gcLeaderUUIDKey:  "Current GC worker leader UUID. (DO NOT EDIT)",
+	gcLeaderDescKey:  "Host name and pid of current GC leader. (DO NOT EDIT)",
 	gcLeaderLeaseKey: "Current GC worker leader lease. (DO NOT EDIT)",
 	gcLastRunTimeKey: "The time when last GC starts. (DO NOT EDIT)",
 	gcRunIntervalKey: "GC run interval, at least 10m, in Go format.",
@@ -394,6 +399,11 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		gcWorkerCounter.WithLabelValues("register_leader").Inc()
 
 		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid)
+		if err != nil {
+			w.session.Execute("ROLLBACK")
+			return false, errors.Trace(err)
+		}
+		err = w.saveValueToSysTable(gcLeaderDescKey, w.desc)
 		if err != nil {
 			w.session.Execute("ROLLBACK")
 			return false, errors.Trace(err)
