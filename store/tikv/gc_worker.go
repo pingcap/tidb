@@ -54,7 +54,7 @@ func NewGCWorker(store *tikvStore) (*GCWorker, error) {
 	}
 	worker := &GCWorker{
 		uuid:        strconv.FormatUint(ver.Ver, 16),
-		desc:        fmt.Sprintf("host:%s pid:%d start:%s", hostName, os.Getpid(), time.Now()),
+		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		store:       store,
 		session:     session,
 		gcIsRunning: false,
