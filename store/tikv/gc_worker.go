@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/juju/errors"
@@ -45,8 +46,12 @@ func NewGCWorker(store *tikvStore) (*GCWorker, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	hostName, err := os.Hostname()
+	if err != nil {
+		hostName = "unknown"
+	}
 	worker := &GCWorker{
-		uuid:        fmt.Sprintf("gcworker_%d", ver.Ver),
+		uuid:        fmt.Sprintf("%s_%d_%d", hostName, os.Getpid(), ver.Ver),
 		store:       store,
 		session:     session,
 		gcIsRunning: false,
