@@ -182,7 +182,6 @@ type Insert struct {
 	Lists       [][]ast.ExprNode
 	Setlist     []*ast.Assignment
 	OnDuplicate []*ast.Assignment
-	SelectPlan  Plan
 
 	IsReplace bool
 	Priority  int

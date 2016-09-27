@@ -39,14 +39,6 @@ const (
 	SystemInternalError terror.ErrCode = 2
 )
 
-// BuildPlan builds a plan from a node.
-// It returns ErrUnsupportedType if ast.Node type is not supported yet.
-func BuildPlan(node ast.Node) (Plan, error) {
-	builder := planBuilder{allocator: new(idAllocator)}
-	p := builder.build(node)
-	return p, builder.err
-}
-
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
@@ -442,11 +434,11 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	insertPlan.initID()
 	insertPlan.self = insertPlan
 	if insert.Select != nil {
-		insertPlan.SelectPlan = b.build(insert.Select)
-		addChild(insertPlan, insertPlan.SelectPlan)
+		selectPlan := b.build(insert.Select)
 		if b.err != nil {
 			return nil
 		}
+		addChild(insertPlan, selectPlan)
 	}
 	return insertPlan
 }
@@ -491,7 +483,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		targetPlan = info.p.PushLimit(nil)
+		targetPlan = info.p
 	}
 	p := &Explain{StmtPlan: targetPlan}
 	addChild(p, targetPlan)

@@ -205,6 +205,7 @@ func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVer
 			continue
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
+			reportRegionError(regionErr)
 			// Retry if error is `NotLeader`.
 			if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 				log.Warnf("tikv reports `NotLeader`: %s, ctx: %s, retry later", notLeader, req.Context)

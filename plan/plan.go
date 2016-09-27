@@ -118,6 +118,7 @@ func (c *columnProp) equal(nc *columnProp) bool {
 type requiredProperty struct {
 	props      []*columnProp
 	sortKeyLen int
+	limit      *Limit
 }
 
 // getHashKey encodes a requiredProperty to a unique hash code.
@@ -169,9 +170,6 @@ type PhysicalPlan interface {
 
 	// Copy copies the current plan.
 	Copy() PhysicalPlan
-
-	// PushLimit tries to push down limit as deeply as possible.
-	PushLimit(l *Limit) PhysicalPlan
 }
 
 type baseLogicalPlan struct {
