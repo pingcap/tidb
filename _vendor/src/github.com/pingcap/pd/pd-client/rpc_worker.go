@@ -15,33 +15,18 @@ package pd
 
 import (
 	"bufio"
-	"net"
-	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/deadline"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/msgpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/kvproto/pkg/util"
 	"github.com/pingcap/pd/pkg/metrics"
 	"github.com/twinj/uuid"
-)
-
-const (
-	pdRPCPrefix      = "/pd/rpc"
-	connectPDTimeout = time.Second * 3
-	netIOTimeout     = time.Second
-)
-
-const (
-	readBufferSize  = 8 * 1024
-	writeBufferSize = 8 * 1024
 )
 
 const maxPipelineRequest = 10000
@@ -74,16 +59,16 @@ type clusterConfigRequest struct {
 }
 
 type rpcWorker struct {
-	addr      string
+	urls      []string
 	clusterID uint64
 	requests  chan interface{}
 	wg        sync.WaitGroup
 	quit      chan struct{}
 }
 
-func newRPCWorker(addr string, clusterID uint64) *rpcWorker {
+func newRPCWorker(addrs []string, clusterID uint64) *rpcWorker {
 	w := &rpcWorker{
-		addr:      addr,
+		urls:      addrsToUrls(addrs),
 		clusterID: clusterID,
 		requests:  make(chan interface{}, maxPipelineRequest),
 		quit:      make(chan struct{}),
@@ -117,22 +102,12 @@ func (w *rpcWorker) work() {
 	defer w.wg.Done()
 
 RECONNECT:
-	log.Infof("[pd] connect to pd server %v", w.addr)
-	conn, err := rpcConnect(w.addr)
-	if err != nil {
-		log.Warnf("[pd] failed connect pd server: %v, will retry later", err)
-
-		select {
-		case <-time.After(netIOTimeout):
-			goto RECONNECT
-		case <-w.quit:
-			return
-		}
+	log.Infof("[pd] connect to pd server %v", w.urls)
+	conn := mustNewConn(w.urls, w.quit)
+	if conn == nil {
+		return // Closed.
 	}
-
-	reader := bufio.NewReaderSize(deadline.NewDeadlineReader(conn, netIOTimeout), readBufferSize)
-	writer := bufio.NewWriterSize(deadline.NewDeadlineWriter(conn, netIOTimeout), writeBufferSize)
-	readwriter := bufio.NewReadWriter(reader, writer)
+	log.Infof("[pd] connected to %v", conn.RemoteAddr())
 
 	for {
 		var pending []interface{}
@@ -148,13 +123,17 @@ RECONNECT:
 					break POP_ALL
 				}
 			}
-			if ok := w.handleRequests(pending, readwriter); !ok {
+			if ok := w.handleRequests(pending, conn.ReadWriter); !ok {
 				conn.Close()
 				goto RECONNECT
 			}
 		case <-w.quit:
 			conn.Close()
 			return
+		case leaderConn := <-conn.ConnChan:
+			conn.Close()
+			conn = leaderConn
+			log.Infof("[pd] reconnected to leader %v", conn.RemoteAddr())
 		}
 	}
 }
@@ -361,52 +340,15 @@ func (w *rpcWorker) checkResponse(resp *pdpb.Response) error {
 	return nil
 }
 
-func parseUrls(s string) ([]url.URL, error) {
-	items := strings.Split(s, ",")
-	urls := make([]url.URL, 0, len(items))
-	for _, item := range items {
-		u, err := url.Parse(item)
-		if err != nil {
-			return nil, errors.Trace(err)
+func addrsToUrls(addrs []string) []string {
+	// Add default schema "http://" to addrs.
+	urls := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		if strings.Contains(addr, "://") {
+			urls = append(urls, addr)
+		} else {
+			urls = append(urls, "http://"+addr)
 		}
-
-		urls = append(urls, *u)
 	}
-
-	return urls, nil
-}
-
-func rpcConnect(addr string) (net.Conn, error) {
-	req, err := http.NewRequest("GET", pdRPCPrefix, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	urls, err := parseUrls(addr)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	for _, url := range urls {
-		var conn net.Conn
-		switch url.Scheme {
-		// used in tests
-		case "unix", "unixs":
-			conn, err = net.DialTimeout("unix", url.Host, connectPDTimeout)
-		default:
-			conn, err = net.DialTimeout("tcp", url.Host, connectPDTimeout)
-		}
-
-		if err != nil {
-			continue
-		}
-		err = req.Write(conn)
-		if err != nil {
-			conn.Close()
-			continue
-		}
-		return conn, nil
-	}
-
-	return nil, errors.Errorf("connect to %s failed", addr)
+	return urls
 }

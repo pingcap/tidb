@@ -15,6 +15,8 @@ package plan
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -28,8 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"sort"
-	"strings"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -313,8 +313,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		c.Assert(err, IsNil)
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		p = info.p.PushLimit(nil)
-		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
 
@@ -371,7 +370,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t a where a.c < 10000 order by a.a limit 2",
-			best: "Index(t.c_d_e)[[-inf,10000)]->Projection->Sort + Limit(2) + Offset(0)",
+			best: "Index(t.c_d_e)[[-inf,10000)]->Sort + Limit(2) + Offset(0)->Projection",
 		},
 		{
 			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by a.c",
@@ -395,7 +394,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select exists(select * from t b where a.a = b.a and b.c = 1) from t a order by a.c limit 3",
-			best: "SemiJoinWithAux{Index(t.c_d_e)[[<nil>,+inf]]->Index(t.c_d_e)[[1,1]]}->Projection->Trim",
+			best: "SemiJoinWithAux{Index(t.c_d_e)[[<nil>,+inf]]->Limit->Index(t.c_d_e)[[1,1]]}->Projection->Trim",
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t where t.c = 1 union select t.c from t) k order by a limit 1",
@@ -430,8 +429,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		c.Assert(err, IsNil)
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		p = info.p.PushLimit(nil)
-		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
 
@@ -592,8 +590,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		c.Assert(err, IsNil)
 		info, err := p.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		np := info.p.PushLimit(nil)
-		c.Assert(ToString(np), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
 

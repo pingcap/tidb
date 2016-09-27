@@ -13,7 +13,10 @@
 
 package tikv
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 var (
 	txnCounter = prometheus.NewCounter(
@@ -129,7 +132,31 @@ var (
 			Name:      "lock_resolver_actions_total",
 			Help:      "Counter of lock resolver actions.",
 		}, []string{"type"})
+
+	regionErrorCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "region_err_total",
+			Help:      "Counter of region errors.",
+		}, []string{"type"})
 )
+
+func reportRegionError(e *errorpb.Error) {
+	if e.GetNotLeader() != nil {
+		regionErrorCounter.WithLabelValues("not_leader").Inc()
+	} else if e.GetRegionNotFound() != nil {
+		regionErrorCounter.WithLabelValues("region_not_found").Inc()
+	} else if e.GetKeyNotInRegion() != nil {
+		regionErrorCounter.WithLabelValues("key_not_in_region").Inc()
+	} else if e.GetStaleEpoch() != nil {
+		regionErrorCounter.WithLabelValues("stale_epoch").Inc()
+	} else if e.GetServerIsBusy() != nil {
+		regionErrorCounter.WithLabelValues("server_is_busy").Inc()
+	} else {
+		regionErrorCounter.WithLabelValues("unknown").Inc()
+	}
+}
 
 func init() {
 	prometheus.MustRegister(txnCounter)
@@ -146,4 +173,5 @@ func init() {
 	prometheus.MustRegister(gcWorkerCounter)
 	prometheus.MustRegister(gcHistogram)
 	prometheus.MustRegister(lockResolverCounter)
+	prometheus.MustRegister(regionErrorCounter)
 }
