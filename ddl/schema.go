@@ -162,11 +162,10 @@ func (d *ddl) dropSchemaData(tIDs []int64, job *model.Job, m *meta.Meta) (bool, 
 
 	var isFinished bool
 	var err error
-	var ids []int64
 	for i, id := range tIDs {
-		// add table infoschema to the job.
 		job.TableID = id
-		isFinished, err = d.dropTableData(id, job)
+		limit := maxBatchSize
+		isFinished, err = d.dropTableData(id, job, limit)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -174,15 +173,15 @@ func (d *ddl) dropSchemaData(tIDs []int64, job *model.Job, m *meta.Meta) (bool, 
 			break
 		}
 
-		ids = make([]int64, 0, len(tIDs)-1)
-		ids = append(ids, tIDs[:i]...)
 		if i < len(tIDs)-1 {
-			ids = append(ids, tIDs[i+1:]...)
+			tIDs = tIDs[i+1:]
+		} else {
+			tIDs = nil
 		}
 		continue
 	}
 	job.TableID = 0
-	job.Args = []interface{}{ids}
+	job.Args = []interface{}{tIDs}
 
 	return isFinished, nil
 }

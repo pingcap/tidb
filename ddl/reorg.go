@@ -169,13 +169,18 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 	return nil
 }
 
-func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job) (bool, error) {
+// delKeysWithPrefix deletes keys with prefix key in a limited number. If limit = -1, deletes all keys.
+func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, limit int) (bool, error) {
 	count := job.GetRowCount()
 	var isFinished bool
+	batch := limit
+	if batch == -1 {
+		batch = maxBatchSize
+	}
 
 	for {
 		startTS := time.Now()
-		keys := make([]kv.Key, 0, maxBatchSize)
+		keys := make([]kv.Key, 0, batch)
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err1 := d.isReorgRunnable(txn, jobType); err1 != nil {
 				return errors.Trace(err1)
@@ -187,7 +192,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job) 
 			}
 			defer iter.Close()
 
-			for i := 0; i < maxBatchSize; i++ {
+			for i := 0; i < batch; i++ {
 				if iter.Valid() && iter.Key().HasPrefix(prefix) {
 					keys = append(keys, iter.Key().Clone())
 					err = iter.Next()
@@ -222,11 +227,11 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job) 
 		log.Infof("[ddl] deleted %v keys with prefix %q take time %v", count, prefix, sub)
 
 		// delete no keys, return.
-		if len(keys) < maxBatchSize {
+		if len(keys) < batch {
 			isFinished = true
 			break
 		}
-		if jobType == bgJobFlag {
+		if limit != -1 {
 			isFinished = false
 			break
 		}

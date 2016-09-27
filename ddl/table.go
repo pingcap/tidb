@@ -87,7 +87,8 @@ func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
 	}
 	tblInfo.State = model.StateDeleteReorganization
 
-	isFinished, err := d.dropTableData(tblInfo.ID, job)
+	limit := maxBatchSize
+	isFinished, err := d.dropTableData(tblInfo.ID, job, limit)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -179,7 +180,8 @@ func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, erro
 	return tblInfo, nil
 }
 
-func (d *ddl) dropTableData(tID int64, job *model.Job) (bool, error) {
-	isFinished, err := d.delKeysWithPrefix(tablecodec.EncodeTablePrefix(tID), bgJobFlag, job)
+// delKeysWithPrefix deletes data in a limited number. If limit = -1, deletes all data.
+func (d *ddl) dropTableData(tID int64, job *model.Job, limit int) (bool, error) {
+	isFinished, err := d.delKeysWithPrefix(tablecodec.EncodeTablePrefix(tID), bgJobFlag, job, limit)
 	return isFinished, errors.Trace(err)
 }

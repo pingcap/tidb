@@ -472,7 +472,8 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo, job *model.Job) error {
 	prefix := tablecodec.EncodeTableIndexPrefix(t.Meta().ID, indexInfo.ID)
 	// It's asynchronous so it doesn't need to consider if it completes.
-	_, err := d.delKeysWithPrefix(prefix, ddlJobFlag, job)
+	deleteAll := -1
+	_, err := d.delKeysWithPrefix(prefix, ddlJobFlag, job, deleteAll)
 
 	return errors.Trace(err)
 }
