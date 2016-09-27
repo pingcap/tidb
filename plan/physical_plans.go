@@ -106,10 +106,11 @@ func (p *physicalTableSource) addTopN(prop *requiredProperty) bool {
 	if p.client == nil || !p.client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeTopN) {
 		return false
 	}
-	if prop.limit != nil {
-		count := int64(prop.limit.Count + prop.limit.Offset)
-		p.LimitCount = &count
+	if prop.limit == nil || len(prop.props) == 0 {
+		return false
 	}
+	count := int64(prop.limit.Count + prop.limit.Offset)
+	p.LimitCount = &count
 	for _, item := range prop.props {
 		p.SortItems = append(p.SortItems, sortByItemToPB(p.client, item.col, item.desc))
 	}

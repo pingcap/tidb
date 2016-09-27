@@ -373,6 +373,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[-inf,10000)]->Sort + Limit(2) + Offset(0)->Projection",
 		},
 		{
+			sql:  "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.a limit 2",
+			best: "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
+		},
+		{
 			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by a.c",
 			best: "LeftHashJoin{Index(t.c_d_e)[[<nil>,+inf]]->Projection->Table(t)->Projection}->Projection",
 		},
