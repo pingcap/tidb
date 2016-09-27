@@ -151,7 +151,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 		}
 	}
 
-	d1.setHookWithLock(tc)
+	d1.setHook(tc)
 
 	testDropSchema(c, ctx, d1, dbInfo)
 

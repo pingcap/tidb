@@ -111,7 +111,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			}
 		}
 	}
-	d.setHookWithLock(tc)
+	d.setHook(tc)
 	testCreateIndex(c, ctx, d, s.dbInfo, originTable.Meta(), false, "c2", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 

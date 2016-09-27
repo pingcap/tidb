@@ -597,7 +597,7 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 		}
 	}
 
-	d.setHookWithLock(tc)
+	d.setHook(tc)
 
 	// Use local ddl for callback test.
 	s.d.close()

@@ -173,9 +173,9 @@ func (s *testTableSuite) TestTable(c *C) {
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
-	// to drop a table with maxBatchSize+10 records.
+	// to drop a table with defaultBatchSize+10 records.
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	for i := 1; i <= maxBatchSize+10; i++ {
+	for i := 1; i <= defaultBatchSize+10; i++ {
 		_, err = tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
@@ -190,16 +190,16 @@ func (s *testTableSuite) TestTable(c *C) {
 		job.Mu.Lock()
 		count := job.RowCount
 		job.Mu.Unlock()
-		if updatedCount == 0 && count != maxBatchSize {
-			checkErr = errors.Errorf("row count %v isn't equal to %v", count, maxBatchSize)
+		if updatedCount == 0 && count != defaultBatchSize {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, defaultBatchSize)
 			return
 		}
-		if updatedCount == 1 && count != maxBatchSize+10 {
-			checkErr = errors.Errorf("row count %v isn't equal to %v", count, maxBatchSize+10)
+		if updatedCount == 1 && count != defaultBatchSize+10 {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, defaultBatchSize+10)
 		}
 		updatedCount++
 	}
-	d.setHookWithLock(tc)
+	d.setHook(tc)
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 

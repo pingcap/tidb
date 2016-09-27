@@ -158,13 +158,13 @@ func (s *testSchemaSuite) TestSchemaT(c *C) {
 		_, err := tbl1.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
-	// create table t1 with maxBatchSize+10 records.
+	// create table t1 with defaultBatchSize+10 records.
 	tblInfo2 := testTableInfo(c, d, "t1", 3)
 	tJob2 := testCreateTable(c, ctx, d, dbInfo, tblInfo2)
 	testCheckTableState(c, d, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(c, d, tJob2, true)
 	tbl2 := testGetTable(c, d, dbInfo.ID, tblInfo2.ID)
-	for i := 1; i <= maxBatchSize+10; i++ {
+	for i := 1; i <= defaultBatchSize+10; i++ {
 		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
@@ -178,16 +178,16 @@ func (s *testSchemaSuite) TestSchemaT(c *C) {
 		job.Mu.Lock()
 		count := job.RowCount
 		job.Mu.Unlock()
-		if updatedCount == 0 && count != maxBatchSize+100 {
-			checkErr = errors.Errorf("row count %v isn't equal to %v", count, maxBatchSize+100)
+		if updatedCount == 0 && count != defaultBatchSize+100 {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, defaultBatchSize+100)
 			return
 		}
-		if updatedCount == 1 && count != maxBatchSize+110 {
-			checkErr = errors.Errorf("row count %v isn't equal to %v", count, maxBatchSize+110)
+		if updatedCount == 1 && count != defaultBatchSize+110 {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, defaultBatchSize+110)
 		}
 		updatedCount++
 	}
-	d.setHookWithLock(tc)
+	d.setHook(tc)
 	job = testDropSchema(c, ctx, d, dbInfo)
 	testCheckSchemaState(c, d, dbInfo, model.StateNone)
 	// check background ddl info

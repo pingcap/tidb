@@ -112,7 +112,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			mu.Unlock()
 		}
 	}
-	d.setHookWithLock(tc)
+	d.setHook(tc)
 	defaultValue := int64(3)
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
@@ -154,7 +154,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 			}
 		}
 	}
-	d.setHookWithLock(tc)
+	d.setHook(tc)
 	d.start()
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
@@ -183,7 +183,7 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx context.Context, d *ddl
 			}
 		}
 	}
-	d.setHookWithLock(tc)
+	d.setHook(tc)
 	d.start()
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)

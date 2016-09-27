@@ -323,7 +323,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hookOnChangeWithLock(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -340,7 +340,7 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hookOnChangeWithLock(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -890,7 +890,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 			d.handleAutoIncID(tbInfo, schema.ID)
 		}
 	}
-	err = d.hookOnChangeWithLock(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -1024,7 +1024,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hookOnChangeWithLock(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -1055,7 +1055,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hookOnChangeWithLock(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -1079,7 +1079,7 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hookOnChangeWithLock(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -1107,7 +1107,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hookOnChangeWithLock(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -1164,7 +1164,7 @@ func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.C
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hookOnChangeWithLock(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 
 }
@@ -1189,7 +1189,7 @@ func (d *ddl) DropForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIS
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hookOnChangeWithLock(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -1213,18 +1213,18 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hookOnChangeWithLock(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
-func (d *ddl) hookOnChangeWithLock(err error) error {
+func (d *ddl) callHookOnChanged(err error) error {
 	d.hookMu.Lock()
 	err = d.hook.OnChanged(err)
 	d.hookMu.Unlock()
 	return errors.Trace(err)
 }
 
-func (d *ddl) setHookWithLock(h Callback) {
+func (d *ddl) setHook(h Callback) {
 	d.hookMu.Lock()
 	d.hook = h
 	d.hookMu.Unlock()

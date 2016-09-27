@@ -338,7 +338,7 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 	return rowKey, vals, nil
 }
 
-const maxBatchSize = 1024
+const defaultBatchSize = 1024
 
 // How to add index in reorganization state?
 //  1. Generate a snapshot with special version.
@@ -390,7 +390,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 	}
 	defer it.Close()
 
-	handles := make([]int64, 0, maxBatchSize)
+	handles := make([]int64, 0, defaultBatchSize)
 	for it.Valid() {
 		if !it.Key().HasPrefix(t.RecordPrefix()) {
 			break
@@ -403,7 +403,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 		}
 
 		handles = append(handles, handle)
-		if len(handles) == maxBatchSize {
+		if len(handles) == defaultBatchSize {
 			break
 		}
 

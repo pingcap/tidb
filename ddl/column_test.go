@@ -773,7 +773,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 		}
 	}
 
-	d.setHookWithLock(tc)
+	d.setHook(tc)
 
 	// Use local ddl for callback test.
 	s.d.close()
@@ -838,7 +838,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 		}
 	}
 
-	d.setHookWithLock(tc)
+	d.setHook(tc)
 
 	// Use local ddl for callback test.
 	s.d.close()

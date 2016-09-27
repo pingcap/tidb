@@ -161,15 +161,15 @@ func (d *ddl) dropSchemaData(tIDs []int64, job *model.Job, m *meta.Meta) (bool, 
 	}
 
 	var isFinished bool
-	var err error
 	for i, id := range tIDs {
 		job.TableID = id
-		limit := maxBatchSize
-		isFinished, err = d.dropTableData(id, job, limit)
+		limit := defaultBatchSize
+		delCount, err := d.dropTableData(id, job, limit)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		if !isFinished {
+		if delCount == limit {
+			isFinished = false
 			break
 		}
 
@@ -178,6 +178,7 @@ func (d *ddl) dropSchemaData(tIDs []int64, job *model.Job, m *meta.Meta) (bool, 
 		} else {
 			tIDs = nil
 		}
+		isFinished = true
 		continue
 	}
 	job.TableID = 0
