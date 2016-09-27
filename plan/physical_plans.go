@@ -20,7 +20,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -40,7 +39,7 @@ type PhysicalIndexScan struct {
 	basePlan
 	physicalTableSource
 
-	ctx        context.Context
+	txn        kv.Transaction
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
 	Ranges     []*IndexRange
@@ -54,15 +53,14 @@ type PhysicalIndexScan struct {
 
 	accessEqualCount int
 	AccessCondition  []expression.Expression
-	// ConditionPBExpr is the pb structure of conditions that pushed down.
-	ConditionPBExpr *tipb.Expr
+	conditions       []expression.Expression
 
 	TableAsName *model.CIStr
 }
 
 type physicalDistSQLPlan interface {
 	addAggregation(agg *PhysicalAggregation) expression.Schema
-	addTopN(prop *requiredProperty)
+	addTopN(prop *requiredProperty) bool
 	addLimit(limit *Limit)
 }
 
@@ -74,6 +72,7 @@ type physicalTableSource struct {
 	AggFuncs   []*tipb.Expr
 	GbyItems   []*tipb.ByItem
 
+	// ConditionPBExpr is the pb structure of conditions that pushed down.
 	ConditionPBExpr *tipb.Expr
 
 	LimitCount *int64
@@ -103,9 +102,9 @@ func (p *physicalTableSource) addLimit(l *Limit) {
 	}
 }
 
-func (p *physicalTableSource) addTopN(prop *requiredProperty) {
+func (p *physicalTableSource) addTopN(prop *requiredProperty) bool {
 	if p.client == nil || !p.client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeTopN) {
-		return
+		return false
 	}
 	if prop.limit != nil {
 		count := int64(prop.limit.Count + prop.limit.Offset)
@@ -114,6 +113,7 @@ func (p *physicalTableSource) addTopN(prop *requiredProperty) {
 	for _, item := range prop.props {
 		p.SortItems = append(p.SortItems, sortByItemToPB(p.client, item.col, item.desc))
 	}
+	return true
 }
 
 func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation) expression.Schema {
@@ -178,7 +178,7 @@ type PhysicalTableScan struct {
 	basePlan
 	physicalTableSource
 
-	ctx     context.Context
+	txn     kv.Transaction
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
 	DBName  *model.CIStr
@@ -187,8 +187,7 @@ type PhysicalTableScan struct {
 	pkCol   *expression.Column
 
 	AccessCondition []expression.Expression
-	// ConditionPBExpr is the pb structure of conditions that pushed down.
-	ConditionPBExpr *tipb.Expr
+	conditions      []expression.Expression
 
 	TableAsName *model.CIStr
 

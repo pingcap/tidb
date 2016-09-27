@@ -81,23 +81,25 @@ func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, in
 func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	table := p.Table
 	client := p.ctx.GetClient()
+	txn, err := p.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	var resultPlan PhysicalPlan
 	ts := &PhysicalTableScan{
-		ctx:                 p.ctx,
+		txn:                 txn,
 		Table:               p.Table,
 		Columns:             p.Columns,
 		TableAsName:         p.TableAsName,
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
-	ts.addLimit(prop.limit)
 	ts.SetSchema(p.GetSchema())
 	resultPlan = ts
-	var oldConditions []expression.Expression
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
+		ts.conditions = sel.Conditions
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
-		oldConditions = sel.Conditions
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.DeepCopy())
 		}
@@ -123,18 +125,6 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 		}
 	} else {
 		ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
-	}
-	txn, err := p.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if txn != nil && !txn.IsReadOnly() {
-		us := &PhysicalUnionScan{
-			Condition: expression.ComposeCNFCondition(oldConditions),
-		}
-		us.SetChildren(resultPlan)
-		us.SetSchema(resultPlan.GetSchema())
-		resultPlan = us
 	}
 	statsTbl := p.statisticTable
 	rowCount := uint64(statsTbl.Count)
@@ -181,8 +171,12 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 	statsTbl := p.statisticTable
 	var resultPlan PhysicalPlan
 	client := p.ctx.GetClient()
+	txn, err := p.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	is := &PhysicalIndexScan{
-		ctx:                 p.ctx,
+		txn:                 txn,
 		Index:               index,
 		Table:               p.Table,
 		Columns:             p.Columns,
@@ -191,20 +185,17 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
-	is.addLimit(prop.limit)
 	is.SetSchema(p.schema)
 	rowCount := uint64(statsTbl.Count)
 	resultPlan = is
-	var oldConditions []expression.Expression
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
+		is.conditions = sel.Conditions
 		rowCount = 0
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
-		oldConditions = sel.Conditions
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.DeepCopy())
 		}
-		oldConditions = sel.Conditions
 		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
 		if client != nil {
 			var memDB bool
@@ -235,18 +226,6 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 	} else {
 		rb := rangeBuilder{}
 		is.Ranges = rb.buildIndexRanges(fullRange)
-	}
-	txn, err := p.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if txn != nil && !txn.IsReadOnly() {
-		us := &PhysicalUnionScan{
-			Condition: expression.ComposeCNFCondition(oldConditions),
-		}
-		us.SetChildren(resultPlan)
-		us.SetSchema(resultPlan.GetSchema())
-		resultPlan = us
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount}), nil
@@ -810,6 +789,9 @@ func (p *Selection) handlePushNothing(prop *requiredProperty) (*physicalPlanInfo
 		return nil, errors.Trace(err)
 	}
 	if prop.limit != nil && len(prop.props) > 0 {
+		if t, ok := info.p.(physicalDistSQLPlan); ok {
+			t.addTopN(prop)
+		}
 		info = enforceProperty(prop, info)
 	} else if len(prop.props) != 0 {
 		info.cost = math.MaxFloat64
