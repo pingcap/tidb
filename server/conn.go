@@ -192,10 +192,14 @@ func handshakeResponseFromData(packet *handshakeResponse41, data []byte) error {
 	packet.User = string(data[pos : pos+bytes.IndexByte(data[pos:], 0)])
 	pos += len(packet.User) + 1
 
-	if false {
-		// TODO: Support mysql.ClientPluginAuthLenencClientData, skip it now
+	if capability&mysql.ClientPluginAuthLenencClientData > 0 {
+		// MySQL client set the wrong capability, it will set this bit even server doesn't
+		// support ClientPluginAuthLenencClientData.
+		// https://github.com/mysql/mysql-server/blob/5.7/sql-common/client.c#L3478
 		if num, null, off := parseLengthEncodedInt(data[pos:]); !null {
-			pos = pos + off + int(num)
+			pos += off
+			packet.Auth = data[pos : pos+int(num)]
+			pos += int(num)
 		}
 	} else if capability&mysql.ClientSecureConnection > 0 {
 		// auth length and auth
