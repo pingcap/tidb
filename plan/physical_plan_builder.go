@@ -80,18 +80,20 @@ func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, in
 
 func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	table := p.Table
+	client := p.ctx.GetClient()
 	var resultPlan PhysicalPlan
 	ts := &PhysicalTableScan{
-		ctx:         p.ctx,
-		Table:       p.Table,
-		Columns:     p.Columns,
-		TableAsName: p.TableAsName,
-		DBName:      p.DBName,
+		ctx:                 p.ctx,
+		Table:               p.Table,
+		Columns:             p.Columns,
+		TableAsName:         p.TableAsName,
+		DBName:              p.DBName,
+		physicalTableSource: physicalTableSource{client: client},
 	}
+	ts.addLimit(prop.limit)
 	ts.SetSchema(p.GetSchema())
 	resultPlan = ts
 	var oldConditions []expression.Expression
-	var err error
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
@@ -100,7 +102,6 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 			conds = append(conds, cond.DeepCopy())
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
-		client := p.ctx.GetClient()
 		if client != nil {
 			var memDB bool
 			switch p.DBName.L {
@@ -108,18 +109,16 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 				memDB = true
 			}
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-				ts.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, client)
-			}
-			if err != nil {
-				return nil, errors.Trace(err)
+				ts.ConditionPBExpr, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
 			}
 		}
-		err = buildTableRange(ts)
+		err := buildTableRange(ts)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if len(newSel.Conditions) > 0 {
 			newSel.SetChildren(ts)
+			newSel.onTable = true
 			resultPlan = &newSel
 		}
 	} else {
@@ -134,6 +133,7 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 			Condition: expression.ComposeCNFCondition(oldConditions),
 		}
 		us.SetChildren(resultPlan)
+		us.SetSchema(resultPlan.GetSchema())
 		resultPlan = us
 	}
 	statsTbl := p.statisticTable
@@ -180,20 +180,22 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexInfo) (*physicalPlanInfo, error) {
 	statsTbl := p.statisticTable
 	var resultPlan PhysicalPlan
+	client := p.ctx.GetClient()
 	is := &PhysicalIndexScan{
-		ctx:         p.ctx,
-		Index:       index,
-		Table:       p.Table,
-		Columns:     p.Columns,
-		TableAsName: p.TableAsName,
-		OutOfOrder:  true,
-		DBName:      p.DBName,
+		ctx:                 p.ctx,
+		Index:               index,
+		Table:               p.Table,
+		Columns:             p.Columns,
+		TableAsName:         p.TableAsName,
+		OutOfOrder:          true,
+		DBName:              p.DBName,
+		physicalTableSource: physicalTableSource{client: client},
 	}
+	is.addLimit(prop.limit)
 	is.SetSchema(p.schema)
 	rowCount := uint64(statsTbl.Count)
 	resultPlan = is
 	var oldConditions []expression.Expression
-	var err error
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
 		rowCount = 0
 		newSel := *sel
@@ -204,7 +206,6 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 		}
 		oldConditions = sel.Conditions
 		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
-		client := p.ctx.GetClient()
 		if client != nil {
 			var memDB bool
 			switch p.DBName.L {
@@ -212,13 +213,10 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 				memDB = true
 			}
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-				is.ConditionPBExpr, newSel.Conditions, err = expressionsToPB(newSel.Conditions, client)
-			}
-			if err != nil {
-				return nil, errors.Trace(err)
+				is.ConditionPBExpr, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
 			}
 		}
-		err = buildIndexRange(is)
+		err := buildIndexRange(is)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -231,6 +229,7 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 		}
 		if len(newSel.Conditions) > 0 {
 			newSel.SetChildren(is)
+			newSel.onTable = true
 			resultPlan = &newSel
 		}
 	} else {
@@ -246,6 +245,7 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 			Condition: expression.ComposeCNFCondition(oldConditions),
 		}
 		us.SetChildren(resultPlan)
+		us.SetSchema(resultPlan.GetSchema())
 		resultPlan = us
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
@@ -323,6 +323,62 @@ func addPlanToResponse(p PhysicalPlan, planInfo *physicalPlanInfo) *physicalPlan
 	return &physicalPlanInfo{p: np, cost: planInfo.cost, count: planInfo.count}
 }
 
+// enforceProperty add an topN or sort or limit upon current operator.
+func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPlanInfo {
+	if len(prop.props) != 0 {
+		items := make([]*ByItems, 0, len(prop.props))
+		for _, col := range prop.props {
+			items = append(items, &ByItems{Expr: col.col, Desc: col.desc})
+		}
+		sort := &Sort{
+			ByItems:   items,
+			ExecLimit: prop.limit,
+		}
+		sort.SetSchema(info.p.GetSchema())
+		info = addPlanToResponse(sort, info)
+		count := info.count
+		if prop.limit != nil {
+			count = prop.limit.Offset + prop.limit.Count
+		}
+		info.cost += float64(info.count)*cpuFactor + float64(count)*memoryFactor
+	} else if prop.limit != nil {
+		limit := prop.limit.Copy()
+		limit.SetSchema(info.p.GetSchema())
+		info = addPlanToResponse(limit, info)
+	}
+	if prop.limit != nil && prop.limit.Count < info.count {
+		info.count = prop.limit.Count
+	}
+	return info
+}
+
+// removeLimit removes limit from prop.
+func removeLimit(prop *requiredProperty) *requiredProperty {
+	ret := &requiredProperty{
+		props:      prop.props,
+		sortKeyLen: prop.sortKeyLen,
+	}
+	return ret
+}
+
+// convertLimitOffsetToCount change limit(offset, count) in prop to limit(0, offset + count)
+func convertLimitOffsetToCount(prop *requiredProperty) *requiredProperty {
+	ret := &requiredProperty{
+		props:      prop.props,
+		sortKeyLen: prop.sortKeyLen,
+	}
+	if prop.limit != nil {
+		ret.limit = &Limit{
+			Count: prop.limit.Offset + prop.limit.Count,
+		}
+	}
+	return ret
+}
+
+func limitProperty(limit *Limit) *requiredProperty {
+	return &requiredProperty{limit: limit}
+}
+
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
 func (p *Limit) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
@@ -332,15 +388,11 @@ func (p *Limit) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	if info != nil {
 		return info, nil
 	}
-	info, err = p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(prop)
+	info, err = p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(limitProperty(&Limit{Offset: p.Offset, Count: p.Count}))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	count := p.Offset + p.Count
-	info = addPlanToResponse(p, info)
-	if count < info.count {
-		info.count = count
-	}
+	info = enforceProperty(prop, info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
@@ -372,21 +424,30 @@ func (p *Join) handleLeftJoin(prop *requiredProperty, innerJoin bool) (*physical
 	} else {
 		join.JoinType = LeftOuterJoin
 	}
+	lProp := prop
 	if !allLeft {
-		prop = &requiredProperty{}
+		lProp = &requiredProperty{}
 	}
-	lInfo, err := lChild.convert2PhysicalPlan(prop)
+	var lInfo *physicalPlanInfo
+	var err error
+	if innerJoin {
+		lInfo, err = lChild.convert2PhysicalPlan(removeLimit(lProp))
+	} else {
+		lInfo, err = lChild.convert2PhysicalPlan(convertLimitOffsetToCount(lProp))
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if !allLeft {
-		lInfo.cost = math.MaxFloat64
 	}
 	rInfo, err := rChild.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
+	if !allLeft {
+		resultInfo = enforceProperty(prop, resultInfo)
+	} else {
+		resultInfo = enforceProperty(limitProperty(prop.limit), resultInfo)
+	}
 	return resultInfo, nil
 }
 
@@ -420,11 +481,25 @@ func (p *Join) handleRightJoin(prop *requiredProperty, innerJoin bool) (*physica
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rInfo, err := rChild.convert2PhysicalPlan(prop)
+	rProp := prop
+	if !allRight {
+		rProp = &requiredProperty{}
+	}
+	var rInfo *physicalPlanInfo
+	if innerJoin {
+		rInfo, err = rChild.convert2PhysicalPlan(removeLimit(rProp))
+	} else {
+		rInfo, err = rChild.convert2PhysicalPlan(convertLimitOffsetToCount(rProp))
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
+	if !allRight {
+		resultInfo = enforceProperty(prop, resultInfo)
+	} else {
+		resultInfo = enforceProperty(limitProperty(prop.limit), resultInfo)
+	}
 	return resultInfo, nil
 }
 
@@ -456,10 +531,14 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 			Anti:            p.anti,
 		}
 		join.SetSchema(p.schema)
+		lProp := prop
 		if !allLeft {
-			prop = &requiredProperty{}
+			lProp = &requiredProperty{}
 		}
-		lInfo, err := lChild.convert2PhysicalPlan(prop)
+		if p.JoinType == SemiJoin {
+			lProp = removeLimit(lProp)
+		}
+		lInfo, err := lChild.convert2PhysicalPlan(lProp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -474,7 +553,9 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 			resultInfo.count = lInfo.count
 		}
 		if !allLeft {
-			resultInfo.cost = math.MaxFloat64
+			resultInfo = enforceProperty(prop, resultInfo)
+		} else if p.JoinType == SemiJoin {
+			resultInfo = enforceProperty(limitProperty(prop.limit), resultInfo)
 		}
 		p.storePlanInfo(prop, resultInfo)
 		return resultInfo, nil
@@ -564,7 +645,7 @@ func (p *Aggregation) handleStreamAgg(prop *requiredProperty) (*physicalPlanInfo
 	return info, nil
 }
 
-func (p *Aggregation) handleFinalAgg(x physicalDistSQLPlan, childInfo *physicalPlanInfo) (*physicalPlanInfo, error) {
+func (p *Aggregation) handleFinalAgg(x physicalDistSQLPlan, childInfo *physicalPlanInfo) *physicalPlanInfo {
 	agg := &PhysicalAggregation{
 		AggType:      FinalAgg,
 		AggFuncs:     p.AggFuncs,
@@ -572,19 +653,16 @@ func (p *Aggregation) handleFinalAgg(x physicalDistSQLPlan, childInfo *physicalP
 	}
 	agg.SetSchema(p.schema)
 	agg.HasGby = len(p.GroupByItems) > 0
-	schema, err := x.addAggregation(agg, p.ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	schema := x.addAggregation(agg)
 	if len(schema) == 0 {
-		return nil, nil
+		return nil
 	}
 	x.(PhysicalPlan).SetSchema(schema)
 	info := addPlanToResponse(agg, childInfo)
 	info.count = uint64(float64(info.count) * aggFactor)
 	// if we build a final agg, it must be the best plan.
 	info.cost = 0
-	return info, nil
+	return info
 }
 
 func (p *Aggregation) handleHashAgg() (*physicalPlanInfo, error) {
@@ -601,10 +679,7 @@ func (p *Aggregation) handleHashAgg() (*physicalPlanInfo, error) {
 	}
 	if !distinct {
 		if x, ok := childInfo.p.(physicalDistSQLPlan); ok {
-			info, err := p.handleFinalAgg(x, childInfo)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			info := p.handleFinalAgg(x, childInfo)
 			if info != nil {
 				return info, nil
 			}
@@ -632,17 +707,18 @@ func (p *Aggregation) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 	if planInfo != nil {
 		return planInfo, nil
 	}
-	planInfo, err = p.handleHashAgg()
-	if err != nil {
-		return nil, errors.Trace(err)
+	limit := prop.limit
+	if len(prop.props) == 0 {
+		planInfo, err = p.handleHashAgg()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
-	if len(prop.props) > 0 {
-		planInfo.cost = math.MaxFloat64
-	}
-	streamInfo, err := p.handleStreamAgg(prop)
-	if streamInfo.cost < planInfo.cost {
+	streamInfo, err := p.handleStreamAgg(removeLimit(prop))
+	if planInfo == nil || streamInfo.cost < planInfo.cost {
 		planInfo = streamInfo
 	}
+	planInfo = enforceProperty(limitProperty(limit), planInfo)
 	err = p.storePlanInfo(prop, planInfo)
 	return planInfo, errors.Trace(err)
 }
@@ -656,13 +732,12 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	if info != nil {
 		return info, nil
 	}
+	limit := prop.limit
 	childInfos := make([]*physicalPlanInfo, 0, len(p.children))
 	var count uint64
 	for _, child := range p.GetChildren() {
-		newProp := &requiredProperty{
-			props:      make([]*columnProp, 0, len(prop.props)),
-			sortKeyLen: prop.sortKeyLen,
-		}
+		newProp := convertLimitOffsetToCount(prop)
+		newProp.props = make([]*columnProp, 0, len(prop.props))
 		for _, c := range prop.props {
 			idx := p.GetSchema().GetIndex(c.col)
 			newProp.props = append(newProp.props, &columnProp{col: child.GetSchema()[idx], desc: c.desc})
@@ -675,6 +750,7 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		childInfos = append(childInfos, info)
 	}
 	info = p.matchProperty(prop, childInfos...)
+	info = enforceProperty(limitProperty(limit), info)
 	info.count = count
 	p.storePlanInfo(prop, info)
 	return info, nil
@@ -682,7 +758,6 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
 func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
-	var err error
 	info, err := p.getPlanInfo(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -690,15 +765,55 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	if info != nil {
 		return info, nil
 	}
-	info, err = p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(prop)
+	// Firstly, we try to push order
+	info, err = p.handlePushOrder(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if _, ok := p.GetChildByIndex(0).(*DataSource); ok {
-		return info, nil
+	// Secondly, we will push nothing and enforce this prop.
+	infoEnforce, err := p.handlePushNothing(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	info = p.matchProperty(prop, info)
+	if infoEnforce.cost < info.cost {
+		info = infoEnforce
+	}
+	if _, ok := p.GetChildByIndex(0).(*DataSource); !ok {
+		info = p.matchProperty(prop, info)
+	}
 	p.storePlanInfo(prop, info)
+	return info, nil
+}
+
+func (p *Selection) handlePushOrder(prop *requiredProperty) (*physicalPlanInfo, error) {
+	child := p.GetChildByIndex(0).(LogicalPlan)
+	limit := prop.limit
+	info, err := child.convert2PhysicalPlan(removeLimit(prop))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if limit != nil {
+		if np, ok := info.p.(physicalDistSQLPlan); ok {
+			np.addLimit(limit)
+			info.count = limit.Count
+		} else {
+			info = enforceProperty(&requiredProperty{limit: limit}, info)
+		}
+	}
+	return info, nil
+}
+
+func (p *Selection) handlePushNothing(prop *requiredProperty) (*physicalPlanInfo, error) {
+	child := p.GetChildByIndex(0).(LogicalPlan)
+	info, err := child.convert2PhysicalPlan(&requiredProperty{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if prop.limit != nil && len(prop.props) > 0 {
+		info = enforceProperty(prop, info)
+	} else if len(prop.props) != 0 {
+		info.cost = math.MaxFloat64
+	}
 	return info, nil
 }
 
@@ -713,7 +828,8 @@ func (p *Projection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 	}
 	newProp := &requiredProperty{
 		props:      make([]*columnProp, 0, len(prop.props)),
-		sortKeyLen: prop.sortKeyLen}
+		sortKeyLen: prop.sortKeyLen,
+		limit:      prop.limit}
 	childSchema := p.GetChildByIndex(0).GetSchema()
 	usedCols := make([]bool, len(childSchema))
 	canPassSort := true
@@ -792,6 +908,9 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 		}
 	}
 	selfProp.sortKeyLen = len(selfProp.props)
+	if len(prop.props) == 0 && prop.limit != nil {
+		selfProp.limit = prop.limit
+	}
 	sortedPlanInfo, err := p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(selfProp)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -803,10 +922,14 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	cnt := float64(unSortedPlanInfo.count)
 	sortCost := cnt*math.Log2(cnt)*cpuFactor + memoryFactor*cnt
 	if len(selfProp.props) == 0 {
-		sortedPlanInfo = addPlanToResponse(p, unSortedPlanInfo)
+		np := p.Copy().(*Sort)
+		np.ExecLimit = selfProp.limit
+		sortedPlanInfo = addPlanToResponse(np, sortedPlanInfo)
 	} else if sortCost+unSortedPlanInfo.cost < sortedPlanInfo.cost {
 		sortedPlanInfo.cost = sortCost + unSortedPlanInfo.cost
-		sortedPlanInfo = addPlanToResponse(p, unSortedPlanInfo)
+		np := *p
+		np.ExecLimit = selfProp.limit
+		sortedPlanInfo = addPlanToResponse(&np, unSortedPlanInfo)
 	}
 	if !matchProp(prop, selfProp) {
 		sortedPlanInfo.cost = math.MaxFloat64
@@ -824,6 +947,15 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	if info != nil {
 		return info, nil
 	}
+	allFromOuter := true
+	for _, col := range prop.props {
+		if p.InnerPlan.GetSchema().GetIndex(col.col) != -1 {
+			allFromOuter = false
+		}
+	}
+	if !allFromOuter {
+		return &physicalPlanInfo{cost: math.MaxFloat64}, err
+	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	innerInfo, err := p.InnerPlan.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
@@ -835,11 +967,13 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		InnerPlan:   innerInfo.p,
 	}
 	np.SetSchema(p.GetSchema())
-	info, err = child.convert2PhysicalPlan(prop)
+	limit := prop.limit
+	info, err = child.convert2PhysicalPlan(removeLimit(prop))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	info = addPlanToResponse(np, info)
+	info = enforceProperty(limitProperty(limit), info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
@@ -855,12 +989,14 @@ func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanIn
 		return info, nil
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
-	info, err = child.convert2PhysicalPlan(prop)
+	limit := prop.limit
+	info, err = child.convert2PhysicalPlan(removeLimit(prop))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	info = addPlanToResponse(p, info)
 	info.count = uint64(float64(info.count) * distinctFactor)
+	info = enforceProperty(limitProperty(limit), info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
