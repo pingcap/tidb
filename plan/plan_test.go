@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -1032,7 +1033,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		sql string
 		ans string
 	}{
-		// projection can be eliminated.
+		// projection can be eliminated in following cases.
 		{
 			sql: "select a from t",
 			ans: "DataScan(t)",
@@ -1073,7 +1074,23 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 			sql: "select a from (select d as a from t where d = 0) k where k.a = 5",
 			ans: "DataScan(t)->Selection",
 		},
-		// projection can not be eliminated.
+		{
+			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t2.a > 1)",
+			ans: "Join{DataScan(t)->DataScan(t)->Selection}",
+		},
+		{
+			sql: "select t1.a, t2.b from t t1, t t2 where t1.a > 0 and t2.b < 0",
+			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}",
+		},
+		{
+			sql: "select t1.a, t1.b, t2.a, t2.b from t t1, t t2 where t1.a > 0 and t2.b < 0",
+			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}",
+		},
+		{
+			sql: "select t1.b, t1.a, t2.b, t2.a from t t1, t t2 where t1.a > 0 and t2.b < 0",
+			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}",
+		},
+		// projection can not be eliminated in following cases.
 		{
 			sql: "select c as a, c as b from t",
 			ans: "DataScan(t)->Projection",
@@ -1083,8 +1100,12 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 			ans: "DataScan(t)->Selection->Projection",
 		},
 		{
-			sql: "select t1.a, t2.b from t t1, t t2 where t1.a > 0 and t2.b < 0",
+			sql: "select t1.a, t2.b, t2.a, t1.b from t t1, t t2 where t1.a > 0 and t2.b < 0",
 			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t1.a > 1)",
+			ans: "DataScan(t)->Apply(DataScan(t)->Selection->Projection)->Selection->Projection",
 		},
 	}
 	for _, ca := range cases {

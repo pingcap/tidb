@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/model"
 )
 
-// EliminateProjection eliminate projection operator to avoid the cost of memory copy in the iterator of projection.
+// EliminateProjection eliminates projection operator to avoid the cost of memory copy in the iterator of projection.
 func EliminateProjection(p LogicalPlan, reorder bool, orderedSchema expression.Schema) LogicalPlan {
 	switch plan := p.(type) {
 	case *Projection:
@@ -31,7 +31,8 @@ func EliminateProjection(p LogicalPlan, reorder bool, orderedSchema expression.S
 		newSchema := make(expression.Schema, len(child.GetSchema()))
 		for j, col := range child.GetSchema() {
 			for i, expr := range plan.Exprs {
-				if col.FromID == expr.(*expression.Column).FromID && col.Position == expr.(*expression.Column).Position {
+				c := expr.(*expression.Column)
+				if col.FromID == c.FromID && col.Position == c.Position {
 					if i != j {
 						reorder = true
 					}
@@ -68,7 +69,7 @@ func EliminateProjection(p LogicalPlan, reorder bool, orderedSchema expression.S
 	}
 	children := make([]Plan, 0, len(p.GetChildren()))
 	for _, child := range p.GetChildren() {
-		children = append(children, EliminateProjection(child.(LogicalPlan), reorder, orderedSchema))
+		children = append(children, EliminateProjection(child.(LogicalPlan), reorder, extractSchemaOfChild(orderedSchema, child.GetSchema())))
 	}
 	p.SetChildren(children...)
 	return p
@@ -85,23 +86,34 @@ func shallowCopyColumn(colDest, colSrc *expression.Column) *expression.Column {
 	return colDest
 }
 
+// projectionCanBeEliminated judges whether a PROJECTION operator can be eliminated.
 func projectionCanBeEliminated(p *Projection) bool {
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	// only fields in PROJECTION are all Columns might be eliminated.
 	for _, expr := range p.Exprs {
-		if _, ok := expr.(*expression.Column); !ok {
-			return false
-		}
-	}
-	// PROJECTION above Join can not be eliminated.
-	for i := 0; i < len(p.Exprs)-1; i++ {
-		if p.Exprs[i].(*expression.Column).TblName != p.Exprs[i+1].(*expression.Column).TblName {
+		if col, ok := expr.(*expression.Column); !ok || col.Correlated {
 			return false
 		}
 	}
 	// detect expression like "SELECT c AS a, c AS b FROM t" which cannot be eliminated.
 	if len(p.GetSchema()) != len(child.GetSchema()) {
 		return false
+	}
+	// detect JOIN like 'select t1.a, t2.b, t1.b, t2.a from t1, t2 where t1.a < 0 and t2.b > 0' which can not be eliminated.
+	isJoin := false
+	for i := 0; i < len(p.Exprs)-1; i++ {
+		col0, col1 := p.Exprs[i].(*expression.Column), p.Exprs[i+1].(*expression.Column)
+		if col0.FromID != col1.FromID {
+			isJoin = true
+			break
+		}
+	}
+	if isJoin {
+		for i, col := range p.Exprs {
+			if col.(*expression.Column).FromID != child.GetSchema()[i].FromID {
+				return false
+			}
+		}
 	}
 	// detect expression like "SELECT c AS a, c AS b FROM t WHERE d = 1" which cannot be eliminated.
 	canBeEliminated := true
@@ -118,4 +130,18 @@ func projectionCanBeEliminated(p *Projection) bool {
 		}
 	}
 	return true
+}
+
+// extractSchemaOfChild extract columns of each child operator in orderedSchema.
+func extractSchemaOfChild(orderedSchema expression.Schema, childSchema expression.Schema) expression.Schema {
+	if orderedSchema == nil || childSchema == nil || len(orderedSchema) == 0 || len(childSchema) == 0{
+		return nil
+	}
+	newSchema := make(expression.Schema, 0, len(orderedSchema))
+	for _, v := range orderedSchema {
+		if v.FromID == childSchema[0].FromID {
+			newSchema = append(newSchema, v)
+		}
+	}
+	return newSchema[:len(newSchema)]
 }
