@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/ngaut/log"
 )
 
 type MockExec struct {
@@ -219,7 +218,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("create table t (id int primary key, ds date)")
 	tk.MustExec("insert into t (id, ds) values (1, \"1991-09-05\"),(2,\"1991-09-05\"), (3, \"1991-09-06\"),(0,\"1991-09-06\")")
 	result = tk.MustQuery("select sum(id), ds from t group by ds order by id")
-	result.Check(testkit.Rows("3 1991-09-06","3 1991-09-05"))
+	result.Check(testkit.Rows("3 1991-09-06", "3 1991-09-05"))
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {
