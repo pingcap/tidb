@@ -65,10 +65,13 @@ func (d *ddl) handleBgJobQueue() error {
 
 		return errors.Trace(err)
 	})
-
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	d.hookMu.Lock()
+	d.hook.OnBgJobUpdated(job)
+	d.hookMu.Unlock()
 
 	return nil
 }

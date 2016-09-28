@@ -144,7 +144,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		checkOK = true
 	}
 
-	d.hook = tc
+	d.setHook(tc)
 
 	d.close()
 	d.start()
