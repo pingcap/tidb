@@ -328,33 +328,6 @@ type XSelectIndexExec struct {
 	aggregate bool
 }
 
-// AddAggregate implements XExecutor interface.
-func (e *XSelectIndexExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByItem, fields []*types.FieldType) {
-	e.aggFuncs = funcs
-	e.byItems = byItems
-	e.aggFields = fields
-	e.aggregate = true
-	client := e.ctx.GetClient()
-	if !client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeGroupBy) {
-		e.indexPlan.DoubleRead = true
-	}
-}
-
-// AddLimit implements XExecutor interface.
-func (e *XSelectIndexExec) AddLimit(limit *plan.Limit) bool {
-	cnt := int64(limit.Offset + limit.Count)
-	if e.indexPlan.LimitCount == nil {
-		e.indexPlan.LimitCount = &cnt
-		return true
-	}
-	return false
-}
-
-// GetTable implements XExecutor interface.
-func (e *XSelectIndexExec) GetTable() *model.TableInfo {
-	return e.tableInfo
-}
-
 // Fields implements Exec Fields interface.
 func (e *XSelectIndexExec) Fields() []*ast.ResultField {
 	return nil
@@ -734,16 +707,6 @@ type XSelectTableExec struct {
 	aggregate bool
 }
 
-// AddLimit implements XExecutor interface.
-func (e *XSelectTableExec) AddLimit(limit *plan.Limit) bool {
-	cnt := int64(limit.Offset + limit.Count)
-	if e.limitCount == nil {
-		e.limitCount = &cnt
-		return true
-	}
-	return false
-}
-
 // Schema implements Executor Schema interface.
 func (e *XSelectTableExec) Schema() expression.Schema {
 	return e.schema
@@ -837,19 +800,6 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		}
 		return resultRowToRow(e.table, h, rowData, e.asName), nil
 	}
-}
-
-// AddAggregate implements XExecutor interface.
-func (e *XSelectTableExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByItem, fields []*types.FieldType) {
-	e.aggFuncs = funcs
-	e.byItems = byItems
-	e.aggFields = fields
-	e.aggregate = true
-}
-
-// GetTable implements XExecutor interface.
-func (e *XSelectTableExec) GetTable() *model.TableInfo {
-	return e.tableInfo
 }
 
 // Fields implements Executor interface.
