@@ -134,7 +134,7 @@ func projectionCanBeEliminated(p *Projection) bool {
 
 // extractSchemaOfChild extract columns of each child operator in orderedSchema.
 func extractSchemaOfChild(orderedSchema expression.Schema, childSchema expression.Schema) expression.Schema {
-	if orderedSchema == nil || childSchema == nil || len(orderedSchema) == 0 || len(childSchema) == 0{
+	if orderedSchema == nil || childSchema == nil || len(orderedSchema) == 0 || len(childSchema) == 0 {
 		return nil
 	}
 	newSchema := make(expression.Schema, 0, len(orderedSchema))
@@ -143,5 +143,5 @@ func extractSchemaOfChild(orderedSchema expression.Schema, childSchema expressio
 			newSchema = append(newSchema, v)
 		}
 	}
-	return newSchema[:len(newSchema)]
+	return newSchema[:]
 }
