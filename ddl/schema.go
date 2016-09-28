@@ -17,10 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 )
 
 func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
@@ -74,34 +71,6 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) delReorgSchema(t *meta.Meta, job *model.Job) error {
-	dbInfo := &model.DBInfo{}
-	if err := job.DecodeArgs(dbInfo); err != nil {
-		// arg error, cancel this job.
-		job.State = model.JobCancelled
-		return errors.Trace(err)
-	}
-
-	tables, err := t.ListTables(dbInfo.ID)
-	if terror.ErrorEqual(meta.ErrDBNotExists, err) {
-		job.State = model.JobDone
-		return nil
-	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if err = d.dropSchemaData(dbInfo, tables); err != nil {
-		return errors.Trace(err)
-	}
-
-	// finish this background job
-	job.SchemaState = model.StateNone
-	job.State = model.JobDone
-
-	return nil
-}
-
 func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
@@ -130,12 +99,20 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		err = t.UpdateDatabase(dbInfo)
 	case model.StateDeleteOnly:
 		dbInfo.State = model.StateDeleteReorganization
+		tables, err := t.ListTables(job.SchemaID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		err = t.UpdateDatabase(dbInfo)
 		if err = t.DropDatabase(dbInfo.ID); err != nil {
 			break
 		}
+
 		// finish this job
-		job.Args = []interface{}{dbInfo}
+		if len(tables) > 0 {
+			job.Args = []interface{}{getIDs(tables)}
+		}
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
 	default:
@@ -146,18 +123,66 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) dropSchemaData(dbInfo *model.DBInfo, tables []*model.TableInfo) error {
-	for _, tblInfo := range tables {
-		alloc := autoid.NewAllocator(d.store, dbInfo.ID)
-		t, err := table.TableFromMeta(alloc, tblInfo)
+func getIDs(tables []*model.TableInfo) []int64 {
+	ids := make([]int64, 0, len(tables))
+	for _, t := range tables {
+		ids = append(ids, t.ID)
+	}
+
+	return ids
+}
+
+func (d *ddl) delReorgSchema(t *meta.Meta, job *model.Job) error {
+	var tableIDs []int64
+	if err := job.DecodeArgs(&tableIDs); err != nil {
+		// arg error, cancel this job.
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+
+	isFinished, err := d.dropSchemaData(tableIDs, job, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !isFinished {
+		return nil
+	}
+
+	// finish this background job
+	job.SchemaState = model.StateNone
+	job.State = model.JobDone
+
+	return nil
+}
+
+func (d *ddl) dropSchemaData(tIDs []int64, job *model.Job, m *meta.Meta) (bool, error) {
+	if len(tIDs) == 0 {
+		return true, nil
+	}
+
+	var isFinished bool
+	for i, id := range tIDs {
+		job.TableID = id
+		limit := defaultBatchSize
+		delCount, err := d.dropTableData(id, job, limit)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
+		}
+		if delCount == limit {
+			isFinished = false
+			break
 		}
 
-		err = d.dropTableData(t)
-		if err != nil {
-			return errors.Trace(err)
+		if i < len(tIDs)-1 {
+			tIDs = tIDs[i+1:]
+		} else {
+			tIDs = nil
 		}
+		isFinished = true
+		continue
 	}
-	return nil
+	job.TableID = 0
+	job.Args = []interface{}{tIDs}
+
+	return isFinished, nil
 }
