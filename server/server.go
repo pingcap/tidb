@@ -55,8 +55,9 @@ var (
 var (
 	errUnknownFieldType  = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
 	errInvalidPayloadLen = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
-	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
-	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
+	errNotAllowedCommand = terror.ClassServer.New(codeNotAllowedCommand,
+		"the used command is not allowed with this TiDB version")
+	errInvalidType = terror.ClassServer.New(codeInvalidType, "invalid type")
 )
 
 // Server is the MySQL protocol server
@@ -253,6 +254,14 @@ type status struct {
 const (
 	codeUnknownFieldType  = 1
 	codeInvalidPayloadLen = 2
-	codeInvalidSequence   = 3
-	codeInvalidType       = 4
+	codeInvalidType       = 3
+
+	codeNotAllowedCommand = 1148
 )
+
+func init() {
+	serverMySQLErrCodes := map[terror.ErrCode]uint16{
+		codeNotAllowedCommand: mysql.ErrNotAllowedCommand,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
+}
