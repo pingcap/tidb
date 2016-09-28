@@ -160,6 +160,9 @@ func (d *ddl) dropTableData(tableID int64) error {
 	return errors.Trace(err)
 }
 
+// onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
+// As all the old data is encoded with old table ID, it can not be accessed any more.
+// A background job will be created to delete old data.
 func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tableID := job.TableID
