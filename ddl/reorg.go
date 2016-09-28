@@ -169,12 +169,21 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 	return nil
 }
 
-func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
-	count := 0
+// delKeysWithPrefix deletes keys with prefix key in a limited number. If limit < 0, deletes all keys.
+func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, limit int) (int, error) {
+	batch := limit
+	if batch == 0 {
+		return 0, nil
+	} else if batch < 0 {
+		batch = defaultBatchSize
+	}
+	delAll := limit < 0
 
+	var count int
+	total := job.GetRowCount()
 	for {
 		startTS := time.Now()
-		keys := make([]kv.Key, 0, maxBatchSize)
+		keys := make([]kv.Key, 0, batch)
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err1 := d.isReorgRunnable(txn, jobType); err1 != nil {
 				return errors.Trace(err1)
@@ -186,7 +195,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
 			}
 			defer iter.Close()
 
-			for i := 0; i < maxBatchSize; i++ {
+			for i := 0; i < batch; i++ {
 				if iter.Valid() && iter.Key().HasPrefix(prefix) {
 					keys = append(keys, iter.Key().Clone())
 					err = iter.Next()
@@ -208,21 +217,29 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType) error {
 			}
 
 			count += len(keys)
+			total += int64(len(keys))
 			return nil
 		})
 		sub := time.Since(startTS).Seconds()
 		if err != nil {
-			log.Warnf("[ddl] deleted %v keys with prefix %q failed, take time %v", count, prefix, sub)
-			return errors.Trace(err)
+			log.Warnf("[ddl] deleted %v keys with prefix %q failed, take time %v", total, prefix, sub)
+			return 0, errors.Trace(err)
 		}
 
+		job.SetRowCount(total)
 		batchHandleDataHistogram.WithLabelValues(batchDelData).Observe(sub)
-		log.Infof("[ddl] deleted %v keys with prefix %q take time %v", count, prefix, sub)
-		// delete no keys, return.
-		if len(keys) == 0 {
-			return nil
+		log.Infof("[ddl] deleted %v keys with prefix %q take time %v", total, prefix, sub)
+
+		// delete keys number less than batch, return.
+		if len(keys) < batch {
+			break
+		}
+		if !delAll {
+			break
 		}
 	}
+
+	return count, nil
 }
 
 type reorgInfo struct {
