@@ -71,6 +71,8 @@ func supportExpr(exprType tipb.ExprType) bool {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(req *kv.Request) kv.Response {
+	coprocessorCounter.WithLabelValues("send").Inc()
+
 	bo := NewBackoffer(copBuildTaskMaxBackoff)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc)
 	if err != nil {
@@ -207,6 +209,8 @@ func (r *copRanges) toPBRanges() []*coprocessor.KeyRange {
 }
 
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool) ([]*copTask, error) {
+	coprocessorCounter.WithLabelValues("build_task").Inc()
+
 	start := time.Now()
 	rangesLen := ranges.len()
 
@@ -269,6 +273,8 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
 		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
 	}
+	copBuildTaskHistogram.Observe(time.Since(start).Seconds())
+	copTaskLenHistogram.Observe(float64(len(tasks)))
 	return tasks, nil
 }
 
@@ -296,7 +302,6 @@ type copIterator struct {
 
 // Pick the next new copTask and send request to tikv-server.
 func (it *copIterator) work() {
-	bo := NewBackoffer(copNextMaxBackoff)
 	for {
 		it.mu.Lock()
 		if it.mu.finished {
@@ -317,6 +322,7 @@ func (it *copIterator) work() {
 		}
 		task.status = taskRunning
 		it.mu.Unlock()
+		bo := NewBackoffer(copNextMaxBackoff)
 		resp, err := it.handleTask(bo, task)
 		if err != nil {
 			it.errChan <- err
@@ -339,6 +345,8 @@ func (it *copIterator) run() {
 
 // Return next coprocessor result.
 func (it *copIterator) Next() (io.ReadCloser, error) {
+	coprocessorCounter.WithLabelValues("next").Inc()
+
 	it.mu.RLock()
 	if it.mu.finished {
 		it.mu.RUnlock()
@@ -401,6 +409,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 
 // Handle single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Response, error) {
+	coprocessorCounter.WithLabelValues("handle_task").Inc()
 	for {
 		it.mu.RLock()
 		if it.mu.finished {
@@ -438,6 +447,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 			continue
 		}
 		if e := resp.GetRegionError(); e != nil {
+			reportRegionError(e)
 			if notLeader := e.GetNotLeader(); notLeader != nil {
 				it.store.regionCache.UpdateLeader(task.region.VerID(), notLeader.GetLeader().GetId())
 			} else {
@@ -478,6 +488,8 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 
 // Rebuild current task. It may be split into multiple tasks (in region split scenario).
 func (it *copIterator) rebuildCurrentTask(bo *Backoffer, task *copTask) error {
+	coprocessorCounter.WithLabelValues("rebuild_task").Inc()
+
 	newTasks, err := buildCopTasks(bo, it.store.regionCache, task.ranges, it.req.Desc)
 	if err != nil {
 		return errors.Trace(err)

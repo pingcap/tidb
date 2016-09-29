@@ -14,7 +14,7 @@
 package plan
 
 import (
-	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -24,12 +24,9 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func expressionsToPB(exprs []expression.Expression, client kv.Client) (pbExpr *tipb.Expr, remained []expression.Expression, err error) {
+func expressionsToPB(exprs []expression.Expression, client kv.Client) (pbExpr *tipb.Expr, remained []expression.Expression) {
 	for _, expr := range exprs {
-		v, err := exprToPB(client, expr)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
+		v := exprToPB(client, expr)
 		if v == nil {
 			remained = append(remained, expr)
 			continue
@@ -46,7 +43,7 @@ func expressionsToPB(exprs []expression.Expression, client kv.Client) (pbExpr *t
 	return
 }
 
-func exprToPB(client kv.Client, expr expression.Expression) (*tipb.Expr, error) {
+func exprToPB(client kv.Client, expr expression.Expression) *tipb.Expr {
 	switch x := expr.(type) {
 	case *expression.Constant:
 		return datumToPBExpr(client, x.Value)
@@ -55,10 +52,10 @@ func exprToPB(client kv.Client, expr expression.Expression) (*tipb.Expr, error) 
 	case *expression.ScalarFunction:
 		return scalarFuncToPBExpr(client, x)
 	}
-	return nil, nil
+	return nil
 }
 
-func datumToPBExpr(client kv.Client, d types.Datum) (*tipb.Expr, error) {
+func datumToPBExpr(client kv.Client, d types.Datum) *tipb.Expr {
 	var tp tipb.ExprType
 	var val []byte
 	switch d.Kind() {
@@ -89,43 +86,39 @@ func datumToPBExpr(client kv.Client, d types.Datum) (*tipb.Expr, error) {
 		tp = tipb.ExprType_MysqlDecimal
 		val = codec.EncodeDecimal(nil, d)
 	default:
-		return nil, nil
+		return nil
 	}
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
-		return nil, nil
+		return nil
 	}
-	return &tipb.Expr{Tp: tp, Val: val}, nil
+	return &tipb.Expr{Tp: tp, Val: val}
 }
 
-func columnToPBExpr(client kv.Client, column *expression.Column) (*tipb.Expr, error) {
+func columnToPBExpr(client kv.Client, column *expression.Column) *tipb.Expr {
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
-		return nil, nil
+		return nil
 	}
 	switch column.GetType().Tp {
 	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry, mysql.TypeDecimal:
-		return nil, nil
+		return nil
 	}
 
 	if column.Correlated {
-		return nil, nil
+		return nil
 	}
 
 	id := column.ID
 	// Zero Column ID is not a column from table, can not support for now.
-	if id == 0 {
-		return nil, nil
-	}
-	// its value is available to use.
-	if id == -1 {
-		return nil, nil
+	if id == 0 || id == -1 {
+		return nil
 	}
 
 	return &tipb.Expr{
 		Tp:  tipb.ExprType_ColumnRef,
-		Val: codec.EncodeInt(nil, id)}, nil
+		Val: codec.EncodeInt(nil, id)}
 }
 
-func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) (*tipb.Expr, error) {
+func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
 	switch expr.FuncName.L {
 	case ast.LT:
@@ -154,94 +147,79 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) (*tip
 		// Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
 		escape := expr.Args[2].(*expression.Constant).Value
 		if escape.IsNull() || byte(escape.GetInt64()) != '\\' {
-			return nil, nil
+			return nil
 		}
 		pattern, ok := expr.Args[1].(*expression.Constant)
 		if !ok || pattern.Value.Kind() != types.KindString {
-			return nil, nil
+			return nil
 		}
 		for i, b := range pattern.Value.GetString() {
 			switch b {
 			case '\\', '_':
-				return nil, nil
+				return nil
 			case '%':
 				if i != 0 && i != len(pattern.Value.GetString())-1 {
-					return nil, nil
+					return nil
 				}
 			}
 		}
 		tp = tipb.ExprType_Like
 	default:
-		return nil, nil
+		return nil
 	}
 
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
-		return nil, nil
+		return nil
 	}
 
-	expr0, err := exprToPB(client, expr.Args[0])
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	expr0 := exprToPB(client, expr.Args[0])
 	if expr0 == nil {
-		return nil, nil
+		return nil
 	}
-	expr1, err := exprToPB(client, expr.Args[1])
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	expr1 := exprToPB(client, expr.Args[1])
 	if expr1 == nil {
-		return nil, nil
+		return nil
 	}
 	return &tipb.Expr{
 		Tp:       tp,
-		Children: []*tipb.Expr{expr0, expr1}}, nil
+		Children: []*tipb.Expr{expr0, expr1}}
 }
 
-func inToPBExpr(client kv.Client, expr *expression.ScalarFunction) (*tipb.Expr, error) {
+func inToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_In)) {
-		return nil, nil
+		return nil
 	}
 
-	pbExpr, err := exprToPB(client, expr.Args[0])
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	pbExpr := exprToPB(client, expr.Args[0])
 	if pbExpr == nil {
-		return nil, nil
+		return nil
 	}
-	listExpr, err := constListToPB(client, expr.Args[1:])
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	listExpr := constListToPB(client, expr.Args[1:])
 	if listExpr == nil {
-		return nil, nil
+		return nil
 	}
 	return &tipb.Expr{
 		Tp:       tipb.ExprType_In,
-		Children: []*tipb.Expr{pbExpr, listExpr}}, nil
+		Children: []*tipb.Expr{pbExpr, listExpr}}
 }
 
-func notToPBExpr(client kv.Client, expr *expression.ScalarFunction) (*tipb.Expr, error) {
+func notToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_Not)) {
-		return nil, nil
+		return nil
 	}
 
-	child, err := exprToPB(client, expr.Args[0])
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	child := exprToPB(client, expr.Args[0])
 	if child == nil {
-		return nil, nil
+		return nil
 	}
 	return &tipb.Expr{
 		Tp:       tipb.ExprType_Not,
-		Children: []*tipb.Expr{child}}, nil
+		Children: []*tipb.Expr{child}}
 }
 
-func constListToPB(client kv.Client, list []expression.Expression) (*tipb.Expr, error) {
+func constListToPB(client kv.Client, list []expression.Expression) *tipb.Expr {
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ValueList)) {
-		return nil, nil
+		return nil
 	}
 
 	// Only list of *expression.Constant can be push down.
@@ -249,19 +227,18 @@ func constListToPB(client kv.Client, list []expression.Expression) (*tipb.Expr, 
 	for _, expr := range list {
 		v, ok := expr.(*expression.Constant)
 		if !ok {
-			return nil, nil
+			return nil
 		}
-		if d, err := datumToPBExpr(client, v.Value); err != nil {
-			return nil, errors.Trace(err)
-		} else if d == nil {
-			return nil, nil
+		d := datumToPBExpr(client, v.Value)
+		if d == nil {
+			return nil
 		}
 		datums = append(datums, v.Value)
 	}
 	return datumsToValueList(datums)
 }
 
-func datumsToValueList(datums []types.Datum) (*tipb.Expr, error) {
+func datumsToValueList(datums []types.Datum) *tipb.Expr {
 	// Don't push value list that has different datum kind.
 	prevKind := types.KindNull
 	for _, d := range datums {
@@ -269,32 +246,39 @@ func datumsToValueList(datums []types.Datum) (*tipb.Expr, error) {
 			prevKind = d.Kind()
 		}
 		if !d.IsNull() && d.Kind() != prevKind {
-			return nil, nil
+			return nil
 		}
 	}
 	err := types.SortDatums(datums)
 	if err != nil {
-		return nil, errors.Trace(err)
+		log.Error(err.Error())
+		return nil
 	}
 	val, err := codec.EncodeValue(nil, datums...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		log.Error(err.Error())
+		return nil
 	}
-	return &tipb.Expr{Tp: tipb.ExprType_ValueList, Val: val}, nil
+	return &tipb.Expr{Tp: tipb.ExprType_ValueList, Val: val}
 }
 
-func groupByItemToPB(client kv.Client, expr expression.Expression) (*tipb.ByItem, error) {
-	e, err := exprToPB(client, expr)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+func groupByItemToPB(client kv.Client, expr expression.Expression) *tipb.ByItem {
+	e := exprToPB(client, expr)
 	if e == nil {
-		return nil, nil
+		return nil
 	}
-	return &tipb.ByItem{Expr: e}, nil
+	return &tipb.ByItem{Expr: e}
 }
 
-func aggFuncToPBExpr(client kv.Client, aggFunc expression.AggregationFunction) (*tipb.Expr, error) {
+func sortByItemToPB(client kv.Client, expr expression.Expression, desc bool) *tipb.ByItem {
+	e := exprToPB(client, expr)
+	if e == nil {
+		return nil
+	}
+	return &tipb.ByItem{Expr: e, Desc: desc}
+}
+
+func aggFuncToPBExpr(client kv.Client, aggFunc expression.AggregationFunction) *tipb.Expr {
 	var tp tipb.ExprType
 	switch aggFunc.GetName() {
 	case ast.AggFuncCount:
@@ -313,19 +297,16 @@ func aggFuncToPBExpr(client kv.Client, aggFunc expression.AggregationFunction) (
 		tp = tipb.ExprType_Avg
 	}
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
-		return nil, nil
+		return nil
 	}
 
 	children := make([]*tipb.Expr, 0, len(aggFunc.GetArgs()))
 	for _, arg := range aggFunc.GetArgs() {
-		pbArg, err := exprToPB(client, arg)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		pbArg := exprToPB(client, arg)
 		if pbArg == nil {
-			return nil, nil
+			return nil
 		}
 		children = append(children, pbArg)
 	}
-	return &tipb.Expr{Tp: tp, Children: children}, nil
+	return &tipb.Expr{Tp: tp, Children: children}
 }

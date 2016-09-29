@@ -30,6 +30,8 @@ const (
 	PresumeKeyNotExistsError
 	// RetryAttempts is the number of txn retry attempt.
 	RetryAttempts
+	// BinlogData is the serialized bytes of Binlog prewrite value.
+	BinlogData
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.
@@ -106,6 +108,7 @@ const (
 	ReqSubTypeBasic   = 0
 	ReqSubTypeDesc    = 10000
 	ReqSubTypeGroupBy = 10001
+	ReqSubTypeTopN    = 10002
 )
 
 // KeyRange represents a range where StartKey <= key < EndKey.

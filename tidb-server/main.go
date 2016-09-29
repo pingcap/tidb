@@ -16,9 +16,12 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -26,14 +29,18 @@ import (
 	"github.com/ngaut/log"
 	"github.com/ngaut/systimemon"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
+	"google.golang.org/grpc"
 )
 
 var (
@@ -50,7 +57,8 @@ var (
 	logFile         = flag.String("log-file", "", "log file path")
 	joinCon         = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
 	metricsAddr     = flag.String("metrics-addr", "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
-	metricsInterval = flag.Int("metrics-interval", 0, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
+	metricsInterval = flag.Int("metrics-interval", 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
+	binlogSocket    = flag.String("binlog-socket", "", "socket file to write binlog")
 )
 
 func main() {
@@ -91,13 +99,13 @@ func main() {
 	printer.PrintTiDBInfo()
 	log.SetLevelByString(cfg.LogLevel)
 
-	store, err := tidb.NewStore(fmt.Sprintf("%s://%s", *store, *storePath))
-	if err != nil {
-		log.Fatal(errors.ErrorStack(err))
-	}
+	store := createStore()
 
 	if *enablePS {
 		perfschema.EnablePerfSchema()
+	}
+	if *binlogSocket != "" {
+		createBinlogClient()
 	}
 
 	// Create a session to load information schema.
@@ -138,6 +146,37 @@ func main() {
 	log.Error(svr.Run())
 }
 
+func createStore() kv.Storage {
+	fullPath := fmt.Sprintf("%s://%s", *store, *storePath)
+	u, err := url.Parse(fullPath)
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
+	if cluster := u.Query().Get("cluster"); cluster != "" {
+		id, err1 := strconv.ParseUint(cluster, 10, 64)
+		if err1 != nil {
+			log.Fatal(errors.ErrorStack(err1))
+		}
+		binloginfo.ClusterID = id
+	}
+	store, err := tidb.NewStore(fullPath)
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
+	return store
+}
+
+func createBinlogClient() {
+	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
+		return net.DialTimeout("unix", addr, timeout)
+	})
+	clientCon, err := grpc.Dial(*binlogSocket, dialerOpt, grpc.WithInsecure())
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
+	binloginfo.PumpClient = binlog.NewPumpClient(clientCon)
+}
+
 // Prometheus push.
 const zeroDuration = time.Duration(0)
 
@@ -155,10 +194,9 @@ func pushMetric(addr string, interval time.Duration) {
 func prometheusPushClient(addr string, interval time.Duration) {
 	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
 	job := "tidb"
-	grouping := map[string]string{"instance": fmt.Sprintf("%s:%s", *host, *port)}
 	for {
 		err := push.FromGatherer(
-			job, grouping,
+			job, push.HostnameGroupingKey(),
 			addr,
 			prometheus.DefaultGatherer,
 		)

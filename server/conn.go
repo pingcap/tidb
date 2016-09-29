@@ -110,9 +110,10 @@ func (cc *clientConn) handshake() error {
 func (cc *clientConn) Close() error {
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
+	connections := len(cc.server.clients)
 	cc.server.rwlock.Unlock()
+	connGauge.Set(float64(connections))
 	cc.conn.Close()
-	connGauge.Dec()
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -192,9 +193,14 @@ func handshakeResponseFromData(packet *handshakeResponse41, data []byte) error {
 	pos += len(packet.User) + 1
 
 	if capability&mysql.ClientPluginAuthLenencClientData > 0 {
-		// TODO: Support mysql.ClientPluginAuthLenencClientData, skip it now
-		if num, null, off := parseLengthEncodedInt(data[pos:]); !null {
-			pos = pos + off + int(num)
+		// MySQL client sets the wrong capability, it will set this bit even server doesn't
+		// support ClientPluginAuthLenencClientData.
+		// https://github.com/mysql/mysql-server/blob/5.7/sql-common/client.c#L3478
+		num, null, off := parseLengthEncodedInt(data[pos:])
+		pos += off
+		if !null {
+			packet.Auth = data[pos : pos+int(num)]
+			pos += int(num)
 		}
 	} else if capability&mysql.ClientSecureConnection > 0 {
 		// auth length and auth
@@ -305,8 +311,6 @@ func (cc *clientConn) Run() {
 		cc.Close()
 	}()
 
-	connGauge.Inc()
-
 	for {
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
@@ -337,10 +341,10 @@ func (cc *clientConn) dispatch(data []byte) error {
 
 	token := cc.server.getToken()
 
-	startTs := time.Now()
+	startTS := time.Now()
 	defer func() {
 		cc.server.releaseToken(token)
-		log.Debugf("[TIME_CMD] %v %d", time.Since(startTs), cmd)
+		log.Debugf("[TIME_CMD] %v %d", time.Since(startTS), cmd)
 	}()
 
 	switch cmd {
@@ -531,10 +535,10 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 }
 
 func (cc *clientConn) handleQuery(sql string) (err error) {
-	startTs := time.Now()
+	startTS := time.Now()
 	defer func() {
 		// Add metrics
-		queryHistgram.Observe(time.Since(startTs).Seconds())
+		queryHistogram.Observe(time.Since(startTS).Seconds())
 		label := querySucc
 		if err != nil {
 			label = queryFailed
@@ -561,7 +565,7 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 		}
 		err = cc.writeOK()
 	}
-	costTime := time.Since(startTs)
+	costTime := time.Since(startTS)
 	if len(sql) > 1024 {
 		sql = sql[:1024]
 	}

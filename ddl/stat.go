@@ -30,6 +30,7 @@ var (
 	ddlJobLastUpdateTS   = "ddl_job_last_update_ts"
 	ddlJobState          = "ddl_job_state"
 	ddlJobError          = "ddl_job_error"
+	ddlJobRows           = "ddl_job_row_count"
 	ddlJobSchemaState    = "ddl_job_schema_state"
 	ddlJobSchemaID       = "ddl_job_schema_id"
 	ddlJobTableID        = "ddl_job_table_id"
@@ -44,6 +45,7 @@ var (
 	bgJobLastUpdateTS    = "bg_job_last_update_ts"
 	bgJobState           = "bg_job_state"
 	bgJobError           = "bg_job_error"
+	bgJobRows            = "bg_job_row_count"
 	bgJobSchemaState     = "bg_job_schema_state"
 	bgJobSchemaID        = "bg_job_schema_id"
 	bgJobTableID         = "bg_job_table_id"
@@ -89,6 +91,7 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 		m[ddlJobAction] = ddlInfo.Job.Type.String()
 		m[ddlJobLastUpdateTS] = ddlInfo.Job.LastUpdateTS / 1e9
 		m[ddlJobState] = ddlInfo.Job.State.String()
+		m[ddlJobRows] = ddlInfo.Job.RowCount
 		if ddlInfo.Job.Error == nil {
 			m[ddlJobError] = ""
 		} else {
@@ -114,6 +117,7 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 		m[bgJobAction] = bgInfo.Job.Type.String()
 		m[bgJobLastUpdateTS] = bgInfo.Job.LastUpdateTS / 1e9
 		m[bgJobState] = bgInfo.Job.State.String()
+		m[bgJobRows] = bgInfo.Job.RowCount
 		if bgInfo.Job.Error == nil {
 			m[bgJobError] = ""
 		} else {

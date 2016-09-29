@@ -35,9 +35,6 @@ func (s *testDDLSuite) TestDropSchemaError(c *C) {
 	job := &model.Job{
 		SchemaID: 1,
 		Type:     model.ActionDropSchema,
-		Args: []interface{}{&model.DBInfo{
-			Name: model.CIStr{O: "test"},
-		}},
 	}
 	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)

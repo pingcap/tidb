@@ -121,11 +121,13 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	txnCounter.Inc()
 	return txn, nil
 }
 
 func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	snapshot := newTiKVSnapshot(s, ver)
+	snapshotCounter.Inc()
 	return snapshot, nil
 }
 
@@ -171,6 +173,7 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 }
 
 func (s *tikvStore) GetClient() kv.Client {
+	txnCmdCounter.WithLabelValues("get_client").Inc()
 	return &CopClient{
 		store: s,
 	}
@@ -202,6 +205,7 @@ func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVer
 			continue
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
+			reportRegionError(regionErr)
 			// Retry if error is `NotLeader`.
 			if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 				log.Warnf("tikv reports `NotLeader`: %s, ctx: %s, retry later", notLeader, req.Context)

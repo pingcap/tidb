@@ -170,7 +170,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		}
 		if columnInfo.DefaultValue != nil || mysql.HasNotNullFlag(columnInfo.Flag) {
 			err = d.runReorgJob(func() error {
-				return d.backfillColumn(tbl, columnInfo, reorgInfo)
+				return d.backfillColumn(tbl, columnInfo, reorgInfo, job)
 			})
 			if terror.ErrorEqual(err, errWaitReorgTimeout) {
 				// if timeout, we should return, check for the owner and re-wait job done.
@@ -303,10 +303,10 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 //  3. For one row, if the row has been already deleted, skip to next row.
 //  4. If not deleted, check whether column data has existed, if existed, skip to next row.
 //  5. If column data doesn't exist, backfill the column with default value and then continue to handle next row.
-func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
+func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgInfo *reorgInfo, job *model.Job) error {
 	seekHandle := reorgInfo.Handle
 	version := reorgInfo.SnapshotVer
-	count := 0
+	count := job.GetRowCount()
 
 	for {
 		startTS := time.Now()
@@ -317,7 +317,7 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 			return nil
 		}
 
-		count += len(handles)
+		count += int64(len(handles))
 		seekHandle = handles[len(handles)-1] + 1
 		sub := time.Since(startTS).Seconds()
 		err = d.backfillColumnData(t, columnInfo, handles, reorgInfo)
@@ -326,6 +326,7 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 			return errors.Trace(err)
 		}
 
+		job.SetRowCount(count)
 		batchHandleDataHistogram.WithLabelValues(batchAddCol).Observe(sub)
 		log.Infof("[ddl] added column for %v rows, take time %v", count, sub)
 	}

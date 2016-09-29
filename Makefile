@@ -5,9 +5,13 @@ ifeq "$(GOPATH)" ""
   $(error Please set the environment variable GOPATH before running `make`)
 endif
 
-path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
+CURDIR := $(shell pwd)
+path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(CURDIR)/_vendor:$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
+
 GO        := GO15VENDOREXPERIMENT="1" go
+GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) $(GO) build
+GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) $(GO) test
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -20,36 +24,26 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 
 TARGET = ""
 
-.PHONY: all build install update parser clean todo test gotest interpreter server goyacc dev benchkv
+.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv check
 
 default: server buildsucc
 
 buildsucc:
 	@echo Build TiDB Server successfully!
 
-all: dev server install benchkv
+all: dev server benchkv
 
 dev: parser build benchkv test check
 
 build:
-	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) build
-	rm -rf vendor
-
-install:
-	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) install ./...
-	rm -rf vendor
+	$(GOBUILD)
 
 TEMP_FILE = temp_parser_file
 
 goyacc:
-	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) build -o bin/goyacc github.com/pingcap/tidb/parser/goyacc
-	rm -rf vendor
+	$(GOBUILD) -o bin/goyacc parser/goyacc/main.go
 
 parser: goyacc
-	rm -rf parser/scanner.go
 	bin/goyacc -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
 	bin/goyacc -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}'
 	rm -f $(TEMP_FILE)
@@ -96,46 +90,45 @@ todo:
 test: gotest
 
 gotest:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	@export log_level=error;\
-	$(GO) test -cover $(PACKAGES)
-	rm -rf vendor
+	$(GOTEST) -cover $(PACKAGES)
 
 race:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	@export log_level=debug; \
 	dirs=`go list ./... | grep -vE 'vendor' | awk '{sub("github.com/pingcap/tidb/",""); print}'`;\
 	for dir in $$dirs; do \
 		cd $$dir;\
-		go test -race | awk 'END{if($$1=="FAIL") {exit 1}}' || exit 1;\
+		$(GOTEST) -race | awk 'END{if($$1=="FAIL") {exit 1}}' || exit 1;\
 		cd -;\
 	done;
-	rm -rf vendor
 
 tikv_integration_test:
-	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) test ./store/tikv/. -with-tikv=true
-	rm -rf vendor
+	$(GOTEST) ./store/tikv/. -with-tikv=true
 
 interpreter:
-	rm -rf vendor && ln -s _vendor/vendor vendor
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
-	rm -rf vendor
 
-server: parser 
+server: parser
 ifeq ($(TARGET), "")
-	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) build -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
-	rm -rf vendor
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
 else
-	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
-	rm -rf vendor
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
 endif
 
-benchkv: 
-	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) build -ldflags '$(LDFLAGS)' -o bin/benchkv benchkv/main.go
-	rm -rf vendor
+benchkv:
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchkv benchkv/main.go
 
-
+update:
+	which glide >/dev/null || curl https://glide.sh/get | sh
+	which glide-vc || go get -v -u github.com/sgotti/glide-vc
+	rm -r vendor && mv _vendor/src vendor || true
+	rm -rf _vendor
+ifdef PKG
+	glide get -s -v --skip-test ${PKG}
+else
+	glide update -s -v --skip-test
+endif
+	@echo "removing test files"
+	glide vc --only-code --no-tests
+	mkdir -p _vendor
+	mv vendor _vendor/src

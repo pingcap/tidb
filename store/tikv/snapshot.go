@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/juju/errors"
@@ -49,6 +50,10 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	txnCmdCounter.WithLabelValues("batch_get").Inc()
+	start := time.Now()
+	defer func() { txnCmdHistogram.WithLabelValues("batch_get").Observe(time.Since(start).Seconds()) }()
+
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
 	bo := NewBackoffer(batchGetMaxBackoff)

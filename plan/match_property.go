@@ -25,13 +25,16 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 	rowCount := float64(infos[0].count)
 	cost := rowCount * netWorkFactor
 	if len(prop.props) == 0 {
-		return &physicalPlanInfo{p: ts, cost: cost, count: infos[0].count}
+		return enforceProperty(prop, &physicalPlanInfo{p: ts, cost: cost, count: infos[0].count})
 	}
 	if len(prop.props) == 1 && ts.pkCol != nil && ts.pkCol == prop.props[0].col {
 		sortedTs := *ts
 		sortedTs.Desc = prop.props[0].desc
 		sortedTs.KeepOrder = true
-		return &physicalPlanInfo{p: &sortedTs, cost: cost, count: infos[0].count}
+		return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
+			p:     &sortedTs,
+			cost:  cost,
+			count: infos[0].count})
 	}
 	return &physicalPlanInfo{p: ts, cost: math.MaxFloat64, count: infos[0].count}
 }
@@ -75,7 +78,7 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 		cost *= 2
 	}
 	if len(prop.props) == 0 {
-		return &physicalPlanInfo{p: is, cost: cost, count: infos[0].count}
+		return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{p: is, cost: cost, count: infos[0].count})
 	}
 	matchedIdx := 0
 	matchedList := make([]bool, len(prop.props))
@@ -103,13 +106,19 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 		if allAsc {
 			sortedIs := *is
 			sortedIs.OutOfOrder = false
-			return &physicalPlanInfo{p: &sortedIs, cost: sortedCost, count: infos[0].count}
+			return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
+				p:     &sortedIs,
+				cost:  sortedCost,
+				count: infos[0].count})
 		}
 		if allDesc {
 			sortedIs := *is
 			sortedIs.Desc = true
 			sortedIs.OutOfOrder = false
-			return &physicalPlanInfo{p: &sortedIs, cost: sortedCost, count: infos[0].count}
+			return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
+				p:     &sortedIs,
+				cost:  sortedCost,
+				count: infos[0].count})
 		}
 	}
 	return &physicalPlanInfo{p: is, cost: math.MaxFloat64, count: infos[0].count}
@@ -168,7 +177,7 @@ func (p *Union) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPla
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Selection) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
-	if childPlanInfo[0].p == nil {
+	if p.onTable {
 		res := p.GetChildByIndex(0).(PhysicalPlan).matchProperty(prop, childPlanInfo...)
 		sel := *p
 		sel.SetChildren(res.p)
@@ -184,16 +193,15 @@ func (p *Selection) matchProperty(prop *requiredProperty, childPlanInfo ...*phys
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalUnionScan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
-	if childPlanInfo[0].p == nil {
-		res := p.GetChildByIndex(0).(PhysicalPlan).matchProperty(prop, childPlanInfo...)
-		np := *p
-		np.SetChildren(res.p)
-		res.p = &np
-		return res
-	}
+	limit := prop.limit
+	res := p.GetChildByIndex(0).(PhysicalPlan).matchProperty(convertLimitOffsetToCount(prop), childPlanInfo...)
 	np := *p
-	np.SetChildren(childPlanInfo[0].p)
-	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
+	np.SetChildren(res.p)
+	res.p = &np
+	if limit != nil {
+		res = addPlanToResponse(limit, res)
+	}
+	return res
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
