@@ -24,6 +24,7 @@ type testDDLCallback struct {
 
 	onJobRunBefore func(*model.Job)
 	onJobUpdated   func(*model.Job)
+	onBgJobUpdated func(*model.Job)
 }
 
 func (tc *testDDLCallback) OnJobRunBefore(job *model.Job) {
@@ -44,10 +45,20 @@ func (tc *testDDLCallback) OnJobUpdated(job *model.Job) {
 	tc.BaseCallback.OnJobUpdated(job)
 }
 
+func (tc *testDDLCallback) OnBgJobUpdated(job *model.Job) {
+	if tc.onBgJobUpdated != nil {
+		tc.onBgJobUpdated(job)
+		return
+	}
+
+	tc.BaseCallback.OnBgJobUpdated(job)
+}
+
 func (s *testDDLSuite) TestCallback(c *C) {
 	defer testleak.AfterTest(c)()
 	cb := &BaseCallback{}
 	c.Assert(cb.OnChanged(nil), IsNil)
 	cb.OnJobRunBefore(nil)
 	cb.OnJobUpdated(nil)
+	cb.OnBgJobUpdated(nil)
 }

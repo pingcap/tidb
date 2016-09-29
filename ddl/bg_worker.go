@@ -65,10 +65,13 @@ func (d *ddl) handleBgJobQueue() error {
 
 		return errors.Trace(err)
 	})
-
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	d.hookMu.Lock()
+	d.hook.OnBgJobUpdated(job)
+	d.hookMu.Unlock()
 
 	return nil
 }
@@ -80,9 +83,9 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 	var err error
 	switch job.Type {
 	case model.ActionDropSchema:
-		err = d.dropSchemaData(t, job)
+		err = d.delReorgSchema(t, job)
 	case model.ActionDropTable, model.ActionTruncateTable:
-		err = d.dropTableData(job.TableID)
+		err = d.delReorgTable(t, job)
 	default:
 		job.State = model.JobCancelled
 		err = errInvalidBgJob
@@ -96,9 +99,6 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 		job.ErrorCount++
 		return
 	}
-
-	job.SchemaState = model.StateNone
-	job.State = model.JobDone
 }
 
 // prepareBgJob prepares a background job.
@@ -117,7 +117,7 @@ func (d *ddl) prepareBgJob(t *meta.Meta, ddlJob *model.Job) error {
 // startBgJob starts a background job.
 func (d *ddl) startBgJob(tp model.ActionType) {
 	switch tp {
-	case model.ActionDropSchema, model.ActionDropTable:
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable:
 		asyncNotify(d.bgJobCh)
 	}
 }

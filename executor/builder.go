@@ -262,8 +262,8 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		Lists:   v.Lists,
 		Setlist: v.Setlist,
 	}
-	if v.SelectPlan != nil {
-		ivs.SelectExec = b.build(v.SelectPlan)
+	if len(v.GetChildren()) > 0 {
+		ivs.SelectExec = b.build(v.GetChildByIndex(0))
 	}
 	// Get Table
 	ts, ok := v.Table.TableRefs.Left.(*ast.TableSource)
@@ -677,7 +677,7 @@ func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 }
 
 func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
-	selExec := b.build(v.SelectPlan)
+	selExec := b.build(v.GetChildByIndex(0))
 	return &UpdateExec{ctx: b.ctx, SelectExec: selExec, OrderedList: v.OrderedList}
 }
 
@@ -688,7 +688,7 @@ func (b *executorBuilder) buildDummyScan(v *plan.PhysicalDummyScan) Executor {
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
-	selExec := b.build(v.SelectPlan)
+	selExec := b.build(v.GetChildByIndex(0))
 	return &DeleteExec{
 		ctx:          b.ctx,
 		SelectExec:   selExec,

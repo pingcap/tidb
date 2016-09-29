@@ -77,6 +77,20 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	}
 }
 
+func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
+	limit := defaultBatchSize
+	delCount, err := d.dropTableData(job.TableID, job, limit)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// finish this background job
+	if delCount < limit {
+		job.SchemaState = model.StateNone
+		job.State = model.JobDone
+	}
+	return nil
+}
+
 func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tableID := job.TableID
@@ -155,9 +169,10 @@ func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, erro
 	return tblInfo, nil
 }
 
-func (d *ddl) dropTableData(tableID int64) error {
-	err := d.delKeysWithPrefix(tablecodec.EncodeTablePrefix(tableID), bgJobFlag)
-	return errors.Trace(err)
+// delKeysWithPrefix deletes data in a limited number. If limit < 0, deletes all data.
+func (d *ddl) dropTableData(tID int64, job *model.Job, limit int) (int, error) {
+	delCount, err := d.delKeysWithPrefix(tablecodec.EncodeTablePrefix(tID), bgJobFlag, job, limit)
+	return delCount, errors.Trace(err)
 }
 
 // onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
