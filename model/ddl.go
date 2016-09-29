@@ -137,8 +137,9 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, Args:%s",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, job.RawArgs)
+	rowCount := job.GetRowCount()
+	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, Args:%s",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, job.RawArgs)
 }
 
 // IsFinished returns whether job is finished or not.
