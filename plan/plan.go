@@ -259,12 +259,8 @@ func (p *basePlan) initID() {
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
-	fields      []*ast.ResultField
-	startupCost float64
-	totalCost   float64
-	rowCount    float64
-	limit       float64
-	correlated  bool
+	fields     []*ast.ResultField
+	correlated bool
 
 	parents  []Plan
 	children []Plan

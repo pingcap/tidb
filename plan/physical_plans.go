@@ -72,7 +72,7 @@ type physicalTableSource struct {
 	AggFuncs   []*tipb.Expr
 	GbyItems   []*tipb.ByItem
 
-	// ConditionPBExpr is the pb structure of conditions that pushed down.
+	// ConditionPBExpr is the pb structure of conditions that be pushed down.
 	ConditionPBExpr *tipb.Expr
 
 	LimitCount *int64
