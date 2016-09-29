@@ -605,7 +605,11 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 			if err1 != nil {
 				return err1
 			}
-			hasOldTableData = it.Key().HasPrefix(tablePrefix)
+			if !it.Valid() {
+				hasOldTableData = false
+			} else {
+				hasOldTableData = it.Key().HasPrefix(tablePrefix)
+			}
 			it.Close()
 			return nil
 		})
