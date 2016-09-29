@@ -1105,7 +1105,7 @@ func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
 		Args:     []interface{}{newTableID},
 	}
 	err = d.doDDLJob(ctx, job)
-	err = d.hook.OnChanged(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
