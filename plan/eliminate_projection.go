@@ -67,11 +67,16 @@ func EliminateProjection(p LogicalPlan, reorder bool, orderedSchema expression.S
 		}
 		plan.Columns = newColumns
 	}
-	children := make([]Plan, 0, len(p.GetChildren()))
-	for _, child := range p.GetChildren() {
-		children = append(children, EliminateProjection(child.(LogicalPlan), reorder, extractSchemaOfChild(orderedSchema, child.GetSchema())))
+	if len(p.GetChildren()) == 1 {
+		child := p.GetChildByIndex(0)
+		p.ReplaceChild(child, EliminateProjection(child.(LogicalPlan), reorder, orderedSchema))
+	} else {
+		children := make([]Plan, 0, len(p.GetChildren()))
+		for _, child := range p.GetChildren() {
+			children = append(children, EliminateProjection(child.(LogicalPlan), reorder, extractSchemaOfChild(orderedSchema, child.GetSchema())))
+		}
+		p.SetChildren(children...)
 	}
-	p.SetChildren(children...)
 	return p
 }
 
@@ -116,21 +121,24 @@ func projectionCanBeEliminated(p *Projection) bool {
 		}
 	}
 	// detect expression like "SELECT c AS a, c AS b FROM t WHERE d = 1" which cannot be eliminated.
-	prjCols := make(map[string]bool, 0)
-	for _, expr := range p.Exprs {
-		hashcode := string(expr.(*expression.Column).HashCode())
-		if _, ok := prjCols[hashcode]; !ok {
-			prjCols[hashcode] = true
-			continue
+	for i := range p.Exprs {
+		col1 := p.Exprs[i].(*expression.Column)
+		for j := range p.Exprs {
+			if i == j {
+				continue
+			}
+			col2 := p.Exprs[j].(*expression.Column)
+			if col1.FromID == col2.FromID && col1.Position == col2.Position {
+				return false
+			}
 		}
-		return false
 	}
 	return true
 }
 
 // extractSchemaOfChild extract columns of each child operator in orderedSchema.
 func extractSchemaOfChild(orderedSchema expression.Schema, childSchema expression.Schema) expression.Schema {
-	if orderedSchema == nil || childSchema == nil || len(orderedSchema) == 0 || len(childSchema) == 0 {
+	if len(orderedSchema) == 0 || len(childSchema) == 0 {
 		return nil
 	}
 	newSchema := make(expression.Schema, 0, len(orderedSchema))
