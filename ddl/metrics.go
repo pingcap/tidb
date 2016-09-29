@@ -16,8 +16,8 @@ package ddl
 import "github.com/prometheus/client_golang/prometheus"
 
 var (
-	jobsGauge = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
+	jobsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
 			Name:      "waiting_jobs",
