@@ -5,12 +5,13 @@ ifeq "$(GOPATH)" ""
   $(error Please set the environment variable GOPATH before running `make`)
 endif
 
-ORIGIN_GOPATH := $(GOPATH)
+GO        := GO15VENDOREXPERIMENT="1" go
+GOGET     := GOPATH=$(GOPATH) go get
+
 CURDIR := $(shell pwd)
 export GOPATH := $(CURDIR)/_vendor:$(GOPATH)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
-GO        := GO15VENDOREXPERIMENT="1" go
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -61,7 +62,7 @@ parser: goyacc
 
 check:
 	bash gitcookie.sh
-	GOPATH=$(ORIGIN_GOPATH) go get github.com/golang/lint/golint
+	$(GOGET) github.com/golang/lint/golint
 
 	@echo "vet"
 	@ go tool vet $(FILES) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
@@ -73,7 +74,7 @@ check:
 	@ gofmt -s -l -w $(FILES) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 
 errcheck:
-	GOPATH=$(ORIGIN_GOPATH) go get github.com/kisielk/errcheck
+	$(GOGET) github.com/kisielk/errcheck
 	errcheck -blank $(PACKAGES)
 
 clean:
@@ -119,7 +120,7 @@ benchkv:
 
 update:
 	which glide >/dev/null || curl https://glide.sh/get | sh
-	which glide-vc || GOPATH=$(ORIGIN_GOPATH) go get -v -u github.com/sgotti/glide-vc
+	which glide-vc || $(GOGET) -v -u github.com/sgotti/glide-vc
 	rm -r vendor && mv _vendor/src vendor || true
 	rm -rf _vendor
 ifdef PKG
