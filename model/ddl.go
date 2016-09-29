@@ -97,16 +97,17 @@ type Job struct {
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.
 func (job *Job) SetRowCount(count int64) {
 	job.Mu.Lock()
+	defer job.Mu.Unlock()
+
 	job.RowCount = count
-	job.Mu.Unlock()
 }
 
 // GetRowCount gets the number of rows. Make sure it can pass `make race`.
 func (job *Job) GetRowCount() int64 {
 	job.Mu.Lock()
-	count := job.RowCount
-	job.Mu.Unlock()
-	return count
+	defer job.Mu.Unlock()
+
+	return job.RowCount
 }
 
 // Encode encodes job with json format.
@@ -119,8 +120,9 @@ func (job *Job) Encode() ([]byte, error) {
 
 	var b []byte
 	job.Mu.Lock()
+	defer job.Mu.Unlock()
 	b, err = json.Marshal(job)
-	job.Mu.Unlock()
+
 	return b, errors.Trace(err)
 }
 
@@ -140,8 +142,9 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, Args:%s",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, job.RawArgs)
+	rowCount := job.GetRowCount()
+	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, Args:%s",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, job.RawArgs)
 }
 
 // IsFinished returns whether job is finished or not.
