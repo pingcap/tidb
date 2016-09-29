@@ -97,7 +97,6 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 		}
 		job.Error = toTError(err)
 		job.ErrorCount++
-		return
 	}
 }
 
