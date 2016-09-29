@@ -5,13 +5,13 @@ ifeq "$(GOPATH)" ""
   $(error Please set the environment variable GOPATH before running `make`)
 endif
 
-GO        := GO15VENDOREXPERIMENT="1" go
-GOGET     := GOPATH=$(GOPATH) go get
-
 CURDIR := $(shell pwd)
-export GOPATH := $(CURDIR)/_vendor:$(GOPATH)
-path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
+path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(CURDIR)/_vendor:$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
+
+GO        := GO15VENDOREXPERIMENT="1" go
+GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) $(GO) build
+GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) $(GO) test
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -36,12 +36,12 @@ all: dev server benchkv
 dev: parser build benchkv test check
 
 build:
-	$(GO) build
+	$(GOBUILD)
 
 TEMP_FILE = temp_parser_file
 
 goyacc:
-	$(GO) build -o bin/goyacc parser/goyacc/main.go
+	$(GOBUILD) -o bin/goyacc parser/goyacc/main.go
 
 parser: goyacc
 	bin/goyacc -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
@@ -62,7 +62,7 @@ parser: goyacc
 
 check:
 	bash gitcookie.sh
-	$(GOGET) github.com/golang/lint/golint
+	go get github.com/golang/lint/golint
 
 	@echo "vet"
 	@ go tool vet $(FILES) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
@@ -74,7 +74,7 @@ check:
 	@ gofmt -s -l -w $(FILES) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 
 errcheck:
-	$(GOGET) github.com/kisielk/errcheck
+	go get github.com/kisielk/errcheck
 	errcheck -blank $(PACKAGES)
 
 clean:
@@ -91,36 +91,36 @@ test: gotest
 
 gotest:
 	@export log_level=error;\
-	$(GO) test -cover $(PACKAGES)
+	$(GOTEST) -cover $(PACKAGES)
 
 race:
 	@export log_level=debug; \
 	dirs=`go list ./... | grep -vE 'vendor' | awk '{sub("github.com/pingcap/tidb/",""); print}'`;\
 	for dir in $$dirs; do \
 		cd $$dir;\
-		go test -race | awk 'END{if($$1=="FAIL") {exit 1}}' || exit 1;\
+		$(GOTEST) -race | awk 'END{if($$1=="FAIL") {exit 1}}' || exit 1;\
 		cd -;\
 	done;
 
 tikv_integration_test:
-	$(GO) test ./store/tikv/. -with-tikv=true
+	$(GOTEST) ./store/tikv/. -with-tikv=true
 
 interpreter:
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
 
 server: parser
 ifeq ($(TARGET), "")
-	$(GO) build -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
 else
-	$(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
 endif
 
 benchkv:
-	$(GO) build -ldflags '$(LDFLAGS)' -o bin/benchkv benchkv/main.go
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchkv benchkv/main.go
 
 update:
 	which glide >/dev/null || curl https://glide.sh/get | sh
-	which glide-vc || $(GOGET) -v -u github.com/sgotti/glide-vc
+	which glide-vc || go get -v -u github.com/sgotti/glide-vc
 	rm -r vendor && mv _vendor/src vendor || true
 	rm -rf _vendor
 ifdef PKG
