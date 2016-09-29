@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -570,4 +571,53 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
+}
+
+func (s *testDBSuite) TestTruncateTable(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://truncate_table")
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int, c2 int)")
+	tk.MustExec("insert t values (1, 1), (2, 2)")
+	ctx := tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	oldTblID := oldTblInfo.Meta().ID
+
+	tk.MustExec("truncate table t")
+
+	tk.MustExec("insert t values (3, 3), (4, 4)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3 3", "4 4"))
+
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(newTblInfo.Meta().ID, Greater, oldTblID)
+
+	// verify that the old table data has been deleted by background worker.
+	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
+	hasOldTableData := true
+	for i := 0; i < 30; i++ {
+		err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+			it, err1 := txn.Seek(tablePrefix)
+			if err1 != nil {
+				return err1
+			}
+			if !it.Valid() {
+				hasOldTableData = false
+			} else {
+				hasOldTableData = it.Key().HasPrefix(tablePrefix)
+			}
+			it.Close()
+			return nil
+		})
+		c.Assert(err, IsNil)
+		if !hasOldTableData {
+			break
+		}
+		time.Sleep(time.Millisecond * 100)
+	}
+	c.Assert(hasOldTableData, IsFalse)
 }

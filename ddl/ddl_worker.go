@@ -189,7 +189,7 @@ func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 	switch job.Type {
-	case model.ActionDropSchema, model.ActionDropTable:
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable:
 		if err = d.prepareBgJob(t, job); err != nil {
 			return errors.Trace(err)
 		}
@@ -374,6 +374,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 		err = d.onCreateForeignKey(t, job)
 	case model.ActionDropForeignKey:
 		err = d.onDropForeignKey(t, job)
+	case model.ActionTruncateTable:
+		err = d.onTruncateTable(t, job)
 	default:
 		// invalid job, cancel it.
 		job.State = model.JobCancelled
