@@ -78,27 +78,16 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 }
 
 func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
-	tblInfo := &model.TableInfo{}
-	err := job.DecodeArgs(tblInfo)
-	if err != nil {
-		// arg error, cancel this job.
-		job.State = model.JobCancelled
-		return errors.Trace(err)
-	}
-	tblInfo.State = model.StateDeleteReorganization
-
 	limit := defaultBatchSize
-	delCount, err := d.dropTableData(tblInfo.ID, job, limit)
+	delCount, err := d.dropTableData(job.TableID, job, limit)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	// finish this background job
 	if delCount < limit {
 		job.SchemaState = model.StateNone
 		job.State = model.JobDone
 	}
-
 	return nil
 }
 
@@ -184,4 +173,46 @@ func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, erro
 func (d *ddl) dropTableData(tID int64, job *model.Job, limit int) (int, error) {
 	delCount, err := d.delKeysWithPrefix(tablecodec.EncodeTablePrefix(tID), bgJobFlag, job, limit)
 	return delCount, errors.Trace(err)
+}
+
+// onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
+// As all the old data is encoded with old table ID, it can not be accessed any more.
+// A background job will be created to delete old data.
+func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
+	schemaID := job.SchemaID
+	tableID := job.TableID
+	var newTableID int64
+	err := job.DecodeArgs(&newTableID)
+	if err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+	tblInfo, err := t.GetTable(schemaID, tableID)
+	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+		job.State = model.JobCancelled
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	} else if err != nil {
+		return errors.Trace(err)
+	}
+	if tblInfo == nil {
+		job.State = model.JobCancelled
+		return errors.Trace(infoschema.ErrTableNotExists)
+	}
+	err = t.DropTable(schemaID, tableID)
+	if err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+	tblInfo.ID = newTableID
+	err = t.CreateTable(schemaID, tblInfo)
+	if err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+	_, err = t.GenSchemaVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job.State = model.JobDone
+	return nil
 }

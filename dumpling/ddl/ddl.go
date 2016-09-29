@@ -97,6 +97,7 @@ type DDL interface {
 	DropIndex(ctx context.Context, tableIdent ast.Ident, indexName model.CIStr) error
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx context.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
+	TruncateTable(ctx context.Context, tableIdent ast.Ident) error
 	// SetLease will reset the lease time for online DDL change,
 	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
 	SetLease(lease time.Duration)
@@ -1078,6 +1079,31 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 		Type:     model.ActionDropTable,
 	}
 
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
+	is := d.GetInformationSchema()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+	}
+	tb, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists)
+	}
+	newTableID, err := d.genGlobalID()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  tb.Meta().ID,
+		Type:     model.ActionTruncateTable,
+		Args:     []interface{}{newTableID},
+	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
