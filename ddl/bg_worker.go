@@ -84,7 +84,7 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 	switch job.Type {
 	case model.ActionDropSchema:
 		err = d.delReorgSchema(t, job)
-	case model.ActionDropTable:
+	case model.ActionDropTable, model.ActionTruncateTable:
 		err = d.delReorgTable(t, job)
 	default:
 		job.State = model.JobCancelled
@@ -95,7 +95,6 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 		if job.State != model.JobCancelled {
 			log.Errorf("[ddl] run background job err %v", errors.ErrorStack(err))
 		}
-
 		job.Error = toTError(err)
 		job.ErrorCount++
 	}
@@ -117,7 +116,7 @@ func (d *ddl) prepareBgJob(t *meta.Meta, ddlJob *model.Job) error {
 // startBgJob starts a background job.
 func (d *ddl) startBgJob(tp model.ActionType) {
 	switch tp {
-	case model.ActionDropSchema, model.ActionDropTable:
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable:
 		asyncNotify(d.bgJobCh)
 	}
 }

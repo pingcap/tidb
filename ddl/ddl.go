@@ -97,6 +97,7 @@ type DDL interface {
 	DropIndex(ctx context.Context, tableIdent ast.Ident, indexName model.CIStr) error
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx context.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
+	TruncateTable(ctx context.Context, tableIdent ast.Ident) error
 	// SetLease will reset the lease time for online DDL change,
 	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
 	SetLease(lease time.Duration)
@@ -1083,6 +1084,31 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 	return errors.Trace(err)
 }
 
+func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
+	is := d.GetInformationSchema()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+	}
+	tb, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists)
+	}
+	newTableID, err := d.genGlobalID()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  tb.Meta().ID,
+		Type:     model.ActionTruncateTable,
+		Args:     []interface{}{newTableID},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexName model.CIStr, idxColNames []*ast.IndexColName) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
@@ -1219,15 +1245,17 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 
 func (d *ddl) callHookOnChanged(err error) error {
 	d.hookMu.Lock()
+	defer d.hookMu.Unlock()
+
 	err = d.hook.OnChanged(err)
-	d.hookMu.Unlock()
 	return errors.Trace(err)
 }
 
 func (d *ddl) setHook(h Callback) {
 	d.hookMu.Lock()
+	defer d.hookMu.Unlock()
+
 	d.hook = h
-	d.hookMu.Unlock()
 }
 
 // findCol finds column in cols by name.
