@@ -152,6 +152,7 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	job := &model.Job{
 		SchemaID: dbInfo2.ID,
 		Type:     model.ActionCreateSchema,
+		RowCount: 0,
 	}
 	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
@@ -176,6 +177,7 @@ func (s *testSuite) TestGetBgDDLInfo(c *C) {
 	job := &model.Job{
 		SchemaID: 1,
 		Type:     model.ActionDropTable,
+		RowCount: 0,
 	}
 	err = t.EnQueueBgJob(job)
 	c.Assert(err, IsNil)
