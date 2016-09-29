@@ -1089,6 +1089,10 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 			sql: "select t1.b, t1.a, t2.b, t2.a from t t1, t t2 where t1.a > 0 and t2.b < 0",
 			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}",
 		},
+		{
+			sql: "select * from (t t1 join t t2) join (t t3 join t t4)",
+			ans: "Join{Join{DataScan(t)->DataScan(t)}->Join{DataScan(t)->DataScan(t)}}",
+		},
 		// projection can not be eliminated in following cases.
 		{
 			sql: "select c as a, c as b from t",

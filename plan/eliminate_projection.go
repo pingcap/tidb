@@ -134,10 +134,14 @@ func extractSchemaOfChild(orderedSchema expression.Schema, childSchema expressio
 		return nil
 	}
 	newSchema := make(expression.Schema, 0, len(orderedSchema))
+	fromIDsOfChildSchema := make(map[string]bool, 0)
+	for _, v := range childSchema {
+		fromIDsOfChildSchema[v.FromID] = true
+	}
 	for _, v := range orderedSchema {
-		if v.FromID == childSchema[0].FromID {
+		if _, ok := fromIDsOfChildSchema[v.FromID]; ok {
 			newSchema = append(newSchema, v)
 		}
 	}
-	return newSchema[:]
+	return newSchema
 }
