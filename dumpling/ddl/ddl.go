@@ -1219,15 +1219,17 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 
 func (d *ddl) callHookOnChanged(err error) error {
 	d.hookMu.Lock()
+	defer d.hookMu.Unlock()
+
 	err = d.hook.OnChanged(err)
-	d.hookMu.Unlock()
 	return errors.Trace(err)
 }
 
 func (d *ddl) setHook(h Callback) {
 	d.hookMu.Lock()
+	defer d.hookMu.Unlock()
+
 	d.hook = h
-	d.hookMu.Unlock()
 }
 
 // findCol finds column in cols by name.
