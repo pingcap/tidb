@@ -396,7 +396,8 @@ func toTError(err error) *terror.Error {
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
 	if ok {
-		return tErr
+		msg := tErr.Error()
+		return tErr.Gen(msg)
 	}
 
 	// TODO: add the error code
