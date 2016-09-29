@@ -86,7 +86,7 @@ func shallowCopyColumn(colDest, colSrc *expression.Column) *expression.Column {
 	return colDest
 }
 
-// projectionCanBeEliminated judges whether a PROJECTION operator can be eliminated.
+// projectionCanBeEliminated checks if a PROJECTION operator can be eliminated.
 func projectionCanBeEliminated(p *Projection) bool {
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	// only fields in PROJECTION are all Columns might be eliminated.
@@ -116,18 +116,14 @@ func projectionCanBeEliminated(p *Projection) bool {
 		}
 	}
 	// detect expression like "SELECT c AS a, c AS b FROM t WHERE d = 1" which cannot be eliminated.
-	canBeEliminated := true
-	for _, col := range child.GetSchema() {
-		for _, expr := range p.Exprs {
-			if col.FromID == expr.(*expression.Column).FromID && col.Position == expr.(*expression.Column).Position {
-				canBeEliminated = true
-				break
-			}
-			canBeEliminated = false
+	prjCols := make(map[string]bool, 0)
+	for _, expr := range p.Exprs {
+		hashcode := string(expr.(*expression.Column).HashCode())
+		if _, ok := prjCols[hashcode]; !ok {
+			prjCols[hashcode] = true
+			continue
 		}
-		if !canBeEliminated {
-			return false
-		}
+		return false
 	}
 	return true
 }
