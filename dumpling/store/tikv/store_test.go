@@ -174,8 +174,8 @@ func (o *mockOracle) addOffset(d time.Duration) {
 }
 
 func (o *mockOracle) GetTimestamp() (uint64, error) {
-	o.RLock()
-	defer o.RUnlock()
+	o.Lock()
+	defer o.Unlock()
 
 	if o.stop {
 		return 0, errors.New("stopped")
