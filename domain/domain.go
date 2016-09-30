@@ -44,26 +44,20 @@ type Domain struct {
 	SchemaValidity *schemaValidityInfo
 }
 
-func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
-	defer func() {
-		if err != nil {
-			do.SchemaValidity.setLastFailedTS(txn.StartTS())
-		}
-	}()
-	m := meta.NewMeta(txn)
-	schemaMetaVersion, err := m.GetSchemaVersion()
+func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64, startTS uint64) error {
+	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	info := do.infoHandle.Get()
-	if info != nil && schemaMetaVersion <= info.SchemaMetaVersion() {
-		// info may be changed by other txn, so here its version may be bigger than schema version,
-		// so we don't need to reload.
-		log.Debugf("[ddl] schema version is still %d, no need reload", schemaMetaVersion)
+	m := meta.NewSnapshotMeta(snapshot)
+	latestSchemaVersion, err := m.GetSchemaVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if usedSchemaVersion != 0 && usedSchemaVersion == latestSchemaVersion {
+		log.Debugf("[ddl] schema version is still %d, no need reload", usedSchemaVersion)
 		return nil
 	}
-
 	schemas, err := m.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)
@@ -84,15 +78,14 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 		di.Tables = make([]*model.TableInfo, 0, len(tables))
 		for _, tbl := range tables {
 			if tbl.State != model.StatePublic {
-				// schema is not public, can't be used outsiee.
+				// schema is not public, can't be used outside.
 				continue
 			}
 			di.Tables = append(di.Tables, tbl)
 		}
 	}
-
-	log.Infof("[ddl] loadInfoSchema %d", schemaMetaVersion)
-	err = do.infoHandle.Set(schemas, schemaMetaVersion)
+	log.Infof("[ddl] loadInfoSchema %d", latestSchemaVersion)
+	err = handle.Set(schemas, latestSchemaVersion)
 	return errors.Trace(err)
 }
 
@@ -101,6 +94,16 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 	// try reload if possible.
 	do.tryReload()
 	return do.infoHandle.Get()
+}
+
+// GetSnapshotInfoSchema gets a snapshot information schema.
+func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
+	snapHandle := do.infoHandle.EmptyClone()
+	err := do.loadInfoSchema(snapHandle, do.infoHandle.Get().SchemaMetaVersion(), snapshotTS)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return snapHandle.Get(), nil
 }
 
 // PerfSchema gets performance schema from domain.
@@ -194,14 +197,22 @@ func (do *Domain) Reload() error {
 	done := make(chan error, 1)
 	go func() {
 		var err error
-
 		for {
-			err = kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
+			var ver kv.Version
+			ver, err = do.store.CurrentVersion()
+			if err == nil {
+				schemaVersion := int64(0)
+				oldInfoSchema := do.infoHandle.Get()
+				if oldInfoSchema != nil {
+					schemaVersion = oldInfoSchema.SchemaMetaVersion()
+				}
+				err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
+			}
 			if err == nil {
 				atomic.StoreInt64(&do.lastLeaseTS, time.Now().UnixNano())
 				break
 			}
-
+			do.SchemaValidity.setLastFailedTS(ver.Ver)
 			log.Errorf("[ddl] load schema err %v, retry again", errors.ErrorStack(err))
 			if atomic.LoadInt32(&exit) == 1 {
 				return

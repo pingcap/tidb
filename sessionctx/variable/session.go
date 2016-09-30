@@ -116,6 +116,10 @@ type SessionVars struct {
 
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
+
+	// SnapshotInfoschema is used with SnapshotTS, when the schema version at snapshotTS less than current schema
+	// version, we load an old version schema for query.
+	SnapshotInfoschema interface{}
 }
 
 // sessionVarsKeyType is a dummy type to avoid naming collision in context.
