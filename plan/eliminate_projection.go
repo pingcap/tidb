@@ -15,65 +15,39 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 )
 
 // EliminateProjection eliminates projection operator to avoid the cost of memory copy in the iterator of projection.
-func EliminateProjection(p LogicalPlan, reorder bool, orderedSchema expression.Schema) LogicalPlan {
+func EliminateProjection(p LogicalPlan) LogicalPlan {
 	switch plan := p.(type) {
 	case *Projection:
 		if !projectionCanBeEliminated(plan) {
 			break
 		}
 		child := p.GetChildByIndex(0).(LogicalPlan)
-		reorder = false
-		orderedSchema = make(expression.Schema, len(plan.Exprs))
 		newSchema := make(expression.Schema, len(child.GetSchema()))
-		for j, col := range child.GetSchema() {
-			for i, expr := range plan.Exprs {
-				c := expr.(*expression.Column)
-				if col.FromID == c.FromID && col.Position == c.Position {
-					if i != j {
-						reorder = true
-					}
-					orderedSchema[i] = expr.(*expression.Column)
-					newSchema[i] = shallowCopyColumn(plan.GetSchema()[i], col)
-					break
-				}
-			}
+		for i := range plan.Exprs {
+			newSchema[i] = shallowCopyColumn(plan.GetSchema()[i], child.GetSchema()[i])
 		}
 		newSchema.InitIndices()
 		child.SetSchema(newSchema)
 		RemovePlan(p)
-		p = EliminateProjection(child, reorder, orderedSchema)
+		p = EliminateProjection(child)
 	case *DataSource:
-		if sel, ok := plan.GetParentByIndex(0).(*Selection); ok { // reorder schema.
+		if sel, ok := plan.GetParentByIndex(0).(*Selection); ok {
 			plan.SetSchema(sel.GetSchema())
 			for i, cond := range sel.Conditions {
 				sel.Conditions[i], _ = retrieveColumnsInExpression(cond, plan.GetSchema())
 			}
 		}
-		if !reorder {
-			break
-		}
-		newColumns := make([]*model.ColumnInfo, 0, len(plan.Columns))
-		for _, s := range orderedSchema { // reorder DataSource's columns.
-			for _, col := range plan.Columns {
-				if s.ColName == col.Name {
-					newColumns = append(newColumns, col)
-					break
-				}
-			}
-		}
-		plan.Columns = newColumns
 	}
 	if len(p.GetChildren()) == 1 {
 		child := p.GetChildByIndex(0)
-		p.ReplaceChild(child, EliminateProjection(child.(LogicalPlan), reorder, orderedSchema))
+		p.ReplaceChild(child, EliminateProjection(child.(LogicalPlan)))
 	} else {
 		children := make([]Plan, 0, len(p.GetChildren()))
 		for _, child := range p.GetChildren() {
-			children = append(children, EliminateProjection(child.(LogicalPlan), reorder, extractSchemaOfChild(orderedSchema, child.GetSchema())))
+			children = append(children, EliminateProjection(child.(LogicalPlan)))
 		}
 		p.SetChildren(children...)
 	}
@@ -120,36 +94,12 @@ func projectionCanBeEliminated(p *Projection) bool {
 			}
 		}
 	}
-	// detect expression like "SELECT c AS a, c AS b FROM t WHERE d = 1" which cannot be eliminated.
+	// detect expression like "SELECT b, a from t" or "SELECT c AS a, c AS b FROM t WHERE d = 1" which cannot be eliminated.
 	for i := range p.Exprs {
-		col1 := p.Exprs[i].(*expression.Column)
-		for j := range p.Exprs {
-			if i == j {
-				continue
-			}
-			col2 := p.Exprs[j].(*expression.Column)
-			if col1.FromID == col2.FromID && col1.Position == col2.Position {
-				return false
-			}
+		col := p.Exprs[i].(*expression.Column)
+		if col.FromID != child.GetSchema()[i].FromID || col.Position != child.GetSchema()[i].Position {
+			return false
 		}
 	}
 	return true
-}
-
-// extractSchemaOfChild extract columns of each child operator in orderedSchema.
-func extractSchemaOfChild(orderedSchema expression.Schema, childSchema expression.Schema) expression.Schema {
-	if len(orderedSchema) == 0 || len(childSchema) == 0 {
-		return nil
-	}
-	newSchema := make(expression.Schema, 0, len(orderedSchema))
-	fromIDsOfChildSchema := make(map[string]bool, 0)
-	for _, v := range childSchema {
-		fromIDsOfChildSchema[v.FromID] = true
-	}
-	for _, v := range orderedSchema {
-		if _, ok := fromIDsOfChildSchema[v.FromID]; ok {
-			newSchema = append(newSchema, v)
-		}
-	}
-	return newSchema
 }

@@ -1050,19 +1050,11 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 			ans: "DataScan(t)->Selection",
 		},
 		{
-			sql: "select d, c, b, a from t where a = b and b = 1",
-			ans: "DataScan(t)->Selection",
-		},
-		{
 			sql: "select a as c1, b as c2 from t where a = 3",
 			ans: "DataScan(t)->Selection",
 		},
 		{
 			sql: "select a as c1, b as c2 from t as t1 where t1.a = 0",
-			ans: "DataScan(t)->Selection",
-		},
-		{
-			sql: "select d as a, b as c from t as t1 where d > 0 and b < 0",
 			ans: "DataScan(t)->Selection",
 		},
 		{
@@ -1086,14 +1078,22 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}",
 		},
 		{
-			sql: "select t1.b, t1.a, t2.b, t2.a from t t1, t t2 where t1.a > 0 and t2.b < 0",
-			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}",
-		},
-		{
 			sql: "select * from (t t1 join t t2) join (t t3 join t t4)",
 			ans: "Join{Join{DataScan(t)->DataScan(t)}->Join{DataScan(t)->DataScan(t)}}",
 		},
 		// projection can not be eliminated in following cases.
+		{
+			sql: "select t1.b, t1.a, t2.b, t2.a from t t1, t t2 where t1.a > 0 and t2.b < 0",
+			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql: "select d, c, b, a from t where a = b and b = 1",
+			ans: "DataScan(t)->Selection->Projection",
+		},
+		{
+			sql: "select d as a, b as c from t as t1 where d > 0 and b < 0",
+			ans: "DataScan(t)->Selection->Projection",
+		},
 		{
 			sql: "select c as a, c as b from t",
 			ans: "DataScan(t)->Projection",
@@ -1131,7 +1131,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		c.Assert(err, IsNil)
 		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
 		c.Assert(err, IsNil)
-		p = EliminateProjection(lp, false, nil)
+		p = EliminateProjection(lp)
 		c.Assert(ToString(p), Equals, ca.ans, Commentf("for %s", ca.sql))
 	}
 }

@@ -49,7 +49,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		logic = EliminateProjection(logic, false, nil)
+		logic = EliminateProjection(logic)
 		info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 		if err != nil {
 			return nil, errors.Trace(err)
