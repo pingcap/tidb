@@ -47,7 +47,7 @@ type basicCtxType int
 
 func (t basicCtxType) String() string {
 	switch t {
-	case 1:
+	case QueryString:
 		return "query_string"
 	}
 	return "unknown"
