@@ -237,7 +237,7 @@ func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 	switch job.Type {
-	case model.ActionDropSchema, model.ActionDropTable:
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable:
 		if err = d.prepareBgJob(t, job); err != nil {
 			return errors.Trace(err)
 		}
@@ -308,9 +308,9 @@ func (d *ddl) handleDDLJobQueue() error {
 
 			log.Warnf("[ddl] run DDL job %v", job)
 
-			d.m.RLock()
+			d.hookMu.Lock()
 			d.hook.OnJobRunBefore(job)
-			d.m.RUnlock()
+			d.hookMu.Unlock()
 
 			// if run job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
@@ -339,9 +339,9 @@ func (d *ddl) handleDDLJobQueue() error {
 			return nil
 		}
 
-		d.m.RLock()
+		d.hookMu.Lock()
 		d.hook.OnJobUpdated(job)
-		d.m.RUnlock()
+		d.hookMu.Unlock()
 
 		// here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// if the job is done or still running, we will wait 2 * lease time to guarantee other servers to update
@@ -422,6 +422,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 		err = d.onCreateForeignKey(t, job)
 	case model.ActionDropForeignKey:
 		err = d.onDropForeignKey(t, job)
+	case model.ActionTruncateTable:
+		err = d.onTruncateTable(t, job)
 	default:
 		// invalid job, cancel it.
 		job.State = model.JobCancelled

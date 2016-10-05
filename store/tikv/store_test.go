@@ -45,7 +45,7 @@ func (s *testStoreSuite) SetUpTest(c *C) {
 }
 
 func (s *testStoreSuite) TestOracle(c *C) {
-	o := newMockOracle(s.store.oracle)
+	o := &mockOracle{}
 	s.store.oracle = o
 
 	t1, err := s.store.getTimestampWithRetry(NewBackoffer(100))
@@ -141,44 +141,63 @@ func (s *testStoreSuite) TestBusyServerCop(c *C) {
 }
 
 type mockOracle struct {
-	oracle.Oracle
-	mu struct {
-		sync.RWMutex
-		stop bool
-	}
-}
-
-func newMockOracle(oracle oracle.Oracle) *mockOracle {
-	return &mockOracle{Oracle: oracle}
+	sync.RWMutex
+	stop   bool
+	offset time.Duration
+	lastTS uint64
 }
 
 func (o *mockOracle) enable() {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.mu.stop = false
+	o.Lock()
+	defer o.Unlock()
+	o.stop = false
 }
 
 func (o *mockOracle) disable() {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.mu.stop = true
+	o.Lock()
+	defer o.Unlock()
+	o.stop = true
+}
+
+func (o *mockOracle) setOffset(offset time.Duration) {
+	o.Lock()
+	defer o.Unlock()
+
+	o.offset = offset
+}
+
+func (o *mockOracle) addOffset(d time.Duration) {
+	o.Lock()
+	defer o.Unlock()
+
+	o.offset += d
 }
 
 func (o *mockOracle) GetTimestamp() (uint64, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
+	o.Lock()
+	defer o.Unlock()
 
-	if o.mu.stop {
+	if o.stop {
 		return 0, errors.New("stopped")
 	}
-	return o.Oracle.GetTimestamp()
+	physical := oracle.GetPhysical(time.Now().Add(o.offset))
+	ts := oracle.ComposeTS(physical, 0)
+	if oracle.ExtractPhysical(o.lastTS) == physical {
+		ts = o.lastTS + 1
+	}
+	o.lastTS = ts
+	return ts, nil
 }
 
 func (o *mockOracle) IsExpired(lockTimestamp uint64, TTL uint64) bool {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
+	o.RLock()
+	defer o.RUnlock()
 
-	return o.Oracle.IsExpired(lockTimestamp, TTL)
+	return oracle.GetPhysical(time.Now().Add(o.offset)) >= oracle.ExtractPhysical(lockTimestamp)+int64(TTL)
+}
+
+func (o *mockOracle) Close() {
+
 }
 
 type busyClient struct {

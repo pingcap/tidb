@@ -14,7 +14,6 @@
 package kv
 
 import (
-	"bytes"
 	"io"
 )
 
@@ -108,18 +107,8 @@ const (
 	ReqSubTypeBasic   = 0
 	ReqSubTypeDesc    = 10000
 	ReqSubTypeGroupBy = 10001
+	ReqSubTypeTopN    = 10002
 )
-
-// KeyRange represents a range where StartKey <= key < EndKey.
-type KeyRange struct {
-	StartKey Key
-	EndKey   Key
-}
-
-// IsPoint checks if the key range represents a point.
-func (r *KeyRange) IsPoint() bool {
-	return bytes.Equal(r.StartKey.PrefixNext(), r.EndKey)
-}
 
 // Request represents a kv request.
 type Request struct {
