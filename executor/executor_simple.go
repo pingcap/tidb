@@ -203,7 +203,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if name == "tidb_snapshot" {
+			if name == variable.TiDBSnapshot {
 				err = e.loadSnapshotInfoSchemaIfNeeded(sessionVars)
 				if err != nil {
 					return errors.Trace(err)
@@ -219,7 +219,7 @@ func (e *SimpleExec) loadSnapshotInfoSchemaIfNeeded(sessionVars *variable.Sessio
 		sessionVars.SnapshotInfoschema = nil
 		return nil
 	}
-	log.Infof("loadSnapshotInfoSchema")
+	log.Infof("loadSnapshotInfoSchema, SnapshotTS:%d", sessionVars.SnapshotTS)
 	dom := sessionctx.GetDomain(e.ctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(sessionVars.SnapshotTS)
 	if err != nil {

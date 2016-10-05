@@ -226,7 +226,7 @@ func (s *SessionVars) SetCurrentUser(user string) {
 
 // special session variables.
 const (
-	tidbSnapshot        = "tidb_snapshot"
+	TiDBSnapshot        = "tidb_snapshot"
 	sqlMode             = "sql_mode"
 	characterSetResults = "character_set_results"
 )
@@ -252,7 +252,7 @@ func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 		} else {
 			s.StrictSQLMode = false
 		}
-	} else if key == tidbSnapshot {
+	} else if key == TiDBSnapshot {
 		err = s.setSnapshotTS(sVal)
 		if err != nil {
 			return errors.Trace(err)
