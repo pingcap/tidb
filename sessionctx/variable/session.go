@@ -289,3 +289,32 @@ func (s *SessionVars) GetSystemVar(key string) types.Datum {
 	}
 	return d
 }
+
+// GetTiDBSystemVar get variable value for name.
+// The variable should be a TiDB specific system variable (The vars in tidbSysVars map).
+// If the session scope variable is not set, it will get global scope value and fill session scope value.
+func (s *SessionVars) GetTiDBSystemVar(ctx context.Context, name string) (string, error) {
+	key := strings.ToLower(name)
+	sVal, ok := s.systems[key]
+	if ok {
+		return sVal, nil
+	}
+	globalVars := GetGlobalVarAccessor(ctx)
+	if key == DistSQLScanConcurrencyVar {
+		s.systems[DistSQLScanConcurrencyVar] = "1"
+	}
+	globalVal, err := globalVars.GetGlobalSysVar(ctx, key)
+	if err != nil {
+		if key == DistSQLScanConcurrencyVar {
+			delete(s.systems, DistSQLScanConcurrencyVar)
+		}
+		return "", errors.Trace(err)
+	}
+	if globalVal == "" {
+		// When bootstrapping, the globalVal will always be "".
+		// See session.GetGlobalSysVar.
+		globalVal = SysVars[key].Value
+	}
+	s.systems[key] = globalVal
+	return globalVal, nil
+}

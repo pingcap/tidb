@@ -730,8 +730,8 @@ func CreateSession(store kv.Storage) (Session, error) {
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 
-	ok := isBootstrapped(store)
-	if !ok {
+	ver := getStoreBootstrapVersion(store)
+	if ver == notBootstrapped {
 		// if no bootstrap and storage is remote, we must use a little lease time to
 		// bootstrap quickly, after bootstrapped, we will reset the lease time.
 		// TODO: Using a bootstap tool for doing this may be better later.
@@ -748,6 +748,8 @@ func CreateSession(store kv.Storage) (Session, error) {
 		}
 
 		finishBootstrap(store)
+	} else if ver < currentBootstrapVersion {
+		upgrade(s)
 	}
 
 	// TODO: Add auth here
@@ -756,18 +758,24 @@ func CreateSession(store kv.Storage) (Session, error) {
 	return s, nil
 }
 
-func isBootstrapped(store kv.Storage) bool {
+const (
+	notBootstrapped         = 0
+	currentBootstrapVersion = 2
+)
+
+func getStoreBootstrapVersion(store kv.Storage) int64 {
 	// check in memory
 	_, ok := storeBootstrapped[store.UUID()]
 	if ok {
-		return true
+		return currentBootstrapVersion
 	}
 
+	var ver int64
 	// check in kv store
 	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		var err error
 		t := meta.NewMeta(txn)
-		ok, err = t.IsBootstrapped()
+		ver, err = t.GetBootstrapVersion()
 		return errors.Trace(err)
 	})
 
@@ -775,12 +783,12 @@ func isBootstrapped(store kv.Storage) bool {
 		log.Fatalf("check bootstrapped err %v", err)
 	}
 
-	if ok {
+	if ver > notBootstrapped {
 		// here mean memory is not ok, but other server has already finished it
 		storeBootstrapped[store.UUID()] = true
 	}
 
-	return ok
+	return ver
 }
 
 func finishBootstrap(store kv.Storage) {
@@ -788,7 +796,7 @@ func finishBootstrap(store kv.Storage) {
 
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err := t.FinishBootstrap()
+		err := t.FinishBootstrap(currentBootstrapVersion)
 		return errors.Trace(err)
 	})
 	if err != nil {

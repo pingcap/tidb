@@ -16,6 +16,7 @@ package executor
 import (
 	"math"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -508,6 +510,17 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 	}
 }
 
+func getScanConcurrency(ctx context.Context) (int, error) {
+	sessionVars := variable.GetSessionVars(ctx)
+	concurrency, err := sessionVars.GetTiDBSystemVar(ctx, variable.DistSQLScanConcurrencyVar)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	c, err := strconv.ParseInt(concurrency, 10, 64)
+	log.Infof("Scan with concurrency ", concurrency)
+	return int(c), errors.Trace(err)
+}
+
 func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
 	selIdxReq.StartTs = e.startTS
@@ -523,14 +536,16 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 		// TODO: when where condition is all index columns limit can be pushed too.
 		selIdxReq.Limit = e.indexPlan.LimitCount
 	}
-	concurrency := 1
+	concurrency, err := getScanConcurrency(e.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if !e.indexPlan.DoubleRead {
-		concurrency = defaultConcurrency
 		selIdxReq.Aggregates = e.aggFuncs
 		selIdxReq.GroupBy = e.byItems
 		selIdxReq.Where = e.where
-	} else if e.indexPlan.OutOfOrder {
-		concurrency = defaultConcurrency
+	} else if !e.indexPlan.OutOfOrder {
+		concurrency = 1
 	}
 	keyRanges, err := indexRangesToKVRanges(e.table.Meta().ID, e.indexPlan.Index.ID, e.indexPlan.Ranges, fieldTypes)
 	if err != nil {
@@ -661,7 +676,12 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
 	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles)
-	resp, err := distsql.Select(e.ctx.GetClient(), selTableReq, keyRanges, defaultConcurrency, false)
+
+	concurrency, err := getScanConcurrency(e.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	resp, err := distsql.Select(e.ctx.GetClient(), selTableReq, keyRanges, concurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -731,7 +751,11 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.GroupBy = e.byItems
 
 	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges)
-	e.result, err = distsql.Select(e.ctx.GetClient(), selReq, kvRanges, defaultConcurrency, e.keepOrder)
+	concurrency, err := getScanConcurrency(e.ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.result, err = distsql.Select(e.ctx.GetClient(), selReq, kvRanges, concurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}
