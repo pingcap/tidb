@@ -749,7 +749,9 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 		finishBootstrap(store)
 	} else if ver < currentBootstrapVersion {
+		s.initing = true
 		upgrade(s)
+		s.initing = false
 	}
 
 	// TODO: Add auth here

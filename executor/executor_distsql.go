@@ -517,7 +517,7 @@ func getScanConcurrency(ctx context.Context) (int, error) {
 		return 0, errors.Trace(err)
 	}
 	c, err := strconv.ParseInt(concurrency, 10, 64)
-	log.Infof("Scan with concurrency ", concurrency)
+	log.Debugf("[DistSQL] Scan with concurrency %d", c)
 	return int(c), errors.Trace(err)
 }
 

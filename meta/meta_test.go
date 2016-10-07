@@ -160,6 +160,13 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(bootstrapVer, Equals, int64(1))
 
+	// Test case for meta.FinishBootstrap with a version.
+	err = t.FinishBootstrap(int64(10))
+	c.Assert(err, IsNil)
+	bootstrapVer, err = t.GetBootstrapVersion()
+	c.Assert(err, IsNil)
+	c.Assert(bootstrapVer, Equals, int64(10))
+
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 }

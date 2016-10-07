@@ -20,6 +20,7 @@ package tidb
 import (
 	"fmt"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -157,7 +158,7 @@ func checkBootstrapped(s Session) (bool, error) {
 // Those variables are used by TiDB server.
 func getTiDBVar(s Session, name string) (types.Datum, error) {
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`,
-		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar)
+		mysql.SystemDB, mysql.TiDBTable, name)
 	rs, err := s.Execute(sql)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
@@ -222,7 +223,7 @@ func upgrade(s Session) error {
 		mustExecute(s, sql)
 	}
 	// Update bootstrap version.
-	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES (%s, %d) ON DUPLICATE UPDATE SET VARIABLE_VALUE = %d;`,
+	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES ("%s", "%d", "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%d"`,
 		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion, currentBootstrapVersion)
 	mustExecute(s, sql)
 	_, err = s.Execute("COMMIT")
@@ -251,7 +252,7 @@ func getBootstrapVersion(s Session) (int64, error) {
 	if d.IsNull() {
 		return 0, nil
 	}
-	return d.GetInt64(), nil
+	return strconv.ParseInt(d.GetString(), 10, 64)
 }
 
 // Execute DDL statements in bootstrap stage.
