@@ -25,15 +25,18 @@ func EliminateProjection(p LogicalPlan) LogicalPlan {
 			break
 		}
 		child := p.GetChildByIndex(0).(LogicalPlan)
-		newSchema := make(expression.Schema, len(child.GetSchema()))
-		for i := range plan.Exprs {
-			newSchema[i] = shallowCopyColumn(plan.GetSchema()[i], child.GetSchema()[i])
+		// pointer of schema in PROJECTION operator may be referenced by parent operator,
+		// and attributes of child operator may be used later, so here we shallow copy child's schema
+		// to the schema of PROJECTION, and reset the child's schema as the schema of PROJECTION.
+		for i, col := range plan.GetSchema() {
+			plan.GetSchema()[i] = shallowCopyColumn(col, child.GetSchema()[i])
 		}
-		newSchema.InitIndices()
-		child.SetSchema(newSchema)
+		child.SetSchema(plan.GetSchema())
 		RemovePlan(p)
 		p = EliminateProjection(child)
 	case *DataSource:
+		// predicates may be pushed down when build physical plan, and the schema of Selection operator is
+		// always the same as the child operator, so here we copy the schema of Selection to DataSource.
 		if sel, ok := plan.GetParentByIndex(0).(*Selection); ok {
 			plan.SetSchema(sel.GetSchema())
 			for i, cond := range sel.Conditions {
@@ -66,37 +69,23 @@ func shallowCopyColumn(colDest, colSrc *expression.Column) *expression.Column {
 }
 
 // projectionCanBeEliminated checks if a PROJECTION operator can be eliminated.
+// PROJECTION operator can be eliminated when meet the following conditions at the same time:
+// 1. fields of PROJECTION are all columns
+// 2. fields of PROJECTION are just the same as the schema of the child operator (including order, amount, etc.).
+// expressions like following cases can not be eliminated:
+// "SELECT b, a from t",
+// or "SELECT c AS a, c AS b FROM t WHERE d = 1",
+// or "select t1.a, t2.b, t1.b, t2.a from t1, t2 where t1.a < 0 and t2.b > 0".
 func projectionCanBeEliminated(p *Projection) bool {
 	child := p.GetChildByIndex(0).(LogicalPlan)
-	// only fields in PROJECTION are all Columns might be eliminated.
-	for _, expr := range p.Exprs {
-		if col, ok := expr.(*expression.Column); !ok || col.Correlated {
-			return false
-		}
-	}
-	// detect expression like "SELECT c AS a, c AS b FROM t" which cannot be eliminated.
 	if len(p.GetSchema()) != len(child.GetSchema()) {
 		return false
 	}
-	// detect JOIN like 'select t1.a, t2.b, t1.b, t2.a from t1, t2 where t1.a < 0 and t2.b > 0' which can not be eliminated.
-	isJoin := false
-	for i := 0; i < len(p.Exprs)-1; i++ {
-		col0, col1 := p.Exprs[i].(*expression.Column), p.Exprs[i+1].(*expression.Column)
-		if col0.FromID != col1.FromID {
-			isJoin = true
-			break
+	for i, expr := range p.Exprs {
+		col, ok := expr.(*expression.Column)
+		if !ok || col.Correlated {
+			return false
 		}
-	}
-	if isJoin {
-		for i, col := range p.Exprs {
-			if col.(*expression.Column).FromID != child.GetSchema()[i].FromID {
-				return false
-			}
-		}
-	}
-	// detect expression like "SELECT b, a from t" or "SELECT c AS a, c AS b FROM t WHERE d = 1" which cannot be eliminated.
-	for i := range p.Exprs {
-		col := p.Exprs[i].(*expression.Column)
 		if col.FromID != child.GetSchema()[i].FromID || col.Position != child.GetSchema()[i].Position {
 			return false
 		}
