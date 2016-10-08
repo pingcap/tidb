@@ -99,19 +99,20 @@ func randomBuf(size int) []byte {
 	return buf
 }
 
-func (s *Server) newConn(conn net.Conn) (cc *clientConn, err error) {
+// newConn creates a new *clientConn from a net.Conn.
+// it allocates a connection ID and random salt data for authentication.
+func (s *Server) newConn(conn net.Conn) *clientConn {
 	log.Info("newConn", conn.RemoteAddr().String())
-	cc = &clientConn{
+	cc := &clientConn{
 		conn:         conn,
-		pkg:          newPacketIO(conn),
+		pkt:          newPacketIO(conn),
 		server:       s,
 		connectionID: atomic.AddUint32(&baseConnID, 1),
 		collation:    mysql.DefaultCollationID,
-		charset:      mysql.DefaultCharset,
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
 	cc.salt = randomBuf(20)
-	return
+	return cc
 }
 
 func (s *Server) skipAuth() bool {
@@ -180,12 +181,9 @@ func (s *Server) Close() {
 	}
 }
 
+// onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(c net.Conn) {
-	conn, err := s.newConn(c)
-	if err != nil {
-		log.Errorf("newConn error %s", errors.ErrorStack(err))
-		return
-	}
+	conn := s.newConn(c)
 	if err := conn.handshake(); err != nil {
 		log.Errorf("handshake error %s", errors.ErrorStack(err))
 		c.Close()
