@@ -492,6 +492,15 @@ func (h *Handle) GetPerfHandle() perfschema.PerfSchema {
 	return h.memSchema.perfHandle
 }
 
+// EmptyClone creates a new Handle with the same store and memSchema, but the value is not set.
+func (h *Handle) EmptyClone() *Handle {
+	newHandle := &Handle{
+		store:     h.store,
+		memSchema: h.memSchema,
+	}
+	return newHandle
+}
+
 // Schema error codes.
 const (
 	codeDBDropExists      terror.ErrCode = 1008
