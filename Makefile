@@ -6,10 +6,12 @@ ifeq "$(GOPATH)" ""
 endif
 
 CURDIR := $(shell pwd)
-export GOPATH := $(CURDIR)/_vendor:$(GOPATH)
-path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
+path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(CURDIR)/_vendor:$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
+
 GO        := GO15VENDOREXPERIMENT="1" go
+GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) $(GO) build
+GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) $(GO) test
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -22,27 +24,24 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 
 TARGET = ""
 
-.PHONY: all build install update parser clean todo test gotest interpreter server dev benchkv check
+.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv check
 
 default: server buildsucc
 
 buildsucc:
 	@echo Build TiDB Server successfully!
 
-all: dev server install benchkv
+all: dev server benchkv
 
 dev: parser build benchkv test check
 
 build:
-	$(GO) build
-
-install:
-	$(GO) install ./...
+	$(GOBUILD)
 
 TEMP_FILE = temp_parser_file
 
 goyacc:
-	$(GO) build -o bin/goyacc parser/goyacc/main.go
+	$(GOBUILD) -o bin/goyacc parser/goyacc/main.go
 
 parser: goyacc
 	bin/goyacc -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
@@ -92,32 +91,32 @@ test: gotest
 
 gotest:
 	@export log_level=error;\
-	$(GO) test -cover $(PACKAGES)
+	$(GOTEST) -cover $(PACKAGES)
 
 race:
 	@export log_level=debug; \
 	dirs=`go list ./... | grep -vE 'vendor' | awk '{sub("github.com/pingcap/tidb/",""); print}'`;\
 	for dir in $$dirs; do \
 		cd $$dir;\
-		go test -race | awk 'END{if($$1=="FAIL") {exit 1}}' || exit 1;\
+		$(GOTEST) -race | awk 'END{if($$1=="FAIL") {exit 1}}' || exit 1;\
 		cd -;\
 	done;
 
 tikv_integration_test:
-	$(GO) test ./store/tikv/. -with-tikv=true
+	$(GOTEST) ./store/tikv/. -with-tikv=true
 
 interpreter:
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
 
 server: parser
 ifeq ($(TARGET), "")
-	$(GO) build -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
 else
-	$(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
 endif
 
 benchkv:
-	$(GO) build -ldflags '$(LDFLAGS)' -o bin/benchkv benchkv/main.go
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchkv benchkv/main.go
 
 update:
 	which glide >/dev/null || curl https://glide.sh/get | sh
