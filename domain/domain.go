@@ -44,6 +44,8 @@ type Domain struct {
 	SchemaValidity *schemaValidityInfo
 }
 
+// loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
+// infoschema version, if it is the same as the schema version at startTS, we don't need to reload again.
 func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64, startTS uint64) error {
 	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
