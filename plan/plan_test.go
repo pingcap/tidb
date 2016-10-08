@@ -19,7 +19,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -50,7 +49,7 @@ func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 }
 
-func newType() types.FieldType {
+func newLongType() types.FieldType {
 	return *(types.NewFieldType(mysql.TypeLong))
 }
 
@@ -77,31 +76,31 @@ func mockResolve(node ast.Node) error {
 	pkColumn := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("a"),
-		FieldType: newType(),
+		FieldType: newLongType(),
 		ID:        1,
 	}
 	col0 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("b"),
-		FieldType: newType(),
+		FieldType: newLongType(),
 		ID:        2,
 	}
 	col1 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("c"),
-		FieldType: newType(),
+		FieldType: newLongType(),
 		ID:        3,
 	}
 	col2 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("d"),
-		FieldType: newType(),
+		FieldType: newLongType(),
 		ID:        4,
 	}
 	col3 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("e"),
-		FieldType: newType(),
+		FieldType: newLongType(),
 		ID:        5,
 	}
 	pkColumn.Flag = mysql.PriKeyFlag
@@ -129,7 +128,6 @@ func supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_In, tipb.ExprType_ValueList,
 		tipb.ExprType_Not,
 		tipb.ExprType_Like:
-		log.Warnf("column!")
 		return true
 	case tipb.ExprType_Plus, tipb.ExprType_Div:
 		return true
@@ -218,6 +216,12 @@ func (s *testPlanSuite) TestTopnPushDown(c *C) {
 			topn:  "[expr:<tp:ColumnRef val:\"\\200\\000\\000\\000\\000\\000\\000\\004\" > ]",
 			limit: "1",
 		},
+		{
+			sql:   "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.b limit 2",
+			best:  "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
+			topn:  "[]",
+			limit: "nil",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -249,11 +253,19 @@ func (s *testPlanSuite) TestTopnPushDown(c *C) {
 			switch x := p.(type) {
 			case *PhysicalTableScan:
 				c.Assert(fmt.Sprintf("%s", x.SortItems), Equals, ca.topn, Commentf("for %s", ca.sql))
-				c.Assert(fmt.Sprintf("%d", *x.LimitCount), Equals, ca.limit, Commentf("for %s", ca.sql))
+				if x.LimitCount == nil {
+					fmt.Print("nil")
+				} else {
+					c.Assert(fmt.Sprintf("%d", *x.LimitCount), Equals, ca.limit, Commentf("for %s", ca.sql))
+				}
 				break loop
 			case *PhysicalIndexScan:
 				c.Assert(fmt.Sprintf("%s", x.SortItems), Equals, ca.topn, Commentf("for %s", ca.sql))
-				c.Assert(fmt.Sprintf("%d", *x.LimitCount), Equals, ca.limit, Commentf("for %s", ca.sql))
+				if x.LimitCount == nil {
+					fmt.Print("nil")
+				} else {
+					c.Assert(fmt.Sprintf("%d", *x.LimitCount), Equals, ca.limit, Commentf("for %s", ca.sql))
+				}
 				break loop
 			}
 			p = p.GetChildByIndex(0)

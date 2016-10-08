@@ -138,19 +138,10 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 			}
 		}
 		sortedCost := cost + rowCount*cpuFactor
-		if allAsc {
+		if allAsc || allDesc {
 			sortedIs := *is
 			sortedIs.OutOfOrder = false
-			p := tryToAddUnionScan(is.txn, is.conditions, &sortedIs)
-			return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
-				p:     p,
-				cost:  sortedCost,
-				count: infos[0].count})
-		}
-		if allDesc {
-			sortedIs := *is
-			sortedIs.Desc = true
-			sortedIs.OutOfOrder = false
+			sortedIs.Desc = allDesc && !allAsc
 			p := tryToAddUnionScan(is.txn, is.conditions, &sortedIs)
 			return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
 				p:     p,
