@@ -234,12 +234,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 		return errors.Trace(err)
 	}
 	if shouldWriteBinlog(ctx) {
-		mutation := t.getMutation(ctx)
-		bin, err := codec.EncodeValue(nil, newData...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		mutation.UpdatedRows = append(mutation.UpdatedRows, bin)
+		t.addUpdateBinlog(ctx, h, oldData, value, colIDs)
 	}
 	return nil
 }
@@ -369,10 +364,9 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 	}
 	if shouldWriteBinlog(ctx) {
 		mutation := t.getMutation(ctx)
-		bin, err := codec.EncodeValue(nil, r...)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
+		// prepend handle to the row value
+		handleVal, _ := codec.EncodeValue(nil, types.NewIntDatum(recordID))
+		bin := append(handleVal, value...)
 		mutation.InsertedRows = append(mutation.InsertedRows, bin)
 	}
 	variable.GetSessionVars(ctx).AddAffectedRows(1)
@@ -538,6 +532,34 @@ func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) erro
 	return errors.Trace(err)
 }
 
+func (t *Table) addUpdateBinlog(ctx context.Context, h int64, old []types.Datum, newValue []byte, colIDs []int64) error {
+	mutation := t.getMutation(ctx)
+	hasPK := false
+	if t.meta.PKIsHandle {
+		hasPK = true
+	} else {
+		for _, idx := range t.meta.Indices {
+			if idx.Primary {
+				hasPK = true
+				break
+			}
+		}
+	}
+	var bin []byte
+	if hasPK {
+		handleData, _ := codec.EncodeValue(nil, types.NewIntDatum(h))
+		bin = append(handleData, newValue...)
+	} else {
+		oldData, err := tablecodec.EncodeRow(old, colIDs)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		bin = append(oldData, newValue...)
+	}
+	mutation.UpdatedRows = append(mutation.UpdatedRows, bin)
+	return nil
+}
+
 func (t *Table) addDeleteBinlog(ctx context.Context, h int64, r []types.Datum) error {
 	mutation := t.getMutation(ctx)
 	if t.meta.PKIsHandle {
@@ -566,8 +588,11 @@ func (t *Table) addDeleteBinlog(ctx context.Context, h int64, r []types.Datum) e
 		mutation.DeletedPks = append(mutation.DeletedPks, data)
 		return nil
 	}
-
-	data, err = codec.EncodeValue(nil, r...)
+	colIDs := make([]int64, len(t.Cols()))
+	for i, col := range t.Cols() {
+		colIDs[i] = col.ID
+	}
+	data, err = tablecodec.EncodeRow(r, colIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}

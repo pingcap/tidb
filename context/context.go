@@ -42,3 +42,19 @@ type Context interface {
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
 }
+
+type basicCtxType int
+
+func (t basicCtxType) String() string {
+	switch t {
+	case QueryString:
+		return "query_string"
+	}
+	return "unknown"
+}
+
+// Context keys.
+const (
+	// QueryString is the key for original query string.
+	QueryString basicCtxType = 1
+)
