@@ -536,7 +536,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2 right join t t3 on t2.a = t3.b order by t1.a, t1.b, t2.a, t2.b, t3.a, t3.b",
-			best: "RightHashJoin{Table(t)->RightHashJoin{Table(t)->Table(t)}(t2.a,t3.b)}->Projection->Sort",
+			best: "RightHashJoin{Table(t)->RightHashJoin{Table(t)->Table(t)}(t2.a,t3.b)}->Sort->Projection",
 		},
 		{
 			sql:  "select * from t a where 1 = a.c and a.d > 1 order by a.d desc limit 2",
@@ -556,11 +556,11 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by b.c",
-			best: "LeftHashJoin{Table(t)->Projection->Table(t)->Projection}->Projection->Sort",
+			best: "LeftHashJoin{Table(t)->Projection->Table(t)->Projection}->Sort->Projection",
 		},
 		{
 			sql:  "select * from (select * from t) a right outer join (select * from t) b on 1 order by a.c",
-			best: "RightHashJoin{Table(t)->Projection->Table(t)->Projection}->Projection->Sort",
+			best: "RightHashJoin{Table(t)->Projection->Table(t)->Projection}->Sort->Projection",
 		},
 		{
 			sql:  "select * from (select * from t) a right outer join (select * from t) b on 1 order by b.c",

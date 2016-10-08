@@ -385,9 +385,6 @@ func (p *Join) handleLeftJoin(prop *requiredProperty, innerJoin bool) (*physical
 			allLeft = false
 		}
 	}
-	if !allLeft {
-		return &physicalPlanInfo{cost: math.MaxFloat64}, nil
-	}
 	join := &PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
@@ -438,9 +435,6 @@ func (p *Join) handleRightJoin(prop *requiredProperty, innerJoin bool) (*physica
 		if rChild.GetSchema().GetIndex(col.col) == -1 {
 			allRight = false
 		}
-	}
-	if !allRight {
-		return &physicalPlanInfo{cost: math.MaxFloat64}, nil
 	}
 	join := &PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
