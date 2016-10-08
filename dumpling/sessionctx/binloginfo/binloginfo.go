@@ -14,9 +14,11 @@
 package binloginfo
 
 import (
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tipb/go-binlog"
+	goctx "golang.org/x/net/context"
 )
 
 // PumpClient is the gRPC client to write binlog, it is opened on server start and never close,
@@ -65,6 +67,17 @@ func GetPrewriteValue(ctx context.Context, createIfNotExists bool) *binlog.Prewr
 		ctx.SetValue(binlogKey, v)
 	}
 	return v
+}
+
+// WriteBinlog writes a binlog to Pump.
+func WriteBinlog(bin *binlog.Binlog) error {
+	commitData, _ := bin.Marshal()
+	req := &binlog.WriteBinlogReq{ClusterID: ClusterID, Payload: commitData}
+	resp, err := PumpClient.WriteBinlog(goctx.Background(), req)
+	if err == nil && resp.Errmsg != "" {
+		err = errors.New(resp.Errmsg)
+	}
+	return errors.Trace(err)
 }
 
 // ClearBinlog clears binlog in a context.

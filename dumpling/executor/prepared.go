@@ -140,6 +140,10 @@ func (e *PrepareExec) DoPrepare() {
 		return
 	}
 	stmt := stmts[0]
+	if _, ok := stmt.(ast.DDLNode); ok {
+		e.Err = ErrPrepareDDL
+		return
+	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
 
