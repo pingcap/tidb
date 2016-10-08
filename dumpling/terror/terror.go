@@ -176,7 +176,7 @@ func (e *Error) MarshalJSON() ([]byte, error) {
 	}{
 		Class: e.class,
 		Code:  e.code,
-		Msg:   e.message,
+		Msg:   e.getMsg(),
 	})
 }
 
