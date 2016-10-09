@@ -86,7 +86,7 @@ func (cc *clientConn) String() string {
 
 // handshake works like TCP handshake, but in a higher level, it first writes initial packet to client,
 // during handshake, client and server negotiate compatible features and do authentication.
-// after handshake, client can send sql query to server.
+// After handshake, client can send sql query to server.
 func (cc *clientConn) handshake() error {
 	if err := cc.writeInitialHandshake(); err != nil {
 		return errors.Trace(err)
@@ -308,7 +308,7 @@ func (cc *clientConn) readHandshakeResponse() error {
 
 // Run reads client query and writes query result to client in for loop, if there is a panic during query handling,
 // it will be recovered and log the panic error.
-// This function returns and the connection is closed if there is IO error or there is a panic.
+// This function returns and the connection is closed if there is an IO error or there is a panic.
 func (cc *clientConn) Run() {
 	defer func() {
 		r := recover()
@@ -493,7 +493,7 @@ func (cc *clientConn) writeReq(filePath string) error {
 	return errors.Trace(cc.flush())
 }
 
-// handleLoadData does the additional work after processed the 'load data' query.
+// handleLoadData does the additional work after processing the 'load data' query.
 // It sends client a file path, then reads the file content from client, inserts data into database.
 func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error {
 	var err error
@@ -551,7 +551,7 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
-// There is a special query `load data` that does not returns result, which is handled differently.
+// There is a special query `load data` that does not return result, which is handled differently.
 func (cc *clientConn) handleQuery(sql string) (err error) {
 	startTS := time.Now()
 	defer func() {
