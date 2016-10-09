@@ -70,6 +70,17 @@ func (k Key) Clone() Key {
 	return append([]byte(nil), k...)
 }
 
+// KeyRange represents a range where StartKey <= key < EndKey.
+type KeyRange struct {
+	StartKey Key
+	EndKey   Key
+}
+
+// IsPoint checks if the key range represents a point.
+func (r *KeyRange) IsPoint() bool {
+	return bytes.Equal(r.StartKey.PrefixNext(), r.EndKey)
+}
+
 // EncodedKey represents encoded key in low-level storage engine.
 type EncodedKey []byte
 

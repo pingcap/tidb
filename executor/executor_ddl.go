@@ -83,16 +83,9 @@ func (e *DDLExec) Close() error {
 }
 
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
-	table, ok := e.is.TableByID(s.Table.TableInfo.ID)
-	if !ok {
-		return errors.New("table not found, should never happen")
-	}
-	err := table.Truncate(e.ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	getDirtyDB(e.ctx).truncateTable(table.Meta().ID)
-	return nil
+	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	err := sessionctx.GetDomain(e.ctx).DDL().TruncateTable(e.ctx, ident)
+	return errors.Trace(err)
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {

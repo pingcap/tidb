@@ -48,6 +48,7 @@ const (
 	defaultWriterSize = 16 * 1024
 )
 
+// packetIO is a helper to read and write data in packet format.
 type packetIO struct {
 	rb *bufio.Reader
 	wb *bufio.Writer

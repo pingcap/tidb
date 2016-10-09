@@ -1326,7 +1326,7 @@ DBName:
   }
 
 DatabaseOption:
-	DefaultKwdOpt CharsetKw EqOpt StringName
+	DefaultKwdOpt CharsetKw EqOpt CharsetName
 	{
 		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionCharset, Value: $4.(string)}
 	}
@@ -3830,7 +3830,7 @@ VariableAssignment:
 			ExtendValue: ast.NewValueExpr($4.(string)),
 		}
 	}
-|	CharsetKw StringName
+|	CharsetKw CharsetName
 	{
 		$$ = &ast.VariableAssignment{
 			Name: ast.SetNames,
@@ -4300,7 +4300,7 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $3}
 	}
-|	DefaultKwdOpt CharsetKw EqOpt StringName
+|	DefaultKwdOpt CharsetKw EqOpt CharsetName
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionCharset, StrValue: $4.(string)}
 	}
@@ -4817,7 +4817,7 @@ OptCharset:
 	{
 		$$ = ""
 	}
-|	CharsetKw StringName
+|	CharsetKw CharsetName
 	{
 		$$ = $2.(string)
 	}
