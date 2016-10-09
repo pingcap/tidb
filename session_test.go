@@ -963,6 +963,17 @@ func (s *testSessionSuite) TestIndex(c *C) {
 	mustExecSQL(c, se, "create table if not exists test_varchar_index (c1 varchar(255), index(c1))")
 	mustExecSQL(c, se, "insert test_varchar_index values (''), ('a')")
 	mustExecMatch(c, se, "select * from test_varchar_index where c1 like ''", [][]interface{}{{[]byte("")}})
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 int, c2 int)")
+	mustExecSQL(c, se, "insert into t values (1,2), (1,2)")
+	mustExecSQL(c, se, "create index idx_0 on t(c1)")
+	mustExecSQL(c, se, "create index idx_1 on t(c2)")
+	r = mustExecSQL(c, se, "select c1 as c2 from t where c1 >= 2")
+	rows, err = GetRows(r)
+	c.Assert(err, IsNil)
+	matches(c, rows, [][]interface{}{})
+
 	err = store.Close()
 	c.Assert(err, IsNil)
 }
