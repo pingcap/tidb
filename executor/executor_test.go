@@ -1266,4 +1266,15 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustExec("insert history_read values (3)")
 	tk.MustExec("update history_read set a = 4 where a = 3")
 	tk.MustExec("delete from history_read where a = 1")
+
+	time.Sleep(time.Millisecond)
+	snapshotTime = time.Now()
+	time.Sleep(time.Millisecond)
+	tk.MustExec("alter table history_read add column b int")
+	tk.MustExec("insert history_read values (8, 8), (9, 9)")
+	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
+	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
+	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
+	tk.MustExec("set @@tidb_snapshot = ''")
+	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 }
