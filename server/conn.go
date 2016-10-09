@@ -53,13 +53,10 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-// mockLoadDataClientLocalFilesCap uses to mock ClientLocalFiles capability.
-var mockLoadDataClientLocalFilesCap bool
-
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
-	mysql.ClientMultiStatements | mysql.ClientMultiResults |
+	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
 	mysql.ClientConnectAtts
 
 type clientConn struct {
@@ -480,7 +477,7 @@ func (cc *clientConn) writeReq(filePath string) error {
 
 func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error {
 	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
-	if cc.capability&mysql.ClientLocalFiles == 0 && !mockLoadDataClientLocalFilesCap {
+	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return errNotAllowedCommand
 	}
 
