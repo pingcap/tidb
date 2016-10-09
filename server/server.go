@@ -57,6 +57,8 @@ var (
 	errInvalidPayloadLen = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
 	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
 	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
+	errNotAllowedCommand = terror.ClassServer.New(codeNotAllowedCommand,
+		"the used command is not allowed with this TiDB version")
 )
 
 // Server is the MySQL protocol server
@@ -253,4 +255,13 @@ const (
 	codeInvalidPayloadLen = 2
 	codeInvalidSequence   = 3
 	codeInvalidType       = 4
+
+	codeNotAllowedCommand = 1148
 )
+
+func init() {
+	serverMySQLErrCodes := map[terror.ErrCode]uint16{
+		codeNotAllowedCommand: mysql.ErrNotAllowedCommand,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
+}
