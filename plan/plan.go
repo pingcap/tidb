@@ -154,8 +154,10 @@ type LogicalPlan interface {
 	// how many columns referenced by inner plan exactly.
 	PruneColumnsAndResolveIndices([]*expression.Column) ([]*expression.Column, error)
 
-	// convert2PhysicalPlan converts logical plan to physical plan. The arg prop means the required sort property.
-	// This function returns the best plan that matches the required property strictly containing the info of count, cost and plan.
+	// convert2PhysicalPlan converts logical plan to physical plan.
+	// It is called recursively from parent to children to create the result physical plan.
+	// Some logical plan will convert to physical plan in different ways, and return the one
+	// with the lowest cost.
 	convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error)
 }
 
@@ -164,8 +166,14 @@ type PhysicalPlan interface {
 	json.Marshaler
 	Plan
 
-	// matchProperty means that this physical plan will try to return the best plan that matches the required property.
-	// childPlanInfo means the plan infos returned by children.
+	// matchProperty calculates the cost of the physical plan if it matches the required property.
+	// It's usually called at the end of convert2PhysicalPlan, some PhysicalPlan do not implements it as there is
+	// no property to match, they just do the cost calculation directly.
+	// If not match, the cost will be set to MaxInt64, so it will not be chosen as the result physical plan.
+	// childrenPlanInfo are used to calculate the result cost of the plan.
+	// The return *physicalPlanInfo will be chosen as final plan if it has the lowest cost.
+	// For the lowest level *PhysicalTableScan and *PhysicalIndexScan, even though it doesn't has childPlanInfo, we
+	// create a initial *physicalPlanInfo to pass the row count.
 	matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo
 
 	// Copy copies the current plan.
