@@ -236,7 +236,6 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
 
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
@@ -249,7 +248,6 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		c.Assert(ToString(lp), Equals, ca.first, Commentf("for %s", ca.sql))
-
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
@@ -293,7 +291,6 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
 
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
@@ -409,7 +406,6 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
 
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
@@ -572,7 +568,6 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
 
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
@@ -707,7 +702,6 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
 
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
@@ -929,7 +923,6 @@ func (s *testPlanSuite) TestTableScanWithOrder(c *C) {
 	sql := "select * from t order by a limit 1;"
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	ast.SetFlag(stmt)
 
 	err = mockResolve(stmt)
 	c.Assert(err, IsNil)
@@ -1027,6 +1020,115 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestProjectionElimination(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql string
+		ans string
+	}{
+		// projection can be eliminated in following cases.
+		{
+			sql: "select a from t",
+			ans: "DataScan(t)",
+		},
+		{
+			sql: "select a from t where a > 1",
+			ans: "DataScan(t)->Selection",
+		},
+		{
+			sql: "select a from t where a is null",
+			ans: "DataScan(t)->Selection",
+		},
+		{
+			sql: "select a, b from t where b > 0",
+			ans: "DataScan(t)->Selection",
+		},
+		{
+			sql: "select a as c1, b as c2 from t where a = 3",
+			ans: "DataScan(t)->Selection",
+		},
+		{
+			sql: "select a as c1, b as c2 from t as t1 where t1.a = 0",
+			ans: "DataScan(t)->Selection",
+		},
+		{
+			sql: "select a from t where exists(select 1 from t as x where x.a < t.a)",
+			ans: "Join{DataScan(t)->DataScan(t)}",
+		},
+		{
+			sql: "select a from (select d as a from t where d = 0) k where k.a = 5",
+			ans: "DataScan(t)->Selection",
+		},
+		{
+			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t2.a > 1)",
+			ans: "Join{DataScan(t)->DataScan(t)->Selection}",
+		},
+		{
+			sql: "select t1.a, t2.b from t t1, t t2 where t1.a > 0 and t2.b < 0",
+			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}",
+		},
+		{
+			sql: "select t1.a, t1.b, t2.a, t2.b from t t1, t t2 where t1.a > 0 and t2.b < 0",
+			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}",
+		},
+		{
+			sql: "select * from (t t1 join t t2) join (t t3 join t t4)",
+			ans: "Join{Join{DataScan(t)->DataScan(t)}->Join{DataScan(t)->DataScan(t)}}",
+		},
+		// projection can not be eliminated in following cases.
+		{
+			sql: "select t1.b, t1.a, t2.b, t2.a from t t1, t t2 where t1.a > 0 and t2.b < 0",
+			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql: "select d, c, b, a from t where a = b and b = 1",
+			ans: "DataScan(t)->Selection->Projection",
+		},
+		{
+			sql: "select d as a, b as c from t as t1 where d > 0 and b < 0",
+			ans: "DataScan(t)->Selection->Projection",
+		},
+		{
+			sql: "select c as a, c as b from t",
+			ans: "DataScan(t)->Projection",
+		},
+		{
+			sql: "select c as a, c as b from t where d > 0",
+			ans: "DataScan(t)->Selection->Projection",
+		},
+		{
+			sql: "select t1.a, t2.b, t2.a, t1.b from t t1, t t2 where t1.a > 0 and t2.b < 0",
+			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t1.a > 1)",
+			ans: "DataScan(t)->Apply(DataScan(t)->Selection->Projection)->Selection->Projection",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mock.NewContext(),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
+		c.Assert(err, IsNil)
+		p = EliminateProjection(lp)
+		c.Assert(ToString(p), Equals, ca.ans, Commentf("for %s", ca.sql))
+	}
+}
 func (s *testPlanSuite) TestCoveringIndex(c *C) {
 	cases := []struct {
 		columnNames []string
@@ -1114,7 +1216,6 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
