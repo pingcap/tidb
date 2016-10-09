@@ -66,7 +66,6 @@ func statementLabel(node ast.StmtNode) string {
 // If it is not supported, the node will be converted to old statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
 	stmtNodeCounter.WithLabelValues(statementLabel(node)).Inc()
-	ast.SetFlag(node)
 	if _, ok := node.(*ast.UpdateStmt); ok {
 		sVars := variable.GetSessionVars(ctx)
 		sVars.InUpdateStmt = true
