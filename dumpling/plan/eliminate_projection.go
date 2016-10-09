@@ -35,13 +35,10 @@ func EliminateProjection(p LogicalPlan) LogicalPlan {
 		RemovePlan(p)
 		p = EliminateProjection(child)
 	case *DataSource:
-		// predicates may be pushed down when build physical plan, and the schema of Selection operator is
-		// always the same as the child operator, so here we copy the schema of Selection to DataSource.
+		// predicates may be pushed down when build physical plan,
+		// so here we copy the schema of Selection to DataSource.
 		if sel, ok := plan.GetParentByIndex(0).(*Selection); ok {
 			plan.SetSchema(sel.GetSchema())
-			for i, cond := range sel.Conditions {
-				sel.Conditions[i], _ = retrieveColumnsInExpression(cond, plan.GetSchema())
-			}
 		}
 	}
 	if len(p.GetChildren()) == 1 {
