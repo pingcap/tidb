@@ -236,7 +236,6 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
 
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
@@ -293,7 +292,6 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
 
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
@@ -409,7 +407,6 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
 
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
@@ -572,7 +569,6 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
 
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
@@ -707,7 +703,6 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
 
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
@@ -929,7 +924,6 @@ func (s *testPlanSuite) TestTableScanWithOrder(c *C) {
 	sql := "select * from t order by a limit 1;"
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	ast.SetFlag(stmt)
 
 	err = mockResolve(stmt)
 	c.Assert(err, IsNil)
@@ -1114,7 +1108,6 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
