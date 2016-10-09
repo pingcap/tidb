@@ -493,7 +493,8 @@ func (cc *clientConn) writeReq(filePath string) error {
 	return errors.Trace(cc.flush())
 }
 
-// handleLoadData
+// handleLoadData does the additional work after processed the 'load data' query.
+// It sends client a file path, then reads the file content from client, inserts data into database.
 func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error {
 	var err error
 	defer func() {

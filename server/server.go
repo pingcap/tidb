@@ -100,7 +100,7 @@ func randomBuf(size int) []byte {
 }
 
 // newConn creates a new *clientConn from a net.Conn.
-// it allocates a connection ID and random salt data for authentication.
+// It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
 	log.Info("newConn", conn.RemoteAddr().String())
 	cc := &clientConn{
