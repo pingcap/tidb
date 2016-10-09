@@ -56,7 +56,7 @@ import (
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
-	mysql.ClientMultiStatements | mysql.ClientMultiResults |
+	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
 	mysql.ClientConnectAtts
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
@@ -496,6 +496,11 @@ func (cc *clientConn) writeReq(filePath string) error {
 // handleLoadData does the additional work after processing the 'load data' query.
 // It sends client a file path, then reads the file content from client, inserts data into database.
 func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error {
+	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
+	if cc.capability&mysql.ClientLocalFiles == 0 {
+		return errNotAllowedCommand
+	}
+
 	var err error
 	defer func() {
 		cc.ctx.SetValue(executor.LoadDataVarKey, nil)
