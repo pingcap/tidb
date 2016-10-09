@@ -110,6 +110,9 @@ func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, err
 	if len(l.Errors()) != 0 {
 		return nil, errors.Trace(l.Errors()[0])
 	}
+	for _, stmt := range parser.result {
+		ast.SetFlag(stmt)
+	}
 	return parser.result, nil
 }
 
@@ -123,6 +126,7 @@ func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode
 	if len(stmts) != 1 {
 		return nil, ErrSyntax
 	}
+	ast.SetFlag(stmts[0])
 	return stmts[0], nil
 }
 
