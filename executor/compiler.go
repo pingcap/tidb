@@ -15,8 +15,10 @@ package executor
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -73,8 +75,14 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 		}()
 	}
 
-	is := sessionctx.GetDomain(ctx).InfoSchema()
-	binloginfo.SetSchemaVersion(ctx, is.SchemaMetaVersion())
+	var is infoschema.InfoSchema
+	if snap := variable.GetSessionVars(ctx).SnapshotInfoschema; snap != nil {
+		is = snap.(infoschema.InfoSchema)
+		log.Infof("use snapshot schema %d", is.SchemaMetaVersion())
+	} else {
+		is = sessionctx.GetDomain(ctx).InfoSchema()
+		binloginfo.SetSchemaVersion(ctx, is.SchemaMetaVersion())
+	}
 	if err := plan.Preprocess(node, is, ctx); err != nil {
 		return nil, errors.Trace(err)
 	}

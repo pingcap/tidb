@@ -467,6 +467,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 		id := variable.GetSessionVars(s).ConnectionID
 		s.stmtState = ph.StartStatement(sql, id, perfschema.CallerNameSessionExecute, rawStmts[i])
+		s.SetValue(context.QueryString, sql)
 
 		startTS = time.Now()
 		r, err := runStmt(s, st)

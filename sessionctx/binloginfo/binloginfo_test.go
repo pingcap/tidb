@@ -94,29 +94,38 @@ func (s *testBinlogSuite) TearDownSuite(c *C) {
 func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists local_binlog")
-	tk.MustExec("create table local_binlog (id int primary key, name varchar(10))")
-	tk.MustExec("insert local_binlog values (1, 'abc'), (2, 'cde')")
 	pump := s.pump
+	tk.MustExec("drop table if exists local_binlog")
+	ddlQuery := "create table local_binlog (id int primary key, name varchar(10))"
+	tk.MustExec(ddlQuery)
+	c.Assert(getLatestBinlogDDLQuery(c, pump), Equals, ddlQuery)
+
+	tk.MustExec("insert local_binlog values (1, 'abc'), (2, 'cde')")
 	prewriteVal := getLatestBinlogPrewriteValue(c, pump)
 	c.Assert(prewriteVal.SchemaVersion, Greater, int64(0))
 	c.Assert(prewriteVal.Mutations[0].TableId, Greater, int64(0))
-	insertedRow1, _ := codec.EncodeValue(nil, types.NewIntDatum(1), types.NewStringDatum("abc"))
-	insertedRow2, _ := codec.EncodeValue(nil, types.NewIntDatum(2), types.NewStringDatum("cde"))
-	c.Assert(prewriteVal.Mutations[0].InsertedRows, DeepEquals, [][]byte{insertedRow1, insertedRow2})
+	expected := [][]types.Datum{
+		{types.NewIntDatum(1), types.NewStringDatum("abc")},
+		{types.NewIntDatum(2), types.NewStringDatum("cde")},
+	}
+	gotRows := mutationRowsToRows(c, prewriteVal.Mutations[0].InsertedRows, 0, 2)
+	c.Assert(gotRows, DeepEquals, expected)
 
 	tk.MustExec("update local_binlog set name = 'xyz' where id = 2")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
-	updatedRow, _ := codec.EncodeValue(nil, types.NewIntDatum(2), types.NewStringDatum("xyz"))
-	c.Assert(prewriteVal.Mutations[0].UpdatedRows, DeepEquals, [][]byte{updatedRow})
+	expected = [][]types.Datum{
+		{types.NewIntDatum(2), types.NewStringDatum("xyz")},
+	}
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 2, 4)
+	c.Assert(gotRows, DeepEquals, expected)
 
 	tk.MustExec("delete from local_binlog where id = 1")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	c.Assert(prewriteVal.Mutations[0].DeletedIds, DeepEquals, []int64{1})
 
 	// Test table primary key is not integer.
-	tk.MustExec("create table local_binlog2 (name varchar(64) primary key)")
-	tk.MustExec("insert local_binlog2 values ('abc'), ('def')")
+	tk.MustExec("create table local_binlog2 (name varchar(64) primary key, age int)")
+	tk.MustExec("insert local_binlog2 values ('abc', 16), ('def', 18)")
 	tk.MustExec("delete from local_binlog2 where name = 'def'")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	_, deletedPK, _ := codec.DecodeOne(prewriteVal.Mutations[0].DeletedPks[0])
@@ -125,15 +134,23 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	// Test Table don't have primary key.
 	tk.MustExec("create table local_binlog3 (c1 int, c2 int)")
 	tk.MustExec("insert local_binlog3 values (1, 2), (1, 3), (2, 3)")
-	tk.MustExec("delete from local_binlog3 where c2 = 3")
+	tk.MustExec("update local_binlog3 set c1 = 3 where c1 = 2")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 5, 7)
+	expected = [][]types.Datum{
+		{types.NewIntDatum(3), types.NewIntDatum(3)},
+	}
+	c.Assert(gotRows, DeepEquals, expected)
 
-	deletedRow1, _ := codec.Decode(prewriteVal.Mutations[0].DeletedRows[0], 2)
-	c.Assert(deletedRow1[1], DeepEquals, types.NewIntDatum(3))
-	deletedRow2, _ := codec.Decode(prewriteVal.Mutations[0].DeletedRows[1], 2)
-	c.Assert(deletedRow2[1], DeepEquals, types.NewIntDatum(3))
+	tk.MustExec("delete from local_binlog3 where c1 = 3 and c2 = 3")
+	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3)
+	expected = [][]types.Datum{
+		{types.NewIntDatum(3), types.NewIntDatum(3)},
+	}
+	c.Assert(gotRows, DeepEquals, expected)
 
-	checkPrewriteMatchHalfBinlogCount(c, pump)
+	checkBinlogCount(c, pump)
 
 	pump.mu.Lock()
 	originBinlogLen := len(pump.mu.payloads)
@@ -164,9 +181,28 @@ func getLatestBinlogPrewriteValue(c *C, pump *mockBinlogPump) *binlog.PrewriteVa
 	return preVal
 }
 
-func checkPrewriteMatchHalfBinlogCount(c *C, pump *mockBinlogPump) {
+func getLatestBinlogDDLQuery(c *C, pump *mockBinlogPump) string {
+	var bin *binlog.Binlog
+	pump.mu.Lock()
+	for i := len(pump.mu.payloads) - 1; i >= 0; i-- {
+		payload := pump.mu.payloads[i]
+		bin = new(binlog.Binlog)
+		bin.Unmarshal(payload)
+		if bin.Tp == binlog.BinlogType_PreDDL {
+			break
+		}
+	}
+	pump.mu.Unlock()
+	c.Assert(bin.DdlJobId, Greater, int64(0))
+	c.Assert(bin.StartTs, Greater, int64(0))
+	c.Assert(bin.CommitTs, Equals, int64(0))
+	return string(bin.DdlQuery)
+}
+
+func checkBinlogCount(c *C, pump *mockBinlogPump) {
 	var bin *binlog.Binlog
 	prewriteCount := 0
+	ddlCount := 0
 	pump.mu.Lock()
 	length := len(pump.mu.payloads)
 	for i := length - 1; i >= 0; i-- {
@@ -175,19 +211,42 @@ func checkPrewriteMatchHalfBinlogCount(c *C, pump *mockBinlogPump) {
 		bin.Unmarshal(payload)
 		if bin.Tp == binlog.BinlogType_Prewrite {
 			prewriteCount++
+		} else if bin.Tp == binlog.BinlogType_PreDDL {
+			ddlCount++
 		}
 	}
 	pump.mu.Unlock()
+	c.Assert(ddlCount, Greater, 0)
 	match := false
 	for i := 0; i < 10; i++ {
 		pump.mu.Lock()
 		length = len(pump.mu.payloads)
 		pump.mu.Unlock()
-		if prewriteCount*2 == length {
+		if (prewriteCount+ddlCount)*2 == length {
 			match = true
 			break
 		}
 		time.Sleep(time.Millisecond * 10)
 	}
 	c.Assert(match, IsTrue)
+}
+
+func mutationRowsToRows(c *C, mutationRows [][]byte, firstColumn, secondColumn int) [][]types.Datum {
+	var rows [][]types.Datum
+	for _, mutationRow := range mutationRows {
+		datums, err := codec.Decode(mutationRow, 5)
+		c.Assert(err, IsNil)
+		for i := range datums {
+			if i != firstColumn && i != secondColumn {
+				// Column ID or handle
+				c.Assert(datums[i].GetInt64(), Greater, int64(0))
+			}
+			if datums[i].Kind() == types.KindBytes {
+				datums[i].SetBytesAsString(datums[i].GetBytes())
+			}
+		}
+		row := []types.Datum{datums[firstColumn], datums[secondColumn]}
+		rows = append(rows, row)
+	}
+	return rows
 }
