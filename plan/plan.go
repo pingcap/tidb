@@ -156,7 +156,7 @@ type LogicalPlan interface {
 
 	// convert2PhysicalPlan converts logical plan to physical plan.
 	// It is called recursively from parent to children to create the result physical plan.
-	// Some logical plan will convert to physical plan in different ways, and return the one
+	// Some logical plan will convert children to physical plans in different ways, and return the one
 	// with the lowest cost.
 	convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error)
 }

@@ -272,7 +272,7 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 }
 
 // convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-// If no no available index match the required property, the returned physicalPlanInfo
+// If no available index matches the required property, the returned physicalPlanInfo
 // will be table scan and has cost of MaxInt64, but it's OK because parent will call
 // convert2PhysicalPlan again with empty required property, so the plan with the lowest
 // cost will be chosen.
@@ -307,7 +307,7 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 	return info, errors.Trace(p.storePlanInfo(prop, info))
 }
 
-// tryToConvert2DummyScan is an optimization which checks if its parent is selection with a constant condition
+// tryToConvert2DummyScan is an optimization which checks if its parent is a selection with a constant condition
 // that evaluates to false, if so there is no need to do real physical scan, a dummy scan will do.
 func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	sel, isSel := p.GetParentByIndex(0).(*Selection)
@@ -331,14 +331,14 @@ func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPl
 	return nil, nil
 }
 
-// addPlanToResponse creates a *physicalPlanInfo that adds p as parent of info.
+// addPlanToResponse creates a *physicalPlanInfo that adds p as the parent of info.
 func addPlanToResponse(parent PhysicalPlan, info *physicalPlanInfo) *physicalPlanInfo {
 	np := parent.Copy()
 	np.SetChildren(info.p)
 	return &physicalPlanInfo{p: np, cost: info.cost, count: info.count}
 }
 
-// enforceProperty creates a physical plan info satisfy the required property by adding
+// enforceProperty creates a *physicalPlanInfo satisfy the required property by adding
 // sort or limit as parent of the given physical plan.
 func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPlanInfo {
 	if len(prop.props) != 0 {
@@ -413,7 +413,7 @@ func (p *Limit) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
-// convert2PhysicalPlanSemi converts semi join to physical join plan.
+// convert2PhysicalPlanSemi converts semi join to *physicalPlanInfo.
 func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanInfo, error) {
 	lChild := p.GetChildByIndex(0).(LogicalPlan)
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
@@ -461,7 +461,7 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 	return resultInfo, nil
 }
 
-// convert2PhysicalPlanLeft converts left join to physical join plan.
+// convert2PhysicalPlanLeft converts left join to *physicalPlanInfo.
 func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.GetChildByIndex(0).(LogicalPlan)
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
@@ -516,7 +516,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	return resultInfo, nil
 }
 
-// convert2PhysicalPlanRight converts right join to physical join plan.
+// convert2PhysicalPlanRight converts right join to *physicalPlanInfo.
 func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.GetChildByIndex(0).(LogicalPlan)
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
@@ -613,7 +613,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	return info, nil
 }
 
-// convert2PhysicalPlanStream converts logical aggregation to physical stream aggregation.
+// convert2PhysicalPlanStream converts logical aggregation to stream aggregation *physicalPlanInfo.
 func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physicalPlanInfo, error) {
 	agg := &PhysicalAggregation{
 		AggType:      StreamedAgg,
@@ -669,7 +669,7 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 	return info, nil
 }
 
-// convert2PhysicalPlanFinalHash converts logical aggregation to physical final hash aggregation.
+// convert2PhysicalPlanFinalHash converts logical aggregation to final hash aggregation *physicalPlanInfo.
 func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, childInfo *physicalPlanInfo) *physicalPlanInfo {
 	agg := &PhysicalAggregation{
 		AggType:      FinalAgg,
@@ -690,7 +690,7 @@ func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, child
 	return info
 }
 
-// convert2PhysicalPlanCompleteHash converts logical aggregation to physical complete hash aggregation.
+// convert2PhysicalPlanCompleteHash converts logical aggregation to complete hash aggregation *physicalPlanInfo.
 func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanInfo) *physicalPlanInfo {
 	agg := &PhysicalAggregation{
 		AggType:      CompleteAgg,
