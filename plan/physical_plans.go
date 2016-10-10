@@ -39,7 +39,7 @@ type PhysicalIndexScan struct {
 	basePlan
 	physicalTableSource
 
-	txn        kv.Transaction
+	readOnly   bool
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
 	Ranges     []*IndexRange
@@ -58,6 +58,8 @@ type PhysicalIndexScan struct {
 	TableAsName *model.CIStr
 }
 
+// physicalDistSQLPlan means the plan that can be executed distributively.
+// We can push down other plan like selection, limit, aggregation, topn into this plan.
 type physicalDistSQLPlan interface {
 	addAggregation(agg *PhysicalAggregation) expression.Schema
 	addTopN(prop *requiredProperty) bool
@@ -179,13 +181,13 @@ type PhysicalTableScan struct {
 	basePlan
 	physicalTableSource
 
-	txn     kv.Transaction
-	Table   *model.TableInfo
-	Columns []*model.ColumnInfo
-	DBName  *model.CIStr
-	Desc    bool
-	Ranges  []TableRange
-	pkCol   *expression.Column
+	readOnly bool
+	Table    *model.TableInfo
+	Columns  []*model.ColumnInfo
+	DBName   *model.CIStr
+	Desc     bool
+	Ranges   []TableRange
+	pkCol    *expression.Column
 
 	AccessCondition []expression.Expression
 	conditions      []expression.Expression

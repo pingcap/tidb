@@ -87,12 +87,16 @@ func (p *DataSource) handleTableScan(prop *requiredProperty) (*physicalPlanInfo,
 	}
 	var resultPlan PhysicalPlan
 	ts := &PhysicalTableScan{
-		txn:                 txn,
 		Table:               p.Table,
 		Columns:             p.Columns,
 		TableAsName:         p.TableAsName,
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
+	}
+	if txn != nil {
+		ts.readOnly = txn.IsReadOnly()
+	} else {
+		ts.readOnly = true
 	}
 	ts.SetSchema(p.GetSchema())
 	resultPlan = ts
@@ -176,7 +180,6 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 		return nil, errors.Trace(err)
 	}
 	is := &PhysicalIndexScan{
-		txn:                 txn,
 		Index:               index,
 		Table:               p.Table,
 		Columns:             p.Columns,
@@ -184,6 +187,11 @@ func (p *DataSource) handleIndexScan(prop *requiredProperty, index *model.IndexI
 		OutOfOrder:          true,
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
+	}
+	if txn != nil {
+		is.readOnly = txn.IsReadOnly()
+	} else {
+		is.readOnly = true
 	}
 	is.SetSchema(p.schema)
 	rowCount := uint64(statsTbl.Count)
