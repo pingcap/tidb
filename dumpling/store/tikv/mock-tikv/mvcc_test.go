@@ -146,18 +146,6 @@ func (s *testMockTiKVSuite) mustRollbackErr(c *C, keys []string, startTS uint64)
 	c.Assert(err, NotNil)
 }
 
-func (s *testMockTiKVSuite) mustCommitThenGetOK(c *C, key string, lockTS, commitTS, getTS uint64, expect string) {
-	val, err := s.store.CommitThenGet(encodeKey(key), lockTS, commitTS, getTS)
-	c.Assert(err, IsNil)
-	c.Assert(string(val), Equals, expect)
-}
-
-func (s *testMockTiKVSuite) mustRollbackThenGetOK(c *C, key string, lockTS uint64, expect string) {
-	val, err := s.store.RollbackThenGet(encodeKey(key), lockTS)
-	c.Assert(err, IsNil)
-	c.Assert(string(val), Equals, expect)
-}
-
 func (s *testMockTiKVSuite) mustScanLock(c *C, maxTs uint64, expect []*kvrpcpb.LockInfo) {
 	locks, err := s.store.ScanLock(nil, nil, maxTs)
 	c.Assert(err, IsNil)
@@ -194,10 +182,6 @@ func (s *testMockTiKVSuite) TestCleanupRollback(c *C) {
 	s.mustGetErr(c, "secondary", 12)
 	s.mustCommitOK(c, []string{"primary"}, 5, 10)
 	s.mustRollbackErr(c, []string{"primary"}, 5)
-	s.mustCommitThenGetOK(c, "secondary", 5, 10, 8, "s-0")
-	s.mustCommitThenGetOK(c, "secondary", 5, 10, 12, "s-5")
-	s.mustCommitThenGetOK(c, "secondary", 5, 10, 8, "s-0")
-	s.mustCommitThenGetOK(c, "secondary", 5, 10, 12, "s-5")
 }
 
 func (s *testMockTiKVSuite) TestScan(c *C) {
