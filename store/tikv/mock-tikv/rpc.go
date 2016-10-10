@@ -59,10 +59,6 @@ func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
 		resp.CmdCommitResp = h.onCommit(req.CmdCommitReq)
 	case kvrpcpb.MessageType_CmdCleanup:
 		resp.CmdCleanupResp = h.onCleanup(req.CmdCleanupReq)
-	case kvrpcpb.MessageType_CmdCommitThenGet:
-		resp.CmdCommitGetResp = h.onCommitThenGet(req.CmdCommitGetReq)
-	case kvrpcpb.MessageType_CmdRollbackThenGet:
-		resp.CmdRbGetResp = h.onRollbackThenGet(req.CmdRbGetReq)
 	case kvrpcpb.MessageType_CmdBatchGet:
 		resp.CmdBatchGetResp = h.onBatchGet(req.CmdBatchGetReq)
 	case kvrpcpb.MessageType_CmdScanLock:
@@ -202,36 +198,6 @@ func (h *rpcHandler) onCleanup(req *kvrpcpb.CmdCleanupRequest) *kvrpcpb.CmdClean
 		}
 	}
 	return &resp
-}
-
-func (h *rpcHandler) onCommitThenGet(req *kvrpcpb.CmdCommitThenGetRequest) *kvrpcpb.CmdCommitThenGetResponse {
-	if !h.keyInRegion(req.Key) {
-		panic("onCommitThenGet: key not in region")
-	}
-	val, err := h.mvccStore.CommitThenGet(req.Key, req.GetLockVersion(), req.GetCommitVersion(), req.GetGetVersion())
-	if err != nil {
-		return &kvrpcpb.CmdCommitThenGetResponse{
-			Error: convertToKeyError(err),
-		}
-	}
-	return &kvrpcpb.CmdCommitThenGetResponse{
-		Value: val,
-	}
-}
-
-func (h *rpcHandler) onRollbackThenGet(req *kvrpcpb.CmdRollbackThenGetRequest) *kvrpcpb.CmdRollbackThenGetResponse {
-	if !h.keyInRegion(req.Key) {
-		panic("onRollbackThenGet: key not in region")
-	}
-	val, err := h.mvccStore.RollbackThenGet(req.Key, req.GetLockVersion())
-	if err != nil {
-		return &kvrpcpb.CmdRollbackThenGetResponse{
-			Error: convertToKeyError(err),
-		}
-	}
-	return &kvrpcpb.CmdRollbackThenGetResponse{
-		Value: val,
-	}
 }
 
 func (h *rpcHandler) onBatchGet(req *kvrpcpb.CmdBatchGetRequest) *kvrpcpb.CmdBatchGetResponse {
