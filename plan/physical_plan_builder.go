@@ -899,18 +899,16 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	selfProp := &requiredProperty{
 		props: make([]*columnProp, 0, len(p.ByItems)),
 	}
-	valid := true
 	for _, by := range p.ByItems {
 		if col, ok := by.Expr.(*expression.Column); ok {
 			selfProp.props = append(selfProp.props, &columnProp{col: col, desc: by.Desc})
 		} else {
 			selfProp.props = nil
-			valid = false
 			break
 		}
 	}
 	selfProp.sortKeyLen = len(selfProp.props)
-	if valid && len(prop.props) == 0 && prop.limit != nil {
+	if len(selfProp.props) != 0 && len(prop.props) == 0 && prop.limit != nil {
 		selfProp.limit = prop.limit
 	}
 	sortedPlanInfo, err := p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(selfProp)
@@ -923,7 +921,7 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	}
 	cnt := float64(unSortedPlanInfo.count)
 	sortCost := cnt*math.Log2(cnt)*cpuFactor + memoryFactor*cnt
-	if !valid {
+	if len(selfProp.props) == 0 {
 		np := p.Copy().(*Sort)
 		np.ExecLimit = prop.limit
 		sortedPlanInfo = addPlanToResponse(np, sortedPlanInfo)
