@@ -49,6 +49,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		logic = EliminateProjection(logic)
 		info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -64,7 +65,6 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 // The statement must be prepared before it can be passed to optimize function.
 // We pass InfoSchema instead of getting from Context in case it is changed after resolving name.
 func PrepareStmt(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error {
-	ast.SetFlag(node)
 	if err := Preprocess(node, is, ctx); err != nil {
 		return errors.Trace(err)
 	}

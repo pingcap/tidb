@@ -1301,7 +1301,7 @@ const (
 )
 
 func init() {
-	ddlMySQLERrCodes := map[terror.ErrCode]uint16{
+	ddlMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeBadNull:              mysql.ErrBadNull,
 		codeCantRemoveAllFields:  mysql.ErrCantRemoveAllFields,
 		codeCantDropFieldOrKey:   mysql.ErrCantDropFieldOrKey,
@@ -1311,5 +1311,5 @@ func init() {
 		codeTooLongIdent:         mysql.ErrTooLongIdent,
 		codeTooLongKey:           mysql.ErrTooLongKey,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLERrCodes
+	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
