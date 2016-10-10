@@ -343,20 +343,6 @@ func (s *MvccStore) Commit(keys [][]byte, startTS, commitTS uint64) error {
 	return nil
 }
 
-// CommitThenGet is a shortcut for Commit+Get, often used when resolving lock.
-func (s *MvccStore) CommitThenGet(key []byte, lockTS, commitTS, getTS uint64) ([]byte, error) {
-	s.Lock()
-	defer s.Unlock()
-
-	entry := s.getOrNewEntry(key)
-	err := entry.Commit(lockTS, commitTS)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	s.submit(entry)
-	return entry.Get(getTS)
-}
-
 // Cleanup cleanups a lock, often used when resolving a expired lock.
 func (s *MvccStore) Cleanup(key []byte, startTS uint64) error {
 	s.Lock()
@@ -387,20 +373,6 @@ func (s *MvccStore) Rollback(keys [][]byte, startTS uint64) error {
 	}
 	s.submit(ents...)
 	return nil
-}
-
-// RollbackThenGet is a shortcut for Rollback+Get, often used when resolving lock.
-func (s *MvccStore) RollbackThenGet(key []byte, lockTS uint64) ([]byte, error) {
-	s.Lock()
-	defer s.Unlock()
-
-	entry := s.getOrNewEntry(key)
-	err := entry.Rollback(lockTS)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	s.submit(entry)
-	return entry.Get(lockTS)
 }
 
 // ScanLock scans all orphan locks in a Region.

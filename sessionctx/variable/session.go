@@ -116,6 +116,10 @@ type SessionVars struct {
 
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
+
+	// SnapshotInfoschema is used with SnapshotTS, when the schema version at snapshotTS less than current schema
+	// version, we load an old version schema for query.
+	SnapshotInfoschema interface{}
 }
 
 // sessionVarsKeyType is a dummy type to avoid naming collision in context.
@@ -222,7 +226,7 @@ func (s *SessionVars) SetCurrentUser(user string) {
 
 // special session variables.
 const (
-	tidbSnapshot        = "tidb_snapshot"
+	TiDBSnapshot        = "tidb_snapshot"
 	sqlMode             = "sql_mode"
 	characterSetResults = "character_set_results"
 )
@@ -248,7 +252,7 @@ func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 		} else {
 			s.StrictSQLMode = false
 		}
-	} else if key == tidbSnapshot {
+	} else if key == TiDBSnapshot {
 		err = s.setSnapshotTS(sVal)
 		if err != nil {
 			return errors.Trace(err)
