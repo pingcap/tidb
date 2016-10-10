@@ -167,12 +167,12 @@ type PhysicalPlan interface {
 	Plan
 
 	// matchProperty calculates the cost of the physical plan if it matches the required property.
-	// It's usually called at the end of convert2PhysicalPlan, some PhysicalPlan do not implements it as there is
+	// It's usually called at the end of convert2PhysicalPlan, some PhysicalPlan does not implement it as there is
 	// no property to match, they just do the cost calculation directly.
 	// If not match, the cost will be set to MaxInt64, so it will not be chosen as the result physical plan.
 	// childrenPlanInfo are used to calculate the result cost of the plan.
 	// The return *physicalPlanInfo will be chosen as final plan if it has the lowest cost.
-	// For the lowest level *PhysicalTableScan and *PhysicalIndexScan, even though it doesn't has childPlanInfo, we
+	// For the lowest level *PhysicalTableScan and *PhysicalIndexScan, even though it doesn't have childPlanInfo, we
 	// create a initial *physicalPlanInfo to pass the row count.
 	matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo
 

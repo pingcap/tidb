@@ -338,7 +338,7 @@ func addPlanToResponse(parent PhysicalPlan, info *physicalPlanInfo) *physicalPla
 	return &physicalPlanInfo{p: np, cost: info.cost, count: info.count}
 }
 
-// enforceProperty creates a *physicalPlanInfo satisfy the required property by adding
+// enforceProperty creates a *physicalPlanInfo that satisfy the required property by adding
 // sort or limit as parent of the given physical plan.
 func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPlanInfo {
 	if len(prop.props) != 0 {
