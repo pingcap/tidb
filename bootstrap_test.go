@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
@@ -86,14 +87,14 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 }
 
 // Create a new session on store but only do ddl works.
-func (s *testSessionSuite) bootstrapWithError(store kv.Storage, c *C) {
+func (s *testSessionSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	ss := &session{
 		values: make(map[fmt.Stringer]interface{}),
 		store:  store,
 		sid:    atomic.AddInt64(&sessionID, 1),
 		parser: parser.New(),
 	}
-	ss.initing = true
+	ss.SetValue(context.Initing, true)
 	domain, err := domap.Get(store)
 	c.Assert(err, IsNil)
 	sessionctx.BindDomain(ss, domain)
@@ -110,10 +111,13 @@ func (s *testSessionSuite) bootstrapWithError(store kv.Storage, c *C) {
 	// Leave dml unfinished.
 }
 
+// When a session failed in bootstrap process (for example, the session is killed after doDDLWorks()).
+// We should make sure that the following session could finish the bootstrap process.
 func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbNameBootstrap)
-	s.bootstrapWithError(store, c)
+	s.bootstrapWithOnlyDDLWork(store, c)
+
 	se := newSession(c, store, s.dbNameBootstrap)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
@@ -177,7 +181,6 @@ func (s *testSessionSuite) TestUpgrade(c *C) {
 		variable.DistSQLScanConcurrencyVar, variable.DistSQLJoinConcurrencyVar))
 	mustExecSQL(c, se1, `commit;`)
 	delete(storeBootstrapped, store.UUID())
-
 	// Make sure the version is downgraded.
 	r = mustExecSQL(c, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	row, err = r.Next()

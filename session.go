@@ -120,8 +120,7 @@ type session struct {
 	store       kv.Storage
 	sid         int64
 	history     stmtHistory
-	initing     bool // Running bootstrap using this session.
-	maxRetryCnt int  // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
+	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
 
@@ -374,7 +373,8 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
-	if s.initing {
+	if ctx.Value(context.Initing) != nil {
+		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
@@ -402,7 +402,7 @@ func (s *session) isAutocommit(ctx context.Context) (bool, error) {
 	sessionVar := variable.GetSessionVars(ctx)
 	autocommit := sessionVar.GetSystemVar("autocommit")
 	if autocommit.IsNull() {
-		if s.initing {
+		if ctx.Value(context.Initing) != nil {
 			return false, nil
 		}
 		autocommitStr, err := s.GetGlobalSysVar(ctx, "autocommit")
@@ -739,9 +739,9 @@ func CreateSession(store kv.Storage) (Session, error) {
 			sessionctx.GetDomain(s).SetLease(chooseMinLease(100*time.Millisecond, schemaLease))
 		}
 
-		s.initing = true
+		s.SetValue(context.Initing, true)
 		bootstrap(s)
-		s.initing = false
+		s.ClearValue(context.Initing)
 
 		if !localstore.IsLocalStore(store) {
 			sessionctx.GetDomain(s).SetLease(schemaLease)
@@ -749,9 +749,9 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 		finishBootstrap(store)
 	} else if ver < currentBootstrapVersion {
-		s.initing = true
+		s.SetValue(context.Initing, true)
 		upgrade(s)
-		s.initing = false
+		s.ClearValue(context.Initing)
 	}
 
 	// TODO: Add auth here

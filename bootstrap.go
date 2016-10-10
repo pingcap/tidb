@@ -147,11 +147,21 @@ func checkBootstrapped(s Session) (bool, error) {
 		log.Fatal(err)
 	}
 	// Check bootstrapped variable value in TiDB table.
-	v, err := checkBootstrappedVar(s)
+	d, err := getTiDBVar(s, bootstrappedVar)
 	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return false, nil
+		}
 		return false, errors.Trace(err)
 	}
-	return v, nil
+	isBootstrapped := d.GetString() == bootstrappedVarTrue
+	if isBootstrapped {
+		// Make sure that doesn't affect the following operations.
+		if err = s.CommitTxn(); err != nil {
+			return false, errors.Trace(err)
+		}
+	}
+	return isBootstrapped, nil
 }
 
 // Get variable value from mysql.tidb table.
@@ -174,24 +184,6 @@ func getTiDBVar(s Session, name string) (types.Datum, error) {
 	return row.Data[0], nil
 }
 
-func checkBootstrappedVar(s Session) (bool, error) {
-	d, err := getTiDBVar(s, bootstrappedVar)
-	if err != nil {
-		if infoschema.ErrTableNotExists.Equal(err) {
-			return false, nil
-		}
-		return false, errors.Trace(err)
-	}
-	isBootstrapped := d.GetString() == bootstrappedVarTrue
-	if isBootstrapped {
-		// Make sure that doesn't affect the following operations.
-		if err = s.CommitTxn(); err != nil {
-			return false, errors.Trace(err)
-		}
-	}
-	return isBootstrapped, nil
-}
-
 // When the system is boostrapped by low version TiDB server, we should do some upgrade works.
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s Session) error {
@@ -207,26 +199,13 @@ func upgrade(s Session) error {
 		}
 		return nil
 	}
-	// Do upgrade works.
-	var sql string
+	// Do upgrade works than update bootstrap version.
 	if ver < 2 {
-		// Version 2 add two system variable for DistSQL concurrency controling.
-		// Insert distsql related system variable.
-		distSQLVars := []string{variable.DistSQLScanConcurrencyVar, variable.DistSQLJoinConcurrencyVar}
-		values := make([]string, 0, len(distSQLVars))
-		for _, v := range distSQLVars {
-			value := fmt.Sprintf(`("%s", "%s")`, v, variable.SysVars[v].Value)
-			values = append(values, value)
-		}
-		sql := fmt.Sprintf("INSERT IGNORE INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
-			strings.Join(values, ", "))
-		mustExecute(s, sql)
+		upgradeToVer2(s)
 	}
-	// Update bootstrap version.
-	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES ("%s", "%d", "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%d"`,
-		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion, currentBootstrapVersion)
-	mustExecute(s, sql)
+	updateBootstrapVer(s)
 	_, err = s.Execute("COMMIT")
+
 	if err != nil {
 		time.Sleep(1 * time.Second)
 		// Check if TiDB is already upgraded.
@@ -241,6 +220,29 @@ func upgrade(s Session) error {
 		log.Fatal(err)
 	}
 	return nil
+}
+
+// Update to version 2.
+func upgradeToVer2(s Session) {
+	// Version 2 add two system variable for DistSQL concurrency controling.
+	// Insert distsql related system variable.
+	distSQLVars := []string{variable.DistSQLScanConcurrencyVar, variable.DistSQLJoinConcurrencyVar}
+	values := make([]string, 0, len(distSQLVars))
+	for _, v := range distSQLVars {
+		value := fmt.Sprintf(`("%s", "%s")`, v, variable.SysVars[v].Value)
+		values = append(values, value)
+	}
+	sql := fmt.Sprintf("INSERT IGNORE INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
+		strings.Join(values, ", "))
+	mustExecute(s, sql)
+}
+
+// Update boostrap version variable in mysql.TiDB table.
+func updateBootstrapVer(s Session) {
+	// Update bootstrap version.
+	sql := fmt.Sprintf(`INSERT INTO %s.%s VALUES ("%s", "%d", "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%d"`,
+		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion, currentBootstrapVersion)
+	mustExecute(s, sql)
 }
 
 // Get bootstrap version from mysql.tidb table;
