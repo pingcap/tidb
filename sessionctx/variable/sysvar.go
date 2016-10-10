@@ -83,6 +83,7 @@ func init() {
 	tidbSysVars = make(map[string]bool)
 	tidbSysVars[DistSQLScanConcurrencyVar] = true
 	tidbSysVars[DistSQLJoinConcurrencyVar] = true
+	tidbSysVars[TiDBSnapshot] = true
 }
 
 // we only support MySQL now
@@ -593,6 +594,7 @@ var defaultSysVars = []*SysVar{
 
 // TiDB system variables
 const (
+	TiDBSnapshot              = "tidb_snapshot"
 	DistSQLScanConcurrencyVar = "tidb_distsql_scan_concurrency"
 	DistSQLJoinConcurrencyVar = "tidb_distsql_join_concurrency"
 )

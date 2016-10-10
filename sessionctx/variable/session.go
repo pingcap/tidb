@@ -226,7 +226,6 @@ func (s *SessionVars) SetCurrentUser(user string) {
 
 // special session variables.
 const (
-	TiDBSnapshot        = "tidb_snapshot"
 	sqlMode             = "sql_mode"
 	characterSetResults = "character_set_results"
 )
@@ -295,12 +294,19 @@ func (s *SessionVars) GetSystemVar(key string) types.Datum {
 // If the session scope variable is not set, it will get global scope value and fill session scope value.
 func (s *SessionVars) GetTiDBSystemVar(ctx context.Context, name string) (string, error) {
 	key := strings.ToLower(name)
+	_, ok := tidbSysVars[key]
+	if !ok {
+		return "", errors.Errorf("%s is not a TiDB specific system variable.", name)
+	}
+
 	sVal, ok := s.systems[key]
 	if ok {
 		return sVal, nil
 	}
 	globalVars := GetGlobalVarAccessor(ctx)
 	if key == DistSQLScanConcurrencyVar {
+		// Get global variable need to scan table which depends on DistSQLScanConcurrencyVar.
+		// So we should add it here to break the dependency loop.
 		s.systems[DistSQLScanConcurrencyVar] = "1"
 	}
 	globalVal, err := globalVars.GetGlobalSysVar(ctx, key)
