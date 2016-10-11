@@ -15,6 +15,8 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	"container/heap"
+	"sort"
 )
 
 // local region server.
@@ -44,17 +46,130 @@ type regionResponse struct {
 
 const chunkSize = 64
 
+type sortRow struct {
+	key []types.Datum
+	meta tipb.RowMeta
+	data []byte
+}
+
+type topnContainer struct {
+	orderByItems []*tipb.ByItem
+	rows         []*sortRow
+	err          error
+}
+
+func (t *topnContainer) Len() int {
+	return len(t.rows)
+}
+
+func (t *topnContainer) Swap(i, j int) {
+	t.rows[i], t.rows[j] = t.rows[j], t.rows[i]
+}
+
+func (t *topnContainer) Less(i, j int) bool {
+	for index, by := range t.orderByItems {
+		v1 := t.rows[i].key[index]
+		v2 := t.rows[j].key[index]
+
+		ret, err := v1.CompareDatum(v2)
+		if err != nil {
+			t.err = errors.Trace(err)
+			return true
+		}
+
+		if by.Desc {
+			ret = -ret
+		}
+
+		if ret < 0 {
+			return true
+		} else if ret > 0 {
+			return false
+		}
+	}
+
+	return false
+}
+
+type topnSolver struct {
+	topnContainer
+
+	totalCount int
+	heapSize   int
+}
+
+func (t *topnSolver) Len() int {
+	return t.heapSize
+}
+
+func (t *topnSolver) Push(x interface{}) {
+	t.rows = append(t.rows, x.(*sortRow))
+	t.heapSize++
+}
+
+func (t *topnSolver) Pop() interface{} {
+	return nil
+}
+
+func (t *topnSolver) Less(i, j int) bool {
+	for index, by := range t.orderByItems {
+		v1 := t.rows[i].key[index]
+		v2 := t.rows[j].key[index]
+
+		ret, err := v1.CompareDatum(v2)
+		if err != nil {
+			t.err = errors.Trace(err)
+			return true
+		}
+
+		if by.Desc {
+			ret = -ret
+		}
+
+		if ret > 0 {
+			return true
+		} else if ret < 0 {
+			return false
+		}
+	}
+
+	return false
+}
+
+func (t *topnSolver) tryToAddRow(row *sortRow) bool {
+	success := false
+	if t.heapSize == t.totalCount {
+		t.rows = append(t.rows, row)
+		if t.Less(0, t.heapSize) {
+			t.Swap(0, t.heapSize)
+			heap.Fix(t, 0)
+			success = true
+		}
+		t.rows = t.rows[:t.heapSize]
+	} else {
+		heap.Push(t, row)
+		success = true
+	}
+	return success
+}
+
 type selectContext struct {
 	sel          *tipb.SelectRequest
 	txn          kv.Transaction
 	eval         *xeval.Evaluator
 	whereColumns map[int64]*tipb.ColumnInfo
 	aggColumns   map[int64]*tipb.ColumnInfo
+	topnColumns  map[int64]*tipb.ColumnInfo
 	groups       map[string]bool
 	groupKeys    [][]byte
 	aggregates   []*aggregateFuncExpr
-	aggregate    bool
+	topnSolver   *topnSolver
 	keyRanges    []kv.KeyRange
+
+	// TODO: Only one of these three flags can be true at the same time. We should set this as an enum var.
+	aggregate bool
+	desc      bool
+	topn      bool
 
 	// Use for DecodeRow.
 	colTps map[int64]*types.FieldType
@@ -82,6 +197,30 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		if sel.Where != nil {
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
 			collectColumnsInExpr(sel.Where, ctx, ctx.whereColumns)
+		}
+		if len(sel.OrderBy) > 0 {
+			if sel.OrderBy[0].Expr == nil {
+				ctx.desc = sel.OrderBy[0].Desc
+			} else {
+				if sel.Limit == nil {
+					return nil, errors.New("We don't supported pushing down a sort without any limit.")
+				}
+				ctx.topn = true
+				ctx.topnSolver = &topnSolver{
+					totalCount: int(*sel.Limit),
+					topnContainer: topnContainer{
+						orderByItems: sel.OrderBy,
+					},
+				}
+				ctx.topnColumns = make(map[int64]*tipb.ColumnInfo)
+				for _, item := range sel.OrderBy {
+					collectColumnsInExpr(item.Expr, ctx, ctx.topnColumns)
+				}
+				for k := range ctx.whereColumns {
+					// It is will be handled in where.
+					delete(ctx.topnColumns, k)
+				}
+			}
 		}
 		ctx.aggregate = len(sel.Aggregates) > 0 || len(sel.GetGroupBy()) > 0
 		if ctx.aggregate {
@@ -113,6 +252,9 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			}
 			err = rs.getRowsFromIndexReq(ctx)
 		}
+		if ctx.topn {
+			rs.pushTopNDataToCtx(ctx)
+		}
 		selResp := new(tipb.SelectResponse)
 		selResp.Error = toPBError(err)
 		selResp.Chunks = ctx.chunks
@@ -128,6 +270,15 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		resp.newEndKey = rs.endKey
 	}
 	return resp, nil
+}
+
+func (rs *localRegion) pushTopNDataToCtx(ctx *selectContext) {
+	sort.Sort(&ctx.topnSolver.topnContainer)
+	for _, row := range ctx.topnSolver.rows {
+		chunk := rs.getChunk(ctx)
+		chunk.RowsData = append(chunk.RowsData, row.data...)
+		chunk.RowsMeta = append(chunk.RowsMeta, row.meta)
+	}
 }
 
 func collectColumnsInExpr(expr *tipb.Expr, ctx *selectContext, collector map[int64]*tipb.ColumnInfo) error {
@@ -173,7 +324,7 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) error {
 		ctx.colTps[col.GetColumnId()] = distsql.FieldTypeFromPBColumn(col)
 	}
 
-	kvRanges, desc := rs.extractKVRanges(ctx)
+	kvRanges := rs.extractKVRanges(ctx)
 	limit := int64(-1)
 	if ctx.sel.Limit != nil {
 		limit = ctx.sel.GetLimit()
@@ -182,7 +333,7 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) error {
 		if limit == 0 {
 			break
 		}
-		count, err := rs.getRowsFromRange(ctx, ran, limit, desc)
+		count, err := rs.getRowsFromRange(ctx, ran, limit, ctx.desc)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -231,8 +382,7 @@ func (rs *localRegion) getRowsFromAgg(ctx *selectContext) error {
 }
 
 // extractKVRanges extracts kv.KeyRanges slice from ctx.keyRanges, and also returns if it is in descending order.
-func (rs *localRegion) extractKVRanges(ctx *selectContext) (kvRanges []kv.KeyRange, desc bool) {
-	sel := ctx.sel
+func (rs *localRegion) extractKVRanges(ctx *selectContext) (kvRanges []kv.KeyRange) {
 	for _, kran := range ctx.keyRanges {
 		upperKey := kran.EndKey
 		if bytes.Compare(upperKey, rs.startKey) <= 0 {
@@ -255,10 +405,7 @@ func (rs *localRegion) extractKVRanges(ctx *selectContext) (kvRanges []kv.KeyRan
 		}
 		kvRanges = append(kvRanges, kvr)
 	}
-	if sel.OrderBy != nil {
-		desc = sel.OrderBy[0].Desc
-	}
-	if desc {
+	if ctx.desc {
 		reverseKVRanges(kvRanges)
 	}
 	return
@@ -382,6 +529,31 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 	return rs.valuesToRow(ctx, handle, values)
 }
 
+func (rs *localRegion) evalTopN(ctx *selectContext, handle int64, values map[int64][]byte, columns []*tipb.ColumnInfo) error {
+	err := rs.setColumnValueToCtx(ctx, handle, values, ctx.topnColumns)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newRow := &sortRow{
+		meta: tipb.RowMeta{Handle: handle},
+	}
+	for _, item := range ctx.topnSolver.orderByItems {
+		result, err := ctx.eval.Eval(item.Expr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newRow.key = append(newRow.key, result)
+	}
+	if ctx.topnSolver.tryToAddRow(newRow) {
+		for _, col := range columns {
+			val := values[col.GetColumnId()]
+			newRow.data = append(newRow.data, val...)
+			newRow.meta.Length += int64(len(val))
+		}
+	}
+	return errors.Trace(ctx.topnSolver.err)
+}
+
 func (rs *localRegion) valuesToRow(ctx *selectContext, handle int64, values map[int64][]byte) (bool, error) {
 	var columns []*tipb.ColumnInfo
 	if ctx.sel.TableInfo != nil {
@@ -396,6 +568,9 @@ func (rs *localRegion) valuesToRow(ctx *selectContext, handle int64, values map[
 	}
 	if !match {
 		return false, nil
+	}
+	if ctx.topn {
+		return false, errors.Trace(rs.evalTopN(ctx, handle, values, columns))
 	}
 	if ctx.aggregate {
 		// Update aggregate functions.
@@ -496,7 +671,7 @@ func toPBError(err error) *tipb.Error {
 }
 
 func (rs *localRegion) getRowsFromIndexReq(ctx *selectContext) error {
-	kvRanges, desc := rs.extractKVRanges(ctx)
+	kvRanges := rs.extractKVRanges(ctx)
 	limit := int64(-1)
 	if ctx.sel.Limit != nil {
 		limit = ctx.sel.GetLimit()
@@ -505,7 +680,7 @@ func (rs *localRegion) getRowsFromIndexReq(ctx *selectContext) error {
 		if limit == 0 {
 			break
 		}
-		count, err := rs.getIndexRowFromRange(ctx, ran, desc, limit)
+		count, err := rs.getIndexRowFromRange(ctx, ran, ctx.desc, limit)
 		if err != nil {
 			return errors.Trace(err)
 		}
