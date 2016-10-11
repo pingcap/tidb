@@ -549,6 +549,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 			aggFuncs:    v.AggFuncs,
 			aggFields:   v.AggFields,
 			byItems:     v.GbyItems,
+			orderByList: v.SortItems,
 		}
 		return st
 	}
