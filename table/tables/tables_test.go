@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -85,6 +86,13 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, NotNil)
 	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
 	c.Assert(err, NotNil)
+
+	// Test input invalid utf8 value.
+	_, err = tb.AddRecord(ctx, types.MakeDatums(3, []byte{255}))
+	c.Assert(terror.ErrorEqual(err, table.ErrInvalidUTF8Value), IsTrue)
+	touched := map[int]bool{2: true}
+	err = tb.UpdateRecord(ctx, 1, types.MakeDatums(1, "abc"), types.MakeDatums(1, []byte{255}), touched)
+	c.Assert(terror.ErrorEqual(err, table.ErrInvalidUTF8Value), IsTrue)
 
 	c.Assert(tb.UpdateRecord(ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), map[int]bool{0: false, 1: true}), IsNil)
 
