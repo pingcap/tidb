@@ -2,7 +2,9 @@ package localstore
 
 import (
 	"bytes"
+	"container/heap"
 	"encoding/binary"
+	"sort"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
@@ -15,8 +17,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
-	"container/heap"
-	"sort"
 )
 
 // local region server.
@@ -47,7 +47,7 @@ type regionResponse struct {
 const chunkSize = 64
 
 type sortRow struct {
-	key []types.Datum
+	key  []types.Datum
 	meta tipb.RowMeta
 	data []byte
 }
