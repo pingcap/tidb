@@ -243,6 +243,9 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r.Check(testkit.Rows(rowStr))
 	tk.MustExec("commit")
 
+	r = tk.MustQuery("select id from select_order_test order by id + 1 desc limit 1 ")
+	r.Check(testkit.Rows("2"))
+
 	tk.MustExec("begin")
 	// Test limit
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 0;")
@@ -1266,4 +1269,15 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustExec("insert history_read values (3)")
 	tk.MustExec("update history_read set a = 4 where a = 3")
 	tk.MustExec("delete from history_read where a = 1")
+
+	time.Sleep(time.Millisecond)
+	snapshotTime = time.Now()
+	time.Sleep(time.Millisecond)
+	tk.MustExec("alter table history_read add column b int")
+	tk.MustExec("insert history_read values (8, 8), (9, 9)")
+	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
+	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
+	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
+	tk.MustExec("set @@tidb_snapshot = ''")
+	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 }
