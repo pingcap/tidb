@@ -834,7 +834,7 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 	return info, nil
 }
 
-// convert2PhysicalPlanEnforce converts a selection to *physicalPlanInfo which does not push the 
+// convert2PhysicalPlanEnforce converts a selection to *physicalPlanInfo which does not push the
 // required property to the children, but enforce the property instead.
 func (p *Selection) convert2PhysicalPlanEnforce(prop *requiredProperty) (*physicalPlanInfo, error) {
 	child := p.GetChildByIndex(0).(LogicalPlan)
