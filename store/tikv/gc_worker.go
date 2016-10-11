@@ -194,6 +194,7 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(float64(runInterval.Seconds()))
 	lastRun, err := w.loadTime(gcLastRunTimeKey)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -209,6 +210,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(float64(lifeTime.Seconds()))
 	lastSafePoint, err := w.loadTime(gcSafePointKey)
 	if err != nil {
 		return nil, errors.Trace(err)
