@@ -81,23 +81,29 @@ func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, in
 func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	table := p.Table
 	client := p.ctx.GetClient()
+	txn, err := p.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	var resultPlan PhysicalPlan
 	ts := &PhysicalTableScan{
-		ctx:                 p.ctx,
 		Table:               p.Table,
 		Columns:             p.Columns,
 		TableAsName:         p.TableAsName,
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
-	ts.addLimit(prop.limit)
+	if txn != nil {
+		ts.readOnly = txn.IsReadOnly()
+	} else {
+		ts.readOnly = true
+	}
 	ts.SetSchema(p.GetSchema())
 	resultPlan = ts
-	var oldConditions []expression.Expression
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
+		ts.conditions = sel.Conditions
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
-		oldConditions = sel.Conditions
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.DeepCopy())
 		}
@@ -123,18 +129,6 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		}
 	} else {
 		ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
-	}
-	txn, err := p.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if txn != nil && !txn.IsReadOnly() {
-		us := &PhysicalUnionScan{
-			Condition: expression.ComposeCNFCondition(oldConditions),
-		}
-		us.SetChildren(resultPlan)
-		us.SetSchema(resultPlan.GetSchema())
-		resultPlan = us
 	}
 	statsTbl := p.statisticTable
 	rowCount := uint64(statsTbl.Count)
@@ -181,8 +175,11 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 	statsTbl := p.statisticTable
 	var resultPlan PhysicalPlan
 	client := p.ctx.GetClient()
+	txn, err := p.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	is := &PhysicalIndexScan{
-		ctx:                 p.ctx,
 		Index:               index,
 		Table:               p.Table,
 		Columns:             p.Columns,
@@ -191,20 +188,22 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
-	is.addLimit(prop.limit)
+	if txn != nil {
+		is.readOnly = txn.IsReadOnly()
+	} else {
+		is.readOnly = true
+	}
 	is.SetSchema(p.schema)
 	rowCount := uint64(statsTbl.Count)
 	resultPlan = is
-	var oldConditions []expression.Expression
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
+		is.conditions = sel.Conditions
 		rowCount = 0
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
-		oldConditions = sel.Conditions
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.DeepCopy())
 		}
-		oldConditions = sel.Conditions
 		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
 		if client != nil {
 			var memDB bool
@@ -235,18 +234,6 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 	} else {
 		rb := rangeBuilder{}
 		is.Ranges = rb.buildIndexRanges(fullRange)
-	}
-	txn, err := p.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if txn != nil && !txn.IsReadOnly() {
-		us := &PhysicalUnionScan{
-			Condition: expression.ComposeCNFCondition(oldConditions),
-		}
-		us.SetChildren(resultPlan)
-		us.SetSchema(resultPlan.GetSchema())
-		resultPlan = us
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount}), nil
@@ -471,9 +458,6 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 			allLeft = false
 		}
 	}
-	if !allLeft {
-		return &physicalPlanInfo{cost: math.MaxFloat64}, nil
-	}
 	join := &PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
@@ -525,9 +509,6 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 		if rChild.GetSchema().GetIndex(col.col) == -1 {
 			allRight = false
 		}
-	}
-	if !allRight {
-		return &physicalPlanInfo{cost: math.MaxFloat64}, nil
 	}
 	join := &PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
@@ -843,6 +824,9 @@ func (p *Selection) convert2PhysicalPlanEnforce(prop *requiredProperty) (*physic
 		return nil, errors.Trace(err)
 	}
 	if prop.limit != nil && len(prop.props) > 0 {
+		if t, ok := info.p.(physicalDistSQLPlan); ok {
+			t.addTopN(prop)
+		}
 		info = enforceProperty(prop, info)
 	} else if len(prop.props) != 0 {
 		info.cost = math.MaxFloat64
