@@ -90,7 +90,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	// Test input invalid utf8 value.
 	_, err = tb.AddRecord(ctx, types.MakeDatums(3, []byte{255}))
 	c.Assert(terror.ErrorEqual(err, table.ErrInvalidUTF8Value), IsTrue)
-	touched := map[int]bool{2: true}
+	touched := map[int]bool{1: true}
 	err = tb.UpdateRecord(ctx, 1, types.MakeDatums(1, "abc"), types.MakeDatums(1, []byte{255}), touched)
 	c.Assert(terror.ErrorEqual(err, table.ErrInvalidUTF8Value), IsTrue)
 
