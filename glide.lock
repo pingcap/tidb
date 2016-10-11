@@ -1,5 +1,5 @@
-hash: 51bb5cdd491a9598769200914e03e1675ba28dda0fab5ad8dddc414da7ab09fa
-updated: 2016-10-11T11:09:25.411779129+08:00
+hash: cea4483e119dff3560035c46120fbeb1749df6ebe8794c4c857e18a7a9856e26
+updated: 2016-10-11T12:54:50.645769904+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -9,15 +9,11 @@ imports:
   - quantile
 - name: github.com/boltdb/bolt
   version: d97499360d1ecebc492ea66c7447ea948f417620
-- name: github.com/cloudfoundry-incubator/candiedyaml
-  version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - name: github.com/coreos/etcd
   version: e53b99588a05d1f4ef172c178d4ed8e8106b8be4
   subpackages:
   - auth/authpb
   - clientv3
-  - etcdserver/api/v3rpc/rpctypes
-  - etcdserver/etcdserverpb
   - mvcc/mvccpb
   - pkg/tlsutil
 - name: github.com/cznic/golex
