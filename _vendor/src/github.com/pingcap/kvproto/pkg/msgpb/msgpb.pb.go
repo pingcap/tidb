@@ -22,13 +22,13 @@ import (
 
 	raft_cmdpb "github.com/pingcap/kvproto/pkg/raft_cmdpb"
 
-	raft_serverpb "github.com/pingcap/kvproto/pkg/raft_serverpb"
-
 	kvrpcpb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 
-	coprocessor "github.com/pingcap/kvproto/pkg/coprocessor"
-
 	pdpb "github.com/pingcap/kvproto/pkg/pdpb"
+
+	raft_serverpb "github.com/pingcap/kvproto/pkg/raft_serverpb"
+
+	coprocessor "github.com/pingcap/kvproto/pkg/coprocessor"
 )
 
 // Reference imports to suppress errors if they are not otherwise used.
