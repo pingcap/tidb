@@ -811,7 +811,7 @@ func (e *XSelectTableExec) Fields() []*ast.ResultField {
 	return nil
 }
 
-// timeZoneOffset return local time zone offset in seconds.
+// timeZoneOffset returns the local time zone offset in seconds.
 func timeZoneOffset() int64 {
 	_, offset := time.Now().Zone()
 	return int64(offset)
