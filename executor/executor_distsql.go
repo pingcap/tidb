@@ -514,8 +514,10 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq.StartTs = e.startTS
 	selIdxReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.indexPlan.Index)
-	if e.indexPlan.Desc {
-		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: e.indexPlan.Desc})
+	if len(e.indexPlan.SortItems) > 0 {
+		selIdxReq.OrderBy = e.indexPlan.SortItems
+	} else if e.indexPlan.Desc {
+		selIdxReq.OrderBy = []*tipb.ByItem{{Desc: e.indexPlan.Desc}}
 	}
 	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
 	for i, v := range e.indexPlan.Index.Columns {
@@ -695,6 +697,7 @@ type XSelectTableExec struct {
 	returnedRows  uint64 // returned rowCount
 	keepOrder     bool
 	startTS       uint64
+	orderByList   []*tipb.ByItem
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -725,8 +728,10 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.TableInfo = &tipb.TableInfo{
 		TableId: e.tableInfo.ID,
 	}
-	if e.supportDesc && e.desc {
-		selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: e.desc})
+	if len(e.orderByList) > 0 {
+		selReq.OrderBy = e.orderByList
+	} else if e.supportDesc && e.desc {
+		selReq.OrderBy = []*tipb.ByItem{{Desc: e.desc}}
 	}
 	selReq.Limit = e.limitCount
 	selReq.TableInfo.Columns = distsql.ColumnsToProto(columns, e.tableInfo.PKIsHandle)
