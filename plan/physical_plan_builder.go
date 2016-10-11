@@ -35,7 +35,7 @@ const (
 	joinFactor      = 0.3
 )
 
-// JoinConcurrency means the number of goroutines that participate joining.
+// JoinConcurrency means the number of goroutines that participate in joining.
 var JoinConcurrency = 5
 
 func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, indexInfo *model.IndexInfo) (uint64, error) {
@@ -258,10 +258,10 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 	return true
 }
 
-// convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
-// If no available index matches the required property, the returned physicalPlanInfo
-// will be table scan and has cost of MaxInt64, but it's OK because parent will call
-// convert2PhysicalPlan again with empty required property, so the plan with the lowest
+// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
+// If there is no index that matches the required property, the returned physicalPlanInfo
+// will be table scan and has the cost of MaxInt64. But this can be ignored because the parent will call
+// convert2PhysicalPlan again with an empty *requiredProperty, so the plan with the lowest
 // cost will be chosen.
 func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
@@ -295,7 +295,7 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 }
 
 // tryToConvert2DummyScan is an optimization which checks if its parent is a selection with a constant condition
-// that evaluates to false, if so there is no need to do real physical scan, a dummy scan will do.
+// that evaluates to false. If it is, there is no need for a real physical scan, a dummy scan will do.
 func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	sel, isSel := p.GetParentByIndex(0).(*Selection)
 	if isSel {
@@ -325,8 +325,8 @@ func addPlanToResponse(parent PhysicalPlan, info *physicalPlanInfo) *physicalPla
 	return &physicalPlanInfo{p: np, cost: info.cost, count: info.count}
 }
 
-// enforceProperty creates a *physicalPlanInfo that satisfy the required property by adding
-// sort or limit as parent of the given physical plan.
+// enforceProperty creates a *physicalPlanInfo that satisfies the required property by adding
+// sort or limit as the parent of the given physical plan.
 func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPlanInfo {
 	if len(prop.props) != 0 {
 		items := make([]*ByItems, 0, len(prop.props))
@@ -355,7 +355,7 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 	return info
 }
 
-// removeLimit removes limit from prop.
+// removeLimit removes the limit from prop.
 func removeLimit(prop *requiredProperty) *requiredProperty {
 	ret := &requiredProperty{
 		props:      prop.props,
@@ -364,7 +364,7 @@ func removeLimit(prop *requiredProperty) *requiredProperty {
 	return ret
 }
 
-// convertLimitOffsetToCount change limit(offset, count) in prop to limit(0, offset + count)
+// convertLimitOffsetToCount changes the limit(offset, count) in prop to limit(0, offset + count).
 func convertLimitOffsetToCount(prop *requiredProperty) *requiredProperty {
 	ret := &requiredProperty{
 		props:      prop.props,
@@ -382,7 +382,7 @@ func limitProperty(limit *Limit) *requiredProperty {
 	return &requiredProperty{limit: limit}
 }
 
-// convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
+// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Limit) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
 	if err != nil {
@@ -400,7 +400,7 @@ func (p *Limit) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
-// convert2PhysicalPlanSemi converts semi join to *physicalPlanInfo.
+// convert2PhysicalPlanSemi converts the semi join to *physicalPlanInfo.
 func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanInfo, error) {
 	lChild := p.GetChildByIndex(0).(LogicalPlan)
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
@@ -448,7 +448,7 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 	return resultInfo, nil
 }
 
-// convert2PhysicalPlanLeft converts left join to *physicalPlanInfo.
+// convert2PhysicalPlanLeft converts the left join to *physicalPlanInfo.
 func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.GetChildByIndex(0).(LogicalPlan)
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
@@ -500,7 +500,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	return resultInfo, nil
 }
 
-// convert2PhysicalPlanRight converts right join to *physicalPlanInfo.
+// convert2PhysicalPlanRight converts the right join to *physicalPlanInfo.
 func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.GetChildByIndex(0).(LogicalPlan)
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
@@ -550,7 +550,7 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	return resultInfo, nil
 }
 
-// convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
+// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
 	if err != nil {
@@ -594,7 +594,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	return info, nil
 }
 
-// convert2PhysicalPlanStream converts logical aggregation to stream aggregation *physicalPlanInfo.
+// convert2PhysicalPlanStream converts the logical aggregation to the stream aggregation *physicalPlanInfo.
 func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physicalPlanInfo, error) {
 	agg := &PhysicalAggregation{
 		AggType:      StreamedAgg,
@@ -613,7 +613,7 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 				gbyCols = append(gbyCols, col)
 			}
 		} else {
-			// group by a + b is not interested in any orders.
+			// group by a + b is not interested in any order.
 			return info, nil
 		}
 	}
@@ -650,7 +650,7 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 	return info, nil
 }
 
-// convert2PhysicalPlanFinalHash converts logical aggregation to final hash aggregation *physicalPlanInfo.
+// convert2PhysicalPlanFinalHash converts the logical aggregation to the final hash aggregation *physicalPlanInfo.
 func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, childInfo *physicalPlanInfo) *physicalPlanInfo {
 	agg := &PhysicalAggregation{
 		AggType:      FinalAgg,
@@ -666,12 +666,12 @@ func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, child
 	x.(PhysicalPlan).SetSchema(schema)
 	info := addPlanToResponse(agg, childInfo)
 	info.count = uint64(float64(info.count) * aggFactor)
-	// if we build a final agg, it must be the best plan.
+	// if we build the final aggregation, it must be the best plan.
 	info.cost = 0
 	return info
 }
 
-// convert2PhysicalPlanCompleteHash converts logical aggregation to complete hash aggregation *physicalPlanInfo.
+// convert2PhysicalPlanCompleteHash converts the logical aggregation to the complete hash aggregation *physicalPlanInfo.
 func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanInfo) *physicalPlanInfo {
 	agg := &PhysicalAggregation{
 		AggType:      CompleteAgg,
@@ -686,7 +686,7 @@ func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanIn
 	return info
 }
 
-// convert2PhysicalPlanHash converts logical aggregation to physical hash aggregation.
+// convert2PhysicalPlanHash converts the logical aggregation to the physical hash aggregation.
 func (p *Aggregation) convert2PhysicalPlanHash() (*physicalPlanInfo, error) {
 	childInfo, err := p.children[0].(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
@@ -710,7 +710,7 @@ func (p *Aggregation) convert2PhysicalPlanHash() (*physicalPlanInfo, error) {
 	return p.convert2PhysicalPlanCompleteHash(childInfo), nil
 }
 
-// convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
+// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Aggregation) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	planInfo, err := p.getPlanInfo(prop)
 	if err != nil {
@@ -735,7 +735,7 @@ func (p *Aggregation) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 	return planInfo, errors.Trace(err)
 }
 
-// convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
+// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
 	if err != nil {
@@ -768,7 +768,7 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
-// convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
+// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
 	if err != nil {
@@ -777,12 +777,12 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	if info != nil {
 		return info, nil
 	}
-	// Firstly, we try to push order
+	// Firstly, we try to push order.
 	info, err = p.convert2PhysicalPlanPushOrder(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Secondly, we will push nothing and enforce this prop.
+	// Secondly, we push nothing and enforce this property.
 	infoEnforce, err := p.convert2PhysicalPlanEnforce(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -815,8 +815,8 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 	return info, nil
 }
 
-// convert2PhysicalPlanEnforce converts selection to a physical plan without pushing required property to
-// children, but enforce the property instead.
+// convert2PhysicalPlanEnforce converts a selection to *physicalPlanInfo which does not push the
+// required property to the children, but enforce the property instead.
 func (p *Selection) convert2PhysicalPlanEnforce(prop *requiredProperty) (*physicalPlanInfo, error) {
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	info, err := child.convert2PhysicalPlan(&requiredProperty{})
@@ -834,7 +834,7 @@ func (p *Selection) convert2PhysicalPlanEnforce(prop *requiredProperty) (*physic
 	return info, nil
 }
 
-// convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
+// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Projection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
 	if err != nil {
@@ -904,7 +904,7 @@ func matchProp(target, new *requiredProperty) bool {
 	return true
 }
 
-// convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
+// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
 	if err != nil {
@@ -955,7 +955,7 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	return sortedPlanInfo, nil
 }
 
-// convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
+// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
 	if err != nil {
@@ -995,7 +995,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
-// convert2PhysicalPlan implements LogicalPlan convert2PhysicalPlan interface.
+// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 // TODO: support streaming distinct.
 func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
