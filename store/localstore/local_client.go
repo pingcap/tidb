@@ -62,7 +62,8 @@ func supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_Not,
 		tipb.ExprType_Like:
 		return true
-	case tipb.ExprType_Plus, tipb.ExprType_Div:
+	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus, tipb.ExprType_Mul,
+		tipb.ExprType_IntDiv, tipb.ExprType_Mod:
 		return true
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum, tipb.ExprType_Avg, tipb.ExprType_Max, tipb.ExprType_Min:
 		return true
