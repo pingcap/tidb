@@ -1,5 +1,5 @@
-hash: cc0534b31b9340851319cb17ad3c860af1288dcc82377c963eefd10edc5a33e3
-updated: 2016-10-10T19:48:40.390320153+08:00
+hash: 51bb5cdd491a9598769200914e03e1675ba28dda0fab5ad8dddc414da7ab09fa
+updated: 2016-10-11T11:09:25.411779129+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -105,7 +105,6 @@ imports:
 - name: github.com/pingcap/kvproto
   version: a31be82f6173279a868491878a99d67c981b03a1
   subpackages:
-  - '...'
   - pkg/coprocessor
   - pkg/errorpb
   - pkg/kvrpcpb
