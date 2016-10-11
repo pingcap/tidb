@@ -1,5 +1,5 @@
-hash: cea4483e119dff3560035c46120fbeb1749df6ebe8794c4c857e18a7a9856e26
-updated: 2016-10-11T12:54:50.645769904+08:00
+hash: 4ebf6604a93a9dcaa8afb86b40967ff5c19c0857ca15dc835f154e9b5483d8a6
+updated: 2016-10-11T13:08:54.2934998+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -99,7 +99,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: a31be82f6173279a868491878a99d67c981b03a1
+  version: b67cb2eae50058de05fb22c5c0118571c8f98404
   subpackages:
   - pkg/coprocessor
   - pkg/errorpb
