@@ -274,7 +274,7 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 // If there is no index that matches the required property, the returned physicalPlanInfo
 // will be table scan and has the cost of MaxInt64. But this can be ignored because the parent will call
-// convert2PhysicalPlan again with the empty required property, so the plan with the lowest
+// convert2PhysicalPlan again with an empty *requiredProperty, so the plan with the lowest
 // cost will be chosen.
 func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
