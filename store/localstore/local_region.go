@@ -94,8 +94,10 @@ func (t *topnContainer) Less(i, j int) bool {
 type topnSolver struct {
 	topnContainer
 
+	// totalCount is equal to the limit count, which means the max size of heap.
 	totalCount int
-	heapSize   int
+	// heapSize means the current size of this heap.
+	heapSize int
 }
 
 func (t *topnSolver) Len() int {
@@ -203,7 +205,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 				ctx.desc = sel.OrderBy[0].Desc
 			} else {
 				if sel.Limit == nil {
-					return nil, errors.New("We don't supported pushing down a sort without any limit.")
+					return nil, errors.New("We don't support pushing down Sort without Limit.")
 				}
 				ctx.topn = true
 				ctx.topnSolver = &topnSolver{
@@ -217,7 +219,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 					collectColumnsInExpr(item.Expr, ctx, ctx.topnColumns)
 				}
 				for k := range ctx.whereColumns {
-					// It is will be handled in where.
+					// It will be handled in where.
 					delete(ctx.topnColumns, k)
 				}
 			}
@@ -238,7 +240,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 				collectColumnsInExpr(item.Expr, ctx, ctx.aggColumns)
 			}
 			for k := range ctx.whereColumns {
-				// It is will be handled in where.
+				// It will be handled in where.
 				delete(ctx.aggColumns, k)
 			}
 		}
