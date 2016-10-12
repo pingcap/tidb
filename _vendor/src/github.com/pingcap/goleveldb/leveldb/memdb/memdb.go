@@ -38,9 +38,7 @@ func (r *lockedSource) Seed(seed int64) {
 var (
 	ErrNotFound     = errors.ErrNotFound
 	ErrIterReleased = errors.New("leveldb/memdb: iterator released")
-	rnd             = rand.New(&lockedSource{
-		src: rand.NewSource(0xdeadbeef),
-	})
+	rndSrc          = &lockedSource{src: rand.NewSource(0xdeadbeef)}
 )
 
 const tMaxHeight = 12
@@ -198,10 +196,32 @@ const (
 	nNext
 )
 
+type bitRand struct {
+	src   rand.Source
+	value uint64
+	bits  uint
+}
+
+// bitN return a random int value of n bits.
+func (r *bitRand) bitN(n uint) uint64 {
+	if r.bits < n {
+		r.value = uint64(r.src.Int63())
+		r.bits = 60
+	}
+
+	// take n bits from value
+	mask := (1 << n) - 1
+	ret := r.value & uint64(mask)
+
+	r.value = r.value >> n
+	r.bits -= n
+	return ret
+}
+
 // DB is an in-memory key/value database.
 type DB struct {
 	cmp comparer.BasicComparer
-	rnd *rand.Rand
+	rnd *bitRand
 
 	mu     sync.RWMutex
 	kvData []byte
@@ -218,10 +238,19 @@ type DB struct {
 	kvSize    int
 }
 
+// randHeight returns a random int value for the height of a skip-list node.
 func (p *DB) randHeight() (h int) {
-	const branching = 4
 	h = 1
-	for h < tMaxHeight && p.rnd.Int()%branching == 0 {
+	// From wikipedia: https://en.wikipedia.org/wiki/Skip_list
+	// "Each higher layer acts as an "express lane" for the lists below, where
+	// an element in layer i appears in layer i+1 with some fixed probability p
+	// (two commonly used values for p are 1/2 or 1/4)."
+
+	// here we chose 1/4 as the probability, which means
+	// 1/4 possibility return a height of 2,
+	// 1/16 possibility of height 3,
+	// 1/64 possibility of height 4, and so on...
+	for h < tMaxHeight && p.rnd.bitN(2) == 0 {
 		h++
 	}
 	return
@@ -481,7 +510,7 @@ func (p *DB) Reset() {
 func New(cmp comparer.BasicComparer, capacity int) *DB {
 	p := &DB{
 		cmp:       cmp,
-		rnd:       rnd,
+		rnd:       &bitRand{src: rndSrc},
 		maxHeight: 1,
 		kvData:    make([]byte, 0, capacity),
 		nodeData:  make([]int, 4+tMaxHeight),
