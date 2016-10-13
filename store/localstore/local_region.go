@@ -52,21 +52,21 @@ type sortRow struct {
 	data []byte
 }
 
-type topnContainer struct {
+type topnSorter struct {
 	orderByItems []*tipb.ByItem
 	rows         []*sortRow
 	err          error
 }
 
-func (t *topnContainer) Len() int {
+func (t *topnSorter) Len() int {
 	return len(t.rows)
 }
 
-func (t *topnContainer) Swap(i, j int) {
+func (t *topnSorter) Swap(i, j int) {
 	t.rows[i], t.rows[j] = t.rows[j], t.rows[i]
 }
 
-func (t *topnContainer) Less(i, j int) bool {
+func (t *topnSorter) Less(i, j int) bool {
 	for index, by := range t.orderByItems {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
@@ -91,8 +91,8 @@ func (t *topnContainer) Less(i, j int) bool {
 	return false
 }
 
-type topnSolver struct {
-	topnContainer
+type topnHeap struct {
+	topnSorter
 
 	// totalCount is equal to the limit count, which means the max size of heap.
 	totalCount int
@@ -100,20 +100,20 @@ type topnSolver struct {
 	heapSize int
 }
 
-func (t *topnSolver) Len() int {
+func (t *topnHeap) Len() int {
 	return t.heapSize
 }
 
-func (t *topnSolver) Push(x interface{}) {
+func (t *topnHeap) Push(x interface{}) {
 	t.rows = append(t.rows, x.(*sortRow))
 	t.heapSize++
 }
 
-func (t *topnSolver) Pop() interface{} {
+func (t *topnHeap) Pop() interface{} {
 	return nil
 }
 
-func (t *topnSolver) Less(i, j int) bool {
+func (t *topnHeap) Less(i, j int) bool {
 	for index, by := range t.orderByItems {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
@@ -138,7 +138,10 @@ func (t *topnSolver) Less(i, j int) bool {
 	return false
 }
 
-func (t *topnSolver) tryToAddRow(row *sortRow) bool {
+// tryToAddRow tries to add a row to heap.
+// When this row is not less than any rows in heap, it will never become the top n element.
+// Then this function returns false.
+func (t *topnHeap) tryToAddRow(row *sortRow) bool {
 	success := false
 	if t.heapSize == t.totalCount {
 		t.rows = append(t.rows, row)
@@ -165,12 +168,12 @@ type selectContext struct {
 	groups       map[string]bool
 	groupKeys    [][]byte
 	aggregates   []*aggregateFuncExpr
-	topnSolver   *topnSolver
+	topnSolver   *topnHeap
 	keyRanges    []kv.KeyRange
 
 	// TODO: Only one of these three flags can be true at the same time. We should set this as an enum var.
 	aggregate bool
-	desc      bool
+	descScan  bool
 	topn      bool
 
 	// Use for DecodeRow.
@@ -202,15 +205,15 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		}
 		if len(sel.OrderBy) > 0 {
 			if sel.OrderBy[0].Expr == nil {
-				ctx.desc = sel.OrderBy[0].Desc
+				ctx.descScan = sel.OrderBy[0].Desc
 			} else {
 				if sel.Limit == nil {
 					return nil, errors.New("We don't support pushing down Sort without Limit.")
 				}
 				ctx.topn = true
-				ctx.topnSolver = &topnSolver{
+				ctx.topnSolver = &topnHeap{
 					totalCount: int(*sel.Limit),
-					topnContainer: topnContainer{
+					topnSorter: topnSorter{
 						orderByItems: sel.OrderBy,
 					},
 				}
@@ -275,7 +278,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 }
 
 func (rs *localRegion) pushTopNDataToCtx(ctx *selectContext) {
-	sort.Sort(&ctx.topnSolver.topnContainer)
+	sort.Sort(&ctx.topnSolver.topnSorter)
 	for _, row := range ctx.topnSolver.rows {
 		chunk := rs.getChunk(ctx)
 		chunk.RowsData = append(chunk.RowsData, row.data...)
@@ -335,7 +338,7 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) error {
 		if limit == 0 {
 			break
 		}
-		count, err := rs.getRowsFromRange(ctx, ran, limit, ctx.desc)
+		count, err := rs.getRowsFromRange(ctx, ran, limit, ctx.descScan)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -407,7 +410,7 @@ func (rs *localRegion) extractKVRanges(ctx *selectContext) (kvRanges []kv.KeyRan
 		}
 		kvRanges = append(kvRanges, kvr)
 	}
-	if ctx.desc {
+	if ctx.descScan {
 		reverseKVRanges(kvRanges)
 	}
 	return
@@ -682,7 +685,7 @@ func (rs *localRegion) getRowsFromIndexReq(ctx *selectContext) error {
 		if limit == 0 {
 			break
 		}
-		count, err := rs.getIndexRowFromRange(ctx, ran, ctx.desc, limit)
+		count, err := rs.getIndexRowFromRange(ctx, ran, ctx.descScan, limit)
 		if err != nil {
 			return errors.Trace(err)
 		}
