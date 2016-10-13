@@ -52,6 +52,7 @@ type sortRow struct {
 	data []byte
 }
 
+// topnSorter implements sort.Interface. When all rows have been processed, the topnSorter will sort the whole data in heap.
 type topnSorter struct {
 	orderByItems []*tipb.ByItem
 	rows         []*sortRow
@@ -91,6 +92,8 @@ func (t *topnSorter) Less(i, j int) bool {
 	return false
 }
 
+// topnHeap holds the top n elements using heap structure. It implements heap.Interface.
+// When we insert a row, topnHeap will check if the row can become one of the top n element or not.
 type topnHeap struct {
 	topnSorter
 
@@ -145,6 +148,7 @@ func (t *topnHeap) tryToAddRow(row *sortRow) bool {
 	success := false
 	if t.heapSize == t.totalCount {
 		t.rows = append(t.rows, row)
+		// When this row is less than the top element, it will replace it and adjust the heap structure.
 		if t.Less(0, t.heapSize) {
 			t.Swap(0, t.heapSize)
 			heap.Fix(t, 0)
