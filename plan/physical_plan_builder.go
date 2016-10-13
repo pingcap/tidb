@@ -328,6 +328,9 @@ func addPlanToResponse(parent PhysicalPlan, info *physicalPlanInfo) *physicalPla
 // enforceProperty creates a *physicalPlanInfo that satisfies the required property by adding
 // sort or limit as the parent of the given physical plan.
 func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPlanInfo {
+	if info.p == nil {
+		return info
+	}
 	if len(prop.props) != 0 {
 		items := make([]*ByItems, 0, len(prop.props))
 		for _, col := range prop.props {
