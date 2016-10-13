@@ -126,7 +126,7 @@ update:
 ifdef PKG
 	glide get -s -v --skip-test ${PKG}
 else
-	glide update -s -v --skip-test
+	glide update -s -v -u --skip-test
 endif
 	@echo "removing test files"
 	glide vc --only-code --no-tests

@@ -216,6 +216,55 @@ func (s *testEvalSuite) TestEval(c *C) {
 			notExpr(datumExpr(types.Datum{})),
 			types.Datum{},
 		},
+		// Arithmetic operation.
+		{
+			binaryExpr(types.NewIntDatum(-1), types.NewIntDatum(1), tipb.ExprType_Plus),
+			types.NewIntDatum(0),
+		},
+		{
+			binaryExpr(types.NewIntDatum(-1), types.NewFloat64Datum(1.5), tipb.ExprType_Plus),
+			types.NewFloat64Datum(0.5),
+		},
+		{
+			binaryExpr(types.NewIntDatum(-1), types.NewIntDatum(1), tipb.ExprType_Minus),
+			types.NewIntDatum(-2),
+		},
+		{
+			binaryExpr(types.NewIntDatum(-1), types.NewFloat64Datum(1.5), tipb.ExprType_Minus),
+			types.NewFloat64Datum(-2.5),
+		},
+		{
+			binaryExpr(types.NewFloat64Datum(-1), types.NewFloat64Datum(1), tipb.ExprType_Mul),
+			types.NewFloat64Datum(-1),
+		},
+		{
+			binaryExpr(types.NewFloat64Datum(-1.5), types.NewFloat64Datum(2), tipb.ExprType_Mul),
+			types.NewFloat64Datum(-3),
+		},
+		{
+			binaryExpr(types.NewFloat64Datum(-3), types.NewFloat64Datum(2), tipb.ExprType_Div),
+			types.NewFloat64Datum(-1.5),
+		},
+		{
+			binaryExpr(types.NewFloat64Datum(-3), types.NewFloat64Datum(0), tipb.ExprType_Div),
+			types.NewDatum(nil),
+		},
+		{
+			binaryExpr(types.NewIntDatum(3), types.NewIntDatum(2), tipb.ExprType_IntDiv),
+			types.NewIntDatum(1),
+		},
+		{
+			binaryExpr(types.NewFloat64Datum(3.0), types.NewFloat64Datum(1.9), tipb.ExprType_IntDiv),
+			types.NewIntDatum(1),
+		},
+		{
+			binaryExpr(types.NewIntDatum(3), types.NewIntDatum(2), tipb.ExprType_Mod),
+			types.NewIntDatum(1),
+		},
+		{
+			binaryExpr(types.NewFloat64Datum(3.0), types.NewFloat64Datum(1.9), tipb.ExprType_Mod),
+			types.NewFloat64Datum(1.1),
+		},
 	}
 	for _, ca := range cases {
 		result, err := xevaluator.Eval(ca.expr)
