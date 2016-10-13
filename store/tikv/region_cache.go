@@ -223,12 +223,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 		}
 		// Move leader to the first.
 		if leader != nil {
-			for i := range meta.Peers {
-				if meta.Peers[i].GetId() == leader.GetId() {
-					meta.Peers[0], meta.Peers[i] = meta.Peers[i], meta.Peers[0]
-					break
-				}
-			}
+			reorderRegionPeers(meta, leader.GetStoreId())
 		}
 		peer := meta.Peers[0]
 		store, err := c.pdClient.GetStore(peer.GetStoreId())
@@ -258,12 +253,7 @@ func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) {
 			log.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)
 			continue
 		}
-		for i := range meta.Peers {
-			if meta.Peers[i].GetStoreId() == old.peer.GetStoreId() {
-				meta.Peers[0], meta.Peers[i] = meta.Peers[i], meta.Peers[0]
-				break
-			}
-		}
+		reorderRegionPeers(meta, old.peer.GetStoreId())
 		peer := meta.Peers[0]
 		if peer.GetStoreId() != old.peer.GetStoreId() {
 			continue
@@ -273,6 +263,17 @@ func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) {
 			peer: peer,
 			addr: old.GetAddress(),
 		})
+	}
+}
+
+// reorderRegionPeers moves the leader peer to the first, makes it easier to try
+// next peer if current does not respond.
+func reorderRegionPeers(r *metapb.Region, leaderStoreID uint64) {
+	for i := range r.Peers {
+		if r.Peers[i].GetStoreId() == leaderStoreID {
+			r.Peers[0], r.Peers[i] = r.Peers[i], r.Peers[0]
+			break
+		}
 	}
 }
 

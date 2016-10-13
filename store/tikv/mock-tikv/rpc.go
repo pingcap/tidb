@@ -293,14 +293,10 @@ func convertToPbPairs(pairs []Pair) []*kvrpcpb.KvPair {
 
 func encodeRegionKey(r *metapb.Region) *metapb.Region {
 	if r.StartKey != nil {
-		var b []byte
-		b = codec.EncodeBytes(b, r.StartKey)
-		r.StartKey = b
+		r.StartKey = codec.EncodeBytes(nil, r.StartKey)
 	}
 	if r.EndKey != nil {
-		var b []byte
-		b = codec.EncodeBytes(b, r.EndKey)
-		r.EndKey = b
+		r.EndKey = codec.EncodeBytes(nil, r.EndKey)
 	}
 	return r
 }
