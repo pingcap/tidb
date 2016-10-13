@@ -43,7 +43,7 @@ Read the [Quick Start](./docs/QUICKSTART.md).
 ## Documentation
 
 + [English](https://github.com/pingcap/docs)
-+ [Chinese](https://github.com/pingcap/docs-cn)
++ [简体中文](https://github.com/pingcap/docs-cn)
 
 ## Architecture
 
