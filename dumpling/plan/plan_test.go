@@ -511,6 +511,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg->Projection",
 		},
 		{
+			sql:  "select count(*) from t group by e order by d limit 1",
+			best: "Table(t)->HashAgg->Projection->Sort + Limit(1) + Offset(0)->Trim",
+		},
+		{
 			sql:  "select count(*) from t group by a",
 			best: "Table(t)->StreamAgg->Projection",
 		},
