@@ -246,6 +246,36 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 	}
 }
 
+// OnRegionStale removes the old region and inserts new regions into the cache.
+func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.dropRegionFromCache(old.VerID())
+
+	for _, meta := range newRegions {
+		if err := decodeRegionMetaKey(meta); err != nil {
+			log.Error("newRegion's range key is not encoded: %v, %v", meta, err)
+			continue
+		}
+		for i := range meta.Peers {
+			if meta.Peers[i].GetStoreId() == old.peer.GetStoreId() {
+				meta.Peers[0], meta.Peers[i] = meta.Peers[i], meta.Peers[0]
+				break
+			}
+		}
+		peer := meta.Peers[0]
+		if peer.GetStoreId() != old.peer.GetStoreId() {
+			continue
+		}
+		c.insertRegionToCache(&Region{
+			meta: meta,
+			peer: peer,
+			addr: old.GetAddress(),
+		})
+	}
+}
+
 // llrbItem is llrbTree's Item that uses []byte for compare.
 type llrbItem struct {
 	key    []byte

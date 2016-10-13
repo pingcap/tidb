@@ -218,6 +218,11 @@ func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVer
 				}
 				continue
 			}
+			if staleEpoch := regionErr.GetStaleEpoch(); staleEpoch != nil {
+				log.Warnf("tikv reports `StaleEpoch`, ctx: %s, retry later", req.Context)
+				s.regionCache.OnRegionStale(region, staleEpoch.NewRegions)
+				continue
+			}
 			// Retry if error is `ServerIsBusy`.
 			if regionErr.GetServerIsBusy() != nil {
 				log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", req.Context)
