@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 type rpcHandler struct {
@@ -119,9 +120,16 @@ func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	}
 	// Region epoch does not match.
 	if !proto.Equal(region.GetRegionEpoch(), ctx.GetRegionEpoch()) {
+		nextRegion, _ := h.cluster.GetRegionByKey(region.GetEndKey())
+		newRegions := []*metapb.Region{encodeRegionKey(region)}
+		if nextRegion != nil {
+			newRegions = append(newRegions, encodeRegionKey(nextRegion))
+		}
 		return &errorpb.Error{
-			Message:    proto.String("stale epoch"),
-			StaleEpoch: &errorpb.StaleEpoch{},
+			Message: proto.String("stale epoch"),
+			StaleEpoch: &errorpb.StaleEpoch{
+				NewRegions: newRegions,
+			},
 		}
 	}
 	h.startKey, h.endKey = region.StartKey, region.EndKey
@@ -281,6 +289,20 @@ func convertToPbPairs(pairs []Pair) []*kvrpcpb.KvPair {
 		kvPairs = append(kvPairs, kvPair)
 	}
 	return kvPairs
+}
+
+func encodeRegionKey(r *metapb.Region) *metapb.Region {
+	if r.StartKey != nil {
+		var b []byte
+		b = codec.EncodeBytes(b, r.StartKey)
+		r.StartKey = b
+	}
+	if r.EndKey != nil {
+		var b []byte
+		b = codec.EncodeBytes(b, r.EndKey)
+		r.EndKey = b
+	}
+	return r
 }
 
 // RPCClient sends kv RPC calls to mock cluster.

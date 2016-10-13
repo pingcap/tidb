@@ -71,3 +71,30 @@ func (s *testSplitSuite) TestSplitBatchGet(c *C) {
 	err = snapshot.batchGetSingleRegion(s.bo, batch, func([]byte, []byte) {})
 	c.Assert(err, IsNil)
 }
+
+func (s *testSplitSuite) TestStaleEpoch(c *C) {
+	mockPDClient := &mockPDClient{client: s.store.regionCache.pdClient}
+	s.store.regionCache.pdClient = mockPDClient
+
+	firstRegion, err := s.store.regionCache.GetRegion(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+
+	txn := s.begin(c)
+	err = txn.Set([]byte("a"), []byte("a"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("c"), []byte("c"))
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+
+	// Initiate a split and disable PD client. Now we can only update new
+	// region from kvrpc.
+	s.split(c, firstRegion.GetID(), []byte("b"))
+	mockPDClient.disable()
+
+	txn = s.begin(c)
+	_, err = txn.Get([]byte("a"))
+	c.Assert(err, IsNil)
+	_, err = txn.Get([]byte("c"))
+	c.Assert(err, IsNil)
+}
