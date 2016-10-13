@@ -168,7 +168,7 @@ type selectContext struct {
 	groups       map[string]bool
 	groupKeys    [][]byte
 	aggregates   []*aggregateFuncExpr
-	topnSolver   *topnHeap
+	topnHeap     *topnHeap
 	keyRanges    []kv.KeyRange
 
 	// TODO: Only one of these three flags can be true at the same time. We should set this as an enum var.
@@ -211,7 +211,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 					return nil, errors.New("We don't support pushing down Sort without Limit.")
 				}
 				ctx.topn = true
-				ctx.topnSolver = &topnHeap{
+				ctx.topnHeap = &topnHeap{
 					totalCount: int(*sel.Limit),
 					topnSorter: topnSorter{
 						orderByItems: sel.OrderBy,
@@ -258,7 +258,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			err = rs.getRowsFromIndexReq(ctx)
 		}
 		if ctx.topn {
-			rs.pushTopNDataToCtx(ctx)
+			rs.setTopNDataForCtx(ctx)
 		}
 		selResp := new(tipb.SelectResponse)
 		selResp.Error = toPBError(err)
@@ -277,9 +277,9 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 	return resp, nil
 }
 
-func (rs *localRegion) pushTopNDataToCtx(ctx *selectContext) {
-	sort.Sort(&ctx.topnSolver.topnSorter)
-	for _, row := range ctx.topnSolver.rows {
+func (rs *localRegion) setTopNDataForCtx(ctx *selectContext) {
+	sort.Sort(&ctx.topnHeap.topnSorter)
+	for _, row := range ctx.topnHeap.rows {
 		chunk := rs.getChunk(ctx)
 		chunk.RowsData = append(chunk.RowsData, row.data...)
 		chunk.RowsMeta = append(chunk.RowsMeta, row.meta)
@@ -542,21 +542,21 @@ func (rs *localRegion) evalTopN(ctx *selectContext, handle int64, values map[int
 	newRow := &sortRow{
 		meta: tipb.RowMeta{Handle: handle},
 	}
-	for _, item := range ctx.topnSolver.orderByItems {
+	for _, item := range ctx.topnHeap.orderByItems {
 		result, err := ctx.eval.Eval(item.Expr)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		newRow.key = append(newRow.key, result)
 	}
-	if ctx.topnSolver.tryToAddRow(newRow) {
+	if ctx.topnHeap.tryToAddRow(newRow) {
 		for _, col := range columns {
 			val := values[col.GetColumnId()]
 			newRow.data = append(newRow.data, val...)
 			newRow.meta.Length += int64(len(val))
 		}
 	}
-	return errors.Trace(ctx.topnSolver.err)
+	return errors.Trace(ctx.topnHeap.err)
 }
 
 func (rs *localRegion) valuesToRow(ctx *selectContext, handle int64, values map[int64][]byte) (bool, error) {
