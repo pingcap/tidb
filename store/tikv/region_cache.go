@@ -255,7 +255,7 @@ func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) {
 
 	for _, meta := range newRegions {
 		if err := decodeRegionMetaKey(meta); err != nil {
-			log.Error("newRegion's range key is not encoded: %v, %v", meta, err)
+			log.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)
 			continue
 		}
 		for i := range meta.Peers {
