@@ -98,7 +98,8 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		return e.evalNot(expr)
 	case tipb.ExprType_In:
 		return e.evalIn(expr)
-	case tipb.ExprType_Plus, tipb.ExprType_Div:
+	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus,
+		tipb.ExprType_Mul, tipb.ExprType_IntDiv, tipb.ExprType_Mod:
 		return e.evalArithmetic(expr)
 	}
 	return types.Datum{}, nil
@@ -579,6 +580,14 @@ func ComputeArithmetic(op tipb.ExprType, left types.Datum, right types.Datum) (t
 		return types.ComputePlus(a, b)
 	case tipb.ExprType_Div:
 		return types.ComputeDiv(a, b)
+	case tipb.ExprType_Minus:
+		return types.ComputeMinus(a, b)
+	case tipb.ExprType_Mul:
+		return types.ComputeMul(a, b)
+	case tipb.ExprType_IntDiv:
+		return types.ComputeIntDiv(a, b)
+	case tipb.ExprType_Mod:
+		return types.ComputeMod(a, b)
 	default:
 		return result, errors.Errorf("Unknown binop type: %v", op)
 	}

@@ -119,6 +119,20 @@ func columnToPBExpr(client kv.Client, column *expression.Column) *tipb.Expr {
 }
 
 func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+	switch expr.FuncName.L {
+	case ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT,
+		ast.NullEQ, ast.In, ast.Like:
+		return compareFuncToPBExpr(client, expr)
+	case ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Mod, ast.IntDiv:
+		return arithmeticalFuncToPBExpr(client, expr)
+	case ast.And, ast.Or, ast.UnaryNot:
+		return logicalFuncToPBExpr(client, expr)
+	default:
+		return nil
+	}
+}
+
+func compareFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
 	switch expr.FuncName.L {
 	case ast.LT:
@@ -135,12 +149,6 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 		tp = tipb.ExprType_GT
 	case ast.NullEQ:
 		tp = tipb.ExprType_NullEQ
-	case ast.And:
-		tp = tipb.ExprType_And
-	case ast.Or:
-		tp = tipb.ExprType_Or
-	case ast.UnaryNot:
-		return notToPBExpr(client, expr)
 	case ast.In:
 		return inToPBExpr(client, expr)
 	case ast.Like:
@@ -164,14 +172,65 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 			}
 		}
 		tp = tipb.ExprType_Like
-	default:
-		return nil
 	}
-
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
 		return nil
 	}
+	expr0 := exprToPB(client, expr.Args[0])
+	if expr0 == nil {
+		return nil
+	}
+	expr1 := exprToPB(client, expr.Args[1])
+	if expr1 == nil {
+		return nil
+	}
+	return &tipb.Expr{
+		Tp:       tp,
+		Children: []*tipb.Expr{expr0, expr1}}
+}
 
+func arithmeticalFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+	var tp tipb.ExprType
+	switch expr.FuncName.L {
+	case ast.Plus:
+		tp = tipb.ExprType_Plus
+	case ast.Minus:
+		tp = tipb.ExprType_Minus
+	case ast.Mul:
+		tp = tipb.ExprType_Mul
+	case ast.Div:
+		tp = tipb.ExprType_Div
+	case ast.Mod:
+		tp = tipb.ExprType_Mod
+	case ast.IntDiv:
+		tp = tipb.ExprType_IntDiv
+	}
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+	expr0 := exprToPB(client, expr.Args[0])
+	if expr0 == nil {
+		return nil
+	}
+	expr1 := exprToPB(client, expr.Args[1])
+	if expr1 == nil {
+		return nil
+	}
+	return &tipb.Expr{
+		Tp:       tp,
+		Children: []*tipb.Expr{expr0, expr1}}
+}
+
+func logicalFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+	var tp tipb.ExprType
+	switch expr.FuncName.L {
+	case ast.And:
+		tp = tipb.ExprType_And
+	case ast.Or:
+		tp = tipb.ExprType_Or
+	case ast.UnaryNot:
+		return notToPBExpr(client, expr)
+	}
 	expr0 := exprToPB(client, expr.Args[0])
 	if expr0 == nil {
 		return nil
