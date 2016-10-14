@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -511,6 +512,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
 	selIdxReq.StartTs = e.startTS
+	selIdxReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	if len(e.indexPlan.SortItems) > 0 {
 		selIdxReq.OrderBy = e.indexPlan.SortItems
@@ -654,6 +656,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 		selTableReq.Limit = e.indexPlan.LimitCount
 	}
 	selTableReq.StartTs = e.startTS
+	selTableReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
 	}
@@ -719,6 +722,7 @@ func (e *XSelectTableExec) doRequest() error {
 	var err error
 	selReq := new(tipb.SelectRequest)
 	selReq.StartTs = e.startTS
+	selReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
 	selReq.Where = e.where
 	columns := e.Columns
 	selReq.TableInfo = &tipb.TableInfo{
@@ -810,4 +814,10 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 // Fields implements Executor interface.
 func (e *XSelectTableExec) Fields() []*ast.ResultField {
 	return nil
+}
+
+// timeZoneOffset returns the local time zone offset in seconds.
+func timeZoneOffset() int64 {
+	_, offset := time.Now().Zone()
+	return int64(offset)
 }

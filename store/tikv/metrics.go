@@ -125,6 +125,15 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 13),
 		}, []string{"stage"})
 
+	gcConfigGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "gc_config",
+			Help:      "Gauge of GC configs.",
+		}, []string{"type"},
+	)
+
 	lockResolverCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -171,6 +180,7 @@ func init() {
 	prometheus.MustRegister(copTaskLenHistogram)
 	prometheus.MustRegister(coprocessorCounter)
 	prometheus.MustRegister(gcWorkerCounter)
+	prometheus.MustRegister(gcConfigGauge)
 	prometheus.MustRegister(gcHistogram)
 	prometheus.MustRegister(lockResolverCounter)
 	prometheus.MustRegister(regionErrorCounter)
