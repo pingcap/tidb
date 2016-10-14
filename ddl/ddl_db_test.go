@@ -89,6 +89,7 @@ func (s *testDBSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	s.testAddIndex(c)
 	s.testDropIndex(c)
+	s.testAddUniqueIndexRollback(c)
 }
 
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
@@ -96,6 +97,79 @@ func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	tbl, err := sessionctx.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
 	c.Assert(err, IsNil)
 	return tbl
+}
+
+func sessionExecute(s kv.Storage, sql string, done chan error) {
+	se, err := tidb.CreateSession(s)
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	defer se.Close()
+	_, err = se.Execute("use test_db")
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	_, err = se.Execute(sql)
+	done <- errors.Trace(err)
+}
+
+func (s *testDBSuite) testAddUniqueIndexRollback(c *C) {
+	// t1 (c1 int, c2 int, c3 int, primary key(c1))
+	s.mustExec(c, "delete from t1")
+	// defaultBatchSize is equal to ddl.defaultBatchSize
+	defaultBatchSize := 1024
+	base := defaultBatchSize * 2
+	count := base
+	// add some rows
+	for i := 0; i < count; i++ {
+		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
+	}
+	// add some duplicate rows
+	for i := count - 10; i < count; i++ {
+		s.mustExec(c, "insert into t1 values (?, ?, ?)", i+10, i, i)
+	}
+
+	done := make(chan error, 1)
+	go sessionExecute(s.store, "create unique index c3_index on t1 (c3)", done)
+
+	times := 0
+	ticker := time.NewTicker(s.lease / 2)
+	defer ticker.Stop()
+LOOP:
+	for {
+		select {
+		case err := <-done:
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[kv:1062]Duplicate for key c3_index", Commentf("err:%v", err))
+			break LOOP
+		case <-ticker.C:
+			if times >= 10 {
+				break
+			}
+			step := 10
+			// delete some rows, and add some data
+			for i := count; i < count+step; i++ {
+				n := rand.Intn(count)
+				s.mustExec(c, "delete from t1 where c1 = ?", n)
+				s.mustExec(c, "insert into t1 values (?, ?, ?)", i+10, i, i)
+			}
+			count += step
+			times++
+		}
+	}
+
+	t := s.testGetTable(c, "t1")
+	for _, tidx := range t.Indices() {
+		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsTrue)
+	}
+
+	// delete duplicate rows, then add index
+	for i := base - 10; i < base; i++ {
+		s.mustExec(c, "delete from t1 where c1 = ?", i+10)
+	}
+	sessionExec(c, s.store, "create index c3_index on t1 (c3)")
 }
 
 func (s *testDBSuite) testAddIndex(c *C) {
@@ -186,7 +260,7 @@ LOOP:
 			break
 		}
 	}
-	// Make sure there is index with name c3_index
+	// Make sure there is index with name c3_index.
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
 	txn, err := ctx.GetTxn(true)
