@@ -67,7 +67,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	}
 	err = util.RunWithRetry(defaultMaxRetries, retryInterval, func() (retry bool, err1 error) {
 		d, err1 = domain.NewDomain(store, lease)
-		return true, err1
+		return true, errors.Trace(err1)
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
