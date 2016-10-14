@@ -68,25 +68,25 @@ const (
 	Del = "Delete"
 )
 
-// Plan is a description of an execution flow.
-// It is created from ast.Node first, then optimized by optimizer,
-// then used by executor to create a Cursor which executes the statement.
+// Plan is the description of an execution flow.
+// It is created from ast.Node first, then optimized by the optimizer,
+// finally used by the executor to create a Cursor which executes the statement.
 type Plan interface {
 	// Fields returns the result fields of the plan.
 	Fields() []*ast.ResultField
 	// SetFields sets the results fields of the plan.
 	SetFields(fields []*ast.ResultField)
-	// AddParent means append a parent for plan.
+	// AddParent means appending a parent for plan.
 	AddParent(parent Plan)
-	// AddChild means append a child for plan.
+	// AddChild means appending a child for plan.
 	AddChild(children Plan)
-	// ReplaceParent means replace a parent with another one.
+	// ReplaceParent means replacing a parent with another one.
 	ReplaceParent(parent, newPar Plan) error
-	// ReplaceChild means replace a child with another one.
+	// ReplaceChild means replacing a child with another one.
 	ReplaceChild(children, newChild Plan) error
-	// Retrieve parent by index.
+	// Retrieve the parent by index.
 	GetParentByIndex(index int) Plan
-	// Retrieve child by index.
+	// Retrieve the child by index.
 	GetChildByIndex(index int) Plan
 	// Get all the parents.
 	GetParents() []Plan
@@ -96,13 +96,13 @@ type Plan interface {
 	SetSchema(schema expression.Schema)
 	// Get the schema.
 	GetSchema() expression.Schema
-	// Get ID.
+	// Get the ID.
 	GetID() string
-	// Check weather this plan is correlated or not.
+	// Check whether this plan is correlated or not.
 	IsCorrelated() bool
-	// SetParents sets parents for plan.
+	// SetParents sets the parents for the plan.
 	SetParents(...Plan)
-	// SetParents sets children for plan.
+	// SetParents sets the children for the plan.
 	SetChildren(...Plan)
 }
 
@@ -139,33 +139,42 @@ type physicalPlanInfo struct {
 }
 
 // LogicalPlan is a tree of logical operators.
-// We can do a lot of logical optimization to it, like predicate push down and column pruning.
+// We can do a lot of logical optimizations to it, like predicate pushdown and column pruning.
 type LogicalPlan interface {
 	Plan
 
-	// PredicatePushDown push down predicates in where/on/having clause as deeply as possible.
-	// It will accept a predicate that is a expression slice, and return the expressions that can't be pushed.
-	// Because it may change the root when exists having clause, we need return a plan that representing a new root.
+	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
+	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
+	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
 	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan, error)
 
-	// PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
-	// This function returns a column slice representing columns from outer env and an error.
-	// We need return outer columns, because Apply plan will prune inner Planner and it will know
-	// how many columns referenced by inner plan exactly.
+	// PruneColumnsAndResolveIndices prunes the unused columns and resolves the index for columns.
+	// This function returns a column slice representing columns from the outer environment and an error.
+	// We need to return the outer columns, because the Apply plan will prune the inner Planner and it will know
+	// the exact number of columns referenced by the inner plan.
 	PruneColumnsAndResolveIndices([]*expression.Column) ([]*expression.Column, error)
 
-	// convert2PhysicalPlan converts logical plan to physical plan. The arg prop means the required sort property.
-	// This function returns the best plan that matches the required property strictly containing the info of count, cost and plan.
+	// convert2PhysicalPlan converts the logical plan to the physical plan.
+	// It is called recursively from the parent to the children to create the result physical plan.
+	// Some logical plans will convert the children to the physical plans in different ways, and return the one
+	// with the lowest cost.
 	convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error)
 }
 
-// PhysicalPlan is a tree of physical operators.
+// PhysicalPlan is a tree of the physical operators.
 type PhysicalPlan interface {
 	json.Marshaler
 	Plan
 
-	// matchProperty means that this physical plan will try to return the best plan that matches the required property.
-	// childPlanInfo means the plan infos returned by children.
+	// matchProperty calculates the cost of the physical plan if it matches the required property.
+	// It's usually called at the end of convert2PhysicalPlan. Some physical plans do not implement it because there is
+	// no property to match, these plans just do the cost calculation directly.
+	// If the cost of the physical plan does not match the required property, the cost will be set to MaxInt64
+	// so it will not be chosen as the result physical plan.
+	// childrenPlanInfo are used to calculate the result cost of the plan.
+	// The returned *physicalPlanInfo will be chosen as the final plan if it has the lowest cost.
+	// For the lowest level *PhysicalTableScan and *PhysicalIndexScan, even though it doesn't have childPlanInfo, we
+	// create an initial *physicalPlanInfo to pass the row count.
 	matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo
 
 	// Copy copies the current plan.
@@ -259,12 +268,8 @@ func (p *basePlan) initID() {
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
-	fields      []*ast.ResultField
-	startupCost float64
-	totalCost   float64
-	rowCount    float64
-	limit       float64
-	correlated  bool
+	fields     []*ast.ResultField
+	correlated bool
 
 	parents  []Plan
 	children []Plan

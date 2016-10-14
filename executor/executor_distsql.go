@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -524,9 +525,12 @@ func getScanConcurrency(ctx context.Context) (int, error) {
 func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
 	selIdxReq.StartTs = e.startTS
+	selIdxReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.indexPlan.Index)
-	if e.indexPlan.Desc {
-		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: e.indexPlan.Desc})
+	if len(e.indexPlan.SortItems) > 0 {
+		selIdxReq.OrderBy = e.indexPlan.SortItems
+	} else if e.indexPlan.Desc {
+		selIdxReq.OrderBy = []*tipb.ByItem{{Desc: e.indexPlan.Desc}}
 	}
 	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
 	for i, v := range e.indexPlan.Index.Columns {
@@ -667,6 +671,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 		selTableReq.Limit = e.indexPlan.LimitCount
 	}
 	selTableReq.StartTs = e.startTS
+	selTableReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
 	}
@@ -712,6 +717,7 @@ type XSelectTableExec struct {
 	returnedRows  uint64 // returned rowCount
 	keepOrder     bool
 	startTS       uint64
+	orderByList   []*tipb.ByItem
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -736,13 +742,16 @@ func (e *XSelectTableExec) doRequest() error {
 	var err error
 	selReq := new(tipb.SelectRequest)
 	selReq.StartTs = e.startTS
+	selReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
 	selReq.Where = e.where
 	columns := e.Columns
 	selReq.TableInfo = &tipb.TableInfo{
 		TableId: e.tableInfo.ID,
 	}
-	if e.supportDesc && e.desc {
-		selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: e.desc})
+	if len(e.orderByList) > 0 {
+		selReq.OrderBy = e.orderByList
+	} else if e.supportDesc && e.desc {
+		selReq.OrderBy = []*tipb.ByItem{{Desc: e.desc}}
 	}
 	selReq.Limit = e.limitCount
 	selReq.TableInfo.Columns = distsql.ColumnsToProto(columns, e.tableInfo.PKIsHandle)
@@ -829,4 +838,10 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 // Fields implements Executor interface.
 func (e *XSelectTableExec) Fields() []*ast.ResultField {
 	return nil
+}
+
+// timeZoneOffset returns the local time zone offset in seconds.
+func timeZoneOffset() int64 {
+	_, offset := time.Now().Zone()
+	return int64(offset)
 }

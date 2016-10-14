@@ -21,8 +21,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
@@ -30,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -44,6 +47,10 @@ type testPlanSuite struct {
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
+}
+
+func newLongType() types.FieldType {
+	return *(types.NewFieldType(mysql.TypeLong))
 }
 
 func mockResolve(node ast.Node) error {
@@ -67,24 +74,34 @@ func mockResolve(node ast.Node) error {
 		},
 	}
 	pkColumn := &model.ColumnInfo{
-		State: model.StatePublic,
-		Name:  model.NewCIStr("a"),
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("a"),
+		FieldType: newLongType(),
+		ID:        1,
 	}
 	col0 := &model.ColumnInfo{
-		State: model.StatePublic,
-		Name:  model.NewCIStr("b"),
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("b"),
+		FieldType: newLongType(),
+		ID:        2,
 	}
 	col1 := &model.ColumnInfo{
-		State: model.StatePublic,
-		Name:  model.NewCIStr("c"),
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("c"),
+		FieldType: newLongType(),
+		ID:        3,
 	}
 	col2 := &model.ColumnInfo{
-		State: model.StatePublic,
-		Name:  model.NewCIStr("d"),
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("d"),
+		FieldType: newLongType(),
+		ID:        4,
 	}
 	col3 := &model.ColumnInfo{
-		State: model.StatePublic,
-		Name:  model.NewCIStr("e"),
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("e"),
+		FieldType: newLongType(),
+		ID:        5,
 	}
 	pkColumn.Flag = mysql.PriKeyFlag
 	table := &model.TableInfo{
@@ -97,6 +114,163 @@ func mockResolve(node ast.Node) error {
 	ctx := mock.NewContext()
 	variable.BindSessionVars(ctx)
 	return MockResolveName(node, is, "test", ctx)
+}
+
+func supportExpr(exprType tipb.ExprType) bool {
+	switch exprType {
+	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_Float32,
+		tipb.ExprType_Float64, tipb.ExprType_String, tipb.ExprType_Bytes,
+		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlDecimal, tipb.ExprType_MysqlTime,
+		tipb.ExprType_ColumnRef,
+		tipb.ExprType_And, tipb.ExprType_Or,
+		tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
+		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
+		tipb.ExprType_In, tipb.ExprType_ValueList,
+		tipb.ExprType_Not,
+		tipb.ExprType_Like:
+		return true
+	case tipb.ExprType_Plus, tipb.ExprType_Div:
+		return true
+	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum, tipb.ExprType_Avg, tipb.ExprType_Max, tipb.ExprType_Min:
+		return true
+	case kv.ReqSubTypeDesc:
+		return true
+	default:
+		return false
+	}
+}
+
+type mockClient struct {
+}
+
+func (c *mockClient) Send(_ *kv.Request) kv.Response {
+	return nil
+}
+
+func (c *mockClient) SupportRequestType(reqType, subType int64) bool {
+	switch reqType {
+	case kv.ReqTypeSelect, kv.ReqTypeIndex:
+		switch subType {
+		case kv.ReqSubTypeGroupBy, kv.ReqSubTypeBasic, kv.ReqSubTypeTopN:
+			return true
+		default:
+			return supportExpr(tipb.ExprType(subType))
+		}
+	}
+	return false
+}
+
+type mockStore struct {
+	client *mockClient
+}
+
+func (m *mockStore) GetClient() kv.Client {
+	return m.client
+}
+
+func (m *mockStore) Begin() (kv.Transaction, error) {
+	return nil, nil
+}
+
+func (m *mockStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
+	return nil, nil
+}
+
+func (m *mockStore) Close() error {
+	return nil
+}
+
+func (m *mockStore) UUID() string {
+	return "mock"
+}
+
+func (m *mockStore) CurrentVersion() (kv.Version, error) {
+	return kv.Version{}, nil
+}
+
+func mockContext() context.Context {
+	ctx := mock.NewContext()
+	ctx.Store = &mockStore{
+		client: &mockClient{},
+	}
+	return ctx
+}
+
+func (s *testPlanSuite) TestTopnPushDown(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql   string
+		best  string
+		topn  string
+		limit string
+	}{
+		{
+			sql:   "select * from t order by d limit 1",
+			best:  "Table(t)->Sort + Limit(1) + Offset(0)->Projection",
+			topn:  "[expr:<tp:ColumnRef val:\"\\200\\000\\000\\000\\000\\000\\000\\004\" > ]",
+			limit: "1",
+		},
+		{
+			sql:   "select * from t where c > 0 order by d limit 1",
+			best:  "Index(t.c_d_e)[(0,+inf]]->Sort + Limit(1) + Offset(0)->Projection",
+			topn:  "[expr:<tp:ColumnRef val:\"\\200\\000\\000\\000\\000\\000\\000\\004\" > ]",
+			limit: "1",
+		},
+		{
+			sql:   "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.b limit 2",
+			best:  "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
+			topn:  "[]",
+			limit: "nil",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
+		c.Assert(err, IsNil)
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		c.Assert(err, IsNil)
+		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
+		p = info.p
+	loop:
+		for {
+			switch x := p.(type) {
+			case *PhysicalTableScan:
+				c.Assert(fmt.Sprintf("%s", x.SortItems), Equals, ca.topn, Commentf("for %s", ca.sql))
+				if x.LimitCount == nil {
+					fmt.Print("nil")
+				} else {
+					c.Assert(fmt.Sprintf("%d", *x.LimitCount), Equals, ca.limit, Commentf("for %s", ca.sql))
+				}
+				break loop
+			case *PhysicalIndexScan:
+				c.Assert(fmt.Sprintf("%s", x.SortItems), Equals, ca.topn, Commentf("for %s", ca.sql))
+				if x.LimitCount == nil {
+					fmt.Print("nil")
+				} else {
+					c.Assert(fmt.Sprintf("%d", *x.LimitCount), Equals, ca.limit, Commentf("for %s", ca.sql))
+				}
+				break loop
+			}
+			p = p.GetChildByIndex(0)
+		}
+	}
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
@@ -337,6 +511,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg->Projection",
 		},
 		{
+			sql:  "select count(*) from t group by e order by d limit 1",
+			best: "Table(t)->HashAgg->Projection->Sort + Limit(1) + Offset(0)->Trim",
+		},
+		{
 			sql:  "select count(*) from t group by a",
 			best: "Table(t)->StreamAgg->Projection",
 		},
@@ -359,7 +537,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2 right join t t3 on t2.a = t3.b order by t1.a, t1.b, t2.a, t2.b, t3.a, t3.b",
-			best: "RightHashJoin{Table(t)->RightHashJoin{Table(t)->Table(t)}(t2.a,t3.b)}->Projection->Sort",
+			best: "RightHashJoin{Table(t)->RightHashJoin{Table(t)->Table(t)}(t2.a,t3.b)}->Sort->Projection",
 		},
 		{
 			sql:  "select * from t a where 1 = a.c and a.d > 1 order by a.d desc limit 2",
@@ -370,16 +548,20 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[-inf,10000)]->Sort + Limit(2) + Offset(0)->Projection",
 		},
 		{
+			sql:  "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.a limit 2",
+			best: "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
+		},
+		{
 			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by a.c",
 			best: "LeftHashJoin{Index(t.c_d_e)[[<nil>,+inf]]->Projection->Table(t)->Projection}->Projection",
 		},
 		{
 			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by b.c",
-			best: "LeftHashJoin{Table(t)->Projection->Table(t)->Projection}->Projection->Sort",
+			best: "LeftHashJoin{Table(t)->Projection->Table(t)->Projection}->Sort->Projection",
 		},
 		{
 			sql:  "select * from (select * from t) a right outer join (select * from t) b on 1 order by a.c",
-			best: "RightHashJoin{Table(t)->Projection->Table(t)->Projection}->Projection->Sort",
+			best: "RightHashJoin{Table(t)->Projection->Table(t)->Projection}->Sort->Projection",
 		},
 		{
 			sql:  "select * from (select * from t) a right outer join (select * from t) b on 1 order by b.c",

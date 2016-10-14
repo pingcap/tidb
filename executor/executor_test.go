@@ -243,6 +243,9 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r.Check(testkit.Rows(rowStr))
 	tk.MustExec("commit")
 
+	r = tk.MustQuery("select id from select_order_test order by id + 1 desc limit 1 ")
+	r.Check(testkit.Rows("2"))
+
 	tk.MustExec("begin")
 	// Test limit
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 0;")
