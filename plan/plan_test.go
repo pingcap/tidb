@@ -670,6 +670,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "Index(t.c_d_e)[[5,5]]->Selection->Projection",
 		},
 		{
+			sql:  "select a from t where not a",
+			best: "Table(t)->Selection->Projection",
+		},
+		{
 			sql:  "select a from t where c in (1)",
 			best: "Index(t.c_d_e)[[1,1]]->Projection",
 		},
