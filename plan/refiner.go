@@ -254,12 +254,13 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 	case ast.IsNull, ast.IsTruth, ast.IsFalsity:
 		return c.checkColumn(scalar.Args[0])
 	case ast.UnaryNot:
-		// Don't support "not like" and "not in" convert to access conditions.
+		// TODO: support "not like" and "not in" convert to access conditions.
 		if s, ok := scalar.Args[0].(*expression.ScalarFunction); ok {
 			if s.FuncName.L == ast.In || s.FuncName.L == ast.Like {
 				return false
 			}
 		} else {
+			// "not column" or "not constant" can't lead to a range.
 			return false
 		}
 		return c.check(scalar.Args[0])
