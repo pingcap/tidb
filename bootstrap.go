@@ -135,9 +135,17 @@ func bootstrap(s Session) {
 }
 
 const (
-	bootstrappedVar      = "bootstrapped"
-	bootstrappedVarTrue  = "True"
-	tidbServerVersionVar = "tidb_server_version"
+	// The variable name in mysql.TiDB table.
+	// It is used for checking if the store is boostrapped by any TiDB server.
+	bootstrappedVar = "bootstrapped"
+	// The variable value in mysql.TiDB table for bootstrappedVar.
+	// If the value true, the store is already boostrapped by a TiDB server.
+	bootstrappedVarTrue = "True"
+	// The variable name in mysql.TiDB table.
+	// It is used for getting the version of the TiDB server which bootstrapped the store.
+	tidbServerVersionVar = "tidb_server_version" //
+	// Const for TiDB server version 2.
+	version2 = 2
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -199,8 +207,8 @@ func upgrade(s Session) error {
 		}
 		return nil
 	}
-	// Do upgrade works than update bootstrap version.
-	if ver < 2 {
+	// Do upgrade works then update bootstrap version.
+	if ver < version2 {
 		upgradeToVer2(s)
 	}
 	updateBootstrapVer(s)
@@ -214,6 +222,11 @@ func upgrade(s Session) error {
 			log.Fatal(err1)
 		}
 		if v >= currentBootstrapVersion {
+			// It is already bootstrapped/upgraded by a higher version TiDB server.
+			if err1 := s.CommitTxn(); err1 != nil {
+				// Make sure that doesn't affect the following operations.
+				return errors.Trace(err1)
+			}
 			return nil
 		}
 		log.Errorf("[Upgrade] upgrade from %d to %d error", ver, currentBootstrapVersion)
@@ -224,7 +237,7 @@ func upgrade(s Session) error {
 
 // Update to version 2.
 func upgradeToVer2(s Session) {
-	// Version 2 add two system variable for DistSQL concurrency controling.
+	// Version 2 add two system variable for DistSQL concurrency controlling.
 	// Insert distsql related system variable.
 	distSQLVars := []string{variable.DistSQLScanConcurrencyVar, variable.DistSQLJoinConcurrencyVar}
 	values := make([]string, 0, len(distSQLVars))
@@ -245,7 +258,7 @@ func updateBootstrapVer(s Session) {
 	mustExecute(s, sql)
 }
 
-// Get bootstrap version from mysql.tidb table;
+// Gets bootstrap version from mysql.tidb table;
 func getBootstrapVersion(s Session) (int64, error) {
 	d, err := getTiDBVar(s, tidbServerVersionVar)
 	if err != nil {
