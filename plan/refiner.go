@@ -259,6 +259,8 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 			if s.FuncName.L == ast.In || s.FuncName.L == ast.Like {
 				return false
 			}
+		} else {
+			return false
 		}
 		return c.check(scalar.Args[0])
 	case ast.In:
