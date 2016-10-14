@@ -87,8 +87,8 @@ func (s *testSplitSuite) TestStaleEpoch(c *C) {
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
-	// Initiate a split and disable PD client. Now we can only update new
-	// region from kvrpc.
+	// Initiate a split and disable the PD client. If it still works, the
+	// new region is updated from kvrpc.
 	s.split(c, firstRegion.GetID(), []byte("b"))
 	mockPDClient.disable()
 

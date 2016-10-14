@@ -223,7 +223,7 @@ func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVer
 				s.regionCache.OnRegionStale(region, staleEpoch.NewRegions)
 				continue
 			}
-			// Retry if error is `ServerIsBusy`.
+			// Retry if the error is `ServerIsBusy`.
 			if regionErr.GetServerIsBusy() != nil {
 				log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", req.Context)
 				err = bo.Backoff(boServerBusy, errors.Errorf("server is busy"))

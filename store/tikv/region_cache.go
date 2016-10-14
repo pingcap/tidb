@@ -266,8 +266,8 @@ func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) {
 	}
 }
 
-// reorderRegionPeers moves the leader peer to the first, makes it easier to try
-// next peer if current does not respond.
+// reorderRegionPeers moves the leader peer to the first and makes it easier to
+// try the next peer if the current peer does not respond.
 func reorderRegionPeers(r *metapb.Region, leaderStoreID uint64) {
 	for i := range r.Peers {
 		if r.Peers[i].GetStoreId() == leaderStoreID {
@@ -277,7 +277,7 @@ func reorderRegionPeers(r *metapb.Region, leaderStoreID uint64) {
 	}
 }
 
-// llrbItem is llrbTree's Item that uses []byte for compare.
+// llrbItem is llrbTree's Item that uses []byte to compare.
 type llrbItem struct {
 	key    []byte
 	region *Region
