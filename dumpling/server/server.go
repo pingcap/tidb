@@ -144,7 +144,7 @@ func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
-	log.Infof("Server run MySql Protocol Listen at [%s]", s.cfg.Addr)
+	log.Infof("Server run MySQL Protocol Listen at [%s]", s.cfg.Addr)
 	return s, nil
 }
 
