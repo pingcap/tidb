@@ -125,7 +125,7 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 		return compareFuncToPBExpr(client, expr)
 	case ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Mod, ast.IntDiv:
 		return arithmeticalFuncToPBExpr(client, expr)
-	case ast.And, ast.Or, ast.UnaryNot:
+	case ast.AndAnd, ast.OrOr, ast.UnaryNot:
 		return logicalFuncToPBExpr(client, expr)
 	default:
 		return nil
@@ -224,9 +224,9 @@ func arithmeticalFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction)
 func logicalFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
 	switch expr.FuncName.L {
-	case ast.And:
+	case ast.AndAnd:
 		tp = tipb.ExprType_And
-	case ast.Or:
+	case ast.OrOr:
 		tp = tipb.ExprType_Or
 	case ast.UnaryNot:
 		return notToPBExpr(client, expr)
