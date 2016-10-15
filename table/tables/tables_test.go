@@ -231,7 +231,8 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 	}
 
 	for _, t := range table {
-		b := tablecodec.EncodeRowKeyWithHandle(t.tableID, t.h)
+		buf := make([]byte, 0, tablecodec.RowKeyWithHandleLen)
+		b := tablecodec.EncodeRowKeyWithHandle(t.tableID, t.h, buf)
 		tableID, handle, err := tablecodec.DecodeRecordKey(b)
 		c.Assert(err, IsNil)
 		c.Assert(tableID, Equals, t.tableID)

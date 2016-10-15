@@ -16,7 +16,7 @@ package executor
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/arena"
 )
 
 var _ = Suite(&testExecSuite{})
@@ -29,11 +29,11 @@ type handleRange struct {
 	end   int64
 }
 
-func getExpectedRanges(tid int64, hrs []*handleRange) []kv.KeyRange {
+func getExpectedRanges(tid int64, hrs []*handleRange, alloc arena.Allocator) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(hrs))
 	for _, hr := range hrs {
-		startKey := tablecodec.EncodeRowKeyWithHandle(tid, hr.start)
-		endKey := tablecodec.EncodeRowKeyWithHandle(tid, hr.end)
+		startKey := encodeRowKeyWithHandle(tid, hr.start, alloc)
+		endKey := encodeRowKeyWithHandle(tid, hr.end, alloc)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	return krs
@@ -48,10 +48,11 @@ func (s *testExecSuite) TestMergeHandles(c *C) {
 	hrs = append(hrs, &handleRange{start: 2, end: 6})
 	hrs = append(hrs, &handleRange{start: 10, end: 12})
 	hrs = append(hrs, &handleRange{start: 100, end: 101})
-	expectedKrs := getExpectedRanges(1, hrs)
+	alloc := arena.NewAllocator(4096)
+	expectedKrs := getExpectedRanges(1, hrs, alloc)
 
 	// Build key ranges.
-	krs := tableHandlesToKVRanges(1, handles)
+	krs := tableHandlesToKVRanges(1, handles, alloc)
 
 	// Compare key ranges and expected key ranges.
 	c.Assert(len(krs), Equals, len(expectedKrs))

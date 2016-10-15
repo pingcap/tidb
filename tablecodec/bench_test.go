@@ -19,14 +19,17 @@ import (
 
 func BenchmarkEncodeRowKeyWithHandle(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		EncodeRowKeyWithHandle(100, 100)
+		buf := make([]byte, 0, RowKeyWithHandleLen)
+		EncodeRowKeyWithHandle(100, 100, buf)
 	}
 }
 
 func BenchmarkEncodeEndKey(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		EncodeRowKeyWithHandle(100, 100)
-		EncodeRowKeyWithHandle(100, 101)
+		buf := make([]byte, 0, RowKeyWithHandleLen)
+		EncodeRowKeyWithHandle(100, 100, buf)
+		buf = buf[:]
+		EncodeRowKeyWithHandle(100, 101, buf)
 	}
 }
 
@@ -35,7 +38,8 @@ func BenchmarkEncodeEndKey(b *testing.B) {
 // BenchmarkEncodeRowKeyWithPrefixNex-4	10000000	       121 ns/op
 func BenchmarkEncodeRowKeyWithPrefixNex(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		sk := EncodeRowKeyWithHandle(100, 100)
+		buf := make([]byte, 0, RowKeyWithHandleLen)
+		sk := EncodeRowKeyWithHandle(100, 100, buf)
 		sk.PrefixNext()
 	}
 }
