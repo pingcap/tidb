@@ -53,6 +53,8 @@ var (
 	ErrIndexStateCantNone = terror.ClassTable.New(codeIndexStateCantNone, "index can not be in none state")
 	// ErrInvalidRecordKey returns for invalid record key.
 	ErrInvalidRecordKey = terror.ClassTable.New(codeInvalidRecordKey, "invalid record key")
+	// ErrInvalidUTF8Value returns for inserting invalid UTF8 value to a utf8 column.
+	ErrInvalidUTF8Value = terror.ClassTable.New(codeInvalidUTF8Value, "invalid utf8 value")
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -139,6 +141,7 @@ const (
 	codeColumnStateNonPublic = 7
 	codeIndexStateCantNone   = 8
 	codeInvalidRecordKey     = 9
+	codeInvalidUTF8Value     = 10
 
 	codeColumnCantNull  = 1048
 	codeUnknownColumn   = 1054
