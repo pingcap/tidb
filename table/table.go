@@ -93,9 +93,6 @@ type Table interface {
 	// RecordKey returns the key in KV storage for the row.
 	RecordKey(h int64) kv.Key
 
-	// Truncate truncates the table.
-	Truncate(ctx context.Context) (err error)
-
 	// AddRecord inserts a row into the table.
 	AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error)
 
@@ -115,9 +112,6 @@ type Table interface {
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
-
-	// LockRow locks a row.
-	LockRow(ctx context.Context, h int64, forRead bool) error
 
 	// Seek returns the handle greater or equal to h.
 	Seek(ctx context.Context, h int64) (handle int64, found bool, err error)
