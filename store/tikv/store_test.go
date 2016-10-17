@@ -142,6 +142,8 @@ func (s *testStoreSuite) TestBusyServerCop(c *C) {
 	wg.Wait()
 }
 
+var errStopped = errors.New("stopped")
+
 type mockOracle struct {
 	sync.RWMutex
 	stop   bool
@@ -180,7 +182,7 @@ func (o *mockOracle) GetTimestamp() (uint64, error) {
 	defer o.Unlock()
 
 	if o.stop {
-		return 0, errors.New("stopped")
+		return 0, errors.Trace(errStopped)
 	}
 	physical := oracle.GetPhysical(time.Now().Add(o.offset))
 	ts := oracle.ComposeTS(physical, 0)
@@ -278,7 +280,7 @@ func (c *mockPDClient) GetTS() (int64, int64, error) {
 	defer c.RUnlock()
 
 	if c.stop {
-		return 0, 0, errors.New("stopped")
+		return 0, 0, errors.Trace(errStopped)
 	}
 	return c.client.GetTS()
 }
@@ -288,7 +290,7 @@ func (c *mockPDClient) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, erro
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.New("stopped")
+		return nil, nil, errors.Trace(errStopped)
 	}
 	return c.client.GetRegion(key)
 }
@@ -298,7 +300,7 @@ func (c *mockPDClient) GetStore(storeID uint64) (*metapb.Store, error) {
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, errors.New("stopped")
+		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetStore(storeID)
 }
