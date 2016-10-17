@@ -120,8 +120,7 @@ type session struct {
 	store       kv.Storage
 	sid         int64
 	history     stmtHistory
-	initing     bool // Running bootstrap using this session.
-	maxRetryCnt int  // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
+	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
 
@@ -374,7 +373,8 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
-	if s.initing {
+	if ctx.Value(context.Initing) != nil {
+		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
@@ -402,7 +402,7 @@ func (s *session) isAutocommit(ctx context.Context) (bool, error) {
 	sessionVar := variable.GetSessionVars(ctx)
 	autocommit := sessionVar.GetSystemVar("autocommit")
 	if autocommit.IsNull() {
-		if s.initing {
+		if ctx.Value(context.Initing) != nil {
 			return false, nil
 		}
 		autocommitStr, err := s.GetGlobalSysVar(ctx, "autocommit")
@@ -730,8 +730,8 @@ func CreateSession(store kv.Storage) (Session, error) {
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 
-	ok := isBootstrapped(store)
-	if !ok {
+	ver := getStoreBootstrapVersion(store)
+	if ver == notBootstrapped {
 		// if no bootstrap and storage is remote, we must use a little lease time to
 		// bootstrap quickly, after bootstrapped, we will reset the lease time.
 		// TODO: Using a bootstap tool for doing this may be better later.
@@ -739,15 +739,19 @@ func CreateSession(store kv.Storage) (Session, error) {
 			sessionctx.GetDomain(s).SetLease(chooseMinLease(100*time.Millisecond, schemaLease))
 		}
 
-		s.initing = true
+		s.SetValue(context.Initing, true)
 		bootstrap(s)
-		s.initing = false
+		s.ClearValue(context.Initing)
 
 		if !localstore.IsLocalStore(store) {
 			sessionctx.GetDomain(s).SetLease(schemaLease)
 		}
 
 		finishBootstrap(store)
+	} else if ver < currentBootstrapVersion {
+		s.SetValue(context.Initing, true)
+		upgrade(s)
+		s.ClearValue(context.Initing)
 	}
 
 	// TODO: Add auth here
@@ -756,18 +760,24 @@ func CreateSession(store kv.Storage) (Session, error) {
 	return s, nil
 }
 
-func isBootstrapped(store kv.Storage) bool {
+const (
+	notBootstrapped         = 0
+	currentBootstrapVersion = 2
+)
+
+func getStoreBootstrapVersion(store kv.Storage) int64 {
 	// check in memory
 	_, ok := storeBootstrapped[store.UUID()]
 	if ok {
-		return true
+		return currentBootstrapVersion
 	}
 
+	var ver int64
 	// check in kv store
 	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		var err error
 		t := meta.NewMeta(txn)
-		ok, err = t.IsBootstrapped()
+		ver, err = t.GetBootstrapVersion()
 		return errors.Trace(err)
 	})
 
@@ -775,12 +785,12 @@ func isBootstrapped(store kv.Storage) bool {
 		log.Fatalf("check bootstrapped err %v", err)
 	}
 
-	if ok {
+	if ver > notBootstrapped {
 		// here mean memory is not ok, but other server has already finished it
 		storeBootstrapped[store.UUID()] = true
 	}
 
-	return ok
+	return ver
 }
 
 func finishBootstrap(store kv.Storage) {
@@ -788,7 +798,7 @@ func finishBootstrap(store kv.Storage) {
 
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err := t.FinishBootstrap()
+		err := t.FinishBootstrap(currentBootstrapVersion)
 		return errors.Trace(err)
 	})
 	if err != nil {

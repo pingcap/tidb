@@ -26,10 +26,8 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
@@ -1313,121 +1311,6 @@ func (s *testSessionSuite) TestBit(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Data[0].GetMysqlBit(), Equals, mysql.Bit{Value: 2, Width: 2})
-
-	err = store.Close()
-	c.Assert(err, IsNil)
-}
-
-func (s *testSessionSuite) TestBootstrap(c *C) {
-	defer testleak.AfterTest(c)()
-	store := newStore(c, s.dbName)
-	se := newSession(c, store, s.dbName)
-	mustExecSQL(c, se, "USE mysql;")
-	r := mustExecSQL(c, se, `select * from user;`)
-	c.Assert(r, NotNil)
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
-	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
-
-	c.Assert(se.Auth("root@anyhost", []byte(""), []byte("")), IsTrue)
-	mustExecSQL(c, se, "USE test;")
-	// Check privilege tables.
-	mustExecSQL(c, se, "SELECT * from mysql.db;")
-	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
-	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
-	// Check privilege tables.
-	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
-	c.Assert(r, NotNil)
-	v, err := r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(v.Data[0].GetInt64(), Equals, int64(len(variable.SysVars)))
-
-	// Check a storage operations are default autocommit after the second start.
-	mustExecSQL(c, se, "USE test;")
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (id int)")
-	delete(storeBootstrapped, store.UUID())
-	se.Close()
-	se, err = CreateSession(store)
-	c.Assert(err, IsNil)
-	mustExecSQL(c, se, "USE test;")
-	mustExecSQL(c, se, "insert t values (?)", 3)
-	se, err = CreateSession(store)
-	c.Assert(err, IsNil)
-	mustExecSQL(c, se, "USE test;")
-	r = mustExecSQL(c, se, "select * from t")
-	c.Assert(r, NotNil)
-	v, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, v.Data, 3)
-	mustExecSQL(c, se, "drop table if exists t")
-	se.Close()
-
-	// Try do bootstrap dml jobs on an already bootstraped TiDB system will not cause fatal.
-	// For https://github.com/pingcap/tidb/issues/1096
-	store = newStore(c, s.dbName)
-	se, err = CreateSession(store)
-	c.Assert(err, IsNil)
-	doDMLWorks(se)
-
-	err = store.Close()
-	c.Assert(err, IsNil)
-}
-
-// Create a new session on store but only do ddl works.
-func (s *testSessionSuite) bootstrapWithError(store kv.Storage, c *C) {
-	ss := &session{
-		values: make(map[fmt.Stringer]interface{}),
-		store:  store,
-		sid:    atomic.AddInt64(&sessionID, 1),
-		parser: parser.New(),
-	}
-	ss.initing = true
-	domain, err := domap.Get(store)
-	c.Assert(err, IsNil)
-	sessionctx.BindDomain(ss, domain)
-	variable.BindSessionVars(ss)
-	variable.GetSessionVars(ss).SetStatusFlag(mysql.ServerStatusAutocommit, true)
-	// session implements autocommit.Checker. Bind it to ctx
-	autocommit.BindAutocommitChecker(ss, ss)
-	sessionMu.Lock()
-	defer sessionMu.Unlock()
-	b, err := checkBootstrapped(ss)
-	c.Assert(b, IsFalse)
-	c.Assert(err, IsNil)
-	doDDLWorks(ss)
-	// Leave dml unfinished.
-}
-
-func (s *testSessionSuite) TestBootstrapWithError(c *C) {
-	defer testleak.AfterTest(c)()
-	store := newStore(c, s.dbNameBootstrap)
-	s.bootstrapWithError(store, c)
-	se := newSession(c, store, s.dbNameBootstrap)
-	mustExecSQL(c, se, "USE mysql;")
-	r := mustExecSQL(c, se, `select * from user;`)
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
-	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
-	mustExecSQL(c, se, "USE test;")
-	// Check privilege tables.
-	mustExecSQL(c, se, "SELECT * from mysql.db;")
-	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
-	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
-	// Check global variables.
-	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
-	v, err := r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(v.Data[0].GetInt64(), Equals, int64(len(variable.SysVars)))
-
-	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
-	c.Assert(row.Data, HasLen, 1)
-	c.Assert(row.Data[0].GetBytes(), BytesEquals, []byte("True"))
 
 	err = store.Close()
 	c.Assert(err, IsNil)
