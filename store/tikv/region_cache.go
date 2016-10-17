@@ -254,11 +254,6 @@ func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) er
 		}
 		moveLeaderToFirst(meta, old.peer.GetStoreId())
 		leader := meta.Peers[0]
-		// Make sure meta at least contains a peer on the same store
-		// with the old peer (which is very likely to be true).
-		if leader.GetStoreId() != old.peer.GetStoreId() {
-			continue
-		}
 		c.insertRegionToCache(&Region{
 			meta: meta,
 			peer: leader,
