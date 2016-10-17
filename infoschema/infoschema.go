@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	// import table implementation to init table.TableFromMeta
-	_ "github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -358,11 +358,8 @@ func insertData(tbl table.Table, rows [][]types.Datum) error {
 	return nil
 }
 
-func refillTable(tbl table.Table, rows [][]types.Datum) error {
-	err := tbl.Truncate(nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
+func refillMemoryTable(tbl table.Table, rows [][]types.Datum) error {
+	tbl.(*tables.MemoryTable).Truncate()
 	return insertData(tbl, rows)
 }
 
@@ -460,19 +457,19 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 		dbNames = append(dbNames, v.Name.L)
 		dbInfos = append(dbInfos, v)
 	}
-	err = refillTable(h.memSchema.schemataTbl, dataForSchemata(dbNames))
+	err = refillMemoryTable(h.memSchema.schemataTbl, dataForSchemata(dbNames))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = refillTable(h.memSchema.tablesTbl, dataForTables(dbInfos))
+	err = refillMemoryTable(h.memSchema.tablesTbl, dataForTables(dbInfos))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = refillTable(h.memSchema.columnsTbl, dataForColumns(dbInfos))
+	err = refillMemoryTable(h.memSchema.columnsTbl, dataForColumns(dbInfos))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = refillTable(h.memSchema.statisticsTbl, dataForStatistics(dbInfos))
+	err = refillMemoryTable(h.memSchema.statisticsTbl, dataForStatistics(dbInfos))
 	if err != nil {
 		return errors.Trace(err)
 	}
