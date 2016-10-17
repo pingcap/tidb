@@ -1,5 +1,5 @@
-hash: 4ebf6604a93a9dcaa8afb86b40967ff5c19c0857ca15dc835f154e9b5483d8a6
-updated: 2016-10-11T14:13:15.206588479+08:00
+hash: bab6532adfe1b5c1375c641787fa4f314545f74a81f6e4eba54722c27dca840b
+updated: 2016-10-13T10:31:30.448228645+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -57,8 +57,8 @@ imports:
   version: c8ec92d0481dd77d9b8c1808eb6476d190aa039a
   subpackages:
   - runtime
-  - utilities
   - runtime/internal
+  - utilities
 - name: github.com/juju/errors
   version: b2c7a7da5b2995941048f60146e67702a292e468
 - name: github.com/matttproud/golang_protobuf_extensions
@@ -99,18 +99,18 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: b67cb2eae50058de05fb22c5c0118571c8f98404
+  version: 3542d756cbeb5eaf1494a378e73e62b938f025e7
   subpackages:
   - pkg/coprocessor
+  - pkg/eraftpb
   - pkg/errorpb
   - pkg/kvrpcpb
   - pkg/metapb
   - pkg/msgpb
-  - pkg/util
   - pkg/pdpb
   - pkg/raft_cmdpb
   - pkg/raft_serverpb
-  - pkg/eraftpb
+  - pkg/util
 - name: github.com/pingcap/pd
   version: 5606df6dcc8bf695a808939169734d675b4786ee
   subpackages:
@@ -126,8 +126,8 @@ imports:
 - name: github.com/prometheus/client_golang
   version: c5b7fccd204277076155f10851dad72b76a49317
   subpackages:
-  - prometheus/push
   - prometheus
+  - prometheus/push
 - name: github.com/prometheus/client_model
   version: fa8ad6fec33561be4280a8f0514318c79d7f6cb6
   subpackages:
@@ -136,8 +136,8 @@ imports:
   version: 4402f4e5ea79ec15f3c574773b6a5198fbea215f
   subpackages:
   - expfmt
-  - model
   - internal/bitbucket.org/ww/goautoneg
+  - model
 - name: github.com/prometheus/procfs
   version: abf152e5f3e97f2fafac028d2cc06c1feb87ffa5
 - name: github.com/twinj/uuid
@@ -149,8 +149,8 @@ imports:
   - http2
   - http2/hpack
   - internal/timeseries
-  - trace
   - lex/httplex
+  - trace
 - name: golang.org/x/sys
   version: 8d1157a435470616f975ff9bb013bea8d0962067
   subpackages:

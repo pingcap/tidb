@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -140,6 +142,8 @@ func (s *testStoreSuite) TestBusyServerCop(c *C) {
 	wg.Wait()
 }
 
+var errStopped = errors.New("stopped")
+
 type mockOracle struct {
 	sync.RWMutex
 	stop   bool
@@ -178,7 +182,7 @@ func (o *mockOracle) GetTimestamp() (uint64, error) {
 	defer o.Unlock()
 
 	if o.stop {
-		return 0, errors.New("stopped")
+		return 0, errors.Trace(errStopped)
 	}
 	physical := oracle.GetPhysical(time.Now().Add(o.offset))
 	ts := oracle.ComposeTS(physical, 0)
@@ -252,3 +256,53 @@ func (c *busyClient) SendCopReq(addr string, req *coprocessor.Request, timeout t
 	}
 	return c.client.SendCopReq(addr, req, timeout)
 }
+
+type mockPDClient struct {
+	sync.RWMutex
+	client pd.Client
+	stop   bool
+}
+
+func (c *mockPDClient) enable() {
+	c.Lock()
+	defer c.Unlock()
+	c.stop = false
+}
+
+func (c *mockPDClient) disable() {
+	c.Lock()
+	defer c.Unlock()
+	c.stop = true
+}
+
+func (c *mockPDClient) GetTS() (int64, int64, error) {
+	c.RLock()
+	defer c.RUnlock()
+
+	if c.stop {
+		return 0, 0, errors.Trace(errStopped)
+	}
+	return c.client.GetTS()
+}
+
+func (c *mockPDClient) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, error) {
+	c.RLock()
+	defer c.RUnlock()
+
+	if c.stop {
+		return nil, nil, errors.Trace(errStopped)
+	}
+	return c.client.GetRegion(key)
+}
+
+func (c *mockPDClient) GetStore(storeID uint64) (*metapb.Store, error) {
+	c.RLock()
+	defer c.RUnlock()
+
+	if c.stop {
+		return nil, errors.Trace(errStopped)
+	}
+	return c.client.GetStore(storeID)
+}
+
+func (c *mockPDClient) Close() {}
