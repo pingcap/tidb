@@ -74,6 +74,10 @@ type selectResult struct {
 
 	results chan PartialResult
 	done    chan error
+
+	// close cancel tells fetch goroutine partialResult is not need any more.
+	// it may be useful when error happens and avoid goroutine leak.
+	cancel chan struct{}
 }
 
 func (r *selectResult) Fetch() {
@@ -99,7 +103,7 @@ func (r *selectResult) fetch() {
 			ignoreData: r.ignoreData,
 			done:       make(chan error),
 		}
-		go pr.fetch()
+		go pr.fetch(r.cancel)
 		r.results <- pr
 	}
 }
@@ -131,6 +135,9 @@ func (r *selectResult) IgnoreData() {
 
 // Close closes SelectResult.
 func (r *selectResult) Close() error {
+	close(r.cancel)
+	for _ = range r.results {
+	}
 	return r.resp.Close()
 }
 
@@ -150,23 +157,34 @@ type partialResult struct {
 	fetched bool
 }
 
-func (pr *partialResult) fetch() {
+func (pr *partialResult) fetch(cancel <-chan struct{}) {
+	defer close(pr.done)
 	pr.resp = new(tipb.SelectResponse)
-	b, err := ioutil.ReadAll(pr.reader)
-	pr.reader.Close()
-	if err != nil {
-		pr.done <- errors.Trace(err)
-		return
+
+	var (
+		err error
+		b   []byte
+	)
+
+	// choose this style because error handle is really boring.
+	for step := 0; err == nil && step < 3; step++ {
+		switch step {
+		case 0:
+			b, err = ioutil.ReadAll(pr.reader)
+			pr.reader.Close()
+		case 1:
+			err = pr.resp.Unmarshal(b)
+		case 2:
+			if pr.resp.Error != nil {
+				err = errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
+			}
+		}
 	}
-	err = pr.resp.Unmarshal(b)
-	if err != nil {
-		pr.done <- errors.Trace(err)
-		return
+
+	select {
+	case <-cancel:
+	case pr.done <- err:
 	}
-	if pr.resp.Error != nil {
-		pr.done <- errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
-	}
-	pr.done <- nil
 }
 
 var dummyData = make([]types.Datum, 0)
@@ -175,9 +193,7 @@ var dummyData = make([]types.Datum, 0)
 // If no more row to return, data would be nil.
 func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 	if !pr.fetched {
-		select {
-		case err = <-pr.done:
-		}
+		err = <-pr.done
 		pr.fetched = true
 		if err != nil {
 			return 0, nil, err
@@ -253,6 +269,8 @@ func (pr *partialResult) getChunk() *tipb.Chunk {
 
 // Close closes the sub result.
 func (pr *partialResult) Close() error {
+	for _ = range pr.done {
+	}
 	return nil
 }
 
@@ -289,6 +307,7 @@ func Select(client kv.Client, req *tipb.SelectRequest, keyRanges []kv.KeyRange, 
 		resp:    resp,
 		results: make(chan PartialResult, 5),
 		done:    make(chan error, 1),
+		cancel:  make(chan struct{}),
 	}
 	// If Aggregates is not nil, we should set result fields latter.
 	if len(req.Aggregates) == 0 && len(req.GroupBy) == 0 {
