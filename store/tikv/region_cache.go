@@ -223,7 +223,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 		}
 		// Move leader to the first.
 		if leader != nil {
-			reorderRegionPeers(meta, leader.GetStoreId())
+			moveLeaderToFirst(meta, leader.GetStoreId())
 		}
 		peer := meta.Peers[0]
 		store, err := c.pdClient.GetStore(peer.GetStoreId())
@@ -242,7 +242,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 }
 
 // OnRegionStale removes the old region and inserts new regions into the cache.
-func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) {
+func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -250,11 +250,12 @@ func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) {
 
 	for _, meta := range newRegions {
 		if err := decodeRegionMetaKey(meta); err != nil {
-			log.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)
-			continue
+			return errors.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)
 		}
-		reorderRegionPeers(meta, old.peer.GetStoreId())
+		moveLeaderToFirst(meta, old.peer.GetStoreId())
 		peer := meta.Peers[0]
+		// Make sure meta at least contains a peer on the same store
+		// with the old peer (which is very likely to be true).
 		if peer.GetStoreId() != old.peer.GetStoreId() {
 			continue
 		}
@@ -264,15 +265,16 @@ func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) {
 			addr: old.GetAddress(),
 		})
 	}
+	return nil
 }
 
-// reorderRegionPeers moves the leader peer to the first and makes it easier to
+// moveLeaderToFirst moves the leader peer to the first and makes it easier to
 // try the next peer if the current peer does not respond.
-func reorderRegionPeers(r *metapb.Region, leaderStoreID uint64) {
+func moveLeaderToFirst(r *metapb.Region, leaderStoreID uint64) {
 	for i := range r.Peers {
 		if r.Peers[i].GetStoreId() == leaderStoreID {
 			r.Peers[0], r.Peers[i] = r.Peers[i], r.Peers[0]
-			break
+			return
 		}
 	}
 }
