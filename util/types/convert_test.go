@@ -39,13 +39,13 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft.Flen = 4
 	ft.Charset = "utf8"
 	v, err := Convert("123456", ft)
-	c.Assert(err, IsNil)
+	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
 	c.Assert(v, Equals, "1234")
 	ft = NewFieldType(mysql.TypeString)
 	ft.Flen = 4
 	ft.Charset = charset.CharsetBin
 	v, err = Convert("12345", ft)
-	c.Assert(err, IsNil)
+	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
 	c.Assert(v, DeepEquals, []byte("1234"))
 
 	ft = NewFieldType(mysql.TypeFloat)
@@ -120,13 +120,13 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft = NewFieldType(mysql.TypeString)
 	ft.Flen = 3
 	v, err = Convert("12345", ft)
-	c.Assert(err, IsNil)
+	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
 	c.Assert(v, Equals, "123")
 	ft = NewFieldType(mysql.TypeString)
 	ft.Flen = 3
 	ft.Charset = charset.CharsetBin
 	v, err = Convert("12345", ft)
-	c.Assert(err, IsNil)
+	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
 	c.Assert(v, DeepEquals, []byte("123"))
 
 	// For TypeDuration
