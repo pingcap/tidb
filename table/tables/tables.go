@@ -504,24 +504,6 @@ func (t *Table) Row(ctx context.Context, h int64) ([]types.Datum, error) {
 	return r, nil
 }
 
-// LockRow implements table.Table LockRow interface.
-// TODO: remove forRead parameter, it should always be true now.
-func (t *Table) LockRow(ctx context.Context, h int64, forRead bool) error {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Get row lock key
-	lockKey := t.RecordKey(h)
-	if forRead {
-		err = txn.LockKeys(lockKey)
-	} else {
-		// set row lock key to current txn
-		err = txn.Set(lockKey, []byte(txn.String()))
-	}
-	return errors.Trace(err)
-}
-
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) error {
 	err := t.removeRowData(ctx, h)

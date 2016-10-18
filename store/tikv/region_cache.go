@@ -223,12 +223,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 		}
 		// Move leader to the first.
 		if leader != nil {
-			for i := range meta.Peers {
-				if meta.Peers[i].GetId() == leader.GetId() {
-					meta.Peers[0], meta.Peers[i] = meta.Peers[i], meta.Peers[0]
-					break
-				}
-			}
+			moveLeaderToFirst(meta, leader.GetStoreId())
 		}
 		peer := meta.Peers[0]
 		store, err := c.pdClient.GetStore(peer.GetStoreId())
@@ -246,7 +241,40 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 	}
 }
 
-// llrbItem is llrbTree's Item that uses []byte for compare.
+// OnRegionStale removes the old region and inserts new regions into the cache.
+func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.dropRegionFromCache(old.VerID())
+
+	for _, meta := range newRegions {
+		if err := decodeRegionMetaKey(meta); err != nil {
+			return errors.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)
+		}
+		moveLeaderToFirst(meta, old.peer.GetStoreId())
+		leader := meta.Peers[0]
+		c.insertRegionToCache(&Region{
+			meta: meta,
+			peer: leader,
+			addr: old.GetAddress(),
+		})
+	}
+	return nil
+}
+
+// moveLeaderToFirst moves the leader peer to the first and makes it easier to
+// try the next peer if the current peer does not respond.
+func moveLeaderToFirst(r *metapb.Region, leaderStoreID uint64) {
+	for i := range r.Peers {
+		if r.Peers[i].GetStoreId() == leaderStoreID {
+			r.Peers[0], r.Peers[i] = r.Peers[i], r.Peers[0]
+			return
+		}
+	}
+}
+
+// llrbItem is llrbTree's Item that uses []byte to compare.
 type llrbItem struct {
 	key    []byte
 	region *Region

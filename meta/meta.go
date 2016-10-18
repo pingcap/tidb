@@ -568,19 +568,16 @@ func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	return m.getHistoryDDLJob(mDDLJobHistoryKey, id)
 }
 
-// IsBootstrapped returns whether we have already run bootstrap or not.
-// return true means we don't need doing any other bootstrap.
-func (m *Meta) IsBootstrapped() (bool, error) {
+// GetBootstrapVersion returns the version of the server which boostrap the store.
+// If the store is not bootstraped, the version will be zero.
+func (m *Meta) GetBootstrapVersion() (int64, error) {
 	value, err := m.txn.GetInt64(mBootstrapKey)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return value == 1, nil
+	return value, errors.Trace(err)
 }
 
 // FinishBootstrap finishes bootstrap.
-func (m *Meta) FinishBootstrap() error {
-	err := m.txn.Set(mBootstrapKey, []byte("1"))
+func (m *Meta) FinishBootstrap(version int64) error {
+	err := m.txn.Set(mBootstrapKey, []byte(fmt.Sprintf("%d", version)))
 	return errors.Trace(err)
 }
 

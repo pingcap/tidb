@@ -49,6 +49,8 @@ func (t basicCtxType) String() string {
 	switch t {
 	case QueryString:
 		return "query_string"
+	case Initing:
+		return "initing"
 	}
 	return "unknown"
 }
@@ -57,4 +59,6 @@ func (t basicCtxType) String() string {
 const (
 	// QueryString is the key for original query string.
 	QueryString basicCtxType = 1
+	// Initing is the key for indicating if the server is running bootstrap or upgrad job.
+	Initing basicCtxType = 2
 )

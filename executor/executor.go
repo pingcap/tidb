@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/distinct"
@@ -293,8 +294,13 @@ func (e *SelectLockExec) Next() (*Row, error) {
 	}
 	if len(row.RowKeys) != 0 && e.Lock == ast.SelectLockForUpdate {
 		forupdate.SetForUpdate(e.ctx)
+		txn, err := e.ctx.GetTxn(false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		for _, k := range row.RowKeys {
-			err = k.Tbl.LockRow(e.ctx, k.Handle, true)
+			lockKey := tablecodec.EncodeRowKeyWithHandle(k.Tbl.Meta().ID, k.Handle)
+			err = txn.LockKeys(lockKey)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
