@@ -29,6 +29,7 @@ import (
 )
 
 // DDLExec represents a DDL executor.
+// It grab a DDL instance from Domain, calling DDL methods to do the work.
 type DDLExec struct {
 	Statement ast.StmtNode
 	ctx       context.Context
@@ -194,16 +195,4 @@ func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	err := sessionctx.GetDomain(e.ctx).DDL().AlterTable(e.ctx, ti, s.Specs)
 	return errors.Trace(err)
-}
-
-func joinColumnName(columnName *ast.ColumnName) string {
-	var originStrs []string
-	if columnName.Schema.O != "" {
-		originStrs = append(originStrs, columnName.Schema.O)
-	}
-	if columnName.Table.O != "" {
-		originStrs = append(originStrs, columnName.Table.O)
-	}
-	originStrs = append(originStrs, columnName.Name.O)
-	return strings.Join(originStrs, ".")
 }

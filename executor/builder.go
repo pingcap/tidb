@@ -31,10 +31,11 @@ import (
 )
 
 // executorBuilder builds an Executor from a Plan.
-// The InfoSchema must be the same one used in InfoBinder.
+// The InfoSchema must not change during execution.
 type executorBuilder struct {
 	ctx context.Context
 	is  infoschema.InfoSchema
+	// If there is any error during Executor building process, err is set.
 	err error
 }
 
@@ -452,7 +453,7 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 		ctx:          b.ctx,
 		bigHashKey:   leftHashKey,
 		smallHashKey: rightHashKey,
-		withAux:      v.WithAux,
+		auxMode:      v.WithAux,
 		anti:         v.Anti,
 		targetTypes:  targetTypes,
 	}
@@ -584,18 +585,19 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
 		st := &XSelectIndexExec{
-			tableInfo:   v.Table,
-			ctx:         b.ctx,
-			supportDesc: supportDesc,
-			asName:      v.TableAsName,
-			table:       table,
-			indexPlan:   v,
-			startTS:     startTS,
-			where:       v.ConditionPBExpr,
-			aggregate:   v.Aggregated,
-			aggFuncs:    v.AggFuncs,
-			aggFields:   v.AggFields,
-			byItems:     v.GbyItems,
+			tableInfo:      v.Table,
+			ctx:            b.ctx,
+			supportDesc:    supportDesc,
+			asName:         v.TableAsName,
+			table:          table,
+			indexPlan:      v,
+			singleReadMode: !v.DoubleRead,
+			startTS:        startTS,
+			where:          v.ConditionPBExpr,
+			aggregate:      v.Aggregated,
+			aggFuncs:       v.AggFuncs,
+			aggFields:      v.AggFields,
+			byItems:        v.GbyItems,
 		}
 		return st
 	}

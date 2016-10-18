@@ -41,11 +41,29 @@ import (
 )
 
 var (
+	_ Executor = &ApplyExec{}
 	_ Executor = &CheckTableExec{}
+	_ Executor = &DistinctExec{}
+	_ Executor = &DummyScanExec{}
+	_ Executor = &ExistsExec{}
+	_ Executor = &FilterExec{}
+	_ Executor = &HashAggExec{}
+	_ Executor = &HashJoinExec{}
+	_ Executor = &HashSemiJoinExec{}
 	_ Executor = &LimitExec{}
+	_ Executor = &MaxOneRowExec{}
+	_ Executor = &ProjectionExec{}
+	_ Executor = &ReverseExec{}
+	_ Executor = &SelectionExec{}
 	_ Executor = &SelectLockExec{}
 	_ Executor = &ShowDDLExec{}
+	_ Executor = &SortExec{}
+	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
+	_ Executor = &TableScanExec{}
+	_ Executor = &TopnExec{}
+	_ Executor = &TrimExec{}
+	_ Executor = &UnionExec{}
 )
 
 // Error instances.
@@ -72,16 +90,15 @@ const (
 	CodeCannotUser terror.ErrCode = 1396
 )
 
-// Row represents a record row.
+// Row represents a result set row, it may be returned from a table, a join, or a projection.
 type Row struct {
 	// Data is the output record data for current Plan.
 	Data []types.Datum
-
+	// RowKeys contains all table row keys in the row.
 	RowKeys []*RowKeyEntry
 }
 
-// RowKeyEntry is designed for Update/Delete statement in multi-table mode,
-// we should know which table this row comes from.
+// RowKeyEntry represents a row key read from a table.
 type RowKeyEntry struct {
 	// The table which this row come from.
 	Tbl table.Table
@@ -175,6 +192,8 @@ func (e *ShowDDLExec) Close() error {
 }
 
 // CheckTableExec represents a check table executor.
+// It is built from "admin check table" statement, checks if the
+// index match the records in the table.
 type CheckTableExec struct {
 	tables []*ast.TableName
 	ctx    context.Context
@@ -227,6 +246,8 @@ func (e *CheckTableExec) Close() error {
 }
 
 // FilterExec represents a filter executor.
+// It evaluates the condition for every source row, returns the source row only if
+// the condition evaluates to true.
 type FilterExec struct {
 	Src       Executor
 	Condition ast.ExprNode
@@ -269,6 +290,11 @@ func (e *FilterExec) Close() error {
 }
 
 // SelectLockExec represents a select lock executor.
+// It is built from "SELECT .. FOR UPDATE" or "SELECT .. LOCK IN SHARE MODE" statement.
+// For "SELECT .. FOR UPDATE" statement, it locks every row key from source Executor.
+// After the execution, the keys are buffered in transaction, and will be sent to KV
+// when doing commit. If there are any keys already locked by another transaction,
+// The transaction will rollback and retry.
 type SelectLockExec struct {
 	Src    Executor
 	Lock   ast.SelectLockType
@@ -318,6 +344,7 @@ func (e *SelectLockExec) Close() error {
 }
 
 // LimitExec represents limit executor
+// It ignores 'Offset' rows from src, then returns 'Count' rows at maximun.
 type LimitExec struct {
 	Src    Executor
 	Offset uint64
@@ -374,11 +401,10 @@ type orderByRow struct {
 	row *Row
 }
 
-// For select stmt with aggregate function but without groupby clasue,
-// We consider there is a single group with key singleGroup.
-var singleGroup = []byte("SingleGroup")
-
 // DistinctExec represents Distinct executor.
+// It ignores duplicate rows from source Executor by using a *distinct.Checker which maintains
+// a map to check duplication.
+// As every distinct row will be added to the map, the memory usage can be very high.
 type DistinctExec struct {
 	Src     Executor
 	checker *distinct.Checker
@@ -475,6 +501,9 @@ func (e *ReverseExec) Close() error {
 }
 
 func init() {
+	// While doing optimization in plan package, we need to execute non-correlated subquery,
+	// but plan package can not import executor package because of dependency cycle.
+	// So we assign a function implemented in executor package to plan package to avoid dependency cycle.
 	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) (d []types.Datum, err error) {
 		e := &executorBuilder{is: is, ctx: ctx}
 		exec := e.build(p)
@@ -527,6 +556,7 @@ type HashJoinExec struct {
 	resultRows chan *Row
 }
 
+// hashJoinCtx holds the variables needed to do a hash join in one of many concurrent goroutines.
 type hashJoinCtx struct {
 	bigFilter   expression.Expression
 	otherFilter expression.Expression
@@ -542,7 +572,8 @@ func (e *HashJoinExec) Close() error {
 	return e.smallExec.Close()
 }
 
-func joinTwoRow(a *Row, b *Row) *Row {
+// makeJoinRow simply creates a new row that appends row b to row a.
+func makeJoinRow(a *Row, b *Row) *Row {
 	ret := &Row{
 		RowKeys: make([]*RowKeyEntry, 0, len(a.RowKeys)+len(b.RowKeys)),
 		Data:    make([]types.Datum, 0, len(a.Data)+len(b.Data)),
@@ -592,7 +623,8 @@ func (e *HashJoinExec) Fields() []*ast.ResultField {
 
 var batchSize = 128
 
-// Worker to get big table rows.
+// fetchBigExec fetches rows from big table in one background goroutine
+// and send the rows to multiple channels, multiple join workers will read those channels.
 func (e *HashJoinExec) fetchBigExec() {
 	cnt := 0
 	defer func() {
@@ -633,6 +665,8 @@ func (e *HashJoinExec) fetchBigExec() {
 	}
 }
 
+// prepare runs at the first time 'Next' is called, it starts one worker goroutine to fetch rows from big table,
+// and reads all data from small table to build a hash table, then starts multiple join worker goroutines.
 func (e *HashJoinExec) prepare() error {
 	e.finished = false
 	e.bigTableRows = make([]chan []*Row, e.concurrency)
@@ -686,22 +720,22 @@ func (e *HashJoinExec) prepare() error {
 	e.wg = sync.WaitGroup{}
 	for i := 0; i < e.concurrency; i++ {
 		e.wg.Add(1)
-		go e.doJoin(i)
+		go e.runJoinWorker(i)
 	}
-	go e.closeChanWorker()
+	go e.waitJoinWorkersAndCloseResultChan()
 
 	e.prepared = true
 	return nil
 }
 
-func (e *HashJoinExec) closeChanWorker() {
+func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.wg.Wait()
 	close(e.resultRows)
 	e.hashTable = nil
 }
 
 // doJoin does join job in one goroutine.
-func (e *HashJoinExec) doJoin(idx int) {
+func (e *HashJoinExec) runJoinWorker(idx int) {
 	for {
 		var (
 			bigRows []*Row
@@ -720,7 +754,7 @@ func (e *HashJoinExec) doJoin(idx int) {
 			break
 		}
 		for _, bigRow := range bigRows {
-			succ := e.join(e.hashJoinContexts[idx], bigRow)
+			succ := e.joinOneBigRow(e.hashJoinContexts[idx], bigRow)
 			if !succ {
 				break
 			}
@@ -729,7 +763,10 @@ func (e *HashJoinExec) doJoin(idx int) {
 	e.wg.Done()
 }
 
-func (e *HashJoinExec) join(ctx *hashJoinCtx, bigRow *Row) bool {
+// joinOneBigRow creates result rows from a big table Row and send them to resultRows channel.
+// Every matched row generates a result row.
+// Ff there is no matched rows and it is outer join, a null filled result row is created.
+func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row) bool {
 	var (
 		matchedRows []*Row
 		err         error
@@ -759,6 +796,7 @@ func (e *HashJoinExec) join(ctx *hashJoinCtx, bigRow *Row) bool {
 	return true
 }
 
+// constructMatchedRows creates matched result rows from a big row.
 func (e *HashJoinExec) constructMatchedRows(ctx *hashJoinCtx, bigRow *Row) (matchedRows []*Row, err error) {
 	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes, ctx.datumBuffer, ctx.hashKeyBuffer[0:0:cap(ctx.hashKeyBuffer)])
 	if err != nil {
@@ -777,9 +815,9 @@ func (e *HashJoinExec) constructMatchedRows(ctx *hashJoinCtx, bigRow *Row) (matc
 		otherMatched := true
 		var matchedRow *Row
 		if e.leftSmall {
-			matchedRow = joinTwoRow(smallRow, bigRow)
+			matchedRow = makeJoinRow(smallRow, bigRow)
 		} else {
-			matchedRow = joinTwoRow(bigRow, smallRow)
+			matchedRow = makeJoinRow(bigRow, smallRow)
 		}
 		if e.otherFilter != nil {
 			otherMatched, err = expression.EvalBool(ctx.otherFilter, matchedRow.Data, e.ctx)
@@ -795,6 +833,8 @@ func (e *HashJoinExec) constructMatchedRows(ctx *hashJoinCtx, bigRow *Row) (matc
 	return matchedRows, nil
 }
 
+// fillNulRow creates a null filled result row from a big table row.
+// It is used for outer join, when a row from outer table doesn't have any matched rows.
 func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row) {
 	smallRow := &Row{
 		Data: make([]types.Datum, len(e.smallExec.Schema())),
@@ -804,9 +844,9 @@ func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row) {
 		data.SetNull()
 	}
 	if e.leftSmall {
-		returnRow = joinTwoRow(smallRow, bigRow)
+		returnRow = makeJoinRow(smallRow, bigRow)
 	} else {
-		returnRow = joinTwoRow(bigRow, smallRow)
+		returnRow = makeJoinRow(bigRow, smallRow)
 	}
 	return returnRow
 }
@@ -839,18 +879,20 @@ func (e *HashJoinExec) Next() (*Row, error) {
 
 // HashSemiJoinExec implements the hash join algorithm for semi join.
 type HashSemiJoinExec struct {
-	hashTable         map[string][]*Row
-	smallHashKey      []*expression.Column
-	bigHashKey        []*expression.Column
-	smallExec         Executor
-	bigExec           Executor
-	prepared          bool
-	ctx               context.Context
-	smallFilter       expression.Expression
-	bigFilter         expression.Expression
-	otherFilter       expression.Expression
-	schema            expression.Schema
-	withAux           bool
+	hashTable    map[string][]*Row
+	smallHashKey []*expression.Column
+	bigHashKey   []*expression.Column
+	smallExec    Executor
+	bigExec      Executor
+	prepared     bool
+	ctx          context.Context
+	smallFilter  expression.Expression
+	bigFilter    expression.Expression
+	otherFilter  expression.Expression
+	schema       expression.Schema
+	// In auxMode, the result row always returns with an extra column stores a bool or null value to indicate if
+	// this row is matched.
+	auxMode           bool
 	targetTypes       []*types.FieldType
 	smallTableHasNull bool
 	// If anti is true, semi join only output the unmatched row.
@@ -879,6 +921,8 @@ func (e *HashSemiJoinExec) Fields() []*ast.ResultField {
 	return nil
 }
 
+// prepare runs at the first time 'Next' is called, it reads all data from small table and stores
+// them in a hash table.
 func (e *HashSemiJoinExec) prepare() error {
 	e.hashTable = make(map[string][]*Row)
 	for {
@@ -937,7 +981,7 @@ func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, hasNull bool
 		matched = true
 		if e.otherFilter != nil {
 			var matchedRow *Row
-			matchedRow = joinTwoRow(bigRow, smallRow)
+			matchedRow = makeJoinRow(bigRow, smallRow)
 			matched, err = expression.EvalBool(e.otherFilter, matchedRow.Data, e.ctx)
 			if err != nil {
 				return false, false, errors.Trace(err)
@@ -988,21 +1032,25 @@ func (e *HashSemiJoinExec) Next() (*Row, error) {
 		if e.anti && !isNull {
 			matched = !matched
 		}
-		if e.withAux {
+		// For auxMode subquery, we returns the row with a Datum indicates if it's match,
+		// For non-auxMode subquery, we only returns the matched row.
+		if e.auxMode {
 			if isNull {
 				bigRow.Data = append(bigRow.Data, types.NewDatum(nil))
 			} else {
 				bigRow.Data = append(bigRow.Data, types.NewDatum(matched))
 			}
 			return bigRow, nil
-		} else if matched {
+		}
+		if matched {
 			return bigRow, nil
 		}
 	}
 }
 
 // HashAggExec deals with all the aggregate functions.
-// It is built from Aggregate Plan. When Next() is called, it reads all the data from Src and updates all the items in AggFuncs.
+// It is built from Aggregate Plan. When Next() is called, it reads all the data from Src
+// and updates all the items in AggFuncs.
 type HashAggExec struct {
 	Src               Executor
 	schema            expression.Schema
@@ -1607,7 +1655,8 @@ func (e *SortExec) Next() (*Row, error) {
 	return row, nil
 }
 
-// TopnExec implements a top n algo.
+// TopnExec implements a top n algorithm, it is built from a select statement with ORDER BY and LIMIT.
+// Instead of sort all the rows fetched from table, it only keeps the top-n element in a heap to reduce memory usage.
 type TopnExec struct {
 	SortExec
 	limit      *plan.Limit
@@ -1673,6 +1722,7 @@ func (e *TopnExec) Next() (*Row, error) {
 			if srcRow == nil {
 				break
 			}
+			// build orderRow from srcRow.
 			orderRow := &orderByRow{
 				row: srcRow,
 				key: make([]types.Datum, len(e.ByItems)),
@@ -1684,6 +1734,8 @@ func (e *TopnExec) Next() (*Row, error) {
 				}
 			}
 			if e.totalCount == e.heapSize {
+				// Equivalent to Push and Pop. we don't use the standard Push and Pop
+				// to reduce the number of comparisons.
 				e.Rows = append(e.Rows, orderRow)
 				if e.Less(0, e.heapSize) {
 					e.Swap(0, e.heapSize)
@@ -1718,7 +1770,9 @@ type ApplyExec struct {
 	Src         Executor
 	outerSchema expression.Schema
 	innerExec   Executor
-	checker     *conditionChecker
+	// checker checks if an src row with an inner row match the condition,
+	// and if it needs to check more inner rows.
+	checker *conditionChecker
 }
 
 // conditionChecker checks if all or any of the row match this condition.
@@ -1730,9 +1784,9 @@ type conditionChecker struct {
 	dataHasNull bool
 }
 
-// Check returns finished for checking if the input row can determine the final result,
+// check returns finished for checking if the input row can determine the final result,
 // and returns data for the eval result.
-func (c *conditionChecker) Check(rowData []types.Datum) (finished bool, data types.Datum, err error) {
+func (c *conditionChecker) check(rowData []types.Datum) (finished bool, data types.Datum, err error) {
 	data, err = c.cond.Eval(rowData, c.ctx)
 	if err != nil {
 		return false, data, errors.Trace(err)
@@ -1748,6 +1802,11 @@ func (c *conditionChecker) Check(rowData []types.Datum) (finished bool, data typ
 		}
 	}
 	return (matched != 0) != c.all, data, nil
+}
+
+// reset resets dataHasNull to false, so it can be reused for the next row from ApplyExec.Src.
+func (c *conditionChecker) reset() {
+	c.dataHasNull = false
 }
 
 // Schema implements Executor Schema interface.
@@ -1795,26 +1854,30 @@ func (e *ApplyExec) Next() (*Row, error) {
 			return srcRow, nil
 		}
 		if innerRow == nil {
-			var d types.Datum
-			// If we can't determine the result until the last row comes, the all must be true and any must not be true.
-			// If the any have met a null, the result will be null.
-			if e.checker.dataHasNull && !e.checker.all {
-				d = types.NewDatum(nil)
+			// Inner exec finished, we need to append an result column to true, false or null.
+			var result types.Datum
+			if e.checker.all {
+				result = types.NewDatum(true)
 			} else {
-				d = types.NewDatum(e.checker.all)
+				// If 'any' have met a null, the result will be null.
+				if e.checker.dataHasNull {
+					result = types.NewDatum(nil)
+				} else {
+					result = types.NewDatum(false)
+				}
 			}
-			srcRow.Data = append(srcRow.Data, d)
-			e.checker.dataHasNull = false
+			srcRow.Data = append(srcRow.Data, result)
+			e.checker.reset()
 			e.innerExec.Close()
 			return srcRow, nil
 		}
-		finished, data, err := e.checker.Check(srcRow.Data)
+		finished, data, err := e.checker.check(srcRow.Data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		srcRow.Data = srcRow.Data[:trimLen]
 		if finished {
-			e.checker.dataHasNull = false
+			e.checker.reset()
 			e.innerExec.Close()
 			srcRow.Data = append(srcRow.Data, data)
 			return srcRow, nil
@@ -1846,6 +1909,7 @@ func (e *ExistsExec) Close() error {
 }
 
 // Next implements Executor Next interface.
+// We always return one row with one column which has true or false value.
 func (e *ExistsExec) Next() (*Row, error) {
 	if !e.evaluated {
 		e.evaluated = true
@@ -1859,6 +1923,7 @@ func (e *ExistsExec) Next() (*Row, error) {
 }
 
 // MaxOneRowExec checks if a query returns no more than one row.
+// It's built from subquery expression.
 type MaxOneRowExec struct {
 	schema    expression.Schema
 	Src       Executor
@@ -1904,7 +1969,10 @@ func (e *MaxOneRowExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-// TrimExec truncates src rows.
+// TrimExec truncates extra columns in src rows.
+// Some columns in src rows are not needed in the result.
+// For example 'SELECT a from t order by b'.
+// In this case, 'b' is needed for ordering, but not needed in the result.
 type TrimExec struct {
 	schema expression.Schema
 	Src    Executor
@@ -1940,6 +2008,8 @@ func (e *TrimExec) Next() (*Row, error) {
 }
 
 // UnionExec represents union executor.
+// UnionExec has multiple source Executors, it executes them sequentially, and do conversion to the same type
+// as source Executors may has different field type, we need to do conversion.
 type UnionExec struct {
 	fields []*ast.ResultField
 	schema expression.Schema
@@ -2000,7 +2070,8 @@ func (e *UnionExec) Close() error {
 	return nil
 }
 
-// DummyScanExec represents a dummy table.
+// DummyScanExec returns zero results, when some where condition never match, there won't be any
+// rows to return, so DummyScan is used to avoid real scan on KV.
 type DummyScanExec struct {
 	schema expression.Schema
 }

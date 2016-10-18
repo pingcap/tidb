@@ -178,7 +178,8 @@ func (e *PrepareExec) DoPrepare() {
 }
 
 // ExecuteExec represents an EXECUTE executor.
-// It executes a prepared statement.
+// It can not be executed by itself, all it needs to do is to build
+// another Executor from a prepared statement.
 type ExecuteExec struct {
 	IS        infoschema.InfoSchema
 	Ctx       context.Context
@@ -214,6 +215,7 @@ func (e *ExecuteExec) Close() error {
 }
 
 // Build builds a prepared statement into an executor.
+// After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build() error {
 	vars := variable.GetSessionVars(e.Ctx)
 	if e.Name != "" {
