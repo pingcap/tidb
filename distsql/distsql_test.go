@@ -73,8 +73,13 @@ func (s *testTableCodecSuite) TestGoroutineLeak(c *C) {
 		}
 	}
 
-	for i := time.Duration(0); i < 3*time.Second; i = i + 10*time.Millisecond {
+	tick := 10 * time.Millisecond
+	totalSleep := time.Duration(0)
+	for totalSleep < 3*time.Second {
+		time.Sleep(tick)
+		totalSleep += tick
 		countAfter := runtime.NumGoroutine()
+
 		if countAfter-countBefore < 5 {
 			return
 		}
