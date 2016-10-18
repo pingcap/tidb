@@ -762,12 +762,16 @@ func (d *Datum) convertToString(target *FieldType) (Datum, error) {
 		return invalidConv(d, target.Tp)
 	}
 	// TODO: consider target.Charset/Collate
+	var err error
+	if target.Flen > 0 && target.Flen < len(s) {
+		err = ErrDataTooLong
+	}
 	s = truncateStr(s, target.Flen)
 	ret.SetString(s)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
 	}
-	return ret, nil
+	return ret, err
 }
 
 func (d *Datum) convertToInt(target *FieldType) (Datum, error) {
