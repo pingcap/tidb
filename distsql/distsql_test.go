@@ -64,7 +64,7 @@ func (s *testTableCodecSuite) TestGoroutineLeak(c *C) {
 	}
 	go sr.Fetch()
 	for {
-		// mock test will generate 500 partial result then return error
+		// mock test will generate some partial result then return error
 		_, err := sr.Next()
 		if err != nil {
 			// close selectResult on error, partialResult's fetch goroutine may leak
@@ -73,11 +73,14 @@ func (s *testTableCodecSuite) TestGoroutineLeak(c *C) {
 		}
 	}
 
-	time.Sleep(3 * time.Second)
-	countAfter := runtime.NumGoroutine()
+	for i := time.Duration(0); i < 3*time.Second; i = i + 10*time.Millisecond {
+		countAfter := runtime.NumGoroutine()
+		if countAfter-countBefore < 5 {
+			return
+		}
+	}
 
-	// if all partialResult's fetch goroutine return, there should not much goroutines.
-	c.Assert(countAfter-countBefore, Less, 5)
+	c.Error("distsql goroutine leak!")
 }
 
 type mockResponse struct {
@@ -86,7 +89,7 @@ type mockResponse struct {
 
 func (resp *mockResponse) Next() (io.ReadCloser, error) {
 	resp.count++
-	if resp.count == 500 {
+	if resp.count == 100 {
 		return nil, errors.New("error happend")
 	}
 	return mockReaderCloser(), nil
