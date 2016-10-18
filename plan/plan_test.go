@@ -297,8 +297,8 @@ func (s *testPlanSuite) TestLogicOpsPushDown(c *C) {
 		},
 		{
 			sql:    "not a",
-			cond:   "and(test.t.a, or(test.t.b, test.t.c))",
-			exprPB: "\b\xfe\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x03",
+			cond:   "not(test.t.a)",
+			exprPB: "\b\xe9\a\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
 		},
 	}
 	for _, ca := range cases {

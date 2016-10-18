@@ -44,7 +44,6 @@ func expressionsToPB(exprs []expression.Expression, client kv.Client) (pbExpr *t
 }
 
 func exprToPB(client kv.Client, expr expression.Expression) *tipb.Expr {
-	log.Error(expr.String())
 	switch x := expr.(type) {
 	case *expression.Constant:
 		return datumToPBExpr(client, x.Value)
@@ -230,7 +229,6 @@ func logicalFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tip
 	case ast.OrOr:
 		tp = tipb.ExprType_Or
 	case ast.UnaryNot:
-		log.Error(expr.String(), " ", notToPBExpr(client, expr))
 		return notToPBExpr(client, expr)
 	}
 	expr0 := exprToPB(client, expr.Args[0])
