@@ -120,7 +120,10 @@ func (c *txnCommitter) iterKeys(bo *Backoffer, keys [][]byte, f func(*Backoffer,
 	}
 	if asyncNonPrimary {
 		go func() {
-			c.doBatches(bo, batches, f)
+			e := c.doBatches(bo, batches, f)
+			if e != nil {
+				log.Warnf("txnCommitter async doBatches err: %v", e)
+			}
 		}()
 		return nil
 	}
@@ -215,6 +218,7 @@ func (c *txnCommitter) prewriteSingleRegion(bo *Backoffer, batch batchKeys) erro
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
+			log.Debugf("prewrite encounters lock: %v", lock)
 			locks = append(locks, lock)
 		}
 		ok, err := c.store.lockResolver.ResolveLocks(bo, locks)
@@ -334,8 +338,12 @@ func (c *txnCommitter) Commit() error {
 		c.mu.RUnlock()
 		if !committed {
 			go func() {
-				c.cleanupKeys(NewBackoffer(cleanupMaxBackoff), writtenKeys)
-				log.Infof("txn clean up done, tid: %d", c.startTS)
+				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff), writtenKeys)
+				if err != nil {
+					log.Infof("txn cleanup err: %v, tid: %d", err, c.startTS)
+				} else {
+					log.Infof("txn clean up done, tid: %d", c.startTS)
+				}
 			}()
 		}
 	}()
