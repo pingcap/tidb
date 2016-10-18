@@ -273,12 +273,13 @@ func (s *testPlanSuite) TestTopnPushDown(c *C) {
 	}
 }
 
+// TestLogicOpsPushDown tests whether logic operators been pushed down successfully.
 func (s *testPlanSuite) TestLogicOpsPushDown(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql    string
-		cond   string
-		exprPB string
+		cond   string // readable expressions.
+		exprPB string // Marshall result of conditions been pushed down.
 	}{
 		{
 			sql:    "a and b",
@@ -327,6 +328,7 @@ func (s *testPlanSuite) TestLogicOpsPushDown(c *C) {
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		p = info.p
+		// loop util reaching the DataSource node of a physical plan to get the conditions been pushed down.
 	loop:
 		for {
 			switch x := p.(type) {
