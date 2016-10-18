@@ -538,6 +538,8 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 	return rs.valuesToRow(ctx, handle, values)
 }
 
+// evalTopN evaluates the top n elements from the data. The input receives a record including its handle and data.
+// And this function will check if this record can replace one of the old records.
 func (rs *localRegion) evalTopN(ctx *selectContext, handle int64, values map[int64][]byte, columns []*tipb.ColumnInfo) error {
 	err := rs.setColumnValueToCtx(ctx, handle, values, ctx.topnColumns)
 	if err != nil {
