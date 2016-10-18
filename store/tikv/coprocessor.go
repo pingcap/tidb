@@ -94,7 +94,7 @@ func (c *CopClient) Send(req *kv.Request) kv.Response {
 	if !it.req.KeepOrder {
 		it.respChan = make(chan *coprocessor.Response, it.concurrency)
 	}
-	it.errChan = make(chan error, 1)
+	it.errChan = make(chan error, it.concurrency)
 	if len(it.mu.tasks) == 0 {
 		it.Close()
 	}
@@ -449,11 +449,19 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 		if e := resp.GetRegionError(); e != nil {
 			reportRegionError(e)
 			if notLeader := e.GetNotLeader(); notLeader != nil {
+				log.Warnf("tikv reports `NotLeader`: %s, ctx: %s, retry later", notLeader, req.Context)
 				it.store.regionCache.UpdateLeader(task.region.VerID(), notLeader.GetLeader().GetId())
+			} else if staleEpoch := e.GetStaleEpoch(); staleEpoch != nil {
+				log.Warnf("tikv reports `StaleEpoch`, ctx: %s, retry later", req.Context)
+				err = it.store.regionCache.OnRegionStale(task.region, staleEpoch.NewRegions)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			} else {
+				log.Warnf("tikv reports region error: %s, ctx: %s, retry later", e, req.Context)
 				it.store.regionCache.DropRegion(task.region.VerID())
 			}
-			err = bo.Backoff(boRegionMiss, err)
+			err = bo.Backoff(boRegionMiss, errors.Errorf("regionError: %s", e))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -465,6 +473,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 			continue
 		}
 		if e := resp.GetLocked(); e != nil {
+			log.Debugf("coprocessor encounters lock: %v", e)
 			ok, err1 := it.store.lockResolver.ResolveLocks(bo, []*Lock{newLock(e)})
 			if err1 != nil {
 				return nil, errors.Trace(err1)
