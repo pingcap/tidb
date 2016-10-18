@@ -192,6 +192,18 @@ func (s *testSuite) TestCreateUser(c *C) {
 	c.Check(err, NotNil)
 }
 
+func (s *testSuite) TestCreateUserWithNoPassword(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	// Create user test.
+	createUserSQL := `CREATE USER 'test1'@'localhost';`
+	tk.MustExec(createUserSQL)
+	// Make sure user test in mysql.User.
+	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	rowStr := fmt.Sprintf("%v", []byte(util.EncodePassword("")))
+	result.Check(testkit.Rows(rowStr))
+}
+
 func (s *testSuite) TestSetPwd(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)

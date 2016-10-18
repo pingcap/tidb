@@ -322,10 +322,12 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 			continue
 		}
 		pwd := ""
-		if spec.AuthOpt.ByAuthString {
-			pwd = util.EncodePassword(spec.AuthOpt.AuthString)
-		} else {
-			pwd = util.EncodePassword(spec.AuthOpt.HashString)
+		if spec.AuthOpt != nil {
+			if spec.AuthOpt.ByAuthString {
+				pwd = util.EncodePassword(spec.AuthOpt.AuthString)
+			} else {
+				pwd = util.EncodePassword(spec.AuthOpt.HashString)
+			}
 		}
 		user := fmt.Sprintf(`("%s", "%s", "%s")`, host, userName, pwd)
 		users = append(users, user)
