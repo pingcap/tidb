@@ -162,7 +162,7 @@ func asyncNotify(ch chan struct{}) {
 }
 
 // Background job is serial processing, so we can extend the owner timeout to make sure
-// a batch of task will be processed before timeout.
+// a batch of rows will be processed before timeout.
 var minBgOwnerTimeout = 20 * time.Second
 
 func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
