@@ -94,7 +94,7 @@ func (c *CopClient) Send(req *kv.Request) kv.Response {
 	if !it.req.KeepOrder {
 		it.respChan = make(chan *coprocessor.Response, it.concurrency)
 	}
-	it.errChan = make(chan error, 1)
+	it.errChan = make(chan error, it.concurrency)
 	if len(it.mu.tasks) == 0 {
 		it.Close()
 	}
