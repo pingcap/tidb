@@ -764,14 +764,14 @@ func (d *Datum) convertToString(target *FieldType) (Datum, error) {
 	// TODO: consider target.Charset/Collate
 	var err error
 	if target.Flen > 0 && target.Flen < len(s) {
-		err = ErrDataTooLong
+		err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", target.Flen, len(s))
 	}
 	s = truncateStr(s, target.Flen)
 	ret.SetString(s)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
 	}
-	return ret, err
+	return ret, errors.Trace(err)
 }
 
 func (d *Datum) convertToInt(target *FieldType) (Datum, error) {
