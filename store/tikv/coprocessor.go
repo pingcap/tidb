@@ -450,6 +450,11 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 			reportRegionError(e)
 			if notLeader := e.GetNotLeader(); notLeader != nil {
 				it.store.regionCache.UpdateLeader(task.region.VerID(), notLeader.GetLeader().GetId())
+			} else if staleEpoch := e.GetStaleEpoch(); staleEpoch != nil {
+				err = it.store.regionCache.OnRegionStale(task.region, staleEpoch.NewRegions)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			} else {
 				it.store.regionCache.DropRegion(task.region.VerID())
 			}
