@@ -63,7 +63,7 @@ type AggregationFunction interface {
 	SetContext(ctx map[string](*ast.AggEvaluateContext))
 }
 
-// EqualAgg checks whether the two expressions are equal.
+// EqualExpression checks whether the two expressions are equal.
 func EqualExpression(a, b Expression) bool {
 	switch x := a.(type) {
 	case *ScalarFunction:
