@@ -92,6 +92,8 @@ type Job struct {
 	// unix nano seconds
 	// TODO: use timestamp allocated by TSO.
 	LastUpdateTS int64 `json:"last_update_ts"`
+	// Query string of the ddl job.
+	Query string `json:"query"`
 }
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.
@@ -151,6 +153,11 @@ func (job *Job) String() string {
 // If the job state is Done or Cancelled, it is finished.
 func (job *Job) IsFinished() bool {
 	return job.State == JobDone || job.State == JobCancelled
+}
+
+// IsDone returns whether job is done.
+func (job *Job) IsDone() bool {
+	return job.State == JobDone
 }
 
 // IsRunning returns whether job is still running or not.

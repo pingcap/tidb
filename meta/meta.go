@@ -17,6 +17,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -566,6 +567,43 @@ func (m *Meta) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {
 // GetHistoryDDLJob gets a history DDL job.
 func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	return m.getHistoryDDLJob(mDDLJobHistoryKey, id)
+}
+
+// GetAllHistoryDDLJobs gets all history DDL jobs.
+func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
+	pairs, err := m.txn.HGetAll(mDDLJobHistoryKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var jobs []*model.Job
+	for _, pair := range pairs {
+		job := &model.Job{}
+		err = job.Decode(pair.Value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, job)
+	}
+	sorter := &jobsSorter{jobs: jobs}
+	sort.Sort(sorter)
+	return jobs, nil
+}
+
+// jobsSorter implements the sort.Interface interface.
+type jobsSorter struct {
+	jobs []*model.Job
+}
+
+func (s *jobsSorter) Swap(i, j int) {
+	s.jobs[i], s.jobs[j] = s.jobs[j], s.jobs[i]
+}
+
+func (s *jobsSorter) Len() int {
+	return len(s.jobs)
+}
+
+func (s *jobsSorter) Less(i, j int) bool {
+	return s.jobs[i].ID < s.jobs[j].ID
 }
 
 // GetBootstrapVersion returns the version of the server which boostrap the store.
