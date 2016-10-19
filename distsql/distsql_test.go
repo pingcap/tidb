@@ -51,7 +51,7 @@ func (s *testTableCodecSuite) TestColumnToProto(c *C) {
 	c.Assert(pc.GetFlag(), Equals, int32(10))
 }
 
-// For Issue 1791
+// For issue 1791
 func (s *testTableCodecSuite) TestGoroutineLeak(c *C) {
 	var sr SelectResult
 	countBefore := runtime.NumGoroutine()
