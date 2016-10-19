@@ -161,6 +161,10 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
+// Background job is serial processing, so we can extend the owner timeout to make sure
+// a batch of rows will be processed before timeout.
+var minBgOwnerTimeout = 20 * time.Second
+
 func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	owner, err := d.getJobOwner(t, flag)
 	if err != nil {
@@ -177,6 +181,12 @@ func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	// the owner will update its owner status every 2 * lease time, so here we use
 	// 4 * lease to check its timeout.
 	maxTimeout := int64(4 * d.lease)
+	if flag == bgJobFlag {
+		// If 4 * lease is less then minBgOwnerTimeout, we will use default minBgOwnerTimeout.
+		if maxTimeout < int64(minBgOwnerTimeout) {
+			maxTimeout = int64(minBgOwnerTimeout)
+		}
+	}
 	sub := now - owner.LastUpdateTS
 	if owner.OwnerID == d.uuid || sub > maxTimeout {
 		owner.OwnerID = d.uuid
@@ -434,7 +444,7 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 	if err != nil {
 		// if job is not cancelled, we should log this error.
 		if job.State != model.JobCancelled {
-			log.Errorf("run ddl job err %v", errors.ErrorStack(err))
+			log.Errorf("[ddl] run ddl job err %v", errors.ErrorStack(err))
 		}
 
 		job.Error = toTError(err)

@@ -64,6 +64,7 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
+	minBgOwnerTimeout = testLease
 	d1 := newDDL(store, nil, nil, testLease)
 	defer d1.close()
 
@@ -101,6 +102,7 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	d2.SetLease(1 * time.Second)
 	d2.SetLease(2 * time.Second)
 	c.Assert(d2.GetLease(), Equals, 2*time.Second)
+	minBgOwnerTimeout = 20 * time.Second
 }
 
 func (s *testDDLSuite) TestSchemaError(c *C) {
