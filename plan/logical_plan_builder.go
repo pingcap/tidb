@@ -34,7 +34,7 @@ func (a *idAllocator) allocID() string {
 	return fmt.Sprintf("_%d", a.id)
 }
 
-func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gby []expression.Expression, correlated bool) LogicalPlan {
+func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gby []expression.Expression, correlated bool) (LogicalPlan, map[int]int) {
 	agg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(aggFuncList)),
 		ctx:             b.ctx,
@@ -44,28 +44,45 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	agg.correlated = p.IsCorrelated() || correlated
 	addChild(agg, p)
 	schema := make([]*expression.Column, 0, len(aggFuncList))
+	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
+	aggIndexMap := make(map[int]int)
 	for i, aggFunc := range aggFuncList {
 		var newArgList []expression.Expression
 		for _, arg := range aggFunc.Args {
 			newArg, np, correlated, err := b.rewrite(arg, p, nil, true)
 			if err != nil {
 				b.err = errors.Trace(err)
-				return nil
+				return nil, nil
 			}
 			p = np
 			agg.correlated = correlated || agg.correlated
 			newArgList = append(newArgList, newArg)
 		}
-		agg.AggFuncs = append(agg.AggFuncs, expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct))
-		schema = append(schema, &expression.Column{FromID: agg.id,
-			ColName:     model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, i)),
-			Position:    i,
-			IsAggOrSubq: true,
-			RetType:     aggFunc.GetType()})
+		newFunc := expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct)
+		combined := false
+		for j, oldFunc := range agg.AggFuncs {
+			if expression.EqualAgg(oldFunc, newFunc) {
+				aggIndexMap[i] = j
+				newFunc = oldFunc
+				combined = true
+				break
+			}
+		}
+		if !combined {
+			position := len(agg.AggFuncs)
+			aggIndexMap[i] = position
+			agg.AggFuncs = append(agg.AggFuncs, newFunc)
+			schema = append(schema, &expression.Column{
+				FromID:      agg.id,
+				ColName:     model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, position)),
+				Position:    position,
+				IsAggOrSubq: true,
+				RetType:     aggFunc.GetType()})
+		}
 	}
 	agg.GroupByItems = gby
 	agg.SetSchema(schema)
-	return agg
+	return agg, aggIndexMap
 }
 
 func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
@@ -773,7 +790,11 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.err != nil {
 			return nil
 		}
-		p = b.buildAggregation(p, aggFuncs, gbyCols, correlated)
+		var aggIndexMap map[int]int
+		p, aggIndexMap = b.buildAggregation(p, aggFuncs, gbyCols, correlated)
+		for k, v := range totalMap {
+			totalMap[k] = aggIndexMap[v]
+		}
 		if b.err != nil {
 			return nil
 		}

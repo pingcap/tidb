@@ -28,6 +28,7 @@ import (
 
 // AggregationFunction stands for aggregate functions.
 type AggregationFunction interface {
+	fmt.Stringer
 	// Update during executing.
 	Update(row []types.Datum, groupKey []byte, ctx context.Context) error
 
@@ -60,6 +61,59 @@ type AggregationFunction interface {
 
 	// SetContext sets the aggregate evaluation context.
 	SetContext(ctx map[string](*ast.AggEvaluateContext))
+}
+
+// EqualAgg checks whether the two expressions are equal.
+func EqualExpression(a, b Expression) bool {
+	switch x := a.(type) {
+	case *ScalarFunction:
+		y, ok := b.(*ScalarFunction)
+		if !ok {
+			return false
+		}
+		if x.FuncName.L != y.FuncName.L {
+			return false
+		}
+		if len(x.Args) != len(y.Args) {
+			return false
+		}
+		for i, argX := range x.Args {
+			if !EqualExpression(argX, y.Args[i]) {
+				return false
+			}
+		}
+	case *Constant:
+		y, ok := b.(*Constant)
+		if !ok {
+			return false
+		}
+		c, err := x.Value.CompareDatum(y.Value)
+		if err != nil || c != 0 {
+			return false
+		}
+	case *Column:
+		y, ok := b.(*Column)
+		if !ok {
+			return false
+		}
+		return x.FromID == y.FromID && x.Position == y.Position
+	}
+	return true
+}
+
+// EqualAgg checks whether the two aggregation functions are equal.
+func EqualAgg(a, b AggregationFunction) bool {
+	if a.GetName() != b.GetName() {
+		return false
+	}
+	if len(a.GetArgs()) == len(b.GetArgs()) {
+		for i, argA := range a.GetArgs() {
+			if !EqualExpression(argA, b.GetArgs()[i]) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -102,6 +156,18 @@ type aggFunction struct {
 	Distinct     bool
 	resultMapper aggCtxMapper
 	streamCtx    *ast.AggEvaluateContext
+}
+
+func (af *aggFunction) String() string {
+	result := af.name + "("
+	for i, arg := range af.Args {
+		result += arg.String()
+		if i+1 != len(af.Args) {
+			result += ", "
+		}
+	}
+	result += ")"
+	return result
 }
 
 func newAggFunc(name string, args []Expression, dist bool) aggFunction {
