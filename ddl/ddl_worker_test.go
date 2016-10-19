@@ -85,9 +85,6 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	testCheckOwner(c, d2, true, ddlJobFlag)
 	testCheckOwner(c, d2, true, bgJobFlag)
 
-	time.Sleep(20 * time.Second)
-	testCheckOwner(c, d2, true, bgJobFlag)
-
 	d2.SetLease(1 * time.Second)
 
 	err := d2.Stop()
