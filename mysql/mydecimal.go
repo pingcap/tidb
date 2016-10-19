@@ -164,6 +164,10 @@ type MyDecimal struct {
 	wordBuf [maxWordBufLen]int32
 }
 
+func (d *MyDecimal) IsNegative() bool {
+	return d.negative
+}
+
 // String returns the decimal string representation rounded to resultFrac.
 func (d *MyDecimal) String() string {
 	tmp := *d

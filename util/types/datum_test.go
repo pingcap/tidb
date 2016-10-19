@@ -213,3 +213,75 @@ func (ts *testDatumSuite) TestCoerceDatum(c *C) {
 		c.Check(x.Kind(), Equals, ca.kind)
 	}
 }
+
+func (ts *testDatumSuite) TestBitOps(c *C) {
+	testCases := []struct {
+		a      Datum
+		b      Datum
+		bitop  string // bitwise operator
+		result Datum
+	}{
+		// And
+		{NewIntDatum(341), NewIntDatum(170), "And", NewIntDatum(0)},
+		{NewIntDatum(341), NewUintDatum(170), "And", NewUintDatum(0)},
+		{NewUintDatum(341), NewUintDatum(170), "And", NewUintDatum(0)},
+		{NewIntDatum(-1), NewFloat64Datum(-2.5), "And", NewUintDatum(18446744073709551613)},
+		{NewFloat64Datum(-1.4), NewFloat64Datum(-2.4), "And", NewUintDatum(18446744073709551614)},
+		{NewFloat64Datum(-1.5), NewFloat64Datum(-2.5), "And", NewUintDatum(18446744073709551612)},
+		// Or
+		{NewIntDatum(341), NewIntDatum(170), "Or", NewIntDatum(511)},
+		{NewIntDatum(341), NewUintDatum(170), "Or", NewUintDatum(511)},
+		{NewUintDatum(341), NewUintDatum(170), "Or", NewUintDatum(511)},
+		{NewIntDatum(-1), NewFloat64Datum(-2.5), "Or", NewUintDatum(18446744073709551615)},
+		{NewFloat64Datum(-1.4), NewFloat64Datum(-2.4), "Or", NewUintDatum(18446744073709551615)},
+		{NewFloat64Datum(-1.5), NewFloat64Datum(-2.5), "Or", NewUintDatum(18446744073709551615)},
+		// Xor
+		{NewIntDatum(341), NewIntDatum(170), "Xor", NewUintDatum(511)},
+		{NewIntDatum(341), NewUintDatum(170), "Xor", NewUintDatum(511)},
+		{NewUintDatum(341), NewUintDatum(170), "Xor", NewUintDatum(511)},
+		{NewIntDatum(-1), NewFloat64Datum(-2.5), "Xor", NewUintDatum(2)},
+		{NewFloat64Datum(-1.4), NewFloat64Datum(-2.4), "Xor", NewUintDatum(1)},
+		{NewFloat64Datum(-1.5), NewFloat64Datum(-2.5), "Xor", NewUintDatum(3)},
+		// Not
+		{NewIntDatum(-1), Datum{}, "Not", NewUintDatum(0)},
+		{NewIntDatum(1), Datum{}, "Not", NewUintDatum(18446744073709551614)},
+		{NewFloat64Datum(-0.5), Datum{}, "Not", NewUintDatum(0)},
+		{NewFloat64Datum(-0.4), Datum{}, "Not", NewUintDatum(18446744073709551615)},
+		{NewUintDatum(18446744073709551615), Datum{}, "Not", NewUintDatum(0)},
+		// LeftShift
+		{NewIntDatum(-1), NewIntDatum(1), "LeftShift", NewUintDatum(18446744073709551614)},
+		{NewIntDatum(-1), NewIntDatum(-1), "LeftShift", NewUintDatum(0)},
+		{NewIntDatum(1), NewIntDatum(10), "LeftShift", NewUintDatum(1024)},
+		{NewFloat64Datum(-1.4), NewFloat64Datum(2.4), "LeftShift", NewUintDatum(18446744073709551612)},
+		{NewFloat64Datum(-1.4), NewFloat64Datum(2.5), "LeftShift", NewUintDatum(18446744073709551608)},
+		// RightShift
+		{NewUintDatum(18446744073709551614), NewIntDatum(1), "RightShift", NewUintDatum(9223372036854775807)},
+		{NewIntDatum(-1), NewIntDatum(-1), "RightShift", NewUintDatum(0)},
+		{NewIntDatum(1024), NewIntDatum(10), "RightShift", NewUintDatum(1)},
+		{NewFloat64Datum(1024), NewFloat64Datum(10.4), "RightShift", NewUintDatum(1)},
+		{NewFloat64Datum(1024), NewFloat64Datum(10.5), "RightShift", NewUintDatum(0)},
+	}
+
+	for _, ca := range testCases {
+		var (
+			result Datum
+			err    error
+		)
+		switch ca.bitop {
+		case "And":
+			result, err = ComputeBitAnd(ca.a, ca.b)
+		case "Or":
+			result, err = ComputeBitOr(ca.a, ca.b)
+		case "Not":
+			result, err = ComputeBitNeg(ca.a)
+		case "Xor":
+			result, err = ComputeBitXor(ca.a, ca.b)
+		case "LeftShift":
+			result, err = ComputeLeftShift(ca.a, ca.b)
+		case "RightShift":
+			result, err = ComputeRightShift(ca.a, ca.b)
+		}
+		c.Check(err, Equals, nil)
+		c.Assert(result.GetUint64(), Equals, ca.result.GetUint64())
+	}
+}
