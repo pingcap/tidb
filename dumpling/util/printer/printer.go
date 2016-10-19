@@ -27,7 +27,7 @@ var (
 
 // PrintTiDBInfo prints the TiDB version information.
 func PrintTiDBInfo() {
-	log.Infof("Welcome to the TiDB.")
+	log.Infof("Welcome to TiDB.")
 	log.Infof("Version:")
 	log.Infof("Git Commit Hash: %s", TiDBGitHash)
 	log.Infof("UTC Build Time:  %s", TiDBBuildTS)
