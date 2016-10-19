@@ -187,7 +187,9 @@ func (s *Server) Close() {
 func (s *Server) onConn(c net.Conn) {
 	conn := s.newConn(c)
 	if err := conn.handshake(); err != nil {
-		log.Errorf("handshake error %s", errors.ErrorStack(err))
+		// Some keep alive services will send request to TiDB and disconnect immediately.
+		// So we use info log level.
+		log.Infof("handshake error %s", errors.ErrorStack(err))
 		c.Close()
 		return
 	}

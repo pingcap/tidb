@@ -170,14 +170,13 @@ func (t *BoundedTable) FirstKey() kv.Key {
 	return t.RecordKey(0)
 }
 
-// Truncate implements table.Table Truncate interface.
-func (t *BoundedTable) Truncate(ctx context.Context) error {
+// Truncate drops all data in BoundedTable.
+func (t *BoundedTable) Truncate() {
 	// just reset everything.
 	for i := int64(0); i < t.capacity; i++ {
 		atomic.StorePointer(&t.records[i], unsafe.Pointer(nil))
 	}
 	t.cursor = 0
-	return nil
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
@@ -254,11 +253,6 @@ func (t *BoundedTable) Row(ctx context.Context, h int64) ([]types.Datum, error) 
 		return nil, errors.Trace(err)
 	}
 	return r, nil
-}
-
-// LockRow implements table.Table LockRow interface.
-func (t *BoundedTable) LockRow(ctx context.Context, h int64, forRead bool) error {
-	return nil
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.

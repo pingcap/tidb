@@ -157,10 +157,9 @@ func (t *MemoryTable) FirstKey() kv.Key {
 	return t.RecordKey(0)
 }
 
-// Truncate implements table.Table Truncate interface.
-func (t *MemoryTable) Truncate(ctx context.Context) error {
+// Truncate drops all data in Memory Table.
+func (t *MemoryTable) Truncate() {
 	t.tree = llrb.New()
-	return nil
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
@@ -228,11 +227,6 @@ func (t *MemoryTable) Row(ctx context.Context, h int64) ([]types.Datum, error) {
 		return nil, errors.Trace(err)
 	}
 	return r, nil
-}
-
-// LockRow implements table.Table LockRow interface.
-func (t *MemoryTable) LockRow(ctx context.Context, h int64, forRead bool) error {
-	return nil
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
