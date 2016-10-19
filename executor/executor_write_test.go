@@ -102,6 +102,10 @@ func (s *testSuite) TestInsert(c *C) {
 
 	_, err = tk.Exec(`insert into insert_test (id, c2) values(1, 1) on duplicate key update t.c2 = 10`)
 	c.Assert(err, NotNil)
+
+	tk.MustExec("create table insert_err (id int, c1 varchar(8))")
+	_, err = tk.Exec("insert insert_err values (1, 'abcdabcdabcd')")
+	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {

@@ -126,7 +126,7 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 	case ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Mod, ast.IntDiv:
 		return arithmeticalFuncToPBExpr(client, expr)
 	case ast.AndAnd, ast.OrOr, ast.UnaryNot, ast.LogicXor:
-		return logicalFuncToPBExpr(client, expr)
+	return logicalFuncToPBExpr(client, expr)
 	case ast.And, ast.Or, ast.BitNeg, ast.Xor, ast.LeftShift, ast.RightShift:
 		return bitwiseFuncToPBExpr(client, expr)
 	default:
