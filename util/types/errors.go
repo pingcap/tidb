@@ -20,7 +20,7 @@ import (
 
 var (
 	// ErrDataTooLong is returned when converts a string value that is longer than field type length.
-	ErrDataTooLong *terror.Error = terror.ClassTypes.New(codeDataTooLong, "Data Too Long")
+	ErrDataTooLong = terror.ClassTypes.New(codeDataTooLong, "Data Too Long")
 )
 
 const (
