@@ -464,11 +464,9 @@ func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
 func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
 	constraints := []*ast.Constraint{}
 	col := &table.Column{
-		ColumnInfo: model.ColumnInfo{
-			Offset:    offset,
-			Name:      colDef.Name.Name,
-			FieldType: *colDef.Tp,
-		},
+		Offset:    offset,
+		Name:      colDef.Name.Name,
+		FieldType: *colDef.Tp,
 	}
 
 	// Check and set TimestampFlag and OnUpdateNowFlag.
@@ -749,7 +747,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		return nil, errors.Trace(err)
 	}
 	for _, v := range cols {
-		tbInfo.Columns = append(tbInfo.Columns, &v.ColumnInfo)
+		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
 	}
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
@@ -1021,7 +1019,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		SchemaID: schema.ID,
 		TableID:  t.Meta().ID,
 		Type:     model.ActionAddColumn,
-		Args:     []interface{}{&col.ColumnInfo, spec.Position, 0},
+		Args:     []interface{}{col, spec.Position, 0},
 	}
 
 	err = d.doDDLJob(ctx, job)
