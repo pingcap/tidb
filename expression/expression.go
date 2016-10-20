@@ -44,6 +44,9 @@ type Expression interface {
 
 	// HashCode create the hashcode for expression
 	HashCode() []byte
+
+	// Equal checks whether two expressions are equal.
+	Equal(e Expression) bool
 }
 
 // EvalBool evaluates expression to a boolean value.
@@ -85,7 +88,7 @@ type Column struct {
 	data       *types.Datum
 }
 
-// Equal checks if two columns are equal
+// Equal implements Expression interface.
 func (col *Column) Equal(expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		return newCol.FromID == col.FromID && newCol.Position == col.Position
@@ -327,6 +330,26 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 	return sf.RetType
 }
 
+// Equal implements Expression interface.
+func (sf *ScalarFunction) Equal(e Expression) bool {
+	fun, ok := e.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	if sf.FuncName.L != fun.FuncName.L {
+		return false
+	}
+	if len(sf.Args) != len(fun.Args) {
+		return false
+	}
+	for i, argX := range sf.Args {
+		if !argX.Equal(fun.Args[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Datum, error) {
 	var err error
@@ -384,6 +407,19 @@ func (c *Constant) GetType() *types.FieldType {
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error) {
 	return c.Value, nil
+}
+
+// Equal implements Expression interface.
+func (x *Constant) Equal(b Expression) bool {
+	y, ok := b.(*Constant)
+	if !ok {
+		return false
+	}
+	c, err := x.Value.CompareDatum(y.Value)
+	if err != nil || c != 0 {
+		return false
+	}
+	return true
 }
 
 // HashCode implements Expression interface.
@@ -451,42 +487,4 @@ func SplitCNFItems(onExpr Expression) []Expression {
 // DNF means disjunctive normal form, e.g. "a or b or c".
 func SplitDNFItems(onExpr Expression) []Expression {
 	return splitNormalFormItems(onExpr, ast.OrOr)
-}
-
-// EqualExpression checks whether the two expressions are equal.
-func EqualExpression(a, b Expression) bool {
-	switch x := a.(type) {
-	case *ScalarFunction:
-		y, ok := b.(*ScalarFunction)
-		if !ok {
-			return false
-		}
-		if x.FuncName.L != y.FuncName.L {
-			return false
-		}
-		if len(x.Args) != len(y.Args) {
-			return false
-		}
-		for i, argX := range x.Args {
-			if !EqualExpression(argX, y.Args[i]) {
-				return false
-			}
-		}
-	case *Constant:
-		y, ok := b.(*Constant)
-		if !ok {
-			return false
-		}
-		c, err := x.Value.CompareDatum(y.Value)
-		if err != nil || c != 0 {
-			return false
-		}
-	case *Column:
-		y, ok := b.(*Column)
-		if !ok {
-			return false
-		}
-		return x.FromID == y.FromID && x.Position == y.Position
-	}
-	return true
 }

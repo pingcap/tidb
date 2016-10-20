@@ -61,21 +61,9 @@ type AggregationFunction interface {
 
 	// SetContext sets the aggregate evaluation context.
 	SetContext(ctx map[string](*ast.AggEvaluateContext))
-}
 
-// EqualAgg checks whether the two aggregation functions are equal.
-func EqualAgg(a, b AggregationFunction) bool {
-	if a.GetName() != b.GetName() {
-		return false
-	}
-	if len(a.GetArgs()) == len(b.GetArgs()) {
-		for i, argA := range a.GetArgs() {
-			if !EqualExpression(argA, b.GetArgs()[i]) {
-				return false
-			}
-		}
-	}
-	return true
+	// Equal checks whether two aggregation functions are equal.
+	Equal(agg AggregationFunction) bool
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -118,6 +106,21 @@ type aggFunction struct {
 	Distinct     bool
 	resultMapper aggCtxMapper
 	streamCtx    *ast.AggEvaluateContext
+}
+
+// Equal implements AggregationFunction interface.
+func (af *aggFunction) Equal(b AggregationFunction) bool {
+	if af.GetName() != b.GetName() {
+		return false
+	}
+	if len(af.GetArgs()) == len(b.GetArgs()) {
+		for i, argA := range af.GetArgs() {
+			if !argA.Equal(b.GetArgs()[i]) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (af *aggFunction) String() string {

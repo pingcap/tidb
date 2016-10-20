@@ -61,7 +61,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		newFunc := expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct)
 		combined := false
 		for j, oldFunc := range agg.AggFuncs {
-			if expression.EqualAgg(oldFunc, newFunc) {
+			if oldFunc.Equal(newFunc) {
 				aggIndexMap[i] = j
 				newFunc = oldFunc
 				combined = true
