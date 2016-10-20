@@ -410,13 +410,13 @@ func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error)
 }
 
 // Equal implements Expression interface.
-func (x *Constant) Equal(b Expression) bool {
+func (c *Constant) Equal(b Expression) bool {
 	y, ok := b.(*Constant)
 	if !ok {
 		return false
 	}
-	c, err := x.Value.CompareDatum(y.Value)
-	if err != nil || c != 0 {
+	con, err := c.Value.CompareDatum(y.Value)
+	if err != nil || con != 0 {
 		return false
 	}
 	return true

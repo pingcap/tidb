@@ -63,7 +63,6 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		for j, oldFunc := range agg.AggFuncs {
 			if oldFunc.Equal(newFunc) {
 				aggIndexMap[i] = j
-				newFunc = oldFunc
 				combined = true
 				break
 			}
