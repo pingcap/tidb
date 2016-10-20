@@ -273,6 +273,81 @@ func (s *testPlanSuite) TestTopnPushDown(c *C) {
 	}
 }
 
+// TestLogicOpsPushDown tests whether logic operators been pushed down successfully.
+func (s *testPlanSuite) TestLogicOpsPushDown(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql    string
+		cond   string // readable expressions.
+		exprPB string // Marshall result of conditions been pushed down.
+	}{
+		{
+			sql:    "a and b",
+			cond:   "and(test.t.a, test.t.b)",
+			exprPB: "\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		{
+			sql:    "a or b",
+			cond:   "or(test.t.a, test.t.b)",
+			exprPB: "\b\xfe\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		{
+			sql:    "a and (b or c)",
+			cond:   "and(test.t.a, or(test.t.b, test.t.c))",
+			exprPB: "\b\xfe\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x03",
+		},
+		{
+			sql:    "not a",
+			cond:   "not(test.t.a)",
+			exprPB: "\b\xe9\a\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
+		},
+	}
+	for _, ca := range cases {
+		sql := "select * from t where " + ca.sql
+		comment := Commentf("for %s", sql)
+		stmt, err := s.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
+		c.Assert(err, IsNil)
+		lp = EliminateProjection(lp)
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		c.Assert(err, IsNil)
+		p = info.p
+		// loop util reaching the DataSource node of a physical plan to get the conditions been pushed down.
+	loop:
+		for {
+			switch x := p.(type) {
+			case *PhysicalTableScan:
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				pbStr, _ := x.ConditionPBExpr.Marshal()
+				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
+				break loop
+			case *PhysicalIndexScan:
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				pbStr, _ := x.ConditionPBExpr.Marshal()
+				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
+				break loop
+			}
+			p = p.GetChildByIndex(0)
+		}
+	}
+}
+
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {

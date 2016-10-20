@@ -260,6 +260,14 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
 
+	all, err := t.GetAllHistoryDDLJobs()
+	c.Assert(err, IsNil)
+	var lastID int64
+	for _, job := range all {
+		c.Assert(job.ID, Greater, lastID)
+		lastID = job.ID
+	}
+
 	// DDL background job test
 	err = t.SetBgJobOwner(owner)
 	c.Assert(err, IsNil)
