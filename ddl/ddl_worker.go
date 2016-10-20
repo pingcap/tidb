@@ -348,9 +348,8 @@ func (d *ddl) handleDDLJobQueue() error {
 			return nil
 		}
 		if binlogStartTS != 0 {
-			var commitTS kv.Version
-			commitTS, err = d.store.CurrentVersion()
-			if err == nil {
+			commitTS, err1 := d.store.CurrentVersion()
+			if err1 == nil {
 				d.writePostDDLBinlog(job.ID, binlogStartTS, commitTS.Ver)
 			}
 		}
