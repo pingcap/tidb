@@ -94,7 +94,11 @@ func (s *testDBSuite) TestIndex(c *C) {
 
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	ctx := s.s.(context.Context)
-	tbl, err := sessionctx.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
+	domain := sessionctx.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := domain.MustReload()
+	c.Assert(err, IsNil)
+	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
 	c.Assert(err, IsNil)
 	return tbl
 }
@@ -162,7 +166,7 @@ LOOP:
 
 	t := s.testGetTable(c, "t1")
 	for _, tidx := range t.Indices() {
-		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsTrue)
+		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsFalse)
 	}
 
 	// delete duplicate rows, then add index
