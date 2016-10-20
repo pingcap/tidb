@@ -82,6 +82,8 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeRollback(x)
 	case *ast.CreateUserStmt:
 		err = e.executeCreateUser(x)
+	case *ast.DropUserStmt:
+		err = e.executeDropUser(x)
 	case *ast.SetPwdStmt:
 		err = e.executeSetPwd(x)
 	case *ast.AnalyzeTableStmt:
@@ -339,6 +341,39 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 	_, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
+	failedUsers := make([]string, 0, len(s.UserList))
+	for _, user := range s.UserList {
+		userName, host := parseUser(user)
+		exists, err := userExists(e.ctx, userName, host)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Warnf("exists %v if exists %v", exists, s.IfExists)
+		if !exists {
+			if !s.IfExists {
+				failedUsers = append(failedUsers, user)
+			}
+			continue
+		}
+		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.UserTable, host, userName)
+		log.Warnf("sql: %s", sql)
+		_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		if err != nil {
+			failedUsers = append(failedUsers, user)
+		}
+	}
+	err := e.ctx.CommitTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(failedUsers) > 0 {
+		errMsg := "Operation DROP USER failed for " + strings.Join(failedUsers, ",")
+		return errors.New(errMsg)
 	}
 	return nil
 }

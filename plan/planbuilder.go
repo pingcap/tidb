@@ -59,10 +59,6 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildAdmin(x)
 	case *ast.AlterTableStmt:
 		return b.buildDDL(x)
-	case *ast.AnalyzeTableStmt:
-		return b.buildSimple(x)
-	case *ast.BinlogStmt:
-		return b.buildSimple(x)
 	case *ast.CreateDatabaseStmt:
 		return b.buildDDL(x)
 	case *ast.CreateIndexStmt:
@@ -83,8 +79,6 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
-	case *ast.FlushTableStmt:
-		return b.buildSimple(x)
 	case *ast.InsertStmt:
 		return b.buildInsert(x)
 	case *ast.LoadDataStmt:
@@ -97,26 +91,11 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildUnion(x)
 	case *ast.UpdateStmt:
 		return b.buildUpdate(x)
-	case *ast.UseStmt:
-		return b.buildSimple(x)
-	case *ast.SetStmt:
-		return b.buildSimple(x)
 	case *ast.ShowStmt:
 		return b.buildShow(x)
-	case *ast.DoStmt:
-		return b.buildSimple(x)
-	case *ast.BeginStmt:
-		return b.buildSimple(x)
-	case *ast.CommitStmt:
-		return b.buildSimple(x)
-	case *ast.RollbackStmt:
-		return b.buildSimple(x)
-	case *ast.CreateUserStmt:
-		return b.buildSimple(x)
-	case *ast.SetPwdStmt:
-		return b.buildSimple(x)
-	case *ast.GrantStmt:
-		return b.buildSimple(x)
+	case *ast.AnalyzeTableStmt, *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt, *ast.SetStmt, *ast.DoStmt, *ast.BeginStmt,
+		*ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.GrantStmt, *ast.DropUserStmt:
+		return b.buildSimple(node.(ast.StmtNode))
 	case *ast.TruncateTableStmt:
 		return b.buildDDL(x)
 	}
