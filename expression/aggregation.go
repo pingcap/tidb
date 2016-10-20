@@ -113,6 +113,9 @@ func (af *aggFunction) Equal(b AggregationFunction) bool {
 	if af.GetName() != b.GetName() {
 		return false
 	}
+	if af.Distinct != b.IsDistinct() {
+		return false
+	}
 	if len(af.GetArgs()) == len(b.GetArgs()) {
 		for i, argA := range af.GetArgs() {
 			if !argA.Equal(b.GetArgs()[i]) {
