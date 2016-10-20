@@ -120,7 +120,14 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			str = "HashAgg"
 		}
 	case *Aggregation:
-		str = "Aggr"
+		str = "Aggr("
+		for i, aggFunc := range x.AggFuncs {
+			str += aggFunc.String()
+			if i != len(x.AggFuncs)-1 {
+				str += ","
+			}
+		}
+		str += ")"
 	case *Distinct:
 		str = "Distinct"
 	case *Trim:

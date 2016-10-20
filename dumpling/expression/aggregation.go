@@ -28,6 +28,7 @@ import (
 
 // AggregationFunction stands for aggregate functions.
 type AggregationFunction interface {
+	fmt.Stringer
 	// Update during executing.
 	Update(row []types.Datum, groupKey []byte, ctx context.Context) error
 
@@ -60,6 +61,9 @@ type AggregationFunction interface {
 
 	// SetContext sets the aggregate evaluation context.
 	SetContext(ctx map[string](*ast.AggEvaluateContext))
+
+	// Equal checks whether two aggregation functions are equal.
+	Equal(agg AggregationFunction) bool
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -102,6 +106,33 @@ type aggFunction struct {
 	Distinct     bool
 	resultMapper aggCtxMapper
 	streamCtx    *ast.AggEvaluateContext
+}
+
+// Equal implements AggregationFunction interface.
+func (af *aggFunction) Equal(b AggregationFunction) bool {
+	if af.GetName() != b.GetName() {
+		return false
+	}
+	if len(af.GetArgs()) == len(b.GetArgs()) {
+		for i, argA := range af.GetArgs() {
+			if !argA.Equal(b.GetArgs()[i]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (af *aggFunction) String() string {
+	result := af.name + "("
+	for i, arg := range af.Args {
+		result += arg.String()
+		if i+1 != len(af.Args) {
+			result += ", "
+		}
+	}
+	result += ")"
+	return result
 }
 
 func newAggFunc(name string, args []Expression, dist bool) aggFunction {
