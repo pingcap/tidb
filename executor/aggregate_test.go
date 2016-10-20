@@ -92,6 +92,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("1", "2", "2"))
 	result = tk.MustQuery("select sum(c) from t group by d")
 	result.Check(testkit.Rows("2", "4", "5"))
+	result = tk.MustQuery("select sum(c), sum(c+1), sum(c), sum(c+1) from t group by d")
+	result.Check(testkit.Rows("2 4 2 4", "4 6 4 6", "5 7 5 7"))
 	result = tk.MustQuery("select d*2 as ee, sum(c) from t group by ee")
 	result.Check(testkit.Rows("2 2", "4 4", "6 5"))
 	result = tk.MustQuery("select sum(distinct c) from t group by d")
