@@ -63,44 +63,6 @@ type AggregationFunction interface {
 	SetContext(ctx map[string](*ast.AggEvaluateContext))
 }
 
-// EqualExpression checks whether the two expressions are equal.
-func EqualExpression(a, b Expression) bool {
-	switch x := a.(type) {
-	case *ScalarFunction:
-		y, ok := b.(*ScalarFunction)
-		if !ok {
-			return false
-		}
-		if x.FuncName.L != y.FuncName.L {
-			return false
-		}
-		if len(x.Args) != len(y.Args) {
-			return false
-		}
-		for i, argX := range x.Args {
-			if !EqualExpression(argX, y.Args[i]) {
-				return false
-			}
-		}
-	case *Constant:
-		y, ok := b.(*Constant)
-		if !ok {
-			return false
-		}
-		c, err := x.Value.CompareDatum(y.Value)
-		if err != nil || c != 0 {
-			return false
-		}
-	case *Column:
-		y, ok := b.(*Column)
-		if !ok {
-			return false
-		}
-		return x.FromID == y.FromID && x.Position == y.Position
-	}
-	return true
-}
-
 // EqualAgg checks whether the two aggregation functions are equal.
 func EqualAgg(a, b AggregationFunction) bool {
 	if a.GetName() != b.GetName() {
