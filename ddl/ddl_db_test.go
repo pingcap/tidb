@@ -99,7 +99,7 @@ func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	return tbl
 }
 
-func sessionExecute(s kv.Storage, sql string, done chan error) {
+func backgroundExec(s kv.Storage, sql string, done chan error) {
 	se, err := tidb.CreateSession(s)
 	if err != nil {
 		done <- errors.Trace(err)
@@ -132,7 +132,7 @@ func (s *testDBSuite) testAddUniqueIndexRollback(c *C) {
 	}
 
 	done := make(chan error, 1)
-	go sessionExecute(s.store, "create unique index c3_index on t1 (c3)", done)
+	go backgroundExec(s.store, "create unique index c3_index on t1 (c3)", done)
 
 	times := 0
 	ticker := time.NewTicker(s.lease / 2)

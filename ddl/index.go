@@ -111,6 +111,16 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 }
 
 func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
+	// rollback job
+	if job.State == model.JobRollback {
+		err := d.onDropIndex(t, job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
+	// normal job
 	schemaID := job.SchemaID
 	tblInfo, err := d.getTableInfo(t, job)
 	if err != nil {
@@ -203,8 +213,8 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		}
 		if err != nil {
 			if terror.ErrorEqual(err, kv.ErrKeyExists) {
-				log.Warnf("[ddl] run DDL job %v err %v, convert job add index to drop column", job, err)
-				err = d.convert2DropIndexJob(t, job, tblInfo, indexInfo)
+				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
+				err = d.convert2RollbackJob(t, job, tblInfo, indexInfo)
 			}
 			return errors.Trace(err)
 		}
@@ -225,9 +235,8 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) convert2DropIndexJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	job.State = model.JobRollback
-	job.Type = model.ActionDropIndex
 	job.Args = []interface{}{indexInfo.Name}
 	job.SchemaState = model.StateDeleteOnly
 	indexInfo.State = model.StateDeleteOnly
