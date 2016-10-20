@@ -319,12 +319,9 @@ func (d *ddl) handleDDLJobQueue() error {
 			d.runDDLJob(t, job)
 
 			if job.IsFinished() {
-				if job.IsDone() {
-					binlogStartTS = txn.StartTS()
-					err = d.writePreDDLBinlog(job, binlogStartTS)
-					if err != nil {
-						return errors.Trace(err)
-					}
+				err = d.writePreDDLBinlogIfNeeded(txn, job, &binlogStartTS)
+				if err != nil {
+					return errors.Trace(err)
 				}
 				err = d.finishDDLJob(t, job)
 			} else {
@@ -370,6 +367,22 @@ func (d *ddl) handleDDLJobQueue() error {
 			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
+}
+
+// writePreDDLBinlog writes preDDL binlog if job is done and the binlog has not been write before.
+func (d *ddl) writePreDDLBinlogIfNeeded(txn kv.Transaction, job *model.Job, binlogStartTS *uint64) error {
+	if job.IsDone() {
+		// Avoid write multiple times.
+		if *binlogStartTS == 0 {
+			startTS := txn.StartTS()
+			err := d.writePreDDLBinlog(job, startTS)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			*binlogStartTS = startTS
+		}
+	}
+	return nil
 }
 
 func chooseLeaseTime(n1 time.Duration, n2 time.Duration) time.Duration {
