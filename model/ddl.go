@@ -172,8 +172,9 @@ type JobState byte
 const (
 	JobNone JobState = iota
 	JobRunning
-	// Add unique index encounter the error of duplicated key,
-	// then convert add index to drop index to ensure to delete keys have been added.
+	// When DDL encouterred an unrecoverable error at reorganization state,
+	// some keys has been added already, we need to remove them.
+	// JobRollback is the state to do rollback work.
 	JobRollback
 	JobRollbackDone
 	JobDone

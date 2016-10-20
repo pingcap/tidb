@@ -238,8 +238,12 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	job.State = model.JobRollback
 	job.Args = []interface{}{indexInfo.Name}
-	job.SchemaState = model.StateDeleteOnly
+	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
+	// Its work is the same as drop index job do.
+	// The write reorganization state in add index job that likes write only state in drop index job.
+	// So the next state is delete only state.
 	indexInfo.State = model.StateDeleteOnly
+	job.SchemaState = model.StateDeleteOnly
 	err := t.UpdateTable(job.SchemaID, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
