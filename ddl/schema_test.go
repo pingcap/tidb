@@ -53,10 +53,12 @@ func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *
 
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v})
 	return job
 }
 
-func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
+func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := &model.Job{
 		SchemaID: dbInfo.ID,
 		Type:     model.ActionDropSchema,
@@ -64,7 +66,8 @@ func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *mo
 
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
-	return job
+	ver := getSchemaVer(c, ctx)
+	return job, ver
 }
 
 func checkDrop(c *C, t *meta.Meta) bool {
@@ -133,7 +136,58 @@ func testCheckJobCancelled(c *C, d *ddl, job *model.Job) {
 	})
 }
 
-func (s *testSchemaSuite) TestSchemaT(c *C) {
+func getSchemaVer(c *C, ctx context.Context) int64 {
+	txn, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn, NotNil)
+	defer ctx.RollbackTxn()
+	m := meta.NewMeta(txn)
+	ver, err := m.GetSchemaVersion()
+	c.Assert(err, IsNil)
+
+	return ver
+}
+
+type historyJobArgs struct {
+	ver    int64
+	tbl    *model.TableInfo
+	tblIDs map[int64]struct{}
+}
+
+func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobArgs) error {
+	txn, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+	defer ctx.RollbackTxn()
+	t := meta.NewMeta(txn)
+	historyJob, err := t.GetHistoryDDLJob(id)
+	c.Assert(err, IsNil)
+
+	var v int64
+	var ids []int64
+	tbl := &model.TableInfo{}
+	if args.tbl == nil && len(args.tblIDs) == 0 {
+		historyJob.DecodeArgs(&v)
+		c.Assert(v, Equals, args.ver)
+		return nil
+	}
+	// alter table DDL
+	if args.tbl != nil {
+		historyJob.DecodeArgs(&v, &tbl)
+		c.Assert(v, Equals, args.ver)
+		return nil
+	}
+	// only for drop schema job
+	historyJob.DecodeArgs(&v, &ids)
+	c.Assert(v, Equals, args.ver)
+	for _, id := range ids {
+		c.Assert(args.tblIDs, HasKey, id)
+		delete(args.tblIDs, id)
+	}
+	c.Assert(len(args.tblIDs), Equals, 0)
+	return nil
+}
+
+func (s *testSchemaSuite) TestSchema(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema")
 	defer store.Close()
@@ -188,8 +242,16 @@ func (s *testSchemaSuite) TestSchemaT(c *C) {
 		updatedCount++
 	}
 	d.setHook(tc)
-	job = testDropSchema(c, ctx, d, dbInfo)
+	job, v := testDropSchema(c, ctx, d, dbInfo)
 	testCheckSchemaState(c, d, dbInfo, model.StateNone)
+	ids := make(map[int64]struct{})
+	ids[tblInfo1.ID] = struct{}{}
+	ids[tblInfo2.ID] = struct{}{}
+	checkHistoryJobArgs(c, ctx, job.ID,
+		&historyJobArgs{
+			ver:    v,
+			tblIDs: ids,
+		})
 	// check background ddl info
 	time.Sleep(testLease * 400)
 	verifyBgJobState(c, d, job, model.JobDone)
@@ -210,7 +272,6 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	store := testCreateStore(c, "test_schema_wait")
 	defer store.Close()
 
-	ctx := mock.NewContext()
 	d1 := newDDL(store, nil, nil, testLease)
 	defer d1.close()
 
@@ -218,6 +279,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 
 	d2 := newDDL(store, nil, nil, testLease*4)
 	defer d2.close()
+	ctx := testNewContext(c, d2)
 
 	// d2 must not be owner.
 	testCheckOwner(c, d2, false, ddlJobFlag)
