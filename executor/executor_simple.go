@@ -353,7 +353,6 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		log.Warnf("exists %v if exists %v", exists, s.IfExists)
 		if !exists {
 			if !s.IfExists {
 				failedUsers = append(failedUsers, user)
@@ -361,7 +360,6 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			continue
 		}
 		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.UserTable, host, userName)
-		log.Warnf("sql: %s", sql)
 		_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 		if err != nil {
 			failedUsers = append(failedUsers, user)

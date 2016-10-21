@@ -16,7 +16,6 @@ package executor_test
 import (
 	"fmt"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/meta"
@@ -214,7 +213,6 @@ func (s *testSuite) TestCreateUser(c *C) {
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	_, err = tk.Exec(dropUserSQL)
 	c.Check(err, NotNil)
-	log.Warnf("err %s", err)
 	dropUserSQL = `DROP USER 'test3'@'localhost';`
 	_, err = tk.Exec(dropUserSQL)
 	c.Check(err, NotNil)
