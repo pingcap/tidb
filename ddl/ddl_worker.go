@@ -493,3 +493,28 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration) {
 	case <-d.quitCh:
 	}
 }
+
+// updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
+func updateSchemaVersion(t *meta.Meta, job *model.Job) error {
+	schemaVersion, err := t.GenSchemaVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	diff := &model.SchemaDiff{
+		Version:  schemaVersion,
+		Type:     job.Type,
+		SchemaID: job.SchemaID,
+	}
+	if job.Type == model.ActionTruncateTable {
+		// Truncate table has two table ID, should be handled differently.
+		err = job.DecodeArgs(&diff.TableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		diff.OldTableID = job.TableID
+	} else {
+		diff.TableID = job.TableID
+	}
+	err = t.SetSchemaDiff(schemaVersion, diff)
+	return errors.Trace(err)
+}

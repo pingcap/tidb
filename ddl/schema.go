@@ -48,7 +48,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 		}
 	}
 
-	_, err = t.GenSchemaVersion()
+	err = updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -81,7 +81,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(infoschema.ErrDatabaseDropExists)
 	}
 
-	_, err = t.GenSchemaVersion()
+	err = updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}

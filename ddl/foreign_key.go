@@ -35,7 +35,7 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 	}
 	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
 
-	_, err = t.GenSchemaVersion()
+	err = updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -95,7 +95,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 	}
 	tblInfo.ForeignKeys = nfks
 
-	_, err = t.GenSchemaVersion()
+	err = updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}

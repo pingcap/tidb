@@ -102,8 +102,11 @@ func (*testSuite) TestT(c *C) {
 	}
 
 	dbInfos := []*model.DBInfo{dbInfo}
+	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(dbInfos, 1)
+	c.Assert(err, IsNil)
+	err = builder.Build()
+	c.Assert(err, IsNil)
 
-	handle.Set(dbInfos, 1)
 	is := handle.Get()
 
 	schemaNames := is.AllSchemaNames()
@@ -156,47 +159,16 @@ func (*testSuite) TestT(c *C) {
 	tb, err = is.TableByName(dbName, noexist)
 	c.Assert(err, NotNil)
 
-	c.Assert(is.ColumnExists(dbName, tbName, colName), IsTrue)
-	c.Assert(is.ColumnExists(dbName, tbName, noexist), IsFalse)
-
-	col, ok := is.ColumnByID(colID)
-	c.Assert(ok, IsTrue)
-	c.Assert(col, NotNil)
-
-	col, ok = is.ColumnByID(dbID)
-	c.Assert(ok, IsFalse)
-	c.Assert(col, IsNil)
-
-	col, ok = is.ColumnByName(dbName, tbName, colName)
-	c.Assert(ok, IsTrue)
-	c.Assert(col, NotNil)
-
-	col, ok = is.ColumnByName(dbName, tbName, noexist)
-	c.Assert(ok, IsFalse)
-	c.Assert(col, IsNil)
-
-	indices, ok := is.ColumnIndicesByID(colID)
-	c.Assert(ok, IsTrue)
-	c.Assert(indices, HasLen, 1)
-
 	tbs := is.SchemaTables(dbName)
 	c.Assert(tbs, HasLen, 1)
 
 	tbs = is.SchemaTables(noexist)
 	c.Assert(tbs, HasLen, 0)
 
-	idx, ok := is.IndexByName(dbName, tbName, idxName)
-	c.Assert(ok, IsTrue)
-	c.Assert(idx, NotNil)
-
 	// Make sure partitions table exists
 	tb, err = is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("partitions"))
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
-
-	col, ok = is.ColumnByName(model.NewCIStr("information_schema"), model.NewCIStr("files"), model.NewCIStr("FILE_TYPE"))
-	c.Assert(ok, IsTrue)
-	c.Assert(col, NotNil)
 }
 
 // Make sure it is safe to concurrently create handle on multiple stores.

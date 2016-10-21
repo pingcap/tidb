@@ -55,7 +55,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 		}
 	}
 
-	_, err = t.GenSchemaVersion()
+	err = updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -108,7 +108,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(infoschema.ErrTableNotExists)
 	}
 
-	_, err = t.GenSchemaVersion()
+	err = updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -209,7 +209,7 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
-	_, err = t.GenSchemaVersion()
+	err = updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}

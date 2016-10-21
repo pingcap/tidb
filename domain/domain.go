@@ -60,9 +60,30 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		log.Debugf("[ddl] schema version is still %d, no need reload", usedSchemaVersion)
 		return nil
 	}
-	schemas, err := m.ListDatabases()
+	ok, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if ok {
+		return nil
+	}
+	schemas, err := do.getAllSchemasWithTablesFromMeta(m)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	newISBuilder, err := infoschema.NewBuilder(handle).InitWithDBInfos(schemas, latestSchemaVersion)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Infof("[ddl] loadInfoSchema %d", latestSchemaVersion)
+	return newISBuilder.Build()
+}
+
+func (do *Domain) getAllSchemasWithTablesFromMeta(m *meta.Meta) ([]*model.DBInfo, error) {
+	schemas, err := m.ListDatabases()
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	for _, di := range schemas {
@@ -74,7 +95,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		tables, err1 := m.ListTables(di.ID)
 		if err1 != nil {
 			err = err1
-			return errors.Trace(err1)
+			return nil, errors.Trace(err1)
 		}
 
 		di.Tables = make([]*model.TableInfo, 0, len(tables))
@@ -86,9 +107,44 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 			di.Tables = append(di.Tables, tbl)
 		}
 	}
-	log.Infof("[ddl] loadInfoSchema %d", latestSchemaVersion)
-	err = handle.Set(schemas, latestSchemaVersion)
-	return errors.Trace(err)
+	return schemas, nil
+}
+
+// tryLoadSchemaDiffs tries to only load latest schema changes.
+func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (bool, error) {
+	if usedVersion == 0 || newVersion-usedVersion > 100 {
+		// If there isn't any used version, or used version is too old, we do full load.
+		return false, nil
+	}
+	if usedVersion > newVersion {
+		// History read.
+		return false, nil
+	}
+	var diffs []*model.SchemaDiff
+	for usedVersion < newVersion {
+		usedVersion++
+		diff, err := m.GetSchemaDiff(usedVersion)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if diff == nil {
+			// If diff is missing for any version between used and new version, we fall back to full reload.
+			return false, nil
+		}
+		diffs = append(diffs, diff)
+	}
+	builder := infoschema.NewBuilder(do.infoHandle).InitWithOldInfoSchema()
+	for _, diff := range diffs {
+		err := builder.ApplyDiff(m, diff)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+	}
+	err := builder.Build()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return true, nil
 }
 
 // InfoSchema gets information schema from domain.
