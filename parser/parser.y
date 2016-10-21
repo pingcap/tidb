@@ -467,7 +467,7 @@ import (
 	DropDatabaseStmt	"DROP DATABASE statement"
 	DropIndexStmt		"DROP INDEX statement"
 	DropTableStmt		"DROP TABLE statement"
-	DropUserStmt        "DROP USER"
+	DropUserStmt		"DROP USER"
 	EmptyStmt		"empty statement"
 	Enclosed		"Enclosed by"
 	EqOpt			"= or empty"
@@ -4218,7 +4218,7 @@ Statement:
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
-|   DropUserStmt
+|	DropUserStmt
 |	FlushStmt
 |	GrantStmt
 |	InsertIntoStmt
