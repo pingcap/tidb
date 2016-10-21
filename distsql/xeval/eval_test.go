@@ -276,23 +276,23 @@ func (s *testEvalSuite) TestEval(c *C) {
 	}
 }
 
-func binaryExpr(left, right interface{}, tp tipb.ExprType) *tipb.Expr {
+func buildExpr(tp tipb.ExprType, children ...interface{}) *tipb.Expr {
 	expr := new(tipb.Expr)
 	expr.Tp = tp
-	expr.Children = make([]*tipb.Expr, 2)
-	switch x := left.(type) {
-	case types.Datum:
-		expr.Children[0] = datumExpr(x)
-	case *tipb.Expr:
-		expr.Children[0] = x
-	}
-	switch x := right.(type) {
-	case types.Datum:
-		expr.Children[1] = datumExpr(x)
-	case *tipb.Expr:
-		expr.Children[1] = x
+	expr.Children = make([]*tipb.Expr, len(children))
+	for i, child := range children {
+		switch x := child.(type) {
+		case types.Datum:
+			expr.Children[i] = datumExpr(x)
+		case *tipb.Expr:
+			expr.Children[i] = x
+		}
 	}
 	return expr
+}
+
+func binaryExpr(left, right interface{}, tp tipb.ExprType) *tipb.Expr {
+	return buildExpr(tp, left, right)
 }
 
 func datumExpr(d types.Datum) *tipb.Expr {

@@ -127,6 +127,8 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 		return arithmeticalFuncToPBExpr(client, expr)
 	case ast.AndAnd, ast.OrOr, ast.UnaryNot:
 		return logicalFuncToPBExpr(client, expr)
+	case ast.Case, "coalesce":
+		return builtinFuncToPBExpr(client, expr)
 	default:
 		return nil
 	}
@@ -361,6 +363,28 @@ func aggFuncToPBExpr(client kv.Client, aggFunc expression.AggregationFunction) *
 
 	children := make([]*tipb.Expr, 0, len(aggFunc.GetArgs()))
 	for _, arg := range aggFunc.GetArgs() {
+		pbArg := exprToPB(client, arg)
+		if pbArg == nil {
+			return nil
+		}
+		children = append(children, pbArg)
+	}
+	return &tipb.Expr{Tp: tp, Children: children}
+}
+
+func builtinFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+	var tp tipb.ExprType
+	switch expr.FuncName.L {
+	case ast.Case:
+		tp = tipb.ExprType_Case
+	case "coalesce":
+		tp = tipb.ExprType_Coalesce
+	}
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+	children := make([]*tipb.Expr, 0, len(expr.Args))
+	for _, arg := range expr.Args {
 		pbArg := exprToPB(client, arg)
 		if pbArg == nil {
 			return nil
