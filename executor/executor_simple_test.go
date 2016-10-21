@@ -207,7 +207,7 @@ func (s *testSuite) TestCreateUser(c *C) {
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
-	// Test negative case without if exists.
+	// Test negative cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
@@ -219,7 +219,7 @@ func (s *testSuite) TestCreateUser(c *C) {
 	dropUserSQL = `DROP USER 'test1'@'localhost';`
 	_, err = tk.Exec(dropUserSQL)
 	c.Check(err, NotNil)
-	// Test positive case without if exists.
+	// Test positive cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test3'@'localhost';`

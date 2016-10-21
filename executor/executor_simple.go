@@ -377,7 +377,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 }
 
 // parse user string into username and host
-// root@localhost -> roor, localhost
+// root@localhost -> root, localhost
 func parseUser(user string) (string, string) {
 	strs := strings.Split(user, "@")
 	return strs[0], strs[1]
