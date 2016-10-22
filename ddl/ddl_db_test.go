@@ -314,6 +314,7 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 	se, err := tidb.CreateSession(s)
 	c.Assert(err, IsNil)
 	_, err = se.Execute("use test_db")
+	c.Assert(err, IsNil)
 	rs, err := se.Execute(sql)
 	c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 	c.Assert(rs, IsNil)
@@ -594,6 +595,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 
 	is = sessionctx.GetDomain(ctx).InfoSchema()
 	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
 	c.Assert(newTblInfo.Meta().ID, Greater, oldTblID)
 
 	// verify that the old table data has been deleted by background worker.
