@@ -56,11 +56,9 @@ type testPrivilegeSuite struct {
 func (s *testPrivilegeSuite) SetUpSuit(c *C) {
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
-	log.SetLevelByString("error")
 }
 
 func (s *testPrivilegeSuite) SetUpTest(c *C) {
-	fmt.Println("SETUPTEST")
 	s.dbName = "test"
 	s.store = newStore(c, s.dbName)
 	se := newSession(c, s.store, s.dbName)
@@ -73,9 +71,7 @@ func (s *testPrivilegeSuite) SetUpTest(c *C) {
 	mustExec(c, se, s.createDBSQL)
 	mustExec(c, se, s.createDB1SQL) // create database test1
 	mustExec(c, se, s.useDBSQL)
-	_, err := se.Execute(s.createTableSQL)
-	log.Error(err)
-	// mustExec(c, se, s.createTableSQL)
+	mustExec(c, se, s.createTableSQL)
 
 	s.createSystemDBSQL = fmt.Sprintf("create database if not exists %s;", mysql.SystemDB)
 	s.createUserTableSQL = tidb.CreateUserTable
@@ -91,11 +87,9 @@ func (s *testPrivilegeSuite) SetUpTest(c *C) {
 }
 
 func (s *testPrivilegeSuite) TearDownTest(c *C) {
-	fmt.Println("TEARDOWNTEST")
 	// drop db
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, s.dropDBSQL)
-
 }
 
 func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
