@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -371,7 +372,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		errMsg := "Operation DROP USER failed for " + strings.Join(failedUsers, ",")
-		return errors.New(errMsg)
+		return terror.ClassExecutor.New(mysql.ErrCannotUser, errMsg)
 	}
 	return nil
 }
