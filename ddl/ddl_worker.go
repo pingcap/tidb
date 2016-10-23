@@ -426,7 +426,9 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 		return
 	}
 
-	job.State = model.JobRunning
+	if job.State != model.JobRollback {
+		job.State = model.JobRunning
+	}
 
 	var err error
 	switch job.Type {
