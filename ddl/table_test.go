@@ -77,11 +77,13 @@ func testCreateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 		Type:     model.ActionCreateTable,
 		Args:     []interface{}{tblInfo},
 	}
-
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
+
 	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v})
+	tblInfo.State = model.StatePublic
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	tblInfo.State = model.StateNone
 	return job
 }
 
@@ -91,11 +93,29 @@ func testDropTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 		TableID:  tblInfo.ID,
 		Type:     model.ActionDropTable,
 	}
-
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
+
 	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v})
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
+func testTruncateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+	newTableID, err := d.genGlobalID()
+	c.Assert(err, IsNil)
+	job := &model.Job{
+		SchemaID: dbInfo.ID,
+		TableID:  tblInfo.ID,
+		Type:     model.ActionTruncateTable,
+		Args:     []interface{}{newTableID},
+	}
+	err = d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+
+	v := getSchemaVer(c, ctx)
+	tblInfo.ID = newTableID
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -164,7 +184,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
-	// create an existing table.
+	// Create an existing table.
 	newTblInfo := testTableInfo(c, d, "t", 3)
 	job = &model.Job{
 		SchemaID: s.dbInfo.ID,
@@ -176,7 +196,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
-	// to drop a table with defaultBatchSize+10 records.
+	// To drop a table with defaultBatchSize+10 records.
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	for i := 1; i <= defaultBatchSize+10; i++ {
 		_, err = tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
@@ -206,11 +226,20 @@ func (s *testTableSuite) TestTable(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	// check background ddl info
+	// Check background ddl info.
 	time.Sleep(testLease * 200)
 	verifyBgJobState(c, d, job, model.JobDone)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(updatedCount, Equals, 2)
+
+	// for truncate table
+	tblInfo = testTableInfo(c, d, "tt", 3)
+	job = testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
+	testCheckJobDone(c, d, job, true)
+	job = testTruncateTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
+	testCheckJobDone(c, d, job, false)
 }
 
 func (s *testTableSuite) TestTableResume(c *C) {
@@ -220,14 +249,12 @@ func (s *testTableSuite) TestTableResume(c *C) {
 	testCheckOwner(c, d, true, ddlJobFlag)
 
 	tblInfo := testTableInfo(c, d, "t1", 3)
-
 	job := &model.Job{
 		SchemaID: s.dbInfo.ID,
 		TableID:  tblInfo.ID,
 		Type:     model.ActionCreateTable,
 		Args:     []interface{}{tblInfo},
 	}
-
 	testRunInterruptedJob(c, d, job)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 
@@ -236,7 +263,6 @@ func (s *testTableSuite) TestTableResume(c *C) {
 		TableID:  tblInfo.ID,
 		Type:     model.ActionDropTable,
 	}
-
 	testRunInterruptedJob(c, d, job)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StateNone)
 }

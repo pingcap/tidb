@@ -90,7 +90,7 @@ func testDropForeignKey(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo,
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v})
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -157,7 +157,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(checkOK, IsTrue)
 	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v})
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 
 	checkOK = false
 	tc.onJobUpdated = func(job *model.Job) {

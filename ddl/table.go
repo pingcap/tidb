@@ -71,7 +71,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 		}
 		// finish this job
 		job.State = model.JobDone
-		addFinishInfo(job, ver, nil)
+		addFinishInfo(job, ver, nil, tbInfo)
 		return nil
 	default:
 		return ErrInvalidTableState.Gen("invalid table state %v", tbInfo.State)
@@ -134,7 +134,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		// finish this job
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
-		addFinishInfo(job, ver, nil)
+		addFinishInfo(job, ver, nil, tblInfo)
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
@@ -215,6 +215,6 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 	job.State = model.JobDone
-	addFinishInfo(job, ver, nil)
+	addFinishInfo(job, ver, nil, tblInfo)
 	return nil
 }

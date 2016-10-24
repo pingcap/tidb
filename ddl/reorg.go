@@ -242,14 +242,15 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, 
 	return count, nil
 }
 
-// addFinishInfo adds schema version and table information that are used for binlog.
-// tblInfo is added in the following operations: add column, drop column, add index, drop index.
-func addFinishInfo(job *model.Job, ver int64, tblInfo *model.TableInfo) {
-	if tblInfo == nil {
-		job.Args = []interface{}{ver}
+// addFinishInfo adds schema version and information (schema or table information) that are used for binlog.
+// dbInfo is added in the following operations: create database, drop database.
+// And the other operations add tblInfo.
+func addFinishInfo(job *model.Job, ver int64, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+	if dbInfo == nil {
+		job.Args = []interface{}{ver, tblInfo}
 		return
 	}
-	job.Args = []interface{}{ver, tblInfo}
+	job.Args = []interface{}{ver, dbInfo}
 }
 
 type reorgInfo struct {

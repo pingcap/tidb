@@ -229,7 +229,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		// finish this job
 		job.SchemaState = model.StatePublic
 		job.State = model.JobDone
-		addFinishInfo(job, ver, tblInfo)
+		addFinishInfo(job, ver, nil, tblInfo)
 		return nil
 	default:
 		return ErrInvalidIndexState.Gen("invalid index state %v", tblInfo.State)
@@ -343,7 +343,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		} else {
 			job.State = model.JobDone
 		}
-		addFinishInfo(job, ver, tblInfo)
+		addFinishInfo(job, ver, nil, tblInfo)
 		return nil
 	default:
 		return ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)

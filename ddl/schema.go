@@ -64,7 +64,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 		}
 		// finish this job
 		job.State = model.JobDone
-		addFinishInfo(job, ver, nil)
+		addFinishInfo(job, ver, dbInfo, nil)
 		return nil
 	default:
 		// we can't enter here.
@@ -113,9 +113,9 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		// finish this job
 		if len(tables) > 0 {
 			ids := getIDs(tables)
-			job.Args = []interface{}{ver, ids}
+			job.Args = []interface{}{ver, dbInfo, ids}
 		} else {
-			addFinishInfo(job, ver, nil)
+			addFinishInfo(job, ver, dbInfo, nil)
 		}
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
