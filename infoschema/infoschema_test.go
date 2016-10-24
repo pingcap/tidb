@@ -104,6 +104,9 @@ func (*testSuite) TestT(c *C) {
 	dbInfos := []*model.DBInfo{dbInfo}
 	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(dbInfos, 1)
 	c.Assert(err, IsNil)
+
+	checkApplyCreateNonExistsSchemaDoesNotPanic(c, store, builder)
+
 	err = builder.Build()
 	c.Assert(err, IsNil)
 
@@ -169,6 +172,14 @@ func (*testSuite) TestT(c *C) {
 	tb, err = is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("partitions"))
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
+}
+
+func checkApplyCreateNonExistsSchemaDoesNotPanic(c *C, store kv.Storage, builder *infoschema.Builder) {
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999})
+	c.Assert(infoschema.ErrDatabaseNotExists.Equal(err), IsTrue)
 }
 
 // Make sure it is safe to concurrently create handle on multiple stores.
