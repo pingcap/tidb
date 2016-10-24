@@ -111,6 +111,16 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 }
 
 func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
+	// rollback job
+	if job.State == model.JobRollback {
+		err := d.onDropIndex(t, job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
+	// normal job
 	schemaID := job.SchemaID
 	tblInfo, err := d.getTableInfo(t, job)
 	if err != nil {
@@ -123,7 +133,6 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		indexID     int64
 		idxColNames []*ast.IndexColName
 	)
-
 	err = job.DecodeArgs(&unique, &indexName, &indexID, &idxColNames)
 	if err != nil {
 		job.State = model.JobCancelled
@@ -140,6 +149,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 			}
 
 			indexInfo = idx
+			break
 		}
 	}
 
@@ -152,7 +162,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 	}
 
-	_, err = t.GenSchemaVersion()
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -202,6 +212,10 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 			return nil
 		}
 		if err != nil {
+			if terror.ErrorEqual(err, kv.ErrKeyExists) {
+				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
+				err = d.convert2RollbackJob(t, job, tblInfo, indexInfo)
+			}
 			return errors.Trace(err)
 		}
 
@@ -215,10 +229,28 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		// finish this job
 		job.SchemaState = model.StatePublic
 		job.State = model.JobDone
+		addFinishInfo(job, ver, tblInfo)
 		return nil
 	default:
 		return ErrInvalidIndexState.Gen("invalid index state %v", tblInfo.State)
 	}
+}
+
+func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+	job.State = model.JobRollback
+	job.Args = []interface{}{indexInfo.Name}
+	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
+	// Its work is the same as drop index job do.
+	// The write reorganization state in add index job that likes write only state in drop index job.
+	// So the next state is delete only state.
+	indexInfo.State = model.StateDeleteOnly
+	job.SchemaState = model.StateDeleteOnly
+	err := t.UpdateTable(job.SchemaID, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
+	return errors.Trace(err)
 }
 
 func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
@@ -238,6 +270,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 	for _, idx := range tblInfo.Indices {
 		if idx.Name.L == indexName.L {
 			indexInfo = idx
+			break
 		}
 	}
 
@@ -246,7 +279,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		return ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
 	}
 
-	_, err = t.GenSchemaVersion()
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -305,7 +338,12 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 
 		// finish this job
 		job.SchemaState = model.StateNone
-		job.State = model.JobDone
+		if job.State == model.JobRollback {
+			job.State = model.JobRollbackDone
+		} else {
+			job.State = model.JobDone
+		}
+		addFinishInfo(job, ver, tblInfo)
 		return nil
 	default:
 		return ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)

@@ -1481,7 +1481,7 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 
 	columns := make([]*table.Column, len(e.schema))
 	for i, v := range e.columns {
-		columns[i] = &table.Column{ColumnInfo: *v}
+		columns[i] = table.ToColumn(v)
 	}
 	row.Data, err = e.t.RowWithCols(e.ctx, handle, columns)
 	if err != nil {

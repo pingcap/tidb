@@ -62,6 +62,7 @@ var (
 	mTableIDPrefix    = "TID"
 	mBootstrapKey     = []byte("BootstrapKey")
 	mTableStatsPrefix = "TStats"
+	mSchemaDiffPrefix = "Diff"
 )
 
 var (
@@ -733,6 +734,36 @@ func (m *Meta) GetTableStats(tableID int64) (*statistics.TablePB, error) {
 		return nil, errors.Trace(err)
 	}
 	return tpb, nil
+}
+
+func (m *Meta) schemaDiffKey(schemaVersion int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mSchemaDiffPrefix, schemaVersion))
+}
+
+// GetSchemaDiff gets the modification information on a given schema version.
+func (m *Meta) GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error) {
+	diffKey := m.schemaDiffKey(schemaVersion)
+	data, err := m.txn.Get(diffKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(data) == 0 {
+		return nil, nil
+	}
+	diff := &model.SchemaDiff{}
+	err = json.Unmarshal(data, diff)
+	return diff, errors.Trace(err)
+}
+
+// SetSchemaDiff sets the modification information on a given schema version.
+func (m *Meta) SetSchemaDiff(schemaVersion int64, diff *model.SchemaDiff) error {
+	data, err := json.Marshal(diff)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	diffKey := m.schemaDiffKey(schemaVersion)
+	err = m.txn.Set(diffKey, data)
+	return errors.Trace(err)
 }
 
 // meta error codes.
