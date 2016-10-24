@@ -211,3 +211,15 @@ type Owner struct {
 func (o *Owner) String() string {
 	return fmt.Sprintf("ID:%s, LastUpdateTS:%d", o.OwnerID, o.LastUpdateTS)
 }
+
+// SchemaDiff contains the schema modification at a particular schema version.
+// It is used to reduce schema reload cost.
+type SchemaDiff struct {
+	Version  int64      `json:"version"`
+	Type     ActionType `json:"type"`
+	SchemaID int64      `json:"schema_id"`
+	TableID  int64      `json:"table_id"`
+
+	// OldTableID is the table ID before truncate, only used by truncate table DDL.
+	OldTableID int64 `json:"old_table_id"`
+}
