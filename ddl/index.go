@@ -162,7 +162,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 	}
 
-	ver, err := t.GenSchemaVersion()
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -279,7 +279,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		return ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
 	}
 
-	ver, err := t.GenSchemaVersion()
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -270,6 +270,11 @@ func (t *BoundedTable) AllocAutoID() (int64, error) {
 	return recordID + initialRecordID, nil
 }
 
+// Allocator implements table.Table Allocator interface.
+func (t *BoundedTable) Allocator() autoid.Allocator {
+	return t.alloc
+}
+
 // RebaseAutoID implements table.Table RebaseAutoID interface.
 func (t *BoundedTable) RebaseAutoID(newBase int64, isSetStep bool) error {
 	return t.alloc.Rebase(t.ID, newBase, isSetStep)

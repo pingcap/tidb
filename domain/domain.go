@@ -60,9 +60,32 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		log.Debugf("[ddl] schema version is still %d, no need reload", usedSchemaVersion)
 		return nil
 	}
-	schemas, err := m.ListDatabases()
+	ok, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
+	if err != nil {
+		// We can fall back to full load, don't need to return the error.
+		log.Errorf("[ddl] failed to load schema diff %v", err)
+	}
+	if ok {
+		log.Infof("[ddl] diff load InfoSchema from version %d to %d", usedSchemaVersion, latestSchemaVersion)
+		return nil
+	}
+	schemas, err := do.getAllSchemasWithTablesFromMeta(m)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	newISBuilder, err := infoschema.NewBuilder(handle).InitWithDBInfos(schemas, latestSchemaVersion)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Infof("[ddl] full load InfoSchema from version %d to %d", usedSchemaVersion, latestSchemaVersion)
+	return newISBuilder.Build()
+}
+
+func (do *Domain) getAllSchemasWithTablesFromMeta(m *meta.Meta) ([]*model.DBInfo, error) {
+	schemas, err := m.ListDatabases()
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	for _, di := range schemas {
@@ -74,7 +97,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		tables, err1 := m.ListTables(di.ID)
 		if err1 != nil {
 			err = err1
-			return errors.Trace(err1)
+			return nil, errors.Trace(err1)
 		}
 
 		di.Tables = make([]*model.TableInfo, 0, len(tables))
@@ -86,9 +109,52 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 			di.Tables = append(di.Tables, tbl)
 		}
 	}
-	log.Infof("[ddl] loadInfoSchema %d", latestSchemaVersion)
-	err = handle.Set(schemas, latestSchemaVersion)
-	return errors.Trace(err)
+	return schemas, nil
+}
+
+const (
+	initialVersion         = 0
+	maxNumberOfDiffsToLoad = 100
+)
+
+// tryLoadSchemaDiffs tries to only load latest schema changes.
+// Returns true if the schema is loaded successfully.
+// Returns false if the schema can not be loaded by schema diff, then we need to do full load.
+func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (bool, error) {
+	if usedVersion == initialVersion || newVersion-usedVersion > maxNumberOfDiffsToLoad {
+		// If there isn't any used version, or used version is too old, we do full load.
+		return false, nil
+	}
+	if usedVersion > newVersion {
+		// When user use History Read feature, history schema will be loaded.
+		// usedVersion may be larger than newVersion, full load is needed.
+		return false, nil
+	}
+	var diffs []*model.SchemaDiff
+	for usedVersion < newVersion {
+		usedVersion++
+		diff, err := m.GetSchemaDiff(usedVersion)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if diff == nil {
+			// If diff is missing for any version between used and new version, we fall back to full reload.
+			return false, nil
+		}
+		diffs = append(diffs, diff)
+	}
+	builder := infoschema.NewBuilder(do.infoHandle).InitWithOldInfoSchema()
+	for _, diff := range diffs {
+		err := builder.ApplyDiff(m, diff)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+	}
+	err := builder.Build()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return true, nil
 }
 
 // InfoSchema gets information schema from domain.
