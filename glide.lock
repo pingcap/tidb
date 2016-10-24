@@ -1,5 +1,5 @@
-hash: bab6532adfe1b5c1375c641787fa4f314545f74a81f6e4eba54722c27dca840b
-updated: 2016-10-13T10:31:30.448228645+08:00
+hash: 7029feee34f79d15cee09307c4480d6f4da40319ff7f94e2ac3a277a8a3b4623
+updated: 2016-10-23T00:28:46.444312025+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -112,7 +112,7 @@ imports:
   - pkg/raft_serverpb
   - pkg/util
 - name: github.com/pingcap/pd
-  version: 5606df6dcc8bf695a808939169734d675b4786ee
+  version: c0af22f4f5c96ec7bd6d7c284529fa674a06cada
   subpackages:
   - pd-client
   - pkg/apiutil
