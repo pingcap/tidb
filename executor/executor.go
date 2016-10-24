@@ -68,7 +68,8 @@ const (
 	CodeWrongParamCount terror.ErrCode = 5
 	CodeRowKeyCount     terror.ErrCode = 6
 	CodePrepareDDL      terror.ErrCode = 7
-	ErrCannotUser       terror.ErrCode = 8
+	// MySQL error code
+	CodeCannotUser terror.ErrCode = 1396
 )
 
 // Row represents a record row.
@@ -487,7 +488,7 @@ func init() {
 		return row.Data, nil
 	}
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		ErrCannotUser: mysql.ErrCannotUser,
+		CodeCannotUser: mysql.ErrCannotUser,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }
