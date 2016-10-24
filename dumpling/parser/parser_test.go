@@ -926,6 +926,8 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+		{`DROP USER 'root'@'localhost', 'root1'@'localhost'`, true},
+		{`DROP USER IF EXISTS 'root'@'localhost'`, true},
 
 		// For grant statement
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost';", true},
