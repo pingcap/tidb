@@ -123,7 +123,7 @@ func GetDefaultCollation(charset string) (string, error) {
 	}
 	c, ok := charsets[charset]
 	if !ok {
-		return "", errors.Errorf("Unkown charset %s", charset)
+		return "", errors.Errorf("Unknown charset %s", charset)
 	}
 	return c.DefaultCollation.Name, nil
 }

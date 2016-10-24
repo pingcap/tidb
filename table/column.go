@@ -31,9 +31,7 @@ import (
 )
 
 // Column provides meta data describing a table column.
-type Column struct {
-	model.ColumnInfo
-}
+type Column model.ColumnInfo
 
 // PrimaryKeyName defines primary key name.
 const PrimaryKeyName = "PRIMARY"
@@ -50,6 +48,11 @@ func (c *Column) String() string {
 	return strings.Join(ans, " ")
 }
 
+// ToInfo casts Column to model.ColumnInfo
+func (c *Column) ToInfo() *model.ColumnInfo {
+	return (*model.ColumnInfo)(c)
+}
+
 // FindCol finds column in cols by name.
 func FindCol(cols []*Column, name string) *Column {
 	for _, col := range cols {
@@ -58,6 +61,11 @@ func FindCol(cols []*Column, name string) *Column {
 		}
 	}
 	return nil
+}
+
+// ToColumn converts a *model.ColumnInfo to *Column.
+func ToColumn(col *model.ColumnInfo) *Column {
+	return (*Column)(col)
 }
 
 // FindCols finds columns in cols by names.
@@ -91,7 +99,7 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreErr bool) (err error) {
 	for _, c := range cols {
 		var converted types.Datum
-		converted, err = CastValue(ctx, rec[c.Offset], &c.ColumnInfo)
+		converted, err = CastValue(ctx, rec[c.Offset], c.ToInfo())
 		if err != nil {
 			if ignoreErr {
 				log.Warnf("cast values failed:%v", err)
