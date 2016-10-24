@@ -356,7 +356,7 @@ func (s *testPlanSuite) TestBuiltinFuncsPushDown(c *C) {
 	cases := []struct {
 		sql    string
 		cond   string // readable expressions
-		exprPB string // Marshall result of conditions been pushed down.
+		exprPB string // Marshall result of conditions that be pushed down.
 	}{
 		// case when
 		{
