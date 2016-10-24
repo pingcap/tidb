@@ -62,9 +62,11 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	}
 	ok, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
 	if err != nil {
-		return errors.Trace(err)
+		// We can fall back to full load, don't need to return the error.
+		log.Errorf("[ddl] failed to load schema diff %v", err)
 	}
 	if ok {
+		log.Infof("[ddl] diff load InfoSchema from version %d to %d", usedSchemaVersion, latestSchemaVersion)
 		return nil
 	}
 	schemas, err := do.getAllSchemasWithTablesFromMeta(m)
@@ -76,7 +78,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Infof("[ddl] loadInfoSchema %d", latestSchemaVersion)
+	log.Infof("[ddl] full load InfoSchema from version %d to %d", usedSchemaVersion, latestSchemaVersion)
 	return newISBuilder.Build()
 }
 
@@ -110,14 +112,19 @@ func (do *Domain) getAllSchemasWithTablesFromMeta(m *meta.Meta) ([]*model.DBInfo
 	return schemas, nil
 }
 
+const maxNumberOfDiffsToLoad = 100
+
 // tryLoadSchemaDiffs tries to only load latest schema changes.
+// Returns true if the schema is loaded successfully.
+// Returns false if the schema can not be loaded by schema diff, then we need to do full load.
 func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (bool, error) {
-	if usedVersion == 0 || newVersion-usedVersion > 100 {
+	if usedVersion == 0 || newVersion-usedVersion > maxNumberOfDiffsToLoad {
 		// If there isn't any used version, or used version is too old, we do full load.
 		return false, nil
 	}
 	if usedVersion > newVersion {
-		// History read.
+		// When user use History Read feature, history schema will be loaded.
+		// usedVersion may be larger than newVersion, full load is needed.
 		return false, nil
 	}
 	var diffs []*model.SchemaDiff

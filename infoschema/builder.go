@@ -37,7 +37,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		b.applyDropSchema(diff.SchemaID)
 		return nil
 	}
-	di, ok := b.is.schemas[diff.SchemaID]
+	roDBInfo, ok := b.is.schemas[diff.SchemaID]
 	if !ok {
 		return ErrDatabaseNotExists
 	}
@@ -58,10 +58,11 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 	var alloc autoid.Allocator
 	if oldTableID != 0 {
 		alloc, _ = b.is.AllocByID(oldTableID)
-		b.applyDropTable(di.Name.L, oldTableID)
+		b.applyDropTable(roDBInfo.Name.L, oldTableID)
 	}
 	if newTableID != 0 {
-		err := b.applyCreateTable(m, di, newTableID, alloc)
+		// All types except DropTable.
+		err := b.applyCreateTable(m, roDBInfo, newTableID, alloc)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -69,13 +70,14 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 	// The old DBInfo still holds a reference to old table info, we need to update it.
 	// As old DBInfo should be read only, we clone a new DBInfo.
 	newDbInfo := new(model.DBInfo)
-	*newDbInfo = *di
-	newDbInfo.Tables = make([]*model.TableInfo, 0, len(di.Tables))
+	*newDbInfo = *roDBInfo
+	newDbInfo.Tables = make([]*model.TableInfo, 0, len(roDBInfo.Tables))
 	if newTableID != 0 {
+		// All types except DropTable.
 		newTblInfo := b.is.tables[newTableID].Meta()
 		newDbInfo.Tables = append(newDbInfo.Tables, newTblInfo)
 	}
-	for _, tblInfo := range di.Tables {
+	for _, tblInfo := range roDBInfo.Tables {
 		if tblInfo.ID != oldTableID && tblInfo.ID != newTableID {
 			newDbInfo.Tables = append(newDbInfo.Tables, tblInfo)
 		}

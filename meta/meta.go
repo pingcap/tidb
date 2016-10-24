@@ -750,7 +750,7 @@ func (m *Meta) GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
-	diff := new(model.SchemaDiff)
+	diff := &model.SchemaDiff{}
 	err = json.Unmarshal(data, diff)
 	return diff, errors.Trace(err)
 }
