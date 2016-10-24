@@ -128,7 +128,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		}
 	}
 
-	ver, err := t.GenSchemaVersion()
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -238,7 +238,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		}
 	}
 
-	ver, err := t.GenSchemaVersion()
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}

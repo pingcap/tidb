@@ -712,6 +712,11 @@ func (t *Table) AllocAutoID() (int64, error) {
 	return t.alloc.Alloc(t.ID)
 }
 
+// Allocator implements table.Table Allocator interface.
+func (t *Table) Allocator() autoid.Allocator {
+	return t.alloc
+}
+
 // RebaseAutoID implements table.Table RebaseAutoID interface.
 func (t *Table) RebaseAutoID(newBase int64, isSetStep bool) error {
 	return t.alloc.Rebase(t.ID, newBase, isSetStep)
