@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -173,6 +174,7 @@ func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
 	testKit.MustExec("SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0")
 	ctx := testKit.Se.(context.Context)
 	is := sessionctx.GetDomain(ctx).InfoSchema()
-	col, _ := is.ColumnByName(model.NewCIStr("test"), model.NewCIStr("tab0"), model.NewCIStr("col1"))
+	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
+	col := table.FindCol(tbl.Cols(), "col1")
 	c.Assert(col.Tp, Equals, mysql.TypeLong)
 }

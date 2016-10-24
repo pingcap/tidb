@@ -50,7 +50,7 @@ var (
 	host            = flag.String("host", "0.0.0.0", "tidb server host")
 	port            = flag.String("P", "4000", "tidb server port")
 	statusPort      = flag.String("status", "10080", "tidb server status port")
-	lease           = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
+	lease           = flag.String("lease", "1s", "schema lease duration, very dangerous to change only if you know what you do")
 	socket          = flag.String("socket", "", "The socket file to use for connection.")
 	enablePS        = flag.Bool("perfschema", false, "If enable performance schema.")
 	reportStatus    = flag.Bool("report-status", true, "If enable status report HTTP service.")
@@ -69,11 +69,8 @@ func main() {
 
 	flag.Parse()
 
-	if *lease < 0 {
-		log.Fatalf("invalid lease seconds %d", *lease)
-	}
-
-	tidb.SetSchemaLease(time.Duration(*lease) * time.Second)
+	leaseDuration := parseLease()
+	tidb.SetSchemaLease(leaseDuration)
 
 	cfg := &server.Config{
 		Addr:         fmt.Sprintf("%s:%s", *host, *port),
@@ -205,4 +202,16 @@ func prometheusPushClient(addr string, interval time.Duration) {
 		}
 		time.Sleep(interval)
 	}
+}
+
+// parseLease parses lease argument string.
+func parseLease() time.Duration {
+	dur, err := time.ParseDuration(*lease)
+	if err != nil {
+		dur, err = time.ParseDuration(*lease + "s")
+	}
+	if err != nil || dur < 0 {
+		log.Fatalf("invalid lease duration %s", *lease)
+	}
+	return dur
 }

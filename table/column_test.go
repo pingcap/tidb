@@ -34,10 +34,8 @@ type testColumnSuite struct{}
 func (s *testColumnSuite) TestString(c *C) {
 	defer testleak.AfterTest(c)()
 	col := &Column{
-		model.ColumnInfo{
-			FieldType: *types.NewFieldType(mysql.TypeTiny),
-			State:     model.StatePublic,
-		},
+		FieldType: *types.NewFieldType(mysql.TypeTiny),
+		State:     model.StatePublic,
 	}
 	col.Flen = 2
 	col.Decimal = 1
@@ -198,9 +196,7 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 
 func newCol(name string) *Column {
 	return &Column{
-		model.ColumnInfo{
-			Name:  model.NewCIStr(name),
-			State: model.StatePublic,
-		},
+		Name:  model.NewCIStr(name),
+		State: model.StatePublic,
 	}
 }

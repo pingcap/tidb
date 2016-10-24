@@ -152,7 +152,7 @@ func (job *Job) String() string {
 // IsFinished returns whether job is finished or not.
 // If the job state is Done or Cancelled, it is finished.
 func (job *Job) IsFinished() bool {
-	return job.State == JobDone || job.State == JobCancelled
+	return job.State == JobDone || job.State == JobRollbackDone || job.State == JobCancelled
 }
 
 // IsDone returns whether job is done.
@@ -172,6 +172,11 @@ type JobState byte
 const (
 	JobNone JobState = iota
 	JobRunning
+	// When DDL encouterred an unrecoverable error at reorganization state,
+	// some keys has been added already, we need to remove them.
+	// JobRollback is the state to do rollback work.
+	JobRollback
+	JobRollbackDone
 	JobDone
 	JobCancelled
 )
@@ -181,6 +186,10 @@ func (s JobState) String() string {
 	switch s {
 	case JobRunning:
 		return "running"
+	case JobRollback:
+		return "rollback"
+	case JobRollbackDone:
+		return "rollback done"
 	case JobDone:
 		return "done"
 	case JobCancelled:
@@ -201,4 +210,16 @@ type Owner struct {
 // String implements fmt.Stringer interface.
 func (o *Owner) String() string {
 	return fmt.Sprintf("ID:%s, LastUpdateTS:%d", o.OwnerID, o.LastUpdateTS)
+}
+
+// SchemaDiff contains the schema modification at a particular schema version.
+// It is used to reduce schema reload cost.
+type SchemaDiff struct {
+	Version  int64      `json:"version"`
+	Type     ActionType `json:"type"`
+	SchemaID int64      `json:"schema_id"`
+	TableID  int64      `json:"table_id"`
+
+	// OldTableID is the table ID before truncate, only used by truncate table DDL.
+	OldTableID int64 `json:"old_table_id"`
 }

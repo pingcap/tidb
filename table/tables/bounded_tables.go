@@ -63,7 +63,7 @@ func BoundedTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo, capa
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))
 	var pkHandleColumn *table.Column
 	for _, colInfo := range tblInfo.Columns {
-		col := &table.Column{ColumnInfo: *colInfo}
+		col := table.ToColumn(colInfo)
 		columns = append(columns, col)
 		if col.IsPKHandleColumn(tblInfo) {
 			pkHandleColumn = col
@@ -268,6 +268,11 @@ func (t *BoundedTable) AllocAutoID() (int64, error) {
 		return invalidRecordID, errors.Trace(err)
 	}
 	return recordID + initialRecordID, nil
+}
+
+// Allocator implements table.Table Allocator interface.
+func (t *BoundedTable) Allocator() autoid.Allocator {
+	return t.alloc
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
