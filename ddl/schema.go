@@ -48,7 +48,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 		}
 	}
 
-	err = updateSchemaVersion(t, job)
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -64,6 +64,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 		}
 		// finish this job
 		job.State = model.JobDone
+		addFinishInfo(job, ver, nil)
 		return nil
 	default:
 		// we can't enter here.
@@ -81,7 +82,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(infoschema.ErrDatabaseDropExists)
 	}
 
-	err = updateSchemaVersion(t, job)
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -111,7 +112,10 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 
 		// finish this job
 		if len(tables) > 0 {
-			job.Args = []interface{}{getIDs(tables)}
+			ids := getIDs(tables)
+			job.Args = []interface{}{ver, ids}
+		} else {
+			addFinishInfo(job, ver, nil)
 		}
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone

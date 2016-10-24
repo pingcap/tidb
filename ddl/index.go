@@ -162,7 +162,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 	}
 
-	err = updateSchemaVersion(t, job)
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -229,6 +229,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		// finish this job
 		job.SchemaState = model.StatePublic
 		job.State = model.JobDone
+		addFinishInfo(job, ver, tblInfo)
 		return nil
 	default:
 		return ErrInvalidIndexState.Gen("invalid index state %v", tblInfo.State)
@@ -278,7 +279,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		return ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
 	}
 
-	err = updateSchemaVersion(t, job)
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -342,6 +343,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		} else {
 			job.State = model.JobDone
 		}
+		addFinishInfo(job, ver, tblInfo)
 		return nil
 	default:
 		return ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
