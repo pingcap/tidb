@@ -112,13 +112,16 @@ func (do *Domain) getAllSchemasWithTablesFromMeta(m *meta.Meta) ([]*model.DBInfo
 	return schemas, nil
 }
 
-const maxNumberOfDiffsToLoad = 100
+const (
+	initialVersion         = 0
+	maxNumberOfDiffsToLoad = 100
+)
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.
 // Returns true if the schema is loaded successfully.
 // Returns false if the schema can not be loaded by schema diff, then we need to do full load.
 func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (bool, error) {
-	if usedVersion == 0 || newVersion-usedVersion > maxNumberOfDiffsToLoad {
+	if usedVersion == initialVersion || newVersion-usedVersion > maxNumberOfDiffsToLoad {
 		// If there isn't any used version, or used version is too old, we do full load.
 		return false, nil
 	}

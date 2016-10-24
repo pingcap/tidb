@@ -68,7 +68,12 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		}
 	}
 	// The old DBInfo still holds a reference to old table info, we need to update it.
-	// As old DBInfo should be read only, we clone a new DBInfo.
+	b.updateDBInfo(roDBInfo, oldTableID, newTableID)
+	return nil
+}
+
+// updateDBInfo clones a new DBInfo from old DBInfo, and update on the new one.
+func (b *Builder) updateDBInfo(roDBInfo *model.DBInfo, oldTableID, newTableID int64) {
 	newDbInfo := new(model.DBInfo)
 	*newDbInfo = *roDBInfo
 	newDbInfo.Tables = make([]*model.TableInfo, 0, len(roDBInfo.Tables))
@@ -83,7 +88,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		}
 	}
 	b.is.schemas[newDbInfo.ID] = newDbInfo
-	return nil
 }
 
 func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
