@@ -102,10 +102,20 @@ func (*testSuite) TestT(c *C) {
 	}
 
 	dbInfos := []*model.DBInfo{dbInfo}
+	err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+		meta.NewMeta(txn).CreateDatabase(dbInfo)
+		return errors.Trace(err)
+	})
+	c.Assert(err, IsNil)
+
 	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(dbInfos, 1)
 	c.Assert(err, IsNil)
 
-	checkApplyCreateNonExistsSchemaDoesNotPanic(c, store, builder)
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	checkApplyCreateNonExistsSchemaDoesNotPanic(c, txn, builder)
+	checkApplyCreateNonExistsTableDoesNotPanic(c, txn, builder, dbID)
+	txn.Rollback()
 
 	err = builder.Build()
 	c.Assert(err, IsNil)
@@ -174,12 +184,16 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(tb, NotNil)
 }
 
-func checkApplyCreateNonExistsSchemaDoesNotPanic(c *C, store kv.Storage, builder *infoschema.Builder) {
-	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+func checkApplyCreateNonExistsSchemaDoesNotPanic(c *C, txn kv.Transaction, builder *infoschema.Builder) {
 	m := meta.NewMeta(txn)
-	err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999})
+	err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999})
 	c.Assert(infoschema.ErrDatabaseNotExists.Equal(err), IsTrue)
+}
+
+func checkApplyCreateNonExistsTableDoesNotPanic(c *C, txn kv.Transaction, builder *infoschema.Builder, dbID int64) {
+	m := meta.NewMeta(txn)
+	err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: dbID, TableID: 999})
+	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
 }
 
 // Make sure it is safe to concurrently create handle on multiple stores.
