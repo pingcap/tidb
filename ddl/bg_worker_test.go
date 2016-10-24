@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -68,7 +67,7 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	defer d.close()
 
 	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(c, mock.NewContext(), d, dbInfo)
+	testCreateSchema(c, testNewContext(c, d), d, dbInfo)
 
 	job := &model.Job{
 		SchemaID: dbInfo.ID,

@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -47,11 +46,11 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.d = newDDL(s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test_column")
-	testCreateSchema(c, mock.NewContext(), s.d, s.dbInfo)
+	testCreateSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
 }
 
 func (s *testColumnSuite) TearDownSuite(c *C) {
-	testDropSchema(c, mock.NewContext(), s.d, s.dbInfo)
+	testDropSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
 	s.d.close()
 
 	err := s.store.Close()
@@ -81,6 +80,8 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 
 	err = d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -97,6 +98,8 @@ func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tbl
 		return nil
 	}
 	c.Assert(errors.ErrorStack(err), Equals, "")
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 

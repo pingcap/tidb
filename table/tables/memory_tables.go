@@ -77,7 +77,7 @@ func MemoryTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (tabl
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))
 	var pkHandleColumn *table.Column
 	for _, colInfo := range tblInfo.Columns {
-		col := &table.Column{ColumnInfo: *colInfo}
+		col := table.ToColumn(colInfo)
 		columns = append(columns, col)
 		if col.IsPKHandleColumn(tblInfo) {
 			pkHandleColumn = col
@@ -240,6 +240,11 @@ func (t *MemoryTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum
 // AllocAutoID implements table.Table AllocAutoID interface.
 func (t *MemoryTable) AllocAutoID() (int64, error) {
 	return t.alloc.Alloc(t.ID)
+}
+
+// Allocator implements table.Table Allocator interface.
+func (t *MemoryTable) Allocator() autoid.Allocator {
+	return t.alloc
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.

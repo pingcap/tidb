@@ -756,7 +756,7 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 func (e *InsertValues) getColumnDefaultValues(cols []*table.Column) (map[string]types.Datum, error) {
 	defaultValMap := map[string]types.Datum{}
 	for _, col := range cols {
-		if value, ok, err := table.GetColDefaultValue(e.ctx, &col.ColumnInfo); ok {
+		if value, ok, err := table.GetColDefaultValue(e.ctx, col.ToInfo()); ok {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -914,7 +914,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			}
 		} else {
 			var err error
-			row[i], _, err = table.GetColDefaultValue(e.ctx, &c.ColumnInfo)
+			row[i], _, err = table.GetColDefaultValue(e.ctx, c.ToInfo())
 			if err != nil {
 				return errors.Trace(err)
 			}

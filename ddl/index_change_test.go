@@ -285,6 +285,9 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx context.Context, write
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 6, 6, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	var rows [][]types.Datum
 	publicTbl.IterRecords(ctx, publicTbl.FirstKey(), publicTbl.Cols(),
@@ -312,21 +315,29 @@ func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx context.Context, p
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	err = checkIndexExists(ctx, publicTbl, 8, 8, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	// WriteOnlyTable update t set c2 = 7 where c1 = 8 and c2 = 8
 	err = writeTbl.UpdateRecord(ctx, 8, types.MakeDatums(8, 8), types.MakeDatums(8, 7), touchedMap(writeTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	err = checkIndexExists(ctx, publicTbl, 7, 8, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// WriteOnlyTable delete t where c1 = 8
 	err = writeTbl.RemoveRecord(ctx, 8, types.MakeDatums(8, 7))
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	err = checkIndexExists(ctx, publicTbl, 7, 8, false)
 	if err != nil {
 		return errors.Trace(err)
@@ -340,25 +351,34 @@ func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx context.Context, 
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	err = checkIndexExists(ctx, writeTbl, 9, 9, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// DeleteOnlyTable insert t values (10, 10)
 	_, err = delTbl.AddRecord(ctx, types.MakeDatums(10, 10))
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	err = checkIndexExists(ctx, writeTbl, 10, 10, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	// DeleteOnlyTable update t set c2 = 10 where c1 = 9
 	err = delTbl.UpdateRecord(ctx, 9, types.MakeDatums(9, 9), types.MakeDatums(9, 10), touchedMap(delTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	err = checkIndexExists(ctx, writeTbl, 9, 9, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	err = checkIndexExists(ctx, writeTbl, 10, 9, false)
 	if err != nil {
 		return errors.Trace(err)

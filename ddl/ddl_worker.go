@@ -426,7 +426,9 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 		return
 	}
 
-	job.State = model.JobRunning
+	if job.State != model.JobRollback {
+		job.State = model.JobRunning
+	}
 
 	var err error
 	switch job.Type {
@@ -492,4 +494,29 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration) {
 	case <-time.After(waitTime):
 	case <-d.quitCh:
 	}
+}
+
+// updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
+func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
+	schemaVersion, err := t.GenSchemaVersion()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	diff := &model.SchemaDiff{
+		Version:  schemaVersion,
+		Type:     job.Type,
+		SchemaID: job.SchemaID,
+	}
+	if job.Type == model.ActionTruncateTable {
+		// Truncate table has two table ID, should be handled differently.
+		err = job.DecodeArgs(&diff.TableID)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.OldTableID = job.TableID
+	} else {
+		diff.TableID = job.TableID
+	}
+	err = t.SetSchemaDiff(schemaVersion, diff)
+	return schemaVersion, errors.Trace(err)
 }

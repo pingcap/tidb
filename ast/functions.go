@@ -67,6 +67,97 @@ const (
 	RowFunc    = "row"
 	SetVar     = "setvar"
 	GetVar     = "getvar"
+
+	// common functions
+	Coalesce = "coalesce"
+	Greatest = "greatest"
+
+	// math functions
+	Abs     = "abs"
+	Ceil    = "ceil"
+	Ceiling = "ceiling"
+	Pow     = "pow"
+	Power   = "power"
+	Rand    = "rand"
+	Round   = "round"
+
+	// time functions
+	Curdate          = "curdate"
+	CurrentDate      = "current_date"
+	CurrentTime      = "current_time"
+	CurrentTimestamp = "current_timestamp"
+	Curtime          = "curtime"
+	Date             = "date"
+	DateArith        = "date_arith"
+	DateFormat       = "date_format"
+	Day              = "day"
+	DayName          = "dayname"
+	DayOfMonth       = "dayofmonth"
+	DayOfWeek        = "dayofweek"
+	DayOfYear        = "dayofyear"
+	Extract          = "extract"
+	Hour             = "hour"
+	MicroSecond      = "microsecond"
+	Minute           = "minute"
+	Month            = "month"
+	MonthName        = "monthname"
+	Now              = "now"
+	Second           = "second"
+	Sysdate          = "sysdate"
+	Time             = "time"
+	UTCDate          = "utc_date"
+	Week             = "week"
+	Weekday          = "weekday"
+	WeekOfYear       = "weekofyear"
+	Year             = "year"
+	YearWeek         = "yearweek"
+
+	// string functions
+	ASCII          = "ascii"
+	Concat         = "concat"
+	ConcatWS       = "concat_ws"
+	Convert        = "convert"
+	Lcase          = "lcase"
+	Left           = "left"
+	Length         = "length"
+	Locate         = "locate"
+	Lower          = "lower"
+	Ltrim          = "ltrim"
+	Repeat         = "repeat"
+	Replace        = "replace"
+	Reverse        = "reverse"
+	Rtrim          = "rtrim"
+	Space          = "space"
+	Strcmp         = "strcmp"
+	Substring      = "substring"
+	SubstringIndex = "substring_index"
+	Trim           = "trim"
+	Upper          = "upper"
+	Ucase          = "ucase"
+	Hex            = "hex"
+	Unhex          = "unhex"
+
+	// information functions
+	ConnectionID = "connection_id"
+	CurrentUser  = "current_user"
+	Database     = "database"
+	FoundRows    = "found_rows"
+	LastInsertId = "last_insert_id"
+	User         = "user"
+	Version      = "version"
+
+	// control functions
+	If     = "if"
+	Ifnull = "ifnull"
+	Nullif = "nullif"
+
+	// miscellaneous functions
+	Sleep = "sleep"
+
+	// get_lock() and release_lock() is parsed but do nothing.
+	// It is used for preventing error in Ruby's activerecord migrations.
+	GetLock     = "get_lock"
+	ReleaseLock = "release_lock"
 )
 
 // FuncCallExpr is for function expression.
