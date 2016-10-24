@@ -112,8 +112,8 @@ func (b *Builder) applyDropSchema(schemaID int64) {
 	}
 }
 
-func (b *Builder) applyCreateTable(m *meta.Meta, di *model.DBInfo, tableID int64, alloc autoid.Allocator) error {
-	tblInfo, err := m.GetTable(di.ID, tableID)
+func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID int64, alloc autoid.Allocator) error {
+	tblInfo, err := m.GetTable(roDBInfo.ID, tableID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -121,14 +121,14 @@ func (b *Builder) applyCreateTable(m *meta.Meta, di *model.DBInfo, tableID int64
 		return ErrTableNotExists
 	}
 	if alloc == nil {
-		alloc = autoid.NewAllocator(b.handle.store, di.ID)
+		alloc = autoid.NewAllocator(b.handle.store, roDBInfo.ID)
 	}
 	tbl, err := tables.TableFromMeta(alloc, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	b.is.tables[tblInfo.ID] = tbl
-	tn := makeTableName(di.Name.L, tblInfo.Name.L)
+	tn := makeTableName(roDBInfo.Name.L, tblInfo.Name.L)
 	b.is.tableNameToID[string(tn)] = tblInfo.ID
 	return nil
 }
