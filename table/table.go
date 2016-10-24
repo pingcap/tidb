@@ -105,6 +105,9 @@ type Table interface {
 	// AllocAutoID allocates an auto_increment ID for a new row.
 	AllocAutoID() (int64, error)
 
+	// Allocator returns Allocator.
+	Allocator() autoid.Allocator
+
 	// RebaseAutoID rebases the auto_increment ID base.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
