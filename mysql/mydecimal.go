@@ -164,6 +164,7 @@ type MyDecimal struct {
 	wordBuf [maxWordBufLen]int32
 }
 
+// IsNegative returns whether a decimal is negative.
 func (d *MyDecimal) IsNegative() bool {
 	return d.negative
 }

@@ -23,7 +23,7 @@ func (e *Evaluator) evalBitOps(expr *tipb.Expr) (types.Datum, error) {
 	if expr.GetTp() == tipb.ExprType_BitNeg {
 		var result types.Datum
 		if len(expr.Children) != 1 {
-			err := ErrInvalid.Gen("need 2 operands but got %d", len(expr.Children))
+			err := ErrInvalid.Gen("need 1 operand but got %d", len(expr.Children))
 			return result, err
 		}
 		operand, err := e.Eval(expr.Children[0])
@@ -44,7 +44,7 @@ func (e *Evaluator) evalBitOps(expr *tipb.Expr) (types.Datum, error) {
 	return ComputeBit(expr.GetTp(), left, right)
 }
 
-// ComputeBit computes the logic operation on two datums.
+// ComputeBit computes the bitwise operation on two datums.
 func ComputeBit(op tipb.ExprType, left, right types.Datum) (types.Datum, error) {
 	var result types.Datum
 	a, err := types.CoerceArithmetic(left)

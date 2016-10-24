@@ -73,12 +73,12 @@ func (e *Evaluator) evalOr(leftBool, rightBool int64) (types.Datum, error) {
 // evalXor computes result of (X XOR Y).
 func (e *Evaluator) evalXor(leftBool, rightBool int64) (types.Datum, error) {
 	var d types.Datum
-	if leftBool == rightBool {
-		d.SetInt64(0)
-		return d, nil
-	}
 	if leftBool == compareResultNull || rightBool == compareResultNull {
 		d.SetNull()
+		return d, nil
+	}
+	if leftBool == rightBool {
+		d.SetInt64(0)
 		return d, nil
 	}
 	d.SetInt64(1)

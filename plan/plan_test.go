@@ -118,20 +118,30 @@ func mockResolve(node ast.Node) error {
 
 func supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
-	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_Float32,
-		tipb.ExprType_Float64, tipb.ExprType_String, tipb.ExprType_Bytes,
-		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlDecimal, tipb.ExprType_MysqlTime,
-		tipb.ExprType_ColumnRef,
-		tipb.ExprType_And, tipb.ExprType_Or,
-		tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
+	// data type
+	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64,
+		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_String,
+		tipb.ExprType_Bytes, tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlDecimal,
+		tipb.ExprType_MysqlTime, tipb.ExprType_ColumnRef:
+		return true
+	// logic operators
+	case tipb.ExprType_And, tipb.ExprType_Or, tipb.ExprType_Not, tipb.ExprType_Xor:
+		return true
+	// compare operators
+	case tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
 		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
-		tipb.ExprType_In, tipb.ExprType_ValueList,
-		tipb.ExprType_Not,
-		tipb.ExprType_Like:
+		tipb.ExprType_In, tipb.ExprType_ValueList, tipb.ExprType_Like:
 		return true
-	case tipb.ExprType_Plus, tipb.ExprType_Div:
+	// arithmetic operators
+	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus,
+		tipb.ExprType_Mul, tipb.ExprType_IntDiv, tipb.ExprType_Mod:
 		return true
-	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum, tipb.ExprType_Avg, tipb.ExprType_Max, tipb.ExprType_Min:
+	// aggregate functions
+	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum,
+		tipb.ExprType_Avg, tipb.ExprType_Max, tipb.ExprType_Min:
+		return true
+	// bitwise operators
+	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitXor, tipb.ExprType_BitNeg:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
@@ -274,7 +284,7 @@ func (s *testPlanSuite) TestTopnPushDown(c *C) {
 }
 
 // TestLogicOpsPushDown tests whether logic operators been pushed down successfully.
-func (s *testPlanSuite) TestLogicOpsPushDown(c *C) {
+func (s *testPlanSuite) TestOperatorsPushDown(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql    string
@@ -300,6 +310,31 @@ func (s *testPlanSuite) TestLogicOpsPushDown(c *C) {
 			sql:    "not a",
 			cond:   "not(test.t.a)",
 			exprPB: "\b\xe9\a\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
+		},
+		{
+			sql:    "a xor b",
+			cond:   "xor(test.t.a, test.t.b)",
+			exprPB: "\b\xff\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		{
+			sql:    "a & b",
+			cond:   "bitand(test.t.a, test.t.b)",
+			exprPB: "\b\xb5\x10\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		{
+			sql:    "a | b",
+			cond:   "bitor(test.t.a, test.t.b)",
+			exprPB: "\b\xb6\x10\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		{
+			sql:    "a ^ b",
+			cond:   "bitxor(test.t.a, test.t.b)",
+			exprPB: "\b\xb7\x10\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		{
+			sql:    "~a",
+			cond:   "bitneg(test.t.a)",
+			exprPB: "\b\xeb\a\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
 		},
 	}
 	for _, ca := range cases {

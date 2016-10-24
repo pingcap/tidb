@@ -48,25 +48,25 @@ type decodedValueList struct {
 // Eval evaluates expr to a Datum.
 func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 	switch expr.GetTp() {
-	// data type.
+	// data type
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64,
 		tipb.ExprType_String, tipb.ExprType_Bytes, tipb.ExprType_Float32,
 		tipb.ExprType_Float64, tipb.ExprType_MysqlDecimal,
 		tipb.ExprType_MysqlDuration, tipb.ExprType_ColumnRef:
 		return e.evalDataType(expr)
-	// compare operator.
+	// compare operator
 	case tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ,
 		tipb.ExprType_NE, tipb.ExprType_GE, tipb.ExprType_GT,
 		tipb.ExprType_NullEQ, tipb.ExprType_Like, tipb.ExprType_In:
 		return e.evalCompareOps(expr)
-	// logic operator.
+	// logic operator
 	case tipb.ExprType_And, tipb.ExprType_Or, tipb.ExprType_Xor, tipb.ExprType_Not:
 		return e.evalLogicOps(expr)
-	// arithmetic operator.
+	// arithmetic operator
 	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus,
 		tipb.ExprType_Mul, tipb.ExprType_IntDiv, tipb.ExprType_Mod:
 		return e.evalArithmeticOps(expr)
-	// bit operator.
+	// bit operator
 	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitNeg,
 		tipb.ExprType_BitXor, tipb.ExprType_LeftShift, tipb.ExprType_RighShift:
 		return e.evalBitOps(expr)
