@@ -140,7 +140,6 @@ func getSchemaVer(c *C, ctx context.Context) int64 {
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn, NotNil)
-	defer ctx.RollbackTxn()
 	m := meta.NewMeta(txn)
 	ver, err := m.GetSchemaVersion()
 	c.Assert(err, IsNil)
@@ -156,7 +155,6 @@ type historyJobArgs struct {
 func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobArgs) error {
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
-	defer ctx.RollbackTxn()
 	t := meta.NewMeta(txn)
 	historyJob, err := t.GetHistoryDDLJob(id)
 	c.Assert(err, IsNil)
