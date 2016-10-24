@@ -210,10 +210,11 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
-	_, err = t.GenSchemaVersion()
+	ver, err := t.GenSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	job.State = model.JobDone
+	addFinishInfo(job, ver, nil)
 	return nil
 }

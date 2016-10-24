@@ -152,7 +152,7 @@ type historyJobArgs struct {
 	tblIDs map[int64]struct{}
 }
 
-func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobArgs) error {
+func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobArgs) {
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -165,13 +165,13 @@ func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobAr
 	if args.tbl == nil && len(args.tblIDs) == 0 {
 		historyJob.DecodeArgs(&v)
 		c.Assert(v, Equals, args.ver)
-		return nil
+		return
 	}
 	// alter table DDL
 	if args.tbl != nil {
 		historyJob.DecodeArgs(&v, &tbl)
 		c.Assert(v, Equals, args.ver)
-		return nil
+		return
 	}
 	// only for drop schema job
 	historyJob.DecodeArgs(&v, &ids)
@@ -181,7 +181,6 @@ func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobAr
 		delete(args.tblIDs, id)
 	}
 	c.Assert(len(args.tblIDs), Equals, 0)
-	return nil
 }
 
 func (s *testSchemaSuite) TestSchema(c *C) {
