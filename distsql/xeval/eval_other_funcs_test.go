@@ -24,28 +24,53 @@ func (s *testEvalSuite) TestEvalCaseWhen(c *C) {
 	row := make(map[int64]types.Datum)
 	row[colID] = types.NewIntDatum(100)
 	xevaluator := &Evaluator{Row: row}
+	trueCond := types.NewIntDatum(1)
+	falseCond := types.NewIntDatum(0)
+	nullCond := types.Datum{}
+	nullCond.SetNull()
 	cases := []struct {
 		expr   *tipb.Expr
 		result types.Datum
 	}{
 		{
-			expr: buildExpr(tipb.ExprType_Case, types.NewIntDatum(0), types.NewStringDatum("case1"),
-				types.NewIntDatum(1), types.NewStringDatum("case2"),
-				types.NewIntDatum(1), types.NewStringDatum("case3")),
+			expr: buildExpr(tipb.ExprType_Case,
+				falseCond, types.NewStringDatum("case1"),
+				trueCond, types.NewStringDatum("case2"),
+				trueCond, types.NewStringDatum("case3")),
 			result: types.NewStringDatum("case2"),
 		},
 		{
-			expr: buildExpr(tipb.ExprType_Case, types.NewIntDatum(0), types.NewStringDatum("case1"),
-				types.NewIntDatum(0), types.NewStringDatum("case2"),
-				types.NewIntDatum(0), types.NewStringDatum("case3"),
+			expr: buildExpr(tipb.ExprType_Case,
+				falseCond, types.NewStringDatum("case1"),
+				falseCond, types.NewStringDatum("case2"),
+				falseCond, types.NewStringDatum("case3"),
 				types.NewStringDatum("Else")),
 			result: types.NewStringDatum("Else"),
 		},
 		{
-			expr: buildExpr(tipb.ExprType_Case, types.NewIntDatum(0), types.NewStringDatum("case1"),
-				types.NewIntDatum(0), types.NewStringDatum("case2"),
-				types.NewIntDatum(0), types.NewStringDatum("case3")),
+			expr: buildExpr(tipb.ExprType_Case,
+				falseCond, types.NewStringDatum("case1"),
+				falseCond, types.NewStringDatum("case2"),
+				falseCond, types.NewStringDatum("case3")),
 			result: types.Datum{},
+		},
+		{
+			expr: buildExpr(tipb.ExprType_Case,
+				buildExpr(tipb.ExprType_Case,
+					falseCond, types.NewIntDatum(0),
+					trueCond, types.NewIntDatum(1),
+				), types.NewStringDatum("nested case when"),
+				falseCond, types.NewStringDatum("case1"),
+				trueCond, types.NewStringDatum("case2"),
+				trueCond, types.NewStringDatum("case3")),
+			result: types.NewStringDatum("nested case when"),
+		},
+		{
+			expr: buildExpr(tipb.ExprType_Case,
+				nullCond, types.NewStringDatum("case1"),
+				falseCond, types.NewStringDatum("case2"),
+				trueCond, types.NewStringDatum("case3")),
+			result: types.NewStringDatum("case3"),
 		},
 	}
 	for _, ca := range cases {

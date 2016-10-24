@@ -666,7 +666,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		if v.ElseClause != nil {
 			args = append(args, er.ctxStack[stkLen-1])
 		}
-		argsLen++ // for trimming the value element later.
+		argsLen++ // for trimming the value element later
 	} else {
 		// args:  condition1, result1,
 		//        condition2, result2,

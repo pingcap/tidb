@@ -14,7 +14,7 @@
 package xeval
 
 import (
-	"github.com/pingcap/tidb/_vendor/src/github.com/juju/errors"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )

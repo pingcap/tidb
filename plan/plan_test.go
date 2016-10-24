@@ -355,7 +355,7 @@ func (s *testPlanSuite) TestBuiltinFuncsPushDown(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql    string
-		cond   string // readable expressions.
+		cond   string // readable expressions
 		exprPB string // Marshall result of conditions been pushed down.
 	}{
 		// case when
