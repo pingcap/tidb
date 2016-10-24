@@ -64,7 +64,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 		}
 		// finish this job
 		job.State = model.JobDone
-		addFinishInfo(job, ver, dbInfo, nil)
+		addDBHistoryInfo(job, ver, dbInfo)
 		return nil
 	default:
 		// we can't enter here.
@@ -99,7 +99,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		dbInfo.State = model.StateDeleteOnly
 		err = t.UpdateDatabase(dbInfo)
 	case model.StateDeleteOnly:
-		dbInfo.State = model.StateDeleteReorganization
+		dbInfo.State = model.StateNone
 		tables, err := t.ListTables(job.SchemaID)
 		if err != nil {
 			return errors.Trace(err)
@@ -111,11 +111,9 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		}
 
 		// finish this job
+		addDBHistoryInfo(job, ver, dbInfo)
 		if len(tables) > 0 {
-			ids := getIDs(tables)
-			job.Args = []interface{}{ver, dbInfo, ids}
-		} else {
-			addFinishInfo(job, ver, dbInfo, nil)
+			job.Args = append(job.Args, getIDs(tables))
 		}
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone

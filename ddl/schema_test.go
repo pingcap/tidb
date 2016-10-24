@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/juju/errors"
@@ -66,9 +65,9 @@ func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) (*m
 		SchemaID: dbInfo.ID,
 		Type:     model.ActionDropSchema,
 	}
-
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
+
 	ver := getSchemaVer(c, ctx)
 	return job, ver
 }
@@ -157,11 +156,13 @@ type historyJobArgs struct {
 }
 
 func checkEqualTable(c *C, t1, t2 *model.TableInfo) {
-	b1, err := json.Marshal(t1)
-	c.Assert(err, IsNil)
-	b2, err := json.Marshal(t2)
-	c.Assert(err, IsNil)
-	c.Assert(b1, DeepEquals, b2)
+	c.Assert(t1.ID, Equals, t2.ID)
+	c.Assert(t1.Name, Equals, t2.Name)
+	c.Assert(t1.Charset, Equals, t2.Charset)
+	c.Assert(t1.Collate, Equals, t2.Collate)
+	c.Assert(t1.PKIsHandle, DeepEquals, t2.PKIsHandle)
+	c.Assert(t1.Comment, DeepEquals, t2.Comment)
+	c.Assert(t1.AutoIncID, DeepEquals, t2.AutoIncID)
 }
 
 func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobArgs) {
@@ -177,7 +178,7 @@ func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobAr
 	if args.tbl != nil {
 		historyJob.DecodeArgs(&v, &tbl)
 		c.Assert(v, Equals, args.ver)
-
+		checkEqualTable(c, tbl, args.tbl)
 		return
 	}
 	// only for create schema job
