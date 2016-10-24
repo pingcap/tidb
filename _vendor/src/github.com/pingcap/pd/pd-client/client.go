@@ -14,6 +14,8 @@
 package pd
 
 import (
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -60,8 +62,12 @@ func (c *client) GetTS() (int64, int64, error) {
 	req := &tsoRequest{
 		done: make(chan error, 1),
 	}
+
+	start := time.Now()
 	c.worker.requests <- req
 	err := <-req.done
+	requestDuration.WithLabelValues("tso").Observe(time.Since(start).Seconds())
+
 	return req.physical, req.logical, err
 }
 
@@ -72,8 +78,12 @@ func (c *client) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, error) {
 		},
 		done: make(chan error, 1),
 	}
+
+	start := time.Now()
 	c.worker.requests <- req
 	err := <-req.done
+	requestDuration.WithLabelValues("get_region").Observe(time.Since(start).Seconds())
+
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -87,8 +97,12 @@ func (c *client) GetStore(storeID uint64) (*metapb.Store, error) {
 		},
 		done: make(chan error, 1),
 	}
+
+	start := time.Now()
 	c.worker.requests <- req
 	err := <-req.done
+	requestDuration.WithLabelValues("get_store").Observe(time.Since(start).Seconds())
+
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

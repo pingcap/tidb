@@ -74,6 +74,8 @@ type selectResult struct {
 
 	results chan PartialResult
 	done    chan error
+
+	closed chan struct{}
 }
 
 func (r *selectResult) Fetch() {
@@ -97,10 +99,16 @@ func (r *selectResult) fetch() {
 			reader:     reader,
 			aggregate:  r.aggregate,
 			ignoreData: r.ignoreData,
-			done:       make(chan error),
+			done:       make(chan error, 1),
 		}
 		go pr.fetch()
-		r.results <- pr
+
+		select {
+		case r.results <- pr:
+		case <-r.closed:
+			// if selectResult called Close() already, make fetch goroutine exit
+			return
+		}
 	}
 }
 
@@ -131,6 +139,8 @@ func (r *selectResult) IgnoreData() {
 
 // Close closes SelectResult.
 func (r *selectResult) Close() error {
+	// close this channel tell fetch goroutine to exit
+	close(r.closed)
 	return r.resp.Close()
 }
 
@@ -151,21 +161,27 @@ type partialResult struct {
 }
 
 func (pr *partialResult) fetch() {
+	defer close(pr.done)
 	pr.resp = new(tipb.SelectResponse)
+
 	b, err := ioutil.ReadAll(pr.reader)
 	pr.reader.Close()
 	if err != nil {
 		pr.done <- errors.Trace(err)
 		return
 	}
+
 	err = pr.resp.Unmarshal(b)
 	if err != nil {
 		pr.done <- errors.Trace(err)
 		return
 	}
+
 	if pr.resp.Error != nil {
 		pr.done <- errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
+		return
 	}
+
 	pr.done <- nil
 }
 
@@ -175,9 +191,7 @@ var dummyData = make([]types.Datum, 0)
 // If no more row to return, data would be nil.
 func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
 	if !pr.fetched {
-		select {
-		case err = <-pr.done:
-		}
+		err = <-pr.done
 		pr.fetched = true
 		if err != nil {
 			return 0, nil, err
@@ -289,6 +303,7 @@ func Select(client kv.Client, req *tipb.SelectRequest, keyRanges []kv.KeyRange, 
 		resp:    resp,
 		results: make(chan PartialResult, 5),
 		done:    make(chan error, 1),
+		closed:  make(chan struct{}),
 	}
 	// If Aggregates is not nil, we should set result fields latter.
 	if len(req.Aggregates) == 0 && len(req.GroupBy) == 0 {

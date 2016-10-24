@@ -273,6 +273,81 @@ func (s *testPlanSuite) TestTopnPushDown(c *C) {
 	}
 }
 
+// TestLogicOpsPushDown tests whether logic operators been pushed down successfully.
+func (s *testPlanSuite) TestLogicOpsPushDown(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql    string
+		cond   string // readable expressions.
+		exprPB string // Marshall result of conditions been pushed down.
+	}{
+		{
+			sql:    "a and b",
+			cond:   "and(test.t.a, test.t.b)",
+			exprPB: "\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		{
+			sql:    "a or b",
+			cond:   "or(test.t.a, test.t.b)",
+			exprPB: "\b\xfe\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		{
+			sql:    "a and (b or c)",
+			cond:   "and(test.t.a, or(test.t.b, test.t.c))",
+			exprPB: "\b\xfe\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x03",
+		},
+		{
+			sql:    "not a",
+			cond:   "not(test.t.a)",
+			exprPB: "\b\xe9\a\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
+		},
+	}
+	for _, ca := range cases {
+		sql := "select * from t where " + ca.sql
+		comment := Commentf("for %s", sql)
+		stmt, err := s.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
+		c.Assert(err, IsNil)
+		lp = EliminateProjection(lp)
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		c.Assert(err, IsNil)
+		p = info.p
+		// loop util reaching the DataSource node of a physical plan to get the conditions been pushed down.
+	loop:
+		for {
+			switch x := p.(type) {
+			case *PhysicalTableScan:
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				pbStr, _ := x.ConditionPBExpr.Marshal()
+				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
+				break loop
+			case *PhysicalIndexScan:
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				pbStr, _ := x.ConditionPBExpr.Marshal()
+				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
+				break loop
+			}
+			p = p.GetChildByIndex(0)
+		}
+	}
+}
+
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
@@ -282,8 +357,8 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	}{
 		{
 			sql:   "select count(*) from t a, t b where a.a = b.a",
-			first: "Join{DataScan(t)->DataScan(t)}->Selection->Aggr->Projection",
-			best:  "Join{DataScan(t)->DataScan(t)}->Aggr->Projection",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Aggr(count(1))->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)}->Aggr(count(1))->Projection",
 		},
 		{
 			sql:   "select a from (select a from t where d = 0) k where k.a = 5",
@@ -382,8 +457,8 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:   "select (select count(*) from t where t.a = k.a) from t k",
-			first: "DataScan(t)->Apply(DataScan(t)->Selection->Aggr->Projection->MaxOneRow)->Projection",
-			best:  "DataScan(t)->Apply(DataScan(t)->Selection->Aggr->Projection->MaxOneRow)->Projection",
+			first: "DataScan(t)->Apply(DataScan(t)->Selection->Aggr(count(1))->Projection->MaxOneRow)->Projection",
+			best:  "DataScan(t)->Apply(DataScan(t)->Selection->Aggr(count(1))->Projection->MaxOneRow)->Projection",
 		},
 		{
 			sql:   "select a from t where exists(select 1 from t as x where x.a < t.a)",
@@ -485,6 +560,46 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
+	}
+}
+
+func (s *testPlanSuite) TestLogicalPlan(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select sum(t.a), sum(t.a+1), sum(t.a), count(t.a), sum(t.a) + count(t.a) from t",
+			best: "DataScan(t)->Aggr(sum(test.t.a),sum(plus(test.t.a, 1)),count(test.t.a))->Projection",
+		},
+		{
+			sql:  "select sum(t.a + t.b), sum(t.a + t.c), sum(t.a + t.b), count(t.a) from t having sum(t.a + t.b) > 0 order by sum(t.a + t.c)",
+			best: "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Selection->Projection->Sort->Trim",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mock.NewContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
+		c.Assert(err, IsNil)
+		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
 

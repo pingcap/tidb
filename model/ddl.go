@@ -92,6 +92,8 @@ type Job struct {
 	// unix nano seconds
 	// TODO: use timestamp allocated by TSO.
 	LastUpdateTS int64 `json:"last_update_ts"`
+	// Query string of the ddl job.
+	Query string `json:"query"`
 }
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.
@@ -150,7 +152,12 @@ func (job *Job) String() string {
 // IsFinished returns whether job is finished or not.
 // If the job state is Done or Cancelled, it is finished.
 func (job *Job) IsFinished() bool {
-	return job.State == JobDone || job.State == JobCancelled
+	return job.State == JobDone || job.State == JobRollbackDone || job.State == JobCancelled
+}
+
+// IsDone returns whether job is done.
+func (job *Job) IsDone() bool {
+	return job.State == JobDone
 }
 
 // IsRunning returns whether job is still running or not.
@@ -165,6 +172,11 @@ type JobState byte
 const (
 	JobNone JobState = iota
 	JobRunning
+	// When DDL encouterred an unrecoverable error at reorganization state,
+	// some keys has been added already, we need to remove them.
+	// JobRollback is the state to do rollback work.
+	JobRollback
+	JobRollbackDone
 	JobDone
 	JobCancelled
 )
@@ -174,6 +186,10 @@ func (s JobState) String() string {
 	switch s {
 	case JobRunning:
 		return "running"
+	case JobRollback:
+		return "rollback"
+	case JobRollbackDone:
+		return "rollback done"
 	case JobDone:
 		return "done"
 	case JobCancelled:
