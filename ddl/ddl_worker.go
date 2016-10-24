@@ -153,7 +153,7 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-var maxBgOwnerTimeout = int64(10 * time.Minute)
+const maxBgOwnerTimeout = int64(10 * time.Minute)
 
 func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	owner, err := d.getJobOwner(t, flag)
