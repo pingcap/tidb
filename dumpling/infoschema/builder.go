@@ -95,6 +95,11 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if di == nil {
+		// When we apply an old schema diff, the database may has been dropped already, so we need to fall back to
+		// full load.
+		return ErrDatabaseNotExists
+	}
 	b.is.schemas[di.ID] = di
 	b.is.schemaNameToID[di.Name.L] = di.ID
 	return nil
@@ -118,6 +123,8 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 		return errors.Trace(err)
 	}
 	if tblInfo == nil {
+		// When we apply an old schema diff, the table may has been dropped already, so we need to fall back to
+		// full load.
 		return ErrTableNotExists
 	}
 	if alloc == nil {
