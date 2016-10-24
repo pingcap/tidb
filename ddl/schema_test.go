@@ -144,7 +144,6 @@ func getSchemaVer(c *C, ctx context.Context) int64 {
 	m := meta.NewMeta(txn)
 	ver, err := m.GetSchemaVersion()
 	c.Assert(err, IsNil)
-
 	return ver
 }
 
@@ -247,11 +246,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	ids := make(map[int64]struct{})
 	ids[tblInfo1.ID] = struct{}{}
 	ids[tblInfo2.ID] = struct{}{}
-	checkHistoryJobArgs(c, ctx, job.ID,
-		&historyJobArgs{
-			ver:    v,
-			tblIDs: ids,
-		})
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tblIDs: ids})
 	// check background ddl info
 	time.Sleep(testLease * 400)
 	verifyBgJobState(c, d, job, model.JobDone)

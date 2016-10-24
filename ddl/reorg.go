@@ -242,7 +242,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, 
 	return count, nil
 }
 
-// addFinishInfo adds schema version and table information that are used to binlog.
+// addFinishInfo adds schema version and table information that are used for binlog.
 func addFinishInfo(job *model.Job, ver int64, tblInfo *model.TableInfo) {
 	if tblInfo == nil {
 		job.Args = []interface{}{ver}

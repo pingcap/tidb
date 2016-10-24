@@ -304,7 +304,6 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		log.Warnf("drop index ver %v", ver)
 		// finish this job
 		job.SchemaState = model.StateNone
 		job.State = model.JobDone
