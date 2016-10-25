@@ -122,11 +122,11 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 	switch expr.FuncName.L {
 	case ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT,
 		ast.NullEQ, ast.In, ast.Like:
-		return compareFuncToPBExpr(client, expr)
+		return compareOpsToPBExpr(client, expr)
 	case ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Mod, ast.IntDiv:
-		return arithmeticalFuncToPBExpr(client, expr)
+		return arithmeticalOpsToPBExpr(client, expr)
 	case ast.AndAnd, ast.OrOr, ast.UnaryNot:
-		return logicalFuncToPBExpr(client, expr)
+		return logicalOpsToPBExpr(client, expr)
 	case ast.Case, ast.Coalesce:
 		return builtinFuncToPBExpr(client, expr)
 	default:
@@ -134,7 +134,7 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 	}
 }
 
-func compareFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+func compareOpsToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
 	switch expr.FuncName.L {
 	case ast.LT:
@@ -191,7 +191,7 @@ func compareFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tip
 		Children: []*tipb.Expr{expr0, expr1}}
 }
 
-func arithmeticalFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+func arithmeticalOpsToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
 	switch expr.FuncName.L {
 	case ast.Plus:
@@ -223,7 +223,7 @@ func arithmeticalFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction)
 		Children: []*tipb.Expr{expr0, expr1}}
 }
 
-func logicalFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+func logicalOpsToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
 	switch expr.FuncName.L {
 	case ast.AndAnd:

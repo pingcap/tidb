@@ -887,7 +887,8 @@ func (s *testParserSuite) TestType(c *C) {
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
 
 		// For hexadecimal
-		{"SELECT x'0a', X'11', 0x11", true},
+		{"select x'0a', X'11', 0x11", true},
+		{"select x'13181C76734725455A'", true},
 		{"select x'0xaa'", false},
 		{"select 0X11", false},
 		{"select 0x4920616D2061206C6F6E672068657820737472696E67", true},
@@ -926,6 +927,8 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+		{`DROP USER 'root'@'localhost', 'root1'@'localhost'`, true},
+		{`DROP USER IF EXISTS 'root'@'localhost'`, true},
 
 		// For grant statement
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost';", true},
