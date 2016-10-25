@@ -256,7 +256,7 @@ func parsePath(path string) (etcdAddrs []string, clusterID uint64, disableGC boo
 		return
 	}
 	if strings.ToLower(u.Scheme) != "tikv" {
-		err = errors.Trace(errors.Errorf("Uri scheme expected[tikv] but found [%s]", u.Scheme))
+		err = errors.Errorf("Uri scheme expected[tikv] but found [%s]", u.Scheme)
 		log.Error(err)
 		return
 	}
@@ -271,7 +271,7 @@ func parsePath(path string) (etcdAddrs []string, clusterID uint64, disableGC boo
 		disableGC = true
 	case "false", "":
 	default:
-		err = errors.Trace(errors.New("disableGC flag should be true/false"))
+		err = errors.New("disableGC flag should be true/false")
 		return
 	}
 	etcdAddrs = strings.Split(u.Host, ",")
