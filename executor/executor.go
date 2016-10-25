@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
@@ -67,6 +68,8 @@ const (
 	CodeWrongParamCount terror.ErrCode = 5
 	CodeRowKeyCount     terror.ErrCode = 6
 	CodePrepareDDL      terror.ErrCode = 7
+	// MySQL error code
+	CodeCannotUser terror.ErrCode = 1396
 )
 
 // Row represents a record row.
@@ -484,6 +487,10 @@ func init() {
 		}
 		return row.Data, nil
 	}
+	tableMySQLErrCodes := map[terror.ErrCode]uint16{
+		CodeCannotUser: mysql.ErrCannotUser,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }
 
 // HashJoinExec implements the hash join algorithm.
@@ -1474,7 +1481,7 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 
 	columns := make([]*table.Column, len(e.schema))
 	for i, v := range e.columns {
-		columns[i] = &table.Column{ColumnInfo: *v}
+		columns[i] = table.ToColumn(v)
 	}
 	row.Data, err = e.t.RowWithCols(e.ctx, handle, columns)
 	if err != nil {

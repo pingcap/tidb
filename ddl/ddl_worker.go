@@ -43,10 +43,8 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = d.writePreDDLBinlog(ctx, job.ID, startTS)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	ddlQuery, _ := ctx.Value(context.QueryString).(string)
+	job.Query = ddlQuery
 
 	// Create a new job and queue it.
 	err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
@@ -57,11 +55,6 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	commitVer, err := d.store.CurrentVersion()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	d.writePostDDLBinlog(job.ID, startTS, commitVer.Ver)
 
 	// notice worker that we push a new job and wait the job done.
 	asyncNotify(d.ddlJobCh)
@@ -109,16 +102,15 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	}
 }
 
-func (d *ddl) writePreDDLBinlog(ctx context.Context, jobID int64, startTS uint64) error {
+func (d *ddl) writePreDDLBinlog(job *model.Job, startTS uint64) error {
 	if binloginfo.PumpClient == nil {
 		return nil
 	}
-	ddlQuery, _ := ctx.Value(context.QueryString).(string)
 	bin := &binlog.Binlog{
 		Tp:       binlog.BinlogType_PreDDL,
-		DdlJobId: jobID,
-		DdlQuery: []byte(ddlQuery),
+		DdlJobId: job.ID,
 		StartTs:  int64(startTS),
+		DdlQuery: []byte(job.Query),
 	}
 	err := binloginfo.WriteBinlog(bin)
 	return errors.Trace(err)
@@ -161,9 +153,7 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-// Background job is serial processing, so we can extend the owner timeout to make sure
-// a batch of rows will be processed before timeout.
-var minBgOwnerTimeout = 20 * time.Second
+const maxBgOwnerTimeout = int64(10 * time.Minute)
 
 func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	owner, err := d.getJobOwner(t, flag)
@@ -182,9 +172,12 @@ func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	// 4 * lease to check its timeout.
 	maxTimeout := int64(4 * d.lease)
 	if flag == bgJobFlag {
-		// If 4 * lease is less then minBgOwnerTimeout, we will use default minBgOwnerTimeout.
-		if maxTimeout < int64(minBgOwnerTimeout) {
-			maxTimeout = int64(minBgOwnerTimeout)
+		// Background job is serial processing, so we can extend the owner timeout to make sure
+		// a batch of rows will be processed before timeout. So here we use 20 * lease to check its timeout.
+		maxTimeout := int64(20 * d.lease)
+		// If 20 * lease is greater than maxBgOwnerTimeout, we will use default maxBgOwnerTimeout.
+		if maxTimeout > maxBgOwnerTimeout {
+			maxTimeout = maxBgOwnerTimeout
 		}
 	}
 	sub := now - owner.LastUpdateTS
@@ -283,7 +276,7 @@ func (d *ddl) handleDDLJobQueue() error {
 		}
 
 		waitTime := 2 * d.lease
-
+		var binlogStartTS uint64
 		var job *model.Job
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
@@ -327,6 +320,10 @@ func (d *ddl) handleDDLJobQueue() error {
 			d.runDDLJob(t, job)
 
 			if job.IsFinished() {
+				err = d.writePreDDLBinlogIfNeeded(txn, job, &binlogStartTS)
+				if err != nil {
+					return errors.Trace(err)
+				}
 				err = d.finishDDLJob(t, job)
 			} else {
 				err = d.updateDDLJob(t, job)
@@ -348,6 +345,12 @@ func (d *ddl) handleDDLJobQueue() error {
 			// no job now, return and retry get later.
 			return nil
 		}
+		if binlogStartTS != 0 {
+			commitTS, err1 := d.store.CurrentVersion()
+			if err1 == nil {
+				d.writePostDDLBinlog(job.ID, binlogStartTS, commitTS.Ver)
+			}
+		}
 
 		d.hookMu.Lock()
 		d.hook.OnJobUpdated(job)
@@ -365,6 +368,22 @@ func (d *ddl) handleDDLJobQueue() error {
 			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
+}
+
+// writePreDDLBinlog writes preDDL binlog if job is done and the binlog has not been write before.
+func (d *ddl) writePreDDLBinlogIfNeeded(txn kv.Transaction, job *model.Job, binlogStartTS *uint64) error {
+	if job.IsDone() {
+		// Avoid write multiple times.
+		if *binlogStartTS == 0 {
+			startTS := txn.StartTS()
+			err := d.writePreDDLBinlog(job, startTS)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			*binlogStartTS = startTS
+		}
+	}
+	return nil
 }
 
 func chooseLeaseTime(n1 time.Duration, n2 time.Duration) time.Duration {
@@ -408,7 +427,9 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 		return
 	}
 
-	job.State = model.JobRunning
+	if job.State != model.JobRollback {
+		job.State = model.JobRunning
+	}
 
 	var err error
 	switch job.Type {
@@ -474,4 +495,29 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration) {
 	case <-time.After(waitTime):
 	case <-d.quitCh:
 	}
+}
+
+// updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
+func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
+	schemaVersion, err := t.GenSchemaVersion()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	diff := &model.SchemaDiff{
+		Version:  schemaVersion,
+		Type:     job.Type,
+		SchemaID: job.SchemaID,
+	}
+	if job.Type == model.ActionTruncateTable {
+		// Truncate table has two table ID, should be handled differently.
+		err = job.DecodeArgs(&diff.TableID)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.OldTableID = job.TableID
+	} else {
+		diff.TableID = job.TableID
+	}
+	err = t.SetSchemaDiff(schemaVersion, diff)
+	return schemaVersion, errors.Trace(err)
 }

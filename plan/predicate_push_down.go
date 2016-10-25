@@ -22,6 +22,17 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+var (
+	inequalityFuncs = map[string]string{
+		ast.LT:   ast.LT,
+		ast.GT:   ast.GT,
+		ast.LE:   ast.LE,
+		ast.GE:   ast.GE,
+		ast.NE:   ast.NE,
+		ast.Like: ast.Like,
+	}
+)
+
 func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) error {
 	selection := &Selection{
 		Conditions:      conditions,
@@ -154,14 +165,7 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 	if len(multipleEqualities) == 0 {
 		return conditions
 	}
-	inequalityFuncs := map[string]string{
-		ast.LT:   ast.LT,
-		ast.GT:   ast.GT,
-		ast.LE:   ast.LE,
-		ast.GE:   ast.GE,
-		ast.NE:   ast.NE,
-		ast.Like: ast.Like,
-	}
+
 	type inequalityFactor struct {
 		FuncName string
 		Factor   []*expression.Constant

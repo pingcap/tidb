@@ -55,7 +55,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 		}
 	}
 
-	_, err = t.GenSchemaVersion()
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -71,6 +71,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 		}
 		// finish this job
 		job.State = model.JobDone
+		addFinishInfo(job, ver, nil)
 		return nil
 	default:
 		return ErrInvalidTableState.Gen("invalid table state %v", tbInfo.State)
@@ -108,7 +109,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(infoschema.ErrTableNotExists)
 	}
 
-	_, err = t.GenSchemaVersion()
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -131,9 +132,9 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 			break
 		}
 		// finish this job
-		job.Args = []interface{}{tblInfo}
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
+		addFinishInfo(job, ver, nil)
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
@@ -209,10 +210,11 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
-	_, err = t.GenSchemaVersion()
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	job.State = model.JobDone
+	addFinishInfo(job, ver, nil)
 	return nil
 }

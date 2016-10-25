@@ -64,7 +64,6 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
-	minBgOwnerTimeout = testLease
 	d1 := newDDL(store, nil, nil, testLease)
 	defer d1.close()
 
@@ -80,7 +79,8 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	testCheckOwner(c, d2, false, bgJobFlag)
 	d1.close()
 
-	time.Sleep(6 * testLease)
+	// Make sure owner is changed.
+	time.Sleep(21 * testLease)
 
 	testCheckOwner(c, d2, true, ddlJobFlag)
 	testCheckOwner(c, d2, true, bgJobFlag)
@@ -102,7 +102,6 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	d2.SetLease(1 * time.Second)
 	d2.SetLease(2 * time.Second)
 	c.Assert(d2.GetLease(), Equals, 2*time.Second)
-	minBgOwnerTimeout = 20 * time.Second
 }
 
 func (s *testDDLSuite) TestSchemaError(c *C) {

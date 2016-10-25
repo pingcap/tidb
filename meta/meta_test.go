@@ -167,6 +167,19 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(bootstrapVer, Equals, int64(10))
 
+	// Test case for SchemaDiff.
+	schemaDiff := &model.SchemaDiff{
+		Version:    100,
+		SchemaID:   1,
+		Type:       model.ActionTruncateTable,
+		TableID:    2,
+		OldTableID: 3,
+	}
+	err = t.SetSchemaDiff(schemaDiff.Version, schemaDiff)
+	c.Assert(err, IsNil)
+	readDiff, err := t.GetSchemaDiff(schemaDiff.Version)
+	c.Assert(readDiff, DeepEquals, schemaDiff)
+
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 }
@@ -259,6 +272,14 @@ func (s *testSuite) TestDDL(c *C) {
 	v, err = t.GetHistoryDDLJob(2)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
+
+	all, err := t.GetAllHistoryDDLJobs()
+	c.Assert(err, IsNil)
+	var lastID int64
+	for _, job := range all {
+		c.Assert(job.ID, Greater, lastID)
+		lastID = job.ID
+	}
 
 	// DDL background job test
 	err = t.SetBgJobOwner(owner)

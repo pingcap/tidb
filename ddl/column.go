@@ -128,7 +128,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		}
 	}
 
-	_, err = t.GenSchemaVersion()
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -193,6 +193,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		// finish this job
 		job.SchemaState = model.StatePublic
 		job.State = model.JobDone
+		addFinishInfo(job, ver, tblInfo)
 		return nil
 	default:
 		return ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
@@ -237,7 +238,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		}
 	}
 
-	_, err = t.GenSchemaVersion()
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -291,6 +292,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		// finish this job
 		job.SchemaState = model.StateNone
 		job.State = model.JobDone
+		addFinishInfo(job, ver, tblInfo)
 		return nil
 	default:
 		return ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)

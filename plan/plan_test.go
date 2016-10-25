@@ -392,8 +392,8 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	}{
 		{
 			sql:   "select count(*) from t a, t b where a.a = b.a",
-			first: "Join{DataScan(t)->DataScan(t)}->Selection->Aggr->Projection",
-			best:  "Join{DataScan(t)->DataScan(t)}->Aggr->Projection",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Aggr(count(1))->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)}->Aggr(count(1))->Projection",
 		},
 		{
 			sql:   "select a from (select a from t where d = 0) k where k.a = 5",
@@ -492,8 +492,8 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:   "select (select count(*) from t where t.a = k.a) from t k",
-			first: "DataScan(t)->Apply(DataScan(t)->Selection->Aggr->Projection->MaxOneRow)->Projection",
-			best:  "DataScan(t)->Apply(DataScan(t)->Selection->Aggr->Projection->MaxOneRow)->Projection",
+			first: "DataScan(t)->Apply(DataScan(t)->Selection->Aggr(count(1))->Projection->MaxOneRow)->Projection",
+			best:  "DataScan(t)->Apply(DataScan(t)->Selection->Aggr(count(1))->Projection->MaxOneRow)->Projection",
 		},
 		{
 			sql:   "select a from t where exists(select 1 from t as x where x.a < t.a)",
@@ -595,6 +595,46 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
+	}
+}
+
+func (s *testPlanSuite) TestLogicalPlan(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select sum(t.a), sum(t.a+1), sum(t.a), count(t.a), sum(t.a) + count(t.a) from t",
+			best: "DataScan(t)->Aggr(sum(test.t.a),sum(plus(test.t.a, 1)),count(test.t.a))->Projection",
+		},
+		{
+			sql:  "select sum(t.a + t.b), sum(t.a + t.c), sum(t.a + t.b), count(t.a) from t having sum(t.a + t.b) > 0 order by sum(t.a + t.c)",
+			best: "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Selection->Projection->Sort->Trim",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mock.NewContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
+		c.Assert(err, IsNil)
+		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
 

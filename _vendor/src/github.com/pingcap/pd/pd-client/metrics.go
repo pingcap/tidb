@@ -49,6 +49,15 @@ var (
 			Help:      "Bucketed histogram of processing time (s) of failed handled cmds.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 13),
 		}, []string{"type"})
+
+	requestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "pd_client",
+			Subsystem: "request",
+			Name:      "handle_requests_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of handled requests.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 13),
+		}, []string{"type"})
 )
 
 func init() {
@@ -56,4 +65,5 @@ func init() {
 	prometheus.MustRegister(cmdFailedCounter)
 	prometheus.MustRegister(cmdDuration)
 	prometheus.MustRegister(cmdFailedDuration)
+	prometheus.MustRegister(requestDuration)
 }
