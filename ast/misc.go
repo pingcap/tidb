@@ -391,6 +391,25 @@ func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// DropUserStmt creates user account.
+// See http://dev.mysql.com/doc/refman/5.7/en/drop-user.html
+type DropUserStmt struct {
+	stmtNode
+
+	IfExists bool
+	UserList []string
+}
+
+// Accept implements Node Accept interface.
+func (n *DropUserStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropUserStmt)
+	return v.Leave(n)
+}
+
 // DoStmt is the struct for DO statement.
 type DoStmt struct {
 	stmtNode
