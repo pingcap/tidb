@@ -53,14 +53,13 @@ func (e *Evaluator) evalCaseWhen(expr *tipb.Expr) (d types.Datum, err error) {
 
 func (e *Evaluator) evalCoalesce(expr *tipb.Expr) (d types.Datum, err error) {
 	for _, child := range expr.Children {
-		x, err := e.Eval(child)
+		d, err = e.Eval(child)
 		if err != nil {
-			return d, err
+			break
 		}
-		if x.IsNull() {
-			continue
+		if !d.IsNull() {
+			break
 		}
-		return x, nil
 	}
-	return
+	return d, errors.Trace(err)
 }
