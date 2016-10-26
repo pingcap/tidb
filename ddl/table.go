@@ -78,14 +78,16 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	}
 }
 
+// Maximum number of keys to delete for each job run.
+const reorgDeleteLimit = 65536
+
 func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
-	limit := defaultBatchSize
-	delCount, err := d.dropTableData(job.TableID, job, limit)
+	delCount, err := d.dropTableData(job.TableID, job, reorgDeleteLimit)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// finish this background job
-	if delCount < limit {
+	if delCount < reorgDeleteLimit {
 		job.SchemaState = model.StateNone
 		job.State = model.JobDone
 	}
