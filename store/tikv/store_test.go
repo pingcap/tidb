@@ -46,6 +46,22 @@ func (s *testStoreSuite) SetUpTest(c *C) {
 	s.store = store
 }
 
+func (s *testStoreSuite) TestParsePath(c *C) {
+	etcdAddrs, clusterID, disableGC, err := parsePath("tikv://node1:2379,node2:2379?cluster=1")
+	c.Assert(err, IsNil)
+	c.Assert(etcdAddrs, DeepEquals, []string{"node1:2379", "node2:2379"})
+	c.Assert(clusterID, Equals, uint64(1))
+	c.Assert(disableGC, IsFalse)
+
+	_, _, _, err = parsePath("tikv://node1:2379")
+	c.Assert(err, NotNil)
+	_, _, _, err = parsePath("tidb://node1:2379?cluster=1")
+	c.Assert(err, NotNil)
+	_, _, disableGC, err = parsePath("tikv://node1:2379?cluster=1&disableGC=true")
+	c.Assert(err, IsNil)
+	c.Assert(disableGC, IsTrue)
+}
+
 func (s *testStoreSuite) TestOracle(c *C) {
 	o := &mockOracle{}
 	s.store.oracle = o

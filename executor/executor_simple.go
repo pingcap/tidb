@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -82,6 +83,8 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeRollback(x)
 	case *ast.CreateUserStmt:
 		err = e.executeCreateUser(x)
+	case *ast.DropUserStmt:
+		err = e.executeDropUser(x)
 	case *ast.SetPwdStmt:
 		err = e.executeSetPwd(x)
 	case *ast.AnalyzeTableStmt:
@@ -343,8 +346,39 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 	return nil
 }
 
+func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
+	failedUsers := make([]string, 0, len(s.UserList))
+	for _, user := range s.UserList {
+		userName, host := parseUser(user)
+		exists, err := userExists(e.ctx, userName, host)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !exists {
+			if !s.IfExists {
+				failedUsers = append(failedUsers, user)
+			}
+			continue
+		}
+		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.UserTable, host, userName)
+		_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		if err != nil {
+			failedUsers = append(failedUsers, user)
+		}
+	}
+	err := e.ctx.CommitTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(failedUsers) > 0 {
+		errMsg := "Operation DROP USER failed for " + strings.Join(failedUsers, ",")
+		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
+	}
+	return nil
+}
+
 // parse user string into username and host
-// root@localhost -> roor, localhost
+// root@localhost -> root, localhost
 func parseUser(user string) (string, string) {
 	strs := strings.Split(user, "@")
 	return strs[0], strs[1]

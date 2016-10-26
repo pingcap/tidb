@@ -153,9 +153,7 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-// Background job is serial processing, so we can extend the owner timeout to make sure
-// a batch of rows will be processed before timeout.
-var minBgOwnerTimeout = 20 * time.Second
+const maxBgOwnerTimeout = int64(10 * time.Minute)
 
 func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	owner, err := d.getJobOwner(t, flag)
@@ -174,9 +172,12 @@ func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	// 4 * lease to check its timeout.
 	maxTimeout := int64(4 * d.lease)
 	if flag == bgJobFlag {
-		// If 4 * lease is less then minBgOwnerTimeout, we will use default minBgOwnerTimeout.
-		if maxTimeout < int64(minBgOwnerTimeout) {
-			maxTimeout = int64(minBgOwnerTimeout)
+		// Background job is serial processing, so we can extend the owner timeout to make sure
+		// a batch of rows will be processed before timeout. So here we use 20 * lease to check its timeout.
+		maxTimeout := int64(20 * d.lease)
+		// If 20 * lease is greater than maxBgOwnerTimeout, we will use default maxBgOwnerTimeout.
+		if maxTimeout > maxBgOwnerTimeout {
+			maxTimeout = maxBgOwnerTimeout
 		}
 	}
 	sub := now - owner.LastUpdateTS

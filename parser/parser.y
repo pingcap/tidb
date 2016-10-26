@@ -467,6 +467,7 @@ import (
 	DropDatabaseStmt	"DROP DATABASE statement"
 	DropIndexStmt		"DROP INDEX statement"
 	DropTableStmt		"DROP TABLE statement"
+	DropUserStmt		"DROP USER"
 	EmptyStmt		"empty statement"
 	Enclosed		"Enclosed by"
 	EqOpt			"= or empty"
@@ -629,6 +630,7 @@ import (
 	UnlockTablesStmt	"Unlock tables statement"
 	UpdateStmt		"UPDATE statement"
 	Username		"Username"
+	UsernameList		"UsernameList"
 	UserSpec		"Username and auth option"
 	UserSpecList		"Username and auth option list"
 	UserVariable		"User defined variable name"
@@ -1507,6 +1509,16 @@ DropTableStmt:
 	{
 		$$ = &ast.DropTableStmt{IfExists: true, Tables: $5.([]*ast.TableName)}
 	}
+
+DropUserStmt:
+    "DROP" "USER" UsernameList
+    {
+        $$ = &ast.DropUserStmt{IfExists: false, UserList: $3.([]string)}
+    }
+|   "DROP" "USER" "IF" "EXISTS" UsernameList
+    {
+        $$ = &ast.DropUserStmt{IfExists: true, UserList: $5.([]string)}
+    }
 
 TableOrTables:
 	"TABLE"
@@ -3896,6 +3908,16 @@ Username:
 		$$ = $1 + "@" + $3
 	}
 
+UsernameList:
+    Username
+    {
+        $$ = []string{$1.(string)}
+    }
+|   UsernameList ',' Username
+    {
+        $$ = append($1.([]string), $3.(string))
+    }
+
 PasswordOpt:
 	stringLit
 	{
@@ -4196,6 +4218,7 @@ Statement:
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
+|	DropUserStmt
 |	FlushStmt
 |	GrantStmt
 |	InsertIntoStmt

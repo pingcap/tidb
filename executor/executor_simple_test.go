@@ -190,18 +190,40 @@ func (s *testSuite) TestCreateUser(c *C) {
 	createUserSQL = `CREATE USER 'test'@'localhost' IDENTIFIED BY '123';`
 	_, err := tk.Exec(createUserSQL)
 	c.Check(err, NotNil)
-}
-
-func (s *testSuite) TestCreateUserWithNoPassword(c *C) {
-	defer testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
+	dropUserSQL := `DROP USER IF EXISTS 'test'@'localhost' ;`
+	tk.MustExec(dropUserSQL)
 	// Create user test.
-	createUserSQL := `CREATE USER 'test1'@'localhost';`
+	createUserSQL = `CREATE USER 'test1'@'localhost';`
 	tk.MustExec(createUserSQL)
 	// Make sure user test in mysql.User.
-	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
-	rowStr := fmt.Sprintf("%v", []byte(util.EncodePassword("")))
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("")))
 	result.Check(testkit.Rows(rowStr))
+	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost' ;`
+	tk.MustExec(dropUserSQL)
+
+	// Test drop user if exists.
+	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
+	tk.MustExec(createUserSQL)
+	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost' ;`
+	tk.MustExec(dropUserSQL)
+	// Test negative cases without IF EXISTS.
+	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
+	tk.MustExec(createUserSQL)
+	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
+	_, err = tk.Exec(dropUserSQL)
+	c.Check(err, NotNil)
+	dropUserSQL = `DROP USER 'test3'@'localhost';`
+	_, err = tk.Exec(dropUserSQL)
+	c.Check(err, NotNil)
+	dropUserSQL = `DROP USER 'test1'@'localhost';`
+	_, err = tk.Exec(dropUserSQL)
+	c.Check(err, NotNil)
+	// Test positive cases without IF EXISTS.
+	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
+	tk.MustExec(createUserSQL)
+	dropUserSQL = `DROP USER 'test1'@'localhost', 'test3'@'localhost';`
+	tk.MustExec(dropUserSQL)
 }
 
 func (s *testSuite) TestSetPwd(c *C) {
