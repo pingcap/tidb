@@ -50,11 +50,13 @@ func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *
 		Type:     model.ActionCreateSchema,
 		Args:     []interface{}{dbInfo},
 	}
-
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
+
 	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v})
+	dbInfo.State = model.StatePublic
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
+	dbInfo.State = model.StateNone
 	return job
 }
 
@@ -63,9 +65,9 @@ func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) (*m
 		SchemaID: dbInfo.ID,
 		Type:     model.ActionDropSchema,
 	}
-
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
+
 	ver := getSchemaVer(c, ctx)
 	return job, ver
 }
@@ -148,8 +150,19 @@ func getSchemaVer(c *C, ctx context.Context) int64 {
 
 type historyJobArgs struct {
 	ver    int64
+	db     *model.DBInfo
 	tbl    *model.TableInfo
 	tblIDs map[int64]struct{}
+}
+
+func checkEqualTable(c *C, t1, t2 *model.TableInfo) {
+	c.Assert(t1.ID, Equals, t2.ID)
+	c.Assert(t1.Name, Equals, t2.Name)
+	c.Assert(t1.Charset, Equals, t2.Charset)
+	c.Assert(t1.Collate, Equals, t2.Collate)
+	c.Assert(t1.PKIsHandle, DeepEquals, t2.PKIsHandle)
+	c.Assert(t1.Comment, DeepEquals, t2.Comment)
+	c.Assert(t1.AutoIncID, DeepEquals, t2.AutoIncID)
 }
 
 func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobArgs) {
@@ -162,20 +175,24 @@ func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobAr
 	var v int64
 	var ids []int64
 	tbl := &model.TableInfo{}
-	if args.tbl == nil && len(args.tblIDs) == 0 {
-		historyJob.DecodeArgs(&v)
-		c.Assert(v, Equals, args.ver)
-		return
-	}
-	// alter table DDL
 	if args.tbl != nil {
 		historyJob.DecodeArgs(&v, &tbl)
 		c.Assert(v, Equals, args.ver)
+		checkEqualTable(c, tbl, args.tbl)
+		return
+	}
+	// only for create schema job
+	db := &model.DBInfo{}
+	if args.db != nil && len(args.tblIDs) == 0 {
+		historyJob.DecodeArgs(&v, &db)
+		c.Assert(v, Equals, args.ver)
+		c.Assert(db, DeepEquals, args.db)
 		return
 	}
 	// only for drop schema job
-	historyJob.DecodeArgs(&v, &ids)
+	historyJob.DecodeArgs(&v, &db, &ids)
 	c.Assert(v, Equals, args.ver)
+	c.Assert(db, DeepEquals, args.db)
 	for _, id := range ids {
 		c.Assert(args.tblIDs, HasKey, id)
 		delete(args.tblIDs, id)
@@ -243,7 +260,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	ids := make(map[int64]struct{})
 	ids[tblInfo1.ID] = struct{}{}
 	ids[tblInfo2.ID] = struct{}{}
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tblIDs: ids})
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
 	// check background ddl info
 	time.Sleep(testLease * 400)
 	verifyBgJobState(c, d, job, model.JobDone)
