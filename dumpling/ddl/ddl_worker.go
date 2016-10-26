@@ -153,7 +153,38 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-const maxBgOwnerTimeout = int64(10 * time.Minute)
+const maxOwnerTimeout = int64(20 * time.Minute)
+
+// We define minBgOwnerTimeout and minDDLOwnerTimeout as variable,
+// because we need to change them in test.
+var (
+	minBgOwnerTimeout  = int64(20 * time.Second)
+	minDDLOwnerTimeout = int64(4 * time.Second)
+)
+
+func (d *ddl) getCheckOwnerTimeout(flag JobType) int64 {
+	// we must wait 2 * lease time to guarantee other servers update the schema,
+	// the owner will update its owner status every 2 * lease time, so here we use
+	// 4 * lease to check its timeout.
+	timeout := int64(4 * d.lease)
+	if timeout > maxOwnerTimeout {
+		return maxOwnerTimeout
+	}
+
+	// The value of lease may be less than 1 second, so the operation of
+	// checking owner is frequent and it isn't necessary.
+	// So if timeout is less than 4 second, we will use default minDDLOwnerTimeout.
+	if flag == ddlJobFlag && timeout < minDDLOwnerTimeout {
+		return minDDLOwnerTimeout
+	}
+	if flag == bgJobFlag && timeout < minBgOwnerTimeout {
+		// Background job is serial processing, so we can extend the owner timeout to make sure
+		// a batch of rows will be processed before timeout.
+		// If timeout is less than maxBgOwnerTimeout, we will use default minBgOwnerTimeout.
+		return minBgOwnerTimeout
+	}
+	return timeout
+}
 
 func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	owner, err := d.getJobOwner(t, flag)
@@ -167,19 +198,7 @@ func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	}
 
 	now := time.Now().UnixNano()
-	// we must wait 2 * lease time to guarantee other servers update the schema,
-	// the owner will update its owner status every 2 * lease time, so here we use
-	// 4 * lease to check its timeout.
-	maxTimeout := int64(4 * d.lease)
-	if flag == bgJobFlag {
-		// Background job is serial processing, so we can extend the owner timeout to make sure
-		// a batch of rows will be processed before timeout. So here we use 20 * lease to check its timeout.
-		maxTimeout = int64(20 * d.lease)
-		// If 20 * lease is greater than maxBgOwnerTimeout, we will use default maxBgOwnerTimeout.
-		if maxTimeout > maxBgOwnerTimeout {
-			maxTimeout = maxBgOwnerTimeout
-		}
-	}
+	maxTimeout := d.getCheckOwnerTimeout(flag)
 	sub := now - owner.LastUpdateTS
 	if owner.OwnerID == d.uuid || sub > maxTimeout {
 		owner.OwnerID = d.uuid
