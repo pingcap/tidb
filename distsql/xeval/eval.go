@@ -66,6 +66,10 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus,
 		tipb.ExprType_Mul, tipb.ExprType_IntDiv, tipb.ExprType_Mod:
 		return e.evalArithmeticOps(expr)
+	case tipb.ExprType_Case:
+		return e.evalCaseWhen(expr)
+	case tipb.ExprType_Coalesce:
+		return e.evalCoalesce(expr)
 	}
 	return types.Datum{}, nil
 }
