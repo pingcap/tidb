@@ -70,6 +70,10 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitNeg,
 		tipb.ExprType_BitXor, tipb.ExprType_LeftShift, tipb.ExprType_RighShift:
 		return e.evalBitOps(expr)
+	case tipb.ExprType_Case:
+		return e.evalCaseWhen(expr)
+	case tipb.ExprType_Coalesce:
+		return e.evalCoalesce(expr)
 	}
 	return types.Datum{}, nil
 }

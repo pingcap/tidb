@@ -76,6 +76,8 @@ func supportExpr(exprType tipb.ExprType) bool {
 	// bitwise operators.
 	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitXor, tipb.ExprType_BitNeg:
 		return true
+	case tipb.ExprType_Case, tipb.ExprType_Coalesce:
+		return true
 	case kv.ReqSubTypeDesc:
 		return true
 	default:
