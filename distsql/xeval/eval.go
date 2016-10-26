@@ -76,7 +76,7 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 
 func (e *Evaluator) evalTwoChildren(expr *tipb.Expr) (left, right types.Datum, err error) {
 	if len(expr.Children) != 2 {
-		err = ErrInvalid.Gen("need 2 operands but got %d", len(expr.Children))
+		err = ErrInvalid.Gen("%s need 2 operands but got %d", tipb.ExprType_name[int32(expr.GetTp())], len(expr.Children))
 		return
 	}
 	left, err = e.Eval(expr.Children[0])

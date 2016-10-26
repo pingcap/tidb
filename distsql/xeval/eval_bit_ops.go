@@ -23,7 +23,7 @@ func (e *Evaluator) evalBitOps(expr *tipb.Expr) (types.Datum, error) {
 	if expr.GetTp() == tipb.ExprType_BitNeg {
 		var result types.Datum
 		if len(expr.Children) != 1 {
-			err := ErrInvalid.Gen("need 1 operand but got %d", len(expr.Children))
+			err := ErrInvalid.Gen("BitNeg(~) need 1 operand but got %d", len(expr.Children))
 			return result, err
 		}
 		operand, err := e.Eval(expr.Children[0])
