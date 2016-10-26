@@ -67,6 +67,18 @@ func supportExpr(exprType tipb.ExprType) bool {
 		return true
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum, tipb.ExprType_Avg, tipb.ExprType_Max, tipb.ExprType_Min:
 		return true
+	// control functions
+	case tipb.ExprType_IfNull, tipb.ExprType_NullIf, tipb.ExprType_If:
+		return true
+	// math functions
+	case tipb.ExprType_Pow, tipb.ExprType_Abs, tipb.ExprType_Round:
+		return true
+	// string functions
+	case tipb.ExprType_Strcmp:
+		return true
+	// other functions
+	case tipb.ExprType_IsNull:
+		return true
 	case kv.ReqSubTypeDesc:
 		return true
 	default:

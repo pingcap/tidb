@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
 func (e *Evaluator) evalIf(expr *tipb.Expr) (d types.Datum, err error) {
 	if len(expr.Children) != 3 {
 		err = ErrInvalid.Gen("IF needs 3 operands but got %d", len(expr.Children))
