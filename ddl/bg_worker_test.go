@@ -71,6 +71,7 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 
 	job := &model.Job{
 		SchemaID: dbInfo.ID,
+		TableID:  1,
 		Type:     model.ActionDropTable,
 		Args: []interface{}{&model.TableInfo{
 			ID:   1,
@@ -85,7 +86,7 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	d.startBgJob(job.Type)
 
 	time.Sleep(testLease * 6)
-	verifyBgJobState(c, d, job, model.JobDone)
+	verifyBgJobState(c, d, job, model.JobCancelled)
 }
 
 func (s *testDDLSuite) TestInvalidBgJobType(c *C) {

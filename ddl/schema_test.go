@@ -133,6 +133,7 @@ func testCheckJobCancelled(c *C, d *ddl, job *model.Job) {
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
+		c.Assert(historyJob, NotNil)
 		c.Assert(historyJob.State, Equals, model.JobCancelled)
 		return nil
 	})

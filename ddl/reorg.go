@@ -181,9 +181,9 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, 
 
 	var count int
 	total := job.GetRowCount()
+	keys := make([]kv.Key, 0, batch)
 	for {
 		startTS := time.Now()
-		keys := make([]kv.Key, 0, batch)
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err1 := d.isReorgRunnable(txn, jobType); err1 != nil {
 				return errors.Trace(err1)
@@ -230,6 +230,11 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, 
 		batchHandleDataHistogram.WithLabelValues(batchDelData).Observe(sub)
 		log.Infof("[ddl] deleted %v keys with prefix %q take time %v", total, prefix, sub)
 
+		if len(keys) > 0 {
+			prefix = keys[len(keys)-1]
+		}
+		job.Args = []interface{}{prefix}
+
 		// delete keys number less than batch, return.
 		if len(keys) < batch {
 			break
@@ -237,6 +242,8 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, 
 		if !delAll {
 			break
 		}
+
+		keys = keys[:0]
 	}
 
 	return count, nil
