@@ -16,6 +16,7 @@ package types
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"time"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
-	"sort"
 )
 
 // Kind constants.
@@ -761,12 +761,30 @@ func (d *Datum) convertToString(target *FieldType) (Datum, error) {
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	// TODO: consider target.Charset/Collate
+
 	var err error
-	if target.Flen > 0 && target.Flen < len(s) {
-		err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", target.Flen, len(s))
+	if target.Flen > 0 {
+		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
+		// rune count and truncate to Flen runes if it is too long.
+		if target.Charset == charset.CharsetUTF8 || target.Charset == charset.CharsetUTF8MB4 {
+			var runeCount int
+			var truncateLen int
+			for i := range s {
+				runeCount++
+				if runeCount == target.Flen+1 {
+					// We do break here because we need to iterate to the end to get runeCount.
+					truncateLen = i
+				}
+			}
+			if truncateLen > 0 {
+				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", target.Flen, runeCount)
+				s = truncateStr(s, truncateLen)
+			}
+		} else if len(s) > target.Flen {
+			err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", target.Flen, len(s))
+			s = truncateStr(s, target.Flen)
+		}
 	}
-	s = truncateStr(s, target.Flen)
 	ret.SetString(s)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
