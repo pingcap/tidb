@@ -290,6 +290,34 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 
 	_, err = ToString(&invalidMockType{})
 	c.Assert(err, NotNil)
+
+	// test truncate
+	cases := []struct {
+		flen    int
+		charset string
+		input   string
+		output  string
+	}{
+		{5, "utf8", "你好，世界", "你好，世界"},
+		{5, "utf8mb4", "你好，世界", "你好，世界"},
+		{4, "utf8", "你好，世界", "你好，世"},
+		{4, "utf8mb4", "你好，世界", "你好，世"},
+		{15, "binary", "你好，世界", "你好，世界"},
+		{12, "binary", "你好，世界", "你好，世"},
+	}
+	for _, ca := range cases {
+		ft = NewFieldType(mysql.TypeVarchar)
+		ft.Flen = ca.flen
+		ft.Charset = ca.charset
+		inputDatum := NewStringDatum(ca.input)
+		outputDatum, err := inputDatum.ConvertTo(ft)
+		if ca.input != ca.output {
+			c.Assert(ErrDataTooLong.Equal(err), IsTrue)
+		} else {
+			c.Assert(err, IsNil)
+		}
+		c.Assert(outputDatum.GetString(), Equals, ca.output)
+	}
 }
 
 func testStrToInt(c *C, str string, expect int64) {
