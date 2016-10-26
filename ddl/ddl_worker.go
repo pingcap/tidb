@@ -174,7 +174,7 @@ func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	if flag == bgJobFlag {
 		// Background job is serial processing, so we can extend the owner timeout to make sure
 		// a batch of rows will be processed before timeout. So here we use 20 * lease to check its timeout.
-		maxTimeout := int64(20 * d.lease)
+		maxTimeout = int64(20 * d.lease)
 		// If 20 * lease is greater than maxBgOwnerTimeout, we will use default maxBgOwnerTimeout.
 		if maxTimeout > maxBgOwnerTimeout {
 			maxTimeout = maxBgOwnerTimeout
