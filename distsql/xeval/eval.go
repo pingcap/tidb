@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	"math"
 )
 
 // Error instances.
@@ -591,4 +592,169 @@ func ComputeArithmetic(op tipb.ExprType, left types.Datum, right types.Datum) (t
 	default:
 		return result, errors.Errorf("Unknown binop type: %v", op)
 	}
+}
+
+func (e *Evaluator) evalAbs(expr *tipb.Expr) (types.Datum, error) {
+	if len(expr.Children) != 1 {
+		return types.Datum{}, ErrInvalid.Gen("ABS need 1 operand, got %d", len(expr.Children))
+	}
+	d, err := e.Eval(expr.Children[0])
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	switch d.Kind() {
+	case types.KindNull:
+		return d, nil
+	case types.KindUint64:
+		return d, nil
+	case types.KindInt64:
+		iv := d.GetInt64()
+		if iv >= 0 {
+			d.SetInt64(iv)
+			return d, nil
+		}
+		d.SetInt64(-iv)
+		return d, nil
+	default:
+		f, err := d.ToFloat64()
+		d.SetFloat64(math.Abs(f))
+		return d, errors.Trace(err)
+	}
+}
+
+func (e *Evaluator) evalPow(expr *tipb.Expr) (types.Datum, error) {
+	left, right, err := e.evalTwoChildren(expr)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	d := types.Datum{}
+	if left.IsNull() || right.IsNull() {
+		d.SetNull()
+		return d, nil
+	}
+	d.SetFloat64(math.Pow(left, right))
+	return d, nil
+}
+
+func (e *Evaluator) evalIsNull(expr *tipb.Expr) (types.Datum, error) {
+	if len(expr.Children) != 1 {
+		return types.Datum{}, ErrInvalid.Gen("ISNULL need 1 operand, got %d", len(expr.Children))
+	}
+	d, err := e.Eval(expr.Children[0])
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if d.IsNull() {
+		return types.NewIntDatum(1), nil
+	}
+	return types.NewIntDatum(0), nil
+}
+
+func (e *Evaluator) evalStrcmp(expr *tipb.Expr) (types.Datum, error) {
+	left, right, err := e.evalTwoChildren(expr)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	var d types.Datum
+	if left.IsNull() || right.IsNull() {
+		d.SetNull()
+		return d, nil
+	}
+	sa, err := left.ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	sb, err := right.ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	ans := types.CompareString(sa, sb)
+	d.SetInt64(int64(ans))
+	return d, nil
+}
+
+func (e *Evaluator) evalIf(expr *tipb.Expr) (d types.Datum, err error) {
+	if len(expr.Children) != 3 {
+		err = ErrInvalid.Gen("IF needs 3 operands but got %d", len(expr.Children))
+		return
+	}
+	child1, err := e.Eval(expr.Children[0])
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	child2, err := e.Eval(expr.Children[1])
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	child3, err := e.Eval(expr.Children[2])
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if child1.IsNull() {
+		return child3, nil
+	}
+	x, err := child1.ToBool()
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if x == 1 {
+		return child2, nil
+	}
+	return child3, nil
+}
+
+func (e *Evaluator) evalIfNull(expr *tipb.Expr) (types.Datum, error) {
+	left, right, err := e.evalTwoChildren(expr)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if left.IsNull() {
+		return right
+	}
+	return left
+}
+
+func (e *Evaluator) evalNullIf(expr *tipb.Expr) (types.Datum, error) {
+	ans := types.Datum{}
+	left, right, err := e.evalTwoChildren(expr)
+	if err != nil {
+		return ans, errors.Trace(err)
+	}
+	if left.IsNull() || right.IsNull() {
+		return left, nil
+	}
+	x, err := left.CompareDatum(right)
+	if err != nil {
+		return ans, errors.Trace(err)
+	}
+	if x == 0 {
+		return left, nil
+	}
+	ans.SetNull()
+	return ans, nil
+}
+
+func (e *Evaluator) evalRound(expr *tipb.Expr) (types.Datum, error) {
+	child0, err := e.Eval(expr.Children[0])
+	x, err := child0.ToDecimal()
+	if err != nil {
+		return types.Datum{}, err
+	}
+	var d int64
+	if len(expr.Children) == 2 {
+		child1, err := e.Eval(expr.Children[1])
+		if err != nil {
+			return types.Datum{}, err
+		}
+		d, err = child1.ToInt64()
+		if err != nil {
+			return types.Datum{}, err
+		}
+	}
+	to := new(mysql.MyDecimal)
+	err = x.Round(to, int(d))
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return types.NewDecimalDatum(to), nil
 }

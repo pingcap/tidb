@@ -127,6 +127,20 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 		return arithmeticalFuncToPBExpr(client, expr)
 	case ast.AndAnd, ast.OrOr, ast.UnaryNot:
 		return logicalFuncToPBExpr(client, expr)
+	//case ast.Abs:
+	//	return absToPBExpr(client, expr)
+	//case ast.Pow:
+	//	return powToPBExpr(client, expr)
+	//case ast.IsNull:
+	//	return isnullToPBExpr(client, expr)
+	//case ast.Strcmp:
+	//	return strcmpToPBExpr(client, expr)
+	//case ast.If:
+	//	return ifToPBExpr(client, expr)
+	//case ast.Ifnull:
+	//	return ifnullToPBExpr(client, expr)
+	//case ast.Nullif:
+	//	return nullifToPBExpr(client, expr)
 	default:
 		return nil
 	}
@@ -369,3 +383,42 @@ func aggFuncToPBExpr(client kv.Client, aggFunc expression.AggregationFunction) *
 	}
 	return &tipb.Expr{Tp: tp, Children: children}
 }
+
+//func absToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+//	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_Abs)) {
+//		return nil
+//	}
+//}
+//
+//func powToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+//	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_Pow)) {
+//		return nil
+//	}
+//}
+//
+//func isnullToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+//	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_IsNull)) {
+//		return nil
+//	}
+//}
+//func strcmpToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+//	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_Strcmp)) {
+//		return nil
+//	}
+//}
+//func ifToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+//	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_If)) {
+//		return nil
+//	}
+//}
+//func ifnullToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+//	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_IfNull)) {
+//		return nil
+//	}
+//}
+//func nullifToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+//	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_NullIf)) {
+//		return nil
+//	}
+//
+//}
