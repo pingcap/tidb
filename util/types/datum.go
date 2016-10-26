@@ -763,7 +763,7 @@ func (d *Datum) convertToString(target *FieldType) (Datum, error) {
 	}
 
 	var err error
-	if target.Flen > 0 {
+	if target.Flen >= 0 {
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
 		if target.Charset == charset.CharsetUTF8 || target.Charset == charset.CharsetUTF8MB4 {
