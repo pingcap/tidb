@@ -165,6 +165,7 @@ import (
 	hash		"HASH"
 	identified	"IDENTIFIED"
 	isolation	"ISOLATION"
+	indexes		"INDEXES"
 	keyBlockSize	"KEY_BLOCK_SIZE"
 	local		"LOCAL"
 	level		"LEVEL"
@@ -491,6 +492,7 @@ import (
 	FieldList		"field expression list"
 	FieldsOrColumns 	"Fields or columns"
 	FlushStmt		"Flush statement"
+	FromOrIn		"From or In"
 	TableRefsClause		"Table references clause"
 	Function		"function expr"
 	FunctionCallAgg		"Function call on aggregate data"
@@ -592,6 +594,7 @@ import (
 	ShowDatabaseNameOpt	"Show tables/columns statement database name option"
 	ShowTableAliasOpt       "Show table alias option"
 	ShowLikeOrWhereOpt	"Show like or where clause option"
+	ShowIndexKwd		"Show index/indexs/key keyword"
 	SignedLiteral		"Literal or NumLiteral with sign"
 	Starting		"Starting by"
 	Statement		"statement"
@@ -1979,7 +1982,7 @@ UnReservedKeyword:
 |	"TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
 |	"COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
 |	"MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
-|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE"
+|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES"
 |	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION"
 
 NotKeywordToken:
@@ -3982,20 +3985,21 @@ ShowStmt:
 			User:	$4.(string),
 		}
 	}
-|	"SHOW" "INDEX" "FROM" TableName
+|	"SHOW" ShowIndexKwd FromOrIn TableName
 	{
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowIndex,
 			Table: $4.(*ast.TableName),
 		}
 	}
-|	"SHOW" "KEYS" "FROM" TableName
-	{
-		$$ = &ast.ShowStmt{
-			Tp: ast.ShowIndex,
-			Table: $4.(*ast.TableName),
-		}
-	}
+
+ShowIndexKwd:
+	"INDEX"
+|	"INDEXES" {}
+|	"KEYS"
+
+FromOrIn:
+	"FROM"|"IN"
 
 ShowTargetFilterable:
 	"ENGINES"

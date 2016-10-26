@@ -45,12 +45,12 @@ type Driver struct {
 }
 
 // Open opens or creates an TiKV storage with given path.
-// Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1
+// Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false
 func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
 
-	etcdAddrs, clusterID, err := parsePath(path)
+	etcdAddrs, clusterID, disableGC, err := parsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -64,7 +64,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), true)
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), !disableGC)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -248,7 +248,7 @@ func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVer
 	}
 }
 
-func parsePath(path string) (etcdAddrs []string, clusterID uint64, err error) {
+func parsePath(path string) (etcdAddrs []string, clusterID uint64, disableGC bool, err error) {
 	var u *url.URL
 	u, err = url.Parse(path)
 	if err != nil {
@@ -256,14 +256,22 @@ func parsePath(path string) (etcdAddrs []string, clusterID uint64, err error) {
 		return
 	}
 	if strings.ToLower(u.Scheme) != "tikv" {
-		log.Errorf("Uri scheme expected[tikv] but found [%s]", u.Scheme)
-		err = errors.Trace(err)
+		err = errors.Errorf("Uri scheme expected[tikv] but found [%s]", u.Scheme)
+		log.Error(err)
 		return
 	}
 	clusterID, err = strconv.ParseUint(u.Query().Get("cluster"), 10, 64)
 	if err != nil {
 		log.Errorf("Parse clusterID error [%s]", err)
 		err = errors.Trace(err)
+		return
+	}
+	switch strings.ToLower(u.Query().Get("disableGC")) {
+	case "true":
+		disableGC = true
+	case "false", "":
+	default:
+		err = errors.New("disableGC flag should be true/false")
 		return
 	}
 	etcdAddrs = strings.Split(u.Host, ",")

@@ -190,7 +190,7 @@ func toHex(l yyLexer, lval *yySymType, str string) int {
 			return int(unicode.ReplacementChar)
 		}
 		lval.item = hexStr
-		return stringLit
+		return hexLit
 	}
 	lval.item = h
 	return hexLit

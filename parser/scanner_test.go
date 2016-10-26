@@ -94,6 +94,7 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{"23416", intLit},
 		{"0", intLit},
 		{"0x3c26", hexLit},
+		{"x'13181C76734725455A'", hexLit},
 		{"0b01", bitLit},
 	}
 	runTest(c, table)
