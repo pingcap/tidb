@@ -20,8 +20,8 @@ import (
 )
 
 func (e *Evaluator) evalBitOps(expr *tipb.Expr) (types.Datum, error) {
+	var result types.Datum
 	if expr.GetTp() == tipb.ExprType_BitNeg {
-		var result types.Datum
 		if len(expr.Children) != 1 {
 			err := ErrInvalid.Gen("BitNeg(~) need 1 operand but got %d", len(expr.Children))
 			return result, err
@@ -36,7 +36,6 @@ func (e *Evaluator) evalBitOps(expr *tipb.Expr) (types.Datum, error) {
 		}
 		return types.ComputeBitNeg(a)
 	}
-	var result types.Datum
 	left, right, err := e.evalTwoChildren(expr)
 	if err != nil {
 		return result, errors.Trace(err)

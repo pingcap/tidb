@@ -490,17 +490,12 @@ func ComputeBitNeg(a Datum) (d Datum, err error) {
 		return
 	}
 	// If either is not integer, we round the operands and then use uint64 to calculate.
-	x, err := a.ToDecimal()
+	x, err := convertNonInt2RoundUint64(a)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	uintX, err := decimal2RoundUint(x)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	d.SetUint64(^uintX)
+	d.SetUint64(^x)
 	return d, nil
 }
 
@@ -512,26 +507,17 @@ func ComputeBitXor(a, b Datum) (d Datum, err error) {
 		return
 	}
 	// If either is not integer, we round the operands and then use uint64 to calculate.
-	x, err := a.ToDecimal()
+	x, err := convertNonInt2RoundUint64(a)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	y, err := b.ToDecimal()
+	y, err := convertNonInt2RoundUint64(b)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	uintX, err := decimal2RoundUint(x)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	uintY, err := decimal2RoundUint(y)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	d.SetUint64(uintX ^ uintY)
+	d.SetUint64(x ^ y)
 	return d, nil
 }
 
@@ -543,26 +529,17 @@ func ComputeLeftShift(a, b Datum) (d Datum, err error) {
 		return
 	}
 	// If either is not integer, we round the operands and then use uint64 to calculate.
-	x, err := a.ToDecimal()
+	x, err := convertNonInt2RoundUint64(a)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	y, err := b.ToDecimal()
+	y, err := convertNonInt2RoundUint64(b)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	uintX, err := decimal2RoundUint(x)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	uintY, err := decimal2RoundUint(y)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	d.SetUint64(uintX << uintY)
+	d.SetUint64(x << y)
 	return d, nil
 }
 
@@ -574,25 +551,29 @@ func ComputeRightShift(a, b Datum) (d Datum, err error) {
 		return
 	}
 	// If either is not integer, we round the operands and then use uint64 to calculate.
-	x, err := a.ToDecimal()
+	x, err := convertNonInt2RoundUint64(a)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	y, err := b.ToDecimal()
+	y, err := convertNonInt2RoundUint64(b)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	uintX, err := decimal2RoundUint(x)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	uintY, err := decimal2RoundUint(y)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	d.SetUint64(uintX >> uintY)
+	d.SetUint64(x >> y)
 	return d, nil
+}
+
+// covertNonIntegerToUint64 coverts a non-integer to an uint64
+func convertNonInt2RoundUint64(x Datum) (d uint64, err error) {
+	decimalX, err := x.ToDecimal()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d, err = decimal2RoundUint(decimalX)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	return
 }
