@@ -155,7 +155,8 @@ func asyncNotify(ch chan struct{}) {
 
 const maxOwnerTimeout = int64(20 * time.Minute)
 
-// Test will change the value of minBgOwnerTimeout and minDDLOwnerTimeout, so they are variable.
+// We define minBgOwnerTimeout and minDDLOwnerTimeout as variable,
+// because we need to change them in test.
 var (
 	minBgOwnerTimeout  = int64(20 * time.Second)
 	minDDLOwnerTimeout = int64(4 * time.Second)
