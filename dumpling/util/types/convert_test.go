@@ -304,6 +304,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 		{4, "utf8mb4", "你好，世界", "你好，世"},
 		{15, "binary", "你好，世界", "你好，世界"},
 		{12, "binary", "你好，世界", "你好，世"},
+		{0, "binary", "你好，世界", ""},
 	}
 	for _, ca := range cases {
 		ft = NewFieldType(mysql.TypeVarchar)
