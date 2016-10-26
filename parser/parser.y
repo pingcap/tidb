@@ -491,6 +491,7 @@ import (
 	FieldList		"field expression list"
 	FieldsOrColumns 	"Fields or columns"
 	FlushStmt		"Flush statement"
+	FromOrIn		"From or In"
 	TableRefsClause		"Table references clause"
 	Function		"function expr"
 	FunctionCallAgg		"Function call on aggregate data"
@@ -3982,20 +3983,23 @@ ShowStmt:
 			User:	$4.(string),
 		}
 	}
-|	"SHOW" "INDEX" "FROM" TableName
+|	"SHOW" "INDEX" FromOrIn TableName
 	{
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowIndex,
 			Table: $4.(*ast.TableName),
 		}
 	}
-|	"SHOW" "KEYS" "FROM" TableName
+|	"SHOW" "KEYS" FromOrIn TableName
 	{
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowIndex,
 			Table: $4.(*ast.TableName),
 		}
 	}
+
+FromOrIn:
+	"FROM"|"IN"
 
 ShowTargetFilterable:
 	"ENGINES"

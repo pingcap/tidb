@@ -328,6 +328,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW FUNCTION STATUS WHERE Db='test'`, true},
 		{`SHOW INDEX FROM t;`, true},
 		{`SHOW KEYS FROM t;`, true},
+		{`SHOW INDEX IN t;`, true},
+		{`SHOW KEYS IN t;`, true},
 		// For show character set
 		{"show character set;", true},
 		// For show collation
