@@ -49,7 +49,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
-		"binlog", "hex", "unhex", "function",
+		"binlog", "hex", "unhex", "function", "indexes",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -330,6 +330,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW KEYS FROM t;`, true},
 		{`SHOW INDEX IN t;`, true},
 		{`SHOW KEYS IN t;`, true},
+		{`SHOW INDEXES IN t;`, true},
 		// For show character set
 		{"show character set;", true},
 		// For show collation
