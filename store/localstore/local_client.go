@@ -77,7 +77,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 	case tipb.ExprType_Strcmp:
 		return true
 	// other functions
-	case tipb.ExprType_IsNull:
+	case tipb.ExprType_IsNull, tipb.ExprType_Case, tipb.ExprType_Coalesce:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true

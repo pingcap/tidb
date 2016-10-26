@@ -133,6 +133,8 @@ func supportExpr(exprType tipb.ExprType) bool {
 		return true
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum, tipb.ExprType_Avg, tipb.ExprType_Max, tipb.ExprType_Min:
 		return true
+	case tipb.ExprType_Case, tipb.ExprType_Coalesce:
+		return true
 	case kv.ReqSubTypeDesc:
 		return true
 	default:
@@ -300,6 +302,80 @@ func (s *testPlanSuite) TestLogicOpsPushDown(c *C) {
 			sql:    "not a",
 			cond:   "not(test.t.a)",
 			exprPB: "\b\xe9\a\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
+		},
+	}
+	for _, ca := range cases {
+		sql := "select * from t where " + ca.sql
+		comment := Commentf("for %s", sql)
+		stmt, err := s.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
+		c.Assert(err, IsNil)
+		lp = EliminateProjection(lp)
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		c.Assert(err, IsNil)
+		p = info.p
+		// loop util reaching the DataSource node of a physical plan to get the conditions been pushed down.
+	loop:
+		for {
+			switch x := p.(type) {
+			case *PhysicalTableScan:
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				pbStr, _ := x.ConditionPBExpr.Marshal()
+				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
+				break loop
+			case *PhysicalIndexScan:
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				pbStr, _ := x.ConditionPBExpr.Marshal()
+				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
+				break loop
+			}
+			p = p.GetChildByIndex(0)
+		}
+	}
+}
+
+// TestBuiltinFuncsPushDown tests whether logic operators been pushed down successfully.
+func (s *testPlanSuite) TestBuiltinFuncsPushDown(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql    string
+		cond   string // readable expressions
+		exprPB string // Marshall result of conditions that be pushed down.
+	}{
+		// case when
+		{
+			sql:  "a = case a when b then 1 when a then 0 end",
+			cond: "eq(test.t.a, case(eq(test.t.a, test.t.b), 1, eq(test.t.a, test.t.a), 0))",
+			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1ae\b\xa7" +
+				"\x1f\x1a!\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01" +
+				"\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02\x1a\f\b\x01\x12\b\x80" +
+				"\x00\x00\x00\x00\x00\x00\x01\x1a!\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00" +
+				"\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01" +
+				"\x1a\f\b\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x00",
+		},
+		// coalesce
+		{
+			sql:  "a = coalesce(null, null, a, b)",
+			cond: "eq(test.t.a, coalesce(<nil>, <nil>, test.t.a, test.t.b))",
+			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a)\b\xad\x1b\x1a" +
+				"\x02\b\x00\x1a\x02\b\x00\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a" +
+				"\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
 		},
 	}
 	for _, ca := range cases {
