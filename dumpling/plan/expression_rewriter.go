@@ -651,7 +651,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		// args:  eq scalar func(args: value, condition1), result1,
 		//        eq scalar func(args: value, condition2), result2,
 		//        ...
-		//        else clasue
+		//        else clause
 		value := er.ctxStack[stkLen-argsLen-1]
 		args = make([]expression.Expression, 0, argsLen)
 		for i := stkLen - argsLen; i < stkLen-1; i += 2 {
@@ -666,7 +666,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		if v.ElseClause != nil {
 			args = append(args, er.ctxStack[stkLen-1])
 		}
-		argsLen++
+		argsLen++ // for trimming the value element later
 	} else {
 		// args:  condition1, result1,
 		//        condition2, result2,
