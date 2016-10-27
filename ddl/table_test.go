@@ -196,6 +196,9 @@ func (s *testTableSuite) TestTable(c *C) {
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
+	// Use a smaller limit to prevent it from consuming too much time.
+	reorgDeleteLimit = 2048
+
 	// To drop a table with reorgDeleteLimit+10 records.
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	for i := 1; i <= reorgDeleteLimit+10; i++ {
@@ -213,11 +216,11 @@ func (s *testTableSuite) TestTable(c *C) {
 		job.Mu.Lock()
 		count := job.RowCount
 		job.Mu.Unlock()
-		if updatedCount == 0 && count != reorgDeleteLimit {
+		if updatedCount == 0 && count != int64(reorgDeleteLimit) {
 			checkErr = errors.Errorf("row count %v isn't equal to %v", count, reorgDeleteLimit)
 			return
 		}
-		if updatedCount == 1 && count != reorgDeleteLimit+10 {
+		if updatedCount == 1 && count != int64(reorgDeleteLimit+10) {
 			checkErr = errors.Errorf("row count %v isn't equal to %v", count, reorgDeleteLimit+10)
 		}
 		updatedCount++
@@ -227,7 +230,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, false)
 
 	// Check background ddl info.
-	time.Sleep(time.Second * 5)
+	time.Sleep(testLease * 200)
 	verifyBgJobState(c, d, job, model.JobDone)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(updatedCount, Equals, 2)

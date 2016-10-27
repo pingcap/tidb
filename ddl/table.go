@@ -79,7 +79,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 }
 
 // Maximum number of keys to delete for each job run.
-const reorgDeleteLimit = 65536
+var reorgDeleteLimit = 65536
 
 func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
 	delCount, err := d.dropTableData(job.TableID, job, reorgDeleteLimit)
