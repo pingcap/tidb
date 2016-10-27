@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -169,8 +170,8 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 	return nil
 }
 
-// delKeysWithPrefix deletes keys with prefix key in a limited number. If limit < 0, deletes all keys.
-func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, limit int) (int, error) {
+// delKeysWithPrefix deletes keys with start key in a limited number. If limit < 0, deletes all keys.
+func (d *ddl) delKeysWithPrefix(startKey kv.Key, jobType JobType, job *model.Job, limit int) (int, error) {
 	batch := limit
 	if batch == 0 {
 		return 0, nil
@@ -182,6 +183,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, 
 	var count int
 	total := job.GetRowCount()
 	keys := make([]kv.Key, 0, batch)
+	prefix := tablecodec.EncodeTablePrefix(job.TableID)
 	for {
 		startTS := time.Now()
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
@@ -189,7 +191,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, 
 				return errors.Trace(err1)
 			}
 
-			iter, err := txn.Seek(prefix)
+			iter, err := txn.Seek(startKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -222,18 +224,18 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, 
 		})
 		sub := time.Since(startTS).Seconds()
 		if err != nil {
-			log.Warnf("[ddl] deleted %v keys with prefix %q failed, take time %v", total, prefix, sub)
+			log.Warnf("[ddl] deleted %d keys failed, take time %v, deleted %d keys in total", len(keys), sub, total)
 			return 0, errors.Trace(err)
 		}
 
 		job.SetRowCount(total)
 		batchHandleDataHistogram.WithLabelValues(batchDelData).Observe(sub)
-		log.Infof("[ddl] deleted %v keys with prefix %q take time %v", total, prefix, sub)
+		log.Infof("[ddl] deleted %d keys take time %v, deleted %d keys in total", len(keys), sub, total)
 
 		if len(keys) > 0 {
-			prefix = keys[len(keys)-1]
+			startKey = keys[len(keys)-1]
 		}
-		job.Args = []interface{}{prefix}
+		job.Args = []interface{}{startKey}
 
 		// delete keys number less than batch, return.
 		if len(keys) < batch {

@@ -73,10 +73,11 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 		SchemaID: dbInfo.ID,
 		TableID:  1,
 		Type:     model.ActionDropTable,
-		Args: []interface{}{&model.TableInfo{
-			ID:   1,
-			Name: model.CIStr{O: "t"},
-		}},
+		Args: []interface{}{0, nil,
+			&model.TableInfo{
+				ID:   1,
+				Name: model.CIStr{O: "t"},
+			}},
 	}
 	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)

@@ -137,14 +137,14 @@ func getIDs(tables []*model.TableInfo) []int64 {
 }
 
 func (d *ddl) delReorgSchema(t *meta.Meta, job *model.Job) error {
-	var prefix kv.Key
+	var startKey kv.Key
 	var tableIDs []int64
-	if err := job.DecodeArgs(&tableIDs, &prefix); err != nil {
+	if err := job.DecodeArgs(&tableIDs, &startKey); err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
 
-	isFinished, err := d.dropSchemaData(tableIDs, prefix, job, t)
+	isFinished, err := d.dropSchemaData(tableIDs, startKey, job, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -159,26 +159,26 @@ func (d *ddl) delReorgSchema(t *meta.Meta, job *model.Job) error {
 	return nil
 }
 
-func (d *ddl) dropSchemaData(tIDs []int64, prefix kv.Key, job *model.Job, m *meta.Meta) (bool, error) {
+func (d *ddl) dropSchemaData(tIDs []int64, startKey kv.Key, job *model.Job, m *meta.Meta) (bool, error) {
 	if len(tIDs) == 0 {
 		return true, nil
 	}
 
 	var isFinished bool
-	var nextPrefix kv.Key
+	var nextStartKey kv.Key
 	for i, id := range tIDs {
 		job.TableID = id
-		if prefix == nil {
-			prefix = tablecodec.EncodeTablePrefix(id)
+		if startKey == nil {
+			startKey = tablecodec.EncodeTablePrefix(id)
 		}
 		limit := defaultBatchSize
-		delCount, err := d.dropTableData(prefix, job, limit)
+		delCount, err := d.dropTableData(startKey, job, limit)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if delCount == limit {
 			isFinished = false
-			nextPrefix = job.Args[len(job.Args)-1].(kv.Key)
+			nextStartKey = job.Args[len(job.Args)-1].(kv.Key)
 			break
 		}
 
@@ -187,12 +187,12 @@ func (d *ddl) dropSchemaData(tIDs []int64, prefix kv.Key, job *model.Job, m *met
 		} else {
 			tIDs = nil
 		}
-		prefix = nil
+		startKey = nil
 		isFinished = true
 		continue
 	}
 	job.TableID = 0
-	job.Args = []interface{}{tIDs, nextPrefix}
+	job.Args = []interface{}{tIDs, nextStartKey}
 
 	return isFinished, nil
 }
