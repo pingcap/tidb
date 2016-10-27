@@ -160,7 +160,7 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	testCreateSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
 
 	// Use a smaller limit to prevent the test from consuming too much time.
-	reorgDeleteLimit = 2000
+	reorgTableDeleteLimit = 2000
 }
 
 func (s *testTableSuite) TearDownSuite(c *C) {
@@ -168,7 +168,7 @@ func (s *testTableSuite) TearDownSuite(c *C) {
 	s.d.close()
 	s.store.Close()
 
-	reorgDeleteLimit = 65536
+	reorgTableDeleteLimit = 65536
 }
 
 func testNewContext(c *C, d *ddl) context.Context {
@@ -201,9 +201,9 @@ func (s *testTableSuite) TestTable(c *C) {
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
-	// To drop a table with reorgDeleteLimit+10 records.
+	// To drop a table with reorgTableDeleteLimit+10 records.
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	for i := 1; i <= reorgDeleteLimit+10; i++ {
+	for i := 1; i <= reorgTableDeleteLimit+10; i++ {
 		_, err = tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
@@ -218,12 +218,12 @@ func (s *testTableSuite) TestTable(c *C) {
 		job.Mu.Lock()
 		count := job.RowCount
 		job.Mu.Unlock()
-		if updatedCount == 0 && count != int64(reorgDeleteLimit) {
-			checkErr = errors.Errorf("row count %v isn't equal to %v", count, reorgDeleteLimit)
+		if updatedCount == 0 && count != int64(reorgTableDeleteLimit) {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, reorgTableDeleteLimit)
 			return
 		}
-		if updatedCount == 1 && count != int64(reorgDeleteLimit+10) {
-			checkErr = errors.Errorf("row count %v isn't equal to %v", count, reorgDeleteLimit+10)
+		if updatedCount == 1 && count != int64(reorgTableDeleteLimit+10) {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, reorgTableDeleteLimit+10)
 		}
 		updatedCount++
 	}
