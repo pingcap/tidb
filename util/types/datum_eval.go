@@ -373,7 +373,7 @@ func ComputeIntDiv(a, b Datum) (d Datum, err error) {
 		}
 	}
 
-	// if any is none integer, use decimal to calculate
+	// If either is not integer, use decimal to calculate
 	x, err := a.ToDecimal()
 	if err != nil {
 		return d, errors.Trace(err)
@@ -394,4 +394,168 @@ func ComputeIntDiv(a, b Datum) (d Datum, err error) {
 	}
 	d.SetInt64(iVal)
 	return d, nil
+}
+
+// decimal2RoundUint converts a MyDecimal to an uint64 after rounding.
+func decimal2RoundUint(x *mysql.MyDecimal) (uint64, error) {
+	roundX := new(mysql.MyDecimal)
+	x.Round(roundX, 0)
+	var (
+		uintX uint64
+		err   error
+	)
+	if roundX.IsNegative() {
+		intX, err := roundX.ToInt()
+		if err != nil && err != mysql.ErrTruncated {
+			return 0, errors.Trace(err)
+		}
+		uintX = uint64(intX)
+	} else {
+		uintX, err = roundX.ToUint()
+		if err != nil && err != mysql.ErrTruncated {
+			return 0, errors.Trace(err)
+		}
+	}
+
+	return uintX, nil
+}
+
+// ComputeBitAnd computes the result of a & b.
+func ComputeBitAnd(a, b Datum) (d Datum, err error) {
+	aKind, bKind := a.Kind(), b.Kind()
+	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
+		d.SetUint64(a.GetUint64() & b.GetUint64())
+		return
+	}
+	// If either is not integer, we round the operands and then use uint64 to calculate.
+	x, err := convertNonInt2RoundUint64(a)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	y, err := convertNonInt2RoundUint64(b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetUint64(x & y)
+	return d, nil
+}
+
+// ComputeBitOr computes the result of a | b.
+func ComputeBitOr(a, b Datum) (d Datum, err error) {
+	aKind, bKind := a.Kind(), b.Kind()
+	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
+		d.SetUint64(a.GetUint64() | b.GetUint64())
+		return
+	}
+	// If either is not integer, we round the operands and then use uint64 to calculate.
+	x, err := convertNonInt2RoundUint64(a)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	y, err := convertNonInt2RoundUint64(b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetUint64(x | y)
+	return d, nil
+}
+
+// ComputeBitNeg computes the result of ~a.
+func ComputeBitNeg(a Datum) (d Datum, err error) {
+	aKind := a.Kind()
+	if aKind == KindInt64 || aKind == KindUint64 {
+		d.SetUint64(^a.GetUint64())
+		return
+	}
+	// If either is not integer, we round the operands and then use uint64 to calculate.
+	x, err := convertNonInt2RoundUint64(a)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetUint64(^x)
+	return d, nil
+}
+
+// ComputeBitXor computes the result of a ^ b.
+func ComputeBitXor(a, b Datum) (d Datum, err error) {
+	aKind, bKind := a.Kind(), b.Kind()
+	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
+		d.SetUint64(a.GetUint64() ^ b.GetUint64())
+		return
+	}
+	// If either is not integer, we round the operands and then use uint64 to calculate.
+	x, err := convertNonInt2RoundUint64(a)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	y, err := convertNonInt2RoundUint64(b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetUint64(x ^ y)
+	return d, nil
+}
+
+// ComputeLeftShift computes the result of a >> b.
+func ComputeLeftShift(a, b Datum) (d Datum, err error) {
+	aKind, bKind := a.Kind(), b.Kind()
+	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
+		d.SetUint64(a.GetUint64() << b.GetUint64())
+		return
+	}
+	// If either is not integer, we round the operands and then use uint64 to calculate.
+	x, err := convertNonInt2RoundUint64(a)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	y, err := convertNonInt2RoundUint64(b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetUint64(x << y)
+	return d, nil
+}
+
+// ComputeRightShift computes the result of a << b.
+func ComputeRightShift(a, b Datum) (d Datum, err error) {
+	aKind, bKind := a.Kind(), b.Kind()
+	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
+		d.SetUint64(a.GetUint64() >> b.GetUint64())
+		return
+	}
+	// If either is not integer, we round the operands and then use uint64 to calculate.
+	x, err := convertNonInt2RoundUint64(a)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	y, err := convertNonInt2RoundUint64(b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetUint64(x >> y)
+	return d, nil
+}
+
+// covertNonIntegerToUint64 coverts a non-integer to an uint64
+func convertNonInt2RoundUint64(x Datum) (d uint64, err error) {
+	decimalX, err := x.ToDecimal()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d, err = decimal2RoundUint(decimalX)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	return
 }
