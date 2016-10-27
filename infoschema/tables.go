@@ -38,6 +38,7 @@ const (
 	tableProfiling     = "PROFILING"
 	tablePartitions    = "PARTITIONS"
 	tableKeyColumm     = "KEY_COLUMN_USAGE"
+	tableReferConst    = "REFERENTIAL_CONSTRAINTS"
 )
 
 type columnInfo struct {
@@ -211,6 +212,21 @@ var keyColumnUsageCols = []columnInfo{
 	{"REFERENCED_TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"REFERENCED_TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"REFERENCED_COLUMN_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/referential-constraints-table.html
+var referConstCols = []columnInfo{
+	{"CONSTRAINT_CATALOG", mysql.TypeVarchar, 512, mysql.NotNullFlag, nil, nil},
+	{"CONSTRAINT_SCHEMA", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"CONSTRAINT_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"UNIQUE_CONSTRAINT_CATALOG", mysql.TypeVarchar, 512, mysql.NotNullFlag, nil, nil},
+	{"UNIQUE_CONSTRAINT_SCHEMA", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"UNIQUE_CONSTRAINT_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"MATCH_OPTION", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"UPDATE_RULE", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"DELETE_RULE", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"REFERENCED_TABLE_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/partitions-table.html
@@ -498,6 +514,7 @@ var tableNameToColumns = map[string]([]columnInfo){
 	tableProfiling:     profilingCols,
 	tablePartitions:    partitionsCols,
 	tableKeyColumm:     keyColumnUsageCols,
+	tableReferConst:    referConstCols,
 }
 
 func createMemoryTable(meta *model.TableInfo, alloc autoid.Allocator) (table.Table, error) {
