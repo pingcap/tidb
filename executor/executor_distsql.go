@@ -322,7 +322,7 @@ func closeAll(objs ...Closeable) error {
 // and sends the task to 'workerCh'.
 //
 // Each worker goroutine receives tasks through the 'workerCh', then executes the task.
-// After finished the task, the workers send the task to a taskChan. At the outer most Executor.Next method,
+// After finishes the task, the workers send the task to a taskChan. At the outer most Executor.Next method,
 // we receive the finished task through taskChan, and return each row in that task until no more tasks to receive.
 type XSelectIndexExec struct {
 	tableInfo     *model.TableInfo
@@ -429,7 +429,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if rowData == nil {
-			// Finish current partial result, get the next one.
+			// Finish current partial result and get the next one.
 			e.partialResult = nil
 			continue
 		}
@@ -869,7 +869,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if rowData == nil {
-			// Finish the current partial result, get the next one.
+			// Finish the current partial result and get the next one.
 			e.partialResult = nil
 			continue
 		}

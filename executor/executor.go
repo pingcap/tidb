@@ -502,7 +502,7 @@ func (e *ReverseExec) Close() error {
 
 func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
-	// but the plan package can not import the executor package because of the dependency cycle.
+	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
 	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) (d []types.Datum, err error) {
 		e := &executorBuilder{is: is, ctx: ctx}
@@ -765,7 +765,7 @@ func (e *HashJoinExec) runJoinWorker(idx int) {
 
 // joinOneBigRow creates result rows from a row in a big table and sends them to resultRows channel.
 // Every matching row generates a result row.
-// If there is no matching rows and it is outer join, a null filled result row is created.
+// If there are no matching rows and it is outer join, a null filled result row is created.
 func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row) bool {
 	var (
 		matchedRows []*Row
@@ -891,7 +891,7 @@ type HashSemiJoinExec struct {
 	otherFilter  expression.Expression
 	schema       expression.Schema
 	// In auxMode, the result row always returns with an extra column which stores a boolean
-	// or null value to indicate if this row is matched.
+	// or NULL value to indicate if this row is matched.
 	auxMode           bool
 	targetTypes       []*types.FieldType
 	smallTableHasNull bool
@@ -921,7 +921,7 @@ func (e *HashSemiJoinExec) Fields() []*ast.ResultField {
 	return nil
 }
 
-// Prepare runs the first time when 'Next' is called, it reads all data from the small table and stores
+// Prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a hash table.
 func (e *HashSemiJoinExec) prepare() error {
 	e.hashTable = make(map[string][]*Row)
@@ -1032,7 +1032,7 @@ func (e *HashSemiJoinExec) Next() (*Row, error) {
 		if e.anti && !isNull {
 			matched = !matched
 		}
-		// For the auxMode subquery, we return the row with a Datum indicates if it's a match,
+		// For the auxMode subquery, we return the row with a Datum indicating if it's a match,
 		// For the non-auxMode subquery, we return the matching row only.
 		if e.auxMode {
 			if isNull {
@@ -1656,7 +1656,7 @@ func (e *SortExec) Next() (*Row, error) {
 }
 
 // TopnExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
-// Instead of sort all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
+// Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopnExec struct {
 	SortExec
 	limit      *plan.Limit
@@ -1814,7 +1814,7 @@ func (e *ApplyExec) Schema() expression.Schema {
 	return e.schema
 }
 
-// Fields implements he Executor Fields interface.
+// Fields implements the Executor Fields interface.
 func (e *ApplyExec) Fields() []*ast.ResultField {
 	return nil
 }
@@ -1854,7 +1854,7 @@ func (e *ApplyExec) Next() (*Row, error) {
 			return srcRow, nil
 		}
 		if innerRow == nil {
-			// When inner exec finishes, we need to append a result column to true, false or null.
+			// When inner exec finishes, we need to append a result column to true, false or NULL.
 			var result types.Datum
 			if e.checker.all {
 				result = types.NewDatum(true)
@@ -1922,7 +1922,7 @@ func (e *ExistsExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-// MaxOneRowExec checks if the number of rows that a query returns is one at maximum.
+// MaxOneRowExec checks if the number of rows that a query returns is at maximum one.
 // It's built from subquery expression.
 type MaxOneRowExec struct {
 	schema    expression.Schema
@@ -1971,7 +1971,7 @@ func (e *MaxOneRowExec) Next() (*Row, error) {
 
 // TrimExec truncates extra columns in the Src rows.
 // Some columns in src rows are not needed in the result.
-// For example 'SELECT a from t order by b',
+// For example, in the 'SELECT a from t order by b' statement,
 // 'b' is needed for ordering, but not needed in the result.
 type TrimExec struct {
 	schema expression.Schema
