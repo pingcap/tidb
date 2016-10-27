@@ -428,26 +428,17 @@ func ComputeBitAnd(a, b Datum) (d Datum, err error) {
 		return
 	}
 	// If either is not integer, we round the operands and then use uint64 to calculate.
-	x, err := a.ToDecimal()
+	x, err := convertNonInt2RoundUint64(a)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	y, err := b.ToDecimal()
+	y, err := convertNonInt2RoundUint64(b)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	uintX, err := decimal2RoundUint(x)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	uintY, err := decimal2RoundUint(y)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	d.SetUint64(uintX & uintY)
+	d.SetUint64(x & y)
 	return d, nil
 }
 
@@ -458,27 +449,18 @@ func ComputeBitOr(a, b Datum) (d Datum, err error) {
 		d.SetUint64(a.GetUint64() | b.GetUint64())
 		return
 	}
-	// If either is not integer, use decimal to calculate
-	x, err := a.ToDecimal()
+	// If either is not integer, we round the operands and then use uint64 to calculate.
+	x, err := convertNonInt2RoundUint64(a)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	y, err := b.ToDecimal()
+	y, err := convertNonInt2RoundUint64(b)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	uintX, err := decimal2RoundUint(x)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	uintY, err := decimal2RoundUint(y)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	d.SetUint64(uintX | uintY)
+	d.SetUint64(x | y)
 	return d, nil
 }
 
