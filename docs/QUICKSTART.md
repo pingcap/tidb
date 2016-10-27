@@ -23,7 +23,7 @@ Notice: OS X user may use `docker-machine ip` to connect it.
 
 #### __Or run TiDB on TiKV cluster__ 
 
-Read this [doc](https://github.com/pingcap/docs/blob/master/op-guide/clustering.md).
+Read the documents for [binary deployment](https://github.com/pingcap/docs/blob/master/op-guide/binary-deployment.md) or [docker deployment](https://github.com/pingcap/docs/blob/master/op-guide/docker-deployment.md).
 
 #### __Pre-requirement__
 
