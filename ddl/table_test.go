@@ -158,12 +158,17 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test")
 	testCreateSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
+
+	// Use a smaller limit to prevent the test from consuming too much time.
+	reorgDeleteLimit = 2000
 }
 
 func (s *testTableSuite) TearDownSuite(c *C) {
 	testDropSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
 	s.d.close()
 	s.store.Close()
+
+	reorgDeleteLimit = 65536
 }
 
 func testNewContext(c *C, d *ddl) context.Context {
@@ -195,9 +200,6 @@ func (s *testTableSuite) TestTable(c *C) {
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
-
-	// Use a smaller limit to prevent it from consuming too much time.
-	reorgDeleteLimit = 2000
 
 	// To drop a table with reorgDeleteLimit+10 records.
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
