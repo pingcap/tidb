@@ -197,7 +197,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobCancelled(c, d, job)
 
 	// Use a smaller limit to prevent it from consuming too much time.
-	reorgDeleteLimit = 2048
+	reorgDeleteLimit = 2000
 
 	// To drop a table with reorgDeleteLimit+10 records.
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
