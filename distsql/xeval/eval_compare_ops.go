@@ -232,7 +232,7 @@ func containsAlphabet(s string) bool {
 
 func (e *Evaluator) evalIn(expr *tipb.Expr) (types.Datum, error) {
 	if len(expr.Children) != 2 {
-		return types.Datum{}, ErrInvalid.Gen("IN need 2 operand, got %d", len(expr.Children))
+		return types.Datum{}, ErrInvalid.Gen("IN need 2 operands, got %d", len(expr.Children))
 	}
 	target, err := e.Eval(expr.Children[0])
 	if err != nil {
@@ -243,7 +243,7 @@ func (e *Evaluator) evalIn(expr *tipb.Expr) (types.Datum, error) {
 	}
 	valueListExpr := expr.Children[1]
 	if valueListExpr.GetTp() != tipb.ExprType_ValueList {
-		return types.Datum{}, ErrInvalid.Gen("the second children should be value list type")
+		return types.Datum{}, ErrInvalid.Gen("the second child should be value list type")
 	}
 	decoded, err := e.decodeValueList(valueListExpr)
 	if err != nil {
