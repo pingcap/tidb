@@ -171,16 +171,16 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 
 // delKeysWithPrefix deletes keys with prefix key in a limited number. If limit < 0, deletes all keys.
 func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, limit int) (int, error) {
-	delAll := limit < 0
+	limitedDel := limit >= 0
 
 	var count int
 	total := job.GetRowCount()
 	for {
-		if !delAll && count >= limit {
+		if limitedDel && count >= limit {
 			break
 		}
 		batch := defaultBatchSize
-		if !delAll && count+batch > limit {
+		if limitedDel && count+batch > limit {
 			batch = limit - count
 		}
 		startTS := time.Now()
@@ -231,8 +231,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, 
 		batchHandleDataHistogram.WithLabelValues(batchDelData).Observe(sub)
 		log.Infof("[ddl] deleted %v keys with prefix %q take time %v", total, prefix, sub)
 
-		// delete keys number less than batch, it means no more keys to delete.
-		if len(keys) < batch {
+		if noMoreKeysToDelete := len(keys) < batch; noMoreKeysToDelete {
 			break
 		}
 	}
