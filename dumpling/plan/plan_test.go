@@ -762,6 +762,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[1,1]]->Projection",
 		},
 		{
+			sql:  "select * from t a order by a.c desc limit 2",
+			best: "Index(t.c_d_e)[[<nil>,+inf]]->Limit->Projection",
+		},
+		{
 			sql:  "select * from t t1, t t2 right join t t3 on t2.a = t3.b order by t1.a, t1.b, t2.a, t2.b, t3.a, t3.b",
 			best: "RightHashJoin{Table(t)->RightHashJoin{Table(t)->Table(t)}(t2.a,t3.b)}->Sort->Projection",
 		},
