@@ -19,7 +19,6 @@ package tables
 
 import (
 	"strings"
-	"unicode/utf8"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -213,9 +212,6 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 			}
 			currentData[i] = defaultVal
 		}
-		if col.Charset == "utf8" && !utf8.Valid(currentData[i].GetBytes()) {
-			return table.ErrInvalidUTF8Value.Gen("invalid utf8 value %q", currentData[i].GetBytes())
-		}
 		colIDs = append(colIDs, col.ID)
 	}
 	// Set new row data into KV.
@@ -350,9 +346,6 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 			if col.DefaultValue == nil && r[col.Offset].IsNull() {
 				// Save storage space by not storing null value.
 				continue
-			}
-			if col.Charset == "utf8" && !utf8.Valid(value.GetBytes()) {
-				return 0, table.ErrInvalidUTF8Value.Gen("invalid utf8 value %q", value.GetBytes())
 			}
 		}
 		colIDs = append(colIDs, col.ID)
