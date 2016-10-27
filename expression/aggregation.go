@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -37,6 +38,9 @@ type AggregationFunction interface {
 
 	// SetMode sets aggFunctionMode for aggregate function
 	SetMode(mode AggFunctionMode)
+
+	// SetMode sets aggFunctionMode for aggregate function
+	GetMode() AggFunctionMode
 
 	// GetGroupResult will be called when all data have been processed.
 	GetGroupResult(groupKey []byte) types.Datum
@@ -64,6 +68,12 @@ type AggregationFunction interface {
 
 	// Equal checks whether two aggregation functions are equal.
 	Equal(agg AggregationFunction) bool
+
+	// DeepCopy copies an aggregate function totally.
+	DeepCopy() AggregationFunction
+
+	// GetType gets field type of aggregate function.
+	GetType() *types.FieldType
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -164,6 +174,10 @@ func (af *aggFunction) SetMode(mode AggFunctionMode) {
 	af.mode = mode
 }
 
+func (af *aggFunction) GetMode() AggFunctionMode {
+	return af.mode
+}
+
 // GetArgs implements AggregationFunction interface.
 func (af *aggFunction) GetArgs() []Expression {
 	return af.Args
@@ -258,6 +272,15 @@ type sumFunction struct {
 	aggFunction
 }
 
+// DeepCopy implements AggregationFunction interface.
+func (sf *sumFunction) DeepCopy() AggregationFunction {
+	nf := *sf
+	for i, arg := range sf.Args {
+		nf.Args[i] = arg.DeepCopy()
+	}
+	return &nf
+}
+
 // Update implements AggregationFunction interface.
 func (sf *sumFunction) Update(row []types.Datum, groupKey []byte, ctx context.Context) error {
 	return sf.updateSum(row, groupKey, ctx)
@@ -281,8 +304,35 @@ func (sf *sumFunction) GetStreamResult() (d types.Datum) {
 	return
 }
 
+// GetType implements AggregationFunction interface.
+func (sf *sumFunction) GetType() *types.FieldType {
+	ft := types.NewFieldType(mysql.TypeNewDecimal)
+	ft.Charset = charset.CharsetBin
+	ft.Collate = charset.CollationBin
+	ft.Decimal = sf.Args[0].GetType().Decimal
+	return ft
+}
+
 type countFunction struct {
 	aggFunction
+}
+
+// DeepCopy implements AggregationFunction interface.
+func (cf *countFunction) DeepCopy() AggregationFunction {
+	nf := *cf
+	for i, arg := range cf.Args {
+		nf.Args[i] = arg.DeepCopy()
+	}
+	return &nf
+}
+
+// GetType implements AggregationFunction interface.
+func (cf *countFunction) GetType() *types.FieldType {
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	ft.Flen = 21
+	ft.Charset = charset.CharsetBin
+	ft.Collate = charset.CollationBin
+	return ft
 }
 
 // Update implements AggregationFunction interface.
@@ -372,6 +422,24 @@ type avgFunction struct {
 	aggFunction
 }
 
+// DeepCopy implements AggregationFunction interface.
+func (af *avgFunction) DeepCopy() AggregationFunction {
+	nf := *af
+	for i, arg := range af.Args {
+		nf.Args[i] = arg.DeepCopy()
+	}
+	return &nf
+}
+
+// GetType implements AggregationFunction interface.
+func (af *avgFunction) GetType() *types.FieldType {
+	ft := types.NewFieldType(mysql.TypeNewDecimal)
+	ft.Charset = charset.CharsetBin
+	ft.Collate = charset.CollationBin
+	ft.Decimal = af.Args[0].GetType().Decimal
+	return ft
+}
+
 func (af *avgFunction) updateAvg(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := af.getContext(groupKey)
 	a := af.Args[1]
@@ -448,6 +516,20 @@ func (af *avgFunction) GetStreamResult() (d types.Datum) {
 
 type concatFunction struct {
 	aggFunction
+}
+
+// DeepCopy implements AggregationFunction interface.
+func (cf *concatFunction) DeepCopy() AggregationFunction {
+	nf := *cf
+	for i, arg := range cf.Args {
+		nf.Args[i] = arg.DeepCopy()
+	}
+	return &nf
+}
+
+// GetType implements AggregationFunction interface.
+func (cf *concatFunction) GetType() *types.FieldType {
+	return types.NewFieldType(mysql.TypeVarString)
 }
 
 // Update implements AggregationFunction interface.
@@ -550,6 +632,20 @@ type maxMinFunction struct {
 	isMax bool
 }
 
+// DeepCopy implements AggregationFunction interface.
+func (mmf *maxMinFunction) DeepCopy() AggregationFunction {
+	nf := *mmf
+	for i, arg := range mmf.Args {
+		nf.Args[i] = arg.DeepCopy()
+	}
+	return &nf
+}
+
+// GetType implements AggregationFunction interface.
+func (mmf *maxMinFunction) GetType() *types.FieldType {
+	return mmf.Args[0].GetType()
+}
+
 // GetGroupResult implements AggregationFunction interface.
 func (mmf *maxMinFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return mmf.getContext(groupKey).Value
@@ -623,6 +719,20 @@ type firstRowFunction struct {
 	aggFunction
 }
 
+// DeepCopy implements AggregationFunction interface.
+func (ff *firstRowFunction) DeepCopy() AggregationFunction {
+	nf := *ff
+	for i, arg := range ff.Args {
+		nf.Args[i] = arg.DeepCopy()
+	}
+	return &nf
+}
+
+// GetType implements AggregationFunction interface.
+func (ff *firstRowFunction) GetType() *types.FieldType {
+	return ff.Args[0].GetType()
+}
+
 // Update implements AggregationFunction interface.
 func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := ff.getContext(groupKey)
@@ -630,7 +740,7 @@ func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx cont
 		return nil
 	}
 	if len(ff.Args) != 1 {
-		return errors.New("Wrong number of args for AggFuncMaxMin")
+		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
 	value, err := ff.Args[0].Eval(row, ectx)
 	if err != nil {
@@ -647,7 +757,7 @@ func (ff *firstRowFunction) StreamUpdate(row []types.Datum, ectx context.Context
 		return nil
 	}
 	if len(ff.Args) != 1 {
-		return errors.New("Wrong number of args for AggFuncMaxMin")
+		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
 	value, err := ff.Args[0].Eval(row, ectx)
 	if err != nil {

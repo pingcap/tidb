@@ -599,6 +599,11 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 
 // convert2PhysicalPlanStream converts the logical aggregation to the stream aggregation *physicalPlanInfo.
 func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physicalPlanInfo, error) {
+	for _, aggFunc := range p.AggFuncs {
+		if aggFunc.GetMode() == expression.FinalMode {
+			return &physicalPlanInfo{cost: math.MaxFloat64}, nil
+		}
+	}
 	agg := &PhysicalAggregation{
 		AggType:      StreamedAgg,
 		AggFuncs:     p.AggFuncs,
