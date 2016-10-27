@@ -132,14 +132,14 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 }
 
 func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
-	var startKey kv.Key
-	if err := job.DecodeArgs(&startKey); err != nil {
+	var prefix kv.Key
+	if err := job.DecodeArgs(&prefix); err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
 
 	limit := defaultBatchSize
-	delCount, err := d.dropTableData(startKey, job, limit)
+	delCount, err := d.dropTableData(prefix, job, limit)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -179,9 +179,11 @@ func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, erro
 	return tblInfo, nil
 }
 
-// delKeysWithPrefix deletes data in a limited number. If limit < 0, deletes all data.
+// dropTableData deletes data in a limited number. If limit < 0, deletes all data.
 func (d *ddl) dropTableData(startKey kv.Key, job *model.Job, limit int) (int, error) {
-	delCount, err := d.delKeysWithPrefix(startKey, bgJobFlag, job, limit)
+	prefix := tablecodec.EncodeTablePrefix(job.TableID)
+	delCount, nextStartKey, err := d.delKeysWithStartKey(prefix, startKey, bgJobFlag, job, limit)
+	job.Args = []interface{}{nextStartKey}
 	return delCount, errors.Trace(err)
 }
 
@@ -228,10 +230,6 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
 	job.State = model.JobDone
 	addTableHistoryInfo(job, ver, tblInfo)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
-<<<<<<< HEAD
-	job.Args = append(job.Args, StartKey)
-=======
 	job.Args = append(job.Args, startKey)
->>>>>>> ddl: rename prefix to startKey
 	return nil
 }

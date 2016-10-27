@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -170,11 +169,11 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 	return nil
 }
 
-// delKeysWithPrefix deletes keys with start key in a limited number. If limit < 0, deletes all keys.
-func (d *ddl) delKeysWithPrefix(startKey kv.Key, jobType JobType, job *model.Job, limit int) (int, error) {
+// delKeysWithStartKey deletes keys with start key in a limited number. If limit < 0, deletes all keys.
+func (d *ddl) delKeysWithStartKey(prefix, startKey kv.Key, jobType JobType, job *model.Job, limit int) (int, kv.Key, error) {
 	batch := limit
 	if batch == 0 {
-		return 0, nil
+		return 0, startKey, nil
 	} else if batch < 0 {
 		batch = defaultBatchSize
 	}
@@ -183,7 +182,6 @@ func (d *ddl) delKeysWithPrefix(startKey kv.Key, jobType JobType, job *model.Job
 	var count int
 	total := job.GetRowCount()
 	keys := make([]kv.Key, 0, batch)
-	prefix := tablecodec.EncodeTablePrefix(job.TableID)
 	for {
 		startTS := time.Now()
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
@@ -225,7 +223,7 @@ func (d *ddl) delKeysWithPrefix(startKey kv.Key, jobType JobType, job *model.Job
 		sub := time.Since(startTS).Seconds()
 		if err != nil {
 			log.Warnf("[ddl] deleted %d keys failed, take time %v, deleted %d keys in total", len(keys), sub, total)
-			return 0, errors.Trace(err)
+			return 0, startKey, errors.Trace(err)
 		}
 
 		job.SetRowCount(total)
@@ -235,7 +233,6 @@ func (d *ddl) delKeysWithPrefix(startKey kv.Key, jobType JobType, job *model.Job
 		if len(keys) > 0 {
 			startKey = keys[len(keys)-1]
 		}
-		job.Args = []interface{}{startKey}
 
 		// delete keys number less than batch, return.
 		if len(keys) < batch {
@@ -248,7 +245,7 @@ func (d *ddl) delKeysWithPrefix(startKey kv.Key, jobType JobType, job *model.Job
 		keys = keys[:0]
 	}
 
-	return count, nil
+	return count, startKey, nil
 }
 
 // addDBHistoryInfo adds schema version and schema information that are used for binlog.
