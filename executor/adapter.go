@@ -63,7 +63,7 @@ func (a *recordSet) Close() error {
 
 // statement implements the ast.Statement interface, it builds a plan.Plan to an ast.Statement.
 type statement struct {
-	// During executing, the InfoSchema should not change, so we holds a reference to it.
+	// The InfoSchema can not change during execution, so we hold a reference to it.
 	is    infoschema.InfoSchema
 	plan  plan.Plan
 	text  string
@@ -84,8 +84,8 @@ func (a *statement) IsDDL() bool {
 }
 
 // Exec implements the ast.Statement Exec interface.
-// This function builds an Executor from a plan, if the Executor doesn't return result,
-// like INSERT, UPDATE statements, it executes in this function, if the Executor returns
+// This function builds an Executor from a plan. If the Executor doesn't return result,
+// like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
 func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	b := newExecutorBuilder(ctx, a.is)
@@ -103,9 +103,9 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		e = executorExec.StmtExec
 	}
 
-	// Fields or Schema are only used for statements that returns result set.
+	// Fields or Schema are only used for statements that return result set.
 	if len(e.Fields()) == 0 && len(e.Schema()) == 0 {
-		// Check if "tidb_snapshot" is set for write executors.
+		// Check if "tidb_snapshot" is set for the write executors.
 		// In history read mode, we can not do write operations.
 		switch e.(type) {
 		case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadData, *DDLExec:
@@ -121,9 +121,9 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// Even though we don't have result set, the row is still used to indicates if there is
+			// Even though there isn't any result set, the row is still used to indicate if there is
 			// more work to do.
-			// For example, UPDATE statement updates a single row on one Next call, we keep calling Next until
+			// For example, the UPDATE statement updates a single row on a Next call, we keep calling Next until
 			// There is no more rows to update.
 			if row == nil {
 				return nil, nil

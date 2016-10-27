@@ -135,7 +135,7 @@ func (s *session) cleanRetryInfo() {
 	}
 }
 
-// If schema is invalid, we need to rollback currenty transaction.
+// If the schema is invalid, we need to rollback the current transaction.
 func (s *session) checkSchemaValidOrRollback() error {
 	var ts uint64
 	if s.txn != nil {

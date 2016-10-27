@@ -29,7 +29,7 @@ import (
 )
 
 // DDLExec represents a DDL executor.
-// It grab a DDL instance from Domain, calling DDL methods to do the work.
+// It grabs a DDL instance from Domain, calling the DDL methods to do the work.
 type DDLExec struct {
 	Statement ast.StmtNode
 	ctx       context.Context
@@ -37,12 +37,12 @@ type DDLExec struct {
 	done      bool
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *DDLExec) Schema() expression.Schema {
 	return nil
 }
 
-// Fields implements Executor Fields interface.
+// Fields implements the Executor Fields interface.
 func (e *DDLExec) Fields() []*ast.ResultField {
 	return nil
 }
@@ -78,7 +78,7 @@ func (e *DDLExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *DDLExec) Close() error {
 	return nil
 }

@@ -145,13 +145,13 @@ type RecordSet interface {
 	Close() error
 }
 
-// ResultSetNode interface has ResultFields property, represents a Node that returns result set.
+// The ResultSetNode interface has a ResultFields property, represents a Node that returns result set.
 // Implementations include SelectStmt, SubqueryExpr, TableSource, TableName and Join.
 type ResultSetNode interface {
 	Node
-	// GetResultFields gets result fields of the result set node.
+	// GetResultFields gets result fields.
 	GetResultFields() []*ResultField
-	// SetResultFields sets result fields of the result set node.
+	// SetResultFields sets result fields.
 	SetResultFields(fields []*ResultField)
 }
 
