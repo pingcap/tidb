@@ -196,9 +196,9 @@ func (s *testTableSuite) TestTable(c *C) {
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
-	// To drop a table with defaultBatchSize+10 records.
+	// to drop a table with reorgDeleteLimit+10 records.
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	for i := 1; i <= defaultBatchSize+10; i++ {
+	for i := 1; i <= reorgDeleteLimit+10; i++ {
 		_, err = tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
@@ -213,12 +213,12 @@ func (s *testTableSuite) TestTable(c *C) {
 		job.Mu.Lock()
 		count := job.RowCount
 		job.Mu.Unlock()
-		if updatedCount == 0 && count != defaultBatchSize {
-			checkErr = errors.Errorf("row count %v isn't equal to %v", count, defaultBatchSize)
+		if updatedCount == 0 && count != reorgDeleteLimit {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, reorgDeleteLimit)
 			return
 		}
-		if updatedCount == 1 && count != defaultBatchSize+10 {
-			checkErr = errors.Errorf("row count %v isn't equal to %v", count, defaultBatchSize+10)
+		if updatedCount == 1 && count != reorgDeleteLimit+10 {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, reorgDeleteLimit+10)
 		}
 		updatedCount++
 	}
@@ -226,8 +226,8 @@ func (s *testTableSuite) TestTable(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	// Check background ddl info.
-	time.Sleep(testLease * 200)
+	// check background ddl info
+	time.Sleep(testLease * 500)
 	verifyBgJobState(c, d, job, model.JobDone)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(updatedCount, Equals, 2)
