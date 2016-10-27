@@ -161,25 +161,25 @@ func (s *testDDLSuite) TestTableError(c *C) {
 }
 
 func (s *testDDLSuite) TestForeignKeyError(c *C) {
-        defer testleak.AfterTest(c)()
-        store := testCreateStore(c, "test_foreign_key_error")
-        defer store.Close()
+	defer testleak.AfterTest(c)()
+	store := testCreateStore(c, "test_foreign_key_error")
+	defer store.Close()
 
-        d := newDDL(store, nil, nil, testLease)
-        defer d.close()
+	d := newDDL(store, nil, nil, testLease)
+	defer d.close()
 
-        ctx := testNewContext(c, d)
+	ctx := testNewContext(c, d)
 
-        doDDLJobErr(c, -1, 1, model.ActionAddForeignKey, nil, ctx, d)
-        doDDLJobErr(c, -1, 1, model.ActionDropForeignKey, nil, ctx, d)
+	doDDLJobErr(c, -1, 1, model.ActionAddForeignKey, nil, ctx, d)
+	doDDLJobErr(c, -1, 1, model.ActionDropForeignKey, nil, ctx, d)
 
-        dbInfo := testSchemaInfo(c, d, "test")
-        tblInfo := testTableInfo(c, d, "t", 3)
+	dbInfo := testSchemaInfo(c, d, "test")
+	tblInfo := testTableInfo(c, d, "t", 3)
 
-        testCreateSchema(c, ctx, d, dbInfo)
-        testCreateTable(c, ctx, d, dbInfo, tblInfo)
+	testCreateSchema(c, ctx, d, dbInfo)
+	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 
-        doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropForeignKey, []interface{}{model.NewCIStr("c1_foreign_key")}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropForeignKey, []interface{}{model.NewCIStr("c1_foreign_key")}, ctx, d)
 }
 
 func (s *testDDLSuite) TestIndexError(c *C) {
