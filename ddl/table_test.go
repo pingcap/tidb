@@ -196,7 +196,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
-	// to drop a table with reorgDeleteLimit+10 records.
+	// To drop a table with reorgDeleteLimit+10 records.
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	for i := 1; i <= reorgDeleteLimit+10; i++ {
 		_, err = tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
@@ -226,13 +226,13 @@ func (s *testTableSuite) TestTable(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	// check background ddl info
-	time.Sleep(testLease * 500)
+	// Check background ddl info.
+	time.Sleep(time.Second * 5)
 	verifyBgJobState(c, d, job, model.JobDone)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(updatedCount, Equals, 2)
 
-	// for truncate table
+	// For truncate table.
 	tblInfo = testTableInfo(c, d, "tt", 3)
 	job = testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
