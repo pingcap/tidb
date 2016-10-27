@@ -278,6 +278,7 @@ func (sf *sumFunction) DeepCopy() AggregationFunction {
 	for i, arg := range sf.Args {
 		nf.Args[i] = arg.DeepCopy()
 	}
+	nf.resultMapper = make(aggCtxMapper)
 	return &nf
 }
 
@@ -323,6 +324,7 @@ func (cf *countFunction) DeepCopy() AggregationFunction {
 	for i, arg := range cf.Args {
 		nf.Args[i] = arg.DeepCopy()
 	}
+	nf.resultMapper = make(aggCtxMapper)
 	return &nf
 }
 
@@ -428,6 +430,7 @@ func (af *avgFunction) DeepCopy() AggregationFunction {
 	for i, arg := range af.Args {
 		nf.Args[i] = arg.DeepCopy()
 	}
+	nf.resultMapper = make(aggCtxMapper)
 	return &nf
 }
 
@@ -524,6 +527,7 @@ func (cf *concatFunction) DeepCopy() AggregationFunction {
 	for i, arg := range cf.Args {
 		nf.Args[i] = arg.DeepCopy()
 	}
+	nf.resultMapper = make(aggCtxMapper)
 	return &nf
 }
 
@@ -638,6 +642,7 @@ func (mmf *maxMinFunction) DeepCopy() AggregationFunction {
 	for i, arg := range mmf.Args {
 		nf.Args[i] = arg.DeepCopy()
 	}
+	nf.resultMapper = make(aggCtxMapper)
 	return &nf
 }
 
@@ -725,6 +730,7 @@ func (ff *firstRowFunction) DeepCopy() AggregationFunction {
 	for i, arg := range ff.Args {
 		nf.Args[i] = arg.DeepCopy()
 	}
+	nf.resultMapper = make(aggCtxMapper)
 	return &nf
 }
 

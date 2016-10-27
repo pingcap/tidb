@@ -134,7 +134,8 @@ func addGbyCol(gbyCols []*expression.Column, cols ...*expression.Column) []*expr
 }
 
 func checkValidJoin(join *Join) bool {
-	return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
+	// TODO: Support outer join.
+	return join.JoinType == InnerJoin
 }
 
 func decompose(aggFunc expression.AggregationFunction, schema expression.Schema, id string) ([]expression.AggregationFunction, expression.Schema) {
@@ -160,10 +161,19 @@ func decompose(aggFunc expression.AggregationFunction, schema expression.Schema,
 	return result, schema
 }
 
-func (a *aggPushDownSolver) produceNewAggPlan(aggFuncs []expression.AggregationFunction, gbyCols []*expression.Column, join *Join, childIdx int) LogicalPlan {
+func allFirstRow(aggFuncs []expression.AggregationFunction) bool {
+	for _, fun := range aggFuncs {
+		if fun.GetName() != ast.AggFuncFirstRow {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *aggPushDownSolver) produceNewAggPlan(aggFuncs []expression.AggregationFunction, gbyCols []*expression.Column, join *Join, childIdx int) (LogicalPlan, bool) {
 	child := join.GetChildByIndex(childIdx).(LogicalPlan)
-	if len(aggFuncs) == 0 {
-		return child
+	if allFirstRow(aggFuncs) {
+		return child, false
 	}
 	agg := &Aggregation{
 		GroupByItems:    expression.Schema2Exprs(gbyCols),
@@ -186,7 +196,7 @@ func (a *aggPushDownSolver) produceNewAggPlan(aggFuncs []expression.AggregationF
 	}
 	agg.AggFuncs = newAggFuncs
 	agg.SetSchema(schema)
-	return agg
+	return agg, true
 }
 
 type aggPushDownSolver struct {
@@ -199,8 +209,14 @@ func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) {
 		child := agg.GetChildByIndex(0)
 		if join, ok1 := child.(*Join); ok1 && checkValidJoin(join) {
 			if valid, leftAggFuncs, rightAggFuns, leftGbyCols, rightGbyCols := checkValidAgg(agg, join); valid {
-				lChild := a.produceNewAggPlan(leftAggFuncs, leftGbyCols, join, 0)
-				rChild := a.produceNewAggPlan(rightAggFuns, rightGbyCols, join, 1)
+				var lChild, rChild LogicalPlan
+				var success bool
+				lChild = join.GetChildByIndex(0).(LogicalPlan)
+				rChild, success = a.produceNewAggPlan(rightAggFuns, rightGbyCols, join, 1)
+				if !success {
+					// TODO: We should support eager split latter.
+					lChild, _ = a.produceNewAggPlan(leftAggFuncs, leftGbyCols, join, 0)
+				}
 				join.SetChildren(lChild, rChild)
 				lChild.SetParents(join)
 				rChild.SetParents(join)
