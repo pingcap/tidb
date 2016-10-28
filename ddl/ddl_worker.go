@@ -70,7 +70,7 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Inc()
 	defer func() {
 		ticker.Stop()
-		jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Desc()
+		jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Dec()
 		retLabel := handleJobSucc
 		if err != nil {
 			retLabel = handleJobFailed
