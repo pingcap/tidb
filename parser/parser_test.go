@@ -711,6 +711,7 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{"select * from t full, t1 row, t2 abs", true},
 		// For issue 1878, identifiers may begin with digit.
 		{"create database 123test", true},
+		{"create database 123", false},
 	}
 	s.RunTest(c, table)
 }
