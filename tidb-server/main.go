@@ -44,6 +44,7 @@ import (
 )
 
 var (
+	version         = flag.Bool("v", false, "print version information and exit")
 	store           = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
 	storePath       = flag.String("path", "/tmp/tidb", "tidb storage path")
 	logLevel        = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
@@ -69,6 +70,10 @@ func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	flag.Parse()
+	if *version {
+		printer.PrintRawTiDBInfo()
+		os.Exit(0)
+	}
 
 	leaseDuration := parseLease()
 	tidb.SetSchemaLease(leaseDuration)
