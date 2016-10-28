@@ -157,12 +157,17 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test")
 	testCreateSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
+
+	// Use a smaller limit to prevent the test from consuming too much time.
+	reorgTableDeleteLimit = 2000
 }
 
 func (s *testTableSuite) TearDownSuite(c *C) {
 	testDropSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
 	s.d.close()
 	s.store.Close()
+
+	reorgTableDeleteLimit = 65536
 }
 
 func (s *testTableSuite) TestTable(c *C) {
@@ -181,9 +186,9 @@ func (s *testTableSuite) TestTable(c *C) {
 	newTblInfo := testTableInfo(c, d, "t", 3)
 	doDDLJobErr(c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, ctx, d)
 
-	// To drop a table with defaultBatchSize+10 records.
+	// To drop a table with reorgTableDeleteLimit+10 records.
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	for i := 1; i <= defaultBatchSize+10; i++ {
+	for i := 1; i <= reorgTableDeleteLimit+10; i++ {
 		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
@@ -198,12 +203,12 @@ func (s *testTableSuite) TestTable(c *C) {
 		job.Mu.Lock()
 		count := job.RowCount
 		job.Mu.Unlock()
-		if updatedCount == 0 && count != defaultBatchSize {
-			checkErr = errors.Errorf("row count %v isn't equal to %v", count, defaultBatchSize)
+		if updatedCount == 0 && count != int64(reorgTableDeleteLimit) {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, reorgTableDeleteLimit)
 			return
 		}
-		if updatedCount == 1 && count != defaultBatchSize+10 {
-			checkErr = errors.Errorf("row count %v isn't equal to %v", count, defaultBatchSize+10)
+		if updatedCount == 1 && count != int64(reorgTableDeleteLimit+10) {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, reorgTableDeleteLimit+10)
 		}
 		updatedCount++
 	}
@@ -212,12 +217,12 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, false)
 
 	// Check background ddl info.
-	time.Sleep(testLease * 200)
+	time.Sleep(testLease * 400)
 	verifyBgJobState(c, d, job, model.JobDone)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(updatedCount, Equals, 2)
 
-	// for truncate table
+	// For truncate table.
 	tblInfo = testTableInfo(c, d, "tt", 3)
 	job = testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
