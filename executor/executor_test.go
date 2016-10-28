@@ -602,11 +602,11 @@ func (s *testSuite) TestJoin(c *C) {
 
 	plan.AllowCartesianProduct = false
 	_, err := tk.Exec("select * from t, t1")
-	c.Check(err, NotNil)
-	_, err = tk.Exec("select * from t left join t1")
-	c.Check(err, NotNil)
-	_, err = tk.Exec("select * from t right join t1")
-	c.Check(err, NotNil)
+	c.Check(plan.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	_, err = tk.Exec("select * from t left join t1 on 1")
+	c.Check(plan.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	_, err = tk.Exec("select * from t right join t1 on 1")
+	c.Check(plan.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	plan.AllowCartesianProduct = true
 
 }
