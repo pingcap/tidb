@@ -56,6 +56,7 @@ var (
 	reportStatus    = flag.Bool("report-status", true, "If enable status report HTTP service.")
 	logFile         = flag.String("log-file", "", "log file path")
 	joinCon         = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
+	crossJoin       = flag.Bool("cross-join", true, "whether support cartesian product or not.")
 	metricsAddr     = flag.String("metrics-addr", "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = flag.Int("metrics-interval", 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 	binlogSocket    = flag.String("binlog-socket", "", "socket file to write binlog")
@@ -91,6 +92,9 @@ func main() {
 
 	if joinCon != nil && *joinCon > 0 {
 		plan.JoinConcurrency = *joinCon
+	}
+	if crossJoin != nil {
+		plan.AllowCartesianProduct = *crossJoin
 	}
 	// Call this before setting log level to make sure that TiDB info could be printed.
 	printer.PrintTiDBInfo()
