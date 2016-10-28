@@ -23,13 +23,15 @@ import (
 
 func isDecomposable(fun expression.AggregationFunction) bool {
 	switch fun.GetName() {
-	case ast.AggFuncAvg:
+	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		// TODO: support avg push down.
 		return false
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
 		return true
-	default:
+	case ast.AggFuncSum, ast.AggFuncCount:
 		return !fun.IsDistinct()
+	default:
+		return false
 	}
 }
 
@@ -146,7 +148,7 @@ func decompose(aggFunc expression.AggregationFunction, schema expression.Schema,
 		sum := expression.NewAggFunction(ast.AggFuncSum, aggFunc.GetArgs(), false)
 		result = []expression.AggregationFunction{count, sum}
 	default:
-		result = []expression.AggregationFunction{aggFunc.DeepCopy()}
+		result = []expression.AggregationFunction{aggFunc.Clone()}
 	}
 	for _, aggFunc := range result {
 		schema = append(schema, &expression.Column{
@@ -192,11 +194,20 @@ func (a *aggPushDownSolver) produceNewAggPlan(aggFuncs []expression.AggregationF
 	for _, gbyCol := range gbyCols {
 		firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
 		newAggFuncs = append(newAggFuncs, firstRow)
-		schema = append(schema, gbyCol.DeepCopy().(*expression.Column))
+		schema = append(schema, gbyCol.Clone().(*expression.Column))
 	}
 	agg.AggFuncs = newAggFuncs
 	agg.SetSchema(schema)
 	return agg, true
+}
+
+func checkCountAndSum(aggFuncs []expression.AggregationFunction) bool {
+	for _, fun := range aggFuncs {
+		if fun.GetName() == ast.AggFuncSum || fun.GetName() == ast.AggFuncCount {
+			return true
+		}
+	}
+	return false
 }
 
 type aggPushDownSolver struct {
@@ -212,15 +223,20 @@ func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) {
 				var lChild, rChild LogicalPlan
 				var success bool
 				lChild = join.GetChildByIndex(0).(LogicalPlan)
-				rChild, success = a.produceNewAggPlan(rightAggFuns, rightGbyCols, join, 1)
-				if !success {
+				if checkCountAndSum(leftAggFuncs) {
+					success = false
+					rChild = join.GetChildByIndex(1).(LogicalPlan)
+				} else {
+					rChild, success = a.produceNewAggPlan(rightAggFuns, rightGbyCols, join, 1)
+				}
+				if !success && !checkCountAndSum(rightAggFuns) {
 					// TODO: We should support eager split latter.
 					lChild, _ = a.produceNewAggPlan(leftAggFuncs, leftGbyCols, join, 0)
 				}
 				join.SetChildren(lChild, rChild)
 				lChild.SetParents(join)
 				rChild.SetParents(join)
-				join.SetSchema(append(lChild.GetSchema().DeepCopy(), rChild.GetSchema().DeepCopy()...))
+				join.SetSchema(append(lChild.GetSchema().Clone(), rChild.GetSchema().Clone()...))
 			}
 		}
 	}

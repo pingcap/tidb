@@ -69,8 +69,8 @@ type AggregationFunction interface {
 	// Equal checks whether two aggregation functions are equal.
 	Equal(agg AggregationFunction) bool
 
-	// DeepCopy copies an aggregate function totally.
-	DeepCopy() AggregationFunction
+	// Clone copies an aggregate function totally.
+	Clone() AggregationFunction
 
 	// GetType gets field type of aggregate function.
 	GetType() *types.FieldType
@@ -272,11 +272,11 @@ type sumFunction struct {
 	aggFunction
 }
 
-// DeepCopy implements AggregationFunction interface.
-func (sf *sumFunction) DeepCopy() AggregationFunction {
+// Clone implements AggregationFunction interface.
+func (sf *sumFunction) Clone() AggregationFunction {
 	nf := *sf
 	for i, arg := range sf.Args {
-		nf.Args[i] = arg.DeepCopy()
+		nf.Args[i] = arg.Clone()
 	}
 	nf.resultMapper = make(aggCtxMapper)
 	return &nf
@@ -318,11 +318,11 @@ type countFunction struct {
 	aggFunction
 }
 
-// DeepCopy implements AggregationFunction interface.
-func (cf *countFunction) DeepCopy() AggregationFunction {
+// Clone implements AggregationFunction interface.
+func (cf *countFunction) Clone() AggregationFunction {
 	nf := *cf
 	for i, arg := range cf.Args {
-		nf.Args[i] = arg.DeepCopy()
+		nf.Args[i] = arg.Clone()
 	}
 	nf.resultMapper = make(aggCtxMapper)
 	return &nf
@@ -424,11 +424,11 @@ type avgFunction struct {
 	aggFunction
 }
 
-// DeepCopy implements AggregationFunction interface.
-func (af *avgFunction) DeepCopy() AggregationFunction {
+// Clone implements AggregationFunction interface.
+func (af *avgFunction) Clone() AggregationFunction {
 	nf := *af
 	for i, arg := range af.Args {
-		nf.Args[i] = arg.DeepCopy()
+		nf.Args[i] = arg.Clone()
 	}
 	nf.resultMapper = make(aggCtxMapper)
 	return &nf
@@ -521,11 +521,11 @@ type concatFunction struct {
 	aggFunction
 }
 
-// DeepCopy implements AggregationFunction interface.
-func (cf *concatFunction) DeepCopy() AggregationFunction {
+// Clone implements AggregationFunction interface.
+func (cf *concatFunction) Clone() AggregationFunction {
 	nf := *cf
 	for i, arg := range cf.Args {
-		nf.Args[i] = arg.DeepCopy()
+		nf.Args[i] = arg.Clone()
 	}
 	nf.resultMapper = make(aggCtxMapper)
 	return &nf
@@ -636,11 +636,11 @@ type maxMinFunction struct {
 	isMax bool
 }
 
-// DeepCopy implements AggregationFunction interface.
-func (mmf *maxMinFunction) DeepCopy() AggregationFunction {
+// Clone implements AggregationFunction interface.
+func (mmf *maxMinFunction) Clone() AggregationFunction {
 	nf := *mmf
 	for i, arg := range mmf.Args {
-		nf.Args[i] = arg.DeepCopy()
+		nf.Args[i] = arg.Clone()
 	}
 	nf.resultMapper = make(aggCtxMapper)
 	return &nf
@@ -724,11 +724,11 @@ type firstRowFunction struct {
 	aggFunction
 }
 
-// DeepCopy implements AggregationFunction interface.
-func (ff *firstRowFunction) DeepCopy() AggregationFunction {
+// Clone implements AggregationFunction interface.
+func (ff *firstRowFunction) Clone() AggregationFunction {
 	nf := *ff
 	for i, arg := range ff.Args {
-		nf.Args[i] = arg.DeepCopy()
+		nf.Args[i] = arg.Clone()
 	}
 	nf.resultMapper = make(aggCtxMapper)
 	return &nf

@@ -662,8 +662,24 @@ func (s *testPlanSuite) TestLogicalPlan(c *C) {
 			best: "Join{DataScan(t)->DataScan(t)->Aggr(sum(b.a),firstrow(b.c))}->Aggr(sum(join_agg_0))->Projection",
 		},
 		{
+			sql:  "select sum(b.a), a.a from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->DataScan(t)->Aggr(sum(b.a),firstrow(b.c))}->Aggr(sum(join_agg_0),firstrow(a.a))->Projection",
+		},
+		{
+			sql:  "select sum(a.a), b.a from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->Aggr(sum(a.a),firstrow(a.c))->DataScan(t)}->Aggr(sum(join_agg_0),firstrow(b.a))->Projection",
+		},
+		{
 			sql:  "select sum(a.a), sum(b.a) from t a, t b where a.c = b.c",
-			best: "Join{DataScan(t)->DataScan(t)->Aggr(sum(b.a),firstrow(b.c))}->Aggr(sum(a.a),sum(join_agg_0))->Projection",
+			best: "Join{DataScan(t)->DataScan(t)}->Aggr(sum(a.a),sum(b.a))->Projection",
+		},
+		{
+			sql:  "select sum(a.a), max(b.a) from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->Aggr(sum(a.a),firstrow(a.c))->DataScan(t)}->Aggr(sum(join_agg_0),max(b.a))->Projection",
+		},
+		{
+			sql:  "select max(a.a), sum(b.a) from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->DataScan(t)->Aggr(sum(b.a),firstrow(b.c))}->Aggr(max(a.a),sum(join_agg_0))->Projection",
 		},
 		{
 			sql:  "select sum(a.a) from t a, t b, t c where a.c = b.c and b.c = c.c",

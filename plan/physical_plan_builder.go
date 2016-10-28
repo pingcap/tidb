@@ -105,7 +105,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
 		for _, cond := range sel.Conditions {
-			conds = append(conds, cond.DeepCopy())
+			conds = append(conds, cond.Clone())
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
 		if client != nil {
@@ -202,7 +202,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
 		for _, cond := range sel.Conditions {
-			conds = append(conds, cond.DeepCopy())
+			conds = append(conds, cond.Clone())
 		}
 		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
 		if client != nil {
