@@ -93,9 +93,7 @@ func main() {
 	if joinCon != nil && *joinCon > 0 {
 		plan.JoinConcurrency = *joinCon
 	}
-	if crossJoin != nil {
-		plan.AllowCartesianProduct = *crossJoin
-	}
+	plan.AllowCartesianProduct = *crossJoin
 	// Call this before setting log level to make sure that TiDB info could be printed.
 	printer.PrintTiDBInfo()
 	log.SetLevelByString(cfg.LogLevel)
