@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
+// AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = true
 
 // Optimize does optimization and creates a Plan.
