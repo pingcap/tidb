@@ -131,6 +131,9 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
+// Maximum number of keys to delete for each reorg table job run.
+var reorgTableDeleteLimit = 65536
+
 func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
 	var prefix kv.Key
 	if err := job.DecodeArgs(&prefix); err != nil {
@@ -138,7 +141,7 @@ func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	limit := defaultBatchSize
+	limit := reorgTableDeleteLimit
 	delCount, err := d.dropTableData(prefix, job, limit)
 	if err != nil {
 		return errors.Trace(err)

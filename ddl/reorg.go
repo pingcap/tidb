@@ -171,18 +171,19 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 
 // delKeysWithStartKey deletes keys with start key in a limited number. If limit < 0, deletes all keys.
 func (d *ddl) delKeysWithStartKey(prefix, startKey kv.Key, jobType JobType, job *model.Job, limit int) (int, kv.Key, error) {
-	batch := limit
-	if batch == 0 {
-		return 0, startKey, nil
-	} else if batch < 0 {
-		batch = defaultBatchSize
-	}
-	delAll := limit < 0
+	limitedDel := limit >= 0
 
 	var count int
 	total := job.GetRowCount()
-	keys := make([]kv.Key, 0, batch)
+	keys := make([]kv.Key, 0, defaultBatchSize)
 	for {
+		if limitedDel && count >= limit {
+			break
+		}
+		batch := defaultBatchSize
+		if limitedDel && count+batch > limit {
+			batch = limit - count
+		}
 		startTS := time.Now()
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err1 := d.isReorgRunnable(txn, jobType); err1 != nil {
@@ -234,11 +235,7 @@ func (d *ddl) delKeysWithStartKey(prefix, startKey kv.Key, jobType JobType, job 
 			startKey = keys[len(keys)-1]
 		}
 
-		// delete keys number less than batch, return.
-		if len(keys) < batch {
-			break
-		}
-		if !delAll {
+		if noMoreKeysToDelete := len(keys) < batch; noMoreKeysToDelete {
 			break
 		}
 
