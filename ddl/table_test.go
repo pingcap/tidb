@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -166,12 +165,6 @@ func (s *testTableSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
-func testNewContext(c *C, d *ddl) context.Context {
-	ctx := d.newReorgContext()
-	variable.BindSessionVars(ctx)
-	return ctx
-}
-
 func (s *testTableSuite) TestTable(c *C) {
 	defer testleak.AfterTest(c)()
 	d := s.d
@@ -186,20 +179,12 @@ func (s *testTableSuite) TestTable(c *C) {
 
 	// Create an existing table.
 	newTblInfo := testTableInfo(c, d, "t", 3)
-	job = &model.Job{
-		SchemaID: s.dbInfo.ID,
-		TableID:  newTblInfo.ID,
-		Type:     model.ActionCreateTable,
-		Args:     []interface{}{newTblInfo},
-	}
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
+	doDDLJobErr(c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, ctx, d)
 
 	// To drop a table with defaultBatchSize+10 records.
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	for i := 1; i <= defaultBatchSize+10; i++ {
-		_, err = tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
+		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
 
