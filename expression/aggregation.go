@@ -36,10 +36,10 @@ type AggregationFunction interface {
 	// StreamUpdate updates data using streaming algo.
 	StreamUpdate(row []types.Datum, ctx context.Context) error
 
-	// SetMode sets aggFunctionMode for aggregate function
+	// SetMode sets aggFunctionMode for aggregate function.
 	SetMode(mode AggFunctionMode)
 
-	// SetMode sets aggFunctionMode for aggregate function
+	// SetMode sets aggFunctionMode for aggregate function.
 	GetMode() AggFunctionMode
 
 	// GetGroupResult will be called when all data have been processed.
@@ -136,6 +136,7 @@ func (af *aggFunction) Equal(b AggregationFunction) bool {
 	return true
 }
 
+// String implements fmt.Stringer interface.
 func (af *aggFunction) String() string {
 	result := af.name + "("
 	for i, arg := range af.Args {
@@ -156,10 +157,12 @@ func newAggFunc(name string, args []Expression, dist bool) aggFunction {
 		Distinct:     dist}
 }
 
+// IsDistinct implements AggregationFunction interface.
 func (af *aggFunction) IsDistinct() bool {
 	return af.Distinct
 }
 
+// Clear implements AggregationFunction interface.
 func (af *aggFunction) Clear() {
 	af.resultMapper = make(aggCtxMapper, 0)
 	af.streamCtx = nil
@@ -170,10 +173,12 @@ func (af *aggFunction) GetName() string {
 	return af.name
 }
 
+// SetMode implements AggregationFunction interface.
 func (af *aggFunction) SetMode(mode AggFunctionMode) {
 	af.mode = mode
 }
 
+// GetMode implements AggregationFunction interface.
 func (af *aggFunction) GetMode() AggFunctionMode {
 	return af.mode
 }
@@ -210,6 +215,7 @@ func (af *aggFunction) getStreamedContext() *ast.AggEvaluateContext {
 	return af.streamCtx
 }
 
+// SetContext implements AggregationFunction interface.
 func (af *aggFunction) SetContext(ctx map[string](*ast.AggEvaluateContext)) {
 	af.resultMapper = ctx
 }
@@ -287,6 +293,7 @@ func (sf *sumFunction) Update(row []types.Datum, groupKey []byte, ctx context.Co
 	return sf.updateSum(row, groupKey, ctx)
 }
 
+// StreamUpdate implements AggregationFunction interface.
 func (sf *sumFunction) StreamUpdate(row []types.Datum, ectx context.Context) error {
 	return sf.streamUpdateSum(row, ectx)
 }
@@ -296,6 +303,7 @@ func (sf *sumFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return sf.getContext(groupKey).Value
 }
 
+// GetStreamResult implements AggregationFunction interface.
 func (sf *sumFunction) GetStreamResult() (d types.Datum) {
 	if sf.streamCtx == nil {
 		return
@@ -374,6 +382,7 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, ectx context
 	return nil
 }
 
+// StreamUpdate implements AggregationFunction interface.
 func (cf *countFunction) StreamUpdate(row []types.Datum, ectx context.Context) error {
 	ctx := cf.getStreamedContext()
 	var vals []interface{}
@@ -411,6 +420,7 @@ func (cf *countFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return d
 }
 
+// GetStreamResult implements AggregationFunction interface.
 func (cf *countFunction) GetStreamResult() (d types.Datum) {
 	if cf.streamCtx == nil {
 		return types.NewDatum(0)
@@ -482,6 +492,7 @@ func (af *avgFunction) Update(row []types.Datum, groupKey []byte, ctx context.Co
 	return af.updateSum(row, groupKey, ctx)
 }
 
+// StreamUpdate implements AggregationFunction interface.
 func (af *avgFunction) StreamUpdate(row []types.Datum, ctx context.Context) error {
 	return af.streamUpdateSum(row, ctx)
 }
@@ -508,6 +519,7 @@ func (af *avgFunction) GetGroupResult(groupKey []byte) types.Datum {
 	return af.calculateResult(ctx)
 }
 
+// GetStreamResult implements AggregationFunction interface.
 func (af *avgFunction) GetStreamResult() (d types.Datum) {
 	if af.streamCtx == nil {
 		return
@@ -572,6 +584,7 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, ectx contex
 	return nil
 }
 
+// StreamUpdate implements AggregationFunction interface.
 func (cf *concatFunction) StreamUpdate(row []types.Datum, ectx context.Context) error {
 	ctx := cf.getStreamedContext()
 	vals := make([]interface{}, 0, len(cf.Args))
@@ -618,6 +631,7 @@ func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return d
 }
 
+// GetStreamResult implements AggregationFunction interface.
 func (cf *concatFunction) GetStreamResult() (d types.Datum) {
 	if cf.streamCtx == nil {
 		return
@@ -656,6 +670,7 @@ func (mmf *maxMinFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return mmf.getContext(groupKey).Value
 }
 
+// GetStreamResult implements AggregationFunction interface.
 func (mmf *maxMinFunction) GetStreamResult() (d types.Datum) {
 	if mmf.streamCtx == nil {
 		return
@@ -693,6 +708,7 @@ func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte, ectx conte
 	return nil
 }
 
+// StreamUpdate implements AggregationFunction interface.
 func (mmf *maxMinFunction) StreamUpdate(row []types.Datum, ectx context.Context) error {
 	ctx := mmf.getStreamedContext()
 	if len(mmf.Args) != 1 {
@@ -756,7 +772,7 @@ func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx cont
 	return nil
 }
 
-// Update implements AggregationFunction interface.
+// StreamUpdate implements AggregationFunction interface.
 func (ff *firstRowFunction) StreamUpdate(row []types.Datum, ectx context.Context) error {
 	ctx := ff.getStreamedContext()
 	if !ctx.Value.IsNull() {
@@ -778,6 +794,7 @@ func (ff *firstRowFunction) GetGroupResult(groupKey []byte) types.Datum {
 	return ff.getContext(groupKey).Value
 }
 
+// GetStreamResult implements AggregationFunction interface.
 func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 	if ff.streamCtx == nil {
 		return

@@ -21,10 +21,21 @@ import (
 	"github.com/pingcap/tidb/model"
 )
 
-func isDecomposable(fun expression.AggregationFunction) bool {
+type aggPushDownSolver struct {
+	alloc *idAllocator
+	ctx   context.Context
+}
+
+// isDecomposable checks if a aggregate function is decomposable.An aggregation function $F$ is decomposable
+// if there exist aggregation functions F_1 and F_2 such that F(S_1 union all S_2) = F_2(F_1(S_1),F_1(S_2)),
+// where S_1 and S_2 are two sets of values. We call S_1 and S_2 partial groups.
+// It's easy to see that max, min, first row is decomposable, no matter whether it's distinct, but sum(distinct) and
+// count(distinct) is not.
+// Currently we don't support avg and concat.
+func (a *aggPushDownSolver) isDecomposable(fun expression.AggregationFunction) bool {
 	switch fun.GetName() {
 	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
-		// TODO: support avg push down.
+		// TODO: Support avg push down.
 		return false
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
 		return true
@@ -35,11 +46,14 @@ func isDecomposable(fun expression.AggregationFunction) bool {
 	}
 }
 
-func collectAggFuncs(agg *Aggregation, join *Join) (valid bool, leftAggFuncs, rightAggFuncs []expression.AggregationFunction) {
+// collectAggFuncs collects all aggregate functions and splits them into two parts: "leftAggFuncs" and "rightAggFuncs" whose
+// arguments are all from left child or right child separately. If some aggregate functions have the arguments that have
+// columns both from left and right children, the whole aggregation is forbidden to push down.
+func (a *aggPushDownSolver) collectAggFuncs(agg *Aggregation, join *Join) (valid bool, leftAggFuncs, rightAggFuncs []expression.AggregationFunction) {
 	valid = true
 	leftChild := join.GetChildByIndex(0)
 	for _, aggFunc := range agg.AggFuncs {
-		if isDecomposable(aggFunc) {
+		if a.isDecomposable(aggFunc) {
 			fromLeft, fromRight := false, false
 			var cols []*expression.Column
 			for _, arg := range aggFunc.GetArgs() {
@@ -66,7 +80,12 @@ func collectAggFuncs(agg *Aggregation, join *Join) (valid bool, leftAggFuncs, ri
 	return
 }
 
-func collectGbyCols(agg *Aggregation, join *Join) (leftGbyCols, rightGbyCols []*expression.Column) {
+// collectGbyCols collects all columns from gby items and join conditions and splits them into two parts: "leftGbyCols" and
+// "rightGbyCols". e.g. For query "SELECT SUM(B.id) FROM A, B WHERE A.c1 = B.c1 AND A.c2 != B.c2 GROUP BY B.c3" , the optimized
+// query should be "SELECT SUM(B.agg) FROM A, (SELECT SUM(id) as agg, c1, c2, c3 FROM B GROUP BY id, c1, c2, c3) as B
+// WHERE A.c1 = B.c1 AND A.c2 != B.c2 GROUP BY B.c3". As you see, all the columns appearing in join conditions should be
+// treated as group by columns in join subquery.
+func (a *aggPushDownSolver) collectGbyCols(agg *Aggregation, join *Join) (leftGbyCols, rightGbyCols []*expression.Column) {
 	leftChild := join.GetChildByIndex(0)
 	for _, gbyExpr := range agg.GroupByItems {
 		var cols []*expression.Column
@@ -81,45 +100,46 @@ func collectGbyCols(agg *Aggregation, join *Join) (leftGbyCols, rightGbyCols []*
 	}
 	// extract equal conditions
 	for _, eqFunc := range join.EqualConditions {
-		leftGbyCols = addGbyCol(leftGbyCols, eqFunc.Args[0].(*expression.Column))
-		rightGbyCols = addGbyCol(rightGbyCols, eqFunc.Args[1].(*expression.Column))
+		leftGbyCols = a.addGbyCol(leftGbyCols, eqFunc.Args[0].(*expression.Column))
+		rightGbyCols = a.addGbyCol(rightGbyCols, eqFunc.Args[1].(*expression.Column))
 	}
 	for _, leftCond := range join.LeftConditions {
 		var cols []*expression.Column
 		cols, _ = extractColumn(leftCond, cols, nil)
-		leftGbyCols = addGbyCol(leftGbyCols, cols...)
+		leftGbyCols = a.addGbyCol(leftGbyCols, cols...)
 	}
 	for _, rightCond := range join.RightConditions {
 		var cols []*expression.Column
 		cols, _ = extractColumn(rightCond, cols, nil)
-		rightGbyCols = addGbyCol(rightGbyCols, cols...)
+		rightGbyCols = a.addGbyCol(rightGbyCols, cols...)
 	}
 	for _, otherCond := range join.OtherConditions {
 		var cols []*expression.Column
 		cols, _ = extractColumn(otherCond, cols, nil)
 		for _, col := range cols {
 			if leftChild.GetSchema().GetIndex(col) != -1 {
-				leftGbyCols = addGbyCol(leftGbyCols, col)
+				leftGbyCols = a.addGbyCol(leftGbyCols, col)
 			} else {
-				rightGbyCols = addGbyCol(rightGbyCols, col)
+				rightGbyCols = a.addGbyCol(rightGbyCols, col)
 			}
 		}
 	}
 	return
 }
 
-func checkValidAgg(agg *Aggregation, join *Join) (valid bool,
+func (a *aggPushDownSolver) splitAggFuncsAndGbyCols(agg *Aggregation, join *Join) (valid bool,
 	leftAggFuncs, rightAggFuncs []expression.AggregationFunction,
 	leftGbyCols, rightGbyCols []*expression.Column) {
-	valid, leftAggFuncs, rightAggFuncs = collectAggFuncs(agg, join)
+	valid, leftAggFuncs, rightAggFuncs = a.collectAggFuncs(agg, join)
 	if !valid {
 		return
 	}
-	leftGbyCols, rightGbyCols = collectGbyCols(agg, join)
+	leftGbyCols, rightGbyCols = a.collectGbyCols(agg, join)
 	return
 }
 
-func addGbyCol(gbyCols []*expression.Column, cols ...*expression.Column) []*expression.Column {
+// addGbyCol add a column to gbyCols. If a group by column has existed, it will not be added repeatedly.
+func (a *aggPushDownSolver) addGbyCol(gbyCols []*expression.Column, cols ...*expression.Column) []*expression.Column {
 	for _, c := range cols {
 		duplicate := false
 		for _, gbyCol := range gbyCols {
@@ -135,21 +155,17 @@ func addGbyCol(gbyCols []*expression.Column, cols ...*expression.Column) []*expr
 	return gbyCols
 }
 
-func checkValidJoin(join *Join) bool {
+// checkValidJoin checks if this join should be pushed across. Temporarily we only consider inner join.
+func (a *aggPushDownSolver) checkValidJoin(join *Join) bool {
 	// TODO: Support outer join.
 	return join.JoinType == InnerJoin
 }
 
-func decompose(aggFunc expression.AggregationFunction, schema expression.Schema, id string) ([]expression.AggregationFunction, expression.Schema) {
-	var result []expression.AggregationFunction
-	switch aggFunc.GetName() {
-	case ast.AggFuncAvg:
-		count := expression.NewAggFunction(ast.AggFuncCount, aggFunc.GetArgs(), false)
-		sum := expression.NewAggFunction(ast.AggFuncSum, aggFunc.GetArgs(), false)
-		result = []expression.AggregationFunction{count, sum}
-	default:
-		result = []expression.AggregationFunction{aggFunc.Clone()}
-	}
+// decompose splits a aggregate function to two parts: a final mode function and a partial mode function. Currently
+// there are no differences between partial mode and complete mode, so we can confuse them.
+func (a *aggPushDownSolver) decompose(aggFunc expression.AggregationFunction, schema expression.Schema, id string) ([]expression.AggregationFunction, expression.Schema) {
+	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
+	result := []expression.AggregationFunction{aggFunc.Clone()}
 	for _, aggFunc := range result {
 		schema = append(schema, &expression.Column{
 			ColName:  model.NewCIStr(fmt.Sprintf("join_agg_%d", len(schema))), // useless but for debug
@@ -163,7 +179,7 @@ func decompose(aggFunc expression.AggregationFunction, schema expression.Schema,
 	return result, schema
 }
 
-func allFirstRow(aggFuncs []expression.AggregationFunction) bool {
+func (a *aggPushDownSolver) allFirstRow(aggFuncs []expression.AggregationFunction) bool {
 	for _, fun := range aggFuncs {
 		if fun.GetName() != ast.AggFuncFirstRow {
 			return false
@@ -172,9 +188,12 @@ func allFirstRow(aggFuncs []expression.AggregationFunction) bool {
 	return true
 }
 
-func (a *aggPushDownSolver) produceNewAggPlan(aggFuncs []expression.AggregationFunction, gbyCols []*expression.Column, join *Join, childIdx int) (LogicalPlan, bool) {
+// tryToPushDownAgg tries to push down an aggregate function into a join path. If all aggFuncs is first row, we won't
+// process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation
+// operator and update the join's schema.
+func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFunction, gbyCols []*expression.Column, join *Join, childIdx int) (LogicalPlan, bool) {
 	child := join.GetChildByIndex(childIdx).(LogicalPlan)
-	if allFirstRow(aggFuncs) {
+	if a.allFirstRow(aggFuncs) {
 		return child, false
 	}
 	agg := &Aggregation{
@@ -188,7 +207,7 @@ func (a *aggPushDownSolver) produceNewAggPlan(aggFuncs []expression.AggregationF
 	schema := make(expression.Schema, 0, len(aggFuncs))
 	for _, aggFunc := range aggFuncs {
 		var newFuncs []expression.AggregationFunction
-		newFuncs, schema = decompose(aggFunc, schema, agg.GetID())
+		newFuncs, schema = a.decompose(aggFunc, schema, agg.GetID())
 		newAggFuncs = append(newAggFuncs, newFuncs...)
 	}
 	for _, gbyCol := range gbyCols {
@@ -201,7 +220,7 @@ func (a *aggPushDownSolver) produceNewAggPlan(aggFuncs []expression.AggregationF
 	return agg, true
 }
 
-func checkCountAndSum(aggFuncs []expression.AggregationFunction) bool {
+func (a *aggPushDownSolver) checkAnyCountAndSum(aggFuncs []expression.AggregationFunction) bool {
 	for _, fun := range aggFuncs {
 		if fun.GetName() == ast.AggFuncSum || fun.GetName() == ast.AggFuncCount {
 			return true
@@ -210,28 +229,26 @@ func checkCountAndSum(aggFuncs []expression.AggregationFunction) bool {
 	return false
 }
 
-type aggPushDownSolver struct {
-	alloc *idAllocator
-	ctx   context.Context
-}
-
+// aggPushDown tries to push down aggregate functions to join paths. Currently we only push aggregate function into one join path.
 func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) {
 	if agg, ok := p.(*Aggregation); ok {
 		child := agg.GetChildByIndex(0)
-		if join, ok1 := child.(*Join); ok1 && checkValidJoin(join) {
-			if valid, leftAggFuncs, rightAggFuns, leftGbyCols, rightGbyCols := checkValidAgg(agg, join); valid {
+		if join, ok1 := child.(*Join); ok1 && a.checkValidJoin(join) {
+			if valid, leftAggFuncs, rightAggFuns, leftGbyCols, rightGbyCols := a.splitAggFuncsAndGbyCols(agg, join); valid {
 				var lChild, rChild LogicalPlan
 				var success bool
 				lChild = join.GetChildByIndex(0).(LogicalPlan)
-				if checkCountAndSum(leftAggFuncs) {
+				// If there exist count or sum functions in left join path, we can't push any
+				// aggregate function into right join path.
+				if a.checkAnyCountAndSum(leftAggFuncs) {
 					success = false
 					rChild = join.GetChildByIndex(1).(LogicalPlan)
 				} else {
-					rChild, success = a.produceNewAggPlan(rightAggFuns, rightGbyCols, join, 1)
+					rChild, success = a.tryToPushDownAgg(rightAggFuns, rightGbyCols, join, 1)
 				}
-				if !success && !checkCountAndSum(rightAggFuns) {
-					// TODO: We should support eager split latter.
-					lChild, _ = a.produceNewAggPlan(leftAggFuncs, leftGbyCols, join, 0)
+				if !success && !a.checkAnyCountAndSum(rightAggFuns) {
+					// TODO: We should support eager split in future.
+					lChild, _ = a.tryToPushDownAgg(leftAggFuncs, leftGbyCols, join, 0)
 				}
 				join.SetChildren(lChild, rChild)
 				lChild.SetParents(join)
