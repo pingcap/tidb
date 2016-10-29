@@ -120,6 +120,9 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustExec(`set @@global.low_priority_updates="ON";`)
 	tk.MustExec(`set @@session.low_priority_updates=DEFAULT;`) // It will be set to global var value.
 	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("ON"))
+
+	// For mysql jdbc driver issue.
+	tk.MustQuery(`select @@session.tx_read_only;`).Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
