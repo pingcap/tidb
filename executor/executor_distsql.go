@@ -322,7 +322,7 @@ func closeAll(objs ...Closeable) error {
 // and sends the task to 'workerCh'.
 //
 // Each worker goroutine receives tasks through the 'workerCh', then executes the task.
-// After finishes the task, the workers send the task to a taskChan. At the outer most Executor.Next method,
+// After finishing the task, the workers send the task to a taskChan. At the outer most Executor.Next method,
 // we receive the finished task through taskChan, and return each row in that task until no more tasks to receive.
 type XSelectIndexExec struct {
 	tableInfo     *model.TableInfo
