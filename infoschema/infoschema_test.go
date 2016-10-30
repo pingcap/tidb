@@ -258,7 +258,6 @@ func (*testSuite) TestInfoTables(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(tb, NotNil)
 	}
-
 }
 
 func genGlobalID(store kv.Storage) (int64, error) {
