@@ -106,8 +106,7 @@ func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tbl
 func (s *testColumnSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
-	var ctx context.Context
-	ctx = testNewContext(c, s.d)
+	ctx := testNewContext(c, s.d)
 	defer ctx.RollbackTxn()
 
 	testCreateTable(c, ctx, s.d, s.dbInfo, tblInfo)
