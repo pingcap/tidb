@@ -26,7 +26,7 @@ type aggPushDownSolver struct {
 	ctx   context.Context
 }
 
-// isDecomposable checks if a aggregate function is decomposable. An aggregation function $F$ is decomposable
+// isDecomposable checks if an aggregate function is decomposable. An aggregation function $F$ is decomposable
 // if there exist aggregation functions F_1 and F_2 such that F(S_1 union all S_2) = F_2(F_1(S_1),F_1(S_2)),
 // where S_1 and S_2 are two sets of values. We call S_1 and S_2 partial groups.
 // It's easy to see that max, min, first row is decomposable, no matter whether it's distinct, but sum(distinct) and
@@ -157,7 +157,7 @@ func (a *aggPushDownSolver) checkValidJoin(join *Join) bool {
 	return join.JoinType == InnerJoin
 }
 
-// decompose splits a aggregate function to two parts: a final mode function and a partial mode function. Currently
+// decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
 // there are no differences between partial mode and complete mode, so we can confuse them.
 func (a *aggPushDownSolver) decompose(aggFunc expression.AggregationFunction, schema expression.Schema, id string) ([]expression.AggregationFunction, expression.Schema) {
 	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
