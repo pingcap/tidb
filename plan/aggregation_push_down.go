@@ -46,6 +46,28 @@ func (a *aggPushDownSolver) isDecomposable(fun expression.AggregationFunction) b
 	}
 }
 
+// getAggFuncChildIdx gets which children it belongs to, 0 stands for left, 1 stands for right, -1 stands for both.
+func (a *aggPushDownSolver) getAggFuncChildIdx(aggFunc expression.AggregationFunction, schema expression.Schema) int {
+	fromLeft, fromRight := false, false
+	var cols []*expression.Column
+	for _, arg := range aggFunc.GetArgs() {
+		cols, _ = extractColumn(arg, cols, nil)
+	}
+	for _, col := range cols {
+		if schema.GetIndex(col) != -1 {
+			fromLeft = true
+		} else {
+			fromRight = true
+		}
+	}
+	if fromLeft && fromRight {
+		return -1
+	} else if fromLeft {
+		return 0
+	}
+	return 1
+}
+
 // collectAggFuncs collects all aggregate functions and splits them into two parts: "leftAggFuncs" and "rightAggFuncs" whose
 // arguments are all from left child or right child separately. If some aggregate functions have the arguments that have
 // columns both from left and right children, the whole aggregation is forbidden to push down.
@@ -54,24 +76,14 @@ func (a *aggPushDownSolver) collectAggFuncs(agg *Aggregation, join *Join) (valid
 	leftChild := join.GetChildByIndex(0)
 	for _, aggFunc := range agg.AggFuncs {
 		if a.isDecomposable(aggFunc) {
-			fromLeft, fromRight := false, false
-			var cols []*expression.Column
-			for _, arg := range aggFunc.GetArgs() {
-				cols, _ = extractColumn(arg, cols, nil)
-			}
-			for _, col := range cols {
-				if leftChild.GetSchema().GetIndex(col) != -1 {
-					fromLeft = true
-				} else {
-					fromRight = true
-				}
-			}
-			if fromLeft && fromRight {
-				return false, nil, nil
-			} else if fromLeft {
+			index := a.getAggFuncChildIdx(aggFunc, leftChild.GetSchema())
+			switch index {
+			case 0:
 				leftAggFuncs = append(leftAggFuncs, aggFunc)
-			} else {
+			case 1:
 				rightAggFuncs = append(rightAggFuncs, aggFunc)
+			default:
+				return false, nil, nil
 			}
 		} else {
 			return false, nil, nil
