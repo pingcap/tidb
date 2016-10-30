@@ -15,10 +15,12 @@ package plan
 import (
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/util/types"
 )
 
 type aggPushDownSolver struct {
@@ -164,8 +166,7 @@ func (a *aggPushDownSolver) addGbyCol(gbyCols []*expression.Column, cols ...*exp
 
 // checkValidJoin checks if this join should be pushed across. Temporarily we only consider inner join.
 func (a *aggPushDownSolver) checkValidJoin(join *Join) bool {
-	// TODO: Support outer join.
-	return join.JoinType == InnerJoin
+	return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 }
 
 // decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
@@ -224,7 +225,26 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 	}
 	agg.AggFuncs = newAggFuncs
 	agg.SetSchema(schema)
+	if (childIdx == 0 && join.JoinType == RightOuterJoin) || (childIdx == 1 && join.JoinType == LeftOuterJoin) {
+		var err error
+		join.DefaultValues, err = a.getDefaultValues(agg)
+		if err != nil {
+			return child
+		}
+	}
 	return agg
+}
+
+func (a *aggPushDownSolver) getDefaultValues(agg *Aggregation) ([]types.Datum, error) {
+	defaultValues := make([]types.Datum, 0, len(agg.GetSchema()))
+	for _, aggFunc := range agg.AggFuncs {
+		value, err := aggFunc.GetDefaultValue(agg.children[0].GetSchema())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		defaultValues = append(defaultValues, value)
+	}
+	return defaultValues, nil
 }
 
 func (a *aggPushDownSolver) checkAnyCountAndSum(aggFuncs []expression.AggregationFunction) bool {

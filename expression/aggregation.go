@@ -74,6 +74,9 @@ type AggregationFunction interface {
 
 	// GetType gets field type of aggregate function.
 	GetType() *types.FieldType
+
+	// GetDefaultValue gets the default value when the aggregate function's input is null.
+	GetDefaultValue(schema Schema) (types.Datum, error)
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -155,6 +158,11 @@ func newAggFunc(name string, args []Expression, dist bool) aggFunction {
 		Args:         args,
 		resultMapper: make(aggCtxMapper, 0),
 		Distinct:     dist}
+}
+
+// GetDefaultValue implements AggregationFunction interface.
+func (af *aggFunction) GetDefaultValue(schema Schema) (d types.Datum, err error) {
+	return d, errors.New("The avg and concat functions are not supported temporarily.")
 }
 
 // IsDistinct implements AggregationFunction interface.
@@ -313,6 +321,20 @@ func (sf *sumFunction) GetStreamResult() (d types.Datum) {
 	return
 }
 
+// GetDefaultValue implements AggregationFunction interface.
+func (sf *sumFunction) GetDefaultValue(schema Schema) (d types.Datum, err error) {
+	arg := sf.Args[0]
+	result, err := EvaluateExprWithNull(schema, arg)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if con, ok := result.(*Constant); ok {
+		d, err = types.CalculateSum(d, con.Value)
+		return
+	}
+	return d, errors.New("Correlated column is not supported.")
+}
+
 // GetType implements AggregationFunction interface.
 func (sf *sumFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeNewDecimal)
@@ -334,6 +356,24 @@ func (cf *countFunction) Clone() AggregationFunction {
 	}
 	nf.resultMapper = make(aggCtxMapper)
 	return &nf
+}
+
+// GetDefaultValue implements AggregationFunction interface.
+func (cf *countFunction) GetDefaultValue(schema Schema) (d types.Datum, err error) {
+	for _, arg := range cf.Args {
+		result, err := EvaluateExprWithNull(schema, arg)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if con, ok := result.(*Constant); ok {
+			if con.Value.IsNull() {
+				return types.NewDatum(0), nil
+			}
+		} else {
+			return d, errors.New("Correlated column is not supported.")
+		}
+	}
+	return types.NewDatum(1), nil
 }
 
 // GetType implements AggregationFunction interface.
@@ -660,6 +700,19 @@ func (mmf *maxMinFunction) Clone() AggregationFunction {
 	return &nf
 }
 
+// GetDefaultValue implements AggregationFunction interface.
+func (mmf *maxMinFunction) GetDefaultValue(schema Schema) (d types.Datum, err error) {
+	arg := mmf.Args[0]
+	result, err := EvaluateExprWithNull(schema, arg)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if con, ok := result.(*Constant); ok {
+		return con.Value, nil
+	}
+	return d, errors.New("Correlated column is not supported.")
+}
+
 // GetType implements AggregationFunction interface.
 func (mmf *maxMinFunction) GetType() *types.FieldType {
 	return mmf.Args[0].GetType()
@@ -802,4 +855,17 @@ func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 	d = ff.streamCtx.Value
 	ff.streamCtx = nil
 	return
+}
+
+// GetDefaultValue implements AggregationFunction interface.
+func (ff *firstRowFunction) GetDefaultValue(schema Schema) (d types.Datum, err error) {
+	arg := ff.Args[0]
+	result, err := EvaluateExprWithNull(schema, arg)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if con, ok := result.(*Constant); ok {
+		return con.Value, nil
+	}
+	return d, errors.New("Correlated column is not supported.")
 }

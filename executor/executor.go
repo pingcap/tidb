@@ -495,20 +495,21 @@ func init() {
 
 // HashJoinExec implements the hash join algorithm.
 type HashJoinExec struct {
-	hashTable    map[string][]*Row
-	smallHashKey []*expression.Column
-	bigHashKey   []*expression.Column
-	smallExec    Executor
-	bigExec      Executor
-	prepared     bool
-	ctx          context.Context
-	smallFilter  expression.Expression
-	bigFilter    expression.Expression
-	otherFilter  expression.Expression
-	schema       expression.Schema
-	outer        bool
-	leftSmall    bool
-	cursor       int
+	hashTable     map[string][]*Row
+	smallHashKey  []*expression.Column
+	bigHashKey    []*expression.Column
+	smallExec     Executor
+	bigExec       Executor
+	prepared      bool
+	ctx           context.Context
+	smallFilter   expression.Expression
+	bigFilter     expression.Expression
+	otherFilter   expression.Expression
+	schema        expression.Schema
+	outer         bool
+	leftSmall     bool
+	cursor        int
+	defaultValues []types.Datum
 	// targetTypes means the target the type that both smallHashKey and bigHashKey should convert to.
 	targetTypes []*types.FieldType
 
@@ -799,7 +800,7 @@ func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row) {
 	smallRow := &Row{
 		Data: make([]types.Datum, len(e.smallExec.Schema())),
 	}
-
+	copy(smallRow.Data, e.defaultValues)
 	for _, data := range smallRow.Data {
 		data.SetNull()
 	}

@@ -720,6 +720,18 @@ func (s *testPlanSuite) TestLogicalPlan(c *C) {
 			sql:  "select sum(a.a) from t a, t b, t c where a.c = b.c and b.c = c.c",
 			best: "Join{Join{DataScan(t)->Aggr(sum(a.a),firstrow(a.c))->DataScan(t)}->Aggr(sum(join_agg_0),firstrow(b.c))->DataScan(t)}->Aggr(sum(join_agg_0))->Projection",
 		},
+		{
+			sql:  "select sum(b.a) from t a left join t b on a.c = b.c",
+			best: "Join{DataScan(t)->DataScan(t)->Aggr(sum(b.a),firstrow(b.c))}->Aggr(sum(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select sum(a.a) from t a left join t b on a.c = b.c",
+			best: "Join{DataScan(t)->Aggr(sum(a.a),firstrow(a.c))->DataScan(t)}->Aggr(sum(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select sum(a.a) from t a right join t b on a.c = b.c",
+			best: "Join{DataScan(t)->Aggr(sum(a.a),firstrow(a.c))->DataScan(t)}->Aggr(sum(join_agg_0))->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
