@@ -39,8 +39,8 @@ type Expression interface {
 	// Get the expression return type.
 	GetType() *types.FieldType
 
-	// DeepCopy copies an expression totally.
-	DeepCopy() Expression
+	// Clone copies an expression totally.
+	Clone() Expression
 
 	// HashCode create the hashcode for expression
 	HashCode() []byte
@@ -132,8 +132,8 @@ func (col *Column) Eval(row []types.Datum, _ context.Context) (types.Datum, erro
 	return row[col.Index], nil
 }
 
-// DeepCopy implements Expression interface.
-func (col *Column) DeepCopy() Expression {
+// Clone implements Expression interface.
+func (col *Column) Clone() Expression {
 	if col.Correlated {
 		return col
 	}
@@ -160,8 +160,8 @@ func (s Schema) String() string {
 	return "[" + strings.Join(strs, ",") + "]"
 }
 
-// DeepCopy copies the total schema.
-func (s Schema) DeepCopy() Schema {
+// Clone copies the total schema.
+func (s Schema) Clone() Schema {
 	result := make(Schema, 0, len(s))
 	for _, col := range s {
 		newCol := *col
@@ -311,8 +311,8 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 	return result
 }
 
-// DeepCopy implements Expression interface.
-func (sf *ScalarFunction) DeepCopy() Expression {
+// Clone implements Expression interface.
+func (sf *ScalarFunction) Clone() Expression {
 	newFunc := &ScalarFunction{
 		FuncName:  sf.FuncName,
 		Function:  sf.Function,
@@ -320,7 +320,7 @@ func (sf *ScalarFunction) DeepCopy() Expression {
 		ArgValues: make([]types.Datum, len(sf.Args))}
 	newFunc.Args = make([]Expression, 0, len(sf.Args))
 	for _, arg := range sf.Args {
-		newFunc.Args = append(newFunc.Args, arg.DeepCopy())
+		newFunc.Args = append(newFunc.Args, arg.Clone())
 	}
 	return newFunc
 }
@@ -393,8 +393,8 @@ func (c *Constant) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// DeepCopy implements Expression interface.
-func (c *Constant) DeepCopy() Expression {
+// Clone implements Expression interface.
+func (c *Constant) Clone() Expression {
 	con := *c
 	return &con
 }

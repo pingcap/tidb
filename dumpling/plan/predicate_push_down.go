@@ -39,7 +39,7 @@ func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression,
 		baseLogicalPlan: newBaseLogicalPlan(Sel, allocator)}
 	selection.self = selection
 	selection.initID()
-	selection.SetSchema(child.GetSchema().DeepCopy())
+	selection.SetSchema(child.GetSchema().Clone())
 	return InsertPlan(p, child, selection)
 }
 
@@ -491,7 +491,7 @@ func calculateResultOfExpression(schema expression.Schema, expr expression.Expre
 		constant.Value.SetNull()
 		return constant, nil
 	default:
-		return x.DeepCopy(), nil
+		return x.Clone(), nil
 	}
 }
 
@@ -549,7 +549,7 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 	for _, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		for _, cond := range predicates {
-			newCond := columnSubstitute(cond.DeepCopy(), p.GetSchema(), expression.Schema2Exprs(proj.GetSchema()))
+			newCond := columnSubstitute(cond.Clone(), p.GetSchema(), expression.Schema2Exprs(proj.GetSchema()))
 			newExprs = append(newExprs, newCond)
 		}
 		retCond, _, err := proj.(LogicalPlan).PredicatePushDown(newExprs)
