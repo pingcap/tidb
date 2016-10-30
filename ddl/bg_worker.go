@@ -109,10 +109,11 @@ func (d *ddl) prepareBgJob(t *meta.Meta, ddlJob *model.Job) error {
 		Type:     ddlJob.Type,
 	}
 
-	if len(ddlJob.Args) > 0 {
-		// ddlJob.Args[0] is the schema version that isn't necessary in background job and it will make
-		// the background job of dropping schema become more complicated to handle.
-		job.Args = ddlJob.Args[1:]
+	if len(ddlJob.Args) >= 2 {
+		// ddlJob.Args[0] is the schema version that isn't necessary in background job and
+		// ddlJob.Args[1] is the table information or the database information.
+		// They will make the background job of dropping schema become more complicated to handle.
+		job.Args = ddlJob.Args[2:]
 	}
 
 	err := t.EnQueueBgJob(job)

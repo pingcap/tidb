@@ -72,7 +72,7 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 	return &physicalPlanInfo{p: ts, cost: math.MaxFloat64, count: infos[0].count}
 }
 
-func anyMatch(matchedList []bool) bool {
+func allMatch(matchedList []bool) bool {
 	for _, matched := range matchedList {
 		if !matched {
 			return false
@@ -106,6 +106,9 @@ func matchPropColumn(prop *requiredProperty, matchedIdx int, idxCol *model.Index
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*physicalPlanInfo) *physicalPlanInfo {
 	rowCount := float64(infos[0].count)
+	if prop.limit != nil {
+		rowCount = float64(prop.limit.Count)
+	}
 	cost := rowCount * netWorkFactor
 	if is.DoubleRead {
 		cost *= 2
@@ -127,7 +130,7 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 			break
 		}
 	}
-	if anyMatch(matchedList) {
+	if allMatch(matchedList) {
 		allDesc, allAsc := true, true
 		for i := 0; i < prop.sortKeyLen; i++ {
 			if prop.props[i].desc {
@@ -151,9 +154,9 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 	if prop.limit != nil {
 		success := is.addTopN(prop)
 		if success {
-			cost += rowCount * cpuFactor
+			cost += float64(infos[0].count) * cpuFactor
 		} else {
-			cost = rowCount * netWorkFactor
+			cost = float64(infos[0].count) * netWorkFactor
 		}
 		sortedIs := *is
 		sortedIs.OutOfOrder = true

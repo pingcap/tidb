@@ -171,17 +171,18 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 
 // delKeysWithPrefix deletes keys with prefix key in a limited number. If limit < 0, deletes all keys.
 func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, limit int) (int, error) {
-	batch := limit
-	if batch == 0 {
-		return 0, nil
-	} else if batch < 0 {
-		batch = defaultBatchSize
-	}
-	delAll := limit < 0
+	limitedDel := limit >= 0
 
 	var count int
 	total := job.GetRowCount()
 	for {
+		if limitedDel && count >= limit {
+			break
+		}
+		batch := defaultBatchSize
+		if limitedDel && count+batch > limit {
+			batch = limit - count
+		}
 		startTS := time.Now()
 		keys := make([]kv.Key, 0, batch)
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
@@ -230,11 +231,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, 
 		batchHandleDataHistogram.WithLabelValues(batchDelData).Observe(sub)
 		log.Infof("[ddl] deleted %v keys with prefix %q take time %v", total, prefix, sub)
 
-		// delete keys number less than batch, return.
-		if len(keys) < batch {
-			break
-		}
-		if !delAll {
+		if noMoreKeysToDelete := len(keys) < batch; noMoreKeysToDelete {
 			break
 		}
 	}
@@ -242,13 +239,15 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key, jobType JobType, job *model.Job, 
 	return count, nil
 }
 
-// addFinishInfo adds schema version and table information that are used for binlog.
-// tblInfo is added in the following operations: add column, drop column, add index, drop index.
-func addFinishInfo(job *model.Job, ver int64, tblInfo *model.TableInfo) {
-	if tblInfo == nil {
-		job.Args = []interface{}{ver}
-		return
-	}
+// addDBHistoryInfo adds schema version and schema information that are used for binlog.
+// dbInfo is added in the following operations: create database, drop database.
+func addDBHistoryInfo(job *model.Job, ver int64, dbInfo *model.DBInfo) {
+	job.Args = []interface{}{ver, dbInfo}
+}
+
+// addTableHistoryInfo adds schema version and table information that are used for binlog.
+// tblInfo is added except for the following operations: create database, drop database.
+func addTableHistoryInfo(job *model.Job, ver int64, tblInfo *model.TableInfo) {
 	job.Args = []interface{}{ver, tblInfo}
 }
 

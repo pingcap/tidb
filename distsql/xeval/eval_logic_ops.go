@@ -33,6 +33,8 @@ func (e *Evaluator) evalLogicOps(expr *tipb.Expr) (types.Datum, error) {
 		return e.evalAnd(leftBool, rightBool)
 	case tipb.ExprType_Or:
 		return e.evalOr(leftBool, rightBool)
+	case tipb.ExprType_Xor:
+		return e.evalXor(leftBool, rightBool)
 	default:
 		return types.Datum{}, errors.Errorf("Unknown binop type: %v", op)
 	}
@@ -65,6 +67,21 @@ func (e *Evaluator) evalOr(leftBool, rightBool int64) (types.Datum, error) {
 		return d, nil
 	}
 	d.SetInt64(0)
+	return d, nil
+}
+
+// evalXor computes result of (X XOR Y).
+func (e *Evaluator) evalXor(leftBool, rightBool int64) (types.Datum, error) {
+	var d types.Datum
+	if leftBool == compareResultNull || rightBool == compareResultNull {
+		d.SetNull()
+		return d, nil
+	}
+	if leftBool == rightBool {
+		d.SetInt64(0)
+		return d, nil
+	}
+	d.SetInt64(1)
 	return d, nil
 }
 
