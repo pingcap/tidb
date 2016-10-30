@@ -75,17 +75,16 @@ func (a *aggPushDownSolver) collectAggFuncs(agg *Aggregation, join *Join) (valid
 	valid = true
 	leftChild := join.GetChildByIndex(0)
 	for _, aggFunc := range agg.AggFuncs {
-		if a.isDecomposable(aggFunc) {
-			index := a.getAggFuncChildIdx(aggFunc, leftChild.GetSchema())
-			switch index {
-			case 0:
-				leftAggFuncs = append(leftAggFuncs, aggFunc)
-			case 1:
-				rightAggFuncs = append(rightAggFuncs, aggFunc)
-			default:
-				return false, nil, nil
-			}
-		} else {
+		if !a.isDecomposable(aggFunc) {
+			return false, nil, nil
+		}
+		index := a.getAggFuncChildIdx(aggFunc, leftChild.GetSchema())
+		switch index {
+		case 0:
+			leftAggFuncs = append(leftAggFuncs, aggFunc)
+		case 1:
+			rightAggFuncs = append(rightAggFuncs, aggFunc)
+		default:
 			return false, nil, nil
 		}
 	}
