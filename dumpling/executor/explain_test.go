@@ -34,42 +34,30 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select * from t1",
 			`{
-    "type": "Projection",
-    "exprs": [
-        "test.t1.c1",
-        "test.t1.c2"
-    ],
-    "child": {
-        "type": "TableScan",
-        "db": "test",
-        "table": "t1",
-        "desc": false,
-        "keep order": false,
-        "access condition": null,
-        "limit": 0
-    }
+    "type": "TableScan",
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "access condition": null,
+    "count of pushed aggregate functions": 0,
+    "limit": 0
 }`,
 		},
 		{
 			"select * from t1 order by c2",
 			`{
-    "type": "Projection",
-    "exprs": [
-        "test.t1.c1",
-        "test.t1.c2"
-    ],
-    "child": {
-        "type": "IndexScan",
-        "db": "test",
-        "table": "t1",
-        "index": "c2",
-        "ranges": "[[\u003cnil\u003e,+inf]]",
-        "desc": false,
-        "out of order": false,
-        "double read": false,
-        "access condition": null,
-        "limit": 0
-    }
+    "type": "IndexScan",
+    "db": "test",
+    "table": "t1",
+    "index": "c2",
+    "ranges": "[[\u003cnil\u003e,+inf]]",
+    "desc": false,
+    "out of order": false,
+    "double read": false,
+    "access condition": null,
+    "count of pushed aggregate functions": 0,
+    "limit": 0
 }`,
 		},
 		{
@@ -84,106 +72,81 @@ func (s *testSuite) TestExplain(c *C) {
     ],
     "limit": null,
     "child": {
-        "type": "Projection",
-        "exprs": [
-            "test.t2.c1",
-            "test.t2.c2"
-        ],
-        "child": {
-            "type": "TableScan",
-            "db": "test",
-            "table": "t2",
-            "desc": false,
-            "keep order": false,
-            "access condition": null,
-            "limit": 0
-        }
+        "type": "TableScan",
+        "db": "test",
+        "table": "t2",
+        "desc": false,
+        "keep order": false,
+        "access condition": null,
+        "count of pushed aggregate functions": 0,
+        "limit": 0
     }
 }`,
 		},
 		{
 			"select * from t1 where t1.c1 > 0",
 			`{
-    "type": "Projection",
-    "exprs": [
-        "test.t1.c1",
-        "test.t1.c2"
+    "type": "TableScan",
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "access condition": [
+        "gt(test.t1.c1, 0)"
     ],
-    "child": {
+    "count of pushed aggregate functions": 0,
+    "limit": 0
+}`,
+		},
+		{
+			"select * from t1 where t1.c2 = 1",
+			`{
+    "type": "IndexScan",
+    "db": "test",
+    "table": "t1",
+    "index": "c2",
+    "ranges": "[[1,1]]",
+    "desc": false,
+    "out of order": true,
+    "double read": false,
+    "access condition": [
+        "eq(test.t1.c2, 1)"
+    ],
+    "count of pushed aggregate functions": 0,
+    "limit": 0
+}`,
+		},
+		{
+			"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
+			`{
+    "type": "LeftJoin",
+    "eqCond": [
+        "eq(test.t1.c2, test.t2.c1)"
+    ],
+    "leftCond": null,
+    "rightCond": null,
+    "otherCond": null,
+    "leftPlan": {
         "type": "TableScan",
         "db": "test",
         "table": "t1",
         "desc": false,
         "keep order": false,
         "access condition": [
-            "gt(test.t1.c1, 0)"
+            "gt(test.t1.c1, 1)"
         ],
+        "count of pushed aggregate functions": 0,
         "limit": 0
-    }
-}`,
-		},
-		{
-			"select * from t1 where t1.c2 = 1",
-			`{
-    "type": "Projection",
-    "exprs": [
-        "test.t1.c1",
-        "test.t1.c2"
-    ],
-    "child": {
-        "type": "IndexScan",
+    },
+    "rightPlan": {
+        "type": "TableScan",
         "db": "test",
-        "table": "t1",
-        "index": "c2",
-        "ranges": "[[1,1]]",
+        "table": "t2",
         "desc": false,
-        "out of order": true,
-        "double read": false,
-        "access condition": [
-            "eq(test.t1.c2, 1)"
-        ],
+        "keep order": false,
+        "access condition": null,
+        "count of pushed aggregate functions": 0,
         "limit": 0
-    }
-}`,
-		},
-		{
-			"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
-			`{
-    "type": "Projection",
-    "exprs": [
-        "test.t1.c1",
-        "test.t1.c2",
-        "test.t2.c1",
-        "test.t2.c2"
-    ],
-    "child": {
-        "type": "LeftJoin",
-        "eqCond": [
-            "eq(test.t1.c2, test.t2.c1)"
-        ],
-        "leftCond": null,
-        "rightCond": null,
-        "otherCond": null,
-        "leftPlan": {
-            "type": "TableScan",
-            "db": "test",
-            "table": "t1",
-            "desc": false,
-            "keep order": false,
-            "access condition": [
-                "gt(test.t1.c1, 1)"
-            ],
-            "limit": 0
-        },
-        "rightPlan": {
-            "type": "TableScan",
-            "db": "test",
-            "table": "t2",
-            "desc": false,
-            "keep order": false,
-            "access condition": null,
-            "limit": 0
-        }
     }
 }`,
 		},
@@ -201,6 +164,7 @@ func (s *testSuite) TestExplain(c *C) {
             "access condition": [
                 "eq(test.t1.c1, 1)"
             ],
+            "count of pushed aggregate functions": 0,
             "limit": 0
         }
     ]
@@ -223,9 +187,61 @@ func (s *testSuite) TestExplain(c *C) {
             "access condition": [
                 "eq(test.t1.c2, 1)"
             ],
+            "count of pushed aggregate functions": 0,
             "limit": 0
         }
     ]
+}`,
+		},
+		{
+			"select count(b.b) from t a, t b where a.a = b.a group by a.b",
+			`{
+    "type": "CompleteAgg",
+    "AggFuncs": [
+        "count(join_agg_0)"
+    ],
+    "GroupByItems": [
+        "a.b"
+    ],
+    "child": {
+        "type": "InnerJoin",
+        "eqCond": [
+            "eq(a.a, b.a)"
+        ],
+        "leftCond": null,
+        "rightCond": null,
+        "otherCond": null,
+        "leftPlan": {
+            "type": "TableScan",
+            "db": "test",
+            "table": "t",
+            "desc": false,
+            "keep order": false,
+            "access condition": null,
+            "count of pushed aggregate functions": 0,
+            "limit": 0
+        },
+        "rightPlan": {
+            "type": "FinalAgg",
+            "AggFuncs": [
+                "count([b.b])",
+                "firstrow([b.a])"
+            ],
+            "GroupByItems": [
+                "[b.a]"
+            ],
+            "child": {
+                "type": "TableScan",
+                "db": "test",
+                "table": "t",
+                "desc": false,
+                "keep order": false,
+                "access condition": null,
+                "count of pushed aggregate functions": 2,
+                "limit": 0
+            }
+        }
+    }
 }`,
 		},
 	}
