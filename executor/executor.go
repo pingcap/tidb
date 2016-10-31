@@ -801,9 +801,6 @@ func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row) {
 		Data: make([]types.Datum, len(e.smallExec.Schema())),
 	}
 	copy(smallRow.Data, e.defaultValues)
-	for _, data := range smallRow.Data {
-		data.SetNull()
-	}
 	if e.leftSmall {
 		returnRow = joinTwoRow(smallRow, bigRow)
 	} else {
