@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
 )
@@ -44,12 +45,12 @@ const (
 	binlogKey        keyType = 1
 )
 
-// SetSchemaVersion sets schema version to a context.
+// SetSchemaVersion sets schema version to the context.
 func SetSchemaVersion(ctx context.Context, version int64) {
 	ctx.SetValue(schemaVersionKey, version)
 }
 
-// GetSchemaVersion gets schema version in a context.
+// GetSchemaVersion gets schema version in the context.
 func GetSchemaVersion(ctx context.Context) int64 {
 	v, ok := ctx.Value(schemaVersionKey).(int64)
 	if !ok {
@@ -58,7 +59,7 @@ func GetSchemaVersion(ctx context.Context) int64 {
 	return v
 }
 
-// GetPrewriteValue gets binlog prewrite value in a context.
+// GetPrewriteValue gets binlog prewrite value in the context.
 func GetPrewriteValue(ctx context.Context, createIfNotExists bool) *binlog.PrewriteValue {
 	v, ok := ctx.Value(binlogKey).(*binlog.PrewriteValue)
 	if !ok && createIfNotExists {
@@ -80,7 +81,17 @@ func WriteBinlog(bin *binlog.Binlog) error {
 	return errors.Trace(err)
 }
 
-// ClearBinlog clears binlog in a context.
+// SetDDLBinlog sets DDL binlog in the kv.Transaction.
+func SetDDLBinlog(txn kv.Transaction, jobID int64, ddlQuery string) {
+	bin := &binlog.Binlog{
+		Tp:       binlog.BinlogType_Prewrite,
+		DdlJobId: jobID,
+		DdlQuery: []byte(ddlQuery),
+	}
+	txn.SetOption(kv.BinlogData, bin)
+}
+
+// ClearBinlog clears binlog in the Context.
 func ClearBinlog(ctx context.Context) {
 	ctx.ClearValue(binlogKey)
 }
