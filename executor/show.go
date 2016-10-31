@@ -94,6 +94,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowColumns()
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
+	case ast.ShowCreateDatabase:
+		return e.fetchShowCreateDatabase()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowEngines:
@@ -484,6 +486,28 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
+	e.rows = append(e.rows, &Row{Data: data})
+	return nil
+}
+
+// Compose show create database result
+func (e *ShowExec) fetchShowCreateDatabase() error {
+
+	db, ok := e.is.SchemaByName(e.DBName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.Gen("Unknown database '%s'", e.DBName.O)
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString(fmt.Sprintf("CREATE DATABASE `%s` (\n", db.Name.O))
+	if s := db.Charset; len(s) > 0 {
+		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s", s))
+	}
+	if s := db.Collate; len(s) > 0 {
+		buf.WriteString(fmt.Sprintf(" DEFAULT COLLATE=%s", s))
+	}
+
+	data := types.MakeDatums(db.Name.O, buf.String())
 	e.rows = append(e.rows, &Row{Data: data})
 	return nil
 }
