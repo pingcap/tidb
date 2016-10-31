@@ -54,7 +54,7 @@ type AggregationFunction interface {
 	// GetName gets the aggregation function name.
 	GetName() string
 
-	// SetArgs set argument by index.
+	// SetArgs sets argument by index.
 	SetArgs(args []Expression)
 
 	// Clear collects the mapper's memory.
