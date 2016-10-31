@@ -164,7 +164,7 @@ func (a *aggPushDownSolver) addGbyCol(gbyCols []*expression.Column, cols ...*exp
 	return gbyCols
 }
 
-// checkValidJoin checks if this join should be pushed across. Temporarily we only consider inner join.
+// checkValidJoin checks if this join should be pushed across.
 func (a *aggPushDownSolver) checkValidJoin(join *Join) bool {
 	return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 }

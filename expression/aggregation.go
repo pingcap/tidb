@@ -76,6 +76,7 @@ type AggregationFunction interface {
 	GetType() *types.FieldType
 
 	// GetDefaultValue gets the default value when the aggregate function's input is null.
+	// The input stands for the schema of Aggregation's child.
 	GetDefaultValue(schema Schema) (types.Datum, error)
 }
 
