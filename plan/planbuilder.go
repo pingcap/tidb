@@ -441,28 +441,10 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
 		return b.buildShow(show)
 	}
-	targetPlan := b.build(explain.Stmt)
-	if b.err != nil {
+	targetPlan, err := Optimize(b.ctx, explain.Stmt, b.is)
+	if err != nil {
+		b.err = errors.Trace(err)
 		return nil
-	}
-	if logic, ok := targetPlan.(LogicalPlan); ok {
-		var err error
-		_, logic, err = logic.PredicatePushDown(nil)
-		if err != nil {
-			b.err = errors.Trace(err)
-			return nil
-		}
-		_, err = logic.PruneColumnsAndResolveIndices(logic.GetSchema())
-		if err != nil {
-			b.err = errors.Trace(err)
-			return nil
-		}
-		info, err := logic.convert2PhysicalPlan(&requiredProperty{})
-		if err != nil {
-			b.err = errors.Trace(err)
-			return nil
-		}
-		targetPlan = info.p
 	}
 	p := &Explain{StmtPlan: targetPlan}
 	addChild(p, targetPlan)

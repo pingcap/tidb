@@ -146,15 +146,16 @@ func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation) expressio
 	p.AggFields = append(p.AggFields, gk)
 	var schema expression.Schema
 	cursor := 0
-	schema = append(schema, &expression.Column{Index: cursor})
+	schema = append(schema, &expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems))})
 	agg.GroupByItems = []expression.Expression{schema[cursor]}
 	newAggFuncs := make([]expression.AggregationFunction, len(agg.AggFuncs))
 	for i, aggFun := range agg.AggFuncs {
 		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
+		colName := model.NewCIStr(fmt.Sprint(aggFun.GetArgs()))
 		if needCount(fun) {
 			cursor++
-			schema = append(schema, &expression.Column{Index: cursor})
+			schema = append(schema, &expression.Column{Index: cursor, ColName: colName})
 			args = append(args, schema[cursor])
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen = 21
@@ -164,7 +165,7 @@ func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation) expressio
 		}
 		if needValue(fun) {
 			cursor++
-			schema = append(schema, &expression.Column{Index: cursor})
+			schema = append(schema, &expression.Column{Index: cursor, ColName: colName})
 			args = append(args, schema[cursor])
 			p.AggFields = append(p.AggFields, agg.schema[i].GetType())
 		}
@@ -294,8 +295,9 @@ func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
 		"\n \"out of order\": %v,"+
 		"\n \"double read\": %v,"+
 		"\n \"access condition\": %s,"+
+		"\n \"count of pushed aggregate functions\": %d,"+
 		"\n \"limit\": %d\n}",
-		p.DBName.O, p.Table.Name.O, p.Index.Name.O, p.Ranges, p.Desc, p.OutOfOrder, p.DoubleRead, access, limit))
+		p.DBName.O, p.Table.Name.O, p.Index.Name.O, p.Ranges, p.Desc, p.OutOfOrder, p.DoubleRead, access, len(p.AggFuncs), limit))
 	return buffer.Bytes(), nil
 }
 
@@ -322,8 +324,9 @@ func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
 		"\n \"desc\": %v,"+
 		"\n \"keep order\": %v,"+
 		"\n \"access condition\": %s,"+
+		"\n \"count of pushed aggregate functions\": %d,"+
 		"\n \"limit\": %d}",
-		p.DBName.O, p.Table.Name.O, p.Desc, p.KeepOrder, access, limit))
+		p.DBName.O, p.Table.Name.O, p.Desc, p.KeepOrder, access, len(p.AggFuncs), limit))
 	return buffer.Bytes(), nil
 }
 
@@ -602,6 +605,36 @@ func (p *SelectLock) Copy() PhysicalPlan {
 func (p *PhysicalAggregation) Copy() PhysicalPlan {
 	np := *p
 	return &np
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalAggregation) MarshalJSON() ([]byte, error) {
+	child, err := json.Marshal(p.children[0].(PhysicalPlan))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer := bytes.NewBufferString("{")
+	var tp string
+	if p.AggType == StreamedAgg {
+		tp = "StreamedAgg"
+	} else if p.AggType == FinalAgg {
+		tp = "FinalAgg"
+	} else {
+		tp = "CompleteAgg"
+	}
+	aggFuncs, err := json.Marshal(p.AggFuncs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	gbyExprs, err := json.Marshal(p.GroupByItems)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer.WriteString(fmt.Sprintf("\"type\": \"%s\",\n"+
+		"\"AggFuncs\": %s,\n"+
+		"\"GroupByItems\": %s,\n"+
+		"\"child\": %s}", tp, aggFuncs, gbyExprs, child))
+	return buffer.Bytes(), nil
 }
 
 // Copy implements the PhysicalPlan Copy interface.
