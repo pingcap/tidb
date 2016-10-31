@@ -405,7 +405,6 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		job.SetRowCount(count)
 		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
 		log.Infof("[ddl] added index for %v rows, take time %v", count, sub)
-
 	}
 }
 
@@ -455,18 +454,18 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
 	kvX := tables.NewIndex(t.Meta(), indexInfo)
 
-	for _, handle := range handles {
-		log.Debug("[ddl] backfill index...", handle)
+	nextHandle := handles[0]
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
+			return errors.Trace(err)
+		}
 
-		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
-				return errors.Trace(err)
-			}
-
+		for _, handle := range handles {
+			log.Debug("[ddl] backfill index...", handle)
 			rowKey, vals, err1 := fetchRowColVals(txn, t, handle, indexInfo)
 			if terror.ErrorEqual(err1, kv.ErrNotExist) {
 				// row doesn't exist, skip it.
-				return nil
+				continue
 			}
 			if err1 != nil {
 				return errors.Trace(err1)
@@ -477,7 +476,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 				return errors.Trace(err1)
 			} else if exist {
 				// index already exists, skip it.
-				return nil
+				continue
 			}
 			err1 = txn.LockKeys(rowKey)
 			if err1 != nil {
@@ -489,14 +488,14 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
-
-			// update reorg next handle
-			return errors.Trace(reorgInfo.UpdateHandle(txn, handle))
-		})
-
-		if err != nil {
-			return errors.Trace(err)
+			nextHandle = handle
 		}
+		// update reorg next handle
+		return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
+	})
+
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil

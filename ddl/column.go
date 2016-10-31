@@ -335,10 +335,8 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 }
 
 func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, handles []int64, reorgInfo *reorgInfo) error {
-	var (
-		defaultVal types.Datum
-		err        error
-	)
+	var defaultVal types.Datum
+	var err error
 	if columnInfo.DefaultValue != nil {
 		defaultVal, _, err = table.GetColDefaultValue(nil, columnInfo)
 		if err != nil {
@@ -347,21 +345,24 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 	} else if mysql.HasNotNullFlag(columnInfo.Flag) {
 		defaultVal = table.GetZeroValue(columnInfo)
 	}
+
 	colMap := make(map[int64]*types.FieldType)
 	for _, col := range t.Meta().Columns {
 		colMap[col.ID] = &col.FieldType
 	}
-	for _, handle := range handles {
-		log.Debug("[ddl] backfill column...", handle)
-		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
-				return errors.Trace(err)
-			}
+	nextHandle := handles[0]
+	err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
+			return errors.Trace(err)
+		}
+
+		for _, handle := range handles {
+			log.Debug("[ddl] backfill column...", handle)
 			rowKey := t.RecordKey(handle)
 			rowVal, err := txn.Get(rowKey)
 			if terror.ErrorEqual(err, kv.ErrNotExist) {
 				// If row doesn't exist, skip it.
-				return nil
+				continue
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -372,7 +373,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 			}
 			if _, ok := rowColumns[columnInfo.ID]; ok {
 				// The column is already added by update or insert statement, skip it.
-				return nil
+				continue
 			}
 			newColumnIDs := make([]int64, 0, len(rowColumns)+1)
 			newRow := make([]types.Datum, 0, len(rowColumns)+1)
@@ -390,12 +391,12 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 			if err != nil {
 				return errors.Trace(err)
 			}
-			return errors.Trace(reorgInfo.UpdateHandle(txn, handle))
-		})
-
-		if err != nil {
-			return errors.Trace(err)
 		}
+		return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
+	})
+
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
