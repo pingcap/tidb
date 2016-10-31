@@ -452,11 +452,17 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 			b.err = errors.Trace(err)
 			return nil
 		}
+		solver := &aggPushDownSolver{
+			ctx:   b.ctx,
+			alloc: b.allocator,
+		}
+		solver.aggPushDown(logic)
 		_, err = logic.PruneColumnsAndResolveIndices(logic.GetSchema())
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
+		logic = EliminateProjection(logic)
 		info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 		if err != nil {
 			b.err = errors.Trace(err)
