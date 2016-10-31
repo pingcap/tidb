@@ -101,7 +101,7 @@ func constructBinaryOpFunction(l expression.Expression, r expression.Expression,
 }
 
 func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (LogicalPlan, expression.Schema) {
-	outerSchema := er.schema.DeepCopy()
+	outerSchema := er.schema.Clone()
 	for _, col := range outerSchema {
 		col.Correlated = true
 	}
@@ -179,11 +179,11 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	var checkCondition expression.Expression
 	var rexpr expression.Expression
 	if len(np.GetSchema()) == 1 {
-		rexpr = np.GetSchema()[0].DeepCopy()
+		rexpr = np.GetSchema()[0].Clone()
 	} else {
 		args := make([]expression.Expression, 0, len(np.GetSchema()))
 		for _, col := range np.GetSchema() {
-			args = append(args, col.DeepCopy())
+			args = append(args, col.Clone())
 		}
 		rexpr, er.err = expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), args...)
 		if er.err != nil {
@@ -292,11 +292,11 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	}
 	var rexpr expression.Expression
 	if len(np.GetSchema()) == 1 {
-		rexpr = np.GetSchema()[0].DeepCopy()
+		rexpr = np.GetSchema()[0].Clone()
 	} else {
 		args := make([]expression.Expression, 0, len(np.GetSchema()))
 		for _, col := range np.GetSchema() {
-			args = append(args, col.DeepCopy())
+			args = append(args, col.Clone())
 		}
 		rexpr, er.err = expression.NewFunction(ast.RowFunc, nil, args...)
 		if er.err != nil {
@@ -348,7 +348,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		if len(np.GetSchema()) > 1 {
 			newCols := make([]expression.Expression, 0, len(np.GetSchema()))
 			for _, col := range np.GetSchema() {
-				newCols = append(newCols, col.DeepCopy())
+				newCols = append(newCols, col.Clone())
 			}
 			expr, err := expression.NewFunction(ast.RowFunc, nil, newCols...)
 			if err != nil {
@@ -655,7 +655,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		value := er.ctxStack[stkLen-argsLen-1]
 		args = make([]expression.Expression, 0, argsLen)
 		for i := stkLen - argsLen; i < stkLen-1; i += 2 {
-			arg, err := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), value.DeepCopy(), er.ctxStack[i])
+			arg, err := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), value.Clone(), er.ctxStack[i])
 			if err != nil {
 				er.err = errors.Trace(err)
 				return
@@ -721,13 +721,13 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	if v.Not {
 		l, er.err = expression.NewFunction(ast.LT, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
 		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.GT, &v.Type, er.ctxStack[stkLen-3].DeepCopy(), er.ctxStack[stkLen-1])
+			r, er.err = expression.NewFunction(ast.GT, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
 		}
 		op = ast.OrOr
 	} else {
 		l, er.err = expression.NewFunction(ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
 		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.LE, &v.Type, er.ctxStack[stkLen-3].DeepCopy(), er.ctxStack[stkLen-1])
+			r, er.err = expression.NewFunction(ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
 		}
 		op = ast.AndAnd
 	}

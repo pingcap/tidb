@@ -189,7 +189,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	}
 	leftPlan := b.buildResultSetNode(join.Left)
 	rightPlan := b.buildResultSetNode(join.Right)
-	newSchema := append(leftPlan.GetSchema().DeepCopy(), rightPlan.GetSchema().DeepCopy()...)
+	newSchema := append(leftPlan.GetSchema().Clone(), rightPlan.GetSchema().Clone()...)
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
 	joinPlan.self = joinPlan
 	joinPlan.initID()
@@ -248,7 +248,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		return p
 	}
 	selection.Conditions = expressions
-	selection.SetSchema(p.GetSchema().DeepCopy())
+	selection.SetSchema(p.GetSchema().Clone())
 	addChild(selection, p)
 	return selection
 }
@@ -335,7 +335,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 		u.children[i] = b.buildSelect(sel)
 		u.correlated = u.correlated || u.children[i].IsCorrelated()
 	}
-	firstSchema := u.children[0].GetSchema().DeepCopy()
+	firstSchema := u.children[0].GetSchema().Clone()
 	for _, sel := range u.children {
 		if len(firstSchema) != len(sel.GetSchema()) {
 			b.err = errors.New("The used SELECT statements have a different number of columns")
@@ -407,7 +407,7 @@ func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 	}
 	sort.ByItems = exprs
 	addChild(sort, p)
-	sort.SetSchema(p.GetSchema().DeepCopy())
+	sort.SetSchema(p.GetSchema().Clone())
 	return sort
 }
 
@@ -421,7 +421,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	li.initID()
 	li.correlated = src.IsCorrelated()
 	addChild(li, src)
-	li.SetSchema(src.GetSchema().DeepCopy())
+	li.SetSchema(src.GetSchema().Clone())
 	return li
 }
 
@@ -838,7 +838,7 @@ func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
 	trim.self = trim
 	trim.initID()
 	addChild(trim, p)
-	trim.SetSchema(p.GetSchema().DeepCopy()[:len])
+	trim.SetSchema(p.GetSchema().Clone()[:len])
 	trim.correlated = p.IsCorrelated()
 	return trim
 }
@@ -927,14 +927,14 @@ func (b *planBuilder) buildApply(p, inner LogicalPlan, schema expression.Schema,
 			ap.OuterSchema = append(ap.OuterSchema[:i], ap.OuterSchema[i+1:]...)
 		}
 	}
-	innerSchema := inner.GetSchema().DeepCopy()
+	innerSchema := inner.GetSchema().Clone()
 	if checker == nil {
 		for _, col := range innerSchema {
 			col.IsAggOrSubq = true
 		}
-		ap.SetSchema(append(p.GetSchema().DeepCopy(), innerSchema...))
+		ap.SetSchema(append(p.GetSchema().Clone(), innerSchema...))
 	} else {
-		ap.SetSchema(append(p.GetSchema().DeepCopy(), &expression.Column{
+		ap.SetSchema(append(p.GetSchema().Clone(), &expression.Column{
 			FromID:      ap.id,
 			ColName:     model.NewCIStr("exists_row"),
 			RetType:     types.NewFieldType(mysql.TypeTiny),
@@ -976,7 +976,7 @@ func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	maxOneRow.self = maxOneRow
 	maxOneRow.initID()
 	addChild(maxOneRow, p)
-	maxOneRow.SetSchema(p.GetSchema().DeepCopy())
+	maxOneRow.SetSchema(p.GetSchema().Clone())
 	maxOneRow.correlated = p.IsCorrelated()
 	return maxOneRow
 }
@@ -1009,7 +1009,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	joinPlan.RightConditions = rightCond
 	joinPlan.OtherConditions = otherCond
 	if asScalar {
-		joinPlan.SetSchema(append(outerPlan.GetSchema().DeepCopy(), &expression.Column{
+		joinPlan.SetSchema(append(outerPlan.GetSchema().Clone(), &expression.Column{
 			FromID:      joinPlan.id,
 			ColName:     model.NewCIStr(fmt.Sprintf("%s_aux_0", joinPlan.id)),
 			RetType:     types.NewFieldType(mysql.TypeTiny),
@@ -1017,7 +1017,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		}))
 		joinPlan.JoinType = SemiJoinWithAux
 	} else {
-		joinPlan.SetSchema(outerPlan.GetSchema().DeepCopy())
+		joinPlan.SetSchema(outerPlan.GetSchema().Clone())
 		joinPlan.JoinType = SemiJoin
 	}
 	joinPlan.anti = not

@@ -688,6 +688,38 @@ func (s *testPlanSuite) TestLogicalPlan(c *C) {
 			sql:  "select sum(t.a + t.b), sum(t.a + t.c), sum(t.a + t.b), count(t.a) from t having sum(t.a + t.b) > 0 order by sum(t.a + t.c)",
 			best: "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Selection->Projection->Sort->Trim",
 		},
+		{
+			sql:  "select sum(a.a) from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->Aggr(sum(a.a),firstrow(a.c))->DataScan(t)}->Aggr(sum(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select sum(b.a) from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->DataScan(t)->Aggr(sum(b.a),firstrow(b.c))}->Aggr(sum(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select sum(b.a), a.a from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->DataScan(t)->Aggr(sum(b.a),firstrow(b.c))}->Aggr(sum(join_agg_0),firstrow(a.a))->Projection",
+		},
+		{
+			sql:  "select sum(a.a), b.a from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->Aggr(sum(a.a),firstrow(a.c))->DataScan(t)}->Aggr(sum(join_agg_0),firstrow(b.a))->Projection",
+		},
+		{
+			sql:  "select sum(a.a), sum(b.a) from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->DataScan(t)}->Aggr(sum(a.a),sum(b.a))->Projection",
+		},
+		{
+			sql:  "select sum(a.a), max(b.a) from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->Aggr(sum(a.a),firstrow(a.c))->DataScan(t)}->Aggr(sum(join_agg_0),max(b.a))->Projection",
+		},
+		{
+			sql:  "select max(a.a), sum(b.a) from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->DataScan(t)->Aggr(sum(b.a),firstrow(b.c))}->Aggr(max(a.a),sum(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select sum(a.a) from t a, t b, t c where a.c = b.c and b.c = c.c",
+			best: "Join{Join{DataScan(t)->Aggr(sum(a.a),firstrow(a.c))->DataScan(t)}->Aggr(sum(join_agg_0),firstrow(b.c))->DataScan(t)}->Aggr(sum(join_agg_0))->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -708,6 +740,11 @@ func (s *testPlanSuite) TestLogicalPlan(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
+		solver := &aggPushDownSolver{
+			ctx:   builder.ctx,
+			alloc: builder.allocator,
+		}
+		solver.aggPushDown(lp)
 		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
