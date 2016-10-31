@@ -16,8 +16,10 @@ package ddl
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/tablecodec"
 )
 
 func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
@@ -135,14 +137,14 @@ func getIDs(tables []*model.TableInfo) []int64 {
 }
 
 func (d *ddl) delReorgSchema(t *meta.Meta, job *model.Job) error {
+	var startKey kv.Key
 	var tableIDs []int64
-	if err := job.DecodeArgs(&tableIDs); err != nil {
-		// arg error, cancel this job.
+	if err := job.DecodeArgs(&tableIDs, &startKey); err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
 
-	isFinished, err := d.dropSchemaData(tableIDs, job, t)
+	isFinished, err := d.dropSchemaData(tableIDs, startKey, job, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -157,21 +159,26 @@ func (d *ddl) delReorgSchema(t *meta.Meta, job *model.Job) error {
 	return nil
 }
 
-func (d *ddl) dropSchemaData(tIDs []int64, job *model.Job, m *meta.Meta) (bool, error) {
+func (d *ddl) dropSchemaData(tIDs []int64, startKey kv.Key, job *model.Job, m *meta.Meta) (bool, error) {
 	if len(tIDs) == 0 {
 		return true, nil
 	}
 
 	var isFinished bool
+	var nextStartKey kv.Key
 	for i, id := range tIDs {
 		job.TableID = id
+		if startKey == nil {
+			startKey = tablecodec.EncodeTablePrefix(id)
+		}
 		limit := defaultBatchSize
-		delCount, err := d.dropTableData(id, job, limit)
+		delCount, err := d.dropTableData(startKey, job, limit)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if delCount == limit {
 			isFinished = false
+			nextStartKey = job.Args[len(job.Args)-1].(kv.Key)
 			break
 		}
 
@@ -180,11 +187,12 @@ func (d *ddl) dropSchemaData(tIDs []int64, job *model.Job, m *meta.Meta) (bool, 
 		} else {
 			tIDs = nil
 		}
+		startKey = nil
 		isFinished = true
 		continue
 	}
 	job.TableID = 0
-	job.Args = []interface{}{tIDs}
+	job.Args = []interface{}{tIDs, nextStartKey}
 
 	return isFinished, nil
 }

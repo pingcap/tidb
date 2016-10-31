@@ -16,6 +16,7 @@ package ddl
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -78,22 +79,6 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	}
 }
 
-// Maximum number of keys to delete for each reorg table job run.
-var reorgTableDeleteLimit = 65536
-
-func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
-	delCount, err := d.dropTableData(job.TableID, job, reorgTableDeleteLimit)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// finish this background job
-	if delCount < reorgTableDeleteLimit {
-		job.SchemaState = model.StateNone
-		job.State = model.JobDone
-	}
-	return nil
-}
-
 func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tableID := job.TableID
@@ -137,11 +122,36 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
 		addTableHistoryInfo(job, ver, tblInfo)
+		startKey := tablecodec.EncodeTablePrefix(tableID)
+		job.Args = append(job.Args, startKey)
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
 
 	return errors.Trace(err)
+}
+
+// Maximum number of keys to delete for each reorg table job run.
+var reorgTableDeleteLimit = 65536
+
+func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
+	var startKey kv.Key
+	if err := job.DecodeArgs(&startKey); err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+
+	limit := reorgTableDeleteLimit
+	delCount, err := d.dropTableData(startKey, job, limit)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// finish this background job
+	if delCount < limit {
+		job.SchemaState = model.StateNone
+		job.State = model.JobDone
+	}
+	return nil
 }
 
 func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
@@ -172,9 +182,11 @@ func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, erro
 	return tblInfo, nil
 }
 
-// delKeysWithPrefix deletes data in a limited number. If limit < 0, deletes all data.
-func (d *ddl) dropTableData(tID int64, job *model.Job, limit int) (int, error) {
-	delCount, err := d.delKeysWithPrefix(tablecodec.EncodeTablePrefix(tID), bgJobFlag, job, limit)
+// dropTableData deletes data in a limited number. If limit < 0, deletes all data.
+func (d *ddl) dropTableData(startKey kv.Key, job *model.Job, limit int) (int, error) {
+	prefix := tablecodec.EncodeTablePrefix(job.TableID)
+	delCount, nextStartKey, err := d.delKeysWithStartKey(prefix, startKey, bgJobFlag, job, limit)
+	job.Args = []interface{}{nextStartKey}
 	return delCount, errors.Trace(err)
 }
 
@@ -201,6 +213,7 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobCancelled
 		return errors.Trace(infoschema.ErrTableNotExists)
 	}
+
 	err = t.DropTable(schemaID, tableID)
 	if err != nil {
 		job.State = model.JobCancelled
@@ -212,11 +225,14 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
+
 	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	job.State = model.JobDone
 	addTableHistoryInfo(job, ver, tblInfo)
+	startKey := tablecodec.EncodeTablePrefix(tableID)
+	job.Args = append(job.Args, startKey)
 	return nil
 }
