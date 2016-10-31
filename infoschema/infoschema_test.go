@@ -224,6 +224,42 @@ func (testSuite) TestConcurrent(c *C) {
 	wg.Wait()
 }
 
+// Make sure that all tables of infomation_schema could be found in infoschema handle.
+func (*testSuite) TestInfoTables(c *C) {
+	defer testleak.AfterTest(c)()
+	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
+	store, err := driver.Open("memory")
+	c.Assert(err, IsNil)
+	defer store.Close()
+	handle, err := infoschema.NewHandle(store)
+	c.Assert(err, IsNil)
+	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, 0)
+	c.Assert(err, IsNil)
+	err = builder.Build()
+	c.Assert(err, IsNil)
+	is := handle.Get()
+	c.Assert(is, NotNil)
+
+	info_tables := []string{
+		"SCHEMATA",
+		"TABLES",
+		"COLUMNS",
+		"STATISTICS",
+		"CHARACTER_SETS",
+		"COLLATIONS",
+		"FILES",
+		"PROFILING",
+		"PARTITIONS",
+		"KEY_COLUMN_USAGE",
+		"REFERENTIAL_CONSTRAINTS",
+	}
+	for _, t := range info_tables {
+		tb, err1 := is.TableByName(model.NewCIStr(infoschema.Name), model.NewCIStr(t))
+		c.Assert(err1, IsNil)
+		c.Assert(tb, NotNil)
+	}
+}
+
 func genGlobalID(store kv.Storage) (int64, error) {
 	var globalID int64
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {

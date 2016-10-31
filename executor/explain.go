@@ -31,12 +31,12 @@ type ExplainExec struct {
 	evaluated bool
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *ExplainExec) Schema() expression.Schema {
 	return e.schema
 }
 
-// Fields implements Executor Fields interface.
+// Fields implements the Executor Fields interface.
 func (e *ExplainExec) Fields() []*ast.ResultField {
 	return nil
 }
@@ -57,7 +57,7 @@ func (e *ExplainExec) Next() (*Row, error) {
 	return row, nil
 }
 
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *ExplainExec) Close() error {
 	return nil
 }

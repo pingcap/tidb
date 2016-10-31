@@ -29,7 +29,7 @@ const (
 	PresumeKeyNotExistsError
 	// RetryAttempts is the number of txn retry attempt.
 	RetryAttempts
-	// BinlogData is the serialized bytes of Binlog prewrite value.
+	// BinlogData is the binlog data to write.
 	BinlogData
 )
 
