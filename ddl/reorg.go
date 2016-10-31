@@ -170,6 +170,7 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 }
 
 // delKeysWithStartKey deletes keys with start key in a limited number. If limit < 0, deletes all keys.
+// It returns the number of rows deleted, next start key and the error.
 func (d *ddl) delKeysWithStartKey(prefix, startKey kv.Key, jobType JobType, job *model.Job, limit int) (int, kv.Key, error) {
 	limitedDel := limit >= 0
 

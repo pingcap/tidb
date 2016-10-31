@@ -135,14 +135,14 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 var reorgTableDeleteLimit = 65536
 
 func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
-	var prefix kv.Key
-	if err := job.DecodeArgs(&prefix); err != nil {
+	var startKey kv.Key
+	if err := job.DecodeArgs(&startKey); err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
 
 	limit := reorgTableDeleteLimit
-	delCount, err := d.dropTableData(prefix, job, limit)
+	delCount, err := d.dropTableData(startKey, job, limit)
 	if err != nil {
 		return errors.Trace(err)
 	}
