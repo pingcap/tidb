@@ -75,9 +75,9 @@ type AggregationFunction interface {
 	// GetType gets field type of aggregate function.
 	GetType() *types.FieldType
 
-	// GetDefaultValue gets the default value when the aggregate function's input is null.
+	// CalculateDefaultValue gets the default value when the aggregate function's input is null.
 	// The input stands for the schema of Aggregation's child.
-	GetDefaultValue(schema Schema) (types.Datum, error)
+	CalculateDefaultValue(schema Schema) (types.Datum, error)
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -161,8 +161,8 @@ func newAggFunc(name string, args []Expression, dist bool) aggFunction {
 		Distinct:     dist}
 }
 
-// GetDefaultValue implements AggregationFunction interface.
-func (af *aggFunction) GetDefaultValue(schema Schema) (d types.Datum, err error) {
+// CalculateDefaultValue implements AggregationFunction interface.
+func (af *aggFunction) CalculateDefaultValue(schema Schema) (d types.Datum, err error) {
 	return d, errors.New("The avg and concat functions are not supported temporarily.")
 }
 
@@ -322,8 +322,8 @@ func (sf *sumFunction) GetStreamResult() (d types.Datum) {
 	return
 }
 
-// GetDefaultValue implements AggregationFunction interface.
-func (sf *sumFunction) GetDefaultValue(schema Schema) (d types.Datum, err error) {
+// CalculateDefaultValue implements AggregationFunction interface.
+func (sf *sumFunction) CalculateDefaultValue(schema Schema) (d types.Datum, err error) {
 	arg := sf.Args[0]
 	result, err := EvaluateExprWithNull(schema, arg)
 	if err != nil {
@@ -359,8 +359,8 @@ func (cf *countFunction) Clone() AggregationFunction {
 	return &nf
 }
 
-// GetDefaultValue implements AggregationFunction interface.
-func (cf *countFunction) GetDefaultValue(schema Schema) (d types.Datum, err error) {
+// CalculateDefaultValue implements AggregationFunction interface.
+func (cf *countFunction) CalculateDefaultValue(schema Schema) (d types.Datum, err error) {
 	for _, arg := range cf.Args {
 		result, err := EvaluateExprWithNull(schema, arg)
 		if err != nil {
@@ -701,8 +701,8 @@ func (mmf *maxMinFunction) Clone() AggregationFunction {
 	return &nf
 }
 
-// GetDefaultValue implements AggregationFunction interface.
-func (mmf *maxMinFunction) GetDefaultValue(schema Schema) (d types.Datum, err error) {
+// CalculateDefaultValue implements AggregationFunction interface.
+func (mmf *maxMinFunction) CalculateDefaultValue(schema Schema) (d types.Datum, err error) {
 	arg := mmf.Args[0]
 	result, err := EvaluateExprWithNull(schema, arg)
 	if err != nil {
@@ -858,8 +858,8 @@ func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 	return
 }
 
-// GetDefaultValue implements AggregationFunction interface.
-func (ff *firstRowFunction) GetDefaultValue(schema Schema) (d types.Datum, err error) {
+// CalculateDefaultValue implements AggregationFunction interface.
+func (ff *firstRowFunction) CalculateDefaultValue(schema Schema) (d types.Datum, err error) {
 	arg := ff.Args[0]
 	result, err := EvaluateExprWithNull(schema, arg)
 	if err != nil {

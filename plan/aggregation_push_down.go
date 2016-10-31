@@ -238,7 +238,7 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 func (a *aggPushDownSolver) getDefaultValues(agg *Aggregation) ([]types.Datum, error) {
 	defaultValues := make([]types.Datum, 0, len(agg.GetSchema()))
 	for _, aggFunc := range agg.AggFuncs {
-		value, err := aggFunc.GetDefaultValue(agg.children[0].GetSchema())
+		value, err := aggFunc.CalculateDefaultValue(agg.children[0].GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

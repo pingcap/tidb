@@ -489,7 +489,8 @@ func SplitDNFItems(onExpr Expression) []Expression {
 	return splitNormalFormItems(onExpr, ast.OrOr)
 }
 
-// EvaluateExprWithNull sets inner table columns in a expression as null and calculate the final result of the scalar function.
+// EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
+// If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(schema Schema, expr Expression) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
