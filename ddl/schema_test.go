@@ -50,11 +50,13 @@ func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *
 		Type:     model.ActionCreateSchema,
 		Args:     []interface{}{dbInfo},
 	}
-
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
+
 	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v})
+	dbInfo.State = model.StatePublic
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
+	dbInfo.State = model.StateNone
 	return job
 }
 
@@ -63,14 +65,14 @@ func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) (*m
 		SchemaID: dbInfo.ID,
 		Type:     model.ActionDropSchema,
 	}
-
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
+
 	ver := getSchemaVer(c, ctx)
 	return job, ver
 }
 
-func checkDrop(c *C, t *meta.Meta) bool {
+func isDDLJobDone(c *C, t *meta.Meta) bool {
 	bgJob, err := t.GetBgJob(0)
 	c.Assert(err, IsNil)
 	if bgJob == nil {
@@ -91,7 +93,7 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 			c.Assert(err, IsNil)
 
 			if state == model.StateNone {
-				isDropped = checkDrop(c, t)
+				isDropped = isDDLJobDone(c, t)
 				if !isDropped {
 					return nil
 				}
@@ -108,79 +110,6 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 			break
 		}
 	}
-}
-
-func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
-	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		historyJob, err := t.GetHistoryDDLJob(job.ID)
-		c.Assert(err, IsNil)
-		c.Assert(historyJob.State, Equals, model.JobDone)
-		if isAdd {
-			c.Assert(historyJob.SchemaState, Equals, model.StatePublic)
-		} else {
-			c.Assert(historyJob.SchemaState, Equals, model.StateNone)
-		}
-
-		return nil
-	})
-}
-
-func testCheckJobCancelled(c *C, d *ddl, job *model.Job) {
-	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		historyJob, err := t.GetHistoryDDLJob(job.ID)
-		c.Assert(err, IsNil)
-		c.Assert(historyJob.State, Equals, model.JobCancelled)
-		return nil
-	})
-}
-
-func getSchemaVer(c *C, ctx context.Context) int64 {
-	txn, err := ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-	c.Assert(txn, NotNil)
-	m := meta.NewMeta(txn)
-	ver, err := m.GetSchemaVersion()
-	c.Assert(err, IsNil)
-	return ver
-}
-
-type historyJobArgs struct {
-	ver    int64
-	tbl    *model.TableInfo
-	tblIDs map[int64]struct{}
-}
-
-func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobArgs) {
-	txn, err := ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
-	historyJob, err := t.GetHistoryDDLJob(id)
-	c.Assert(err, IsNil)
-
-	var v int64
-	var ids []int64
-	tbl := &model.TableInfo{}
-	if args.tbl == nil && len(args.tblIDs) == 0 {
-		historyJob.DecodeArgs(&v)
-		c.Assert(v, Equals, args.ver)
-		return
-	}
-	// alter table DDL
-	if args.tbl != nil {
-		historyJob.DecodeArgs(&v, &tbl)
-		c.Assert(v, Equals, args.ver)
-		return
-	}
-	// only for drop schema job
-	historyJob.DecodeArgs(&v, &ids)
-	c.Assert(v, Equals, args.ver)
-	for _, id := range ids {
-		c.Assert(args.tblIDs, HasKey, id)
-		delete(args.tblIDs, id)
-	}
-	c.Assert(len(args.tblIDs), Equals, 0)
 }
 
 func (s *testSchemaSuite) TestSchema(c *C) {
@@ -243,7 +172,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	ids := make(map[int64]struct{})
 	ids[tblInfo1.ID] = struct{}{}
 	ids[tblInfo2.ID] = struct{}{}
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tblIDs: ids})
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
 	// check background ddl info
 	time.Sleep(testLease * 400)
 	verifyBgJobState(c, d, job, model.JobDone)
@@ -277,7 +206,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	testCheckOwner(c, d2, false, ddlJobFlag)
 
 	dbInfo := testSchemaInfo(c, d2, "test")
-	job := testCreateSchema(c, ctx, d2, dbInfo)
+	testCreateSchema(c, ctx, d2, dbInfo)
 	testCheckSchemaState(c, d2, dbInfo, model.StatePublic)
 
 	// d2 must not be owner.
@@ -285,16 +214,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 
 	schemaID, err := d2.genGlobalID()
 	c.Assert(err, IsNil)
-
-	job = &model.Job{
-		SchemaID: schemaID,
-		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{dbInfo},
-	}
-
-	err = d2.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d2, job)
+	doDDLJobErr(c, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, ctx, d2)
 
 	// d2 must not be owner.
 	testCheckOwner(c, d2, false, ddlJobFlag)

@@ -118,20 +118,32 @@ func mockResolve(node ast.Node) error {
 
 func supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
-	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_Float32,
-		tipb.ExprType_Float64, tipb.ExprType_String, tipb.ExprType_Bytes,
-		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlDecimal, tipb.ExprType_MysqlTime,
-		tipb.ExprType_ColumnRef,
-		tipb.ExprType_And, tipb.ExprType_Or,
-		tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
+	// data type
+	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64,
+		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_String,
+		tipb.ExprType_Bytes, tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlDecimal,
+		tipb.ExprType_MysqlTime, tipb.ExprType_ColumnRef:
+		return true
+	// logic operators
+	case tipb.ExprType_And, tipb.ExprType_Or, tipb.ExprType_Not, tipb.ExprType_Xor:
+		return true
+	// compare operators
+	case tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
 		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
-		tipb.ExprType_In, tipb.ExprType_ValueList,
-		tipb.ExprType_Not,
-		tipb.ExprType_Like:
+		tipb.ExprType_In, tipb.ExprType_ValueList, tipb.ExprType_Like:
 		return true
-	case tipb.ExprType_Plus, tipb.ExprType_Div:
+	// arithmetic operators
+	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus,
+		tipb.ExprType_Mul, tipb.ExprType_IntDiv, tipb.ExprType_Mod:
 		return true
-	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum, tipb.ExprType_Avg, tipb.ExprType_Max, tipb.ExprType_Min:
+	// aggregate functions
+	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum,
+		tipb.ExprType_Avg, tipb.ExprType_Max, tipb.ExprType_Min:
+		return true
+	// bitwise operators
+	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitXor, tipb.ExprType_BitNeg:
+		return true
+	case tipb.ExprType_Case, tipb.ExprType_Coalesce:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
@@ -274,7 +286,7 @@ func (s *testPlanSuite) TestTopnPushDown(c *C) {
 }
 
 // TestLogicOpsPushDown tests whether logic operators been pushed down successfully.
-func (s *testPlanSuite) TestLogicOpsPushDown(c *C) {
+func (s *testPlanSuite) TestOperatorsPushDown(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql    string
@@ -300,6 +312,105 @@ func (s *testPlanSuite) TestLogicOpsPushDown(c *C) {
 			sql:    "not a",
 			cond:   "not(test.t.a)",
 			exprPB: "\b\xe9\a\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
+		},
+		{
+			sql:    "a xor b",
+			cond:   "xor(test.t.a, test.t.b)",
+			exprPB: "\b\xff\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		{
+			sql:    "a & b",
+			cond:   "bitand(test.t.a, test.t.b)",
+			exprPB: "\b\xb5\x10\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		{
+			sql:    "a | b",
+			cond:   "bitor(test.t.a, test.t.b)",
+			exprPB: "\b\xb6\x10\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		{
+			sql:    "a ^ b",
+			cond:   "bitxor(test.t.a, test.t.b)",
+			exprPB: "\b\xb7\x10\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		{
+			sql:    "~a",
+			cond:   "bitneg(test.t.a)",
+			exprPB: "\b\xeb\a\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
+		},
+	}
+	for _, ca := range cases {
+		sql := "select * from t where " + ca.sql
+		comment := Commentf("for %s", sql)
+		stmt, err := s.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
+		c.Assert(err, IsNil)
+		lp = EliminateProjection(lp)
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		c.Assert(err, IsNil)
+		p = info.p
+		// loop util reaching the DataSource node of a physical plan to get the conditions been pushed down.
+	loop:
+		for {
+			switch x := p.(type) {
+			case *PhysicalTableScan:
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				pbStr, _ := x.ConditionPBExpr.Marshal()
+				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
+				break loop
+			case *PhysicalIndexScan:
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				pbStr, _ := x.ConditionPBExpr.Marshal()
+				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
+				break loop
+			}
+			p = p.GetChildByIndex(0)
+		}
+	}
+}
+
+// TestBuiltinFuncsPushDown tests whether logic operators been pushed down successfully.
+func (s *testPlanSuite) TestBuiltinFuncsPushDown(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql    string
+		cond   string // readable expressions
+		exprPB string // Marshall result of conditions that be pushed down.
+	}{
+		// case when
+		{
+			sql:  "a = case a when b then 1 when a then 0 end",
+			cond: "eq(test.t.a, case(eq(test.t.a, test.t.b), 1, eq(test.t.a, test.t.a), 0))",
+			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1ae\b\xa7" +
+				"\x1f\x1a!\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01" +
+				"\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02\x1a\f\b\x01\x12\b\x80" +
+				"\x00\x00\x00\x00\x00\x00\x01\x1a!\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00" +
+				"\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01" +
+				"\x1a\f\b\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x00",
+		},
+		// coalesce
+		{
+			sql:  "a = coalesce(null, null, a, b)",
+			cond: "eq(test.t.a, coalesce(<nil>, <nil>, test.t.a, test.t.b))",
+			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a)\b\xad\x1b\x1a" +
+				"\x02\b\x00\x1a\x02\b\x00\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a" +
+				"\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
 		},
 	}
 	for _, ca := range cases {
@@ -577,6 +688,38 @@ func (s *testPlanSuite) TestLogicalPlan(c *C) {
 			sql:  "select sum(t.a + t.b), sum(t.a + t.c), sum(t.a + t.b), count(t.a) from t having sum(t.a + t.b) > 0 order by sum(t.a + t.c)",
 			best: "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Selection->Projection->Sort->Trim",
 		},
+		{
+			sql:  "select sum(a.a) from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->Aggr(sum(a.a),firstrow(a.c))->DataScan(t)}->Aggr(sum(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select sum(b.a) from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->DataScan(t)->Aggr(sum(b.a),firstrow(b.c))}->Aggr(sum(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select sum(b.a), a.a from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->DataScan(t)->Aggr(sum(b.a),firstrow(b.c))}->Aggr(sum(join_agg_0),firstrow(a.a))->Projection",
+		},
+		{
+			sql:  "select sum(a.a), b.a from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->Aggr(sum(a.a),firstrow(a.c))->DataScan(t)}->Aggr(sum(join_agg_0),firstrow(b.a))->Projection",
+		},
+		{
+			sql:  "select sum(a.a), sum(b.a) from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->DataScan(t)}->Aggr(sum(a.a),sum(b.a))->Projection",
+		},
+		{
+			sql:  "select sum(a.a), max(b.a) from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->Aggr(sum(a.a),firstrow(a.c))->DataScan(t)}->Aggr(sum(join_agg_0),max(b.a))->Projection",
+		},
+		{
+			sql:  "select max(a.a), sum(b.a) from t a, t b where a.c = b.c",
+			best: "Join{DataScan(t)->DataScan(t)->Aggr(sum(b.a),firstrow(b.c))}->Aggr(max(a.a),sum(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select sum(a.a) from t a, t b, t c where a.c = b.c and b.c = c.c",
+			best: "Join{Join{DataScan(t)->Aggr(sum(a.a),firstrow(a.c))->DataScan(t)}->Aggr(sum(join_agg_0),firstrow(b.c))->DataScan(t)}->Aggr(sum(join_agg_0))->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -597,6 +740,11 @@ func (s *testPlanSuite) TestLogicalPlan(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
+		solver := &aggPushDownSolver{
+			ctx:   builder.ctx,
+			alloc: builder.allocator,
+		}
+		solver.aggPushDown(lp)
 		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -649,6 +797,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		{
 			sql:  "select * from t a where a.c = 1 order by a.d limit 2",
 			best: "Index(t.c_d_e)[[1,1]]->Projection",
+		},
+		{
+			sql:  "select * from t a order by a.c desc limit 2",
+			best: "Index(t.c_d_e)[[<nil>,+inf]]->Limit->Projection",
 		},
 		{
 			sql:  "select * from t t1, t t2 right join t t3 on t2.a = t3.b order by t1.a, t1.b, t2.a, t2.b, t3.a, t3.b",

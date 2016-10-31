@@ -419,10 +419,10 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 	for i := 0; i < e.concurrency; i++ {
 		ctx := &hashJoinCtx{}
 		if e.bigFilter != nil {
-			ctx.bigFilter = e.bigFilter.DeepCopy()
+			ctx.bigFilter = e.bigFilter.Clone()
 		}
 		if e.otherFilter != nil {
-			ctx.otherFilter = e.otherFilter.DeepCopy()
+			ctx.otherFilter = e.otherFilter.Clone()
 		}
 		ctx.datumBuffer = make([]types.Datum, len(e.bigHashKey))
 		ctx.hashKeyBuffer = make([]byte, 0, 10000)

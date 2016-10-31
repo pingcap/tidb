@@ -71,21 +71,23 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 		}
 		// finish this job
 		job.State = model.JobDone
-		addFinishInfo(job, ver, nil)
+		addTableHistoryInfo(job, ver, tbInfo)
 		return nil
 	default:
 		return ErrInvalidTableState.Gen("invalid table state %v", tbInfo.State)
 	}
 }
 
+// Maximum number of keys to delete for each reorg table job run.
+var reorgTableDeleteLimit = 65536
+
 func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
-	limit := defaultBatchSize
-	delCount, err := d.dropTableData(job.TableID, job, limit)
+	delCount, err := d.dropTableData(job.TableID, job, reorgTableDeleteLimit)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// finish this background job
-	if delCount < limit {
+	if delCount < reorgTableDeleteLimit {
 		job.SchemaState = model.StateNone
 		job.State = model.JobDone
 	}
@@ -134,7 +136,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		// finish this job
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
-		addFinishInfo(job, ver, nil)
+		addTableHistoryInfo(job, ver, tblInfo)
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
@@ -215,6 +217,6 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 	job.State = model.JobDone
-	addFinishInfo(job, ver, nil)
+	addTableHistoryInfo(job, ver, tblInfo)
 	return nil
 }
