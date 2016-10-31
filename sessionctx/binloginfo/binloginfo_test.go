@@ -196,7 +196,7 @@ func checkLatestBinlogDDL(c *C, pump *mockBinlogPump, ddlQuery string) {
 		if bin.Tp == binlog.BinlogType_Commit && bin.DdlJobId > 0 {
 			commitDDL = bin
 		}
-		if bin.Tp == binlog.BinlogType_PreDDL {
+		if bin.Tp == binlog.BinlogType_Prewrite && bin.DdlJobId != 0 {
 			preDDL = bin
 		}
 		if preDDL != nil && commitDDL != nil {
@@ -225,9 +225,11 @@ func checkBinlogCount(c *C, pump *mockBinlogPump) {
 		bin = new(binlog.Binlog)
 		bin.Unmarshal(payload)
 		if bin.Tp == binlog.BinlogType_Prewrite {
-			prewriteCount++
-		} else if bin.Tp == binlog.BinlogType_PreDDL {
-			ddlCount++
+			if bin.DdlJobId != 0 {
+				ddlCount++
+			} else {
+				prewriteCount++
+			}
 		}
 	}
 	pump.mu.Unlock()

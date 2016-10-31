@@ -84,7 +84,7 @@ func WriteBinlog(bin *binlog.Binlog) error {
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.
 func SetDDLBinlog(txn kv.Transaction, jobID int64, ddlQuery string) {
 	bin := &binlog.Binlog{
-		Tp:       binlog.BinlogType_PreDDL,
+		Tp:       binlog.BinlogType_Prewrite,
 		DdlJobId: jobID,
 		DdlQuery: []byte(ddlQuery),
 	}
