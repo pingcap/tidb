@@ -60,7 +60,7 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		tipb.ExprType_NullEQ, tipb.ExprType_Like, tipb.ExprType_In:
 		return e.evalCompareOps(expr)
 	// logic operator
-	case tipb.ExprType_And, tipb.ExprType_Or, tipb.ExprType_Not:
+	case tipb.ExprType_And, tipb.ExprType_Or, tipb.ExprType_Xor, tipb.ExprType_Not:
 		return e.evalLogicOps(expr)
 	// arithmetic operator
 	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus,
@@ -75,7 +75,13 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 	// string functions
 	case tipb.ExprType_Strcmp:
 		return e.evalStringFuncs(expr)
+	// bit operator
+	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitNeg,
+		tipb.ExprType_BitXor, tipb.ExprType_LeftShift, tipb.ExprType_RightShift:
+		return e.evalBitOps(expr)
 	// other functions
+	case tipb.ExprType_Case:
+		return e.evalCaseWhen(expr)
 	case tipb.ExprType_Coalesce:
 		return e.evalCoalesce(expr)
 	case tipb.ExprType_IsNull:
@@ -86,7 +92,7 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 
 func (e *Evaluator) evalTwoChildren(expr *tipb.Expr) (left, right types.Datum, err error) {
 	if len(expr.Children) != 2 {
-		err = ErrInvalid.Gen("%s need 2 operands but got %d", expr.GetTp(), len(expr.Children))
+		err = ErrInvalid.Gen("%s needs 2 operands but got %d", tipb.ExprType_name[int32(expr.GetTp())], len(expr.Children))
 		return
 	}
 	left, err = e.Eval(expr.Children[0])

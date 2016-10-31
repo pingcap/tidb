@@ -106,6 +106,8 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("create table insert_err (id int, c1 varchar(8))")
 	_, err = tk.Exec("insert insert_err values (1, 'abcdabcdabcd')")
 	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
+	_, err = tk.Exec("insert insert_err values (1, '你好，世界')")
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {

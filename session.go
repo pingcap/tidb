@@ -135,6 +135,7 @@ func (s *session) cleanRetryInfo() {
 	}
 }
 
+// If the schema is invalid, we need to rollback the current transaction.
 func (s *session) checkSchemaValidOrRollback() error {
 	var ts uint64
 	if s.txn != nil {
@@ -762,7 +763,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 2
+	currentBootstrapVersion = 3
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

@@ -145,14 +145,13 @@ type RecordSet interface {
 	Close() error
 }
 
-// ResultSetNode interface has ResultFields property which is computed and set by
-// optimizer.InfoBinder during binding process. Implementations include SelectStmt,
-// SubqueryExpr, TableSource, TableName and Join.
+// The ResultSetNode interface has a ResultFields property, represents a Node that returns result set.
+// Implementations include SelectStmt, SubqueryExpr, TableSource, TableName and Join.
 type ResultSetNode interface {
 	Node
-	// GetResultFields gets result fields of the result set node.
+	// GetResultFields gets result fields.
 	GetResultFields() []*ResultField
-	// SetResultFields sets result fields of the result set node.
+	// SetResultFields sets result fields.
 	SetResultFields(fields []*ResultField)
 }
 

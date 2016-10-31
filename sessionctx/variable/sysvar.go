@@ -479,7 +479,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "explicit_defaults_for_timestamp", "OFF"},
 	{ScopeNone, "performance_schema_events_waits_history_size", "10"},
 	{ScopeGlobal, "log_syslog_tag", ""},
-	{ScopeGlobal | ScopeSession, "tx_read_only", "OFF"},
+	{ScopeGlobal | ScopeSession, "tx_read_only", "0"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_point", ""},
 	{ScopeGlobal, "innodb_undo_log_truncate", ""},
 	{ScopeNone, "simplified_binlog_gtid_recovery", "OFF"},

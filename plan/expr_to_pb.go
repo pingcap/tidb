@@ -125,11 +125,13 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 		return compareOpsToPBExpr(client, expr)
 	case ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Mod, ast.IntDiv:
 		return arithmeticalOpsToPBExpr(client, expr)
-	case ast.AndAnd, ast.OrOr, ast.UnaryNot:
+	case ast.AndAnd, ast.OrOr, ast.UnaryNot, ast.LogicXor:
 		return logicalOpsToPBExpr(client, expr)
 	case ast.Coalesce, ast.Case, ast.Round, ast.Abs, ast.Pow,
 		ast.If, ast.Ifnull, ast.Nullif, ast.Strcmp, ast.IsNull:
 		return builtinFuncToPBExpr(client, expr)
+	case ast.And, ast.Or, ast.BitNeg, ast.Xor, ast.LeftShift, ast.RightShift:
+		return bitwiseFuncToPBExpr(client, expr)
 	default:
 		return nil
 	}
@@ -186,8 +188,54 @@ func logicalOpsToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 		tp = tipb.ExprType_And
 	case ast.OrOr:
 		tp = tipb.ExprType_Or
+	case ast.LogicXor:
+		tp = tipb.ExprType_Xor
 	case ast.UnaryNot:
 		tp = tipb.ExprType_Not
+	}
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+
+	expr0 := exprToPB(client, expr.Args[0])
+	if expr0 == nil {
+		return nil
+	}
+	expr1 := exprToPB(client, expr.Args[1])
+	if expr1 == nil {
+		return nil
+	}
+	return &tipb.Expr{
+		Tp:       tp,
+		Children: []*tipb.Expr{expr0, expr1}}
+}
+
+func bitwiseFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+	var tp tipb.ExprType
+	switch expr.FuncName.L {
+	case ast.And:
+		tp = tipb.ExprType_BitAnd
+	case ast.Or:
+		tp = tipb.ExprType_BitOr
+	case ast.Xor:
+		tp = tipb.ExprType_BitXor
+	case ast.LeftShift:
+		tp = tipb.ExprType_LeftShift
+	case ast.RightShift:
+		tp = tipb.ExprType_RightShift
+	case ast.BitNeg:
+		return bitNegToPBExpr(client, expr)
+	}
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+	expr0 := exprToPB(client, expr.Args[0])
+	if expr0 == nil {
+		return nil
+	}
+	expr1 := exprToPB(client, expr.Args[1])
+	if expr1 == nil {
+		return nil
 	}
 	return convertToPBExpr(client, expr, tp)
 }
@@ -245,6 +293,21 @@ func likeToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr 
 	return &tipb.Expr{
 		Tp:       tp,
 		Children: []*tipb.Expr{expr0, expr1}}
+}
+
+func bitNegToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_BitNeg)) {
+		return nil
+	}
+
+	child := exprToPB(client, expr.Args[0])
+	if child == nil {
+		return nil
+	}
+
+	return &tipb.Expr{
+		Tp:       tipb.ExprType_BitNeg,
+		Children: []*tipb.Expr{child}}
 }
 
 func constListToPB(client kv.Client, list []expression.Expression) *tipb.Expr {

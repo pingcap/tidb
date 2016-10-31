@@ -146,6 +146,7 @@ const (
 	tidbServerVersionVar = "tidb_server_version" //
 	// Const for TiDB server version 2.
 	version2 = 2
+	version3 = 3
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -210,7 +211,12 @@ func upgrade(s Session) error {
 	// Do upgrade works then update bootstrap version.
 	if ver < version2 {
 		upgradeToVer2(s)
+		ver = version2
 	}
+	if ver < version3 {
+		upgradeToVer3(s)
+	}
+
 	updateBootstrapVer(s)
 	_, err = s.Execute("COMMIT")
 
@@ -247,6 +253,14 @@ func upgradeToVer2(s Session) {
 	}
 	sql := fmt.Sprintf("INSERT IGNORE INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
 		strings.Join(values, ", "))
+	mustExecute(s, sql)
+}
+
+// Update to version 3.
+func upgradeToVer3(s Session) {
+	// Version 3 fix tx_read_only variable value.
+	sql := fmt.Sprintf("UPDATE %s.%s set variable_value = '0' where variable_name = 'tx_read_only';",
+		mysql.SystemDB, mysql.GlobalVariablesTable)
 	mustExecute(s, sql)
 }
 
