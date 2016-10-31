@@ -41,7 +41,7 @@ type AggregationFunction interface {
 	// SetMode sets aggFunctionMode for aggregate function.
 	SetMode(mode AggFunctionMode)
 
-	// GetMode sets aggFunctionMode for aggregate function.
+	// GetMode gets aggFunctionMode from aggregate function.
 	GetMode() AggFunctionMode
 
 	// GetGroupResult will be called when all data have been processed.
