@@ -399,7 +399,7 @@ func (s *schemaValidityInfo) Check(lastFailedTS uint64) error {
 	return ErrLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
 }
 
-// NewDomain creates a new domain.
+// NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	d = &Domain{store: store,
 		SchemaValidity: &schemaValidityInfo{}}
