@@ -19,6 +19,20 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+func (e *Evaluator) evalControlFuncs(expr *tipb.Expr) (d types.Datum, err error) {
+	switch expr.GetTp() {
+	case tipb.ExprType_Case:
+		return e.evalCaseWhen(expr)
+	case tipb.ExprType_If:
+		return e.evalIf(expr)
+	case tipb.ExprType_IfNull:
+		return e.evalIfNull(expr)
+	case tipb.ExprType_NullIf:
+		return e.evalNullIf(expr)
+	}
+	return
+}
+
 func (e *Evaluator) evalIf(expr *tipb.Expr) (d types.Datum, err error) {
 	if len(expr.Children) != 3 {
 		err = ErrInvalid.Gen("IF needs 3 operands but got %d", len(expr.Children))
@@ -55,9 +69,9 @@ func (e *Evaluator) evalIfNull(expr *tipb.Expr) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	if left.IsNull() {
-		return right
+		return right, nil
 	}
-	return left
+	return left, nil
 }
 
 func (e *Evaluator) evalNullIf(expr *tipb.Expr) (types.Datum, error) {
@@ -74,10 +88,7 @@ func (e *Evaluator) evalNullIf(expr *tipb.Expr) (types.Datum, error) {
 		return ans, errors.Trace(err)
 	}
 	if x == 0 {
-		return left, nil
+		return ans, nil
 	}
-	ans.SetNull()
-	return ans, nil
+	return left, nil
 }
-
-

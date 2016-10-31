@@ -66,17 +66,27 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus,
 		tipb.ExprType_Mul, tipb.ExprType_IntDiv, tipb.ExprType_Mod:
 		return e.evalArithmeticOps(expr)
-	case tipb.ExprType_Case:
-		return e.evalCaseWhen(expr)
+	// control functions
+	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull, tipb.ExprType_NullIf:
+		return e.evalControlFuncs(expr)
+	// math functions
+	case tipb.ExprType_Pow, tipb.ExprType_Round, tipb.ExprType_Abs:
+		return e.evalMathFuncs(expr)
+	// string functions
+	case tipb.ExprType_Strcmp:
+		return e.evalStringFuncs(expr)
+	// other functions
 	case tipb.ExprType_Coalesce:
 		return e.evalCoalesce(expr)
+	case tipb.ExprType_IsNull:
+		return e.evalIsNull(expr)
 	}
 	return types.Datum{}, nil
 }
 
 func (e *Evaluator) evalTwoChildren(expr *tipb.Expr) (left, right types.Datum, err error) {
 	if len(expr.Children) != 2 {
-		err = ErrInvalid.Gen("need 2 operands but got %d", len(expr.Children))
+		err = ErrInvalid.Gen("%s need 2 operands but got %d", expr.GetTp(), len(expr.Children))
 		return
 	}
 	left, err = e.Eval(expr.Children[0])
@@ -103,6 +113,3 @@ func (e *Evaluator) evalIsNull(expr *tipb.Expr) (types.Datum, error) {
 	}
 	return types.NewIntDatum(0), nil
 }
-
-
-

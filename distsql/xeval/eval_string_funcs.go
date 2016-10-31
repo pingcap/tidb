@@ -19,6 +19,14 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+func (e *Evaluator) evalStringFuncs(expr *tipb.Expr) (d types.Datum, err error) {
+	switch expr.GetTp() {
+	case tipb.ExprType_Strcmp:
+		return e.evalStrcmp(expr)
+	}
+	return
+}
+
 func (e *Evaluator) evalStrcmp(expr *tipb.Expr) (types.Datum, error) {
 	left, right, err := e.evalTwoChildren(expr)
 	if err != nil {

@@ -15,11 +15,23 @@ package xeval
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"math"
-	"github.com/pingcap/tidb/mysql"
 )
+
+func (e *Evaluator) evalMathFuncs(expr *tipb.Expr) (d types.Datum, err error) {
+	switch expr.GetTp() {
+	case tipb.ExprType_Pow:
+		return e.evalPow(expr)
+	case tipb.ExprType_Round:
+		return e.evalRound(expr)
+	case tipb.ExprType_Abs:
+		return e.evalAbs(expr)
+	}
+	return
+}
 
 func (e *Evaluator) evalAbs(expr *tipb.Expr) (types.Datum, error) {
 	if len(expr.Children) != 1 {
@@ -56,15 +68,28 @@ func (e *Evaluator) evalPow(expr *tipb.Expr) (types.Datum, error) {
 	}
 	d := types.Datum{}
 	if left.IsNull() || right.IsNull() {
-		d.SetNull()
 		return d, nil
 	}
-	d.SetFloat64(math.Pow(left, right))
+	x, err := left.ToFloat64()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	y, err := right.ToFloat64()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetFloat64(math.Pow(x, y))
 	return d, nil
 }
 
 func (e *Evaluator) evalRound(expr *tipb.Expr) (types.Datum, error) {
 	child0, err := e.Eval(expr.Children[0])
+	if err != nil {
+		return types.Datum{}, err
+	}
+	if child0.IsNull() {
+		return types.Datum{}, nil
+	}
 	x, err := child0.ToDecimal()
 	if err != nil {
 		return types.Datum{}, err
@@ -74,6 +99,9 @@ func (e *Evaluator) evalRound(expr *tipb.Expr) (types.Datum, error) {
 		child1, err := e.Eval(expr.Children[1])
 		if err != nil {
 			return types.Datum{}, err
+		}
+		if child1.IsNull() {
+			return types.Datum{}, nil
 		}
 		d, err = child1.ToInt64()
 		if err != nil {
