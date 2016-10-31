@@ -152,7 +152,7 @@ func (e *ShowExec) fetchShowTables() error {
 	// sort for tables
 	var tableNames []string
 	for _, v := range e.is.SchemaTables(e.DBName) {
-		tableNames = append(tableNames, v.Meta().Name.L)
+		tableNames = append(tableNames, v.Meta().Name.O)
 	}
 	sort.Strings(tableNames)
 	for _, v := range tableNames {
@@ -175,7 +175,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	// sort for tables
 	var tableNames []string
 	for _, v := range e.is.SchemaTables(e.DBName) {
-		tableNames = append(tableNames, v.Meta().Name.L)
+		tableNames = append(tableNames, v.Meta().Name.O)
 	}
 	sort.Strings(tableNames)
 
@@ -449,16 +449,16 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 		cols := make([]string, 0, len(fk.Cols))
 		for _, c := range fk.Cols {
-			cols = append(cols, c.L)
+			cols = append(cols, c.O)
 		}
 
 		refCols := make([]string, 0, len(fk.RefCols))
 		for _, c := range fk.Cols {
-			refCols = append(refCols, c.L)
+			refCols = append(refCols, c.O)
 		}
 
-		buf.WriteString(fmt.Sprintf("  CONSTRAINT `%s` FOREIGN KEY (`%s`)", fk.Name.L, strings.Join(cols, "`,`")))
-		buf.WriteString(fmt.Sprintf(" REFERENCES `%s` (`%s`)", fk.RefTable.L, strings.Join(refCols, "`,`")))
+		buf.WriteString(fmt.Sprintf("  CONSTRAINT `%s` FOREIGN KEY (`%s`)", fk.Name.O, strings.Join(cols, "`,`")))
+		buf.WriteString(fmt.Sprintf(" REFERENCES `%s` (`%s`)", fk.RefTable.O, strings.Join(refCols, "`,`")))
 
 		if ast.ReferOptionType(fk.OnDelete) != ast.ReferOptionNoOption {
 			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete)))
