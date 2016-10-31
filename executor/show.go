@@ -114,7 +114,7 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowTriggers()
 	case ast.ShowVariables:
 		return e.fetchShowVariables()
-	case ast.ShowWarnings:
+	case ast.ShowWarnings, ast.ShowProcessList:
 		// empty result
 	}
 	return nil

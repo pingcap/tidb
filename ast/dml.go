@@ -908,6 +908,7 @@ const (
 	ShowTriggers
 	ShowProcedureStatus
 	ShowIndex
+	ShowProcessList
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.
@@ -960,7 +961,7 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	switch n.Tp {
-	case ShowTriggers, ShowProcedureStatus:
+	case ShowTriggers, ShowProcedureStatus, ShowProcessList:
 		// We don't have any data to return for those types,
 		// but visiting Where may cause resolving error, so return here to avoid error.
 		return v.Leave(n)

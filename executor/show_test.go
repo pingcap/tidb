@@ -85,6 +85,7 @@ func (s *testSuite) TestShow(c *C) {
 
 	tk.MustQuery("SHOW PROCEDURE STATUS WHERE Db='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW TRIGGERS WHERE Trigger ='test'").Check(testkit.Rows())
+	tk.MustQuery("SHOW processlist;").Check(testkit.Rows())
 }
 
 type stats struct {
