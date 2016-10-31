@@ -26,7 +26,7 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustExec("use test")
 	testSQL := `drop table if exists show_test`
 	tk.MustExec(testSQL)
-	testSQL = `create table show_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int comment "c1_comment", c2 int, c3 int default 1) ENGINE=InnoDB AUTO_INCREMENT=28934 DEFAULT CHARSET=utf8 COMMENT "table_comment";`
+	testSQL = `create table SHOW_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int comment "c1_comment", c2 int, c3 int default 1) ENGINE=InnoDB AUTO_INCREMENT=28934 DEFAULT CHARSET=utf8 COMMENT "table_comment";`
 	tk.MustExec(testSQL)
 
 	testSQL = "show columns from show_test;"
@@ -39,7 +39,7 @@ func (s *testSuite) TestShow(c *C) {
 	row := result.Rows()[0]
 	// For issue https://github.com/pingcap/tidb/issues/1061
 	expectedRow := []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 AUTO_INCREMENT=28934 COMMENT='table_comment'"}
+		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 AUTO_INCREMENT=28934 COMMENT='table_comment'"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -73,7 +73,9 @@ func (s *testSuite) TestShow(c *C) {
 	// For show like with escape
 	testSQL = `show tables like 'show\_test'`
 	result = tk.MustQuery(testSQL)
-	c.Check(result.Rows(), HasLen, 1)
+	rows := result.Rows()
+	c.Check(rows, HasLen, 1)
+	c.Check(rows[0], DeepEquals, []interface{}{"SHOW_test"})
 
 	var ss stats
 	variable.RegisterStatistics(ss)
@@ -110,14 +112,14 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 	testSQL = `CREATE TABLE t1 (id int PRIMARY KEY AUTO_INCREMENT)`
 	tk.MustExec(testSQL)
 
-	testSQL = "create table show_test (`id` int PRIMARY KEY AUTO_INCREMENT, FOREIGN KEY `fk` (`id`) REFERENCES `t1` (`a`) ON DELETE CASCADE ON UPDATE CASCADE) ENGINE=InnoDB"
+	testSQL = "create table show_test (`id` int PRIMARY KEY AUTO_INCREMENT, FOREIGN KEY `Fk` (`id`) REFERENCES `t1` (`a`) ON DELETE CASCADE ON UPDATE CASCADE) ENGINE=InnoDB"
 	tk.MustExec(testSQL)
 	testSQL = "show create table show_test;"
 	result := tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
 	row := result.Rows()[0]
 	expectedRow := []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n PRIMARY KEY (`id`),\n  CONSTRAINT `fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB"}
+		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n PRIMARY KEY (`id`),\n  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -134,14 +136,14 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
-	testSQL = "ALTER TABLE SHOW_TEST ADD CONSTRAINT `fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n "
+	testSQL = "ALTER TABLE SHOW_TEST ADD CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n "
 	tk.MustExec(testSQL)
 	testSQL = "show create table show_test;"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n PRIMARY KEY (`id`),\n  CONSTRAINT `fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB"}
+		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n PRIMARY KEY (`id`),\n  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
