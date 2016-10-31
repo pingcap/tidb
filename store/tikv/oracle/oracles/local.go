@@ -20,14 +20,12 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
-const epochShiftBits = 18
-
 var _ oracle.Oracle = &localOracle{}
 
 type localOracle struct {
-	mu              sync.Mutex
-	lastTimeStampTs int64
-	n               int64
+	sync.Mutex
+	lastTimeStampTS uint64
+	n               uint64
 }
 
 // NewLocalOracle creates an Oracle that uses local time as data source.
@@ -35,20 +33,23 @@ func NewLocalOracle() oracle.Oracle {
 	return &localOracle{}
 }
 
-func (l *localOracle) IsExpired(lockTs uint64, TTL uint64) (bool, error) {
-	beginMs := lockTs >> epochShiftBits
-	return uint64(time.Now().UnixNano()/int64(time.Millisecond)) >= (beginMs + TTL), nil
+func (l *localOracle) IsExpired(lockTS uint64, TTL uint64) bool {
+	return oracle.GetPhysical(time.Now()) >= oracle.ExtractPhysical(lockTS)+int64(TTL)
 }
 
 func (l *localOracle) GetTimestamp() (uint64, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	ts := (time.Now().UnixNano() / int64(time.Millisecond)) << epochShiftBits
-	if l.lastTimeStampTs == ts {
+	l.Lock()
+	defer l.Unlock()
+	physical := oracle.GetPhysical(time.Now())
+	ts := oracle.ComposeTS(physical, 0)
+	if l.lastTimeStampTS == ts {
 		l.n++
 		return uint64(ts + l.n), nil
 	}
-	l.lastTimeStampTs = ts
+	l.lastTimeStampTS = ts
 	l.n = 0
 	return uint64(ts), nil
+}
+
+func (l *localOracle) Close() {
 }

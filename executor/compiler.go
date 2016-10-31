@@ -15,11 +15,13 @@ package executor
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
@@ -27,12 +29,42 @@ import (
 type Compiler struct {
 }
 
-// Compile compiles an ast.StmtNode to a stmt.Statement.
-// If it is supported to use new plan and executer, it optimizes the node to
-// a plan, and we wrap the plan in an adapter as stmt.Statement.
-// If it is not supported, the node will be converted to old statement.
+func statementLabel(node ast.StmtNode) string {
+	switch node.(type) {
+	case *ast.SelectStmt:
+		return "Select"
+	case *ast.DeleteStmt:
+		return "Delete"
+	case *ast.InsertStmt:
+		if node.(*ast.InsertStmt).IsReplace {
+			return "Replace"
+		}
+		return "Insert"
+	case *ast.UnionStmt:
+		return "Union"
+	case *ast.UpdateStmt:
+		return "Update"
+	case *ast.CreateIndexStmt:
+		return "CreateIndex"
+	case *ast.CreateTableStmt:
+		return "CreateTable"
+	case *ast.CreateDatabaseStmt:
+		return "CreateDatabase"
+	case *ast.DropDatabaseStmt:
+		return "DropDatabase"
+	case *ast.DropTableStmt:
+		return "DropTable"
+	case *ast.DropIndexStmt:
+		return "DropIndex"
+	}
+	return "unknown"
+}
+
+// Compile compiles an ast.StmtNode to an ast.Statement.
+// After preprocessed and validated, it will be optimized to a plan,
+// then wrappped to an adapter *statement as stmt.Statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
-	ast.SetFlag(node)
+	stmtNodeCounter.WithLabelValues(statementLabel(node)).Inc()
 	if _, ok := node.(*ast.UpdateStmt); ok {
 		sVars := variable.GetSessionVars(ctx)
 		sVars.InUpdateStmt = true
@@ -41,7 +73,14 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 		}()
 	}
 
-	is := sessionctx.GetDomain(ctx).InfoSchema()
+	var is infoschema.InfoSchema
+	if snap := variable.GetSessionVars(ctx).SnapshotInfoschema; snap != nil {
+		is = snap.(infoschema.InfoSchema)
+		log.Infof("use snapshot schema %d", is.SchemaMetaVersion())
+	} else {
+		is = sessionctx.GetDomain(ctx).InfoSchema()
+		binloginfo.SetSchemaVersion(ctx, is.SchemaMetaVersion())
+	}
 	if err := plan.Preprocess(node, is, ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -49,9 +88,7 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 	if err := plan.Validate(node, false); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sb := NewSubQueryBuilder(is)
-
-	p, err := plan.Optimize(ctx, node, sb, is)
+	p, err := plan.Optimize(ctx, node, is)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -63,9 +100,4 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 		isDDL: isDDL,
 	}
 	return sa, nil
-}
-
-// NewSubQueryBuilder builds and returns a new SubQuery builder.
-func NewSubQueryBuilder(is infoschema.InfoSchema) plan.SubQueryBuilder {
-	return &subqueryBuilder{is: is}
 }

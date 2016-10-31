@@ -47,12 +47,20 @@ func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
 	var mutations []*kvrpcpb.Mutation
 	for i := 0; i < len(kvpairs); i += 2 {
 		mutations = append(mutations, &kvrpcpb.Mutation{
-			Op:    kvrpcpb.Op_Put.Enum(),
+			Op:    kvrpcpb.Op_Put,
 			Key:   encodeKey(kvpairs[i]),
 			Value: []byte(kvpairs[i+1]),
 		})
 	}
 	return mutations
+}
+
+func lock(key, primary string, ts uint64) *kvrpcpb.LockInfo {
+	return &kvrpcpb.LockInfo{
+		Key:         encodeKey(key),
+		PrimaryLock: encodeKey(primary),
+		LockVersion: ts,
+	}
 }
 
 func (s *testMockTiKVSuite) SetUpTest(c *C) {
@@ -89,7 +97,7 @@ func (s *testMockTiKVSuite) mustPutOK(c *C, key, value string, startTS, commitTS
 func (s *testMockTiKVSuite) mustDeleteOK(c *C, key string, startTS, commitTS uint64) {
 	mutations := []*kvrpcpb.Mutation{
 		{
-			Op:  kvrpcpb.Op_Del.Enum(),
+			Op:  kvrpcpb.Op_Del,
 			Key: encodeKey(key),
 		},
 	}
@@ -138,16 +146,14 @@ func (s *testMockTiKVSuite) mustRollbackErr(c *C, keys []string, startTS uint64)
 	c.Assert(err, NotNil)
 }
 
-func (s *testMockTiKVSuite) mustCommitThenGetOK(c *C, key string, lockTS, commitTS, getTS uint64, expect string) {
-	val, err := s.store.CommitThenGet(encodeKey(key), lockTS, commitTS, getTS)
+func (s *testMockTiKVSuite) mustScanLock(c *C, maxTs uint64, expect []*kvrpcpb.LockInfo) {
+	locks, err := s.store.ScanLock(nil, nil, maxTs)
 	c.Assert(err, IsNil)
-	c.Assert(string(val), Equals, expect)
+	c.Assert(locks, DeepEquals, expect)
 }
 
-func (s *testMockTiKVSuite) mustRollbackThenGetOK(c *C, key string, lockTS uint64, expect string) {
-	val, err := s.store.RollbackThenGet(encodeKey(key), lockTS)
-	c.Assert(err, IsNil)
-	c.Assert(string(val), Equals, expect)
+func (s *testMockTiKVSuite) mustResolveLock(c *C, startTS, commitTS uint64) {
+	c.Assert(s.store.ResolveLock(nil, nil, startTS, commitTS), IsNil)
 }
 
 func (s *testMockTiKVSuite) TestGet(c *C) {
@@ -176,10 +182,6 @@ func (s *testMockTiKVSuite) TestCleanupRollback(c *C) {
 	s.mustGetErr(c, "secondary", 12)
 	s.mustCommitOK(c, []string{"primary"}, 5, 10)
 	s.mustRollbackErr(c, []string{"primary"}, 5)
-	s.mustCommitThenGetOK(c, "secondary", 5, 10, 8, "s-0")
-	s.mustCommitThenGetOK(c, "secondary", 5, 10, 12, "s-5")
-	s.mustCommitThenGetOK(c, "secondary", 5, 10, 8, "s-0")
-	s.mustCommitThenGetOK(c, "secondary", 5, 10, 12, "s-5")
 }
 
 func (s *testMockTiKVSuite) TestScan(c *C) {
@@ -239,4 +241,29 @@ func (s *testMockTiKVSuite) TestScan(c *C) {
 	checkV20()
 	checkV30()
 	checkV40()
+}
+
+func (s *testMockTiKVSuite) TestScanLock(c *C) {
+	s.mustPutOK(c, "k1", "v1", 1, 2)
+	s.mustPrewriteOK(c, putMutations("p1", "v5", "s1", "v5"), "p1", 5)
+	s.mustPrewriteOK(c, putMutations("p2", "v10", "s2", "v10"), "p2", 10)
+	s.mustPrewriteOK(c, putMutations("p3", "v20", "s3", "v20"), "p3", 20)
+	s.mustScanLock(c, 10, []*kvrpcpb.LockInfo{
+		lock("p1", "p1", 5),
+		lock("p2", "p2", 10),
+		lock("s1", "p1", 5),
+		lock("s2", "p2", 10),
+	})
+}
+
+func (s *testMockTiKVSuite) TestResolveLock(c *C) {
+	s.mustPrewriteOK(c, putMutations("p1", "v5", "s1", "v5"), "p1", 5)
+	s.mustPrewriteOK(c, putMutations("p2", "v10", "s2", "v10"), "p2", 10)
+	s.mustResolveLock(c, 5, 0)
+	s.mustResolveLock(c, 10, 20)
+	s.mustGetNone(c, "p1", 20)
+	s.mustGetNone(c, "s1", 30)
+	s.mustGetOK(c, "p2", 20, "v10")
+	s.mustGetOK(c, "s2", 30, "v10")
+	s.mustScanLock(c, 30, nil)
 }

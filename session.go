@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -48,23 +49,26 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-binlog"
 )
 
 // Session context
 type Session interface {
-	Status() uint16                              // Flag of current status, such as autocommit
-	LastInsertID() uint64                        // Last inserted auto_increment id
-	AffectedRows() uint64                        // Affected rows by latest executed stmt
-	Execute(sql string) ([]ast.RecordSet, error) // Execute a sql statement
-	String() string                              // For debug
+	Status() uint16                               // Flag of current status, such as autocommit.
+	LastInsertID() uint64                         // Last inserted auto_increment id.
+	AffectedRows() uint64                         // Affected rows by latest executed stmt.
+	SetValue(key fmt.Stringer, value interface{}) // SetValue saves a value associated with this session for key.
+	Value(key fmt.Stringer) interface{}           // Value returns the value associated with this session for key.
+	Execute(sql string) ([]ast.RecordSet, error)  // Execute a sql statement.
+	String() string                               // For debug
 	CommitTxn() error
 	RollbackTxn() error
-	// For execute prepare statement in binary protocol
+	// For execute prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
-	// Execute a prepared statement
+	// Execute a prepared statement.
 	ExecutePreparedStmt(stmtID uint32, param ...interface{}) (ast.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
-	SetClientCapability(uint32) // Set client capability flags
+	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	Close() error
 	Retry() error
@@ -117,8 +121,7 @@ type session struct {
 	store       kv.Storage
 	sid         int64
 	history     stmtHistory
-	initing     bool // Running bootstrap using this session.
-	maxRetryCnt int  // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
+	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
 
@@ -133,6 +136,7 @@ func (s *session) cleanRetryInfo() {
 	}
 }
 
+// If the schema is invalid, we need to rollback the current transaction.
 func (s *session) checkSchemaValidOrRollback() error {
 	var ts uint64
 	if s.txn != nil {
@@ -186,10 +190,7 @@ func (s *session) finishTxn(rollback bool) error {
 		s.ClearValue(executor.DirtyDBKey)
 		s.txn = nil
 		variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, false)
-		// Update tps metrics
-		if !variable.GetSessionVars(s).RetryInfo.Retrying {
-			tpsMetrics.Add(1)
-		}
+		binloginfo.ClearBinlog(s)
 	}()
 
 	if rollback {
@@ -197,7 +198,20 @@ func (s *session) finishTxn(rollback bool) error {
 		s.cleanRetryInfo()
 		return s.txn.Rollback()
 	}
-
+	if binloginfo.PumpClient != nil {
+		prewriteValue := binloginfo.GetPrewriteValue(s, false)
+		if prewriteValue != nil {
+			prewriteData, err := prewriteValue.Marshal()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			bin := &binlog.Binlog{
+				Tp:            binlog.BinlogType_Prewrite,
+				PrewriteValue: prewriteData,
+			}
+			s.txn.SetOption(kv.BinlogData, bin)
+		}
+	}
 	err := s.txn.Commit()
 	if err != nil {
 		if !variable.GetSessionVars(s).RetryInfo.Retrying && kv.IsRetryableError(err) {
@@ -224,6 +238,10 @@ func (s *session) CommitTxn() error {
 
 func (s *session) RollbackTxn() error {
 	return s.finishTxn(true)
+}
+
+func (s *session) GetClient() kv.Client {
+	return s.store.GetClient()
 }
 
 func (s *session) String() string {
@@ -324,7 +342,10 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.Record
 	// For example only support DML on system meta table.
 	// TODO: Add more restrictions.
 	log.Debugf("Executing %s [%s]", st.OriginText(), sql)
+	sessVar := variable.GetSessionVars(ctx)
+	sessVar.InRestrictedSQL = true
 	rs, err := st.Exec(ctx)
+	sessVar.InRestrictedSQL = false
 	return rs, errors.Trace(err)
 }
 
@@ -358,6 +379,10 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
+	if ctx.Value(context.Initing) != nil {
+		// When running bootstrap or upgrade, we should not access global storage.
+		return "", nil
+	}
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	sysVar, err := s.getExecRet(ctx, sql)
@@ -379,40 +404,43 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 }
 
 // IsAutocommit checks if it is in the auto-commit mode.
-func (s *session) isAutocommit(ctx context.Context) bool {
+func (s *session) isAutocommit(ctx context.Context) (bool, error) {
 	sessionVar := variable.GetSessionVars(ctx)
 	autocommit := sessionVar.GetSystemVar("autocommit")
 	if autocommit.IsNull() {
-		if s.initing {
-			return false
+		if ctx.Value(context.Initing) != nil {
+			return false, nil
 		}
 		autocommitStr, err := s.GetGlobalSysVar(ctx, "autocommit")
 		if err != nil {
-			log.Errorf("Get global sys var error: %v", err)
-			return false
+			return false, errors.Trace(err)
 		}
 		autocommit.SetString(autocommitStr)
 		err = sessionVar.SetSystemVar("autocommit", autocommit)
 		if err != nil {
-			log.Errorf("Set session sys var error: %v", err)
+			return false, errors.Trace(err)
 		}
 	}
 	autocommitStr := autocommit.GetString()
 	if autocommitStr == "ON" || autocommitStr == "on" || autocommitStr == "1" {
 		variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, true)
-		return true
+		return true, nil
 	}
 	variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, false)
-	return false
+	return false, nil
 }
 
-func (s *session) ShouldAutocommit(ctx context.Context) bool {
+func (s *session) ShouldAutocommit(ctx context.Context) (bool, error) {
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK.
-	if variable.GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 && s.isAutocommit(ctx) {
-		return true
+	ac, err := s.isAutocommit(ctx)
+	if err != nil {
+		return false, errors.Trace(err)
 	}
-	return false
+	if variable.GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 && ac {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
@@ -423,33 +451,46 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	if err := s.checkSchemaValidOrRollback(); err != nil {
 		return nil, errors.Trace(err)
 	}
+	startTS := time.Now()
 	charset, collation := getCtxCharsetInfo(s)
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", sql, err)
 		return nil, errors.Trace(err)
 	}
+	sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
 	var rs []ast.RecordSet
 	ph := sessionctx.GetDomain(s).PerfSchema()
 	for i, rst := range rawStmts {
+		startTS := time.Now()
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
 			log.Errorf("Syntax error: %s", sql)
 			log.Errorf("Error occurs at %s.", err1)
 			return nil, errors.Trace(err1)
 		}
+		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 		id := variable.GetSessionVars(s).ConnectionID
 		s.stmtState = ph.StartStatement(sql, id, perfschema.CallerNameSessionExecute, rawStmts[i])
+		s.SetValue(context.QueryString, sql)
+
+		startTS = time.Now()
 		r, err := runStmt(s, st)
 		ph.EndStatement(s.stmtState)
 		if err != nil {
 			log.Warnf("session:%v, err:%v", s, err)
 			return nil, errors.Trace(err)
 		}
+		sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
 		if r != nil {
 			rs = append(rs, r)
 		}
+	}
+
+	if variable.GetSessionVars(s).ClientCapability&mysql.ClientMultiResults == 0 && len(rs) > 1 {
+		// return the first recordset if client doesn't support ClientMultiResults.
+		rs = rs[:1]
 	}
 	return rs, nil
 }
@@ -544,14 +585,21 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 // In this situation, if current transaction is still in progress,
 // there will be an implicit commit and create a new transaction.
 func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
-	var err error
+	var (
+		err error
+		ac  bool
+	)
 	if s.txn == nil {
 		s.resetHistory()
 		s.txn, err = s.store.Begin()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if !s.isAutocommit(s) {
+		ac, err = s.isAutocommit(s)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !ac {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		log.Infof("New txn:%s in session:%d", s.txn, s.sid)
@@ -564,8 +612,12 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if !s.isAutocommit(s) {
+		ac, err = s.isAutocommit(s)
+		if !ac {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		log.Warnf("Force new txn:%s in session:%d", s.txn, s.sid)
 	}
@@ -684,8 +736,8 @@ func CreateSession(store kv.Storage) (Session, error) {
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 
-	ok := isBoostrapped(store)
-	if !ok {
+	ver := getStoreBootstrapVersion(store)
+	if ver == notBootstrapped {
 		// if no bootstrap and storage is remote, we must use a little lease time to
 		// bootstrap quickly, after bootstrapped, we will reset the lease time.
 		// TODO: Using a bootstap tool for doing this may be better later.
@@ -693,15 +745,19 @@ func CreateSession(store kv.Storage) (Session, error) {
 			sessionctx.GetDomain(s).SetLease(chooseMinLease(100*time.Millisecond, schemaLease))
 		}
 
-		s.initing = true
+		s.SetValue(context.Initing, true)
 		bootstrap(s)
-		s.initing = false
+		s.ClearValue(context.Initing)
 
 		if !localstore.IsLocalStore(store) {
 			sessionctx.GetDomain(s).SetLease(schemaLease)
 		}
 
-		finishBoostrap(store)
+		finishBootstrap(store)
+	} else if ver < currentBootstrapVersion {
+		s.SetValue(context.Initing, true)
+		upgrade(s)
+		s.ClearValue(context.Initing)
 	}
 
 	// TODO: Add auth here
@@ -710,18 +766,24 @@ func CreateSession(store kv.Storage) (Session, error) {
 	return s, nil
 }
 
-func isBoostrapped(store kv.Storage) bool {
+const (
+	notBootstrapped         = 0
+	currentBootstrapVersion = 3
+)
+
+func getStoreBootstrapVersion(store kv.Storage) int64 {
 	// check in memory
 	_, ok := storeBootstrapped[store.UUID()]
 	if ok {
-		return true
+		return currentBootstrapVersion
 	}
 
+	var ver int64
 	// check in kv store
 	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		var err error
 		t := meta.NewMeta(txn)
-		ok, err = t.IsBootstrapped()
+		ver, err = t.GetBootstrapVersion()
 		return errors.Trace(err)
 	})
 
@@ -729,20 +791,20 @@ func isBoostrapped(store kv.Storage) bool {
 		log.Fatalf("check bootstrapped err %v", err)
 	}
 
-	if ok {
+	if ver > notBootstrapped {
 		// here mean memory is not ok, but other server has already finished it
 		storeBootstrapped[store.UUID()] = true
 	}
 
-	return ok
+	return ver
 }
 
-func finishBoostrap(store kv.Storage) {
+func finishBootstrap(store kv.Storage) {
 	storeBootstrapped[store.UUID()] = true
 
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err := t.FinishBootstrap()
+		err := t.FinishBootstrap(currentBootstrapVersion)
 		return errors.Trace(err)
 	})
 	if err != nil {

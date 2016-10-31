@@ -15,7 +15,6 @@ package plan
 
 import (
 	"fmt"
-	"math"
 	"strings"
 )
 
@@ -27,7 +26,7 @@ func ToString(p Plan) string {
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch in.(type) {
-	case *JoinOuter, *JoinInner, *Join, *Union, *NewUnion:
+	case *Join, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin:
 		idxs = append(idxs, len(strs))
 	}
 
@@ -39,14 +38,42 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch x := in.(type) {
 	case *CheckTable:
 		str = "CheckTable"
-	case *IndexScan:
-		str = fmt.Sprintf("Index(%s.%s)", x.Table.Name.L, x.Index.Name.L)
-		if x.LimitCount != nil {
-			str += fmt.Sprintf(" + Limit(%v)", *x.LimitCount)
-		}
 	case *PhysicalIndexScan:
 		str = fmt.Sprintf("Index(%s.%s)%v", x.Table.Name.L, x.Index.Name.L, x.Ranges)
+	case *PhysicalTableScan:
+		str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
+	case *PhysicalDummyScan:
+		str = "Dummy"
+	case *PhysicalHashJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		if x.SmallTable == 0 {
+			str = "RightHashJoin{" + strings.Join(children, "->") + "}"
+		} else {
+			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
+		}
+		for _, eq := range x.EqualConditions {
+			l := eq.Args[0].String()
+			r := eq.Args[1].String()
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
+	case *PhysicalHashSemiJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		if x.WithAux {
+			str = "SemiJoinWithAux{" + strings.Join(children, "->") + "}"
+		} else {
+			str = "SemiJoin{" + strings.Join(children, "->") + "}"
+		}
 	case *Apply:
+		str = fmt.Sprintf("Apply(%s)", ToString(x.InnerPlan))
+	case *PhysicalApply:
 		str = fmt.Sprintf("Apply(%s)", ToString(x.InnerPlan))
 	case *Exists:
 		str = "Exists"
@@ -54,8 +81,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "MaxOneRow"
 	case *Limit:
 		str = "Limit"
-	case *SelectFields:
-		str = "Fields"
 	case *SelectLock:
 		str = "Lock"
 	case *ShowDDL:
@@ -67,34 +92,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		if x.ExecLimit != nil {
 			str += fmt.Sprintf(" + Limit(%v) + Offset(%v)", x.ExecLimit.Count, x.ExecLimit.Offset)
 		}
-	case *TableScan:
-		if len(x.Ranges) > 0 {
-			ran := x.Ranges[0]
-			if ran.LowVal != math.MinInt64 || ran.HighVal != math.MaxInt64 {
-				str = fmt.Sprintf("Range(%s)", x.Table.Name.L)
-			} else {
-				str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
-			}
-		} else {
-			str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
-		}
-		if x.LimitCount != nil {
-			str += fmt.Sprintf(" + Limit(%v)", *x.LimitCount)
-		}
-	case *JoinOuter:
-		last := len(idxs) - 1
-		idx := idxs[last]
-		children := strs[idx:]
-		strs = strs[:idx]
-		str = "OuterJoin{" + strings.Join(children, "->") + "}"
-		idxs = idxs[:last]
-	case *JoinInner:
-		last := len(idxs) - 1
-		idx := idxs[last]
-		children := strs[idx:]
-		strs = strs[:idx]
-		str = "InnerJoin{" + strings.Join(children, "->") + "}"
-		idxs = idxs[:last]
 	case *Join:
 		last := len(idxs) - 1
 		idx := idxs[last]
@@ -102,7 +99,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		str = "Join{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
-	case *Union, *NewUnion:
+	case *Union:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -115,10 +112,22 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Selection"
 	case *Projection:
 		str = "Projection"
+	case *PhysicalAggregation:
+		switch x.AggType {
+		case StreamedAgg:
+			str = "StreamAgg"
+		default:
+			str = "HashAgg"
+		}
 	case *Aggregation:
-		str = "Aggr"
-	case *Aggregate:
-		str = "Aggregate"
+		str = "Aggr("
+		for i, aggFunc := range x.AggFuncs {
+			str += aggFunc.String()
+			if i != len(x.AggFuncs)-1 {
+				str += ","
+			}
+		}
+		str += ")"
 	case *Distinct:
 		str = "Distinct"
 	case *Trim:

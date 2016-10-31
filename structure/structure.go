@@ -24,6 +24,7 @@ const (
 	codeInvalidHashKeyPrefix                = 2
 	codeInvalidListIndex                    = 3
 	codeInvalidListMetaData                 = 4
+	codeWriteOnSnapshot                     = 5
 )
 
 var (
@@ -31,19 +32,22 @@ var (
 	errInvalidHashKeyPrefix = terror.ClassStructure.New(codeInvalidHashKeyPrefix, "invalid encoded hash key prefix")
 	errInvalidListIndex     = terror.ClassStructure.New(codeInvalidListMetaData, "invalid list index")
 	errInvalidListMetaData  = terror.ClassStructure.New(codeInvalidListMetaData, "invalid list meta data")
+	errWriteOnSnapshot      = terror.ClassStructure.New(codeWriteOnSnapshot, "write on snapshot")
 )
 
-// NewStructure creates a TxStructure in transaction txn and with key prefix.
-func NewStructure(txn kv.Transaction, prefix []byte) *TxStructure {
+// NewStructure creates a TxStructure with Retriever, RetrieverMutator and key prefix.
+func NewStructure(reader kv.Retriever, readWriter kv.RetrieverMutator, prefix []byte) *TxStructure {
 	return &TxStructure{
-		txn:    txn,
-		prefix: prefix,
+		reader:     reader,
+		readWriter: readWriter,
+		prefix:     prefix,
 	}
 }
 
 // TxStructure supports some simple data structures like string, hash, list, etc... and
 // you can use these in a transaction.
 type TxStructure struct {
-	txn    kv.Transaction
-	prefix []byte
+	reader     kv.Retriever
+	readWriter kv.RetrieverMutator
+	prefix     []byte
 }

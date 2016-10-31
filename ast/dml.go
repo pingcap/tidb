@@ -24,6 +24,7 @@ var (
 	_ DMLNode = &UpdateStmt{}
 	_ DMLNode = &SelectStmt{}
 	_ DMLNode = &ShowStmt{}
+	_ DMLNode = &LoadDataStmt{}
 
 	_ Node = &Assignment{}
 	_ Node = &ByItem{}
@@ -634,12 +635,55 @@ const (
 	DelayedPriority
 )
 
+// LoadDataStmt is a statement to load data from a specified file, then insert this rows into an existing table.
+// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
+type LoadDataStmt struct {
+	dmlNode
+
+	IsLocal    bool
+	Path       string
+	Table      *TableName
+	FieldsInfo *FieldsClause
+	LinesInfo  *LinesClause
+}
+
+// Accept implements Node Accept interface.
+func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*LoadDataStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
+// FieldsClause represents fields references clause in load data statement.
+type FieldsClause struct {
+	Terminated string
+	Enclosed   byte
+	Escaped    byte
+}
+
+// LinesClause represents lines references clause in load data statement.
+type LinesClause struct {
+	Starting   string
+	Terminated string
+}
+
 // InsertStmt is a statement to insert new rows into an existing table.
 // See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 type InsertStmt struct {
 	dmlNode
 
 	IsReplace   bool
+	Ignore      bool
 	Table       *TableRefsClause
 	Columns     []*ColumnName
 	Lists       [][]ExprNode
@@ -864,6 +908,7 @@ const (
 	ShowTriggers
 	ShowProcedureStatus
 	ShowIndex
+	ShowProcessList
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.
@@ -914,6 +959,14 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Pattern = node.(*PatternLikeExpr)
 	}
+
+	switch n.Tp {
+	case ShowTriggers, ShowProcedureStatus, ShowProcessList:
+		// We don't have any data to return for those types,
+		// but visiting Where may cause resolving error, so return here to avoid error.
+		return v.Leave(n)
+	}
+
 	if n.Where != nil {
 		node, ok := n.Where.Accept(v)
 		if !ok {

@@ -65,10 +65,13 @@ func (d *ddl) handleBgJobQueue() error {
 
 		return errors.Trace(err)
 	})
-
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	d.hookMu.Lock()
+	d.hook.OnBgJobUpdated(job)
+	d.hookMu.Unlock()
 
 	return nil
 }
@@ -81,7 +84,7 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 	switch job.Type {
 	case model.ActionDropSchema:
 		err = d.delReorgSchema(t, job)
-	case model.ActionDropTable:
+	case model.ActionDropTable, model.ActionTruncateTable:
 		err = d.delReorgTable(t, job)
 	default:
 		job.State = model.JobCancelled
@@ -90,10 +93,9 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 
 	if err != nil {
 		if job.State != model.JobCancelled {
-			log.Errorf("run background job err %v", errors.ErrorStack(err))
+			log.Errorf("[ddl] run background job err %v", errors.ErrorStack(err))
 		}
-
-		job.Error = err.Error()
+		job.Error = toTError(err)
 		job.ErrorCount++
 	}
 }
@@ -105,8 +107,15 @@ func (d *ddl) prepareBgJob(t *meta.Meta, ddlJob *model.Job) error {
 		SchemaID: ddlJob.SchemaID,
 		TableID:  ddlJob.TableID,
 		Type:     ddlJob.Type,
-		Args:     ddlJob.Args,
 	}
+
+	if len(ddlJob.Args) >= 2 {
+		// ddlJob.Args[0] is the schema version that isn't necessary in background job and
+		// ddlJob.Args[1] is the table information or the database information.
+		// They will make the background job of dropping schema become more complicated to handle.
+		job.Args = ddlJob.Args[2:]
+	}
+
 	err := t.EnQueueBgJob(job)
 	return errors.Trace(err)
 }
@@ -114,7 +123,7 @@ func (d *ddl) prepareBgJob(t *meta.Meta, ddlJob *model.Job) error {
 // startBgJob starts a background job.
 func (d *ddl) startBgJob(tp model.ActionType) {
 	switch tp {
-	case model.ActionDropSchema, model.ActionDropTable:
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable:
 		asyncNotify(d.bgJobCh)
 	}
 }

@@ -1,2 +1,0 @@
-# systimemon
-System time monitor

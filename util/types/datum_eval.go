@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
@@ -36,7 +37,8 @@ func CoerceArithmetic(a Datum) (d Datum, err error) {
 		t := a.GetMysqlTime()
 		de := t.ToNumber()
 		if t.Fsp == 0 {
-			d.SetInt64(de.IntPart())
+			iVal, _ := de.ToInt()
+			d.SetInt64(iVal)
 			return d, nil
 		}
 		d.SetMysqlDecimal(de)
@@ -46,7 +48,8 @@ func CoerceArithmetic(a Datum) (d Datum, err error) {
 		du := a.GetMysqlDuration()
 		de := du.ToNumber()
 		if du.Fsp == 0 {
-			d.SetInt64(de.IntPart())
+			iVal, _ := de.ToInt()
+			d.SetInt64(iVal)
 			return d, nil
 		}
 		d.SetMysqlDecimal(de)
@@ -103,9 +106,10 @@ func ComputePlus(a, b Datum) (d Datum, err error) {
 	case KindMysqlDecimal:
 		switch b.Kind() {
 		case KindMysqlDecimal:
-			r := a.GetMysqlDecimal().Add(b.GetMysqlDecimal())
+			r := new(mysql.MyDecimal)
+			err = mysql.DecimalAdd(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
 			d.SetMysqlDecimal(r)
-			return d, nil
+			return d, err
 		}
 	}
 	_, err = InvOp2(a.GetValue(), b.GetValue(), opcode.Plus)
@@ -147,9 +151,10 @@ func ComputeMinus(a, b Datum) (d Datum, err error) {
 	case KindMysqlDecimal:
 		switch b.Kind() {
 		case KindMysqlDecimal:
-			r := a.GetMysqlDecimal().Sub(b.GetMysqlDecimal())
+			r := new(mysql.MyDecimal)
+			err = mysql.DecimalSub(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
 			d.SetMysqlDecimal(r)
-			return d, nil
+			return d, err
 		}
 	}
 	_, err = InvOp2(a.GetValue(), b.GetValue(), opcode.Minus)
@@ -191,7 +196,8 @@ func ComputeMul(a, b Datum) (d Datum, err error) {
 	case KindMysqlDecimal:
 		switch b.Kind() {
 		case KindMysqlDecimal:
-			r := a.GetMysqlDecimal().Mul(b.GetMysqlDecimal())
+			r := new(mysql.MyDecimal)
+			err = mysql.DecimalMul(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
 			d.SetMysqlDecimal(r)
 			return d, nil
 		}
@@ -233,13 +239,15 @@ func ComputeDiv(a, b Datum) (d Datum, err error) {
 		if err1 != nil {
 			return d, errors.Trace(err1)
 		}
-		if f, _ := xb.Float64(); f == 0 {
-			// division by zero return null
-			return d, nil
+		// division by zero return null
+		to := new(mysql.MyDecimal)
+		err = mysql.DecimalDiv(xa, xb, to, mysql.DivFracIncr)
+		if err != mysql.ErrDivByZero {
+			d.SetMysqlDecimal(to)
+		} else {
+			err = nil
 		}
-
-		d.SetMysqlDecimal(xa.Div(xb))
-		return d, nil
+		return d, err
 	}
 }
 
@@ -306,13 +314,15 @@ func ComputeMod(a, b Datum) (d Datum, err error) {
 		switch b.Kind() {
 		case KindMysqlDecimal:
 			y := b.GetMysqlDecimal()
-			xf, _ := x.Float64()
-			yf, _ := y.Float64()
-			if yf == 0 {
-				return d, nil
+			to := new(mysql.MyDecimal)
+			err = mysql.DecimalMod(x, y, to)
+			if err != mysql.ErrDivByZero {
+				d.SetMysqlDecimal(to)
+			} else {
+				// div by zero returns nil without error.
+				err = nil
 			}
-			d.SetFloat64(math.Mod(xf, yf))
-			return d, nil
+			return d, err
 		}
 	}
 	_, err = InvOp2(a.GetValue(), b.GetValue(), opcode.Mod)
@@ -363,7 +373,7 @@ func ComputeIntDiv(a, b Datum) (d Datum, err error) {
 		}
 	}
 
-	// if any is none integer, use decimal to calculate
+	// If either is not integer, use decimal to calculate
 	x, err := a.ToDecimal()
 	if err != nil {
 		return d, errors.Trace(err)
@@ -373,11 +383,179 @@ func ComputeIntDiv(a, b Datum) (d Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
-	if f, _ := y.Float64(); f == 0 {
+	to := new(mysql.MyDecimal)
+	err = mysql.DecimalDiv(x, y, to, mysql.DivFracIncr)
+	if err == mysql.ErrDivByZero {
 		return d, nil
 	}
-
-	d.SetInt64(x.Div(y).IntPart())
+	iVal, err1 := to.ToInt()
+	if err == nil {
+		err = err1
+	}
+	d.SetInt64(iVal)
 	return d, nil
+}
+
+// decimal2RoundUint converts a MyDecimal to an uint64 after rounding.
+func decimal2RoundUint(x *mysql.MyDecimal) (uint64, error) {
+	roundX := new(mysql.MyDecimal)
+	x.Round(roundX, 0)
+	var (
+		uintX uint64
+		err   error
+	)
+	if roundX.IsNegative() {
+		intX, err := roundX.ToInt()
+		if err != nil && err != mysql.ErrTruncated {
+			return 0, errors.Trace(err)
+		}
+		uintX = uint64(intX)
+	} else {
+		uintX, err = roundX.ToUint()
+		if err != nil && err != mysql.ErrTruncated {
+			return 0, errors.Trace(err)
+		}
+	}
+
+	return uintX, nil
+}
+
+// ComputeBitAnd computes the result of a & b.
+func ComputeBitAnd(a, b Datum) (d Datum, err error) {
+	aKind, bKind := a.Kind(), b.Kind()
+	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
+		d.SetUint64(a.GetUint64() & b.GetUint64())
+		return
+	}
+	// If either is not integer, we round the operands and then use uint64 to calculate.
+	x, err := convertNonInt2RoundUint64(a)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	y, err := convertNonInt2RoundUint64(b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetUint64(x & y)
+	return d, nil
+}
+
+// ComputeBitOr computes the result of a | b.
+func ComputeBitOr(a, b Datum) (d Datum, err error) {
+	aKind, bKind := a.Kind(), b.Kind()
+	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
+		d.SetUint64(a.GetUint64() | b.GetUint64())
+		return
+	}
+	// If either is not integer, we round the operands and then use uint64 to calculate.
+	x, err := convertNonInt2RoundUint64(a)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	y, err := convertNonInt2RoundUint64(b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetUint64(x | y)
+	return d, nil
+}
+
+// ComputeBitNeg computes the result of ~a.
+func ComputeBitNeg(a Datum) (d Datum, err error) {
+	aKind := a.Kind()
+	if aKind == KindInt64 || aKind == KindUint64 {
+		d.SetUint64(^a.GetUint64())
+		return
+	}
+	// If either is not integer, we round the operands and then use uint64 to calculate.
+	x, err := convertNonInt2RoundUint64(a)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetUint64(^x)
+	return d, nil
+}
+
+// ComputeBitXor computes the result of a ^ b.
+func ComputeBitXor(a, b Datum) (d Datum, err error) {
+	aKind, bKind := a.Kind(), b.Kind()
+	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
+		d.SetUint64(a.GetUint64() ^ b.GetUint64())
+		return
+	}
+	// If either is not integer, we round the operands and then use uint64 to calculate.
+	x, err := convertNonInt2RoundUint64(a)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	y, err := convertNonInt2RoundUint64(b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetUint64(x ^ y)
+	return d, nil
+}
+
+// ComputeLeftShift computes the result of a >> b.
+func ComputeLeftShift(a, b Datum) (d Datum, err error) {
+	aKind, bKind := a.Kind(), b.Kind()
+	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
+		d.SetUint64(a.GetUint64() << b.GetUint64())
+		return
+	}
+	// If either is not integer, we round the operands and then use uint64 to calculate.
+	x, err := convertNonInt2RoundUint64(a)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	y, err := convertNonInt2RoundUint64(b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetUint64(x << y)
+	return d, nil
+}
+
+// ComputeRightShift computes the result of a << b.
+func ComputeRightShift(a, b Datum) (d Datum, err error) {
+	aKind, bKind := a.Kind(), b.Kind()
+	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
+		d.SetUint64(a.GetUint64() >> b.GetUint64())
+		return
+	}
+	// If either is not integer, we round the operands and then use uint64 to calculate.
+	x, err := convertNonInt2RoundUint64(a)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	y, err := convertNonInt2RoundUint64(b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetUint64(x >> y)
+	return d, nil
+}
+
+// covertNonIntegerToUint64 coverts a non-integer to an uint64
+func convertNonInt2RoundUint64(x Datum) (d uint64, err error) {
+	decimalX, err := x.ToDecimal()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d, err = decimal2RoundUint(decimalX)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	return
 }

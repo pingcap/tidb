@@ -37,7 +37,7 @@ type RestrictedSQLExecutor interface {
 
 // SQLParser is an interface provides parsing sql statement.
 // To parse a sql statement, we could run parser.New() to get a parser object, and then run Parse method on it.
-// But a session already has a parser bind in it, so we define this interface and use session as its implemention,
+// But a session already has a parser bind in it, so we define this interface and use session as its implementation,
 // thus avoid allocating new parser. See session.SQLParser for more information.
 type SQLParser interface {
 	ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error)

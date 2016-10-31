@@ -14,138 +14,47 @@
 package codec
 
 import (
-	"bytes"
-	"math/big"
-	"strconv"
-
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
 )
-
-const (
-	negativeSign int64 = 8
-	zeroSign     int64 = 16
-	positiveSign int64 = 24
-)
-
-func codecSign(value int64) int64 {
-	if value < 0 {
-		return negativeSign
-	}
-
-	return positiveSign
-}
 
 // EncodeDecimal encodes a decimal d into a byte slice which can be sorted lexicographically later.
-// EncodeDecimal guarantees that the encoded value is in ascending order for comparison.
-// Decimal encoding:
-// Byte -> value sign
-// EncodeInt -> exp value
-// EncodeBytes -> abs value bytes
-func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
-	if d.Equals(mysql.ZeroDecimal) {
-		return append(b, byte(zeroSign))
+func EncodeDecimal(b []byte, d types.Datum) []byte {
+	dec := d.GetMysqlDecimal()
+	precision := d.Length()
+	frac := d.Frac()
+	if precision == 0 {
+		precision, frac = dec.PrecisionAndFrac()
 	}
-
-	v := d.BigIntValue()
-	valSign := codecSign(int64(v.Sign()))
-
-	absVal := new(big.Int)
-	absVal.Abs(v)
-
-	// Get exp and value, format is "value":"exp".
-	// like "12.34" -> "0.1234":"2".
-	// like "-0.01234" -> "-0.1234":"-1".
-	exp := int64(0)
-	div := big.NewInt(10)
-	mod := big.NewInt(0)
-	value := []byte{}
-	for ; ; exp++ {
-		if absVal.Sign() == 0 {
-			break
-		}
-
-		mod.Mod(absVal, div)
-		absVal.Div(absVal, div)
-		value = append([]byte(strconv.Itoa(int(mod.Int64()))), value...)
+	b = append(b, byte(precision), byte(frac))
+	bin, err := dec.ToBin(precision, frac)
+	if err != nil {
+		log.Errorf("should not happen, precision %d, frac %d %v", precision, frac, err)
+		return b
 	}
-
-	value = bytes.TrimRight(value, "0")
-
-	expVal := exp + int64(d.Exponent())
-	if valSign == negativeSign {
-		expVal = -expVal
-	}
-
-	b = append(b, byte(valSign))
-	b = EncodeInt(b, expVal)
-	if valSign == negativeSign {
-		b = EncodeBytesDesc(b, value)
-	} else {
-		b = EncodeBytes(b, value)
-	}
+	b = append(b, bin...)
 	return b
 }
 
 // DecodeDecimal decodes bytes to decimal.
-// DecodeFloat decodes a float from a byte slice
-// Decimal decoding:
-// Byte -> value sign
-// DecodeInt -> exp value
-// DecodeBytes -> abs value bytes
-func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {
-	var (
-		r   = b
-		d   mysql.Decimal
-		err error
-	)
-
-	// Decode value sign.
-	valSign := int64(r[0])
-	r = r[1:]
-	if valSign == zeroSign {
-		d, err = mysql.ParseDecimal("0")
-		return r, d, errors.Trace(err)
+func DecodeDecimal(b []byte) ([]byte, types.Datum, error) {
+	var d types.Datum
+	if len(b) < 3 {
+		return b, d, errors.New("insufficient bytes to decode value")
 	}
-
-	// Decode exp value.
-	expVal := int64(0)
-	r, expVal, err = DecodeInt(r)
+	precision := int(b[0])
+	frac := int(b[1])
+	b = b[2:]
+	dec := new(mysql.MyDecimal)
+	binSize, err := dec.FromBin(b, precision, frac)
+	b = b[binSize:]
 	if err != nil {
-		return r, d, errors.Trace(err)
+		return b, d, errors.Trace(err)
 	}
-
-	// Decode abs value bytes.
-	value := []byte{}
-	if valSign == negativeSign {
-		expVal = -expVal
-		r, value, err = DecodeBytesDesc(r)
-	} else {
-		r, value, err = DecodeBytes(r)
-	}
-	if err != nil {
-		return r, d, errors.Trace(err)
-	}
-
-	// Set decimal sign and point to value.
-	if valSign == negativeSign {
-		value = append([]byte("-0."), value...)
-	} else {
-		value = append([]byte("0."), value...)
-	}
-
-	numberDecimal, err := mysql.ParseDecimal(string(value))
-	if err != nil {
-		return r, d, errors.Trace(err)
-	}
-
-	expDecimal := mysql.NewDecimalFromInt(1, int32(expVal))
-	d = numberDecimal.Mul(expDecimal)
-	if expDecimal.Exponent() > 0 {
-		// For int64(3), it will be converted to value=0.3 and exp=1 when doing encode.
-		// Its frac will be changed after we run d = numberDecimal.Mul(expDecimal).
-		// So we try to get frac to the original one.
-		d.SetFracDigits(d.FracDigits() - expDecimal.Exponent())
-	}
-	return r, d, nil
+	d.SetLength(precision)
+	d.SetFrac(frac)
+	d.SetMysqlDecimal(dec)
+	return b, d, nil
 }

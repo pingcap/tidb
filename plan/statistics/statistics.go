@@ -34,7 +34,7 @@ const (
 	// It has row count 10000, equal condition selects 1/10 of total rows, less condition selects 1/3 of total rows,
 	// between condition selects 1/4 of total rows.
 	pseudoRowCount    = 10000
-	pseudoEqualRate   = 10
+	pseudoEqualRate   = 200
 	pseudoLessRate    = 3
 	pseudoBetweenRate = 4
 	pseudoTimestamp   = 1
@@ -89,6 +89,30 @@ func (c *Column) EqualRowCount(value types.Datum) (int64, error) {
 	}
 	totalCount := c.Numbers[len(c.Numbers)-1] + 1
 	return totalCount / c.NDV, nil
+}
+
+// GreaterRowCount estimates the row count where the column greater than value.
+func (c *Column) GreaterRowCount(value types.Datum) (int64, error) {
+	if len(c.Numbers) == 0 {
+		return pseudoRowCount / pseudoLessRate, nil
+	}
+	index, match, err := c.search(value)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if index == 0 {
+		return c.totalRowCount(), nil
+	}
+	number := c.Numbers[index]
+	nextNumber := int64(0)
+	if index < len(c.Numbers)-1 {
+		nextNumber = c.Numbers[index+1]
+	}
+	greaterThanBucketValueCount := number - c.Repeats[index]
+	if match {
+		return greaterThanBucketValueCount, nil
+	}
+	return (nextNumber + greaterThanBucketValueCount) / 2, nil
 }
 
 // LessRowCount estimates the row count where the column less than value.
@@ -322,7 +346,7 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 	t.Columns = make([]*Column, len(tpb.GetColumns()))
 	for i, cInfo := range t.info.Columns {
 		cpb := tpb.Columns[i]
-		values, err := codec.Decode(cpb.GetValue())
+		values, err := codec.Decode(cpb.GetValue(), 1)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -334,7 +358,7 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 			Repeats: cpb.GetRepeats(),
 		}
 		for i, val := range values {
-			c.Values[i], err = tablecodec.Unflatten(val, &cInfo.FieldType)
+			c.Values[i], err = tablecodec.Unflatten(val, &cInfo.FieldType, false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

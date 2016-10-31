@@ -60,6 +60,8 @@ const (
 	CodeUnknownSystemVar terror.ErrCode = 1193
 )
 
+var tidbSysVars map[string]bool
+
 // Variable errors
 var (
 	UnknownStatusVar = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
@@ -77,6 +79,11 @@ func init() {
 		CodeUnknownSystemVar: mysql.ErrUnknownSystemVariable,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
+
+	tidbSysVars = make(map[string]bool)
+	tidbSysVars[DistSQLScanConcurrencyVar] = true
+	tidbSysVars[DistSQLJoinConcurrencyVar] = true
+	tidbSysVars[TiDBSnapshot] = true
 }
 
 // we only support MySQL now
@@ -121,7 +128,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "skip_name_resolve", "OFF"},
 	{ScopeNone, "performance_schema_max_file_handles", "32768"},
 	{ScopeSession, "transaction_allow_batching", ""},
-	{ScopeGlobal | ScopeSession, "sql_mode", "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"},
+	{ScopeGlobal | ScopeSession, sqlMode, "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"},
 	{ScopeNone, "performance_schema_max_statement_classes", "168"},
 	{ScopeGlobal, "server_id", "0"},
 	{ScopeGlobal, "innodb_flushing_avg_loops", "30"},
@@ -357,7 +364,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "binlog_direct_non_transactional_updates", "OFF"},
 	{ScopeGlobal, "innodb_change_buffering", "all"},
 	{ScopeGlobal | ScopeSession, "sql_big_selects", "ON"},
-	{ScopeGlobal | ScopeSession, "character_set_results", "latin1"},
+	{ScopeGlobal | ScopeSession, characterSetResults, "latin1"},
 	{ScopeGlobal, "innodb_max_purge_lag_delay", "0"},
 	{ScopeGlobal | ScopeSession, "session_track_schema", ""},
 	{ScopeGlobal, "innodb_io_capacity_max", "2000"},
@@ -472,7 +479,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "explicit_defaults_for_timestamp", "OFF"},
 	{ScopeNone, "performance_schema_events_waits_history_size", "10"},
 	{ScopeGlobal, "log_syslog_tag", ""},
-	{ScopeGlobal | ScopeSession, "tx_read_only", "OFF"},
+	{ScopeGlobal | ScopeSession, "tx_read_only", "0"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_point", ""},
 	{ScopeGlobal, "innodb_undo_log_truncate", ""},
 	{ScopeNone, "simplified_binlog_gtid_recovery", "OFF"},
@@ -580,7 +587,17 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "min_examined_row_limit", "0"},
 	{ScopeGlobal, "sync_frm", "ON"},
 	{ScopeGlobal, "innodb_online_alter_log_max_size", "134217728"},
+	{ScopeSession, TiDBSnapshot, ""},
+	{ScopeGlobal | ScopeSession, DistSQLScanConcurrencyVar, "10"},
+	{ScopeGlobal | ScopeSession, DistSQLJoinConcurrencyVar, "5"},
 }
+
+// TiDB system variables
+const (
+	TiDBSnapshot              = "tidb_snapshot"
+	DistSQLScanConcurrencyVar = "tidb_distsql_scan_concurrency"
+	DistSQLJoinConcurrencyVar = "tidb_distsql_join_concurrency"
+)
 
 // SetNamesVariables is the system variable names related to set names statements.
 var SetNamesVariables = []string{
@@ -592,7 +609,7 @@ var SetNamesVariables = []string{
 const (
 	// CollationConnection is the name for collation_connection system variable.
 	CollationConnection = "collation_connection"
-	// CharsetDatabase is the name for charactor_set_database system variable.
+	// CharsetDatabase is the name for character_set_database system variable.
 	CharsetDatabase = "character_set_database"
 	// CollationDatabase is the name for collation_database system variable.
 	CollationDatabase = "collation_database"

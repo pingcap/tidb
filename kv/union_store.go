@@ -33,6 +33,8 @@ type UnionStore interface {
 	SetOption(opt Option, val interface{})
 	// DelOption deletes an option.
 	DelOption(opt Option)
+	// GetOption gets an option.
+	GetOption(opt Option) interface{}
 }
 
 // Option is used for customizing kv store's behaviors during a transaction.
@@ -207,6 +209,11 @@ func (us *unionStore) SetOption(opt Option, val interface{}) {
 // DelOption implements the UnionStore DelOption interface.
 func (us *unionStore) DelOption(opt Option) {
 	delete(us.opts, opt)
+}
+
+// GetOption implements the UnionStore GetOption interface.
+func (us *unionStore) GetOption(opt Option) interface{} {
+	return us.opts[opt]
 }
 
 type options map[Option]interface{}

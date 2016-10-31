@@ -658,3 +658,48 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 	}
 }
+func (s *testEvaluatorSuite) TestHexFunc(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input  interface{}
+		Expect string
+	}{
+		{12, "C"},
+		{12.3, "C"},
+		{12.5, "D"},
+		{-12.3, "FFFFFFFFFFFFFFF4"},
+		{-12.5, "FFFFFFFFFFFFFFF3"},
+		{"12", "3132"},
+		{0x12, "12"},
+		{"", ""},
+	}
+
+	dtbl := tblToDtbl(tbl)
+
+	for _, t := range dtbl {
+		d, err := builtinHex(t["Input"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
+
+	}
+}
+func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input  interface{}
+		Expect string
+	}{
+		{"4D7953514C", "MySQL"},
+		{"31323334", "1234"},
+		{"", ""},
+	}
+
+	dtbl := tblToDtbl(tbl)
+
+	for _, t := range dtbl {
+		d, err := builtinUnHex(t["Input"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
+
+	}
+}

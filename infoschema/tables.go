@@ -38,6 +38,7 @@ const (
 	tableProfiling     = "PROFILING"
 	tablePartitions    = "PARTITIONS"
 	tableKeyColumm     = "KEY_COLUMN_USAGE"
+	tableReferConst    = "REFERENTIAL_CONSTRAINTS"
 )
 
 type columnInfo struct {
@@ -129,7 +130,7 @@ var columnsCols = []columnInfo{
 	{"IS_NULLABLE", mysql.TypeVarchar, 3, 0, nil, nil},
 	{"DATA_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"CHARACTER_MAXIMUM_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"CHARACTOR_OCTET_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"CHARACTER_OCTET_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"NUMERIC_PRECISION", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"NUMERIC_SCALE", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"DATETIME_PRECISION", mysql.TypeLonglong, 21, 0, nil, nil},
@@ -211,6 +212,21 @@ var keyColumnUsageCols = []columnInfo{
 	{"REFERENCED_TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"REFERENCED_TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"REFERENCED_COLUMN_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/referential-constraints-table.html
+var referConstCols = []columnInfo{
+	{"CONSTRAINT_CATALOG", mysql.TypeVarchar, 512, mysql.NotNullFlag, nil, nil},
+	{"CONSTRAINT_SCHEMA", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"CONSTRAINT_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"UNIQUE_CONSTRAINT_CATALOG", mysql.TypeVarchar, 512, mysql.NotNullFlag, nil, nil},
+	{"UNIQUE_CONSTRAINT_SCHEMA", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"UNIQUE_CONSTRAINT_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"MATCH_OPTION", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"UPDATE_RULE", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"DELETE_RULE", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"REFERENCED_TABLE_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/partitions-table.html
@@ -376,7 +392,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			decimal = 0
 		}
 		columnType := col.FieldType.CompactStr()
-		columnDesc := table.NewColDesc(&table.Column{ColumnInfo: *col})
+		columnDesc := table.NewColDesc(table.ToColumn(col))
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
@@ -391,7 +407,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDesc.Null,                      // IS_NULLABLE
 			types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
 			colLen,                            // CHARACTER_MAXIMUM_LENGTH
-			colLen,                            // CHARACTOR_OCTET_LENGTH
+			colLen,                            // CHARACTER_OCTET_LENGTH
 			decimal,                           // NUMERIC_PRECISION
 			0,                                 // NUMERIC_SCALE
 			0,                                 // DATETIME_PRECISION
@@ -498,6 +514,7 @@ var tableNameToColumns = map[string]([]columnInfo){
 	tableProfiling:     profilingCols,
 	tablePartitions:    partitionsCols,
 	tableKeyColumm:     keyColumnUsageCols,
+	tableReferConst:    referConstCols,
 }
 
 func createMemoryTable(meta *model.TableInfo, alloc autoid.Allocator) (table.Table, error) {

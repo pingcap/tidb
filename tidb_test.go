@@ -35,7 +35,8 @@ import (
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
 
 func TestT(t *testing.T) {
-	log.SetLevelByString("error")
+	logLevel := os.Getenv("log_level")
+	log.SetLevelByString(logLevel)
 	TestingT(t)
 }
 
@@ -179,6 +180,10 @@ func (s *testMainSuite) TestCaseInsensitive(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
 	c.Assert(fields[1].ColumnAsName.O, Equals, "b")
+	rs = mustExecSQL(c, se, "select a as A from t where A > 0")
+	fields, err = rs.Fields()
+	c.Assert(err, IsNil)
+	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
 	mustExecSQL(c, se, "update T set b = B + 1")
 	mustExecSQL(c, se, "update T set B = b + 1")
 	rs = mustExecSQL(c, se, "select b from T")
@@ -292,26 +297,6 @@ func (s *testMainSuite) TestParseDSN(c *C) {
 	}
 }
 
-func (s *testMainSuite) TestTPS(c *C) {
-	store := newStore(c, s.dbName)
-	se := newSession(c, store, s.dbName)
-	defer store.Close()
-
-	mustExecSQL(c, se, "set @@autocommit=0;")
-	for i := 1; i < 6; i++ {
-		for j := 0; j < 5; j++ {
-			for k := 0; k < i; k++ {
-				mustExecSQL(c, se, "begin;")
-				mustExecSQL(c, se, "select 1;")
-				mustExecSQL(c, se, "commit;")
-			}
-			time.Sleep(220 * time.Millisecond)
-		}
-		// It is hard to get the accurate tps because there is another timeline in tpsMetrics.
-		// We could only get the upper/lower boundary for tps
-		c.Assert(GetTPS(), GreaterEqual, int64(4*(i-1)))
-	}
-}
 func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {
 	se.Execute("BEGIN;")
 	r, err := se.Execute(sql)

@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -31,7 +30,6 @@ import (
 )
 
 func (s *testSuite) TestCharsetDatabase(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
@@ -49,11 +47,9 @@ func (s *testSuite) TestCharsetDatabase(c *C) {
 	tk.MustExec(testSQL)
 	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
-	plan.UseNewPlanner = false
 }
 
 func (s *testSuite) TestSetVar(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := "SET @a = 1;"
@@ -125,7 +121,8 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustExec(`set @@session.low_priority_updates=DEFAULT;`) // It will be set to global var value.
 	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("ON"))
 
-	plan.UseNewPlanner = false
+	// For mysql jdbc driver issue.
+	tk.MustQuery(`select @@session.tx_read_only;`).Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
@@ -146,6 +143,9 @@ func (s *testSuite) TestSetCharset(c *C) {
 	}
 	sVar := sessionVars.GetSystemVar(variable.CollationConnection)
 	c.Assert(sVar.GetString(), Equals, "utf8_general_ci")
+
+	// Issue 1523
+	tk.MustExec(`SET NAMES binary`)
 }
 
 func (s *testSuite) TestDo(c *C) {
@@ -193,6 +193,40 @@ func (s *testSuite) TestCreateUser(c *C) {
 	createUserSQL = `CREATE USER 'test'@'localhost' IDENTIFIED BY '123';`
 	_, err := tk.Exec(createUserSQL)
 	c.Check(err, NotNil)
+	dropUserSQL := `DROP USER IF EXISTS 'test'@'localhost' ;`
+	tk.MustExec(dropUserSQL)
+	// Create user test.
+	createUserSQL = `CREATE USER 'test1'@'localhost';`
+	tk.MustExec(createUserSQL)
+	// Make sure user test in mysql.User.
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("")))
+	result.Check(testkit.Rows(rowStr))
+	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost' ;`
+	tk.MustExec(dropUserSQL)
+
+	// Test drop user if exists.
+	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
+	tk.MustExec(createUserSQL)
+	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost' ;`
+	tk.MustExec(dropUserSQL)
+	// Test negative cases without IF EXISTS.
+	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
+	tk.MustExec(createUserSQL)
+	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
+	_, err = tk.Exec(dropUserSQL)
+	c.Check(err, NotNil)
+	dropUserSQL = `DROP USER 'test3'@'localhost';`
+	_, err = tk.Exec(dropUserSQL)
+	c.Check(err, NotNil)
+	dropUserSQL = `DROP USER 'test1'@'localhost';`
+	_, err = tk.Exec(dropUserSQL)
+	c.Check(err, NotNil)
+	// Test positive cases without IF EXISTS.
+	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
+	tk.MustExec(createUserSQL)
+	dropUserSQL = `DROP USER 'test1'@'localhost', 'test3'@'localhost';`
+	tk.MustExec(dropUserSQL)
 }
 
 func (s *testSuite) TestSetPwd(c *C) {

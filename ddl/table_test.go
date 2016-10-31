@@ -15,7 +15,9 @@ package ddl
 
 import (
 	"fmt"
+	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -23,9 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -76,9 +76,13 @@ func testCreateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 		Type:     model.ActionCreateTable,
 		Args:     []interface{}{tblInfo},
 	}
-
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
+
+	v := getSchemaVer(c, ctx)
+	tblInfo.State = model.StatePublic
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	tblInfo.State = model.StateNone
 	return job
 }
 
@@ -88,9 +92,29 @@ func testDropTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 		TableID:  tblInfo.ID,
 		Type:     model.ActionDropTable,
 	}
-
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
+
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
+func testTruncateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+	newTableID, err := d.genGlobalID()
+	c.Assert(err, IsNil)
+	job := &model.Job{
+		SchemaID: dbInfo.ID,
+		TableID:  tblInfo.ID,
+		Type:     model.ActionTruncateTable,
+		Args:     []interface{}{newTableID},
+	}
+	err = d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+
+	v := getSchemaVer(c, ctx)
+	tblInfo.ID = newTableID
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -132,19 +156,18 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	s.d = newDDL(s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test")
-	testCreateSchema(c, mock.NewContext(), s.d, s.dbInfo)
+	testCreateSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
+
+	// Use a smaller limit to prevent the test from consuming too much time.
+	reorgTableDeleteLimit = 2000
 }
 
 func (s *testTableSuite) TearDownSuite(c *C) {
-	testDropSchema(c, mock.NewContext(), s.d, s.dbInfo)
+	testDropSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
 	s.d.close()
 	s.store.Close()
-}
 
-func testNewContext(c *C, d *ddl) context.Context {
-	ctx := d.newReorgContext()
-	variable.BindSessionVars(ctx)
-	return ctx
+	reorgTableDeleteLimit = 65536
 }
 
 func (s *testTableSuite) TestTable(c *C) {
@@ -155,32 +178,57 @@ func (s *testTableSuite) TestTable(c *C) {
 	defer ctx.RollbackTxn()
 
 	tblInfo := testTableInfo(c, d, "t", 3)
-
 	job := testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
+	// Create an existing table.
 	newTblInfo := testTableInfo(c, d, "t", 3)
-	job = &model.Job{
-		SchemaID: s.dbInfo.ID,
-		TableID:  newTblInfo.ID,
-		Type:     model.ActionCreateTable,
-		Args:     []interface{}{newTblInfo},
+	doDDLJobErr(c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, ctx, d)
+
+	// To drop a table with reorgTableDeleteLimit+10 records.
+	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	for i := 1; i <= reorgTableDeleteLimit+10; i++ {
+		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
+		c.Assert(err, IsNil)
 	}
 
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
-
-	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
-	_, err = tbl.AddRecord(ctx, types.MakeDatums(1, 1, 1))
-	c.Assert(err, IsNil)
-
-	_, err = tbl.AddRecord(ctx, types.MakeDatums(2, 2, 2))
-	c.Assert(err, IsNil)
-
+	tc := &testDDLCallback{}
+	var checkErr error
+	var updatedCount int
+	tc.onBgJobUpdated = func(job *model.Job) {
+		if job == nil || checkErr != nil {
+			return
+		}
+		job.Mu.Lock()
+		count := job.RowCount
+		job.Mu.Unlock()
+		if updatedCount == 0 && count != int64(reorgTableDeleteLimit) {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, reorgTableDeleteLimit)
+			return
+		}
+		if updatedCount == 1 && count != int64(reorgTableDeleteLimit+10) {
+			checkErr = errors.Errorf("row count %v isn't equal to %v", count, reorgTableDeleteLimit+10)
+		}
+		updatedCount++
+	}
+	d.setHook(tc)
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckJobDone(c, d, job, false)
+
+	// Check background ddl info.
+	time.Sleep(testLease * 300)
+	verifyBgJobState(c, d, job, model.JobDone)
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(updatedCount, Equals, 2)
+
+	// For truncate table.
+	tblInfo = testTableInfo(c, d, "tt", 3)
+	job = testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
+	testCheckJobDone(c, d, job, true)
+	job = testTruncateTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, false)
 }
 
@@ -191,14 +239,12 @@ func (s *testTableSuite) TestTableResume(c *C) {
 	testCheckOwner(c, d, true, ddlJobFlag)
 
 	tblInfo := testTableInfo(c, d, "t1", 3)
-
 	job := &model.Job{
 		SchemaID: s.dbInfo.ID,
 		TableID:  tblInfo.ID,
 		Type:     model.ActionCreateTable,
 		Args:     []interface{}{tblInfo},
 	}
-
 	testRunInterruptedJob(c, d, job)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 
@@ -207,7 +253,6 @@ func (s *testTableSuite) TestTableResume(c *C) {
 		TableID:  tblInfo.ID,
 		Type:     model.ActionDropTable,
 	}
-
 	testRunInterruptedJob(c, d, job)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StateNone)
 }

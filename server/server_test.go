@@ -16,12 +16,16 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	tmysql "github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/printer"
 )
 
 func TestT(t *testing.T) {
@@ -200,6 +204,145 @@ func runTestPreparedString(t *C) {
 	})
 }
 
+func runTestLoadData(c *C) {
+	// create a file and write data.
+	path := "/tmp/load_data_test.csv"
+	fp, err := os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+	defer func() {
+		err = fp.Close()
+		c.Assert(err, IsNil)
+		err = os.Remove(path)
+		c.Assert(err, IsNil)
+	}()
+	_, err = fp.WriteString(`
+xxx row1_col1	- row1_col2	1
+xxx row2_col1	- row2_col2	
+xxxy row3_col1	- row3_col2	
+xxx row4_col1	- 		900
+xxx row5_col1	- 	row5_col3`)
+	c.Assert(err, IsNil)
+
+	// support ClientLocalFiles capability
+	runTests(c, dsn+"&allowAllFiles=true", func(dbt *DBTest) {
+		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
+		rs, err := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
+		dbt.Assert(err, IsNil)
+		lastID, err := rs.LastInsertId()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(lastID, Equals, int64(1))
+		affectedRows, err := rs.RowsAffected()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(affectedRows, Equals, int64(5))
+		var (
+			a  string
+			b  string
+			bb sql.NullString
+			cc int
+		)
+		rows := dbt.mustQuery("select * from test")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &bb, &cc)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, DeepEquals, "")
+		dbt.Check(bb.String, DeepEquals, "")
+		dbt.Check(cc, DeepEquals, 1)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &cc)
+		dbt.Check(a, DeepEquals, "xxx row2_col1")
+		dbt.Check(b, DeepEquals, "- row2_col2")
+		dbt.Check(cc, DeepEquals, 2)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &cc)
+		dbt.Check(a, DeepEquals, "xxxy row3_col1")
+		dbt.Check(b, DeepEquals, "- row3_col2")
+		dbt.Check(cc, DeepEquals, 3)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &cc)
+		dbt.Check(a, DeepEquals, "xxx row4_col1")
+		dbt.Check(b, DeepEquals, "- ")
+		dbt.Check(cc, DeepEquals, 4)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &cc)
+		dbt.Check(a, DeepEquals, "xxx row5_col1")
+		dbt.Check(b, DeepEquals, "- ")
+		dbt.Check(cc, DeepEquals, 5)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		rows.Close()
+
+		// specify faileds and lines
+		dbt.mustExec("delete from test")
+		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
+		dbt.Assert(err, IsNil)
+		lastID, err = rs.LastInsertId()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(lastID, Equals, int64(6))
+		affectedRows, err = rs.RowsAffected()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(affectedRows, Equals, int64(4))
+		rows = dbt.mustQuery("select * from test")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &cc)
+		dbt.Check(a, DeepEquals, "row1_col1")
+		dbt.Check(b, DeepEquals, "row1_col2\t1")
+		dbt.Check(cc, DeepEquals, 6)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &cc)
+		dbt.Check(a, DeepEquals, "row2_col1")
+		dbt.Check(b, DeepEquals, "row2_col2\t")
+		dbt.Check(cc, DeepEquals, 7)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &cc)
+		dbt.Check(a, DeepEquals, "row4_col1")
+		dbt.Check(b, DeepEquals, "\t\t900")
+		dbt.Check(cc, DeepEquals, 8)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &cc)
+		dbt.Check(a, DeepEquals, "row5_col1")
+		dbt.Check(b, DeepEquals, "\trow5_col3")
+		dbt.Check(cc, DeepEquals, 9)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+
+		// infile size more than a packet size(16K)
+		dbt.mustExec("delete from test")
+		_, err = fp.WriteString("\n")
+		dbt.Assert(err, IsNil)
+		for i := 6; i <= 800; i++ {
+			_, err = fp.WriteString(fmt.Sprintf("xxx row%d_col1	- row%d_col2\n", i, i))
+			dbt.Assert(err, IsNil)
+		}
+		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
+		dbt.Assert(err, IsNil)
+		lastID, err = rs.LastInsertId()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(lastID, Equals, int64(10))
+		affectedRows, err = rs.RowsAffected()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(affectedRows, Equals, int64(799))
+		rows = dbt.mustQuery("select * from test")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+
+		// don't support lines terminated is ""
+		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test lines terminated by ''")
+		dbt.Assert(err, NotNil)
+
+		// infile doesn't exist
+		rs, err = dbt.db.Exec("load data local infile '/tmp/nonexistence.csv' into table test")
+		dbt.Assert(err, NotNil)
+	})
+
+	// unsupport ClientLocalFiles capability
+	defaultCapability ^= tmysql.ClientLocalFiles
+	runTests(c, dsn+"&allowAllFiles=true", func(dbt *DBTest) {
+		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
+		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
+		dbt.Assert(err, NotNil)
+		checkErrorCode(c, err, tmysql.ErrNotAllowedCommand)
+	})
+	defaultCapability |= tmysql.ClientLocalFiles
+}
+
 func runTestConcurrentUpdate(c *C) {
 	runTests(c, dsn, func(dbt *DBTest) {
 		dbt.mustExec("create table test (a int, b int)")
@@ -276,7 +419,7 @@ func runTestErrorCode(c *C) {
 
 func checkErrorCode(c *C, e error, code uint16) {
 	me, ok := e.(*mysql.MySQLError)
-	c.Assert(ok, IsTrue)
+	c.Assert(ok, IsTrue, Commentf("err: %v", e))
 	c.Assert(me.Number, Equals, code)
 }
 
@@ -324,4 +467,52 @@ func runTestStatusAPI(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.Version, Equals, tmysql.ServerVersion)
+	c.Assert(data.GitHash, Equals, printer.TiDBGitHash)
+}
+
+func runTestMultiPacket(c *C) {
+	runTests(c, dsn, func(dbt *DBTest) {
+		dbt.mustExec(fmt.Sprintf("set global max_allowed_packet=%d", 1024*1024*160)) // 160M
+	})
+
+	runTests(c, dsn, func(dbt *DBTest) {
+		dbt.mustExec("create table test (a longtext)")
+		// When i == 30, packet size will be 16777215(2^24−1) bytes.
+		for i := 30; i < 32; i++ {
+			dbt.mustExec("insert into test values ('" + strings.Repeat("x", 1024*1024*16-i) + "')")
+		}
+	})
+}
+
+func runTestMultiStatements(c *C) {
+	runTests(c, dsn, func(dbt *DBTest) {
+		// Create Table
+		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
+
+		// Create Data
+		res := dbt.mustExec("INSERT INTO test VALUES (1, 1)")
+		count, err := res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+
+		// Update
+		res = dbt.mustExec("UPDATE test SET value = 3 WHERE id = 1; UPDATE test SET value = 4 WHERE id = 1; UPDATE test SET value = 5 WHERE id = 1;")
+		count, err = res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+
+		// Read
+		var out int
+		rows := dbt.mustQuery("SELECT value FROM test WHERE id=1;")
+		if rows.Next() {
+			rows.Scan(&out)
+			c.Assert(out, Equals, 5)
+
+			if rows.Next() {
+				dbt.Error("unexpected data")
+			}
+		} else {
+			dbt.Error("no data")
+		}
+	})
 }

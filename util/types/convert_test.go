@@ -39,13 +39,13 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft.Flen = 4
 	ft.Charset = "utf8"
 	v, err := Convert("123456", ft)
-	c.Assert(err, IsNil)
+	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
 	c.Assert(v, Equals, "1234")
 	ft = NewFieldType(mysql.TypeString)
 	ft.Flen = 4
 	ft.Charset = charset.CharsetBin
 	v, err = Convert("12345", ft)
-	c.Assert(err, IsNil)
+	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
 	c.Assert(v, DeepEquals, []byte("1234"))
 
 	ft = NewFieldType(mysql.TypeFloat)
@@ -120,13 +120,13 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft = NewFieldType(mysql.TypeString)
 	ft.Flen = 3
 	v, err = Convert("12345", ft)
-	c.Assert(err, IsNil)
+	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
 	c.Assert(v, Equals, "123")
 	ft = NewFieldType(mysql.TypeString)
 	ft.Flen = 3
 	ft.Charset = charset.CharsetBin
 	v, err = Convert("12345", ft)
-	c.Assert(err, IsNil)
+	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
 	c.Assert(v, DeepEquals, []byte("123"))
 
 	// For TypeDuration
@@ -201,7 +201,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft.Decimal = 5
 	v, err = Convert(3.1415926, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v.(mysql.Decimal).String(), Equals, "3.14159")
+	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "3.14159")
 
 	// For TypeYear
 	ft = NewFieldType(mysql.TypeYear)
@@ -290,6 +290,35 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 
 	_, err = ToString(&invalidMockType{})
 	c.Assert(err, NotNil)
+
+	// test truncate
+	cases := []struct {
+		flen    int
+		charset string
+		input   string
+		output  string
+	}{
+		{5, "utf8", "你好，世界", "你好，世界"},
+		{5, "utf8mb4", "你好，世界", "你好，世界"},
+		{4, "utf8", "你好，世界", "你好，世"},
+		{4, "utf8mb4", "你好，世界", "你好，世"},
+		{15, "binary", "你好，世界", "你好，世界"},
+		{12, "binary", "你好，世界", "你好，世"},
+		{0, "binary", "你好，世界", ""},
+	}
+	for _, ca := range cases {
+		ft = NewFieldType(mysql.TypeVarchar)
+		ft.Flen = ca.flen
+		ft.Charset = ca.charset
+		inputDatum := NewStringDatum(ca.input)
+		outputDatum, err := inputDatum.ConvertTo(ft)
+		if ca.input != ca.output {
+			c.Assert(ErrDataTooLong.Equal(err), IsTrue)
+		} else {
+			c.Assert(err, IsNil)
+		}
+		c.Assert(outputDatum.GetString(), Equals, ca.output)
+	}
 }
 
 func testStrToInt(c *C, str string, expect int64) {
@@ -508,14 +537,17 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, float32(123), "123")
 	signedAccept(c, mysql.TypeNewDecimal, 123.456, "123.456")
 	signedAccept(c, mysql.TypeNewDecimal, "-123.456", "-123.456")
-	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(123, 5), "12300000")
-	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(-123, -5), "-0.00123")
+	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecFromInt(12300000), "12300000")
+	dec := mysql.NewDecFromInt(-123)
+	dec.Shift(-5)
+	dec.Round(dec, 5)
+	signedAccept(c, mysql.TypeNewDecimal, dec, "-0.00123")
 }
 
 func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	cases := []struct {
-		orgin string
-		valid string
+		origin string
+		valid  string
 	}{
 		{"-100", "-100"},
 		{"1abc", "1"},
@@ -527,6 +559,6 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		{"1.1e-13a", "1.1e-13"},
 	}
 	for _, ca := range cases {
-		c.Assert(getValidFloatPrefix(ca.orgin), Equals, ca.valid)
+		c.Assert(getValidFloatPrefix(ca.origin), Equals, ca.valid)
 	}
 }

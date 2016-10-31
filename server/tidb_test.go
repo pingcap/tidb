@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// +build !race
 
 package server
 
@@ -34,9 +35,10 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := &Config{
-		Addr:       ":4001",
-		LogLevel:   "debug",
-		StatusAddr: ":10090",
+		Addr:         ":4001",
+		LogLevel:     "debug",
+		StatusAddr:   ":10090",
+		ReportStatus: true,
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -69,6 +71,10 @@ func (ts *TidbTestSuite) TestPreparedString(c *C) {
 	runTestPreparedString(c)
 }
 
+func (ts *TidbTestSuite) TestLoadData(c *C) {
+	runTestLoadData(c)
+}
+
 func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
 	runTestConcurrentUpdate(c)
 }
@@ -91,6 +97,14 @@ func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
 
 func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	runTestStatusAPI(c)
+}
+
+func (ts *TidbTestSuite) TestMultiPacket(c *C) {
+	runTestMultiPacket(c)
+}
+
+func (ts *TidbTestSuite) TestMultiStatements(c *C) {
+	runTestMultiStatements(c)
 }
 
 func (ts *TidbTestSuite) TestSocket(c *C) {

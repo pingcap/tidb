@@ -60,7 +60,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	// Select Table request.
 	txn, err := store.Begin()
 	c.Check(err, IsNil)
-	client := txn.GetClient()
+	client := store.GetClient()
 	req, err := prepareSelectRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
 	resp := client.Send(req)
@@ -70,22 +70,26 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	c.Check(err, IsNil)
 	selResp := new(tipb.SelectResponse)
 	proto.Unmarshal(data, selResp)
-	c.Check(selResp.Rows, HasLen, int(count))
-	for i, row := range selResp.Rows {
+	c.Check(selResp.Chunks, HasLen, 1)
+	chunk := &selResp.Chunks[0]
+	c.Check(chunk.RowsMeta, HasLen, int(count))
+	var dataOffset int64
+	for i, rowMeta := range chunk.RowsMeta {
 		handle := int64(i + 1)
 		expectedDatums := []types.Datum{types.NewDatum(handle)}
 		expectedDatums = append(expectedDatums, genValues(handle, tbInfo)...)
 		var expectedEncoded []byte
 		expectedEncoded, err = codec.EncodeValue(nil, expectedDatums...)
 		c.Assert(err, IsNil)
-		c.Assert(row.Data, BytesEquals, expectedEncoded)
+		c.Assert(chunk.RowsData[dataOffset:dataOffset+rowMeta.Length], BytesEquals, expectedEncoded)
+		dataOffset += rowMeta.Length
 	}
 	txn.Commit()
 
 	// Select Index request.
 	txn, err = store.Begin()
 	c.Check(err, IsNil)
-	client = txn.GetClient()
+	client = store.GetClient()
 	req, err = prepareIndexRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
 	resp = client.Send(req)
@@ -95,14 +99,11 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	c.Check(err, IsNil)
 	idxResp := new(tipb.SelectResponse)
 	proto.Unmarshal(data, idxResp)
-	c.Check(idxResp.Rows, HasLen, int(count))
+	chunk = &idxResp.Chunks[0]
+	c.Check(chunk.RowsMeta, HasLen, int(count))
 	handles := make([]int, 0, 10)
-	for _, row := range idxResp.Rows {
-		var err error
-		datums, err := codec.Decode(row.Handle)
-		c.Check(err, IsNil)
-		c.Check(datums, HasLen, 1)
-		handles = append(handles, int(datums[0].GetInt64()))
+	for _, rowMeta := range chunk.RowsMeta {
+		handles = append(handles, int(rowMeta.Handle))
 	}
 	sort.Ints(handles)
 	for i, h := range handles {
@@ -125,19 +126,19 @@ type simpleTableInfo struct {
 
 func (s *simpleTableInfo) toPBTableInfo() *tipb.TableInfo {
 	tbInfo := new(tipb.TableInfo)
-	tbInfo.TableId = proto.Int64(s.tID)
+	tbInfo.TableId = s.tID
 	pkColumn := new(tipb.ColumnInfo)
-	pkColumn.Tp = proto.Int32(int32(mysql.TypeLonglong))
+	pkColumn.Tp = int32(mysql.TypeLonglong)
 	// It's ok to just use table ID for pk column ID, as it doesn't have a column kv.
 	pkColumn.ColumnId = tbInfo.TableId
-	pkColumn.PkHandle = proto.Bool(true)
-	pkColumn.Flag = proto.Int32(0)
+	pkColumn.PkHandle = true
+	pkColumn.Flag = 0
 	tbInfo.Columns = append(tbInfo.Columns, pkColumn)
 	for i, colTp := range s.cTypes {
 		coInfo := &tipb.ColumnInfo{
-			ColumnId: proto.Int64(s.cIDs[i]),
-			Tp:       proto.Int32(int32(colTp)),
-			PkHandle: proto.Bool(false),
+			ColumnId: s.cIDs[i],
+			Tp:       int32(colTp),
+			PkHandle: false,
 		}
 		tbInfo.Columns = append(tbInfo.Columns, coInfo)
 	}
@@ -146,14 +147,14 @@ func (s *simpleTableInfo) toPBTableInfo() *tipb.TableInfo {
 
 func (s *simpleTableInfo) toPBIndexInfo(idxOff int) *tipb.IndexInfo {
 	idxInfo := new(tipb.IndexInfo)
-	idxInfo.TableId = proto.Int64(s.tID)
-	idxInfo.IndexId = proto.Int64(s.iIDs[idxOff])
+	idxInfo.TableId = s.tID
+	idxInfo.IndexId = s.iIDs[idxOff]
 	colOff := s.indices[idxOff]
 	idxInfo.Columns = []*tipb.ColumnInfo{
 		{
-			ColumnId: proto.Int64(s.cIDs[colOff]),
-			Tp:       proto.Int32((int32(s.cTypes[colOff]))),
-			PkHandle: proto.Bool(false),
+			ColumnId: s.cIDs[colOff],
+			Tp:       int32(s.cTypes[colOff]),
+			PkHandle: false,
 		},
 	}
 	return idxInfo
@@ -218,7 +219,7 @@ func setRow(txn kv.Transaction, handle int64, tbl *simpleTableInfo, gen genValue
 func prepareSelectRequest(simpleInfo *simpleTableInfo, startTs uint64) (*kv.Request, error) {
 	selReq := new(tipb.SelectRequest)
 	selReq.TableInfo = simpleInfo.toPBTableInfo()
-	selReq.StartTs = proto.Uint64(startTs)
+	selReq.StartTs = startTs
 	selReq.Ranges = []*tipb.KeyRange{fullPBTableRange}
 	data, err := proto.Marshal(selReq)
 	if err != nil {
@@ -258,7 +259,7 @@ func fullIndexRange(tid int64, idxID int64) kv.KeyRange {
 func prepareIndexRequest(simpleInfo *simpleTableInfo, startTs uint64) (*kv.Request, error) {
 	selReq := new(tipb.SelectRequest)
 	selReq.IndexInfo = simpleInfo.toPBIndexInfo(0)
-	selReq.StartTs = proto.Uint64(startTs)
+	selReq.StartTs = startTs
 	selReq.Ranges = []*tipb.KeyRange{fullPBIndexRange}
 	data, err := proto.Marshal(selReq)
 	if err != nil {

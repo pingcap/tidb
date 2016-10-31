@@ -14,7 +14,6 @@
 package kv
 
 import (
-	"bytes"
 	"io"
 )
 
@@ -30,6 +29,8 @@ const (
 	PresumeKeyNotExistsError
 	// RetryAttempts is the number of txn retry attempt.
 	RetryAttempts
+	// BinlogData is the binlog data to write.
+	BinlogData
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.
@@ -85,8 +86,6 @@ type Transaction interface {
 	DelOption(opt Option)
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
-	// GetClient gets a client instance.
-	GetClient() Client
 	// StartTS returns the transaction start timestamp.
 	StartTS() uint64
 }
@@ -108,18 +107,8 @@ const (
 	ReqSubTypeBasic   = 0
 	ReqSubTypeDesc    = 10000
 	ReqSubTypeGroupBy = 10001
+	ReqSubTypeTopN    = 10002
 )
-
-// KeyRange represents a range where StartKey <= key < EndKey.
-type KeyRange struct {
-	StartKey Key
-	EndKey   Key
-}
-
-// IsPoint checks if the key range represents a point.
-func (r *KeyRange) IsPoint() bool {
-	return bytes.Equal(r.StartKey.PrefixNext(), r.EndKey)
-}
 
 // Request represents a kv request.
 type Request struct {
@@ -169,6 +158,8 @@ type Storage interface {
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) (Snapshot, error)
+	// GetClient gets a client instance.
+	GetClient() Client
 	// Close store
 	Close() error
 	// Storage's unique ID

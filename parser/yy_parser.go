@@ -14,8 +14,11 @@
 package parser
 
 import (
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -60,7 +63,20 @@ func handleMySQLSpecificCode(sql string) string {
 
 // Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
 type Parser struct {
-	cache []yySymType
+	charset   string
+	collation string
+	result    []ast.StmtNode
+	src       string
+	lexer     Scanner
+
+	// the following fields are used by yyParse to reduce allocation.
+	cache  []yySymType
+	yylval yySymType
+	yyVAL  yySymType
+}
+
+type stmtTexter interface {
+	stmtText() string
 }
 
 // New returns a Parser object.
@@ -79,14 +95,25 @@ func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, err
 	if collation == "" {
 		collation = mysql.DefaultCollationName
 	}
+	parser.charset = charset
+	parser.collation = collation
+	parser.src = sql
+	parser.result = parser.result[:0]
+
 	sql = handleMySQLSpecificCode(sql)
-	l := NewLexer(sql)
-	l.SetCharsetInfo(charset, collation)
-	yyParse(l, &parser.cache)
+
+	var l yyLexer
+	parser.lexer.reset(sql)
+	l = &parser.lexer
+	yyParse(l, parser)
+
 	if len(l.Errors()) != 0 {
 		return nil, errors.Trace(l.Errors()[0])
 	}
-	return l.Stmts(), nil
+	for _, stmt := range parser.result {
+		ast.SetFlag(stmt)
+	}
+	return parser.result, nil
 }
 
 // ParseOneStmt parses a query and returns an ast.StmtNode.
@@ -99,5 +126,83 @@ func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode
 	if len(stmts) != 1 {
 		return nil, ErrSyntax
 	}
+	ast.SetFlag(stmts[0])
 	return stmts[0], nil
+}
+
+// The select statement is not at the end of the whole statement, if the last
+// field text was set from its offset to the end of the src string, update
+// the last field text.
+func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
+	lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+	if lastField.Offset+len(lastField.Text()) >= len(parser.src)-1 {
+		lastField.SetText(parser.src[lastField.Offset:lastEnd])
+	}
+}
+
+func (parser *Parser) startOffset(v *yySymType) int {
+	return v.offset
+}
+
+func (parser *Parser) endOffset(v *yySymType) int {
+	offset := v.offset
+	for offset > 0 && unicode.IsSpace(rune(parser.src[offset-1])) {
+		offset--
+	}
+	return offset
+}
+
+func toInt(l yyLexer, lval *yySymType, str string) int {
+	n, err := strconv.ParseUint(str, 0, 64)
+	if err != nil {
+		l.Errorf("integer literal: %v", err)
+		return int(unicode.ReplacementChar)
+	}
+
+	switch {
+	case n < math.MaxInt64:
+		lval.item = int64(n)
+	default:
+		lval.item = uint64(n)
+	}
+	return intLit
+}
+
+func toFloat(l yyLexer, lval *yySymType, str string) int {
+	n, err := strconv.ParseFloat(str, 64)
+	if err != nil {
+		l.Errorf("float literal: %v", err)
+		return int(unicode.ReplacementChar)
+	}
+
+	lval.item = float64(n)
+	return floatLit
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
+func toHex(l yyLexer, lval *yySymType, str string) int {
+	h, err := mysql.ParseHex(str)
+	if err != nil {
+		// If parse hexadecimal literal to numerical value error, we should treat it as a string.
+		hexStr, err1 := mysql.ParseHexStr(str)
+		if err1 != nil {
+			l.Errorf("hex literal: %v", err)
+			return int(unicode.ReplacementChar)
+		}
+		lval.item = hexStr
+		return hexLit
+	}
+	lval.item = h
+	return hexLit
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
+func toBit(l yyLexer, lval *yySymType, str string) int {
+	b, err := mysql.ParseBit(str, -1)
+	if err != nil {
+		l.Errorf("bit literal: %v", err)
+		return int(unicode.ReplacementChar)
+	}
+	lval.item = b
+	return bitLit
 }

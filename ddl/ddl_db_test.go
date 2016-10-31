@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	_ "github.com/pingcap/tidb"
@@ -30,8 +31,10 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -59,6 +62,7 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.store, err = tidb.NewStore(uri)
 	c.Assert(err, IsNil)
 
+	localstore.MockRemoteStore = true
 	s.db, err = sql.Open("tidb", fmt.Sprintf("%s/%s", uri, s.schemaName))
 	c.Assert(err, IsNil)
 
@@ -75,8 +79,9 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
-	s.db.Close()
+	localstore.MockRemoteStore = false
 
+	s.db.Close()
 	s.s.Close()
 }
 
@@ -84,13 +89,91 @@ func (s *testDBSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	s.testAddIndex(c)
 	s.testDropIndex(c)
+	s.testAddUniqueIndexRollback(c)
 }
 
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	ctx := s.s.(context.Context)
-	tbl, err := sessionctx.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
+	domain := sessionctx.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := domain.MustReload()
+	c.Assert(err, IsNil)
+	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
 	c.Assert(err, IsNil)
 	return tbl
+}
+
+func backgroundExec(s kv.Storage, sql string, done chan error) {
+	se, err := tidb.CreateSession(s)
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	defer se.Close()
+	_, err = se.Execute("use test_db")
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	_, err = se.Execute(sql)
+	done <- errors.Trace(err)
+}
+
+func (s *testDBSuite) testAddUniqueIndexRollback(c *C) {
+	// t1 (c1 int, c2 int, c3 int, primary key(c1))
+	s.mustExec(c, "delete from t1")
+	// defaultBatchSize is equal to ddl.defaultBatchSize
+	defaultBatchSize := 1024
+	base := defaultBatchSize * 2
+	count := base
+	// add some rows
+	for i := 0; i < count; i++ {
+		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
+	}
+	// add some duplicate rows
+	for i := count - 10; i < count; i++ {
+		s.mustExec(c, "insert into t1 values (?, ?, ?)", i+10, i, i)
+	}
+
+	done := make(chan error, 1)
+	go backgroundExec(s.store, "create unique index c3_index on t1 (c3)", done)
+
+	times := 0
+	ticker := time.NewTicker(s.lease / 2)
+	defer ticker.Stop()
+LOOP:
+	for {
+		select {
+		case err := <-done:
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[kv:1062]Duplicate for key c3_index", Commentf("err:%v", err))
+			break LOOP
+		case <-ticker.C:
+			if times >= 10 {
+				break
+			}
+			step := 10
+			// delete some rows, and add some data
+			for i := count; i < count+step; i++ {
+				n := rand.Intn(count)
+				s.mustExec(c, "delete from t1 where c1 = ?", n)
+				s.mustExec(c, "insert into t1 values (?, ?, ?)", i+10, i, i)
+			}
+			count += step
+			times++
+		}
+	}
+
+	t := s.testGetTable(c, "t1")
+	for _, tidx := range t.Indices() {
+		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsFalse)
+	}
+
+	// delete duplicate rows, then add index
+	for i := base - 10; i < base; i++ {
+		s.mustExec(c, "delete from t1 where c1 = ?", i+10)
+	}
+	sessionExec(c, s.store, "create index c3_index on t1 (c3)")
 }
 
 func (s *testDBSuite) testAddIndex(c *C) {
@@ -103,7 +186,7 @@ func (s *testDBSuite) testAddIndex(c *C) {
 	}
 
 	go func() {
-		s.mustExec(c, "create index c3_index on t1 (c3)")
+		sessionExec(c, s.store, "create index c3_index on t1 (c3)")
 		done <- struct{}{}
 	}()
 
@@ -157,10 +240,11 @@ LOOP:
 		matchRows(c, rows, [][]interface{}{{keys[index]}, {keys[index+1]}, {keys[index+2]}})
 	}
 
-	rows := s.mustQuery(c, "explain select c1 from t1 where c3 >= 100")
+	// TODO: support explain in future.
+	//rows := s.mustQuery(c, "explain select c1 from t1 where c3 >= 100")
 
-	ay := dumpRows(c, rows)
-	c.Assert(strings.Contains(fmt.Sprintf("%v", ay), "c3_index"), IsTrue)
+	//ay := dumpRows(c, rows)
+	//c.Assert(strings.Contains(fmt.Sprintf("%v", ay), "c3_index"), IsTrue)
 
 	// get all row handles
 	ctx := s.s.(context.Context)
@@ -180,7 +264,7 @@ LOOP:
 			break
 		}
 	}
-	// Make sure there is index with name c3_index
+	// Make sure there is index with name c3_index.
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
 	txn, err := ctx.GetTxn(true)
@@ -227,7 +311,7 @@ func (s *testDBSuite) testDropIndex(c *C) {
 	c.Assert(c3idx, NotNil)
 
 	go func() {
-		s.mustExec(c, "drop index c3_index on t1")
+		sessionExec(c, s.store, "drop index c3_index on t1")
 		done <- struct{}{}
 	}()
 
@@ -304,6 +388,17 @@ func (s *testDBSuite) TestColumn(c *C) {
 	s.testDropColumn(c)
 }
 
+func sessionExec(c *C, s kv.Storage, sql string) {
+	se, err := tidb.CreateSession(s)
+	c.Assert(err, IsNil)
+	_, err = se.Execute("use test_db")
+	c.Assert(err, IsNil)
+	rs, err := se.Execute(sql)
+	c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+	c.Assert(rs, IsNil)
+	se.Close()
+}
+
 func (s *testDBSuite) testAddColumn(c *C) {
 	done := make(chan struct{}, 1)
 
@@ -314,7 +409,7 @@ func (s *testDBSuite) testAddColumn(c *C) {
 	}
 
 	go func() {
-		s.mustExec(c, "alter table t2 add column c4 int default -1")
+		sessionExec(c, s.store, "alter table t2 add column c4 int default -1")
 		done <- struct{}{}
 	}()
 
@@ -402,7 +497,7 @@ func (s *testDBSuite) testDropColumn(c *C) {
 	ctx := s.s.(context.Context)
 
 	go func() {
-		s.mustExec(c, "alter table t2 drop column c4")
+		sessionExec(c, s.store, "alter table t2 drop column c4")
 		done <- struct{}{}
 	}()
 
@@ -555,4 +650,54 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
+}
+
+func (s *testDBSuite) TestTruncateTable(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://truncate_table")
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int, c2 int)")
+	tk.MustExec("insert t values (1, 1), (2, 2)")
+	ctx := tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	oldTblID := oldTblInfo.Meta().ID
+
+	tk.MustExec("truncate table t")
+
+	tk.MustExec("insert t values (3, 3), (4, 4)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3 3", "4 4"))
+
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo.Meta().ID, Greater, oldTblID)
+
+	// verify that the old table data has been deleted by background worker.
+	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
+	hasOldTableData := true
+	for i := 0; i < 30; i++ {
+		err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+			it, err1 := txn.Seek(tablePrefix)
+			if err1 != nil {
+				return err1
+			}
+			if !it.Valid() {
+				hasOldTableData = false
+			} else {
+				hasOldTableData = it.Key().HasPrefix(tablePrefix)
+			}
+			it.Close()
+			return nil
+		})
+		c.Assert(err, IsNil)
+		if !hasOldTableData {
+			break
+		}
+		time.Sleep(time.Millisecond * 100)
+	}
+	c.Assert(hasOldTableData, IsFalse)
 }

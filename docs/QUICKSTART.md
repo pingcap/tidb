@@ -1,6 +1,6 @@
 # Quick Start
 
-#### Run TiDB with Docker
+#### Run TiDB with Docker (Standalone mode)
 
 You can quickly test TiDB with Docker, the source repository contains the Dockerfile which contains local tidb-server.
 
@@ -21,9 +21,9 @@ mysql -h 127.0.0.1 -P 4000 -u root -D test
 
 Notice: OS X user may use `docker-machine ip` to connect it.
 
-#### __Run TiDB on TiKV__
+#### __Or run TiDB on TiKV cluster__ 
 
-Read this [doc](https://github.com/pingcap/tikv/blob/master/USAGE.md).
+Read the documents for [binary deployment](https://github.com/pingcap/docs/blob/master/op-guide/binary-deployment.md) or [docker deployment](https://github.com/pingcap/docs/blob/master/op-guide/docker-deployment.md).
 
 #### __Pre-requirement__
 
@@ -47,8 +47,8 @@ Press `Ctrl+C` to quit.
 #### __Run as MySQL protocol server__
 
 ```
-make server
-cd tidb-server && ./tidb-server
+make
+cd bin && ./tidb-server
 ```
 
 In case you want to compile a specific location:

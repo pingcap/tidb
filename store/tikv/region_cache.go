@@ -29,18 +29,21 @@ import (
 // RegionCache caches Regions loaded from PD.
 type RegionCache struct {
 	pdClient pd.Client
-	mu       sync.RWMutex
-	regions  map[RegionVerID]*Region
-	sorted   *llrb.LLRB
+	mu       struct {
+		sync.RWMutex
+		regions map[RegionVerID]*Region
+		sorted  *llrb.LLRB
+	}
 }
 
 // NewRegionCache creates a RegionCache.
 func NewRegionCache(pdClient pd.Client) *RegionCache {
-	return &RegionCache{
+	c := &RegionCache{
 		pdClient: pdClient,
-		regions:  make(map[RegionVerID]*Region),
-		sorted:   llrb.New(),
 	}
+	c.mu.regions = make(map[RegionVerID]*Region)
+	c.mu.sorted = llrb.New()
+	return c
 }
 
 // GetRegionByVerID finds a Region by Region's verID.
@@ -48,21 +51,21 @@ func (c *RegionCache) GetRegionByVerID(id RegionVerID) *Region {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if r, ok := c.regions[id]; ok {
+	if r, ok := c.mu.regions[id]; ok {
 		return r.Clone()
 	}
 	return nil
 }
 
 // GetRegion find in cache, or get new region.
-func (c *RegionCache) GetRegion(key []byte) (*Region, error) {
+func (c *RegionCache) GetRegion(bo *Backoffer, key []byte) (*Region, error) {
 	c.mu.RLock()
 	r := c.getRegionFromCache(key)
 	c.mu.RUnlock()
 	if r != nil {
 		return r, nil
 	}
-	r, err := c.loadRegion(key)
+	r, err := c.loadRegion(bo, key)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -74,7 +77,7 @@ func (c *RegionCache) GetRegion(key []byte) (*Region, error) {
 // GroupKeysByRegion separates keys into groups by their belonging Regions.
 // Specially it also returns the first key's region which may be used as the
 // 'PrimaryLockKey' and should be committed ahead of others.
-func (c *RegionCache) GroupKeysByRegion(keys [][]byte) (map[RegionVerID][][]byte, RegionVerID, error) {
+func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[RegionVerID][][]byte, RegionVerID, error) {
 	groups := make(map[RegionVerID][][]byte)
 	var first RegionVerID
 	var lastRegion *Region
@@ -84,7 +87,7 @@ func (c *RegionCache) GroupKeysByRegion(keys [][]byte) (map[RegionVerID][][]byte
 			region = lastRegion
 		} else {
 			var err error
-			region, err = c.GetRegion(k)
+			region, err = c.GetRegion(bo, k)
 			if err != nil {
 				return nil, first, errors.Trace(err)
 			}
@@ -127,7 +130,7 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderID uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	r, ok := c.regions[regionID]
+	r, ok := c.mu.regions[regionID]
 	if !ok {
 		log.Debugf("regionCache: cannot find region when updating leader %d,%d", regionID, leaderID)
 		return
@@ -159,7 +162,7 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderID uint64) {
 
 func (c *RegionCache) getRegionFromCache(key []byte) *Region {
 	var r *Region
-	c.sorted.DescendLessOrEqual(newRBSearchItem(key), func(item llrb.Item) bool {
+	c.mu.sorted.DescendLessOrEqual(newRBSearchItem(key), func(item llrb.Item) bool {
 		r = item.(*llrbItem).region
 		return false
 	})
@@ -175,38 +178,44 @@ func (c *RegionCache) getRegionFromCache(key []byte) *Region {
 // insertRegionToCache tries to insert the Region to cache. If there is an old
 // Region with the same VerID, it will return the old one instead.
 func (c *RegionCache) insertRegionToCache(r *Region) *Region {
-	if old, ok := c.regions[r.VerID()]; ok {
+	if old, ok := c.mu.regions[r.VerID()]; ok {
 		return old
 	}
-	old := c.sorted.ReplaceOrInsert(newRBItem(r))
+	old := c.mu.sorted.ReplaceOrInsert(newRBItem(r))
 	if old != nil {
-		delete(c.regions, old.(*llrbItem).region.VerID())
+		delete(c.mu.regions, old.(*llrbItem).region.VerID())
 	}
-	c.regions[r.VerID()] = r
+	c.mu.regions[r.VerID()] = r
 	return r
 }
 
 func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
-	r, ok := c.regions[verID]
+	r, ok := c.mu.regions[verID]
 	if !ok {
 		return
 	}
-	c.sorted.Delete(newRBItem(r))
-	delete(c.regions, r.VerID())
+	c.mu.sorted.Delete(newRBItem(r))
+	delete(c.mu.regions, r.VerID())
 }
 
 // loadRegion loads region from pd client, and picks the first peer as leader.
-func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
-	var region *Region
+func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 	var backoffErr error
-	for backoff := pdBackoff(); backoffErr == nil; backoffErr = backoff() {
+	for {
+		if backoffErr != nil {
+			err := bo.Backoff(boPDRPC, backoffErr)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
 		meta, leader, err := c.pdClient.GetRegion(key)
 		if err != nil {
-			log.Warnf("loadRegion from PD failed, key: %q, err: %v", key, err)
+			backoffErr = errors.Errorf("loadRegion from PD failed, key: %q, err: %v", key, err)
 			continue
 		}
 		if meta == nil {
-			log.Warnf("region not found for key %q", key)
+			backoffErr = errors.Errorf("region not found for key %q", key)
 			continue
 		}
 		if len(meta.Peers) == 0 {
@@ -214,34 +223,58 @@ func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 		}
 		// Move leader to the first.
 		if leader != nil {
-			for i := range meta.Peers {
-				if meta.Peers[i].GetId() == leader.GetId() {
-					meta.Peers[0], meta.Peers[i] = meta.Peers[i], meta.Peers[0]
-					break
-				}
-			}
+			moveLeaderToFirst(meta, leader.GetStoreId())
 		}
 		peer := meta.Peers[0]
 		store, err := c.pdClient.GetStore(peer.GetStoreId())
 		if err != nil {
-			log.Warnf("loadStore from PD failed, key %q, storeID: %d, err: %v", key, peer.GetStoreId(), err)
+			backoffErr = errors.Errorf("loadStore from PD failed, key %q, storeID: %d, err: %v", key, peer.GetStoreId(), err)
 			continue
 		}
-		region = &Region{
+		region := &Region{
 			meta:       meta,
 			peer:       peer,
 			addr:       store.GetAddress(),
 			curPeerIdx: 0,
 		}
-		break
+		return region, nil
 	}
-	if backoffErr != nil {
-		return nil, errors.Annotate(backoffErr, txnRetryableMark)
-	}
-	return region, nil
 }
 
-// llrbItem is llrbTree's Item that uses []byte for compare.
+// OnRegionStale removes the old region and inserts new regions into the cache.
+func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.dropRegionFromCache(old.VerID())
+
+	for _, meta := range newRegions {
+		if err := decodeRegionMetaKey(meta); err != nil {
+			return errors.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)
+		}
+		moveLeaderToFirst(meta, old.peer.GetStoreId())
+		leader := meta.Peers[0]
+		c.insertRegionToCache(&Region{
+			meta: meta,
+			peer: leader,
+			addr: old.GetAddress(),
+		})
+	}
+	return nil
+}
+
+// moveLeaderToFirst moves the leader peer to the first and makes it easier to
+// try the next peer if the current peer does not respond.
+func moveLeaderToFirst(r *metapb.Region, leaderStoreID uint64) {
+	for i := range r.Peers {
+		if r.Peers[i].GetStoreId() == leaderStoreID {
+			r.Peers[0], r.Peers[i] = r.Peers[i], r.Peers[0]
+			return
+		}
+	}
+}
+
+// llrbItem is llrbTree's Item that uses []byte to compare.
 type llrbItem struct {
 	key    []byte
 	region *Region
@@ -341,24 +374,4 @@ func (r *Region) NextPeer() (*metapb.Peer, error) {
 		return nil, errors.New("out of range of peer")
 	}
 	return r.meta.Peers[nextPeerIdx], nil
-}
-
-// regionMissBackoff is for region cache miss retry.
-func regionMissBackoff() func() error {
-	const (
-		maxRetry  = 2
-		sleepBase = 1
-		sleepCap  = 1
-	)
-	return NewBackoff(maxRetry, sleepBase, sleepCap, NoJitter)
-}
-
-// pdBackoff is for PD RPC retry.
-func pdBackoff() func() error {
-	const (
-		maxRetry  = 10
-		sleepBase = 500
-		sleepCap  = 3000
-	)
-	return NewBackoff(maxRetry, sleepBase, sleepCap, EqualJitter)
 }

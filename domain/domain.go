@@ -44,29 +44,48 @@ type Domain struct {
 	SchemaValidity *schemaValidityInfo
 }
 
-func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
-	defer func() {
-		if err != nil {
-			do.SchemaValidity.setLastFailedTS(txn.StartTS())
-		}
-	}()
-	m := meta.NewMeta(txn)
-	schemaMetaVersion, err := m.GetSchemaVersion()
+// loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
+// infoschema version, if it is the same as the schema version at startTS, we don't need to reload again.
+func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64, startTS uint64) error {
+	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	info := do.infoHandle.Get()
-	if info != nil && schemaMetaVersion <= info.SchemaMetaVersion() {
-		// info may be changed by other txn, so here its version may be bigger than schema version,
-		// so we don't need to reload.
-		log.Debugf("[ddl] schema version is still %d, no need reload", schemaMetaVersion)
+	m := meta.NewSnapshotMeta(snapshot)
+	latestSchemaVersion, err := m.GetSchemaVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if usedSchemaVersion != 0 && usedSchemaVersion == latestSchemaVersion {
+		log.Debugf("[ddl] schema version is still %d, no need reload", usedSchemaVersion)
 		return nil
 	}
-
-	schemas, err := m.ListDatabases()
+	ok, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
+	if err != nil {
+		// We can fall back to full load, don't need to return the error.
+		log.Errorf("[ddl] failed to load schema diff %v", err)
+	}
+	if ok {
+		log.Infof("[ddl] diff load InfoSchema from version %d to %d", usedSchemaVersion, latestSchemaVersion)
+		return nil
+	}
+	schemas, err := do.getAllSchemasWithTablesFromMeta(m)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	newISBuilder, err := infoschema.NewBuilder(handle).InitWithDBInfos(schemas, latestSchemaVersion)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Infof("[ddl] full load InfoSchema from version %d to %d", usedSchemaVersion, latestSchemaVersion)
+	return newISBuilder.Build()
+}
+
+func (do *Domain) getAllSchemasWithTablesFromMeta(m *meta.Meta) ([]*model.DBInfo, error) {
+	schemas, err := m.ListDatabases()
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	for _, di := range schemas {
@@ -78,22 +97,64 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 		tables, err1 := m.ListTables(di.ID)
 		if err1 != nil {
 			err = err1
-			return errors.Trace(err1)
+			return nil, errors.Trace(err1)
 		}
 
 		di.Tables = make([]*model.TableInfo, 0, len(tables))
 		for _, tbl := range tables {
 			if tbl.State != model.StatePublic {
-				// schema is not public, can't be used outsiee.
+				// schema is not public, can't be used outside.
 				continue
 			}
 			di.Tables = append(di.Tables, tbl)
 		}
 	}
+	return schemas, nil
+}
 
-	log.Infof("[ddl] loadInfoSchema %d", schemaMetaVersion)
-	err = do.infoHandle.Set(schemas, schemaMetaVersion)
-	return errors.Trace(err)
+const (
+	initialVersion         = 0
+	maxNumberOfDiffsToLoad = 100
+)
+
+// tryLoadSchemaDiffs tries to only load latest schema changes.
+// Returns true if the schema is loaded successfully.
+// Returns false if the schema can not be loaded by schema diff, then we need to do full load.
+func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (bool, error) {
+	if usedVersion == initialVersion || newVersion-usedVersion > maxNumberOfDiffsToLoad {
+		// If there isn't any used version, or used version is too old, we do full load.
+		return false, nil
+	}
+	if usedVersion > newVersion {
+		// When user use History Read feature, history schema will be loaded.
+		// usedVersion may be larger than newVersion, full load is needed.
+		return false, nil
+	}
+	var diffs []*model.SchemaDiff
+	for usedVersion < newVersion {
+		usedVersion++
+		diff, err := m.GetSchemaDiff(usedVersion)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if diff == nil {
+			// If diff is missing for any version between used and new version, we fall back to full reload.
+			return false, nil
+		}
+		diffs = append(diffs, diff)
+	}
+	builder := infoschema.NewBuilder(do.infoHandle).InitWithOldInfoSchema()
+	for _, diff := range diffs {
+		err := builder.ApplyDiff(m, diff)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+	}
+	err := builder.Build()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return true, nil
 }
 
 // InfoSchema gets information schema from domain.
@@ -101,6 +162,16 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 	// try reload if possible.
 	do.tryReload()
 	return do.infoHandle.Get()
+}
+
+// GetSnapshotInfoSchema gets a snapshot information schema.
+func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
+	snapHandle := do.infoHandle.EmptyClone()
+	err := do.loadInfoSchema(snapHandle, do.infoHandle.Get().SchemaMetaVersion(), snapshotTS)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return snapHandle.Get(), nil
 }
 
 // PerfSchema gets performance schema from domain.
@@ -194,14 +265,22 @@ func (do *Domain) Reload() error {
 	done := make(chan error, 1)
 	go func() {
 		var err error
-
 		for {
-			err = kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
+			var ver kv.Version
+			ver, err = do.store.CurrentVersion()
+			if err == nil {
+				schemaVersion := int64(0)
+				oldInfoSchema := do.infoHandle.Get()
+				if oldInfoSchema != nil {
+					schemaVersion = oldInfoSchema.SchemaMetaVersion()
+				}
+				err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
+			}
 			if err == nil {
 				atomic.StoreInt64(&do.lastLeaseTS, time.Now().UnixNano())
 				break
 			}
-
+			do.SchemaValidity.setLastFailedTS(ver.Ver)
 			log.Errorf("[ddl] load schema err %v, retry again", errors.ErrorStack(err))
 			if atomic.LoadInt32(&exit) == 1 {
 				return
@@ -298,11 +377,15 @@ func (s *schemaValidityInfo) SetValidity(v bool) {
 	s.mux.Lock()
 	if !v {
 		txnTS := s.getLastFailedTS()
+		log.Errorf("[ddl] SetValidity, v:%v txnTS:%v lastInvalidTS:%v", v, txnTS, s.lastInvalidTS)
 		if s.lastInvalidTS < txnTS {
 			s.lastInvalidTS = txnTS
 		}
 	}
-	s.isValid = v
+	if s.isValid != v {
+		log.Infof("[ddl] SetValidity, original:%v current:%v", s.isValid, v)
+		s.isValid = v
+	}
 	s.mux.Unlock()
 }
 
@@ -316,7 +399,7 @@ func (s *schemaValidityInfo) Check(lastFailedTS uint64) error {
 	return ErrLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
 }
 
-// NewDomain creates a new domain.
+// NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	d = &Domain{store: store,
 		SchemaValidity: &schemaValidityInfo{}}

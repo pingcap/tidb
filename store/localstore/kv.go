@@ -258,8 +258,14 @@ type Driver struct {
 	engine.Driver
 }
 
+// MockRemoteStore mocks remote store. It makes IsLocalStore return false.
+var MockRemoteStore bool
+
 // IsLocalStore checks whether a storage is local or not.
 func IsLocalStore(s kv.Storage) bool {
+	if MockRemoteStore {
+		return false
+	}
 	_, ok := s.(*dbStore)
 	return ok
 }
@@ -340,6 +346,10 @@ func (s *dbStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	}, nil
 }
 
+func (s *dbStore) GetClient() kv.Client {
+	return &dbClient{store: s, regionInfo: s.pd.GetRegionInfo()}
+}
+
 func (s *dbStore) CurrentVersion() (kv.Version, error) {
 	return globalVersionProvider.CurrentVersion()
 }
@@ -396,7 +406,7 @@ func (s *dbStore) unLockKeys(txn *dbTxn) error {
 	for k := range txn.lockedKeys {
 		if tid, ok := s.keysLocked[k]; !ok || tid != txn.tid {
 			debug.PrintStack()
-			return errors.Errorf("should never happend:%v, %v", tid, txn.tid)
+			return errors.Errorf("should never happened:%v, %v", tid, txn.tid)
 		}
 
 		delete(s.keysLocked, k)

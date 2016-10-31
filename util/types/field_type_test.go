@@ -124,13 +124,14 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
 		{mysql.Hex{}, mysql.TypeVarchar},
 		{mysql.Time{Type: mysql.TypeDatetime}, mysql.TypeDatetime},
 		{mysql.Duration{}, mysql.TypeDuration},
-		{mysql.Decimal{}, mysql.TypeNewDecimal},
+		{&mysql.MyDecimal{}, mysql.TypeNewDecimal},
 		{mysql.Enum{}, mysql.TypeEnum},
 		{mysql.Set{}, mysql.TypeSet},
 		{nil, mysql.TypeNull},
 	}
 	for _, ca := range cases {
-		ft := DefaultTypeForValue(ca.value)
+		var ft FieldType
+		DefaultTypeForValue(ca.value, &ft)
 		c.Assert(ft.Tp, Equals, ca.tp, Commentf("%v %v", ft, ca))
 	}
 }

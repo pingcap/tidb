@@ -61,7 +61,7 @@ func NewValueExpr(value interface{}) *ValueExpr {
 	}
 	ve := &ValueExpr{}
 	ve.SetValue(value)
-	ve.Type = types.DefaultTypeForValue(value)
+	types.DefaultTypeForValue(value, &ve.Type)
 	return ve
 }
 

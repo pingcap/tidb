@@ -257,7 +257,7 @@ func ToString(value interface{}) (string, error) {
 		return v.String(), nil
 	case mysql.Duration:
 		return v.String(), nil
-	case mysql.Decimal:
+	case *mysql.MyDecimal:
 		return v.String(), nil
 	case mysql.Hex:
 		return v.ToString(), nil

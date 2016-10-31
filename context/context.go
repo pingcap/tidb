@@ -24,6 +24,9 @@ type Context interface {
 	// GetTxn gets a transaction for further execution.
 	GetTxn(forceNew bool) (kv.Transaction, error)
 
+	// GetClient gets a kv.Client.
+	GetClient() kv.Client
+
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn() error
 
@@ -39,3 +42,23 @@ type Context interface {
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
 }
+
+type basicCtxType int
+
+func (t basicCtxType) String() string {
+	switch t {
+	case QueryString:
+		return "query_string"
+	case Initing:
+		return "initing"
+	}
+	return "unknown"
+}
+
+// Context keys.
+const (
+	// QueryString is the key for original query string.
+	QueryString basicCtxType = 1
+	// Initing is the key for indicating if the server is running bootstrap or upgrad job.
+	Initing basicCtxType = 2
+)

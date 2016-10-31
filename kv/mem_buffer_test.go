@@ -159,6 +159,21 @@ func (s *testKVSuite) TestNewIterator(c *C) {
 	s.ResetMembuffers()
 }
 
+func (s *testKVSuite) TestIterNextUntil(c *C) {
+	defer testleak.AfterTest(c)()
+	buffer := NewMemDbBuffer()
+	insertData(c, buffer)
+
+	iter, err := buffer.Seek(nil)
+	c.Assert(err, IsNil)
+
+	err = NextUntil(iter, func(k Key) bool {
+		return false
+	})
+	c.Assert(err, IsNil)
+	c.Assert(iter.Valid(), IsFalse)
+}
+
 func (s *testKVSuite) TestBasicNewIterator(c *C) {
 	defer testleak.AfterTest(c)()
 	for _, buffer := range s.bs {

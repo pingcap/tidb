@@ -14,6 +14,8 @@
 package server
 
 import (
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
@@ -110,11 +112,14 @@ func (ts *TiDBStatement) Close() error {
 
 // OpenCtx implements IDriver.
 func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string) (IContext, error) {
-	session, _ := tidb.CreateSession(qd.store)
+	session, err := tidb.CreateSession(qd.store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	session.SetClientCapability(capability)
 	session.SetConnectionID(connID)
 	if dbname != "" {
-		_, err := session.Execute("use " + dbname)
+		_, err = session.Execute("use " + dbname)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -137,6 +142,26 @@ func (tc *TiDBContext) LastInsertID() uint64 {
 	return tc.session.LastInsertID()
 }
 
+// Value implements IContext Value method.
+func (tc *TiDBContext) Value(key fmt.Stringer) interface{} {
+	return tc.session.Value(key)
+}
+
+// SetValue implements IContext SetValue method.
+func (tc *TiDBContext) SetValue(key fmt.Stringer, value interface{}) {
+	tc.session.SetValue(key, value)
+}
+
+// CommitTxn implements IContext CommitTxn method.
+func (tc *TiDBContext) CommitTxn() error {
+	return tc.session.CommitTxn()
+}
+
+// RollbackTxn implements IContext RollbackTxn method.
+func (tc *TiDBContext) RollbackTxn() error {
+	return tc.session.RollbackTxn()
+}
+
 // AffectedRows implements IContext AffectedRows method.
 func (tc *TiDBContext) AffectedRows() uint64 {
 	return tc.session.AffectedRows()
@@ -153,7 +178,7 @@ func (tc *TiDBContext) WarningCount() uint16 {
 }
 
 // Execute implements IContext Execute method.
-func (tc *TiDBContext) Execute(sql string) (rs ResultSet, err error) {
+func (tc *TiDBContext) Execute(sql string) (rs []ResultSet, err error) {
 	rsList, err := tc.session.Execute(sql)
 	if err != nil {
 		return
@@ -161,10 +186,18 @@ func (tc *TiDBContext) Execute(sql string) (rs ResultSet, err error) {
 	if len(rsList) == 0 { // result ok
 		return
 	}
-	rs = &tidbResultSet{
-		recordSet: rsList[0],
+	rs = make([]ResultSet, len(rsList))
+	for i := 0; i < len(rsList); i++ {
+		rs[i] = &tidbResultSet{
+			recordSet: rsList[i],
+		}
 	}
 	return
+}
+
+// SetClientCapability implements IContext SetClientCapability method.
+func (tc *TiDBContext) SetClientCapability(flags uint32) {
+	tc.session.SetClientCapability(flags)
 }
 
 // Close implements IContext Close method.
@@ -183,7 +216,7 @@ func (tc *TiDBContext) FieldList(table string) (colums []*ColumnInfo, err error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	colums, err = rs.Columns()
+	colums, err = rs[0].Columns()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -50,3 +50,20 @@ func (s *testKeySuite) TestPartialNext(c *C) {
 	cmp = bytes.Compare(nextPartialKey, keyB)
 	c.Assert(cmp, Equals, -1)
 }
+
+func (s *testKeySuite) TestIsPoint(c *C) {
+	kr := KeyRange{
+		StartKey: Key("rowkey1"),
+		EndKey:   Key("rowkey2"),
+	}
+	c.Check(kr.IsPoint(), IsTrue)
+
+	kr.EndKey = Key("rowkey3")
+	c.Check(kr.IsPoint(), IsFalse)
+
+	kr = KeyRange{
+		StartKey: Key(""),
+		EndKey:   Key([]byte{0}),
+	}
+	c.Check(kr.IsPoint(), IsTrue)
+}

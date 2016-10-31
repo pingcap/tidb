@@ -22,10 +22,19 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
+type mvccValueType int
+
+const (
+	typePut mvccValueType = iota
+	typeDelete
+	typeRollback
+)
+
 type mvccValue struct {
-	startTS  uint64
-	commitTS uint64
-	value    []byte
+	valueType mvccValueType
+	startTS   uint64
+	commitTS  uint64
+	value     []byte
 }
 
 type mvccLock struct {
@@ -52,9 +61,10 @@ func (e *mvccEntry) Clone() *mvccEntry {
 	entry.key = append([]byte(nil), e.key...)
 	for _, v := range e.values {
 		entry.values = append(entry.values, mvccValue{
-			startTS:  v.startTS,
-			commitTS: v.commitTS,
-			value:    append([]byte(nil), v.value...),
+			valueType: v.valueType,
+			startTS:   v.startTS,
+			commitTS:  v.commitTS,
+			value:     append([]byte(nil), v.value...),
 		})
 	}
 	if e.lock != nil {
@@ -87,7 +97,7 @@ func (e *mvccEntry) Get(ts uint64) ([]byte, error) {
 		}
 	}
 	for _, v := range e.values {
-		if v.commitTS <= ts {
+		if v.commitTS <= ts && v.valueType != typeRollback {
 			return v.value, nil
 		}
 	}
@@ -117,7 +127,7 @@ func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary
 
 func (e *mvccEntry) checkTxnCommitted(startTS uint64) (uint64, bool) {
 	for _, v := range e.values {
-		if v.startTS == startTS {
+		if v.startTS == startTS && v.valueType != typeRollback {
 			return v.commitTS, true
 		}
 	}
@@ -132,10 +142,17 @@ func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 		return ErrRetryable("txn not found")
 	}
 	if e.lock.op != kvrpcpb.Op_Lock {
+		var valueType mvccValueType
+		if e.lock.op == kvrpcpb.Op_Put {
+			valueType = typePut
+		} else {
+			valueType = typeDelete
+		}
 		e.values = append([]mvccValue{{
-			startTS:  startTS,
-			commitTS: commitTS,
-			value:    e.lock.value,
+			valueType: valueType,
+			startTS:   startTS,
+			commitTS:  commitTS,
+			value:     e.lock.value,
 		}}, e.values...)
 	}
 	e.lock = nil
@@ -149,13 +166,18 @@ func (e *mvccEntry) Rollback(startTS uint64) error {
 		}
 		return nil
 	}
+	e.values = append([]mvccValue{{
+		valueType: typeRollback,
+		startTS:   startTS,
+		commitTS:  startTS,
+	}}, e.values...)
 	e.lock = nil
 	return nil
 }
 
 // MvccStore is an in-memory, multi-versioned, transaction-supported kv storage.
 type MvccStore struct {
-	mu   sync.RWMutex
+	sync.RWMutex
 	tree *llrb.LLRB
 }
 
@@ -168,8 +190,8 @@ func NewMvccStore() *MvccStore {
 
 // Get reads a key by ts.
 func (s *MvccStore) Get(key []byte, startTS uint64) ([]byte, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.RLock()
+	defer s.RUnlock()
 
 	return s.get(key, startTS)
 }
@@ -191,8 +213,8 @@ type Pair struct {
 
 // BatchGet gets values with keys and ts.
 func (s *MvccStore) BatchGet(ks [][]byte, startTS uint64) []Pair {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.RLock()
+	defer s.RUnlock()
 
 	var pairs []Pair
 	for _, k := range ks {
@@ -216,8 +238,8 @@ func regionContains(startKey []byte, endKey []byte, key []byte) bool {
 
 // Scan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey.
 func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.RLock()
+	defer s.RUnlock()
 
 	var pairs []Pair
 	iterator := func(item llrb.Item) bool {
@@ -245,8 +267,8 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 // ReverseScan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey
 // in descending order.
 func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.RLock()
+	defer s.RUnlock()
 
 	var pairs []Pair
 	iterator := func(item llrb.Item) bool {
@@ -290,8 +312,8 @@ func (s *MvccStore) submit(ents ...*mvccEntry) {
 
 // Prewrite acquires a lock on a key. (1st phase of 2PC).
 func (s *MvccStore) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64) []error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Lock()
+	defer s.Unlock()
 
 	var errs []error
 	for _, m := range mutations {
@@ -305,8 +327,8 @@ func (s *MvccStore) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, star
 
 // Commit commits the lock on a key. (2nd phase of 2PC).
 func (s *MvccStore) Commit(keys [][]byte, startTS, commitTS uint64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Lock()
+	defer s.Unlock()
 
 	var ents []*mvccEntry
 	for _, k := range keys {
@@ -321,24 +343,10 @@ func (s *MvccStore) Commit(keys [][]byte, startTS, commitTS uint64) error {
 	return nil
 }
 
-// CommitThenGet is a shortcut for Commit+Get, often used when resolving lock.
-func (s *MvccStore) CommitThenGet(key []byte, lockTS, commitTS, getTS uint64) ([]byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	entry := s.getOrNewEntry(key)
-	err := entry.Commit(lockTS, commitTS)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	s.submit(entry)
-	return entry.Get(getTS)
-}
-
 // Cleanup cleanups a lock, often used when resolving a expired lock.
 func (s *MvccStore) Cleanup(key []byte, startTS uint64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Lock()
+	defer s.Unlock()
 
 	entry := s.getOrNewEntry(key)
 	err := entry.Rollback(startTS)
@@ -351,8 +359,8 @@ func (s *MvccStore) Cleanup(key []byte, startTS uint64) error {
 
 // Rollback cleanups multiple locks, often used when rolling back a conflict txn.
 func (s *MvccStore) Rollback(keys [][]byte, startTS uint64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Lock()
+	defer s.Unlock()
 
 	var ents []*mvccEntry
 	for _, k := range keys {
@@ -367,16 +375,59 @@ func (s *MvccStore) Rollback(keys [][]byte, startTS uint64) error {
 	return nil
 }
 
-// RollbackThenGet is a shortcut for Rollback+Get, often used when resolving lock.
-func (s *MvccStore) RollbackThenGet(key []byte, lockTS uint64) ([]byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// ScanLock scans all orphan locks in a Region.
+func (s *MvccStore) ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error) {
+	s.RLock()
+	defer s.RUnlock()
 
-	entry := s.getOrNewEntry(key)
-	err := entry.Rollback(lockTS)
-	if err != nil {
-		return nil, errors.Trace(err)
+	var locks []*kvrpcpb.LockInfo
+	iterator := func(item llrb.Item) bool {
+		ent := item.(*mvccEntry)
+		if !regionContains(startKey, endKey, ent.key) {
+			return false
+		}
+		if ent.lock != nil && ent.lock.startTS <= maxTS {
+			locks = append(locks, &kvrpcpb.LockInfo{
+				PrimaryLock: ent.lock.primary,
+				LockVersion: ent.lock.startTS,
+				Key:         ent.key,
+			})
+		}
+		return true
 	}
-	s.submit(entry)
-	return entry.Get(lockTS)
+	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
+	return locks, nil
+}
+
+// ResolveLock resolves all orphan locks belong to a transaction.
+func (s *MvccStore) ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error {
+	s.Lock()
+	defer s.Unlock()
+
+	var ents []*mvccEntry
+	var err error
+	iterator := func(item llrb.Item) bool {
+		ent := item.(*mvccEntry)
+		if !regionContains(startKey, endKey, ent.key) {
+			return false
+		}
+		if ent.lock != nil && ent.lock.startTS == startTS {
+			if commitTS > 0 {
+				err = ent.Commit(startTS, commitTS)
+			} else {
+				err = ent.Rollback(startTS)
+			}
+			if err != nil {
+				return false
+			}
+			ents = append(ents, ent)
+		}
+		return true
+	}
+	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.submit(ents...)
+	return nil
 }

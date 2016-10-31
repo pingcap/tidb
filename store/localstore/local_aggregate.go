@@ -17,9 +17,9 @@ import (
 	"bytes"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi/xeval"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -46,15 +46,11 @@ func (rs *localRegion) getGroupKey(ctx *selectContext) ([]byte, error) {
 }
 
 // Update aggregate functions with rows.
-func (rs *localRegion) aggregate(ctx *selectContext, row [][]byte) error {
+func (rs *localRegion) aggregate(ctx *selectContext, h int64, row map[int64][]byte) error {
 	// Put row data into evaluate context for later evaluation.
-	cols := ctx.sel.TableInfo.Columns
-	for i, col := range cols {
-		_, datum, err := codec.DecodeOne(row[i])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		ctx.eval.Row[col.GetColumnId()] = datum
+	err := rs.setColumnValueToCtx(ctx, h, row, ctx.aggColumns)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	// Get group key.
 	gk, err := rs.getGroupKey(ctx)
@@ -90,8 +86,6 @@ type aggItem struct {
 	value types.Datum
 	// TODO: support group_concat
 	buffer *bytes.Buffer // Buffer is used for group_concat.
-	// Used by FirstRow aggregate function.
-	evaluated bool
 }
 
 // This is similar to ast.AggregateFuncExpr but use tipb.Expr.
@@ -206,14 +200,13 @@ func (n *aggregateFuncExpr) updateCount(ctx *selectContext, args []types.Datum) 
 
 func (n *aggregateFuncExpr) updateFirst(ctx *selectContext, args []types.Datum) error {
 	aggItem := n.getAggItem()
-	if aggItem.evaluated {
+	if !aggItem.value.IsNull() {
 		return nil
 	}
 	if len(args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
 	aggItem.value = args[0]
-	aggItem.evaluated = true
 	return nil
 }
 
@@ -228,9 +221,8 @@ func (n *aggregateFuncExpr) updateSum(ctx *selectContext, args []types.Datum) er
 		return nil
 	}
 	aggItem := n.getAggItem()
-	if !aggItem.evaluated {
+	if aggItem.value.IsNull() {
 		aggItem.value = arg
-		aggItem.evaluated = true
 		aggItem.count = 1
 		return nil
 	}
@@ -258,9 +250,8 @@ func (n *aggregateFuncExpr) updateMaxMin(ctx *selectContext, args []types.Datum,
 		return nil
 	}
 	aggItem := n.getAggItem()
-	if !aggItem.evaluated {
+	if aggItem.value.IsNull() {
 		aggItem.value = arg
-		aggItem.evaluated = true
 		return nil
 	}
 	c, err := aggItem.value.CompareDatum(arg)

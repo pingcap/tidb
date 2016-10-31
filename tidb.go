@@ -18,14 +18,10 @@
 package tidb
 
 import (
-	"net/http"
-	"time"
-	// For pprof
-	_ "net/http/pprof"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -34,21 +30,21 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
 
 // Engine prefix name
 const (
-	EngineGoLevelDBMemory = "memory://"
-	defaultMaxRetries     = 30
-	retrySleepInterval    = 500 * time.Millisecond
+	EngineGoLevelDBMemory        = "memory://"
+	defaultMaxRetries            = 30
+	retryInterval         uint64 = 500
 )
 
 type domainMap struct {
@@ -69,7 +65,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if !localstore.IsLocalStore(store) {
 		lease = schemaLease
 	}
-	d, err = domain.NewDomain(store, lease)
+	err = util.RunWithRetry(defaultMaxRetries, retryInterval, func() (retry bool, err1 error) {
+		d, err1 = domain.NewDomain(store, lease)
+		return true, errors.Trace(err1)
+	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -82,10 +81,6 @@ var (
 		domains: map[string]*domain.Domain{},
 	}
 	stores = make(map[string]kv.Driver)
-	// EnablePprof indicates whether to enable HTTP Pprof or not.
-	EnablePprof = os.Getenv("TIDB_PPROF") != "0"
-	// PprofAddr is the pprof url.
-	PprofAddr = ":8888"
 	// store.UUID()-> IfBootstrapped
 	storeBootstrapped = make(map[string]bool)
 
@@ -134,7 +129,7 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
-	compiler := &executor.Compiler{}
+	compiler := executor.Compiler{}
 	st, err := compiler.Compile(ctx, rawStmt)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -158,7 +153,11 @@ func runStmt(ctx context.Context, s ast.Statement, args ...interface{}) (ast.Rec
 	se := ctx.(*session)
 	se.history.add(0, s)
 	// MySQL DDL should be auto-commit.
-	if s.IsDDL() || autocommit.ShouldAutocommit(ctx) {
+	ac, err1 := autocommit.ShouldAutocommit(ctx)
+	if err1 != nil {
+		return nil, errors.Trace(err1)
+	}
+	if s.IsDDL() || ac {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
 			ctx.RollbackTxn()
@@ -234,15 +233,10 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	}
 
 	var s kv.Storage
-	for i := 1; i <= maxRetries; i++ {
+	util.RunWithRetry(maxRetries, retryInterval, func() (bool, error) {
 		s, err = d.Open(path)
-		if err == nil || !kv.IsRetryableError(err) {
-			break
-		}
-		sleepTime := time.Duration(uint64(retrySleepInterval) * uint64(i))
-		log.Warnf("Waiting store to get ready, sleep %v and try again...", sleepTime)
-		time.Sleep(sleepTime)
-	}
+		return kv.IsRetryableError(err), err
+	})
 	return s, errors.Trace(err)
 }
 
@@ -278,22 +272,8 @@ func IsQuery(sql string) bool {
 	return false
 }
 
-var tpsMetrics metric.TPSMetrics
-
-// GetTPS gets tidb tps.
-func GetTPS() int64 {
-	return tpsMetrics.Get()
-}
-
 func init() {
 	// Register default memory and goleveldb storage
 	RegisterLocalStore("memory", goleveldb.MemoryDriver{})
 	RegisterLocalStore("goleveldb", goleveldb.Driver{})
-	// start pprof handlers
-	if EnablePprof {
-		go http.ListenAndServe(PprofAddr, nil)
-	}
-
-	// Init metrics
-	tpsMetrics = metric.NewTPSMetrics()
 }

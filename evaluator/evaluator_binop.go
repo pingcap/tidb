@@ -50,7 +50,7 @@ func (e *Evaluator) handleLogicOperation(o *ast.BinaryOperationExpr) bool {
 	case opcode.LogicXor:
 		return e.handleXor(o)
 	default:
-		e.err = ErrInvalidOperation.Gen("unkown operator %s", o.Op)
+		e.err = ErrInvalidOperation.Gen("unknown operator %s", o.Op)
 		return false
 	}
 }
@@ -146,7 +146,15 @@ func (e *Evaluator) handleXor(o *ast.BinaryOperationExpr) bool {
 }
 
 func (e *Evaluator) handleComparisonOp(o *ast.BinaryOperationExpr) bool {
-	a, b := types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum())
+	var a, b = *o.L.GetDatum(), *o.R.GetDatum()
+	var err error
+	if o.Op != opcode.NullEQ {
+		a, b, err = types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum())
+		if err != nil {
+			e.err = errors.Trace(err)
+			return false
+		}
+	}
 	if a.IsNull() || b.IsNull() {
 		// for <=>, if a and b are both nil, return true.
 		// if a or b is nil, return false.
@@ -199,13 +207,16 @@ func getCompResult(op opcode.Op, value int) (bool, error) {
 	case opcode.NullEQ:
 		return value == 0, nil
 	default:
-		return false, ErrInvalidOperation.Gen("invalid op %v in comparision operation", op)
+		return false, ErrInvalidOperation.Gen("invalid op %v in comparison operation", op)
 	}
 }
 
 func (e *Evaluator) handleBitOp(o *ast.BinaryOperationExpr) bool {
-	a, b := types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum())
-
+	a, b, err := types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum())
+	if err != nil {
+		e.err = errors.Trace(err)
+		return false
+	}
 	if a.IsNull() || b.IsNull() {
 		o.SetNull()
 		return true
@@ -248,14 +259,17 @@ func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
 		e.err = errors.Trace(err)
 		return false
 	}
-
 	b, err := types.CoerceArithmetic(*o.R.GetDatum())
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
 	}
 
-	a, b = types.CoerceDatum(a, b)
+	a, b, err = types.CoerceDatum(a, b)
+	if err != nil {
+		e.err = errors.Trace(err)
+		return false
+	}
 	if a.IsNull() || b.IsNull() {
 		o.SetNull()
 		return true

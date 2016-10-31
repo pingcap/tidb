@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -82,6 +83,10 @@ func (c *reorgContext) CommitTxn() error {
 	return c.finishTxn(false)
 }
 
+func (c *reorgContext) GetClient() kv.Client {
+	return c.store.GetClient()
+}
+
 func (c *reorgContext) SetValue(key fmt.Stringer, value interface{}) {
 	c.m[key] = value
 }
@@ -129,51 +134,70 @@ func (d *ddl) runReorgJob(f func() error) error {
 	// wait reorganization job done or timeout
 	select {
 	case err := <-d.reorgDoneCh:
+		log.Info("[ddl] run reorg job done")
 		d.reorgDoneCh = nil
 		return errors.Trace(err)
 	case <-d.quitCh:
+		log.Info("[ddl] run reorg job ddl quit")
 		// we return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
+		log.Infof("[ddl] run reorg job wait timeout :%v", waitTimeout)
 		// if timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}
 }
 
-func (d *ddl) isReorgRunnable(txn kv.Transaction) error {
+func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 	if d.isClosed() {
 		// worker is closed, can't run reorganization.
 		return errors.Trace(errInvalidWorker.Gen("worker is closed"))
 	}
 
 	t := meta.NewMeta(txn)
-	owner, err := t.GetDDLJobOwner()
+	owner, err := d.getJobOwner(t, flag)
 	if err != nil {
 		return errors.Trace(err)
-	} else if owner == nil || owner.OwnerID != d.uuid {
+	}
+	if owner == nil || owner.OwnerID != d.uuid {
 		// if no owner, we will try later, so here just return error.
 		// or another server is owner, return error too.
+		log.Infof("[ddl] %s job, self id %s owner %s, txnTS:%d", flag, d.uuid, owner, txn.StartTS())
 		return errors.Trace(errNotOwner)
 	}
 
 	return nil
 }
 
-func (d *ddl) delKeysWithPrefix(prefix kv.Key) error {
+// delKeysWithStartKey deletes keys with start key in a limited number. If limit < 0, deletes all keys.
+// It returns the number of rows deleted, next start key and the error.
+func (d *ddl) delKeysWithStartKey(prefix, startKey kv.Key, jobType JobType, job *model.Job, limit int) (int, kv.Key, error) {
+	limitedDel := limit >= 0
+
+	var count int
+	total := job.GetRowCount()
+	keys := make([]kv.Key, 0, defaultBatchSize)
 	for {
-		keys := make([]kv.Key, 0, maxBatchSize)
+		if limitedDel && count >= limit {
+			break
+		}
+		batch := defaultBatchSize
+		if limitedDel && count+batch > limit {
+			batch = limit - count
+		}
+		startTS := time.Now()
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err1 := d.isReorgRunnable(txn); err1 != nil {
+			if err1 := d.isReorgRunnable(txn, jobType); err1 != nil {
 				return errors.Trace(err1)
 			}
 
-			iter, err := txn.Seek(prefix)
+			iter, err := txn.Seek(startKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
-
 			defer iter.Close()
-			for i := 0; i < maxBatchSize; i++ {
+
+			for i := 0; i < batch; i++ {
 				if iter.Valid() && iter.Key().HasPrefix(prefix) {
 					keys = append(keys, iter.Key().Clone())
 					err = iter.Next()
@@ -194,18 +218,44 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key) error {
 				}
 			}
 
+			count += len(keys)
+			total += int64(len(keys))
 			return nil
 		})
-
+		sub := time.Since(startTS).Seconds()
 		if err != nil {
-			return errors.Trace(err)
+			log.Warnf("[ddl] deleted %d keys failed, take time %v, deleted %d keys in total", len(keys), sub, total)
+			return 0, startKey, errors.Trace(err)
 		}
 
-		// delete no keys, return.
-		if len(keys) == 0 {
-			return nil
+		job.SetRowCount(total)
+		batchHandleDataHistogram.WithLabelValues(batchDelData).Observe(sub)
+		log.Infof("[ddl] deleted %d keys take time %v, deleted %d keys in total", len(keys), sub, total)
+
+		if len(keys) > 0 {
+			startKey = keys[len(keys)-1]
 		}
+
+		if noMoreKeysToDelete := len(keys) < batch; noMoreKeysToDelete {
+			break
+		}
+
+		keys = keys[:0]
 	}
+
+	return count, startKey, nil
+}
+
+// addDBHistoryInfo adds schema version and schema information that are used for binlog.
+// dbInfo is added in the following operations: create database, drop database.
+func addDBHistoryInfo(job *model.Job, ver int64, dbInfo *model.DBInfo) {
+	job.Args = []interface{}{ver, dbInfo}
+}
+
+// addTableHistoryInfo adds schema version and table information that are used for binlog.
+// tblInfo is added except for the following operations: create database, drop database.
+func addTableHistoryInfo(job *model.Job, ver int64, tblInfo *model.TableInfo) {
+	job.Args = []interface{}{ver, tblInfo}
 }
 
 type reorgInfo struct {

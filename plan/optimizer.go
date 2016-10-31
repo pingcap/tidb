@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
@@ -22,50 +23,71 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
+// AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
+var AllowCartesianProduct = true
+
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, node ast.Node, sb SubQueryBuilder, is infoschema.InfoSchema) (Plan, error) {
+func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	// We have to infer type again because after parameter is set, the expression type may change.
 	if err := InferType(node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := logicOptimize(ctx, node); err != nil {
-		return nil, errors.Trace(err)
-	}
+	allocator := new(idAllocator)
 	builder := &planBuilder{
-		sb:        sb,
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
-		allocator: new(idAllocator)}
+		allocator: allocator}
 	p := builder.build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)
 	}
-	if logic, ok := p.(LogicalPlan); UseNewPlanner && ok {
+	if logic, ok := p.(LogicalPlan); ok {
 		var err error
 		_, logic, err = logic.PredicatePushDown(nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		solver := &aggPushDownSolver{
+			ctx:   ctx,
+			alloc: allocator,
+		}
+		solver.aggPushDown(logic)
 		_, err = logic.PruneColumnsAndResolveIndices(p.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		p = logic.Convert2PhysicalPlan()
-	}
-	err := Refine(p)
-	if err != nil {
-		return nil, errors.Trace(err)
+		if !AllowCartesianProduct && existsCartesianProduct(logic) {
+			return nil, ErrCartesianProductUnsupported
+		}
+		logic = EliminateProjection(logic)
+		info, err := logic.convert2PhysicalPlan(&requiredProperty{})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		p = info.p
+		log.Debugf("[PLAN] %s", ToString(p))
+		return p, nil
 	}
 	return p, nil
+}
+func existsCartesianProduct(p LogicalPlan) bool {
+	if join, ok := p.(*Join); ok && len(join.EqualConditions) == 0 {
+		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
+	}
+	for _, child := range p.GetChildren() {
+		if existsCartesianProduct(child.(LogicalPlan)) {
+			return true
+		}
+	}
+	return false
 }
 
 // PrepareStmt prepares a raw statement parsed from parser.
 // The statement must be prepared before it can be passed to optimize function.
 // We pass InfoSchema instead of getting from Context in case it is changed after resolving name.
 func PrepareStmt(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error {
-	ast.SetFlag(node)
 	if err := Preprocess(node, is, ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -87,12 +109,12 @@ const (
 
 // Optimizer base errors.
 var (
-	ErrOneColumn           = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
-	ErrSameColumns         = terror.ClassOptimizer.New(CodeSameColumns, "Operands should contain same columns")
-	ErrMultiWildCard       = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
-	ErrUnSupported         = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
-	ErrInvalidGroupFuncUse = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
-	ErrIllegalReference    = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")
+	ErrOneColumn                   = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
+	ErrSameColumns                 = terror.ClassOptimizer.New(CodeSameColumns, "Operands should contain same columns")
+	ErrMultiWildCard               = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
+	ErrCartesianProductUnsupported = terror.ClassOptimizer.New(CodeUnsupported, "Cartesian product is unsupported")
+	ErrInvalidGroupFuncUse         = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
+	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")
 )
 
 func init() {

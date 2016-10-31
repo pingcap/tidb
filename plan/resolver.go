@@ -195,6 +195,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.currentContext().inHaving = true
 	case *ast.InsertStmt:
 		nr.pushContext()
+	case *ast.LoadDataStmt:
+		nr.pushContext()
 	case *ast.Join:
 		nr.pushJoin(v)
 	case *ast.OnCondition:
@@ -316,6 +318,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	case *ast.UnionSelectList:
 		nr.handleUnionSelectList(v)
 	case *ast.InsertStmt:
+		nr.popContext()
+	case *ast.LoadDataStmt:
 		nr.popContext()
 	case *ast.DeleteStmt:
 		nr.popContext()
@@ -578,7 +582,7 @@ func (nr *nameResolver) resolveColumnNameInOnCondition(cn *ast.ColumnNameExpr) {
 	join := ctx.joinNodeStack[len(ctx.joinNodeStack)-1]
 	tableSources := appendTableSources(nil, join)
 	if !nr.resolveColumnInTableSources(cn, tableSources) {
-		nr.Err = errors.Errorf("unkown column name %s", cn.Name.Name.O)
+		nr.Err = errors.Errorf("unknown column name %s", cn.Name.Name.O)
 	}
 }
 
@@ -924,6 +928,10 @@ func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowProcessList:
+		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
 	}
 	for i, name := range names {
 		f := &ast.ResultField{

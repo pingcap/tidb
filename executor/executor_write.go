@@ -14,15 +14,17 @@
 package executor
 
 import (
+	"bytes"
+	"strings"
+
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -33,137 +35,17 @@ var (
 	_ Executor = &UpdateExec{}
 	_ Executor = &DeleteExec{}
 	_ Executor = &InsertExec{}
+	_ Executor = &ReplaceExec{}
+	_ Executor = &LoadData{}
 )
 
-// UpdateExec represents an update executor.
-type UpdateExec struct {
-	SelectExec  Executor
-	OrderedList []*ast.Assignment
-
-	// Map for unique (Table, handle) pair.
-	updatedRowKeys map[table.Table]map[int64]struct{}
-	ctx            context.Context
-
-	rows        []*Row          // The rows fetched from TableExec.
-	newRowsData [][]types.Datum // The new values to be set.
-	fetched     bool
-	cursor      int
-}
-
-// Schema implements Executor Schema interface.
-func (e *UpdateExec) Schema() expression.Schema {
-	return nil
-}
-
-// Next implements Executor Next interface.
-func (e *UpdateExec) Next() (*Row, error) {
-	if !e.fetched {
-		err := e.fetchRows()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.fetched = true
-	}
-
-	columns, err := getUpdateColumns(e.OrderedList)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if e.cursor >= len(e.rows) {
-		return nil, nil
-	}
-	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[table.Table]map[int64]struct{})
-	}
-	row := e.rows[e.cursor]
-	newData := e.newRowsData[e.cursor]
-	for _, entry := range row.RowKeys {
-		tbl := entry.Tbl
-		if e.updatedRowKeys[tbl] == nil {
-			e.updatedRowKeys[tbl] = make(map[int64]struct{})
-		}
-		offset := e.getTableOffset(tbl)
-		handle := entry.Handle
-		oldData := row.Data[offset : offset+len(tbl.WritableCols())]
-		newTableData := newData[offset : offset+len(tbl.WritableCols())]
-		_, ok := e.updatedRowKeys[tbl][handle]
-		if ok {
-			// Each matching row is updated once, even if it matches the conditions multiple times.
-			continue
-		}
-		// Update row
-		err1 := updateRecord(e.ctx, handle, oldData, newTableData, columns, tbl, offset, false)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
-		}
-		e.updatedRowKeys[tbl][handle] = struct{}{}
-	}
-	e.cursor++
-	return &Row{}, nil
-}
-
-func getUpdateColumns(assignList []*ast.Assignment) (map[int]*ast.Assignment, error) {
-	m := make(map[int]*ast.Assignment, len(assignList))
-	for i, v := range assignList {
-		m[i] = v
-	}
-	return m, nil
-}
-
-func (e *UpdateExec) fetchRows() error {
-	for {
-		row, err := e.SelectExec.Next()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if row == nil {
-			return nil
-		}
-		data := make([]types.Datum, len(e.SelectExec.Fields()))
-		newData := make([]types.Datum, len(e.SelectExec.Fields()))
-		for i, f := range e.SelectExec.Fields() {
-			data[i] = types.NewDatum(f.Expr.GetValue())
-			newData[i] = data[i]
-			if e.OrderedList[i] != nil {
-				val, err := evaluator.Eval(e.ctx, e.OrderedList[i].Expr)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				newData[i] = val
-			}
-		}
-		row.Data = data
-		e.rows = append(e.rows, row)
-		e.newRowsData = append(e.newRowsData, newData)
-	}
-}
-
-func (e *UpdateExec) getTableOffset(t table.Table) int {
-	fields := e.SelectExec.Fields()
-	i := 0
-	for i < len(fields) {
-		field := fields[i]
-		if field.Table.Name.L == t.Meta().Name.L {
-			return i
-		}
-		for _, col := range field.Table.Columns {
-			if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
-				continue
-			}
-			i++
-		}
-	}
-	return 0
-}
-
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, updateColumns map[int]*ast.Assignment, t table.Table, offset int, onDuplicateUpdate bool) error {
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, offset int, onDuplicateUpdate bool) error {
 	cols := t.Cols()
 	touched := make(map[int]bool, len(cols))
-
 	assignExists := false
 	var newHandle types.Datum
-	for i, asgn := range updateColumns {
-		if asgn == nil {
+	for i, hasSetExpr := range assignFlag {
+		if !hasSetExpr {
 			continue
 		}
 		if i < offset || i >= offset+len(cols) {
@@ -197,7 +79,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	}
 
 	// Check whether new value is valid.
-	if err := table.CastValues(ctx, newData, cols); err != nil {
+	if err := table.CastValues(ctx, newData, cols, false); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -257,17 +139,6 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	return nil
 }
 
-// Fields implements Executor Fields interface.
-// Returns nil to indicate there is no output.
-func (e *UpdateExec) Fields() []*ast.ResultField {
-	return nil
-}
-
-// Close implements Executor Close interface.
-func (e *UpdateExec) Close() error {
-	return e.SelectExec.Close()
-}
-
 // DeleteExec represents a delete executor.
 // See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteExec struct {
@@ -280,12 +151,12 @@ type DeleteExec struct {
 	finished bool
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *DeleteExec) Schema() expression.Schema {
 	return nil
 }
 
-// Next implements Executor Next interface.
+// Next implements the Executor Next interface.
 func (e *DeleteExec) Next() (*Row, error) {
 	if e.finished {
 		return nil, nil
@@ -310,13 +181,19 @@ func (e *DeleteExec) Next() (*Row, error) {
 				tblNames[f.TableName.Name.L] = f.TableName.Name.L
 			}
 		}
-		for _, t := range e.Tables {
-			// Consider DBName.
-			_, ok := tblNames[t.Name.L]
-			if !ok {
-				return nil, errors.Errorf("Unknown table '%s' in MULTI DELETE", t.Name.O)
+		if len(tblNames) != 0 {
+			for _, t := range e.Tables {
+				// Consider DBName.
+				_, ok := tblNames[t.Name.L]
+				if !ok {
+					return nil, errors.Errorf("Unknown table '%s' in MULTI DELETE", t.Name.O)
+				}
+				tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
 			}
-			tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
+		} else { // all columns have been pruned
+			for _, t := range e.Tables {
+				tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
+			}
 		}
 	}
 
@@ -388,15 +265,304 @@ func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data
 	return nil
 }
 
-// Fields implements Executor Fields interface.
+// Fields implements the Executor Fields interface.
 // Returns nil to indicate there is no output.
 func (e *DeleteExec) Fields() []*ast.ResultField {
 	return nil
 }
 
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
 	return e.SelectExec.Close()
+}
+
+// NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
+func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table) *LoadDataInfo {
+	return &LoadDataInfo{
+		row:       row,
+		insertVal: &InsertValues{ctx: ctx, Table: tbl},
+		Table:     tbl,
+	}
+}
+
+// LoadDataInfo saves the information of loading data operation.
+type LoadDataInfo struct {
+	row       []types.Datum
+	insertVal *InsertValues
+
+	Path       string
+	Table      table.Table
+	FieldsInfo *ast.FieldsClause
+	LinesInfo  *ast.LinesClause
+}
+
+// getValidData returns prevData and curData that starts from starting symbol.
+// If the data doesn't have starting symbol, prevData is nil and curData is curData[len(curData)-startingLen+1:].
+// If curData size less than startingLen, curData is returned directly.
+func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
+	startingLen := len(e.LinesInfo.Starting)
+	if startingLen == 0 {
+		return prevData, curData
+	}
+
+	prevLen := len(prevData)
+	if prevLen > 0 {
+		// starting symbol in the prevData
+		idx := strings.Index(string(prevData), e.LinesInfo.Starting)
+		if idx != -1 {
+			return prevData[idx:], curData
+		}
+
+		// starting symbol in the middle of prevData and curData
+		restStart := curData
+		if len(curData) >= startingLen {
+			restStart = curData[:startingLen-1]
+		}
+		prevData = append(prevData, restStart...)
+		idx = strings.Index(string(prevData), e.LinesInfo.Starting)
+		if idx != -1 {
+			return prevData[idx:prevLen], curData
+		}
+	}
+
+	// starting symbol in the curData
+	idx := strings.Index(string(curData), e.LinesInfo.Starting)
+	if idx != -1 {
+		return nil, curData[idx:]
+	}
+
+	// no starting symbol
+	if len(curData) >= startingLen {
+		curData = curData[len(curData)-startingLen+1:]
+	}
+	return nil, curData
+}
+
+// getLine returns a line, curData, the next data start index and a bool value.
+// If it has starting symbol the bool is true, otherwise is false.
+func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) {
+	startingLen := len(e.LinesInfo.Starting)
+	prevData, curData = e.getValidData(prevData, curData)
+	if prevData == nil && len(curData) < startingLen {
+		return nil, curData, false
+	}
+
+	prevLen := len(prevData)
+	terminatedLen := len(e.LinesInfo.Terminated)
+	curStartIdx := 0
+	if prevLen < startingLen {
+		curStartIdx = startingLen - prevLen
+	}
+	endIdx := -1
+	if len(curData) >= curStartIdx {
+		endIdx = strings.Index(string(curData[curStartIdx:]), e.LinesInfo.Terminated)
+	}
+	if endIdx == -1 {
+		// no terminated symbol
+		if len(prevData) == 0 {
+			return nil, curData, true
+		}
+
+		// terminated symbol in the middle of prevData and curData
+		curData = append(prevData, curData...)
+		endIdx = strings.Index(string(curData[startingLen:]), e.LinesInfo.Terminated)
+		if endIdx != -1 {
+			nextDataIdx := startingLen + endIdx + terminatedLen
+			return curData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
+		}
+		// no terminated symbol
+		return nil, curData, true
+	}
+
+	// terminated symbol in the curData
+	nextDataIdx := curStartIdx + endIdx + terminatedLen
+	if len(prevData) == 0 {
+		return curData[curStartIdx : curStartIdx+endIdx], curData[nextDataIdx:], true
+	}
+
+	// terminated symbol in the curData
+	prevData = append(prevData, curData[:nextDataIdx]...)
+	endIdx = strings.Index(string(prevData[startingLen:]), e.LinesInfo.Terminated)
+	if endIdx >= prevLen {
+		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
+	}
+
+	// terminated symbol in the middle of prevData and curData
+	lineLen := startingLen + endIdx + terminatedLen
+	return prevData[startingLen : startingLen+endIdx], curData[lineLen-prevLen:], true
+}
+
+// InsertData inserts data into specified table according to the specified format.
+// If it has the rest of data isn't completed the processing, then is returns without completed data.
+// If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
+func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
+	// TODO: support enclosed and escape.
+	if len(prevData) == 0 && len(curData) == 0 {
+		return nil, nil
+	}
+
+	var line []byte
+	var isEOF, hasStarting bool
+	cols := make([]string, 0, len(e.row))
+	if len(prevData) > 0 && len(curData) == 0 {
+		isEOF = true
+		prevData, curData = curData, prevData
+	}
+	for len(curData) > 0 {
+		line, curData, hasStarting = e.getLine(prevData, curData)
+		prevData = nil
+
+		// If it doesn't find the terminated symbol and this data isn't the last data,
+		// the data can't be inserted.
+		if line == nil && !isEOF {
+			break
+		}
+		// If doesn't find starting symbol, this data can't be inserted.
+		if !hasStarting {
+			if isEOF {
+				curData = nil
+			}
+			break
+		}
+		if line == nil && isEOF {
+			line = curData[len(e.LinesInfo.Starting):]
+			curData = nil
+		}
+
+		rawCols := bytes.Split(line, []byte(e.FieldsInfo.Terminated))
+		cols = escapeCols(rawCols)
+		e.insertData(cols)
+		e.insertVal.currRow++
+	}
+	if e.insertVal.lastInsertID != 0 {
+		variable.GetSessionVars(e.insertVal.ctx).LastInsertID = e.insertVal.lastInsertID
+	}
+
+	return curData, nil
+}
+
+func escapeCols(strs [][]byte) []string {
+	ret := make([]string, len(strs))
+	for i, v := range strs {
+		ret[i] = string(escape(v))
+	}
+	return ret
+}
+
+// TODO: escape need to be improved, it should support ESCAPED BY to specify
+// the escape character and handle \N escape.
+// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
+func escape(str []byte) []byte {
+	pos := 0
+	for i := 0; i < len(str); i++ {
+		c := str[i]
+		if c == '\\' && i+1 < len(str) {
+			var ok bool
+			if c, ok = escapeChar(str[i+1]); ok {
+				i++
+			}
+		}
+
+		str[pos] = c
+		pos++
+	}
+	return str[:pos]
+}
+
+func escapeChar(c byte) (byte, bool) {
+	switch c {
+	case '0':
+		return 0, true
+	case 'b':
+		return '\b', true
+	case 'n':
+		return '\n', true
+	case 'r':
+		return '\r', true
+	case 't':
+		return '\t', true
+	case 'Z':
+		return 26, true
+	case '\\':
+		return '\\', true
+	}
+	return c, false
+}
+
+func (e *LoadDataInfo) insertData(cols []string) {
+	for i := 0; i < len(e.row); i++ {
+		if i >= len(cols) {
+			e.row[i].SetString("")
+			continue
+		}
+		e.row[i].SetString(cols[i])
+	}
+	row, err := e.insertVal.fillRowData(e.Table.Cols(), e.row, true)
+	if err != nil {
+		log.Warnf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
+	}
+	_, err = e.Table.AddRecord(e.insertVal.ctx, row)
+	if err != nil {
+		log.Warnf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
+	}
+}
+
+// LoadData represents a load data executor.
+type LoadData struct {
+	IsLocal      bool
+	loadDataInfo *LoadDataInfo
+}
+
+// loadDataVarKeyType is a dummy type to avoid naming collision in context.
+type loadDataVarKeyType int
+
+// String defines a Stringer function for debugging and pretty printing.
+func (k loadDataVarKeyType) String() string {
+	return "load_data_var"
+}
+
+// LoadDataVarKey is a variable key for load data.
+const LoadDataVarKey loadDataVarKeyType = 0
+
+// Next implements the Executor Next interface.
+func (e *LoadData) Next() (*Row, error) {
+	// TODO: support load data without local field.
+	if !e.IsLocal {
+		return nil, errors.New("Load Data: don't support load data without local field")
+	}
+	// TODO: support lines terminated is "".
+	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
+		return nil, errors.New("Load Data: don't support load data terminated is nil")
+	}
+
+	ctx := e.loadDataInfo.insertVal.ctx
+	val := ctx.Value(LoadDataVarKey)
+	if val != nil {
+		ctx.SetValue(LoadDataVarKey, nil)
+		return nil, errors.New("Load Data: previous load data option isn't closed normal")
+	}
+	if e.loadDataInfo.Path == "" {
+		return nil, errors.New("Load Data: infile path is empty")
+	}
+	ctx.SetValue(LoadDataVarKey, e.loadDataInfo)
+
+	return nil, nil
+}
+
+// Schema implements the Executor Schema interface.
+func (e *LoadData) Schema() expression.Schema {
+	return nil
+}
+
+// Fields implements the Executor Fields interface.
+// Returns nil to indicate there is no output.
+func (e *LoadData) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *LoadData) Close() error {
+	return nil
 }
 
 // InsertValues is the data to insert.
@@ -421,16 +587,17 @@ type InsertExec struct {
 	fields      []*ast.ResultField
 
 	Priority int
+	Ignore   bool
 
 	finished bool
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *InsertExec) Schema() expression.Schema {
 	return nil
 }
 
-// Next implements Executor Next interface.
+// Next implements the Executor Next interface.
 func (e *InsertExec) Next() (*Row, error) {
 	if e.finished {
 		return nil, nil
@@ -459,7 +626,7 @@ func (e *InsertExec) Next() (*Row, error) {
 	}
 
 	for _, row := range rows {
-		if len(e.OnDuplicate) == 0 {
+		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
 		h, err := e.Table.AddRecord(e.ctx, row)
@@ -470,6 +637,12 @@ func (e *InsertExec) Next() (*Row, error) {
 		}
 
 		if len(e.OnDuplicate) == 0 || !terror.ErrorEqual(err, kv.ErrKeyExists) {
+			// If you use the IGNORE keyword, errors that occur while executing the INSERT statement are ignored.
+			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
+			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
+			if e.Ignore {
+				continue
+			}
 			return nil, errors.Trace(err)
 		}
 		if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
@@ -484,13 +657,13 @@ func (e *InsertExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-// Fields implements Executor Fields interface.
+// Fields implements the Executor Fields interface.
 // Returns nil to indicate there is no output.
 func (e *InsertExec) Fields() []*ast.ResultField {
 	return nil
 }
 
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
@@ -583,7 +756,7 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 func (e *InsertValues) getColumnDefaultValues(cols []*table.Column) (map[string]types.Datum, error) {
 	defaultValMap := map[string]types.Datum{}
 	for _, col := range cols {
-		if value, ok, err := table.GetColDefaultValue(e.ctx, &col.ColumnInfo); ok {
+		if value, ok, err := table.GetColDefaultValue(e.ctx, col.ToInfo()); ok {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -625,14 +798,14 @@ func (e *InsertValues) getRow(cols []*table.Column, list []ast.ExprNode, default
 	for i, expr := range list {
 		if d, ok := expr.(*ast.DefaultExpr); ok {
 			cn := d.Name
-			if cn != nil {
-				var found bool
-				vals[i], found = defaultVals[cn.Name.L]
-				if !found {
-					return nil, errors.Errorf("default column not found - %s", cn.Name.O)
-				}
-			} else {
+			if cn == nil {
 				vals[i] = defaultVals[cols[i].Name.L]
+				continue
+			}
+			var found bool
+			vals[i], found = defaultVals[cn.Name.L]
+			if !found {
+				return nil, errors.Errorf("default column not found - %s", cn.Name.O)
 			}
 		} else {
 			var val types.Datum
@@ -643,14 +816,12 @@ func (e *InsertValues) getRow(cols []*table.Column, list []ast.ExprNode, default
 			}
 		}
 	}
-	return e.fillRowData(cols, vals)
+	return e.fillRowData(cols, vals, false)
 }
 
 func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
-	if !plan.UseNewPlanner && len(e.SelectExec.Fields()) != len(cols) {
-		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Fields()))
-	} else if plan.UseNewPlanner && len(e.SelectExec.Schema()) != len(cols) {
+	if len(e.SelectExec.Schema()) != len(cols) {
 		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Schema()))
 	}
 	var rows [][]types.Datum
@@ -663,7 +834,7 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 			break
 		}
 		e.currRow = len(rows)
-		row, err := e.fillRowData(cols, innerRow.Data)
+		row, err := e.fillRowData(cols, innerRow.Data, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -672,19 +843,21 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 	return rows, nil
 }
 
-func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]types.Datum, error) {
+func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ignoreCastErr bool) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	marked := make(map[int]struct{}, len(vals))
 	for i, v := range vals {
 		offset := cols[i].Offset
 		row[offset] = v
-		marked[offset] = struct{}{}
+		if !ignoreCastErr {
+			marked[offset] = struct{}{}
+		}
 	}
-	err := e.initDefaultValues(row, marked)
+	err := e.initDefaultValues(row, marked, ignoreCastErr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = table.CastValues(e.ctx, row, cols); err != nil {
+	if err = table.CastValues(e.ctx, row, cols, ignoreCastErr); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err = table.CheckNotNull(e.Table.Cols(), row); err != nil {
@@ -693,7 +866,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]
 	return row, nil
 }
 
-func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}) error {
+func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}, ignoreErr bool) error {
 	var defaultValueCols []*table.Column
 	for i, c := range e.Table.Cols() {
 		// It's used for retry.
@@ -711,7 +884,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				continue
 			}
 			val, err := row[i].ToInt64()
-			if err != nil {
+			if err != nil && !ignoreErr {
 				return errors.Trace(err)
 			}
 			if val != 0 {
@@ -741,7 +914,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			}
 		} else {
 			var err error
-			row[i], _, err = table.GetColDefaultValue(e.ctx, &c.ColumnInfo)
+			row[i], _, err = table.GetColDefaultValue(e.ctx, c.ToInfo())
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -749,7 +922,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 
 		defaultValueCols = append(defaultValueCols, c)
 	}
-	if err := table.CastValues(e.ctx, row, defaultValueCols); err != nil {
+	if err := table.CastValues(e.ctx, row, defaultValueCols, ignoreErr); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -783,7 +956,15 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 		}
 		newData[i] = val
 	}
-	if err = updateRecord(e.ctx, h, data, newData, cols, e.Table, 0, true); err != nil {
+	assignFlag := make([]bool, len(e.Table.Cols()))
+	for i, asgn := range cols {
+		if asgn != nil {
+			assignFlag[i] = true
+		} else {
+			assignFlag[i] = false
+		}
+	}
+	if err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, 0, true); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -822,18 +1003,18 @@ type ReplaceExec struct {
 	finished bool
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *ReplaceExec) Schema() expression.Schema {
 	return nil
 }
 
-// Fields implements Executor Fields interface.
+// Fields implements the Executor Fields interface.
 // Returns nil to indicate there is no output.
 func (e *ReplaceExec) Fields() []*ast.ResultField {
 	return nil
 }
 
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *ReplaceExec) Close() error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
@@ -841,7 +1022,7 @@ func (e *ReplaceExec) Close() error {
 	return nil
 }
 
-// Next implements Executor Next interface.
+// Next implements the Executor Next interface.
 func (e *ReplaceExec) Next() (*Row, error) {
 	if e.finished {
 		return nil, nil
@@ -917,4 +1098,143 @@ func (e *ReplaceExec) Next() (*Row, error) {
 	}
 	e.finished = true
 	return nil, nil
+}
+
+// UpdateExec represents a new update executor.
+type UpdateExec struct {
+	SelectExec  Executor
+	OrderedList []*expression.Assignment
+
+	// Map for unique (Table, handle) pair.
+	updatedRowKeys map[table.Table]map[int64]struct{}
+	ctx            context.Context
+
+	rows        []*Row          // The rows fetched from TableExec.
+	newRowsData [][]types.Datum // The new values to be set.
+	fetched     bool
+	cursor      int
+}
+
+// Schema implements the Executor Schema interface.
+func (e *UpdateExec) Schema() expression.Schema {
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *UpdateExec) Next() (*Row, error) {
+	if !e.fetched {
+		err := e.fetchRows()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.fetched = true
+	}
+
+	assignFlag, err := getUpdateColumns(e.OrderedList)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if e.cursor >= len(e.rows) {
+		return nil, nil
+	}
+	if e.updatedRowKeys == nil {
+		e.updatedRowKeys = make(map[table.Table]map[int64]struct{})
+	}
+	row := e.rows[e.cursor]
+	newData := e.newRowsData[e.cursor]
+	for _, entry := range row.RowKeys {
+		tbl := entry.Tbl
+		if e.updatedRowKeys[tbl] == nil {
+			e.updatedRowKeys[tbl] = make(map[int64]struct{})
+		}
+		offset := e.getTableOffset(*entry)
+		handle := entry.Handle
+		oldData := row.Data[offset : offset+len(tbl.WritableCols())]
+		newTableData := newData[offset : offset+len(tbl.WritableCols())]
+		_, ok := e.updatedRowKeys[tbl][handle]
+		if ok {
+			// Each matched row is updated once, even if it matches the conditions multiple times.
+			continue
+		}
+		// Update row
+		err1 := updateRecord(e.ctx, handle, oldData, newTableData, assignFlag, tbl, offset, false)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		e.updatedRowKeys[tbl][handle] = struct{}{}
+	}
+	e.cursor++
+	return &Row{}, nil
+}
+
+func getUpdateColumns(assignList []*expression.Assignment) ([]bool, error) {
+	assignFlag := make([]bool, len(assignList))
+	for i, v := range assignList {
+		if v != nil {
+			assignFlag[i] = true
+		} else {
+			assignFlag[i] = false
+		}
+	}
+	return assignFlag, nil
+}
+
+func (e *UpdateExec) fetchRows() error {
+	for {
+		row, err := e.SelectExec.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if row == nil {
+			return nil
+		}
+		data := make([]types.Datum, len(e.SelectExec.Schema()))
+		newData := make([]types.Datum, len(e.SelectExec.Schema()))
+		for i, s := range e.SelectExec.Schema() {
+			data[i], err = s.Eval(row.Data, e.ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			newData[i] = data[i]
+			if e.OrderedList[i] != nil {
+				val, err := e.OrderedList[i].Expr.Eval(row.Data, e.ctx)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				newData[i] = val
+			}
+		}
+		row.Data = data
+		e.rows = append(e.rows, row)
+		e.newRowsData = append(e.newRowsData, newData)
+	}
+}
+
+func (e *UpdateExec) getTableOffset(entry RowKeyEntry) int {
+	t := entry.Tbl
+	var tblName string
+	if entry.TableAsName == nil || len(entry.TableAsName.L) == 0 {
+		tblName = t.Meta().Name.L
+	} else {
+		tblName = entry.TableAsName.L
+	}
+	schema := e.SelectExec.Schema()
+	for i := 0; i < len(schema); i++ {
+		s := schema[i]
+		if s.TblName.L == tblName {
+			return i
+		}
+	}
+	return 0
+}
+
+// Fields implements the Executor Fields interface.
+// Returns nil to indicate there is no output.
+func (e *UpdateExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *UpdateExec) Close() error {
+	return e.SelectExec.Close()
 }

@@ -43,6 +43,29 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestCeil(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg interface{}
+		Ret interface{}
+	}{
+		{nil, nil},
+		{int64(1), int64(1)},
+		{float64(1.23), float64(2)},
+		{float64(-1.23), float64(-1)},
+		{"1.23", float64(2)},
+		{"-1.23", float64(-1)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		v, err := builtinCeil(t["Arg"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+	}
+}
+
 func (s *testEvaluatorSuite) TestRand(c *C) {
 	defer testleak.AfterTest(c)()
 	v, err := builtinRand(make([]types.Datum, 0), nil)

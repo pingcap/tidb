@@ -49,7 +49,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
-		"binlog",
+		"binlog", "hex", "unhex", "function", "indexes", "processlist",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -133,6 +133,7 @@ func (s *testParserSuite) RunTest(c *C, table []testCase) {
 		}
 	}
 }
+
 func (s *testParserSuite) TestDMLStmt(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
@@ -179,26 +180,169 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"REPLACE INTO foo VALUE ()", true},
 		// 40
 		{`SELECT stuff.id
-		FROM stuff
-		WHERE stuff.value >= ALL (SELECT stuff.value
-		FROM stuff)`, true},
+			FROM stuff
+			WHERE stuff.value >= ALL (SELECT stuff.value
+			FROM stuff)`, true},
 		{"BEGIN", true},
 		{"START TRANSACTION", true},
 		// 45
 		{"COMMIT", true},
 		{"ROLLBACK", true},
-		{`
-		BEGIN;
+		{`BEGIN;
 			INSERT INTO foo VALUES (42, 3.14);
 			INSERT INTO foo VALUES (-1, 2.78);
 		COMMIT;`, true},
-		{` // A
-		BEGIN;
+		{`BEGIN;
 			INSERT INTO tmp SELECT * from bar;
-		SELECT * from tmp;
-
-		// B
+			SELECT * from tmp;
 		ROLLBACK;`, true},
+
+		// qualified select
+		{"SELECT a.b.c FROM t", true},
+		{"SELECT a.b.*.c FROM t", false},
+		{"SELECT a.b.* FROM t", true},
+		{"SELECT a FROM t", true},
+		{"SELECT a.b.c.d FROM t", false},
+
+		// Do statement
+		{"DO 1", true},
+		{"DO 1 from t", false},
+
+		// load data
+		{"load data infile '/tmp/t.csv' into table t", true},
+		{"load data infile '/tmp/t.csv' into table t fields terminated by 'ab'", true},
+		{"load data infile '/tmp/t.csv' into table t columns terminated by 'ab'", true},
+		{"load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b'", true},
+		{"load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*'", true},
+		{"load data infile '/tmp/t.csv' into table t lines starting by 'ab'", true},
+		{"load data infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy'", true},
+		{"load data infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy'", true},
+		{"load data infile '/tmp/t.csv' into table t terminated by 'xy' fields terminated by 'ab'", false},
+		{"load data local infile '/tmp/t.csv' into table t", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab'", true},
+		{"load data local infile '/tmp/t.csv' into table t columns terminated by 'ab'", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b'", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*'", true},
+		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab'", true},
+		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy'", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy'", true},
+		{"load data local infile '/tmp/t.csv' into table t terminated by 'xy' fields terminated by 'ab'", false},
+
+		// Select for update
+		{"SELECT * from t for update", true},
+		{"SELECT * from t lock in share mode", true},
+
+		// For alter table
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
+		{"ALTER TABLE t DISABLE KEYS", true},
+		{"ALTER TABLE t ENABLE KEYS", true},
+
+		// from join
+		{"SELECT * from t1, t2, t3", true},
+		{"select * from t1 join t2 left join t3 on t2.id = t3.id", true},
+		{"select * from t1 right join t2 on t1.id = t2.id left join t3 on t3.id = t2.id", true},
+		{"select * from t1 right join t2 on t1.id = t2.id left join t3", false},
+
+		// For admin
+		{"admin show ddl;", true},
+		{"admin check table t1, t2;", true},
+
+		// For on duplicate key update
+		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
+		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
+
+		// For default value
+		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
+		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true},
+
+		// For truncate statement
+		{"TRUNCATE TABLE t1", true},
+		{"TRUNCATE t1", true},
+
+		// For delete statement
+		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
+		{"DELETE FROM t1, t2 USING t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
+		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id limit 10;", false},
+
+		// For update statement
+		{"UPDATE t SET id = id + 1 ORDER BY id DESC;", true},
+		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id;", true},
+		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id LIMIT 10;", false},
+		{"UPDATE user T0 LEFT OUTER JOIN user_profile T1 ON T1.id = T0.profile_id SET T0.profile_id = 1 WHERE T0.profile_id IN (1);", true},
+
+		// For select with where clause
+		{"SELECT * FROM t WHERE 1 = 1", true},
+
+		// For dual
+		{"select 1 from dual", true},
+		{"select 1 from dual limit 1", true},
+		{"select 1 where exists (select 2)", false},
+		{"select 1 from dual where not exists (select 2)", true},
+
+		// For https://github.com/pingcap/tidb/issues/320
+		{`(select 1);`, true},
+
+		// For https://github.com/pingcap/tidb/issues/1050
+		{`SELECT /*!40001 SQL_NO_CACHE */ * FROM test WHERE 1 limit 0, 2000;`, true},
+
+		{`ANALYZE TABLE t`, true},
+
+		// For Binlog stmt
+		{`BINLOG '
+BxSFVw8JAAAA8QAAAPUAAAAAAAQANS41LjQ0LU1hcmlhREItbG9nAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAEzgNAAgAEgAEBAQEEgAA2QAEGggAAAAICAgCAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAA5gm5Mg==
+'/*!*/;`, true},
+	}
+	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestDBAStmt(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		// For SHOW statement
+		{"SHOW VARIABLES LIKE 'character_set_results'", true},
+		{"SHOW GLOBAL VARIABLES LIKE 'character_set_results'", true},
+		{"SHOW SESSION VARIABLES LIKE 'character_set_results'", true},
+		{"SHOW VARIABLES", true},
+		{"SHOW GLOBAL VARIABLES", true},
+		{"SHOW GLOBAL VARIABLES WHERE Variable_name = 'autocommit'", true},
+		{"SHOW STATUS", true},
+		{"SHOW GLOBAL STATUS", true},
+		{"SHOW SESSION STATUS", true},
+		{"SHOW STATUS LIKE 'Up%'", true},
+		{"SHOW STATUS WHERE Variable_name LIKE 'Up%'", true},
+		{`SHOW FULL TABLES FROM icar_qa LIKE play_evolutions`, true},
+		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
+		{`SHOW GRANTS`, true},
+		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
+		{`SHOW COLUMNS FROM City;`, true},
+		{`SHOW FIELDS FROM City;`, true},
+		{`SHOW TRIGGERS LIKE 't'`, true},
+		{`SHOW DATABASES LIKE 'test2'`, true},
+		{`SHOW PROCEDURE STATUS WHERE Db='test'`, true},
+		{`SHOW FUNCTION STATUS WHERE Db='test'`, true},
+		{`SHOW INDEX FROM t;`, true},
+		{`SHOW KEYS FROM t;`, true},
+		{`SHOW INDEX IN t;`, true},
+		{`SHOW KEYS IN t;`, true},
+		{`SHOW INDEXES IN t;`, true},
+		// For show character set
+		{"show character set;", true},
+		// For show collation
+		{"show collation", true},
+		{"show collation like 'utf8%'", true},
+		{"show collation where Charset = 'utf8' and Collation = 'utf8_bin'", true},
+		// For show full columns
+		{"show columns in t;", true},
+		{"show full columns in t;", true},
+		// For show create table
+		{"show create table test.t", true},
+		{"show create table t", true},
 
 		// set
 		// user defined
@@ -207,6 +351,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// session system variables
 		{"SET SESSION autocommit = 1", true},
 		{"SET @@session.autocommit = 1", true},
+		{"SET @@SESSION.autocommit = 1", true},
+		{"SET @@GLOBAL.GTID_PURGED = '123'", true},
+		{"SET @MYSQLDUMP_TEMP_LOG_BIN = @@SESSION.SQL_LOG_BIN", true},
 		{"SET LOCAL autocommit = 1", true},
 		{"SET @@local.autocommit = 1", true},
 		{"SET @@autocommit = 1", true},
@@ -231,136 +378,37 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", true},
 		{"SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED", true},
 		{"SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE", true},
-
-		// qualified select
-		{"SELECT a.b.c FROM t", true},
-		{"SELECT a.b.*.c FROM t", false},
-		{"SELECT a.b.* FROM t", true},
-		{"SELECT a FROM t", true},
-		{"SELECT a.b.c.d FROM t", false},
-
-		// Do statement
-		{"DO 1", true},
-		{"DO 1 from t", false},
-
-		// Select for update
-		{"SELECT * from t for update", true},
-		{"SELECT * from t lock in share mode", true},
-
-		// For alter table
-		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
-		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
-		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
-		{"ALTER TABLE t DISABLE KEYS", true},
-		{"ALTER TABLE t ENABLE KEYS", true},
-
-		// from join
-		{"SELECT * from t1, t2, t3", true},
-		{"select * from t1 join t2 left join t3 on t2.id = t3.id", true},
-		{"select * from t1 right join t2 on t1.id = t2.id left join t3 on t3.id = t2.id", true},
-		{"select * from t1 right join t2 on t1.id = t2.id left join t3", false},
-
-		// For show full columns
-		{"show columns in t;", true},
-		{"show full columns in t;", true},
-
-		// For admin
-		{"admin show ddl;", true},
-		{"admin check table t1, t2;", true},
-
 		// For set names
 		{"set names utf8", true},
 		{"set names utf8 collate utf8_unicode_ci", true},
-
+		{"set names binary", true},
 		// For set names and set vars
 		{"set names utf8, @@session.sql_mode=1;", true},
 		{"set @@session.sql_mode=1, names utf8, charset utf8;", true},
 
-		// For show character set
-		{"show character set;", true},
-		// For on duplicate key update
-		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
-		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
-
-		// For SHOW statement
-		{"SHOW VARIABLES LIKE 'character_set_results'", true},
-		{"SHOW GLOBAL VARIABLES LIKE 'character_set_results'", true},
-		{"SHOW SESSION VARIABLES LIKE 'character_set_results'", true},
-		{"SHOW VARIABLES", true},
-		{"SHOW GLOBAL VARIABLES", true},
-		{"SHOW GLOBAL VARIABLES WHERE Variable_name = 'autocommit'", true},
-		{"SHOW STATUS", true},
-		{"SHOW GLOBAL STATUS", true},
-		{"SHOW SESSION STATUS", true},
-		{"SHOW STATUS LIKE 'Up%'", true},
-		{"SHOW STATUS WHERE Variable_name LIKE 'Up%'", true},
-		{`SHOW FULL TABLES FROM icar_qa LIKE play_evolutions`, true},
-		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
-		{`SHOW GRANTS`, true},
-		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
-		{`SHOW COLUMNS FROM City;`, true},
-		{`SHOW FIELDS FROM City;`, true},
-		{`SHOW TRIGGERS LIKE 't'`, true},
-		{`SHOW DATABASES LIKE 'test2'`, true},
-		{`SHOW PROCEDURE STATUS WHERE Db='test'`, true},
-		{`SHOW INDEX FROM t;`, true},
-		{`SHOW KEYS FROM t;`, true},
-
-		// For default value
-		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
-		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true},
-
-		// For truncate statement
-		{"TRUNCATE TABLE t1", true},
-		{"TRUNCATE t1", true},
-
-		// For delete statement
-		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
-		{"DELETE FROM t1, t2 USING t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
-		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id limit 10;", false},
-
-		// For update statement
-		{"UPDATE t SET id = id + 1 ORDER BY id DESC;", true},
-		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id;", true},
-		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id LIMIT 10;", false},
-		{"UPDATE user T0 LEFT OUTER JOIN user_profile T1 ON T1.id = T0.profile_id SET T0.profile_id = 1 WHERE T0.profile_id IN (1);", true},
-
-		// For select with where clause
-		{"SELECT * FROM t WHERE 1 = 1", true},
-
-		// For show collation
-		{"show collation", true},
-		{"show collation like 'utf8%'", true},
-		{"show collation where Charset = 'utf8' and Collation = 'utf8_bin'", true},
-
-		// For dual
-		{"select 1 from dual", true},
-		{"select 1 from dual limit 1", true},
-		{"select 1 where exists (select 2)", false},
-		{"select 1 from dual where not exists (select 2)", true},
-
-		// For show create table
-		{"show create table test.t", true},
-		{"show create table t", true},
-
-		// For https://github.com/pingcap/tidb/issues/320
-		{`(select 1);`, true},
-
-		// For https://github.com/pingcap/tidb/issues/1050
-		{`SELECT /*!40001 SQL_NO_CACHE */ * FROM test WHERE 1 limit 0, 2000;`, true},
-
-		{`ANALYZE TABLE t`, true},
-
-		// For Binlog stmt
-		{`BINLOG '
-BxSFVw8JAAAA8QAAAPUAAAAAAAQANS41LjQ0LU1hcmlhREItbG9nAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAEzgNAAgAEgAEBAQEEgAA2QAEGggAAAAICAgCAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAA5gm5Mg==
-'/*!*/;`, true},
+		// For FLUSH statement
+		{"flush no_write_to_binlog tables tbl1 with read lock", true},
+		{"flush table", true},
+		{"flush tables", true},
+		{"flush tables tbl1", true},
+		{"flush no_write_to_binlog tables tbl1", true},
+		{"flush local tables tbl1", true},
+		{"flush table with read lock", true},
+		{"flush tables tbl1, tbl2, tbl3", true},
+		{"flush tables tbl1, tbl2, tbl3 with read lock", true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestFlushTable(c *C) {
+	parser := New()
+	stmt, err := parser.Parse("flush local tables tbl1,tbl2 with read lock", "", "")
+	c.Assert(err, IsNil)
+	flushTable := stmt[0].(*ast.FlushTableStmt)
+	c.Assert(flushTable.Tables[0].Name.L, Equals, "tbl1")
+	c.Assert(flushTable.Tables[1].Name.L, Equals, "tbl2")
+	c.Assert(flushTable.NoWriteToBinLog, IsTrue)
+	c.Assert(flushTable.ReadLock, IsTrue)
 }
 
 func (s *testParserSuite) TestExpression(c *C) {
@@ -401,6 +449,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT MOD(10, 2);", true},
 		{"SELECT ROUND(-1.23);", true},
 		{"SELECT ROUND(1.23, 1);", true},
+		{"SELECT CEIL(-1.23);", true},
+		{"SELECT CEILING(1.23);", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
@@ -679,7 +729,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (a bytes)", false},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED)", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) -- foo", true},
-		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) // foo", true},
+		// {"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) // foo", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
 		{"CREATE TABLE foo /* foo */ (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
 		{"CREATE TABLE foo (name CHAR(50) BINARY)", true},
@@ -728,7 +778,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create schema xxx", true},
 		{"create schema if exists xxx", false},
 		{"create schema if not exists xxx", true},
-		// For drop datbase/schema/table
+		// For drop database/schema/table
 		{"drop database xxx", true},
 		{"drop database if exists xxx", true},
 		{"drop database if not exists xxx", false},
@@ -821,6 +871,14 @@ func (s *testParserSuite) TestDDL(c *C) {
 		CONSTRAINT FK_7rod8a71yep5vxasb0ms3osbg FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id) ON DELETE CASCADE ON UPDATE NO ACTION,
 		INDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''
 		) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;`, true},
+		{"CREATE TABLE address (\r\nid bigint(20) NOT NULL AUTO_INCREMENT,\r\ncreate_at datetime NOT NULL,\r\ndeleted tinyint(1) NOT NULL,\r\nupdate_at datetime NOT NULL,\r\nversion bigint(20) DEFAULT NULL,\r\naddress varchar(128) NOT NULL,\r\naddress_detail varchar(128) NOT NULL,\r\ncellphone varchar(16) NOT NULL,\r\nlatitude double NOT NULL,\r\nlongitude double NOT NULL,\r\nname varchar(16) NOT NULL,\r\nsex tinyint(1) NOT NULL,\r\nuser_id bigint(20) NOT NULL,\r\nPRIMARY KEY (id),\r\nCONSTRAINT FK_7rod8a71yep5vxasb0ms3osbg FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id) ON DELETE CASCADE ON UPDATE NO ACTION,\r\nINDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''\r\n) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;", true},
+		// For issue 1802
+		{`CREATE TABLE t1 (
+accout_id int(11) DEFAULT '0',
+summoner_id int(11) DEFAULT '0',
+union_name varbinary(52) NOT NULL,
+union_id int(11) DEFAULT '0',
+PRIMARY KEY (union_name)) ENGINE=MyISAM DEFAULT CHARSET=binary;`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -832,7 +890,8 @@ func (s *testParserSuite) TestType(c *C) {
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
 
 		// For hexadecimal
-		{"SELECT x'0a', X'11', 0x11", true},
+		{"select x'0a', X'11', 0x11", true},
+		{"select x'13181C76734725455A'", true},
 		{"select x'0xaa'", false},
 		{"select 0X11", false},
 		{"select 0x4920616D2061206C6F6E672068657820737472696E67", true},
@@ -871,6 +930,8 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+		{`DROP USER 'root'@'localhost', 'root1'@'localhost'`, true},
+		{`DROP USER IF EXISTS 'root'@'localhost'`, true},
 
 		// For grant statement
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost';", true},
@@ -895,6 +956,7 @@ func (s *testParserSuite) TestComment(c *C) {
 		{"create table t (c int) comment 'comment'", true},
 		{"create table t (c int) comment comment", false},
 		{"create table t (comment text)", true},
+		{"START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */", true},
 		// For comment in query
 		{"/*comment*/ /*comment*/ select c /* this is a comment */ from t;", true},
 	}

@@ -146,7 +146,3 @@ func (txn *dbTxn) IsReadOnly() bool {
 func (txn *dbTxn) StartTS() uint64 {
 	return txn.tid
 }
-
-func (txn *dbTxn) GetClient() kv.Client {
-	return &dbClient{store: txn.store, regionInfo: txn.store.pd.GetRegionInfo()}
-}

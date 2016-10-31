@@ -54,7 +54,7 @@ func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
 	buf := make([]byte, 0, recordRowKeyLen+idLen)
 	buf = appendTableRecordPrefix(buf, tableID)
-	buf = EncodeRecordKey(buf, handle)
+	buf = codec.EncodeInt(buf, handle)
 	return buf
 }
 
@@ -136,17 +136,10 @@ func flatten(data types.Datum) (types.Datum, error) {
 	switch data.Kind() {
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
-		b, err := data.GetMysqlTime().Marshal()
-		if err != nil {
-			return types.NewDatum(nil), errors.Trace(err)
-		}
-		return types.NewDatum(b), nil
+		return types.NewUintDatum(data.GetMysqlTime().ToPackedUint()), nil
 	case types.KindMysqlDuration:
 		// for mysql time type
 		data.SetInt64(int64(data.GetMysqlDuration().Duration))
-		return data, nil
-	case types.KindMysqlDecimal:
-		data.SetString(data.GetMysqlDecimal().String())
 		return data, nil
 	case types.KindMysqlEnum:
 		data.SetUint64(data.GetMysqlEnum().Value)
@@ -167,23 +160,19 @@ func flatten(data types.Datum) (types.Datum, error) {
 
 // DecodeValues decodes a byte slice into datums with column types.
 func DecodeValues(data []byte, fts []*types.FieldType, inIndex bool) ([]types.Datum, error) {
-	if data == nil {
+	if len(data) == 0 {
 		return nil, nil
 	}
-	values, err := codec.Decode(data)
+	values, err := codec.Decode(data, len(fts))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if len(values) > len(fts) {
 		return nil, errInvalidColumnCount.Gen("invalid column count %d is less than value count %d", len(fts), len(values))
 	}
-	if inIndex {
-		// We don't need to unflatten index columns for now.
-		return values, nil
-	}
 
 	for i := range values {
-		values[i], err = Unflatten(values[i], fts[i])
+		values[i], err = Unflatten(values[i], fts[i], inIndex)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -197,7 +186,7 @@ func DecodeColumnValue(data []byte, ft *types.FieldType) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	colDatum, err := Unflatten(d, ft)
+	colDatum, err := Unflatten(d, ft, false)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
@@ -241,7 +230,7 @@ func DecodeRow(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			v, err = Unflatten(v, ft)
+			v, err = Unflatten(v, ft, false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -297,7 +286,7 @@ func CutRow(data []byte, cols map[int64]*types.FieldType) (map[int64][]byte, err
 }
 
 // Unflatten converts a raw datum to a column datum.
-func Unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
+func Unflatten(datum types.Datum, ft *types.FieldType, inIndex bool) (types.Datum, error) {
 	if datum.IsNull() {
 		return datum, nil
 	}
@@ -314,7 +303,8 @@ func Unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 		var t mysql.Time
 		t.Type = ft.Tp
 		t.Fsp = ft.Decimal
-		err := t.Unmarshal(datum.GetBytes())
+		var err error
+		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
@@ -323,23 +313,6 @@ func Unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 	case mysql.TypeDuration:
 		dur := mysql.Duration{Duration: time.Duration(datum.GetInt64())}
 		datum.SetValue(dur)
-		return datum, nil
-	case mysql.TypeNewDecimal:
-		if datum.Kind() == types.KindMysqlDecimal {
-			if ft.Decimal >= 0 {
-				dec := datum.GetMysqlDecimal().Truncate(int32(ft.Decimal))
-				datum.SetMysqlDecimal(dec)
-			}
-			return datum, nil
-		}
-		dec, err := mysql.ParseDecimal(datum.GetString())
-		if err != nil {
-			return datum, errors.Trace(err)
-		}
-		if ft.Decimal >= 0 {
-			dec = dec.Truncate(int32(ft.Decimal))
-		}
-		datum.SetValue(dec)
 		return datum, nil
 	case mysql.TypeEnum:
 		enum, err := mysql.ParseEnumValue(ft.Elems, datum.GetUint64())
@@ -375,7 +348,24 @@ func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key 
 // DecodeIndexKey decodes datums from an index key.
 func DecodeIndexKey(key kv.Key) ([]types.Datum, error) {
 	b := key[prefixLen+idLen:]
-	return codec.Decode(b)
+	return codec.Decode(b, 1)
+}
+
+// CutIndexKey cuts encoded index key into colIDs to bytes slices map.
+// The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
+// if it is non-unique index.
+func CutIndexKey(key kv.Key, colIDs []int64) (values map[int64][]byte, b []byte, err error) {
+	b = key[prefixLen+idLen:]
+	values = make(map[int64][]byte)
+	for _, id := range colIDs {
+		var val []byte
+		val, b, err = codec.CutOne(b)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		values[id] = val
+	}
+	return
 }
 
 // EncodeTableIndexPrefix encodes index prefix with tableID and idxID.

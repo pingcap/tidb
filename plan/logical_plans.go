@@ -16,18 +16,18 @@ package plan
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/plan/statistics"
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
 type JoinType int
 
 const (
-	// CrossJoin means Cartesian Product, but not used now.
-	CrossJoin JoinType = iota
 	// InnerJoin means inner join.
-	InnerJoin
+	InnerJoin JoinType = iota
 	// LeftOuterJoin means left join.
 	LeftOuterJoin
 	// RightOuterJoin means right join.
@@ -42,8 +42,10 @@ const (
 type Join struct {
 	baseLogicalPlan
 
-	JoinType JoinType
-	anti     bool
+	JoinType      JoinType
+	anti          bool
+	reordered     bool
+	cartesianJoin bool
 
 	EqualConditions []*expression.ScalarFunction
 	LeftConditions  []expression.Expression
@@ -60,8 +62,10 @@ type Projection struct {
 // Aggregation represents an aggregate plan.
 type Aggregation struct {
 	baseLogicalPlan
+
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
+	ctx          context.Context
 }
 
 // Selection means a filter.
@@ -72,6 +76,9 @@ type Selection struct {
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
+
+	// onTable means if this selection's child is a table scan or index scan.
+	onTable bool
 }
 
 // Apply gets one row from outer executor and gets one row from inner executor according to outer row.
@@ -95,8 +102,8 @@ type MaxOneRow struct {
 	baseLogicalPlan
 }
 
-// NewTableDual represents a dual table plan.
-type NewTableDual struct {
+// TableDual represents a dual table plan.
+type TableDual struct {
 	baseLogicalPlan
 }
 
@@ -109,31 +116,46 @@ type DataSource struct {
 	Columns []*model.ColumnInfo
 	DBName  *model.CIStr
 	Desc    bool
+	ctx     context.Context
 
 	TableAsName *model.CIStr
 
 	LimitCount *int64
+
+	statisticTable *statistics.Table
 }
 
-// Trim trims child's rows.
+// Trim trims extra columns in src rows.
 type Trim struct {
 	baseLogicalPlan
 }
 
-// NewUnion represents Union plan.
-type NewUnion struct {
+// Union represents Union plan.
+type Union struct {
 	baseLogicalPlan
-
-	Selects []LogicalPlan
 }
 
-// NewSort stands for the order by plan.
-type NewSort struct {
+// Sort stands for the order by plan.
+type Sort struct {
 	baseLogicalPlan
 
-	ByItems []*ByItems
-
+	ByItems   []*ByItems
 	ExecLimit *Limit
+}
+
+// Update represents Update plan.
+type Update struct {
+	baseLogicalPlan
+
+	OrderedList []*expression.Assignment
+}
+
+// Delete represents a delete plan.
+type Delete struct {
+	baseLogicalPlan
+
+	Tables       []*ast.TableName
+	IsMultiTable bool
 }
 
 // AddChild for parent.

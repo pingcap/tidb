@@ -22,6 +22,11 @@ import (
 var (
 	ErrBadConn       = errors.New("connection was bad")
 	ErrMalformPacket = errors.New("Malform packet error")
+
+	ErrTruncated = errors.New("truncated")
+	ErrOverflow  = errors.New("overflow")
+	ErrDivByZero = errors.New("div by zero")
+	ErrBadNumber = errors.New("bad number")
 )
 
 // SQLError records an error information, from executing SQL.
@@ -55,7 +60,7 @@ func NewErr(errCode uint16, args ...interface{}) *SQLError {
 	return e
 }
 
-// NewErrf creates a SQL error, with an error code and a format specifier
+// NewErrf creates a SQL error, with an error code and a format specifier.
 func NewErrf(errCode uint16, format string, args ...interface{}) *SQLError {
 	e := &SQLError{Code: errCode}
 

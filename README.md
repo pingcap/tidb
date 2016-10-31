@@ -42,7 +42,8 @@ Read the [Quick Start](./docs/QUICKSTART.md).
 
 ## Documentation
 
-Read the full [documentation](https://github.com/pingcap/docs).
++ [English](https://github.com/pingcap/docs)
++ [简体中文](https://github.com/pingcap/docs-cn)
 
 ## Architecture
 

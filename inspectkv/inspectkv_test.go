@@ -152,6 +152,7 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	job := &model.Job{
 		SchemaID: dbInfo2.ID,
 		Type:     model.ActionCreateSchema,
+		RowCount: 0,
 	}
 	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
@@ -176,6 +177,7 @@ func (s *testSuite) TestGetBgDDLInfo(c *C) {
 	job := &model.Job{
 		SchemaID: 1,
 		Type:     model.ActionDropTable,
+		RowCount: 0,
 	}
 	err = t.EnQueueBgJob(job)
 	c.Assert(err, IsNil)
@@ -319,7 +321,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
-	err = idx.Create(txn, types.MakeDatums(int64(30)), 3)
+	_, err = idx.Create(txn, types.MakeDatums(int64(30)), 3)
 	c.Assert(err, IsNil)
 	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
@@ -337,7 +339,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40), (3, 31)
-	err = idx.Create(txn, types.MakeDatums(int64(40)), 4)
+	_, err = idx.Create(txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	setColValue(c, txn, key, types.NewDatum(int64(31)))

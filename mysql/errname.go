@@ -605,7 +605,7 @@ var MySQLErrName = map[uint16]string{
 	ErrBinlogPurgeEmFile:                        "Too many files opened, please execute the command again",
 	ErrEventCannotCreateInThePast:               "Event execution time is in the past and ON COMPLETION NOT PRESERVE is set. The event was dropped immediately after creation.",
 	ErrEventCannotAlterInThePast:                "Event execution time is in the past and ON COMPLETION NOT PRESERVE is set. The event was not changed. Specify a time in the future.",
-	ErrSlaveIncident:                            "The incident %s occured on the master. Message: %-.64s",
+	ErrSlaveIncident:                            "The incident %s occurred on the master. Message: %-.64s",
 	ErrNoPartitionForGivenValueSilent:           "Table has no partition for some existing values",
 	ErrBinlogUnsafeStatement:                    "Unsafe statement written to the binary log using statement format since BINLOGFORMAT = STATEMENT. %s",
 	ErrSlaveFatal:                               "Fatal : %s",

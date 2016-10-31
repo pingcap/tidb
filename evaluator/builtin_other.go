@@ -211,7 +211,10 @@ func builtinIn(args []types.Datum, _ context.Context) (d types.Datum, err error)
 			continue
 		}
 
-		a, b := types.CoerceDatum(args[0], v)
+		a, b, err := types.CoerceDatum(args[0], v)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
 		ret, err := a.CompareDatum(b)
 		if err != nil {
 			return d, errors.Trace(err)
@@ -256,7 +259,13 @@ func builtinLogicXor(args []types.Datum, _ context.Context) (d types.Datum, err 
 
 func compareFuncFactory(op opcode.Op) BuiltinFunc {
 	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		a, b := types.CoerceDatum(args[0], args[1])
+		var a, b = args[0], args[1]
+		if op != opcode.NullEQ {
+			a, b, err = types.CoerceDatum(a, b)
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+		}
 		if a.IsNull() || b.IsNull() {
 			// for <=>, if a and b are both nil, return true.
 			// if a or b is nil, return false.
@@ -289,7 +298,7 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 		case opcode.NE:
 			result = n != 0
 		default:
-			return d, ErrInvalidOperation.Gen("invalid op %v in comparision operation", op)
+			return d, ErrInvalidOperation.Gen("invalid op %v in comparison operation", op)
 		}
 		if result {
 			d.SetInt64(oneI64)
@@ -302,7 +311,10 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 
 func bitOpFactory(op opcode.Op) BuiltinFunc {
 	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		a, b := types.CoerceDatum(args[0], args[1])
+		a, b, err := types.CoerceDatum(args[0], args[1])
+		if err != nil {
+			return d, errors.Trace(err)
+		}
 		if a.IsNull() || b.IsNull() {
 			return
 		}
@@ -347,8 +359,10 @@ func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-
-		a, b = types.CoerceDatum(a, b)
+		a, b, err = types.CoerceDatum(a, b)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
 		if a.IsNull() || b.IsNull() {
 			return
 		}
@@ -454,16 +468,21 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 			case types.KindFloat32:
 				d.SetFloat32(-aDatum.GetFloat32())
 			case types.KindMysqlDuration:
-				d.SetMysqlDecimal(mysql.ZeroDecimal.Sub(aDatum.GetMysqlDuration().ToNumber()))
+				dec := new(mysql.MyDecimal)
+				err = mysql.DecimalSub(new(mysql.MyDecimal), aDatum.GetMysqlDuration().ToNumber(), dec)
+				d.SetMysqlDecimal(dec)
 			case types.KindMysqlTime:
-				d.SetMysqlDecimal(mysql.ZeroDecimal.Sub(aDatum.GetMysqlTime().ToNumber()))
+				dec := new(mysql.MyDecimal)
+				err = mysql.DecimalSub(new(mysql.MyDecimal), aDatum.GetMysqlTime().ToNumber(), dec)
+				d.SetMysqlDecimal(dec)
 			case types.KindString, types.KindBytes:
 				f, err1 := types.StrToFloat(aDatum.GetString())
 				err = errors.Trace(err1)
 				d.SetFloat64(-f)
 			case types.KindMysqlDecimal:
-				f, _ := aDatum.GetMysqlDecimal().Float64()
-				d.SetMysqlDecimal(mysql.NewDecimalFromFloat(-f))
+				dec := new(mysql.MyDecimal)
+				err = mysql.DecimalSub(new(mysql.MyDecimal), aDatum.GetMysqlDecimal(), dec)
+				d.SetMysqlDecimal(dec)
 			case types.KindMysqlHex:
 				d.SetFloat64(-aDatum.GetMysqlHex().ToNumber())
 			case types.KindMysqlBit:

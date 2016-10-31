@@ -33,6 +33,10 @@ func (s *testIsolationSuite) SetUpSuite(c *C) {
 	s.store = newTestStore(c)
 }
 
+func (s *testIsolationSuite) TearDownSuite(c *C) {
+	s.store.Close()
+}
+
 type writeRecord struct {
 	startTS  uint64
 	commitTS uint64

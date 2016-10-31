@@ -35,7 +35,7 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 	}
 	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
 
-	_, err = t.GenSchemaVersion()
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -52,6 +52,7 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 		}
 		// finish this job
 		job.State = model.JobDone
+		addTableHistoryInfo(job, ver, tblInfo)
 		return nil
 	default:
 		return ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)
@@ -84,6 +85,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 	}
 
 	if !found {
+		job.State = model.JobCancelled
 		return infoschema.ErrForeignKeyNotExists.Gen("foreign key doesn't exist", fkName)
 	}
 
@@ -95,7 +97,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 	}
 	tblInfo.ForeignKeys = nfks
 
-	_, err = t.GenSchemaVersion()
+	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -112,6 +114,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 		}
 		// finish this job
 		job.State = model.JobDone
+		addTableHistoryInfo(job, ver, tblInfo)
 		return nil
 	default:
 		return ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)

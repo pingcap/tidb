@@ -97,6 +97,7 @@ type DDL interface {
 	DropIndex(ctx context.Context, tableIdent ast.Ident, indexName model.CIStr) error
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx context.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
+	TruncateTable(ctx context.Context, tableIdent ast.Ident) error
 	// SetLease will reset the lease time for online DDL change,
 	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
 	SetLease(lease time.Duration)
@@ -117,6 +118,7 @@ type ddl struct {
 
 	infoHandle *infoschema.Handle
 	hook       Callback
+	hookMu     sync.RWMutex
 	store      kv.Storage
 	// schema lease seconds.
 	lease        time.Duration
@@ -322,7 +324,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hook.OnChanged(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -339,7 +341,7 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hook.OnChanged(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -462,11 +464,9 @@ func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
 func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
 	constraints := []*ast.Constraint{}
 	col := &table.Column{
-		ColumnInfo: model.ColumnInfo{
-			Offset:    offset,
-			Name:      colDef.Name.Name,
-			FieldType: *colDef.Tp,
-		},
+		Offset:    offset,
+		Name:      colDef.Name.Name,
+		FieldType: *colDef.Tp,
 	}
 
 	// Check and set TimestampFlag and OnUpdateNowFlag.
@@ -747,7 +747,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		return nil, errors.Trace(err)
 	}
 	for _, v := range cols {
-		tbInfo.Columns = append(tbInfo.Columns, &v.ColumnInfo)
+		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
 	}
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
@@ -889,7 +889,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 			d.handleAutoIncID(tbInfo, schema.ID)
 		}
 	}
-	err = d.hook.OnChanged(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -1019,11 +1019,11 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		SchemaID: schema.ID,
 		TableID:  t.Meta().ID,
 		Type:     model.ActionAddColumn,
-		Args:     []interface{}{&col.ColumnInfo, spec.Position, 0},
+		Args:     []interface{}{col, spec.Position, 0},
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hook.OnChanged(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -1054,7 +1054,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hook.OnChanged(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -1078,7 +1078,32 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hook.OnChanged(err)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
+	is := d.GetInformationSchema()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+	}
+	tb, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists)
+	}
+	newTableID, err := d.genGlobalID()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  tb.Meta().ID,
+		Type:     model.ActionTruncateTable,
+		Args:     []interface{}{newTableID},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -1106,7 +1131,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hook.OnChanged(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -1163,7 +1188,7 @@ func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.C
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hook.OnChanged(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 
 }
@@ -1188,7 +1213,7 @@ func (d *ddl) DropForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIS
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.hook.OnChanged(err)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -1212,8 +1237,23 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 	}
 
 	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) callHookOnChanged(err error) error {
+	d.hookMu.Lock()
+	defer d.hookMu.Unlock()
+
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
+}
+
+func (d *ddl) setHook(h Callback) {
+	d.hookMu.Lock()
+	defer d.hookMu.Unlock()
+
+	d.hook = h
 }
 
 // findCol finds column in cols by name.
@@ -1248,19 +1288,18 @@ const (
 	codeCantDropColWithIndex = 201
 	codeUnsupportedAddColumn = 202
 
-	codeBadNull             = 1048
-	codeCantRemoveAllFields = 1090
-	codeCantDropFieldOrKey  = 1091
-	codeInvalidOnUpdate     = 1294
-	codeTooLongIdent        = 1059
-
+	codeBadNull              = 1048
+	codeTooLongIdent         = 1059
 	codeTooLongKey           = 1071
-	codeBlobKeyWithoutLength = 1170
 	codeIncorrectPrefixKey   = 1089
+	codeCantRemoveAllFields  = 1090
+	codeCantDropFieldOrKey   = 1091
+	codeBlobKeyWithoutLength = 1170
+	codeInvalidOnUpdate      = 1294
 )
 
 func init() {
-	ddlMySQLERrCodes := map[terror.ErrCode]uint16{
+	ddlMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeBadNull:              mysql.ErrBadNull,
 		codeCantRemoveAllFields:  mysql.ErrCantRemoveAllFields,
 		codeCantDropFieldOrKey:   mysql.ErrCantDropFieldOrKey,
@@ -1270,5 +1309,5 @@ func init() {
 		codeTooLongIdent:         mysql.ErrTooLongIdent,
 		codeTooLongKey:           mysql.ErrTooLongKey,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLERrCodes
+	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

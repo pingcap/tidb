@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -67,6 +68,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
+	var mu sync.Mutex
 	tc := &testDDLCallback{}
 	// set up hook
 	prevState := model.StateNone
@@ -98,6 +100,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 				checkErr = errors.Trace(err)
 			}
 		case model.StatePublic:
+			mu.Lock()
 			publicTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
 				checkErr = errors.Trace(err)
@@ -106,14 +109,17 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
+			mu.Unlock()
 		}
 	}
-	d.hook = tc
+	d.setHook(tc)
 	defaultValue := int64(3)
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
+	mu.Lock()
 	s.testColumnDrop(c, ctx, d, publicTable)
+	mu.Unlock()
 	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
 	d.close()
 }
@@ -124,7 +130,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 	// set up hook
 	prevState := model.StateNone
 	var checkErr error
-	var writeOnlyTable, publicTable table.Table
+	var writeOnlyTable table.Table
 	tc.onJobUpdated = func(job *model.Job) {
 		if job.SchemaState == prevState {
 			return
@@ -138,7 +144,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 				checkErr = errors.Trace(err)
 			}
 		case model.StatePublic:
-			publicTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			_, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -148,7 +154,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 			}
 		}
 	}
-	d.hook = tc
+	d.setHook(tc)
 	d.start()
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
@@ -177,8 +183,9 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx context.Context, d *ddl
 			}
 		}
 	}
-	d.hook = tc
+	d.setHook(tc)
 	d.start()
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }
 

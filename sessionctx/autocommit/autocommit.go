@@ -21,7 +21,7 @@ import (
 // TODO: Choose a better name.
 type Checker interface {
 	// ShouldAutocommit returns true if it should autocommit in the context.
-	ShouldAutocommit(ctx context.Context) bool
+	ShouldAutocommit(ctx context.Context) (bool, error)
 }
 
 // keyType is a dummy type to avoid naming collision in context.
@@ -40,7 +40,7 @@ func BindAutocommitChecker(ctx context.Context, checker Checker) {
 }
 
 // ShouldAutocommit gets checker from ctx and checks if it should autocommit.
-func ShouldAutocommit(ctx context.Context) bool {
+func ShouldAutocommit(ctx context.Context) (bool, error) {
 	v, ok := ctx.Value(key).(Checker)
 	if !ok {
 		panic("Miss autocommit checker")

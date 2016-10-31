@@ -95,6 +95,14 @@ func (c *Context) RollbackTxn() error {
 	return c.finishTxn(true)
 }
 
+// GetClient implements context.Context GetClient interface.
+func (c *Context) GetClient() kv.Client {
+	if c.Store == nil {
+		return nil
+	}
+	return c.Store.GetClient()
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)

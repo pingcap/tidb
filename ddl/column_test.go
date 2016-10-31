@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"reflect"
+	"sync"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -46,11 +46,11 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.d = newDDL(s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test_column")
-	testCreateSchema(c, mock.NewContext(), s.d, s.dbInfo)
+	testCreateSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
 }
 
 func (s *testColumnSuite) TearDownSuite(c *C) {
-	testDropSchema(c, mock.NewContext(), s.d, s.dbInfo)
+	testDropSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
 	s.d.close()
 
 	err := s.store.Close()
@@ -80,6 +80,8 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 
 	err = d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -96,14 +98,15 @@ func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tbl
 		return nil
 	}
 	c.Assert(errors.ErrorStack(err), Equals, "")
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
 func (s *testColumnSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
-	var ctx context.Context
-	ctx = testNewContext(c, s.d)
+	ctx := testNewContext(c, s.d)
 	defer ctx.RollbackTxn()
 
 	testCreateTable(c, ctx, s.d, s.dbInfo, tblInfo)
@@ -736,7 +739,6 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
@@ -773,7 +775,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 		}
 	}
 
-	d.hook = tc
+	d.setHook(tc)
 
 	// Use local ddl for callback test.
 	s.d.close()
@@ -821,7 +823,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	checkOK := false
-	oldCol := &table.Column{}
+	var mu sync.Mutex
 
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
@@ -831,13 +833,14 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID).(*tables.Table)
 		col := table.FindCol(t.Columns, colName)
 		if col == nil {
+			mu.Lock()
 			checkOK = true
+			mu.Unlock()
 			return
 		}
-		oldCol = col
 	}
 
-	d.hook = tc
+	d.setHook(tc)
 
 	// Use local ddl for callback test.
 	s.d.close()
@@ -847,7 +850,9 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 
 	job := testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, false)
 	testCheckJobDone(c, d, job, false)
+	mu.Lock()
 	c.Assert(checkOK, IsTrue)
+	mu.Unlock()
 
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)

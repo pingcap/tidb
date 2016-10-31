@@ -15,6 +15,7 @@ package privileges_test
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/ngaut/log"
@@ -52,8 +53,12 @@ type testPrivilegeSuite struct {
 	createColumnPrivTableSQL string
 }
 
+func (s *testPrivilegeSuite) SetUpSuit(c *C) {
+	logLevel := os.Getenv("log_level")
+	log.SetLevelByString(logLevel)
+}
+
 func (s *testPrivilegeSuite) SetUpTest(c *C) {
-	log.SetLevelByString("error")
 	s.dbName = "test"
 	s.store = newStore(c, s.dbName)
 	se := newSession(c, s.store, s.dbName)

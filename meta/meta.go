@@ -17,6 +17,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +53,7 @@ var (
 //
 
 var (
+	mMetaPrefix       = []byte("m")
 	mNextGlobalIDKey  = []byte("NextGlobalID")
 	mSchemaVersionKey = []byte("SchemaVersionKey")
 	mDBs              = []byte("DBs")
@@ -60,6 +62,7 @@ var (
 	mTableIDPrefix    = "TID"
 	mBootstrapKey     = []byte("BootstrapKey")
 	mTableStatsPrefix = "TStats"
+	mSchemaDiffPrefix = "Diff"
 )
 
 var (
@@ -83,7 +86,13 @@ type Meta struct {
 
 // NewMeta creates a Meta in transaction txn.
 func NewMeta(txn kv.Transaction) *Meta {
-	t := structure.NewStructure(txn, []byte{'m'})
+	t := structure.NewStructure(txn, txn, mMetaPrefix)
+	return &Meta{txn: t}
+}
+
+// NewSnapshotMeta creates a Meta with snapshot.
+func NewSnapshotMeta(snapshot kv.Snapshot) *Meta {
+	t := structure.NewStructure(snapshot, nil, mMetaPrefix)
 	return &Meta{txn: t}
 }
 
@@ -561,19 +570,53 @@ func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	return m.getHistoryDDLJob(mDDLJobHistoryKey, id)
 }
 
-// IsBootstrapped returns whether we have already run bootstrap or not.
-// return true means we don't need doing any other bootstrap.
-func (m *Meta) IsBootstrapped() (bool, error) {
-	value, err := m.txn.GetInt64(mBootstrapKey)
+// GetAllHistoryDDLJobs gets all history DDL jobs.
+func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
+	pairs, err := m.txn.HGetAll(mDDLJobHistoryKey)
 	if err != nil {
-		return false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return value == 1, nil
+	var jobs []*model.Job
+	for _, pair := range pairs {
+		job := &model.Job{}
+		err = job.Decode(pair.Value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, job)
+	}
+	sorter := &jobsSorter{jobs: jobs}
+	sort.Sort(sorter)
+	return jobs, nil
+}
+
+// jobsSorter implements the sort.Interface interface.
+type jobsSorter struct {
+	jobs []*model.Job
+}
+
+func (s *jobsSorter) Swap(i, j int) {
+	s.jobs[i], s.jobs[j] = s.jobs[j], s.jobs[i]
+}
+
+func (s *jobsSorter) Len() int {
+	return len(s.jobs)
+}
+
+func (s *jobsSorter) Less(i, j int) bool {
+	return s.jobs[i].ID < s.jobs[j].ID
+}
+
+// GetBootstrapVersion returns the version of the server which boostrap the store.
+// If the store is not bootstraped, the version will be zero.
+func (m *Meta) GetBootstrapVersion() (int64, error) {
+	value, err := m.txn.GetInt64(mBootstrapKey)
+	return value, errors.Trace(err)
 }
 
 // FinishBootstrap finishes bootstrap.
-func (m *Meta) FinishBootstrap() error {
-	err := m.txn.Set(mBootstrapKey, []byte("1"))
+func (m *Meta) FinishBootstrap(version int64) error {
+	err := m.txn.Set(mBootstrapKey, []byte(fmt.Sprintf("%d", version)))
 	return errors.Trace(err)
 }
 
@@ -682,12 +725,45 @@ func (m *Meta) GetTableStats(tableID int64) (*statistics.TablePB, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if len(data) == 0 {
+		return nil, nil
+	}
 	tpb := &statistics.TablePB{}
 	err = proto.Unmarshal(data, tpb)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return tpb, nil
+}
+
+func (m *Meta) schemaDiffKey(schemaVersion int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mSchemaDiffPrefix, schemaVersion))
+}
+
+// GetSchemaDiff gets the modification information on a given schema version.
+func (m *Meta) GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error) {
+	diffKey := m.schemaDiffKey(schemaVersion)
+	data, err := m.txn.Get(diffKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(data) == 0 {
+		return nil, nil
+	}
+	diff := &model.SchemaDiff{}
+	err = json.Unmarshal(data, diff)
+	return diff, errors.Trace(err)
+}
+
+// SetSchemaDiff sets the modification information on a given schema version.
+func (m *Meta) SetSchemaDiff(schemaVersion int64, diff *model.SchemaDiff) error {
+	data, err := json.Marshal(diff)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	diffKey := m.schemaDiffKey(schemaVersion)
+	err = m.txn.Set(diffKey, data)
+	return errors.Trace(err)
 }
 
 // meta error codes.
