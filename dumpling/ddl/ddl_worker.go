@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tipb/go-binlog"
 )
 
 func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
@@ -100,37 +99,6 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 
 		return errors.Trace(historyJob.Error)
 	}
-}
-
-func (d *ddl) writePreDDLBinlog(job *model.Job, startTS uint64) error {
-	if binloginfo.PumpClient == nil {
-		return nil
-	}
-	bin := &binlog.Binlog{
-		Tp:       binlog.BinlogType_PreDDL,
-		DdlJobId: job.ID,
-		StartTs:  int64(startTS),
-		DdlQuery: []byte(job.Query),
-	}
-	err := binloginfo.WriteBinlog(bin)
-	return errors.Trace(err)
-}
-
-func (d *ddl) writePostDDLBinlog(jobID int64, startTS, commitTS uint64) {
-	if binloginfo.PumpClient == nil {
-		return
-	}
-	bin := &binlog.Binlog{
-		Tp:       binlog.BinlogType_PostDDL,
-		DdlJobId: jobID,
-		StartTs:  int64(startTS),
-		CommitTs: int64(commitTS),
-	}
-	err := binloginfo.WriteBinlog(bin)
-	if err != nil {
-		log.Errorf("failed to write PostDDL binlog %v", err)
-	}
-	return
 }
 
 func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
@@ -295,7 +263,6 @@ func (d *ddl) handleDDLJobQueue() error {
 		}
 
 		waitTime := 2 * d.lease
-		var binlogStartTS uint64
 		var job *model.Job
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
@@ -339,10 +306,7 @@ func (d *ddl) handleDDLJobQueue() error {
 			d.runDDLJob(t, job)
 
 			if job.IsFinished() {
-				err = d.writePreDDLBinlogIfNeeded(txn, job, &binlogStartTS)
-				if err != nil {
-					return errors.Trace(err)
-				}
+				binloginfo.SetDDLBinlog(txn, job.ID, job.Query)
 				err = d.finishDDLJob(t, job)
 			} else {
 				err = d.updateDDLJob(t, job)
@@ -364,12 +328,6 @@ func (d *ddl) handleDDLJobQueue() error {
 			// no job now, return and retry get later.
 			return nil
 		}
-		if binlogStartTS != 0 {
-			commitTS, err1 := d.store.CurrentVersion()
-			if err1 == nil {
-				d.writePostDDLBinlog(job.ID, binlogStartTS, commitTS.Ver)
-			}
-		}
 
 		d.hookMu.Lock()
 		d.hook.OnJobUpdated(job)
@@ -387,22 +345,6 @@ func (d *ddl) handleDDLJobQueue() error {
 			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
-}
-
-// writePreDDLBinlog writes preDDL binlog if job is done and the binlog has not been write before.
-func (d *ddl) writePreDDLBinlogIfNeeded(txn kv.Transaction, job *model.Job, binlogStartTS *uint64) error {
-	if job.IsDone() {
-		// Avoid write multiple times.
-		if *binlogStartTS == 0 {
-			startTS := txn.StartTS()
-			err := d.writePreDDLBinlog(job, startTS)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			*binlogStartTS = startTS
-		}
-	}
-	return nil
 }
 
 func chooseLeaseTime(n1 time.Duration, n2 time.Duration) time.Duration {

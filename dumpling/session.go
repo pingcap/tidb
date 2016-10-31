@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-binlog"
 )
 
 // Session context
@@ -198,13 +199,17 @@ func (s *session) finishTxn(rollback bool) error {
 		return s.txn.Rollback()
 	}
 	if binloginfo.PumpClient != nil {
-		bin := binloginfo.GetPrewriteValue(s, false)
-		if bin != nil {
-			binlogData, err := bin.Marshal()
+		prewriteValue := binloginfo.GetPrewriteValue(s, false)
+		if prewriteValue != nil {
+			prewriteData, err := prewriteValue.Marshal()
 			if err != nil {
 				return errors.Trace(err)
 			}
-			s.txn.SetOption(kv.BinlogData, binlogData)
+			bin := &binlog.Binlog{
+				Tp:            binlog.BinlogType_Prewrite,
+				PrewriteValue: prewriteData,
+			}
+			s.txn.SetOption(kv.BinlogData, bin)
 		}
 	}
 	err := s.txn.Commit()
