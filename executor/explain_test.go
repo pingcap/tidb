@@ -40,6 +40,7 @@ func (s *testSuite) TestExplain(c *C) {
     "desc": false,
     "keep order": false,
     "access condition": null,
+    "count of pushed aggregate functions": 0,
     "limit": 0
 }`,
 		},
@@ -55,6 +56,7 @@ func (s *testSuite) TestExplain(c *C) {
     "out of order": false,
     "double read": false,
     "access condition": null,
+    "count of pushed aggregate functions": 0,
     "limit": 0
 }`,
 		},
@@ -76,6 +78,7 @@ func (s *testSuite) TestExplain(c *C) {
         "desc": false,
         "keep order": false,
         "access condition": null,
+        "count of pushed aggregate functions": 0,
         "limit": 0
     }
 }`,
@@ -91,6 +94,7 @@ func (s *testSuite) TestExplain(c *C) {
     "access condition": [
         "gt(test.t1.c1, 0)"
     ],
+    "count of pushed aggregate functions": 0,
     "limit": 0
 }`,
 		},
@@ -108,6 +112,7 @@ func (s *testSuite) TestExplain(c *C) {
     "access condition": [
         "eq(test.t1.c2, 1)"
     ],
+    "count of pushed aggregate functions": 0,
     "limit": 0
 }`,
 		},
@@ -130,6 +135,7 @@ func (s *testSuite) TestExplain(c *C) {
         "access condition": [
             "gt(test.t1.c1, 1)"
         ],
+        "count of pushed aggregate functions": 0,
         "limit": 0
     },
     "rightPlan": {
@@ -139,6 +145,7 @@ func (s *testSuite) TestExplain(c *C) {
         "desc": false,
         "keep order": false,
         "access condition": null,
+        "count of pushed aggregate functions": 0,
         "limit": 0
     }
 }`,
@@ -157,6 +164,7 @@ func (s *testSuite) TestExplain(c *C) {
             "access condition": [
                 "eq(test.t1.c1, 1)"
             ],
+            "count of pushed aggregate functions": 0,
             "limit": 0
         }
     ]
@@ -179,6 +187,7 @@ func (s *testSuite) TestExplain(c *C) {
             "access condition": [
                 "eq(test.t1.c2, 1)"
             ],
+            "count of pushed aggregate functions": 0,
             "limit": 0
         }
     ]
@@ -209,6 +218,7 @@ func (s *testSuite) TestExplain(c *C) {
             "desc": false,
             "keep order": false,
             "access condition": null,
+            "count of pushed aggregate functions": 0,
             "limit": 0
         },
         "rightPlan": {
@@ -227,6 +237,7 @@ func (s *testSuite) TestExplain(c *C) {
                 "desc": false,
                 "keep order": false,
                 "access condition": null,
+                "count of pushed aggregate functions": 2,
                 "limit": 0
             }
         }

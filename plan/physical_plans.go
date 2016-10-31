@@ -295,8 +295,9 @@ func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
 		"\n \"out of order\": %v,"+
 		"\n \"double read\": %v,"+
 		"\n \"access condition\": %s,"+
+		"\n \"count of pushed aggregate functions\": %d,"+
 		"\n \"limit\": %d\n}",
-		p.DBName.O, p.Table.Name.O, p.Index.Name.O, p.Ranges, p.Desc, p.OutOfOrder, p.DoubleRead, access, limit))
+		p.DBName.O, p.Table.Name.O, p.Index.Name.O, p.Ranges, p.Desc, p.OutOfOrder, p.DoubleRead, access, len(p.AggFuncs), limit))
 	return buffer.Bytes(), nil
 }
 
@@ -323,8 +324,9 @@ func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
 		"\n \"desc\": %v,"+
 		"\n \"keep order\": %v,"+
 		"\n \"access condition\": %s,"+
+		"\n \"count of pushed aggregate functions\": %d,"+
 		"\n \"limit\": %d}",
-		p.DBName.O, p.Table.Name.O, p.Desc, p.KeepOrder, access, limit))
+		p.DBName.O, p.Table.Name.O, p.Desc, p.KeepOrder, access, len(p.AggFuncs), limit))
 	return buffer.Bytes(), nil
 }
 
