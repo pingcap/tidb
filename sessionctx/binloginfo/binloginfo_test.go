@@ -103,6 +103,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.MustExec("drop table if exists local_binlog")
 	ddlQuery := "create table local_binlog (id int primary key, name varchar(10))"
 	tk.MustExec(ddlQuery)
+	time.Sleep(time.Millisecond)
 	checkLatestBinlogDDL(c, pump, ddlQuery)
 
 	tk.MustExec("insert local_binlog values (1, 'abc'), (2, 'cde')")
