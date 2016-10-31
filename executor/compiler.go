@@ -60,10 +60,9 @@ func statementLabel(node ast.StmtNode) string {
 	return "unknown"
 }
 
-// Compile compiles an ast.StmtNode to a stmt.Statement.
-// If it is supported to use new plan and executer, it optimizes the node to
-// a plan, and we wrap the plan in an adapter as stmt.Statement.
-// If it is not supported, the node will be converted to old statement.
+// Compile compiles an ast.StmtNode to an ast.Statement.
+// After preprocessed and validated, it will be optimized to a plan,
+// then wrappped to an adapter *statement as stmt.Statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
 	stmtNodeCounter.WithLabelValues(statementLabel(node)).Inc()
 	if _, ok := node.(*ast.UpdateStmt); ok {

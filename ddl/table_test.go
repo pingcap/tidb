@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -171,12 +170,6 @@ func (s *testTableSuite) TearDownSuite(c *C) {
 	reorgTableDeleteLimit = 65536
 }
 
-func testNewContext(c *C, d *ddl) context.Context {
-	ctx := d.newReorgContext()
-	variable.BindSessionVars(ctx)
-	return ctx
-}
-
 func (s *testTableSuite) TestTable(c *C) {
 	defer testleak.AfterTest(c)()
 	d := s.d
@@ -191,20 +184,12 @@ func (s *testTableSuite) TestTable(c *C) {
 
 	// Create an existing table.
 	newTblInfo := testTableInfo(c, d, "t", 3)
-	job = &model.Job{
-		SchemaID: s.dbInfo.ID,
-		TableID:  newTblInfo.ID,
-		Type:     model.ActionCreateTable,
-		Args:     []interface{}{newTblInfo},
-	}
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
+	doDDLJobErr(c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, ctx, d)
 
 	// To drop a table with reorgTableDeleteLimit+10 records.
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	for i := 1; i <= reorgTableDeleteLimit+10; i++ {
-		_, err = tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
+		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
 
@@ -232,7 +217,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, false)
 
 	// Check background ddl info.
-	time.Sleep(testLease * 200)
+	time.Sleep(testLease * 400)
 	verifyBgJobState(c, d, job, model.JobDone)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(updatedCount, Equals, 2)

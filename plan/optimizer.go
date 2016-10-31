@@ -33,11 +33,12 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	if err := InferType(node); err != nil {
 		return nil, errors.Trace(err)
 	}
+	allocator := new(idAllocator)
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
-		allocator: new(idAllocator)}
+		allocator: allocator}
 	p := builder.build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)
@@ -48,6 +49,11 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		solver := &aggPushDownSolver{
+			ctx:   ctx,
+			alloc: allocator,
+		}
+		solver.aggPushDown(logic)
 		_, err = logic.PruneColumnsAndResolveIndices(p.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)

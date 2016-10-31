@@ -55,12 +55,12 @@ type ShowExec struct {
 	cursor  int
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *ShowExec) Schema() expression.Schema {
 	return nil
 }
 
-// Fields implements Executor Fields interface.
+// Fields implements the Executor Fields interface.
 func (e *ShowExec) Fields() []*ast.ResultField {
 	return e.fields
 }
@@ -544,7 +544,7 @@ func (e *ShowExec) getTable() (table.Table, error) {
 	return tb, nil
 }
 
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *ShowExec) Close() error {
 	return nil
 }

@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -24,8 +23,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -39,27 +36,6 @@ type testDDLSuite struct {
 }
 
 const testLease = 5 * time.Millisecond
-
-func testCreateStore(c *C, name string) kv.Storage {
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open(fmt.Sprintf("memory://%s", name))
-	c.Assert(err, IsNil)
-	return store
-}
-
-func testCheckOwner(c *C, d *ddl, isOwner bool, flag JobType) {
-	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		_, err := d.checkOwner(t, flag)
-		return err
-	})
-	if isOwner {
-		c.Assert(err, IsNil)
-		return
-	}
-
-	c.Assert(terror.ErrorEqual(err, errNotOwner), IsTrue)
-}
 
 func (s *testDDLSuite) SetUpSuite(c *C) {
 	s.originMinDDLOwnerTimeout = minDDLOwnerTimeout
@@ -146,7 +122,6 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	job.State = 0
 	tblInfo := testTableInfo(c, d, "t", 3)
 	job.Args = []interface{}{tblInfo}
-
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
@@ -266,6 +241,46 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
 	doDDLJobErr(c, -1, 1, model.ActionDropColumn, []interface{}{1}, ctx, d)
+}
+
+func testCheckOwner(c *C, d *ddl, isOwner bool, flag JobType) {
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		_, err := d.checkOwner(t, flag)
+		return err
+	})
+	if isOwner {
+		c.Assert(err, IsNil)
+		return
+	}
+
+	c.Assert(terror.ErrorEqual(err, errNotOwner), IsTrue)
+}
+
+func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
+	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		historyJob, err := t.GetHistoryDDLJob(job.ID)
+		c.Assert(err, IsNil)
+		c.Assert(historyJob.State, Equals, model.JobDone)
+		if isAdd {
+			c.Assert(historyJob.SchemaState, Equals, model.StatePublic)
+		} else {
+			c.Assert(historyJob.SchemaState, Equals, model.StateNone)
+		}
+
+		return nil
+	})
+}
+
+func testCheckJobCancelled(c *C, d *ddl, job *model.Job) {
+	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		historyJob, err := t.GetHistoryDDLJob(job.ID)
+		c.Assert(err, IsNil)
+		c.Assert(historyJob.State, Equals, model.JobCancelled)
+		return nil
+	})
 }
 
 func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []interface{},
