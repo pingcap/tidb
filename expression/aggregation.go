@@ -15,6 +15,7 @@ package expression
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -30,6 +31,7 @@ import (
 // AggregationFunction stands for aggregate functions.
 type AggregationFunction interface {
 	fmt.Stringer
+	json.Marshaler
 	// Update during executing.
 	Update(row []types.Datum, groupKey []byte, ctx context.Context) error
 
@@ -39,7 +41,7 @@ type AggregationFunction interface {
 	// SetMode sets aggFunctionMode for aggregate function.
 	SetMode(mode AggFunctionMode)
 
-	// SetMode sets aggFunctionMode for aggregate function.
+	// GetMode gets aggFunctionMode from aggregate function.
 	GetMode() AggFunctionMode
 
 	// GetGroupResult will be called when all data have been processed.
@@ -147,6 +149,12 @@ func (af *aggFunction) String() string {
 	}
 	result += ")"
 	return result
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (af *aggFunction) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString(fmt.Sprintf("\"%s\"", af))
+	return buffer.Bytes(), nil
 }
 
 func newAggFunc(name string, args []Expression, dist bool) aggFunction {
