@@ -110,12 +110,12 @@ type UnionScanExec struct {
 	snapshotRow *Row
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (us *UnionScanExec) Schema() expression.Schema {
 	return us.Src.Schema()
 }
 
-// Fields implements Executor Fields interface.
+// Fields implements the Executor Fields interface.
 func (us *UnionScanExec) Fields() []*ast.ResultField {
 	return us.Src.Fields()
 }
@@ -217,7 +217,7 @@ func (us *UnionScanExec) pickRow(a, b *Row) (*Row, error) {
 	return row, nil
 }
 
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (us *UnionScanExec) Close() error {
 	return us.Src.Close()
 }

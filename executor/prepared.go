@@ -86,19 +86,19 @@ type PrepareExec struct {
 	Err          error
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *PrepareExec) Schema() expression.Schema {
 	// Will never be called.
 	return nil
 }
 
-// Fields implements Executor Fields interface.
+// Fields implements the Executor Fields interface.
 func (e *PrepareExec) Fields() []*ast.ResultField {
 	// returns nil to indicate prepare will not return Recordset.
 	return nil
 }
 
-// Next implements Executor Next interface.
+// Next implements the Executor Next interface.
 func (e *PrepareExec) Next() (*Row, error) {
 	e.DoPrepare()
 	return nil, e.Err
@@ -178,7 +178,8 @@ func (e *PrepareExec) DoPrepare() {
 }
 
 // ExecuteExec represents an EXECUTE executor.
-// It executes a prepared statement.
+// It cannot be executed by itself, all it needs to do is to build
+// another Executor from a prepared statement.
 type ExecuteExec struct {
 	IS        infoschema.InfoSchema
 	Ctx       context.Context
@@ -189,19 +190,19 @@ type ExecuteExec struct {
 	Stmt      ast.StmtNode
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *ExecuteExec) Schema() expression.Schema {
 	// Will never be called.
 	return nil
 }
 
-// Fields implements Executor Fields interface.
+// Fields implements the Executor Fields interface.
 func (e *ExecuteExec) Fields() []*ast.ResultField {
 	// Will never be called.
 	return nil
 }
 
-// Next implements Executor Next interface.
+// Next implements the Executor Next interface.
 func (e *ExecuteExec) Next() (*Row, error) {
 	// Will never be called.
 	return nil, nil
@@ -214,6 +215,7 @@ func (e *ExecuteExec) Close() error {
 }
 
 // Build builds a prepared statement into an executor.
+// After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build() error {
 	vars := variable.GetSessionVars(e.Ctx)
 	if e.Name != "" {
@@ -267,18 +269,18 @@ type DeallocateExec struct {
 	ctx  context.Context
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *DeallocateExec) Schema() expression.Schema {
 	// Will never be called.
 	return nil
 }
 
-// Fields implements Executor Fields interface.
+// Fields implements the Executor Fields interface.
 func (e *DeallocateExec) Fields() []*ast.ResultField {
 	return nil
 }
 
-// Next implements Executor Next interface.
+// Next implements the Executor Next interface.
 func (e *DeallocateExec) Next() (*Row, error) {
 	vars := variable.GetSessionVars(e.ctx)
 	id, ok := vars.PreparedStmtNameToID[e.Name]
