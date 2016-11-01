@@ -208,7 +208,7 @@ func mockContext() context.Context {
 	return ctx
 }
 
-func (s *testPlanSuite) TestTopnPushDown(c *C) {
+func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql   string
@@ -216,6 +216,24 @@ func (s *testPlanSuite) TestTopnPushDown(c *C) {
 		topn  string
 		limit string
 	}{
+		{
+			sql:   "select * from t order by a limit 5",
+			best:  "Table(t)->Limit->Projection",
+			topn:  "[]",
+			limit: "5",
+		},
+		{
+			sql:   "select * from t limit 5",
+			best:  "Table(t)->Limit->Projection",
+			topn:  "[]",
+			limit: "5",
+		},
+		{
+			sql:   "select c from t order by c limit 5",
+			best:  "Index(t.c_d_e)[[<nil>,+inf]]->Limit->Projection",
+			topn:  "[]",
+			limit: "5",
+		},
 		{
 			sql:   "select * from t order by d limit 1",
 			best:  "Table(t)->Sort + Limit(1) + Offset(0)->Projection",
@@ -265,19 +283,23 @@ func (s *testPlanSuite) TestTopnPushDown(c *C) {
 			switch x := p.(type) {
 			case *PhysicalTableScan:
 				c.Assert(fmt.Sprintf("%s", x.SortItems), Equals, ca.topn, Commentf("for %s", ca.sql))
+				var limitStr string
 				if x.LimitCount == nil {
-					fmt.Print("nil")
+					limitStr = fmt.Sprint("nil")
 				} else {
-					c.Assert(fmt.Sprintf("%d", *x.LimitCount), Equals, ca.limit, Commentf("for %s", ca.sql))
+					limitStr = fmt.Sprintf("%d", *x.LimitCount)
 				}
+				c.Assert(limitStr, Equals, ca.limit, Commentf("for %s", ca.sql))
 				break loop
 			case *PhysicalIndexScan:
 				c.Assert(fmt.Sprintf("%s", x.SortItems), Equals, ca.topn, Commentf("for %s", ca.sql))
+				var limitStr string
 				if x.LimitCount == nil {
-					fmt.Print("nil")
+					limitStr = fmt.Sprint("nil")
 				} else {
-					c.Assert(fmt.Sprintf("%d", *x.LimitCount), Equals, ca.limit, Commentf("for %s", ca.sql))
+					limitStr = fmt.Sprintf("%d", *x.LimitCount)
 				}
+				c.Assert(limitStr, Equals, ca.limit, Commentf("for %s", ca.sql))
 				break loop
 			}
 			p = p.GetChildByIndex(0)

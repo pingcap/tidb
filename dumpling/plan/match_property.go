@@ -41,13 +41,16 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		cost = float64(prop.limit.Count+prop.limit.Offset) * netWorkFactor
 	}
 	if len(prop.props) == 0 {
-		p := tryToAddUnionScan(ts.readOnly, ts.conditions, ts)
+		newTS := *ts
+		newTS.addLimit(prop.limit)
+		p := tryToAddUnionScan(newTS.readOnly, newTS.conditions, &newTS)
 		return enforceProperty(prop, &physicalPlanInfo{p: p, cost: cost, count: infos[0].count})
 	}
 	if len(prop.props) == 1 && ts.pkCol != nil && ts.pkCol == prop.props[0].col {
 		sortedTs := *ts
 		sortedTs.Desc = prop.props[0].desc
 		sortedTs.KeepOrder = true
+		sortedTs.addLimit(prop.limit)
 		p := tryToAddUnionScan(ts.readOnly, ts.conditions, &sortedTs)
 		return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
 			p:     p,
@@ -55,15 +58,15 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 			count: infos[0].count})
 	}
 	if prop.limit != nil {
-		success := ts.addTopN(prop)
+		sortedTS := *ts
+		success := sortedTS.addTopN(prop)
 		if success {
 			cost += rowCount * cpuFactor
 		} else {
 			cost = rowCount * netWorkFactor
 		}
-		sortedTs := *ts
-		sortedTs.KeepOrder = true
-		p := tryToAddUnionScan(ts.readOnly, ts.conditions, &sortedTs)
+		sortedTS.KeepOrder = true
+		p := tryToAddUnionScan(ts.readOnly, ts.conditions, &sortedTS)
 		return enforceProperty(prop, &physicalPlanInfo{
 			p:     p,
 			cost:  cost,
@@ -141,10 +144,11 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 		}
 		sortedCost := cost + rowCount*cpuFactor
 		if allAsc || allDesc {
-			sortedIs := *is
-			sortedIs.OutOfOrder = false
-			sortedIs.Desc = allDesc && !allAsc
-			p := tryToAddUnionScan(is.readOnly, is.conditions, &sortedIs)
+			sortedIS := *is
+			sortedIS.OutOfOrder = false
+			sortedIS.Desc = allDesc && !allAsc
+			sortedIS.addLimit(prop.limit)
+			p := tryToAddUnionScan(is.readOnly, is.conditions, &sortedIS)
 			return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
 				p:     p,
 				cost:  sortedCost,
@@ -152,15 +156,15 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 		}
 	}
 	if prop.limit != nil {
-		success := is.addTopN(prop)
+		sortedIS := *is
+		success := sortedIS.addTopN(prop)
 		if success {
 			cost += float64(infos[0].count) * cpuFactor
 		} else {
 			cost = float64(infos[0].count) * netWorkFactor
 		}
-		sortedIs := *is
-		sortedIs.OutOfOrder = true
-		p := tryToAddUnionScan(is.readOnly, is.conditions, &sortedIs)
+		sortedIS.OutOfOrder = true
+		p := tryToAddUnionScan(is.readOnly, is.conditions, &sortedIS)
 		return enforceProperty(prop, &physicalPlanInfo{
 			p:     p,
 			cost:  cost,
