@@ -339,7 +339,7 @@ func (sf *sumFunction) CalculateDefaultValue(schema Schema) (d types.Datum, err 
 	}
 	if con, ok := result.(*Constant); ok {
 		d, err = types.CalculateSum(d, con.Value)
-		return
+		return d, errors.Trace(err)
 	}
 	return d, errors.New("Correlated column is not supported.")
 }

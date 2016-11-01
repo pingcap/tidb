@@ -791,7 +791,7 @@ func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row) bool {
 		e.resultRows <- r
 	}
 	if len(matchedRows) == 0 && e.outer {
-		r := e.fillNullRow(bigRow)
+		r := e.fillRowWithDefaultValues(bigRow)
 		e.resultRows <- r
 	}
 	return true
@@ -834,9 +834,9 @@ func (e *HashJoinExec) constructMatchedRows(ctx *hashJoinCtx, bigRow *Row) (matc
 	return matchedRows, nil
 }
 
-// fillNulRow creates a null filled result row from a row in the big table.
+// fillRowWithDefaultValues creates a result row filled with default values from a row in the big table.
 // It is used for outer join, when a row from outer table doesn't have any matching rows.
-func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row) {
+func (e *HashJoinExec) fillRowWithDefaultValues(bigRow *Row) (returnRow *Row) {
 	smallRow := &Row{
 		Data: make([]types.Datum, len(e.smallExec.Schema())),
 	}

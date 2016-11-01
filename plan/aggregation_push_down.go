@@ -16,6 +16,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -229,6 +230,7 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 		var err error
 		join.DefaultValues, err = a.getDefaultValues(agg)
 		if err != nil {
+			log.Warn(err.Error())
 			return child
 		}
 	}

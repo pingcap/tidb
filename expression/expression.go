@@ -498,9 +498,9 @@ func EvaluateExprWithNull(schema Schema, expr Expression) (Expression, error) {
 		args := make([]Expression, len(x.Args))
 		for i, arg := range x.Args {
 			args[i], err = EvaluateExprWithNull(schema, arg)
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		return NewFunction(x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
 	case *Column:
