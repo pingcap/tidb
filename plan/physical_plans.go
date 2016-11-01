@@ -105,10 +105,14 @@ func (p *physicalTableSource) addLimit(l *Limit) {
 }
 
 func (p *physicalTableSource) addTopN(prop *requiredProperty) bool {
+	if len(prop.props) == 0 && prop.limit != nil {
+		p.addLimit(prop.limit)
+		return true
+	}
 	if p.client == nil || !p.client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeTopN) {
 		return false
 	}
-	if prop.limit == nil || len(prop.props) == 0 {
+	if prop.limit == nil {
 		return false
 	}
 	count := int64(prop.limit.Count + prop.limit.Offset)

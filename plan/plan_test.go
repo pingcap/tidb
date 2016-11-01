@@ -217,6 +217,24 @@ func (s *testPlanSuite) TestTopnPushDown(c *C) {
 		limit string
 	}{
 		{
+			sql:   "select * from t order by a limit 5",
+			best:  "Table(t)->Limit->Projection",
+			topn:  "[]",
+			limit: "5",
+		},
+		{
+			sql:   "select * from t limit 5",
+			best:  "Table(t)->Limit->Projection",
+			topn:  "[]",
+			limit: "5",
+		},
+		{
+			sql:   "select c from t order by c limit 5",
+			best:  "Index(t.c_d_e)[[<nil>,+inf]]->Limit->Projection",
+			topn:  "[]",
+			limit: "5",
+		},
+		{
 			sql:   "select * from t order by d limit 1",
 			best:  "Table(t)->Sort + Limit(1) + Offset(0)->Projection",
 			topn:  "[expr:<tp:ColumnRef val:\"\\200\\000\\000\\000\\000\\000\\000\\004\" > ]",

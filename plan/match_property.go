@@ -48,6 +48,7 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		sortedTs := *ts
 		sortedTs.Desc = prop.props[0].desc
 		sortedTs.KeepOrder = true
+		ts.addLimit(prop.limit)
 		p := tryToAddUnionScan(ts.readOnly, ts.conditions, &sortedTs)
 		return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
 			p:     p,
@@ -144,6 +145,7 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 			sortedIs := *is
 			sortedIs.OutOfOrder = false
 			sortedIs.Desc = allDesc && !allAsc
+			sortedIs.addLimit(prop.limit)
 			p := tryToAddUnionScan(is.readOnly, is.conditions, &sortedIs)
 			return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
 				p:     p,
