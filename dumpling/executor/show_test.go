@@ -86,6 +86,19 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustQuery("SHOW PROCEDURE STATUS WHERE Db='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW TRIGGERS WHERE Trigger ='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW processlist;").Check(testkit.Rows())
+
+	// Test show create database
+	testSQL = `create database show_test_DB`
+	tk.MustExec(testSQL)
+	testSQL = "show create database show_test_DB;"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"show_test_DB", "CREATE DATABASE `show_test_DB` DEFAULT CHARSET=utf8"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
 }
 
 type stats struct {

@@ -911,6 +911,8 @@ func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowCreateTable:
 		names = []string{"Table", "Create Table"}
+	case ast.ShowCreateDatabase:
+		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:
 		names = []string{fmt.Sprintf("Grants for %s", s.User)}
 	case ast.ShowTriggers:
