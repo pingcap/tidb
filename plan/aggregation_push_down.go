@@ -15,8 +15,6 @@ package plan
 import (
 	"fmt"
 
-	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -227,26 +225,25 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 	agg.AggFuncs = newAggFuncs
 	agg.SetSchema(schema)
 	if (childIdx == 0 && join.JoinType == RightOuterJoin) || (childIdx == 1 && join.JoinType == LeftOuterJoin) {
-		var err error
-		join.DefaultValues, err = a.getDefaultValues(agg)
-		if err != nil {
-			log.Warn(err.Error())
+		var existsDefaultValues bool
+		join.DefaultValues, existsDefaultValues = a.getDefaultValues(agg)
+		if !existsDefaultValues {
 			return child
 		}
 	}
 	return agg
 }
 
-func (a *aggPushDownSolver) getDefaultValues(agg *Aggregation) ([]types.Datum, error) {
+func (a *aggPushDownSolver) getDefaultValues(agg *Aggregation) ([]types.Datum, bool) {
 	defaultValues := make([]types.Datum, 0, len(agg.GetSchema()))
 	for _, aggFunc := range agg.AggFuncs {
-		value, err := aggFunc.CalculateDefaultValue(agg.children[0].GetSchema())
-		if err != nil {
-			return nil, errors.Trace(err)
+		value, existsDefaultValue := aggFunc.CalculateDefaultValue(agg.children[0].GetSchema())
+		if !existsDefaultValue {
+			return nil, false
 		}
 		defaultValues = append(defaultValues, value)
 	}
-	return defaultValues, nil
+	return defaultValues, true
 }
 
 func (a *aggPushDownSolver) checkAnyCountAndSum(aggFuncs []expression.AggregationFunction) bool {

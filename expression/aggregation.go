@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -78,8 +79,9 @@ type AggregationFunction interface {
 	GetType() *types.FieldType
 
 	// CalculateDefaultValue gets the default value when the aggregate function's input is null.
-	// The input stands for the schema of Aggregation's child.
-	CalculateDefaultValue(schema Schema) (types.Datum, error)
+	// The input stands for the schema of Aggregation's child. If the function can't produce a default value, the second
+	// return value will be false.
+	CalculateDefaultValue(schema Schema) (types.Datum, bool)
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -170,8 +172,8 @@ func newAggFunc(name string, args []Expression, dist bool) aggFunction {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (af *aggFunction) CalculateDefaultValue(schema Schema) (d types.Datum, err error) {
-	return d, errors.New("The avg and concat functions are not supported temporarily.")
+func (af *aggFunction) CalculateDefaultValue(schema Schema) (types.Datum, bool) {
+	return types.Datum{}, false
 }
 
 // IsDistinct implements AggregationFunction interface.
@@ -331,17 +333,21 @@ func (sf *sumFunction) GetStreamResult() (d types.Datum) {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (sf *sumFunction) CalculateDefaultValue(schema Schema) (d types.Datum, err error) {
+func (sf *sumFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
 	arg := sf.Args[0]
 	result, err := EvaluateExprWithNull(schema, arg)
 	if err != nil {
-		return d, errors.Trace(err)
+		log.Warn(err.Error())
+		return d, false
 	}
 	if con, ok := result.(*Constant); ok {
 		d, err = types.CalculateSum(d, con.Value)
-		return d, errors.Trace(err)
+		if err != nil {
+			log.Warn(err.Error())
+		}
+		return d, err == nil
 	}
-	return d, errors.New("Correlated column is not supported.")
+	return d, false
 }
 
 // GetType implements AggregationFunction interface.
@@ -368,21 +374,22 @@ func (cf *countFunction) Clone() AggregationFunction {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (cf *countFunction) CalculateDefaultValue(schema Schema) (d types.Datum, err error) {
+func (cf *countFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
 	for _, arg := range cf.Args {
 		result, err := EvaluateExprWithNull(schema, arg)
 		if err != nil {
-			return d, errors.Trace(err)
+			log.Warn(err.Error())
+			return d, false
 		}
 		if con, ok := result.(*Constant); ok {
 			if con.Value.IsNull() {
-				return types.NewDatum(0), nil
+				return types.NewDatum(0), true
 			}
 		} else {
-			return d, errors.New("Correlated column is not supported.")
+			return d, false
 		}
 	}
-	return types.NewDatum(1), nil
+	return types.NewDatum(1), true
 }
 
 // GetType implements AggregationFunction interface.
@@ -710,16 +717,17 @@ func (mmf *maxMinFunction) Clone() AggregationFunction {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (mmf *maxMinFunction) CalculateDefaultValue(schema Schema) (d types.Datum, err error) {
+func (mmf *maxMinFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
 	arg := mmf.Args[0]
 	result, err := EvaluateExprWithNull(schema, arg)
 	if err != nil {
-		return d, errors.Trace(err)
+		log.Warn(err.Error())
+		return d, false
 	}
 	if con, ok := result.(*Constant); ok {
-		return con.Value, nil
+		return con.Value, true
 	}
-	return d, errors.New("Correlated column is not supported.")
+	return d, false
 }
 
 // GetType implements AggregationFunction interface.
@@ -867,14 +875,15 @@ func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (ff *firstRowFunction) CalculateDefaultValue(schema Schema) (d types.Datum, err error) {
+func (ff *firstRowFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
 	arg := ff.Args[0]
 	result, err := EvaluateExprWithNull(schema, arg)
 	if err != nil {
-		return d, errors.Trace(err)
+		log.Warn(err.Error())
+		return d, false
 	}
 	if con, ok := result.(*Constant); ok {
-		return con.Value, nil
+		return con.Value, true
 	}
-	return d, errors.New("Correlated column is not supported.")
+	return d, false
 }
