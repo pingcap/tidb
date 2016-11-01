@@ -343,6 +343,7 @@ func (d *ddl) batchBackfillColumn(t table.Table, colID int64, handles []int64, c
 		rowVal, err := txn.Get(rowKey)
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			// If row doesn't exist, skip it.
+			nextHandle = handle
 			continue
 		}
 		if err != nil {
@@ -355,6 +356,7 @@ func (d *ddl) batchBackfillColumn(t table.Table, colID int64, handles []int64, c
 		}
 		if _, ok := rowColumns[colID]; ok {
 			// The column is already added by update or insert statement, skip it.
+			nextHandle = handle
 			continue
 		}
 
@@ -405,8 +407,8 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, handle
 		}
 
 		err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
-				return errors.Trace(err)
+			if err1 := d.isReorgRunnable(txn, ddlJobFlag); err1 != nil {
+				return errors.Trace(err1)
 			}
 
 			nextHandle, err1 := d.batchBackfillColumn(t, columnInfo.ID, handles[:endIdx], colMap, defaultVal, txn)
@@ -415,10 +417,10 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, handle
 			}
 			return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 		})
-
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		handles = handles[endIdx:]
 	}
 

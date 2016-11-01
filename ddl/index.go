@@ -459,6 +459,7 @@ func (d *ddl) batchBackfillIndex(t table.Table, kvIdx table.Index, handles []int
 		rowKey, vals, err := fetchRowColVals(txn, t, handle, kvIdx.Meta())
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			// Row doesn't exist, skip it.
+			nextHandle = handle
 			continue
 		}
 		if err != nil {
@@ -470,6 +471,7 @@ func (d *ddl) batchBackfillIndex(t table.Table, kvIdx table.Index, handles []int
 			return 0, errors.Trace(err)
 		} else if exist {
 			// Index already exists, skip it.
+			nextHandle = handle
 			continue
 		}
 		err = txn.LockKeys(rowKey)
@@ -498,8 +500,8 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 		}
 
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
-				return errors.Trace(err)
+			if err1 := d.isReorgRunnable(txn, ddlJobFlag); err1 != nil {
+				return errors.Trace(err1)
 			}
 			nextHandle, err1 := d.batchBackfillIndex(t, kvIdx, handles[:endIdx], txn)
 			if err1 != nil {
@@ -508,10 +510,10 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 			// Update reorg next handle.
 			return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 		})
-
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		handles = handles[endIdx:]
 	}
 
