@@ -19,8 +19,8 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
 )
 
 type aggPushDownSolver struct {
@@ -227,7 +227,7 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 	agg.SetSchema(schema)
 	if len(agg.GroupByItems) == 0 {
 		agg.GroupByItems = []expression.Expression{&expression.Constant{
-			Value: types.NewDatum(0),
+			Value:   types.NewDatum(0),
 			RetType: types.NewFieldType(mysql.TypeLong)}}
 	}
 	if (childIdx == 0 && join.JoinType == RightOuterJoin) || (childIdx == 1 && join.JoinType == LeftOuterJoin) {
