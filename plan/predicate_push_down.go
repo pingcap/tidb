@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
-	"strings"
 	"strconv"
+	"strings"
 )
 
 var (
@@ -606,7 +606,7 @@ func scalarFunctionByOneCol(sf *expression.ScalarFunction) (ok bool, col *expres
 	ok = false
 	for _, arg := range sf.Args {
 		switch cond := arg.(type) {
-		case  *expression.Column:
+		case *expression.Column:
 			if ok && !cond.Equal(col) {
 				return false, nil
 			} else if !ok {
@@ -633,7 +633,7 @@ func colNameIsGroupByItem(name string, aggrID int, colIDs []int) bool {
 	if aggrID == aggrIDOfCol {
 		for _, colID := range colIDs {
 			if colID == id {
-				return true;
+				return true
 			}
 		}
 	}
