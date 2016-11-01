@@ -25,38 +25,16 @@ func EliminateProjection(p PhysicalPlan) PhysicalPlan {
 			break
 		}
 		child := p.GetChildByIndex(0).(PhysicalPlan)
-		// pointer of schema in PROJECTION operator may be referenced by parent operator,
-		// and attributes of child operator may be used later, so here we shallow copy child's schema
-		// to the schema of PROJECTION, and reset the child's schema as the schema of PROJECTION.
-		for i, col := range plan.GetSchema() {
-			plan.GetSchema()[i] = shallowCopyColumn(col, child.GetSchema()[i])
-		}
 		child.SetSchema(plan.GetSchema())
 		RemovePlan(p)
 		p = EliminateProjection(child)
 	}
-	if len(p.GetChildren()) == 1 {
-		child := p.GetChildByIndex(0)
-		p.ReplaceChild(child, EliminateProjection(child.(PhysicalPlan)))
-	} else {
-		children := make([]Plan, 0, len(p.GetChildren()))
-		for _, child := range p.GetChildren() {
-			children = append(children, EliminateProjection(child.(PhysicalPlan)))
-		}
-		p.SetChildren(children...)
+	children := make([]Plan, 0, len(p.GetChildren()))
+	for _, child := range p.GetChildren() {
+		children = append(children, EliminateProjection(child.(PhysicalPlan)))
 	}
+	p.SetChildren(children...)
 	return p
-}
-
-func shallowCopyColumn(colDest, colSrc *expression.Column) *expression.Column {
-	colDest.Correlated = colSrc.Correlated
-	colDest.FromID = colSrc.FromID
-	colDest.Position = colSrc.Position
-	colDest.ID = colSrc.ID
-	colDest.IsAggOrSubq = colSrc.IsAggOrSubq
-	colDest.RetType = colSrc.RetType
-
-	return colDest
 }
 
 // projectionCanBeEliminated checks if a PROJECTION operator can be eliminated.
