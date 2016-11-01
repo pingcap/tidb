@@ -500,7 +500,7 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "CREATE DATABASE `%s`", db.Name.O)
 	if s := db.Charset; len(s) > 0 {
-		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s", s)
+		fmt.Fprintf(&buf, " /* !40100 DEFAULT CHARACTER SET %s */", s)
 	}
 
 	data := types.MakeDatums(db.Name.O, buf.String())

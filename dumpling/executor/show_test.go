@@ -95,7 +95,7 @@ func (s *testSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"show_test_DB", "CREATE DATABASE `show_test_DB` DEFAULT CHARSET=utf8"}
+		"show_test_DB", "CREATE DATABASE `show_test_DB` /* !40100 DEFAULT CHARACTER SET utf8 */"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
