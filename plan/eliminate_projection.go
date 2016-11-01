@@ -18,13 +18,13 @@ import (
 )
 
 // EliminateProjection eliminates projection operator to avoid the cost of memory copy in the iterator of projection.
-func EliminateProjection(p LogicalPlan) LogicalPlan {
+func EliminateProjection(p PhysicalPlan) PhysicalPlan {
 	switch plan := p.(type) {
 	case *Projection:
 		if !projectionCanBeEliminated(plan) {
 			break
 		}
-		child := p.GetChildByIndex(0).(LogicalPlan)
+		child := p.GetChildByIndex(0).(PhysicalPlan)
 		// pointer of schema in PROJECTION operator may be referenced by parent operator,
 		// and attributes of child operator may be used later, so here we shallow copy child's schema
 		// to the schema of PROJECTION, and reset the child's schema as the schema of PROJECTION.
@@ -34,20 +34,14 @@ func EliminateProjection(p LogicalPlan) LogicalPlan {
 		child.SetSchema(plan.GetSchema())
 		RemovePlan(p)
 		p = EliminateProjection(child)
-	case *DataSource:
-		// predicates may be pushed down when build physical plan,
-		// so here we copy the schema of Selection to DataSource.
-		if sel, ok := plan.GetParentByIndex(0).(*Selection); ok {
-			plan.SetSchema(sel.GetSchema())
-		}
 	}
 	if len(p.GetChildren()) == 1 {
 		child := p.GetChildByIndex(0)
-		p.ReplaceChild(child, EliminateProjection(child.(LogicalPlan)))
+		p.ReplaceChild(child, EliminateProjection(child.(PhysicalPlan)))
 	} else {
 		children := make([]Plan, 0, len(p.GetChildren()))
 		for _, child := range p.GetChildren() {
-			children = append(children, EliminateProjection(child.(LogicalPlan)))
+			children = append(children, EliminateProjection(child.(PhysicalPlan)))
 		}
 		p.SetChildren(children...)
 	}
@@ -74,7 +68,7 @@ func shallowCopyColumn(colDest, colSrc *expression.Column) *expression.Column {
 // or "SELECT c AS a, c AS b FROM t WHERE d = 1",
 // or "select t1.a, t2.b, t1.b, t2.a from t1, t2 where t1.a < 0 and t2.b > 0".
 func projectionCanBeEliminated(p *Projection) bool {
-	child := p.GetChildByIndex(0).(LogicalPlan)
+	child := p.GetChildByIndex(0).(PhysicalPlan)
 	if len(p.GetSchema()) != len(child.GetSchema()) {
 		return false
 	}
