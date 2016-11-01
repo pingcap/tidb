@@ -490,9 +490,8 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	return nil
 }
 
-// Compose show create database result
+// Compose show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
-
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.Gen("Unknown database '%s'", e.DBName.O)
