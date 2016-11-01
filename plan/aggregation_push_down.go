@@ -225,7 +225,7 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 	}
 	agg.AggFuncs = newAggFuncs
 	agg.SetSchema(schema)
-	// If agg has no group by items, it will return a default values, which may cause some bug.
+	// If agg has no group-by item, it will return a default value, which may cause some bugs.
 	// So here we add a group-by item forcely.
 	if len(agg.GroupByItems) == 0 {
 		agg.GroupByItems = []expression.Expression{&expression.Constant{
