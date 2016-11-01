@@ -3973,6 +3973,13 @@ ShowStmt:
 			Table:	$4.(*ast.TableName),
 		}
 	}
+|	"SHOW" "CREATE" "DATABASE" DBName 
+	{
+		$$ = &ast.ShowStmt{
+			Tp:	ast.ShowCreateDatabase,
+			DBName:	$4.(string),
+		}
+	}
 |	"SHOW" "GRANTS"
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
