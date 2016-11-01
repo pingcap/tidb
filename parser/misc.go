@@ -318,6 +318,7 @@ var tokenMap = map[string]int{
 	"PRIMARY":             primary,
 	"PRIVILEGES":          privileges,
 	"PROCEDURE":           procedure,
+	"PROCESSLIST":         processlist,
 	"QUARTER":             quarter,
 	"QUICK":               quick,
 	"RAND":                rand,

@@ -15,16 +15,13 @@ package executor_test
 
 import (
 	"fmt"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -577,8 +574,8 @@ func (s *testSuite) TestLoadData(c *C) {
 	_, err = tk.Exec("load data infile '/tmp/nonexistence.csv' into table load_data_test")
 	c.Assert(err, NotNil)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
-
-	ld, ctx := makeLoadDataInfo(4, s.store, c)
+	ctx := tk.Se.(context.Context)
+	ld := makeLoadDataInfo(4, ctx, c)
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
@@ -749,8 +746,8 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
-
-	ld, ctx := makeLoadDataInfo(2, s.store, c)
+	ctx := tk.Se.(context.Context)
+	ld := makeLoadDataInfo(2, ctx, c)
 	// test escape
 	cases := []testCase{
 		// data1 = nil, data2 != nil
@@ -766,12 +763,8 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-func makeLoadDataInfo(column int, store kv.Storage, c *C) (ld *executor.LoadDataInfo, ctx *mock.Context) {
-	ctx = mock.NewContext()
-	ctx.Store = store
-	variable.BindSessionVars(ctx)
-	domain, err := domain.NewDomain(store, 1*time.Second)
-	c.Assert(err, IsNil)
+func makeLoadDataInfo(column int, ctx context.Context, c *C) (ld *executor.LoadDataInfo) {
+	domain := sessionctx.GetDomain(ctx)
 	is := domain.InfoSchema()
 	c.Assert(is, NotNil)
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("load_data_test"))

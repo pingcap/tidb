@@ -305,13 +305,8 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		tbl, err := d.getTable(schemaID, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
 		err = d.runReorgJob(func() error {
-			return d.dropTableIndex(tbl, indexInfo, job)
+			return d.dropTableIndex(indexInfo, job)
 		})
 
 		if terror.ErrorEqual(err, errWaitReorgTimeout) {
@@ -507,11 +502,10 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 	return nil
 }
 
-func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo, job *model.Job) error {
-	prefix := tablecodec.EncodeTableIndexPrefix(t.Meta().ID, indexInfo.ID)
+func (d *ddl) dropTableIndex(indexInfo *model.IndexInfo, job *model.Job) error {
+	startKey := tablecodec.EncodeTableIndexPrefix(job.TableID, indexInfo.ID)
 	// It's asynchronous so it doesn't need to consider if it completes.
 	deleteAll := -1
-	_, err := d.delKeysWithPrefix(prefix, ddlJobFlag, job, deleteAll)
-
+	_, _, err := d.delKeysWithStartKey(startKey, startKey, ddlJobFlag, job, deleteAll)
 	return errors.Trace(err)
 }

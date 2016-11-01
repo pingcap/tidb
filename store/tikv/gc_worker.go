@@ -23,6 +23,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -39,7 +40,7 @@ type GCWorker struct {
 }
 
 // NewGCWorker creates a GCWorker instance.
-func NewGCWorker(store *tikvStore) (*GCWorker, error) {
+func NewGCWorker(store kv.Storage) (*GCWorker, error) {
 	session, err := tidb.CreateSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -55,7 +56,7 @@ func NewGCWorker(store *tikvStore) (*GCWorker, error) {
 	worker := &GCWorker{
 		uuid:        strconv.FormatUint(ver.Ver, 16),
 		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
-		store:       store,
+		store:       store.(*tikvStore),
 		session:     session,
 		gcIsRunning: false,
 		lastFinish:  time.Now(),
@@ -231,7 +232,7 @@ func (w *GCWorker) runGCJob(safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
-	err = w.doGC(safePoint)
+	err = w.DoGC(safePoint)
 	if err != nil {
 		w.done <- errors.Trace(err)
 	}
@@ -311,7 +312,8 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 	return nil
 }
 
-func (w *GCWorker) doGC(safePoint uint64) error {
+// DoGC sends GC command to KV, it is exported for testing purpose.
+func (w *GCWorker) DoGC(safePoint uint64) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
 	req := &kvrpcpb.Request{
