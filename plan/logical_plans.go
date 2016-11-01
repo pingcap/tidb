@@ -53,7 +53,7 @@ type Join struct {
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
 
-	// DefaultValues only used for outer join, which stands for the default values when the outer table cannot find join partner
+	// DefaultValues is only used for outer join, which stands for the default values when the outer table cannot find join partner
 	// instead of null padding.
 	DefaultValues []types.Datum
 }
