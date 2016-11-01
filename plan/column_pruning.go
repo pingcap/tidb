@@ -288,7 +288,7 @@ func (p *Join) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 			return nil, errors.Trace(err)
 		}
 	}
-	composedSchema := append(lChild.GetSchema().DeepCopy(), rChild.GetSchema().DeepCopy()...)
+	composedSchema := append(lChild.GetSchema().Clone(), rChild.GetSchema().Clone()...)
 	composedSchema.InitIndices()
 	for i, otherCond := range p.OtherConditions {
 		p.OtherConditions[i], err = retrieveColumnsInExpression(otherCond, composedSchema)
@@ -307,9 +307,9 @@ func (p *Join) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column
 		}
 	}
 	if p.JoinType == SemiJoin {
-		p.schema = lChild.GetSchema().DeepCopy()
+		p.schema = lChild.GetSchema().Clone()
 	} else if p.JoinType == SemiJoinWithAux {
-		p.schema = append(lChild.GetSchema().DeepCopy(), p.schema[len(p.schema)-1])
+		p.schema = append(lChild.GetSchema().Clone(), p.schema[len(p.schema)-1])
 	} else {
 		p.schema = composedSchema
 	}
@@ -346,7 +346,7 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 	for _, col := range p.OuterSchema {
 		col.Index = child.GetSchema().GetIndex(col)
 	}
-	combinedSchema := append(child.GetSchema().DeepCopy(), p.InnerPlan.GetSchema().DeepCopy()...)
+	combinedSchema := append(child.GetSchema().Clone(), p.InnerPlan.GetSchema().Clone()...)
 	if p.Checker == nil {
 		p.schema = combinedSchema
 	} else {
@@ -355,7 +355,7 @@ func (p *Apply) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Colum
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		p.schema = append(child.GetSchema().DeepCopy(), p.schema[len(p.schema)-1])
+		p.schema = append(child.GetSchema().Clone(), p.schema[len(p.schema)-1])
 	}
 	p.schema.InitIndices()
 	return append(childOuterUsedCols, p.outerColumns...), nil

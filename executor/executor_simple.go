@@ -50,12 +50,12 @@ type SimpleExec struct {
 	done      bool
 }
 
-// Fields implements Executor Fields interface.
+// Fields implements the Executor Fields interface.
 func (e *SimpleExec) Fields() []*ast.ResultField {
 	return nil
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *SimpleExec) Schema() expression.Schema {
 	return nil
 }
@@ -100,7 +100,7 @@ func (e *SimpleExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *SimpleExec) Close() error {
 	return nil
 }
