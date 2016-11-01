@@ -116,6 +116,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("2", "2"))
 	result = tk.MustQuery("select max(c) from t group by d having sum(c) > 3 order by avg(c) desc")
 	result.Check(testkit.Rows("4", "3"))
+	result = tk.MustQuery("select sum(-1) from t a left outer join t b on not null is null")
+	result.Check(testkit.Rows("-7"))
 	result = tk.MustQuery("select count(*), b.d from t a left join t b on a.c = b.d group by b.d order by b.d")
 	result.Check(testkit.Rows("2 <nil>", "12 1", "2 3"))
 	result = tk.MustQuery("select count(b.d), b.d from t a left join t b on a.c = b.d group by b.d order by b.d")
