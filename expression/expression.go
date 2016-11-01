@@ -508,7 +508,6 @@ func EvaluateExprWithNull(schema Schema, expr Expression) (Expression, error) {
 			return x, nil
 		}
 		constant := &Constant{Value: types.Datum{}}
-		constant.Value.SetNull()
 		return constant, nil
 	default:
 		return x.Clone(), nil
