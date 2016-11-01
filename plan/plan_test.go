@@ -591,6 +591,21 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			first: "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Projection",
 			best:  "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Projection",
 		},
+		{
+			sql:   "select * from (select a, b, sum(c) as s from t group by a, b) k where k.a > k.b",
+			first: "DataScan(t)->Aggr(firstrow(test.t.a),firstrow(test.t.b),sum(test.t.c))->Projection->Selection->Projection",
+			best:  "DataScan(t)->Aggr(firstrow(test.t.a),firstrow(test.t.b),sum(test.t.c))->Selection->Projection->Projection",
+		},
+		{
+			sql:   "select * from (select a, b, sum(c) as s from t group by a, b) k where k.a > 1 and k.b > 2",
+			first: "DataScan(t)->Aggr(firstrow(test.t.a),firstrow(test.t.b),sum(test.t.c))->Projection->Selection->Projection",
+			best:  "DataScan(t)->Selection->Aggr(firstrow(test.t.a),firstrow(test.t.b),sum(test.t.c))->Projection->Projection",
+		},
+		{
+			sql:   "select * from (select k.a, sum(k.s) as ss from (select a, sum(b) as s from t group by a) k group by k.a) l where l.a > 2",
+			first: "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Projection->Aggr(firstrow(k.a),sum(k.s))->Projection->Selection->Projection",
+			best:  "DataScan(t)->Selection->Aggr(firstrow(test.t.a),sum(test.t.b))->Projection->Aggr(firstrow(k.a),sum(k.s))->Projection->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
