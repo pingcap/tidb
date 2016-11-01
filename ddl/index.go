@@ -372,7 +372,7 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 }
 
 const defaultBatchSize = 1024
-const defaultBackfillBatchSize = 100
+const defaultSegmentBatchSize = 100
 
 // How to add index in reorganization state?
 //  1. Generate a snapshot with special version.
@@ -452,7 +452,9 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 	return handles, nil
 }
 
-func (d *ddl) batchBackfillIndex(t table.Table, kvIdx table.Index, handles []int64, txn kv.Transaction) (int64, error) {
+// segmentBackfillIndex deals with part of backfilling index data.
+// This part of the index data rows is defaultSegmentBatchSize.
+func (d *ddl) segmentBackfillIndex(t table.Table, kvIdx table.Index, handles []int64, txn kv.Transaction) (int64, error) {
 	nextHandle := handles[0]
 	for _, handle := range handles {
 		log.Debug("[ddl] backfill index...", handle)
@@ -493,8 +495,8 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 	var endIdx int
 	kvIdx := tables.NewIndex(t.Meta(), indexInfo)
 	for len(handles) > 0 {
-		if len(handles) >= defaultBackfillBatchSize {
-			endIdx = defaultBackfillBatchSize
+		if len(handles) >= defaultSegmentBatchSize {
+			endIdx = defaultSegmentBatchSize
 		} else {
 			endIdx = len(handles)
 		}
@@ -503,7 +505,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 			if err1 := d.isReorgRunnable(txn, ddlJobFlag); err1 != nil {
 				return errors.Trace(err1)
 			}
-			nextHandle, err1 := d.batchBackfillIndex(t, kvIdx, handles[:endIdx], txn)
+			nextHandle, err1 := d.segmentBackfillIndex(t, kvIdx, handles[:endIdx], txn)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}

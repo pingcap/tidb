@@ -334,7 +334,9 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	}
 }
 
-func (d *ddl) batchBackfillColumn(t table.Table, colID int64, handles []int64, colMap map[int64]*types.FieldType,
+// segmentBackfillColumn deals with a part of backfilling column data.
+// This part of the column data rows is defaultSegmentBatchSize.
+func (d *ddl) segmentBackfillColumn(t table.Table, colID int64, handles []int64, colMap map[int64]*types.FieldType,
 	defaultVal types.Datum, txn kv.Transaction) (int64, error) {
 	nextHandle := handles[0]
 	for _, handle := range handles {
@@ -343,7 +345,6 @@ func (d *ddl) batchBackfillColumn(t table.Table, colID int64, handles []int64, c
 		rowVal, err := txn.Get(rowKey)
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			// If row doesn't exist, skip it.
-			nextHandle = handle
 			continue
 		}
 		if err != nil {
@@ -356,7 +357,6 @@ func (d *ddl) batchBackfillColumn(t table.Table, colID int64, handles []int64, c
 		}
 		if _, ok := rowColumns[colID]; ok {
 			// The column is already added by update or insert statement, skip it.
-			nextHandle = handle
 			continue
 		}
 
@@ -400,27 +400,27 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, handle
 
 	var endIdx int
 	for len(handles) > 0 {
-		if len(handles) >= defaultBackfillBatchSize {
-			endIdx = defaultBackfillBatchSize
+		if len(handles) >= defaultSegmentBatchSize {
+			endIdx = defaultSegmentBatchSize
 		} else {
 			endIdx = len(handles)
 		}
 
 		err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err1 := d.isReorgRunnable(txn, ddlJobFlag); err1 != nil {
-				return errors.Trace(err1)
+			if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
+				return errors.Trace(err)
 			}
 
-			nextHandle, err1 := d.batchBackfillColumn(t, columnInfo.ID, handles[:endIdx], colMap, defaultVal, txn)
+			nextHandle, err1 := d.segmentBackfillColumn(t, columnInfo.ID, handles[:endIdx], colMap, defaultVal, txn)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
 			return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 		})
+
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		handles = handles[endIdx:]
 	}
 
