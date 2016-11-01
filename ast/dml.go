@@ -909,6 +909,7 @@ const (
 	ShowProcedureStatus
 	ShowIndex
 	ShowProcessList
+	ShowCreateDatabase
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.
