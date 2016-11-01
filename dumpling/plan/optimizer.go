@@ -61,14 +61,14 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		if !AllowCartesianProduct && existsCartesianProduct(logic) {
 			return nil, ErrCartesianProductUnsupported
 		}
-		logic = EliminateProjection(logic)
 		info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		p = info.p
-		log.Debugf("[PLAN] %s", ToString(p))
-		return p, nil
+		pp := info.p
+		pp = EliminateProjection(pp)
+		log.Debugf("[PLAN] %s", ToString(pp))
+		return pp, nil
 	}
 	return p, nil
 }
