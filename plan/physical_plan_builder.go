@@ -640,6 +640,7 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 		if matchedCol == nil {
 			return info, nil
 		}
+		// We should add columns in aggregation in order to keep index right.
 		newProp.props = append(newProp.props, &columnProp{col: matchedCol, desc: pro.desc})
 	}
 	newProp.sortKeyLen = len(newProp.props)
