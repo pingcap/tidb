@@ -136,6 +136,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select count(*) from t a join t b where a.c < 0")
 	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select sum(b.c), count(b.d), a.c from t a left join t b on a.c = b.d group by b.d order by b.d")
+	result.Check(testkit.Rows("<nil> 0 4", "8 12 1", "5 2 3"))
 	// This two cases prove that having always resolve name from field list firstly.
 	result = tk.MustQuery("select 1-d as d from t having d < 0 order by d desc")
 	result.Check(testkit.Rows("-1", "-1", "-2", "-2"))
