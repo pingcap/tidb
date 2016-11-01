@@ -41,9 +41,9 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		cost = float64(prop.limit.Count+prop.limit.Offset) * netWorkFactor
 	}
 	if len(prop.props) == 0 {
-		newTs := *ts
-		newTs.addLimit(prop.limit)
-		p := tryToAddUnionScan(newTs.readOnly, newTs.conditions, &newTs)
+		newTS := *ts
+		newTS.addLimit(prop.limit)
+		p := tryToAddUnionScan(newTS.readOnly, newTS.conditions, &newTS)
 		return enforceProperty(prop, &physicalPlanInfo{p: p, cost: cost, count: infos[0].count})
 	}
 	if len(prop.props) == 1 && ts.pkCol != nil && ts.pkCol == prop.props[0].col {
