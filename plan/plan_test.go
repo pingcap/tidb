@@ -283,19 +283,23 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 			switch x := p.(type) {
 			case *PhysicalTableScan:
 				c.Assert(fmt.Sprintf("%s", x.SortItems), Equals, ca.topn, Commentf("for %s", ca.sql))
+				var limitStr string
 				if x.LimitCount == nil {
-					fmt.Print("nil")
+					limitStr = fmt.Sprint("nil")
 				} else {
-					c.Assert(fmt.Sprintf("%d", *x.LimitCount), Equals, ca.limit, Commentf("for %s", ca.sql))
+					limitStr = fmt.Sprintf("%d", *x.LimitCount)
 				}
+				c.Assert(limitStr, Equals, ca.limit, Commentf("for %s", ca.sql))
 				break loop
 			case *PhysicalIndexScan:
 				c.Assert(fmt.Sprintf("%s", x.SortItems), Equals, ca.topn, Commentf("for %s", ca.sql))
+				var limitStr string
 				if x.LimitCount == nil {
-					fmt.Print("nil")
+					limitStr = fmt.Sprint("nil")
 				} else {
-					c.Assert(fmt.Sprintf("%d", *x.LimitCount), Equals, ca.limit, Commentf("for %s", ca.sql))
+					limitStr = fmt.Sprintf("%d", *x.LimitCount)
 				}
+				c.Assert(limitStr, Equals, ca.limit, Commentf("for %s", ca.sql))
 				break loop
 			}
 			p = p.GetChildByIndex(0)
