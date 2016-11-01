@@ -468,7 +468,8 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 		OtherConditions: p.OtherConditions,
 		SmallTable:      1,
 		// TODO: decide concurrency by data size.
-		Concurrency: JoinConcurrency,
+		Concurrency:   JoinConcurrency,
+		DefaultValues: p.DefaultValues,
 	}
 	join.SetSchema(p.schema)
 	if innerJoin {
@@ -519,7 +520,8 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
 		// TODO: decide concurrency by data size.
-		Concurrency: JoinConcurrency,
+		Concurrency:   JoinConcurrency,
+		DefaultValues: p.DefaultValues,
 	}
 	join.SetSchema(p.schema)
 	if innerJoin {
