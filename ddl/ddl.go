@@ -413,12 +413,25 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 	}
 }
 
+func primaryKeyInConstraints(constraints []*ast.Constraint) map[string]struct{} {
+	ret := make(map[string]struct{})
+	for _, v := range constraints {
+		if v.Tp == ast.ConstraintPrimaryKey {
+			for _, key := range v.Keys {
+				ret[key.Column.Name.L] = struct{}{}
+			}
+		}
+	}
+	return ret
+}
+
 func (d *ddl) buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.ColumnDef,
 	constraints []*ast.Constraint) ([]*table.Column, []*ast.Constraint, error) {
+	pkInConstr := primaryKeyInConstraints(constraints)
 	var cols []*table.Column
 	colMap := map[string]*table.Column{}
 	for i, colDef := range colDefs {
-		col, cts, err := d.buildColumnAndConstraint(ctx, i, colDef)
+		col, cts, err := d.buildColumnAndConstraint(ctx, i, colDef, pkInConstr)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -435,7 +448,7 @@ func (d *ddl) buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.Col
 }
 
 func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
-	colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
+	colDef *ast.ColumnDef, pks map[string]struct{}) (*table.Column, []*ast.Constraint, error) {
 	// Set charset.
 	if len(colDef.Tp.Charset) == 0 {
 		switch colDef.Tp.Tp {
@@ -447,7 +460,7 @@ func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
 		}
 	}
 
-	col, cts, err := columnDefToCol(ctx, offset, colDef)
+	col, cts, err := columnDefToCol(ctx, offset, colDef, pks)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -461,12 +474,19 @@ func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
 }
 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
-func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
+func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef, pks map[string]struct{}) (*table.Column, []*ast.Constraint, error) {
 	constraints := []*ast.Constraint{}
 	col := &table.Column{
 		Offset:    offset,
 		Name:      colDef.Name.Name,
 		FieldType: *colDef.Tp,
+	}
+
+	if pks != nil {
+		if _, ok := pks[col.Name.L]; ok {
+			col.Flag |= mysql.PriKeyFlag
+			col.Flag |= mysql.NotNullFlag
+		}
 	}
 
 	// Check and set TimestampFlag and OnUpdateNowFlag.
@@ -506,6 +526,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
 				constraints = append(constraints, constraint)
 				col.Flag |= mysql.PriKeyFlag
+				col.Flag |= mysql.NotNullFlag
 			case ast.ColumnOptionUniq:
 				constraint := &ast.Constraint{Tp: ast.ConstraintUniq, Name: colDef.Name.Name.O, Keys: keys}
 				constraints = append(constraints, constraint)
@@ -1010,7 +1031,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	// ingore table constraints now, maybe return error later
 	// we use length(t.Cols()) as the default offset first, later we will change the
 	// column's offset later.
-	col, _, err = d.buildColumnAndConstraint(ctx, len(t.Cols()), spec.Column)
+	col, _, err = d.buildColumnAndConstraint(ctx, len(t.Cols()), spec.Column, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
