@@ -64,9 +64,9 @@ func shallowCopyColumn(colDest, colSrc *expression.Column) *expression.Column {
 // 1. fields of PROJECTION are all columns
 // 2. fields of PROJECTION are just the same as the schema of the child operator (including order, amount, etc.).
 // expressions like following cases can not be eliminated:
-// "SELECT b, a from t",
+// "SELECT b, a FROM t",
 // or "SELECT c AS a, c AS b FROM t WHERE d = 1",
-// or "select t1.a, t2.b, t1.b, t2.a from t1, t2 where t1.a < 0 and t2.b > 0".
+// or "SELECT t1.a, t2.b, t1.b, t2.a FROM t1, t2 WHERE t1.a < 0 AND t2.b > 0".
 func projectionCanBeEliminated(p *Projection) bool {
 	child := p.GetChildByIndex(0).(PhysicalPlan)
 	if len(p.GetSchema()) != len(child.GetSchema()) {
