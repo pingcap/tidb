@@ -225,6 +225,8 @@ type PhysicalHashJoin struct {
 	OtherConditions []expression.Expression
 	SmallTable      int
 	Concurrency     int
+
+	DefaultValues []types.Datum
 }
 
 // PhysicalHashSemiJoin represents hash join for semi join.

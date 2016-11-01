@@ -215,8 +215,10 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	}
 	if join.Tp == ast.LeftJoin {
 		joinPlan.JoinType = LeftOuterJoin
+		joinPlan.DefaultValues = make([]types.Datum, len(rightPlan.GetSchema()))
 	} else if join.Tp == ast.RightJoin {
 		joinPlan.JoinType = RightOuterJoin
+		joinPlan.DefaultValues = make([]types.Datum, len(leftPlan.GetSchema()))
 	} else {
 		joinPlan.JoinType = InnerJoin
 	}
