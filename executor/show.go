@@ -498,9 +498,9 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 	}
 
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("CREATE DATABASE `%s`", db.Name.O))
+	fmt.Fprintf(&buf, "CREATE DATABASE `%s`", db.Name.O)
 	if s := db.Charset; len(s) > 0 {
-		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s", s))
+		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s", s)
 	}
 
 	data := types.MakeDatums(db.Name.O, buf.String())
