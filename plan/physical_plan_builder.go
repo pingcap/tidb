@@ -630,17 +630,17 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 		props: make([]*columnProp, 0, len(gbyCols)),
 	}
 	for _, pro := range prop.props {
-		isMatch := false
+		var matchedCol *expression.Column
 		for i, col := range gbyCols {
-			if col.ColName.L == pro.col.ColName.L {
+			if !col.Correlated && col.ColName.L == pro.col.ColName.L {
 				isSortKey[i] = true
-				isMatch = true
+				matchedCol = col
 			}
 		}
-		if !isMatch {
+		if matchedCol == nil {
 			return info, nil
 		}
-		newProp.props = append(newProp.props, pro)
+		newProp.props = append(newProp.props, &columnProp{col: matchedCol, desc: pro.desc})
 	}
 	newProp.sortKeyLen = len(newProp.props)
 	for i, col := range gbyCols {
