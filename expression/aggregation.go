@@ -337,13 +337,13 @@ func (sf *sumFunction) CalculateDefaultValue(schema Schema) (d types.Datum, vali
 	arg := sf.Args[0]
 	result, err := EvaluateExprWithNull(schema, arg)
 	if err != nil {
-		log.Warn(err.Error())
+		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", sf, err.Error())
 		return d, false
 	}
 	if con, ok := result.(*Constant); ok {
 		d, err = types.CalculateSum(d, con.Value)
 		if err != nil {
-			log.Warn(err.Error())
+			log.Warnf("CalculateSum failed in function %s, err msg is %s", sf, err.Error())
 		}
 		return d, err == nil
 	}
@@ -378,7 +378,7 @@ func (cf *countFunction) CalculateDefaultValue(schema Schema) (d types.Datum, va
 	for _, arg := range cf.Args {
 		result, err := EvaluateExprWithNull(schema, arg)
 		if err != nil {
-			log.Warn(err.Error())
+			log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", cf, err.Error())
 			return d, false
 		}
 		if con, ok := result.(*Constant); ok {
@@ -721,7 +721,7 @@ func (mmf *maxMinFunction) CalculateDefaultValue(schema Schema) (d types.Datum, 
 	arg := mmf.Args[0]
 	result, err := EvaluateExprWithNull(schema, arg)
 	if err != nil {
-		log.Warn(err.Error())
+		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", mmf, err.Error())
 		return d, false
 	}
 	if con, ok := result.(*Constant); ok {
@@ -879,7 +879,7 @@ func (ff *firstRowFunction) CalculateDefaultValue(schema Schema) (d types.Datum,
 	arg := ff.Args[0]
 	result, err := EvaluateExprWithNull(schema, arg)
 	if err != nil {
-		log.Warn(err.Error())
+		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", ff, err.Error())
 		return d, false
 	}
 	if con, ok := result.(*Constant); ok {
