@@ -208,7 +208,7 @@ func mockContext() context.Context {
 	return ctx
 }
 
-func (s *testPlanSuite) TestTopnPushDown(c *C) {
+func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql   string
