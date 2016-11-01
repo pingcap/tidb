@@ -361,7 +361,6 @@ func (s *testPlanSuite) TestOperatorsPushDown(c *C) {
 		c.Assert(err, IsNil)
 		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
 		c.Assert(err, IsNil)
-		lp = EliminateProjection(lp)
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		p = info.p
@@ -435,7 +434,6 @@ func (s *testPlanSuite) TestBuiltinFuncsPushDown(c *C) {
 		c.Assert(err, IsNil)
 		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
 		c.Assert(err, IsNil)
-		lp = EliminateProjection(lp)
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		p = info.p
@@ -771,84 +769,84 @@ func (s *testPlanSuite) TestCBO(c *C) {
 	}{
 		{
 			sql:  "select * from t t1 where 1 = 0",
-			best: "Dummy->Projection",
+			best: "Dummy",
 		},
 		{
 			sql:  "select * from t t1 where c in (1,2,3,4,5,6,7,8,9,0)",
-			best: "Index(t.c_d_e)[[0,0] [1,1] [2,2] [3,3] [4,4] [5,5] [6,6] [7,7] [8,8] [9,9]]->Projection",
+			best: "Index(t.c_d_e)[[0,0] [1,1] [2,2] [3,3] [4,4] [5,5] [6,6] [7,7] [8,8] [9,9]]",
 		},
 		{
 			sql:  "select count(*) from t t1 having 1 = 0",
-			best: "Dummy->HashAgg->Selection->Projection",
+			best: "Dummy->HashAgg->Selection",
 		},
 		{
 			sql:  "select count(*) from t group by c",
-			best: "Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg->Projection",
+			best: "Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t group by e order by d limit 1",
-			best: "Table(t)->HashAgg->Projection->Sort + Limit(1) + Offset(0)->Trim",
+			best: "Table(t)->HashAgg->Sort + Limit(1) + Offset(0)->Trim",
 		},
 		{
 			sql:  "select count(*) from t group by a",
-			best: "Table(t)->StreamAgg->Projection",
+			best: "Table(t)->StreamAgg",
 		},
 		{
 			sql:  "select count(distinct e) from t where c = 1 group by d",
-			best: "Index(t.c_d_e)[[1,1]]->StreamAgg->Projection",
+			best: "Index(t.c_d_e)[[1,1]]->StreamAgg",
 		},
 		{
 			sql:  "select count(distinct e) from t group by d",
-			best: "Table(t)->HashAgg->Projection",
+			best: "Table(t)->HashAgg",
 		},
 		{
 			// Multi distinct column can't apply stream agg.
 			sql:  "select count(distinct e), sum(distinct c) from t where c = 1 group by d",
-			best: "Index(t.c_d_e)[[1,1]]->StreamAgg->Projection",
+			best: "Index(t.c_d_e)[[1,1]]->StreamAgg",
 		},
 		{
 			sql:  "select * from t a where a.c = 1 order by a.d limit 2",
-			best: "Index(t.c_d_e)[[1,1]]->Projection",
+			best: "Index(t.c_d_e)[[1,1]]",
 		},
 		{
 			sql:  "select * from t a order by a.c desc limit 2",
-			best: "Index(t.c_d_e)[[<nil>,+inf]]->Limit->Projection",
+			best: "Index(t.c_d_e)[[<nil>,+inf]]->Limit",
 		},
 		{
 			sql:  "select * from t t1, t t2 right join t t3 on t2.a = t3.b order by t1.a, t1.b, t2.a, t2.b, t3.a, t3.b",
-			best: "RightHashJoin{Table(t)->RightHashJoin{Table(t)->Table(t)}(t2.a,t3.b)}->Sort->Projection",
+			best: "RightHashJoin{Table(t)->RightHashJoin{Table(t)->Table(t)}(t2.a,t3.b)}->Sort",
 		},
 		{
 			sql:  "select * from t a where 1 = a.c and a.d > 1 order by a.d desc limit 2",
-			best: "Index(t.c_d_e)[(1 1,1 +inf]]->Projection",
+			best: "Index(t.c_d_e)[(1 1,1 +inf]]",
 		},
 		{
 			sql:  "select * from t a where a.c < 10000 order by a.a limit 2",
-			best: "Index(t.c_d_e)[[-inf,10000)]->Sort + Limit(2) + Offset(0)->Projection",
+			best: "Index(t.c_d_e)[[-inf,10000)]->Sort + Limit(2) + Offset(0)",
 		},
 		{
 			sql:  "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.a limit 2",
-			best: "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
+			best: "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)",
 		},
 		{
 			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by a.c",
-			best: "LeftHashJoin{Index(t.c_d_e)[[<nil>,+inf]]->Projection->Table(t)->Projection}->Projection",
+			best: "LeftHashJoin{Index(t.c_d_e)[[<nil>,+inf]]->Table(t)}",
 		},
 		{
 			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by b.c",
-			best: "LeftHashJoin{Table(t)->Projection->Table(t)->Projection}->Sort->Projection",
+			best: "LeftHashJoin{Table(t)->Table(t)}->Sort",
 		},
 		{
 			sql:  "select * from (select * from t) a right outer join (select * from t) b on 1 order by a.c",
-			best: "RightHashJoin{Table(t)->Projection->Table(t)->Projection}->Sort->Projection",
+			best: "RightHashJoin{Table(t)->Table(t)}->Sort",
 		},
 		{
 			sql:  "select * from (select * from t) a right outer join (select * from t) b on 1 order by b.c",
-			best: "RightHashJoin{Table(t)->Projection->Index(t.c_d_e)[[<nil>,+inf]]->Projection}->Projection",
+			best: "RightHashJoin{Table(t)->Index(t.c_d_e)[[<nil>,+inf]]}",
 		},
 		{
 			sql:  "select * from t a where exists(select * from t b where a.a = b.a) and a.c = 1 order by a.d limit 3",
-			best: "SemiJoin{Index(t.c_d_e)[[1,1]]->Table(t)}->Limit->Projection",
+			best: "SemiJoin{Index(t.c_d_e)[[1,1]]->Table(t)}->Limit",
 		},
 		{
 			sql:  "select exists(select * from t b where a.a = b.a and b.c = 1) from t a order by a.c limit 3",
@@ -856,11 +854,11 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t where t.c = 1 union select t.c from t) k order by a limit 1",
-			best: "UnionAll{Table(t)->Projection->Index(t.c_d_e)[[1,1]]->Projection->Index(t.c_d_e)[[<nil>,+inf]]->Projection}->Distinct->Limit->Projection",
+			best: "UnionAll{Table(t)->Index(t.c_d_e)[[1,1]]->Projection->Index(t.c_d_e)[[<nil>,+inf]]}->Distinct->Limit",
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t union select t.c from t) k order by a limit 1",
-			best: "UnionAll{Table(t)->Projection->Table(t)->Projection->Table(t)->Projection}->Distinct->Projection->Sort + Limit(1) + Offset(0)",
+			best: "UnionAll{Table(t)->Table(t)->Table(t)}->Distinct->Sort + Limit(1) + Offset(0)",
 		},
 	}
 	for _, ca := range cases {
@@ -886,7 +884,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		c.Assert(err, IsNil)
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(EliminateProjection(info.p)), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
 
@@ -1494,80 +1492,80 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		// projection can be eliminated in following cases.
 		{
 			sql: "select a from t",
-			ans: "DataScan(t)",
+			ans: "Table(t)",
 		},
 		{
 			sql: "select a from t where a > 1",
-			ans: "DataScan(t)->Selection",
+			ans: "Table(t)",
 		},
 		{
 			sql: "select a from t where a is null",
-			ans: "DataScan(t)->Selection",
+			ans: "Table(t)",
 		},
 		{
 			sql: "select a, b from t where b > 0",
-			ans: "DataScan(t)->Selection",
+			ans: "Table(t)->Selection",
 		},
 		{
 			sql: "select a as c1, b as c2 from t where a = 3",
-			ans: "DataScan(t)->Selection",
+			ans: "Table(t)",
 		},
 		{
 			sql: "select a as c1, b as c2 from t as t1 where t1.a = 0",
-			ans: "DataScan(t)->Selection",
+			ans: "Table(t)",
 		},
 		{
 			sql: "select a from t where exists(select 1 from t as x where x.a < t.a)",
-			ans: "Join{DataScan(t)->DataScan(t)}",
+			ans: "SemiJoin{Table(t)->Table(t)}",
 		},
 		{
 			sql: "select a from (select d as a from t where d = 0) k where k.a = 5",
-			ans: "DataScan(t)->Selection",
+			ans: "Dummy",
 		},
 		{
 			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t2.a > 1)",
-			ans: "Join{DataScan(t)->DataScan(t)->Selection}",
+			ans: "SemiJoin{Table(t)->Table(t)}",
 		},
 		{
 			sql: "select t1.a, t2.b from t t1, t t2 where t1.a > 0 and t2.b < 0",
-			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}",
+			ans: "RightHashJoin{Table(t)->Table(t)->Selection}",
 		},
 		{
 			sql: "select t1.a, t1.b, t2.a, t2.b from t t1, t t2 where t1.a > 0 and t2.b < 0",
-			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}",
+			ans: "RightHashJoin{Table(t)->Table(t)->Selection}",
 		},
 		{
 			sql: "select * from (t t1 join t t2) join (t t3 join t t4)",
-			ans: "Join{Join{DataScan(t)->DataScan(t)}->Join{DataScan(t)->DataScan(t)}}",
+			ans: "LeftHashJoin{LeftHashJoin{Table(t)->Table(t)}->LeftHashJoin{Table(t)->Table(t)}}",
 		},
 		// projection can not be eliminated in following cases.
 		{
 			sql: "select t1.b, t1.a, t2.b, t2.a from t t1, t t2 where t1.a > 0 and t2.b < 0",
-			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+			ans: "RightHashJoin{Table(t)->Table(t)->Selection}->Projection",
 		},
 		{
 			sql: "select d, c, b, a from t where a = b and b = 1",
-			ans: "DataScan(t)->Selection->Projection",
+			ans: "Table(t)->Selection->Projection",
 		},
 		{
 			sql: "select d as a, b as c from t as t1 where d > 0 and b < 0",
-			ans: "DataScan(t)->Selection->Projection",
+			ans: "Table(t)->Selection->Projection",
 		},
 		{
 			sql: "select c as a, c as b from t",
-			ans: "DataScan(t)->Projection",
+			ans: "Table(t)->Projection",
 		},
 		{
 			sql: "select c as a, c as b from t where d > 0",
-			ans: "DataScan(t)->Selection->Projection",
+			ans: "Table(t)->Selection->Projection",
 		},
 		{
 			sql: "select t1.a, t2.b, t2.a, t1.b from t t1, t t2 where t1.a > 0 and t2.b < 0",
-			ans: "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+			ans: "RightHashJoin{Table(t)->Table(t)->Selection}->Projection",
 		},
 		{
 			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t1.a > 1)",
-			ans: "DataScan(t)->Apply(DataScan(t)->Selection->Projection)->Selection->Projection",
+			ans: "Table(t)->Apply(Table(t)->Selection->Projection)->Selection->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -1590,10 +1588,12 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		c.Assert(err, IsNil)
 		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
 		c.Assert(err, IsNil)
-		p = EliminateProjection(lp)
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		p = EliminateProjection(info.p)
 		c.Assert(ToString(p), Equals, ca.ans, Commentf("for %s", ca.sql))
 	}
 }
+
 func (s *testPlanSuite) TestCoveringIndex(c *C) {
 	cases := []struct {
 		columnNames []string
