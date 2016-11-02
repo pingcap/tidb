@@ -43,6 +43,8 @@ import (
 
 var _ = Suite(&testDBSuite{})
 
+const defaultBatchSize = 1024
+
 type testDBSuite struct {
 	db *sql.DB
 
@@ -123,7 +125,6 @@ func (s *testDBSuite) testAddUniqueIndexRollback(c *C) {
 	// t1 (c1 int, c2 int, c3 int, primary key(c1))
 	s.mustExec(c, "delete from t1")
 	// defaultBatchSize is equal to ddl.defaultBatchSize
-	defaultBatchSize := 1024
 	base := defaultBatchSize * 2
 	count := base
 	// add some rows
@@ -179,7 +180,7 @@ LOOP:
 func (s *testDBSuite) testAddIndex(c *C) {
 	done := make(chan struct{}, 1)
 
-	num := 100
+	num := defaultBatchSize + 10
 	// first add some rows
 	for i := 0; i < num; i++ {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
@@ -402,7 +403,7 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 func (s *testDBSuite) testAddColumn(c *C) {
 	done := make(chan struct{}, 1)
 
-	num := 100
+	num := defaultBatchSize + 10
 	// add some rows
 	for i := 0; i < num; i++ {
 		s.mustExec(c, "insert into t2 values (?, ?, ?)", i, i, i)
