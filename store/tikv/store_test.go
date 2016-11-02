@@ -41,23 +41,20 @@ func (s *testStoreSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	mvccStore := mocktikv.NewMvccStore()
 	clientFactory := mocktikv.NewRPCClient(s.cluster, mvccStore)
-	store, err := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), clientFactory, false)
+	store, err := newTikvStore(1, "mock-tikv-store", mocktikv.NewPDClient(s.cluster), clientFactory, false)
 	c.Assert(err, IsNil)
 	s.store = store
 }
 
 func (s *testStoreSuite) TestParsePath(c *C) {
-	etcdAddrs, clusterID, disableGC, err := parsePath("tikv://node1:2379,node2:2379?cluster=1")
+	etcdAddrs, disableGC, err := parsePath("tikv://node1:2379,node2:2379")
 	c.Assert(err, IsNil)
 	c.Assert(etcdAddrs, DeepEquals, []string{"node1:2379", "node2:2379"})
-	c.Assert(clusterID, Equals, uint64(1))
 	c.Assert(disableGC, IsFalse)
 
-	_, _, _, err = parsePath("tikv://node1:2379")
+	_, _, err = parsePath("tikv://node1:2379")
 	c.Assert(err, NotNil)
-	_, _, _, err = parsePath("tidb://node1:2379?cluster=1")
-	c.Assert(err, NotNil)
-	_, _, disableGC, err = parsePath("tikv://node1:2379?cluster=1&disableGC=true")
+	_, disableGC, err = parsePath("tikv://node1:2379?disableGC=true")
 	c.Assert(err, IsNil)
 	c.Assert(disableGC, IsTrue)
 }
@@ -289,6 +286,10 @@ func (c *mockPDClient) disable() {
 	c.Lock()
 	defer c.Unlock()
 	c.stop = true
+}
+
+func (c *mockPDClient) GetClusterID() uint64 {
+	return 1
 }
 
 func (c *mockPDClient) GetTS() (int64, int64, error) {

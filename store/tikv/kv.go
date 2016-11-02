@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,21 +49,24 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
 
-	etcdAddrs, clusterID, disableGC, err := parsePath(path)
+	etcdAddrs, disableGC, err := parsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	pdCli, err := pd.NewClient(etcdAddrs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	clusterID := pdCli.GetClusterID()
+
 	// FIXME: uuid will be a very long and ugly string, simplify it.
 	uuid := fmt.Sprintf("tikv-%v-%v", etcdAddrs, clusterID)
 	if store, ok := mc.cache[uuid]; ok {
 		return store, nil
 	}
 
-	pdCli, err := pd.NewClient(etcdAddrs, clusterID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), !disableGC)
+	s, err := newTikvStore(clusterID, uuid, &codecPDClient{pdCli}, newRPCClient(), !disableGC)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -76,6 +78,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 var oracleUpdateInterval = 2000
 
 type tikvStore struct {
+	clusterID    uint64
 	uuid         string
 	oracle       oracle.Oracle
 	client       Client
@@ -84,13 +87,14 @@ type tikvStore struct {
 	gcWorker     *GCWorker
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
+func newTikvStore(clusterID uint64, uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
 	oracle, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	store := &tikvStore{
+		clusterID:   clusterID,
 		uuid:        uuid,
 		oracle:      oracle,
 		client:      client,
@@ -113,7 +117,7 @@ func NewMockTikvStore() (kv.Storage, error) {
 	mvccStore := mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
 	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
-	return newTikvStore(uuid, mocktikv.NewPDClient(cluster), client, false)
+	return newTikvStore(1, uuid, mocktikv.NewPDClient(cluster), client, false)
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {
@@ -248,7 +252,7 @@ func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVer
 	}
 }
 
-func parsePath(path string) (etcdAddrs []string, clusterID uint64, disableGC bool, err error) {
+func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
 	var u *url.URL
 	u, err = url.Parse(path)
 	if err != nil {
@@ -258,12 +262,6 @@ func parsePath(path string) (etcdAddrs []string, clusterID uint64, disableGC boo
 	if strings.ToLower(u.Scheme) != "tikv" {
 		err = errors.Errorf("Uri scheme expected[tikv] but found [%s]", u.Scheme)
 		log.Error(err)
-		return
-	}
-	clusterID, err = strconv.ParseUint(u.Query().Get("cluster"), 10, 64)
-	if err != nil {
-		log.Errorf("Parse clusterID error [%s]", err)
-		err = errors.Trace(err)
 		return
 	}
 	switch strings.ToLower(u.Query().Get("disableGC")) {
