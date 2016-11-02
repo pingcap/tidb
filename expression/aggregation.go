@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -56,7 +57,7 @@ type AggregationFunction interface {
 	// GetName gets the aggregation function name.
 	GetName() string
 
-	// SetArgs set argument by index.
+	// SetArgs sets argument by index.
 	SetArgs(args []Expression)
 
 	// Clear collects the mapper's memory.
@@ -76,6 +77,11 @@ type AggregationFunction interface {
 
 	// GetType gets field type of aggregate function.
 	GetType() *types.FieldType
+
+	// CalculateDefaultValue gets the default value when the aggregate function's input is null.
+	// The input stands for the schema of Aggregation's child. If the function can't produce a default value, the second
+	// return value will be false.
+	CalculateDefaultValue(schema Schema) (types.Datum, bool)
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -163,6 +169,11 @@ func newAggFunc(name string, args []Expression, dist bool) aggFunction {
 		Args:         args,
 		resultMapper: make(aggCtxMapper, 0),
 		Distinct:     dist}
+}
+
+// CalculateDefaultValue implements AggregationFunction interface.
+func (af *aggFunction) CalculateDefaultValue(schema Schema) (types.Datum, bool) {
+	return types.Datum{}, false
 }
 
 // IsDistinct implements AggregationFunction interface.
@@ -321,6 +332,24 @@ func (sf *sumFunction) GetStreamResult() (d types.Datum) {
 	return
 }
 
+// CalculateDefaultValue implements AggregationFunction interface.
+func (sf *sumFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
+	arg := sf.Args[0]
+	result, err := EvaluateExprWithNull(schema, arg)
+	if err != nil {
+		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", sf, err.Error())
+		return d, false
+	}
+	if con, ok := result.(*Constant); ok {
+		d, err = types.CalculateSum(d, con.Value)
+		if err != nil {
+			log.Warnf("CalculateSum failed in function %s, err msg is %s", sf, err.Error())
+		}
+		return d, err == nil
+	}
+	return d, false
+}
+
 // GetType implements AggregationFunction interface.
 func (sf *sumFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeNewDecimal)
@@ -342,6 +371,25 @@ func (cf *countFunction) Clone() AggregationFunction {
 	}
 	nf.resultMapper = make(aggCtxMapper)
 	return &nf
+}
+
+// CalculateDefaultValue implements AggregationFunction interface.
+func (cf *countFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
+	for _, arg := range cf.Args {
+		result, err := EvaluateExprWithNull(schema, arg)
+		if err != nil {
+			log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", cf, err.Error())
+			return d, false
+		}
+		if con, ok := result.(*Constant); ok {
+			if con.Value.IsNull() {
+				return types.NewDatum(0), true
+			}
+		} else {
+			return d, false
+		}
+	}
+	return types.NewDatum(1), true
 }
 
 // GetType implements AggregationFunction interface.
@@ -668,6 +716,20 @@ func (mmf *maxMinFunction) Clone() AggregationFunction {
 	return &nf
 }
 
+// CalculateDefaultValue implements AggregationFunction interface.
+func (mmf *maxMinFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
+	arg := mmf.Args[0]
+	result, err := EvaluateExprWithNull(schema, arg)
+	if err != nil {
+		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", mmf, err.Error())
+		return d, false
+	}
+	if con, ok := result.(*Constant); ok {
+		return con.Value, true
+	}
+	return d, false
+}
+
 // GetType implements AggregationFunction interface.
 func (mmf *maxMinFunction) GetType() *types.FieldType {
 	return mmf.Args[0].GetType()
@@ -810,4 +872,18 @@ func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 	d = ff.streamCtx.Value
 	ff.streamCtx = nil
 	return
+}
+
+// CalculateDefaultValue implements AggregationFunction interface.
+func (ff *firstRowFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
+	arg := ff.Args[0]
+	result, err := EvaluateExprWithNull(schema, arg)
+	if err != nil {
+		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", ff, err.Error())
+		return d, false
+	}
+	if con, ok := result.(*Constant); ok {
+		return con.Value, true
+	}
+	return d, false
 }

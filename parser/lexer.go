@@ -443,6 +443,12 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 	if ch0 == '.' || ch0 == 'e' || ch0 == 'E' {
 		return s.scanFloat(&pos)
 	}
+
+	// Identifiers may begin with a digit but unless quoted may not consist solely of digits.
+	if ch0 != unicode.ReplacementChar && isIdentChar(ch0) {
+		s.r.incAsLongAs(isIdentChar)
+		return identifier, pos, s.r.data(&pos)
+	}
 	tok, lit = intLit, s.r.data(&pos)
 	return
 }

@@ -49,7 +49,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
-		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime",
+		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -709,6 +709,12 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{`select * from t as a`, true},
 		{"select 1 full, 1 row, 1 abs", true},
 		{"select * from t full, t1 row, t2 abs", true},
+		// For issue 1878, identifiers may begin with digit.
+		{"create database 123test", true},
+		{"create database 123", false},
+		{"create database `123`", true},
+		{"create table `123` (123a1 int)", true},
+		{"create table 123 (123a1 int)", false},
 	}
 	s.RunTest(c, table)
 }

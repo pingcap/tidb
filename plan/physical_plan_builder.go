@@ -468,7 +468,8 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 		OtherConditions: p.OtherConditions,
 		SmallTable:      1,
 		// TODO: decide concurrency by data size.
-		Concurrency: JoinConcurrency,
+		Concurrency:   JoinConcurrency,
+		DefaultValues: p.DefaultValues,
 	}
 	join.SetSchema(p.schema)
 	if innerJoin {
@@ -519,7 +520,8 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
 		// TODO: decide concurrency by data size.
-		Concurrency: JoinConcurrency,
+		Concurrency:   JoinConcurrency,
+		DefaultValues: p.DefaultValues,
 	}
 	join.SetSchema(p.schema)
 	if innerJoin {
@@ -630,17 +632,18 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 		props: make([]*columnProp, 0, len(gbyCols)),
 	}
 	for _, pro := range prop.props {
-		isMatch := false
+		var matchedCol *expression.Column
 		for i, col := range gbyCols {
-			if col.ColName.L == pro.col.ColName.L {
+			if !col.Correlated && col.ColName.L == pro.col.ColName.L {
 				isSortKey[i] = true
-				isMatch = true
+				matchedCol = col
 			}
 		}
-		if !isMatch {
+		if matchedCol == nil {
 			return info, nil
 		}
-		newProp.props = append(newProp.props, pro)
+		// We should add columns in aggregation in order to keep index right.
+		newProp.props = append(newProp.props, &columnProp{col: matchedCol, desc: pro.desc})
 	}
 	newProp.sortKeyLen = len(newProp.props)
 	for i, col := range gbyCols {

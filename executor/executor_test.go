@@ -25,13 +25,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
@@ -118,8 +118,8 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin check table admin_test_error")
 	c.Assert(err, NotNil)
 	// different index values
-	domain, err := domain.NewDomain(s.store, 1*time.Second)
-	c.Assert(err, IsNil)
+	ctx := tk.Se.(context.Context)
+	domain := sessionctx.GetDomain(ctx)
 	is := domain.InfoSchema()
 	c.Assert(is, NotNil)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
@@ -1233,6 +1233,15 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(err, IsNil)
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
+	tk.MustExec("begin")
+	tk.MustExec("insert t values(1,1)")
+	rs, err = tk.Exec("select c d, d c from t")
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 2)
+	c.Check(fields[0].Column.Name.L, Equals, "d")
+	c.Check(fields[1].Column.Name.L, Equals, "c")
 }
 
 func (s *testSuite) TestSelectVar(c *C) {
