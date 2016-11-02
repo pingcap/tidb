@@ -55,8 +55,9 @@ var (
 	errInvalidStoreVer       = terror.ClassDDL.New(codeInvalidStoreVer, "invalid storage current version")
 
 	// we don't support drop column with index covered now.
-	errCantDropColWithIndex = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
-	errUnsupportedAddColumn = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
+	errCantDropColWithIndex    = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
+	errUnsupportedAddColumn    = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
+	errUnsupportedModifyColumn = terror.ClassDDL.New(codeUnsupportedModifyColumn, "unsupported modify column")
 
 	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specificate a key length")
 	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
@@ -434,19 +435,29 @@ func (d *ddl) buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.Col
 	return cols, constraints, nil
 }
 
+func (d *ddl) setCharsetFlenDecimal(tp *types.FieldType) {
+	if len(tp.Charset) == 0 {
+		switch tp.Tp {
+		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			tp.Charset, tp.Collate = getDefaultCharsetAndCollate()
+		default:
+			tp.Charset = charset.CharsetBin
+			tp.Collate = charset.CharsetBin
+		}
+	}
+	// If flen is not assigned, assigned it by type.
+	if tp.Flen == types.UnspecifiedLength {
+		tp.Flen = mysql.GetDefaultFieldLength(tp.Tp)
+	}
+	if tp.Decimal == types.UnspecifiedLength {
+		tp.Decimal = mysql.GetDefaultDecimal(tp.Tp)
+	}
+}
+
 func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
 	colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
 	// Set charset.
-	if len(colDef.Tp.Charset) == 0 {
-		switch colDef.Tp.Tp {
-		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			colDef.Tp.Charset, colDef.Tp.Collate = getDefaultCharsetAndCollate()
-		default:
-			colDef.Tp.Charset = charset.CharsetBin
-			colDef.Tp.Collate = charset.CharsetBin
-		}
-	}
-
+	d.setCharsetFlenDecimal(colDef.Tp)
 	col, cts, err := columnDefToCol(ctx, offset, colDef)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -474,14 +485,6 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 		col.Flag |= mysql.TimestampFlag
 		col.Flag |= mysql.OnUpdateNowFlag
 		col.Flag |= mysql.NotNullFlag
-	}
-
-	// If flen is not assigned, assigned it by type.
-	if col.Flen == types.UnspecifiedLength {
-		col.Flen = mysql.GetDefaultFieldLength(col.Tp)
-	}
-	if col.Decimal == types.UnspecifiedLength {
-		col.Decimal = mysql.GetDefaultDecimal(col.Tp)
 	}
 
 	setOnUpdateNow := false
@@ -954,6 +957,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 			}
 		case ast.AlterTableDropForeignKey:
 			err = d.DropForeignKey(ctx, ident, model.NewCIStr(spec.Name))
+		case ast.AlterTableModifyColumn:
+			err = d.ModifyColumn(ctx, ident, spec)
 		default:
 			// nothing to do now.
 		}
@@ -1053,6 +1058,84 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 		Args:     []interface{}{colName},
 	}
 
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// Modifiable checks if the 'origin' type can be modified to 'to' type with out the need to
+// change or check existing data in the table.
+// It returns true if the two types has the same Charset and Collation, the same sign, both are
+// integer types or string types, and new Flen and Decimal must be greater than or equal to origin.
+func (d *ddl) modifiable(origin *types.FieldType, to *types.FieldType) bool {
+	if to.Flen > 0 && to.Flen < origin.Flen {
+		return false
+	}
+	if to.Decimal > 0 && to.Decimal < origin.Decimal {
+		return false
+	}
+	if origin.Charset != to.Charset || origin.Collate != to.Collate {
+		return false
+	}
+	if mysql.HasUnsignedFlag(uint(origin.Flag)) != mysql.HasUnsignedFlag(uint(to.Flag)) {
+		return false
+	}
+	switch origin.Tp {
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		switch to.Tp {
+		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			return true
+		default:
+			return false
+		}
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		switch to.Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+// ModifyColumn does modification on an existing column, currently we only support limited kind of changes
+// that do not need to change or check data on the table.
+func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists)
+	}
+	colName := spec.Column.Name.Name
+	col := table.FindCol(t.Cols(), colName.L)
+	if col == nil {
+		return infoschema.ErrTableNotExists.Gen("column %s doesn't exist", colName.O)
+	}
+	if spec.Constraint != nil || spec.Position.Tp != ast.ColumnPositionNone ||
+		len(spec.Column.Options) != 0 || spec.Column.Tp == nil {
+		// Make sure the column definition is simple field type.
+		return errUnsupportedModifyColumn
+	}
+	d.setCharsetFlenDecimal(spec.Column.Tp)
+	if !d.modifiable(&col.FieldType, spec.Column.Tp) {
+		return errUnsupportedModifyColumn
+	}
+	newCol := *col
+	newCol.FieldType = *spec.Column.Tp
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  t.Meta().ID,
+		Type:     model.ActionModifyColumn,
+		Args:     []interface{}{&newCol},
+	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
@@ -1285,8 +1368,9 @@ const (
 	codeInvalidIndexState      = 103
 	codeInvalidForeignKeyState = 104
 
-	codeCantDropColWithIndex = 201
-	codeUnsupportedAddColumn = 202
+	codeCantDropColWithIndex    = 201
+	codeUnsupportedAddColumn    = 202
+	codeUnsupportedModifyColumn = 203
 
 	codeBadNull              = 1048
 	codeTooLongIdent         = 1059
