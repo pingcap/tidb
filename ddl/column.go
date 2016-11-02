@@ -334,9 +334,9 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	}
 }
 
-// segmentBackfillColumn deals with a part of backfilling column data.
-// This part of the column data rows is defaultSegmentBatchSize.
-func (d *ddl) segmentBackfillColumn(t table.Table, colID int64, handles []int64, colMap map[int64]*types.FieldType,
+// backfillColumnInTxn deals with a part of backfilling column data in a Transaction.
+// This part of the column data rows is defaultSmallBatchSize.
+func (d *ddl) backfillColumnInTxn(t table.Table, colID int64, handles []int64, colMap map[int64]*types.FieldType,
 	defaultVal types.Datum, txn kv.Transaction) (int64, error) {
 	nextHandle := handles[0]
 	for _, handle := range handles {
@@ -400,8 +400,8 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, handle
 
 	var endIdx int
 	for len(handles) > 0 {
-		if len(handles) >= defaultSegmentBatchSize {
-			endIdx = defaultSegmentBatchSize
+		if len(handles) >= defaultSmallBatchSize {
+			endIdx = defaultSmallBatchSize
 		} else {
 			endIdx = len(handles)
 		}
@@ -411,7 +411,7 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, handle
 				return errors.Trace(err)
 			}
 
-			nextHandle, err1 := d.segmentBackfillColumn(t, columnInfo.ID, handles[:endIdx], colMap, defaultVal, txn)
+			nextHandle, err1 := d.backfillColumnInTxn(t, columnInfo.ID, handles[:endIdx], colMap, defaultVal, txn)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
