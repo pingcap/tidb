@@ -517,7 +517,10 @@ LOOP:
 				if err != nil {
 					// if err is failed, the column number must be 4 now.
 					values := s.showColumns(c, "t2")
-					c.Assert(values, HasLen, 4)
+					if len(values) != 4 {
+						c.Log(errors.ErrorStack(err))
+						c.FailNow()
+					}
 				}
 			}
 			num += step
