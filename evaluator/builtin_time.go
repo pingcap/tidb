@@ -601,6 +601,64 @@ func builtinYearWeek(args []types.Datum, _ context.Context) (types.Datum, error)
 	return d, nil
 }
 
+// http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
+func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	// TODO: support Decimal
+	unixTimeStamp, err := args[0].ToDecimal()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	// 0 <= unixTimeStamp <= INT32_MAX
+	if unixTimeStamp.IsNegative() {
+		return
+	}
+	integralPart, err := unixTimeStamp.ToInt()
+	if err != nil && err != mysql.ErrTruncated {
+		return d, errors.Trace(err)
+	}
+	if integralPart > int64(1<<31-1) {
+		return
+	}
+	// split the integral part and fractional part of a decimal.
+	v := new(mysql.MyDecimal)
+	x := types.NewIntDatum(integralPart)
+	integer, _ := x.ToDecimal()
+	err = mysql.DecimalSub(unixTimeStamp, integer, v)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	x = types.NewIntDatum(1000000000)
+	nano, _ := x.ToDecimal()
+	frac := new(mysql.MyDecimal)
+	err = mysql.DecimalMul(v, nano, frac)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	fractionalPart, err := frac.ToInt()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	t := mysql.Time{
+		Time: time.Unix(integralPart, fractionalPart),
+		Type: mysql.TypeDatetime,
+		// set unspecified for later round
+		Fsp: mysql.UnspecifiedFsp,
+	}
+	fracDigitsNumber := int(math.Log10(float64(fractionalPart))) // get digits' number of fractional part.
+	if fracDigitsNumber > 6 {
+		t, err = t.RoundFrac(6)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		t.Fsp = 6
+	}
+	d.SetMysqlTime(t)
+	if len(args) == 1 {
+		return
+	}
+	return builtinDateFormat([]types.Datum{d, args[1]}, nil)
+}
+
 func builtinSysDate(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
 	// But here we can just think they are the same because we don't support stored function
