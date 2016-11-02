@@ -350,7 +350,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) *UnionSc
 	if b.err != nil {
 		return nil
 	}
-	us := &UnionScanExec{ctx: b.ctx, Src: src}
+	us := &UnionScanExec{ctx: b.ctx, Src: src, schema: v.GetSchema()}
 	switch x := src.(type) {
 	case *XSelectTableExec:
 		us.desc = x.desc
