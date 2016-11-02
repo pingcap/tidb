@@ -46,7 +46,7 @@ func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.I
 		columns[offset].Offset = len(columns) - 1
 	}
 
-	// TODO: index can't cover the add/remove column with offset now, we may check this later.
+	// TODO: Index can't cover the add/remove column with offset now, we may check this later.
 
 	// Update index column offset info.
 	for _, idx := range indices {
@@ -111,7 +111,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 	columnInfo := findCol(tblInfo.Columns, col.Name.L)
 	if columnInfo != nil {
 		if columnInfo.State == model.StatePublic {
-			// We already have a column with same column name.
+			// We already have a column with the same column name.
 			job.State = model.JobCancelled
 			return infoschema.ErrColumnExists.Gen("ADD COLUMN: column already exist %s", col.Name.L)
 		}
@@ -152,7 +152,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		err = t.UpdateTable(schemaID, tblInfo)
 	case model.StateWriteReorganization:
 		// reorganization -> public
-		// Get the current version for reorganization if we don't have.
+		// Get the current version for reorganization if we don't have it.
 		reorgInfo, err := d.getReorgInfo(t, job)
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
@@ -222,7 +222,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 			colName, tblInfo.Name)
 	}
 
-	// We don't support drop column with index covered now.
+	// We don't support dropping column with index covered now.
 	// We must drop the index first, then drop the column.
 	for _, indexInfo := range tblInfo.Indices {
 		for _, col := range indexInfo.Columns {
@@ -244,7 +244,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
 		colInfo.State = model.StateWriteOnly
-		// Set this column's offset to the last and reset all following columns' offset
+		// Set this column's offset to the last and reset all following columns' offsets.
 		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, colInfo.Offset, false)
 		err = t.UpdateTable(schemaID, tblInfo)
 	case model.StateWriteOnly:

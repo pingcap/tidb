@@ -54,7 +54,7 @@ var (
 	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
 	errInvalidStoreVer       = terror.ClassDDL.New(codeInvalidStoreVer, "invalid storage current version")
 
-	// We don't support drop column with index covered now.
+	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
 
@@ -125,7 +125,7 @@ type ddl struct {
 	uuid         string
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
-	// Drop database/table job runs in the background.
+	// Drop database/table job that runs in the background.
 	bgJobCh chan struct{}
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
 	// we will use this channel to notify outer.
@@ -181,7 +181,7 @@ func (d *ddl) Stop() error {
 			return nil
 		}
 
-		// DDL job's owner is me, clean it so other servers can compete for it quickly.
+		// DDL job's owner is me, clean it so other servers can complete it quickly.
 		return t.SetDDLJobOwner(&model.Owner{})
 	})
 	if err != nil {
@@ -198,7 +198,7 @@ func (d *ddl) Stop() error {
 			return nil
 		}
 
-		// Background job's owner is me, clean it so other servers can compete for it quickly.
+		// Background job's owner is me, clean it so other servers can complete it quickly.
 		return t.SetBgJobOwner(&model.Owner{})
 	})
 
@@ -224,7 +224,7 @@ func (d *ddl) start() {
 	go d.onBackgroundWorker()
 	go d.onDDLWorker()
 	// For every start, we will send a fake job to let worker
-	// check owner first and try to find whether a job exists and run.
+	// check owner firstly and try to find whether a job exists and run.
 	asyncNotify(d.ddlJobCh)
 	asyncNotify(d.bgJobCh)
 }
@@ -879,7 +879,6 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		Args:     []interface{}{tbInfo},
 	}
 
-	// Handle Table Options.
 	d.handleTableOptions(options, tbInfo, schema.ID)
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
@@ -927,7 +926,7 @@ func (d *ddl) handleTableOptions(options []*ast.TableOption, tbInfo *model.Table
 }
 
 func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
-	// Now we only allow one schema changes at the same time.
+	// Now we only allow one schema changing at the same time.
 	if len(specs) != 1 {
 		return errRunMultiSchemaChanges
 	}
@@ -1008,7 +1007,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	}
 
 	// Ingore table constraints now, maybe return error later.
-	// We use length(t.Cols()) as the default offset first, later we will change the
+	// We use length(t.Cols()) as the default offset firstly, later we will change the
 	// column's offset later.
 	col, _, err = d.buildColumnAndConstraint(ctx, len(t.Cols()), spec.Column)
 	if err != nil {

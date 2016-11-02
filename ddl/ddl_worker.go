@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-// onDDLWorker is for async online schema change, it will try to become the owner first,
+// onDDLWorker is for async online schema changing, it will try to become the owner firstly,
 // then wait or pull the job queue to handle a schema change job.
 func (d *ddl) onDDLWorker() {
 	defer d.wait.Done()
