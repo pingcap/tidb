@@ -372,7 +372,7 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 }
 
 const defaultBatchSize = 1024
-const defaultSegmentBatchSize = 100
+const defaultSegmentBatchSize = 128
 
 // How to add index in reorganization state?
 //  1. Generate a snapshot with special version.
