@@ -1233,6 +1233,15 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(err, IsNil)
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
+	tk.MustExec("begin")
+	tk.MustExec("insert t values(1,1)")
+	rs, err = tk.Exec("select c d, d c from t")
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 2)
+	c.Check(fields[0].Column.Name.L, Equals, "d")
+	c.Check(fields[1].Column.Name.L, Equals, "c")
 }
 
 func (s *testSuite) TestSelectVar(c *C) {
