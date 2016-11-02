@@ -39,7 +39,6 @@ type PhysicalIndexScan struct {
 	basePlan
 	physicalTableSource
 
-	readOnly   bool
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
 	Ranges     []*IndexRange
@@ -68,6 +67,7 @@ type physicalTableSource struct {
 	client kv.Client
 
 	Aggregated bool
+	readOnly   bool
 	AggFields  []*types.FieldType
 	AggFuncsPB []*tipb.Expr
 	GbyItemsPB []*tipb.ByItem
@@ -98,6 +98,12 @@ func (p *physicalTableSource) clearForAggPushDown() {
 	p.gbyItems = nil
 }
 
+func (p *physicalTableSource) clearForTopnPushDown() {
+	p.sortItems = nil
+	p.SortItemsPB = nil
+	p.LimitCount = nil
+}
+
 func needCount(af expression.AggregationFunction) bool {
 	return af.GetName() == ast.AggFuncCount || af.GetName() == ast.AggFuncAvg
 }
@@ -105,6 +111,18 @@ func needCount(af expression.AggregationFunction) bool {
 func needValue(af expression.AggregationFunction) bool {
 	return af.GetName() == ast.AggFuncSum || af.GetName() == ast.AggFuncAvg || af.GetName() == ast.AggFuncFirstRow ||
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat
+}
+
+func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) PhysicalPlan {
+	if !p.readOnly {
+		us := &PhysicalUnionScan{
+			Condition: expression.ComposeCNFCondition(append(p.conditions, p.AccessCondition...)),
+		}
+		us.SetChildren(resultPlan)
+		us.SetSchema(resultPlan.GetSchema())
+		return us
+	}
+	return resultPlan
 }
 
 func (p *physicalTableSource) addLimit(l *Limit) {
@@ -127,9 +145,14 @@ func (p *physicalTableSource) addTopN(prop *requiredProperty) bool {
 	}
 	count := int64(prop.limit.Count + prop.limit.Offset)
 	p.LimitCount = &count
-	for _, item := range prop.props {
-		p.SortItemsPB = append(p.SortItemsPB, sortByItemToPB(p.client, item.col, item.desc))
-		p.sortItems = append(p.sortItems, &ByItems{Expr: item.col, Desc: item.desc})
+	for _, prop := range prop.props {
+		item := sortByItemToPB(p.client, prop.col, prop.desc)
+		if item == nil {
+			p.clearForTopnPushDown()
+			return false
+		}
+		p.SortItemsPB = append(p.SortItemsPB, item)
+		p.sortItems = append(p.sortItems, &ByItems{Expr: prop.col, Desc: prop.desc})
 	}
 	return true
 }
@@ -199,13 +222,12 @@ type PhysicalTableScan struct {
 	basePlan
 	physicalTableSource
 
-	readOnly bool
-	Table    *model.TableInfo
-	Columns  []*model.ColumnInfo
-	DBName   *model.CIStr
-	Desc     bool
-	Ranges   []TableRange
-	pkCol    *expression.Column
+	Table   *model.TableInfo
+	Columns []*model.ColumnInfo
+	DBName  *model.CIStr
+	Desc    bool
+	Ranges  []TableRange
+	pkCol   *expression.Column
 
 	TableAsName *model.CIStr
 

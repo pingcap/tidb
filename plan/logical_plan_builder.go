@@ -387,8 +387,6 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 
 // ByItems wraps a "by" item.
 type ByItems struct {
-	fmt.Stringer
-
 	Expr expression.Expression
 	Desc bool
 }

@@ -114,7 +114,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 				memDB = true
 			}
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-				ts.ConditionPBExpr, newSel.Conditions, ts.conditions = expressionsToPB(newSel.Conditions, client)
+				ts.ConditionPBExpr, ts.conditions, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
 			}
 		}
 		err := buildTableRange(ts)
@@ -209,8 +209,8 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			case "information_schema", "performance_schema":
 				memDB = true
 			}
-			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-				is.ConditionPBExpr, newSel.Conditions, is.conditions = expressionsToPB(newSel.Conditions, client)
+			if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
+				is.ConditionPBExpr, is.conditions, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
 			}
 		}
 		err := buildIndexRange(is)

@@ -381,76 +381,56 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 func (s *testPlanSuite) TestPushDownExpression(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
-		sql    string
-		cond   string // readable expressions.
-		exprPB string // Marshall result of conditions been pushed down.
+		sql  string
+		cond string // readable expressions.
 	}{
 		{
-			sql:    "a and b",
-			cond:   "test.t.b",
-			exprPB: "\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+			sql:  "a and b",
+			cond: "test.t.b",
 		},
 		{
-			sql:    "a or (b and c)",
-			cond:   "or(test.t.a, and(test.t.b, test.t.c))",
-			exprPB: "\b\xfe\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a!\b\xfd\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x03",
+			sql:  "a or (b and c)",
+			cond: "or(test.t.a, and(test.t.b, test.t.c))",
 		},
 		{
-			sql:    "a or b",
-			cond:   "or(test.t.a, test.t.b)",
-			exprPB: "\b\xfe\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+			sql:  "a or b",
+			cond: "or(test.t.a, test.t.b)",
 		},
 		{
-			sql:    "a and (b or c)",
-			cond:   "or(test.t.b, test.t.c)",
-			exprPB: "\b\xfe\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x03",
+			sql:  "a and (b or c)",
+			cond: "or(test.t.b, test.t.c)",
 		},
 		{
-			sql:    "not a",
-			cond:   "not(test.t.a)",
-			exprPB: "\b\xe9\a\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
+			sql:  "not a",
+			cond: "not(test.t.a)",
 		},
 		{
-			sql:    "a xor b",
-			cond:   "xor(test.t.a, test.t.b)",
-			exprPB: "\b\xff\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+			sql:  "a xor b",
+			cond: "xor(test.t.a, test.t.b)",
 		},
 		{
-			sql:    "a & b",
-			cond:   "bitand(test.t.a, test.t.b)",
-			exprPB: "\b\xb5\x10\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+			sql:  "a & b",
+			cond: "bitand(test.t.a, test.t.b)",
 		},
 		{
-			sql:    "a | b",
-			cond:   "bitor(test.t.a, test.t.b)",
-			exprPB: "\b\xb6\x10\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+			sql:  "a | b",
+			cond: "bitor(test.t.a, test.t.b)",
 		},
 		{
-			sql:    "a ^ b",
-			cond:   "bitxor(test.t.a, test.t.b)",
-			exprPB: "\b\xb7\x10\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+			sql:  "a ^ b",
+			cond: "bitxor(test.t.a, test.t.b)",
 		},
 		{
-			sql:    "~a",
-			cond:   "bitneg(test.t.a)",
-			exprPB: "\b\xeb\a\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
+			sql:  "~a",
+			cond: "bitneg(test.t.a)",
 		},
 		{
 			sql:  "a = case a when b then 1 when a then 0 end",
 			cond: "eq(test.t.a, case(eq(test.t.a, test.t.b), 1, eq(test.t.a, test.t.a), 0))",
-			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1ae\b\xa7" +
-				"\x1f\x1a!\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01" +
-				"\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02\x1a\f\b\x01\x12\b\x80" +
-				"\x00\x00\x00\x00\x00\x00\x01\x1a!\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00" +
-				"\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01" +
-				"\x1a\f\b\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x00",
 		},
 		{
 			sql:  "a = coalesce(null, null, a, b)",
 			cond: "eq(test.t.a, coalesce(<nil>, <nil>, test.t.a, test.t.b))",
-			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a)\b\xad\x1b\x1a" +
-				"\x02\b\x00\x1a\x02\b\x00\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a" +
-				"\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
 		},
 	}
 	for _, ca := range cases {
@@ -488,8 +468,6 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			}
 			if ts != nil {
 				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(ts.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
-				pbStr, _ := ts.ConditionPBExpr.Marshal()
-				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
 				break
 			}
 			p = p.GetChildByIndex(0)
