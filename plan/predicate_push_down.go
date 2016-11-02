@@ -591,6 +591,8 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 		switch cond.(type) {
 		case *expression.Constant:
 			condsToPush = append(condsToPush, cond)
+			// Consider SQL like "select sum(b) from t group by a having 1=0". 1=0 which is a constant should remain there and
+			// push down at the same time. If we only push down it, we will get one column with value 0 rather than none column.
 			ret = append(ret, cond)
 		case *expression.ScalarFunction:
 			extractedCols, _ := extractColumn(cond, nil, nil)
