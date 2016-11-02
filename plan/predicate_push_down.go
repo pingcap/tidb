@@ -20,8 +20,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
-	"strconv"
-	"strings"
 )
 
 var (
@@ -567,15 +565,13 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
-	// TODO: implement aggregation push down.
 	retPlan = p
-	colsOfGroupBy := p.GroupByItems
-	var aggrID, _ = strconv.Atoi(strings.Split(p.GetID(), "_")[1]) // form of Aggregation ID: aggregation_x
+	colsInGroupBy := p.GroupByItems
 	var colIDsInGroupBy []int
 	var exprs []expression.Expression
 	for id, aggrFun := range p.AggFuncs {
 		exprs = append(exprs, aggrFun.GetArgs()[0])
-		for _, col := range colsOfGroupBy {
+		for _, col := range colsInGroupBy {
 			if aggrFun.GetName() == ast.AggFuncFirstRow && col.Equal(aggrFun.GetArgs()[0]) {
 				colIDsInGroupBy = append(colIDsInGroupBy, id)
 			}
@@ -583,13 +579,33 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 	}
 	var condsToPush []expression.Expression
 	for _, cond := range predicates {
-		switch v := cond.(type) {
+		switch cond.(type) {
 		case *expression.Constant:
 			condsToPush = append(condsToPush, cond)
 			ret = append(ret, cond)
 		case *expression.ScalarFunction:
-			if ok, col := scalarFunctionByOneCol(v); ok && col.IsAggOrSubq && colNameIsGroupByItem(col.String(), aggrID, colIDsInGroupBy) {
-				newSf := columnSubstitute(v.Clone(), p.GetSchema(), exprs)
+			extractedCols, _ := extractColumn(cond, nil, nil)
+			idFound := -1 // -1 not found, -2 find multiple, or find col not in group-by, >= 0 find one group-by item
+			for _, col := range extractedCols {
+				for _, colID := range colIDsInGroupBy {
+					if colID == p.GetSchema().GetIndex(col) {
+						if idFound >= 0 && idFound != colID {
+							idFound = -2
+							break
+						} else {
+							idFound = colID
+						}
+					} else {
+						idFound = -2
+						break
+					}
+				}
+				if idFound == -2 {
+					break
+				}
+			}
+			if idFound >= 0 {
+				newSf := columnSubstitute(cond.Clone(), p.GetSchema(), exprs)
 				condsToPush = append(condsToPush, newSf)
 			} else {
 				ret = append(ret, cond)
@@ -600,44 +616,6 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 	}
 	p.baseLogicalPlan.PredicatePushDown(condsToPush)
 	return
-}
-
-func scalarFunctionByOneCol(sf *expression.ScalarFunction) (ok bool, col *expression.Column) {
-	ok = false
-	for _, arg := range sf.Args {
-		switch cond := arg.(type) {
-		case *expression.Column:
-			if ok && !cond.Equal(col) {
-				return false, nil
-			} else if !ok {
-				ok = true
-				col = cond
-			}
-		case *expression.ScalarFunction:
-			tmpOk, tmpCol := scalarFunctionByOneCol(cond)
-			if !tmpOk || (ok && !tmpCol.Equal(col)) {
-				return false, nil
-			} else if !ok {
-				ok = true
-				col = tmpCol
-			}
-		}
-	}
-	return ok, col
-}
-
-func colNameIsGroupByItem(name string, aggrID int, colIDs []int) bool {
-	splitList := strings.Split(name, "_") // form of name: aggregation_x_col_y
-	aggrIDOfCol, _ := strconv.Atoi(splitList[1])
-	id, _ := strconv.Atoi(splitList[3])
-	if aggrID == aggrIDOfCol {
-		for _, colID := range colIDs {
-			if colID == id {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
