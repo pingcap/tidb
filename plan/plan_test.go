@@ -208,49 +208,35 @@ func mockContext() context.Context {
 	return ctx
 }
 
-func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
+func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
-		sql   string
-		best  string
-		topn  string
-		limit string
+		sql       string
+		best      string
+		aggFuns   string
+		aggFields string
+		gbyItems  string
 	}{
 		{
-			sql:   "select * from t order by a limit 5",
-			best:  "Table(t)->Limit->Projection",
-			topn:  "[]",
-			limit: "5",
+			sql:       "select count(*) from t",
+			best:      "Table(t)->HashAgg->Projection",
+			aggFuns:   "[count(1)]",
+			aggFields: "[blob bigint(21)]",
+			gbyItems:  "[]",
 		},
 		{
-			sql:   "select * from t limit 5",
-			best:  "Table(t)->Limit->Projection",
-			topn:  "[]",
-			limit: "5",
+			sql:       "select sum(b) from t group by c",
+			best:      "Table(t)->HashAgg->Projection",
+			aggFuns:   "[sum(test.t.b)]",
+			aggFields: "[blob decimal(0,0)]",
+			gbyItems:  "[test.t.c]",
 		},
 		{
-			sql:   "select c from t order by c limit 5",
-			best:  "Index(t.c_d_e)[[<nil>,+inf]]->Limit->Projection",
-			topn:  "[]",
-			limit: "5",
-		},
-		{
-			sql:   "select * from t order by d limit 1",
-			best:  "Table(t)->Sort + Limit(1) + Offset(0)->Projection",
-			topn:  "[expr:<tp:ColumnRef val:\"\\200\\000\\000\\000\\000\\000\\000\\004\" > ]",
-			limit: "1",
-		},
-		{
-			sql:   "select * from t where c > 0 order by d limit 1",
-			best:  "Index(t.c_d_e)[(0,+inf]]->Sort + Limit(1) + Offset(0)->Projection",
-			topn:  "[expr:<tp:ColumnRef val:\"\\200\\000\\000\\000\\000\\000\\000\\004\" > ]",
-			limit: "1",
-		},
-		{
-			sql:   "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.b limit 2",
-			best:  "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
-			topn:  "[]",
-			limit: "nil",
+			sql:       "select max(b + c), min(case when b then 1 else 2 end) from t group by d + e, a",
+			best:      "Table(t)->HashAgg->Projection",
+			aggFuns:   "[max(plus(test.t.b, test.t.c)) min(case(test.t.b, 1, 2))]",
+			aggFields: "[blob decimal(0,0) decimal(0,0)]",
+			gbyItems:  "[plus(test.t.d, test.t.e) test.t.a]",
 		},
 	}
 	for _, ca := range cases {
@@ -278,37 +264,121 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
 		p = info.p
-	loop:
 		for {
+			var ts *physicalTableSource
 			switch x := p.(type) {
 			case *PhysicalTableScan:
-				c.Assert(fmt.Sprintf("%s", x.SortItems), Equals, ca.topn, Commentf("for %s", ca.sql))
-				var limitStr string
-				if x.LimitCount == nil {
-					limitStr = fmt.Sprint("nil")
-				} else {
-					limitStr = fmt.Sprintf("%d", *x.LimitCount)
-				}
-				c.Assert(limitStr, Equals, ca.limit, Commentf("for %s", ca.sql))
-				break loop
+				ts = &x.physicalTableSource
 			case *PhysicalIndexScan:
-				c.Assert(fmt.Sprintf("%s", x.SortItems), Equals, ca.topn, Commentf("for %s", ca.sql))
-				var limitStr string
-				if x.LimitCount == nil {
-					limitStr = fmt.Sprint("nil")
-				} else {
-					limitStr = fmt.Sprintf("%d", *x.LimitCount)
-				}
-				c.Assert(limitStr, Equals, ca.limit, Commentf("for %s", ca.sql))
-				break loop
+				ts = &x.physicalTableSource
+			}
+			if ts != nil {
+				c.Assert(fmt.Sprintf("%s", ts.aggFuncs), Equals, ca.aggFuns, Commentf("for %s", ca.sql))
+				c.Assert(fmt.Sprintf("%s", ts.gbyItems), Equals, ca.gbyItems, Commentf("for %s", ca.sql))
+				c.Assert(fmt.Sprintf("%s", ts.AggFields), Equals, ca.aggFields, Commentf("for %s", ca.sql))
+				break
 			}
 			p = p.GetChildByIndex(0)
 		}
 	}
 }
 
-// TestLogicOpsPushDown tests whether logic operators been pushed down successfully.
-func (s *testPlanSuite) TestOperatorsPushDown(c *C) {
+func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql          string
+		best         string
+		orderByItmes string
+		limit        string
+	}{
+		{
+			sql:          "select * from t order by a limit 5",
+			best:         "Table(t)->Limit->Projection",
+			orderByItmes: "[]",
+			limit:        "5",
+		},
+		{
+			sql:          "select * from t limit 5",
+			best:         "Table(t)->Limit->Projection",
+			orderByItmes: "[]",
+			limit:        "5",
+		},
+		{
+			sql:          "select c from t order by c limit 5",
+			best:         "Index(t.c_d_e)[[<nil>,+inf]]->Limit->Projection",
+			orderByItmes: "[]",
+			limit:        "5",
+		},
+		{
+			sql:          "select * from t order by d limit 1",
+			best:         "Table(t)->Sort + Limit(1) + Offset(0)->Projection",
+			orderByItmes: "[(test.t.d, false)]",
+			limit:        "1",
+		},
+		{
+			sql:          "select * from t where c > 0 order by d limit 1",
+			best:         "Index(t.c_d_e)[(0,+inf]]->Sort + Limit(1) + Offset(0)->Projection",
+			orderByItmes: "[(test.t.d, false)]",
+			limit:        "1",
+		},
+		{
+			sql:          "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.b limit 2",
+			best:         "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
+			orderByItmes: "[]",
+			limit:        "nil",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
+		c.Assert(err, IsNil)
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		c.Assert(err, IsNil)
+		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
+		p = info.p
+		for {
+			var ts *physicalTableSource
+			switch x := p.(type) {
+			case *PhysicalTableScan:
+				ts = &x.physicalTableSource
+			case *PhysicalIndexScan:
+				ts = &x.physicalTableSource
+			}
+			if ts != nil {
+				c.Assert(fmt.Sprintf("%s", ts.sortItems), Equals, ca.orderByItmes, Commentf("for %s", ca.sql))
+				var limitStr string
+				if ts.LimitCount == nil {
+					limitStr = fmt.Sprint("nil")
+				} else {
+					limitStr = fmt.Sprintf("%d", *ts.LimitCount)
+				}
+				c.Assert(limitStr, Equals, ca.limit, Commentf("for %s", ca.sql))
+				break
+			}
+			p = p.GetChildByIndex(0)
+		}
+	}
+}
+
+// TestPushDownExpression tests whether logic operators been pushed down successfully.
+func (s *testPlanSuite) TestPushDownExpression(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql    string
@@ -317,8 +387,13 @@ func (s *testPlanSuite) TestOperatorsPushDown(c *C) {
 	}{
 		{
 			sql:    "a and b",
-			cond:   "and(test.t.a, test.t.b)",
+			cond:   "test.t.b",
 			exprPB: "\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		{
+			sql:    "a or (b and c)",
+			cond:   "or(test.t.a, and(test.t.b, test.t.c))",
+			exprPB: "\b\xfe\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a!\b\xfd\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x03",
 		},
 		{
 			sql:    "a or b",
@@ -327,7 +402,7 @@ func (s *testPlanSuite) TestOperatorsPushDown(c *C) {
 		},
 		{
 			sql:    "a and (b or c)",
-			cond:   "and(test.t.a, or(test.t.b, test.t.c))",
+			cond:   "or(test.t.b, test.t.c)",
 			exprPB: "\b\xfe\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x03",
 		},
 		{
@@ -360,61 +435,6 @@ func (s *testPlanSuite) TestOperatorsPushDown(c *C) {
 			cond:   "bitneg(test.t.a)",
 			exprPB: "\b\xeb\a\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
 		},
-	}
-	for _, ca := range cases {
-		sql := "select * from t where " + ca.sql
-		comment := Commentf("for %s", sql)
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
-
-		err = mockResolve(stmt)
-		c.Assert(err, IsNil)
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
-		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
-		lp := p.(LogicalPlan)
-
-		_, lp, err = lp.PredicatePushDown(nil)
-		c.Assert(err, IsNil)
-		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
-		c.Assert(err, IsNil)
-		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
-		c.Assert(err, IsNil)
-		p = info.p
-		// loop util reaching the DataSource node of a physical plan to get the conditions been pushed down.
-	loop:
-		for {
-			switch x := p.(type) {
-			case *PhysicalTableScan:
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
-				pbStr, _ := x.ConditionPBExpr.Marshal()
-				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
-				break loop
-			case *PhysicalIndexScan:
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
-				pbStr, _ := x.ConditionPBExpr.Marshal()
-				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
-				break loop
-			}
-			p = p.GetChildByIndex(0)
-		}
-	}
-}
-
-// TestBuiltinFuncsPushDown tests whether logic operators been pushed down successfully.
-func (s *testPlanSuite) TestBuiltinFuncsPushDown(c *C) {
-	defer testleak.AfterTest(c)()
-	cases := []struct {
-		sql    string
-		cond   string // readable expressions
-		exprPB string // Marshall result of conditions that be pushed down.
-	}{
-		// case when
 		{
 			sql:  "a = case a when b then 1 when a then 0 end",
 			cond: "eq(test.t.a, case(eq(test.t.a, test.t.b), 1, eq(test.t.a, test.t.a), 0))",
@@ -425,7 +445,6 @@ func (s *testPlanSuite) TestBuiltinFuncsPushDown(c *C) {
 				"\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01" +
 				"\x1a\f\b\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x00",
 		},
-		// coalesce
 		{
 			sql:  "a = coalesce(null, null, a, b)",
 			cond: "eq(test.t.a, coalesce(<nil>, <nil>, test.t.a, test.t.b))",
@@ -459,20 +478,19 @@ func (s *testPlanSuite) TestBuiltinFuncsPushDown(c *C) {
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		p = info.p
-		// loop util reaching the DataSource node of a physical plan to get the conditions been pushed down.
-	loop:
 		for {
+			var ts *physicalTableSource
 			switch x := p.(type) {
 			case *PhysicalTableScan:
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
-				pbStr, _ := x.ConditionPBExpr.Marshal()
-				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
-				break loop
+				ts = &x.physicalTableSource
 			case *PhysicalIndexScan:
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
-				pbStr, _ := x.ConditionPBExpr.Marshal()
+				ts = &x.physicalTableSource
+			}
+			if ts != nil {
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(ts.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				pbStr, _ := ts.ConditionPBExpr.Marshal()
 				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
-				break loop
+				break
 			}
 			p = p.GetChildByIndex(0)
 		}

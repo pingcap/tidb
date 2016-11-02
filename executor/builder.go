@@ -548,10 +548,10 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 			keepOrder:   v.KeepOrder,
 			where:       v.ConditionPBExpr,
 			aggregate:   v.Aggregated,
-			aggFuncs:    v.AggFuncs,
+			aggFuncs:    v.AggFuncsPB,
 			aggFields:   v.AggFields,
-			byItems:     v.GbyItems,
-			orderByList: v.SortItems,
+			byItems:     v.GbyItemsPB,
+			orderByList: v.SortItemsPB,
 		}
 		return st
 	}
@@ -596,9 +596,9 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 			startTS:        startTS,
 			where:          v.ConditionPBExpr,
 			aggregate:      v.Aggregated,
-			aggFuncs:       v.AggFuncs,
+			aggFuncs:       v.AggFuncsPB,
 			aggFields:      v.AggFields,
-			byItems:        v.GbyItems,
+			byItems:        v.GbyItemsPB,
 		}
 		return st
 	}

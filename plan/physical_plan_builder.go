@@ -101,7 +101,6 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	ts.SetSchema(p.GetSchema())
 	resultPlan = ts
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
-		ts.conditions = sel.Conditions
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
 		for _, cond := range sel.Conditions {
@@ -115,7 +114,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 				memDB = true
 			}
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-				ts.ConditionPBExpr, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
+				ts.ConditionPBExpr, newSel.Conditions, ts.conditions = expressionsToPB(newSel.Conditions, client)
 			}
 		}
 		err := buildTableRange(ts)
@@ -197,7 +196,6 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 	rowCount := uint64(statsTbl.Count)
 	resultPlan = is
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
-		is.conditions = sel.Conditions
 		rowCount = 0
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
@@ -212,7 +210,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 				memDB = true
 			}
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-				is.ConditionPBExpr, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
+				is.ConditionPBExpr, newSel.Conditions, is.conditions = expressionsToPB(newSel.Conditions, client)
 			}
 		}
 		err := buildIndexRange(is)

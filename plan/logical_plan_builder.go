@@ -387,8 +387,15 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 
 // ByItems wraps a "by" item.
 type ByItems struct {
+	fmt.Stringer
+
 	Expr expression.Expression
 	Desc bool
+}
+
+// String implements fmt.Stringer interface.
+func (by *ByItems) String() string {
+	return fmt.Sprintf("(%s, %v)", by.Expr, by.Desc)
 }
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
