@@ -587,21 +587,18 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 			extractedCols, _ := extractColumn(cond, nil, nil)
 			idFound := -1 // -1 not found, -2 find multiple, or find col not in group-by, >= 0 find one group-by item
 			for _, col := range extractedCols {
+				idFoundThisTime := -1
 				for _, colID := range colIDsInGroupBy {
 					if colID == p.GetSchema().GetIndex(col) {
-						if idFound >= 0 && idFound != colID {
-							idFound = -2
-							break
-						} else {
-							idFound = colID
-						}
-					} else {
-						idFound = -2
+						idFoundThisTime = colID
 						break
 					}
 				}
-				if idFound == -2 {
+				if idFoundThisTime == -1 || (idFound >= 0 && idFound != idFoundThisTime) {
+					idFound = -2
 					break
+				} else {
+					idFound = idFoundThisTime
 				}
 			}
 			if idFound >= 0 {
