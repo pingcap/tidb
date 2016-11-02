@@ -388,7 +388,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			if !mysql.HasNoDefaultValueFlag(col.Flag) {
 				switch col.DefaultValue {
 				case nil:
-					if !mysql.HasPriKeyFlag(col.Flag) {
+					if !mysql.HasNotNullFlag(col.Flag) {
 						buf.WriteString(" DEFAULT NULL")
 					}
 				case "CURRENT_TIMESTAMP":
