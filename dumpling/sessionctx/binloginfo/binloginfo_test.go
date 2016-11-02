@@ -103,8 +103,18 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.MustExec("drop table if exists local_binlog")
 	ddlQuery := "create table local_binlog (id int primary key, name varchar(10))"
 	tk.MustExec(ddlQuery)
-	time.Sleep(time.Millisecond)
-	checkLatestBinlogDDL(c, pump, ddlQuery)
+	var matched bool // got matched pre DDL and commit DDL
+	for i := 0; i < 10; i++ {
+		preDDL, commitDDL := getLatestDDLBinlog(c, pump, ddlQuery)
+		if preDDL.DdlJobId == commitDDL.DdlJobId {
+			c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
+			c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
+			matched = true
+			break
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	c.Assert(matched, IsTrue)
 
 	tk.MustExec("insert local_binlog values (1, 'abc'), (2, 'cde')")
 	prewriteVal := getLatestBinlogPrewriteValue(c, pump)
@@ -187,8 +197,7 @@ func getLatestBinlogPrewriteValue(c *C, pump *mockBinlogPump) *binlog.PrewriteVa
 	return preVal
 }
 
-func checkLatestBinlogDDL(c *C, pump *mockBinlogPump, ddlQuery string) {
-	var preDDL, commitDDL *binlog.Binlog
+func getLatestDDLBinlog(c *C, pump *mockBinlogPump, ddlQuery string) (preDDL, commitDDL *binlog.Binlog) {
 	pump.mu.Lock()
 	for i := len(pump.mu.payloads) - 1; i >= 0; i-- {
 		payload := pump.mu.payloads[i]
@@ -209,9 +218,6 @@ func checkLatestBinlogDDL(c *C, pump *mockBinlogPump, ddlQuery string) {
 	c.Assert(preDDL.StartTs, Greater, int64(0))
 	c.Assert(preDDL.CommitTs, Equals, int64(0))
 	c.Assert(string(preDDL.DdlQuery), Equals, ddlQuery)
-	c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
-	c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
-	c.Assert(commitDDL.DdlJobId, Equals, preDDL.DdlJobId)
 	return
 }
 
