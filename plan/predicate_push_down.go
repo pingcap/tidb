@@ -563,21 +563,30 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 	return
 }
 
-// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
-	retPlan = p
-	colsInGroupBy := p.GroupByItems
-	var colIDsInGroupBy []int
-	var exprs []expression.Expression
-	for id, aggrFun := range p.AggFuncs {
-		exprs = append(exprs, aggrFun.GetArgs()[0])
-		for _, col := range colsInGroupBy {
-			if aggrFun.GetName() == ast.AggFuncFirstRow && col.Equal(aggrFun.GetArgs()[0]) {
-				colIDsInGroupBy = append(colIDsInGroupBy, id)
+// CheckIsGroupByItem check whether this column is a group-by item
+func (p *Aggregation) CheckIsGroupByItem(col *expression.Column) bool {
+	var tmpSchema expression.Schema
+	for id, fun := range p.AggFuncs {
+		if fun.GetName() != ast.AggFuncFirstRow {
+			continue
+		}
+		for _, item := range p.GroupByItems {
+			if _, ok := item.(*expression.Column); ok && item.Equal(fun.GetArgs()[0]) {
+				tmpSchema = append(tmpSchema, p.GetSchema()[id])
 			}
 		}
 	}
+	return tmpSchema.GetIndex(col) >= 0
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
+	retPlan = p
+	var exprs []expression.Expression
 	var condsToPush []expression.Expression
+	for _, fun := range p.AggFuncs {
+		exprs = append(exprs, fun.GetArgs()[0])
+	}
 	for _, cond := range predicates {
 		switch cond.(type) {
 		case *expression.Constant:
@@ -585,23 +594,14 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 			ret = append(ret, cond)
 		case *expression.ScalarFunction:
 			extractedCols, _ := extractColumn(cond, nil, nil)
-			idFound := -1 // -1 not found, -2 find multiple, or find col not in group-by, >= 0 find one group-by item
+			ok := true
 			for _, col := range extractedCols {
-				idFoundThisTime := -1
-				for _, colID := range colIDsInGroupBy {
-					if colID == p.GetSchema().GetIndex(col) {
-						idFoundThisTime = colID
-						break
-					}
-				}
-				if idFoundThisTime == -1 || (idFound >= 0 && idFound != idFoundThisTime) {
-					idFound = -2
+				if !p.CheckIsGroupByItem(col) {
+					ok = false
 					break
-				} else {
-					idFound = idFoundThisTime
 				}
 			}
-			if idFound >= 0 {
+			if ok {
 				newSf := columnSubstitute(cond.Clone(), p.GetSchema(), exprs)
 				condsToPush = append(condsToPush, newSf)
 			} else {

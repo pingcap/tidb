@@ -592,9 +592,9 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			best:  "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Projection",
 		},
 		{
-			sql:   "select * from (select a, b, sum(c) as s from t group by a, b) k where k.a > k.b",
+			sql:   "select * from (select a, b, sum(c) as s from t group by a, b) k where k.a > k.b * 2 + 1",
 			first: "DataScan(t)->Aggr(firstrow(test.t.a),firstrow(test.t.b),sum(test.t.c))->Projection->Selection->Projection",
-			best:  "DataScan(t)->Aggr(firstrow(test.t.a),firstrow(test.t.b),sum(test.t.c))->Selection->Projection->Projection",
+			best:  "DataScan(t)->Selection->Aggr(firstrow(test.t.a),firstrow(test.t.b),sum(test.t.c))->Projection->Projection",
 		},
 		{
 			sql:   "select * from (select a, b, sum(c) as s from t group by a, b) k where k.a > 1 and k.b > 2",
@@ -608,6 +608,11 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:   "select * from (select a, sum(b) as s from t group by a) k where a > s",
+			first: "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Projection->Selection->Projection",
+			best:  "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Selection->Projection->Projection",
+		},
+		{
+			sql:   "select * from (select a, sum(b) as s from t group by a + 1) k where a > 1",
 			first: "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Projection->Selection->Projection",
 			best:  "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Selection->Projection->Projection",
 		},
