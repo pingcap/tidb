@@ -563,29 +563,13 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 	return
 }
 
-// CheckIsGroupByItem check whether this column is a group-by item
-func (p *Aggregation) CheckIsGroupByItem(col *expression.Column) bool {
-	var tmpSchema expression.Schema
-	for id, fun := range p.AggFuncs {
-		if fun.GetName() != ast.AggFuncFirstRow {
-			continue
-		}
-		for _, item := range p.GroupByItems {
-			if _, ok := item.(*expression.Column); ok && item.Equal(fun.GetArgs()[0]) {
-				tmpSchema = append(tmpSchema, p.GetSchema()[id])
-			}
-		}
-	}
-	return tmpSchema.GetIndex(col) >= 0
-}
-
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
 	retPlan = p
-	var exprs []expression.Expression
+	var exprsOriginal []expression.Expression
 	var condsToPush []expression.Expression
 	for _, fun := range p.AggFuncs {
-		exprs = append(exprs, fun.GetArgs()[0])
+		exprsOriginal = append(exprsOriginal, fun.GetArgs()[0])
 	}
 	for _, cond := range predicates {
 		switch cond.(type) {
@@ -598,14 +582,14 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 			extractedCols, _ := extractColumn(cond, nil, nil)
 			ok := true
 			for _, col := range extractedCols {
-				if !p.CheckIsGroupByItem(col) {
+				if p.groupBySchema.GetIndex(col) == -1 {
 					ok = false
 					break
 				}
 			}
 			if ok {
-				newSf := columnSubstitute(cond.Clone(), p.GetSchema(), exprs)
-				condsToPush = append(condsToPush, newSf)
+				newFunc := columnSubstitute(cond.Clone(), p.GetSchema(), exprsOriginal)
+				condsToPush = append(condsToPush, newFunc)
 			} else {
 				ret = append(ret, cond)
 			}

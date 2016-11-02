@@ -66,6 +66,8 @@ type Aggregation struct {
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
 	ctx          context.Context
+
+	groupBySchema expression.Schema // is used to judge whether a column is a group-by item
 }
 
 // Selection means a filter.
