@@ -92,6 +92,7 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{"0.2314", floatLit},
 		{"132.3e231", floatLit},
 		{"23416", intLit},
+		{"123test", identifier},
 		{"0", intLit},
 		{"0x3c26", hexLit},
 		{"x'13181C76734725455A'", hexLit},

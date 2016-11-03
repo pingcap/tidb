@@ -58,8 +58,6 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
-	dom, err = NewDomain(store, 0)
-	c.Assert(err, IsNil)
 
 	dom.SetLease(10 * time.Second)
 

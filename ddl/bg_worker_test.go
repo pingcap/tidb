@@ -71,11 +71,13 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 
 	job := &model.Job{
 		SchemaID: dbInfo.ID,
+		TableID:  1,
 		Type:     model.ActionDropTable,
-		Args: []interface{}{&model.TableInfo{
-			ID:   1,
-			Name: model.CIStr{O: "t"},
-		}},
+		Args: []interface{}{0, nil,
+			&model.TableInfo{
+				ID:   1,
+				Name: model.CIStr{O: "t"},
+			}},
 	}
 	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -85,7 +87,7 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	d.startBgJob(job.Type)
 
 	time.Sleep(testLease * 6)
-	verifyBgJobState(c, d, job, model.JobDone)
+	verifyBgJobState(c, d, job, model.JobCancelled)
 }
 
 func (s *testDDLSuite) TestInvalidBgJobType(c *C) {

@@ -103,7 +103,18 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.MustExec("drop table if exists local_binlog")
 	ddlQuery := "create table local_binlog (id int primary key, name varchar(10))"
 	tk.MustExec(ddlQuery)
-	c.Assert(getLatestBinlogDDLQuery(c, pump), Equals, ddlQuery)
+	var matched bool // got matched pre DDL and commit DDL
+	for i := 0; i < 10; i++ {
+		preDDL, commitDDL := getLatestDDLBinlog(c, pump, ddlQuery)
+		if preDDL.DdlJobId == commitDDL.DdlJobId {
+			c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
+			c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
+			matched = true
+			break
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	c.Assert(matched, IsTrue)
 
 	tk.MustExec("insert local_binlog values (1, 'abc'), (2, 'cde')")
 	prewriteVal := getLatestBinlogPrewriteValue(c, pump)
@@ -186,22 +197,28 @@ func getLatestBinlogPrewriteValue(c *C, pump *mockBinlogPump) *binlog.PrewriteVa
 	return preVal
 }
 
-func getLatestBinlogDDLQuery(c *C, pump *mockBinlogPump) string {
-	var bin *binlog.Binlog
+func getLatestDDLBinlog(c *C, pump *mockBinlogPump, ddlQuery string) (preDDL, commitDDL *binlog.Binlog) {
 	pump.mu.Lock()
 	for i := len(pump.mu.payloads) - 1; i >= 0; i-- {
 		payload := pump.mu.payloads[i]
-		bin = new(binlog.Binlog)
+		bin := new(binlog.Binlog)
 		bin.Unmarshal(payload)
-		if bin.Tp == binlog.BinlogType_PreDDL {
+		if bin.Tp == binlog.BinlogType_Commit && bin.DdlJobId > 0 {
+			commitDDL = bin
+		}
+		if bin.Tp == binlog.BinlogType_Prewrite && bin.DdlJobId != 0 {
+			preDDL = bin
+		}
+		if preDDL != nil && commitDDL != nil {
 			break
 		}
 	}
 	pump.mu.Unlock()
-	c.Assert(bin.DdlJobId, Greater, int64(0))
-	c.Assert(bin.StartTs, Greater, int64(0))
-	c.Assert(bin.CommitTs, Equals, int64(0))
-	return string(bin.DdlQuery)
+	c.Assert(preDDL.DdlJobId, Greater, int64(0))
+	c.Assert(preDDL.StartTs, Greater, int64(0))
+	c.Assert(preDDL.CommitTs, Equals, int64(0))
+	c.Assert(string(preDDL.DdlQuery), Equals, ddlQuery)
+	return
 }
 
 func checkBinlogCount(c *C, pump *mockBinlogPump) {
@@ -215,9 +232,11 @@ func checkBinlogCount(c *C, pump *mockBinlogPump) {
 		bin = new(binlog.Binlog)
 		bin.Unmarshal(payload)
 		if bin.Tp == binlog.BinlogType_Prewrite {
-			prewriteCount++
-		} else if bin.Tp == binlog.BinlogType_PreDDL {
-			ddlCount++
+			if bin.DdlJobId != 0 {
+				ddlCount++
+			} else {
+				prewriteCount++
+			}
 		}
 	}
 	pump.mu.Unlock()

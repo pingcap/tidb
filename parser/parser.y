@@ -181,6 +181,7 @@ import (
 	password	"PASSWORD"
 	prepare		"PREPARE"
 	privileges	"PRIVILEGES"
+	processlist	"PROCESSLIST"
 	quarter		"QUARTER"
 	quick		"QUICK"
 	redundant	"REDUNDANT"
@@ -1982,7 +1983,7 @@ UnReservedKeyword:
 |	"TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
 |	"COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
 |	"MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
-|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES"
+|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 |	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION"
 
 NotKeywordToken:
@@ -3972,6 +3973,13 @@ ShowStmt:
 			Table:	$4.(*ast.TableName),
 		}
 	}
+|	"SHOW" "CREATE" "DATABASE" DBName 
+	{
+		$$ = &ast.ShowStmt{
+			Tp:	ast.ShowCreateDatabase,
+			DBName:	$4.(string),
+		}
+	}
 |	"SHOW" "GRANTS"
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
@@ -3990,6 +3998,12 @@ ShowStmt:
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowIndex,
 			Table: $4.(*ast.TableName),
+		}
+	}
+|	"SHOW" "PROCESSLIST"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowProcessList,
 		}
 	}
 

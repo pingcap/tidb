@@ -16,15 +16,17 @@ package ddl
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/tablecodec"
 )
 
 func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	dbInfo := &model.DBInfo{}
 	if err := job.DecodeArgs(dbInfo); err != nil {
-		// arg error, cancel this job.
+		// Invalid arguments, cancel this job.
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
@@ -40,7 +42,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 	for _, db := range dbs {
 		if db.Name.L == dbInfo.Name.L {
 			if db.ID != schemaID {
-				// database exists, can't create, we should cancel this job now.
+				// The database already exists, can't create it, we should cancel this job now.
 				job.State = model.JobCancelled
 				return errors.Trace(infoschema.ErrDatabaseExists)
 			}
@@ -62,12 +64,12 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// finish this job
+		// Finish this job.
 		job.State = model.JobDone
 		addDBHistoryInfo(job, ver, dbInfo)
 		return nil
 	default:
-		// we can't enter here.
+		// We can't enter here.
 		return errors.Errorf("invalid db state %v", dbInfo.State)
 	}
 }
@@ -110,7 +112,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 			break
 		}
 
-		// finish this job
+		// Finish this job.
 		addDBHistoryInfo(job, ver, dbInfo)
 		if len(tables) > 0 {
 			job.Args = append(job.Args, getIDs(tables))
@@ -118,7 +120,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
 	default:
-		// we can't enter here.
+		// We can't enter here.
 		err = errors.Errorf("invalid db state %v", dbInfo.State)
 	}
 
@@ -135,14 +137,14 @@ func getIDs(tables []*model.TableInfo) []int64 {
 }
 
 func (d *ddl) delReorgSchema(t *meta.Meta, job *model.Job) error {
+	var startKey kv.Key
 	var tableIDs []int64
-	if err := job.DecodeArgs(&tableIDs); err != nil {
-		// arg error, cancel this job.
+	if err := job.DecodeArgs(&tableIDs, &startKey); err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
 
-	isFinished, err := d.dropSchemaData(tableIDs, job, t)
+	isFinished, err := d.dropSchemaData(tableIDs, startKey, job, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -150,28 +152,33 @@ func (d *ddl) delReorgSchema(t *meta.Meta, job *model.Job) error {
 		return nil
 	}
 
-	// finish this background job
+	// Finish this background job.
 	job.SchemaState = model.StateNone
 	job.State = model.JobDone
 
 	return nil
 }
 
-func (d *ddl) dropSchemaData(tIDs []int64, job *model.Job, m *meta.Meta) (bool, error) {
+func (d *ddl) dropSchemaData(tIDs []int64, startKey kv.Key, job *model.Job, m *meta.Meta) (bool, error) {
 	if len(tIDs) == 0 {
 		return true, nil
 	}
 
 	var isFinished bool
+	var nextStartKey kv.Key
 	for i, id := range tIDs {
 		job.TableID = id
+		if startKey == nil {
+			startKey = tablecodec.EncodeTablePrefix(id)
+		}
 		limit := defaultBatchSize
-		delCount, err := d.dropTableData(id, job, limit)
+		delCount, err := d.dropTableData(startKey, job, limit)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if delCount == limit {
 			isFinished = false
+			nextStartKey = job.Args[len(job.Args)-1].(kv.Key)
 			break
 		}
 
@@ -180,11 +187,12 @@ func (d *ddl) dropSchemaData(tIDs []int64, job *model.Job, m *meta.Meta) (bool, 
 		} else {
 			tIDs = nil
 		}
+		startKey = nil
 		isFinished = true
 		continue
 	}
 	job.TableID = 0
-	job.Args = []interface{}{tIDs}
+	job.Args = []interface{}{tIDs, nextStartKey}
 
 	return isFinished, nil
 }

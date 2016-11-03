@@ -350,7 +350,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) *UnionSc
 	if b.err != nil {
 		return nil
 	}
-	us := &UnionScanExec{ctx: b.ctx, Src: src}
+	us := &UnionScanExec{ctx: b.ctx, Src: src, schema: v.GetSchema()}
 	switch x := src.(type) {
 	case *XSelectTableExec:
 		us.desc = x.desc
@@ -387,12 +387,13 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
 	e := &HashJoinExec{
-		schema:      v.GetSchema(),
-		otherFilter: expression.ComposeCNFCondition(v.OtherConditions),
-		prepared:    false,
-		ctx:         b.ctx,
-		targetTypes: targetTypes,
-		concurrency: v.Concurrency,
+		schema:        v.GetSchema(),
+		otherFilter:   expression.ComposeCNFCondition(v.OtherConditions),
+		prepared:      false,
+		ctx:           b.ctx,
+		targetTypes:   targetTypes,
+		concurrency:   v.Concurrency,
+		defaultValues: v.DefaultValues,
 	}
 	if v.SmallTable == 1 {
 		e.smallFilter = expression.ComposeCNFCondition(v.RightConditions)
