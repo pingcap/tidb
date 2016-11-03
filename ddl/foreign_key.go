@@ -50,7 +50,7 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// finish this job
+		// Finish this job.
 		job.State = model.JobDone
 		addTableHistoryInfo(job, ver, tblInfo)
 		return nil
@@ -112,7 +112,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// finish this job
+		// Finish this job.
 		job.State = model.JobDone
 		addTableHistoryInfo(job, ver, tblInfo)
 		return nil

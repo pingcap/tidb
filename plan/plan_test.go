@@ -798,6 +798,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[0,0] [1,1] [2,2] [3,3] [4,4] [5,5] [6,6] [7,7] [8,8] [9,9]]",
 		},
 		{
+			sql:  "select * from t t1 where a in (1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,7,8,9)",
+			best: "Table(t)",
+		},
+		{
 			sql:  "select count(*) from t t1 having 1 = 0",
 			best: "Dummy->HashAgg->Selection",
 		},
