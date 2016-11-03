@@ -46,7 +46,7 @@ type ShowExec struct {
 	// Used by show variables
 	GlobalScope bool
 
-	fields []*ast.ResultField
+	schema expression.Schema
 	ctx    context.Context
 	is     infoschema.InfoSchema
 
@@ -57,12 +57,12 @@ type ShowExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *ShowExec) Schema() expression.Schema {
-	return nil
+	return e.schema
 }
 
 // Fields implements the Executor Fields interface.
 func (e *ShowExec) Fields() []*ast.ResultField {
-	return e.fields
+	return nil
 }
 
 // Next implements Execution Next interface.
@@ -77,9 +77,6 @@ func (e *ShowExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	row := e.rows[e.cursor]
-	for i, field := range e.fields {
-		field.Expr.SetValue(row.Data[i].GetValue())
-	}
 	e.cursor++
 	return row, nil
 }
