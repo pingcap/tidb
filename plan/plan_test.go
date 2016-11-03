@@ -806,7 +806,15 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t t1 use index(c_d_e)",
-			best: "Index(t.c_d_e)",
+			best: "Index(t.c_d_e)[[<nil>,+inf]]",
+		},
+		{
+			sql:  "select * from t t1 ignore index(e) where c < 0",
+			best: "Index(t.c_d_e)[[-inf,0)]",
+		},
+		{
+			sql:  "select * from t t1 ignore index(c_d_e) where c < 0",
+			best: "Table(t)->Selection",
 		},
 		{
 			sql:  "select * from t t1 where 1 = 0",

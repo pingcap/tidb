@@ -226,10 +226,7 @@ func availableIndices(table *ast.TableName) (indices []*model.IndexInfo, include
 		// Empty use hint means don't use any index.
 		return nil, true
 	}
-	if len(ignores) == 0 {
-		return publicIndices, true
-	}
-	return indices, true
+	return removeIgnores(publicIndices, ignores), true
 }
 
 func removeIgnores(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
