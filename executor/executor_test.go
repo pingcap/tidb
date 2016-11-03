@@ -467,7 +467,6 @@ func (s *testSuite) TestIn(c *C) {
 		tk.MustExec(fmt.Sprintf("insert t values(%d, %d)", i, i))
 	}
 	queryStr := `select c2 from t where c1 in ('7', '10', '112', '111', '98', '106', '100', '9', '18', '17') order by c2`
-	log.Warnf(queryStr)
 	r := tk.MustQuery(queryStr)
 	r.Check(testkit.Rows("7", "9", "10", "17", "18", "98", "100", "106", "111", "112"))
 
