@@ -1097,6 +1097,21 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("insert t values ()")
 	tk.MustExec("insert t values (1000)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0", "127"))
+
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+	tk.MustExec("set @@global.sql_mode = ''")
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk2.MustExec("create table t2 (a varchar(3))")
+	tk2.MustExec("insert t2 values ('abcd')")
+	tk2.MustQuery("select * from t2").Check(testkit.Rows(fmt.Sprintf("%v", []byte("abc"))))
+
+	// session1 is still in strict mode.
+	_, err = tk.Exec("insert t2 values ('abcd')")
+	c.Check(err, NotNil)
+	// Restore original global strict mode.
+	tk.MustExec("set @@global.sql_mode = 'STRICT_TRANS_TABLES'")
 }
 
 func (s *testSuite) TestNewSubquery(c *C) {
