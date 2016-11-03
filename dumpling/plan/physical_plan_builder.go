@@ -78,6 +78,35 @@ func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, in
 	return uint64(count), nil
 }
 
+func getRowCountByTableRange(statsTbl *statistics.Table, ranges []TableRange, offset int) (uint64, error) {
+	var rowCount uint64
+	for _, rg := range ranges {
+		var cnt int64
+		var err error
+		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
+			cnt = statsTbl.Count
+		} else if rg.LowVal == math.MinInt64 {
+			cnt, err = statsTbl.Columns[offset].LessRowCount(types.NewDatum(rg.HighVal))
+		} else if rg.HighVal == math.MaxInt64 {
+			cnt, err = statsTbl.Columns[offset].GreaterRowCount(types.NewDatum(rg.LowVal))
+		} else {
+			if rg.LowVal == rg.HighVal {
+				cnt, err = statsTbl.Columns[offset].EqualRowCount(types.NewDatum(rg.LowVal))
+			} else {
+				cnt, err = statsTbl.Columns[offset].BetweenRowCount(types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal))
+			}
+		}
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		rowCount += uint64(cnt)
+	}
+	if rowCount > uint64(statsTbl.Count) {
+		rowCount = uint64(statsTbl.Count)
+	}
+	return rowCount, nil
+}
+
 func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	table := p.Table
 	client := p.ctx.GetClient()
@@ -146,23 +175,9 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 				break
 			}
 		}
-		rowCount = 0
-		for _, rg := range ts.Ranges {
-			var cnt int64
-			var err error
-			if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
-				cnt = statsTbl.Count
-			} else if rg.LowVal == math.MinInt64 {
-				cnt, err = statsTbl.Columns[offset].LessRowCount(types.NewDatum(rg.HighVal))
-			} else if rg.HighVal == math.MaxInt64 {
-				cnt, err = statsTbl.Columns[offset].GreaterRowCount(types.NewDatum(rg.LowVal))
-			} else {
-				cnt, err = statsTbl.Columns[offset].BetweenRowCount(types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal))
-			}
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			rowCount += uint64(cnt)
+		rowCount, err = getRowCountByTableRange(statsTbl, ts.Ranges, offset)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	if ts.ConditionPBExpr != nil {
