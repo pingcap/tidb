@@ -108,6 +108,9 @@ type SessionVars struct {
 	// Strict SQL mode
 	StrictSQLMode bool
 
+	// CommonGlobalLoaded indicates if common global variable has been loaded for this session.
+	CommonGlobalLoaded bool
+
 	// InUpdateStmt indicates if the session is handling update stmt.
 	InUpdateStmt bool
 
@@ -213,6 +216,11 @@ func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 	s.Status &= (^flag)
 }
 
+// GetStatusFlag gets the session server status variable, returns true if it is on.
+func (s *SessionVars) GetStatusFlag(flag uint16) bool {
+	return s.Status&flag > 0
+}
+
 // GetNextPreparedStmtID generates and returns the next session scope prepared statement id.
 func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	s.preparedStmtID++
@@ -226,7 +234,8 @@ func (s *SessionVars) SetCurrentUser(user string) {
 
 // special session variables.
 const (
-	sqlMode             = "sql_mode"
+	SQLModeVar          = "sql_mode"
+	AutocommitVar       = "autocommit"
 	characterSetResults = "character_set_results"
 )
 
@@ -244,18 +253,22 @@ func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if key == sqlMode {
+	switch key {
+	case SQLModeVar:
 		sVal = strings.ToUpper(sVal)
 		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
 			s.StrictSQLMode = true
 		} else {
 			s.StrictSQLMode = false
 		}
-	} else if key == TiDBSnapshot {
+	case TiDBSnapshot:
 		err = s.setSnapshotTS(sVal)
 		if err != nil {
 			return errors.Trace(err)
 		}
+	case AutocommitVar:
+		isAutocommit := strings.EqualFold(sVal, "ON") || sVal == "1"
+		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 	}
 	s.systems[key] = sVal
 	return nil
