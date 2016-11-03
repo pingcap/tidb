@@ -306,7 +306,7 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 	checkAutocommit(c, se, 0)
 	checkTxn(c, se, "drop table if exists t;", 0)
 	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "set autocommit=1;", 0)
+	checkTxn(c, se, "set autocommit='On';", 0)
 	checkAutocommit(c, se, 2)
 
 	mustExecSQL(c, se, s.dropDBSQL)

@@ -267,7 +267,7 @@ func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 			return errors.Trace(err)
 		}
 	case AutocommitVar:
-		isAutocommit := sVal == "ON" || sVal == "on" || sVal == "1"
+		isAutocommit := strings.EqualFold(sVal, "ON") || sVal == "1"
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 	}
 	s.systems[key] = sVal
