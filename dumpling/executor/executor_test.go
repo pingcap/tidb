@@ -469,6 +469,9 @@ func (s *testSuite) TestIn(c *C) {
 	queryStr := `select c2 from t where c1 in ('7', '10', '112', '111', '98', '106', '100', '9', '18', '17') order by c2`
 	r := tk.MustQuery(queryStr)
 	r.Check(testkit.Rows("7", "9", "10", "17", "18", "98", "100", "106", "111", "112"))
+
+	queryStr = `select c2 from t where c1 in ('7a')`
+	tk.MustQuery(queryStr).Check(testkit.Rows("7"))
 }
 
 func (s *testSuite) TestTablePKisHandleScan(c *C) {

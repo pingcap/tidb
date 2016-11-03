@@ -793,59 +793,8 @@ func (d *Datum) convertToString(target *FieldType) (Datum, error) {
 }
 
 func (d *Datum) convertToInt(target *FieldType) (Datum, error) {
-	tp := target.Tp
-	lowerBound := signedLowerBound[tp]
-	upperBound := signedUpperBound[tp]
-	var (
-		val int64
-		err error
-		ret Datum
-	)
-	switch d.k {
-	case KindInt64:
-		val, err = convertIntToInt(d.GetInt64(), lowerBound, upperBound, tp)
-	case KindUint64:
-		val, err = convertUintToInt(d.GetUint64(), upperBound, tp)
-	case KindFloat32, KindFloat64:
-		val, err = convertFloatToInt(d.GetFloat64(), lowerBound, upperBound, tp)
-	case KindString, KindBytes:
-		fval, err1 := StrToFloat(d.GetString())
-		if err1 != nil {
-			return ret, errors.Trace(err1)
-		}
-		val, err = convertFloatToInt(fval, lowerBound, upperBound, tp)
-	case KindMysqlTime:
-		dec := d.GetMysqlTime().ToNumber()
-		dec.Round(dec, 0)
-		val, _ = dec.ToInt()
-		val, err = convertIntToInt(val, lowerBound, upperBound, tp)
-	case KindMysqlDuration:
-		dec := d.GetMysqlDuration().ToNumber()
-		dec.Round(dec, 0)
-		iVal, err1 := dec.ToInt()
-		val, err = convertIntToInt(iVal, lowerBound, upperBound, tp)
-		if err == nil {
-			err = err1
-		}
-	case KindMysqlDecimal:
-		fval, _ := d.GetMysqlDecimal().ToFloat64()
-		val, err = convertFloatToInt(fval, lowerBound, upperBound, tp)
-	case KindMysqlHex:
-		val, err = convertFloatToInt(d.GetMysqlHex().ToNumber(), lowerBound, upperBound, tp)
-	case KindMysqlBit:
-		val, err = convertFloatToInt(d.GetMysqlBit().ToNumber(), lowerBound, upperBound, tp)
-	case KindMysqlEnum:
-		val, err = convertFloatToInt(d.GetMysqlEnum().ToNumber(), lowerBound, upperBound, tp)
-	case KindMysqlSet:
-		val, err = convertFloatToInt(d.GetMysqlSet().ToNumber(), lowerBound, upperBound, tp)
-	default:
-		return invalidConv(d, target.Tp)
-	}
-	ret.SetInt64(val)
-	if err != nil {
-		return ret, errors.Trace(err)
-	}
-	return ret, nil
+	i64, err := d.toSignedInteger(target.Tp)
+	return NewIntDatum(i64), errors.Trace(err)
 }
 
 func (d *Datum) convertToUint(target *FieldType) (Datum, error) {
@@ -1236,7 +1185,10 @@ func (d *Datum) ToDecimal() (*mysql.MyDecimal, error) {
 
 // ToInt64 converts to a int64.
 func (d *Datum) ToInt64() (int64, error) {
-	tp := mysql.TypeLonglong
+	return d.toSignedInteger(mysql.TypeLonglong)
+}
+
+func (d *Datum) toSignedInteger(tp byte) (int64, error) {
 	lowerBound := signedLowerBound[tp]
 	upperBound := signedUpperBound[tp]
 	switch d.Kind() {
@@ -1251,10 +1203,11 @@ func (d *Datum) ToInt64() (int64, error) {
 	case KindString:
 		s := d.GetString()
 		fval, err := StrToFloat(s)
-		if err != nil {
-			return 0, errors.Trace(err)
+		i64, err1 := convertFloatToInt(fval, lowerBound, upperBound, tp)
+		if err == nil {
+			err = err1
 		}
-		return convertFloatToInt(fval, lowerBound, upperBound, tp)
+		return i64, errors.Trace(err)
 	case KindBytes:
 		s := string(d.GetBytes())
 		fval, err := StrToFloat(s)
