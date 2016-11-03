@@ -791,8 +791,8 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.DistSQLJoinConcurrencyVar + "', '" +
 	variable.DistSQLScanConcurrencyVar + "')"
 
-// LoadCommonGlobalVariableIfNeeded load and apply commonly used global variable for the session
-// right before creating a transaction for the first time in the session.
+// LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session
+// right before creating a transaction for the first time.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars := variable.GetSessionVars(s)
 	if vars.CommonGlobalLoaded {
