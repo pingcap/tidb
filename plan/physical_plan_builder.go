@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/ngaut/log"
 )
 
 const (
@@ -109,7 +108,6 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 			conds = append(conds, cond.Clone())
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
-		log.Warnf("ac %s rest %s", ts.AccessCondition, newSel.Conditions)
 		if client != nil {
 			var memDB bool
 			switch p.DBName.L {
