@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -386,19 +387,22 @@ func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
 				newDatum, err := valueExpr.Datum.ConvertTo(&ft)
 				if err != nil {
 					v.err = errors.Trace(err)
-					return
 				}
 				cmp, err := newDatum.CompareDatum(valueExpr.Datum)
 				if err != nil {
 					v.err = errors.Trace(err)
-					return
 				}
 				if cmp != 0 {
-					// The value has been truncated after Convert, ignore this case.
+					// The value will never match the column, do not set newDatum.
 					continue
 				}
 				valueExpr.SetDatum(newDatum)
 			}
+		}
+		if v.err != nil {
+			// TODO: errors should be handled differently according to query context.
+			log.Errorf("inferor type for pattern in error %v", v.err)
+			v.err = nil
 		}
 	}
 }
