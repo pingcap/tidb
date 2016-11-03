@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/ngaut/log"
 )
 
 const (
@@ -108,6 +109,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 			conds = append(conds, cond.Clone())
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
+		log.Warnf("ac %s rest %s", ts.AccessCondition, newSel.Conditions)
 		if client != nil {
 			var memDB bool
 			switch p.DBName.L {
@@ -157,12 +159,19 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 			} else if rg.HighVal == math.MaxInt64 {
 				cnt, err = statsTbl.Columns[offset].GreaterRowCount(types.NewDatum(rg.LowVal))
 			} else {
-				cnt, err = statsTbl.Columns[offset].BetweenRowCount(types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal))
+				if rg.LowVal == rg.HighVal {
+					cnt, err = statsTbl.Columns[offset].EqualRowCount(types.NewDatum(rg.LowVal))
+				} else {
+					cnt, err = statsTbl.Columns[offset].BetweenRowCount(types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal))
+				}
 			}
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			rowCount += uint64(cnt)
+		}
+		if rowCount > uint64(statsTbl.Count) {
+			rowCount = uint64(statsTbl.Count)
 		}
 	}
 	if ts.ConditionPBExpr != nil {
