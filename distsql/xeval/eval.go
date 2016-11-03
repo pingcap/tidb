@@ -77,11 +77,9 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		return e.evalStringFuncs(expr)
 	// bit operator
 	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitNeg,
-		tipb.ExprType_BitXor, tipb.ExprType_LeftShift, tipb.ExprType_RightShift:
+		tipb.ExprType_BitXor, tipb.ExprType_LeftShift, tipb.ExprType_RighShift:
 		return e.evalBitOps(expr)
 	// other functions
-	case tipb.ExprType_Case:
-		return e.evalCaseWhen(expr)
 	case tipb.ExprType_Coalesce:
 		return e.evalCoalesce(expr)
 	case tipb.ExprType_IsNull:

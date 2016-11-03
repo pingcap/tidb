@@ -144,7 +144,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitXor, tipb.ExprType_BitNeg:
 		return true
 	// control functions
-	case tipb.ExprType_IfNull, tipb.ExprType_NullIf, tipb.ExprType_If:
+	case tipb.ExprType_IfNull, tipb.ExprType_NullIf, tipb.ExprType_If, tipb.ExprType_Case:
 		return true
 	// math functions
 	case tipb.ExprType_Pow, tipb.ExprType_Abs, tipb.ExprType_Round:
@@ -153,7 +153,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 	case tipb.ExprType_Strcmp:
 		return true
 	// other functions
-	case tipb.ExprType_IsNull, tipb.ExprType_Case, tipb.ExprType_Coalesce:
+	case tipb.ExprType_IsNull, tipb.ExprType_Coalesce:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
