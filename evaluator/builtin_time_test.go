@@ -384,27 +384,24 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 			v, err := builtinFromUnixTime([]types.Datum{timestamp}, nil)
 			c.Assert(err, IsNil)
 			ans := v.GetMysqlTime()
-			c.Assert(ans.String(), GreaterEqual, unixTime)
-			c.Assert(ans.String(), LessEqual, unixTime)
+			c.Assert(ans.String(), Equals, unixTime)
 		} else {
 			format := types.NewStringDatum(t.format)
 			v, err := builtinFromUnixTime([]types.Datum{timestamp, format}, nil)
 			c.Assert(err, IsNil)
 			result, err := builtinDateFormat([]types.Datum{types.NewStringDatum(unixTime), format}, nil)
 			c.Assert(err, IsNil)
-			c.Assert(v.GetString(), GreaterEqual, result.GetString())
+			c.Assert(v.GetString(), Equals, result.GetString())
 		}
 	}
 
 	v, err := builtinFromUnixTime([]types.Datum{types.NewIntDatum(-12345)}, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), GreaterEqual, types.KindNull)
-	c.Assert(v.Kind(), LessEqual, types.KindNull)
+	c.Assert(v.Kind(), Equals, types.KindNull)
 
 	_, err = builtinFromUnixTime([]types.Datum{types.NewIntDatum(math.MaxInt32+1)}, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), GreaterEqual, types.KindNull)
-	c.Assert(v.Kind(), LessEqual, types.KindNull)
+	c.Assert(v.Kind(), Equals, types.KindNull)
 }
 
 func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
