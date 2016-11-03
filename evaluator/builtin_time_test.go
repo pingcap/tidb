@@ -399,7 +399,7 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 
-	_, err = builtinFromUnixTime([]types.Datum{types.NewIntDatum(math.MaxInt32+1)}, nil)
+	_, err = builtinFromUnixTime([]types.Datum{types.NewIntDatum(math.MaxInt32 + 1)}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 }
