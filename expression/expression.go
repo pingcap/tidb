@@ -514,6 +514,7 @@ func EvaluateExprWithNull(schema Schema, expr Expression) (Expression, error) {
 	}
 }
 
+// ResultFieldsToSchema converts slice of result fields to schema.
 func ResultFieldsToSchema(fields []*ast.ResultField) Schema {
 	schema := make(Schema, 0, len(fields))
 	for i, field := range fields {
