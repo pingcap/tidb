@@ -563,7 +563,7 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 	return
 }
 
-// CheckColumnIsGroupByItem check whether a column is a group-by item
+// CheckColumnIsGroupByItem check whether a column is a group-by item.
 func (p *Aggregation) CheckColumnIsGroupByItem(col *expression.Column) bool {
 	id := p.GetSchema().GetIndex(col)
 	colOriginal, isColumn := p.AggFuncs[id].GetArgs()[0].(*expression.Column)
@@ -582,8 +582,9 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 		switch cond.(type) {
 		case *expression.Constant:
 			condsToPush = append(condsToPush, cond)
-			// Consider SQL like "select sum(b) from t group by a having 1=0". 1=0 which is a constant should remain there and
-			// push down at the same time. If we only push down it, we will get one column with value 0 rather than none column.
+			// Consider SQL list "select sum(b) from t group by a having 1=0". "1=0" is a constant predicate which should be
+			// retained and pushed down at the same time. Because we will get a wrong query result that contains one column
+			// with value 0 rather than an empty query result.
 			ret = append(ret, cond)
 		case *expression.ScalarFunction:
 			extractedCols, _ := extractColumn(cond, nil, nil)

@@ -614,7 +614,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		{
 			sql:   "select * from (select a, sum(b) as s from t group by a + 1) k where a > 1",
 			first: "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Projection->Selection->Projection",
-			best:  "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Projection->Selection->Projection",
+			best:  "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Selection->Projection->Projection",
 		},
 		{
 			sql:   "select * from (select a, sum(b) as s from t group by a having 1 = 0) k where a > 1",
