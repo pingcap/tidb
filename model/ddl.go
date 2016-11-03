@@ -80,11 +80,11 @@ type Job struct {
 	Error    *terror.Error `json:"err"`
 	// Every time we meet an error when running job, we will increase it.
 	ErrorCount int64 `json:"err_count"`
-	// The number of rows are processed.
+	// The number of rows that are processed.
 	RowCount int64         `json:"row_count"`
 	Mu       sync.Mutex    `json:"-"`
 	Args     []interface{} `json:"-"`
-	// We must use json raw message for delay parsing special args.
+	// We must use json raw message to delay parsing special args.
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
 	// Snapshot version for this job.

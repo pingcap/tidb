@@ -388,7 +388,7 @@ func toTError(err error) *terror.Error {
 	return terror.ClassDDL.New(terror.CodeUnknown, err.Error())
 }
 
-// For every lease seconds, we will re-update the whole schema, so we will wait 2 * lease time
+// For every lease, we will re-update the whole schema, so we will wait 2 * lease time
 // to guarantee that all servers have already updated schema.
 func (d *ddl) waitSchemaChanged(waitTime time.Duration) {
 	if waitTime == 0 {

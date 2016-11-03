@@ -372,7 +372,6 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 		for _, key := range v.Keys {
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
-				// TODO: Table constraint on unknown column.
 				continue
 			}
 			c.Flag |= mysql.PriKeyFlag
@@ -383,7 +382,6 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 		for i, key := range v.Keys {
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
-				// TODO: Table constraint on unknown column.
 				continue
 			}
 			if i == 0 {
@@ -402,7 +400,6 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 		for i, key := range v.Keys {
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
-				// TODO: Table constraint on unknown column.
 				continue
 			}
 			if i == 0 {
