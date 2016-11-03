@@ -54,7 +54,7 @@ var (
 	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
 	errInvalidStoreVer       = terror.ClassDDL.New(codeInvalidStoreVer, "invalid storage current version")
 
-	// we don't support drop column with index covered now.
+	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
 
@@ -120,16 +120,16 @@ type ddl struct {
 	hook       Callback
 	hookMu     sync.RWMutex
 	store      kv.Storage
-	// schema lease seconds.
+	// Schema lease seconds.
 	lease        time.Duration
 	uuid         string
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
-	// drop database/table job runs in the background.
+	// Drop database/table job that runs in the background.
 	bgJobCh chan struct{}
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
 	// we will use this channel to notify outer.
-	// TODO: now we use goroutine to simulate reorganization jobs, later we may
+	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
 	// use a persistent job list.
 	reorgDoneCh chan error
 
@@ -181,7 +181,7 @@ func (d *ddl) Stop() error {
 			return nil
 		}
 
-		// ddl job's owner is me, clean it so other servers can compete for it quickly.
+		// DDL job's owner is me, clean it so other servers can complete it quickly.
 		return t.SetDDLJobOwner(&model.Owner{})
 	})
 	if err != nil {
@@ -198,7 +198,7 @@ func (d *ddl) Stop() error {
 			return nil
 		}
 
-		// background job's owner is me, clean it so other servers can compete for it quickly.
+		// Background job's owner is me, clean it so other servers can complete it quickly.
 		return t.SetBgJobOwner(&model.Owner{})
 	})
 
@@ -223,8 +223,8 @@ func (d *ddl) start() {
 	d.wait.Add(2)
 	go d.onBackgroundWorker()
 	go d.onDDLWorker()
-	// for every start, we will send a fake job to let worker
-	// check owner first and try to find whether a job exists and run.
+	// For every start, we will send a fake job to let worker
+	// check owner firstly and try to find whether a job exists and run.
 	asyncNotify(d.ddlJobCh)
 	asyncNotify(d.bgJobCh)
 }
@@ -259,12 +259,12 @@ func (d *ddl) SetLease(lease time.Duration) {
 	log.Warnf("[ddl] change schema lease %s -> %s", d.lease, lease)
 
 	if d.isClosed() {
-		// if already closed, just set lease and return
+		// If already closed, just set lease and return.
 		d.lease = lease
 		return
 	}
 
-	// close the running worker and start again
+	// Close the running worker and start again.
 	d.close()
 	d.lease = lease
 	d.start()
@@ -361,7 +361,7 @@ func checkTooLongTable(table model.CIStr) error {
 
 func getDefaultCharsetAndCollate() (string, string) {
 	// TODO: TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
-	// TODO: change TableOption parser to parse collate.
+	// TODO: Change TableOption parser to parse collate.
 	// This is a tmp solution.
 	return "utf8", "utf8_unicode_ci"
 }
@@ -372,7 +372,6 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 		for _, key := range v.Keys {
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
-				// TODO: table constraint on unknown column.
 				continue
 			}
 			c.Flag |= mysql.PriKeyFlag
@@ -383,7 +382,6 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 		for i, key := range v.Keys {
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
-				// TODO: table constraint on unknown column.
 				continue
 			}
 			if i == 0 {
@@ -402,7 +400,6 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 		for i, key := range v.Keys {
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
-				// TODO: table constraint on unknown column.
 				continue
 			}
 			if i == 0 {
@@ -427,7 +424,7 @@ func (d *ddl) buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.Col
 		cols = append(cols, col)
 		colMap[colDef.Name.Name.L] = col
 	}
-	// traverse table Constraints and set col.flag
+	// Traverse table Constraints and set col.flag.
 	for _, v := range constraints {
 		setColumnFlagWithConstraint(colMap, v)
 	}
@@ -878,7 +875,6 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		Type:     model.ActionCreateTable,
 		Args:     []interface{}{tbInfo},
 	}
-	// Handle Table Options
 
 	d.handleTableOptions(options, tbInfo, schema.ID)
 	err = d.doDDLJob(ctx, job)
@@ -927,7 +923,7 @@ func (d *ddl) handleTableOptions(options []*ast.TableOption, tbInfo *model.Table
 }
 
 func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
-	// now we only allow one schema changes at the same time.
+	// Now we only allow one schema changing at the same time.
 	if len(specs) != 1 {
 		return errRunMultiSchemaChanges
 	}
@@ -950,12 +946,12 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 			case ast.ConstraintForeignKey:
 				err = d.CreateForeignKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			default:
-				// nothing to do now.
+				// Nothing to do now.
 			}
 		case ast.AlterTableDropForeignKey:
 			err = d.DropForeignKey(ctx, ident, model.NewCIStr(spec.Name))
 		default:
-			// nothing to do now.
+			// Nothing to do now.
 		}
 
 		if err != nil {
@@ -1007,8 +1003,8 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		return ErrTooLongIdent.Gen("too long column %s", colName)
 	}
 
-	// ingore table constraints now, maybe return error later
-	// we use length(t.Cols()) as the default offset first, later we will change the
+	// Ingore table constraints now, maybe return error later.
+	// We use length(t.Cols()) as the default offset firstly, later we will change the
 	// column's offset later.
 	col, _, err = d.buildColumnAndConstraint(ctx, len(t.Cols()), spec.Column)
 	if err != nil {
@@ -1239,6 +1235,64 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
+	// For every DDL, we must commit current transaction.
+	if err := ctx.CommitTxn(); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Get a global job ID and put the DDL job in the queue.
+	err := d.addDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Notice worker that we push a new job and wait the job done.
+	asyncNotify(d.ddlJobCh)
+	log.Warnf("[ddl] start DDL job %v", job)
+
+	var historyJob *model.Job
+	jobID := job.ID
+	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
+	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
+	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 10*time.Second))
+	startTime := time.Now()
+	jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Inc()
+	defer func() {
+		ticker.Stop()
+		jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Dec()
+		retLabel := handleJobSucc
+		if err != nil {
+			retLabel = handleJobFailed
+		}
+		handleJobHistogram.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String(),
+			retLabel).Observe(time.Since(startTime).Seconds())
+	}()
+	for {
+		select {
+		case <-d.ddlJobDoneCh:
+		case <-ticker.C:
+		}
+
+		historyJob, err = d.getHistoryDDLJob(jobID)
+		if err != nil {
+			log.Errorf("[ddl] get history DDL job err %v, check again", err)
+			continue
+		} else if historyJob == nil {
+			log.Warnf("[ddl] DDL job %d is not in history, maybe not run", jobID)
+			continue
+		}
+
+		// If a job is a history job, the state must be JobDone or JobCancel.
+		if historyJob.State == model.JobDone {
+			log.Warnf("[ddl] DDL job %d is finished", jobID)
+			return nil
+		}
+
+		return errors.Trace(historyJob.Error)
+	}
 }
 
 func (d *ddl) callHookOnChanged(err error) error {

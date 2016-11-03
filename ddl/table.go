@@ -29,13 +29,14 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	if err := job.DecodeArgs(tbInfo); err != nil {
-		// arg error, cancel this job.
+		// Invalid arguments, cancel this job.
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
 
 	tbInfo.State = model.StateNone
 
+	// Check this table's database.
 	tables, err := t.ListTables(schemaID)
 	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 		job.State = model.JobCancelled
@@ -44,10 +45,11 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
+	// Check the table.
 	for _, tbl := range tables {
 		if tbl.Name.L == tbInfo.Name.L {
 			if tbl.ID != tbInfo.ID {
-				// table exists, can't create, we should cancel this job now.
+				// This table already exists, can't create it, we should cancel this job now.
 				job.State = model.JobCancelled
 				return errors.Trace(infoschema.ErrTableExists)
 			}
@@ -70,7 +72,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// finish this job
+		// Finish this job.
 		job.State = model.JobDone
 		addTableHistoryInfo(job, ver, tbInfo)
 		return nil
@@ -83,6 +85,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 
+	// Check this table's database.
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 		job.State = model.JobCancelled
@@ -91,6 +94,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
+	// Check the table.
 	if tblInfo == nil {
 		job.State = model.JobCancelled
 		return errors.Trace(infoschema.ErrTableNotExists)
@@ -118,7 +122,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		if err = t.DropTable(job.SchemaID, job.TableID); err != nil {
 			break
 		}
-		// finish this job
+		// Finish this job.
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
 		addTableHistoryInfo(job, ver, tblInfo)
@@ -146,7 +150,7 @@ func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// finish this background job
+	// Finish this background job.
 	if delCount < limit {
 		job.SchemaState = model.StateNone
 		job.State = model.JobDone
