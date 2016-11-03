@@ -2366,6 +2366,7 @@ func (s *testSessionSuite) TestRetryAttempts(c *C) {
 	sv := variable.GetSessionVars(se)
 	// Prevent getting variable value from storage.
 	sv.SetSystemVar("autocommit", types.NewDatum("ON"))
+	sv.CommonGlobalLoaded = true
 
 	// Add retry info.
 	retryInfo := sv.RetryInfo
