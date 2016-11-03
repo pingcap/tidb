@@ -58,9 +58,11 @@ var (
 	errCantDropColWithIndex = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
 
-	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specificate a key length")
-	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
-	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey, fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
+	errBlobKeyWithoutLength  = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specificate a key length")
+	errIncorrectPrefixKey    = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
+	errTooLongKey            = terror.ClassDDL.New(codeTooLongKey, fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
+	errKeyColumnDoesNotExits = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
+	errDupKeyName            = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -347,14 +349,14 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 
 func checkTooLongSchema(schema model.CIStr) error {
 	if len(schema.L) > mysql.MaxDatabaseNameLength {
-		return ErrTooLongIdent.Gen("too long schema %s", schema.L)
+		return ErrTooLongIdent.Gen("too long schema %s", schema.O)
 	}
 	return nil
 }
 
 func checkTooLongTable(table model.CIStr) error {
 	if len(table.L) > mysql.MaxTableNameLength {
-		return ErrTooLongIdent.Gen("too long table %s", table.L)
+		return ErrTooLongIdent.Gen("too long table %s", table.O)
 	}
 	return nil
 }
@@ -534,7 +536,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				if !evaluator.IsCurrentTimeExpr(v.Expr) {
-					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
+					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name.O)
 				}
 
 				col.Flag |= mysql.OnUpdateNowFlag
@@ -646,7 +648,7 @@ func checkDefaultValue(c *table.Column, hasDefaultValue bool) error {
 
 	// Set not null but default null is invalid.
 	if mysql.HasNotNullFlag(c.Flag) {
-		return ErrColumnBadNull.Gen("invalid default value for %s", c.Name)
+		return ErrColumnBadNull.Gen("invalid default value for %s", c.Name.O)
 	}
 
 	return nil
@@ -657,7 +659,7 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		nameLower := colDef.Name.Name.O
 		if colNames[nameLower] {
-			return infoschema.ErrColumnExists.Gen("duplicate column %s", colDef.Name)
+			return infoschema.ErrColumnExists.Gen("duplicate column %s", colDef.Name.Name)
 		}
 		colNames[nameLower] = true
 	}
@@ -667,7 +669,7 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
-			return ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name.L)
+			return ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name.O)
 		}
 	}
 	return nil
@@ -680,9 +682,9 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	nameLower := strings.ToLower(name)
 	if namesMap[nameLower] {
 		if foreign {
-			return infoschema.ErrForeignKeyExists.Gen("CREATE TABLE: duplicate foreign key %s", name)
+			return infoschema.ErrForeignKeyExists.Gen("duplicate foreign key %s", name)
 		}
-		return infoschema.ErrIndexExists.Gen("CREATE TABLE: duplicate key %s", name)
+		return errDupKeyName.Gen("duplicate key name %s", name)
 	}
 	namesMap[nameLower] = true
 	return nil
@@ -782,7 +784,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 				key := constr.Keys[0]
 				col := table.FindCol(cols, key.Column.Name.O)
 				if col == nil {
-					return nil, infoschema.ErrColumnNotExists.Gen("no such column: %v", key)
+					return nil, errKeyColumnDoesNotExits.Gen("key column %s doesn't exist in table", key.Column.Name)
 				}
 				switch col.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong,
@@ -800,7 +802,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		for _, key := range constr.Keys {
 			col := table.FindCol(cols, key.Column.Name.O)
 			if col == nil {
-				return nil, infoschema.ErrColumnNotExists.Gen("no such column: %v", key)
+				return nil, errKeyColumnDoesNotExits.Gen("key column %s doesn't exist in table", key.Column.Name)
 			}
 			indexColumns = append(indexColumns, &model.IndexColumn{
 				Name:   key.Column.Name,
@@ -842,7 +844,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ident.Schema)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ident.Schema.O)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		return errors.Trace(infoschema.ErrTableExists)
@@ -1043,7 +1045,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 	// Check whether dropped column has existed.
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
-		return infoschema.ErrColumnNotExists.Gen("column %s doesn’t exist", colName.L)
+		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName.O)
 	}
 
 	job := &model.Job{
@@ -1063,7 +1065,7 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema.O)
 	}
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
@@ -1086,7 +1088,7 @@ func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema.O)
 	}
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
@@ -1111,7 +1113,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema.O)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -1167,7 +1169,7 @@ func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.C
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema.O)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -1197,7 +1199,7 @@ func (d *ddl) DropForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIS
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema.O)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -1288,26 +1290,30 @@ const (
 	codeCantDropColWithIndex = 201
 	codeUnsupportedAddColumn = 202
 
-	codeBadNull              = 1048
-	codeTooLongIdent         = 1059
-	codeTooLongKey           = 1071
-	codeIncorrectPrefixKey   = 1089
-	codeCantRemoveAllFields  = 1090
-	codeCantDropFieldOrKey   = 1091
-	codeBlobKeyWithoutLength = 1170
-	codeInvalidOnUpdate      = 1294
+	codeBadNull               = 1048
+	codeTooLongIdent          = 1059
+	codeDupKeyName            = 1061
+	codeTooLongKey            = 1071
+	codeKeyColumnDoesNotExits = 1072
+	codeIncorrectPrefixKey    = 1089
+	codeCantRemoveAllFields   = 1090
+	codeCantDropFieldOrKey    = 1091
+	codeBlobKeyWithoutLength  = 1170
+	codeInvalidOnUpdate       = 1294
 )
 
 func init() {
 	ddlMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeBadNull:              mysql.ErrBadNull,
-		codeCantRemoveAllFields:  mysql.ErrCantRemoveAllFields,
-		codeCantDropFieldOrKey:   mysql.ErrCantDropFieldOrKey,
-		codeInvalidOnUpdate:      mysql.ErrInvalidOnUpdate,
-		codeBlobKeyWithoutLength: mysql.ErrBlobKeyWithoutLength,
-		codeIncorrectPrefixKey:   mysql.ErrWrongSubKey,
-		codeTooLongIdent:         mysql.ErrTooLongIdent,
-		codeTooLongKey:           mysql.ErrTooLongKey,
+		codeBadNull:               mysql.ErrBadNull,
+		codeCantRemoveAllFields:   mysql.ErrCantRemoveAllFields,
+		codeCantDropFieldOrKey:    mysql.ErrCantDropFieldOrKey,
+		codeInvalidOnUpdate:       mysql.ErrInvalidOnUpdate,
+		codeBlobKeyWithoutLength:  mysql.ErrBlobKeyWithoutLength,
+		codeIncorrectPrefixKey:    mysql.ErrWrongSubKey,
+		codeTooLongIdent:          mysql.ErrTooLongIdent,
+		codeTooLongKey:            mysql.ErrTooLongKey,
+		codeKeyColumnDoesNotExits: mysql.ErrKeyColumnDoesNotExits,
+		codeDupKeyName:            mysql.ErrDupKeyName,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

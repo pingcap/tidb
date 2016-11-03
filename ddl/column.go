@@ -113,7 +113,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		if columnInfo.State == model.StatePublic {
 			// we already have a column with same column name
 			job.State = model.JobCancelled
-			return infoschema.ErrColumnExists.Gen("ADD COLUMN: column already exist %s", col.Name.L)
+			return infoschema.ErrColumnExists.Gen("column already exist %s", col.Name.O)
 		}
 	} else {
 		columnInfo, offset, err = d.addColumn(tblInfo, col, pos)
@@ -217,13 +217,13 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	colInfo := findCol(tblInfo.Columns, colName.L)
 	if colInfo == nil {
 		job.State = model.JobCancelled
-		return infoschema.ErrColumnNotExists.Gen("column %s doesn't exist", colName)
+		return ErrCantDropFieldOrKey.Gen("index %s doesn't exist", colName.O)
 	}
 
 	if len(tblInfo.Columns) == 1 {
 		job.State = model.JobCancelled
 		return ErrCantRemoveAllFields.Gen("can't drop only column %s in table %s",
-			colName, tblInfo.Name)
+			colName.O, tblInfo.Name.O)
 	}
 
 	// we don't support drop column with index covered now.
@@ -233,7 +233,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 			if col.Name.L == colName.L {
 				job.State = model.JobCancelled
 				return errCantDropColWithIndex.Gen("can't drop column %s with index %s covered now",
-					colName, indexInfo.Name)
+					colName.O, indexInfo.Name.O)
 			}
 		}
 	}
