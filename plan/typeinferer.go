@@ -378,7 +378,7 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 }
 
 // ConvertValueToColumnTypeIfNeeded checks if the expr in PatternInExpr is column name,
-// and cast function to the items in the list.
+// and casts function to the items in the list.
 func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
 	if cn, ok := x.Expr.(*ast.ColumnNameExpr); ok && cn.Refer != nil {
 		ft := cn.Refer.Column.FieldType
@@ -400,7 +400,7 @@ func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
 			}
 		}
 		if v.err != nil {
-			// TODO: errors should be handled differently according to query context.
+			// TODO: Errors should be handled differently according to query context.
 			log.Errorf("inferor type for pattern in error %v", v.err)
 			v.err = nil
 		}
