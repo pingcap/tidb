@@ -351,7 +351,6 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
-	// TODO: In mysql, from_unixtime(1451606400.9999999) returns '2016-01-01 08:00:01.000000', but we get '2016-01-01 08:00:01'.
 	defer testleak.AfterTest(c)()
 
 	tbl := []struct {

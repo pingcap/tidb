@@ -603,7 +603,6 @@ func builtinYearWeek(args []types.Datum, _ context.Context) (types.Datum, error)
 
 // http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
 func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	// TODO: support Decimal
 	unixTimeStamp, err := args[0].ToDecimal()
 	if err != nil {
 		return d, errors.Trace(err)
@@ -619,7 +618,10 @@ func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, 
 	if integralPart > int64(1<<31-1) {
 		return
 	}
-	// split the integral part and fractional part of a decimal.
+	// split the integral part and fractional part of a decimal timestamp.
+	// e.g. for timestamp 12345.678,
+	// first get the integral part 12345,
+	// then (12345.678 - 12345) * (10^9) to get the decimal part and convert it to nanosecond precision.
 	v := new(mysql.MyDecimal)
 	x := types.NewIntDatum(integralPart)
 	integer, _ := x.ToDecimal()
@@ -641,16 +643,19 @@ func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, 
 	t := mysql.Time{
 		Time: time.Unix(integralPart, fractionalPart),
 		Type: mysql.TypeDatetime,
-		// set unspecified for later round
-		Fsp: mysql.UnspecifiedFsp,
+		Fsp:  mysql.UnspecifiedFsp,
 	}
-	fracDigitsNumber := int(math.Log10(float64(fractionalPart))) // get digits' number of fractional part.
-	if fracDigitsNumber > 6 {
-		t, err = t.RoundFrac(6)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		t.Fsp = 6
+	_, fracDigitsNumber := unixTimeStamp.PrecisionAndFrac()
+	fsp := fracDigitsNumber
+	if fracDigitsNumber > mysql.MaxFsp {
+		fsp = mysql.MaxFsp
+	}
+	t, err = t.RoundFrac(fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].Kind() == types.KindString { // keep consistent with MySQL.
+		t.Fsp = mysql.MaxFsp
 	}
 	d.SetMysqlTime(t)
 	if len(args) == 1 {
