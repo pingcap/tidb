@@ -16,6 +16,7 @@ package plan
 import (
 	"strings"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -88,6 +89,7 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		x.Type.Charset = charset.CharsetBin
 		x.Type.Collate = charset.CollationBin
+		v.convertValueToColumnTypeIfNeeded(x)
 	case *ast.PatternLikeExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		x.Type.Charset = charset.CharsetBin
@@ -372,4 +374,31 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 	x.SetType(&currType)
 	// TODO: We need a better way to set charset/collation
 	x.Type.Charset, x.Type.Collate = types.DefaultCharsetForType(x.Type.Tp)
+}
+
+// ConvertValueToColumnTypeIfNeeded checks if the expr in PatternInExpr is column name,
+// and cast function to the items in the list.
+func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
+	if cn, ok := x.Expr.(*ast.ColumnNameExpr); ok && cn.Refer != nil {
+		ft := cn.Refer.Column.FieldType
+		for _, expr := range x.List {
+			if valueExpr, ok := expr.(*ast.ValueExpr); ok {
+				newDatum, err := valueExpr.Datum.ConvertTo(&ft)
+				if err != nil {
+					v.err = errors.Trace(err)
+					return
+				}
+				cmp, err := newDatum.CompareDatum(valueExpr.Datum)
+				if err != nil {
+					v.err = errors.Trace(err)
+					return
+				}
+				if cmp != 0 {
+					// The value has been truncated after Convert, ignore this case.
+					continue
+				}
+				valueExpr.SetDatum(newDatum)
+			}
+		}
+	}
 }
