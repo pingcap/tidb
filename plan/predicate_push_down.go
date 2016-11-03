@@ -563,6 +563,13 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 	return
 }
 
+// CheckColumnIsGroupByItem check whether a column is a group-by item
+func (p *Aggregation) CheckColumnIsGroupByItem(col *expression.Column) bool {
+	id := p.GetSchema().GetIndex(col)
+	colOriginal, isColumn := p.AggFuncs[id].GetArgs()[0].(*expression.Column)
+	return isColumn && expression.Schema(p.groupByCols).GetIndex(colOriginal) != -1
+}
+
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
 	retPlan = p
@@ -582,7 +589,7 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 			extractedCols, _ := extractColumn(cond, nil, nil)
 			ok := true
 			for _, col := range extractedCols {
-				if p.groupBySchema.GetIndex(col) == -1 {
+				if !p.CheckColumnIsGroupByItem(col) {
 					ok = false
 					break
 				}

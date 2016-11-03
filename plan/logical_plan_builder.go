@@ -34,10 +34,10 @@ func (a *idAllocator) allocID() string {
 	return fmt.Sprintf("_%d", a.id)
 }
 
-func (p *Aggregation) buildGroupBySchema() {
-	for id, fun := range p.AggFuncs {
-		if fun.GetName() == ast.AggFuncFirstRow {
-			p.groupBySchema = append(p.groupBySchema, p.GetSchema()[id])
+func (p *Aggregation) buildGroupByColumns() {
+	for _, item := range p.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			p.groupByCols = append(p.groupByCols, col)
 		}
 	}
 }
@@ -89,7 +89,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	}
 	agg.GroupByItems = gby
 	agg.SetSchema(schema)
-	agg.buildGroupBySchema()
+	agg.buildGroupByColumns()
 	return agg, aggIndexMap
 }
 
