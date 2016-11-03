@@ -612,10 +612,13 @@ func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, 
 		return
 	}
 	integralPart, err := unixTimeStamp.ToInt()
-	if err != nil && err != mysql.ErrTruncated {
+	if err == mysql.ErrTruncated {
+		err = nil
+	}
+	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if integralPart > int64(1<<31-1) {
+	if integralPart > int64(math.MaxInt32) {
 		return
 	}
 	// split the integral part and fractional part of a decimal timestamp.
@@ -624,19 +627,28 @@ func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, 
 	// then (12345.678 - 12345) * (10^9) to get the decimal part and convert it to nanosecond precision.
 	v := new(mysql.MyDecimal)
 	x := types.NewIntDatum(integralPart)
-	integer, _ := x.ToDecimal()
+	integer, err := x.ToDecimal()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	err = mysql.DecimalSub(unixTimeStamp, integer, v)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 	x = types.NewIntDatum(1000000000)
-	nano, _ := x.ToDecimal()
+	nano, err := x.ToDecimal()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	frac := new(mysql.MyDecimal)
 	err = mysql.DecimalMul(v, nano, frac)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 	fractionalPart, err := frac.ToInt()
+	if err == mysql.ErrTruncated {
+		err = nil
+	}
 	if err != nil {
 		return d, errors.Trace(err)
 	}

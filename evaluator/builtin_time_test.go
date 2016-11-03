@@ -390,10 +390,21 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 			format := types.NewStringDatum(t.format)
 			v, err := builtinFromUnixTime([]types.Datum{timestamp, format}, nil)
 			c.Assert(err, IsNil)
-			result, _ := builtinDateFormat([]types.Datum{types.NewStringDatum(unixTime), format}, nil)
+			result, err := builtinDateFormat([]types.Datum{types.NewStringDatum(unixTime), format}, nil)
+			c.Assert(err, IsNil)
 			c.Assert(v.GetString(), GreaterEqual, result.GetString())
 		}
 	}
+
+	v, err := builtinFromUnixTime([]types.Datum{types.NewIntDatum(-12345)}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), GreaterEqual, types.KindNull)
+	c.Assert(v.Kind(), LessEqual, types.KindNull)
+
+	_, err = builtinFromUnixTime([]types.Datum{types.NewIntDatum(math.MaxInt32+1)}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), GreaterEqual, types.KindNull)
+	c.Assert(v.Kind(), LessEqual, types.KindNull)
 }
 
 func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
