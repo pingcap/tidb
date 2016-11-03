@@ -78,8 +78,8 @@ func getRowCountByIndexRange(table *statistics.Table, indexRange *IndexRange, in
 	return uint64(count), nil
 }
 
-func getRowCountByTableRange(statsTbl *statistics.Table, ranges []TableRange, offset int) uint64 {
-	rowCount := 0
+func getRowCountByTableRange(statsTbl *statistics.Table, ranges []TableRange, offset int) (uint64, error) {
+	var rowCount uint64
 	for _, rg := range ranges {
 		var cnt int64
 		var err error
@@ -97,14 +97,14 @@ func getRowCountByTableRange(statsTbl *statistics.Table, ranges []TableRange, of
 			}
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		rowCount += uint64(cnt)
 	}
 	if rowCount > uint64(statsTbl.Count) {
 		rowCount = uint64(statsTbl.Count)
 	}
-	return rowCount
+	return rowCount, nil
 }
 
 func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
@@ -175,7 +175,10 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 				break
 			}
 		}
-		rowCount = getRowCountByTableRange(statsTbl, ts.Ranges, offset)
+		rowCount, err = getRowCountByTableRange(statsTbl, ts.Ranges, offset)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	if ts.ConditionPBExpr != nil {
 		rowCount = uint64(float64(rowCount) * selectionFactor)
