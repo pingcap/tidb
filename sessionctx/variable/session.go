@@ -316,27 +316,5 @@ func (s *SessionVars) GetTiDBSystemVar(ctx context.Context, name string) (string
 	if ok {
 		return sVal, nil
 	}
-
-	if ctx.Value(context.Initing) != nil {
-		// When running bootstrap or upgrade job, we should not access global storage.
-		return SysVars[key].Value, nil
-	}
-
-	if key == DistSQLScanConcurrencyVar {
-		// Get global variable need to scan table which depends on DistSQLScanConcurrencyVar.
-		// So we should add it here to break the dependency loop.
-		s.systems[DistSQLScanConcurrencyVar] = SysVars[key].Value
-	}
-
-	globalVars := GetGlobalVarAccessor(ctx)
-	globalVal, err := globalVars.GetGlobalSysVar(ctx, key)
-	if err != nil {
-		if key == DistSQLScanConcurrencyVar {
-			// Clean up.
-			delete(s.systems, DistSQLScanConcurrencyVar)
-		}
-		return "", errors.Trace(err)
-	}
-	s.systems[key] = globalVal
-	return globalVal, nil
+	return SysVars[key].Value, nil
 }
