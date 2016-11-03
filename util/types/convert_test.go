@@ -486,6 +486,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeLong, " 2.35e3  ", "2350")
 	signedAccept(c, mysql.TypeLong, " +2.51 ", "3")
 	signedAccept(c, mysql.TypeLong, " -3.58", "-4")
+	signedDeny(c, mysql.TypeLong, " 1a ", "1")
 
 	// integer from float
 	signedAccept(c, mysql.TypeLong, 234.5456, "235")
