@@ -1205,9 +1205,9 @@ func (d *Datum) toSignedInteger(tp byte) (int64, error) {
 		fval, err := StrToFloat(s)
 		i64, err1 := convertFloatToInt(fval, lowerBound, upperBound, tp)
 		if err == nil {
-			err = errors.Trace(err1)
+			err = err1
 		}
-		return i64, err
+		return i64, errors.Trace(err)
 	case KindBytes:
 		s := string(d.GetBytes())
 		fval, err := StrToFloat(s)
