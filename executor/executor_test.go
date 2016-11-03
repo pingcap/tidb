@@ -457,6 +457,20 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *testSuite) TestIn(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (c1 int primary key, c2 int, key c (c2));`)
+	for i := 0; i <= 200; i++ {
+		tk.MustExec(fmt.Sprintf("insert t values(%d, %d)", i, i))
+	}
+	queryStr := `select c2 from t where c1 in ('7', '10', '112', '111', '98', '106', '100', '9', '18', '17') order by c2`
+	r := tk.MustQuery(queryStr)
+	r.Check(testkit.Rows("7", "9", "10", "17", "18", "98", "100", "106", "111", "112"))
+}
+
 func (s *testSuite) TestTablePKisHandleScan(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
