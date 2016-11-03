@@ -71,6 +71,17 @@ func mockResolve(node ast.Node) error {
 					Length: types.UnspecifiedLength,
 				},
 			},
+			State: model.StatePublic,
+		},
+		{
+			Name: model.NewCIStr("e"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("e"),
+					Length: types.UnspecifiedLength,
+				},
+			},
+			State: model.StateWriteOnly,
 		},
 	}
 	pkColumn := &model.ColumnInfo{
@@ -789,6 +800,22 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		sql  string
 		best string
 	}{
+		{
+			sql:  "select * from t t1 use index(e)",
+			best: "Table(t)",
+		},
+		{
+			sql:  "select * from t t1 use index(c_d_e)",
+			best: "Index(t.c_d_e)[[<nil>,+inf]]",
+		},
+		{
+			sql:  "select * from t t1 ignore index(e) where c < 0",
+			best: "Index(t.c_d_e)[[-inf,0)]",
+		},
+		{
+			sql:  "select * from t t1 ignore index(c_d_e) where c < 0",
+			best: "Table(t)->Selection",
+		},
 		{
 			sql:  "select * from t t1 where 1 = 0",
 			best: "Dummy",
