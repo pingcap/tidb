@@ -350,6 +350,60 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		isDecimal      bool
+		integralPart   int64
+		fractionalPart int64
+		decimal        float64
+		format         string
+		ansLen         int
+	}{
+		{false, 1451606400, 0, 0, "", 19},
+		{true, 1451606400, 123456000, 1451606400.123456, "", 26},
+		{true, 1451606400, 999999000, 1451606400.999999, "", 26},
+		{true, 1451606400, 999999900, 1451606400.9999999, "", 19},
+		{false, 1451606400, 0, 0, "%Y %D %M %h:%i:%s %x", 19},
+		{true, 1451606400, 123456000, 1451606400.123456, "%Y %D %M %h:%i:%s %x", 26},
+		{true, 1451606400, 999999000, 1451606400.999999, "%Y %D %M %h:%i:%s %x", 26},
+		{true, 1451606400, 999999900, 1451606400.9999999, "%Y %D %M %h:%i:%s %x", 19},
+	}
+
+	for _, t := range tbl {
+		var timestamp types.Datum
+		if !t.isDecimal {
+			timestamp.SetInt64(t.integralPart)
+		} else {
+			timestamp.SetFloat64(t.decimal)
+		}
+		// result of from_unixtime() is dependent on specific time zone.
+		unixTime := time.Unix(t.integralPart, t.fractionalPart).Round(time.Microsecond).String()[:t.ansLen]
+		if len(t.format) == 0 {
+			v, err := builtinFromUnixTime([]types.Datum{timestamp}, nil)
+			c.Assert(err, IsNil)
+			ans := v.GetMysqlTime()
+			c.Assert(ans.String(), Equals, unixTime)
+		} else {
+			format := types.NewStringDatum(t.format)
+			v, err := builtinFromUnixTime([]types.Datum{timestamp, format}, nil)
+			c.Assert(err, IsNil)
+			result, err := builtinDateFormat([]types.Datum{types.NewStringDatum(unixTime), format}, nil)
+			c.Assert(err, IsNil)
+			c.Assert(v.GetString(), Equals, result.GetString())
+		}
+	}
+
+	v, err := builtinFromUnixTime([]types.Datum{types.NewIntDatum(-12345)}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
+
+	_, err = builtinFromUnixTime([]types.Datum{types.NewIntDatum(math.MaxInt32 + 1)}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
+}
+
 func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
 	defer testleak.AfterTest(c)()
 	last := time.Now()
