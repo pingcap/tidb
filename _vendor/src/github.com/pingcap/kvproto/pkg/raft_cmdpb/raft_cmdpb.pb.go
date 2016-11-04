@@ -48,13 +48,11 @@ import (
 	"math"
 
 	proto "github.com/golang/protobuf/proto"
-
-	metapb "github.com/pingcap/kvproto/pkg/metapb"
-
-	errorpb "github.com/pingcap/kvproto/pkg/errorpb"
-
-	eraftpb "github.com/pingcap/kvproto/pkg/eraftpb"
 )
+
+import metapb "github.com/pingcap/kvproto/pkg/metapb"
+import errorpb "github.com/pingcap/kvproto/pkg/errorpb"
+import eraftpb "github.com/pingcap/kvproto/pkg/eraftpb"
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
@@ -478,8 +476,6 @@ func (m *ChangePeerResponse) GetRegion() *metapb.Region {
 type SplitRequest struct {
 	// This can be only called in internal RaftStore now.
 	// The split_key must be in the been splitting region.
-	// If the split_key is none, we will choose a proper key
-	// to split the region in half.
 	SplitKey []byte `protobuf:"bytes,1,opt,name=split_key" json:"split_key,omitempty"`
 	// We split the region into two, first uses the origin
 	// parent region id, and the second uses the new_region_id.
