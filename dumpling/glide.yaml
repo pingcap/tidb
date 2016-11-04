@@ -43,7 +43,7 @@ import:
 - package: github.com/peterh/liner
   version: 3f3a91ddf7d2784892a58e27ddf48d70e3304bb7
 - package: github.com/pingcap/check
-  version: ce8a2f822ab1e245a4eefcef2996531c79c943f1
+  version: 5ebf485998c8549fd2ccfd8f716adebe2e69d689
 - package: github.com/pingcap/goleveldb
   version: 158edde5a354460121af007d02a00b01c8d03443
   subpackages:
