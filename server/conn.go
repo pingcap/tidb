@@ -593,9 +593,9 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 		sql = sql[:1024]
 	}
 	if costTime < time.Second {
-		log.Debugf("[TIME_QUERY][%d] %v, session:%d\n%s", cc.connectionID, costTime, sql)
+		log.Debugf("[%d][TIME_QUERY] %v\n%s", cc.connectionID, costTime, sql)
 	} else {
-		log.Warnf("[TIME_QUERY][%d] %v, session:%d\n%s", cc.connectionID, costTime, sql)
+		log.Warnf("[%d][TIME_QUERY] %v\n%s", cc.connectionID, costTime, sql)
 	}
 	return errors.Trace(err)
 }
