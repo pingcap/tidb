@@ -51,9 +51,8 @@ func NewLockResolver(etcdAddrs []string) (*LockResolver, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	clusterID := pdCli.GetClusterID()
-	uuid := fmt.Sprintf("tikv-%v-%v", etcdAddrs, clusterID)
-	s, err := newTikvStore(clusterID, uuid, &codecPDClient{pdCli}, newRPCClient(), false)
+	uuid := fmt.Sprintf("tikv-%v-%v", etcdAddrs, pdCli.GetClusterID())
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -41,7 +41,7 @@ func (s *testStoreSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	mvccStore := mocktikv.NewMvccStore()
 	clientFactory := mocktikv.NewRPCClient(s.cluster, mvccStore)
-	store, err := newTikvStore(1, "mock-tikv-store", mocktikv.NewPDClient(s.cluster), clientFactory, false)
+	store, err := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), clientFactory, false)
 	c.Assert(err, IsNil)
 	s.store = store
 }
@@ -53,7 +53,7 @@ func (s *testStoreSuite) TestParsePath(c *C) {
 	c.Assert(disableGC, IsFalse)
 
 	_, _, err = parsePath("tikv://node1:2379")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 	_, disableGC, err = parsePath("tikv://node1:2379?disableGC=true")
 	c.Assert(err, IsNil)
 	c.Assert(disableGC, IsTrue)

@@ -58,15 +58,14 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	clusterID := pdCli.GetClusterID()
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
-	uuid := fmt.Sprintf("tikv-%v-%v", etcdAddrs, clusterID)
+	uuid := fmt.Sprintf("tikv-%v-%v", etcdAddrs, pdCli.GetClusterID())
 	if store, ok := mc.cache[uuid]; ok {
 		return store, nil
 	}
 
-	s, err := newTikvStore(clusterID, uuid, &codecPDClient{pdCli}, newRPCClient(), !disableGC)
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), !disableGC)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -87,14 +86,14 @@ type tikvStore struct {
 	gcWorker     *GCWorker
 }
 
-func newTikvStore(clusterID uint64, uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
+func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
 	oracle, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	store := &tikvStore{
-		clusterID:   clusterID,
+		clusterID:   pdClient.GetClusterID(),
 		uuid:        uuid,
 		oracle:      oracle,
 		client:      client,
@@ -117,7 +116,7 @@ func NewMockTikvStore() (kv.Storage, error) {
 	mvccStore := mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
 	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
-	return newTikvStore(1, uuid, mocktikv.NewPDClient(cluster), client, false)
+	return newTikvStore(uuid, mocktikv.NewPDClient(cluster), client, false)
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {
