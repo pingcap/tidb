@@ -79,8 +79,8 @@ type clientConn struct {
 
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
-	return fmt.Sprintf("conn: %s, status: %d, collation: %s, user: %s, lastInsertId: %d",
-		cc.conn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user, cc.ctx.LastInsertID(),
+	return fmt.Sprintf("id:%d, addr:%s status:%d, collation:%s, user:%s",
+		cc.connectionID, cc.conn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
 }
 
@@ -335,8 +335,8 @@ func (cc *clientConn) Run() {
 			if terror.ErrorEqual(err, io.EOF) {
 				return
 			}
-			log.Warnf("dispatch error %s, %s", errors.ErrorStack(err), cc)
-			log.Warnf("cmd: %s", string(data[1:]))
+			cmd := string(data[1:])
+			log.Warnf("[%d] dispatch error:\n%s\n%s\n%s", cc.connectionID, cc, cmd, errors.ErrorStack(err))
 			cc.writeError(err)
 		}
 
@@ -593,9 +593,9 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 		sql = sql[:1024]
 	}
 	if costTime < time.Second {
-		log.Debugf("[TIME_QUERY] %v %s", costTime, sql)
+		log.Debugf("[%d][TIME_QUERY] %v\n%s", cc.connectionID, costTime, sql)
 	} else {
-		log.Warnf("[TIME_QUERY] %v %s", costTime, sql)
+		log.Warnf("[%d][TIME_QUERY] %v\n%s", cc.connectionID, costTime, sql)
 	}
 	return errors.Trace(err)
 }

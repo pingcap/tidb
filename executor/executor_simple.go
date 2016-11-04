@@ -206,6 +206,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, value.GetString())
 			if name == variable.TiDBSnapshot {
 				err = e.loadSnapshotInfoSchemaIfNeeded(sessionVars)
 				if err != nil {
@@ -222,7 +223,7 @@ func (e *SimpleExec) loadSnapshotInfoSchemaIfNeeded(sessionVars *variable.Sessio
 		sessionVars.SnapshotInfoschema = nil
 		return nil
 	}
-	log.Infof("loadSnapshotInfoSchema, SnapshotTS:%d", sessionVars.SnapshotTS)
+	log.Infof("[%d] loadSnapshotInfoSchema, SnapshotTS:%d", sessionVars.ConnectionID, sessionVars.SnapshotTS)
 	dom := sessionctx.GetDomain(e.ctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(sessionVars.SnapshotTS)
 	if err != nil {
@@ -304,9 +305,10 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) error {
 }
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
-	log.Info("RollbackTxn for rollback statement.")
+	sessVars := variable.GetSessionVars(e.ctx)
+	log.Infof("[%d] execute rollback statement", sessVars.ConnectionID)
 	err := e.ctx.RollbackTxn()
-	variable.GetSessionVars(e.ctx).SetStatusFlag(mysql.ServerStatusInTrans, false)
+	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return errors.Trace(err)
 }
 

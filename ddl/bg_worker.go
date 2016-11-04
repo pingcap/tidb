@@ -142,7 +142,7 @@ func (d *ddl) updateBgJob(t *meta.Meta, job *model.Job) error {
 
 // finishBgJob finishs a background job.
 func (d *ddl) finishBgJob(t *meta.Meta, job *model.Job) error {
-	log.Warnf("[ddl] finish background job %v", job)
+	log.Infof("[ddl] finish background job %v", job)
 	if _, err := t.DeQueueBgJob(); err != nil {
 		return errors.Trace(err)
 	}

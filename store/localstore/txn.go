@@ -128,7 +128,7 @@ func (txn *dbTxn) Rollback() error {
 	if !txn.valid {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
-	log.Warnf("[kv] Rollback txn %d", txn.tid)
+	log.Infof("[kv] Rollback txn %d", txn.tid)
 	return txn.close()
 }
 

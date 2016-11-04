@@ -554,7 +554,7 @@ func getScanConcurrency(ctx context.Context) (int, error) {
 		return 0, errors.Trace(err)
 	}
 	c, err := strconv.ParseInt(concurrency, 10, 64)
-	log.Debugf("[DistSQL] Scan with concurrency %d", c)
+	log.Debugf("[%d] [DistSQL] Scan with concurrency %d", sessionVars.ConnectionID, c)
 	return int(c), errors.Trace(err)
 }
 
@@ -851,10 +851,11 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 				return nil, nil
 			}
 			duration := time.Since(startTs)
+			connID := variable.GetSessionVars(e.ctx).ConnectionID
 			if duration > 30*time.Millisecond {
-				log.Infof("[TIME_TABLE_SCAN] %v", duration)
+				log.Infof("[%d] [TIME_TABLE_SCAN] %v", connID, duration)
 			} else {
-				log.Debugf("[TIME_TABLE_SCAN] %v", duration)
+				log.Debugf("[%d] [TIME_TABLE_SCAN] %v", connID, duration)
 			}
 		}
 		// Get a row from partial result.
