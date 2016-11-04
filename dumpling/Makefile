@@ -124,7 +124,7 @@ update:
 	rm -r vendor && mv _vendor/src vendor || true
 	rm -rf _vendor
 ifdef PKG
-	glide update -s -v --skip-test ${PKG}
+	glide get -s -v --skip-test ${PKG}
 else
 	glide update -s -v -u --skip-test
 endif
