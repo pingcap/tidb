@@ -217,7 +217,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, false)
 
 	// Check background ddl info.
-	time.Sleep(testLease * 300)
+	time.Sleep(testLease * 400)
 	verifyBgJobState(c, d, job, model.JobDone)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(updatedCount, Equals, 2)

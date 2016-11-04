@@ -108,6 +108,9 @@ type SessionVars struct {
 	// Strict SQL mode
 	StrictSQLMode bool
 
+	// CommonGlobalLoaded indicates if common global variable has been loaded for this session.
+	CommonGlobalLoaded bool
+
 	// InUpdateStmt indicates if the session is handling update stmt.
 	InUpdateStmt bool
 
@@ -213,6 +216,11 @@ func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 	s.Status &= (^flag)
 }
 
+// GetStatusFlag gets the session server status variable, returns true if it is on.
+func (s *SessionVars) GetStatusFlag(flag uint16) bool {
+	return s.Status&flag > 0
+}
+
 // GetNextPreparedStmtID generates and returns the next session scope prepared statement id.
 func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	s.preparedStmtID++
@@ -226,7 +234,8 @@ func (s *SessionVars) SetCurrentUser(user string) {
 
 // special session variables.
 const (
-	sqlMode             = "sql_mode"
+	SQLModeVar          = "sql_mode"
+	AutocommitVar       = "autocommit"
 	characterSetResults = "character_set_results"
 )
 
@@ -244,18 +253,22 @@ func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if key == sqlMode {
+	switch key {
+	case SQLModeVar:
 		sVal = strings.ToUpper(sVal)
 		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
 			s.StrictSQLMode = true
 		} else {
 			s.StrictSQLMode = false
 		}
-	} else if key == TiDBSnapshot {
+	case TiDBSnapshot:
 		err = s.setSnapshotTS(sVal)
 		if err != nil {
 			return errors.Trace(err)
 		}
+	case AutocommitVar:
+		isAutocommit := strings.EqualFold(sVal, "ON") || sVal == "1"
+		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 	}
 	s.systems[key] = sVal
 	return nil
@@ -289,9 +302,9 @@ func (s *SessionVars) GetSystemVar(key string) types.Datum {
 	return d
 }
 
-// GetTiDBSystemVar get variable value for name.
+// GetTiDBSystemVar gets variable value for name.
 // The variable should be a TiDB specific system variable (The vars in tidbSysVars map).
-// If the session scope variable is not set, it will get global scope value and fill session scope value.
+// We load the variable from session first, if not found, use local defined default variable.
 func (s *SessionVars) GetTiDBSystemVar(ctx context.Context, name string) (string, error) {
 	key := strings.ToLower(name)
 	_, ok := tidbSysVars[key]
@@ -303,27 +316,5 @@ func (s *SessionVars) GetTiDBSystemVar(ctx context.Context, name string) (string
 	if ok {
 		return sVal, nil
 	}
-
-	if ctx.Value(context.Initing) != nil {
-		// When running bootstrap or upgrade job, we should not access global storage.
-		return SysVars[key].Value, nil
-	}
-
-	if key == DistSQLScanConcurrencyVar {
-		// Get global variable need to scan table which depends on DistSQLScanConcurrencyVar.
-		// So we should add it here to break the dependency loop.
-		s.systems[DistSQLScanConcurrencyVar] = SysVars[key].Value
-	}
-
-	globalVars := GetGlobalVarAccessor(ctx)
-	globalVal, err := globalVars.GetGlobalSysVar(ctx, key)
-	if err != nil {
-		if key == DistSQLScanConcurrencyVar {
-			// Clean up.
-			delete(s.systems, DistSQLScanConcurrencyVar)
-		}
-		return "", errors.Trace(err)
-	}
-	s.systems[key] = globalVal
-	return globalVal, nil
+	return SysVars[key].Value, nil
 }

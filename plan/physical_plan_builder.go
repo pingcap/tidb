@@ -302,7 +302,7 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if indexInfo.cost < info.cost {
+		if info == nil || indexInfo.cost < info.cost {
 			info = indexInfo
 		}
 	}
