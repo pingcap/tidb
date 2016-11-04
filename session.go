@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -77,7 +76,6 @@ type Session interface {
 
 var (
 	_         Session = (*session)(nil)
-	sessionID int64
 	sessionMu sync.Mutex
 )
 
@@ -119,7 +117,6 @@ type session struct {
 	txn         kv.Transaction // Current transaction
 	values      map[fmt.Stringer]interface{}
 	store       kv.Storage
-	sid         int64
 	history     stmtHistory
 	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
@@ -149,7 +146,7 @@ func (s *session) checkSchemaValidOrRollback() error {
 
 	if err1 := s.RollbackTxn(); err1 != nil {
 		// TODO: handle this error.
-		log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err1))
+		log.Errorf("[%d] rollback txn failed, err:%v", variable.GetSessionVars(s).ConnectionID, errors.ErrorStack(err1))
 		errMsg := fmt.Sprintf("schema is invalid, rollback txn err:%v", err1.Error())
 		return domain.ErrLoadSchemaTimeOut.Gen(errMsg)
 	}
@@ -246,16 +243,27 @@ func (s *session) GetClient() kv.Client {
 
 func (s *session) String() string {
 	// TODO: how to print binded context in values appropriately?
+	sessVars := variable.GetSessionVars(s)
 	data := map[string]interface{}{
+		"id":         sessVars.ConnectionID,
+		"user":       sessVars.User,
 		"currDBName": db.GetCurrentSchema(s),
-		"sid":        s.sid,
+		"stauts":     sessVars.Status,
+		"strictMode": sessVars.StrictSQLMode,
 	}
-
 	if s.txn != nil {
 		// if txn is committed or rolled back, txn is nil.
 		data["txn"] = s.txn.String()
 	}
-
+	if sessVars.SnapshotTS != 0 {
+		data["snapshotTS"] = sessVars.SnapshotTS
+	}
+	if sessVars.LastInsertID > 0 {
+		data["lastInsertID"] = sessVars.LastInsertID
+	}
+	if len(sessVars.PreparedStmts) > 0 {
+		data["preparedStmtCount"] = len(sessVars.PreparedStmts)
+	}
 	b, _ := json.MarshalIndent(data, "", "  ")
 	return string(b)
 }
@@ -428,9 +436,10 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	}
 	startTS := time.Now()
 	charset, collation := getCtxCharsetInfo(s)
+	connID := variable.GetSessionVars(s).ConnectionID
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
-		log.Warnf("compiling %s, error: %v", sql, err)
+		log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
 		return nil, errors.Trace(err)
 	}
 	sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
@@ -441,20 +450,19 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		startTS := time.Now()
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
-			log.Errorf("Syntax error: %s", sql)
-			log.Errorf("Error occurs at %s.", err1)
+			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
 			return nil, errors.Trace(err1)
 		}
 		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
-		id := variable.GetSessionVars(s).ConnectionID
-		s.stmtState = ph.StartStatement(sql, id, perfschema.CallerNameSessionExecute, rawStmts[i])
+
+		s.stmtState = ph.StartStatement(sql, connID, perfschema.CallerNameSessionExecute, rawStmts[i])
 		s.SetValue(context.QueryString, sql)
 
 		startTS = time.Now()
 		r, err := runStmt(s, st)
 		ph.EndStatement(s.stmtState)
 		if err != nil {
-			log.Warnf("session:%v, err:%v", s, err)
+			log.Warnf("[%d] session error:\n%v\n%s", connID, err, s)
 			return nil, errors.Trace(err)
 		}
 		sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
@@ -564,6 +572,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		err error
 		ac  bool
 	)
+	sessVars := variable.GetSessionVars(s)
 	if s.txn == nil {
 		err = s.loadCommonGlobalVariablesIfNeeded()
 		if err != nil {
@@ -578,7 +587,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if !ac {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
-		log.Infof("New txn:%s in session:%d", s.txn, s.sid)
+		log.Infof("[%d] new txn:%s", sessVars.ConnectionID, s.txn)
 	} else if forceNew {
 		err = s.CommitTxn()
 		if err != nil {
@@ -592,7 +601,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if !ac {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
-		log.Warnf("Force new txn:%s in session:%d", s.txn, s.sid)
+		log.Warnf("[%d] force new txn:%s", sessVars.ConnectionID, s.txn)
 	}
 	retryInfo := variable.GetSessionVars(s).RetryInfo
 	if retryInfo.Retrying {
@@ -616,7 +625,6 @@ func (s *session) ClearValue(key fmt.Stringer) {
 
 // Close function does some clean work when session end.
 func (s *session) Close() error {
-	log.Info("RollbackTxn for session close.")
 	return s.RollbackTxn()
 }
 
@@ -687,7 +695,6 @@ func CreateSession(store kv.Storage) (Session, error) {
 	s := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
-		sid:         atomic.AddInt64(&sessionID, 1),
 		debugInfos:  make(map[string]interface{}),
 		maxRetryCnt: 10,
 		parser:      parser.New(),
