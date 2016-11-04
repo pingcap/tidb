@@ -34,6 +34,14 @@ func (a *idAllocator) allocID() string {
 	return fmt.Sprintf("_%d", a.id)
 }
 
+func (p *Aggregation) collectGroupByColumns() {
+	for _, item := range p.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			p.groupByCols = append(p.groupByCols, col)
+		}
+	}
+}
+
 func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gby []expression.Expression, correlated bool) (LogicalPlan, map[int]int) {
 	agg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(aggFuncList)),
@@ -81,6 +89,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	}
 	agg.GroupByItems = gby
 	agg.SetSchema(schema)
+	agg.collectGroupByColumns()
 	return agg, aggIndexMap
 }
 

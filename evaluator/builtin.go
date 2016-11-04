@@ -85,6 +85,7 @@ var Funcs = map[string]Func{
 	ast.WeekOfYear:       {builtinWeekOfYear, 1, 1},
 	ast.Year:             {builtinYear, 1, 1},
 	ast.YearWeek:         {builtinYearWeek, 1, 2},
+	ast.FromUnixTime:     {builtinFromUnixTime, 1, 2},
 
 	// string functions
 	ast.ASCII:          {builtinASCII, 1, 1},
