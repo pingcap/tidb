@@ -71,6 +71,17 @@ func mockResolve(node ast.Node) error {
 					Length: types.UnspecifiedLength,
 				},
 			},
+			State: model.StatePublic,
+		},
+		{
+			Name: model.NewCIStr("e"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("e"),
+					Length: types.UnspecifiedLength,
+				},
+			},
+			State: model.StateWriteOnly,
 		},
 	}
 	pkColumn := &model.ColumnInfo{
@@ -611,6 +622,36 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			first: "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Projection",
 			best:  "Join{Join{DataScan(t)->DataScan(t)}->DataScan(t)}->Projection",
 		},
+		{
+			sql:   "select * from (select a, b, sum(c) as s from t group by a, b) k where k.a > k.b * 2 + 1",
+			first: "DataScan(t)->Aggr(firstrow(test.t.a),firstrow(test.t.b),sum(test.t.c))->Projection->Selection->Projection",
+			best:  "DataScan(t)->Selection->Aggr(firstrow(test.t.a),firstrow(test.t.b),sum(test.t.c))->Projection->Projection",
+		},
+		{
+			sql:   "select * from (select a, b, sum(c) as s from t group by a, b) k where k.a > 1 and k.b > 2",
+			first: "DataScan(t)->Aggr(firstrow(test.t.a),firstrow(test.t.b),sum(test.t.c))->Projection->Selection->Projection",
+			best:  "DataScan(t)->Selection->Aggr(firstrow(test.t.a),firstrow(test.t.b),sum(test.t.c))->Projection->Projection",
+		},
+		{
+			sql:   "select * from (select k.a, sum(k.s) as ss from (select a, sum(b) as s from t group by a) k group by k.a) l where l.a > 2",
+			first: "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Projection->Aggr(firstrow(k.a),sum(k.s))->Projection->Selection->Projection",
+			best:  "DataScan(t)->Selection->Aggr(firstrow(test.t.a),sum(test.t.b))->Projection->Aggr(firstrow(k.a),sum(k.s))->Projection->Projection",
+		},
+		{
+			sql:   "select * from (select a, sum(b) as s from t group by a) k where a > s",
+			first: "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Projection->Selection->Projection",
+			best:  "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Selection->Projection->Projection",
+		},
+		{
+			sql:   "select * from (select a, sum(b) as s from t group by a + 1) k where a > 1",
+			first: "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Projection->Selection->Projection",
+			best:  "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Selection->Projection->Projection",
+		},
+		{
+			sql:   "select * from (select a, sum(b) as s from t group by a having 1 = 0) k where a > 1",
+			first: "DataScan(t)->Aggr(firstrow(test.t.a),sum(test.t.b))->Projection->Selection->Selection->Projection",
+			best:  "DataScan(t)->Selection->Aggr(firstrow(test.t.a),sum(test.t.b))->Selection->Projection->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -790,12 +831,32 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		best string
 	}{
 		{
+			sql:  "select * from t t1 use index(e)",
+			best: "Table(t)",
+		},
+		{
+			sql:  "select * from t t1 use index(c_d_e)",
+			best: "Index(t.c_d_e)[[<nil>,+inf]]",
+		},
+		{
+			sql:  "select * from t t1 ignore index(e) where c < 0",
+			best: "Index(t.c_d_e)[[-inf,0)]",
+		},
+		{
+			sql:  "select * from t t1 ignore index(c_d_e) where c < 0",
+			best: "Table(t)->Selection",
+		},
+		{
 			sql:  "select * from t t1 where 1 = 0",
 			best: "Dummy",
 		},
 		{
 			sql:  "select * from t t1 where c in (1,2,3,4,5,6,7,8,9,0)",
 			best: "Index(t.c_d_e)[[0,0] [1,1] [2,2] [3,3] [4,4] [5,5] [6,6] [7,7] [8,8] [9,9]]",
+		},
+		{
+			sql:  "select * from t t1 where a in (1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,7,8,9)",
+			best: "Table(t)",
 		},
 		{
 			sql:  "select count(*) from t t1 having 1 = 0",

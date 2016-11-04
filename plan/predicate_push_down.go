@@ -538,17 +538,50 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 	return
 }
 
+// CheckColumnIsGroupByItem check whether a column is a group-by item.
+func (p *Aggregation) CheckColumnIsGroupByItem(col *expression.Column) bool {
+	id := p.GetSchema().GetIndex(col)
+	colOriginal, isColumn := p.AggFuncs[id].GetArgs()[0].(*expression.Column)
+	return isColumn && expression.Schema(p.groupByCols).GetIndex(colOriginal) != -1
+}
+
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	// TODO: implement aggregation push down.
+func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
+	retPlan = p
+	var exprsOriginal []expression.Expression
 	var condsToPush []expression.Expression
+	for _, fun := range p.AggFuncs {
+		exprsOriginal = append(exprsOriginal, fun.GetArgs()[0])
+	}
 	for _, cond := range predicates {
-		if _, ok := cond.(*expression.Constant); ok {
+		switch cond.(type) {
+		case *expression.Constant:
 			condsToPush = append(condsToPush, cond)
+			// Consider SQL list "select sum(b) from t group by a having 1=0". "1=0" is a constant predicate which should be
+			// retained and pushed down at the same time. Because we will get a wrong query result that contains one column
+			// with value 0 rather than an empty query result.
+			ret = append(ret, cond)
+		case *expression.ScalarFunction:
+			extractedCols, _ := extractColumn(cond, nil, nil)
+			ok := true
+			for _, col := range extractedCols {
+				if !p.CheckColumnIsGroupByItem(col) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				newFunc := columnSubstitute(cond.Clone(), p.GetSchema(), exprsOriginal)
+				condsToPush = append(condsToPush, newFunc)
+			} else {
+				ret = append(ret, cond)
+			}
+		default:
+			ret = append(ret, cond)
 		}
 	}
 	p.baseLogicalPlan.PredicatePushDown(condsToPush)
-	return predicates, p, nil
+	return
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
