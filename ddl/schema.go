@@ -26,7 +26,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	dbInfo := &model.DBInfo{}
 	if err := job.DecodeArgs(dbInfo); err != nil {
-		// arg error, cancel this job.
+		// Invalid arguments, cancel this job.
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
@@ -42,7 +42,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 	for _, db := range dbs {
 		if db.Name.L == dbInfo.Name.L {
 			if db.ID != schemaID {
-				// database exists, can't create, we should cancel this job now.
+				// The database already exists, can't create it, we should cancel this job now.
 				job.State = model.JobCancelled
 				return errors.Trace(infoschema.ErrDatabaseExists)
 			}
@@ -64,12 +64,12 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// finish this job
+		// Finish this job.
 		job.State = model.JobDone
 		addDBHistoryInfo(job, ver, dbInfo)
 		return nil
 	default:
-		// we can't enter here.
+		// We can't enter here.
 		return errors.Errorf("invalid db state %v", dbInfo.State)
 	}
 }
@@ -112,7 +112,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 			break
 		}
 
-		// finish this job
+		// Finish this job.
 		addDBHistoryInfo(job, ver, dbInfo)
 		if len(tables) > 0 {
 			job.Args = append(job.Args, getIDs(tables))
@@ -120,7 +120,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
 	default:
-		// we can't enter here.
+		// We can't enter here.
 		err = errors.Errorf("invalid db state %v", dbInfo.State)
 	}
 
@@ -152,7 +152,7 @@ func (d *ddl) delReorgSchema(t *meta.Meta, job *model.Job) error {
 		return nil
 	}
 
-	// finish this background job
+	// Finish this background job.
 	job.SchemaState = model.StateNone
 	job.State = model.JobDone
 
