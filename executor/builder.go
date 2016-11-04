@@ -548,6 +548,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 			byItems:     v.GbyItems,
 			orderByList: v.SortItems,
 		}
+		st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
 		return st
 	}
 
@@ -595,6 +596,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 			aggFields:      v.AggFields,
 			byItems:        v.GbyItems,
 		}
+		st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
 		return st
 	}
 	b.err = errors.New("Not implement yet.")
