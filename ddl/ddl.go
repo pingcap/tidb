@@ -349,14 +349,14 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 
 func checkTooLongSchema(schema model.CIStr) error {
 	if len(schema.L) > mysql.MaxDatabaseNameLength {
-		return ErrTooLongIdent.Gen("too long schema %s", schema.O)
+		return ErrTooLongIdent.Gen("too long schema %s", schema)
 	}
 	return nil
 }
 
 func checkTooLongTable(table model.CIStr) error {
 	if len(table.L) > mysql.MaxTableNameLength {
-		return ErrTooLongIdent.Gen("too long table %s", table.O)
+		return ErrTooLongIdent.Gen("too long table %s", table)
 	}
 	return nil
 }
@@ -536,7 +536,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				if !evaluator.IsCurrentTimeExpr(v.Expr) {
-					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name.O)
+					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 				}
 
 				col.Flag |= mysql.OnUpdateNowFlag
@@ -648,7 +648,7 @@ func checkDefaultValue(c *table.Column, hasDefaultValue bool) error {
 
 	// Set not null but default null is invalid.
 	if mysql.HasNotNullFlag(c.Flag) {
-		return ErrColumnBadNull.Gen("invalid default value for %s", c.Name.O)
+		return ErrColumnBadNull.Gen("invalid default value for %s", c.Name)
 	}
 
 	return nil
@@ -669,7 +669,7 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
-			return ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name.O)
+			return ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name)
 		}
 	}
 	return nil
@@ -844,7 +844,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ident.Schema.O)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		return errors.Trace(infoschema.ErrTableExists)
@@ -1045,7 +1045,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 	// Check whether dropped column has existed.
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
-		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName.O)
+		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
 	}
 
 	job := &model.Job{
@@ -1065,7 +1065,7 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema.O)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
 	}
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
@@ -1088,7 +1088,7 @@ func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema.O)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
 	}
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
@@ -1113,7 +1113,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema.O)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -1169,7 +1169,7 @@ func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.C
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema.O)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -1199,7 +1199,7 @@ func (d *ddl) DropForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIS
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema.O)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)

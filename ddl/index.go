@@ -41,7 +41,7 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 		col := findCol(tblInfo.Columns, ic.Column.Name.O)
 		if col == nil {
 			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s",
-				ic.Column.Name.O)
+				ic.Column.Name)
 		}
 
 		// Length must be specified for BLOB and TEXT column indexes.
@@ -144,7 +144,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 			if idx.State == model.StatePublic {
 				// we already have a index with same index name
 				job.State = model.JobCancelled
-				return errDupKeyName.Gen("index already exist %s", indexName.O)
+				return errDupKeyName.Gen("index already exist %s", indexName)
 			}
 
 			indexInfo = idx
