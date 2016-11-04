@@ -25,6 +25,8 @@ import (
 // Client is a PD (Placement Driver) client.
 // It should not be used after calling Close().
 type Client interface {
+	// GetClusterID gets the cluster ID from PD.
+	GetClusterID() uint64
 	// GetTS gets a timestamp from PD.
 	GetTS() (int64, int64, error)
 	// GetRegion gets a region and its leader Peer from PD by key.
@@ -46,16 +48,21 @@ type client struct {
 }
 
 // NewClient creates a PD client.
-func NewClient(pdAddrs []string, clusterID uint64) (Client, error) {
+func NewClient(pdAddrs []string) (Client, error) {
 	log.Infof("[pd] create pd client with endpoints %v", pdAddrs)
-	client := &client{
-		worker: newRPCWorker(pdAddrs, clusterID),
+	worker, err := newRPCWorker(pdAddrs)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return client, nil
+	return &client{worker: worker}, nil
 }
 
 func (c *client) Close() {
 	c.worker.stop(errors.New("[pd] pd-client closing"))
+}
+
+func (c *client) GetClusterID() uint64 {
+	return c.worker.clusterID
 }
 
 func (c *client) GetTS() (int64, int64, error) {
