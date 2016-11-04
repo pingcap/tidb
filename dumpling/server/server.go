@@ -49,7 +49,7 @@ import (
 )
 
 var (
-	baseConnID uint32 = 10000
+	baseConnID uint32
 )
 
 var (
@@ -104,7 +104,6 @@ func randomBuf(size int) []byte {
 // newConn creates a new *clientConn from a net.Conn.
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
-	log.Info("newConn", conn.RemoteAddr().String())
 	cc := &clientConn{
 		conn:         conn,
 		pkt:          newPacketIO(conn),
@@ -113,6 +112,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
+	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	cc.salt = randomBuf(20)
 	return cc
 }
@@ -194,7 +194,7 @@ func (s *Server) onConn(c net.Conn) {
 		return
 	}
 	defer func() {
-		log.Infof("close %s", conn)
+		log.Infof("[%d] close connection", conn.connectionID)
 	}()
 
 	s.rwlock.Lock()

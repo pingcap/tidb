@@ -20,6 +20,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -311,10 +312,14 @@ func newStore(c *C, dbPath string) kv.Storage {
 	return store
 }
 
+var testConnID uint64
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
+	id := atomic.AddUint64(&testConnID, 1)
+	se.SetConnectionID(id)
 	c.Assert(err, IsNil)
-	se.Auth("root@%", nil, []byte("012345678901234567890"))
+	se.Auth(`root@%`, nil, []byte("012345678901234567890"))
 	mustExecSQL(c, se, "create database if not exists "+dbName)
 	mustExecSQL(c, se, "use "+dbName)
 	return se

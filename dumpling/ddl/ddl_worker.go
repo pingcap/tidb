@@ -326,7 +326,7 @@ func chooseLeaseTime(n1 time.Duration, n2 time.Duration) time.Duration {
 
 // runDDLJob runs a DDL job.
 func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
-	log.Warnf("[ddl] run DDL job %v", job)
+	log.Infof("[ddl] run DDL job %s", job)
 	if job.IsFinished() {
 		return
 	}

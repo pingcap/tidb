@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -2350,7 +2349,6 @@ func newSessionWithoutInit(c *C, store kv.Storage) *session {
 	s := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
-		sid:         atomic.AddInt64(&sessionID, 1),
 		debugInfos:  make(map[string]interface{}),
 		maxRetryCnt: 10,
 	}

@@ -74,9 +74,10 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 	}
 
 	var is infoschema.InfoSchema
-	if snap := variable.GetSessionVars(ctx).SnapshotInfoschema; snap != nil {
+	sessVar := variable.GetSessionVars(ctx)
+	if snap := sessVar.SnapshotInfoschema; snap != nil {
 		is = snap.(infoschema.InfoSchema)
-		log.Infof("use snapshot schema %d", is.SchemaMetaVersion())
+		log.Infof("[%d] use snapshot schema %d", sessVar.ConnectionID, is.SchemaMetaVersion())
 	} else {
 		is = sessionctx.GetDomain(ctx).InfoSchema()
 		binloginfo.SetSchemaVersion(ctx, is.SchemaMetaVersion())
