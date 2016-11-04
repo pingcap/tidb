@@ -60,7 +60,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
-	uuid := fmt.Sprintf("tikv-%v-%v", etcdAddrs, pdCli.GetClusterID())
+	uuid := fmt.Sprintf("tikv-%v", etcdAddrs)
 	if store, ok := mc.cache[uuid]; ok {
 		return store, nil
 	}
