@@ -11,7 +11,7 @@ export PATH := $(path_to_add):$(PATH)
 
 GO        := GO15VENDOREXPERIMENT="1" go
 GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) $(GO) build
-GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) $(GO) test -check.v
+GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) $(GO) test
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
