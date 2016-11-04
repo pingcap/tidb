@@ -359,6 +359,8 @@ type XSelectIndexExec struct {
 	byItems   []*tipb.ByItem
 	aggFields []*types.FieldType
 	aggregate bool
+
+	scanConcurrency int
 }
 
 // Fields implements Exec Fields interface.
@@ -570,10 +572,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 		// TODO: when where condition is all index columns limit can be pushed too.
 		selIdxReq.Limit = e.indexPlan.LimitCount
 	}
-	concurrency, err := getScanConcurrency(e.ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	concurrency := e.scanConcurrency
 	if e.singleReadMode {
 		selIdxReq.Aggregates = e.aggFuncs
 		selIdxReq.GroupBy = e.byItems
@@ -721,11 +720,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	selTableReq.GroupBy = e.byItems
 	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles)
 
-	concurrency, err := getScanConcurrency(e.ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	resp, err := distsql.Select(e.ctx.GetClient(), selTableReq, keyRanges, concurrency, false)
+	resp, err := distsql.Select(e.ctx.GetClient(), selTableReq, keyRanges, e.scanConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -774,6 +769,8 @@ type XSelectTableExec struct {
 	byItems   []*tipb.ByItem
 	aggFields []*types.FieldType
 	aggregate bool
+
+	scanConcurrency int
 }
 
 // Schema implements the Executor Schema interface.
@@ -803,10 +800,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.GroupBy = e.byItems
 
 	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges)
-	concurrency, err := getScanConcurrency(e.ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	concurrency := e.scanConcurrency
 	e.result, err = distsql.Select(e.ctx.GetClient(), selReq, kvRanges, concurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)

@@ -524,20 +524,21 @@ func init() {
 
 // HashJoinExec implements the hash join algorithm.
 type HashJoinExec struct {
-	hashTable    map[string][]*Row
-	smallHashKey []*expression.Column
-	bigHashKey   []*expression.Column
-	smallExec    Executor
-	bigExec      Executor
-	prepared     bool
-	ctx          context.Context
-	smallFilter  expression.Expression
-	bigFilter    expression.Expression
-	otherFilter  expression.Expression
-	schema       expression.Schema
-	outer        bool
-	leftSmall    bool
-	cursor       int
+	hashTable     map[string][]*Row
+	smallHashKey  []*expression.Column
+	bigHashKey    []*expression.Column
+	smallExec     Executor
+	bigExec       Executor
+	prepared      bool
+	ctx           context.Context
+	smallFilter   expression.Expression
+	bigFilter     expression.Expression
+	otherFilter   expression.Expression
+	schema        expression.Schema
+	outer         bool
+	leftSmall     bool
+	cursor        int
+	defaultValues []types.Datum
 	// targetTypes means the target the type that both smallHashKey and bigHashKey should convert to.
 	targetTypes []*types.FieldType
 
@@ -790,7 +791,7 @@ func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row) bool {
 		e.resultRows <- r
 	}
 	if len(matchedRows) == 0 && e.outer {
-		r := e.fillNullRow(bigRow)
+		r := e.fillRowWithDefaultValues(bigRow)
 		e.resultRows <- r
 	}
 	return true
@@ -833,16 +834,13 @@ func (e *HashJoinExec) constructMatchedRows(ctx *hashJoinCtx, bigRow *Row) (matc
 	return matchedRows, nil
 }
 
-// fillNulRow creates a null filled result row from a row in the big table.
+// fillRowWithDefaultValues creates a result row filled with default values from a row in the big table.
 // It is used for outer join, when a row from outer table doesn't have any matching rows.
-func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row) {
+func (e *HashJoinExec) fillRowWithDefaultValues(bigRow *Row) (returnRow *Row) {
 	smallRow := &Row{
 		Data: make([]types.Datum, len(e.smallExec.Schema())),
 	}
-
-	for _, data := range smallRow.Data {
-		data.SetNull()
-	}
+	copy(smallRow.Data, e.defaultValues)
 	if e.leftSmall {
 		returnRow = makeJoinRow(smallRow, bigRow)
 	} else {

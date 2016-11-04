@@ -78,19 +78,19 @@ type Job struct {
 	TableID  int64         `json:"table_id"`
 	State    JobState      `json:"state"`
 	Error    *terror.Error `json:"err"`
-	// every time we meet an error when running job, we will increase it.
+	// Every time we meet an error when running job, we will increase it.
 	ErrorCount int64 `json:"err_count"`
-	// the number of rows are processed.
+	// The number of rows that are processed.
 	RowCount int64         `json:"row_count"`
 	Mu       sync.Mutex    `json:"-"`
 	Args     []interface{} `json:"-"`
-	// we must use json raw message for delay parsing special args.
+	// We must use json raw message to delay parsing special args.
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
-	// snapshot version for this job.
+	// Snapshot version for this job.
 	SnapshotVer uint64 `json:"snapshot_ver"`
 	// unix nano seconds
-	// TODO: use timestamp allocated by TSO.
+	// TODO: Use timestamp allocated by TSO.
 	LastUpdateTS int64 `json:"last_update_ts"`
 	// Query string of the ddl job.
 	Query string `json:"query"`
@@ -203,7 +203,7 @@ func (s JobState) String() string {
 type Owner struct {
 	OwnerID string `json:"owner_id"`
 	// unix nano seconds
-	// TODO: use timestamp allocated by TSO
+	// TODO: Use timestamp allocated by TSO.
 	LastUpdateTS int64 `json:"last_update_ts"`
 }
 

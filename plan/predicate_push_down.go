@@ -454,7 +454,7 @@ func outerJoinSimplify(p *Join, predicates []expression.Expression) error {
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
 func isNullRejected(schema expression.Schema, expr expression.Expression) (bool, error) {
-	result, err := calculateResultOfExpression(schema, expr)
+	result, err := expression.EvaluateExprWithNull(schema, expr)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -468,31 +468,6 @@ func isNullRejected(schema expression.Schema, expr expression.Expression) (bool,
 		return true, errors.Trace(err)
 	}
 	return false, nil
-}
-
-// calculateResultOfExpression set inner table columns in a expression as null and calculate the finally result of the scalar function.
-func calculateResultOfExpression(schema expression.Schema, expr expression.Expression) (expression.Expression, error) {
-	switch x := expr.(type) {
-	case *expression.ScalarFunction:
-		var err error
-		args := make([]expression.Expression, len(x.Args))
-		for i, arg := range x.Args {
-			args[i], err = calculateResultOfExpression(schema, arg)
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return expression.NewFunction(x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
-	case *expression.Column:
-		if schema.GetIndex(x) == -1 {
-			return x, nil
-		}
-		constant := &expression.Constant{Value: types.Datum{}}
-		constant.Value.SetNull()
-		return constant, nil
-	default:
-		return x.Clone(), nil
-	}
 }
 
 // concatOnAndWhereConds concatenate ON conditions with WHERE conditions.

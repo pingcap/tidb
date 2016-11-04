@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/table"
@@ -42,6 +42,8 @@ import (
 )
 
 var _ = Suite(&testDBSuite{})
+
+const defaultBatchSize = 1024
 
 type testDBSuite struct {
 	db *sql.DB
@@ -85,6 +87,64 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.s.Close()
 }
 
+func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
+	_, err := s.s.Execute(sql)
+	c.Assert(err, NotNil)
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	c.Assert(ok, IsTrue, Commentf("err: %T", originErr))
+	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
+}
+
+func (s *testDBSuite) TestMySQLErrorCode(c *C) {
+	_, err := s.s.Execute("use test")
+	c.Assert(err, IsNil)
+
+	// create database
+	sql := "create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
+	sql = "create database test"
+	s.testErrorCode(c, sql, tmysql.ErrDBCreateExists)
+	// drop database
+	sql = "drop database db_not_exist"
+	s.testErrorCode(c, sql, tmysql.ErrDBDropExists)
+	// crate table
+	_, err = s.s.Execute("create table test_error_code_succ (c1 int, c2 int, c3 int)")
+	c.Assert(err, IsNil)
+	sql = "create table test_error_code_succ (c1 int, c2 int, c3 int)"
+	s.testErrorCode(c, sql, tmysql.ErrTableExists)
+	sql = "create table test_error_code1 (c1 int, c2 int, c2 int)"
+	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
+	sql = "create table test_error_code1 (c1 int, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int)"
+	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
+	sql = "create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int)"
+	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
+	sql = "create table test_error_code1 (c1 int, c2 int, key aa (c1, c2), key aa (c1))"
+	s.testErrorCode(c, sql, tmysql.ErrDupKeyName)
+	sql = "create table test_error_code1 (c1 int, c2 int, c3 int, key(c_not_exist))"
+	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
+	sql = "create table test_error_code1 (c1 int, c2 int, c3 int, primary key(c_not_exist))"
+	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
+	// add column
+	sql = "alter table test_error_code_succ add column c1 int"
+	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
+	sql = "alter table test_error_code_succ add column aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int"
+	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
+	// drop column
+	sql = "alter table test_error_code_succ drop c_not_exist"
+	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
+	// add index
+	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
+	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
+	_, err = s.s.Execute("alter table test_error_code_succ add index idx (c1)")
+	c.Assert(err, IsNil)
+	sql = "alter table test_error_code_succ add index idx (c1)"
+	s.testErrorCode(c, sql, tmysql.ErrDupKeyName)
+	// drop index
+	sql = "alter table test_error_code_succ drop index idx_not_exist"
+	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
+}
+
 func (s *testDBSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	s.testAddIndex(c)
@@ -123,7 +183,6 @@ func (s *testDBSuite) testAddUniqueIndexRollback(c *C) {
 	// t1 (c1 int, c2 int, c3 int, primary key(c1))
 	s.mustExec(c, "delete from t1")
 	// defaultBatchSize is equal to ddl.defaultBatchSize
-	defaultBatchSize := 1024
 	base := defaultBatchSize * 2
 	count := base
 	// add some rows
@@ -179,7 +238,7 @@ LOOP:
 func (s *testDBSuite) testAddIndex(c *C) {
 	done := make(chan struct{}, 1)
 
-	num := 100
+	num := defaultBatchSize + 10
 	// first add some rows
 	for i := 0; i < num; i++ {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
@@ -402,7 +461,7 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 func (s *testDBSuite) testAddColumn(c *C) {
 	done := make(chan struct{}, 1)
 
-	num := 100
+	num := defaultBatchSize + 10
 	// add some rows
 	for i := 0; i < num; i++ {
 		s.mustExec(c, "insert into t2 values (?, ?, ?)", i, i, i)
@@ -431,7 +490,7 @@ LOOP:
 				if err != nil {
 					// if err is failed, the column number must be 4 now.
 					values := s.showColumns(c, "t2")
-					c.Assert(values, HasLen, 4)
+					c.Assert(values, HasLen, 4, Commentf("err:%v", err))
 				}
 			}
 			num += step
@@ -516,7 +575,7 @@ LOOP:
 				if err != nil {
 					// if err is failed, the column number must be 4 now.
 					values := s.showColumns(c, "t2")
-					c.Assert(values, HasLen, 4)
+					c.Assert(values, HasLen, 4, Commentf("err:%v", err))
 				}
 			}
 			num += step
@@ -618,7 +677,7 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 		Name:         model.NewCIStr("c3"),
 		Offset:       2,
 		DefaultValue: 9,
-		FieldType:    *types.NewFieldType(mysql.TypeLonglong),
+		FieldType:    *types.NewFieldType(tmysql.TypeLonglong),
 		State:        model.StateWriteOnly,
 	}
 	t1Info.Columns = append(t1Info.Columns, newColumn)
