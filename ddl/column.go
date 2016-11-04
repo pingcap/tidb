@@ -113,7 +113,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		if columnInfo.State == model.StatePublic {
 			// We already have a column with the same column name.
 			job.State = model.JobCancelled
-			return infoschema.ErrColumnExists.Gen("ADD COLUMN: column already exist %s", col.Name.L)
+			return infoschema.ErrColumnExists.Gen("column already exist %s", col.Name)
 		}
 	} else {
 		columnInfo, offset, err = d.createColumnInfo(tblInfo, col, pos)
@@ -213,7 +213,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	colInfo := findCol(tblInfo.Columns, colName.L)
 	if colInfo == nil {
 		job.State = model.JobCancelled
-		return infoschema.ErrColumnNotExists.Gen("column %s doesn't exist", colName)
+		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
 	}
 
 	if len(tblInfo.Columns) == 1 {

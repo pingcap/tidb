@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -41,8 +40,8 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 	for _, ic := range idxColNames {
 		col := findCol(tblInfo.Columns, ic.Column.Name.O)
 		if col == nil {
-			return nil, infoschema.ErrColumnNotExists.Gen("CREATE INDEX: column does not exist: %s",
-				ic.Column.Name.O)
+			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s",
+				ic.Column.Name)
 		}
 
 		// Length must be specified for BLOB and TEXT column indexes.
@@ -145,7 +144,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 			if idx.State == model.StatePublic {
 				// We already have an index with same index name.
 				job.State = model.JobCancelled
-				return infoschema.ErrIndexExists.Gen("CREATE INDEX: index already exist %s", indexName)
+				return errDupKeyName.Gen("index already exist %s", indexName)
 			}
 			indexInfo = idx
 			break

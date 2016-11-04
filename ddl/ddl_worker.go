@@ -370,6 +370,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 		// If job is not cancelled, we should log this error.
 		if job.State != model.JobCancelled {
 			log.Errorf("[ddl] run ddl job err %v", errors.ErrorStack(err))
+		} else {
+			log.Infof("[ddl] the job is normal to cancel because %v", errors.ErrorStack(err))
 		}
 
 		job.Error = toTError(err)

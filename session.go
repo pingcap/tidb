@@ -404,43 +404,18 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 }
 
 // IsAutocommit checks if it is in the auto-commit mode.
-func (s *session) isAutocommit(ctx context.Context) (bool, error) {
+func (s *session) isAutocommit(ctx context.Context) bool {
 	sessionVar := variable.GetSessionVars(ctx)
-	autocommit := sessionVar.GetSystemVar("autocommit")
-	if autocommit.IsNull() {
-		if ctx.Value(context.Initing) != nil {
-			return false, nil
-		}
-		autocommitStr, err := s.GetGlobalSysVar(ctx, "autocommit")
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		autocommit.SetString(autocommitStr)
-		err = sessionVar.SetSystemVar("autocommit", autocommit)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-	}
-	autocommitStr := autocommit.GetString()
-	if autocommitStr == "ON" || autocommitStr == "on" || autocommitStr == "1" {
-		variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, true)
-		return true, nil
-	}
-	variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, false)
-	return false, nil
+	return sessionVar.GetStatusFlag(mysql.ServerStatusAutocommit)
 }
 
-func (s *session) ShouldAutocommit(ctx context.Context) (bool, error) {
+func (s *session) ShouldAutocommit(ctx context.Context) bool {
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK.
-	ac, err := s.isAutocommit(ctx)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if variable.GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 && ac {
-		return true, nil
-	}
-	return false, nil
+	sessVar := variable.GetSessionVars(ctx)
+	isAutomcommit := sessVar.GetStatusFlag(mysql.ServerStatusAutocommit)
+	inTransaction := sessVar.GetStatusFlag(mysql.ServerStatusInTrans)
+	return isAutomcommit && !inTransaction
 }
 
 func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
@@ -590,15 +565,16 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		ac  bool
 	)
 	if s.txn == nil {
+		err = s.loadCommonGlobalVariablesIfNeeded()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		s.resetHistory()
 		s.txn, err = s.store.Begin()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ac, err = s.isAutocommit(s)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		ac = s.isAutocommit(s)
 		if !ac {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
@@ -612,12 +588,9 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ac, err = s.isAutocommit(s)
+		ac = s.isAutocommit(s)
 		if !ac {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
 		}
 		log.Warnf("Force new txn:%s in session:%d", s.txn, s.sid)
 	}
@@ -810,4 +783,46 @@ func finishBootstrap(store kv.Storage) {
 	if err != nil {
 		log.Fatalf("finish bootstrap err %v", err)
 	}
+}
+
+const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where variable_name in ('" +
+	variable.AutocommitVar + "', '" +
+	variable.SQLModeVar + "', '" +
+	variable.DistSQLJoinConcurrencyVar + "', '" +
+	variable.DistSQLScanConcurrencyVar + "')"
+
+// LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session
+// right before creating a transaction for the first time.
+func (s *session) loadCommonGlobalVariablesIfNeeded() error {
+	vars := variable.GetSessionVars(s)
+	if vars.CommonGlobalLoaded {
+		return nil
+	}
+	if s.Value(context.Initing) != nil {
+		// When running bootstrap or upgrade, we should not access global storage.
+		return nil
+	}
+	// Set the variable to true to prevent cyclic recursive call.
+	vars.CommonGlobalLoaded = true
+	rs, err := s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
+	if err != nil {
+		vars.CommonGlobalLoaded = false
+		log.Errorf("Failed to load common global variables.")
+		return errors.Trace(err)
+	}
+	for {
+		row, err1 := rs.Next()
+		if err1 != nil {
+			vars.CommonGlobalLoaded = false
+			log.Errorf("Failed to load common global variables.")
+			return errors.Trace(err1)
+		}
+		if row == nil {
+			break
+		}
+		varName := row.Data[0].GetString()
+		vars.SetSystemVar(varName, row.Data[1])
+	}
+	vars.CommonGlobalLoaded = true
+	return nil
 }
