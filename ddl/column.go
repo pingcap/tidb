@@ -217,7 +217,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	colInfo := findCol(tblInfo.Columns, colName.L)
 	if colInfo == nil {
 		job.State = model.JobCancelled
-		return ErrCantDropFieldOrKey.Gen("index %s doesn't exist", colName.O)
+		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName.O)
 	}
 
 	if len(tblInfo.Columns) == 1 {

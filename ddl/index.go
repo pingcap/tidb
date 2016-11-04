@@ -144,7 +144,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 			if idx.State == model.StatePublic {
 				// we already have a index with same index name
 				job.State = model.JobCancelled
-				return errDupKeyName.Gen("index already exist %s", indexName)
+				return errDupKeyName.Gen("index already exist %s", indexName.O)
 			}
 
 			indexInfo = idx
