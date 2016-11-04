@@ -81,7 +81,7 @@ type physicalTableSource struct {
 	LimitCount  *int64
 	SortItemsPB []*tipb.ByItem
 
-	// The following fields are only for tests.
+	// The following fields are used for explaining and testing. Because pb structures are not human-readable.
 	aggFuncs   []expression.AggregationFunction
 	gbyItems   []expression.Expression
 	sortItems  []*ByItems
@@ -114,15 +114,15 @@ func needValue(af expression.AggregationFunction) bool {
 }
 
 func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) PhysicalPlan {
-	if !p.readOnly {
-		us := &PhysicalUnionScan{
-			Condition: expression.ComposeCNFCondition(append(p.conditions, p.AccessCondition...)),
-		}
-		us.SetChildren(resultPlan)
-		us.SetSchema(resultPlan.GetSchema())
-		return us
+	if p.readOnly {
+		return resultPlan
 	}
-	return resultPlan
+	us := &PhysicalUnionScan{
+		Condition: expression.ComposeCNFCondition(append(p.conditions, p.AccessCondition...)),
+	}
+	us.SetChildren(resultPlan)
+	us.SetSchema(resultPlan.GetSchema())
+	return us
 }
 
 func (p *physicalTableSource) addLimit(l *Limit) {
