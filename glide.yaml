@@ -142,7 +142,7 @@ import:
 - package: github.com/pingcap/pd
   version: c0af22f4f5c96ec7bd6d7c284529fa674a06cada
 - package: github.com/pingcap/tipb
-  version: 38084aeaf922fb5d41284865d64b2113f3ae5f1c
+  version: 0ff3e19786f9af44c072991f7ed697d9b30486cc 
   subpackages:
   - go-binlog
   - go-tipb

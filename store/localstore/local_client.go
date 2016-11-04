@@ -76,7 +76,17 @@ func supportExpr(exprType tipb.ExprType) bool {
 	// bitwise operators.
 	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitXor, tipb.ExprType_BitNeg:
 		return true
-	case tipb.ExprType_Case, tipb.ExprType_Coalesce:
+	// control functions
+	case tipb.ExprType_IfNull, tipb.ExprType_NullIf, tipb.ExprType_If:
+		return true
+	// math functions
+	case tipb.ExprType_Pow, tipb.ExprType_Abs, tipb.ExprType_Round:
+		return true
+	// string functions
+	case tipb.ExprType_Strcmp:
+		return true
+	// other functions
+	case tipb.ExprType_IsNull, tipb.ExprType_Case, tipb.ExprType_Coalesce:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true

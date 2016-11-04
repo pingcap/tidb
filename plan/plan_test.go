@@ -154,7 +154,17 @@ func supportExpr(exprType tipb.ExprType) bool {
 	// bitwise operators
 	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitXor, tipb.ExprType_BitNeg:
 		return true
-	case tipb.ExprType_Case, tipb.ExprType_Coalesce:
+	// control functions
+	case tipb.ExprType_IfNull, tipb.ExprType_NullIf, tipb.ExprType_If, tipb.ExprType_Case:
+		return true
+	// math functions
+	case tipb.ExprType_Pow, tipb.ExprType_Abs, tipb.ExprType_Round:
+		return true
+	// string functions
+	case tipb.ExprType_Strcmp:
+		return true
+	// other functions
+	case tipb.ExprType_IsNull, tipb.ExprType_Coalesce:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
@@ -443,6 +453,59 @@ func (s *testPlanSuite) TestBuiltinFuncsPushDown(c *C) {
 			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a)\b\xad\x1b\x1a" +
 				"\x02\b\x00\x1a\x02\b\x00\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a" +
 				"\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+		},
+		// abs
+		{
+			sql:  "a = abs(a)",
+			cond: "eq(test.t.a, abs(test.t.a))",
+			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\x12\b\x9d\x18" +
+				"\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
+		},
+		// pow
+		{
+			sql:  "a = pow(a, 2)",
+			cond: "eq(test.t.a, pow(test.t.a, 2))",
+			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a \b\x9e\x18\x1a" +
+				"\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\f\b\x01\x12\b\x80\x00\x00" +
+				"\x00\x00\x00\x00\x02",
+		},
+		// round
+		{
+			sql:  "a = round(a, 0)",
+			cond: "eq(test.t.a, round(test.t.a, 0))",
+			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a \b\x9f\x18\x1a" +
+				"\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\f\b\x01\x12\b\x80\x00\x00\x00" +
+				"\x00\x00\x00\x00",
+		},
+		// ifnull
+		{
+			sql:  "a = ifnull(a, 1)",
+			cond: "eq(test.t.a, ifnull(test.t.a, 1))",
+			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a \b\xe7\x19\x1a" +
+				"\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\f\b\x01\x12\b\x80\x00\x00" +
+				"\x00\x00\x00\x00\x01",
+		},
+		// if
+		{
+			sql:  "a = if(a, 1, 0)",
+			cond: "eq(test.t.a, if(test.t.a, 1, 0))",
+			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a.\b\xe5\x19\x1a" +
+				"\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\f\b\x01\x12\b\x80\x00\x00" +
+				"\x00\x00\x00\x00\x01\x1a\f\b\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x00",
+		},
+		// nullif
+		{
+			sql:  "a = nullif(a, 1)",
+			cond: "eq(test.t.a, nullif(test.t.a, 1))",
+			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a \b\xe6\x19\x1a" +
+				"\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\f\b\x01\x12\b\x80\x00\x00" +
+				"\x00\x00\x00\x00\x01",
+		},
+		// isnull
+		{
+			sql:    "b is null",
+			cond:   "isnull(test.t.b)",
+			exprPB: "\b\xa3\x1f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
 		},
 	}
 	for _, ca := range cases {
