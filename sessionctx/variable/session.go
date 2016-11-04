@@ -302,9 +302,9 @@ func (s *SessionVars) GetSystemVar(key string) types.Datum {
 	return d
 }
 
-// GetTiDBSystemVar get variable value for name.
+// GetTiDBSystemVar gets variable value for name.
 // The variable should be a TiDB specific system variable (The vars in tidbSysVars map).
-// If the session scope variable is not set, it will get global scope value and fill session scope value.
+// We load the variable from session first, if not found, use local defined default variable.
 func (s *SessionVars) GetTiDBSystemVar(ctx context.Context, name string) (string, error) {
 	key := strings.ToLower(name)
 	_, ok := tidbSysVars[key]
