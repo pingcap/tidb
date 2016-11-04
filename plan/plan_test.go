@@ -377,7 +377,7 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 	}
 }
 
-// TestPushDownExpression tests whether logic operators been pushed down successfully.
+// TestPushDownExpression tests whether expressions have been pushed down successfully.
 func (s *testPlanSuite) TestPushDownExpression(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {

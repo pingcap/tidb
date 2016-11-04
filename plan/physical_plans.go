@@ -148,6 +148,7 @@ func (p *physicalTableSource) addTopN(prop *requiredProperty) bool {
 	for _, prop := range prop.props {
 		item := sortByItemToPB(p.client, prop.col, prop.desc)
 		if item == nil {
+			// When we fail to convert any sortItem to PB struct, we should clear the environments.
 			p.clearForTopnPushDown()
 			return false
 		}
@@ -164,6 +165,7 @@ func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation) expressio
 	for _, f := range agg.AggFuncs {
 		pb := aggFuncToPBExpr(p.client, f)
 		if pb == nil {
+			// When we fail to convert any agg function to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
 			return nil
 		}
@@ -173,6 +175,7 @@ func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation) expressio
 	for _, item := range agg.GroupByItems {
 		pb := groupByItemToPB(p.client, item)
 		if pb == nil {
+			// When we fail to convert any group-by item to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
 			return nil
 		}
