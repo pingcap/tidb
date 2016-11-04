@@ -601,7 +601,7 @@ func builtinYearWeek(args []types.Datum, _ context.Context) (types.Datum, error)
 	return d, nil
 }
 
-// http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
+// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
 func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	unixTimeStamp, err := args[0].ToDecimal()
 	if err != nil {
@@ -621,31 +621,23 @@ func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, 
 	if integralPart > int64(math.MaxInt32) {
 		return
 	}
-	// split the integral part and fractional part of a decimal timestamp.
+	// Split the integral part and fractional part of a decimal timestamp.
 	// e.g. for timestamp 12345.678,
 	// first get the integral part 12345,
 	// then (12345.678 - 12345) * (10^9) to get the decimal part and convert it to nanosecond precision.
-	v := new(mysql.MyDecimal)
-	x := types.NewIntDatum(integralPart)
-	integer, err := x.ToDecimal()
+	integerDecimalTp := new(mysql.MyDecimal).FromInt(integralPart)
+	fracDecimalTp := new(mysql.MyDecimal)
+	err = mysql.DecimalSub(unixTimeStamp, integerDecimalTp, fracDecimalTp)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	err = mysql.DecimalSub(unixTimeStamp, integer, v)
+	nano := new(mysql.MyDecimal).FromInt(int64(time.Second))
+	x := new(mysql.MyDecimal)
+	err = mysql.DecimalMul(fracDecimalTp, nano, x)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	x = types.NewIntDatum(1000000000)
-	nano, err := x.ToDecimal()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	frac := new(mysql.MyDecimal)
-	err = mysql.DecimalMul(v, nano, frac)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	fractionalPart, err := frac.ToInt()
+	fractionalPart, err := x.ToInt() // here fractionalPart is result multiplying the original fractional part by 10^9.
 	if err == mysql.ErrTruncated {
 		err = nil
 	}
@@ -666,7 +658,7 @@ func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, 
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if args[0].Kind() == types.KindString { // keep consistent with MySQL.
+	if args[0].Kind() == types.KindString { // Keep consistent with MySQL.
 		t.Fsp = mysql.MaxFsp
 	}
 	d.SetMysqlTime(t)

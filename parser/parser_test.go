@@ -574,6 +574,15 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select extract(day_hour from "2011-11-11 10:10:10.123456")`, true},
 		{`select extract(year_month from "2011-11-11 10:10:10.123456")`, true},
 
+		// For from_unixtime
+		{`select from_unixtime(1447430881)`, true},
+		{`select from_unixtime(1447430881.123456)`, true},
+		{`select from_unixtime(1447430881.1234567)`, true},
+		{`select from_unixtime(1447430881.9999999)`, true},
+		{`select from_unixtime(1447430881, "%Y %D %M %h:%i:%s %x")`, true},
+		{`select from_unixtime(1447430881.123456, "%Y %D %M %h:%i:%s %x")`, true},
+		{`select from_unixtime(1447430881.1234567, "%Y %D %M %h:%i:%s %x")`, true},
+
 		// For issue 224
 		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true},
 
