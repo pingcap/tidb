@@ -46,12 +46,12 @@ func newLockResolver(store *tikvStore) *LockResolver {
 }
 
 // NewLockResolver creates a LockResolver.
-func NewLockResolver(etcdAddrs []string, clusterID uint64) (*LockResolver, error) {
-	uuid := fmt.Sprintf("tikv-%v-%v", etcdAddrs, clusterID)
-	pdCli, err := pd.NewClient(etcdAddrs, clusterID)
+func NewLockResolver(etcdAddrs []string) (*LockResolver, error) {
+	pdCli, err := pd.NewClient(etcdAddrs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID())
 	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), false)
 	if err != nil {
 		return nil, errors.Trace(err)

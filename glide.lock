@@ -99,7 +99,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: 3542d756cbeb5eaf1494a378e73e62b938f025e7
+  version: 3ef22759515076bd169f08e96c4760b05cd0f1a6
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -112,7 +112,7 @@ imports:
   - pkg/raft_serverpb
   - pkg/util
 - name: github.com/pingcap/pd
-  version: c0af22f4f5c96ec7bd6d7c284529fa674a06cada
+  version: 447b500dc50e6a5f5cf46abf3bacaf67abb718c1
   subpackages:
   - pd-client
   - pkg/apiutil
@@ -169,7 +169,7 @@ imports:
   - encoding/unicode
   - transform
 - name: golang.org/x/time
-  version: 711ca1cb87636abec28122ef3bc6a77269d433f3
+  version: f51c12702a4d776e4c1fa9b0fabab841babae631
   subpackages:
   - rate
 - name: google.golang.org/grpc
