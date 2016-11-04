@@ -154,7 +154,11 @@ func supportExpr(exprType tipb.ExprType) bool {
 	// bitwise operators
 	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitXor, tipb.ExprType_BitNeg:
 		return true
-	case tipb.ExprType_Case, tipb.ExprType_Coalesce:
+	// control functions
+	case tipb.ExprType_Case, tipb.ExprType_If:
+		return true
+	// other functions
+	case tipb.ExprType_Coalesce:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
@@ -435,6 +439,14 @@ func (s *testPlanSuite) TestBuiltinFuncsPushDown(c *C) {
 				"\x00\x00\x00\x00\x00\x00\x01\x1a!\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00" +
 				"\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01" +
 				"\x1a\f\b\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x00",
+		},
+		// if
+		{
+			sql:  "a = if(a, 1, 0)",
+			cond: "eq(test.t.a, if(test.t.a, 1, 0))",
+			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a.\b\xe5\x19\x1a" +
+				"\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\f\b\x01\x12\b\x80\x00\x00" +
+				"\x00\x00\x00\x00\x01\x1a\f\b\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x00",
 		},
 		// coalesce
 		{
