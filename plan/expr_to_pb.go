@@ -162,6 +162,9 @@ func compareOpsToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 }
 
 func likeToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_Like)) {
+		return nil
+	}
 	// Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
 	escape := expr.Args[2].(*expression.Constant).Value
 	if escape.IsNull() || byte(escape.GetInt64()) != '\\' {
@@ -181,10 +184,6 @@ func likeToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr 
 			}
 		}
 	}
-	tp := tipb.ExprType_Like
-	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
-		return nil
-	}
 	expr0 := exprToPB(client, expr.Args[0])
 	if expr0 == nil {
 		return nil
@@ -194,7 +193,7 @@ func likeToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr 
 		return nil
 	}
 	return &tipb.Expr{
-		Tp:       tp,
+		Tp:       tipb.ExprType_Like,
 		Children: []*tipb.Expr{expr0, expr1}}
 }
 
