@@ -2447,3 +2447,14 @@ func (s *testSessionSuite) TestSelectHaving(c *C) {
 	mustExecMultiSQL(c, se, "select * from select_having_test group by id having null is not null;")
 	mustExecMultiSQL(c, se, "drop table select_having_test")
 }
+
+func (s *testSessionSuite) TestQueryString(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecute(se, "use "+s.dbName)
+	_, err := se.Execute("create table mutil1 (a int);create table multi2 (a int)")
+	c.Assert(err, IsNil)
+	ctx := se.(context.Context)
+	queryStr := ctx.Value(context.QueryString)
+	c.Assert(queryStr, Equals, "create table multi2 (a int)")
+}
