@@ -914,6 +914,20 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select hex(unhex(1267))")
 	result.Check(testkit.Rows("1267"))
 
+	// select from_unixtime
+	result = tk.MustQuery("select from_unixtime(1451606400)")
+	unixTime := time.Unix(1451606400, 0).String()[:19]
+	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime(1451606400.123456)")
+	unixTime = time.Unix(1451606400, 123456000).String()[:26]
+	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime(1451606400.1234567)")
+	unixTime = time.Unix(1451606400, 123456700).Round(time.Microsecond).Format("2006-01-02 15:04:05.000000")[:26]
+	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime(1451606400.999999)")
+	unixTime = time.Unix(1451606400, 999999000).String()[:26]
+	result.Check(testkit.Rows(unixTime))
+
 	// for case
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(255), b int)")

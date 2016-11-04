@@ -601,6 +601,73 @@ func builtinYearWeek(args []types.Datum, _ context.Context) (types.Datum, error)
 	return d, nil
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
+func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	unixTimeStamp, err := args[0].ToDecimal()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	// 0 <= unixTimeStamp <= INT32_MAX
+	if unixTimeStamp.IsNegative() {
+		return
+	}
+	integralPart, err := unixTimeStamp.ToInt()
+	if err == mysql.ErrTruncated {
+		err = nil
+	}
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if integralPart > int64(math.MaxInt32) {
+		return
+	}
+	// Split the integral part and fractional part of a decimal timestamp.
+	// e.g. for timestamp 12345.678,
+	// first get the integral part 12345,
+	// then (12345.678 - 12345) * (10^9) to get the decimal part and convert it to nanosecond precision.
+	integerDecimalTp := new(mysql.MyDecimal).FromInt(integralPart)
+	fracDecimalTp := new(mysql.MyDecimal)
+	err = mysql.DecimalSub(unixTimeStamp, integerDecimalTp, fracDecimalTp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	nano := new(mysql.MyDecimal).FromInt(int64(time.Second))
+	x := new(mysql.MyDecimal)
+	err = mysql.DecimalMul(fracDecimalTp, nano, x)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	fractionalPart, err := x.ToInt() // here fractionalPart is result multiplying the original fractional part by 10^9.
+	if err == mysql.ErrTruncated {
+		err = nil
+	}
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	t := mysql.Time{
+		Time: time.Unix(integralPart, fractionalPart),
+		Type: mysql.TypeDatetime,
+		Fsp:  mysql.UnspecifiedFsp,
+	}
+	_, fracDigitsNumber := unixTimeStamp.PrecisionAndFrac()
+	fsp := fracDigitsNumber
+	if fracDigitsNumber > mysql.MaxFsp {
+		fsp = mysql.MaxFsp
+	}
+	t, err = t.RoundFrac(fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].Kind() == types.KindString { // Keep consistent with MySQL.
+		t.Fsp = mysql.MaxFsp
+	}
+	d.SetMysqlTime(t)
+	if len(args) == 1 {
+		return
+	}
+	return builtinDateFormat([]types.Datum{d, args[1]}, nil)
+}
+
 func builtinSysDate(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
 	// But here we can just think they are the same because we don't support stored function

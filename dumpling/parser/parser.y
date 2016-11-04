@@ -71,6 +71,7 @@ import (
 	dayofweek	"DAYOFWEEK"
 	dayofyear	"DAYOFYEAR"
 	foundRows	"FOUND_ROWS"
+	fromUnixTime	"FROM_UNIXTIME"
 	groupConcat	"GROUP_CONCAT"
 	greatest	"GREATEST"
 	hour		"HOUR"
@@ -1993,7 +1994,7 @@ NotKeywordToken:
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 |	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX"
 |	"SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
-|	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING"
+|	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FROM_UNIXTIME"
 
 /************************************************************************************
  *
@@ -2573,6 +2574,20 @@ FunctionCallNonKeyword:
 |	"FOUND_ROWS" '(' ')'
 	{
 		$$ =  &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
+	}
+|	"FROM_UNIXTIME" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"FROM_UNIXTIME" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
 	}
 |	"GREATEST" '(' ExpressionList ')'
 	{
