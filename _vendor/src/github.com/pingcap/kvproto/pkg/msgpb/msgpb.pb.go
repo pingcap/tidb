@@ -19,17 +19,13 @@ import (
 	"math"
 
 	proto "github.com/golang/protobuf/proto"
-
-	raft_cmdpb "github.com/pingcap/kvproto/pkg/raft_cmdpb"
-
-	raft_serverpb "github.com/pingcap/kvproto/pkg/raft_serverpb"
-
-	kvrpcpb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-
-	coprocessor "github.com/pingcap/kvproto/pkg/coprocessor"
-
-	pdpb "github.com/pingcap/kvproto/pkg/pdpb"
 )
+
+import raft_cmdpb "github.com/pingcap/kvproto/pkg/raft_cmdpb"
+import raft_serverpb "github.com/pingcap/kvproto/pkg/raft_serverpb"
+import kvrpcpb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+import coprocessor "github.com/pingcap/kvproto/pkg/coprocessor"
+import pdpb "github.com/pingcap/kvproto/pkg/pdpb"
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
