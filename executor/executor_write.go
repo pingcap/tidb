@@ -861,8 +861,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = table.CheckNotNull(e.Table.Cols(), row)
-	if filterErr(err, ignoreErr) != nil {
+	if err = table.CheckNotNull(e.Table.Cols(), row); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return row, nil
