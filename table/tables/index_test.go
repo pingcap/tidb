@@ -169,6 +169,9 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 	err = txn.Commit()
 	c.Assert(err, IsNil)
+
+	_, err = index.FetchValues(make([]types.Datum, 0))
+	c.Assert(err, NotNil)
 }
 
 func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
