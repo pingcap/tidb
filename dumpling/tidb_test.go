@@ -38,6 +38,7 @@ var store = flag.String("store", "memory", "registered store name, [memory, gole
 func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
+	CustomVerboseFlag = true
 	TestingT(t)
 }
 
