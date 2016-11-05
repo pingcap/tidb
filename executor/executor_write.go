@@ -875,7 +875,7 @@ func filterErr(err error, ignoreErr bool) error {
 	if !ignoreErr {
 		return errors.Trace(err)
 	}
-	log.Warning("ignoreErr err:%v", errors.ErrorStack(err))
+	log.Warning("ignore err:%v", errors.ErrorStack(err))
 	return nil
 }
 
