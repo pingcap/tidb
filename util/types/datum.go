@@ -694,9 +694,6 @@ func (d *Datum) convertToFloat(target *FieldType) (Datum, error) {
 		f = d.GetFloat64()
 	case KindString, KindBytes:
 		f, err = StrToFloat(d.GetString())
-		if err != nil {
-			return ret, errors.Trace(err)
-		}
 	case KindMysqlTime:
 		f, _ = d.GetMysqlTime().ToNumber().ToFloat64()
 	case KindMysqlDuration:
@@ -717,9 +714,10 @@ func (d *Datum) convertToFloat(target *FieldType) (Datum, error) {
 	// For float and following double type, we will only truncate it for float(M, D) format.
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
-		f, err = TruncateFloat(f, target.Flen, target.Decimal)
-		if err != nil {
-			return ret, errors.Trace(err)
+		var err1 error
+		f, err1 = TruncateFloat(f, target.Flen, target.Decimal)
+		if err == nil {
+			err = err1
 		}
 	}
 	if target.Tp == mysql.TypeFloat {
@@ -727,7 +725,7 @@ func (d *Datum) convertToFloat(target *FieldType) (Datum, error) {
 	} else {
 		ret.SetFloat64(f)
 	}
-	return ret, nil
+	return ret, errors.Trace(err)
 }
 
 func (d *Datum) convertToString(target *FieldType) (Datum, error) {
