@@ -278,7 +278,7 @@ func (c *index) Exist(rm kv.RetrieverMutator, indexedValues []types.Datum, h int
 func (c *index) FetchValues(r []types.Datum) ([]types.Datum, error) {
 	vals := make([]types.Datum, len(c.idxInfo.Columns))
 	for i, ic := range c.idxInfo.Columns {
-		if ic.Offset < 0 || ic.Offset > len(r) {
+		if ic.Offset < 0 || ic.Offset >= len(r) {
 			return nil, table.ErrIndexOutBound.Gen("Index column offset out of bound")
 		}
 		vals[i] = r[ic.Offset]
