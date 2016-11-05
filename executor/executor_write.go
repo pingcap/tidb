@@ -500,6 +500,7 @@ func (e *LoadDataInfo) insertData(cols []string) {
 	row, err := e.insertVal.fillRowData(e.Table.Cols(), e.row, true)
 	if err != nil {
 		log.Warnf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
+		return
 	}
 	_, err = e.Table.AddRecord(e.insertVal.ctx, row)
 	if err != nil {
@@ -843,27 +844,38 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 	return rows, nil
 }
 
-func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ignoreCastErr bool) ([]types.Datum, error) {
+func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ignoreErr bool) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	marked := make(map[int]struct{}, len(vals))
 	for i, v := range vals {
 		offset := cols[i].Offset
 		row[offset] = v
-		if !ignoreCastErr {
+		if !ignoreErr {
 			marked[offset] = struct{}{}
 		}
 	}
-	err := e.initDefaultValues(row, marked, ignoreCastErr)
+	err := e.initDefaultValues(row, marked, ignoreErr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = table.CastValues(e.ctx, row, cols, ignoreCastErr); err != nil {
+	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err = table.CheckNotNull(e.Table.Cols(), row); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return row, nil
+}
+
+func filterErr(err error, ignoreErr bool) error {
+	if err == nil {
+		return nil
+	}
+	if !ignoreErr {
+		return errors.Trace(err)
+	}
+	log.Warning("ignore err:%v", errors.ErrorStack(err))
+	return nil
 }
 
 func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}, ignoreErr bool) error {
@@ -884,9 +896,10 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				continue
 			}
 			val, err := row[i].ToInt64()
-			if err != nil && !ignoreErr {
+			if filterErr(errors.Trace(err), ignoreErr) != nil {
 				return errors.Trace(err)
 			}
+			row[i].SetInt64(val)
 			if val != 0 {
 				e.Table.RebaseAutoID(val, true)
 				continue
@@ -915,7 +928,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 		} else {
 			var err error
 			row[i], _, err = table.GetColDefaultValue(e.ctx, c.ToInfo())
-			if err != nil {
+			if filterErr(err, ignoreErr) != nil {
 				return errors.Trace(err)
 			}
 		}
