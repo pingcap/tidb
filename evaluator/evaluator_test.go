@@ -36,6 +36,7 @@ import (
 var _ = Suite(&testEvaluatorSuite{})
 
 func TestT(t *testing.T) {
+	CustomVerboseFlag = true
 	TestingT(t)
 }
 
