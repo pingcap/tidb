@@ -24,6 +24,7 @@ import (
 )
 
 func TestTxStructure(t *testing.T) {
+	CustomVerboseFlag = true
 	TestingT(t)
 }
 
