@@ -40,6 +40,7 @@ func buildIndexRange(p *PhysicalIndexScan) error {
 			p.Ranges = rb.appendIndexRanges(p.Ranges, point)
 		}
 	}
+	// Build rangePoints for in conditions.
 	for i := p.accessEqualCount; i < p.accessInCount; i++ {
 		points := rb.build(p.AccessCondition[i])
 		if i == 0 {
@@ -144,6 +145,7 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 		}
 	}
 	indexScan.accessInCount = indexScan.accessEqualCount
+	// We should remove all accessConds , so that they will not be added to filter conditions.
 	for i := len(conditions) - 1; i >= 0; i-- {
 		for _, cond := range accessConds {
 			if cond == conditions[i] {
@@ -158,6 +160,9 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 			idx:          indexScan.Index,
 			columnOffset: curIndex,
 		}
+		// First of all we should extract all of in/eq expressions. We still need to consider eq functions,
+		// because they may not be counted before. e.g. a = 1 and b in (3,4) and c = 5. Only a = 1 will be counted
+		// in accessEqualCount.
 		accessIdx := checker.extractEqOrInFunc(conditions)
 		if accessIdx != -1 {
 			indexScan.accessInCount++
@@ -168,6 +173,7 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 			conditions = append(conditions[:accessIdx], conditions[accessIdx+1:]...)
 			continue
 		}
+		// If we fail to find any in or eq expression, we should consider all of other conditions for the next column.
 		for _, cond := range conditions {
 			if !checker.check(cond) {
 				filterConds = append(filterConds, cond)
@@ -175,7 +181,7 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 			}
 			accessConds = append(accessConds, cond)
 			if indexScan.Index.Columns[curIndex].Length != types.UnspecifiedLength ||
-				// TODO: it will lead to repeated compution cost.
+				// TODO: It will lead to repeated computation cost.
 				checker.shouldReserve {
 				filterConds = append(filterConds, cond)
 				checker.shouldReserve = false

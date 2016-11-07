@@ -51,7 +51,9 @@ type PhysicalIndexScan struct {
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
 
-	accessInCount    int
+	// All conditions in AccessCondition[accessEqualCount:accessInCount] are in expressions.
+	accessInCount int
+	// All conditions in AccessCondition[:accessEqualCount] are equal conditions.
 	accessEqualCount int
 	AccessCondition  []expression.Expression
 	conditions       []expression.Expression
