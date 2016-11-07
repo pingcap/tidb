@@ -350,7 +350,7 @@ func (c *ddlCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
 	}
-	log.Warnf("[ddl] on DDL change")
+	log.Infof("[ddl] on DDL change")
 
 	return c.do.MustReload()
 }
