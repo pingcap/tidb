@@ -872,6 +872,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Table(t)->StreamAgg",
 		},
 		{
+			sql:  "select count(*) from t group by a order by a",
+			best: "Table(t)->StreamAgg->Trim",
+		},
+		{
 			sql:  "select count(distinct e) from t where c = 1 group by d",
 			best: "Index(t.c_d_e)[[1,1]]->StreamAgg",
 		},

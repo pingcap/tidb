@@ -627,36 +627,24 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
 	// TODO: Consider distinct key.
-	gbyCols := make([]*expression.Column, 0, len(p.GroupByItems)+1)
 	info := &physicalPlanInfo{cost: math.MaxFloat64}
-	// TODO: extract columns in monotonic functions.
-	for _, item := range p.GroupByItems {
-		if col, ok := item.(*expression.Column); ok {
-			if !col.Correlated {
-				gbyCols = append(gbyCols, col)
-			}
-		} else {
-			// group by a + b is not interested in any order.
-			return info, nil
-		}
+	gbyCols := p.groupByCols
+	if len(gbyCols) != len(p.GroupByItems) {
+		// group by a + b is not interested in any order.
+		return info, nil
 	}
 	isSortKey := make([]bool, len(gbyCols))
 	newProp := &requiredProperty{
 		props: make([]*columnProp, 0, len(gbyCols)),
 	}
 	for _, pro := range prop.props {
-		var matchedCol *expression.Column
-		for i, col := range gbyCols {
-			if !col.Correlated && col.ColName.L == pro.col.ColName.L {
-				isSortKey[i] = true
-				matchedCol = col
-			}
-		}
-		if matchedCol == nil {
+		idx := p.getGbyColIndex(pro.col)
+		if idx == -1 {
 			return info, nil
 		}
+		isSortKey[idx] = true
 		// We should add columns in aggregation in order to keep index right.
-		newProp.props = append(newProp.props, &columnProp{col: matchedCol, desc: pro.desc})
+		newProp.props = append(newProp.props, &columnProp{col: gbyCols[idx], desc: pro.desc})
 	}
 	newProp.sortKeyLen = len(newProp.props)
 	for i, col := range gbyCols {
