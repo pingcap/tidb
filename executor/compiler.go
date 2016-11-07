@@ -81,11 +81,17 @@ func statementLabel(node ast.StmtNode) string {
 	case *ast.RollbackStmt:
 		return "Rollback"
 	case *ast.SelectStmt:
-		switch ref := x.From.TableRefs.(type) {
-		case *ast.TableSource:
-			switch ref.Source.(type) {
-			case *ast.TableName:
-				return "Select-Simple"
+		if x.From == nil {
+			return "Select-Simple"
+		}
+		fileds := x.From.TableRefs
+		if fileds.Right == nil {
+			switch ref := fileds.Left.(type) {
+			case *ast.TableSource:
+				switch ref.Source.(type) {
+				case *ast.TableName:
+					return "Select-Simple"
+				}
 			}
 		}
 		return "Select-Complex"
