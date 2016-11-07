@@ -208,7 +208,11 @@ func supportExpr(exprType tipb.ExprType) bool {
 	// bitwise operators
 	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitXor, tipb.ExprType_BitNeg:
 		return true
-	case tipb.ExprType_Case, tipb.ExprType_Coalesce:
+	// control functions
+	case tipb.ExprType_Case, tipb.ExprType_If:
+		return true
+	// other functions
+	case tipb.ExprType_Coalesce:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
@@ -493,6 +497,12 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			sql:  "a = case a when b then 1 when a then 0 end",
 			cond: "eq(test.t.a, case(eq(test.t.a, test.t.b), 1, eq(test.t.a, test.t.a), 0))",
 		},
+		// if
+		{
+			sql:  "a = if(a, 1, 0)",
+			cond: "eq(test.t.a, if(test.t.a, 1, 0))",
+		},
+		// coalesce
 		{
 			sql:  "a = coalesce(null, null, a, b)",
 			cond: "eq(test.t.a, coalesce(<nil>, <nil>, test.t.a, test.t.b))",
