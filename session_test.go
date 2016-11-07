@@ -2104,11 +2104,11 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	mustExecMatch(c, se, sql, [][]interface{}{{1}})
 
 	sql = "select c1 from t where c1 in (1) and c2 < 5.1"
-	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[[1 -inf,1 5.1)]->Projection")
+	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[[1 -inf,1 5]]->Projection")
 	mustExecMatch(c, se, sql, [][]interface{}{{1}})
 
 	sql = "select c1 from t where c1 in (1.1) and c2 > 3"
-	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[(1.1 3,1.1 +inf]]->Projection")
+	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[]->Projection")
 	mustExecMatch(c, se, sql, [][]interface{}{})
 
 	// Test varchar type.
