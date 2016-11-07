@@ -6,7 +6,7 @@
 
 ## What is TiDB?
 
-TiDB (pronounce: /taɪ'diːbi:/ tai-D-B) is a distributed SQL database.
+TiDB (The pronunciation is: /taɪ'diːbi:/ tai-D-B, etymology: titanium) is a distributed SQL database.
 Inspired by the design of Google [F1](http://research.google.com/pubs/pub41344.html), TiDB supports the best features of both traditional RDBMS and NoSQL.
 
 - __Horizontal scalability__  
