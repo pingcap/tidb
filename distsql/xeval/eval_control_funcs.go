@@ -66,20 +66,24 @@ func (e *Evaluator) evalIf(expr *tipb.Expr) (d types.Datum, err error) {
 		err = ErrInvalid.Gen("IF needs 3 operands but got %d", len(expr.Children))
 		return
 	}
+	condTrue := false
 	child1, err := e.Eval(expr.Children[0])
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d, err = e.Eval(expr.Children[2])
-	if err != nil || child1.IsNull() {
-		return d, errors.Trace(err)
+	if !child1.IsNull() {
+		x, err := child1.ToBool()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if x == 1 {
+			condTrue = true
+		}
 	}
-	x, err := child1.ToBool()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if x == 1 {
+	if condTrue {
 		d, err = e.Eval(expr.Children[1])
+	} else {
+		d, err = e.Eval(expr.Children[2])
 	}
 	return d, errors.Trace(err)
 }
