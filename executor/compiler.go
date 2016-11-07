@@ -30,32 +30,73 @@ type Compiler struct {
 }
 
 func statementLabel(node ast.StmtNode) string {
-	switch node.(type) {
-	case *ast.SelectStmt:
-		return "Select"
-	case *ast.DeleteStmt:
-		return "Delete"
-	case *ast.InsertStmt:
-		if node.(*ast.InsertStmt).IsReplace {
-			return "Replace"
-		}
-		return "Insert"
-	case *ast.UnionStmt:
-		return "Union"
-	case *ast.UpdateStmt:
-		return "Update"
+	switch x := node.(type) {
+	case *ast.AlterTableStmt:
+		return "AlterTable"
+	case *ast.AnalyzeTableStmt:
+		return "AnalyzeTable"
+	case *ast.BeginStmt:
+		return "Begin"
+	case *ast.CommitStmt:
+		return "Commit"
+	case *ast.CreateDatabaseStmt:
+		return "CreateDatabase"
 	case *ast.CreateIndexStmt:
 		return "CreateIndex"
 	case *ast.CreateTableStmt:
 		return "CreateTable"
-	case *ast.CreateDatabaseStmt:
-		return "CreateDatabase"
+	case *ast.CreateUserStmt:
+		return "CreateUser"
+	case *ast.DeallocateStmt:
+		return "Deallocate"
+	case *ast.DeleteStmt:
+		return "Delete"
+	case *ast.DoStmt:
+		return "Do"
 	case *ast.DropDatabaseStmt:
 		return "DropDatabase"
-	case *ast.DropTableStmt:
-		return "DropTable"
 	case *ast.DropIndexStmt:
 		return "DropIndex"
+	case *ast.DropTableStmt:
+		return "DropTable"
+	case *ast.DropUserStmt:
+		return "DropUser"
+	case *ast.ExecuteStmt:
+		return "Execute"
+	case *ast.ExplainStmt:
+		return "Explain"
+	case *ast.FlushTableStmt:
+		return "FlushTable"
+	case *ast.GrantStmt:
+		return "Grant"
+	case *ast.InsertStmt:
+		if x.IsReplace {
+			return "Replace"
+		}
+		return "Insert"
+	case *ast.LoadDataStmt:
+		return "LoadData"
+	case *ast.PrepareStmt:
+		return "Prepare"
+	case *ast.RollbackStmt:
+		return "Rollback"
+	case *ast.SelectStmt:
+		switch ref := x.From.TableRefs.(type) {
+		case *ast.TableSource:
+			switch ref.Source.(type) {
+			case *ast.TableName:
+				return "Select-Simple"
+			}
+		}
+		return "Select-Complex"
+	case *ast.SetPwdStmt:
+		return "SetPwd"
+	case *ast.ShowStmt:
+		return "Show"
+	case *ast.TruncateTableStmt:
+		return "TruncateTable"
+	case *ast.UpdateStmt:
+		return "Update"
 	}
 	return "unknown"
 }
