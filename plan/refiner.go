@@ -34,10 +34,14 @@ func buildIndexRange(p *PhysicalIndexScan) error {
 	if p.accessEqualCount > 0 {
 		// Build ranges for equal access conditions.
 		point := rb.build(p.AccessCondition[0])
-		p.Ranges = rb.buildIndexRanges(point)
+		colOff := p.Index.Columns[0].Offset
+		tp := &p.Table.Columns[colOff].FieldType
+		p.Ranges = rb.buildIndexRanges(point, tp)
 		for i := 1; i < p.accessEqualCount; i++ {
+			colOff = p.Index.Columns[i].Offset
+			tp = &p.Table.Columns[colOff].FieldType
 			point = rb.build(p.AccessCondition[i])
-			p.Ranges = rb.appendIndexRanges(p.Ranges, point)
+			p.Ranges = rb.appendIndexRanges(p.Ranges, point, tp)
 		}
 	}
 	rangePoints := fullRange
@@ -46,9 +50,13 @@ func buildIndexRange(p *PhysicalIndexScan) error {
 		rangePoints = rb.intersection(rangePoints, rb.build(p.AccessCondition[i]))
 	}
 	if p.accessEqualCount == 0 {
-		p.Ranges = rb.buildIndexRanges(rangePoints)
+		colOff := p.Index.Columns[0].Offset
+		tp := &p.Table.Columns[colOff].FieldType
+		p.Ranges = rb.buildIndexRanges(rangePoints, tp)
 	} else if p.accessEqualCount < len(p.AccessCondition) {
-		p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints)
+		colOff := p.Index.Columns[p.accessEqualCount].Offset
+		tp := &p.Table.Columns[colOff].FieldType
+		p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints, tp)
 	}
 
 	// Take prefix index into consideration.
