@@ -35,6 +35,7 @@ func (a *idAllocator) allocID() string {
 }
 
 func (p *Aggregation) collectGroupByColumns() {
+	p.groupByCols = p.groupByCols[:0]
 	for _, item := range p.GroupByItems {
 		if col, ok := item.(*expression.Column); ok {
 			p.groupByCols = append(p.groupByCols, col)
