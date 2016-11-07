@@ -807,6 +807,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop tables xxx, yyy", true},
 		{"drop table if exists xxx", true},
 		{"drop table if not exists xxx", false},
+		{"drop view if exists xxx", true},
 		// For issue 974
 		{`CREATE TABLE address (
 		id bigint(20) NOT NULL AUTO_INCREMENT,

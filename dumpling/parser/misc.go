@@ -391,6 +391,7 @@ var tokenMap = map[string]int{
 	"VALUES":              values,
 	"VARIABLES":           variables,
 	"VERSION":             version,
+	"VIEW":                view,
 	"WARNINGS":            warnings,
 	"WEEK":                week,
 	"WEEKDAY":             weekday,
