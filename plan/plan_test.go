@@ -1164,7 +1164,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "Index(t.c_d_e_str)[(abc_,abc`)]->Selection->Projection",
 		},
 		{
-			// check that 123 is converted to string '123'. index can be used.
+			// Check that 123 is converted to string '123'. index can be used.
 			sql:  `select a from t where c_str like 123`,
 			best: "Index(t.c_d_e_str)[[123,123]]->Projection",
 		},

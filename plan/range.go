@@ -487,24 +487,24 @@ func (r *rangeBuilder) convertPoint(point rangePoint, tp *types.FieldType) range
 	if point.start {
 		if point.excl {
 			if valCmpCasted < 0 {
-				// e.g, "a > 1.9" convert to "a >= 2".
+				// e.g. "a > 1.9" convert to "a >= 2".
 				point.excl = false
 			}
 		} else {
 			if valCmpCasted > 0 {
-				// e.g "a >= 1.1 convert to "a > 1"
+				// e.g. "a >= 1.1 convert to "a > 1"
 				point.excl = true
 			}
 		}
 	} else {
 		if point.excl {
 			if valCmpCasted > 0 {
-				// e.g, "a < 1.1" convert to "a <= 1"
+				// e.g. "a < 1.1" convert to "a <= 1"
 				point.excl = false
 			}
 		} else {
 			if valCmpCasted < 0 {
-				// e.g "a <= 1.9" convert to "a < 2"
+				// e.g. "a <= 1.9" convert to "a < 2"
 				point.excl = true
 			}
 		}

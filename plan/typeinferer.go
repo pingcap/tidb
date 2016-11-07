@@ -380,7 +380,7 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 	x.Type.Charset, x.Type.Collate = types.DefaultCharsetForType(x.Type.Tp)
 }
 
-// like expression expect the target expression and pattern to be a string, if it's not, we add a cast function.
+// like expression expects the target expression and pattern to be a string, if it's not, we add a cast function.
 func (v *typeInferrer) handleLikeExpr(x *ast.PatternLikeExpr) {
 	x.SetType(types.NewFieldType(mysql.TypeLonglong))
 	x.Type.Charset = charset.CharsetBin
@@ -389,7 +389,7 @@ func (v *typeInferrer) handleLikeExpr(x *ast.PatternLikeExpr) {
 	x.Pattern = v.addCastToString(x.Pattern)
 }
 
-// regexp expression expect the target expression and pattern to be a string, if it's not, we add a cast function.
+// regexp expression expects the target expression and pattern to be a string, if it's not, we add a cast function.
 func (v *typeInferrer) handleRegexpExpr(x *ast.PatternRegexpExpr) {
 	x.SetType(types.NewFieldType(mysql.TypeLonglong))
 	x.Type.Charset = charset.CharsetBin
