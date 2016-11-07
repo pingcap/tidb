@@ -434,7 +434,7 @@ func (d *ddl) buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.Col
 	return cols, constraints, nil
 }
 
-func (d *ddl) setCharsetFlenDecimal(tp *types.FieldType) {
+func (d *ddl) setCharsetCollationFlenDecimal(tp *types.FieldType) {
 	if len(tp.Charset) == 0 {
 		switch tp.Tp {
 		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
@@ -455,8 +455,7 @@ func (d *ddl) setCharsetFlenDecimal(tp *types.FieldType) {
 
 func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
 	colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
-	// Set charset.
-	d.setCharsetFlenDecimal(colDef.Tp)
+	d.setCharsetCollationFlenDecimal(colDef.Tp)
 	col, cts, err := columnDefToCol(ctx, offset, colDef)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -1115,14 +1114,14 @@ func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 	colName := spec.Column.Name.Name
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
-		return infoschema.ErrTableNotExists.Gen("column %s doesn't exist", colName.O)
+		return infoschema.ErrColumnNotExists.Gen("column %s doesn't exist", colName.O)
 	}
 	if spec.Constraint != nil || spec.Position.Tp != ast.ColumnPositionNone ||
 		len(spec.Column.Options) != 0 || spec.Column.Tp == nil {
 		// Make sure the column definition is simple field type.
 		return errUnsupportedModifyColumn
 	}
-	d.setCharsetFlenDecimal(spec.Column.Tp)
+	d.setCharsetCollationFlenDecimal(spec.Column.Tp)
 	if !d.modifiable(&col.FieldType, spec.Column.Tp) {
 		return errUnsupportedModifyColumn
 	}
@@ -1144,7 +1143,7 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s doesn't exist", ti.Schema)
 	}
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
