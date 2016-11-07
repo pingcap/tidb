@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -517,6 +518,23 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	return resultInfo, nil
 }
 
+// replaceColsInPropBySchema replace the columns in originSchema with the new columns in new schema.
+func replaceColsInPropBySchema(prop *requiredProperty, originSchema expression.Schema, newSchema expression.Schema) *requiredProperty {
+	newProps := make([]*columnProp, 0, len(prop.props))
+	for _, p := range prop.props {
+		idx := originSchema.GetIndex(p.col)
+		if idx == -1 {
+			log.Errorf("Can't find column %s in schema", p.col)
+		}
+		newProps = append(newProps, &columnProp{col: newSchema[idx], desc: p.desc})
+	}
+	return &requiredProperty{
+		props:      newProps,
+		sortKeyLen: prop.sortKeyLen,
+		limit:      prop.limit,
+	}
+}
+
 // convert2PhysicalPlanRight converts the right join to *physicalPlanInfo.
 func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.GetChildByIndex(0).(LogicalPlan)
@@ -549,6 +567,8 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	rProp := prop
 	if !allRight {
 		rProp = &requiredProperty{}
+	} else {
+		rProp = replaceColsInPropBySchema(rProp, rChild.GetSchema(), rChild.GetSchema())
 	}
 	var rInfo *physicalPlanInfo
 	if innerJoin {
@@ -761,11 +781,7 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	var count uint64
 	for _, child := range p.GetChildren() {
 		newProp := convertLimitOffsetToCount(prop)
-		newProp.props = make([]*columnProp, 0, len(prop.props))
-		for _, c := range prop.props {
-			idx := p.GetSchema().GetIndex(c.col)
-			newProp.props = append(newProp.props, &columnProp{col: child.GetSchema()[idx], desc: c.desc})
-		}
+		newProp = replaceColsInPropBySchema(newProp, p.schema, child.GetSchema())
 		info, err = child.(LogicalPlan).convert2PhysicalPlan(newProp)
 		count += info.count
 		if err != nil {
