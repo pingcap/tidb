@@ -400,6 +400,11 @@ type ByItems struct {
 	Desc bool
 }
 
+// String implements fmt.Stringer interface.
+func (by *ByItems) String() string {
+	return fmt.Sprintf("(%s, %v)", by.Expr, by.Desc)
+}
+
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	var exprs []*ByItems
 	sort := &Sort{baseLogicalPlan: newBaseLogicalPlan(Srt, b.allocator)}
