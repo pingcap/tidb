@@ -44,6 +44,24 @@ func (s *testSuite) TestShow(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
+	// For issue https://github.com/pingcap/tidb/issues/1918
+	testSQL = `create table ptest(
+		a int primary key, 
+		b double NOT NULL DEFAULT 2.0, 
+		c varchar(10) NOT NULL, 
+		d time unique
+	);`
+	tk.MustExec(testSQL)
+	testSQL = "show create table ptest;"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n PRIMARY KEY (`a`),\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)

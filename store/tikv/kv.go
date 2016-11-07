@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,20 +49,22 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
 
-	etcdAddrs, clusterID, disableGC, err := parsePath(path)
+	etcdAddrs, disableGC, err := parsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	pdCli, err := pd.NewClient(etcdAddrs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	// FIXME: uuid will be a very long and ugly string, simplify it.
-	uuid := fmt.Sprintf("tikv-%v-%v", etcdAddrs, clusterID)
+	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID())
 	if store, ok := mc.cache[uuid]; ok {
 		return store, nil
 	}
 
-	pdCli, err := pd.NewClient(etcdAddrs, clusterID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), !disableGC)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -76,6 +77,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 var oracleUpdateInterval = 2000
 
 type tikvStore struct {
+	clusterID    uint64
 	uuid         string
 	oracle       oracle.Oracle
 	client       Client
@@ -91,6 +93,7 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 	}
 
 	store := &tikvStore{
+		clusterID:   pdClient.GetClusterID(),
 		uuid:        uuid,
 		oracle:      oracle,
 		client:      client,
@@ -248,7 +251,7 @@ func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVer
 	}
 }
 
-func parsePath(path string) (etcdAddrs []string, clusterID uint64, disableGC bool, err error) {
+func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
 	var u *url.URL
 	u, err = url.Parse(path)
 	if err != nil {
@@ -258,12 +261,6 @@ func parsePath(path string) (etcdAddrs []string, clusterID uint64, disableGC boo
 	if strings.ToLower(u.Scheme) != "tikv" {
 		err = errors.Errorf("Uri scheme expected[tikv] but found [%s]", u.Scheme)
 		log.Error(err)
-		return
-	}
-	clusterID, err = strconv.ParseUint(u.Query().Get("cluster"), 10, 64)
-	if err != nil {
-		log.Errorf("Parse clusterID error [%s]", err)
-		err = errors.Trace(err)
 		return
 	}
 	switch strings.ToLower(u.Query().Get("disableGC")) {

@@ -16,6 +16,8 @@ package plan
 import (
 	"strings"
 
+	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -88,6 +90,7 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		x.Type.Charset = charset.CharsetBin
 		x.Type.Collate = charset.CollationBin
+		v.convertValueToColumnTypeIfNeeded(x)
 	case *ast.PatternLikeExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		x.Type.Charset = charset.CharsetBin
@@ -295,6 +298,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case "now", "sysdate":
 		tp = types.NewFieldType(mysql.TypeDatetime)
 		tp.Decimal = v.getFsp(x)
+	case "from_unixtime":
+		if len(x.Args) == 1 {
+			tp = types.NewFieldType(mysql.TypeDatetime)
+		} else {
+			tp = types.NewFieldType(mysql.TypeVarString)
+			chs = v.defaultCharset
+		}
 	case "dayname", "version", "database", "user", "current_user",
 		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
 		"replace", "ucase", "upper", "convert", "substring",
@@ -372,4 +382,34 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 	x.SetType(&currType)
 	// TODO: We need a better way to set charset/collation
 	x.Type.Charset, x.Type.Collate = types.DefaultCharsetForType(x.Type.Tp)
+}
+
+// ConvertValueToColumnTypeIfNeeded checks if the expr in PatternInExpr is column name,
+// and casts function to the items in the list.
+func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
+	if cn, ok := x.Expr.(*ast.ColumnNameExpr); ok && cn.Refer != nil {
+		ft := cn.Refer.Column.FieldType
+		for _, expr := range x.List {
+			if valueExpr, ok := expr.(*ast.ValueExpr); ok {
+				newDatum, err := valueExpr.Datum.ConvertTo(&ft)
+				if err != nil {
+					v.err = errors.Trace(err)
+				}
+				cmp, err := newDatum.CompareDatum(valueExpr.Datum)
+				if err != nil {
+					v.err = errors.Trace(err)
+				}
+				if cmp != 0 {
+					// The value will never match the column, do not set newDatum.
+					continue
+				}
+				valueExpr.SetDatum(newDatum)
+			}
+		}
+		if v.err != nil {
+			// TODO: Errors should be handled differently according to query context.
+			log.Errorf("inferor type for pattern in error %v", v.err)
+			v.err = nil
+		}
+	}
 }

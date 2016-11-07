@@ -395,7 +395,7 @@ func (c *txnCommitter) prewriteBinlog() chan error {
 		if bin.Tp == binlog.BinlogType_Prewrite {
 			bin.PrewriteKey = c.keys[0]
 		}
-		err := binloginfo.WriteBinlog(bin)
+		err := binloginfo.WriteBinlog(bin, c.store.clusterID)
 		ch <- errors.Trace(err)
 	}()
 	return ch
@@ -409,7 +409,7 @@ func (c *txnCommitter) writeFinishBinlog(tp binlog.BinlogType, commitTS int64) {
 	bin.Tp = tp
 	bin.CommitTs = commitTS
 	go func() {
-		err := binloginfo.WriteBinlog(bin)
+		err := binloginfo.WriteBinlog(bin, c.store.clusterID)
 		if err != nil {
 			log.Errorf("failed to write binlog: %v", err)
 		}

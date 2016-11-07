@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -41,8 +40,8 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 	for _, ic := range idxColNames {
 		col := findCol(tblInfo.Columns, ic.Column.Name.O)
 		if col == nil {
-			return nil, infoschema.ErrColumnNotExists.Gen("CREATE INDEX: column does not exist: %s",
-				ic.Column.Name.O)
+			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s",
+				ic.Column.Name)
 		}
 
 		// Length must be specified for BLOB and TEXT column indexes.
@@ -111,7 +110,7 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 }
 
 func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
-	// rollback job
+	// Handle rollback job.
 	if job.State == model.JobRollback {
 		err := d.onDropIndex(t, job)
 		if err != nil {
@@ -120,7 +119,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		return nil
 	}
 
-	// normal job
+	// Handle normal job.
 	schemaID := job.SchemaID
 	tblInfo, err := d.getTableInfo(t, job)
 	if err != nil {
@@ -143,11 +142,10 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 	for _, idx := range tblInfo.Indices {
 		if idx.Name.L == indexName.L {
 			if idx.State == model.StatePublic {
-				// we already have a index with same index name
+				// We already have an index with same index name.
 				job.State = model.JobCancelled
-				return infoschema.ErrIndexExists.Gen("CREATE INDEX: index already exist %s", indexName)
+				return errDupKeyName.Gen("index already exist %s", indexName)
 			}
-
 			indexInfo = idx
 			break
 		}
@@ -184,7 +182,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		// write only -> reorganization
 		job.SchemaState = model.StateWriteReorganization
 		indexInfo.State = model.StateWriteReorganization
-		// initialize SnapshotVer to 0 for later reorganization check.
+		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
@@ -192,7 +190,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		// reorganization -> public
 		reorgInfo, err := d.getReorgInfo(t, job)
 		if err != nil || reorgInfo.first {
-			// if we run reorg firstly, we should update the job snapshot version
+			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
 			return errors.Trace(err)
 		}
@@ -206,7 +204,6 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		err = d.runReorgJob(func() error {
 			return d.addTableIndex(tbl, indexInfo, reorgInfo, job)
 		})
-
 		if terror.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return nil
@@ -220,13 +217,13 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		}
 
 		indexInfo.State = model.StatePublic
-		// set column index flag.
+		// Set column index flag.
 		addIndexColumnFlag(tblInfo, indexInfo)
 		if err = t.UpdateTable(schemaID, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
 
-		// finish this job
+		// Finish this job.
 		job.SchemaState = model.StatePublic
 		job.State = model.JobDone
 		addTableHistoryInfo(job, ver, tblInfo)
@@ -290,34 +287,31 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		job.SchemaState = model.StateWriteOnly
 		indexInfo.State = model.StateWriteOnly
 		err = t.UpdateTable(schemaID, tblInfo)
-		return errors.Trace(err)
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		indexInfo.State = model.StateDeleteOnly
 		err = t.UpdateTable(schemaID, tblInfo)
-		return errors.Trace(err)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
 		indexInfo.State = model.StateDeleteReorganization
 		err = t.UpdateTable(schemaID, tblInfo)
-		return errors.Trace(err)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		err = d.runReorgJob(func() error {
 			return d.dropTableIndex(indexInfo, job)
 		})
-
 		if terror.ErrorEqual(err, errWaitReorgTimeout) {
-			// if timeout, we should return, check for the owner and re-wait job done.
+			// If the timeout happens, we should return.
+			// Then check for the owner and re-wait job to finish.
 			return nil
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		// all reorganization jobs done, drop this index
+		// All reorganization jobs are done, drop this index.
 		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 		for _, idx := range tblInfo.Indices {
 			if idx.Name.L != indexName.L {
@@ -325,13 +319,13 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 			}
 		}
 		tblInfo.Indices = newIndices
-		// set column index flag.
+		// Set column index flag.
 		dropIndexColumnFlag(tblInfo, indexInfo)
 		if err = t.UpdateTable(schemaID, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
 
-		// finish this job
+		// Finish this job.
 		job.SchemaState = model.StateNone
 		if job.State == model.JobRollback {
 			job.State = model.JobRollbackDone
@@ -339,10 +333,10 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 			job.State = model.JobDone
 		}
 		addTableHistoryInfo(job, ver, tblInfo)
-		return nil
 	default:
-		return ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
+		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
+	return errors.Trace(err)
 }
 
 func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo *model.IndexInfo) (

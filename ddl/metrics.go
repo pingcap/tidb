@@ -33,7 +33,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "handle_job_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handle jobs",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 13),
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		}, []string{"type", "action", "result_state"})
 
 	// handle batch data type.
@@ -46,7 +46,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "batch_add_or_del_data_succ",
 			Help:      "Bucketed histogram of processing time (s) of batch handle data",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 13),
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 		}, []string{"handle_data_type"})
 )
 

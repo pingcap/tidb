@@ -114,6 +114,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"found_rows()", mysql.TypeLonglong, charset.CharsetBin},
 		{"length('tidb')", mysql.TypeLonglong, charset.CharsetBin},
 		{"now()", mysql.TypeDatetime, charset.CharsetBin},
+		{"from_unixtime(1447430881)", mysql.TypeDatetime, charset.CharsetBin},
+		{"from_unixtime(1447430881, '%Y %D %M %h:%i:%s %x')", mysql.TypeVarString, "utf8"},
 		{"sysdate()", mysql.TypeDatetime, charset.CharsetBin},
 		{"dayname('2007-02-03')", mysql.TypeVarString, "utf8"},
 		{"version()", mysql.TypeVarString, "utf8"},

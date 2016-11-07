@@ -15,7 +15,6 @@ package tidb
 
 import (
 	"fmt"
-	"sync/atomic"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
@@ -91,7 +90,6 @@ func (s *testSessionSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	ss := &session{
 		values: make(map[fmt.Stringer]interface{}),
 		store:  store,
-		sid:    atomic.AddInt64(&sessionID, 1),
 		parser: parser.New(),
 	}
 	ss.SetValue(context.Initing, true)

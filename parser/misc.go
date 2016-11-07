@@ -236,6 +236,7 @@ var tokenMap = map[string]int{
 	"FORCE":               force,
 	"FOUND_ROWS":          foundRows,
 	"FROM":                from,
+	"FROM_UNIXTIME":       fromUnixTime,
 	"FULL":                full,
 	"FULLTEXT":            fulltext,
 	"FUNCTION":            function,

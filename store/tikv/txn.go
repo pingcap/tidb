@@ -157,7 +157,7 @@ func (txn *tikvTxn) Rollback() error {
 		return kv.ErrInvalidTxn
 	}
 	txn.close()
-	log.Warnf("[kv] Rollback txn %d", txn.StartTS())
+	log.Infof("[kv] Rollback txn %d", txn.StartTS())
 	txnCmdCounter.WithLabelValues("rollback").Inc()
 
 	return nil
