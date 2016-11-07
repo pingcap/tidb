@@ -418,7 +418,10 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			// if index is in delete only or delete reorganization state, we can't add it.
 			continue
 		}
-		colVals, _ := v.FetchValues(r)
+		colVals, err2 := v.FetchValues(r)
+		if err2 != nil {
+			return 0, errors.Trace(err2)
+		}
 		var dupKeyErr error
 		if v.Meta().Unique || v.Meta().Primary {
 			entryKey, err1 := t.genIndexKeyStr(colVals)

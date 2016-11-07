@@ -21,6 +21,7 @@ import (
 )
 
 func TestT(t *testing.T) {
+	check.CustomVerboseFlag = true
 	check.TestingT(t)
 }
 

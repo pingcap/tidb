@@ -24,13 +24,14 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func expressionsToPB(exprs []expression.Expression, client kv.Client) (pbExpr *tipb.Expr, remained []expression.Expression) {
+func expressionsToPB(exprs []expression.Expression, client kv.Client) (pbExpr *tipb.Expr, pushed []expression.Expression, remained []expression.Expression) {
 	for _, expr := range exprs {
 		v := exprToPB(client, expr)
 		if v == nil {
 			remained = append(remained, expr)
 			continue
 		}
+		pushed = append(pushed, expr)
 		if pbExpr == nil {
 			pbExpr = v
 		} else {

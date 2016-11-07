@@ -591,6 +591,7 @@ func (s *testSuite) TestLoadData(c *C) {
 		{nil, []byte("\n"), []string{fmt.Sprintf("%v %v %v %v", 1, 0, []byte(""), 0)}, nil},
 		{nil, []byte("\t\n"), []string{fmt.Sprintf("%v %v %v %v", 2, 0, []byte(""), 0)}, nil},
 		{nil, []byte("3\t2\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4)}, nil},
+		{nil, []byte("3*1\t2\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4)}, nil},
 		{nil, []byte("4\t2\t\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 4, 2, []byte(""), 3)}, nil},
 		{nil, []byte("\t1\t2\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 5, 1, []byte("2"), 3)}, nil},
 		{nil, []byte("6\t2\t3\n"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("3"), 0)}, nil},
