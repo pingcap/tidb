@@ -251,6 +251,14 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t (id, ds) values (1, \"1991-09-05\"),(2,\"1991-09-05\"), (3, \"1991-09-06\"),(0,\"1991-09-06\")")
 	result = tk.MustQuery("select sum(id), ds from t group by ds order by id")
 	result.Check(testkit.Rows("3 1991-09-06", "3 1991-09-05"))
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (col0 int, col1 int)")
+	tk.MustExec("create table t2 (col0 int, col1 int)")
+	tk.MustExec("insert into t1 values(83, 0), (26, 0), (43, 81)")
+	tk.MustExec("insert into t2 values(22, 2), (3, 12), (38, 98)")
+	result = tk.MustQuery("SELECT COALESCE ( + 1, cor0.col0 ) + - CAST( NULL AS DECIMAL ) FROM t2, t1 AS cor0, t2 AS cor1 GROUP BY cor0.col1")
+	result.Check(testkit.Rows("<nil>", "<nil>"))
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {
