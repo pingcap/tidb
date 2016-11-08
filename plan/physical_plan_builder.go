@@ -31,7 +31,7 @@ const (
 	selectionFactor = 0.8
 	distinctFactor  = 0.7
 	cpuFactor       = 0.9
-	aggFactor       = 0.2
+	aggFactor       = 0.1
 	joinFactor      = 0.3
 )
 
@@ -359,7 +359,7 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		if prop.limit != nil {
 			count = prop.limit.Offset + prop.limit.Count
 		}
-		info.cost += float64(info.count)*cpuFactor + float64(count)*memoryFactor
+		info.cost += sortCost(count)
 	} else if prop.limit != nil {
 		limit := prop.limit.Copy()
 		limit.SetSchema(info.p.GetSchema())
@@ -369,6 +369,10 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		info.count = prop.limit.Count
 	}
 	return info
+}
+
+func sortCost(cnt uint64) float64 {
+	return float64(cnt)*math.Log2(float64(cnt))*cpuFactor + memoryFactor*float64(cnt)
 }
 
 // removeLimit removes the limit from prop.
@@ -948,8 +952,7 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	cnt := float64(unSortedPlanInfo.count)
-	sortCost := cnt*math.Log2(cnt)*cpuFactor + memoryFactor*cnt
+	sortCost := sortCost(unSortedPlanInfo.count)
 	if len(selfProp.props) == 0 {
 		np := p.Copy().(*Sort)
 		np.ExecLimit = prop.limit
