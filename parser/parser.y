@@ -171,6 +171,7 @@ import (
 	local		"LOCAL"
 	level		"LEVEL"
 	mode		"MODE"
+	modify		"MODIFY"
 	maxRows		"MAX_ROWS"
 	minRows		"MIN_ROWS"
 	noWriteToBinLog "NO_WRITE_TO_BINLOG"
@@ -214,6 +215,7 @@ import (
 	user		"USER"
 	value		"VALUE"
 	variables	"VARIABLES"
+	view		"VIEW"
 	warnings	"WARNINGS"
 	week		"WEEK"
 	yearType	"YEAR"
@@ -471,6 +473,7 @@ import (
 	DropIndexStmt		"DROP INDEX statement"
 	DropTableStmt		"DROP TABLE statement"
 	DropUserStmt		"DROP USER"
+	DropViewStmt		"DROP VIEW statement"
 	EmptyStmt		"empty statement"
 	Enclosed		"Enclosed by"
 	EqOpt			"= or empty"
@@ -805,6 +808,14 @@ AlterTableSpec:
 |	"ENABLE" "KEYS"
 	{
 		$$ = &ast.AlterTableSpec{}
+	}
+|	"MODIFY" ColumnKeywordOpt ColumnDef ColumnPosition
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:		ast.AlterTableModifyColumn,
+			Column:		$3.(*ast.ColumnDef),
+			Position:	$4.(*ast.ColumnPosition),
+		}
 	}
 
 KeyOrIndex:
@@ -1515,6 +1526,12 @@ DropTableStmt:
 		$$ = &ast.DropTableStmt{IfExists: true, Tables: $5.([]*ast.TableName)}
 	}
 
+DropViewStmt:
+	"DROP" "VIEW" "IF" "EXISTS" TableNameList
+	{
+		$$ = &ast.DoStmt{}
+	}
+
 DropUserStmt:
     "DROP" "USER" UsernameList
     {
@@ -1985,7 +2002,7 @@ UnReservedKeyword:
 |	"COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
 |	"MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
-|	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION"
+|	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
@@ -4251,6 +4268,7 @@ Statement:
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
+|	DropViewStmt
 |	DropUserStmt
 |	FlushStmt
 |	GrantStmt
