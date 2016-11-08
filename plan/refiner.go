@@ -165,9 +165,14 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 		// First of all, we should extract all of in/eq expressions from rest conditions for every continuous index column.
 		// e.g. For index (a,b,c) and conditions a in (1,2) and b < 1 and c in (3,4), we should only extract column a in (1,2).
 		accessIdx := checker.findEqOrInFunc(conditions)
-		// If we fail to find any in or eq expression, we should consider all of other conditions for the next column.
 		if accessIdx == -1 {
-			accessConds, filterConds = checker.extractAccessAndFilterConds(conditions, accessConds, filterConds)
+			if curIndex == indexScan.accessEqualCount {
+				// If we fail to find any in or eq expression, we should consider all of other conditions for the next column.
+				accessConds, filterConds = checker.extractAccessAndFilterConds(conditions, accessConds, filterConds)
+			}
+			// If we have found some in expression, we should not consider any more column. Because for condition
+			// a in (1,3) and b > 5, we should calculate the range like (1 5,2 -inf) and (3 5,4 -inf) when the a is integer.
+			// Temporarily we don't consider this case.
 			break
 		}
 		indexScan.accessInAndEqCount++
