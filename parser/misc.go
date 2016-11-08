@@ -297,6 +297,7 @@ var tokenMap = map[string]int{
 	"MIN_ROWS":            minRows,
 	"MOD":                 mod,
 	"MODE":                mode,
+	"MODIFY":              modify,
 	"MONTH":               month,
 	"MONTHNAME":           monthname,
 	"NAMES":               names,
