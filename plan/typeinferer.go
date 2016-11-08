@@ -92,13 +92,9 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.Type.Collate = charset.CollationBin
 		v.convertValueToColumnTypeIfNeeded(x)
 	case *ast.PatternLikeExpr:
-		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-		x.Type.Charset = charset.CharsetBin
-		x.Type.Collate = charset.CollationBin
+		v.handleLikeExpr(x)
 	case *ast.PatternRegexpExpr:
-		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-		x.Type.Charset = charset.CharsetBin
-		x.Type.Collate = charset.CollationBin
+		v.handleRegexpExpr(x)
 	case *ast.SelectStmt:
 		v.selectStmt(x)
 	case *ast.UnaryOperationExpr:
@@ -382,6 +378,48 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 	x.SetType(&currType)
 	// TODO: We need a better way to set charset/collation
 	x.Type.Charset, x.Type.Collate = types.DefaultCharsetForType(x.Type.Tp)
+}
+
+// like expression expects the target expression and pattern to be a string, if it's not, we add a cast function.
+func (v *typeInferrer) handleLikeExpr(x *ast.PatternLikeExpr) {
+	x.SetType(types.NewFieldType(mysql.TypeLonglong))
+	x.Type.Charset = charset.CharsetBin
+	x.Type.Collate = charset.CollationBin
+	x.Expr = v.addCastToString(x.Expr)
+	x.Pattern = v.addCastToString(x.Pattern)
+}
+
+// regexp expression expects the target expression and pattern to be a string, if it's not, we add a cast function.
+func (v *typeInferrer) handleRegexpExpr(x *ast.PatternRegexpExpr) {
+	x.SetType(types.NewFieldType(mysql.TypeLonglong))
+	x.Type.Charset = charset.CharsetBin
+	x.Type.Collate = charset.CollationBin
+	x.Expr = v.addCastToString(x.Expr)
+	x.Pattern = v.addCastToString(x.Pattern)
+}
+
+// AddCastToString adds a cast function to string type if the expr charset is not UTF8.
+func (v *typeInferrer) addCastToString(expr ast.ExprNode) ast.ExprNode {
+	if !mysql.IsUTF8Charset(expr.GetType().Charset) {
+		castTp := types.NewFieldType(mysql.TypeString)
+		castTp.Charset, castTp.Collate = types.DefaultCharsetForType(mysql.TypeString)
+		if val, ok := expr.(*ast.ValueExpr); ok {
+			newVal, err := val.Datum.ConvertTo(castTp)
+			if err != nil {
+				v.err = errors.Trace(err)
+			}
+			expr.SetDatum(newVal)
+		} else {
+			castFunc := &ast.FuncCastExpr{
+				Expr:         expr,
+				Tp:           castTp,
+				FunctionType: ast.CastFunction,
+			}
+			expr = castFunc
+		}
+		expr.SetType(castTp)
+	}
+	return expr
 }
 
 // ConvertValueToColumnTypeIfNeeded checks if the expr in PatternInExpr is column name,
