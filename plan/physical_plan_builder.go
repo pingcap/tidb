@@ -77,6 +77,9 @@ func getRowCountByIndexRanges(table *statistics.Table, indexRanges []*IndexRange
 			return 0, errors.Trace(err)
 		}
 		count = count / float64(table.Count) * float64(rowCount)
+		for j := 0; j < i; j++ {
+			count = count / float64(100)
+		}
 		totalCount += count
 	}
 	if totalCount > float64(table.Count) {

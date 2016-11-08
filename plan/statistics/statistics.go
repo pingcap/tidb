@@ -31,10 +31,10 @@ const (
 	defaultBucketCount = 256
 
 	// When we haven't analyzed a table, we use pseudo statistics to estimate costs.
-	// It has row count 10000, equal condition selects 1/10 of total rows, less condition selects 1/3 of total rows,
+	// It has row count 1000000000, equal condition selects 1/500 of total rows, less condition selects 1/3 of total rows,
 	// between condition selects 1/4 of total rows.
-	pseudoRowCount    = 10000
-	pseudoEqualRate   = 1000
+	pseudoRowCount    = 1000000000
+	pseudoEqualRate   = 500
 	pseudoLessRate    = 3
 	pseudoBetweenRate = 4
 	pseudoTimestamp   = 1
