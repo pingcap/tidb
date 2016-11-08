@@ -563,8 +563,8 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq.StartTs = e.startTS
 	selIdxReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.indexPlan.Index)
-	if len(e.indexPlan.SortItems) > 0 {
-		selIdxReq.OrderBy = e.indexPlan.SortItems
+	if len(e.indexPlan.SortItemsPB) > 0 {
+		selIdxReq.OrderBy = e.indexPlan.SortItemsPB
 	} else if e.indexPlan.Desc {
 		selIdxReq.OrderBy = []*tipb.ByItem{{Desc: e.indexPlan.Desc}}
 	}

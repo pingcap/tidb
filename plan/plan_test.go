@@ -54,6 +54,12 @@ func newLongType() types.FieldType {
 	return *(types.NewFieldType(mysql.TypeLong))
 }
 
+func newStringType() types.FieldType {
+	ft := types.NewFieldType(mysql.TypeVarchar)
+	ft.Charset, ft.Collate = types.DefaultCharsetForType(mysql.TypeVarchar)
+	return *ft
+}
+
 func mockResolve(node ast.Node) error {
 	indices := []*model.IndexInfo{
 		{
@@ -62,14 +68,17 @@ func mockResolve(node ast.Node) error {
 				{
 					Name:   model.NewCIStr("c"),
 					Length: types.UnspecifiedLength,
+					Offset: 1,
 				},
 				{
 					Name:   model.NewCIStr("d"),
 					Length: types.UnspecifiedLength,
+					Offset: 2,
 				},
 				{
 					Name:   model.NewCIStr("e"),
 					Length: types.UnspecifiedLength,
+					Offset: 3,
 				},
 			},
 			State: model.StatePublic,
@@ -83,6 +92,27 @@ func mockResolve(node ast.Node) error {
 				},
 			},
 			State: model.StateWriteOnly,
+		},
+		{
+			Name: model.NewCIStr("c_d_e_str"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("c_str"),
+					Length: types.UnspecifiedLength,
+					Offset: 5,
+				},
+				{
+					Name:   model.NewCIStr("d_str"),
+					Length: types.UnspecifiedLength,
+					Offset: 6,
+				},
+				{
+					Name:   model.NewCIStr("e_str"),
+					Length: types.UnspecifiedLength,
+					Offset: 7,
+				},
+			},
+			State: model.StatePublic,
 		},
 	}
 	pkColumn := &model.ColumnInfo{
@@ -115,9 +145,28 @@ func mockResolve(node ast.Node) error {
 		FieldType: newLongType(),
 		ID:        5,
 	}
+	colStr1 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("c_str"),
+		FieldType: newStringType(),
+		ID:        6,
+	}
+	colStr2 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("d_str"),
+		FieldType: newStringType(),
+		ID:        7,
+	}
+	colStr3 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("e_str"),
+		FieldType: newStringType(),
+		ID:        8,
+	}
+
 	pkColumn.Flag = mysql.PriKeyFlag
 	table := &model.TableInfo{
-		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3},
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3},
 		Indices:    indices,
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
@@ -125,7 +174,11 @@ func mockResolve(node ast.Node) error {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{table})
 	ctx := mock.NewContext()
 	variable.BindSessionVars(ctx)
-	return MockResolveName(node, is, "test", ctx)
+	err := MockResolveName(node, is, "test", ctx)
+	if err != nil {
+		return err
+	}
+	return InferType(node)
 }
 
 func supportExpr(exprType tipb.ExprType) bool {
@@ -155,7 +208,11 @@ func supportExpr(exprType tipb.ExprType) bool {
 	// bitwise operators
 	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitXor, tipb.ExprType_BitNeg:
 		return true
-	case tipb.ExprType_Case, tipb.ExprType_Coalesce:
+	// control functions
+	case tipb.ExprType_Case, tipb.ExprType_If:
+		return true
+	// other functions
+	case tipb.ExprType_Coalesce:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
@@ -220,49 +277,35 @@ func mockContext() context.Context {
 	return ctx
 }
 
-func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
+func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
-		sql   string
-		best  string
-		topn  string
-		limit string
+		sql       string
+		best      string
+		aggFuns   string
+		aggFields string
+		gbyItems  string
 	}{
 		{
-			sql:   "select * from t order by a limit 5",
-			best:  "Table(t)->Limit->Projection",
-			topn:  "[]",
-			limit: "5",
+			sql:       "select count(*) from t",
+			best:      "Table(t)->HashAgg->Projection",
+			aggFuns:   "[count(1)]",
+			aggFields: "[blob bigint(21)]",
+			gbyItems:  "[]",
 		},
 		{
-			sql:   "select * from t limit 5",
-			best:  "Table(t)->Limit->Projection",
-			topn:  "[]",
-			limit: "5",
+			sql:       "select sum(b) from t group by c",
+			best:      "Table(t)->HashAgg->Projection",
+			aggFuns:   "[sum(test.t.b)]",
+			aggFields: "[blob decimal]",
+			gbyItems:  "[test.t.c]",
 		},
 		{
-			sql:   "select c from t order by c limit 5",
-			best:  "Index(t.c_d_e)[[<nil>,+inf]]->Limit->Projection",
-			topn:  "[]",
-			limit: "5",
-		},
-		{
-			sql:   "select * from t order by d limit 1",
-			best:  "Table(t)->Sort + Limit(1) + Offset(0)->Projection",
-			topn:  "[expr:<tp:ColumnRef val:\"\\200\\000\\000\\000\\000\\000\\000\\004\" > ]",
-			limit: "1",
-		},
-		{
-			sql:   "select * from t where c > 0 order by d limit 1",
-			best:  "Index(t.c_d_e)[(0,+inf]]->Sort + Limit(1) + Offset(0)->Projection",
-			topn:  "[expr:<tp:ColumnRef val:\"\\200\\000\\000\\000\\000\\000\\000\\004\" > ]",
-			limit: "1",
-		},
-		{
-			sql:   "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.b limit 2",
-			best:  "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
-			topn:  "[]",
-			limit: "nil",
+			sql:       "select max(b + c), min(case when b then 1 else 2 end) from t group by d + e, a",
+			best:      "Table(t)->HashAgg->Projection",
+			aggFuns:   "[max(plus(test.t.b, test.t.c)) min(case(test.t.b, 1, 2))]",
+			aggFields: "[blob bigint bigint]",
+			gbyItems:  "[plus(test.t.d, test.t.e) test.t.a]",
 		},
 	}
 	for _, ca := range cases {
@@ -290,93 +333,73 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
 		p = info.p
-	loop:
 		for {
+			var ts *physicalTableSource
 			switch x := p.(type) {
 			case *PhysicalTableScan:
-				c.Assert(fmt.Sprintf("%s", x.SortItems), Equals, ca.topn, Commentf("for %s", ca.sql))
-				var limitStr string
-				if x.LimitCount == nil {
-					limitStr = fmt.Sprint("nil")
-				} else {
-					limitStr = fmt.Sprintf("%d", *x.LimitCount)
-				}
-				c.Assert(limitStr, Equals, ca.limit, Commentf("for %s", ca.sql))
-				break loop
+				ts = &x.physicalTableSource
 			case *PhysicalIndexScan:
-				c.Assert(fmt.Sprintf("%s", x.SortItems), Equals, ca.topn, Commentf("for %s", ca.sql))
-				var limitStr string
-				if x.LimitCount == nil {
-					limitStr = fmt.Sprint("nil")
-				} else {
-					limitStr = fmt.Sprintf("%d", *x.LimitCount)
-				}
-				c.Assert(limitStr, Equals, ca.limit, Commentf("for %s", ca.sql))
-				break loop
+				ts = &x.physicalTableSource
+			}
+			if ts != nil {
+				c.Assert(fmt.Sprintf("%s", ts.aggFuncs), Equals, ca.aggFuns, Commentf("for %s", ca.sql))
+				c.Assert(fmt.Sprintf("%s", ts.gbyItems), Equals, ca.gbyItems, Commentf("for %s", ca.sql))
+				c.Assert(fmt.Sprintf("%s", ts.AggFields), Equals, ca.aggFields, Commentf("for %s", ca.sql))
+				break
 			}
 			p = p.GetChildByIndex(0)
 		}
 	}
 }
 
-// TestLogicOpsPushDown tests whether logic operators been pushed down successfully.
-func (s *testPlanSuite) TestOperatorsPushDown(c *C) {
+func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
-		sql    string
-		cond   string // readable expressions.
-		exprPB string // Marshall result of conditions been pushed down.
+		sql          string
+		best         string
+		orderByItmes string
+		limit        string
 	}{
 		{
-			sql:    "a and b",
-			cond:   "and(test.t.a, test.t.b)",
-			exprPB: "\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+			sql:          "select * from t order by a limit 5",
+			best:         "Table(t)->Limit->Projection",
+			orderByItmes: "[]",
+			limit:        "5",
 		},
 		{
-			sql:    "a or b",
-			cond:   "or(test.t.a, test.t.b)",
-			exprPB: "\b\xfe\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+			sql:          "select * from t limit 5",
+			best:         "Table(t)->Limit->Projection",
+			orderByItmes: "[]",
+			limit:        "5",
 		},
 		{
-			sql:    "a and (b or c)",
-			cond:   "and(test.t.a, or(test.t.b, test.t.c))",
-			exprPB: "\b\xfe\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x03",
+			sql:          "select c from t order by c limit 5",
+			best:         "Index(t.c_d_e)[[<nil>,+inf]]->Limit->Projection",
+			orderByItmes: "[]",
+			limit:        "5",
 		},
 		{
-			sql:    "not a",
-			cond:   "not(test.t.a)",
-			exprPB: "\b\xe9\a\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
+			sql:          "select * from t order by d limit 1",
+			best:         "Table(t)->Sort + Limit(1) + Offset(0)->Projection",
+			orderByItmes: "[(test.t.d, false)]",
+			limit:        "1",
 		},
 		{
-			sql:    "a xor b",
-			cond:   "xor(test.t.a, test.t.b)",
-			exprPB: "\b\xff\x11\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
+			sql:          "select * from t where c > 0 order by d limit 1",
+			best:         "Index(t.c_d_e)[(0,+inf]]->Sort + Limit(1) + Offset(0)->Projection",
+			orderByItmes: "[(test.t.d, false)]",
+			limit:        "1",
 		},
 		{
-			sql:    "a & b",
-			cond:   "bitand(test.t.a, test.t.b)",
-			exprPB: "\b\xb5\x10\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
-		},
-		{
-			sql:    "a | b",
-			cond:   "bitor(test.t.a, test.t.b)",
-			exprPB: "\b\xb6\x10\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
-		},
-		{
-			sql:    "a ^ b",
-			cond:   "bitxor(test.t.a, test.t.b)",
-			exprPB: "\b\xb7\x10\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
-		},
-		{
-			sql:    "~a",
-			cond:   "bitneg(test.t.a)",
-			exprPB: "\b\xeb\a\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01",
+			sql:          "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.b limit 2",
+			best:         "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
+			orderByItmes: "[]",
+			limit:        "nil",
 		},
 	}
 	for _, ca := range cases {
-		sql := "select * from t where " + ca.sql
-		comment := Commentf("for %s", sql)
-		stmt, err := s.ParseOneStmt(sql, "", "")
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
@@ -397,53 +420,92 @@ func (s *testPlanSuite) TestOperatorsPushDown(c *C) {
 		c.Assert(err, IsNil)
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
+		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
 		p = info.p
-		// loop util reaching the DataSource node of a physical plan to get the conditions been pushed down.
-	loop:
 		for {
+			var ts *physicalTableSource
 			switch x := p.(type) {
 			case *PhysicalTableScan:
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
-				pbStr, _ := x.ConditionPBExpr.Marshal()
-				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
-				break loop
+				ts = &x.physicalTableSource
 			case *PhysicalIndexScan:
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
-				pbStr, _ := x.ConditionPBExpr.Marshal()
-				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
-				break loop
+				ts = &x.physicalTableSource
+			}
+			if ts != nil {
+				c.Assert(fmt.Sprintf("%s", ts.sortItems), Equals, ca.orderByItmes, Commentf("for %s", ca.sql))
+				var limitStr string
+				if ts.LimitCount == nil {
+					limitStr = fmt.Sprint("nil")
+				} else {
+					limitStr = fmt.Sprintf("%d", *ts.LimitCount)
+				}
+				c.Assert(limitStr, Equals, ca.limit, Commentf("for %s", ca.sql))
+				break
 			}
 			p = p.GetChildByIndex(0)
 		}
 	}
 }
 
-// TestBuiltinFuncsPushDown tests whether logic operators been pushed down successfully.
-func (s *testPlanSuite) TestBuiltinFuncsPushDown(c *C) {
+// TestPushDownExpression tests whether expressions have been pushed down successfully.
+func (s *testPlanSuite) TestPushDownExpression(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
-		sql    string
-		cond   string // readable expressions
-		exprPB string // Marshall result of conditions that be pushed down.
+		sql  string
+		cond string // readable expressions.
 	}{
-		// case when
+		{
+			sql:  "a and b",
+			cond: "test.t.b",
+		},
+		{
+			sql:  "a or (b and c)",
+			cond: "or(test.t.a, and(test.t.b, test.t.c))",
+		},
+		{
+			sql:  "a or b",
+			cond: "or(test.t.a, test.t.b)",
+		},
+		{
+			sql:  "a and (b or c)",
+			cond: "or(test.t.b, test.t.c)",
+		},
+		{
+			sql:  "not a",
+			cond: "not(test.t.a)",
+		},
+		{
+			sql:  "a xor b",
+			cond: "xor(test.t.a, test.t.b)",
+		},
+		{
+			sql:  "a & b",
+			cond: "bitand(test.t.a, test.t.b)",
+		},
+		{
+			sql:  "a | b",
+			cond: "bitor(test.t.a, test.t.b)",
+		},
+		{
+			sql:  "a ^ b",
+			cond: "bitxor(test.t.a, test.t.b)",
+		},
+		{
+			sql:  "~a",
+			cond: "bitneg(test.t.a)",
+		},
 		{
 			sql:  "a = case a when b then 1 when a then 0 end",
 			cond: "eq(test.t.a, case(eq(test.t.a, test.t.b), 1, eq(test.t.a, test.t.a), 0))",
-			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1ae\b\xa7" +
-				"\x1f\x1a!\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01" +
-				"\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02\x1a\f\b\x01\x12\b\x80" +
-				"\x00\x00\x00\x00\x00\x00\x01\x1a!\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00" +
-				"\x00\x00\x00\x00\x01\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01" +
-				"\x1a\f\b\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x00",
+		},
+		// if
+		{
+			sql:  "a = if(a, 1, 0)",
+			cond: "eq(test.t.a, if(test.t.a, 1, 0))",
 		},
 		// coalesce
 		{
 			sql:  "a = coalesce(null, null, a, b)",
 			cond: "eq(test.t.a, coalesce(<nil>, <nil>, test.t.a, test.t.b))",
-			exprPB: "\b\xd3\x0f\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a)\b\xad\x1b\x1a" +
-				"\x02\b\x00\x1a\x02\b\x00\x1a\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x01\x1a" +
-				"\r\b\xc9\x01\x12\b\x80\x00\x00\x00\x00\x00\x00\x02",
 		},
 	}
 	for _, ca := range cases {
@@ -471,20 +533,17 @@ func (s *testPlanSuite) TestBuiltinFuncsPushDown(c *C) {
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		p = info.p
-		// loop util reaching the DataSource node of a physical plan to get the conditions been pushed down.
-	loop:
 		for {
+			var ts *physicalTableSource
 			switch x := p.(type) {
 			case *PhysicalTableScan:
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
-				pbStr, _ := x.ConditionPBExpr.Marshal()
-				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
-				break loop
+				ts = &x.physicalTableSource
 			case *PhysicalIndexScan:
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(x.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
-				pbStr, _ := x.ConditionPBExpr.Marshal()
-				c.Assert(fmt.Sprintf("%s", pbStr), Equals, ca.exprPB, Commentf("for %s", sql))
-				break loop
+				ts = &x.physicalTableSource
+			}
+			if ts != nil {
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(ts.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				break
 			}
 			p = p.GetChildByIndex(0)
 		}
@@ -876,6 +935,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Table(t)->StreamAgg",
 		},
 		{
+			sql:  "select count(*) from t group by a order by a",
+			best: "Table(t)->StreamAgg->Trim",
+		},
+		{
 			sql:  "select count(distinct e) from t where c = 1 group by d",
 			best: "Index(t.c_d_e)[[1,1]]->StreamAgg",
 		},
@@ -1055,60 +1118,94 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "Table(t)->Selection->Projection",
 		},
 		{
-			sql:  "select a from t where c like ''",
-			best: "Index(t.c_d_e)[[,]]->Projection",
+			sql:  "select a from t where c_str like ''",
+			best: "Index(t.c_d_e_str)[[,]]->Projection",
 		},
 		{
-			sql:  "select a from t where c like 'abc'",
-			best: "Index(t.c_d_e)[[abc,abc]]->Projection",
+			sql:  "select a from t where c_str like 'abc'",
+			best: "Index(t.c_d_e_str)[[abc,abc]]->Projection",
 		},
 		{
-			sql:  "select a from t where c not like 'abc'",
+			sql:  "select a from t where c_str not like 'abc'",
 			best: "Table(t)->Selection->Projection",
 		},
 		{
-			sql:  "select a from t where not (c like 'abc' or c like 'abd')",
+			sql:  "select a from t where not (c_str like 'abc' or c_str like 'abd')",
 			best: "Table(t)->Selection->Projection",
 		},
 		{
-			sql:  "select a from t where c like '_abc'",
+			sql:  "select a from t where c_str like '_abc'",
 			best: "Table(t)->Selection->Projection",
 		},
 		{
-			sql:  "select a from t where c like 'abc%'",
-			best: "Index(t.c_d_e)[[abc,abd)]->Projection",
+			sql:  "select a from t where c_str like 'abc%'",
+			best: "Index(t.c_d_e_str)[[abc,abd)]->Projection",
 		},
 		{
-			sql:  "select a from t where c like 'abc_'",
-			best: "Index(t.c_d_e)[(abc,abd)]->Selection->Projection",
+			sql:  "select a from t where c_str like 'abc_'",
+			best: "Index(t.c_d_e_str)[(abc,abd)]->Selection->Projection",
 		},
 		{
-			sql:  "select a from t where c like 'abc%af'",
-			best: "Index(t.c_d_e)[[abc,abd)]->Selection->Projection",
+			sql:  "select a from t where c_str like 'abc%af'",
+			best: "Index(t.c_d_e_str)[[abc,abd)]->Selection->Projection",
 		},
 		{
-			sql:  `select a from t where c like 'abc\\_' escape ''`,
-			best: "Index(t.c_d_e)[[abc_,abc_]]->Projection",
+			sql:  `select a from t where c_str like 'abc\\_' escape ''`,
+			best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
 		},
 		{
-			sql:  `select a from t where c like 'abc\\_'`,
-			best: "Index(t.c_d_e)[[abc_,abc_]]->Projection",
+			sql:  `select a from t where c_str like 'abc\\_'`,
+			best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
 		},
 		{
-			sql:  `select a from t where c like 'abc\\\\_'`,
-			best: "Index(t.c_d_e)[(abc\\,abc])]->Selection->Projection",
+			sql:  `select a from t where c_str like 'abc\\\\_'`,
+			best: "Index(t.c_d_e_str)[(abc\\,abc])]->Selection->Projection",
 		},
 		{
-			sql:  `select a from t where c like 'abc\\_%'`,
-			best: "Index(t.c_d_e)[[abc_,abc`)]->Projection",
+			sql:  `select a from t where c_str like 'abc\\_%'`,
+			best: "Index(t.c_d_e_str)[[abc_,abc`)]->Projection",
 		},
 		{
-			sql:  `select a from t where c like 'abc=_%' escape '='`,
-			best: "Index(t.c_d_e)[[abc_,abc`)]->Projection",
+			sql:  `select a from t where c_str like 'abc=_%' escape '='`,
+			best: "Index(t.c_d_e_str)[[abc_,abc`)]->Projection",
 		},
 		{
-			sql:  `select a from t where c like 'abc\\__'`,
-			best: "Index(t.c_d_e)[(abc_,abc`)]->Selection->Projection",
+			sql:  `select a from t where c_str like 'abc\\__'`,
+			best: "Index(t.c_d_e_str)[(abc_,abc`)]->Selection->Projection",
+		},
+		{
+			// Check that 123 is converted to string '123'. index can be used.
+			sql:  `select a from t where c_str like 123`,
+			best: "Index(t.c_d_e_str)[[123,123]]->Projection",
+		},
+		{
+			// c is not string type, added cast to string during InferType, no index can be used.
+			sql:  `select a from t where c like '1'`,
+			best: "Table(t)->Selection->Projection",
+		},
+		{
+			sql:  `select a from t where c = 1.1 and d > 3`,
+			best: "Index(t.c_d_e)[]->Projection",
+		},
+		{
+			sql:  `select a from t where c = 1.9 and d > 3`,
+			best: "Index(t.c_d_e)[]->Projection",
+		},
+		{
+			sql:  `select a from t where c < 1.1`,
+			best: "Index(t.c_d_e)[[-inf,1]]->Projection",
+		},
+		{
+			sql:  `select a from t where c <= 1.9`,
+			best: "Index(t.c_d_e)[[-inf,2)]->Projection",
+		},
+		{
+			sql:  `select a from t where c >= 1.1`,
+			best: "Index(t.c_d_e)[(1,+inf]]->Projection",
+		},
+		{
+			sql:  `select a from t where c > 1.9`,
+			best: "Index(t.c_d_e)[[2,+inf]]->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -1132,7 +1229,8 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		c.Assert(err, IsNil)
 		info, err := p.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
+		jsonPlan, _ := info.p.MarshalJSON()
+		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s, %s", ca.sql, string(jsonPlan)))
 	}
 }
 
@@ -1434,11 +1532,9 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 	}
 
 	for _, ca := range cases {
-		sql := "select 1 from t where " + ca.exprStr
-		stmts, err := s.Parse(sql, "", "")
+		sql := "select * from t where " + ca.exprStr
+		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
-		stmt := stmts[0].(*ast.SelectStmt)
-
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
 
@@ -1523,7 +1619,7 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 		},
 		{
 			exprStr:   "a in (hex(12), 'a', '9')",
-			resultStr: "in(test.t.a, C, a, 9)",
+			resultStr: "in(test.t.a, C, 0, 9)",
 		},
 		{
 			exprStr:   "'string' is not null",
@@ -1749,7 +1845,7 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 		},
 		{
 			sql:   "a = b and b = c and c LIKE 'abc%'",
-			after: "eq(test.t.a, test.t.b), eq(test.t.b, test.t.c), like(test.t.a, abc%, 92), like(test.t.b, abc%, 92), like(test.t.c, abc%, 92)",
+			after: "eq(test.t.a, test.t.b), eq(test.t.b, test.t.c), like(cast(test.t.c), abc%, 92)",
 		},
 		{
 			sql:   "a = b and a > 2 and b > 3 and a < 1 and b < 2",

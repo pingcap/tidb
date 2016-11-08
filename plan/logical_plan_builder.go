@@ -35,6 +35,7 @@ func (a *idAllocator) allocID() string {
 }
 
 func (p *Aggregation) collectGroupByColumns() {
+	p.groupByCols = p.groupByCols[:0]
 	for _, item := range p.GroupByItems {
 		if col, ok := item.(*expression.Column); ok {
 			p.groupByCols = append(p.groupByCols, col)
@@ -398,6 +399,11 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 type ByItems struct {
 	Expr expression.Expression
 	Desc bool
+}
+
+// String implements fmt.Stringer interface.
+func (by *ByItems) String() string {
+	return fmt.Sprintf("(%s, %v)", by.Expr, by.Desc)
 }
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {

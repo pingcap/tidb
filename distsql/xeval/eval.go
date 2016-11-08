@@ -70,8 +70,9 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitNeg,
 		tipb.ExprType_BitXor, tipb.ExprType_LeftShift, tipb.ExprType_RighShift:
 		return e.evalBitOps(expr)
-	case tipb.ExprType_Case:
-		return e.evalCaseWhen(expr)
+	// control functions
+	case tipb.ExprType_Case, tipb.ExprType_If:
+		return e.evalControlFuncs(expr)
 	case tipb.ExprType_Coalesce:
 		return e.evalCoalesce(expr)
 	}
@@ -80,7 +81,7 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 
 func (e *Evaluator) evalTwoChildren(expr *tipb.Expr) (left, right types.Datum, err error) {
 	if len(expr.Children) != 2 {
-		err = ErrInvalid.Gen("%s need 2 operands but got %d", tipb.ExprType_name[int32(expr.GetTp())], len(expr.Children))
+		err = ErrInvalid.Gen("%s needs 2 operands but got %d", tipb.ExprType_name[int32(expr.GetTp())], len(expr.Children))
 		return
 	}
 	left, err = e.Eval(expr.Children[0])
