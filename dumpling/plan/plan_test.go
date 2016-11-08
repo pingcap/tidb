@@ -1107,11 +1107,19 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c in (1) and d > 3",
-			best: "Index(t.c_d_e)[[1,1]]->Selection->Projection",
+			best: "Index(t.c_d_e)[(1 3,1 +inf]]->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
+			best: "Index(t.c_d_e)[(1 3,1 4) (1 5,1 6) (2 3,2 4) (2 5,2 6) (3 3,3 4) (3 5,3 6)]->Projection",
 		},
 		{
 			sql:  "select a from t where c in (1, 2, 3)",
 			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3]]->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
+			best: "Index(t.c_d_e)[[1 1 1,1 1 1] [1 2 1,1 2 1] [2 1 1,2 1 1] [2 2 1,2 2 1] [3 1 1,3 1 1] [3 2 1,3 2 1]]->Projection",
 		},
 		{
 			sql:  "select a from t where d in (1, 2, 3)",
