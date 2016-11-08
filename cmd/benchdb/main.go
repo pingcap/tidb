@@ -173,6 +173,7 @@ func (ut *benchDB) mustParseSpec(s string) (start, end, count int) {
 }
 
 func (ut *benchDB) createTable() {
+	cLog("create table")
 	createSQL := "CREATE TABLE IF NOT EXISTS " + *tableName + ` (
   id bigint(20) NOT NULL,
   name varchar(32) NOT NULL,
@@ -182,7 +183,6 @@ func (ut *benchDB) createTable() {
   UNIQUE KEY name (name)
 )`
 	ut.mustExec(createSQL)
-	fmt.Println("done")
 }
 
 func (ut *benchDB) truncateTable() {
