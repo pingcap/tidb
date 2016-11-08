@@ -429,18 +429,12 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
-	var done bool
-	for i, col := range tblInfo.Columns {
-		if col.ID == newCol.ID && col.State == model.StatePublic {
-			tblInfo.Columns[i] = newCol
-			done = true
-			break
-		}
-	}
-	if !done {
+	oldCol := findCol(tblInfo.Columns, newCol.Name.L)
+	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobCancelled
-		return infoschema.ErrColumnNotExists.Gen("column %s not exist", newCol.Name)
+		return infoschema.ErrColumnNotExists.Gen("column %s doesn't exist", newCol.Name)
 	}
+	*oldCol = *newCol
 	err = t.UpdateTable(job.SchemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobCancelled
