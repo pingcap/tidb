@@ -33,7 +33,7 @@ var (
 	batchSize = flag.Int("batch", 100, "number of statements in a transaction, used for insert and update-random only")
 	blobSize  = flag.Int("blob", 1000, "size of the blob column in the row")
 	logLevel  = flag.String("L", "warn", "log level")
-	workFlow  = flag.String("run", strings.Join([]string{
+	runJobs   = flag.String("run", strings.Join([]string{
 		"create",
 		"truncate",
 		"insert:0_10000",
@@ -43,7 +43,7 @@ var (
 		"select:0_10000:10",
 		"gc",
 		"select:0_10000:10",
-	}, ","), "work-flow to run")
+	}, ","), "jobs to run")
 )
 
 var blobString string
@@ -55,7 +55,7 @@ func main() {
 	tidb.RegisterStore("tikv", tikv.Driver{})
 	blobString = strings.Repeat("0", *blobSize)
 	ut := newBenchDB()
-	works := strings.Split(*workFlow, ",")
+	works := strings.Split(*runJobs, ",")
 	for _, v := range works {
 		work := strings.ToLower(strings.TrimSpace(v))
 		name, spec := ut.mustParseWork(work)
@@ -75,7 +75,7 @@ func main() {
 		case "gc":
 			ut.manualGC(nil)
 		default:
-			cLog("Unknown work ", v)
+			cLog("Unknown job ", v)
 			return
 		}
 	}
@@ -89,7 +89,7 @@ type benchDB struct {
 
 func newBenchDB() *benchDB {
 	// Create TiKV store and disable GC as we will trigger GC manually.
-	store, err := tidb.NewStore("tikv://" + *addr + "?cluster=1&disableGC=true")
+	store, err := tidb.NewStore("tikv://" + *addr + "?disableGC=true")
 	if err != nil {
 		log.Fatal(err)
 	}
