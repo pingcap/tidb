@@ -72,6 +72,7 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 	return i != 0, nil
 }
 
+// CorrelatedColumn stands for a column in a correlated sub query.
 type CorrelatedColumn struct {
 	Column
 
@@ -96,10 +97,12 @@ func (col *CorrelatedColumn) Equal(expr Expression) bool {
 	return false
 }
 
+// IsCorrelated implements Expression interface.
 func (col *CorrelatedColumn) IsCorrelated() bool {
 	return true
 }
 
+// Decorrelated implements Expression interface.
 func (col *CorrelatedColumn) Decorrelated(schema Schema) Expression {
 	if schema.GetIndex(&col.Column) == -1 {
 		return col
@@ -169,10 +172,12 @@ func (col *Column) Clone() Expression {
 	return &newCol
 }
 
+// IsCorrelated implements Expression interface.
 func (col *Column) IsCorrelated() bool {
 	return false
 }
 
+// Decorrelated implements Expression interface.
 func (col *Column) Decorrelated(_ Schema) Expression {
 	return col
 }
@@ -386,6 +391,7 @@ func (sf *ScalarFunction) Equal(e Expression) bool {
 	return true
 }
 
+// IsCorrelated implements Expression interface.
 func (sf *ScalarFunction) IsCorrelated() bool {
 	for _, arg := range sf.Args {
 		if arg.IsCorrelated() {
@@ -395,6 +401,7 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 	return false
 }
 
+// Decorrelated implements Expression interface.
 func (sf *ScalarFunction) Decorrelated(schema Schema) Expression {
 	for i, arg := range sf.Args {
 		sf.Args[i] = arg.Decorrelated(schema)
@@ -474,10 +481,12 @@ func (c *Constant) Equal(b Expression) bool {
 	return true
 }
 
+// IsCorrelated implements Expression interface.
 func (c *Constant) IsCorrelated() bool {
 	return false
 }
 
+// Decorrelated implements Expression interface.
 func (c *Constant) Decorrelated(_ Schema) Expression {
 	return c
 }

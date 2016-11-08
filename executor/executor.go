@@ -1837,7 +1837,7 @@ func (e *ApplyExec) Next() (*Row, error) {
 	for {
 		for _, col := range e.outerSchema {
 			idx := col.Index
-			col.Data = &srcRow.Data[idx]
+			*col.Data = srcRow.Data[idx]
 		}
 		innerRow, err := e.innerExec.Next()
 		if err != nil {

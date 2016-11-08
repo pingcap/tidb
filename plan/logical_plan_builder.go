@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	. "github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
@@ -36,15 +36,15 @@ func (a *idAllocator) allocID() string {
 func (p *Aggregation) collectGroupByColumns() {
 	p.groupByCols = p.groupByCols[:0]
 	for _, item := range p.GroupByItems {
-		if col, ok := item.(*Column); ok {
+		if col, ok := item.(*expression.Column); ok {
 			p.groupByCols = append(p.groupByCols, col)
 		}
 	}
 }
 
-func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []Expression) (LogicalPlan, map[int]int) {
+func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int) {
 	agg := &Aggregation{
-		AggFuncs:        make([]AggregationFunction, 0, len(aggFuncList)),
+		AggFuncs:        make([]expression.AggregationFunction, 0, len(aggFuncList)),
 		ctx:             b.ctx,
 		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator)}
 	agg.self = agg
@@ -54,11 +54,11 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		agg.correlated = agg.correlated || item.IsCorrelated()
 	}
 	addChild(agg, p)
-	schema := make([]*Column, 0, len(aggFuncList))
+	schema := make(expression.Schema, 0, len(aggFuncList))
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
 	for i, aggFunc := range aggFuncList {
-		var newArgList []Expression
+		var newArgList []expression.Expression
 		for _, arg := range aggFunc.Args {
 			newArg, np, err := b.rewrite(arg, p, nil, true)
 			if err != nil {
@@ -69,7 +69,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			agg.correlated = agg.correlated || newArg.IsCorrelated()
 			newArgList = append(newArgList, newArg)
 		}
-		newFunc := NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct)
+		newFunc := expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct)
 		combined := false
 		for j, oldFunc := range agg.AggFuncs {
 			if oldFunc.Equal(newFunc) {
@@ -82,7 +82,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			position := len(agg.AggFuncs)
 			aggIndexMap[i] = position
 			agg.AggFuncs = append(agg.AggFuncs, newFunc)
-			schema = append(schema, &Column{
+			schema = append(schema, &expression.Column{
 				FromID:      agg.id,
 				ColName:     model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, position)),
 				Position:    position,
@@ -137,37 +137,38 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 	}
 }
 
-func extractColumn(expr Expression, cols []*Column, corCols []*CorrelatedColumn) ([]*Column, []*CorrelatedColumn) {
+func extractColumn(expr expression.Expression, cols []*expression.Column, corCols []*expression.CorrelatedColumn) (
+	[]*expression.Column, []*expression.CorrelatedColumn) {
 	switch v := expr.(type) {
-	case *Column:
+	case *expression.Column:
 		return append(cols, v), corCols
-	case *ScalarFunction:
+	case *expression.ScalarFunction:
 		for _, arg := range v.Args {
 			cols, corCols = extractColumn(arg, cols, corCols)
 		}
 		return cols, corCols
-	case *CorrelatedColumn:
+	case *expression.CorrelatedColumn:
 		return cols, append(corCols, v)
 	}
 	return cols, corCols
 }
 
-func extractOnCondition(conditions []Expression, left LogicalPlan, right LogicalPlan) (
-	eqCond []*ScalarFunction, leftCond []Expression, rightCond []Expression,
-	otherCond []Expression) {
+func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
+	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
+	otherCond []expression.Expression) {
 	for _, expr := range conditions {
-		binop, ok := expr.(*ScalarFunction)
+		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && binop.FuncName.L == ast.EQ {
-			ln, lOK := binop.Args[0].(*Column)
-			rn, rOK := binop.Args[1].(*Column)
+			ln, lOK := binop.Args[0].(*expression.Column)
+			rn, rOK := binop.Args[1].(*expression.Column)
 			if lOK && rOK {
 				if left.GetSchema().GetIndex(ln) != -1 && right.GetSchema().GetIndex(rn) != -1 {
 					eqCond = append(eqCond, binop)
 					continue
 				}
 				if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
-					cond, _ := NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
-					eqCond = append(eqCond, cond.(*ScalarFunction))
+					cond, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
+					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
 				}
 			}
@@ -214,7 +215,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		if onExpr.IsCorrelated() {
 			b.err = errors.New("On condition doesn't support subqueries yet.")
 		}
-		onCondition := SplitCNFItems(onExpr)
+		onCondition := expression.SplitCNFItems(onExpr)
 		eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, leftPlan, rightPlan)
 		joinPlan.EqualConditions = eqCond
 		joinPlan.LeftConditions = leftCond
@@ -239,7 +240,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 
 func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	conditions := splitWhere(where)
-	expressions := make([]Expression, 0, len(conditions))
+	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := &Selection{baseLogicalPlan: newBaseLogicalPlan(Sel, b.allocator)}
 	selection.self = selection
 	selection.initID()
@@ -254,7 +255,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		if expr == nil {
 			continue
 		}
-		expressions = append(expressions, SplitCNFItems(expr)...)
+		expressions = append(expressions, expression.SplitCNFItems(expr)...)
 		selection.correlated = selection.correlated || expr.IsCorrelated()
 	}
 	if len(expressions) == 0 {
@@ -269,13 +270,13 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
 	proj := &Projection{
-		Exprs:           make([]Expression, 0, len(fields)),
+		Exprs:           make([]expression.Expression, 0, len(fields)),
 		baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
 	}
 	proj.self = proj
 	proj.initID()
 	proj.correlated = p.IsCorrelated()
-	schema := make(Schema, 0, len(fields))
+	schema := make(expression.Schema, 0, len(fields))
 	oldLen := 0
 	for _, field := range fields {
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
@@ -289,7 +290,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		var tblName, colName model.CIStr
 		if field.AsName.L != "" {
 			colName = field.AsName
-		} else if c, ok := newExpr.(*Column); ok && !c.IsAggOrSubq {
+		} else if c, ok := newExpr.(*expression.Column); ok && !c.IsAggOrSubq {
 			if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
 				colName = astCol.Name.Name
 				tblName = astCol.Name.Table
@@ -312,7 +313,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				}
 			}
 		}
-		schemaCol := &Column{
+		schemaCol := &expression.Column{
 			FromID:  proj.id,
 			TblName: tblName,
 			ColName: colName,
@@ -398,7 +399,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 
 // ByItems wraps a "by" item.
 type ByItems struct {
-	Expr Expression
+	Expr expression.Expression
 	Desc bool
 }
 
@@ -523,7 +524,7 @@ func (a *havingAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, skipChi
 	return n, false
 }
 
-func (a *havingAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, schema Schema) (int, error) {
+func (a *havingAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, schema expression.Schema) (int, error) {
 	col, err := schema.FindColumn(v.Name)
 	if err != nil {
 		return -1, errors.Trace(err)
@@ -669,7 +670,7 @@ func (b *planBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.Aggrega
 // gbyResolver resolves group by items from select fields.
 type gbyResolver struct {
 	fields []*ast.SelectField
-	schema Schema
+	schema expression.Schema
 	err    error
 	inExpr bool
 }
@@ -714,8 +715,8 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
-func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, []Expression) {
-	exprs := make([]Expression, 0, len(gby.Items))
+func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, []expression.Expression) {
+	exprs := make([]expression.Expression, 0, len(gby.Items))
 	resolver := &gbyResolver{fields: fields, schema: p.GetSchema()}
 	for _, item := range gby.Items {
 		resolver.inExpr = false
@@ -769,7 +770,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		p                             LogicalPlan
 		aggFuncs                      []*ast.AggregateFuncExpr
 		havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
-		gbyCols                       []Expression
+		gbyCols                       []expression.Expression
 	)
 	if sel.From != nil {
 		p = b.buildResultSetNode(sel.From.TableRefs)
@@ -886,11 +887,11 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	p.initID()
 	// Equal condition contains a column from previous joined table.
 	rfs := tn.GetResultFields()
-	schema := make([]*Column, 0, len(rfs))
+	schema := make([]*expression.Column, 0, len(rfs))
 	for i, rf := range rfs {
 		p.DBName = &rf.DBName
 		p.Columns = append(p.Columns, rf.Column)
-		schema = append(schema, &Column{
+		schema = append(schema, &expression.Column{
 			FromID:   p.id,
 			ColName:  rf.Column.Name,
 			TblName:  rf.Table.Name,
@@ -905,15 +906,15 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 
 // ApplyConditionChecker checks whether all or any output of apply matches a condition.
 type ApplyConditionChecker struct {
-	Condition Expression
+	Condition expression.Expression
 	All       bool
 }
 
-func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, schema Schema, checker *ApplyConditionChecker) LogicalPlan {
+func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, checker *ApplyConditionChecker) LogicalPlan {
 	ap := &Apply{
 		InnerPlan:        innerPlan,
 		Checker:          checker,
-		corColsInCurPlan: make([]*CorrelatedColumn, len(outerPlan.GetSchema())),
+		corColsInCurPlan: make([]*expression.CorrelatedColumn, len(outerPlan.GetSchema())),
 		baseLogicalPlan:  newBaseLogicalPlan(App, b.allocator),
 	}
 	ap.self = ap
@@ -933,7 +934,13 @@ func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, schema Schema
 		if idx := outerPlan.GetSchema().GetIndex(&corCol.Column); idx == -1 {
 			ap.corColsInOuterPlan = append(ap.corColsInOuterPlan, corCol)
 		} else {
-			ap.corColsInCurPlan[idx] = corCol
+			if ap.corColsInCurPlan[idx] == nil {
+				ap.corColsInCurPlan[idx] = &expression.CorrelatedColumn{
+					Column: *outerPlan.GetSchema()[idx],
+					Data:   &types.Datum{},
+				}
+			}
+			corCol.Data = ap.corColsInCurPlan[idx].Data
 		}
 	}
 	for i := len(ap.corColsInCurPlan) - 1; i >= 0; i-- {
@@ -948,7 +955,7 @@ func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, schema Schema
 		}
 		ap.SetSchema(append(outerPlan.GetSchema().Clone(), innerSchema...))
 	} else {
-		ap.SetSchema(append(outerPlan.GetSchema().Clone(), &Column{
+		ap.SetSchema(append(outerPlan.GetSchema().Clone(), &expression.Column{
 			FromID:      ap.id,
 			ColName:     model.NewCIStr("exists_row"),
 			RetType:     types.NewFieldType(mysql.TypeTiny),
@@ -976,11 +983,11 @@ out:
 	exists.self = exists
 	exists.initID()
 	addChild(exists, p)
-	newCol := &Column{
+	newCol := &expression.Column{
 		FromID:  exists.id,
 		RetType: types.NewFieldType(mysql.TypeTiny),
 		ColName: model.NewCIStr("exists_col")}
-	exists.SetSchema([]*Column{newCol})
+	exists.SetSchema(expression.Schema{newCol})
 	exists.correlated = p.IsCorrelated()
 	return exists
 }
@@ -995,7 +1002,7 @@ func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	return maxOneRow
 }
 
-func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []Expression, asScalar bool, not bool) LogicalPlan {
+func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) LogicalPlan {
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
 	joinPlan.self = joinPlan
 	joinPlan.initID()
@@ -1010,7 +1017,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	joinPlan.RightConditions = rightCond
 	joinPlan.OtherConditions = otherCond
 	if asScalar {
-		joinPlan.SetSchema(append(outerPlan.GetSchema().Clone(), &Column{
+		joinPlan.SetSchema(append(outerPlan.GetSchema().Clone(), &expression.Column{
 			FromID:      joinPlan.id,
 			ColName:     model.NewCIStr(fmt.Sprintf("%s_aux_0", joinPlan.id)),
 			RetType:     types.NewFieldType(mysql.TypeTiny),
@@ -1066,9 +1073,9 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	return updt
 }
 
-func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([]*Assignment, LogicalPlan) {
+func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
 	schema := p.GetSchema()
-	newList := make([]*Assignment, len(schema))
+	newList := make([]*expression.Assignment, len(schema))
 	for _, assign := range list {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -1089,7 +1096,7 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([
 			return nil, nil
 		}
 		p = np
-		newList[offset] = &Assignment{Col: col, Expr: newExpr}
+		newList[offset] = &expression.Assignment{Col: col, Expr: newExpr}
 	}
 	return newList, p
 }
