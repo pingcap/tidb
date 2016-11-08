@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -31,7 +32,7 @@ const (
 	selectionFactor = 0.8
 	distinctFactor  = 0.7
 	cpuFactor       = 0.9
-	aggFactor       = 0.2
+	aggFactor       = 0.1
 	joinFactor      = 0.3
 )
 
@@ -246,7 +247,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		}
 	} else {
 		rb := rangeBuilder{}
-		is.Ranges = rb.buildIndexRanges(fullRange)
+		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount}), nil
@@ -359,7 +360,7 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		if prop.limit != nil {
 			count = prop.limit.Offset + prop.limit.Count
 		}
-		info.cost += float64(info.count)*cpuFactor + float64(count)*memoryFactor
+		info.cost += sortCost(count)
 	} else if prop.limit != nil {
 		limit := prop.limit.Copy()
 		limit.SetSchema(info.p.GetSchema())
@@ -369,6 +370,10 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		info.count = prop.limit.Count
 	}
 	return info
+}
+
+func sortCost(cnt uint64) float64 {
+	return float64(cnt)*math.Log2(float64(cnt))*cpuFactor + memoryFactor*float64(cnt)
 }
 
 // removeLimit removes the limit from prop.
@@ -517,6 +522,23 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	return resultInfo, nil
 }
 
+// replaceColsInPropBySchema replaces the columns in original prop with the columns in schema.
+func replaceColsInPropBySchema(prop *requiredProperty, schema expression.Schema) *requiredProperty {
+	newProps := make([]*columnProp, 0, len(prop.props))
+	for _, p := range prop.props {
+		idx := schema.GetIndex(p.col)
+		if idx == -1 {
+			log.Errorf("Can't find column %s in schema", p.col)
+		}
+		newProps = append(newProps, &columnProp{col: schema[idx], desc: p.desc})
+	}
+	return &requiredProperty{
+		props:      newProps,
+		sortKeyLen: prop.sortKeyLen,
+		limit:      prop.limit,
+	}
+}
+
 // convert2PhysicalPlanRight converts the right join to *physicalPlanInfo.
 func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.GetChildByIndex(0).(LogicalPlan)
@@ -549,6 +571,8 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	rProp := prop
 	if !allRight {
 		rProp = &requiredProperty{}
+	} else {
+		rProp = replaceColsInPropBySchema(rProp, rChild.GetSchema())
 	}
 	var rInfo *physicalPlanInfo
 	if innerJoin {
@@ -948,8 +972,7 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	cnt := float64(unSortedPlanInfo.count)
-	sortCost := cnt*math.Log2(cnt)*cpuFactor + memoryFactor*cnt
+	sortCost := sortCost(unSortedPlanInfo.count)
 	if len(selfProp.props) == 0 {
 		np := p.Copy().(*Sort)
 		np.ExecLimit = prop.limit
