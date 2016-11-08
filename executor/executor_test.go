@@ -894,7 +894,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("3 2"))
 
 	// test cast
-	result = tk.MustQuery("select cast(1 as decimal(1,2))")
+	result = tk.MustQuery("select cast(1 as decimal(3,2))")
 	result.Check(testkit.Rows("1.00"))
 	result = tk.MustQuery("select cast('1991-09-05 11:11:11' as datetime)")
 	result.Check(testkit.Rows("1991-09-05 11:11:11"))
@@ -1018,6 +1018,7 @@ func (s *testSuite) TestToPBExpr(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a decimal(10,6), b decimal, index idx_b (b))")
+	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values (1.1, 1.1)")
 	tk.MustExec("insert t values (2.4, 2.4)")
 	tk.MustExec("insert t values (3.3, 2.7)")
@@ -1069,6 +1070,7 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a decimal(10,6), b decimal, index idx_b (b))")
+	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values (1.1, 1.1)")
 	tk.MustExec("insert t values (2.2, 2.2)")
 	tk.MustExec("insert t values (3.3, 2.7)")
