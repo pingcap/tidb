@@ -61,8 +61,6 @@ func statementLabel(node ast.StmtNode) string {
 		return "DropTable"
 	case *ast.DropUserStmt:
 		return "DropUser"
-	case *ast.ExecuteStmt:
-		return "Execute"
 	case *ast.ExplainStmt:
 		return "Explain"
 	case *ast.FlushTableStmt:
@@ -76,17 +74,15 @@ func statementLabel(node ast.StmtNode) string {
 		return "Insert"
 	case *ast.LoadDataStmt:
 		return "LoadData"
-	case *ast.PrepareStmt:
-		return "Prepare"
 	case *ast.RollbackStmt:
 		return "Rollback"
 	case *ast.SelectStmt:
 		if x.From == nil {
 			return "Select-Simple"
 		}
-		fileds := x.From.TableRefs
-		if fileds.Right == nil {
-			switch ref := fileds.Left.(type) {
+		tableRefs := x.From.TableRefs
+		if tableRefs.Right == nil {
+			switch ref := tableRefs.Left.(type) {
 			case *ast.TableSource:
 				switch ref.Source.(type) {
 				case *ast.TableName:
@@ -95,23 +91,25 @@ func statementLabel(node ast.StmtNode) string {
 			}
 		}
 		return "Select-Complex"
-	case *ast.SetPwdStmt:
-		return "SetPwd"
+	case *ast.SetStmt, *ast.SetPwdStmt:
+		return "Set"
 	case *ast.ShowStmt:
 		return "Show"
 	case *ast.TruncateTableStmt:
 		return "TruncateTable"
 	case *ast.UpdateStmt:
 		return "Update"
+	case *ast.ExecuteStmt, *ast.PrepareStmt, *ast.UseStmt:
+		return "Ignored"
 	}
-	return "unknown"
+	return "other"
 }
 
 // Compile compiles an ast.StmtNode to an ast.Statement.
 // After preprocessed and validated, it will be optimized to a plan,
 // then wrappped to an adapter *statement as stmt.Statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
-	stmtNodeCounter.WithLabelValues(statementLabel(node)).Inc()
+	stmtCount(node)
 	if _, ok := node.(*ast.UpdateStmt); ok {
 		sVars := variable.GetSessionVars(ctx)
 		sVars.InUpdateStmt = true

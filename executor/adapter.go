@@ -100,6 +100,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		stmtCount(executorExec.Stmt)
 		e = executorExec.StmtExec
 	}
 
