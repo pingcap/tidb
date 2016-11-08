@@ -251,10 +251,11 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 			return nil
 		}
 		p = np
-		selection.correlated = selection.correlated || expr.IsCorrelated()
-		if expr != nil {
-			expressions = append(expressions, SplitCNFItems(expr)...)
+		if expr == nil {
+			continue
 		}
+		expressions = append(expressions, SplitCNFItems(expr)...)
+		selection.correlated = selection.correlated || expr.IsCorrelated()
 	}
 	if len(expressions) == 0 {
 		return p
@@ -1000,7 +1001,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	joinPlan.initID()
 	joinPlan.correlated = outerPlan.IsCorrelated() || innerPlan.IsCorrelated()
 	for i, expr := range onCondition {
-		onCondition[i] = expr.Decorrelated(innerPlan.GetSchema())
+		onCondition[i] = expr.Decorrelated(outerPlan.GetSchema())
 		joinPlan.correlated = joinPlan.correlated || onCondition[i].IsCorrelated()
 	}
 	eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, outerPlan, innerPlan)

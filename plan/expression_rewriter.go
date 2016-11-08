@@ -736,9 +736,8 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
-	var column Expression
 	var err error
-	column, err = er.schema.FindColumn(v)
+	column, err := er.schema.FindColumn(v)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
@@ -747,23 +746,19 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.ctxStack = append(er.ctxStack, column)
 		return
 	}
-
 	for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
 		outerSchema := er.b.outerSchemas[i]
 		column, err = outerSchema.FindColumn(v)
 		if column != nil {
-			column = &CorrelatedColumn{Column: *column.(*Column)}
+			er.ctxStack = append(er.ctxStack, &CorrelatedColumn{Column: *column})
+			return
 		}
 		if err != nil {
 			er.err = errors.Trace(err)
 			return
 		}
 	}
-	if column == nil {
-		er.err = errors.Errorf("Unknown column %s %s %s.", v.Schema.L, v.Table.L, v.Name.L)
-		return
-	}
-	er.ctxStack = append(er.ctxStack, column)
+	er.err = errors.Errorf("Unknown column %s %s %s.", v.Schema.L, v.Table.L, v.Name.L)
 }
 
 func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
