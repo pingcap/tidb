@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -521,6 +522,23 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	return resultInfo, nil
 }
 
+// replaceColsInPropBySchema replaces the columns in original prop with the columns in schema.
+func replaceColsInPropBySchema(prop *requiredProperty, schema expression.Schema) *requiredProperty {
+	newProps := make([]*columnProp, 0, len(prop.props))
+	for _, p := range prop.props {
+		idx := schema.GetIndex(p.col)
+		if idx == -1 {
+			log.Errorf("Can't find column %s in schema", p.col)
+		}
+		newProps = append(newProps, &columnProp{col: schema[idx], desc: p.desc})
+	}
+	return &requiredProperty{
+		props:      newProps,
+		sortKeyLen: prop.sortKeyLen,
+		limit:      prop.limit,
+	}
+}
+
 // convert2PhysicalPlanRight converts the right join to *physicalPlanInfo.
 func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.GetChildByIndex(0).(LogicalPlan)
@@ -553,6 +571,8 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	rProp := prop
 	if !allRight {
 		rProp = &requiredProperty{}
+	} else {
+		rProp = replaceColsInPropBySchema(rProp, rChild.GetSchema())
 	}
 	var rInfo *physicalPlanInfo
 	if innerJoin {
