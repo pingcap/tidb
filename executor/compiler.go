@@ -47,26 +47,16 @@ func statementLabel(node ast.StmtNode) string {
 		return "CreateTable"
 	case *ast.CreateUserStmt:
 		return "CreateUser"
-	case *ast.DeallocateStmt:
-		return "Deallocate"
 	case *ast.DeleteStmt:
 		return "Delete"
-	case *ast.DoStmt:
-		return "Do"
 	case *ast.DropDatabaseStmt:
 		return "DropDatabase"
 	case *ast.DropIndexStmt:
 		return "DropIndex"
 	case *ast.DropTableStmt:
 		return "DropTable"
-	case *ast.DropUserStmt:
-		return "DropUser"
 	case *ast.ExplainStmt:
 		return "Explain"
-	case *ast.FlushTableStmt:
-		return "FlushTable"
-	case *ast.GrantStmt:
-		return "Grant"
 	case *ast.InsertStmt:
 		if x.IsReplace {
 			return "Replace"
@@ -99,7 +89,7 @@ func statementLabel(node ast.StmtNode) string {
 		return "TruncateTable"
 	case *ast.UpdateStmt:
 		return "Update"
-	case *ast.ExecuteStmt, *ast.PrepareStmt, *ast.UseStmt:
+	case *ast.DeallocateStmt, *ast.ExecuteStmt, *ast.PrepareStmt, *ast.UseStmt:
 		return "Ignored"
 	}
 	return "other"
