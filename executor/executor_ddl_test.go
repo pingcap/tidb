@@ -134,7 +134,7 @@ func (s *testSuite) TestCreateDropIndex(c *C) {
 	tk.MustExec("drop table drop_test")
 }
 
-func (s *testSuite) TestAlterTable(c *C) {
+func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -155,4 +155,27 @@ func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("insert nn (c1) values (3)")
 	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0", "3 0"))
+}
+
+func (s *testSuite) TestAlterTableModifyColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists mc (c1 int, c2 varchar(10))")
+	_, err := tk.Exec("alter table mc modify column c1 short")
+	c.Assert(err, NotNil)
+	tk.MustExec("alter table mc modify column c1 bigint")
+
+	_, err = tk.Exec("alter table mc modify column c2 blob")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("alter table mc modify column c2 varchar(8)")
+	c.Assert(err, NotNil)
+	tk.MustExec("alter table mc modify column c2 varchar(11)")
+	tk.MustExec("alter table mc modify column c2 text(13)")
+	tk.MustExec("alter table mc modify column c2 text")
+	result := tk.MustQuery("show create table mc")
+	createSQL := result.Rows()[0][1]
+	expected := "CREATE TABLE `mc` (\n  `c1` bigint(21) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB"
+	c.Assert(createSQL, Equals, expected)
 }
