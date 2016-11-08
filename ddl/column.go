@@ -450,6 +450,7 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	job.SchemaState = model.StatePublic
 	job.State = model.JobDone
 	addTableHistoryInfo(job, ver, tblInfo)
 	return nil

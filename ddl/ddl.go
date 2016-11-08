@@ -1166,7 +1166,7 @@ func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s doesn't exist", ti.Schema)
 	}
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
