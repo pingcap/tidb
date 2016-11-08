@@ -45,7 +45,7 @@ func buildIndexRange(p *PhysicalIndexScan) error {
 		}
 	}
 	// Build rangePoints for in conditions.
-	for i := p.accessEqualCount; i < p.accessInCount; i++ {
+	for i := p.accessEqualCount; i < p.accessInAndEqCount; i++ {
 		points := rb.build(p.AccessCondition[i])
 		if i == 0 {
 			colOff := p.Index.Columns[0].Offset
@@ -60,15 +60,15 @@ func buildIndexRange(p *PhysicalIndexScan) error {
 
 	rangePoints := fullRange
 	// Build rangePoints for non-equal access conditions.
-	for i := p.accessInCount; i < len(p.AccessCondition); i++ {
+	for i := p.accessInAndEqCount; i < len(p.AccessCondition); i++ {
 		rangePoints = rb.intersection(rangePoints, rb.build(p.AccessCondition[i]))
 	}
-	if p.accessInCount == 0 {
+	if p.accessInAndEqCount == 0 {
 		colOff := p.Index.Columns[0].Offset
 		tp := &p.Table.Columns[colOff].FieldType
 		p.Ranges = rb.buildIndexRanges(rangePoints, tp)
-	} else if p.accessInCount < len(p.AccessCondition) {
-		colOff := p.Index.Columns[p.accessInCount].Offset
+	} else if p.accessInAndEqCount < len(p.AccessCondition) {
+		colOff := p.Index.Columns[p.accessInAndEqCount].Offset
 		tp := &p.Table.Columns[colOff].FieldType
 		p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints, tp)
 	}
@@ -156,7 +156,7 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 			indexScan.accessEqualCount = len(accessConds)
 		}
 	}
-	indexScan.accessInCount = indexScan.accessEqualCount
+	indexScan.accessInAndEqCount = indexScan.accessEqualCount
 	// We should remove all accessConds , so that they will not be added to filter conditions.
 	for i := len(conditions) - 1; i >= 0; i-- {
 		for _, cond := range accessConds {
@@ -177,7 +177,7 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 		// in accessEqualCount.
 		accessIdx := checker.extractEqOrInFunc(conditions)
 		if accessIdx != -1 {
-			indexScan.accessInCount++
+			indexScan.accessInAndEqCount++
 			accessConds = append(accessConds, conditions[accessIdx])
 			if indexScan.Index.Columns[curIndex].Length != types.UnspecifiedLength {
 				filterConds = append(filterConds, conditions[accessIdx])
