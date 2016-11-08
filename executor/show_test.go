@@ -49,7 +49,8 @@ func (s *testSuite) TestShow(c *C) {
 		a int primary key, 
 		b double NOT NULL DEFAULT 2.0, 
 		c varchar(10) NOT NULL, 
-		d time unique
+		d time unique,
+		e timestamp NULL
 	);`
 	tk.MustExec(testSQL)
 	testSQL = "show create table ptest;"
@@ -57,7 +58,7 @@ func (s *testSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n PRIMARY KEY (`a`),\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB"}
+		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n PRIMARY KEY (`a`),\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
