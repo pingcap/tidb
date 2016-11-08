@@ -143,6 +143,7 @@ func (p *Aggregation) PruneColumnsAndResolveIndices(parentUsedCols []*Column) ([
 			return nil, errors.Trace(err)
 		}
 	}
+	p.collectGroupByColumns()
 	p.schema.InitIndices()
 	return append(childCorCols, corCols...), nil
 }
