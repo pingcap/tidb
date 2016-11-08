@@ -137,7 +137,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	doDDLJobErr(c, 1, 1, model.ActionCreateTable, []interface{}{1}, ctx, d)
 	// Schema ID is wrong, so creating table is failed.
 	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
-	// Table is existed, so creating table is failed.
+	// Table exists, so creating table is failed.
 	tblInfo.ID = tblInfo.ID + 1
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
 
@@ -193,7 +193,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		[]interface{}{false, model.NewCIStr("c1_index"), 1,
 			[]*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c1")}, Length: 256}}}, ctx, d)
 
-	// for drop index
+	// for dropping index
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, []interface{}{1}, ctx, d)
 	testDropIndex(c, ctx, d, dbInfo, tblInfo, "c1_index")
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, []interface{}{model.NewCIStr("c1_index")}, ctx, d)
