@@ -923,6 +923,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Dummy->HashAgg->Selection",
 		},
 		{
+			sql:  "select sum(a.b), sum(b.b) from t a join t b on a.c = b.c group by a.d order by a.d",
+			best: "LeftHashJoin{Table(t)->Table(t)}(a.c,b.c)->HashAgg->Sort->Trim",
+		},
+		{
 			sql:  "select count(*) from t group by c",
 			best: "Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg",
 		},
