@@ -31,7 +31,7 @@ var fullRange = []rangePoint{
 
 func buildIndexRange(p *PhysicalIndexScan) error {
 	rb := rangeBuilder{}
-	for i:= 0; i < p.accessInAndEqCount; i++ {
+	for i := 0; i < p.accessInAndEqCount; i++ {
 		// Build ranges for equal or in access conditions.
 		point := rb.build(p.AccessCondition[i])
 		colOff := p.Index.Columns[i].Offset
@@ -115,9 +115,22 @@ func getEQFunctionOffset(expr expression.Expression, cols []*model.IndexColumn) 
 	return -1
 }
 
+func removeAccessConditions(conditions, accessConds []expression.Expression) []expression.Expression {
+	for i := len(conditions) - 1; i >= 0; i-- {
+		for _, cond := range accessConds {
+			if cond == conditions[i] {
+				conditions = append(conditions[:i], conditions[i+1:]...)
+				break
+			}
+		}
+	}
+	return conditions
+}
+
 func detachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
 	accessConds := make([]expression.Expression, len(indexScan.Index.Columns))
 	var filterConds []expression.Expression
+	// pushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, cond := range conditions {
 		conditions[i] = pushDownNot(cond, false)
 	}
@@ -142,48 +155,27 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 	}
 	indexScan.accessInAndEqCount = indexScan.accessEqualCount
 	// We should remove all accessConds , so that they will not be added to filter conditions.
-	for i := len(conditions) - 1; i >= 0; i-- {
-		for _, cond := range accessConds {
-			if cond == conditions[i] {
-				conditions = append(conditions[:i], conditions[i+1:]...)
-				break
-			}
-		}
-	}
+	conditions = removeAccessConditions(conditions, accessConds)
 	for curIndex := indexScan.accessEqualCount; curIndex < len(indexScan.Index.Columns); curIndex++ {
 		checker := &conditionChecker{
 			tableName:    indexScan.Table.Name,
 			idx:          indexScan.Index,
 			columnOffset: curIndex,
 		}
-		// First of all we should extract all of in/eq expressions. We still need to consider eq functions,
-		// because they may not be counted before. e.g. a = 1 and b in (3,4) and c = 5. Only a = 1 will be counted
-		// in accessEqualCount.
-		accessIdx := checker.extractEqOrInFunc(conditions)
-		if accessIdx != -1 {
-			indexScan.accessInAndEqCount++
-			accessConds = append(accessConds, conditions[accessIdx])
-			if indexScan.Index.Columns[curIndex].Length != types.UnspecifiedLength {
-				filterConds = append(filterConds, conditions[accessIdx])
-			}
-			conditions = append(conditions[:accessIdx], conditions[accessIdx+1:]...)
-			continue
-		}
+		// First of all, we should extract all of in/eq expressions from rest conditions for every continuous index column.
+		// e.g. For index (a,b,c) and conditions a in (1,2) and b < 1 and c in (3,4), we should only extract column a in (1,2).
+		accessIdx := checker.findEqOrInFunc(conditions)
 		// If we fail to find any in or eq expression, we should consider all of other conditions for the next column.
-		for _, cond := range conditions {
-			if !checker.check(cond) {
-				filterConds = append(filterConds, cond)
-				continue
-			}
-			accessConds = append(accessConds, cond)
-			if indexScan.Index.Columns[curIndex].Length != types.UnspecifiedLength ||
-				// TODO: It will lead to repeated computation cost.
-				checker.shouldReserve {
-				filterConds = append(filterConds, cond)
-				checker.shouldReserve = false
-			}
+		if accessIdx == -1 {
+			accessConds, filterConds = checker.extractAccessAndFilterConds(conditions, accessConds, filterConds)
+			break
 		}
-		break
+		indexScan.accessInAndEqCount++
+		accessConds = append(accessConds, conditions[accessIdx])
+		if indexScan.Index.Columns[curIndex].Length != types.UnspecifiedLength {
+			filterConds = append(filterConds, conditions[accessIdx])
+		}
+		conditions = append(conditions[:accessIdx], conditions[accessIdx+1:]...)
 	}
 	return accessConds, filterConds
 }
@@ -214,7 +206,7 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 			continue
 		}
 		accessConditions = append(accessConditions, cond)
-		// TODO: it will lead to repeated compution cost.
+		// TODO: it will lead to repeated computation cost.
 		if checker.shouldReserve {
 			filterConditions = append(filterConditions, cond)
 			checker.shouldReserve = false
@@ -263,7 +255,24 @@ func (c *conditionChecker) check(condition expression.Expression) bool {
 	return false
 }
 
-func (c *conditionChecker) extractEqOrInFunc(conditions []expression.Expression) int {
+func (c *conditionChecker) extractAccessAndFilterConds(conditions, accessConds, filterConds []expression.Expression) ([]expression.Expression, []expression.Expression) {
+	for _, cond := range conditions {
+		if !c.check(cond) {
+			filterConds = append(filterConds, cond)
+			continue
+		}
+		accessConds = append(accessConds, cond)
+		if c.idx.Columns[c.columnOffset].Length != types.UnspecifiedLength ||
+			// TODO: It will lead to repeated computation cost.
+			c.shouldReserve {
+			filterConds = append(filterConds, cond)
+			c.shouldReserve = false
+		}
+	}
+	return accessConds, filterConds
+}
+
+func (c *conditionChecker) findEqOrInFunc(conditions []expression.Expression) int {
 	for i, cond := range conditions {
 		if c.columnOffset == getEQFunctionOffset(cond, c.idx.Columns) {
 			return i
