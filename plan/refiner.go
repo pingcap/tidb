@@ -31,33 +31,17 @@ var fullRange = []rangePoint{
 
 func buildIndexRange(p *PhysicalIndexScan) error {
 	rb := rangeBuilder{}
-	if p.accessEqualCount > 0 {
-		// Build ranges for equal access conditions.
-		point := rb.build(p.AccessCondition[0])
-		colOff := p.Index.Columns[0].Offset
+	for i:= 0; i < p.accessInAndEqCount; i++ {
+		// Build ranges for equal or in access conditions.
+		point := rb.build(p.AccessCondition[i])
+		colOff := p.Index.Columns[i].Offset
 		tp := &p.Table.Columns[colOff].FieldType
-		p.Ranges = rb.buildIndexRanges(point, tp)
-		for i := 1; i < p.accessEqualCount; i++ {
-			colOff = p.Index.Columns[i].Offset
-			tp = &p.Table.Columns[colOff].FieldType
-			point = rb.build(p.AccessCondition[i])
+		if i == 0 {
+			p.Ranges = rb.buildIndexRanges(point, tp)
+		} else {
 			p.Ranges = rb.appendIndexRanges(p.Ranges, point, tp)
 		}
 	}
-	// Build rangePoints for in conditions.
-	for i := p.accessEqualCount; i < p.accessInAndEqCount; i++ {
-		points := rb.build(p.AccessCondition[i])
-		if i == 0 {
-			colOff := p.Index.Columns[0].Offset
-			tp := &p.Table.Columns[colOff].FieldType
-			p.Ranges = rb.buildIndexRanges(points, tp)
-		} else {
-			colOff := p.Index.Columns[p.accessEqualCount].Offset
-			tp := &p.Table.Columns[colOff].FieldType
-			p.Ranges = rb.appendIndexRanges(p.Ranges, points, tp)
-		}
-	}
-
 	rangePoints := fullRange
 	// Build rangePoints for non-equal access conditions.
 	for i := p.accessInAndEqCount; i < len(p.AccessCondition); i++ {
