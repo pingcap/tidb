@@ -48,7 +48,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	// Check the table.
 	for _, tbl := range tables {
 		if tbl.Name.L == tbInfo.Name.L {
-			// This table already exists, can't create it, we should cancel this job now.
+			// This table already exists and can't be created, we should cancel this job now.
 			job.State = model.JobCancelled
 			return errors.Trace(infoschema.ErrTableExists)
 		}
