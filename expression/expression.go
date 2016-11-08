@@ -47,6 +47,12 @@ type Expression interface {
 
 	// Equal checks whether two expressions are equal.
 	Equal(e Expression) bool
+
+	// IsCorrelated checks if this expression has correlated key.
+	IsCorrelated() bool
+
+	// Decorrelated try to decorrelate the expression by schema.
+	Decorrelated(schema Schema) Expression
 }
 
 // EvalBool evaluates expression to a boolean value.
@@ -66,6 +72,41 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 	return i != 0, nil
 }
 
+type CorrelatedColumn struct {
+	Column
+
+	Data *types.Datum
+}
+
+// Clone implements Expression interface.
+func (col *CorrelatedColumn) Clone() Expression {
+	return col
+}
+
+// Eval implements Expression interface.
+func (col *CorrelatedColumn) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
+	return *col.Data, nil
+}
+
+// Equal implements Expression interface.
+func (col *CorrelatedColumn) Equal(expr Expression) bool {
+	if cc, ok := expr.(*CorrelatedColumn); ok {
+		return col.Column.Equal(&cc.Column)
+	}
+	return false
+}
+
+func (col *CorrelatedColumn) IsCorrelated() bool {
+	return true
+}
+
+func (col *CorrelatedColumn) Decorrelated(schema Schema) Expression {
+	if schema.GetIndex(&col.Column) == -1 {
+		return col
+	}
+	return &col.Column
+}
+
 // Column represents a column.
 type Column struct {
 	FromID  string
@@ -83,9 +124,7 @@ type Column struct {
 	IsAggOrSubq bool
 
 	// only used during execution
-	Index      int
-	Correlated bool
-	data       *types.Datum
+	Index int
 }
 
 // Equal implements Expression interface.
@@ -114,11 +153,6 @@ func (col *Column) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// SetValue sets value for correlated columns.
-func (col *Column) SetValue(d *types.Datum) {
-	col.data = d
-}
-
 // GetType implements Expression interface.
 func (col *Column) GetType() *types.FieldType {
 	return col.RetType
@@ -126,19 +160,21 @@ func (col *Column) GetType() *types.FieldType {
 
 // Eval implements Expression interface.
 func (col *Column) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
-	if col.Correlated {
-		return *col.data, nil
-	}
 	return row[col.Index], nil
 }
 
 // Clone implements Expression interface.
 func (col *Column) Clone() Expression {
-	if col.Correlated {
-		return col
-	}
 	newCol := *col
 	return &newCol
+}
+
+func (col *Column) IsCorrelated() bool {
+	return false
+}
+
+func (col *Column) Decorrelated(_ Schema) Expression {
+	return col
 }
 
 // HashCode implements Expression interface.
@@ -350,6 +386,22 @@ func (sf *ScalarFunction) Equal(e Expression) bool {
 	return true
 }
 
+func (sf *ScalarFunction) IsCorrelated() bool {
+	for _, arg := range sf.Args {
+		if arg.IsCorrelated() {
+			return true
+		}
+	}
+	return false
+}
+
+func (sf *ScalarFunction) Decorrelated(schema Schema) Expression {
+	for i, arg := range sf.Args {
+		sf.Args[i] = arg.Decorrelated(schema)
+	}
+	return sf
+}
+
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Datum, error) {
 	var err error
@@ -420,6 +472,14 @@ func (c *Constant) Equal(b Expression) bool {
 		return false
 	}
 	return true
+}
+
+func (c *Constant) IsCorrelated() bool {
+	return false
+}
+
+func (c *Constant) Decorrelated(_ Schema) Expression {
+	return c
 }
 
 // HashCode implements Expression interface.

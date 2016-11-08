@@ -634,9 +634,7 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 	// TODO: extract columns in monotonic functions.
 	for _, item := range p.GroupByItems {
 		if col, ok := item.(*expression.Column); ok {
-			if !col.Correlated {
 				gbyCols = append(gbyCols, col)
-			}
 		} else {
 			// group by a + b is not interested in any order.
 			return info, nil
@@ -649,7 +647,7 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 	for _, pro := range prop.props {
 		var matchedCol *expression.Column
 		for i, col := range gbyCols {
-			if !col.Correlated && col.ColName.L == pro.col.ColName.L {
+			if col.ColName.L == pro.col.ColName.L {
 				isSortKey[i] = true
 				matchedCol = col
 			}
@@ -1005,7 +1003,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		return nil, errors.Trace(err)
 	}
 	np := &PhysicalApply{
-		OuterSchema: p.OuterSchema,
+		OuterSchema: p.corColsInCurPlan,
 		Checker:     p.Checker,
 		InnerPlan:   innerInfo.p,
 	}

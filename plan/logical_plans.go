@@ -93,11 +93,11 @@ type Selection struct {
 type Apply struct {
 	baseLogicalPlan
 
-	InnerPlan   LogicalPlan
-	OuterSchema expression.Schema
-	Checker     *ApplyConditionChecker
-	// outerColumns is the columns that not belong to this plan.
-	outerColumns []*expression.Column
+	InnerPlan        LogicalPlan
+	Checker          *ApplyConditionChecker
+	corColsInCurPlan []*expression.CorrelatedColumn
+	// outerColumns is the correlated columns that not belong to this plan.
+	corColsInOuterPlan []*expression.CorrelatedColumn
 }
 
 // Exists checks if a query returns result.
