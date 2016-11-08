@@ -631,7 +631,12 @@ func (er *expressionRewriter) inToExpression(v *ast.PatternInExpr) {
 	}
 	stkLen := len(er.ctxStack)
 	lLen := len(v.List)
-	function := er.notToExpression(v.Not, ast.In, &v.Type, er.ctxStack[stkLen-lLen-1:stkLen]...)
+	funName := ast.In
+	if lLen == 1 {
+		// a in (1) is treated as a = 1.
+		funName = ast.EQ
+	}
+	function := er.notToExpression(v.Not, funName, &v.Type, er.ctxStack[stkLen-lLen-1:stkLen]...)
 	er.ctxStack = er.ctxStack[:stkLen-lLen-1]
 	er.ctxStack = append(er.ctxStack, function)
 }
