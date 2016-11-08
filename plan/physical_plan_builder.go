@@ -518,15 +518,15 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	return resultInfo, nil
 }
 
-// replaceColsInPropBySchema replaces the columns in originSchema with the new columns in newSchema.
-func replaceColsInPropBySchema(prop *requiredProperty, originSchema expression.Schema, newSchema expression.Schema) *requiredProperty {
+// replaceColsInPropBySchema replaces the columns in original prop with the columns in schema.
+func replaceColsInPropBySchema(prop *requiredProperty, schema expression.Schema) *requiredProperty {
 	newProps := make([]*columnProp, 0, len(prop.props))
 	for _, p := range prop.props {
-		idx := originSchema.GetIndex(p.col)
+		idx := schema.GetIndex(p.col)
 		if idx == -1 {
 			log.Errorf("Can't find column %s in schema", p.col)
 		}
-		newProps = append(newProps, &columnProp{col: newSchema[idx], desc: p.desc})
+		newProps = append(newProps, &columnProp{col: schema[idx], desc: p.desc})
 	}
 	return &requiredProperty{
 		props:      newProps,
@@ -568,7 +568,7 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	if !allRight {
 		rProp = &requiredProperty{}
 	} else {
-		rProp = replaceColsInPropBySchema(rProp, rChild.GetSchema(), rChild.GetSchema())
+		rProp = replaceColsInPropBySchema(rProp, rChild.GetSchema())
 	}
 	var rInfo *physicalPlanInfo
 	if innerJoin {
@@ -781,7 +781,11 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	var count uint64
 	for _, child := range p.GetChildren() {
 		newProp := convertLimitOffsetToCount(prop)
-		newProp = replaceColsInPropBySchema(newProp, p.schema, child.GetSchema())
+		newProp.props = make([]*columnProp, 0, len(prop.props))
+		for _, c := range prop.props {
+			idx := p.GetSchema().GetIndex(c.col)
+			newProp.props = append(newProp.props, &columnProp{col: child.GetSchema()[idx], desc: c.desc})
+		}
 		info, err = child.(LogicalPlan).convert2PhysicalPlan(newProp)
 		count += info.count
 		if err != nil {
