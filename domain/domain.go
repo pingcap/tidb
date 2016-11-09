@@ -88,6 +88,8 @@ func (do *Domain) getAllSchemasWithTablesFromMeta(m *meta.Meta) ([]*model.DBInfo
 		return nil, errors.Trace(err)
 	}
 
+
+
 	for _, di := range schemas {
 		if di.State != model.StatePublic {
 			// schema is not public, can't be used outside.
@@ -110,6 +112,28 @@ func (do *Domain) getAllSchemasWithTablesFromMeta(m *meta.Meta) ([]*model.DBInfo
 		}
 	}
 	return schemas, nil
+}
+
+func (do *Domain) getPartialSchemasWithTablesFromMeta(schemas []*model.DBInfo, m *meta.Meta) error {
+	for _, di := range schemas {
+		if di.State != model.StatePublic {
+			// schema is not public, can't be used outside.
+			continue
+		}
+		tables, err := m.ListTables(di.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		di.Tables = make([]*model.TableInfo, 0, len(tables))
+		for _, tbl := range tables {
+			if tbl.State != model.StatePublic {
+				// schema is not public, can't be used outside.
+				continue
+			}
+			di.Tables = append(di.Tables, tbl)
+		}
+	}
+
 }
 
 const (
