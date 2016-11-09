@@ -156,7 +156,8 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 	indexScan.accessInAndEqCount = indexScan.accessEqualCount
 	// We should remove all accessConds , so that they will not be added to filter conditions.
 	conditions = removeAccessConditions(conditions, accessConds)
-	for curIndex := indexScan.accessEqualCount; curIndex < len(indexScan.Index.Columns); curIndex++ {
+	var curIndex int
+	for curIndex = indexScan.accessEqualCount; curIndex < len(indexScan.Index.Columns); curIndex++ {
 		checker := &conditionChecker{
 			tableName:    indexScan.Table.Name,
 			idx:          indexScan.Index,
@@ -176,6 +177,10 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 			filterConds = append(filterConds, conditions[accessIdx])
 		}
 		conditions = append(conditions[:accessIdx], conditions[accessIdx+1:]...)
+	}
+	// If curIndex equals to len of index columns, it means the rest conditions haven't been appended to filter conditions.
+	if curIndex == len(indexScan.Index.Columns) {
+		filterConds = append(filterConds, conditions...)
 	}
 	return accessConds, filterConds
 }

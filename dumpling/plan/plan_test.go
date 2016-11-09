@@ -462,6 +462,10 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			cond: "or(test.t.a, and(test.t.b, test.t.c))",
 		},
 		{
+			sql:  "c=1 and d =1 and e =1 and b=1",
+			cond: "eq(test.t.b, 1)",
+		},
+		{
 			sql:  "a or b",
 			cond: "or(test.t.a, test.t.b)",
 		},
