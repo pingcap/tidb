@@ -67,14 +67,6 @@ var (
 			Help:      "Bucketed histogram of sleep seconds of backoff.",
 		}, []string{"type"})
 
-	sendReqCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "request_total",
-			Help:      "Counter of tikv-server requests.",
-		}, []string{"type"})
-
 	sendReqHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -174,7 +166,6 @@ func init() {
 	prometheus.MustRegister(txnCmdHistogram)
 	prometheus.MustRegister(backoffCounter)
 	prometheus.MustRegister(backoffHistogram)
-	prometheus.MustRegister(sendReqCounter)
 	prometheus.MustRegister(sendReqHistogram)
 	prometheus.MustRegister(copBuildTaskHistogram)
 	prometheus.MustRegister(copTaskLenHistogram)
