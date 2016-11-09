@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -198,10 +199,20 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// For TypeNewDecimal
 	ft = NewFieldType(mysql.TypeNewDecimal)
-	ft.Decimal = 5
-	v, err = Convert(3.1415926, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "3.14159")
+	ft.Flen = 8
+	ft.Decimal = 4
+	v, err = Convert(3.1416, ft)
+	c.Assert(err, IsNil, Commentf(errors.ErrorStack(err)))
+	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "3.1416")
+	v, err = Convert("3.1415926", ft)
+	c.Assert(terror.ErrorEqual(err, mysql.ErrTruncated), IsTrue)
+	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "3.1416")
+	v, err = Convert("99999", ft)
+	c.Assert(terror.ErrorEqual(err, mysql.ErrOverflow), IsTrue)
+	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "9999.9999")
+	v, err = Convert("-10000", ft)
+	c.Assert(terror.ErrorEqual(err, mysql.ErrOverflow), IsTrue)
+	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "-9999.9999")
 
 	// For TypeYear
 	ft = NewFieldType(mysql.TypeYear)
@@ -283,9 +294,10 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, td, "11:11:11.999999")
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
+	ft.Flen = 10
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
-	c.Assert(err, IsNil)
+	c.Assert(terror.ErrorEqual(err, mysql.ErrTruncated), IsTrue)
 	testToString(c, v, "3.14159")
 
 	_, err = ToString(&invalidMockType{})
