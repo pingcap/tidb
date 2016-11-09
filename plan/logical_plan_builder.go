@@ -1008,7 +1008,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	joinPlan.initID()
 	joinPlan.correlated = outerPlan.IsCorrelated() || innerPlan.IsCorrelated()
 	for i, expr := range onCondition {
-		onCondition[i] = expr.Decorrelated(outerPlan.GetSchema())
+		onCondition[i] = expr.Decorrelate(outerPlan.GetSchema())
 		joinPlan.correlated = joinPlan.correlated || onCondition[i].IsCorrelated()
 	}
 	eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, outerPlan, innerPlan)

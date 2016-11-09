@@ -51,8 +51,8 @@ type Expression interface {
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
 
-	// Decorrelated try to decorrelate the expression by schema.
-	Decorrelated(schema Schema) Expression
+	// Decorrelate try to decorrelate the expression by schema.
+	Decorrelate(schema Schema) Expression
 }
 
 // EvalBool evaluates expression to a boolean value.
@@ -102,8 +102,8 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 	return true
 }
 
-// Decorrelated implements Expression interface.
-func (col *CorrelatedColumn) Decorrelated(schema Schema) Expression {
+// Decorrelate implements Expression interface.
+func (col *CorrelatedColumn) Decorrelate(schema Schema) Expression {
 	if schema.GetIndex(&col.Column) == -1 {
 		return col
 	}
@@ -177,8 +177,8 @@ func (col *Column) IsCorrelated() bool {
 	return false
 }
 
-// Decorrelated implements Expression interface.
-func (col *Column) Decorrelated(_ Schema) Expression {
+// Decorrelate implements Expression interface.
+func (col *Column) Decorrelate(_ Schema) Expression {
 	return col
 }
 
@@ -401,10 +401,10 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 	return false
 }
 
-// Decorrelated implements Expression interface.
-func (sf *ScalarFunction) Decorrelated(schema Schema) Expression {
+// Decorrelate implements Expression interface.
+func (sf *ScalarFunction) Decorrelate(schema Schema) Expression {
 	for i, arg := range sf.Args {
-		sf.Args[i] = arg.Decorrelated(schema)
+		sf.Args[i] = arg.Decorrelate(schema)
 	}
 	return sf
 }
@@ -486,8 +486,8 @@ func (c *Constant) IsCorrelated() bool {
 	return false
 }
 
-// Decorrelated implements Expression interface.
-func (c *Constant) Decorrelated(_ Schema) Expression {
+// Decorrelate implements Expression interface.
+func (c *Constant) Decorrelate(_ Schema) Expression {
 	return c
 }
 
