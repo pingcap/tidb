@@ -63,7 +63,7 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txnWriteKVLenHistogram.Observe(float64(len(keys)))
+	txnWriteKVCountHistogram.Observe(float64(len(keys)))
 	txnWriteSizeHistogram.Observe(float64(size / 1024))
 	// Transactions without Put/Del, only Locks are readonly.
 	// We can skip commit directly.
