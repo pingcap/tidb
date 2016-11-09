@@ -62,7 +62,6 @@ func newRPCClient() *rpcClient {
 
 // SendCopReq sends a Request to co-processor and receives Response.
 func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
-	sendReqCounter.WithLabelValues("cop").Inc()
 	start := time.Now()
 	defer func() { sendReqHistogram.WithLabelValues("cop").Observe(time.Since(start).Seconds()) }()
 
@@ -89,7 +88,6 @@ func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request, timeout ti
 
 // SendKVReq sends a Request to kv server and receives Response.
 func (c *rpcClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
-	sendReqCounter.WithLabelValues("kv").Inc()
 	start := time.Now()
 	defer func() { sendReqHistogram.WithLabelValues("kv").Observe(time.Since(start).Seconds()) }()
 
