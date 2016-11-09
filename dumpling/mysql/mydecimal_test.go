@@ -641,3 +641,23 @@ func (s *testMyDecimalSuite) TestDivMod(c *C) {
 		c.Assert(to.String(), Equals, ca.result)
 	}
 }
+
+func (s *testMyDecimalSuite) TestMaxOrMin(c *C) {
+	type tcase struct {
+		neg    bool
+		prec   int
+		frac   int
+		result string
+	}
+	cases := []tcase{
+		{true, 2, 1, "-9.9"},
+		{false, 1, 1, "0.9"},
+		{true, 1, 0, "-9"},
+		{false, 0, 0, "0"},
+		{false, 4, 2, "99.99"},
+	}
+	for _, ca := range cases {
+		dec := NewMaxOrMinDec(ca.neg, ca.prec, ca.frac)
+		c.Assert(dec.String(), Equals, ca.result)
+	}
+}

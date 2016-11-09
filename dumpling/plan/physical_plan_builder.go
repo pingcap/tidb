@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -231,7 +232,10 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		}
 		err := buildIndexRange(is)
 		if err != nil {
-			return nil, errors.Trace(err)
+			if !terror.ErrorEqual(err, mysql.ErrTruncated) {
+				return nil, errors.Trace(err)
+			}
+			log.Warn("truncate error in buildIndexRange")
 		}
 		for _, idxRange := range is.Ranges {
 			cnt, err := getRowCountByIndexRange(statsTbl, idxRange, is.Index)
