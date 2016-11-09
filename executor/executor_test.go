@@ -760,6 +760,15 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("insert t values (5, 2)")
 	result = tk.MustQuery("select * from t where a < 5 and b = 1 limit 2")
 	result.Check(testkit.Rows("0 1", "2 1"))
+	tk.MustExec("drop table if exists tab1")
+	tk.MustExec("CREATE TABLE tab1(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col3 INTEGER, col4 FLOAT)")
+	tk.MustExec("CREATE INDEX idx_tab1_0 on tab1 (col0)")
+	tk.MustExec("CREATE INDEX idx_tab1_1 on tab1 (col1)")
+	tk.MustExec("CREATE INDEX idx_tab1_3 on tab1 (col3)")
+	tk.MustExec("CREATE INDEX idx_tab1_4 on tab1 (col4)")
+	tk.MustExec("INSERT INTO tab1 VALUES(1,37,20.85,30,10.69)")
+	result = tk.MustQuery("SELECT pk FROM tab1 WHERE ((col3 <= 6 OR col3 < 29 AND (col0 < 41)) OR col3 > 42) AND col1 >= 96.1 AND col3 = 30 AND col3 > 17 AND (col0 BETWEEN 36 AND 42)")
+	result.Check(testkit.Rows())
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
