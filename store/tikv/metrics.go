@@ -141,6 +141,24 @@ var (
 			Name:      "region_err_total",
 			Help:      "Counter of region errors.",
 		}, []string{"type"})
+
+	txnWriteKVLenHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "txn_write_kv_len",
+			Help:      "Count of kv pairs to write in a transaction.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 15),
+		})
+
+	txnWriteSizeHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "txn_write_size",
+			Help:      "Size of kv pairs to write in a transaction. (KB)",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 15),
+		})
 )
 
 func reportRegionError(e *errorpb.Error) {
@@ -175,4 +193,6 @@ func init() {
 	prometheus.MustRegister(gcHistogram)
 	prometheus.MustRegister(lockResolverCounter)
 	prometheus.MustRegister(regionErrorCounter)
+	prometheus.MustRegister(txnWriteKVLenHistogram)
+	prometheus.MustRegister(txnWriteSizeHistogram)
 }
