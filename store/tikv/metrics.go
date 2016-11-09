@@ -157,7 +157,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "txn_write_size",
 			Help:      "Size of kv pairs to write in a transaction. (KB)",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 15),
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
 		})
 )
 
