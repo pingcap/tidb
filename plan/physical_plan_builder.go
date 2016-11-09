@@ -77,10 +77,16 @@ func getRowCountByIndexRanges(table *statistics.Table, indexRanges []*IndexRange
 			return 0, errors.Trace(err)
 		}
 		count = count / float64(table.Count) * float64(rowCount)
+		// If the condition is a = 1, b = 1, c = 1, d = 1, we think every a=1, b=1, c=1 only filtrate 1/100 data,
+		// so as to avoid collapsing too fast.
 		for j := 0; j < i; j++ {
 			count = count / float64(100)
 		}
 		totalCount += count
+	}
+	// To avoid the totalCount become 0.
+	if uint64(totalCount) == 0 {
+		totalCount = 10.0
 	}
 	if totalCount > float64(table.Count) {
 		totalCount = float64(table.Count) / 3.0
@@ -378,6 +384,10 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 }
 
 func sortCost(cnt uint64) float64 {
+	if cnt == 0 {
+		// If cnt is 0, the log(cnt) will be NAN.
+		cnt = 10
+	}
 	return float64(cnt)*math.Log2(float64(cnt))*cpuFactor + memoryFactor*float64(cnt)
 }
 

@@ -124,7 +124,7 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	c.Assert(count, Equals, int64(333333333))
 	count, err = col.EqualRowCount(types.NewIntDatum(1000))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, int64(2000000))
+	c.Assert(count, Equals, int64(1000000))
 	count, err = col.BetweenRowCount(types.NewIntDatum(1000), types.NewIntDatum(5000))
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, int64(250000000))
