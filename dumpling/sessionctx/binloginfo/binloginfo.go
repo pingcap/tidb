@@ -20,7 +20,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
+	grpc "google.golang.org/grpc"
 )
+
+func init() {
+	grpc.EnableTracing = false
+}
 
 // PumpClient is the gRPC client to write binlog, it is opened on server start and never close,
 // shared by all sessions.
