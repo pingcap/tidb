@@ -974,8 +974,17 @@ func (d *Datum) convertToMysqlDecimal(target *FieldType) (Datum, error) {
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	if target.Decimal != UnspecifiedLength {
-		dec.Round(dec, target.Decimal)
+	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
+		prec, frac := dec.PrecisionAndFrac()
+		if prec-frac > target.Flen-target.Decimal {
+			dec = mysql.NewMaxOrMinDec(dec.IsNegative(), target.Flen, target.Decimal)
+			err = errors.Trace(mysql.ErrOverflow)
+		} else if frac != target.Decimal {
+			dec.Round(dec, target.Decimal)
+			if frac > target.Decimal {
+				err = errors.Trace(mysql.ErrTruncated)
+			}
+		}
 	}
 	ret.SetValue(dec)
 	return ret, err
