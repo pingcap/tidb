@@ -17,7 +17,6 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -116,11 +115,6 @@ func (us *UnionScanExec) Schema() expression.Schema {
 	return us.schema
 }
 
-// Fields implements the Executor Fields interface.
-func (us *UnionScanExec) Fields() []*ast.ResultField {
-	return us.Src.Fields()
-}
-
 // Next implements Execution Next interface.
 func (us *UnionScanExec) Next() (*Row, error) {
 	for {
@@ -147,9 +141,6 @@ func (us *UnionScanExec) Next() (*Row, error) {
 			us.snapshotRow = nil
 		} else {
 			us.cursor++
-		}
-		for i, field := range us.Src.Fields() {
-			field.Expr.SetDatum(row.Data[i])
 		}
 		return row, nil
 	}

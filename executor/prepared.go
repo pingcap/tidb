@@ -80,21 +80,14 @@ type PrepareExec struct {
 	Name    string
 	SQLText string
 
-	ID           uint32
-	ResultFields []*ast.ResultField
-	ParamCount   int
-	Err          error
+	ID         uint32
+	ParamCount int
+	Err        error
 }
 
 // Schema implements the Executor Schema interface.
 func (e *PrepareExec) Schema() expression.Schema {
 	// Will never be called.
-	return nil
-}
-
-// Fields implements the Executor Fields interface.
-func (e *PrepareExec) Fields() []*ast.ResultField {
-	// returns nil to indicate prepare will not return Recordset.
 	return nil
 }
 
@@ -164,9 +157,6 @@ func (e *PrepareExec) DoPrepare() {
 		e.Err = errors.Trace(err)
 		return
 	}
-	if resultSetNode, ok := stmt.(ast.ResultSetNode); ok {
-		e.ResultFields = resultSetNode.GetResultFields()
-	}
 
 	if e.ID == 0 {
 		e.ID = vars.GetNextPreparedStmtID()
@@ -192,12 +182,6 @@ type ExecuteExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *ExecuteExec) Schema() expression.Schema {
-	// Will never be called.
-	return nil
-}
-
-// Fields implements the Executor Fields interface.
-func (e *ExecuteExec) Fields() []*ast.ResultField {
 	// Will never be called.
 	return nil
 }
@@ -272,11 +256,6 @@ type DeallocateExec struct {
 // Schema implements the Executor Schema interface.
 func (e *DeallocateExec) Schema() expression.Schema {
 	// Will never be called.
-	return nil
-}
-
-// Fields implements the Executor Fields interface.
-func (e *DeallocateExec) Fields() []*ast.ResultField {
 	return nil
 }
 
