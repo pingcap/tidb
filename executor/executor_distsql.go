@@ -359,6 +359,8 @@ type XSelectIndexExec struct {
 	byItems   []*tipb.ByItem
 	aggFields []*types.FieldType
 	aggregate bool
+
+	scanConcurrency int
 }
 
 // Fields implements Exec Fields interface.
@@ -552,7 +554,7 @@ func getScanConcurrency(ctx context.Context) (int, error) {
 		return 0, errors.Trace(err)
 	}
 	c, err := strconv.ParseInt(concurrency, 10, 64)
-	log.Debugf("[DistSQL] Scan with concurrency %d", c)
+	log.Debugf("[%d] [DistSQL] Scan with concurrency %d", sessionVars.ConnectionID, c)
 	return int(c), errors.Trace(err)
 }
 
@@ -561,8 +563,8 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq.StartTs = e.startTS
 	selIdxReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.indexPlan.Index)
-	if len(e.indexPlan.SortItems) > 0 {
-		selIdxReq.OrderBy = e.indexPlan.SortItems
+	if len(e.indexPlan.SortItemsPB) > 0 {
+		selIdxReq.OrderBy = e.indexPlan.SortItemsPB
 	} else if e.indexPlan.Desc {
 		selIdxReq.OrderBy = []*tipb.ByItem{{Desc: e.indexPlan.Desc}}
 	}
@@ -570,10 +572,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 		// TODO: when where condition is all index columns limit can be pushed too.
 		selIdxReq.Limit = e.indexPlan.LimitCount
 	}
-	concurrency, err := getScanConcurrency(e.ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	concurrency := e.scanConcurrency
 	if e.singleReadMode {
 		selIdxReq.Aggregates = e.aggFuncs
 		selIdxReq.GroupBy = e.byItems
@@ -721,11 +720,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	selTableReq.GroupBy = e.byItems
 	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles)
 
-	concurrency, err := getScanConcurrency(e.ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	resp, err := distsql.Select(e.ctx.GetClient(), selTableReq, keyRanges, concurrency, false)
+	resp, err := distsql.Select(e.ctx.GetClient(), selTableReq, keyRanges, e.scanConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -774,6 +769,8 @@ type XSelectTableExec struct {
 	byItems   []*tipb.ByItem
 	aggFields []*types.FieldType
 	aggregate bool
+
+	scanConcurrency int
 }
 
 // Schema implements the Executor Schema interface.
@@ -803,10 +800,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.GroupBy = e.byItems
 
 	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges)
-	concurrency, err := getScanConcurrency(e.ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	concurrency := e.scanConcurrency
 	e.result, err = distsql.Select(e.ctx.GetClient(), selReq, kvRanges, concurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
@@ -857,10 +851,11 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 				return nil, nil
 			}
 			duration := time.Since(startTs)
+			connID := variable.GetSessionVars(e.ctx).ConnectionID
 			if duration > 30*time.Millisecond {
-				log.Infof("[TIME_TABLE_SCAN] %v", duration)
+				log.Infof("[%d] [TIME_TABLE_SCAN] %v", connID, duration)
 			} else {
-				log.Debugf("[TIME_TABLE_SCAN] %v", duration)
+				log.Debugf("[%d] [TIME_TABLE_SCAN] %v", connID, duration)
 			}
 		}
 		// Get a row from partial result.

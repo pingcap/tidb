@@ -24,7 +24,7 @@ var (
 			Subsystem: "server",
 			Name:      "handle_query_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 13),
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
 		})
 
 	queryCounter = prometheus.NewCounterVec(

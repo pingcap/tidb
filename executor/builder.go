@@ -142,12 +142,7 @@ func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 
 func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	ac, err := autocommit.ShouldAutocommit(b.ctx)
-	if err != nil {
-		b.err = errors.Trace(err)
-		return src
-	}
-	if ac {
+	if autocommit.ShouldAutocommit(b.ctx) {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
@@ -517,11 +512,12 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 			keepOrder:   v.KeepOrder,
 			where:       v.ConditionPBExpr,
 			aggregate:   v.Aggregated,
-			aggFuncs:    v.AggFuncs,
+			aggFuncs:    v.AggFuncsPB,
 			aggFields:   v.AggFields,
-			byItems:     v.GbyItems,
-			orderByList: v.SortItems,
+			byItems:     v.GbyItemsPB,
+			orderByList: v.SortItemsPB,
 		}
+		st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
 		return st
 	}
 
@@ -565,10 +561,11 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 			startTS:        startTS,
 			where:          v.ConditionPBExpr,
 			aggregate:      v.Aggregated,
-			aggFuncs:       v.AggFuncs,
+			aggFuncs:       v.AggFuncsPB,
 			aggFields:      v.AggFields,
-			byItems:        v.GbyItems,
+			byItems:        v.GbyItemsPB,
 		}
+		st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
 		return st
 	}
 	b.err = errors.New("Not implement yet.")

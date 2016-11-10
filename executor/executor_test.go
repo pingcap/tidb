@@ -40,6 +40,7 @@ import (
 )
 
 func TestT(t *testing.T) {
+	CustomVerboseFlag = true
 	TestingT(t)
 }
 
@@ -457,6 +458,23 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *testSuite) TestIn(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (c1 int primary key, c2 int, key c (c2));`)
+	for i := 0; i <= 200; i++ {
+		tk.MustExec(fmt.Sprintf("insert t values(%d, %d)", i, i))
+	}
+	queryStr := `select c2 from t where c1 in ('7', '10', '112', '111', '98', '106', '100', '9', '18', '17') order by c2`
+	r := tk.MustQuery(queryStr)
+	r.Check(testkit.Rows("7", "9", "10", "17", "18", "98", "100", "106", "111", "112"))
+
+	queryStr = `select c2 from t where c1 in ('7a')`
+	tk.MustQuery(queryStr).Check(testkit.Rows("7"))
+}
+
 func (s *testSuite) TestTablePKisHandleScan(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
@@ -599,6 +617,8 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5),(6),(7)")
 	result = tk.MustQuery("select a.c1 from t a , t1 b where a.c1 = b.c1 order by a.c1;")
 	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
+	result = tk.MustQuery("select a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;")
+	result.Check(testkit.Rows("1", "2", "3"))
 
 	plan.AllowCartesianProduct = false
 	_, err := tk.Exec("select * from t, t1")
@@ -740,6 +760,15 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("insert t values (5, 2)")
 	result = tk.MustQuery("select * from t where a < 5 and b = 1 limit 2")
 	result.Check(testkit.Rows("0 1", "2 1"))
+	tk.MustExec("drop table if exists tab1")
+	tk.MustExec("CREATE TABLE tab1(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col3 INTEGER, col4 FLOAT)")
+	tk.MustExec("CREATE INDEX idx_tab1_0 on tab1 (col0)")
+	tk.MustExec("CREATE INDEX idx_tab1_1 on tab1 (col1)")
+	tk.MustExec("CREATE INDEX idx_tab1_3 on tab1 (col3)")
+	tk.MustExec("CREATE INDEX idx_tab1_4 on tab1 (col4)")
+	tk.MustExec("INSERT INTO tab1 VALUES(1,37,20.85,30,10.69)")
+	result = tk.MustQuery("SELECT pk FROM tab1 WHERE ((col3 <= 6 OR col3 < 29 AND (col0 < 41)) OR col3 > 42) AND col1 >= 96.1 AND col3 = 30 AND col3 > 17 AND (col0 BETWEEN 36 AND 42)")
+	result.Check(testkit.Rows())
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
@@ -874,7 +903,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("3 2"))
 
 	// test cast
-	result = tk.MustQuery("select cast(1 as decimal(1,2))")
+	result = tk.MustQuery("select cast(1 as decimal(3,2))")
 	result.Check(testkit.Rows("1.00"))
 	result = tk.MustQuery("select cast('1991-09-05 11:11:11' as datetime)")
 	result.Check(testkit.Rows("1991-09-05 11:11:11"))
@@ -896,6 +925,20 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1267"))
 	result = tk.MustQuery("select hex(unhex(1267))")
 	result.Check(testkit.Rows("1267"))
+
+	// select from_unixtime
+	result = tk.MustQuery("select from_unixtime(1451606400)")
+	unixTime := time.Unix(1451606400, 0).String()[:19]
+	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime(1451606400.123456)")
+	unixTime = time.Unix(1451606400, 123456000).String()[:26]
+	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime(1451606400.1234567)")
+	unixTime = time.Unix(1451606400, 123456700).Round(time.Microsecond).Format("2006-01-02 15:04:05.000000")[:26]
+	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime(1451606400.999999)")
+	unixTime = time.Unix(1451606400, 999999000).String()[:26]
+	result.Check(testkit.Rows(unixTime))
 
 	// for case
 	tk.MustExec("drop table if exists t")
@@ -984,6 +1027,7 @@ func (s *testSuite) TestToPBExpr(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a decimal(10,6), b decimal, index idx_b (b))")
+	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values (1.1, 1.1)")
 	tk.MustExec("insert t values (2.4, 2.4)")
 	tk.MustExec("insert t values (3.3, 2.7)")
@@ -1035,6 +1079,7 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a decimal(10,6), b decimal, index idx_b (b))")
+	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values (1.1, 1.1)")
 	tk.MustExec("insert t values (2.2, 2.2)")
 	tk.MustExec("insert t values (3.3, 2.7)")
@@ -1080,6 +1125,21 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("insert t values ()")
 	tk.MustExec("insert t values (1000)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0", "127"))
+
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+	tk.MustExec("set @@global.sql_mode = ''")
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk2.MustExec("create table t2 (a varchar(3))")
+	tk2.MustExec("insert t2 values ('abcd')")
+	tk2.MustQuery("select * from t2").Check(testkit.Rows(fmt.Sprintf("%v", []byte("abc"))))
+
+	// session1 is still in strict mode.
+	_, err = tk.Exec("insert t2 values ('abcd')")
+	c.Check(err, NotNil)
+	// Restore original global strict mode.
+	tk.MustExec("set @@global.sql_mode = 'STRICT_TRANS_TABLES'")
 }
 
 func (s *testSuite) TestNewSubquery(c *C) {

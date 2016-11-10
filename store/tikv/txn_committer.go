@@ -41,6 +41,7 @@ type txnCommitter struct {
 
 func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	var keys [][]byte
+	var size int
 	mutations := make(map[string]*pb.Mutation)
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
@@ -56,11 +57,14 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 			}
 		}
 		keys = append(keys, k)
+		size += len(k) + len(v)
 		return nil
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	txnWriteKVCountHistogram.Observe(float64(len(keys)))
+	txnWriteSizeHistogram.Observe(float64(size / 1024))
 	// Transactions without Put/Del, only Locks are readonly.
 	// We can skip commit directly.
 	if len(keys) == 0 {
@@ -395,7 +399,7 @@ func (c *txnCommitter) prewriteBinlog() chan error {
 		if bin.Tp == binlog.BinlogType_Prewrite {
 			bin.PrewriteKey = c.keys[0]
 		}
-		err := binloginfo.WriteBinlog(bin)
+		err := binloginfo.WriteBinlog(bin, c.store.clusterID)
 		ch <- errors.Trace(err)
 	}()
 	return ch
@@ -409,7 +413,7 @@ func (c *txnCommitter) writeFinishBinlog(tp binlog.BinlogType, commitTS int64) {
 	bin.Tp = tp
 	bin.CommitTs = commitTS
 	go func() {
-		err := binloginfo.WriteBinlog(bin)
+		err := binloginfo.WriteBinlog(bin, c.store.clusterID)
 		if err != nil {
 			log.Errorf("failed to write binlog: %v", err)
 		}

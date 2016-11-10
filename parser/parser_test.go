@@ -25,6 +25,7 @@ import (
 )
 
 func TestT(t *testing.T) {
+	CustomVerboseFlag = true
 	TestingT(t)
 }
 
@@ -49,7 +50,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
-		"binlog", "hex", "unhex", "function", "indexes", "processlist",
+		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -238,6 +239,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
 		{"ALTER TABLE t DISABLE KEYS", true},
 		{"ALTER TABLE t ENABLE KEYS", true},
+		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
 
 		// from join
 		{"SELECT * from t1, t2, t3", true},
@@ -574,6 +576,15 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select extract(day_hour from "2011-11-11 10:10:10.123456")`, true},
 		{`select extract(year_month from "2011-11-11 10:10:10.123456")`, true},
 
+		// For from_unixtime
+		{`select from_unixtime(1447430881)`, true},
+		{`select from_unixtime(1447430881.123456)`, true},
+		{`select from_unixtime(1447430881.1234567)`, true},
+		{`select from_unixtime(1447430881.9999999)`, true},
+		{`select from_unixtime(1447430881, "%Y %D %M %h:%i:%s %x")`, true},
+		{`select from_unixtime(1447430881.123456, "%Y %D %M %h:%i:%s %x")`, true},
+		{`select from_unixtime(1447430881.1234567, "%Y %D %M %h:%i:%s %x")`, true},
+
 		// For issue 224
 		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true},
 
@@ -797,6 +808,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop tables xxx, yyy", true},
 		{"drop table if exists xxx", true},
 		{"drop table if not exists xxx", false},
+		{"drop view if exists xxx", true},
 		// For issue 974
 		{`CREATE TABLE address (
 		id bigint(20) NOT NULL AUTO_INCREMENT,

@@ -2093,3 +2093,20 @@ func NewDecFromStringForTest(s string) *MyDecimal {
 	dec.FromString([]byte(s))
 	return dec
 }
+
+// NewMaxOrMinDec returns the max or min value decimal for given precision and fraction.
+func NewMaxOrMinDec(negative bool, prec, frac int) *MyDecimal {
+	str := make([]byte, prec+2)
+	for i := 0; i < len(str); i++ {
+		str[i] = '9'
+	}
+	if negative {
+		str[0] = '-'
+	} else {
+		str[0] = '+'
+	}
+	str[1+prec-frac] = '.'
+	dec := new(MyDecimal)
+	dec.FromString(str)
+	return dec
+}

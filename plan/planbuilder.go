@@ -185,8 +185,14 @@ func availableIndices(table *ast.TableName) (indices []*model.IndexInfo, include
 			usableHints = append(usableHints, hint)
 		}
 	}
+	publicIndices := make([]*model.IndexInfo, 0, len(table.TableInfo.Indices))
+	for _, index := range table.TableInfo.Indices {
+		if index.State == model.StatePublic {
+			publicIndices = append(publicIndices, index)
+		}
+	}
 	if len(usableHints) == 0 {
-		return table.TableInfo.Indices, true
+		return publicIndices, true
 	}
 	var hasUse bool
 	var ignores []*model.IndexInfo
@@ -196,7 +202,7 @@ func availableIndices(table *ast.TableName) (indices []*model.IndexInfo, include
 			// Currently we don't distinguish between Force and Use because our cost estimation is not reliable.
 			hasUse = true
 			for _, idxName := range hint.IndexNames {
-				idx := findIndexByName(table.TableInfo.Indices, idxName)
+				idx := findIndexByName(publicIndices, idxName)
 				if idx != nil {
 					indices = append(indices, idx)
 				}
@@ -204,7 +210,7 @@ func availableIndices(table *ast.TableName) (indices []*model.IndexInfo, include
 		case ast.HintIgnore:
 			// Collect all the ignore index hints.
 			for _, idxName := range hint.IndexNames {
-				idx := findIndexByName(table.TableInfo.Indices, idxName)
+				idx := findIndexByName(publicIndices, idxName)
 				if idx != nil {
 					ignores = append(ignores, idx)
 				}
@@ -220,16 +226,7 @@ func availableIndices(table *ast.TableName) (indices []*model.IndexInfo, include
 		// Empty use hint means don't use any index.
 		return nil, true
 	}
-	if len(ignores) == 0 {
-		return table.TableInfo.Indices, true
-	}
-	for _, idx := range table.TableInfo.Indices {
-		// Exclude ignored index.
-		if findIndexByName(ignores, idx.Name) == nil {
-			indices = append(indices, idx)
-		}
-	}
-	return indices, true
+	return removeIgnores(publicIndices, ignores), true
 }
 
 func removeIgnores(indices, ignores []*model.IndexInfo) []*model.IndexInfo {

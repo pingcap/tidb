@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -306,7 +305,7 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 	checkAutocommit(c, se, 0)
 	checkTxn(c, se, "drop table if exists t;", 0)
 	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "set autocommit=1;", 0)
+	checkTxn(c, se, "set autocommit='On';", 0)
 	checkAutocommit(c, se, 2)
 
 	mustExecSQL(c, se, s.dropDBSQL)
@@ -2097,21 +2096,19 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	mustExecSQL(c, se, "insert into t values (1, 5)")
 
 	sql := "select c1 from t where c1 in (1) and c2 < 10"
-	expectedExplain := "Index(t.idx_c1_c2)[[1,1]]->Projection"
-	checkPlan(c, se, sql, expectedExplain)
+	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[[1 -inf,1 10)]->Projection")
 	mustExecMatch(c, se, sql, [][]interface{}{{1}})
 
 	sql = "select c1 from t where c1 in (1) and c2 > 3"
-	checkPlan(c, se, sql, expectedExplain)
+	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[(1 3,1 +inf]]->Projection")
 	mustExecMatch(c, se, sql, [][]interface{}{{1}})
 
 	sql = "select c1 from t where c1 in (1) and c2 < 5.1"
-	checkPlan(c, se, sql, expectedExplain)
+	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[[1 -inf,1 5]]->Projection")
 	mustExecMatch(c, se, sql, [][]interface{}{{1}})
 
 	sql = "select c1 from t where c1 in (1.1) and c2 > 3"
-	expectedExplain = "Index(t.idx_c1_c2)[[1.1,1.1]]->Projection"
-	checkPlan(c, se, sql, expectedExplain)
+	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[]->Projection")
 	mustExecMatch(c, se, sql, [][]interface{}{})
 
 	// Test varchar type.
@@ -2350,7 +2347,6 @@ func newSessionWithoutInit(c *C, store kv.Storage) *session {
 	s := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
-		sid:         atomic.AddInt64(&sessionID, 1),
 		debugInfos:  make(map[string]interface{}),
 		maxRetryCnt: 10,
 	}
@@ -2366,6 +2362,7 @@ func (s *testSessionSuite) TestRetryAttempts(c *C) {
 	sv := variable.GetSessionVars(se)
 	// Prevent getting variable value from storage.
 	sv.SetSystemVar("autocommit", types.NewDatum("ON"))
+	sv.CommonGlobalLoaded = true
 
 	// Add retry info.
 	retryInfo := sv.RetryInfo
@@ -2447,4 +2444,15 @@ func (s *testSessionSuite) TestSelectHaving(c *C) {
 	mustExecMatch(c, se, sql, [][]interface{}{{"1", fmt.Sprintf("%v", []byte("hello"))}})
 	mustExecMultiSQL(c, se, "select * from select_having_test group by id having null is not null;")
 	mustExecMultiSQL(c, se, "drop table select_having_test")
+}
+
+func (s *testSessionSuite) TestQueryString(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecute(se, "use "+s.dbName)
+	_, err := se.Execute("create table mutil1 (a int);create table multi2 (a int)")
+	c.Assert(err, IsNil)
+	ctx := se.(context.Context)
+	queryStr := ctx.Value(context.QueryString)
+	c.Assert(queryStr, Equals, "create table multi2 (a int)")
 }

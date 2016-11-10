@@ -17,11 +17,9 @@ import (
 	"flag"
 	"fmt"
 	"net"
-	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -152,17 +150,6 @@ func main() {
 
 func createStore() kv.Storage {
 	fullPath := fmt.Sprintf("%s://%s", *store, *storePath)
-	u, err := url.Parse(fullPath)
-	if err != nil {
-		log.Fatal(errors.ErrorStack(err))
-	}
-	if cluster := u.Query().Get("cluster"); cluster != "" {
-		id, err1 := strconv.ParseUint(cluster, 10, 64)
-		if err1 != nil {
-			log.Fatal(errors.ErrorStack(err1))
-		}
-		binloginfo.ClusterID = id
-	}
 	store, err := tidb.NewStore(fullPath)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
@@ -199,7 +186,7 @@ func prometheusPushClient(addr string, interval time.Duration) {
 	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
 	job := "tidb"
 	for {
-		err := push.FromGatherer(
+		err := push.AddFromGatherer(
 			job, push.HostnameGroupingKey(),
 			addr,
 			prometheus.DefaultGatherer,

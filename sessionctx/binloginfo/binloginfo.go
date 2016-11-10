@@ -20,14 +20,16 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
+	grpc "google.golang.org/grpc"
 )
+
+func init() {
+	grpc.EnableTracing = false
+}
 
 // PumpClient is the gRPC client to write binlog, it is opened on server start and never close,
 // shared by all sessions.
 var PumpClient binlog.PumpClient
-
-// ClusterID is set by command line argument, if not set, use default value 1.
-var ClusterID uint64 = 1
 
 // keyType is a dummy type to avoid naming collision in context.
 type keyType int
@@ -71,9 +73,9 @@ func GetPrewriteValue(ctx context.Context, createIfNotExists bool) *binlog.Prewr
 }
 
 // WriteBinlog writes a binlog to Pump.
-func WriteBinlog(bin *binlog.Binlog) error {
+func WriteBinlog(bin *binlog.Binlog, clusterID uint64) error {
 	commitData, _ := bin.Marshal()
-	req := &binlog.WriteBinlogReq{ClusterID: ClusterID, Payload: commitData}
+	req := &binlog.WriteBinlogReq{ClusterID: clusterID, Payload: commitData}
 	resp, err := PumpClient.WriteBinlog(goctx.Background(), req)
 	if err == nil && resp.Errmsg != "" {
 		err = errors.New(resp.Errmsg)

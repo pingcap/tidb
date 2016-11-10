@@ -16,6 +16,8 @@ package plan
 import (
 	"strings"
 
+	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -88,14 +90,11 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		x.Type.Charset = charset.CharsetBin
 		x.Type.Collate = charset.CollationBin
+		v.convertValueToColumnTypeIfNeeded(x)
 	case *ast.PatternLikeExpr:
-		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-		x.Type.Charset = charset.CharsetBin
-		x.Type.Collate = charset.CollationBin
+		v.handleLikeExpr(x)
 	case *ast.PatternRegexpExpr:
-		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-		x.Type.Charset = charset.CharsetBin
-		x.Type.Collate = charset.CollationBin
+		v.handleRegexpExpr(x)
 	case *ast.SelectStmt:
 		v.selectStmt(x)
 	case *ast.UnaryOperationExpr:
@@ -295,6 +294,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case "now", "sysdate":
 		tp = types.NewFieldType(mysql.TypeDatetime)
 		tp.Decimal = v.getFsp(x)
+	case "from_unixtime":
+		if len(x.Args) == 1 {
+			tp = types.NewFieldType(mysql.TypeDatetime)
+		} else {
+			tp = types.NewFieldType(mysql.TypeVarString)
+			chs = v.defaultCharset
+		}
 	case "dayname", "version", "database", "user", "current_user",
 		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
 		"replace", "ucase", "upper", "convert", "substring",
@@ -372,4 +378,76 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 	x.SetType(&currType)
 	// TODO: We need a better way to set charset/collation
 	x.Type.Charset, x.Type.Collate = types.DefaultCharsetForType(x.Type.Tp)
+}
+
+// like expression expects the target expression and pattern to be a string, if it's not, we add a cast function.
+func (v *typeInferrer) handleLikeExpr(x *ast.PatternLikeExpr) {
+	x.SetType(types.NewFieldType(mysql.TypeLonglong))
+	x.Type.Charset = charset.CharsetBin
+	x.Type.Collate = charset.CollationBin
+	x.Expr = v.addCastToString(x.Expr)
+	x.Pattern = v.addCastToString(x.Pattern)
+}
+
+// regexp expression expects the target expression and pattern to be a string, if it's not, we add a cast function.
+func (v *typeInferrer) handleRegexpExpr(x *ast.PatternRegexpExpr) {
+	x.SetType(types.NewFieldType(mysql.TypeLonglong))
+	x.Type.Charset = charset.CharsetBin
+	x.Type.Collate = charset.CollationBin
+	x.Expr = v.addCastToString(x.Expr)
+	x.Pattern = v.addCastToString(x.Pattern)
+}
+
+// AddCastToString adds a cast function to string type if the expr charset is not UTF8.
+func (v *typeInferrer) addCastToString(expr ast.ExprNode) ast.ExprNode {
+	if !mysql.IsUTF8Charset(expr.GetType().Charset) {
+		castTp := types.NewFieldType(mysql.TypeString)
+		castTp.Charset, castTp.Collate = types.DefaultCharsetForType(mysql.TypeString)
+		if val, ok := expr.(*ast.ValueExpr); ok {
+			newVal, err := val.Datum.ConvertTo(castTp)
+			if err != nil {
+				v.err = errors.Trace(err)
+			}
+			expr.SetDatum(newVal)
+		} else {
+			castFunc := &ast.FuncCastExpr{
+				Expr:         expr,
+				Tp:           castTp,
+				FunctionType: ast.CastFunction,
+			}
+			expr = castFunc
+		}
+		expr.SetType(castTp)
+	}
+	return expr
+}
+
+// ConvertValueToColumnTypeIfNeeded checks if the expr in PatternInExpr is column name,
+// and casts function to the items in the list.
+func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
+	if cn, ok := x.Expr.(*ast.ColumnNameExpr); ok && cn.Refer != nil {
+		ft := cn.Refer.Column.FieldType
+		for _, expr := range x.List {
+			if valueExpr, ok := expr.(*ast.ValueExpr); ok {
+				newDatum, err := valueExpr.Datum.ConvertTo(&ft)
+				if err != nil {
+					v.err = errors.Trace(err)
+				}
+				cmp, err := newDatum.CompareDatum(valueExpr.Datum)
+				if err != nil {
+					v.err = errors.Trace(err)
+				}
+				if cmp != 0 {
+					// The value will never match the column, do not set newDatum.
+					continue
+				}
+				valueExpr.SetDatum(newDatum)
+			}
+		}
+		if v.err != nil {
+			// TODO: Errors should be handled differently according to query context.
+			log.Errorf("inferor type for pattern in error %v", v.err)
+			v.err = nil
+		}
+	}
 }

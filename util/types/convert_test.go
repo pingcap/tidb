@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -198,10 +199,20 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// For TypeNewDecimal
 	ft = NewFieldType(mysql.TypeNewDecimal)
-	ft.Decimal = 5
-	v, err = Convert(3.1415926, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "3.14159")
+	ft.Flen = 8
+	ft.Decimal = 4
+	v, err = Convert(3.1416, ft)
+	c.Assert(err, IsNil, Commentf(errors.ErrorStack(err)))
+	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "3.1416")
+	v, err = Convert("3.1415926", ft)
+	c.Assert(terror.ErrorEqual(err, mysql.ErrTruncated), IsTrue)
+	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "3.1416")
+	v, err = Convert("99999", ft)
+	c.Assert(terror.ErrorEqual(err, mysql.ErrOverflow), IsTrue)
+	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "9999.9999")
+	v, err = Convert("-10000", ft)
+	c.Assert(terror.ErrorEqual(err, mysql.ErrOverflow), IsTrue)
+	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "-9999.9999")
 
 	// For TypeYear
 	ft = NewFieldType(mysql.TypeYear)
@@ -283,9 +294,10 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, td, "11:11:11.999999")
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
+	ft.Flen = 10
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
-	c.Assert(err, IsNil)
+	c.Assert(terror.ErrorEqual(err, mysql.ErrTruncated), IsTrue)
 	testToString(c, v, "3.14159")
 
 	_, err = ToString(&invalidMockType{})
@@ -486,6 +498,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeLong, " 2.35e3  ", "2350")
 	signedAccept(c, mysql.TypeLong, " +2.51 ", "3")
 	signedAccept(c, mysql.TypeLong, " -3.58", "-4")
+	signedDeny(c, mysql.TypeLong, " 1a ", "1")
 
 	// integer from float
 	signedAccept(c, mysql.TypeLong, 234.5456, "235")
@@ -499,6 +512,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeFloat, float32(123), "123")
 	signedAccept(c, mysql.TypeFloat, float64(123), "123")
 	signedAccept(c, mysql.TypeDouble, " -23.54", "-23.54")
+	signedDeny(c, mysql.TypeDouble, "-23.54a", "-23.54")
 
 	// year
 	signedDeny(c, mysql.TypeYear, 123, "<nil>")

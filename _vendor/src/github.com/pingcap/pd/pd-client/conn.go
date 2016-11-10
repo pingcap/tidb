@@ -88,6 +88,13 @@ func (c *conn) Close() {
 	c.Conn.Close()
 	close(c.quit)
 	c.wg.Wait()
+
+	// Close the connection in case it is not used.
+	select {
+	case conn := <-c.ConnChan:
+		conn.Close()
+	default:
+	}
 }
 
 func (c *conn) connectLeader(urls []string, interval time.Duration) {

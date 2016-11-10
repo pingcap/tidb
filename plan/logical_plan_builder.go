@@ -34,6 +34,15 @@ func (a *idAllocator) allocID() string {
 	return fmt.Sprintf("_%d", a.id)
 }
 
+func (p *Aggregation) collectGroupByColumns() {
+	p.groupByCols = p.groupByCols[:0]
+	for _, item := range p.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			p.groupByCols = append(p.groupByCols, col)
+		}
+	}
+}
+
 func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gby []expression.Expression, correlated bool) (LogicalPlan, map[int]int) {
 	agg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(aggFuncList)),
@@ -81,6 +90,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	}
 	agg.GroupByItems = gby
 	agg.SetSchema(schema)
+	agg.collectGroupByColumns()
 	return agg, aggIndexMap
 }
 
@@ -389,6 +399,11 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 type ByItems struct {
 	Expr expression.Expression
 	Desc bool
+}
+
+// String implements fmt.Stringer interface.
+func (by *ByItems) String() string {
+	return fmt.Sprintf("(%s, %v)", by.Expr, by.Desc)
 }
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {

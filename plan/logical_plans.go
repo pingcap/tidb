@@ -71,6 +71,9 @@ type Aggregation struct {
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
 	ctx          context.Context
+
+	// groupByCols stores the columns that are group-by items.
+	groupByCols []*expression.Column
 }
 
 // Selection means a filter.
