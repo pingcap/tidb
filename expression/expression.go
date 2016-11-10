@@ -513,3 +513,27 @@ func EvaluateExprWithNull(schema Schema, expr Expression) (Expression, error) {
 		return x.Clone(), nil
 	}
 }
+
+// ResultFieldsToSchema converts slice of result fields to schema.
+func ResultFieldsToSchema(fields []*ast.ResultField) Schema {
+	schema := make(Schema, 0, len(fields))
+	for i, field := range fields {
+		colName := field.ColumnAsName
+		if colName.L == "" {
+			colName = field.Column.Name
+		}
+		tblName := field.TableAsName
+		if tblName.L == "" {
+			tblName = field.Table.Name
+		}
+		col := &Column{
+			ColName:  colName,
+			TblName:  tblName,
+			DBName:   field.DBName,
+			RetType:  &field.Column.FieldType,
+			Position: i,
+		}
+		schema = append(schema, col)
+	}
+	return schema
+}
