@@ -516,7 +516,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 		handles, finish, err := extractHandlesFromIndexResult(idxResult)
 		if err != nil || finish {
 			e.tasksErr = errors.Trace(err)
-			if totalHandles >= 100000 {
+			if totalHandles >= 100000 && len(e.indexPlan.Ranges) == 1 && e.indexPlan.Ranges[0].IsPoint() {
 				log.Warnf("[TIME_INDEX_SCAN] time: %v handles: %d concurrency: %d",
 					time.Since(startTs),
 					totalHandles,
