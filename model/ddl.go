@@ -39,6 +39,7 @@ const (
 	ActionAddForeignKey
 	ActionDropForeignKey
 	ActionTruncateTable
+	ActionModifyColumn
 )
 
 func (action ActionType) String() string {
@@ -65,6 +66,8 @@ func (action ActionType) String() string {
 		return "drop foreign key"
 	case ActionTruncateTable:
 		return "truncate table"
+	case ActionModifyColumn:
+		return "modify column"
 	default:
 		return "none"
 	}

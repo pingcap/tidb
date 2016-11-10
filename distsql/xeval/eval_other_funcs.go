@@ -19,38 +19,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func (e *Evaluator) evalCaseWhen(expr *tipb.Expr) (d types.Datum, err error) {
-	l := len(expr.Children)
-	for i := 0; i < l-1; i += 2 {
-		child, err := e.Eval(expr.Children[i])
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		if child.IsNull() {
-			continue
-		}
-		x, err := child.ToBool()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		if x == 1 {
-			ans, err := e.Eval(expr.Children[i+1])
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			return ans, nil
-		}
-	}
-	if l%2 == 1 { // Else statement
-		ans, err := e.Eval(expr.Children[l-1])
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		return ans, nil
-	}
-	return d, nil
-}
-
 func (e *Evaluator) evalCoalesce(expr *tipb.Expr) (d types.Datum, err error) {
 	for _, child := range expr.Children {
 		d, err = e.Eval(child)

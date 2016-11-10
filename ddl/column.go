@@ -417,3 +417,35 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, handle
 
 	return nil
 }
+
+func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
+	tblInfo, err := d.getTableInfo(t, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newCol := &model.ColumnInfo{}
+	err = job.DecodeArgs(newCol)
+	if err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+	oldCol := findCol(tblInfo.Columns, newCol.Name.L)
+	if oldCol == nil || oldCol.State != model.StatePublic {
+		job.State = model.JobCancelled
+		return infoschema.ErrColumnNotExists.Gen("column %s doesn't exist", newCol.Name)
+	}
+	*oldCol = *newCol
+	err = t.UpdateTable(job.SchemaID, tblInfo)
+	if err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+	ver, err := updateSchemaVersion(t, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job.SchemaState = model.StatePublic
+	job.State = model.JobDone
+	addTableHistoryInfo(job, ver, tblInfo)
+	return nil
+}

@@ -46,7 +46,7 @@ type ShowExec struct {
 	// Used by show variables
 	GlobalScope bool
 
-	fields []*ast.ResultField
+	schema expression.Schema
 	ctx    context.Context
 	is     infoschema.InfoSchema
 
@@ -57,12 +57,7 @@ type ShowExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *ShowExec) Schema() expression.Schema {
-	return nil
-}
-
-// Fields implements the Executor Fields interface.
-func (e *ShowExec) Fields() []*ast.ResultField {
-	return e.fields
+	return e.schema
 }
 
 // Next implements Execution Next interface.
@@ -77,9 +72,6 @@ func (e *ShowExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	row := e.rows[e.cursor]
-	for i, field := range e.fields {
-		field.Expr.SetValue(row.Data[i].GetValue())
-	}
 	e.cursor++
 	return row, nil
 }
@@ -389,6 +381,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				switch col.DefaultValue {
 				case nil:
 					if !mysql.HasNotNullFlag(col.Flag) {
+						if mysql.HasTimestampFlag(col.Flag) {
+							buf.WriteString(" NULL")
+						}
 						buf.WriteString(" DEFAULT NULL")
 					}
 				case "CURRENT_TIMESTAMP":

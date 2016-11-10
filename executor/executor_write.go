@@ -170,30 +170,10 @@ func (e *DeleteExec) Next() (*Row, error) {
 
 	tblMap := make(map[int64][]string, len(e.Tables))
 	// Get table alias map.
-	tblNames := make(map[string]string)
 	if e.IsMultiTable {
 		// Delete from multiple tables should consider table ident list.
-		fs := e.SelectExec.Fields()
-		for _, f := range fs {
-			if len(f.TableAsName.L) > 0 {
-				tblNames[f.TableAsName.L] = f.TableName.Name.L
-			} else {
-				tblNames[f.TableName.Name.L] = f.TableName.Name.L
-			}
-		}
-		if len(tblNames) != 0 {
-			for _, t := range e.Tables {
-				// Consider DBName.
-				_, ok := tblNames[t.Name.L]
-				if !ok {
-					return nil, errors.Errorf("Unknown table '%s' in MULTI DELETE", t.Name.O)
-				}
-				tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
-			}
-		} else { // all columns have been pruned
-			for _, t := range e.Tables {
-				tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
-			}
+		for _, t := range e.Tables {
+			tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
 		}
 	}
 
@@ -262,12 +242,6 @@ func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data
 	}
 	getDirtyDB(ctx).deleteRow(t.Meta().ID, h)
 	variable.GetSessionVars(ctx).AddAffectedRows(1)
-	return nil
-}
-
-// Fields implements the Executor Fields interface.
-// Returns nil to indicate there is no output.
-func (e *DeleteExec) Fields() []*ast.ResultField {
 	return nil
 }
 
@@ -555,12 +529,6 @@ func (e *LoadData) Schema() expression.Schema {
 	return nil
 }
 
-// Fields implements the Executor Fields interface.
-// Returns nil to indicate there is no output.
-func (e *LoadData) Fields() []*ast.ResultField {
-	return nil
-}
-
 // Close implements the Executor Close interface.
 func (e *LoadData) Close() error {
 	return nil
@@ -656,12 +624,6 @@ func (e *InsertExec) Next() (*Row, error) {
 	}
 	e.finished = true
 	return nil, nil
-}
-
-// Fields implements the Executor Fields interface.
-// Returns nil to indicate there is no output.
-func (e *InsertExec) Fields() []*ast.ResultField {
-	return nil
 }
 
 // Close implements the Executor Close interface.
@@ -1021,12 +983,6 @@ func (e *ReplaceExec) Schema() expression.Schema {
 	return nil
 }
 
-// Fields implements the Executor Fields interface.
-// Returns nil to indicate there is no output.
-func (e *ReplaceExec) Fields() []*ast.ResultField {
-	return nil
-}
-
 // Close implements the Executor Close interface.
 func (e *ReplaceExec) Close() error {
 	if e.SelectExec != nil {
@@ -1239,12 +1195,6 @@ func (e *UpdateExec) getTableOffset(entry RowKeyEntry) int {
 		}
 	}
 	return 0
-}
-
-// Fields implements the Executor Fields interface.
-// Returns nil to indicate there is no output.
-func (e *UpdateExec) Fields() []*ast.ResultField {
-	return nil
 }
 
 // Close implements the Executor Close interface.

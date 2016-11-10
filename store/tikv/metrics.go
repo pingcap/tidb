@@ -67,14 +67,6 @@ var (
 			Help:      "Bucketed histogram of sleep seconds of backoff.",
 		}, []string{"type"})
 
-	sendReqCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "request_total",
-			Help:      "Counter of tikv-server requests.",
-		}, []string{"type"})
-
 	sendReqHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -149,6 +141,24 @@ var (
 			Name:      "region_err_total",
 			Help:      "Counter of region errors.",
 		}, []string{"type"})
+
+	txnWriteKVCountHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "txn_write_kv_count",
+			Help:      "Count of kv pairs to write in a transaction.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
+		})
+
+	txnWriteSizeHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "txn_write_size",
+			Help:      "Size of kv pairs to write in a transaction. (KB)",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
+		})
 )
 
 func reportRegionError(e *errorpb.Error) {
@@ -174,7 +184,6 @@ func init() {
 	prometheus.MustRegister(txnCmdHistogram)
 	prometheus.MustRegister(backoffCounter)
 	prometheus.MustRegister(backoffHistogram)
-	prometheus.MustRegister(sendReqCounter)
 	prometheus.MustRegister(sendReqHistogram)
 	prometheus.MustRegister(copBuildTaskHistogram)
 	prometheus.MustRegister(copTaskLenHistogram)
@@ -184,4 +193,6 @@ func init() {
 	prometheus.MustRegister(gcHistogram)
 	prometheus.MustRegister(lockResolverCounter)
 	prometheus.MustRegister(regionErrorCounter)
+	prometheus.MustRegister(txnWriteKVCountHistogram)
+	prometheus.MustRegister(txnWriteSizeHistogram)
 }

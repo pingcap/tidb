@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -865,4 +866,37 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 
 	d.close()
 	s.d.start()
+}
+
+func (s *testColumnSuite) TestModifyColumn(c *C) {
+	d := newDDL(s.store, nil, nil, testLease)
+	cases := []struct {
+		origin string
+		to     string
+		ok     bool
+	}{
+		{"int", "bigint", true},
+		{"int", "int unsigned", false},
+		{"varchar(10)", "text", true},
+		{"varbinary(10)", "blob", true},
+		{"text", "blob", false},
+		{"varchar(10)", "varchar(8)", false},
+		{"varchar(10)", "varchar(11)", true},
+	}
+	for _, ca := range cases {
+		ftA := s.colDefStrToFieldType(c, ca.origin)
+		ftB := s.colDefStrToFieldType(c, ca.to)
+		c.Assert(d.modifiable(ftA, ftB), Equals, ca.ok)
+	}
+	d.close()
+}
+
+func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldType {
+	sqlA := "alter table t modify column a " + str
+	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
+	c.Assert(err, IsNil)
+	colDef := stmt.(*ast.AlterTableStmt).Specs[0].Column
+	col, _, err := columnDefToCol(nil, 0, colDef)
+	c.Assert(err, IsNil)
+	return &col.FieldType
 }

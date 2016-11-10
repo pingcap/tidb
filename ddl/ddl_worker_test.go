@@ -56,36 +56,31 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 
 	d1 := newDDL(store, nil, nil, testLease)
 	defer d1.close()
-
 	time.Sleep(testLease)
-
 	testCheckOwner(c, d1, true, ddlJobFlag)
 	testCheckOwner(c, d1, true, bgJobFlag)
 
+	// Start a new DDL and the DDL owner is still d1.
 	d2 := newDDL(store, nil, nil, testLease)
 	defer d2.close()
-
 	testCheckOwner(c, d2, false, ddlJobFlag)
 	testCheckOwner(c, d2, false, bgJobFlag)
-	d1.close()
 
+	// Change the DDL owner.
+	d1.close()
 	// Make sure owner is changed.
 	time.Sleep(6 * testLease)
-
 	testCheckOwner(c, d2, true, ddlJobFlag)
 	testCheckOwner(c, d2, true, bgJobFlag)
 
+	// Change the DDL owner.
 	d2.SetLease(1 * time.Second)
-
 	err := d2.Stop()
 	c.Assert(err, IsNil)
-
 	err = d1.Start()
 	c.Assert(err, IsNil)
-
 	err = d1.Start()
 	c.Assert(err, IsNil)
-
 	testCheckOwner(c, d1, true, ddlJobFlag)
 	testCheckOwner(c, d1, true, bgJobFlag)
 
@@ -113,29 +108,19 @@ func (s *testDDLSuite) TestTableError(c *C) {
 
 	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
-
 	ctx := testNewContext(c, d)
 
-	job := doDDLJobErr(c, 1, 1, model.ActionCreateTable, []interface{}{1}, ctx, d)
-
-	job.SchemaID = -1
-	job.State = 0
-	tblInfo := testTableInfo(c, d, "t", 3)
-	job.Args = []interface{}{tblInfo}
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
-
-	doDDLJobErr(c, 1, 1, model.ActionDropTable, nil, ctx, d)
-
+	// Schema ID is wrong, so dropping table is failed.
+	doDDLJobErr(c, -1, 1, model.ActionDropTable, nil, ctx, d)
+	// Table ID is wrong, so dropping table is failed.
 	dbInfo := testSchemaInfo(c, d, "test")
 	testCreateSchema(c, testNewContext(c, d), d, dbInfo)
+	job := doDDLJobErr(c, dbInfo.ID, -1, model.ActionDropTable, nil, ctx, d)
 
-	job = doDDLJobErr(c, dbInfo.ID, -1, model.ActionDropTable, nil, ctx, d)
-
+	// Table ID or schema ID is wrong, so getting table is failed.
+	tblInfo := testTableInfo(c, d, "t", 3)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
-
-	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		job.SchemaID = -1
 		job.TableID = -1
 		t := meta.NewMeta(txn)
@@ -147,6 +132,15 @@ func (s *testDDLSuite) TestTableError(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
+
+	// Args is wrong, so creating table is failed.
+	doDDLJobErr(c, 1, 1, model.ActionCreateTable, []interface{}{1}, ctx, d)
+	// Schema ID is wrong, so creating table is failed.
+	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
+	// Table exists, so creating table is failed.
+	tblInfo.ID = tblInfo.ID + 1
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
+
 }
 
 func (s *testDDLSuite) TestForeignKeyError(c *C) {
@@ -156,7 +150,6 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 
 	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
-
 	ctx := testNewContext(c, d)
 
 	doDDLJobErr(c, -1, 1, model.ActionAddForeignKey, nil, ctx, d)
@@ -164,10 +157,8 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	tblInfo := testTableInfo(c, d, "t", 3)
-
 	testCreateSchema(c, ctx, d, dbInfo)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
-
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropForeignKey, []interface{}{model.NewCIStr("c1_foreign_key")}, ctx, d)
 }
 
@@ -178,32 +169,33 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 
 	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
-
 	ctx := testNewContext(c, d)
 
+	// Schema ID is wrong.
 	doDDLJobErr(c, -1, 1, model.ActionAddIndex, nil, ctx, d)
 	doDDLJobErr(c, -1, 1, model.ActionDropIndex, nil, ctx, d)
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	tblInfo := testTableInfo(c, d, "t", 3)
-
 	testCreateSchema(c, ctx, d, dbInfo)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 
+	// for adding index
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, []interface{}{1}, ctx, d)
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
-		[]interface{}{false, model.NewCIStr("t"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}}, ctx, d)
+		[]interface{}{false, model.NewCIStr("t"), 1,
+			[]*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}}, ctx, d)
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
-		[]interface{}{false, model.NewCIStr("c1_index"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}}, ctx, d)
-
+		[]interface{}{false, model.NewCIStr("c1_index"), 1,
+			[]*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}}, ctx, d)
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "c1_index", "c1")
-
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
-		[]interface{}{false, model.NewCIStr("c1_index"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c1")}, Length: 256}}}, ctx, d)
+		[]interface{}{false, model.NewCIStr("c1_index"), 1,
+			[]*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c1")}, Length: 256}}}, ctx, d)
+
+	// for dropping index
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, []interface{}{1}, ctx, d)
-
 	testDropIndex(c, ctx, d, dbInfo, tblInfo, "c1_index")
-
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, []interface{}{model.NewCIStr("c1_index")}, ctx, d)
 }
 
@@ -211,36 +203,36 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_column_error")
 	defer store.Close()
-
 	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
-
 	ctx := testNewContext(c, d)
-
-	doDDLJobErr(c, -1, 1, model.ActionAddColumn, nil, ctx, d)
-	doDDLJobErr(c, -1, 1, model.ActionDropColumn, nil, ctx, d)
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	tblInfo := testTableInfo(c, d, "t", 3)
-
 	testCreateSchema(c, ctx, d, dbInfo)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
-
 	col := &model.ColumnInfo{
 		Name:         model.NewCIStr("c4"),
 		Offset:       len(tblInfo.Columns),
 		DefaultValue: 0,
 	}
-
 	var err error
 	col.ID, err = d.genGlobalID()
 	c.Assert(err, IsNil)
-
 	col.FieldType = *types.NewFieldType(mysql.TypeLong)
 	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c5")}}
 
+	// for adding column
+	doDDLJobErr(c, -1, tblInfo.ID, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, -1, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, []interface{}{0}, ctx, d)
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
-	doDDLJobErr(c, -1, 1, model.ActionDropColumn, []interface{}{1}, ctx, d)
+
+	// for dropping column
+	doDDLJobErr(c, -1, tblInfo.ID, model.ActionDropColumn, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, -1, model.ActionDropColumn, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, []interface{}{0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, []interface{}{model.NewCIStr("c5")}, ctx, d)
 }
 
 func testCheckOwner(c *C, d *ddl, isOwner bool, flag JobType) {

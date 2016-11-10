@@ -617,6 +617,8 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5),(6),(7)")
 	result = tk.MustQuery("select a.c1 from t a , t1 b where a.c1 = b.c1 order by a.c1;")
 	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
+	result = tk.MustQuery("select a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;")
+	result.Check(testkit.Rows("1", "2", "3"))
 
 	plan.AllowCartesianProduct = false
 	_, err := tk.Exec("select * from t, t1")
@@ -758,6 +760,15 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("insert t values (5, 2)")
 	result = tk.MustQuery("select * from t where a < 5 and b = 1 limit 2")
 	result.Check(testkit.Rows("0 1", "2 1"))
+	tk.MustExec("drop table if exists tab1")
+	tk.MustExec("CREATE TABLE tab1(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col3 INTEGER, col4 FLOAT)")
+	tk.MustExec("CREATE INDEX idx_tab1_0 on tab1 (col0)")
+	tk.MustExec("CREATE INDEX idx_tab1_1 on tab1 (col1)")
+	tk.MustExec("CREATE INDEX idx_tab1_3 on tab1 (col3)")
+	tk.MustExec("CREATE INDEX idx_tab1_4 on tab1 (col4)")
+	tk.MustExec("INSERT INTO tab1 VALUES(1,37,20.85,30,10.69)")
+	result = tk.MustQuery("SELECT pk FROM tab1 WHERE ((col3 <= 6 OR col3 < 29 AND (col0 < 41)) OR col3 > 42) AND col1 >= 96.1 AND col3 = 30 AND col3 > 17 AND (col0 BETWEEN 36 AND 42)")
+	result.Check(testkit.Rows())
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
@@ -892,7 +903,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("3 2"))
 
 	// test cast
-	result = tk.MustQuery("select cast(1 as decimal(1,2))")
+	result = tk.MustQuery("select cast(1 as decimal(3,2))")
 	result.Check(testkit.Rows("1.00"))
 	result = tk.MustQuery("select cast('1991-09-05 11:11:11' as datetime)")
 	result.Check(testkit.Rows("1991-09-05 11:11:11"))
@@ -1016,6 +1027,7 @@ func (s *testSuite) TestToPBExpr(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a decimal(10,6), b decimal, index idx_b (b))")
+	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values (1.1, 1.1)")
 	tk.MustExec("insert t values (2.4, 2.4)")
 	tk.MustExec("insert t values (3.3, 2.7)")
@@ -1067,6 +1079,7 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a decimal(10,6), b decimal, index idx_b (b))")
+	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values (1.1, 1.1)")
 	tk.MustExec("insert t values (2.2, 2.2)")
 	tk.MustExec("insert t values (3.3, 2.7)")

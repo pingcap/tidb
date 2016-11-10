@@ -55,11 +55,6 @@ func (e *GrantExec) Schema() expression.Schema {
 	return nil
 }
 
-// Fields implements the Executor Fields interface.
-func (e *GrantExec) Fields() []*ast.ResultField {
-	return nil
-}
-
 // Next implements Execution Next interface.
 func (e *GrantExec) Next() (*Row, error) {
 	if e.done {

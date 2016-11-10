@@ -50,6 +50,9 @@ type PhysicalIndexScan struct {
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
 
+	// All conditions in AccessCondition[accessEqualCount:accessInAndEqCount] are IN expressions or equal conditions.
+	accessInAndEqCount int
+	// All conditions in AccessCondition[:accessEqualCount] are equal conditions.
 	accessEqualCount int
 
 	TableAsName *model.CIStr
@@ -61,6 +64,26 @@ type physicalDistSQLPlan interface {
 	addAggregation(agg *PhysicalAggregation) expression.Schema
 	addTopN(prop *requiredProperty) bool
 	addLimit(limit *Limit)
+	calculateCost(count uint64) float64
+}
+
+func (p *PhysicalIndexScan) calculateCost(count uint64) float64 {
+	cnt := float64(count)
+	// network cost
+	cost := cnt * netWorkFactor
+	if p.DoubleRead {
+		cost *= 2
+	}
+	// sort cost
+	if !p.OutOfOrder && p.DoubleRead {
+		cost += float64(count) * cpuFactor
+	}
+	return cost
+}
+
+func (p *PhysicalTableScan) calculateCost(count uint64) float64 {
+	cnt := float64(count)
+	return cnt * netWorkFactor
 }
 
 type physicalTableSource struct {
@@ -692,6 +715,12 @@ func (p *PhysicalDummyScan) Copy() PhysicalPlan {
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Delete) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *Show) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
