@@ -55,7 +55,6 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 
 // Implement transaction interface.
 func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
-	log.Debugf("Get key[%q] txn[%d]", k, txn.StartTS())
 	txnCmdCounter.WithLabelValues("get").Inc()
 	start := time.Now()
 	defer func() { txnCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
@@ -68,7 +67,6 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
-	log.Debugf("Set key[%q] txn[%d]", k, txn.StartTS())
 	txnCmdCounter.WithLabelValues("set").Inc()
 
 	txn.dirty = true
@@ -80,7 +78,6 @@ func (txn *tikvTxn) String() string {
 }
 
 func (txn *tikvTxn) Seek(k kv.Key) (kv.Iterator, error) {
-	log.Debugf("Seek key[%q] txn[%d]", k, txn.StartTS())
 	txnCmdCounter.WithLabelValues("seek").Inc()
 	start := time.Now()
 	defer func() { txnCmdHistogram.WithLabelValues("seek").Observe(time.Since(start).Seconds()) }()
@@ -90,7 +87,6 @@ func (txn *tikvTxn) Seek(k kv.Key) (kv.Iterator, error) {
 
 // SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 func (txn *tikvTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
-	log.Debugf("SeekReverse key[%q] txn[%d]", k, txn.StartTS())
 	txnCmdCounter.WithLabelValues("seek_reverse").Inc()
 	start := time.Now()
 	defer func() { txnCmdHistogram.WithLabelValues("seek_reverse").Observe(time.Since(start).Seconds()) }()
@@ -99,7 +95,6 @@ func (txn *tikvTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
-	log.Debugf("Delete key[%q] txn[%d]", k, txn.StartTS())
 	txnCmdCounter.WithLabelValues("delete").Inc()
 
 	txn.dirty = true
@@ -120,7 +115,6 @@ func (txn *tikvTxn) Commit() error {
 	}
 	defer txn.close()
 
-	log.Debugf("[kv] start to commit txn %d", txn.StartTS())
 	txnCmdCounter.WithLabelValues("commit").Inc()
 	start := time.Now()
 	defer func() { txnCmdHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds()) }()
@@ -143,7 +137,6 @@ func (txn *tikvTxn) Commit() error {
 	}
 	committer.writeFinishBinlog(binlog.BinlogType_Commit, int64(committer.commitTS))
 	txn.commitTS = committer.commitTS
-	log.Debugf("[kv] finish commit txn %d", txn.StartTS())
 	return nil
 }
 
