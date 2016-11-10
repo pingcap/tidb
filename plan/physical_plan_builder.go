@@ -84,7 +84,7 @@ func getRowCountByIndexRanges(table *statistics.Table, indexRanges []*IndexRange
 		}
 		totalCount += count
 	}
-	// To avoid the totalCount become 0.
+	// To avoid the totalCount become too small.
 	if uint64(totalCount) < 1000 {
 		// We will not let the row count less than 1000 to avoid collapsing too fast in the future calculation.
 		totalCount = 1000.0
