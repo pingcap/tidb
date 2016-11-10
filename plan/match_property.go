@@ -177,7 +177,7 @@ func (p *PhysicalApply) matchProperty(_ *requiredProperty, childPlanInfo ...*phy
 }
 
 func estimateJoinCount(lc uint64, rc uint64) uint64 {
-	count := float64(lc)*float64(rc) * joinFactor
+	count := float64(lc) * float64(rc) * joinFactor
 	if count > math.MaxInt32 {
 		return math.MaxInt32
 	}
@@ -313,5 +313,10 @@ func (p *PhysicalDummyScan) matchProperty(_ *requiredProperty, _ ...*physicalPla
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Delete) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
+}
+
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Show) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }
