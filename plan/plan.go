@@ -238,24 +238,28 @@ func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	if len(p.GetChildren()) == 0 {
-		return predicates, nil, nil
+		return predicates, p, nil
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	rest, _, err := child.PredicatePushDown(predicates)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, p, errors.Trace(err)
 	}
 	if len(rest) > 0 {
 		err = addSelection(p, child, rest, p.allocator)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, p, errors.Trace(err)
 		}
 	}
-	return nil, nil, nil
+	return nil, p, nil
 }
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
 func (p *baseLogicalPlan) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
+	if len(p.children) == 0 {
+		p.schema.InitIndices()
+		return nil, nil
+	}
 	outer, err := p.GetChildByIndex(0).(LogicalPlan).PruneColumnsAndResolveIndices(parentUsedCols)
 	p.SetSchema(p.GetChildByIndex(0).GetSchema())
 	return outer, errors.Trace(err)
