@@ -94,6 +94,44 @@ func mockResolve(node ast.Node) error {
 			State: model.StateWriteOnly,
 		},
 		{
+			Name: model.NewCIStr("f"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("f"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+			},
+			State: model.StatePublic,
+		},
+		{
+			Name: model.NewCIStr("g"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("g"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+			},
+			State: model.StatePublic,
+		},
+		{
+			Name: model.NewCIStr("f_g"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("f"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+				{
+					Name:   model.NewCIStr("g"),
+					Length: types.UnspecifiedLength,
+					Offset: 2,
+				},
+			},
+			State: model.StatePublic,
+		},
+		{
 			Name: model.NewCIStr("c_d_e_str"),
 			Columns: []*model.IndexColumn{
 				{
@@ -163,10 +201,22 @@ func mockResolve(node ast.Node) error {
 		FieldType: newStringType(),
 		ID:        8,
 	}
+	col4 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("f"),
+		FieldType: newLongType(),
+		ID:        9,
+	}
+	col5 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("g"),
+		FieldType: newLongType(),
+		ID:        10,
+	}
 
 	pkColumn.Flag = mysql.PriKeyFlag
 	table := &model.TableInfo{
-		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3},
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5},
 		Indices:    indices,
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
@@ -903,12 +953,24 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[<nil>,+inf]]",
 		},
 		{
+			sql:  "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
+			best: "Index(t.c_d_e)[(0,1) (2,3) (4,5) (6,7) (9,10)]",
+		},
+		{
+			sql:  "select sum(t.a) from t where t.c in (1,2) and t.d in (1,3) group by t.d order by t.d",
+			best: "Index(t.c_d_e)[[1 1,1 1] [1 3,1 3] [2 1,2 1] [2 3,2 3]]->HashAgg->Sort->Trim",
+		},
+		{
 			sql:  "select * from t t1 ignore index(e) where c < 0",
 			best: "Index(t.c_d_e)[[-inf,0)]",
 		},
 		{
 			sql:  "select * from t t1 ignore index(c_d_e) where c < 0",
 			best: "Table(t)->Selection",
+		},
+		{
+			sql:  "select * from t where f in (1,2) and g in(1,2,3,4,5)",
+			best: "Index(t.f_g)[[1 1,1 1] [1 2,1 2] [1 3,1 3] [1 4,1 4] [1 5,1 5] [2 1,2 1] [2 2,2 2] [2 3,2 3] [2 4,2 4] [2 5,2 5]]",
 		},
 		{
 			sql:  "select * from t t1 where 1 = 0",
