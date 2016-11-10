@@ -64,6 +64,26 @@ type physicalDistSQLPlan interface {
 	addAggregation(agg *PhysicalAggregation) expression.Schema
 	addTopN(prop *requiredProperty) bool
 	addLimit(limit *Limit)
+	calculateCost(count uint64) float64
+}
+
+func (p *PhysicalIndexScan) calculateCost(count uint64) float64 {
+	cnt := float64(count)
+	// network cost
+	cost := cnt * netWorkFactor
+	if p.DoubleRead {
+		cost *= 2
+	}
+	// sort cost
+	if !p.OutOfOrder && p.DoubleRead {
+		cost += float64(count) * cpuFactor
+	}
+	return cost
+}
+
+func (p *PhysicalTableScan) calculateCost(count uint64) float64 {
+	cnt := float64(count)
+	return cnt * netWorkFactor
 }
 
 type physicalTableSource struct {
