@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -72,10 +71,6 @@ const (
 // It is created from ast.Node first, then optimized by the optimizer,
 // finally used by the executor to create a Cursor which executes the statement.
 type Plan interface {
-	// Fields returns the result fields of the plan.
-	Fields() []*ast.ResultField
-	// SetFields sets the results fields of the plan.
-	SetFields(fields []*ast.ResultField)
 	// AddParent means appending a parent for plan.
 	AddParent(parent Plan)
 	// AddChild means appending a child for plan.
@@ -272,7 +267,6 @@ func (p *basePlan) initID() {
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
-	fields     []*ast.ResultField
 	correlated bool
 
 	parents  []Plan
@@ -314,16 +308,6 @@ func (p *basePlan) SetSchema(schema expression.Schema) {
 // GetSchema implements Plan GetSchema interface.
 func (p *basePlan) GetSchema() expression.Schema {
 	return p.schema
-}
-
-// Fields implements Plan Fields interface.
-func (p *basePlan) Fields() []*ast.ResultField {
-	return p.fields
-}
-
-// SetFields implements Plan SetFields interface.
-func (p *basePlan) SetFields(fields []*ast.ResultField) {
-	p.fields = fields
 }
 
 // AddParent implements Plan AddParent interface.
