@@ -14,6 +14,8 @@
 package infoschema
 
 import (
+	"sort"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -37,7 +39,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		b.applyDropSchema(diff.SchemaID)
 		return nil
 	}
-	roDBInfo, ok := b.is.schemas[diff.SchemaID]
+	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
 		return ErrDatabaseNotExists
 	}
@@ -54,13 +56,15 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		oldTableID = diff.TableID
 		newTableID = diff.TableID
 	}
+	b.copySchemaTables(roDBInfo.Name.L)
+
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var alloc autoid.Allocator
 	if oldTableID != 0 {
 		if oldTableID == newTableID {
 			alloc, _ = b.is.AllocByID(oldTableID)
 		}
-		b.applyDropTable(roDBInfo.Name.L, oldTableID)
+		b.applyDropTable(roDBInfo, oldTableID)
 	}
 	if newTableID != 0 {
 		// All types except DropTable.
@@ -81,15 +85,16 @@ func (b *Builder) updateDBInfo(roDBInfo *model.DBInfo, oldTableID, newTableID in
 	newDbInfo.Tables = make([]*model.TableInfo, 0, len(roDBInfo.Tables))
 	if newTableID != 0 {
 		// All types except DropTable.
-		newTblInfo := b.is.tables[newTableID].Meta()
-		newDbInfo.Tables = append(newDbInfo.Tables, newTblInfo)
+		if newTbl, ok := b.is.TableByID(newTableID); ok {
+			newDbInfo.Tables = append(newDbInfo.Tables, newTbl.Meta())
+		}
 	}
 	for _, tblInfo := range roDBInfo.Tables {
 		if tblInfo.ID != oldTableID && tblInfo.ID != newTableID {
 			newDbInfo.Tables = append(newDbInfo.Tables, tblInfo)
 		}
 	}
-	b.is.schemas[newDbInfo.ID] = newDbInfo
+	b.is.schemasMap[roDBInfo.Name.L].dbInfo = newDbInfo
 }
 
 func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
@@ -102,20 +107,18 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 		// full load.
 		return ErrDatabaseNotExists
 	}
-	b.is.schemas[di.ID] = di
-	b.is.schemaNameToID[di.Name.L] = di.ID
+	b.is.schemasMap[di.Name.L] = &schemaTables{dbInfo: di, tables: make(map[string]table.Table)}
 	return nil
 }
 
 func (b *Builder) applyDropSchema(schemaID int64) {
-	di, ok := b.is.schemas[schemaID]
+	di, ok := b.is.SchemaByID(schemaID)
 	if !ok {
 		return
 	}
-	delete(b.is.schemas, di.ID)
-	delete(b.is.schemaNameToID, di.Name.L)
+	delete(b.is.schemasMap, di.Name.L)
 	for _, tbl := range di.Tables {
-		b.applyDropTable(di.Name.L, tbl.ID)
+		b.applyDropTable(di, tbl.ID)
 	}
 }
 
@@ -136,58 +139,58 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b.is.tables[tblInfo.ID] = tbl
-	tn := makeTableName(roDBInfo.Name.L, tblInfo.Name.L)
-	b.is.tableNameToID[string(tn)] = tblInfo.ID
+	tableNames := b.is.schemasMap[roDBInfo.Name.L]
+	tableNames.tables[tblInfo.Name.L] = tbl
+	b.is.sortedTables = append(b.is.sortedTables, tbl)
+	sort.Sort(b.is.sortedTables)
 	return nil
 }
 
-func (b *Builder) applyDropTable(schemaName string, tableID int64) {
-	tbl, ok := b.is.tables[tableID]
-	if !ok {
+func (b *Builder) applyDropTable(di *model.DBInfo, tableID int64) {
+	idx := b.is.searchTable(tableID)
+	if idx == -1 {
 		return
 	}
-	tblInfo := tbl.Meta()
-	delete(b.is.tables, tblInfo.ID)
-	tn := makeTableName(schemaName, tblInfo.Name.L)
-	delete(b.is.tableNameToID, string(tn))
+	if tableNames, ok := b.is.schemasMap[di.Name.L]; ok {
+		delete(tableNames.tables, b.is.sortedTables[idx].Meta().Name.L)
+	}
+	// Remove the table in sorted table slice.
+	b.is.sortedTables = append(b.is.sortedTables[0:idx], b.is.sortedTables[idx+1:]...)
 }
 
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
 func (b *Builder) InitWithOldInfoSchema() *Builder {
 	oldIS := b.handle.Get().(*infoSchema)
 	b.is.schemaMetaVersion = oldIS.schemaMetaVersion
-	b.copySchemaNames(oldIS)
-	b.copyTableNames(oldIS)
-	b.copySchemas(oldIS)
-	b.copyTables(oldIS)
+	b.copySchemasMap(oldIS)
+	b.copySortedTables(oldIS)
 	return b
 }
 
-func (b *Builder) copySchemaNames(oldIS *infoSchema) {
-	for k, v := range oldIS.schemaNameToID {
-		b.is.schemaNameToID[k] = v
+func (b *Builder) copySchemasMap(oldIS *infoSchema) {
+	for k, v := range oldIS.schemasMap {
+		b.is.schemasMap[k] = v
 	}
 }
 
-func (b *Builder) copyTableNames(oldIS *infoSchema) {
-	b.is.tableNameToID = make(map[string]int64, len(oldIS.tableNameToID))
-	for k, v := range oldIS.tableNameToID {
-		b.is.tableNameToID[k] = v
+// When a table in the database has changed, we should create a new schemaTables instance, then do modifications
+// on the new one. Because old schemaTables must be read-only.
+func (b *Builder) copySchemaTables(dbName string) {
+	oldSchemaTables := b.is.schemasMap[dbName]
+	newSchemaTables := &schemaTables{
+		dbInfo: oldSchemaTables.dbInfo,
+		tables: make(map[string]table.Table, len(oldSchemaTables.tables)),
 	}
+	for k, v := range oldSchemaTables.tables {
+		newSchemaTables.tables[k] = v
+	}
+	b.is.schemasMap[dbName] = newSchemaTables
 }
 
-func (b *Builder) copySchemas(oldIS *infoSchema) {
-	for k, v := range oldIS.schemas {
-		b.is.schemas[k] = v
-	}
-}
-
-func (b *Builder) copyTables(oldIS *infoSchema) {
-	b.is.tables = make(map[int64]table.Table, len(oldIS.tables))
-	for k, v := range oldIS.tables {
-		b.is.tables[k] = v
-	}
+func (b *Builder) copySortedTables(oldIS *infoSchema) {
+	// make an extra capacity for create table.
+	b.is.sortedTables = make([]table.Table, len(oldIS.sortedTables), len(oldIS.sortedTables)+1)
+	copy(b.is.sortedTables, oldIS.sortedTables)
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo and schema version.
@@ -199,8 +202,11 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
 	for _, di := range dbInfos {
-		info.schemas[di.ID] = di
-		info.schemaNameToID[di.Name.L] = di.ID
+		schTbls := &schemaTables{
+			dbInfo: di,
+			tables: make(map[string]table.Table),
+		}
+		info.schemasMap[di.Name.L] = schTbls
 		for _, t := range di.Tables {
 			alloc := autoid.NewAllocator(b.handle.store, di.ID)
 			var tbl table.Table
@@ -208,38 +214,43 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			info.tables[t.ID] = tbl
-			tname := makeTableName(di.Name.L, t.Name.L)
-			info.tableNameToID[string(tname)] = t.ID
+			schTbls.tables[t.Name.L] = tbl
+			info.sortedTables = append(info.sortedTables, tbl)
 		}
 	}
+	sort.Sort(info.sortedTables)
 	return b, nil
 }
 
 func (b *Builder) initMemorySchemas() error {
 	info := b.is
-	info.schemaNameToID[infoSchemaDB.Name.L] = infoSchemaDB.ID
-	info.schemas[infoSchemaDB.ID] = infoSchemaDB
+	infoSchemaTblNames := &schemaTables{
+		dbInfo: infoSchemaDB,
+		tables: make(map[string]table.Table),
+	}
+
+	info.schemasMap[infoSchemaDB.Name.L] = infoSchemaTblNames
 	for _, t := range infoSchemaDB.Tables {
 		tbl := b.handle.memSchema.nameToTable[t.Name.L]
-		info.tables[t.ID] = tbl
-		tname := makeTableName(infoSchemaDB.Name.L, t.Name.L)
-		info.tableNameToID[string(tname)] = t.ID
+		infoSchemaTblNames.tables[t.Name.L] = tbl
+		info.sortedTables = append(info.sortedTables, tbl)
 	}
 
 	perfHandle := b.handle.memSchema.perfHandle
-	psDB := perfHandle.GetDBMeta()
+	perfSchemaDB := perfHandle.GetDBMeta()
+	perfSchemaTblNames := &schemaTables{
+		dbInfo: perfSchemaDB,
+		tables: make(map[string]table.Table),
+	}
+	info.schemasMap[perfSchemaDB.Name.L] = perfSchemaTblNames
 
-	info.schemaNameToID[psDB.Name.L] = psDB.ID
-	info.schemas[psDB.ID] = psDB
-	for _, t := range psDB.Tables {
+	for _, t := range perfSchemaDB.Tables {
 		tbl, ok := perfHandle.GetTable(t.Name.O)
 		if !ok {
 			return ErrTableNotExists.Gen("table `%s` is missing.", t.Name)
 		}
-		info.tables[t.ID] = tbl
-		tname := makeTableName(psDB.Name.L, t.Name.L)
-		info.tableNameToID[string(tname)] = t.ID
+		perfSchemaTblNames.tables[t.Name.L] = tbl
+		info.sortedTables = append(info.sortedTables, tbl)
 	}
 	return nil
 }
@@ -259,10 +270,7 @@ func NewBuilder(handle *Handle) *Builder {
 	b := new(Builder)
 	b.handle = handle
 	b.is = &infoSchema{
-		schemaNameToID: map[string]int64{},
-		tableNameToID:  map[string]int64{},
-		schemas:        map[int64]*model.DBInfo{},
-		tables:         map[int64]table.Table{},
+		schemasMap: map[string]*schemaTables{},
 	}
 	return b
 }
