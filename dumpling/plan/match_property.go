@@ -311,3 +311,8 @@ func (p *PhysicalDummyScan) matchProperty(_ *requiredProperty, _ ...*physicalPla
 func (p *Delete) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }
+
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Show) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
+}

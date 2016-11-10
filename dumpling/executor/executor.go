@@ -118,19 +118,19 @@ type Executor interface {
 
 // ShowDDLExec represents a show DDL executor.
 type ShowDDLExec struct {
-	fields []*ast.ResultField
+	schema expression.Schema
 	ctx    context.Context
 	done   bool
 }
 
 // Schema implements the Executor Schema interface.
 func (e *ShowDDLExec) Schema() expression.Schema {
-	return nil
+	return e.schema
 }
 
 // Fields implements the Executor Fields interface.
 func (e *ShowDDLExec) Fields() []*ast.ResultField {
-	return e.fields
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -178,9 +178,6 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 		bgOwner,
 		bgJob,
 	)
-	for i, f := range e.fields {
-		f.Expr.SetValue(row.Data[i].GetValue())
-	}
 	e.done = true
 
 	return row, nil

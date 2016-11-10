@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -64,9 +63,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildExecute(v)
 	case *plan.Explain:
 		return b.buildExplain(v)
-	case *plan.Filter:
-		src := b.build(v.GetChildByIndex(0))
-		return b.buildFilter(src, v.Conditions)
 	case *plan.Insert:
 		return b.buildInsert(v)
 	case *plan.LoadData:
@@ -123,21 +119,10 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	}
 }
 
-func (b *executorBuilder) buildFilter(src Executor, conditions []ast.ExprNode) Executor {
-	if len(conditions) == 0 {
-		return src
-	}
-	return &FilterExec{
-		Src:       src,
-		Condition: b.joinConditions(conditions),
-		ctx:       b.ctx,
-	}
-}
-
 func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	return &ShowDDLExec{
-		fields: v.Fields(),
 		ctx:    b.ctx,
+		schema: v.GetSchema(),
 	}
 }
 
@@ -153,22 +138,6 @@ func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 		ctx:  b.ctx,
 		Name: v.Name,
 	}
-}
-
-func (b *executorBuilder) joinConditions(conditions []ast.ExprNode) ast.ExprNode {
-	if len(conditions) == 0 {
-		return nil
-	}
-	if len(conditions) == 1 {
-		return conditions[0]
-	}
-	condition := &ast.BinaryOperationExpr{
-		Op: opcode.AndAnd,
-		L:  conditions[0],
-		R:  b.joinConditions(conditions[1:]),
-	}
-	ast.MergeChildrenFlags(condition, condition.L, condition.R)
-	return condition
 }
 
 func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
@@ -235,7 +204,7 @@ func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 		GlobalScope: v.GlobalScope,
 		ctx:         b.ctx,
 		is:          b.is,
-		fields:      v.Fields(),
+		schema:      v.GetSchema(),
 	}
 	if e.Tp == ast.ShowGrants && len(e.User) == 0 {
 		e.User = variable.GetSessionVars(e.ctx).User

@@ -700,6 +700,12 @@ func (p *Delete) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
+func (p *Show) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 	np := *p
 	return &np
