@@ -23,7 +23,6 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -361,11 +360,6 @@ type XSelectIndexExec struct {
 	aggregate bool
 
 	scanConcurrency int
-}
-
-// Fields implements Exec Fields interface.
-func (e *XSelectIndexExec) Fields() []*ast.ResultField {
-	return nil
 }
 
 // Schema implements Exec Schema interface.
@@ -875,11 +869,6 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		}
 		return resultRowToRow(e.table, h, rowData, e.asName), nil
 	}
-}
-
-// Fields implements the Executor interface.
-func (e *XSelectTableExec) Fields() []*ast.ResultField {
-	return nil
 }
 
 // timeZoneOffset returns the local time zone offset in seconds.

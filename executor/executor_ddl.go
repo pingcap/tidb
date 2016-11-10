@@ -42,11 +42,6 @@ func (e *DDLExec) Schema() expression.Schema {
 	return nil
 }
 
-// Fields implements the Executor Fields interface.
-func (e *DDLExec) Fields() []*ast.ResultField {
-	return nil
-}
-
 // Next implements Execution Next interface.
 func (e *DDLExec) Next() (*Row, error) {
 	if e.done {
