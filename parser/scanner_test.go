@@ -14,6 +14,8 @@
 package parser
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -179,6 +181,10 @@ func (s *testLexerSuite) TestIdentifier(c *C) {
 	defer testleak.AfterTest(c)()
 	table := [][2]string{
 		{`哈哈`, "哈哈"},
+		// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+		// ASCII NUL (U+0000) and supplementary characters (U+10000 and higher) are not permitted in quoted or unquoted identifiers.
+		// According to mysql document, this is not a valid identifier, but mysql implementation seems accept it:
+		{fmt.Sprintf("t1%c", 0), "t1"},
 		{"`numeric`", "numeric"},
 		{"\r\n \r \n \tthere\t \n", "there"},
 		// `5number`,
