@@ -636,7 +636,6 @@ func (b *executorBuilder) buildTrim(v *plan.Trim) Executor {
 func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 	e := &UnionExec{
 		schema: v.GetSchema(),
-		fields: v.Fields(),
 		Srcs:   make([]Executor, len(v.GetChildren())),
 	}
 	for i, sel := range v.GetChildren() {

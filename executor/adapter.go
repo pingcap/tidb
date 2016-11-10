@@ -104,7 +104,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}
 
 	// Fields or Schema are only used for statements that return result set.
-	if len(e.Fields()) == 0 && len(e.Schema()) == 0 {
+	if len(e.Schema()) == 0 {
 		// Check if "tidb_snapshot" is set for the write executors.
 		// In history read mode, we can not do write operations.
 		switch e.(type) {
@@ -131,15 +131,8 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		}
 	}
 
-	fs := e.Fields()
-	for _, f := range fs {
-		if len(f.ColumnAsName.O) == 0 {
-			f.ColumnAsName = f.Column.Name
-		}
-	}
 	return &recordSet{
 		executor: e,
-		fields:   fs,
 		schema:   e.Schema(),
 	}, nil
 }

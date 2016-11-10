@@ -60,11 +60,6 @@ func (e *ShowExec) Schema() expression.Schema {
 	return e.schema
 }
 
-// Fields implements the Executor Fields interface.
-func (e *ShowExec) Fields() []*ast.ResultField {
-	return nil
-}
-
 // Next implements Execution Next interface.
 func (e *ShowExec) Next() (*Row, error) {
 	if e.rows == nil {
