@@ -83,6 +83,7 @@ func initTokenFunc(str string, fn func(s *Scanner) (int, Pos, string)) {
 }
 
 func init() {
+	ruleTable.token = invalid
 	initTokenByte('*', int('*'))
 	initTokenByte('/', int('/'))
 	initTokenByte('+', int('+'))

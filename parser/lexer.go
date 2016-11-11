@@ -129,6 +129,9 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		ch0 = s.skipWhitespace()
 	}
 	pos = s.r.pos()
+	if s.r.eof() {
+		return 0, pos, ""
+	}
 
 	if ch0 != unicode.ReplacementChar && isIdentExtend(ch0) {
 		return scanIdentifier(s)

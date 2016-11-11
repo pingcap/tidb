@@ -350,6 +350,10 @@ func (cc *clientConn) Run() {
 func (cc *clientConn) dispatch(data []byte) error {
 	cmd := data[0]
 	data = data[1:]
+	// trim last '\0' in EOF string
+	if data[len(data)-1] == 0 {
+		data = data[:len(data)-1]
+	}
 	cc.lastCmd = hack.String(data)
 
 	token := cc.server.getToken()
