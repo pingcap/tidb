@@ -519,6 +519,7 @@ func (r *reader) peek() rune {
 	v, w := rune(r.s[r.p.Offset]), 1
 	switch {
 	case v == 0:
+		r.w = w
 		return v // illegal UTF-8 encoding
 	case v >= 0x80:
 		v, w = utf8.DecodeRuneInString(r.s[r.p.Offset:])
