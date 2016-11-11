@@ -173,6 +173,6 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 
 func init() {
 	// Speed up tests.
-	lockTTL = 3
+	defaultLockTTL = 3
 	oracleUpdateInterval = 2
 }

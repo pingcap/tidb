@@ -31,6 +31,7 @@ type txnCommitter struct {
 	startTS   uint64
 	keys      [][]byte
 	mutations map[string]*pb.Mutation
+	lockTTL   uint64
 	commitTS  uint64
 	mu        struct {
 		sync.RWMutex
@@ -63,8 +64,6 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txnWriteKVCountHistogram.Observe(float64(len(keys)))
-	txnWriteSizeHistogram.Observe(float64(size / 1024))
 	// Transactions without Put/Del, only Locks are readonly.
 	// We can skip commit directly.
 	if len(keys) == 0 {
@@ -77,14 +76,28 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 				Key: lockKey,
 			}
 			keys = append(keys, lockKey)
+			size += len(lockKey)
 		}
 	}
+	txnWriteKVCountHistogram.Observe(float64(len(keys)))
+	txnWriteSizeHistogram.Observe(float64(size / 1024))
+
+	// Increase lockTTL for large transactions.
+	var lockTTL uint64
+	if size > txnCommitBatchSize {
+		lockTTL = defaultLockTTL * uint64(size/txnCommitBatchSize)
+		if lockTTL > maxLockTTL {
+			lockTTL = maxLockTTL
+		}
+	}
+
 	return &txnCommitter{
 		store:     txn.store,
 		txn:       txn,
 		startTS:   txn.StartTS(),
 		keys:      keys,
 		mutations: mutations,
+		lockTTL:   lockTTL,
 	}, nil
 }
 
@@ -188,6 +201,7 @@ func (c *txnCommitter) prewriteSingleRegion(bo *Backoffer, batch batchKeys) erro
 			Mutations:    mutations,
 			PrimaryLock:  c.primary(),
 			StartVersion: c.startTS,
+			LockTtl:      c.lockTTL,
 		},
 	}
 
