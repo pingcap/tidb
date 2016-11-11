@@ -15,6 +15,7 @@ package tikv
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 )
 
@@ -171,8 +172,60 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 }
 
+func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
+	committer, err := newTxnCommitter(txn)
+	c.Assert(err, IsNil)
+	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff), committer.keys)
+	c.Assert(err, IsNil)
+}
+
+func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
+	ver, err := s.store.CurrentVersion()
+	c.Assert(err, IsNil)
+	bo := NewBackoffer(getMaxBackoff)
+	req := &kvrpcpb.Request{
+		Type: kvrpcpb.MessageType_CmdGet,
+		CmdGetReq: &kvrpcpb.CmdGetRequest{
+			Key:     key,
+			Version: ver.Ver,
+		},
+	}
+	region, err := s.store.regionCache.GetRegion(bo, key)
+	c.Assert(err, IsNil)
+	resp, err := s.store.SendKVReq(bo, req, region.VerID(), readTimeoutShort)
+	c.Assert(err, IsNil)
+	cmdGetResp := resp.GetCmdGetResp()
+	c.Assert(cmdGetResp, NotNil)
+	keyErr := cmdGetResp.GetError()
+	c.Assert(keyErr, NotNil)
+	lock, err := extractLockFromKeyErr(keyErr)
+	c.Assert(err, IsNil)
+	return lock
+}
+
+func (s *testLockSuite) TestLockTTL(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set(kv.Key("key"), []byte("value"))
+	s.prewriteTxn(c, txn.(*tikvTxn))
+	l := s.mustGetLock(c, []byte("key"))
+	c.Assert(l.TTL, Equals, defaultLockTTL)
+
+	// Huge txn has a greater TTL.
+	txn, err = s.store.Begin()
+	txn.Set(kv.Key("key"), []byte("value"))
+	for i := 0; i < 1024; i++ {
+		k, v := randKV(1024, 1024)
+		txn.Set(kv.Key(k), []byte(v))
+	}
+	s.prewriteTxn(c, txn.(*tikvTxn))
+	l = s.mustGetLock(c, []byte("key"))
+	c.Assert(l.TTL, Greater, defaultLockTTL)
+}
+
 func init() {
 	// Speed up tests.
 	defaultLockTTL = 3
+	maxLockTTL = 120
 	oracleUpdateInterval = 2
 }
