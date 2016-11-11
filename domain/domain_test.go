@@ -65,14 +65,16 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(dom.GetScope("dummy_status"), Equals, variable.DefaultScopeFlag)
 
 	// for setting lease
-	dom.SetLease(100 * time.Millisecond)
-	c.Assert(dd.GetLease(), Equals, 100*time.Millisecond)
+	lease := 100 * time.Millisecond
+	dom.SetLease(lease)
+	c.Assert(dd.GetLease(), Equals, lease)
+	dom.SetLease(lease)
+	c.Assert(dd.GetLease(), Equals, lease)
 	dom.SetLease(0 * time.Millisecond)
-	c.Assert(dd.GetLease(), Equals, 100*time.Millisecond)
-	time.Sleep(100 * time.Millisecond)
+	c.Assert(dd.GetLease(), Equals, lease)
 	dom1, err := NewDomain(store, 0)
 	c.Assert(err, IsNil)
-	dom1.SetLease(100 * time.Millisecond)
+	dom1.SetLease(50 * time.Millisecond)
 	c.Assert(dom1.DDL().GetLease(), Equals, 0*time.Second)
 
 	// for schemaValidity
@@ -81,18 +83,16 @@ func (*testSuite) TestT(c *C) {
 	dom.SchemaValidity.MockReloadFailed = true
 	err = dom.MustReload()
 	c.Assert(err, NotNil)
+	time.Sleep(lease)
 	err = dom.SchemaValidity.Check(0)
 	c.Assert(err, NotNil)
 	dom.SchemaValidity.MockReloadFailed = false
 	err = dom.MustReload()
 	c.Assert(err, IsNil)
+	time.Sleep(lease)
 	err = dom.SchemaValidity.Check(0)
 	c.Assert(err, IsNil)
 
-	defaultMinReloadTimeout = 20 * time.Millisecond
-	// for goroutine exit in Reload
 	err = store.Close()
 	c.Assert(err, IsNil)
-	err = dom.reload()
-	c.Assert(err, NotNil)
 }

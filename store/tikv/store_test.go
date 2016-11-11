@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
@@ -128,31 +130,45 @@ func (s *testStoreSuite) TestBusyServerKV(c *C) {
 func (s *testStoreSuite) TestBusyServerCop(c *C) {
 	client := newBusyClient(s.store.client)
 	s.store.client = client
-
 	session, err := tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
+	ctx := session.(context.Context)
+	sessionctx.GetDomain(ctx).SetLease(50 * time.Millisecond)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
+	execCh := make(chan struct{}, 1)
+	setCh := make(chan struct{}, 1)
 	client.setBusy(true)
+	time.Sleep(time.Millisecond * 50)
+
+	execCh <- struct{}{}
 	go func() {
 		defer wg.Done()
-		time.Sleep(time.Millisecond * 100)
+		<-execCh
+		setCh <- struct{}{}
+		_, err := session.Execute(`SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
+		c.Assert(err, NotNil)
+	}()
+
+	go func() {
+		defer wg.Done()
+		<-setCh
+		time.Sleep(time.Millisecond * 60)
 		client.setBusy(false)
 	}()
 
-	go func() {
-		defer wg.Done()
-		rs, err := session.Execute(`SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
-		c.Assert(err, IsNil)
-		row, err := rs[0].Next()
-		c.Assert(err, IsNil)
-		c.Assert(row, NotNil)
-		c.Assert(row.Data[0].GetString(), Equals, "True")
-	}()
-
 	wg.Wait()
+
+	// retry after 2 seconds
+	time.Sleep(2000 * time.Millisecond)
+	rs, err := session.Execute(`SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
+	c.Assert(err, IsNil)
+	row, err := rs[0].Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	c.Assert(row.Data[0].GetString(), Equals, "True")
 }
 
 var errStopped = errors.New("stopped")
