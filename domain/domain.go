@@ -109,7 +109,7 @@ const fetchSchemaConcurrency = 8
 
 func (do *Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
 	groupSize := (len(schemas) + fetchSchemaConcurrency - 1) / fetchSchemaConcurrency
-	var splitted [][]*model.DBInfo
+	splitted := make([][]*model.DBInfo, 0, fetchSchemaConcurrency)
 	for i := 0; i < len(schemas); i += groupSize {
 		end := i + groupSize
 		if end > len(schemas) {
