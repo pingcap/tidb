@@ -489,7 +489,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		SQLText: sql,
 	}
 	prepareExec.DoPrepare()
-	return prepareExec.ID, prepareExec.ParamCount, prepareExec.ResultFields, prepareExec.Err
+	return prepareExec.ID, prepareExec.ParamCount, nil, prepareExec.Err
 }
 
 // checkArgs makes sure all the arguments' types are known and can be handled.
@@ -828,7 +828,9 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 			break
 		}
 		varName := row.Data[0].GetString()
-		vars.SetSystemVar(varName, row.Data[1])
+		if d := vars.GetSystemVar(varName); d.IsNull() {
+			vars.SetSystemVar(varName, row.Data[1])
+		}
 	}
 	vars.CommonGlobalLoaded = true
 	return nil

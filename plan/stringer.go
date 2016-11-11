@@ -85,8 +85,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
-	case *Filter:
-		str = "Filter"
 	case *Sort:
 		str = "Sort"
 		if x.ExecLimit != nil {

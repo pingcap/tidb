@@ -73,7 +73,6 @@ func (s *testSuite) TestPrepared(c *C) {
 
 	// Coverage.
 	exec := &executor.ExecuteExec{}
-	exec.Fields()
 	exec.Next()
 	exec.Close()
 }

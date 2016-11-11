@@ -140,19 +140,9 @@ type Deallocate struct {
 	Name string
 }
 
-// Filter represents a plan that filter GetChildByIndex(0)plan result.
-type Filter struct {
-	basePlan
-
-	// Originally the WHERE or ON condition is parsed into a single expression,
-	// but after we converted to CNF(Conjunctive normal form), it can be
-	// split into a list of AND conditions.
-	Conditions []ast.ExprNode
-}
-
 // Show represents a show plan.
 type Show struct {
-	basePlan
+	baseLogicalPlan
 
 	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName string
