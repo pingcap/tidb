@@ -78,6 +78,9 @@ func (s *Scanner) Errorf(format string, a ...interface{}) {
 
 // Lex returns a token and store the token value in v.
 // Scanner satisfies yyLexer interface.
+// 0 and invalid are special token id this function would return:
+// return 0 tells parser that scanner meets EOF,
+// return invalid tells parser that scanner meets illegal character.
 func (s *Scanner) Lex(v *yySymType) int {
 	tok, pos, lit := s.scan()
 	v.offset = pos.Offset
@@ -130,6 +133,8 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 	}
 	pos = s.r.pos()
 	if s.r.eof() {
+		// when scanner meets EOF, the returned token should be 0,
+		// because 0 is a special token id to remind the parser that stream is end.
 		return 0, pos, ""
 	}
 
