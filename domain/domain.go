@@ -60,16 +60,19 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		log.Debugf("[ddl] schema version is still %d, no need reload", usedSchemaVersion)
 		return nil
 	}
+	startTime := time.Now()
 	ok, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
 	if err != nil {
 		// We can fall back to full load, don't need to return the error.
 		log.Errorf("[ddl] failed to load schema diff %v", err)
 	}
 	if ok {
-		log.Infof("[ddl] diff load InfoSchema from version %d to %d", usedSchemaVersion, latestSchemaVersion)
+		log.Infof("[ddl] diff load InfoSchema from version %d to %d, in %v",
+			usedSchemaVersion, latestSchemaVersion, time.Since(startTime))
 		return nil
 	}
-	schemas, err := do.getAllSchemasWithTablesFromMeta(m)
+
+	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -78,43 +81,46 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Infof("[ddl] full load InfoSchema from version %d to %d", usedSchemaVersion, latestSchemaVersion)
+	log.Infof("[ddl] full load InfoSchema from version %d to %d, in %v",
+		usedSchemaVersion, latestSchemaVersion, time.Since(startTime))
 	return newISBuilder.Build()
 }
 
-func (do *Domain) getAllSchemasWithTablesFromMeta(m *meta.Meta) ([]*model.DBInfo, error) {
-	schemas, err := m.ListDatabases()
+func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
+	allSchemas, err := m.ListDatabases()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-
-
-	for _, di := range schemas {
-		if di.State != model.StatePublic {
-			// schema is not public, can't be used outside.
-			continue
-		}
-
-		tables, err1 := m.ListTables(di.ID)
-		if err1 != nil {
-			err = err1
-			return nil, errors.Trace(err1)
-		}
-
-		di.Tables = make([]*model.TableInfo, 0, len(tables))
-		for _, tbl := range tables {
-			if tbl.State != model.StatePublic {
-				// schema is not public, can't be used outside.
-				continue
-			}
-			di.Tables = append(di.Tables, tbl)
+	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
+	doneChan := make(chan error, len(splittedSchemas))
+	for _, schemas := range splittedSchemas {
+		go do.fetchSchemasWithTables(schemas, m, doneChan)
+	}
+	for range splittedSchemas {
+		err = <-doneChan
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
-	return schemas, nil
+	return allSchemas, nil
 }
 
-func (do *Domain) getPartialSchemasWithTablesFromMeta(schemas []*model.DBInfo, m *meta.Meta) error {
+const fetchSchemaConcurrency = 8
+
+func (do *Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
+	groupSize := (len(schemas) + fetchSchemaConcurrency - 1) / fetchSchemaConcurrency
+	var splitted [][]*model.DBInfo
+	for i := 0; i < len(schemas); i += groupSize {
+		end := i + groupSize
+		if end > len(schemas) {
+			end = len(schemas)
+		}
+		splitted = append(splitted, schemas[i:end])
+	}
+	return splitted
+}
+
+func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, done chan error) {
 	for _, di := range schemas {
 		if di.State != model.StatePublic {
 			// schema is not public, can't be used outside.
@@ -122,7 +128,8 @@ func (do *Domain) getPartialSchemasWithTablesFromMeta(schemas []*model.DBInfo, m
 		}
 		tables, err := m.ListTables(di.ID)
 		if err != nil {
-			return nil, errors.Trace(err)
+			done <- err
+			return
 		}
 		di.Tables = make([]*model.TableInfo, 0, len(tables))
 		for _, tbl := range tables {
@@ -133,7 +140,7 @@ func (do *Domain) getPartialSchemasWithTablesFromMeta(schemas []*model.DBInfo, m
 			di.Tables = append(di.Tables, tbl)
 		}
 	}
-
+	done <- nil
 }
 
 const (
