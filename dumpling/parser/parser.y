@@ -47,6 +47,7 @@ import (
 %token	<ident>
 	/*yy:token "%c"     */	identifier      "identifier"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
+	invalid		"a special token never used by parser, used by lexer to indicate error"
 
 	with		"WITH"
 

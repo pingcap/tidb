@@ -369,6 +369,13 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComQuit:
 		return io.EOF
 	case mysql.ComQuery: // Most frequently used command.
+		// For issue 1989
+		// Input payload may end with byte '\0', we didn't find related mysql document about it, but mysql
+		// implementation accept that case. So trim the last '\0' here as if the payload an EOF string.
+		// See http://dev.mysql.com/doc/internals/en/com-query.html
+		if data[len(data)-1] == 0 {
+			data = data[:len(data)-1]
+		}
 		return cc.handleQuery(hack.String(data))
 	case mysql.ComPing:
 		return cc.writeOK()
