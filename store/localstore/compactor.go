@@ -175,9 +175,7 @@ func (gc *localstoreCompactor) Compact(k kv.Key) error {
 		return errors.Trace(err)
 	}
 	filteredKeys := gc.filterExpiredKeys(keys)
-	if len(filteredKeys) > 0 {
-		log.Debugf("[kv] GC send %d keys to delete worker", len(filteredKeys))
-	}
+
 	for _, key := range filteredKeys {
 		gc.delCh <- key
 	}

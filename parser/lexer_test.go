@@ -14,6 +14,8 @@
 package parser
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
 	"unicode"
@@ -99,6 +101,8 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{"0x3c26", hexLit},
 		{"x'13181C76734725455A'", hexLit},
 		{"0b01", bitLit},
+		{fmt.Sprintf("%c", 0), invalid},
+		{fmt.Sprintf("t1%c", 0), identifier},
 	}
 	runTest(c, table)
 }
@@ -186,6 +190,7 @@ func (s *testLexerSuite) TestIdentifier(c *C) {
 		{"\r\n \r \n \tthere\t \n", "there"},
 		{`5number`, `5number`},
 		{replacementString, replacementString},
+		{fmt.Sprintf("t1%cxxx", 0), "t1"},
 	}
 	l := &Scanner{}
 	for _, item := range table {
