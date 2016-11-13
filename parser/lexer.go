@@ -138,7 +138,7 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		return 0, pos, ""
 	}
 
-	if ch0 != unicode.ReplacementChar && isIdentExtend(ch0) {
+	if !s.r.eof() && isIdentExtend(ch0) {
 		return scanIdentifier(s)
 	}
 
@@ -453,7 +453,7 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 	}
 
 	// Identifiers may begin with a digit but unless quoted may not consist solely of digits.
-	if ch0 != unicode.ReplacementChar && isIdentChar(ch0) {
+	if !s.r.eof() && isIdentChar(ch0) {
 		s.r.incAsLongAs(isIdentChar)
 		return identifier, pos, s.r.data(&pos)
 	}
@@ -517,6 +517,9 @@ func (r *reader) eof() bool {
 	return r.p.Offset >= len(r.s)
 }
 
+// peek() peeks a rune from underlying reader.
+// if reader meets EOF, it will return unicode.ReplacementChar. to distinguish from
+// the real unicode.ReplacementChar, the caller should call r.eof() again to check.
 func (r *reader) peek() rune {
 	if r.eof() {
 		return unicode.ReplacementChar
