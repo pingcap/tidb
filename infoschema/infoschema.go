@@ -82,18 +82,28 @@ const (
 	Name = "INFORMATION_SCHEMA"
 )
 
-type tableSlice []table.Table
+type sortedTables []table.Table
 
-func (s tableSlice) Len() int {
+func (s sortedTables) Len() int {
 	return len(s)
 }
 
-func (s tableSlice) Swap(i, j int) {
+func (s sortedTables) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
 
-func (s tableSlice) Less(i, j int) bool {
+func (s sortedTables) Less(i, j int) bool {
 	return s[i].Meta().ID < s[j].Meta().ID
+}
+
+func (s sortedTables) searchTable(id int64) int {
+	idx := sort.Search(len(s), func(i int) bool {
+		return s[i].Meta().ID >= id
+	})
+	if idx == len(s) || s[idx].Meta().ID != id {
+		return -1
+	}
+	return idx
 }
 
 type schemaTables struct {
@@ -101,26 +111,23 @@ type schemaTables struct {
 	tables map[string]table.Table
 }
 
+const bucketCount = 256
+
 type infoSchema struct {
 	schemasMap map[string]*schemaTables
 
-	// sortedTables is sorted by ID, used to search table by ID.
-	sortedTables tableSlice
+	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
+	sortedTablesBuckets []sortedTables
 
 	// We should check version when change schema.
 	schemaMetaVersion int64
-}
-
-type schemaHandle struct {
-	tableNameToID map[string]int64
 }
 
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
 	result.schemasMap = make(map[string]*schemaTables)
-	result.sortedTables = make(tableSlice, 0, len(tbList))
-
+	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
@@ -130,9 +137,12 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	for _, tb := range tbList {
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
-		result.sortedTables = append(result.sortedTables, tbl)
+		bucketIdx := tb.ID % bucketCount
+		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
-	sort.Sort(result.sortedTables)
+	for i := range result.sortedTablesBuckets {
+		sort.Sort(result.sortedTablesBuckets[i])
+	}
 	return result
 }
 
@@ -173,14 +183,6 @@ func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
 	return false
 }
 
-func makeTableName(schema, table string) []byte {
-	name := make([]byte, len(schema)+1+len(table))
-	copy(name, schema)
-	name[len(schema)] = '.'
-	copy(name[len(schema)+1:], table)
-	return name
-}
-
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 	for _, v := range is.schemasMap {
 		if v.dbInfo.ID == id {
@@ -190,22 +192,13 @@ func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 	return nil, false
 }
 
-func (is *infoSchema) searchTable(id int64) int {
-	idx := sort.Search(len(is.sortedTables), func(i int) bool {
-		return is.sortedTables[i].Meta().ID >= id
-	})
-	if idx == len(is.sortedTables) || is.sortedTables[idx].Meta().ID != id {
-		return -1
-	}
-	return idx
-}
-
 func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
-	idx := is.searchTable(id)
+	slice := is.sortedTablesBuckets[id%bucketCount]
+	idx := slice.searchTable(id)
 	if idx == -1 {
 		return nil, false
 	}
-	return is.sortedTables[idx], true
+	return slice[idx], true
 }
 
 func (is *infoSchema) AllocByID(id int64) (autoid.Allocator, bool) {

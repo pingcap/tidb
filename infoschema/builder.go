@@ -57,6 +57,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		newTableID = diff.TableID
 	}
 	b.copySchemaTables(roDBInfo.Name.L)
+	b.copySortedTables(oldTableID, newTableID)
 
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var alloc autoid.Allocator
@@ -74,6 +75,24 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 	// The old DBInfo still holds a reference to old table info, we need to update it.
 	b.updateDBInfo(roDBInfo, oldTableID, newTableID)
 	return nil
+}
+
+// CopySortedTables copies sortedTables for old table and new table for later modification.
+func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
+	buckets := b.is.sortedTablesBuckets
+	if oldTableID != 0 {
+		bucketIdx := oldTableID % bucketCount
+		oldSortedTables := buckets[bucketIdx]
+		newSortedTables := make(sortedTables, len(oldSortedTables))
+		copy(newSortedTables, oldSortedTables)
+		buckets[bucketIdx] = newSortedTables
+	}
+	if newTableID != 0 && newTableID != oldTableID {
+		oldSortedTables := buckets[newTableID%bucketCount]
+		newSortedTables := make(sortedTables, len(oldSortedTables), len(oldSortedTables)+1)
+		copy(newSortedTables, oldSortedTables)
+		buckets[newTableID%bucketCount] = newSortedTables
+	}
 }
 
 // updateDBInfo clones a new DBInfo from old DBInfo, and update on the new one.
@@ -139,21 +158,26 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 	}
 	tableNames := b.is.schemasMap[roDBInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
-	b.is.sortedTables = append(b.is.sortedTables, tbl)
-	sort.Sort(b.is.sortedTables)
+	bucketIdx := tableID % bucketCount
+	sortedTables := b.is.sortedTablesBuckets[bucketIdx]
+	sortedTables = append(sortedTables, tbl)
+	sort.Sort(sortedTables)
+	b.is.sortedTablesBuckets[bucketIdx] = sortedTables
 	return nil
 }
 
 func (b *Builder) applyDropTable(di *model.DBInfo, tableID int64) {
-	idx := b.is.searchTable(tableID)
+	bucketIdx := tableID % bucketCount
+	sortedTables := b.is.sortedTablesBuckets[bucketIdx]
+	idx := sortedTables.searchTable(tableID)
 	if idx == -1 {
 		return
 	}
 	if tableNames, ok := b.is.schemasMap[di.Name.L]; ok {
-		delete(tableNames.tables, b.is.sortedTables[idx].Meta().Name.L)
+		delete(tableNames.tables, sortedTables[idx].Meta().Name.L)
 	}
 	// Remove the table in sorted table slice.
-	b.is.sortedTables = append(b.is.sortedTables[0:idx], b.is.sortedTables[idx+1:]...)
+	b.is.sortedTablesBuckets[bucketIdx] = append(sortedTables[0:idx], sortedTables[idx+1:]...)
 }
 
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
@@ -161,7 +185,7 @@ func (b *Builder) InitWithOldInfoSchema() *Builder {
 	oldIS := b.handle.Get().(*infoSchema)
 	b.is.schemaMetaVersion = oldIS.schemaMetaVersion
 	b.copySchemasMap(oldIS)
-	b.copySortedTables(oldIS)
+	copy(b.is.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return b
 }
 
@@ -183,12 +207,6 @@ func (b *Builder) copySchemaTables(dbName string) {
 		newSchemaTables.tables[k] = v
 	}
 	b.is.schemasMap[dbName] = newSchemaTables
-}
-
-func (b *Builder) copySortedTables(oldIS *infoSchema) {
-	// make an extra capacity for create table.
-	b.is.sortedTables = make([]table.Table, len(oldIS.sortedTables), len(oldIS.sortedTables)+1)
-	copy(b.is.sortedTables, oldIS.sortedTables)
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo and schema version.
@@ -213,10 +231,13 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 				return nil, errors.Trace(err)
 			}
 			schTbls.tables[t.Name.L] = tbl
-			info.sortedTables = append(info.sortedTables, tbl)
+			sortedTables := info.sortedTablesBuckets[t.ID%bucketCount]
+			info.sortedTablesBuckets[t.ID%bucketCount] = append(sortedTables, tbl)
 		}
 	}
-	sort.Sort(info.sortedTables)
+	for _, v := range info.sortedTablesBuckets {
+		sort.Sort(v)
+	}
 	return b, nil
 }
 
@@ -231,7 +252,8 @@ func (b *Builder) initMemorySchemas() error {
 	for _, t := range infoSchemaDB.Tables {
 		tbl := b.handle.memSchema.nameToTable[t.Name.L]
 		infoSchemaTblNames.tables[t.Name.L] = tbl
-		info.sortedTables = append(info.sortedTables, tbl)
+		bucketIdx := t.ID % bucketCount
+		info.sortedTablesBuckets[bucketIdx] = append(info.sortedTablesBuckets[bucketIdx], tbl)
 	}
 
 	perfHandle := b.handle.memSchema.perfHandle
@@ -248,7 +270,8 @@ func (b *Builder) initMemorySchemas() error {
 			return ErrTableNotExists.Gen("table `%s` is missing.", t.Name)
 		}
 		perfSchemaTblNames.tables[t.Name.L] = tbl
-		info.sortedTables = append(info.sortedTables, tbl)
+		bucketIdx := t.ID % bucketCount
+		info.sortedTablesBuckets[bucketIdx] = append(info.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	return nil
 }
@@ -268,7 +291,8 @@ func NewBuilder(handle *Handle) *Builder {
 	b := new(Builder)
 	b.handle = handle
 	b.is = &infoSchema{
-		schemasMap: map[string]*schemaTables{},
+		schemasMap:          map[string]*schemaTables{},
+		sortedTablesBuckets: make([]sortedTables, bucketCount),
 	}
 	return b
 }
