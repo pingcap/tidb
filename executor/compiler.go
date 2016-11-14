@@ -32,64 +32,110 @@ type Compiler struct {
 const (
 	// IGNORE is a special label to identify the situations we want to ignore.
 	IGNORE = "Ignore"
+	// SimpleSelect represents SELECT statements like "select a from t" or "select 2".
+	SimpleSelect = "Simple-Select"
+	// ComplexSelect represents the other SELECT statements besides SIMPLE_SELECT.
+	ComplexSelect = "Complex-Select"
+	// AlterTable represents alter table statements.
+	AlterTable = "AlterTable"
+	// AnalyzeTable represents analyze table statements.
+	AnalyzeTable = "AnalyzeTable"
+	// Begin represents begin statements.
+	Begin = "Begin"
+	// Commit represents commit statements.
+	Commit = "Commit"
+	// CreateDatabase represents create database statements.
+	CreateDatabase = "CreateDatabase"
+	// CreateIndex represents create index statements.
+	CreateIndex = "CreateIndex"
+	// CreateTable represents create table statements.
+	CreateTable = "CreateTable"
+	// CreateUser represents create user statements.
+	CreateUser = "CreateUser"
+	// Delete represents delete statements.
+	Delete = "Delete"
+	// DropDatabase represents drop database statements.
+	DropDatabase = "DropDatabase"
+	// DropIndex represents drop index statements.
+	DropIndex = "DropIndex"
+	// DropTable represents drop table statements.
+	DropTable = "DropTable"
+	// Explain represents explain statements.
+	Explain = "Explain"
+	// Replace represents replace statements.
+	Replace = "Replace"
+	// Insert represents insert statements.
+	Insert = "Insert"
+	// LoadDataStmt represents load data statements.
+	LoadDataStmt = "LoadData"
+	// RollBack represents roll back statements.
+	RollBack = "RollBack"
+	// Set represents set statements.
+	Set = "Set"
+	// Show represents show statements.
+	Show = "Show"
+	// TruncateTable represents truncate table statements.
+	TruncateTable = "TruncateTable"
+	// Update represents update statements.
+	Update = "Update"
 )
 
 func statementLabel(node ast.StmtNode) string {
 	switch x := node.(type) {
 	case *ast.AlterTableStmt:
-		return "AlterTable"
+		return AlterTable
 	case *ast.AnalyzeTableStmt:
-		return "AnalyzeTable"
+		return AnalyzeTable
 	case *ast.BeginStmt:
-		return "Begin"
+		return Begin
 	case *ast.CommitStmt:
-		return "Commit"
+		return Commit
 	case *ast.CreateDatabaseStmt:
-		return "CreateDatabase"
+		return CreateDatabase
 	case *ast.CreateIndexStmt:
-		return "CreateIndex"
+		return CreateIndex
 	case *ast.CreateTableStmt:
-		return "CreateTable"
+		return CreateTable
 	case *ast.CreateUserStmt:
-		return "CreateUser"
+		return CreateUser
 	case *ast.DeleteStmt:
-		return "Delete"
+		return Delete
 	case *ast.DropDatabaseStmt:
-		return "DropDatabase"
+		return DropDatabase
 	case *ast.DropIndexStmt:
-		return "DropIndex"
+		return DropIndex
 	case *ast.DropTableStmt:
-		return "DropTable"
+		return DropTable
 	case *ast.ExplainStmt:
-		return "Explain"
+		return Explain
 	case *ast.InsertStmt:
 		if x.IsReplace {
-			return "Replace"
+			return Replace
 		}
-		return "Insert"
+		return Insert
 	case *ast.LoadDataStmt:
-		return "LoadData"
+		return LoadDataStmt
 	case *ast.RollbackStmt:
-		return "Rollback"
+		return RollBack
 	case *ast.SelectStmt:
-		return distinguishSelectStmt(x)
+		return getSelectStmtLabel(x)
 	case *ast.SetStmt, *ast.SetPwdStmt:
-		return "Set"
+		return Set
 	case *ast.ShowStmt:
-		return "Show"
+		return Show
 	case *ast.TruncateTableStmt:
-		return "TruncateTable"
+		return TruncateTable
 	case *ast.UpdateStmt:
-		return "Update"
+		return Update
 	case *ast.DeallocateStmt, *ast.ExecuteStmt, *ast.PrepareStmt, *ast.UseStmt:
 		return IGNORE
 	}
 	return "other"
 }
 
-func distinguishSelectStmt(x *ast.SelectStmt) string {
+func getSelectStmtLabel(x *ast.SelectStmt) string {
 	if x.From == nil {
-		return "Select-Simple"
+		return SimpleSelect
 	}
 	tableRefs := x.From.TableRefs
 	if tableRefs.Right == nil {
@@ -97,11 +143,11 @@ func distinguishSelectStmt(x *ast.SelectStmt) string {
 		case *ast.TableSource:
 			switch ref.Source.(type) {
 			case *ast.TableName:
-				return "Select-Simple"
+				return SimpleSelect
 			}
 		}
 	}
-	return "Select-Complex"
+	return ComplexSelect
 }
 
 // Compile compiles an ast.StmtNode to an ast.Statement.

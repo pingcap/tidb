@@ -17,18 +17,19 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/executor"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/printer"
-	"io/ioutil"
-	"regexp"
-	"strconv"
 )
 
 func TestT(t *testing.T) {
@@ -544,11 +545,11 @@ func runTestStmtCount(t *C) {
 		dbt.mustExec("execute stmt2")
 
 		currentStmtCnt := getStmtCnt(string(getMetrics(t)))
-		t.Assert(currentStmtCnt["CreateTable"], Equals, originStmtCnt["CreateTable"]+1)
-		t.Assert(currentStmtCnt["Insert"], Equals, originStmtCnt["Insert"]+5)
-		t.Assert(currentStmtCnt["Delete"], Equals, originStmtCnt["Delete"]+1)
-		t.Assert(currentStmtCnt["Update"], Equals, originStmtCnt["Update"]+2)
-		t.Assert(currentStmtCnt["Select-Simple"], Equals, originStmtCnt["Select-Simple"]+3)
+		t.Assert(currentStmtCnt[executor.CreateTable], Equals, originStmtCnt[executor.CreateTable]+1)
+		t.Assert(currentStmtCnt[executor.Insert], Equals, originStmtCnt[executor.Insert]+5)
+		t.Assert(currentStmtCnt[executor.Delete], Equals, originStmtCnt[executor.Delete]+1)
+		t.Assert(currentStmtCnt[executor.Update], Equals, originStmtCnt[executor.Update]+2)
+		t.Assert(currentStmtCnt[executor.SimpleSelect], Equals, originStmtCnt[executor.SimpleSelect]+3)
 	})
 }
 
