@@ -125,11 +125,12 @@ const (
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {
-	fn         map[backoffType]func() int
-	maxSleep   int
-	totalSleep int
-	errors     []error
-	ctx        context.Context
+	fn                 map[backoffType]func() int
+	maxSleep           int
+	totalSleep         int
+	errors             []error
+	ctx                context.Context
+	cancelOnFirstError bool
 }
 
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
@@ -142,10 +143,16 @@ func NewBackoffer(maxSleep int, ctx context.Context) *Backoffer {
 
 // WithCancel returns a cancel function which, when called, would cancel backoffer's context.
 func (b *Backoffer) WithCancel() context.CancelFunc {
-	var cancel context.CancelFunc
-	b.ctx, cancel = context.WithCancel(b.ctx)
-	return cancel
+	if b.cancelOnFirstError {
+		var cancel context.CancelFunc
+		b.ctx, cancel = context.WithCancel(b.ctx)
+		return cancel
+	}
+	// if not cancelable, return a null function
+	return b.nop
 }
+
+func (b *Backoffer) nop() {}
 
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.

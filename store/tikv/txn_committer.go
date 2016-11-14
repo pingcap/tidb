@@ -327,6 +327,7 @@ func (c *txnCommitter) cleanupSingleRegion(bo *Backoffer, batch batchKeys) error
 }
 
 func (c *txnCommitter) prewriteKeys(bo *Backoffer, keys [][]byte) error {
+	bo.cancelOnFirstError = true
 	return c.iterKeys(bo, keys, c.prewriteSingleRegion, c.keyValueSize, false)
 }
 
