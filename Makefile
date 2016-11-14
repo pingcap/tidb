@@ -116,7 +116,10 @@ else
 endif
 
 benchkv:
-	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchkv benchkv/main.go
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchkv cmd/benchkv/main.go
+
+benchdb:
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
 
 update:
 	which glide >/dev/null || curl https://glide.sh/get | sh
