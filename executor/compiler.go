@@ -29,6 +29,11 @@ import (
 type Compiler struct {
 }
 
+const (
+	// IGNORE is a special label to identify the situations we want to ignore.
+	IGNORE = "Ignore"
+)
+
 func statementLabel(node ast.StmtNode) string {
 	switch x := node.(type) {
 	case *ast.AlterTableStmt:
@@ -67,20 +72,7 @@ func statementLabel(node ast.StmtNode) string {
 	case *ast.RollbackStmt:
 		return "Rollback"
 	case *ast.SelectStmt:
-		if x.From == nil {
-			return "Select-Simple"
-		}
-		tableRefs := x.From.TableRefs
-		if tableRefs.Right == nil {
-			switch ref := tableRefs.Left.(type) {
-			case *ast.TableSource:
-				switch ref.Source.(type) {
-				case *ast.TableName:
-					return "Select-Simple"
-				}
-			}
-		}
-		return "Select-Complex"
+		return distinguishSelectStmt(x)
 	case *ast.SetStmt, *ast.SetPwdStmt:
 		return "Set"
 	case *ast.ShowStmt:
@@ -90,9 +82,26 @@ func statementLabel(node ast.StmtNode) string {
 	case *ast.UpdateStmt:
 		return "Update"
 	case *ast.DeallocateStmt, *ast.ExecuteStmt, *ast.PrepareStmt, *ast.UseStmt:
-		return "Ignored"
+		return IGNORE
 	}
 	return "other"
+}
+
+func distinguishSelectStmt(x *ast.SelectStmt) string {
+	if x.From == nil {
+		return "Select-Simple"
+	}
+	tableRefs := x.From.TableRefs
+	if tableRefs.Right == nil {
+		switch ref := tableRefs.Left.(type) {
+		case *ast.TableSource:
+			switch ref.Source.(type) {
+			case *ast.TableName:
+				return "Select-Simple"
+			}
+		}
+	}
+	return "Select-Complex"
 }
 
 // Compile compiles an ast.StmtNode to an ast.Statement.

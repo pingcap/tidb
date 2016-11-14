@@ -33,7 +33,7 @@ func init() {
 }
 
 func stmtCount(node ast.StmtNode) {
-	if stmtLable := statementLabel(node); stmtLable != "Ignored" {
+	if stmtLable := statementLabel(node); stmtLable != IGNORE {
 		stmtNodeCounter.WithLabelValues(stmtLable).Inc()
 	}
 }
