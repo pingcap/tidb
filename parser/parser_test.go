@@ -239,6 +239,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
 		{"ALTER TABLE t DISABLE KEYS", true},
 		{"ALTER TABLE t ENABLE KEYS", true},
+		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
 
 		// from join
 		{"SELECT * from t1, t2, t3", true},
@@ -725,6 +726,7 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{"create database `123`", true},
 		{"create table `123` (123a1 int)", true},
 		{"create table 123 (123a1 int)", false},
+		{fmt.Sprintf("select * from t%cble", 0), false},
 	}
 	s.RunTest(c, table)
 }
@@ -807,6 +809,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop tables xxx, yyy", true},
 		{"drop table if exists xxx", true},
 		{"drop table if not exists xxx", false},
+		{"drop view if exists xxx", true},
 		// For issue 974
 		{`CREATE TABLE address (
 		id bigint(20) NOT NULL AUTO_INCREMENT,

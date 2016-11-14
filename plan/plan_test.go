@@ -54,6 +54,12 @@ func newLongType() types.FieldType {
 	return *(types.NewFieldType(mysql.TypeLong))
 }
 
+func newStringType() types.FieldType {
+	ft := types.NewFieldType(mysql.TypeVarchar)
+	ft.Charset, ft.Collate = types.DefaultCharsetForType(mysql.TypeVarchar)
+	return *ft
+}
+
 func mockResolve(node ast.Node) error {
 	indices := []*model.IndexInfo{
 		{
@@ -62,14 +68,17 @@ func mockResolve(node ast.Node) error {
 				{
 					Name:   model.NewCIStr("c"),
 					Length: types.UnspecifiedLength,
+					Offset: 1,
 				},
 				{
 					Name:   model.NewCIStr("d"),
 					Length: types.UnspecifiedLength,
+					Offset: 2,
 				},
 				{
 					Name:   model.NewCIStr("e"),
 					Length: types.UnspecifiedLength,
+					Offset: 3,
 				},
 			},
 			State: model.StatePublic,
@@ -83,6 +92,65 @@ func mockResolve(node ast.Node) error {
 				},
 			},
 			State: model.StateWriteOnly,
+		},
+		{
+			Name: model.NewCIStr("f"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("f"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+			},
+			State: model.StatePublic,
+		},
+		{
+			Name: model.NewCIStr("g"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("g"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+			},
+			State: model.StatePublic,
+		},
+		{
+			Name: model.NewCIStr("f_g"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("f"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+				{
+					Name:   model.NewCIStr("g"),
+					Length: types.UnspecifiedLength,
+					Offset: 2,
+				},
+			},
+			State: model.StatePublic,
+		},
+		{
+			Name: model.NewCIStr("c_d_e_str"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("c_str"),
+					Length: types.UnspecifiedLength,
+					Offset: 5,
+				},
+				{
+					Name:   model.NewCIStr("d_str"),
+					Length: types.UnspecifiedLength,
+					Offset: 6,
+				},
+				{
+					Name:   model.NewCIStr("e_str"),
+					Length: types.UnspecifiedLength,
+					Offset: 7,
+				},
+			},
+			State: model.StatePublic,
 		},
 	}
 	pkColumn := &model.ColumnInfo{
@@ -115,9 +183,40 @@ func mockResolve(node ast.Node) error {
 		FieldType: newLongType(),
 		ID:        5,
 	}
+	colStr1 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("c_str"),
+		FieldType: newStringType(),
+		ID:        6,
+	}
+	colStr2 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("d_str"),
+		FieldType: newStringType(),
+		ID:        7,
+	}
+	colStr3 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("e_str"),
+		FieldType: newStringType(),
+		ID:        8,
+	}
+	col4 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("f"),
+		FieldType: newLongType(),
+		ID:        9,
+	}
+	col5 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Name:      model.NewCIStr("g"),
+		FieldType: newLongType(),
+		ID:        10,
+	}
+
 	pkColumn.Flag = mysql.PriKeyFlag
 	table := &model.TableInfo{
-		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3},
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5},
 		Indices:    indices,
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
@@ -125,7 +224,11 @@ func mockResolve(node ast.Node) error {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{table})
 	ctx := mock.NewContext()
 	variable.BindSessionVars(ctx)
-	return MockResolveName(node, is, "test", ctx)
+	err := MockResolveName(node, is, "test", ctx)
+	if err != nil {
+		return err
+	}
+	return InferType(node)
 }
 
 func supportExpr(exprType tipb.ExprType) bool {
@@ -155,7 +258,11 @@ func supportExpr(exprType tipb.ExprType) bool {
 	// bitwise operators
 	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitXor, tipb.ExprType_BitNeg:
 		return true
-	case tipb.ExprType_Case, tipb.ExprType_Coalesce:
+	// control functions
+	case tipb.ExprType_Case, tipb.ExprType_If:
+		return true
+	// other functions
+	case tipb.ExprType_Coalesce:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
@@ -240,14 +347,14 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			sql:       "select sum(b) from t group by c",
 			best:      "Table(t)->HashAgg->Projection",
 			aggFuns:   "[sum(test.t.b)]",
-			aggFields: "[blob decimal(0,0)]",
+			aggFields: "[blob decimal]",
 			gbyItems:  "[test.t.c]",
 		},
 		{
 			sql:       "select max(b + c), min(case when b then 1 else 2 end) from t group by d + e, a",
 			best:      "Table(t)->HashAgg->Projection",
 			aggFuns:   "[max(plus(test.t.b, test.t.c)) min(case(test.t.b, 1, 2))]",
-			aggFields: "[blob decimal(0,0) decimal(0,0)]",
+			aggFields: "[blob bigint bigint]",
 			gbyItems:  "[plus(test.t.d, test.t.e) test.t.a]",
 		},
 	}
@@ -405,6 +512,10 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			cond: "or(test.t.a, and(test.t.b, test.t.c))",
 		},
 		{
+			sql:  "c=1 and d =1 and e =1 and b=1",
+			cond: "eq(test.t.b, 1)",
+		},
+		{
 			sql:  "a or b",
 			cond: "or(test.t.a, test.t.b)",
 		},
@@ -440,6 +551,12 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			sql:  "a = case a when b then 1 when a then 0 end",
 			cond: "eq(test.t.a, case(eq(test.t.a, test.t.b), 1, eq(test.t.a, test.t.a), 0))",
 		},
+		// if
+		{
+			sql:  "a = if(a, 1, 0)",
+			cond: "eq(test.t.a, if(test.t.a, 1, 0))",
+		},
+		// coalesce
 		{
 			sql:  "a = coalesce(null, null, a, b)",
 			cond: "eq(test.t.a, coalesce(<nil>, <nil>, test.t.a, test.t.b))",
@@ -836,12 +953,24 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[<nil>,+inf]]",
 		},
 		{
+			sql:  "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
+			best: "Index(t.c_d_e)[(0,1) (2,3) (4,5) (6,7) (9,10)]",
+		},
+		{
+			sql:  "select sum(t.a) from t where t.c in (1,2) and t.d in (1,3) group by t.d order by t.d",
+			best: "Index(t.c_d_e)[[1 1,1 1] [1 3,1 3] [2 1,2 1] [2 3,2 3]]->HashAgg->Sort->Trim",
+		},
+		{
 			sql:  "select * from t t1 ignore index(e) where c < 0",
 			best: "Index(t.c_d_e)[[-inf,0)]",
 		},
 		{
 			sql:  "select * from t t1 ignore index(c_d_e) where c < 0",
 			best: "Table(t)->Selection",
+		},
+		{
+			sql:  "select * from t where f in (1,2) and g in(1,2,3,4,5)",
+			best: "Index(t.f_g)[[1 1,1 1] [1 2,1 2] [1 3,1 3] [1 4,1 4] [1 5,1 5] [2 1,2 1] [2 2,2 2] [2 3,2 3] [2 4,2 4] [2 5,2 5]]",
 		},
 		{
 			sql:  "select * from t t1 where 1 = 0",
@@ -860,6 +989,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Dummy->HashAgg->Selection",
 		},
 		{
+			sql:  "select sum(a.b), sum(b.b) from t a join t b on a.c = b.c group by a.d order by a.d",
+			best: "LeftHashJoin{Table(t)->Table(t)}(a.c,b.c)->HashAgg->Sort->Trim",
+		},
+		{
 			sql:  "select count(*) from t group by c",
 			best: "Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg",
 		},
@@ -870,6 +1003,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		{
 			sql:  "select count(*) from t group by a",
 			best: "Table(t)->StreamAgg",
+		},
+		{
+			sql:  "select count(*) from t group by a order by a",
+			best: "Table(t)->StreamAgg->Trim",
 		},
 		{
 			sql:  "select count(distinct e) from t where c = 1 group by d",
@@ -1036,11 +1173,19 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c in (1) and d > 3",
-			best: "Index(t.c_d_e)[[1,1]]->Selection->Projection",
+			best: "Index(t.c_d_e)[(1 3,1 +inf]]->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
+			best: "Index(t.c_d_e)[(1 3,1 4) (1 5,1 6) (2 3,2 4) (2 5,2 6) (3 3,3 4) (3 5,3 6)]->Projection",
 		},
 		{
 			sql:  "select a from t where c in (1, 2, 3)",
 			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3]]->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
+			best: "Index(t.c_d_e)[[1 1 1,1 1 1] [1 2 1,1 2 1] [2 1 1,2 1 1] [2 2 1,2 2 1] [3 1 1,3 1 1] [3 2 1,3 2 1]]->Projection",
 		},
 		{
 			sql:  "select a from t where d in (1, 2, 3)",
@@ -1051,60 +1196,94 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "Table(t)->Selection->Projection",
 		},
 		{
-			sql:  "select a from t where c like ''",
-			best: "Index(t.c_d_e)[[,]]->Projection",
+			sql:  "select a from t where c_str like ''",
+			best: "Index(t.c_d_e_str)[[,]]->Projection",
 		},
 		{
-			sql:  "select a from t where c like 'abc'",
-			best: "Index(t.c_d_e)[[abc,abc]]->Projection",
+			sql:  "select a from t where c_str like 'abc'",
+			best: "Index(t.c_d_e_str)[[abc,abc]]->Projection",
 		},
 		{
-			sql:  "select a from t where c not like 'abc'",
+			sql:  "select a from t where c_str not like 'abc'",
 			best: "Table(t)->Selection->Projection",
 		},
 		{
-			sql:  "select a from t where not (c like 'abc' or c like 'abd')",
+			sql:  "select a from t where not (c_str like 'abc' or c_str like 'abd')",
 			best: "Table(t)->Selection->Projection",
 		},
 		{
-			sql:  "select a from t where c like '_abc'",
+			sql:  "select a from t where c_str like '_abc'",
 			best: "Table(t)->Selection->Projection",
 		},
 		{
-			sql:  "select a from t where c like 'abc%'",
-			best: "Index(t.c_d_e)[[abc,abd)]->Projection",
+			sql:  "select a from t where c_str like 'abc%'",
+			best: "Index(t.c_d_e_str)[[abc,abd)]->Projection",
 		},
 		{
-			sql:  "select a from t where c like 'abc_'",
-			best: "Index(t.c_d_e)[(abc,abd)]->Selection->Projection",
+			sql:  "select a from t where c_str like 'abc_'",
+			best: "Index(t.c_d_e_str)[(abc,abd)]->Selection->Projection",
 		},
 		{
-			sql:  "select a from t where c like 'abc%af'",
-			best: "Index(t.c_d_e)[[abc,abd)]->Selection->Projection",
+			sql:  "select a from t where c_str like 'abc%af'",
+			best: "Index(t.c_d_e_str)[[abc,abd)]->Selection->Projection",
 		},
 		{
-			sql:  `select a from t where c like 'abc\\_' escape ''`,
-			best: "Index(t.c_d_e)[[abc_,abc_]]->Projection",
+			sql:  `select a from t where c_str like 'abc\\_' escape ''`,
+			best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
 		},
 		{
-			sql:  `select a from t where c like 'abc\\_'`,
-			best: "Index(t.c_d_e)[[abc_,abc_]]->Projection",
+			sql:  `select a from t where c_str like 'abc\\_'`,
+			best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
 		},
 		{
-			sql:  `select a from t where c like 'abc\\\\_'`,
-			best: "Index(t.c_d_e)[(abc\\,abc])]->Selection->Projection",
+			sql:  `select a from t where c_str like 'abc\\\\_'`,
+			best: "Index(t.c_d_e_str)[(abc\\,abc])]->Selection->Projection",
 		},
 		{
-			sql:  `select a from t where c like 'abc\\_%'`,
-			best: "Index(t.c_d_e)[[abc_,abc`)]->Projection",
+			sql:  `select a from t where c_str like 'abc\\_%'`,
+			best: "Index(t.c_d_e_str)[[abc_,abc`)]->Projection",
 		},
 		{
-			sql:  `select a from t where c like 'abc=_%' escape '='`,
-			best: "Index(t.c_d_e)[[abc_,abc`)]->Projection",
+			sql:  `select a from t where c_str like 'abc=_%' escape '='`,
+			best: "Index(t.c_d_e_str)[[abc_,abc`)]->Projection",
 		},
 		{
-			sql:  `select a from t where c like 'abc\\__'`,
-			best: "Index(t.c_d_e)[(abc_,abc`)]->Selection->Projection",
+			sql:  `select a from t where c_str like 'abc\\__'`,
+			best: "Index(t.c_d_e_str)[(abc_,abc`)]->Selection->Projection",
+		},
+		{
+			// Check that 123 is converted to string '123'. index can be used.
+			sql:  `select a from t where c_str like 123`,
+			best: "Index(t.c_d_e_str)[[123,123]]->Projection",
+		},
+		{
+			// c is not string type, added cast to string during InferType, no index can be used.
+			sql:  `select a from t where c like '1'`,
+			best: "Table(t)->Selection->Projection",
+		},
+		{
+			sql:  `select a from t where c = 1.1 and d > 3`,
+			best: "Index(t.c_d_e)[]->Projection",
+		},
+		{
+			sql:  `select a from t where c = 1.9 and d > 3`,
+			best: "Index(t.c_d_e)[]->Projection",
+		},
+		{
+			sql:  `select a from t where c < 1.1`,
+			best: "Index(t.c_d_e)[[-inf,1]]->Projection",
+		},
+		{
+			sql:  `select a from t where c <= 1.9`,
+			best: "Index(t.c_d_e)[[-inf,2)]->Projection",
+		},
+		{
+			sql:  `select a from t where c >= 1.1`,
+			best: "Index(t.c_d_e)[(1,+inf]]->Projection",
+		},
+		{
+			sql:  `select a from t where c > 1.9`,
+			best: "Index(t.c_d_e)[[2,+inf]]->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -1128,7 +1307,8 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		c.Assert(err, IsNil)
 		info, err := p.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
+		jsonPlan, _ := info.p.MarshalJSON()
+		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s, %s", ca.sql, string(jsonPlan)))
 	}
 }
 
@@ -1430,11 +1610,9 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 	}
 
 	for _, ca := range cases {
-		sql := "select 1 from t where " + ca.exprStr
-		stmts, err := s.Parse(sql, "", "")
+		sql := "select * from t where " + ca.exprStr
+		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
-		stmt := stmts[0].(*ast.SelectStmt)
-
 		err = mockResolve(stmt)
 		c.Assert(err, IsNil)
 
@@ -1519,7 +1697,7 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 		},
 		{
 			exprStr:   "a in (hex(12), 'a', '9')",
-			resultStr: "in(test.t.a, C, a, 9)",
+			resultStr: "in(test.t.a, C, 0, 9)",
 		},
 		{
 			exprStr:   "'string' is not null",
@@ -1745,7 +1923,7 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 		},
 		{
 			sql:   "a = b and b = c and c LIKE 'abc%'",
-			after: "eq(test.t.a, test.t.b), eq(test.t.b, test.t.c), like(test.t.a, abc%, 92), like(test.t.b, abc%, 92), like(test.t.c, abc%, 92)",
+			after: "eq(test.t.a, test.t.b), eq(test.t.b, test.t.c), like(cast(test.t.c), abc%, 92)",
 		},
 		{
 			sql:   "a = b and a > 2 and b > 3 and a < 1 and b < 2",

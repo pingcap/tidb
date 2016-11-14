@@ -78,6 +78,9 @@ func (s *Scanner) Errorf(format string, a ...interface{}) {
 
 // Lex returns a token and store the token value in v.
 // Scanner satisfies yyLexer interface.
+// 0 and invalid are special token id this function would return:
+// return 0 tells parser that scanner meets EOF,
+// return invalid tells parser that scanner meets illegal character.
 func (s *Scanner) Lex(v *yySymType) int {
 	tok, pos, lit := s.scan()
 	v.offset = pos.Offset
@@ -129,8 +132,13 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		ch0 = s.skipWhitespace()
 	}
 	pos = s.r.pos()
+	if s.r.eof() {
+		// when scanner meets EOF, the returned token should be 0,
+		// because 0 is a special token id to remind the parser that stream is end.
+		return 0, pos, ""
+	}
 
-	if ch0 != unicode.ReplacementChar && isIdentExtend(ch0) {
+	if !s.r.eof() && isIdentExtend(ch0) {
 		return scanIdentifier(s)
 	}
 
@@ -445,7 +453,7 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 	}
 
 	// Identifiers may begin with a digit but unless quoted may not consist solely of digits.
-	if ch0 != unicode.ReplacementChar && isIdentChar(ch0) {
+	if !s.r.eof() && isIdentChar(ch0) {
 		s.r.incAsLongAs(isIdentChar)
 		return identifier, pos, s.r.data(&pos)
 	}
@@ -509,6 +517,9 @@ func (r *reader) eof() bool {
 	return r.p.Offset >= len(r.s)
 }
 
+// peek() peeks a rune from underlying reader.
+// if reader meets EOF, it will return unicode.ReplacementChar. to distinguish from
+// the real unicode.ReplacementChar, the caller should call r.eof() again to check.
 func (r *reader) peek() rune {
 	if r.eof() {
 		return unicode.ReplacementChar
@@ -516,7 +527,8 @@ func (r *reader) peek() rune {
 	v, w := rune(r.s[r.p.Offset]), 1
 	switch {
 	case v == 0:
-		return unicode.ReplacementChar
+		r.w = w
+		return v // illegal UTF-8 encoding
 	case v >= 0x80:
 		v, w = utf8.DecodeRuneInString(r.s[r.p.Offset:])
 		if v == utf8.RuneError && w == 1 {

@@ -62,7 +62,6 @@ func newRPCClient() *rpcClient {
 
 // SendCopReq sends a Request to co-processor and receives Response.
 func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
-	sendReqCounter.WithLabelValues("cop").Inc()
 	start := time.Now()
 	defer func() { sendReqHistogram.WithLabelValues("cop").Observe(time.Since(start).Seconds()) }()
 
@@ -89,7 +88,6 @@ func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request, timeout ti
 
 // SendKVReq sends a Request to kv server and receives Response.
 func (c *rpcClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
-	sendReqCounter.WithLabelValues("kv").Inc()
 	start := time.Now()
 	defer func() { sendReqHistogram.WithLabelValues("kv").Observe(time.Since(start).Seconds()) }()
 
@@ -116,7 +114,6 @@ func (c *rpcClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Du
 
 func (c *rpcClient) doSend(conn *Conn, msg *msgpb.Message, writeTimeout time.Duration, readTimeout time.Duration) error {
 	curMsgID := atomic.AddUint64(&c.msgID, 1)
-	log.Debugf("Send request msgID[%d] type[%v]", curMsgID, msg.GetMsgType())
 	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 	if err := util.WriteMessage(conn, curMsgID, msg); err != nil {
 		return errors.Trace(err)
@@ -133,7 +130,6 @@ func (c *rpcClient) doSend(conn *Conn, msg *msgpb.Message, writeTimeout time.Dur
 		log.Errorf("Sent msgID[%d] mismatches recv msgID[%d]", curMsgID, msgID)
 		return errors.Trace(errInvalidResponse)
 	}
-	log.Debugf("Receive response msgID[%d] type[%v]", msgID, msg.GetMsgType())
 	return nil
 }
 

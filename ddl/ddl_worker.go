@@ -349,6 +349,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 		err = d.onAddColumn(t, job)
 	case model.ActionDropColumn:
 		err = d.onDropColumn(t, job)
+	case model.ActionModifyColumn:
+		err = d.onModifyColumn(t, job)
 	case model.ActionAddIndex:
 		err = d.onCreateIndex(t, job)
 	case model.ActionDropIndex:
