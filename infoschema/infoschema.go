@@ -15,7 +15,6 @@ package infoschema
 
 import (
 	"sort"
-	"strings"
 	"sync/atomic"
 
 	"github.com/juju/errors"
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	// import table implementation to init table.TableFromMeta
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -111,7 +109,7 @@ type schemaTables struct {
 	tables map[string]table.Table
 }
 
-const bucketCount = 256
+const bucketCount = 512
 
 type infoSchema struct {
 	schemasMap map[string]*schemaTables
@@ -243,9 +241,9 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 
 // Handle handles information schema, including getting and setting.
 type Handle struct {
-	value     atomic.Value
-	store     kv.Storage
-	memSchema *memSchemaHandle
+	value      atomic.Value
+	store      kv.Storage
+	perfHandle perfschema.PerfSchema
 }
 
 // NewHandle creates a new Handle.
@@ -255,78 +253,14 @@ func NewHandle(store kv.Storage) (*Handle, error) {
 	}
 	// init memory tables
 	var err error
-	h.memSchema, err = newMemSchemaHandle()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return h, nil
-}
-
-// Init memory schemas including infoschema and perfshcema.
-func newMemSchemaHandle() (*memSchemaHandle, error) {
-	h := &memSchemaHandle{
-		nameToTable: make(map[string]table.Table),
-	}
-	err := initMemoryTables(h)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	h.perfHandle, err = perfschema.NewPerfHandle()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return h, nil
-}
-
-// memSchemaHandle is used to store memory schema information.
-type memSchemaHandle struct {
-	// Information Schema
-	schemataTbl   table.Table
-	tablesTbl     table.Table
-	columnsTbl    table.Table
-	statisticsTbl table.Table
-	charsetTbl    table.Table
-	collationsTbl table.Table
-	filesTbl      table.Table
-	defTbl        table.Table
-	profilingTbl  table.Table
-	partitionsTbl table.Table
-	nameToTable   map[string]table.Table
-	// Performance Schema
-	perfHandle perfschema.PerfSchema
-}
-
-func initMemoryTables(h *memSchemaHandle) error {
-	// Init Information_Schema
-	var (
-		err error
-		tbl table.Table
-	)
-	for _, tblInfo := range infoSchemaDB.Tables {
-		alloc := autoid.NewMemoryAllocator(infoSchemaDB.ID)
-		tbl, err = createMemoryTable(tblInfo, alloc)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		h.nameToTable[tblInfo.Name.L] = tbl
-	}
-	h.schemataTbl = h.nameToTable[strings.ToLower(tableSchemata)]
-	h.tablesTbl = h.nameToTable[strings.ToLower(tableTables)]
-	h.columnsTbl = h.nameToTable[strings.ToLower(tableColumns)]
-	h.statisticsTbl = h.nameToTable[strings.ToLower(tableStatistics)]
-	h.charsetTbl = h.nameToTable[strings.ToLower(tableCharacterSets)]
-	h.collationsTbl = h.nameToTable[strings.ToLower(tableCollations)]
-
-	// CharacterSets/Collations contain static data. Init them now.
-	err = insertData(h.charsetTbl, dataForCharacterSets())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = insertData(h.collationsTbl, dataForColltions())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
 }
 
 func insertData(tbl table.Table, rows [][]types.Datum) error {
@@ -339,32 +273,6 @@ func insertData(tbl table.Table, rows [][]types.Datum) error {
 	return nil
 }
 
-func refillMemoryTable(tbl table.Table, rows [][]types.Datum) error {
-	tbl.(*tables.MemoryTable).Truncate()
-	return insertData(tbl, rows)
-}
-
-func (h *Handle) refillMemoryTables(schemas []*model.DBInfo) error {
-	dbNames := make([]string, 0, len(schemas))
-	for _, v := range schemas {
-		dbNames = append(dbNames, v.Name.L)
-	}
-	err := refillMemoryTable(h.memSchema.schemataTbl, dataForSchemata(dbNames))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = refillMemoryTable(h.memSchema.tablesTbl, dataForTables(schemas))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = refillMemoryTable(h.memSchema.columnsTbl, dataForColumns(schemas))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = refillMemoryTable(h.memSchema.statisticsTbl, dataForStatistics(schemas))
-	return errors.Trace(err)
-}
-
 // Get gets information schema from Handle.
 func (h *Handle) Get() InfoSchema {
 	v := h.value.Load()
@@ -374,14 +282,14 @@ func (h *Handle) Get() InfoSchema {
 
 // GetPerfHandle gets performance schema from handle.
 func (h *Handle) GetPerfHandle() perfschema.PerfSchema {
-	return h.memSchema.perfHandle
+	return h.perfHandle
 }
 
 // EmptyClone creates a new Handle with the same store and memSchema, but the value is not set.
 func (h *Handle) EmptyClone() *Handle {
 	newHandle := &Handle{
-		store:     h.store,
-		memSchema: h.memSchema,
+		store:      h.store,
+		perfHandle: h.perfHandle,
 	}
 	return newHandle
 }

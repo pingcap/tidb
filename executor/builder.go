@@ -522,13 +522,14 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	}
 
 	ts := &TableScanExec{
-		t:          table,
-		asName:     v.TableAsName,
-		ctx:        b.ctx,
-		columns:    v.Columns,
-		schema:     v.GetSchema(),
-		seekHandle: math.MinInt64,
-		ranges:     v.Ranges,
+		t:            table,
+		asName:       v.TableAsName,
+		ctx:          b.ctx,
+		columns:      v.Columns,
+		schema:       v.GetSchema(),
+		seekHandle:   math.MinInt64,
+		ranges:       v.Ranges,
+		isInfoSchema: v.DBName.L == "information_schema",
 	}
 	if v.Desc {
 		return &ReverseExec{Src: ts}
