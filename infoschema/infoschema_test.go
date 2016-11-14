@@ -118,8 +118,7 @@ func (*testSuite) TestT(c *C) {
 	checkApplyCreateNonExistsTableDoesNotPanic(c, txn, builder, dbID)
 	txn.Rollback()
 
-	err = builder.Build()
-	c.Assert(err, IsNil)
+	builder.Build()
 
 	is := handle.Get()
 
@@ -236,8 +235,7 @@ func (*testSuite) TestInfoTables(c *C) {
 	c.Assert(err, IsNil)
 	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, 0)
 	c.Assert(err, IsNil)
-	err = builder.Build()
-	c.Assert(err, IsNil)
+	builder.Build()
 	is := handle.Get()
 	c.Assert(is, NotNil)
 
