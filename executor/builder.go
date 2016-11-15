@@ -568,7 +568,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
 		return st
 	}
-	b.err = errors.New("Not implement yet.")
+	b.err = errors.New("not implement yet")
 	return nil
 }
 
