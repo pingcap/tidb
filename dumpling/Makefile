@@ -95,12 +95,7 @@ gotest:
 
 race:
 	@export log_level=debug; \
-	dirs=`go list ./... | grep -vE 'vendor' | awk '{sub("github.com/pingcap/tidb/",""); print}'`;\
-	for dir in $$dirs; do \
-		cd $$dir;\
-		$(GOTEST) -race | awk 'END{if($$1=="FAIL") {exit 1}}' || exit 1;\
-		cd -;\
-	done;
+	$(GOTEST) -race $(PACKAGES)
 
 tikv_integration_test:
 	$(GOTEST) ./store/tikv/. -with-tikv=true
