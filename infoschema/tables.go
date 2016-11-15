@@ -15,6 +15,7 @@ package infoschema
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/juju/errors"
@@ -538,29 +539,56 @@ type infoschemaTable struct {
 	mu     sync.Mutex
 }
 
-func (it *infoschemaTable) getRows(ctx context.Context) [][]types.Datum {
+type schemasSorter []*model.DBInfo
+
+func (s schemasSorter) Len() int {
+	return len(s)
+}
+
+func (s schemasSorter) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (s schemasSorter) Less(i, j int) bool {
+	return s[i].Name.L < s[j].Name.L
+}
+
+func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) [][]types.Datum {
 	is := it.handle.Get()
 	dbs := is.AllSchemas()
+	sort.Sort(schemasSorter(dbs))
+	var fullRows [][]types.Datum
 	switch it.meta.Name.O {
 	case tableSchemata:
-		return dataForSchemata(dbs)
+		fullRows = dataForSchemata(dbs)
 	case tableTables:
-		return dataForTables(dbs)
+		fullRows = dataForTables(dbs)
 	case tableColumns:
-		return dataForColumns(dbs)
+		fullRows = dataForColumns(dbs)
 	case tableStatistics:
-		return dataForStatistics(dbs)
+		fullRows = dataForStatistics(dbs)
 	case tableCharacterSets:
-		return dataForCharacterSets()
+		fullRows = dataForCharacterSets()
 	case tableCollations:
-		return dataForColltions()
+		fullRows = dataForColltions()
 	case tableFiles:
 	case tableProfiling:
 	case tablePartitions:
 	case tableKeyColumm:
 	case tableReferConst:
 	}
-	return nil
+	if len(cols) == len(it.cols) {
+		return fullRows
+	}
+	rows := make([][]types.Datum, len(fullRows))
+	for i, fullRow := range fullRows {
+		row := make([]types.Datum, len(cols))
+		for j, col := range cols {
+			row[j] = fullRow[col.Offset]
+		}
+		rows[i] = row
+	}
+	return rows
 }
 
 func (it *infoschemaTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.Column,
@@ -568,10 +596,7 @@ func (it *infoschemaTable) IterRecords(ctx context.Context, startKey kv.Key, col
 	if len(startKey) != 0 {
 		return table.ErrUnsupportedOp
 	}
-	if len(cols) != len(it.cols) {
-		return table.ErrUnsupportedOp
-	}
-	rows := it.getRows(ctx)
+	rows := it.getRows(ctx, cols)
 	for i, row := range rows {
 		more, err := fn(int64(i), row, cols)
 		if err != nil {

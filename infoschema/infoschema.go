@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	// import table implementation to init table.TableFromMeta
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -261,16 +260,6 @@ func NewHandle(store kv.Storage) (*Handle, error) {
 		return nil, errors.Trace(err)
 	}
 	return h, nil
-}
-
-func insertData(tbl table.Table, rows [][]types.Datum) error {
-	for _, r := range rows {
-		_, err := tbl.AddRecord(nil, r)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
 }
 
 // Get gets information schema from Handle.

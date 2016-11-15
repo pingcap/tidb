@@ -1430,10 +1430,13 @@ func (e *TableScanExec) nextForInfoSchema() (*Row, error) {
 		for i, v := range e.columns {
 			columns[i] = table.ToColumn(v)
 		}
-		e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
 			e.infoSchemaRows = append(e.infoSchemaRows, rec)
 			return true, nil
 		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	if e.infoSchemaCursor >= len(e.infoSchemaRows) {
 		return nil, nil
