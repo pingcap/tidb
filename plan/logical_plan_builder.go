@@ -213,7 +213,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 			return nil
 		}
 		if onExpr.IsCorrelated() {
-			b.err = errors.New("On condition doesn't support subqueries yet.")
+			b.err = errors.New("ON condition doesn't support subqueries yet")
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
 		eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, leftPlan, rightPlan)

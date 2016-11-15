@@ -111,7 +111,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadData, *DDLExec:
 			snapshotTS := variable.GetSnapshotTS(ctx)
 			if snapshotTS != 0 {
-				return nil, errors.New("Can not execute write statement when 'tidb_snapshot' is set.")
+				return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 			}
 		}
 

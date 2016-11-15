@@ -726,6 +726,7 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{"create database `123`", true},
 		{"create table `123` (123a1 int)", true},
 		{"create table 123 (123a1 int)", false},
+		{fmt.Sprintf("select * from t%cble", 0), false},
 	}
 	s.RunTest(c, table)
 }
