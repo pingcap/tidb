@@ -103,7 +103,6 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 		if err != nil {
 			if ignoreErr {
 				log.Warnf("cast values failed:%v", err)
-				continue
 			} else {
 				return errors.Trace(err)
 			}
