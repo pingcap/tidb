@@ -218,7 +218,7 @@ func runTestLoadData(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	_, err = fp.WriteString(`
-xxx row1_col1	- row1_col2	1
+xxx row1_col1	- row1_col2	1abc
 xxx row2_col1	- row2_col2	
 xxxy row3_col1	- row3_col2	
 xxx row4_col1	- 		900
@@ -286,7 +286,7 @@ xxx row5_col1	- 	row5_col3`)
 		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
 		rows.Scan(&a, &b, &cc)
 		dbt.Check(a, DeepEquals, "row1_col1")
-		dbt.Check(b, DeepEquals, "row1_col2\t1")
+		dbt.Check(b, DeepEquals, "row1_col2\t1abc")
 		dbt.Check(cc, DeepEquals, 6)
 		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
 		rows.Scan(&a, &b, &cc)
