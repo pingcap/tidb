@@ -2456,3 +2456,19 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 	queryStr := ctx.Value(context.QueryString)
 	c.Assert(queryStr, Equals, "create table multi2 (a int)")
 }
+
+// Test that the auto_increment ID does not reuse the old table's allocator.
+func (s *testSessionSuite) TestTruncateAlloc(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecute(se, "use "+s.dbName)
+	_, err := se.Execute("create table truncate_id (a int primary key auto_increment)")
+	c.Assert(err, IsNil)
+	mustExecute(se, "insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
+	mustExecute(se, "truncate table truncate_id")
+	mustExecute(se, "insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
+	rset := mustExecSQL(c, se, "select a from truncate_id where a > 11")
+	row, err := rset.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, IsNil)
+}
