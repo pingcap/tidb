@@ -126,6 +126,7 @@ func (s *testStoreSuite) TestBusyServerKV(c *C) {
 }
 
 func (s *testStoreSuite) TestBusyServerCop(c *C) {
+	c.Parallel()
 	client := newBusyClient(s.store.client)
 	s.store.client = client
 

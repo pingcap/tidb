@@ -51,6 +51,34 @@ func runTests(c *C, dsn string, tests ...func(dbt *DBTest)) {
 	}
 }
 
+func runTestsOnNewDB(c *C, dbName string, tests ...func(dbt *DBTest)) {
+	db, err := sql.Open("mysql", "root@tcp(localhost:4001)/?strict=true")
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+
+	dropDB := fmt.Sprintf("DROP DATABASE IF EXISTS %s;", dbName)
+	createDB := fmt.Sprintf("CREATE DATABASE %s;", dbName)
+	useDB := fmt.Sprintf("USE %s;", dbName)
+
+	_, err = db.Exec(dropDB)
+	c.Assert(err, IsNil, Commentf("Error drop database %s", dbName))
+
+	_, err = db.Exec(createDB)
+	c.Assert(err, IsNil, Commentf("Error create database %s", dbName))
+
+	_, err = db.Exec(useDB)
+	c.Assert(err, IsNil, Commentf("Error use database %s", dbName))
+
+	dbt := &DBTest{c, db}
+	for _, test := range tests {
+		test(dbt)
+		dbt.db.Exec("DROP TABLE IF EXISTS test")
+	}
+
+	_, err = db.Exec(dropDB)
+	c.Assert(err, IsNil, Commentf("Error create database %s", dbName))
+}
+
 type DBTest struct {
 	*C
 	db *sql.DB
@@ -81,8 +109,8 @@ func (dbt *DBTest) mustQueryRows(query string, args ...interface{}) {
 	rows.Close()
 }
 
-func runTestRegression(c *C) {
-	runTests(c, dsn, func(dbt *DBTest) {
+func runTestRegression(c *C, dbName string) {
+	runTestsOnNewDB(c, dbName, func(dbt *DBTest) {
 		// Create Table
 		dbt.mustExec("CREATE TABLE test (val TINYINT)")
 
@@ -176,7 +204,7 @@ func runTestPrepareResultFieldType(t *C) {
 }
 
 func runTestSpecialType(t *C) {
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTestsOnNewDB(t, "SpecialType", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a decimal(10, 5), b datetime, c time)")
 		dbt.mustExec("insert test values (1.4, '2012-12-21 12:12:12', '4:23:34')")
 		rows := dbt.mustQuery("select * from test where a > ?", 0)
@@ -192,7 +220,7 @@ func runTestSpecialType(t *C) {
 }
 
 func runTestPreparedString(t *C) {
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTestsOnNewDB(t, "PreparedString", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a char(10), b char(10))")
 		dbt.mustExec("insert test values (?, ?)", "abcdeabcde", "abcde")
 		rows := dbt.mustQuery("select * from test where 1 = ?", 1)
@@ -452,7 +480,7 @@ func runTestIssues(c *C) {
 }
 
 func runTestResultFieldTableIsNull(c *C) {
-	runTests(c, dsn, func(dbt *DBTest) {
+	runTestsOnNewDB(c, "ResultFieldTableIsNull", func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists test;")
 		dbt.mustExec("create table test (c int);")
 		dbt.mustExec("explain select * from test;")
@@ -486,7 +514,7 @@ func runTestMultiPacket(c *C) {
 }
 
 func runTestMultiStatements(c *C) {
-	runTests(c, dsn, func(dbt *DBTest) {
+	runTestsOnNewDB(c, "MultiStatements", func(dbt *DBTest) {
 		// Create Table
 		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
 

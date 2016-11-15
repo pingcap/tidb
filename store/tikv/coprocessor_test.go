@@ -25,6 +25,7 @@ type testCoprocessorSuite struct{}
 var _ = Suite(&testCoprocessorSuite{})
 
 func (s *testCoprocessorSuite) TestBuildHugeTasks(c *C) {
+	c.Parallel()
 	cluster := mocktikv.NewCluster()
 	var splitKeys [][]byte
 	for ch := byte('a'); ch <= byte('z'); ch++ {
