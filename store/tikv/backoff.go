@@ -144,16 +144,10 @@ var cancelOnFirstError struct{}
 
 // WithCancel returns a cancel function which, when called, would cancel backoffer's context.
 func (b *Backoffer) WithCancel() context.CancelFunc {
-	if b.ctx.Value(cancelOnFirstError) != nil {
-		var cancel context.CancelFunc
-		b.ctx, cancel = context.WithCancel(b.ctx)
-		return cancel
-	}
-	// if not cancelable, return a null function
-	return b.nop
+	var cancel context.CancelFunc
+	b.ctx, cancel = context.WithCancel(b.ctx)
+	return cancel
 }
-
-func (b *Backoffer) nop() {}
 
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.

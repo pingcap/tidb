@@ -150,7 +150,11 @@ func (c *txnCommitter) doBatches(bo *Backoffer, batches []batchKeys, f func(*Bac
 	}
 
 	// For prewrite, stop sending other requests after receiving first error.
-	cancel := bo.WithCancel()
+	var cancel context.CancelFunc
+	if bo.ctx.Value(cancelOnFirstError) != nil {
+		cancel = bo.WithCancel()
+	}
+
 	ch := make(chan error)
 	for _, batch := range batches {
 		go func(batch batchKeys) {
@@ -161,7 +165,9 @@ func (c *txnCommitter) doBatches(bo *Backoffer, batches []batchKeys, f func(*Bac
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
 			log.Warnf("txnCommitter doBatches failed: %v, tid: %d", e, c.startTS)
-			cancel()
+			if cancel != nil {
+				cancel()
+			}
 			err = e
 		}
 	}
