@@ -65,7 +65,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		if oldTableID == newTableID {
 			alloc, _ = b.is.AllocByID(oldTableID)
 		}
-		b.applyDropTable(roDBInfo.Name.L, oldTableID)
+		b.applyDropTable(roDBInfo, oldTableID)
 	}
 	if newTableID != 0 {
 		// All types except DropTable.
