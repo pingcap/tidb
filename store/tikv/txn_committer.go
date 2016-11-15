@@ -83,9 +83,13 @@ func newTxnCommitter(txn *tikvTxn) (*txnCommitter, error) {
 	txnWriteSizeHistogram.Observe(float64(size / 1024))
 
 	// Increase lockTTL for large transactions.
+	// The algorithm is simply linearly increasing according to the size of the
+	// data to be written. The lockTTL will reach to maxLockTTL(120s) at a
+	// write size of 20MB, approximately equivalent to removing about 1 million
+	// keys.
 	var lockTTL uint64
 	if size > txnCommitBatchSize {
-		lockTTL = defaultLockTTL * uint64(size/txnCommitBatchSize)
+		lockTTL = uint64(float64(defaultLockTTL) * float64(size) / float64(txnCommitBatchSize))
 		if lockTTL > maxLockTTL {
 			lockTTL = maxLockTTL
 		}
