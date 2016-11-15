@@ -1884,7 +1884,7 @@ func (e *MaxOneRowExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if srcRow1 != nil {
-			return nil, errors.New("Subquery returns more than 1 row.")
+			return nil, errors.New("subquery returns more than 1 row")
 		}
 		return srcRow, nil
 	}
