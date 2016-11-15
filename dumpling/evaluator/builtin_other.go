@@ -35,7 +35,7 @@ func builtinSleep(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	sessVars := variable.GetSessionVars(ctx)
 	if args[0].IsNull() {
 		if sessVars.StrictSQLMode {
-			return d, errors.New("Incorrect arguments to sleep.")
+			return d, errors.New("incorrect arguments to sleep")
 		}
 		d.SetInt64(0)
 		return
@@ -48,7 +48,7 @@ func builtinSleep(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	}
 	if ret == -1 {
 		if sessVars.StrictSQLMode {
-			return d, errors.New("Incorrect arguments to sleep.")
+			return d, errors.New("incorrect arguments to sleep")
 		}
 		d.SetInt64(0)
 		return
