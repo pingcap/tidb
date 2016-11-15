@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"math"
 	"time"
 
 	"github.com/juju/errors"
@@ -486,15 +487,9 @@ func (d *ddl) backfillIndexInTxn(t table.Table, kvIdx table.Index, handles []int
 }
 
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
-	var endIdx int
 	kvIdx := tables.NewIndex(t.Meta(), indexInfo)
 	for len(handles) > 0 {
-		if len(handles) >= defaultSmallBatchCnt {
-			endIdx = defaultSmallBatchCnt
-		} else {
-			endIdx = len(handles)
-		}
-
+		endIdx := int(math.Min(float64(defaultSmallBatchCnt), float64(len(handles))))
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err1 := d.isReorgRunnable(txn, ddlJobFlag); err1 != nil {
 				return errors.Trace(err1)
