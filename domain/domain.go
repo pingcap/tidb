@@ -92,12 +92,12 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 		return nil, errors.Trace(err)
 	}
 	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
-	doneChan := make(chan error, len(splittedSchemas))
+	doneCh := make(chan error, len(splittedSchemas))
 	for _, schemas := range splittedSchemas {
-		go do.fetchSchemasWithTables(schemas, m, doneChan)
+		go do.fetchSchemasWithTables(schemas, m, doneCh)
 	}
 	for range splittedSchemas {
-		err = <-doneChan
+		err = <-doneCh
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -110,10 +110,11 @@ const fetchSchemaConcurrency = 8
 func (do *Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
 	groupSize := (len(schemas) + fetchSchemaConcurrency - 1) / fetchSchemaConcurrency
 	splitted := make([][]*model.DBInfo, 0, fetchSchemaConcurrency)
-	for i := 0; i < len(schemas); i += groupSize {
+	schemaCnt := len(schemas)
+	for i := 0; i < schemaCnt; i += groupSize {
 		end := i + groupSize
-		if end > len(schemas) {
-			end = len(schemas)
+		if end > schemaCnt {
+			end = schemaCnt
 		}
 		splitted = append(splitted, schemas[i:end])
 	}
