@@ -17,13 +17,17 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/executor"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/printer"
 )
@@ -516,4 +520,55 @@ func runTestMultiStatements(c *C) {
 			dbt.Error("no data")
 		}
 	})
+}
+
+func runTestStmtCount(t *C) {
+	runTests(t, dsn, func(dbt *DBTest) {
+		originStmtCnt := getStmtCnt(string(getMetrics(t)))
+
+		dbt.mustExec("create table test (a int)")
+
+		dbt.mustExec("insert into test values(1)")
+		dbt.mustExec("insert into test values(2)")
+		dbt.mustExec("insert into test values(3)")
+		dbt.mustExec("insert into test values(4)")
+		dbt.mustExec("insert into test values(5)")
+
+		dbt.mustExec("delete from test where a = 3")
+		dbt.mustExec("update test set a = 2 where a = 1")
+		dbt.mustExec("select * from test")
+		dbt.mustExec("select 2")
+
+		dbt.mustExec("prepare stmt1 from 'update test set a = 1 where a = 2'")
+		dbt.mustExec("execute stmt1")
+		dbt.mustExec("prepare stmt2 from 'select * from test'")
+		dbt.mustExec("execute stmt2")
+
+		currentStmtCnt := getStmtCnt(string(getMetrics(t)))
+		t.Assert(currentStmtCnt[executor.CreateTable], Equals, originStmtCnt[executor.CreateTable]+1)
+		t.Assert(currentStmtCnt[executor.Insert], Equals, originStmtCnt[executor.Insert]+5)
+		t.Assert(currentStmtCnt[executor.Delete], Equals, originStmtCnt[executor.Delete]+1)
+		t.Assert(currentStmtCnt[executor.Update], Equals, originStmtCnt[executor.Update]+2)
+		t.Assert(currentStmtCnt[executor.SimpleSelect], Equals, originStmtCnt[executor.SimpleSelect]+3)
+	})
+}
+
+func getMetrics(t *C) []byte {
+	resp, err := http.Get("http://127.0.0.1:10090/metrics")
+	t.Assert(err, IsNil)
+	content, err := ioutil.ReadAll(resp.Body)
+	t.Assert(err, IsNil)
+	resp.Body.Close()
+	return content
+}
+
+func getStmtCnt(content string) (stmtCnt map[string]int) {
+	stmtCnt = make(map[string]int)
+	r, _ := regexp.Compile("tidb_executor_statement_node_total{type=\"([A-Z|a-z|-]+)\"} (\\d+)")
+	matchResult := r.FindAllStringSubmatch(content, -1)
+	for _, v := range matchResult {
+		cnt, _ := strconv.Atoi(v[2])
+		stmtCnt[v[1]] = cnt
+	}
+	return stmtCnt
 }
