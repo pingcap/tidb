@@ -137,7 +137,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	for _, tb := range tbList {
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
-		bucketIdx := tb.ID % bucketCount
+		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	for i := range result.sortedTablesBuckets {
@@ -193,7 +193,7 @@ func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 }
 
 func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
-	slice := is.sortedTablesBuckets[id%bucketCount]
+	slice := is.sortedTablesBuckets[tableBucketIdx(id)]
 	idx := slice.searchTable(id)
 	if idx == -1 {
 		return nil, false

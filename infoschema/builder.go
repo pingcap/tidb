@@ -24,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 )
 
-const invalidTableID = 0
-
 // Builder builds a new InfoSchema.
 type Builder struct {
 	is     *infoSchema
@@ -63,13 +61,13 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var alloc autoid.Allocator
-	if oldTableID != invalidTableID {
+	if tableIDIsValid(oldTableID) {
 		if oldTableID == newTableID {
 			alloc, _ = b.is.AllocByID(oldTableID)
 		}
 		b.applyDropTable(roDBInfo, oldTableID)
 	}
-	if newTableID != invalidTableID {
+	if tableIDIsValid(newTableID) {
 		// All types except DropTable.
 		err := b.applyCreateTable(m, roDBInfo, newTableID, alloc)
 		if err != nil {
@@ -84,18 +82,18 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 // CopySortedTables copies sortedTables for old table and new table for later modification.
 func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 	buckets := b.is.sortedTablesBuckets
-	if oldTableID != invalidTableID {
-		bucketIdx := oldTableID % bucketCount
+	if tableIDIsValid(oldTableID) {
+		bucketIdx := tableBucketIdx(oldTableID)
 		oldSortedTables := buckets[bucketIdx]
 		newSortedTables := make(sortedTables, len(oldSortedTables))
 		copy(newSortedTables, oldSortedTables)
 		buckets[bucketIdx] = newSortedTables
 	}
-	if newTableID != invalidTableID && newTableID != oldTableID {
-		oldSortedTables := buckets[newTableID%bucketCount]
+	if tableIDIsValid(newTableID) && newTableID != oldTableID {
+		oldSortedTables := buckets[tableBucketIdx(newTableID)]
 		newSortedTables := make(sortedTables, len(oldSortedTables), len(oldSortedTables)+1)
 		copy(newSortedTables, oldSortedTables)
-		buckets[newTableID%bucketCount] = newSortedTables
+		buckets[tableBucketIdx(newTableID)] = newSortedTables
 	}
 }
 
@@ -103,7 +101,7 @@ func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 func (b *Builder) updateDBInfo(roDBInfo *model.DBInfo, oldTableID, newTableID int64) {
 	newDbInfo := *roDBInfo
 	newDbInfo.Tables = make([]*model.TableInfo, 0, len(roDBInfo.Tables))
-	if newTableID != invalidTableID {
+	if tableIDIsValid(newTableID) {
 		// All types except DropTable.
 		if newTbl, ok := b.is.TableByID(newTableID); ok {
 			newDbInfo.Tables = append(newDbInfo.Tables, newTbl.Meta())
@@ -161,7 +159,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 	}
 	tableNames := b.is.schemaMap[roDBInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
-	bucketIdx := tableID % bucketCount
+	bucketIdx := tableBucketIdx(tableID)
 	sortedTables := b.is.sortedTablesBuckets[bucketIdx]
 	sortedTables = append(sortedTables, tbl)
 	sort.Sort(sortedTables)
@@ -170,7 +168,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 }
 
 func (b *Builder) applyDropTable(di *model.DBInfo, tableID int64) {
-	bucketIdx := tableID % bucketCount
+	bucketIdx := tableBucketIdx(tableID)
 	sortedTables := b.is.sortedTablesBuckets[bucketIdx]
 	idx := sortedTables.searchTable(tableID)
 	if idx == -1 {
@@ -234,8 +232,8 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 				return nil, errors.Trace(err)
 			}
 			schTbls.tables[t.Name.L] = tbl
-			sortedTables := info.sortedTablesBuckets[t.ID%bucketCount]
-			info.sortedTablesBuckets[t.ID%bucketCount] = append(sortedTables, tbl)
+			sortedTables := info.sortedTablesBuckets[tableBucketIdx(t.ID)]
+			info.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTables, tbl)
 		}
 	}
 	for _, v := range info.sortedTablesBuckets {
@@ -255,7 +253,7 @@ func (b *Builder) initMemorySchemas() error {
 	for _, t := range infoSchemaDB.Tables {
 		tbl := b.handle.memSchema.nameToTable[t.Name.L]
 		infoSchemaTblNames.tables[t.Name.L] = tbl
-		bucketIdx := t.ID % bucketCount
+		bucketIdx := tableBucketIdx(t.ID)
 		info.sortedTablesBuckets[bucketIdx] = append(info.sortedTablesBuckets[bucketIdx], tbl)
 	}
 
@@ -273,7 +271,7 @@ func (b *Builder) initMemorySchemas() error {
 			return ErrTableNotExists.Gen("table `%s` is missing.", t.Name)
 		}
 		perfSchemaTblNames.tables[t.Name.L] = tbl
-		bucketIdx := t.ID % bucketCount
+		bucketIdx := tableBucketIdx(t.ID)
 		info.sortedTablesBuckets[bucketIdx] = append(info.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	return nil
@@ -298,4 +296,12 @@ func NewBuilder(handle *Handle) *Builder {
 		sortedTablesBuckets: make([]sortedTables, bucketCount),
 	}
 	return b
+}
+
+func tableBucketIdx(tableID int64) int {
+	return int(tableID % bucketCount)
+}
+
+func tableIDIsValid(tableID int64) bool {
+	return tableID != 0
 }
