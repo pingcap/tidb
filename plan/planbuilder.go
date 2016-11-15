@@ -134,7 +134,7 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 	for _, f := range sel.GetResultFields() {
 		n, ok := f.Expr.Accept(extractor)
 		if !ok {
-			b.err = errors.New("Failed to extract agg expr!")
+			b.err = errors.New("failed to extract agg expr")
 			return nil
 		}
 		ve, ok := f.Expr.(*ast.ValueExpr)
@@ -260,7 +260,6 @@ func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *Select
 	selectLock.initID()
 	addChild(selectLock, src)
 	selectLock.SetSchema(src.GetSchema())
-	selectLock.SetFields(src.Fields())
 	return selectLock
 }
 

@@ -568,7 +568,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
 		return st
 	}
-	b.err = errors.New("Not implement yet.")
+	b.err = errors.New("not implement yet")
 	return nil
 }
 
@@ -636,7 +636,6 @@ func (b *executorBuilder) buildTrim(v *plan.Trim) Executor {
 func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 	e := &UnionExec{
 		schema: v.GetSchema(),
-		fields: v.Fields(),
 		Srcs:   make([]Executor, len(v.GetChildren())),
 	}
 	for i, sel := range v.GetChildren() {

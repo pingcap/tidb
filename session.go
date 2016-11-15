@@ -339,7 +339,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.Record
 	}
 	if len(rawStmts) != 1 {
 		log.Errorf("ExecRestrictedSQL only executes one statement. Too many/few statement in %s", sql)
-		return nil, errors.New("Wrong number of statement.")
+		return nil, errors.New("wrong number of statement")
 	}
 	st, err := Compile(s, rawStmts[0])
 	if err != nil {
@@ -489,7 +489,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		SQLText: sql,
 	}
 	prepareExec.DoPrepare()
-	return prepareExec.ID, prepareExec.ParamCount, prepareExec.ResultFields, prepareExec.Err
+	return prepareExec.ID, prepareExec.ParamCount, nil, prepareExec.Err
 }
 
 // checkArgs makes sure all the arguments' types are known and can be handled.

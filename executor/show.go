@@ -60,11 +60,6 @@ func (e *ShowExec) Schema() expression.Schema {
 	return e.schema
 }
 
-// Fields implements the Executor Fields interface.
-func (e *ShowExec) Fields() []*ast.ResultField {
-	return nil
-}
-
 // Next implements Execution Next interface.
 func (e *ShowExec) Next() (*Row, error) {
 	if e.rows == nil {
@@ -534,7 +529,7 @@ func (e *ShowExec) fetchShowGrants() error {
 	// Get checker
 	checker := privilege.GetPrivilegeChecker(e.ctx)
 	if checker == nil {
-		return errors.New("Miss privilege checker!")
+		return errors.New("miss privilege checker")
 	}
 	gs, err := checker.ShowGrants(e.ctx, e.User)
 	if err != nil {

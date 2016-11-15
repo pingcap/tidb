@@ -14,8 +14,11 @@
 package parser
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
+	"unicode"
 )
 
 var _ = Suite(&testLexerSuite{})
@@ -93,10 +96,13 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{"132.3e231", floatLit},
 		{"23416", intLit},
 		{"123test", identifier},
+		{"123" + string(unicode.ReplacementChar) + "xxx", identifier},
 		{"0", intLit},
 		{"0x3c26", hexLit},
 		{"x'13181C76734725455A'", hexLit},
 		{"0b01", bitLit},
+		{fmt.Sprintf("%c", 0), invalid},
+		{fmt.Sprintf("t1%c", 0), identifier},
 	}
 	runTest(c, table)
 }
@@ -177,11 +183,14 @@ func (s *testLexerSuite) TestscanString(c *C) {
 
 func (s *testLexerSuite) TestIdentifier(c *C) {
 	defer testleak.AfterTest(c)()
+	replacementString := string(unicode.ReplacementChar) + "xxx"
 	table := [][2]string{
 		{`哈哈`, "哈哈"},
 		{"`numeric`", "numeric"},
 		{"\r\n \r \n \tthere\t \n", "there"},
-		// `5number`,
+		{`5number`, `5number`},
+		{replacementString, replacementString},
+		{fmt.Sprintf("t1%cxxx", 0), "t1"},
 	}
 	l := &Scanner{}
 	for _, item := range table {

@@ -59,7 +59,7 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 			cost:  cost,
 			count: infos[0].count})
 	}
-	return &physicalPlanInfo{p: ts, cost: math.MaxFloat64, count: infos[0].count}
+	return &physicalPlanInfo{p: nil, cost: math.MaxFloat64, count: infos[0].count}
 }
 
 func allMatch(matchedList []bool) bool {
@@ -157,7 +157,7 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 			cost:  cost,
 			count: infos[0].count})
 	}
-	return &physicalPlanInfo{p: is, cost: math.MaxFloat64, count: infos[0].count}
+	return &physicalPlanInfo{p: nil, cost: math.MaxFloat64, count: infos[0].count}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
@@ -177,7 +177,11 @@ func (p *PhysicalApply) matchProperty(_ *requiredProperty, childPlanInfo ...*phy
 }
 
 func estimateJoinCount(lc uint64, rc uint64) uint64 {
-	return uint64(float64(lc*rc) * joinFactor)
+	count := float64(lc) * float64(rc) * joinFactor
+	if count > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return uint64(count)
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
