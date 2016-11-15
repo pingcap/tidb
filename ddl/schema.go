@@ -164,19 +164,19 @@ func (d *ddl) dropSchemaData(tIDs []int64, startKey kv.Key, job *model.Job, m *m
 		return true, nil
 	}
 
-	var isFinished bool
+	isFinished := false
 	var nextStartKey kv.Key
 	for i, id := range tIDs {
 		job.TableID = id
 		if startKey == nil {
 			startKey = tablecodec.EncodeTablePrefix(id)
 		}
-		limit := defaultBatchSize
-		delCount, err := d.dropTableData(startKey, job, limit)
+		delCount, err := d.dropTableData(startKey, job, defaultBatchSize)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		if delCount == limit {
+
+		if delCount == defaultBatchSize {
 			isFinished = false
 			nextStartKey = job.Args[len(job.Args)-1].(kv.Key)
 			break
@@ -189,7 +189,6 @@ func (d *ddl) dropSchemaData(tIDs []int64, startKey kv.Key, job *model.Job, m *m
 		}
 		startKey = nil
 		isFinished = true
-		continue
 	}
 	job.TableID = 0
 	job.Args = []interface{}{tIDs, nextStartKey}
