@@ -56,7 +56,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 	}
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var alloc autoid.Allocator
-	if oldTableID != 0 {
+	if oldTableID != 0 && oldTableID == newTableID {
 		alloc, _ = b.is.AllocByID(oldTableID)
 		b.applyDropTable(roDBInfo.Name.L, oldTableID)
 	}
