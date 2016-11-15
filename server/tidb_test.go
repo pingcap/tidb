@@ -141,3 +141,7 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 	dsn = tcpDsn
 	server.Close()
 }
+
+func (ts *TidbTestSuite) TestStmtCount(c *C) {
+	runTestStmtCount(c)
+}

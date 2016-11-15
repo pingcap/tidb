@@ -29,42 +29,132 @@ import (
 type Compiler struct {
 }
 
+const (
+	// IGNORE is a special label to identify the situations we want to ignore.
+	IGNORE = "Ignore"
+	// SimpleSelect represents SELECT statements like "select a from t" or "select 2".
+	SimpleSelect = "Simple-Select"
+	// ComplexSelect represents the other SELECT statements besides SIMPLE_SELECT.
+	ComplexSelect = "Complex-Select"
+	// AlterTable represents alter table statements.
+	AlterTable = "AlterTable"
+	// AnalyzeTable represents analyze table statements.
+	AnalyzeTable = "AnalyzeTable"
+	// Begin represents begin statements.
+	Begin = "Begin"
+	// Commit represents commit statements.
+	Commit = "Commit"
+	// CreateDatabase represents create database statements.
+	CreateDatabase = "CreateDatabase"
+	// CreateIndex represents create index statements.
+	CreateIndex = "CreateIndex"
+	// CreateTable represents create table statements.
+	CreateTable = "CreateTable"
+	// CreateUser represents create user statements.
+	CreateUser = "CreateUser"
+	// Delete represents delete statements.
+	Delete = "Delete"
+	// DropDatabase represents drop database statements.
+	DropDatabase = "DropDatabase"
+	// DropIndex represents drop index statements.
+	DropIndex = "DropIndex"
+	// DropTable represents drop table statements.
+	DropTable = "DropTable"
+	// Explain represents explain statements.
+	Explain = "Explain"
+	// Replace represents replace statements.
+	Replace = "Replace"
+	// Insert represents insert statements.
+	Insert = "Insert"
+	// LoadDataStmt represents load data statements.
+	LoadDataStmt = "LoadData"
+	// RollBack represents roll back statements.
+	RollBack = "RollBack"
+	// Set represents set statements.
+	Set = "Set"
+	// Show represents show statements.
+	Show = "Show"
+	// TruncateTable represents truncate table statements.
+	TruncateTable = "TruncateTable"
+	// Update represents update statements.
+	Update = "Update"
+)
+
 func statementLabel(node ast.StmtNode) string {
-	switch node.(type) {
-	case *ast.SelectStmt:
-		return "Select"
-	case *ast.DeleteStmt:
-		return "Delete"
-	case *ast.InsertStmt:
-		if node.(*ast.InsertStmt).IsReplace {
-			return "Replace"
-		}
-		return "Insert"
-	case *ast.UnionStmt:
-		return "Union"
-	case *ast.UpdateStmt:
-		return "Update"
-	case *ast.CreateIndexStmt:
-		return "CreateIndex"
-	case *ast.CreateTableStmt:
-		return "CreateTable"
+	switch x := node.(type) {
+	case *ast.AlterTableStmt:
+		return AlterTable
+	case *ast.AnalyzeTableStmt:
+		return AnalyzeTable
+	case *ast.BeginStmt:
+		return Begin
+	case *ast.CommitStmt:
+		return Commit
 	case *ast.CreateDatabaseStmt:
-		return "CreateDatabase"
+		return CreateDatabase
+	case *ast.CreateIndexStmt:
+		return CreateIndex
+	case *ast.CreateTableStmt:
+		return CreateTable
+	case *ast.CreateUserStmt:
+		return CreateUser
+	case *ast.DeleteStmt:
+		return Delete
 	case *ast.DropDatabaseStmt:
-		return "DropDatabase"
-	case *ast.DropTableStmt:
-		return "DropTable"
+		return DropDatabase
 	case *ast.DropIndexStmt:
-		return "DropIndex"
+		return DropIndex
+	case *ast.DropTableStmt:
+		return DropTable
+	case *ast.ExplainStmt:
+		return Explain
+	case *ast.InsertStmt:
+		if x.IsReplace {
+			return Replace
+		}
+		return Insert
+	case *ast.LoadDataStmt:
+		return LoadDataStmt
+	case *ast.RollbackStmt:
+		return RollBack
+	case *ast.SelectStmt:
+		return getSelectStmtLabel(x)
+	case *ast.SetStmt, *ast.SetPwdStmt:
+		return Set
+	case *ast.ShowStmt:
+		return Show
+	case *ast.TruncateTableStmt:
+		return TruncateTable
+	case *ast.UpdateStmt:
+		return Update
+	case *ast.DeallocateStmt, *ast.ExecuteStmt, *ast.PrepareStmt, *ast.UseStmt:
+		return IGNORE
 	}
-	return "unknown"
+	return "other"
+}
+
+func getSelectStmtLabel(x *ast.SelectStmt) string {
+	if x.From == nil {
+		return SimpleSelect
+	}
+	tableRefs := x.From.TableRefs
+	if tableRefs.Right == nil {
+		switch ref := tableRefs.Left.(type) {
+		case *ast.TableSource:
+			switch ref.Source.(type) {
+			case *ast.TableName:
+				return SimpleSelect
+			}
+		}
+	}
+	return ComplexSelect
 }
 
 // Compile compiles an ast.StmtNode to an ast.Statement.
 // After preprocessed and validated, it will be optimized to a plan,
 // then wrappped to an adapter *statement as stmt.Statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
-	stmtNodeCounter.WithLabelValues(statementLabel(node)).Inc()
+	stmtCount(node)
 	if _, ok := node.(*ast.UpdateStmt); ok {
 		sVars := variable.GetSessionVars(ctx)
 		sVars.InUpdateStmt = true
