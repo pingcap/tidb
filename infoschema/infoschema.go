@@ -114,7 +114,7 @@ type schemaTables struct {
 const bucketCount = 512
 
 type infoSchema struct {
-	schemasMap map[string]*schemaTables
+	schemaMap map[string]*schemaTables
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
@@ -126,14 +126,14 @@ type infoSchema struct {
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
-	result.schemasMap = make(map[string]*schemaTables)
+	result.schemaMap = make(map[string]*schemaTables)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
 	}
-	result.schemasMap["test"] = tableNames
+	result.schemaMap["test"] = tableNames
 	for _, tb := range tbList {
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
@@ -149,7 +149,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 var _ InfoSchema = (*infoSchema)(nil)
 
 func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-	tableNames, ok := is.schemasMap[schema.L]
+	tableNames, ok := is.schemaMap[schema.L]
 	if !ok {
 		return
 	}
@@ -161,12 +161,12 @@ func (is *infoSchema) SchemaMetaVersion() int64 {
 }
 
 func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
-	_, ok := is.schemasMap[schema.L]
+	_, ok := is.schemaMap[schema.L]
 	return ok
 }
 
 func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
-	if tbNames, ok := is.schemasMap[schema.L]; ok {
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok = tbNames.tables[table.L]; ok {
 			return
 		}
@@ -175,7 +175,7 @@ func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err
 }
 
 func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
-	if tbNames, ok := is.schemasMap[schema.L]; ok {
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if _, ok = tbNames.tables[table.L]; ok {
 			return true
 		}
@@ -184,7 +184,7 @@ func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
 }
 
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
-	for _, v := range is.schemasMap {
+	for _, v := range is.schemaMap {
 		if v.dbInfo.ID == id {
 			return v.dbInfo, true
 		}
@@ -210,21 +210,21 @@ func (is *infoSchema) AllocByID(id int64) (autoid.Allocator, bool) {
 }
 
 func (is *infoSchema) AllSchemaNames() (names []string) {
-	for _, v := range is.schemasMap {
+	for _, v := range is.schemaMap {
 		names = append(names, v.dbInfo.Name.O)
 	}
 	return
 }
 
 func (is *infoSchema) AllSchemas() (schemas []*model.DBInfo) {
-	for _, v := range is.schemasMap {
+	for _, v := range is.schemaMap {
 		schemas = append(schemas, v.dbInfo)
 	}
 	return
 }
 
 func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
-	schemaTables, ok := is.schemasMap[schema.L]
+	schemaTables, ok := is.schemaMap[schema.L]
 	if !ok {
 		return
 	}
@@ -235,7 +235,7 @@ func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
 }
 
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
-	for _, v := range is.schemasMap {
+	for _, v := range is.schemaMap {
 		result = append(result, v.dbInfo.Clone())
 	}
 	return
