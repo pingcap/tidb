@@ -529,7 +529,7 @@ func (e *ShowExec) fetchShowGrants() error {
 	// Get checker
 	checker := privilege.GetPrivilegeChecker(e.ctx)
 	if checker == nil {
-		return errors.New("Miss privilege checker!")
+		return errors.New("miss privilege checker")
 	}
 	gs, err := checker.ShowGrants(e.ctx, e.User)
 	if err != nil {

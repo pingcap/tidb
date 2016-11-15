@@ -212,7 +212,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 				ctx.descScan = sel.OrderBy[0].Desc
 			} else {
 				if sel.Limit == nil {
-					return nil, errors.New("We don't support pushing down Sort without Limit.")
+					return nil, errors.New("we don't support pushing down Sort without Limit")
 				}
 				ctx.topn = true
 				ctx.topnHeap = &topnHeap{

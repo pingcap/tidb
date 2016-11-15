@@ -491,7 +491,7 @@ func (e *GrantExec) getTargetSchema() (*model.DBInfo, error) {
 		// Grant *, use current schema
 		dbName = db.GetCurrentSchema(e.ctx)
 		if len(dbName) == 0 {
-			return nil, errors.New("Miss DB name for grant privilege.")
+			return nil, errors.New("miss DB name for grant privilege")
 		}
 	}
 	//check if db exists
