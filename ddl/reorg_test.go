@@ -33,7 +33,6 @@ func (k testCtxKeyType) String() string {
 const testCtxKey testCtxKeyType = 0
 
 func (s *testDDLSuite) TestReorg(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_reorg")
 	defer store.Close()
@@ -114,7 +113,6 @@ func (s *testDDLSuite) TestReorg(c *C) {
 }
 
 func (s *testDDLSuite) TestReorgOwner(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_reorg_owner")
 	defer store.Close()

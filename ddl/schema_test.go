@@ -113,7 +113,6 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 }
 
 func (s *testSchemaSuite) TestSchema(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema")
 	defer store.Close()
@@ -190,7 +189,6 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 }
 
 func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema_wait")
 	defer store.Close()
@@ -246,7 +244,6 @@ LOOP:
 }
 
 func (s *testSchemaSuite) TestSchemaResume(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema_resume")
 	defer store.Close()

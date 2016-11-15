@@ -24,7 +24,6 @@ import (
 )
 
 func (s *testDDLSuite) TestDropSchemaError(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_drop_schema")
 	defer store.Close()
@@ -60,7 +59,6 @@ func verifyBgJobState(c *C, d *ddl, job *model.Job, state model.JobState) {
 }
 
 func (s *testDDLSuite) TestDropTableError(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_drop_table")
 	defer store.Close()
@@ -93,7 +91,6 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 }
 
 func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_invalid_bg_job_type")
 	defer store.Close()

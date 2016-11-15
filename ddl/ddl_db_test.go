@@ -656,7 +656,6 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 }
 
 func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://update_multiple_table")
 	c.Assert(err, IsNil)
@@ -716,7 +715,6 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 }
 
 func (s *testDBSuite) TestTruncateTable(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://truncate_table")
 	c.Assert(err, IsNil)
