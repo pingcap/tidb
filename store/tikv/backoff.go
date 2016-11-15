@@ -125,11 +125,11 @@ const (
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {
-	fn                 map[backoffType]func() int
-	maxSleep           int
-	totalSleep         int
-	errors             []error
-	ctx                context.Context
+	fn         map[backoffType]func() int
+	maxSleep   int
+	totalSleep int
+	errors     []error
+	ctx        context.Context
 }
 
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
