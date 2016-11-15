@@ -179,7 +179,7 @@ type PhysicalPlan interface {
 type baseLogicalPlan struct {
 	basePlan
 	planMap map[string]*physicalPlanInfo
-	self    Plan
+	self    LogicalPlan
 }
 
 func (p *baseLogicalPlan) getPlanInfo(prop *requiredProperty) (*physicalPlanInfo, error) {
@@ -233,20 +233,20 @@ func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	if len(p.GetChildren()) == 0 {
-		return predicates, p, nil
+		return predicates, p.self, nil
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	rest, _, err := child.PredicatePushDown(predicates)
 	if err != nil {
-		return nil, p, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	if len(rest) > 0 {
 		err = addSelection(p, child, rest, p.allocator)
 		if err != nil {
-			return nil, p, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 	}
-	return nil, p, nil
+	return nil, p.self, nil
 }
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
