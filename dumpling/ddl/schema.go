@@ -171,12 +171,12 @@ func (d *ddl) dropSchemaData(tIDs []int64, startKey kv.Key, job *model.Job, m *m
 		if startKey == nil {
 			startKey = tablecodec.EncodeTablePrefix(id)
 		}
-		delCount, err := d.dropTableData(startKey, job, defaultBatchSize)
+		delCount, err := d.dropTableData(startKey, job, defaultBatchCnt)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 
-		if delCount == defaultBatchSize {
+		if delCount == defaultBatchCnt {
 			isFinished = false
 			nextStartKey = job.Args[len(job.Args)-1].(kv.Key)
 			break
