@@ -46,6 +46,9 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	ts.server = server
 	go ts.server.Run()
 	waitUntilServerOnline()
+
+	// run this test here because parallel would affect the result of it
+	runTestStmtCount(c)
 }
 
 func waitUntilServerOnline() {
@@ -140,8 +143,4 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 	runTestRegression(c, "SocketRegression")
 	dsn = tcpDsn
 	server.Close()
-}
-
-func (ts *TidbTestSuite) TestStmtCount(c *C) {
-	runTestStmtCount(c)
 }
