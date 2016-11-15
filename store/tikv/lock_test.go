@@ -138,7 +138,6 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 }
 
 func (s *testLockSuite) TestCleanLock(c *C) {
-	c.Parallel()
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		k := []byte{ch}
 		s.lockKey(c, k, k, k, k, false)
