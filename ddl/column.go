@@ -326,7 +326,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 }
 
 // backfillColumnInTxn deals with a part of backfilling column data in a Transaction.
-// This part of the column data rows is defaultSmallBatchSize.
+// This part of the column data rows is defaultSmallBatchCnt.
 func (d *ddl) backfillColumnInTxn(t table.Table, colID int64, handles []int64, colMap map[int64]*types.FieldType,
 	defaultVal types.Datum, txn kv.Transaction) (int64, error) {
 	nextHandle := handles[0]
@@ -391,8 +391,8 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, handle
 
 	var endIdx int
 	for len(handles) > 0 {
-		if len(handles) >= defaultSmallBatchSize {
-			endIdx = defaultSmallBatchSize
+		if len(handles) >= defaultSmallBatchCnt {
+			endIdx = defaultSmallBatchCnt
 		} else {
 			endIdx = len(handles)
 		}
