@@ -130,7 +130,6 @@ type Backoffer struct {
 	totalSleep         int
 	errors             []error
 	ctx                context.Context
-	cancelOnFirstError bool
 }
 
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
@@ -141,9 +140,11 @@ func NewBackoffer(maxSleep int, ctx context.Context) *Backoffer {
 	}
 }
 
+var cancelOnFirstError struct{}
+
 // WithCancel returns a cancel function which, when called, would cancel backoffer's context.
 func (b *Backoffer) WithCancel() context.CancelFunc {
-	if b.cancelOnFirstError {
+	if b.ctx.Value(cancelOnFirstError) != nil {
 		var cancel context.CancelFunc
 		b.ctx, cancel = context.WithCancel(b.ctx)
 		return cancel
