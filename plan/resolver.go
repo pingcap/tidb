@@ -723,7 +723,7 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 	ctx := nr.currentContext()
 	if field.WildCard != nil {
 		if len(ctx.tables) == 0 {
-			nr.Err = errors.New("No table used.")
+			nr.Err = errors.New("no table used")
 			return
 		}
 		tableRfs := []*ast.ResultField{}
