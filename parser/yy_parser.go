@@ -100,8 +100,6 @@ func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, err
 	parser.src = sql
 	parser.result = parser.result[:0]
 
-	sql = handleMySQLSpecificCode(sql)
-
 	var l yyLexer
 	parser.lexer.reset(sql)
 	l = &parser.lexer

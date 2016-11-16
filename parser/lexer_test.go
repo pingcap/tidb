@@ -121,7 +121,7 @@ func (s *testLexerSuite) TestComment(c *C) {
 
 	table := []testCaseItem{
 		{"-- select --\n1", intLit},
-		{"/*!40101 SET character_set_client = utf8 */;", int(';')},
+		{"/*!40101 SET character_set_client = utf8 */;", set},
 		{"/* some comments */ SELECT ", selectKwd},
 		{`-- comment continues to the end of line
 SELECT`, selectKwd},
