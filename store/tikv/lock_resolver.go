@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
+	"golang.org/x/net/context"
 )
 
 const resolvedCacheSize = 512
@@ -161,7 +162,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err
 // To avoid unnecessarily aborting too many txns, it is wiser to wait a few
 // seconds before calling it after Prewrite.
 func (lr *LockResolver) GetTxnStatus(txnID uint64, primary []byte) (TxnStatus, error) {
-	bo := NewBackoffer(cleanupMaxBackoff)
+	bo := NewBackoffer(cleanupMaxBackoff, context.Background())
 	status, err := lr.getTxnStatus(bo, txnID, primary)
 	return status, errors.Trace(err)
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-tipb"
+	"golang.org/x/net/context"
 )
 
 // CopClient is coprocessor client.
@@ -73,7 +74,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 func (c *CopClient) Send(req *kv.Request) kv.Response {
 	coprocessorCounter.WithLabelValues("send").Inc()
 
-	bo := NewBackoffer(copBuildTaskMaxBackoff)
+	bo := NewBackoffer(copBuildTaskMaxBackoff, context.Background())
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc)
 	if err != nil {
 		return copErrorResponse{err}
@@ -322,7 +323,7 @@ func (it *copIterator) work() {
 		}
 		task.status = taskRunning
 		it.mu.Unlock()
-		bo := NewBackoffer(copNextMaxBackoff)
+		bo := NewBackoffer(copNextMaxBackoff, context.Background())
 		resp, err := it.handleTask(bo, task)
 		if err != nil {
 			it.errChan <- err

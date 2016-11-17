@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -26,16 +27,19 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-var _ context.Context = &reorgContext{}
+var _ context.Context = &mockContext{}
 
-// reorgContext implements context.Context interface for reorganization use.
-type reorgContext struct {
+// mockContext implements context.Context interface for testing.
+type mockContext struct {
 	store kv.Storage
+	mux   sync.Mutex
 	m     map[fmt.Stringer]interface{}
 	txn   kv.Transaction
 }
 
-func (c *reorgContext) GetTxn(forceNew bool) (kv.Transaction, error) {
+func (c *mockContext) GetTxn(forceNew bool) (kv.Transaction, error) {
+	c.mux.Lock()
+	defer c.mux.Unlock()
 	if forceNew {
 		if c.txn != nil {
 			if err := c.txn.Commit(); err != nil {
@@ -44,7 +48,6 @@ func (c *reorgContext) GetTxn(forceNew bool) (kv.Transaction, error) {
 			c.txn = nil
 		}
 	}
-
 	if c.txn != nil {
 		return c.txn, nil
 	}
@@ -58,7 +61,7 @@ func (c *reorgContext) GetTxn(forceNew bool) (kv.Transaction, error) {
 	return c.txn, nil
 }
 
-func (c *reorgContext) finishTxn(rollback bool) error {
+func (c *mockContext) finishTxn(rollback bool) error {
 	if c.txn == nil {
 		return nil
 	}
@@ -75,32 +78,32 @@ func (c *reorgContext) finishTxn(rollback bool) error {
 	return errors.Trace(err)
 }
 
-func (c *reorgContext) RollbackTxn() error {
+func (c *mockContext) RollbackTxn() error {
 	return c.finishTxn(true)
 }
 
-func (c *reorgContext) CommitTxn() error {
+func (c *mockContext) CommitTxn() error {
 	return c.finishTxn(false)
 }
 
-func (c *reorgContext) GetClient() kv.Client {
+func (c *mockContext) GetClient() kv.Client {
 	return c.store.GetClient()
 }
 
-func (c *reorgContext) SetValue(key fmt.Stringer, value interface{}) {
+func (c *mockContext) SetValue(key fmt.Stringer, value interface{}) {
 	c.m[key] = value
 }
 
-func (c *reorgContext) Value(key fmt.Stringer) interface{} {
+func (c *mockContext) Value(key fmt.Stringer) interface{} {
 	return c.m[key]
 }
 
-func (c *reorgContext) ClearValue(key fmt.Stringer) {
+func (c *mockContext) ClearValue(key fmt.Stringer) {
 	delete(c.m, key)
 }
 
-func (d *ddl) newReorgContext() context.Context {
-	c := &reorgContext{
+func (d *ddl) newMockContext() context.Context {
+	c := &mockContext{
 		store: d.store,
 		m:     make(map[fmt.Stringer]interface{}),
 	}
