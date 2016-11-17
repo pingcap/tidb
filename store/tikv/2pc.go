@@ -148,7 +148,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		batches = batches[1:]
 	}
 	if action == actionCommit {
-		// commit secondary batches in background goroutine to reduce latency.
+		// Commit secondary batches in background goroutine to reduce latency.
 		go func() {
 			e := c.doActionOnBatches(bo, action, batches)
 			if e != nil {
@@ -161,7 +161,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	return errors.Trace(err)
 }
 
-// doBatches do action to batches in parallel.
+// doActionOnBatches does action to batches in parallel.
 func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseCommitAction, batches []batchKeys) error {
 	if len(batches) == 0 {
 		return nil
