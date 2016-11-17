@@ -52,7 +52,7 @@ func projectionCanBeEliminated(p *Projection) bool {
 	}
 	for i, expr := range p.Exprs {
 		col, ok := expr.(*expression.Column)
-		if !ok || col.Correlated {
+		if !ok {
 			return false
 		}
 		if col.FromID != child.GetSchema()[i].FromID || col.Position != child.GetSchema()[i].Position {

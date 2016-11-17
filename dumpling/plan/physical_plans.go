@@ -271,7 +271,7 @@ type PhysicalApply struct {
 	basePlan
 
 	InnerPlan   PhysicalPlan
-	OuterSchema expression.Schema
+	OuterSchema []*expression.CorrelatedColumn
 	Checker     *ApplyConditionChecker
 }
 
