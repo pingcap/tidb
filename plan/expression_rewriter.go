@@ -21,7 +21,7 @@ var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Cont
 
 // rewrite function rewrites ast expr to expression.Expression.
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
-// asScalar means whether this expression must be treated as a scalar
+// asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
 func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (
 	expression.Expression, LogicalPlan, error) {
@@ -161,7 +161,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	if er.err != nil {
 		return v, true
 	}
-	// Only (a,b,c) = all (...) and (a,b,c) != any () can use row
+	// Only (a,b,c) = all (...) and (a,b,c) != any () can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
 	if !canMultiCol && (getRowLen(lexpr) != 1 || len(np.GetSchema()) != 1) {
 		er.err = errors.New("Operand should contain 1 column(s)")
@@ -227,7 +227,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 				return v, true
 			}
 		} else {
-			// Can't be built as semi-join
+			// Can't be built as semi-join.
 			er.p = er.b.buildApply(er.p, np, nil)
 		}
 		er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
