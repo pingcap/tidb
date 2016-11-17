@@ -147,7 +147,7 @@ type LogicalPlan interface {
 	// This function returns a column slice representing columns from the outer environment and an error.
 	// We need to return the outer columns, because the Apply plan will prune the inner Planner and it will know
 	// the exact number of columns referenced by the inner plan.
-	PruneColumnsAndResolveIndices([]*expression.Column) ([]*expression.Column, error)
+	PruneColumnsAndResolveIndices([]*expression.Column) ([]*expression.CorrelatedColumn, error)
 
 	// convert2PhysicalPlan converts the logical plan to the physical plan.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -250,7 +250,7 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 }
 
 // PruneColumnsAndResolveIndices implements LogicalPlan PruneColumnsAndResolveIndices interface.
-func (p *baseLogicalPlan) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.Column, error) {
+func (p *baseLogicalPlan) PruneColumnsAndResolveIndices(parentUsedCols []*expression.Column) ([]*expression.CorrelatedColumn, error) {
 	if len(p.children) == 0 {
 		p.schema.InitIndices()
 		return nil, nil

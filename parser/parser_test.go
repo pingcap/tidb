@@ -80,6 +80,16 @@ func (s *testParserSuite) TestSimple(c *C) {
 	_, ok := stmt.(*ast.SetStmt)
 	c.Assert(ok, IsTrue)
 
+	// For issue #2017
+	src = "insert into blobtable (a) values ('/*! truncated */');"
+	stmt, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+	is, ok := stmt.(*ast.InsertStmt)
+	c.Assert(ok, IsTrue)
+	c.Assert(is.Lists, HasLen, 1)
+	c.Assert(is.Lists[0], HasLen, 1)
+	c.Assert(is.Lists[0][0].GetDatum().GetString(), Equals, "/*! truncated */")
+
 	// Testcase for CONVERT(expr,type)
 	src = "SELECT CONVERT('111', SIGNED);"
 	st, err := parser.ParseOneStmt(src, "", "")
