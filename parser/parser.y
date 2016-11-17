@@ -49,7 +49,17 @@ import (
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 	invalid		"a special token never used by parser, used by lexer to indicate error"
 
+	/* the following tokens belong to ReservedKeyword*/
+	add		"ADD"
 	with		"WITH"
+	all 		"ALL"
+	alter		"ALTER"
+	analyze		"ANALYZE"
+	and		"AND"
+	as		"AS"
+	asc		"ASC"
+	between		"BETWEEN"
+	bigIntType	"BIGINT"
 
 	/* the following tokens belong to NotKeywordToken*/
 	abs		"ABS"
@@ -148,6 +158,7 @@ import (
 	datetimeType	"DATETIME"
 	deallocate	"DEALLOCATE"
 	delayKeyWrite	"DELAY_KEY_WRITE"
+	desc		"DESC"
 	disable		"DISABLE"
 	do		"DO"
 	dynamic		"DYNAMIC"
@@ -228,18 +239,10 @@ import (
 	/*yy:token "%x"     */	hexLit          "hexadecimal literal"
 	/*yy:token "%b"     */	bitLit          "bit literal"
 
-	add		"ADD"
-	all 		"ALL"
-	alter		"ALTER"
-	analyze		"ANALYZE"
-	and		"AND"
 	andand		"&&"
 	andnot		"&^"
-	as		"AS"
-	asc		"ASC"
 	assignmentEq	":="
 	at		"AT"
-	between		"BETWEEN"
 	both		"BOTH"
 	by		"BY"
 	byteType	"BYTE"
@@ -263,7 +266,6 @@ import (
 	defaultKwd	"DEFAULT"
 	delayed		"DELAYED"
 	deleteKwd	"DELETE"
-	desc		"DESC"
 	describe	"DESCRIBE"
 	distinct	"DISTINCT"
 	div 		"DIV"
@@ -378,7 +380,6 @@ import (
 	mediumIntType	"MEDIUMINT"
 	intType		"INT"
 	integerType	"INTEGER"
-	bigIntType	"BIGINT"
 
 	decimalType	"DECIMAL"
 	numericType	"NUMERIC"
@@ -682,9 +683,11 @@ import (
 	LengthNum		"Field length num(uint64)"
 
 %type	<ident>
-	Identifier		"identifier or unreserved keyword"
-	NotKeywordToken		"Tokens not mysql keyword but treated specially"
-	UnReservedKeyword	"MySQL unreserved keywords"
+	Identifier			"identifier or unreserved keyword"
+	IdentifierOrReservedKeyword	"Identifier or ReservedKeyword"
+	NotKeywordToken			"Tokens not mysql keyword but treated specially"
+	UnReservedKeyword		"MySQL unreserved keywords"
+	ReservedKeyword			"MySQL reserved keywords"
 
 %token	tableRefPriority
 
@@ -1564,6 +1567,9 @@ ExplainSym:
 	"EXPLAIN"
 |	"DESCRIBE"
 |	"DESC"
+	{
+		$$ = $1
+	}
 
 ExplainStmt:
 	ExplainSym TableName
@@ -1993,6 +1999,9 @@ IndexTypeOpt:
 Identifier:
 identifier | UnReservedKeyword | NotKeywordToken
 
+IdentifierOrReservedKeyword:
+Identifier | ReservedKeyword
+
 UnReservedKeyword:
  "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
 |	"COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO"
@@ -2004,6 +2013,30 @@ UnReservedKeyword:
 |	"MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 |	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY"
+
+ReservedKeyword:
+"ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT" 
+/* | "BINARY" | "BLOB" | "BOTH" | "BY" | "CASCADE" | "CASE" | "CHARACTER" | "CHECK" | "COLLATE" 
+| "COLUMN" | "CONSTRAINT" | "CONVERT" | "CREATE" | "CROSS" | "CURRENT_DATE" | "CURRENT_TIME" 
+| "CURRENT_USER" | "DATABASE" | "DATABASES" | "DAY_HOUR" | "DAY_MICROSECOND" | "DAY_MINUTE" 
+| "DAY_SECOND" | "DECIMAL" | "DEFAULT" | "DELAYED" | "DELETE" | "DESC" | "DESCRIBE" 
+| "DISTINCT" | "DIV" | "DOUBLE" | "DROP" | "DUAL" | "ELSE" | "ENCLOSED" | "ESCAPED" 
+| "EXISTS" | "EXPLAIN" | "FALSE" | "FLOAT" | "FOR" | "FORCE" | "FOREIGN" | "FROM" 
+| "FULLTEXT" | "GENERATED" | "GRANT" | "GROUP" | "HAVING" | "HIGH_PRIORITY" | "HOUR_MICROSECOND" | "HOUR_MINUTE" 
+| "HOUR_SECOND" | "IF" | "IGNORE" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT"
+| "INTEGER" | "INTERVAL" | "INTO" | "IS" 
+| "JOIN" | "KEY" | "KEYS" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD" | "LOCALTIME" 
+| "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "LOW_PRIORITY" 
+| "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT" 
+| "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC" 
+| "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" 
+| "PRECISION" | "PRIMARY" | "PROCEDURE" | "READ" | "REAL" | "REFERENCES" | "REGEXP" 
+| "REPEAT" | "REPLACE" | "RESTRICT" | "RIGHT" | "RLIKE" 
+| "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT" 
+| "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" 
+| "TINYINT" | "TINYTEXT" | "TO" | "TRAILING" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED" 
+| "UPDATE" | "USE" | "USING" | "UTC_DATE" | "VALUES" | "VARBINARY" | "VARCHAR" 
+| "WHEN" | "WHERE" | "WITH" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL" */
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
@@ -3171,7 +3204,7 @@ TableName:
 	{
 		$$ = &ast.TableName{Name:model.NewCIStr($1)}
 	}
-|	Identifier '.' Identifier
+|	IdentifierOrReservedKeyword '.' IdentifierOrReservedKeyword
 	{
 		$$ = &ast.TableName{Schema:model.NewCIStr($1),	Name:model.NewCIStr($3)}
 	}
