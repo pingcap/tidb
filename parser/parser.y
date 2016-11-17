@@ -60,6 +60,22 @@ import (
 	asc		"ASC"
 	between		"BETWEEN"
 	bigIntType	"BIGINT"
+	binaryType	"BINARY"
+	blobType	"BLOB"
+	both		"BOTH"
+	by		"BY"
+	cascade		"CASCADE"
+	caseKwd		"CASE"
+	character	"CHARACTER"
+	check 		"CHECK"
+	collate 	"COLLATE"
+	column		"COLUMN"
+	constraint	"CONSTRAINT"
+	convert		"CONVERT"
+	create		"CREATE"
+	cross 		"CROSS"
+	currentDate 	"CURRENT_DATE"
+	currentTime 	"CURRENT_TIME"
 
 	/* the following tokens belong to NotKeywordToken*/
 	abs		"ABS"
@@ -132,6 +148,7 @@ import (
 	after		"AFTER"
 	any 		"ANY"
 	ascii		"ASCII"
+	at		"AT"
 	autoIncrement	"AUTO_INCREMENT"
 	avgRowLength	"AVG_ROW_LENGTH"
 	avg		"AVG"
@@ -242,23 +259,9 @@ import (
 	andand		"&&"
 	andnot		"&^"
 	assignmentEq	":="
-	at		"AT"
-	both		"BOTH"
-	by		"BY"
 	byteType	"BYTE"
-	caseKwd		"CASE"
 	cast		"CAST"
-	character	"CHARACTER"
-	check 		"CHECK"
-	collate 	"COLLATE"
-	column		"COLUMN"
-	constraint	"CONSTRAINT"
-	convert		"CONVERT"
-	create		"CREATE"
-	cross 		"CROSS"
 	curDate 	"CURDATE"
-	currentDate 	"CURRENT_DATE"
-	currentTime 	"CURRENT_TIME"
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
@@ -391,10 +394,8 @@ import (
 
 	charType	"CHAR"
 	varcharType	"VARCHAR"
-	binaryType	"BINARY"
 	varbinaryType	"VARBINARY"
 	tinyblobType	"TINYBLOB"
-	blobType	"BLOB"
 	mediumblobType	"MEDIUMBLOB"
 	longblobType	"LONGBLOB"
 	tinytextType	"TINYTEXT"
@@ -414,7 +415,6 @@ import (
 	yearMonth		"YEAR_MONTH"
 
 	restrict	"RESTRICT"
-	cascade		"CASCADE"
 
 %type   <item>
 	AdminStmt		"Check table statement or show ddl statement"
@@ -828,6 +828,7 @@ KeyOrIndex:
 ColumnKeywordOpt:
 	{}
 |	"COLUMN"
+	{}
 
 ColumnPosition:
 	{
@@ -2003,7 +2004,7 @@ IdentifierOrReservedKeyword:
 Identifier | ReservedKeyword
 
 UnReservedKeyword:
- "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
+ "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AT" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
 |	"COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO"
 |	"DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FULL" |"GLOBAL"
 |	"HASH" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK"
@@ -2015,9 +2016,10 @@ UnReservedKeyword:
 |	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY"
 
 ReservedKeyword:
-"ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT" 
-/* | "BINARY" | "BLOB" | "BOTH" | "BY" | "CASCADE" | "CASE" | "CHARACTER" | "CHECK" | "COLLATE" 
-| "COLUMN" | "CONSTRAINT" | "CONVERT" | "CREATE" | "CROSS" | "CURRENT_DATE" | "CURRENT_TIME" 
+"ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
+| "BINARY" | "BLOB" | "BOTH" | "BY" | "CASCADE" | "CASE" | "CHARACTER" | "CHECK" | "COLLATE"
+| "COLUMN" | "CONSTRAINT" | "CONVERT" | "CREATE" | "CROSS" | "CURRENT_DATE" | "CURRENT_TIME"
+ /*
 | "CURRENT_USER" | "DATABASE" | "DATABASES" | "DAY_HOUR" | "DAY_MICROSECOND" | "DAY_MINUTE" 
 | "DAY_SECOND" | "DECIMAL" | "DEFAULT" | "DELAYED" | "DELETE" | "DESC" | "DESCRIBE" 
 | "DISTINCT" | "DIV" | "DOUBLE" | "DROP" | "DUAL" | "ELSE" | "ENCLOSED" | "ESCAPED" 
@@ -2388,7 +2390,11 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" | "UTC_DATE"
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "UTC_DATE"
+| "CURRENT_DATE"
+	{
+		$$ = $1
+	}
 | "VERSION"
 	{
 		$$ = $1
@@ -2406,7 +2412,7 @@ FunctionCallConflict:
 	}
 |	"CURRENT_DATE"
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
 |	"UTC_DATE"
 	{
@@ -2460,7 +2466,7 @@ FunctionCallKeyword:
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 		charset := ast.NewValueExpr($5)
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1.(string)),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), charset},
 		}
 	}
@@ -2522,7 +2528,7 @@ FunctionCallNonKeyword:
 		if $2 != nil {
 			args = append(args, $2.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"CURRENT_TIMESTAMP" FuncDatetimePrec
 	{
@@ -3617,6 +3623,7 @@ OuterOpt:
 CrossOpt:
 	"JOIN"
 |	"CROSS" "JOIN"
+	{}
 |	"INNER" "JOIN"
 
 
@@ -4932,6 +4939,8 @@ OptCharset:
 
 CharsetKw:
 	"CHARACTER" "SET"
+	{
+	}
 |	"CHARSET"
 	{
 		$$ = $1
