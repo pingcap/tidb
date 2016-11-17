@@ -20,8 +20,11 @@ import (
 )
 
 func (s *testSuite) TestExplain(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec("drop table if exists t1, t2")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, index c2 (c2))")
@@ -279,6 +282,4 @@ func (s *testSuite) TestExplain(c *C) {
 		result := tk.MustQuery("explain " + ca.sql)
 		result.Check(testkit.Rows("EXPLAIN " + ca.result))
 	}
-	tk.MustExec("drop table t1")
-	tk.MustExec("drop table t2")
 }

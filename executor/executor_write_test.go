@@ -28,8 +28,11 @@ import (
 )
 
 func (s *testSuite) TestInsert(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec("drop table if exists insert_test, insert_test_1, insert_test_2, insert_err")
+	}()
 	tk.MustExec("use test")
 	testSQL := `drop table if exists insert_test;create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
 	tk.MustExec(testSQL)
@@ -105,12 +108,14 @@ func (s *testSuite) TestInsert(c *C) {
 	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
 	_, err = tk.Exec("insert insert_err values (1, '你好，世界')")
 	c.Assert(err, IsNil)
-	tk.MustExec("drop table insert_test, insert_test_1, insert_test_2, insert_err")
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec("drop table if exists insert_autoinc_test")
+	}()
 	tk.MustExec("use test")
 	createSQL := `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
 	tk.MustExec(createSQL)
@@ -190,12 +195,14 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 	r = tk.MustQuery("select * from insert_autoinc_test;")
 	rowStr6 = fmt.Sprintf("%v %v", "6", "6")
 	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
-	tk.MustExec("drop table insert_autoinc_test")
 }
 
 func (s *testSuite) TestInsertIgnore(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec("drop table if exists t")
+	}()
 	tk.MustExec("use test")
 	testSQL := `drop table if exists t;
     create table t (id int PRIMARY KEY AUTO_INCREMENT, c1 int);`
@@ -213,12 +220,15 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	rowStr = fmt.Sprintf("%v %v", "1", "2")
 	rowStr1 := fmt.Sprintf("%v %v", "2", "3")
 	r.Check(testkit.Rows(rowStr, rowStr1))
-	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestReplace(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec("drop table if exists replace_test, replace_test_1, replace_test_2, replace_test_3, replace_test_4, replace_test_5")
+		tk.MustExec("drop table if exists tIssue989, tIssue1012")
+	}()
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
     create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
@@ -336,13 +346,14 @@ func (s *testSuite) TestReplace(c *C) {
 	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(3))
 	r = tk.MustQuery("select * from tIssue1012;")
 	r.Check(testkit.Rows("1 1"))
-	tk.MustExec("drop table replace_test, replace_test_1, replace_test_2, replace_test_3, replace_test_4, replace_test_5")
-	tk.MustExec("drop table tIssue989, tIssue1012")
 }
 
 func (s *testSuite) TestUpdate(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec("drop table if exists update_test")
+	}()
 	tk.MustExec("use test")
 	s.fillData(tk, "update_test")
 
@@ -396,7 +407,6 @@ func (s *testSuite) TestUpdate(c *C) {
 	r = tk.MustQuery("select * from update_test;")
 	r.Check(testkit.Rows("2"))
 	tk.MustExec("commit")
-	tk.MustExec("drop table update_test")
 }
 
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
@@ -411,8 +421,12 @@ func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
 }
 
 func (s *testSuite) TestMultipleTableUpdate(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec("drop table if exists items, month")
+		tk.MustExec("drop table if exists t1, t2")
+	}()
 	tk.MustExec("use test")
 	s.fillMultiTableForUpdate(tk)
 
@@ -466,13 +480,14 @@ func (s *testSuite) TestMultipleTableUpdate(c *C) {
 
 	r = tk.MustQuery("select * from t1")
 	r.Check(testkit.Rows("10", "10"))
-	tk.MustExec("drop table items, month")
-	tk.MustExec("drop table t1, t2")
 }
 
 func (s *testSuite) TestDelete(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec("drop table if exists delete_test")
+	}()
 	s.fillData(tk, "delete_test")
 
 	tk.MustExec(`update delete_test set name = "abc" where id = 2;`)
@@ -498,7 +513,6 @@ func (s *testSuite) TestDelete(c *C) {
 
 	tk.MustExec(`delete from delete_test ;`)
 	tk.CheckExecResult(1, 0)
-	tk.MustExec("drop table delete_test")
 }
 
 func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
@@ -519,8 +533,11 @@ func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
 }
 
 func (s *testSuite) TestMultiTableDelete(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec("drop table if exists t1, t2, t3")
+	}()
 	s.fillDataMultiTable(tk)
 
 	tk.MustExec(`delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;`)
@@ -529,12 +546,14 @@ func (s *testSuite) TestMultiTableDelete(c *C) {
 	// Select data
 	r := tk.MustQuery("select * from t3")
 	c.Assert(r.Rows(), HasLen, 3)
-	tk.MustExec("drop table t1,t2,t3")
 }
 
 func (s *testSuite) TestQualifiedDelete(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec("drop table if exists t1, t2")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
@@ -567,13 +586,14 @@ func (s *testSuite) TestQualifiedDelete(c *C) {
 
 	_, err = tk.Exec("delete t1, t2 from t1 as a join t2 as b where a.c2 = b.c1")
 	c.Assert(err, NotNil)
-
-	tk.MustExec("drop table t1, t2")
 }
 
 func (s *testSuite) TestLoadData(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec("drop table if exists load_data_test")
+	}()
 	tk.MustExec("use test")
 	createSQL := `drop table if exists load_data_test;
 		create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int);`
@@ -748,12 +768,14 @@ func (s *testSuite) TestLoadData(c *C) {
 			fmt.Sprintf("%v %v %v %v", 40, 0, []byte(""), 0)}, []byte("xxx")},
 	}
 	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
-	tk.MustExec("drop table load_data_test")
 }
 
 func (s *testSuite) TestLoadDataEscape(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec("drop table if exists load_data_test")
+	}()
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
@@ -772,7 +794,6 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
-	tk.MustExec("drop table load_data_test")
 }
 
 func makeLoadDataInfo(column int, ctx context.Context, c *C) (ld *executor.LoadDataInfo) {

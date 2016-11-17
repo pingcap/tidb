@@ -22,8 +22,11 @@ import (
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec(`drop table if exists truncate_test;`)
+	}()
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists truncate_test;`)
 	tk.MustExec(`create table truncate_test (a int)`)
@@ -36,8 +39,11 @@ func (s *testSuite) TestTruncateTable(c *C) {
 }
 
 func (s *testSuite) TestCreateTable(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		testleak.AfterTest(c)()
+		tk.MustExec(`drop table if exists test;`)
+	}()
 	tk.MustExec("use test")
 	// Test create an exist database
 	_, err := tk.Exec("CREATE database test")
