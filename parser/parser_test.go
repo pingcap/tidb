@@ -727,6 +727,9 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{`select 1 a, 1 "a", 1 'a'`, true},
 		{`select * from t as "a"`, false},
 		{`select * from t a`, true},
+		// reserved keyword can't be used as identifier directly, but A.B pattern is an exception
+		{`select COUNT from DESC`, false},
+		{`select COUNT from SELECT.DESC`, true},
 		{`select * from t as a`, true},
 		{"select 1 full, 1 row, 1 abs", true},
 		{"select * from t full, t1 row, t2 abs", true},
