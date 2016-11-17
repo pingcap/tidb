@@ -111,6 +111,47 @@ type physicalTableSource struct {
 	conditions []expression.Expression
 }
 
+// MarshalJSON implements json.Marshaler interface.
+func (p *physicalTableSource) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString("{")
+	limit := 0
+	if p.LimitCount != nil {
+		limit = int(*p.LimitCount)
+	}
+	buffer.WriteString(fmt.Sprintf("\"limit\": %d, \n", limit))
+	if p.Aggregated {
+		buffer.WriteString(fmt.Sprint("\"aggregated push down\": true, \n"))
+		gbyItems, err := json.Marshal(p.gbyItems)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		buffer.WriteString(fmt.Sprintf("\"gby items\": %s, \n", gbyItems))
+		aggFuncs, err := json.Marshal(p.aggFuncs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		buffer.WriteString(fmt.Sprintf("\"agg funcs\": %s, \n", aggFuncs))
+	} else if len(p.sortItems) > 0 {
+		sortItems, err := json.Marshal(p.sortItems)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		buffer.WriteString(fmt.Sprintf("\"sort items\": %s, \n", sortItems))
+	}
+	access, err := json.Marshal(p.AccessCondition)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	filter, err := json.Marshal(p.conditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// print condition infos
+	buffer.WriteString(fmt.Sprintf("\"access conditions\": %s, \n", access))
+	buffer.WriteString(fmt.Sprintf("\"filter conditions\": %s}", filter))
+	return buffer.Bytes(), nil
+}
+
 func (p *physicalTableSource) clearForAggPushDown() {
 	p.AggFields = nil
 	p.AggFuncsPB = nil
@@ -341,11 +382,7 @@ func (p *PhysicalIndexScan) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
-	limit := 0
-	if p.LimitCount != nil {
-		limit = int(*p.LimitCount)
-	}
-	access, err := json.Marshal(p.AccessCondition)
+	pushDownInfo, err := json.Marshal(&p.physicalTableSource)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -358,10 +395,8 @@ func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
 		"\n \"desc\": %v,"+
 		"\n \"out of order\": %v,"+
 		"\n \"double read\": %v,"+
-		"\n \"access condition\": %s,"+
-		"\n \"count of pushed aggregate functions\": %d,"+
-		"\n \"limit\": %d\n}",
-		p.DBName.O, p.Table.Name.O, p.Index.Name.O, p.Ranges, p.Desc, p.OutOfOrder, p.DoubleRead, access, len(p.AggFuncsPB), limit))
+		"\n \"push down info\": %s\n}",
+		p.DBName.O, p.Table.Name.O, p.Index.Name.O, p.Ranges, p.Desc, p.OutOfOrder, p.DoubleRead, pushDownInfo))
 	return buffer.Bytes(), nil
 }
 
@@ -373,11 +408,7 @@ func (p *PhysicalTableScan) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
-	limit := 0
-	if p.LimitCount != nil {
-		limit = int(*p.LimitCount)
-	}
-	access, err := json.Marshal(p.AccessCondition)
+	pushDownInfo, err := json.Marshal(&p.physicalTableSource)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -387,10 +418,8 @@ func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
 		"\n \"table\": \"%s\","+
 		"\n \"desc\": %v,"+
 		"\n \"keep order\": %v,"+
-		"\n \"access condition\": %s,"+
-		"\n \"count of pushed aggregate functions\": %d,"+
-		"\n \"limit\": %d}",
-		p.DBName.O, p.Table.Name.O, p.Desc, p.KeepOrder, access, len(p.AggFuncsPB), limit))
+		"\n \"push down info\": %s}",
+		p.DBName.O, p.Table.Name.O, p.Desc, p.KeepOrder, pushDownInfo))
 	return buffer.Bytes(), nil
 }
 
