@@ -51,7 +51,6 @@ import (
 
 	/* the following tokens belong to ReservedKeyword*/
 	add		"ADD"
-	with		"WITH"
 	all 		"ALL"
 	alter		"ALTER"
 	analyze		"ANALYZE"
@@ -167,6 +166,41 @@ import (
 	restrict	"RESTRICT"
 	right		"RIGHT"
 	rlike		"RLIKE"
+	schema		"SCHEMA"
+	schemas		"SCHEMAS"
+	secondMicrosecond	"SECOND_MICROSECOND"
+	selectKwd	"SELECT"
+	set		"SET"
+	show		"SHOW"
+	smallIntType	"SMALLINT"
+	starting	"STARTING"
+	tableKwd	"TABLE"
+	terminated	"TERMINATED"
+	then		"THEN"
+	tinyblobType	"TINYBLOB"
+	tinyIntType	"TINYINT"
+	tinytextType	"TINYTEXT"
+	to		"TO"
+	trailing	"TRAILING"
+	trueKwd		"TRUE"
+	unique		"UNIQUE"
+	union		"UNION"
+	unlock		"UNLOCK"
+	unsigned	"UNSIGNED"
+	update		"UPDATE"
+	use		"USE"
+	using		"USING"
+	utcDate 	"UTC_DATE"
+	values		"VALUES"
+	varcharType	"VARCHAR"
+	varbinaryType	"VARBINARY"
+	when		"WHEN"
+	where		"WHERE"
+	write		"WRITE"
+	with		"WITH"
+	xor 		"XOR"
+	yearMonth	"YEAR_MONTH"
+	zerofill	"ZEROFILL"
 
 	/* the following tokens belong to NotKeywordToken*/
 	abs		"ABS"
@@ -366,58 +400,16 @@ import (
 	oror		"||"
 	placeholder	"PLACEHOLDER"
 	rsh		">>"
-	schema		"SCHEMA"
-	schemas		"SCHEMAS"
-	selectKwd	"SELECT"
-	set		"SET"
 	share		"SHARE"
-	show		"SHOW"
-	starting	"STARTING"
 	strcmp		"STRCMP"
 	sysVar		"SYS_VAR"
 	sysDate		"SYSDATE"
-	tableKwd	"TABLE"
-	terminated	"TERMINATED"
-	then		"THEN"
-	to		"TO"
-	trailing	"TRAILING"
-	trueKwd		"true"
+
+
 	underscoreCS	"UNDERSCORE_CHARSET"
-	union		"UNION"
-	unique		"UNIQUE"
-	unlock		"UNLOCK"
-	unsigned	"UNSIGNED"
-	update		"UPDATE"
-	use		"USE"
 	userVar		"USER_VAR"
-	using		"USING"
-	utcDate 	"UTC_DATE"
-	values		"VALUES"
-	when		"WHEN"
-	where		"WHERE"
-	write		"WRITE"
-	xor 		"XOR"
-	zerofill	"ZEROFILL"
-
-
 	currentTs	"CURRENT_TIMESTAMP"
-
-	tinyIntType	"TINYINT"
-	smallIntType	"SMALLINT"
-
-
-
-
 	charType	"CHAR"
-	varcharType	"VARCHAR"
-	varbinaryType	"VARBINARY"
-	tinyblobType	"TINYBLOB"
-	tinytextType	"TINYTEXT"
-
-	secondMicrosecond	"SECOND_MICROSECOND"
-	yearMonth		"YEAR_MONTH"
-
-
 
 %type   <item>
 	AdminStmt		"Check table statement or show ddl statement"
@@ -1526,6 +1518,9 @@ DatabaseSym:
 	"DATABASE" 
 	{}
 |	"SCHEMA"
+	{
+		$$ = $1
+	}
 
 DropDatabaseStmt:
 	"DROP" DatabaseSym IfExists DBName
@@ -1566,7 +1561,7 @@ DropUserStmt:
     }
 
 TableOrTables:
-	"TABLE"
+	"TABLE" {}
 |	"TABLES"
 
 EqOpt:
@@ -2054,17 +2049,15 @@ ReservedKeyword:
 | "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC" 
 | "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "READ" | "REAL" 
 | "REFERENCES" | "REGEXP" | "REPEAT" | "REPLACE" | "RESTRICT" | "RIGHT" | "RLIKE" 
-
- /*  
-
-| "DELAYED"  |  "HIGH_PRIORITY" | "LOW_PRIORITY" | "IF" | "IGNORE" | "INTO" 
-
-
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT" 
-| "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" 
-| "TINYINT" | "TINYTEXT" | "TO" | "TRAILING" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED" 
+| "STARTING" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO" 
+| "TRAILING" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED" 
 | "UPDATE" | "USE" | "USING" | "UTC_DATE" | "VALUES" | "VARBINARY" | "VARCHAR" 
-| "WHEN" | "WHERE" | "WITH" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL" */
+| "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL"
+ /*  
+| "DELAYED" | "HIGH_PRIORITY" | "LOW_PRIORITY" | "IF" | "IGNORE" | "INTO" | "TABLE" | "WITH" 
+ */
+
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
@@ -2142,6 +2135,9 @@ ValueSym:
 		$$ = $1
 	}
 |	"VALUES"
+	{
+		$$ = $1
+	}
 
 ExpressionListList:
 	ExpressionListListItem
@@ -2237,7 +2233,7 @@ Literal:
 	{
 		$$ = nil
 	}
-|	"true"
+|	"TRUE"
 	{
 		$$ = int64(1)
 	}
@@ -2424,6 +2420,9 @@ FunctionNameConflict:
 		$$ = $1
 	}
 | "SCHEMA" 
+	{
+		$$ = $1
+	}
 | "IF" 
 	{
 		$$ = $1
@@ -2441,6 +2440,9 @@ FunctionNameConflict:
 		$$ = $1
 	}
 | "UTC_DATE"
+	{
+		$$ = $1
+	}
 | "CURRENT_DATE"
 	{
 		$$ = $1
@@ -2466,7 +2468,7 @@ FunctionCallConflict:
 	}
 |	"UTC_DATE"
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
 |	"MOD" '(' PrimaryFactor ',' PrimaryFactor ')'
 	{
@@ -3079,6 +3081,9 @@ TimeUnit:
 		$$ = $1
 	}
 | "SECOND_MICROSECOND" 
+	{
+		$$ = $1
+	}
 | "MINUTE_MICROSECOND"
 	{
 		$$ = $1
@@ -3116,6 +3121,9 @@ TimeUnit:
 		$$ = $1
 	}
 | "YEAR_MONTH"
+	{
+		$$ = $1
+	}
 
 ExpressionOpt:
 	{
@@ -4598,7 +4606,8 @@ TableOptionList:
 	}
 
 OptTable:
-	{} | "TABLE"
+	{} 
+| "TABLE" {}
 
 TruncateTableStmt:
 	"TRUNCATE" OptTable TableName
@@ -5472,7 +5481,7 @@ LinesTerminated:
  *********************************************************************/
 
 UnlockTablesStmt:
-	"UNLOCK" "TABLES"
+	"UNLOCK" "TABLES" {}
 
 LockTablesStmt:
 	"LOCK" "TABLES" TableLockList
@@ -5484,7 +5493,7 @@ TableLock:
 LockType:
 	"READ" {}
 |	"READ" "LOCAL" {}
-|	"WRITE"
+|	"WRITE" {}
 
 TableLockList:
 	TableLock
