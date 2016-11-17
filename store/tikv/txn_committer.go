@@ -244,13 +244,6 @@ func (c *txnCommitter) prewriteSingleRegion(bo *Backoffer, batch batchKeys) erro
 				return errors.Trace(err)
 			}
 		}
-
-		select {
-		case <-bo.ctx.Done():
-			// context canceled
-			return bo.ctx.Err()
-		default:
-		}
 	}
 }
 
