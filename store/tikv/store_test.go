@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
+	tcontext "github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -134,7 +134,7 @@ func (s *testStoreSuite) TestBusyServerCop(c *C) {
 	s.store.client = client
 	session, err := tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
-	ctx := session.(context.Context)
+	ctx := session.(tcontext.Context)
 	sessionctx.GetDomain(ctx).SetLease(50 * time.Millisecond)
 
 	var wg sync.WaitGroup
