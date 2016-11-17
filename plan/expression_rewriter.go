@@ -520,9 +520,6 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 
 func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 	stkLen := len(er.ctxStack)
-	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
-		er.err = ErrOneColumn
-	}
 	var op string
 	switch v.Op {
 	case opcode.Plus:
@@ -536,6 +533,10 @@ func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		op = ast.UnaryNot
 	default:
 		er.err = errors.Errorf("Unknown Unary Op %T", v.Op)
+		return
+	}
+	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
+		er.err = ErrOneColumn
 		return
 	}
 	er.ctxStack[stkLen-1], er.err = expression.NewFunction(op, &v.Type, er.ctxStack[stkLen-1])
@@ -633,6 +634,12 @@ func (er *expressionRewriter) inToExpression(v *ast.PatternInExpr) {
 	}
 	stkLen := len(er.ctxStack)
 	lLen := len(v.List)
+	for i := 0; i < lLen; i++ {
+		if getRowLen(er.ctxStack[stkLen-lLen-1]) != getRowLen(er.ctxStack[stkLen-lLen+i]) {
+			er.err = ErrSameColumns
+			return
+		}
+	}
 	function := er.notToExpression(v.Not, ast.In, &v.Type, er.ctxStack[stkLen-lLen-1:stkLen]...)
 	er.ctxStack = er.ctxStack[:stkLen-lLen-1]
 	er.ctxStack = append(er.ctxStack, function)
@@ -643,6 +650,10 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 	argsLen := 2 * len(v.WhenClauses)
 	if v.ElseClause != nil {
 		argsLen++
+	}
+	er.checkArgsOneColumn(er.ctxStack[stkLen-argsLen:]...)
+	if er.err != nil {
+		return
 	}
 
 	// value                          -> ctxStack[stkLen-argsLen-1]
@@ -674,7 +685,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		//        condition2, result2,
 		//        ...
 		//        else clause
-		args = er.ctxStack[stkLen-argsLen : stkLen]
+		args = er.ctxStack[stkLen-argsLen:]
 	}
 	function, err := expression.NewFunction(ast.Case, &v.Type, args...)
 	if err != nil {
@@ -687,6 +698,10 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 
 func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 	l := len(er.ctxStack)
+	er.checkArgsOneColumn(er.ctxStack[l-2:]...)
+	if er.err != nil {
+		return
+	}
 	function := er.notToExpression(v.Not, ast.Like, &v.Type,
 		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape))})
 	er.ctxStack = er.ctxStack[:l-2]
@@ -695,6 +710,10 @@ func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 
 func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
 	l := len(er.ctxStack)
+	er.checkArgsOneColumn(er.ctxStack[l-2:]...)
+	if er.err != nil {
+		return
+	}
 	function := er.notToExpression(v.Not, ast.Regexp, &v.Type, er.ctxStack[l-2], er.ctxStack[l-1])
 	er.ctxStack = er.ctxStack[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
@@ -718,6 +737,10 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 
 func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	stkLen := len(er.ctxStack)
+	er.checkArgsOneColumn(er.ctxStack[stkLen-3:]...)
+	if er.err != nil {
+		return
+	}
 	var op string
 	var l, r expression.Expression
 	if v.Not {
@@ -746,10 +769,24 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	er.ctxStack = append(er.ctxStack, function)
 }
 
+func (er *expressionRewriter) checkArgsOneColumn(args ...expression.Expression) {
+	for _, arg := range args {
+		if getRowLen(arg) != 1 {
+			er.err = ErrOneColumn
+			return
+		}
+	}
+}
+
 func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	stackLen := len(er.ctxStack)
+	args := er.ctxStack[stackLen-len(v.Args):]
+	er.checkArgsOneColumn(args...)
+	if er.err != nil {
+		return
+	}
 	var function expression.Expression
-	function, er.err = expression.NewFunction(v.FnName.L, &v.Type, er.ctxStack[stackLen-len(v.Args):]...)
+	function, er.err = expression.NewFunction(v.FnName.L, &v.Type, args...)
 	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -784,6 +821,10 @@ func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
 	bt, err := evaluator.CastFuncFactory(v.Tp)
 	if err != nil {
 		er.err = errors.Trace(err)
+		return
+	}
+	er.checkArgsOneColumn(er.ctxStack[len(er.ctxStack)-1])
+	if er.err != nil {
 		return
 	}
 	function := &expression.ScalarFunction{
