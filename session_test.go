@@ -1983,7 +1983,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	}
 	// Make sure loading information schema is failed and server is invalid.
 	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed = true
-	sessionctx.GetDomain(ctx).MustReload()
+	sessionctx.GetDomain(ctx).Reload()
 	lease := sessionctx.GetDomain(ctx).DDL().GetLease()
 	time.Sleep(lease)
 	// Make sure insert to table t1 transaction executes.

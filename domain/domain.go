@@ -270,8 +270,9 @@ func (do *Domain) mockReloadFailed() error {
 
 const doReloadSleepTime = 500 * time.Millisecond
 
-// reload reloads InfoSchema.
-func (do *Domain) reload() error {
+// Reload reloads InfoSchema.
+// It's public in order to do the test.
+func (do *Domain) Reload() error {
 	// for test
 	if do.SchemaValidity.MockReloadFailed {
 		return do.mockReloadFailed()
@@ -308,16 +309,6 @@ func (do *Domain) reload() error {
 	return errors.Trace(err)
 }
 
-// MustReload reloads the infoschema.
-// If reload error, it will hold whole program to guarantee data safe.
-// It's public in order to do the test.
-func (do *Domain) MustReload() error {
-	if err := do.reload(); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
 func (do *Domain) checkValidityInLoop(lease time.Duration) {
 	timer := time.NewTimer(lease)
 	defer timer.Stop()
@@ -325,6 +316,7 @@ func (do *Domain) checkValidityInLoop(lease time.Duration) {
 	for {
 		select {
 		case <-timer.C:
+			// TODO: Using the local time, it will affect the accuracy of the check when clock transition.
 			lastReloadTime, lastSuccTS := do.SchemaValidity.getTimeInfo()
 			sub := time.Duration(time.Now().UnixNano() - lastReloadTime)
 			if sub > lease {
@@ -355,7 +347,7 @@ func (do *Domain) checkValidityInLoop(lease time.Duration) {
 			}
 
 			lease = newLease
-			timer.Reset(0 * time.Millisecond)
+			timer.Reset(0)
 		}
 	}
 }
@@ -367,7 +359,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	for {
 		select {
 		case <-ticker.C:
-			err := do.reload()
+			err := do.Reload()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
@@ -396,7 +388,7 @@ func (c *ddlCallback) OnChanged(err error) error {
 	}
 	log.Infof("[ddl] on DDL change, must reload")
 
-	return c.do.MustReload()
+	return c.do.Reload()
 }
 
 type schemaValidityInfo struct {
@@ -455,7 +447,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 		return nil, errors.Trace(err)
 	}
 	d.ddl = ddl.NewDDL(d.store, d.infoHandle, &ddlCallback{do: d}, lease)
-	if err = d.MustReload(); err != nil {
+	if err = d.Reload(); err != nil {
 		return nil, errors.Trace(err)
 	}
 	d.SchemaValidity.SetValidity(true, 0)
