@@ -125,6 +125,48 @@ import (
 	is		"IS"
 	insert		"INSERT"
 	intType		"INT"
+	join		"JOIN"
+	key		"KEY"
+	keys		"KEYS"
+	leading		"LEADING"
+	left		"LEFT"
+	like		"LIKE"
+	limit		"LIMIT"
+	lines 		"LINES"
+	load		"LOAD"
+	localTime	"LOCALTIME"
+	localTs		"LOCALTIMESTAMP"
+	lock		"LOCK"
+	longblobType	"LONGBLOB"
+	longtextType	"LONGTEXT"
+	lowPriority	"LOW_PRIORITY"
+	mediumblobType	"MEDIUMBLOB"
+	mediumIntType	"MEDIUMINT"
+	mediumtextType	"MEDIUMTEXT"
+	minuteMicrosecond	"MINUTE_MICROSECOND"
+	minuteSecond 		"MINUTE_SECOND"
+	mod 		"MOD"
+	not		"NOT"
+	noWriteToBinLog "NO_WRITE_TO_BINLOG"
+	null		"NULL"
+	numericType	"NUMERIC"
+	on		"ON"
+	option		"OPTION"
+	or		"OR"
+	order		"ORDER"
+	outer		"OUTER"
+	precisionType	"PRECISION"
+	primary		"PRIMARY"
+	procedure	"PROCEDURE"
+	read		"READ"
+	realType	"REAL"
+	references	"REFERENCES"
+	regexpKwd	"REGEXP"
+	repeat		"REPEAT"
+	replace		"REPLACE"
+	restrict	"RESTRICT"
+	right		"RIGHT"
+	rlike		"RLIKE"
 
 	/* the following tokens belong to NotKeywordToken*/
 	abs		"ABS"
@@ -251,7 +293,6 @@ import (
 	modify		"MODIFY"
 	maxRows		"MAX_ROWS"
 	minRows		"MIN_ROWS"
-	noWriteToBinLog "NO_WRITE_TO_BINLOG"
 	names		"NAMES"
 	national	"NATIONAL"
 	no		"NO"
@@ -317,41 +358,13 @@ import (
 	extract		"EXTRACT"
 
 	ge		">="
-	join		"JOIN"
-	key		"KEY"
-	keys		"KEYS"
 	le		"<="
-	leading		"LEADING"
-	left		"LEFT"
-	like		"LIKE"
-	limit		"LIMIT"
-	lines 		"LINES"
-	load		"LOAD"
-	lock		"LOCK"
-	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
-	mod 		"MOD"
 	neq		"!="
 	neqSynonym	"<>"
-	not		"NOT"
-	null		"NULL"
 	nulleq		"<=>"
-	on		"ON"
-	option		"OPTION"
-	or		"OR"
-	order		"ORDER"
 	oror		"||"
-	outer		"OUTER"
 	placeholder	"PLACEHOLDER"
-	primary		"PRIMARY"
-	procedure	"PROCEDURE"
-	read		"READ"
-	references	"REFERENCES"
-	regexpKwd	"REGEXP"
-	repeat		"REPEAT"
-	replace		"REPLACE"
-	right		"RIGHT"
-	rlike		"RLIKE"
 	rsh		">>"
 	schema		"SCHEMA"
 	schemas		"SCHEMAS"
@@ -388,36 +401,23 @@ import (
 
 
 	currentTs	"CURRENT_TIMESTAMP"
-	localTime	"LOCALTIME"
-	localTs		"LOCALTIMESTAMP"
 
 	tinyIntType	"TINYINT"
 	smallIntType	"SMALLINT"
-	mediumIntType	"MEDIUMINT"
 
 
-	numericType	"NUMERIC"
-	precisionType	"PRECISION"
-	realType	"REAL"
 
 
 	charType	"CHAR"
 	varcharType	"VARCHAR"
 	varbinaryType	"VARBINARY"
 	tinyblobType	"TINYBLOB"
-	mediumblobType	"MEDIUMBLOB"
-	longblobType	"LONGBLOB"
 	tinytextType	"TINYTEXT"
-	mediumtextType	"MEDIUMTEXT"
-	longtextType	"LONGTEXT"
 
 	secondMicrosecond	"SECOND_MICROSECOND"
-	minuteMicrosecond	"MINUTE_MICROSECOND"
-	minuteSecond 		"MINUTE_SECOND"
 	yearMonth		"YEAR_MONTH"
 
 
-	restrict	"RESTRICT"
 
 %type   <item>
 	AdminStmt		"Check table statement or show ddl statement"
@@ -826,7 +826,9 @@ AlterTableSpec:
 	}
 
 KeyOrIndex:
-	"KEY"|"INDEX" {}
+	"KEY"
+	{}
+|"INDEX" {}
 
 ColumnKeywordOpt:
 	{}
@@ -977,7 +979,11 @@ CommitStmt:
 	}
 
 PrimaryOpt:
-	{} | "PRIMARY"
+	{} 
+| "PRIMARY"
+	{
+		$$ = $1
+	}
 
 ColumnOption:
 	"NOT" "NULL"
@@ -1257,7 +1263,13 @@ DefaultValueExpr:
 NowSym:
 	"CURRENT_TIMESTAMP"
 |	"LOCALTIME"
+	{
+		$$ = $1
+	}
 |	"LOCALTIMESTAMP"
+	{
+		$$ = $1
+	}
 |	"NOW"
 	{
 		$$ = $1
@@ -1819,8 +1831,8 @@ PredicateExpr:
 |	PrimaryFactor
 
 RegexpSym:
-	"REGEXP"
-|	"RLIKE"
+	"REGEXP" {}
+|	"RLIKE" {}
 
 LikeEscapeOpt:
 	%prec lowerThanEscape
@@ -2037,18 +2049,17 @@ ReservedKeyword:
 | "EXISTS" | "EXPLAIN" | "FALSE" | "FLOAT" | "FOR" | "FORCE" | "FOREIGN" | "FROM" 
 | "FULLTEXT" | "GRANT" | "GROUP" | "HAVING" | "HOUR_MICROSECOND" | "HOUR_MINUTE" 
 | "HOUR_SECOND" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT" | "INTEGER" | "INTERVAL"
-| "IS" 
- /* 
-
-| "DELAYED"  |  "HIGH_PRIORITY" | "IF" | "IGNORE" | "INTO" 
-
-| "JOIN" | "KEY" | "KEYS" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD" | "LOCALTIME" 
-| "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "LOW_PRIORITY" 
-| "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT" 
+| "IS" | "JOIN" | "KEY" | "KEYS" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD" | "LOCALTIME" 
+| "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT" 
 | "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC" 
-| "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" 
-| "PRECISION" | "PRIMARY" | "PROCEDURE" | "READ" | "REAL" | "REFERENCES" | "REGEXP" 
-| "REPEAT" | "REPLACE" | "RESTRICT" | "RIGHT" | "RLIKE" 
+| "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "READ" | "REAL" 
+| "REFERENCES" | "REGEXP" | "REPEAT" | "REPLACE" | "RESTRICT" | "RIGHT" | "RLIKE" 
+
+ /*  
+
+| "DELAYED"  |  "HIGH_PRIORITY" | "LOW_PRIORITY" | "IF" | "IGNORE" | "INTO" 
+
+
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT" 
 | "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" 
 | "TINYINT" | "TINYTEXT" | "TO" | "TRAILING" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED" 
@@ -2223,6 +2234,9 @@ Literal:
 		$$ = int64(0)
 	}
 |	"NULL"
+	{
+		$$ = nil
+	}
 |	"true"
 	{
 		$$ = int64(1)
@@ -2414,7 +2428,14 @@ FunctionNameConflict:
 	{
 		$$ = $1
 	}
-| "LEFT" | "REPEAT" 
+| "LEFT" 
+	{
+		$$ = $1
+	}
+| "REPEAT" 
+	{
+		$$ = $1
+	}
 | "CURRENT_USER" 
 	{
 		$$ = $1
@@ -2788,7 +2809,7 @@ FunctionCallNonKeyword:
 |	"REPLACE" '(' Expression ',' Expression ',' Expression ')'
 	{
 		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"REVERSE" '(' Expression ')'
 	{
@@ -3057,8 +3078,15 @@ TimeUnit:
 	{
 		$$ = $1
 	}
-| "SECOND_MICROSECOND" | "MINUTE_MICROSECOND"
+| "SECOND_MICROSECOND" 
+| "MINUTE_MICROSECOND"
+	{
+		$$ = $1
+	}
 |	"MINUTE_SECOND" 
+	{
+		$$ = $1
+	}
 | "HOUR_MICROSECOND" 
 	{
 		$$ = $1
@@ -3678,10 +3706,14 @@ OuterOpt:
 		$$ = nil
 	}
 |	"OUTER"
+	{
+		$$ = $1
+	}
 
 
 CrossOpt:
 	"JOIN"
+	{}
 |	"CROSS" "JOIN"
 	{}
 |	"INNER" "JOIN"
@@ -3910,7 +3942,7 @@ TransactionChars:
 
 TransactionChar:
 	"ISOLATION" "LEVEL" IsolationLevel {}
-|	"READ" "WRITE"
+|	"READ" "WRITE" {}
 |	"READ" "ONLY" {}
 
 IsolationLevel:
@@ -4143,7 +4175,7 @@ ShowStmt:
 ShowIndexKwd:
 	"INDEX" {}
 |	"INDEXES" {}
-|	"KEYS"
+|	"KEYS" {}
 
 FromOrIn:
 	"FROM"
@@ -5444,13 +5476,14 @@ UnlockTablesStmt:
 
 LockTablesStmt:
 	"LOCK" "TABLES" TableLockList
+	{}
 
 TableLock:
 	 TableName LockType
 
 LockType:
-	"READ"
-|	"READ" "LOCAL"
+	"READ" {}
+|	"READ" "LOCAL" {}
 |	"WRITE"
 
 TableLockList:
