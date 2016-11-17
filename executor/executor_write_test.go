@@ -105,6 +105,7 @@ func (s *testSuite) TestInsert(c *C) {
 	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
 	_, err = tk.Exec("insert insert_err values (1, '你好，世界')")
 	c.Assert(err, IsNil)
+	tk.MustExec("drop table insert_test, insert_test_1, insert_test_2, insert_err")
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
@@ -189,6 +190,7 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 	r = tk.MustQuery("select * from insert_autoinc_test;")
 	rowStr6 = fmt.Sprintf("%v %v", "6", "6")
 	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
+	tk.MustExec("drop table insert_autoinc_test")
 }
 
 func (s *testSuite) TestInsertIgnore(c *C) {
@@ -211,6 +213,7 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	rowStr = fmt.Sprintf("%v %v", "1", "2")
 	rowStr1 := fmt.Sprintf("%v %v", "2", "3")
 	r.Check(testkit.Rows(rowStr, rowStr1))
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestReplace(c *C) {
@@ -333,6 +336,8 @@ func (s *testSuite) TestReplace(c *C) {
 	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(3))
 	r = tk.MustQuery("select * from tIssue1012;")
 	r.Check(testkit.Rows("1 1"))
+	tk.MustExec("drop table replace_test, replace_test_1, replace_test_2, replace_test_3, replace_test_4, replace_test_5")
+	tk.MustExec("drop table tIssue989, tIssue1012")
 }
 
 func (s *testSuite) TestUpdate(c *C) {
@@ -461,6 +466,8 @@ func (s *testSuite) TestMultipleTableUpdate(c *C) {
 
 	r = tk.MustQuery("select * from t1")
 	r.Check(testkit.Rows("10", "10"))
+	tk.MustExec("drop table items, month")
+	tk.MustExec("drop table t1, t2")
 }
 
 func (s *testSuite) TestDelete(c *C) {
@@ -491,6 +498,7 @@ func (s *testSuite) TestDelete(c *C) {
 
 	tk.MustExec(`delete from delete_test ;`)
 	tk.CheckExecResult(1, 0)
+	tk.MustExec("drop table delete_test")
 }
 
 func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
@@ -521,6 +529,7 @@ func (s *testSuite) TestMultiTableDelete(c *C) {
 	// Select data
 	r := tk.MustQuery("select * from t3")
 	c.Assert(r.Rows(), HasLen, 3)
+	tk.MustExec("drop table t1,t2,t3")
 }
 
 func (s *testSuite) TestQualifiedDelete(c *C) {
@@ -739,6 +748,7 @@ func (s *testSuite) TestLoadData(c *C) {
 			fmt.Sprintf("%v %v %v %v", 40, 0, []byte(""), 0)}, []byte("xxx")},
 	}
 	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
+	tk.MustExec("drop table load_data_test")
 }
 
 func (s *testSuite) TestLoadDataEscape(c *C) {
@@ -762,6 +772,7 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
+	tk.MustExec("drop table load_data_test")
 }
 
 func makeLoadDataInfo(column int, ctx context.Context, c *C) (ld *executor.LoadDataInfo) {

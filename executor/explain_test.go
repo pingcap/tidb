@@ -279,4 +279,6 @@ func (s *testSuite) TestExplain(c *C) {
 		result := tk.MustQuery("explain " + ca.sql)
 		result.Check(testkit.Rows("EXPLAIN " + ca.result))
 	}
+	tk.MustExec("drop table t1")
+	tk.MustExec("drop table t2")
 }

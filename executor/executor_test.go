@@ -132,6 +132,8 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	r, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
+	tk.MustExec("drop table admin_test")
+	tk.MustExec("drop table admin_test1")
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
@@ -311,6 +313,7 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r.Check(testkit.Rows("0", "-1", "-2"))
 	r = tk.MustQuery("select t.d from t order by d;")
 	r.Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestSelectDistinct(c *C) {
@@ -401,6 +404,7 @@ func (s *testSuite) TestIssue345(c *C) {
 	c.Assert(err, NotNil)
 
 	tk.MustExec("commit")
+	tk.MustExec(`drop table t1, t2`)
 }
 
 func (s *testSuite) TestUnion(c *C) {
@@ -456,6 +460,7 @@ func (s *testSuite) TestUnion(c *C) {
 	r.Check(testkit.Rows("abc", "1"))
 
 	tk.MustExec("commit")
+	tk.MustExec("drop table union_test")
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -473,6 +478,7 @@ func (s *testSuite) TestIn(c *C) {
 
 	queryStr = `select c2 from t where c1 in ('7a')`
 	tk.MustQuery(queryStr).Check(testkit.Rows("7"))
+	tk.MustExec(`drop table t`)
 }
 
 func (s *testSuite) TestTablePKisHandleScan(c *C) {
@@ -536,6 +542,7 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 		result := tk.MustQuery(ca.sql)
 		result.Check(ca.result)
 	}
+	tk.MustExec(`drop table t`)
 }
 
 func (s *testSuite) TestJoin(c *C) {
@@ -628,6 +635,10 @@ func (s *testSuite) TestJoin(c *C) {
 	_, err = tk.Exec("select * from t right join t1 on 1")
 	c.Check(plan.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	plan.AllowCartesianProduct = true
+	tk.MustExec("drop table t")
+	tk.MustExec("drop table t1")
+	tk.MustExec("drop table t2")
+	tk.MustExec("drop table t3")
 
 }
 
@@ -635,7 +646,6 @@ func (s *testSuite) TestMultiJoin(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t35(a35 int primary key, b35 int, x35 int)")
 	tk.MustExec("create table t40(a40 int primary key, b40 int, x40 int)")
 	tk.MustExec("create table t14(a14 int primary key, b14 int, x14 int)")
@@ -723,6 +733,27 @@ AND a62=b18
 AND b4=a37
 AND b44=a42`)
 	result.Check(testkit.Rows("7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7"))
+	tk.MustExec("drop table t15")
+	tk.MustExec("drop table t14")
+	tk.MustExec("drop table t40")
+	tk.MustExec("drop table t35")
+	tk.MustExec("drop table t42")
+	tk.MustExec("drop table t7")
+	tk.MustExec("drop table t64")
+	tk.MustExec("drop table t19")
+	tk.MustExec("drop table t9")
+	tk.MustExec("drop table t8")
+	tk.MustExec("drop table t57")
+	tk.MustExec("drop table t37")
+	tk.MustExec("drop table t44")
+	tk.MustExec("drop table t38")
+	tk.MustExec("drop table t18")
+	tk.MustExec("drop table t62")
+	tk.MustExec("drop table t4")
+	tk.MustExec("drop table t48")
+	tk.MustExec("drop table t31")
+	tk.MustExec("drop table t16")
+	tk.MustExec("drop table t12")
 }
 
 func (s *testSuite) TestIndexScan(c *C) {
@@ -769,6 +800,8 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("INSERT INTO tab1 VALUES(1,37,20.85,30,10.69)")
 	result = tk.MustQuery("SELECT pk FROM tab1 WHERE ((col3 <= 6 OR col3 < 29 AND (col0 < 41)) OR col3 > 42) AND col1 >= 96.1 AND col3 = 30 AND col3 > 17 AND (col0 BETWEEN 36 AND 42)")
 	result.Check(testkit.Rows())
+	tk.MustExec("drop table t")
+	tk.MustExec("drop table tab1")
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
@@ -782,6 +815,7 @@ func (s *testSuite) TestSubquerySameTable(c *C) {
 	result.Check(testkit.Rows("2"))
 	result = tk.MustQuery("select a from t where not exists(select 1 from t as x where x.a < t.a)")
 	result.Check(testkit.Rows("1"))
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {
@@ -801,6 +835,7 @@ func (s *testSuite) TestIndexReverseOrder(c *C) {
 	tk.MustExec("insert t values (0, 2), (1, 2), (2, 2), (0, 1), (1, 1), (2, 1), (0, 0), (1, 0), (2, 0)")
 	result = tk.MustQuery("select b, a from t order by b, a desc")
 	result.Check(testkit.Rows("0 2", "0 1", "0 0", "1 2", "1 1", "1 0", "2 2", "2 1", "2 0"))
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestTableReverseOrder(c *C) {
@@ -814,6 +849,7 @@ func (s *testSuite) TestTableReverseOrder(c *C) {
 	result.Check(testkit.Rows("9", "8", "7", "6", "5", "4", "3", "2", "1"))
 	result = tk.MustQuery("select a from t where a <3 or (a >=6 and a < 8) order by a desc")
 	result.Check(testkit.Rows("7", "6", "2", "1"))
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
@@ -844,6 +880,8 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("create table t1 (a float)")
 	tk.MustExec("insert t1 values (281.37)")
 	tk.MustQuery("select a from t1 where (a in (select a from t1))").Check(testkit.Rows("281.37"))
+	tk.MustExec("drop table t")
+	tk.MustExec("drop table t1")
 }
 
 func (s *testSuite) TestDefaultNull(c *C) {
@@ -861,6 +899,7 @@ func (s *testSuite) TestDefaultNull(c *C) {
 	tk.MustExec("delete from t where a = 1")
 	tk.MustExec("insert t (a) values (1)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 <nil>"))
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestUnsignedPKColumn(c *C) {
@@ -875,6 +914,7 @@ func (s *testSuite) TestUnsignedPKColumn(c *C) {
 	tk.MustExec("update t set c=2 where a=1;")
 	result = tk.MustQuery("select * from t where b=1;")
 	result.Check(testkit.Rows("1 1 2"))
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestBuiltin(c *C) {
@@ -1019,6 +1059,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 		{".*", "abcd", 1},
 	}
 	patternMatching(c, tk, "regexp", testCases)
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
@@ -1071,6 +1112,7 @@ func (s *testSuite) TestToPBExpr(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select * from t where not(a != 1 and a != 2)")
 	result.Check(testkit.Rows("1", "2"))
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestDatumXAPI(c *C) {
@@ -1097,6 +1139,7 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 	result.Check(testkit.Rows("11:11:12 11:11:12", "11:11:13 11:11:13"))
 	result = tk.MustQuery("select * from t where b > '11:11:11.5'")
 	result.Check(testkit.Rows("11:11:12 11:11:12", "11:11:13 11:11:13"))
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestJoinPanic(c *C) {
@@ -1106,6 +1149,7 @@ func (s *testSuite) TestJoinPanic(c *C) {
 	tk.MustExec("drop table if exists events")
 	tk.MustExec("create table events (clock int, source int)")
 	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
+	tk.MustExec("drop table events")
 }
 
 func (s *testSuite) TestSQLMode(c *C) {
@@ -1140,6 +1184,7 @@ func (s *testSuite) TestSQLMode(c *C) {
 	c.Check(err, NotNil)
 	// Restore original global strict mode.
 	tk.MustExec("set @@global.sql_mode = 'STRICT_TRANS_TABLES'")
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestNewSubquery(c *C) {
@@ -1198,6 +1243,9 @@ func (s *testSuite) TestNewSubquery(c *C) {
 
 	result = tk.MustQuery("select * from a b where c = (select d from b a where a.c = 2 and b.c = 1)")
 	result.Check(testkit.Rows("1 2"))
+	tk.MustExec("drop table t")
+	tk.MustExec("drop table a")
+	tk.MustExec("drop table b")
 }
 
 func (s *testSuite) TestNewTableDual(c *C) {
@@ -1273,6 +1321,7 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("1 1"))
 	result = tk.MustQuery("select * from t where (c, d) = (select * from t k where (t.c,t.d) = (c,d))")
 	result.Check(testkit.Rows("1 1", "1 3", "2 1", "2 3"))
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestColumnName(c *C) {
@@ -1302,6 +1351,7 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(len(fields), Equals, 2)
 	c.Check(fields[0].Column.Name.L, Equals, "d")
 	c.Check(fields[1].Column.Name.L, Equals, "c")
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestSelectVar(c *C) {
@@ -1314,6 +1364,7 @@ func (s *testSuite) TestSelectVar(c *C) {
 	result.Check(testkit.Rows("<nil> 2", "<nil> 3", "<nil> 2"))
 	result = tk.MustQuery("select @a, @a := d+1 from t")
 	result.Check(testkit.Rows("2 2", "2 3", "3 2"))
+	tk.MustExec("drop table t")
 
 }
 
@@ -1359,4 +1410,5 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
+	tk.MustExec("drop table history_read")
 }
