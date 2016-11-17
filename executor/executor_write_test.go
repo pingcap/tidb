@@ -30,8 +30,8 @@ import (
 func (s *testSuite) TestInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		testleak.AfterTest(c)()
 		tk.MustExec("drop table if exists insert_test, insert_test_1, insert_test_2, insert_err")
+		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
 	testSQL := `drop table if exists insert_test;create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
@@ -113,8 +113,8 @@ func (s *testSuite) TestInsert(c *C) {
 func (s *testSuite) TestInsertAutoInc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		testleak.AfterTest(c)()
 		tk.MustExec("drop table if exists insert_autoinc_test")
+		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
 	createSQL := `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
@@ -200,8 +200,8 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 func (s *testSuite) TestInsertIgnore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		testleak.AfterTest(c)()
 		tk.MustExec("drop table if exists t")
+		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
 	testSQL := `drop table if exists t;
@@ -225,9 +225,9 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 func (s *testSuite) TestReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		testleak.AfterTest(c)()
 		tk.MustExec("drop table if exists replace_test, replace_test_1, replace_test_2, replace_test_3, replace_test_4, replace_test_5")
 		tk.MustExec("drop table if exists tIssue989, tIssue1012")
+		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
@@ -351,8 +351,8 @@ func (s *testSuite) TestReplace(c *C) {
 func (s *testSuite) TestUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		testleak.AfterTest(c)()
 		tk.MustExec("drop table if exists update_test")
+		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
 	s.fillData(tk, "update_test")
@@ -423,9 +423,9 @@ func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
 func (s *testSuite) TestMultipleTableUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		testleak.AfterTest(c)()
 		tk.MustExec("drop table if exists items, month")
 		tk.MustExec("drop table if exists t1, t2")
+		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
 	s.fillMultiTableForUpdate(tk)
@@ -485,8 +485,8 @@ func (s *testSuite) TestMultipleTableUpdate(c *C) {
 func (s *testSuite) TestDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		testleak.AfterTest(c)()
 		tk.MustExec("drop table if exists delete_test")
+		testleak.AfterTest(c)()
 	}()
 	s.fillData(tk, "delete_test")
 
@@ -535,8 +535,8 @@ func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
 func (s *testSuite) TestMultiTableDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		testleak.AfterTest(c)()
 		tk.MustExec("drop table if exists t1, t2, t3")
+		testleak.AfterTest(c)()
 	}()
 	s.fillDataMultiTable(tk)
 
@@ -551,8 +551,8 @@ func (s *testSuite) TestMultiTableDelete(c *C) {
 func (s *testSuite) TestQualifiedDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		testleak.AfterTest(c)()
 		tk.MustExec("drop table if exists t1, t2")
+		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -591,8 +591,8 @@ func (s *testSuite) TestQualifiedDelete(c *C) {
 func (s *testSuite) TestLoadData(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		testleak.AfterTest(c)()
 		tk.MustExec("drop table if exists load_data_test")
+		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
 	createSQL := `drop table if exists load_data_test;
@@ -773,8 +773,8 @@ func (s *testSuite) TestLoadData(c *C) {
 func (s *testSuite) TestLoadDataEscape(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		testleak.AfterTest(c)()
 		tk.MustExec("drop table if exists load_data_test")
+		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")

@@ -22,8 +22,8 @@ import (
 func (s *testSuite) TestExplain(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		testleak.AfterTest(c)()
 		tk.MustExec("drop table if exists t1, t2")
+		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
