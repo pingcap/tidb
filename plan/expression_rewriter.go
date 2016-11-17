@@ -566,10 +566,10 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 			return
 		}
 		function, er.err = expression.NewFunction(opcode.Ops[v.Op], &v.Type, er.ctxStack[stkLen-2:]...)
-		if er.err != nil {
-			er.err = errors.Trace(er.err)
-			return
-		}
+	}
+	if er.err != nil {
+		er.err = errors.Trace(er.err)
+		return
 	}
 	er.ctxStack = er.ctxStack[:stkLen-2]
 	er.ctxStack = append(er.ctxStack, function)
