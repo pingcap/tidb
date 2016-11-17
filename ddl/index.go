@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"math"
 	"time"
 
 	"github.com/juju/errors"
@@ -365,8 +366,8 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 	return rowKey, vals, nil
 }
 
-const defaultBatchSize = 1024
-const defaultSmallBatchSize = 128
+const defaultBatchCnt = 1024
+const defaultSmallBatchCnt = 128
 
 // How to add index in reorganization state?
 //  1. Generate a snapshot with special version.
@@ -417,7 +418,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 	}
 	defer it.Close()
 
-	handles := make([]int64, 0, defaultBatchSize)
+	handles := make([]int64, 0, defaultBatchCnt)
 	for it.Valid() {
 		if !it.Key().HasPrefix(t.RecordPrefix()) {
 			break
@@ -430,7 +431,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 		}
 
 		handles = append(handles, handle)
-		if len(handles) == defaultBatchSize {
+		if len(handles) == defaultBatchCnt {
 			break
 		}
 
@@ -447,7 +448,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 }
 
 // backfillIndexInTxn deals with a part of backfilling index data in a Transaction.
-// This part of the index data rows is defaultSmallBatchSize.
+// This part of the index data rows is defaultSmallBatchCnt.
 func (d *ddl) backfillIndexInTxn(t table.Table, kvIdx table.Index, handles []int64, txn kv.Transaction) (int64, error) {
 	nextHandle := handles[0]
 	for _, handle := range handles {
@@ -486,15 +487,9 @@ func (d *ddl) backfillIndexInTxn(t table.Table, kvIdx table.Index, handles []int
 }
 
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
-	var endIdx int
 	kvIdx := tables.NewIndex(t.Meta(), indexInfo)
 	for len(handles) > 0 {
-		if len(handles) >= defaultSmallBatchSize {
-			endIdx = defaultSmallBatchSize
-		} else {
-			endIdx = len(handles)
-		}
-
+		endIdx := int(math.Min(float64(defaultSmallBatchCnt), float64(len(handles))))
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err1 := d.isReorgRunnable(txn, ddlJobFlag); err1 != nil {
 				return errors.Trace(err1)
