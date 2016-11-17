@@ -37,6 +37,9 @@ type Scanner struct {
 
 	errs         []error
 	stmtStartPos int
+
+	// for scanning such kind of comment: /*! MySQL-specific code */
+	specialComment *Scanner
 }
 
 // Errors returns the errors during a scan.
@@ -127,6 +130,19 @@ func (s *Scanner) skipWhitespace() rune {
 }
 
 func (s *Scanner) scan() (tok int, pos Pos, lit string) {
+	if s.specialComment != nil {
+		// enter specialComment scan mode.
+		// for scanning such kind of comment: /*! MySQL-specific code */
+		specialComment := s.specialComment
+		tok, pos, lit = specialComment.scan()
+		if tok != 0 {
+			// return the specialComment scan result as the result
+			return
+		}
+		// leave specialComment scan mode after all stream consumed.
+		s.specialComment = nil
+	}
+
 	ch0 := s.r.peek()
 	if unicode.IsSpace(ch0) {
 		ch0 = s.skipWhitespace()
@@ -236,6 +252,15 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 				break
 			}
 		}
+
+		// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
+		// Convert "/*!VersionNumber MySQL-specific-code */" to "MySQL-specific-code".
+		comment := s.r.data(&pos)
+		if strings.HasPrefix(comment, "/*!") {
+			sql := specCodePattern.ReplaceAllStringFunc(comment, trimComment)
+			s.specialComment = NewScanner(sql)
+		}
+
 		return s.scan()
 	}
 	tok = int('/')
