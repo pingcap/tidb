@@ -76,6 +76,55 @@ import (
 	cross 		"CROSS"
 	currentDate 	"CURRENT_DATE"
 	currentTime 	"CURRENT_TIME"
+	currentUser	"CURRENT_USER"
+	database	"DATABASE"
+	databases	"DATABASES"
+	dayHour		"DAY_HOUR"
+	dayMicrosecond	"DAY_MICROSECOND"
+	dayMinute	"DAY_MINUTE"
+	daySecond 	"DAY_SECOND"
+	decimalType	"DECIMAL"
+	defaultKwd	"DEFAULT"
+	delayed		"DELAYED"
+	deleteKwd	"DELETE"
+	desc		"DESC"
+	describe	"DESCRIBE"
+	distinct	"DISTINCT"
+	div 		"DIV"
+	doubleType	"DOUBLE"
+	drop		"DROP"
+	dual 		"DUAL"
+	elseKwd		"ELSE"
+	enclosed	"ENCLOSED"
+	escaped 	"ESCAPED"
+	exists		"EXISTS"
+	explain		"EXPLAIN"
+	falseKwd	"FALSE"
+	floatType	"FLOAT"
+	forKwd		"FOR"
+	force		"FORCE"
+	foreign		"FOREIGN"
+	from		"FROM"
+	fulltext	"FULLTEXT"
+	grants		"GRANTS"
+	group		"GROUP"
+	having		"HAVING"
+	highPriority	"HIGH_PRIORITY"
+	hourMicrosecond	"HOUR_MICROSECOND"
+	hourMinute	"HOUR_MINUTE"
+	hourSecond	"HOUR_SECOND"
+	ifKwd		"IF"
+	ignore		"IGNORE"
+	in		"IN"
+	index		"INDEX"
+	infile		"INFILE"
+	inner 		"INNER"
+	integerType	"INTEGER"
+	interval	"INTERVAL"
+	into		"INTO"
+	is		"IS"
+	insert		"INSERT"
+	intType		"INT"
 
 	/* the following tokens belong to NotKeywordToken*/
 	abs		"ABS"
@@ -99,6 +148,7 @@ import (
 	dayofyear	"DAYOFYEAR"
 	foundRows	"FOUND_ROWS"
 	fromUnixTime	"FROM_UNIXTIME"
+	grant		"GRANT"
 	groupConcat	"GROUP_CONCAT"
 	greatest	"GREATEST"
 	hour		"HOUR"
@@ -175,7 +225,6 @@ import (
 	datetimeType	"DATETIME"
 	deallocate	"DEALLOCATE"
 	delayKeyWrite	"DELAY_KEY_WRITE"
-	desc		"DESC"
 	disable		"DISABLE"
 	do		"DO"
 	dynamic		"DYNAMIC"
@@ -191,7 +240,6 @@ import (
 	flush		"FLUSH"
 	full		"FULL"
 	function	"FUNCTION"
-	grants		"GRANTS"
 	hash		"HASH"
 	identified	"IDENTIFIED"
 	isolation	"ISOLATION"
@@ -262,48 +310,13 @@ import (
 	byteType	"BYTE"
 	cast		"CAST"
 	curDate 	"CURDATE"
-	currentUser	"CURRENT_USER"
-	database	"DATABASE"
-	databases	"DATABASES"
 	ddl		"DDL"
-	defaultKwd	"DEFAULT"
-	delayed		"DELAYED"
-	deleteKwd	"DELETE"
-	describe	"DESCRIBE"
-	distinct	"DISTINCT"
-	div 		"DIV"
-	drop		"DROP"
-	dual 		"DUAL"
 	duplicate	"DUPLICATE"
-	elseKwd		"ELSE"
-	enclosed	"ENCLOSED"
 	enum 		"ENUM"
 	eq		"="
-	escaped 	"ESCAPED"
-	exists		"EXISTS"
-	explain		"EXPLAIN"
 	extract		"EXTRACT"
-	falseKwd	"false"
-	foreign		"FOREIGN"
-	forKwd		"FOR"
-	force		"FORCE"
-	from		"FROM"
-	fulltext	"FULLTEXT"
+
 	ge		">="
-	grant		"GRANT"
-	group		"GROUP"
-	having		"HAVING"
-	highPriority	"HIGH_PRIORITY"
-	ignore		"IGNORE"
-	ifKwd		"IF"
-	in		"IN"
-	index		"INDEX"
-	infile		"INFILE"
-	inner 		"INNER"
-	insert		"INSERT"
-	interval	"INTERVAL"
-	into		"INTO"
-	is		"IS"
 	join		"JOIN"
 	key		"KEY"
 	keys		"KEYS"
@@ -381,13 +394,9 @@ import (
 	tinyIntType	"TINYINT"
 	smallIntType	"SMALLINT"
 	mediumIntType	"MEDIUMINT"
-	intType		"INT"
-	integerType	"INTEGER"
 
-	decimalType	"DECIMAL"
+
 	numericType	"NUMERIC"
-	floatType	"float"
-	doubleType	"DOUBLE"
 	precisionType	"PRECISION"
 	realType	"REAL"
 
@@ -405,14 +414,8 @@ import (
 	secondMicrosecond	"SECOND_MICROSECOND"
 	minuteMicrosecond	"MINUTE_MICROSECOND"
 	minuteSecond 		"MINUTE_SECOND"
-	hourMicrosecond		"HOUR_MICROSECOND"
-	hourSecond 		"HOUR_SECOND"
-	hourMinute 		"HOUR_MINUTE"
-	dayMicrosecond 		"DAY_MICROSECOND"
-	daySecond 		"DAY_SECOND"
-	dayMinute 		"DAY_MINUTE"
-	dayHour			"DAY_HOUR"
 	yearMonth		"YEAR_MONTH"
+
 
 	restrict	"RESTRICT"
 
@@ -823,7 +826,7 @@ AlterTableSpec:
 	}
 
 KeyOrIndex:
-	"KEY"|"INDEX"
+	"KEY"|"INDEX" {}
 
 ColumnKeywordOpt:
 	{}
@@ -1431,6 +1434,7 @@ DefaultOpt:
 DefaultKwdOpt:
 	{}
 |	"DEFAULT"
+	{}
 
 /******************************************************************
  * Do statement
@@ -1507,7 +1511,9 @@ DeleteFromStmt:
 	}
 
 DatabaseSym:
-	"DATABASE" | "SCHEMA"
+	"DATABASE" 
+	{}
+|	"SCHEMA"
 
 DropDatabaseStmt:
 	"DROP" DatabaseSym IfExists DBName
@@ -1566,7 +1572,13 @@ EmptyStmt:
 
 ExplainSym:
 	"EXPLAIN"
+	{
+		$$ = $1
+	}
 |	"DESCRIBE"
+	{
+		$$ = $1
+	}
 |	"DESC"
 	{
 		$$ = $1
@@ -2019,14 +2031,17 @@ ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
 | "BINARY" | "BLOB" | "BOTH" | "BY" | "CASCADE" | "CASE" | "CHARACTER" | "CHECK" | "COLLATE"
 | "COLUMN" | "CONSTRAINT" | "CONVERT" | "CREATE" | "CROSS" | "CURRENT_DATE" | "CURRENT_TIME"
- /*
 | "CURRENT_USER" | "DATABASE" | "DATABASES" | "DAY_HOUR" | "DAY_MICROSECOND" | "DAY_MINUTE" 
-| "DAY_SECOND" | "DECIMAL" | "DEFAULT" | "DELAYED" | "DELETE" | "DESC" | "DESCRIBE" 
+| "DAY_SECOND" | "DECIMAL" | "DEFAULT" | "DELETE" | "DESC" | "DESCRIBE" 
 | "DISTINCT" | "DIV" | "DOUBLE" | "DROP" | "DUAL" | "ELSE" | "ENCLOSED" | "ESCAPED" 
 | "EXISTS" | "EXPLAIN" | "FALSE" | "FLOAT" | "FOR" | "FORCE" | "FOREIGN" | "FROM" 
-| "FULLTEXT" | "GENERATED" | "GRANT" | "GROUP" | "HAVING" | "HIGH_PRIORITY" | "HOUR_MICROSECOND" | "HOUR_MINUTE" 
-| "HOUR_SECOND" | "IF" | "IGNORE" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT"
-| "INTEGER" | "INTERVAL" | "INTO" | "IS" 
+| "FULLTEXT" | "GRANT" | "GROUP" | "HAVING" | "HOUR_MICROSECOND" | "HOUR_MINUTE" 
+| "HOUR_SECOND" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT" | "INTEGER" | "INTERVAL"
+| "IS" 
+ /* 
+
+| "DELAYED"  |  "HIGH_PRIORITY" | "IF" | "IGNORE" | "INTO" 
+
 | "JOIN" | "KEY" | "KEYS" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD" | "LOCALTIME" 
 | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "LOW_PRIORITY" 
 | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT" 
@@ -2203,7 +2218,7 @@ ReplacePriority:
 /***********************************Replace Statements END************************************/
 
 Literal:
-	"false"
+	"FALSE"
 	{
 		$$ = int64(0)
 	}
@@ -2390,7 +2405,21 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "UTC_DATE"
+	"DATABASE" 
+	{
+		$$ = $1
+	}
+| "SCHEMA" 
+| "IF" 
+	{
+		$$ = $1
+	}
+| "LEFT" | "REPEAT" 
+| "CURRENT_USER" 
+	{
+		$$ = $1
+	}
+| "UTC_DATE"
 | "CURRENT_DATE"
 	{
 		$$ = $1
@@ -2408,7 +2437,7 @@ FunctionCallConflict:
 |	"CURRENT_USER"
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
 |	"CURRENT_DATE"
 	{
@@ -3029,8 +3058,36 @@ TimeUnit:
 		$$ = $1
 	}
 | "SECOND_MICROSECOND" | "MINUTE_MICROSECOND"
-|	"MINUTE_SECOND" | "HOUR_MICROSECOND" | "HOUR_SECOND" | "HOUR_MINUTE"
-|	"DAY_MICROSECOND" | "DAY_SECOND" | "DAY_MINUTE" | "DAY_HOUR" | "YEAR_MONTH"
+|	"MINUTE_SECOND" 
+| "HOUR_MICROSECOND" 
+	{
+		$$ = $1
+	}
+| "HOUR_SECOND" 
+	{
+		$$ = $1
+	}
+| "HOUR_MINUTE"
+	{
+		$$ = $1
+	}
+|	"DAY_MICROSECOND" 
+	{
+		$$ = $1
+	}
+| "DAY_SECOND" 
+	{
+		$$ = $1
+	}
+| "DAY_MINUTE" 
+	{
+		$$ = $1
+	}
+| "DAY_HOUR" 
+	{
+		$$ = $1
+	}
+| "YEAR_MONTH"
 
 ExpressionOpt:
 	{
@@ -3317,6 +3374,9 @@ DeallocateSym:
 		$$ = $1
 	}
 | "DROP"
+	{
+		$$ = $1
+	}
 
 /****************************Prepared Statement End*******************************/
 
@@ -3625,7 +3685,7 @@ CrossOpt:
 |	"CROSS" "JOIN"
 	{}
 |	"INNER" "JOIN"
-
+	{}
 
 LimitClause:
 	{
@@ -4081,12 +4141,15 @@ ShowStmt:
 	}
 
 ShowIndexKwd:
-	"INDEX"
+	"INDEX" {}
 |	"INDEXES" {}
 |	"KEYS"
 
 FromOrIn:
-	"FROM"|"IN"
+	"FROM"
+	{}
+|	"IN"
+	{}
 
 ShowTargetFilterable:
 	"ENGINES"
@@ -4657,7 +4720,9 @@ IntegerType:
 	}
 
 OptInteger:
-	{} | "INTEGER"
+	{} 
+| "INTEGER"
+	{}
 
 FixedPointType:
 	"DECIMAL"
@@ -4670,7 +4735,7 @@ FixedPointType:
 	}
 
 FloatingPointType:
-	"float"
+	"FLOAT"
 	{
 		$$ = mysql.TypeFloat
 	}
