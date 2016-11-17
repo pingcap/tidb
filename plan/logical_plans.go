@@ -96,7 +96,7 @@ type Apply struct {
 	InnerPlan        LogicalPlan
 	Checker          *ApplyConditionChecker
 	corColsInCurPlan []*expression.CorrelatedColumn
-	// outerColumns is the correlated columns that not belong to this plan.
+	// corColsInOuterPlan is the correlated columns that don't belong to this plan.
 	corColsInOuterPlan []*expression.CorrelatedColumn
 }
 

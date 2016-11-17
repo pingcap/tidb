@@ -126,7 +126,7 @@ type Column struct {
 	// If so, this column's name will be the plain sql text.
 	IsAggOrSubq bool
 
-	// only used during execution
+	// Only used for execution.
 	Index int
 }
 

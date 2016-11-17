@@ -910,6 +910,8 @@ type ApplyConditionChecker struct {
 	All       bool
 }
 
+// buildApply builds apply plan with outerPlan and innerPlan. Everytime we fetch a record from outerPlan and apply it to
+// innerPlan. This way is the so-called correlated execution.
 func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, checker *ApplyConditionChecker) LogicalPlan {
 	ap := &Apply{
 		InnerPlan:        innerPlan,
