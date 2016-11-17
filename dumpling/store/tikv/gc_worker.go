@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
 // GCWorker periodically triggers GC process on tikv server.
@@ -250,7 +251,7 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 			MaxVersion: safePoint,
 		},
 	}
-	bo := NewBackoffer(gcResolveLockMaxBackoff)
+	bo := NewBackoffer(gcResolveLockMaxBackoff, goctx.Background())
 
 	log.Infof("[gc worker] %s start resolve locks, safePoint: %v.", w.uuid, safePoint)
 	startTime := time.Now()
@@ -324,7 +325,7 @@ func (w *GCWorker) DoGC(safePoint uint64) error {
 			SafePoint: safePoint,
 		},
 	}
-	bo := NewBackoffer(gcMaxBackoff)
+	bo := NewBackoffer(gcMaxBackoff, goctx.Background())
 
 	log.Infof("[gc worker] %s start gc, safePoint: %v.", w.uuid, safePoint)
 	startTime := time.Now()
