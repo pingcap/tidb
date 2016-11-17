@@ -176,12 +176,12 @@ func (d *ddl) delKeysWithStartKey(prefix, startKey kv.Key, jobType JobType, job 
 
 	var count int
 	total := job.GetRowCount()
-	keys := make([]kv.Key, 0, defaultBatchSize)
+	keys := make([]kv.Key, 0, defaultBatchCnt)
 	for {
 		if limitedDel && count >= limit {
 			break
 		}
-		batch := defaultBatchSize
+		batch := defaultBatchCnt
 		if limitedDel && count+batch > limit {
 			batch = limit - count
 		}

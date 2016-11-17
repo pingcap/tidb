@@ -106,7 +106,7 @@ func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.
 			if f.FuncName.L == ast.EQ {
 				lCol, lok := f.Args[0].(*expression.Column)
 				rCol, rok := f.Args[1].(*expression.Column)
-				if lok && rok && !lCol.Correlated && !rCol.Correlated {
+				if lok && rok {
 					lID := findColumnIndexByGroup(group, lCol)
 					rID := findColumnIndexByGroup(group, rCol)
 					if lID != rID {

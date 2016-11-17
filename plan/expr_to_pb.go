@@ -104,10 +104,6 @@ func columnToPBExpr(client kv.Client, column *expression.Column) *tipb.Expr {
 		return nil
 	}
 
-	if column.Correlated {
-		return nil
-	}
-
 	id := column.ID
 	// Zero Column ID is not a column from table, can not support for now.
 	if id == 0 || id == -1 {
