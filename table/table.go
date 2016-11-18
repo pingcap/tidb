@@ -18,6 +18,8 @@
 package table
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -142,6 +144,17 @@ const (
 	codeDuplicateColumn = 1110
 	codeNoDefaultValue  = 1364
 )
+
+// Slice is used for table sorting.
+type Slice []Table
+
+func (s Slice) Len() int { return len(s) }
+
+func (s Slice) Less(i, j int) bool {
+	return strings.Compare(s[i].Meta().Name.L, s[j].Meta().Name.L) < 0
+}
+
+func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
