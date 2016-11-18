@@ -140,8 +140,6 @@ func NewBackoffer(maxSleep int, ctx context.Context) *Backoffer {
 	}
 }
 
-var cancelOnFirstError struct{}
-
 // WithCancel returns a cancel function which, when called, would cancel backoffer's context.
 func (b *Backoffer) WithCancel() context.CancelFunc {
 	var cancel context.CancelFunc
