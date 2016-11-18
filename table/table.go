@@ -18,8 +18,6 @@
 package table
 
 import (
-	"strings"
-
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -151,7 +149,7 @@ type Slice []Table
 func (s Slice) Len() int { return len(s) }
 
 func (s Slice) Less(i, j int) bool {
-	return strings.Compare(s[i].Meta().Name.L, s[j].Meta().Name.L) < 0
+	return s[i].Meta().Name.O < s[j].Meta().Name.O
 }
 
 func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
