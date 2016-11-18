@@ -382,6 +382,7 @@ import (
 %token	<item>
 
 	/*yy:token "1.%d"   */	floatLit        "floating-point literal"
+	/*yy:token "1.%d"   */	decLit          "decimal literal"
 	/*yy:token "%d"     */	intLit          "integer literal"
 	/*yy:token "%x"     */	hexLit          "hexadecimal literal"
 	/*yy:token "%b"     */	bitLit          "bit literal"
@@ -1276,6 +1277,7 @@ SignedLiteral:
 NumLiteral:
 	intLit
 |	floatLit
+|	decLit
 
 
 CreateIndexStmt:
@@ -2192,6 +2194,7 @@ Literal:
 		$$ = int64(1)
 	}
 |	floatLit
+|	decLit
 |	intLit
 |	stringLit
 	{
