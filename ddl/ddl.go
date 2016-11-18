@@ -843,7 +843,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ident.Schema)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		return errors.Trace(infoschema.ErrTableExists)
@@ -1143,7 +1143,7 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s doesn't exist", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
 	}
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
@@ -1166,7 +1166,7 @@ func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s doesn't exist", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
 	}
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
@@ -1191,7 +1191,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -1247,7 +1247,7 @@ func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.C
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -1277,7 +1277,7 @@ func (d *ddl) DropForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIS
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)

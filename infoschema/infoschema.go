@@ -34,7 +34,7 @@ var (
 	// ErrDatabaseDropExists returns for dropping a non-existent database.
 	ErrDatabaseDropExists = terror.ClassSchema.New(codeDBDropExists, "database doesn't exist")
 	// ErrDatabaseNotExists returns for database not exists.
-	ErrDatabaseNotExists = terror.ClassSchema.New(codeDatabaseNotExists, "database not exists")
+	ErrDatabaseNotExists = terror.ClassSchema.New(codeDatabaseNotExists, "database %s doesn't exists")
 	// ErrTableNotExists returns for table not exists.
 	ErrTableNotExists = terror.ClassSchema.New(codeTableNotExists, "table not exists")
 	// ErrColumnNotExists returns for column not exists.
