@@ -143,6 +143,17 @@ const (
 	codeNoDefaultValue  = 1364
 )
 
+// Slice is used for table sorting.
+type Slice []Table
+
+func (s Slice) Len() int { return len(s) }
+
+func (s Slice) Less(i, j int) bool {
+	return s[i].Meta().Name.O < s[j].Meta().Name.O
+}
+
+func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeColumnCantNull:  mysql.ErrBadNull,
