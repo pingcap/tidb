@@ -306,7 +306,7 @@ func (s *session) Retry() error {
 			if len(txt) > sqlLogMaxLen {
 				txt = txt[:sqlLogMaxLen]
 			}
-			log.Warnf("Retry %s", txt)
+			log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
 			_, err = runStmt(s, st)
 			if err != nil {
 				if kv.IsRetryableError(err) {
