@@ -381,9 +381,6 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	if !ok {
 		return false
 	}
-	if col.Correlated {
-		return false
-	}
 	if c.pkName.L != "" {
 		return c.pkName.L == col.ColName.L
 	}

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
+	"golang.org/x/net/context"
 )
 
 type storeCache struct {
@@ -154,7 +155,7 @@ func (s *tikvStore) UUID() string {
 }
 
 func (s *tikvStore) CurrentVersion() (kv.Version, error) {
-	bo := NewBackoffer(tsoMaxBackoff)
+	bo := NewBackoffer(tsoMaxBackoff, context.Background())
 	startTS, err := s.getTimestampWithRetry(bo)
 	if err != nil {
 		return kv.NewVersion(0), errors.Trace(err)
@@ -187,6 +188,12 @@ func (s *tikvStore) GetClient() kv.Client {
 // returns `NotLeader`.
 func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVerID, timeout time.Duration) (*pb.Response, error) {
 	for {
+		select {
+		case <-bo.ctx.Done():
+			return nil, errors.Trace(bo.ctx.Err())
+		default:
+		}
+
 		region := s.regionCache.GetRegionByVerID(regionID)
 		if region == nil {
 			// If the region is not found in cache, it must be out

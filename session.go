@@ -268,6 +268,8 @@ func (s *session) String() string {
 	return string(b)
 }
 
+const sqlLogMaxLen = 1024
+
 func (s *session) Retry() error {
 	variable.GetSessionVars(s).RetryInfo.Retrying = true
 	nh := s.history.clone()
@@ -300,7 +302,11 @@ func (s *session) Retry() error {
 		variable.GetSessionVars(s).RetryInfo.ResetOffset()
 		for _, sr := range nh.history {
 			st := sr.st
-			log.Warnf("Retry %s", st.OriginText())
+			txt := st.OriginText()
+			if len(txt) > sqlLogMaxLen {
+				txt = txt[:sqlLogMaxLen]
+			}
+			log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
 			_, err = runStmt(s, st)
 			if err != nil {
 				if kv.IsRetryableError(err) {
