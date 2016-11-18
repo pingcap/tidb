@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -1968,5 +1969,93 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 		}
 		sort.Strings(result)
 		c.Assert(strings.Join(result, ", "), Equals, ca.after, Commentf("for %s", ca.sql))
+	}
+}
+
+func (s *testPlanSuite) TestValidate(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql string
+		err *terror.Error
+	}{
+		{
+			sql: "select date_format((1,2), '%H');",
+			err: ErrOneColumn,
+		},
+		{
+			sql: "select cast((1,2) as date)",
+			err: ErrOneColumn,
+		},
+		{
+			sql: "select (1,2) between (3,4) and (5,6)",
+			err: ErrOneColumn,
+		},
+		{
+			sql: "select (1,2) rlike '1'",
+			err: ErrOneColumn,
+		},
+		{
+			sql: "select (1,2) like '1'",
+			err: ErrOneColumn,
+		},
+		{
+			sql: "select case(1,2) when(1,2) then true end",
+			err: ErrOneColumn,
+		},
+		{
+			sql: "select (1,2) in ((3,4),(5,6))",
+			err: nil,
+		},
+		{
+			sql: "select (1,2) in ((3,4),5)",
+			err: ErrSameColumns,
+		},
+		{
+			sql: "select (1,2) is true",
+			err: ErrOneColumn,
+		},
+		{
+			sql: "select (1,2) is null",
+			err: ErrOneColumn,
+		},
+		{
+			sql: "select (+(1,2))=(1,2)",
+			err: nil,
+		},
+		{
+			sql: "select (-(1,2))=(1,2)",
+			err: ErrOneColumn,
+		},
+		{
+			sql: "select (1,2)||(1,2)",
+			err: ErrOneColumn,
+		},
+		{
+			sql: "select (1,2) < (3,4)",
+			err: nil,
+		},
+		{
+			sql: "select (1,2) < 3",
+			err: ErrSameColumns,
+		},
+	}
+	for _, ca := range cases {
+		sql := ca.sql
+		comment := Commentf("for %s", sql)
+		stmt, err := s.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, comment)
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mock.NewContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		builder.build(stmt)
+		if ca.err == nil {
+			c.Assert(builder.err, IsNil, comment)
+		} else {
+			c.Assert(ca.err.Equal(builder.err), IsTrue, comment)
+		}
 	}
 }

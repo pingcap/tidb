@@ -48,20 +48,20 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 		err = txn.Delete(primaryKey)
 	}
 	c.Assert(err, IsNil)
-	committer, err := newTxnCommitter(txn)
+	tpc, err := newTwoPhaseCommitter(txn)
 	c.Assert(err, IsNil)
-	committer.keys = [][]byte{primaryKey, key}
+	tpc.keys = [][]byte{primaryKey, key}
 
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), committer.keys)
+	err = tpc.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), tpc.keys)
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
-		committer.commitTS, err = s.store.oracle.GetTimestamp()
+		tpc.commitTS, err = s.store.oracle.GetTimestamp()
 		c.Assert(err, IsNil)
-		err = committer.commitKeys(NewBackoffer(commitMaxBackoff, context.Background()), [][]byte{primaryKey})
+		err = tpc.commitKeys(NewBackoffer(commitMaxBackoff, context.Background()), [][]byte{primaryKey})
 		c.Assert(err, IsNil)
 	}
-	return txn.startTS, committer.commitTS
+	return txn.startTS, tpc.commitTS
 }
 
 func (s *testLockSuite) putAlphabets(c *C) {

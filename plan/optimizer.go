@@ -111,7 +111,7 @@ const (
 var (
 	ErrOneColumn                   = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
 	ErrSameColumns                 = terror.ClassOptimizer.New(CodeSameColumns, "Operands should contain same columns")
-	ErrMultiWildCard               = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
+	ErrMultiWildCard               = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard fields exist more than once without any table name")
 	ErrCartesianProductUnsupported = terror.ClassOptimizer.New(CodeUnsupported, "Cartesian product is unsupported")
 	ErrInvalidGroupFuncUse         = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
 	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")

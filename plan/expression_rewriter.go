@@ -43,7 +43,7 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 		return nil, nil, errors.Errorf("context len %v is invalid", len(er.ctxStack))
 	}
 	if getRowLen(er.ctxStack[0]) != 1 {
-		return nil, nil, errors.New("Operand should contain 1 column(s)")
+		return nil, nil, ErrOneColumn
 	}
 	return er.ctxStack[0], er.p, nil
 }
@@ -85,7 +85,7 @@ func constructBinaryOpFunction(l expression.Expression, r expression.Expression,
 	if lLen == 1 && rLen == 1 {
 		return expression.NewFunction(op, types.NewFieldType(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
-		return nil, errors.Errorf("Operand should contain %d column(s)", lLen)
+		return nil, ErrSameColumns
 	}
 	funcs := make([]expression.Expression, lLen)
 	for i := 0; i < lLen; i++ {
@@ -164,11 +164,11 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	// Only (a,b,c) = all (...) and (a,b,c) != any () can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
 	if !canMultiCol && (getRowLen(lexpr) != 1 || len(np.GetSchema()) != 1) {
-		er.err = errors.New("Operand should contain 1 column(s)")
+		er.err = ErrOneColumn
 		return v, true
 	}
 	if getRowLen(lexpr) != len(np.GetSchema()) {
-		er.err = errors.Errorf("Operand should contain %d column(s)", getRowLen(lexpr))
+		er.err = ErrSameColumns
 		return v, true
 	}
 	var checkCondition expression.Expression
@@ -276,7 +276,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		return v, true
 	}
 	if getRowLen(lexpr) != len(np.GetSchema()) {
-		er.err = errors.Errorf("Operand should contain %d column(s)", getRowLen(lexpr))
+		er.err = ErrSameColumns
 		return v, true
 	}
 	var rexpr expression.Expression
@@ -427,9 +427,9 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	case *ast.PositionExpr:
 		er.positionToScalarFunc(v)
 	case *ast.IsNullExpr:
-		er.isnullToExpression(v)
+		er.isNullToExpression(v)
 	case *ast.IsTruthExpr:
-		er.istrueToScalarFunc(v)
+		er.isTrueToScalarFunc(v)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -520,9 +520,6 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 
 func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 	stkLen := len(er.ctxStack)
-	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
-		er.err = errors.New("Operand should contain 1 column(s)")
-	}
 	var op string
 	switch v.Op {
 	case opcode.Plus:
@@ -538,6 +535,10 @@ func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		er.err = errors.Errorf("Unknown Unary Op %T", v.Op)
 		return
 	}
+	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
+		er.err = ErrOneColumn
+		return
+	}
 	er.ctxStack[stkLen-1], er.err = expression.NewFunction(op, &v.Type, er.ctxStack[stkLen-1])
 }
 
@@ -549,6 +550,21 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		function, er.err = constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
 			opcode.Ops[v.Op])
 	default:
+		lLen := getRowLen(er.ctxStack[stkLen-2])
+		rLen := getRowLen(er.ctxStack[stkLen-1])
+		switch v.Op {
+		case opcode.GT, opcode.GE, opcode.LT, opcode.LE:
+			if lLen != rLen {
+				er.err = ErrSameColumns
+			}
+		default:
+			if lLen != 1 || rLen != 1 {
+				er.err = ErrOneColumn
+			}
+		}
+		if er.err != nil {
+			return
+		}
 		function, er.err = expression.NewFunction(opcode.Ops[v.Op], &v.Type, er.ctxStack[stkLen-2:]...)
 	}
 	if er.err != nil {
@@ -578,10 +594,10 @@ func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.
 	return opFunc
 }
 
-func (er *expressionRewriter) isnullToExpression(v *ast.IsNullExpr) {
+func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 	stkLen := len(er.ctxStack)
 	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
-		er.err = errors.New("Operand should contain 1 column(s)")
+		er.err = ErrOneColumn
 		return
 	}
 	function := er.notToExpression(v.Not, ast.IsNull, &v.Type, er.ctxStack[stkLen-1])
@@ -597,11 +613,15 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 	}
 }
 
-func (er *expressionRewriter) istrueToScalarFunc(v *ast.IsTruthExpr) {
+func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 	stkLen := len(er.ctxStack)
 	op := ast.IsTruth
 	if v.True == 0 {
 		op = ast.IsFalsity
+	}
+	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
+		er.err = ErrOneColumn
+		return
 	}
 	function := er.notToExpression(v.Not, op, &v.Type, er.ctxStack[stkLen-1])
 	er.ctxStack = er.ctxStack[:stkLen-1]
@@ -614,6 +634,12 @@ func (er *expressionRewriter) inToExpression(v *ast.PatternInExpr) {
 	}
 	stkLen := len(er.ctxStack)
 	lLen := len(v.List)
+	for i := 0; i < lLen; i++ {
+		if getRowLen(er.ctxStack[stkLen-lLen-1]) != getRowLen(er.ctxStack[stkLen-lLen+i]) {
+			er.err = ErrSameColumns
+			return
+		}
+	}
 	function := er.notToExpression(v.Not, ast.In, &v.Type, er.ctxStack[stkLen-lLen-1:stkLen]...)
 	er.ctxStack = er.ctxStack[:stkLen-lLen-1]
 	er.ctxStack = append(er.ctxStack, function)
@@ -624,6 +650,10 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 	argsLen := 2 * len(v.WhenClauses)
 	if v.ElseClause != nil {
 		argsLen++
+	}
+	er.checkArgsOneColumn(er.ctxStack[stkLen-argsLen:]...)
+	if er.err != nil {
+		return
 	}
 
 	// value                          -> ctxStack[stkLen-argsLen-1]
@@ -655,7 +685,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		//        condition2, result2,
 		//        ...
 		//        else clause
-		args = er.ctxStack[stkLen-argsLen : stkLen]
+		args = er.ctxStack[stkLen-argsLen:]
 	}
 	function, err := expression.NewFunction(ast.Case, &v.Type, args...)
 	if err != nil {
@@ -668,6 +698,10 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 
 func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 	l := len(er.ctxStack)
+	er.checkArgsOneColumn(er.ctxStack[l-2:]...)
+	if er.err != nil {
+		return
+	}
 	function := er.notToExpression(v.Not, ast.Like, &v.Type,
 		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape))})
 	er.ctxStack = er.ctxStack[:l-2]
@@ -676,6 +710,10 @@ func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 
 func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
 	l := len(er.ctxStack)
+	er.checkArgsOneColumn(er.ctxStack[l-2:]...)
+	if er.err != nil {
+		return
+	}
 	function := er.notToExpression(v.Not, ast.Regexp, &v.Type, er.ctxStack[l-2], er.ctxStack[l-1])
 	er.ctxStack = er.ctxStack[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
@@ -699,6 +737,10 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 
 func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	stkLen := len(er.ctxStack)
+	er.checkArgsOneColumn(er.ctxStack[stkLen-3:]...)
+	if er.err != nil {
+		return
+	}
 	var op string
 	var l, r expression.Expression
 	if v.Not {
@@ -727,10 +769,24 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	er.ctxStack = append(er.ctxStack, function)
 }
 
+func (er *expressionRewriter) checkArgsOneColumn(args ...expression.Expression) {
+	for _, arg := range args {
+		if getRowLen(arg) != 1 {
+			er.err = ErrOneColumn
+			return
+		}
+	}
+}
+
 func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	stackLen := len(er.ctxStack)
+	args := er.ctxStack[stackLen-len(v.Args):]
+	er.checkArgsOneColumn(args...)
+	if er.err != nil {
+		return
+	}
 	var function expression.Expression
-	function, er.err = expression.NewFunction(v.FnName.L, &v.Type, er.ctxStack[stackLen-len(v.Args):]...)
+	function, er.err = expression.NewFunction(v.FnName.L, &v.Type, args...)
 	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -765,6 +821,10 @@ func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
 	bt, err := evaluator.CastFuncFactory(v.Tp)
 	if err != nil {
 		er.err = errors.Trace(err)
+		return
+	}
+	er.checkArgsOneColumn(er.ctxStack[len(er.ctxStack)-1])
+	if er.err != nil {
 		return
 	}
 	function := &expression.ScalarFunction{
