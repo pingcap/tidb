@@ -176,14 +176,14 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
 	committer, err := newTxnCommitter(txn)
 	c.Assert(err, IsNil)
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), committer.keys)
 	c.Assert(err, IsNil)
 }
 
 func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	bo := NewBackoffer(getMaxBackoff)
+	bo := NewBackoffer(getMaxBackoff, context.Background())
 	req := &kvrpcpb.Request{
 		Type: kvrpcpb.MessageType_CmdGet,
 		CmdGetReq: &kvrpcpb.CmdGetRequest{
