@@ -163,7 +163,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 		// Set system variable
 		sysVar := variable.GetSysVar(name)
 		if sysVar == nil {
-			return variable.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
+			return variable.UnknownSystemVar.GenByArgs(name)
 		}
 		if sysVar.Scope == variable.ScopeNone {
 			return errors.Errorf("Variable '%s' is a read only variable", name)

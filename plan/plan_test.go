@@ -1980,27 +1980,27 @@ func (s *testPlanSuite) TestValidate(c *C) {
 	}{
 		{
 			sql: "select date_format((1,2), '%H');",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select cast((1,2) as date)",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) between (3,4) and (5,6)",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) rlike '1'",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) like '1'",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select case(1,2) when(1,2) then true end",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) in ((3,4),(5,6))",
@@ -2008,15 +2008,15 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 		{
 			sql: "select (1,2) in ((3,4),5)",
-			err: ErrSameColumns,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) is true",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) is null",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (+(1,2))=(1,2)",
@@ -2024,11 +2024,11 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 		{
 			sql: "select (-(1,2))=(1,2)",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2)||(1,2)",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) < (3,4)",
@@ -2036,7 +2036,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 		{
 			sql: "select (1,2) < 3",
-			err: ErrSameColumns,
+			err: ErrOperandColumns,
 		},
 	}
 	for _, ca := range cases {
