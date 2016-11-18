@@ -174,7 +174,7 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 }
 
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
-	committer, err := newTxnCommitter(txn)
+	committer, err := newTwoPhaseCommitter(txn)
 	c.Assert(err, IsNil)
 	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), committer.keys)
 	c.Assert(err, IsNil)
