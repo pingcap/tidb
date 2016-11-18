@@ -21,8 +21,11 @@ import (
 )
 
 func (s *testSuite) TestShow(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk.MustExec("use test")
 	testSQL := `drop table if exists show_test`
 	tk.MustExec(testSQL)

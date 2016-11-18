@@ -23,7 +23,7 @@ import (
 func (s *testSuite) TestPrepared(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		tk.MustExec("drop table if exists prepare_test")
+		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")

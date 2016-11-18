@@ -30,7 +30,7 @@ import (
 func (s *testSuite) TestInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		tk.MustExec("drop table if exists insert_test, insert_test_1, insert_test_2, insert_err")
+		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
@@ -113,7 +113,7 @@ func (s *testSuite) TestInsert(c *C) {
 func (s *testSuite) TestInsertAutoInc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		tk.MustExec("drop table if exists insert_autoinc_test")
+		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
@@ -200,7 +200,7 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 func (s *testSuite) TestInsertIgnore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		tk.MustExec("drop table if exists t")
+		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
@@ -225,8 +225,7 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 func (s *testSuite) TestReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		tk.MustExec("drop table if exists replace_test, replace_test_1, replace_test_2, replace_test_3, replace_test_4, replace_test_5")
-		tk.MustExec("drop table if exists tIssue989, tIssue1012")
+		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
@@ -351,7 +350,7 @@ func (s *testSuite) TestReplace(c *C) {
 func (s *testSuite) TestUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		tk.MustExec("drop table if exists update_test")
+		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
@@ -423,8 +422,7 @@ func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
 func (s *testSuite) TestMultipleTableUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		tk.MustExec("drop table if exists items, month")
-		tk.MustExec("drop table if exists t1, t2")
+		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
@@ -485,7 +483,7 @@ func (s *testSuite) TestMultipleTableUpdate(c *C) {
 func (s *testSuite) TestDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		tk.MustExec("drop table if exists delete_test")
+		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	s.fillData(tk, "delete_test")
@@ -535,7 +533,7 @@ func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
 func (s *testSuite) TestMultiTableDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		tk.MustExec("drop table if exists t1, t2, t3")
+		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	s.fillDataMultiTable(tk)
@@ -551,7 +549,7 @@ func (s *testSuite) TestMultiTableDelete(c *C) {
 func (s *testSuite) TestQualifiedDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		tk.MustExec("drop table if exists t1, t2")
+		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
@@ -591,7 +589,7 @@ func (s *testSuite) TestQualifiedDelete(c *C) {
 func (s *testSuite) TestLoadData(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		tk.MustExec("drop table if exists load_data_test")
+		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
@@ -773,7 +771,7 @@ func (s *testSuite) TestLoadData(c *C) {
 func (s *testSuite) TestLoadDataEscape(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		tk.MustExec("drop table if exists load_data_test")
+		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test; drop table if exists load_data_test;")

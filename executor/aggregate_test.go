@@ -61,7 +61,7 @@ func (m *MockExec) Close() error {
 func (s *testSuite) TestAggregation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		tk.MustExec("drop table if exists t, t1, t2")
+		defer testleak.AfterTest(c)()
 		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
