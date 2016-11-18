@@ -21,11 +21,11 @@ import (
 )
 
 func (s *testSuite) TestPrepared(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists prepare_test")
 	tk.MustExec("create table prepare_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)")

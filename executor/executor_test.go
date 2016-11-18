@@ -88,11 +88,11 @@ func (s *testSuite) cleanEnv(c *C) {
 }
 
 func (s *testSuite) TestAdmin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
@@ -249,11 +249,11 @@ func (s *testSuite) TestSelectLimit(c *C) {
 }
 
 func (s *testSuite) TestSelectOrderBy(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "select_order_test")
 
@@ -333,11 +333,11 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 }
 
 func (s *testSuite) TestSelectDistinct(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "select_distinct_test")
 
@@ -350,11 +350,11 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 }
 
 func (s *testSuite) TestSelectErrorRow(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	tk.MustExec("begin")
@@ -387,11 +387,11 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 
 // For https://github.com/pingcap/tidb/issues/345
 func (s *testSuite) TestIssue345(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1, t2`)
 	tk.MustExec(`create table t1 (c1 int);`)
@@ -431,11 +431,11 @@ func (s *testSuite) TestIssue345(c *C) {
 }
 
 func (s *testSuite) TestUnion(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `select 1 union select 0;`
 	tk.MustExec(testSQL)
@@ -489,11 +489,11 @@ func (s *testSuite) TestUnion(c *C) {
 }
 
 func (s *testSuite) TestIn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t (c1 int primary key, c2 int, key c (c2));`)
@@ -509,11 +509,11 @@ func (s *testSuite) TestIn(c *C) {
 }
 
 func (s *testSuite) TestTablePKisHandleScan(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int PRIMARY KEY AUTO_INCREMENT)")
@@ -575,11 +575,11 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 }
 
 func (s *testSuite) TestJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int)")
@@ -671,11 +671,11 @@ func (s *testSuite) TestJoin(c *C) {
 }
 
 func (s *testSuite) TestMultiJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t35(a35 int primary key, b35 int, x35 int)")
 	tk.MustExec("create table t40(a40 int primary key, b40 int, x40 int)")
@@ -767,11 +767,11 @@ AND b44=a42`)
 }
 
 func (s *testSuite) TestIndexScan(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int unique)")
@@ -816,11 +816,11 @@ func (s *testSuite) TestIndexScan(c *C) {
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
@@ -832,11 +832,11 @@ func (s *testSuite) TestSubquerySameTable(c *C) {
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key auto_increment, b int, index idx (b))")
@@ -854,11 +854,11 @@ func (s *testSuite) TestIndexReverseOrder(c *C) {
 }
 
 func (s *testSuite) TestTableReverseOrder(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key auto_increment, b int)")
@@ -870,11 +870,11 @@ func (s *testSuite) TestTableReverseOrder(c *C) {
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
@@ -903,11 +903,11 @@ func (s *testSuite) TestInSubquery(c *C) {
 }
 
 func (s *testSuite) TestDefaultNull(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key auto_increment, b int default 1, c int)")
@@ -923,11 +923,11 @@ func (s *testSuite) TestDefaultNull(c *C) {
 }
 
 func (s *testSuite) TestUnsignedPKColumn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int unsigned primary key, b int, c int, key idx_ba (b, c, a));")
@@ -940,11 +940,11 @@ func (s *testSuite) TestUnsignedPKColumn(c *C) {
 }
 
 func (s *testSuite) TestBuiltin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	// for is true
@@ -1087,11 +1087,11 @@ func (s *testSuite) TestBuiltin(c *C) {
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a decimal(10,6), b decimal, index idx_b (b))")
@@ -1141,11 +1141,11 @@ func (s *testSuite) TestToPBExpr(c *C) {
 }
 
 func (s *testSuite) TestDatumXAPI(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a decimal(10,6), b decimal, index idx_b (b))")
@@ -1170,11 +1170,11 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 }
 
 func (s *testSuite) TestJoinPanic(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists events")
 	tk.MustExec("create table events (clock int, source int)")
@@ -1182,11 +1182,11 @@ func (s *testSuite) TestJoinPanic(c *C) {
 }
 
 func (s *testSuite) TestSQLMode(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a tinyint not null)")
@@ -1219,11 +1219,11 @@ func (s *testSuite) TestSQLMode(c *C) {
 }
 
 func (s *testSuite) TestNewSubquery(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
@@ -1333,11 +1333,11 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 }
 
 func (s *testSuite) TestRow(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
@@ -1358,11 +1358,11 @@ func (s *testSuite) TestRow(c *C) {
 }
 
 func (s *testSuite) TestColumnName(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
@@ -1391,11 +1391,11 @@ func (s *testSuite) TestColumnName(c *C) {
 }
 
 func (s *testSuite) TestSelectVar(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (d int)")
@@ -1407,11 +1407,11 @@ func (s *testSuite) TestSelectVar(c *C) {
 }
 
 func (s *testSuite) TestHistoryRead(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists history_read")
 	tk.MustExec("create table history_read (a int)")

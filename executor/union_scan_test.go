@@ -20,11 +20,11 @@ import (
 )
 
 func (s *testSuite) TestDirtyTransaction(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)
 	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, index idx_b (b));")
