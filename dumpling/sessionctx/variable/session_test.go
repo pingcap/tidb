@@ -68,4 +68,13 @@ func (*testSessionSuite) TestSession(c *C) {
 	c.Assert(collation, Equals, "utf8_general_ci")
 
 	c.Assert(v.SetSystemVar("character_set_results", types.Datum{}), IsNil)
+
+	// Test case for tidb_skip_constraint_check
+	c.Assert(v.SkipConstraintCheck, IsFalse)
+	v.SetSystemVar(variable.TiDBSkipConstraintCheck, types.NewStringDatum("0"))
+	c.Assert(v.SkipConstraintCheck, IsFalse)
+	v.SetSystemVar(variable.TiDBSkipConstraintCheck, types.NewStringDatum("1"))
+	c.Assert(v.SkipConstraintCheck, IsTrue)
+	v.SetSystemVar(variable.TiDBSkipConstraintCheck, types.NewStringDatum("0"))
+	c.Assert(v.SkipConstraintCheck, IsFalse)
 }
