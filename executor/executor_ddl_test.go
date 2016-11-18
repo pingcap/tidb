@@ -24,7 +24,7 @@ import (
 func (s *testSuite) TestTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		defer testleak.AfterTest(c)()
+		testleak.AfterTest(c)()
 		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
@@ -41,7 +41,7 @@ func (s *testSuite) TestTruncateTable(c *C) {
 func (s *testSuite) TestCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
-		defer testleak.AfterTest(c)()
+		testleak.AfterTest(c)()
 		testleak.AfterTest(c)()
 	}()
 	tk.MustExec("use test")
