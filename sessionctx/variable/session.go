@@ -299,6 +299,8 @@ func (s *SessionVars) setSnapshotTS(sVal string) error {
 func (s *SessionVars) setSkipConstraintCheck(sVal string) {
 	if sVal == "1" {
 		s.SkipConstraintCheck = true
+	} else {
+		s.SkipConstraintCheck = false
 	}
 }
 
