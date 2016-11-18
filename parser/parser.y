@@ -684,6 +684,7 @@ import (
 	ReservedKeyword			"MySQL reserved keywords"
 	FunctionNameConflict	"Built-in function call names which are conflict with keywords"
 
+%precedence lowestOpt
 %token	tableRefPriority
 
 %precedence lowerThanCalcFoundRows
@@ -731,6 +732,15 @@ import (
 %precedence escape
 %precedence lowerThanComma
 %precedence ','
+%precedence lowerThanWith
+%precedence with
+%precedence lowerThanInto
+%precedence into
+%precedence lowerThanIf
+%precedence ifKwd
+%precedence lowerThanIgnore
+%precedence ignore
+%precedence tableKwd
 
 %start	Start
 
@@ -1536,7 +1546,7 @@ DropUserStmt:
     }
 
 TableOrTables:
-	"TABLE" {}
+	"TABLE"
 |	"TABLES"
 
 EqOpt:
@@ -1895,6 +1905,7 @@ HavingClause:
 	}
 
 IfExists:
+	%prec lowestOpt
 	{
 		$$ = false
 	}
@@ -1904,6 +1915,7 @@ IfExists:
 	}
 
 IfNotExists:
+	%prec lowestOpt
 	{
 		$$ = false
 	}
@@ -1914,6 +1926,7 @@ IfNotExists:
 
 
 IgnoreOptional:
+	%prec lowerThanIgnore
 	{
 		$$ = false
 	}
@@ -2003,19 +2016,19 @@ ReservedKeyword:
 | "DISTINCT" | "DIV" | "DOUBLE" | "DROP" | "DUAL" | "ELSE" | "ENCLOSED" | "ESCAPED"
 | "EXISTS" | "EXPLAIN" | "FALSE" | "FLOAT" | "FOR" | "FORCE" | "FOREIGN" | "FROM"
 | "FULLTEXT" | "GRANT" | "GROUP" | "HAVING" | "HOUR_MICROSECOND" | "HOUR_MINUTE"
-| "HOUR_SECOND" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT" | "INTEGER" | "INTERVAL"
-| "IS" | "JOIN" | "KEY" | "KEYS" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD" | "LOCALTIME"
-| "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
+| "HOUR_SECOND" | "IF" | "IGNORE" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT" | "INTO" | "INTEGER"
+| "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
+| "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
 | "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC"
 | "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "READ" | "REAL"
 | "REFERENCES" | "REGEXP" | "REPEAT" | "REPLACE" | "RESTRICT" | "RIGHT" | "RLIKE"
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
-| "STARTING" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
+| "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
 | "TRAILING" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
 | "UPDATE" | "USE" | "USING" | "UTC_DATE" | "VALUES" | "VARBINARY" | "VARCHAR"
 | "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL"
  /*
-| "DELAYED" | "HIGH_PRIORITY" | "LOW_PRIORITY" | "IF" | "IGNORE" | "INTO" | "TABLE" | "WITH"
+| "DELAYED" | "HIGH_PRIORITY" | "LOW_PRIORITY"| "WITH"
  */
 
 
@@ -2050,6 +2063,7 @@ InsertIntoStmt:
 	}
 
 IntoOpt:
+	%prec lowerThanInto
 	{}
 |	"INTO"
 
@@ -4450,6 +4464,7 @@ TableOptionList:
 	}
 
 OptTable:
+	%prec lowestOpt
 	{}
 |	"TABLE"
 
