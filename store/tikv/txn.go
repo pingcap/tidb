@@ -124,14 +124,14 @@ func (txn *tikvTxn) Commit() error {
 		return errors.Trace(err)
 	}
 
-	committer, err := newTxnCommitter(txn)
+	committer, err := newTwoPhaseCommitter(txn)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if committer == nil {
 		return nil
 	}
-	err = committer.Commit()
+	err = committer.execute()
 	if err != nil {
 		committer.writeFinishBinlog(binlog.BinlogType_Rollback, 0)
 		return errors.Trace(err)
