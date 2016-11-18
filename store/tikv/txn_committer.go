@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tipb/go-binlog"
+	"golang.org/x/net/context"
 )
 
 type txnCommitter struct {
@@ -148,7 +149,12 @@ func (c *txnCommitter) doBatches(bo *Backoffer, batches []batchKeys, f func(*Bac
 		return errors.Trace(e)
 	}
 
-	// TODO: For prewrite, stop sending other requests after receiving first error.
+	// For prewrite, stop sending other requests after receiving first error.
+	var cancel context.CancelFunc
+	if bo.ctx.Value(cancelOnFirstError) != nil {
+		cancel = bo.WithCancel()
+	}
+
 	ch := make(chan error)
 	for _, batch := range batches {
 		go func(batch batchKeys) {
@@ -159,6 +165,9 @@ func (c *txnCommitter) doBatches(bo *Backoffer, batches []batchKeys, f func(*Bac
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
 			log.Warnf("txnCommitter doBatches failed: %v, tid: %d", e, c.startTS)
+			if cancel != nil {
+				cancel()
+			}
 			err = e
 		}
 	}
@@ -317,6 +326,7 @@ func (c *txnCommitter) cleanupSingleRegion(bo *Backoffer, batch batchKeys) error
 }
 
 func (c *txnCommitter) prewriteKeys(bo *Backoffer, keys [][]byte) error {
+	bo.ctx = context.WithValue(bo.ctx, cancelOnFirstError, struct{}{})
 	return c.iterKeys(bo, keys, c.prewriteSingleRegion, c.keyValueSize, false)
 }
 
@@ -334,6 +344,7 @@ func (c *txnCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 const maxTxnTimeUse = 590000
 
 func (c *txnCommitter) Commit() error {
+	ctx := context.Background()
 	defer func() {
 		// Always clean up all written keys if the txn does not commit.
 		c.mu.RLock()
@@ -342,7 +353,7 @@ func (c *txnCommitter) Commit() error {
 		c.mu.RUnlock()
 		if !committed {
 			go func() {
-				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff), writtenKeys)
+				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, ctx), writtenKeys)
 				if err != nil {
 					log.Infof("txn cleanup err: %v, tid: %d", err, c.startTS)
 				} else {
@@ -353,7 +364,7 @@ func (c *txnCommitter) Commit() error {
 	}()
 
 	binlogChan := c.prewriteBinlog()
-	err := c.prewriteKeys(NewBackoffer(prewriteMaxBackoff), c.keys)
+	err := c.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), c.keys)
 	if binlogChan != nil {
 		binlogErr := <-binlogChan
 		if binlogErr != nil {
@@ -365,7 +376,7 @@ func (c *txnCommitter) Commit() error {
 		return errors.Trace(err)
 	}
 
-	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff))
+	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff, ctx))
 	if err != nil {
 		log.Warnf("txn get commitTS failed: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
@@ -377,7 +388,7 @@ func (c *txnCommitter) Commit() error {
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
-	err = c.commitKeys(NewBackoffer(commitMaxBackoff), c.keys)
+	err = c.commitKeys(NewBackoffer(commitMaxBackoff, ctx), c.keys)
 	if err != nil {
 		if !c.mu.committed {
 			log.Warnf("txn commit failed on commit: %v, tid: %d", err, c.startTS)

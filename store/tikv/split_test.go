@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"golang.org/x/net/context"
 )
 
 type testSplitSuite struct {
@@ -35,7 +36,7 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	store, err := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), client, false)
 	c.Assert(err, IsNil)
 	s.store = store
-	s.bo = NewBackoffer(5000)
+	s.bo = NewBackoffer(5000, context.Background())
 }
 
 func (s *testSplitSuite) begin(c *C) *tikvTxn {

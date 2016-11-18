@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/util/codec"
+	"golang.org/x/net/context"
 )
 
 type testCoprocessorSuite struct{}
@@ -32,7 +33,7 @@ func (s *testCoprocessorSuite) TestBuildHugeTasks(c *C) {
 	}
 	mocktikv.BootstrapWithMultiRegions(cluster, splitKeys...)
 
-	bo := NewBackoffer(3000)
+	bo := NewBackoffer(3000, context.Background())
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
 
 	const rangesPerRegion = 1e6
@@ -59,7 +60,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
 
-	bo := NewBackoffer(3000)
+	bo := NewBackoffer(3000, context.Background())
 
 	tasks, err := buildCopTasks(bo, cache, s.buildKeyRanges("a", "c"), false)
 	c.Assert(err, IsNil)
@@ -119,7 +120,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	cluster := mocktikv.NewCluster()
 	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
-	bo := NewBackoffer(3000)
+	bo := NewBackoffer(3000, context.Background())
 
 	tasks, err := buildCopTasks(bo, cache, s.buildKeyRanges("a", "z"), false)
 	c.Assert(err, IsNil)
