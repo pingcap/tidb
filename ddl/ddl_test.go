@@ -42,7 +42,7 @@ func testCreateStore(c *C, name string) kv.Storage {
 }
 
 func testNewContext(c *C, d *ddl) context.Context {
-	ctx := d.newReorgContext()
+	ctx := d.newMockContext()
 	variable.BindSessionVars(ctx)
 	return ctx
 }

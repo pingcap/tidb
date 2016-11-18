@@ -1676,7 +1676,7 @@ func (e *TopnExec) Next() (*Row, error) {
 type ApplyExec struct {
 	schema      expression.Schema
 	Src         Executor
-	outerSchema expression.Schema
+	outerSchema []*expression.CorrelatedColumn
 	innerExec   Executor
 	// checker checks if an Src row with an inner row matches the condition,
 	// and if it needs to check more inner rows.
@@ -1742,7 +1742,7 @@ func (e *ApplyExec) Next() (*Row, error) {
 	for {
 		for _, col := range e.outerSchema {
 			idx := col.Index
-			col.SetValue(&srcRow.Data[idx])
+			*col.Data = srcRow.Data[idx]
 		}
 		innerRow, err := e.innerExec.Next()
 		if err != nil {
