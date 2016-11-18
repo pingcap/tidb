@@ -221,7 +221,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	}
 	s.prewriteTxn(c, txn.(*tikvTxn))
 	l = s.mustGetLock(c, []byte("key"))
-	c.Assert(l.TTL, Greater, defaultLockTTL)
+	c.Assert(l.TTL, Equals, defaultLockTTL*(1024*2/512))
 }
 
 func init() {
