@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -56,7 +57,7 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
-	bo := NewBackoffer(batchGetMaxBackoff)
+	bo := NewBackoffer(batchGetMaxBackoff, context.Background())
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
@@ -170,7 +171,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
-	val, err := s.get(NewBackoffer(getMaxBackoff), k)
+	val, err := s.get(NewBackoffer(getMaxBackoff, context.Background()), k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

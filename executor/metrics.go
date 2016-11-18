@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"github.com/pingcap/tidb/ast"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -29,4 +30,10 @@ var (
 
 func init() {
 	prometheus.MustRegister(stmtNodeCounter)
+}
+
+func stmtCount(node ast.StmtNode) {
+	if stmtLable := statementLabel(node); stmtLable != IGNORE {
+		stmtNodeCounter.WithLabelValues(stmtLable).Inc()
+	}
 }

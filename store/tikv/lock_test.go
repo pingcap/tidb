@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"golang.org/x/net/context"
 )
 
 type testLockSuite struct {
@@ -52,13 +53,13 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	c.Assert(err, IsNil)
 	committer.keys = [][]byte{primaryKey, key}
 
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), committer.keys)
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
 		committer.commitTS, err = s.store.oracle.GetTimestamp()
 		c.Assert(err, IsNil)
-		err = committer.commitKeys(NewBackoffer(commitMaxBackoff), [][]byte{primaryKey})
+		err = committer.commitKeys(NewBackoffer(commitMaxBackoff, context.Background()), [][]byte{primaryKey})
 		c.Assert(err, IsNil)
 	}
 	return txn.startTS, committer.commitTS

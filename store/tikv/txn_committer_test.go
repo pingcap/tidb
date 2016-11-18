@@ -16,8 +16,10 @@ package tikv
 import (
 	"math/rand"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"golang.org/x/net/context"
 )
 
 type testCommitterSuite struct {
@@ -125,6 +127,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		"b": "b0",
 	})
 
+	ctx := context.Background()
 	txn1 := s.begin(c)
 	err := txn1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
@@ -132,7 +135,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := newTxnCommitter(txn1)
 	c.Assert(err, IsNil)
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), committer.keys)
 	c.Assert(err, IsNil)
 
 	txn2 := s.begin(c)
@@ -140,7 +143,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a0"))
 
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), committer.keys)
 	if err != nil {
 		// Retry.
 		txn1 = s.begin(c)
@@ -150,16 +153,33 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		c.Assert(err, IsNil)
 		committer, err = newTxnCommitter(txn1)
 		c.Assert(err, IsNil)
-		err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff), committer.keys)
+		err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), committer.keys)
 		c.Assert(err, IsNil)
 	}
 	committer.commitTS, err = s.store.oracle.GetTimestamp()
 	c.Assert(err, IsNil)
-	err = committer.commitKeys(NewBackoffer(commitMaxBackoff), [][]byte{[]byte("a")})
+	err = committer.commitKeys(NewBackoffer(commitMaxBackoff, ctx), [][]byte{[]byte("a")})
 	c.Assert(err, IsNil)
 
 	txn3 := s.begin(c)
 	v, err = txn3.Get([]byte("b"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("b1"))
+}
+
+func (s *testCommitterSuite) TestContextCancel(c *C) {
+	txn1 := s.begin(c)
+	err := txn1.Set([]byte("a"), []byte("a1"))
+	c.Assert(err, IsNil)
+	err = txn1.Set([]byte("b"), []byte("b1"))
+	c.Assert(err, IsNil)
+	committer, err := newTxnCommitter(txn1)
+	c.Assert(err, IsNil)
+
+	bo := NewBackoffer(prewriteMaxBackoff, context.Background())
+	bo.ctx = context.WithValue(bo.ctx, cancelOnFirstError, struct{}{})
+	cancel := bo.WithCancel()
+	cancel() // cancel the context
+	err = committer.prewriteKeys(bo, committer.keys)
+	c.Assert(errors.Cause(err), Equals, context.Canceled)
 }
