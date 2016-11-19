@@ -48,6 +48,8 @@ import (
 	/*yy:token "%c"     */	identifier      "identifier"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 	invalid		"a special token never used by parser, used by lexer to indicate error"
+	andand		"&&"
+	oror		"||"
 
 	/* the following tokens belong to ReservedKeyword*/
 	add		"ADD"
@@ -384,7 +386,6 @@ import (
 	/*yy:token "%x"     */	hexLit          "hexadecimal literal"
 	/*yy:token "%b"     */	bitLit          "bit literal"
 
-	andand		"&&"
 	andnot		"&^"
 	assignmentEq	":="
 	cast		"CAST"
@@ -400,7 +401,6 @@ import (
 	neq		"!="
 	neqSynonym	"<>"
 	nulleq		"<=>"
-	oror		"||"
 	placeholder	"PLACEHOLDER"
 	rsh		">>"
 	strcmp		"STRCMP"
@@ -483,7 +483,6 @@ import (
 	FieldAsName		"Field alias name"
 	FieldAsNameOpt		"Field alias name opt"
 	FieldList		"field expression list"
-	FieldsOrColumns 	"Fields or columns"
 	FlushStmt		"Flush statement"
 	TableRefsClause		"Table references clause"
 	Function		"function expr"
@@ -524,8 +523,6 @@ import (
 	LoadDataStmt		"Load data statement"
 	LocalOpt		"Local opt"
 	LockTablesStmt		"Lock tables statement"
-	logAnd			"logical and operator"
-	logOr			"logical or operator"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
 	NotOpt			"optional NOT"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
@@ -675,6 +672,9 @@ import (
 	CharsetKw		"charset or charater set"
 	CommaOpt		"optional comma"
 	LockType		"Table locks type"
+	logAnd			"logical and operator"
+	logOr			"logical or operator"
+	FieldsOrColumns 	"Fields or columns"
 
 %type	<ident>
 	Identifier			"identifier or unreserved keyword"
@@ -1646,20 +1646,10 @@ Expression:
 
 
 logOr:
-	"||"
-	{
-	}
-|	"OR"
-	{
-	}
+"||" | "OR"
 
 logAnd:
-	"&&"
-	{
-	}
-|	"AND"
-	{
-	}
+"&&" | "AND"
 
 ExpressionList:
 	Expression
@@ -5262,8 +5252,7 @@ Fields:
 	}
 
 FieldsOrColumns:
-	"FIELDS"{}
-|	"COLUMNS"{}
+"FIELDS" | "COLUMNS"
 
 FieldsTerminated:
 	{
@@ -5335,8 +5324,7 @@ LockTablesStmt:
 	{}
 
 TableLock:
-	 TableName LockType
-	{}
+	TableName LockType
 
 LockType:
 	"READ"
