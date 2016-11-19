@@ -311,10 +311,11 @@ func (s *SessionVars) GetSystemVar(key string) types.Datum {
 	sVal, ok := s.systems[key]
 	if ok {
 		d.SetString(sVal)
-	}
-	// TiDBSkipConstraintCheck is a session scope vars. We do not store it in the global table.
-	if key == TiDBSkipConstraintCheck {
-		d.SetString(SysVars[TiDBSkipConstraintCheck].Value)
+	} else {
+		// TiDBSkipConstraintCheck is a session scope vars. We do not store it in the global table.
+		if key == TiDBSkipConstraintCheck {
+			d.SetString(SysVars[TiDBSkipConstraintCheck].Value)
+		}
 	}
 	return d
 }

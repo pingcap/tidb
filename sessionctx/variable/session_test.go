@@ -81,4 +81,9 @@ func (*testSessionSuite) TestSession(c *C) {
 	c.Assert(v.SkipConstraintCheck, IsTrue)
 	v.SetSystemVar(variable.TiDBSkipConstraintCheck, types.NewStringDatum("0"))
 	c.Assert(v.SkipConstraintCheck, IsFalse)
+
+	// Test case for change TiDBSkipConstraintCheck session variable.
+	v.SetSystemVar(variable.TiDBSkipConstraintCheck, types.NewStringDatum("1"))
+	d = v.GetSystemVar(variable.TiDBSkipConstraintCheck)
+	c.Assert(d.GetString(), Equals, "1")
 }
