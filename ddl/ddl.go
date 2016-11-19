@@ -299,7 +299,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(schema)
 	if ok {
-		return errors.Trace(infoschema.ErrDatabaseExists)
+		return errors.Trace(infoschema.ErrDatabaseExists.GenByArgs(schema))
 	}
 
 	if err = checkTooLongSchema(schema); err != nil {
@@ -658,7 +658,7 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		nameLower := colDef.Name.Name.O
 		if colNames[nameLower] {
-			return infoschema.ErrColumnExists.Gen("duplicate column %s", colDef.Name.Name)
+			return infoschema.ErrColumnExists.GenByArgs(colDef.Name.Name)
 		}
 		colNames[nameLower] = true
 	}
@@ -681,7 +681,7 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	nameLower := strings.ToLower(name)
 	if namesMap[nameLower] {
 		if foreign {
-			return infoschema.ErrForeignKeyExists.Gen("duplicate foreign key %s", name)
+			return infoschema.ErrCannotAddForeign
 		}
 		return errDupKeyName.Gen("duplicate key name %s", name)
 	}
@@ -754,7 +754,11 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		if constr.Tp == ast.ConstraintForeignKey {
 			for _, fk := range tbInfo.ForeignKeys {
 				if fk.Name.L == strings.ToLower(constr.Name) {
-					return nil, infoschema.ErrForeignKeyExists.Gen("foreign key %s already exists.", constr.Name)
+					/*
+						mysql> create table s (dd int,mm int,foreign key xx (dd) REFERENCES t (id), foreign key xx(dd) REFERENCES t (id));
+						ERROR 1215 (HY000): Cannot add foreign key constraint
+					*/
+					return nil, infoschema.ErrCannotAddForeign
 				}
 			}
 			var fk model.FKInfo
@@ -770,10 +774,18 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 			fk.OnDelete = int(constr.Refer.OnDelete.ReferOpt)
 			fk.OnUpdate = int(constr.Refer.OnUpdate.ReferOpt)
 			if len(fk.Cols) != len(fk.RefCols) {
-				return nil, infoschema.ErrForeignKeyNotMatch.Gen("foreign key not match keys len %d, refkeys len %d .", len(fk.Cols), len(fk.RefCols))
+				/*
+					mysql> create table s (dd int,mm int,foreign key xx (dd,mm) REFERENCES t (id));
+					ERROR 1239 (42000): Incorrect foreign key definition for 'xx': Key reference and table reference don't match
+				*/
+				return nil, infoschema.ErrForeignKeyNotMatch
 			}
 			if len(fk.Cols) == 0 {
-				return nil, infoschema.ErrForeignKeyNotMatch.Gen("foreign key should have one key at least.")
+				// TODO: In MySQL, this case will report a parse error:
+				// mysql> create table s (dd int,foreign key xx (dd) REFERENCES t ());
+				// ERROR 1064 (42000): You have an error in your SQL syntax; check the manual
+				// that corresponds to your MySQL server version for the right syntax to use near '))' at line 1
+				return nil, infoschema.ErrCannotAddForeign
 			}
 			tbInfo.ForeignKeys = append(tbInfo.ForeignKeys, &fk)
 			continue
@@ -846,7 +858,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
-		return errors.Trace(infoschema.ErrTableExists)
+		return errors.Trace(infoschema.ErrTableExists.GenByArgs(ident))
 	}
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return errors.Trace(err)
@@ -1002,7 +1014,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	colName := spec.Column.Name.Name.O
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
-		return infoschema.ErrColumnExists.Gen("column %s already exists", colName)
+		return infoschema.ErrColumnExists.GenByArgs(colName)
 	}
 
 	if len(colName) > mysql.MaxColumnNameLength {
@@ -1114,7 +1126,11 @@ func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 	colName := spec.Column.Name.Name
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
-		return infoschema.ErrColumnNotExists.Gen("column %s doesn't exist", colName.O)
+		/*
+			mysql> alter table t modify a int not null;
+			ERROR 1054 (42S22): Unknown column 'a' in 't'
+		*/
+		return infoschema.ErrColumnNotExists.GenByArgs(colName, ident.Name)
 	}
 	if spec.Constraint != nil || spec.Position.Tp != ast.ColumnPositionNone ||
 		len(spec.Column.Options) != 0 || spec.Column.Tp == nil {
@@ -1148,7 +1164,7 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists)
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti))
 	}
 
 	job := &model.Job{

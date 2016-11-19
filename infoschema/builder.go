@@ -235,7 +235,7 @@ func (b *Builder) initMemorySchemas() error {
 	for _, t := range psDB.Tables {
 		tbl, ok := perfHandle.GetTable(t.Name.O)
 		if !ok {
-			return ErrTableNotExists.Gen("table `%s` is missing.", t.Name)
+			return ErrTableNotExists.GenByArgs(psDB.Name, t.Name)
 		}
 		info.tables[t.ID] = tbl
 		tname := makeTableName(psDB.Name.L, t.Name.L)
