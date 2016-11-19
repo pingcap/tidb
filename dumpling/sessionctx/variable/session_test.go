@@ -69,6 +69,10 @@ func (*testSessionSuite) TestSession(c *C) {
 
 	c.Assert(v.SetSystemVar("character_set_results", types.Datum{}), IsNil)
 
+	// Test case for get TiDBSkipConstraintCheck session variable
+	d := v.GetSystemVar(variable.TiDBSkipConstraintCheck)
+	c.Assert(d.GetString(), Equals, "0")
+
 	// Test case for tidb_skip_constraint_check
 	c.Assert(v.SkipConstraintCheck, IsFalse)
 	v.SetSystemVar(variable.TiDBSkipConstraintCheck, types.NewStringDatum("0"))
