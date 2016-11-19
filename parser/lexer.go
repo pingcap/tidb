@@ -137,6 +137,8 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		tok, pos, lit = specialComment.scan()
 		if tok != 0 {
 			// return the specialComment scan result as the result
+			pos.Line += s.r.p.Line
+			pos.Offset += s.r.p.Col
 			return
 		}
 		// leave specialComment scan mode after all stream consumed.
