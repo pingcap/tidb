@@ -2038,6 +2038,18 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "select (1,2) < 3",
 			err: ErrSameColumns,
 		},
+		{
+			sql: "select 1, * from t",
+			err: ErrInvalidWildCard,
+		},
+		{
+			sql: "select *, 1 from t",
+			err: nil,
+		},
+		{
+			sql: "select 1, t.* from t",
+			err: nil,
+		},
 	}
 	for _, ca := range cases {
 		sql := ca.sql
