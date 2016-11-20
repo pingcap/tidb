@@ -941,11 +941,11 @@ ColumnName:
 	{
 		$$ = &ast.ColumnName{Name: model.NewCIStr($1)}
 	}
-|	Identifier '.' Identifier
+|	Identifier '.' IdentifierOrReservedKeyword
 	{
 		$$ = &ast.ColumnName{Table: model.NewCIStr($1), Name: model.NewCIStr($3)}
 	}
-|	Identifier '.' Identifier '.' Identifier
+|	Identifier '.' Identifier '.' IdentifierOrReservedKeyword
 	{
 		$$ = &ast.ColumnName{Schema: model.NewCIStr($1), Table: model.NewCIStr($3), Name: model.NewCIStr($5)}
 	}
