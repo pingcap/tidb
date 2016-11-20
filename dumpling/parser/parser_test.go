@@ -69,6 +69,10 @@ func (s *testParserSuite) TestSimple(c *C) {
 		src = fmt.Sprintf("SELECT * FROM %s.desc", kw)
 		_, err = parser.ParseOneStmt(src, "", "")
 		c.Assert(err, IsNil, Commentf("source %s", src))
+
+		src = fmt.Sprintf("SELECT t.%s FROM t", kw)
+		_, err = parser.ParseOneStmt(src, "", "")
+		c.Assert(err, IsNil, Commentf("source %s", src))
 	}
 
 	// Testcase for unreserved keywords
