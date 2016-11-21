@@ -189,7 +189,7 @@ func (s *testSessionSuite) TestUpgrade(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ver, Equals, int64(0))
 
-	// Create a new session then upgrade() will run automaticly.
+	// Create a new session then upgrade() will run automatically.
 	se2 := newSession(c, store, s.dbName)
 	r = mustExecSQL(c, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	row, err = r.Next()
