@@ -77,6 +77,8 @@ var defaultLockTTL uint64 = 3000
 // TODO: Consider if it's appropriate.
 var maxLockTTL uint64 = 120000
 
+var ttlPerMB = 6000
+
 // Lock represents a lock from tikv server.
 type Lock struct {
 	Key     []byte

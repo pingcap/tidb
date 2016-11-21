@@ -221,12 +221,13 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	}
 	s.prewriteTxn(c, txn.(*tikvTxn))
 	l = s.mustGetLock(c, []byte("key"))
-	c.Assert(l.TTL, Equals, defaultLockTTL*(1024*2/512))
+	c.Assert(l.TTL, Equals, uint64(2*ttlPerMB))
 }
 
 func init() {
 	// Speed up tests.
 	defaultLockTTL = 3
 	maxLockTTL = 120
+	ttlPerMB = 6
 	oracleUpdateInterval = 2
 }

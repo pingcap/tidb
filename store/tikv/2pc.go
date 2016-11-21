@@ -112,7 +112,11 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	// keys.
 	var lockTTL uint64
 	if size > txnCommitBatchSize {
-		lockTTL = uint64(float64(defaultLockTTL) * float64(size) / float64(txnCommitBatchSize))
+		sizeMB := float64(size) / 1024 / 1024
+		lockTTL = uint64(sizeMB * float64(ttlPerMB))
+		if lockTTL < defaultLockTTL {
+			lockTTL = defaultLockTTL
+		}
 		if lockTTL > maxLockTTL {
 			lockTTL = maxLockTTL
 		}
