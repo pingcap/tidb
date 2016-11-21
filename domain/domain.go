@@ -332,7 +332,7 @@ func (do *Domain) checkValidityInLoop(lease time.Duration) {
 				// If the schema is invalid (sub >= lease), it means reload schema will become frequent.
 				// We need to reduce wait time to check the validity more frequently.
 				if sub >= lease {
-					waitTime = lease / 4
+					waitTime = minInterval(lease)
 				} else {
 					waitTime -= sub
 				}
@@ -352,8 +352,14 @@ func (do *Domain) checkValidityInLoop(lease time.Duration) {
 	}
 }
 
+// minInterval gets a minimal interval.
+// It uses to reload schema and check schema validity after the schema is invalid.
+func minInterval(lease time.Duration) time.Duration {
+	return lease / 4
+}
+
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
-	ticker := time.NewTicker(lease / 4)
+	ticker := time.NewTicker(minInterval(lease))
 	defer func() { ticker.Stop() }()
 
 	for {
@@ -372,7 +378,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			lease = newLease
 			log.Infof("[ddl] load loop, lease:%v, new:%v", lease, newLease)
 			ticker.Stop()
-			ticker = time.NewTicker(lease / 4)
+			ticker = time.NewTicker(minInterval(lease))
 		}
 	}
 }
