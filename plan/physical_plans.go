@@ -374,6 +374,11 @@ type PhysicalUnionScan struct {
 	Condition expression.Expression
 }
 
+// TempStore represents a temp plan below Apply that stores the result.
+type TempStore struct {
+	basePlan
+}
+
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalIndexScan) Copy() PhysicalPlan {
 	np := *p
@@ -758,4 +763,21 @@ func (p *Show) Copy() PhysicalPlan {
 func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 	np := *p
 	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *TempStore) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (p *TempStore) MarshalJSON() ([]byte, error) {
+	child, err := json.Marshal(p.children[0])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"type\": \"Temp\",\n\"child\": %s}", child))
+	return buffer.Bytes(), nil
 }

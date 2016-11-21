@@ -244,8 +244,16 @@ func (p *PhysicalUnionScan) matchProperty(prop *requiredProperty, childPlanInfo 
 	return res
 }
 
+
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Projection) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+	np := *p
+	np.SetChildren(childPlanInfo[0].p)
+	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
+}
+
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *TempStore) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	np := *p
 	np.SetChildren(childPlanInfo[0].p)
 	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}

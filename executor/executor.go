@@ -1931,3 +1931,34 @@ func (e *DummyScanExec) Close() error {
 func (e *DummyScanExec) Next() (*Row, error) {
 	return nil, nil
 }
+
+type TempStoreExec struct {
+	schema expression.Schema
+	Src Executor
+	storedRows []*Row
+	pt int
+}
+
+// Schema implements the Executor Schema interface.
+func (e *TempStoreExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Close implements the Executor Close interface.
+func (e *TempStoreExec) Close() error {
+	e.pt = 0
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *TempStoreExec) Next() (*Row, error) {
+	if e.pt == len(e.storedRows) {
+		row, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.storedRows = append(e.storedRows, row)
+	}
+	e.pt += 1
+	return e.storedRows[e.pt - 1], nil
+}
