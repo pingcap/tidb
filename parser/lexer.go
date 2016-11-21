@@ -106,7 +106,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return toHex(s, v, lit)
 	case bitLit:
 		return toBit(s, v, lit)
-	case userVar, sysVar, database, currentUser, replace, cast, sysDate, currentTs, currentTime, currentDate, curDate, utcDate, extract, repeat, secondMicrosecond, minuteMicrosecond, minuteSecond, hourMicrosecond, hourMinute, hourSecond, dayMicrosecond, dayMinute, daySecond, dayHour, yearMonth, ifKwd, left, convert:
+	case userVar, sysVar, cast, sysDate, curDate, extract:
 		v.item = lit
 		return tok
 	case null:
@@ -137,6 +137,8 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		tok, pos, lit = specialComment.scan()
 		if tok != 0 {
 			// return the specialComment scan result as the result
+			pos.Line += s.r.p.Line
+			pos.Offset += s.r.p.Col
 			return
 		}
 		// leave specialComment scan mode after all stream consumed.
