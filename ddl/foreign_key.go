@@ -52,7 +52,7 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 		}
 		// Finish this job.
 		job.State = model.JobDone
-		addTableHistoryInfo(job, ver, tblInfo)
+		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 		return nil
 	default:
 		return ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)
@@ -114,7 +114,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 		}
 		// Finish this job.
 		job.State = model.JobDone
-		addTableHistoryInfo(job, ver, tblInfo)
+		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 		return nil
 	default:
 		return ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)

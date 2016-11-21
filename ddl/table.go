@@ -70,7 +70,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 		}
 		// Finish this job.
 		job.State = model.JobDone
-		addTableHistoryInfo(job, ver, tbInfo)
+		job.BinlogInfo.AddTableInfo(ver, tbInfo)
 		return nil
 	default:
 		return ErrInvalidTableState.Gen("invalid table state %v", tbInfo.State)
@@ -121,7 +121,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		// Finish this job.
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
-		addTableHistoryInfo(job, ver, tblInfo)
+		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(tableID)
 		job.Args = append(job.Args, startKey)
 	default:
@@ -231,8 +231,8 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 	job.State = model.JobDone
-	addTableHistoryInfo(job, ver, tblInfo)
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
-	job.Args = append(job.Args, startKey)
+	job.Args = []interface{}{startKey}
 	return nil
 }

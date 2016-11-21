@@ -66,7 +66,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 		}
 		// Finish this job.
 		job.State = model.JobDone
-		addDBHistoryInfo(job, ver, dbInfo)
+		job.BinlogInfo.AddDBInfo(ver, dbInfo)
 		return nil
 	default:
 		// We can't enter here.
@@ -113,7 +113,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		}
 
 		// Finish this job.
-		addDBHistoryInfo(job, ver, dbInfo)
+		job.BinlogInfo.AddDBInfo(ver, dbInfo)
 		if len(tables) > 0 {
 			job.Args = append(job.Args, getIDs(tables))
 		}
