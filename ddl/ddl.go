@@ -595,7 +595,10 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return v.GetValue(), nil
+	if v.IsNull() {
+		return nil, nil
+	}
+	return v.ToString()
 }
 
 func removeOnUpdateNowFlag(c *table.Column) {
