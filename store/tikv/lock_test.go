@@ -15,6 +15,7 @@ package tikv
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"golang.org/x/net/context"
 )
@@ -48,20 +49,20 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 		err = txn.Delete(primaryKey)
 	}
 	c.Assert(err, IsNil)
-	committer, err := newTxnCommitter(txn)
+	tpc, err := newTwoPhaseCommitter(txn)
 	c.Assert(err, IsNil)
-	committer.keys = [][]byte{primaryKey, key}
+	tpc.keys = [][]byte{primaryKey, key}
 
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), committer.keys)
+	err = tpc.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), tpc.keys)
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
-		committer.commitTS, err = s.store.oracle.GetTimestamp()
+		tpc.commitTS, err = s.store.oracle.GetTimestamp()
 		c.Assert(err, IsNil)
-		err = committer.commitKeys(NewBackoffer(commitMaxBackoff, context.Background()), [][]byte{primaryKey})
+		err = tpc.commitKeys(NewBackoffer(commitMaxBackoff, context.Background()), [][]byte{primaryKey})
 		c.Assert(err, IsNil)
 	}
-	return txn.startTS, committer.commitTS
+	return txn.startTS, tpc.commitTS
 }
 
 func (s *testLockSuite) putAlphabets(c *C) {
@@ -172,8 +173,61 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 }
 
+func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
+	committer, err := newTwoPhaseCommitter(txn)
+	c.Assert(err, IsNil)
+	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), committer.keys)
+	c.Assert(err, IsNil)
+}
+
+func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
+	ver, err := s.store.CurrentVersion()
+	c.Assert(err, IsNil)
+	bo := NewBackoffer(getMaxBackoff, context.Background())
+	req := &kvrpcpb.Request{
+		Type: kvrpcpb.MessageType_CmdGet,
+		CmdGetReq: &kvrpcpb.CmdGetRequest{
+			Key:     key,
+			Version: ver.Ver,
+		},
+	}
+	region, err := s.store.regionCache.GetRegion(bo, key)
+	c.Assert(err, IsNil)
+	resp, err := s.store.SendKVReq(bo, req, region.VerID(), readTimeoutShort)
+	c.Assert(err, IsNil)
+	cmdGetResp := resp.GetCmdGetResp()
+	c.Assert(cmdGetResp, NotNil)
+	keyErr := cmdGetResp.GetError()
+	c.Assert(keyErr, NotNil)
+	lock, err := extractLockFromKeyErr(keyErr)
+	c.Assert(err, IsNil)
+	return lock
+}
+
+func (s *testLockSuite) TestLockTTL(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set(kv.Key("key"), []byte("value"))
+	s.prewriteTxn(c, txn.(*tikvTxn))
+	l := s.mustGetLock(c, []byte("key"))
+	c.Assert(l.TTL, Equals, defaultLockTTL)
+
+	// Huge txn has a greater TTL.
+	txn, err = s.store.Begin()
+	txn.Set(kv.Key("key"), []byte("value"))
+	for i := 0; i < 2048; i++ {
+		k, v := randKV(1024, 1024)
+		txn.Set(kv.Key(k), []byte(v))
+	}
+	s.prewriteTxn(c, txn.(*tikvTxn))
+	l = s.mustGetLock(c, []byte("key"))
+	c.Assert(l.TTL, Equals, uint64(ttlFactor*2))
+}
+
 func init() {
 	// Speed up tests.
-	lockTTL = 3
+	defaultLockTTL = 3
+	maxLockTTL = 120
+	ttlFactor = 6
 	oracleUpdateInterval = 2
 }

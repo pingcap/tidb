@@ -100,7 +100,7 @@ func PrepareStmt(is infoschema.InfoSchema, ctx context.Context, node ast.Node) e
 // Optimizer error codes.
 const (
 	CodeOperandColumns      terror.ErrCode = 1
-	CodeMultiWildCard       terror.ErrCode = 3
+	CodeInvalidWildCard     terror.ErrCode = 3
 	CodeUnsupported         terror.ErrCode = 4
 	CodeInvalidGroupFuncUse terror.ErrCode = 5
 	CodeIllegalReference    terror.ErrCode = 6
@@ -109,7 +109,7 @@ const (
 // Optimizer base errors.
 var (
 	ErrOperandColumns              = terror.ClassOptimizer.New(CodeOperandColumns, "Operand should contain %d column(s)")
-	ErrMultiWildCard               = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard fields exist more than once without any table name")
+	ErrInvalidWildCard             = terror.ClassOptimizer.New(CodeInvalidWildCard, "Wildcard fields without any table name appears in wrong place")
 	ErrCartesianProductUnsupported = terror.ClassOptimizer.New(CodeUnsupported, "Cartesian product is unsupported")
 	ErrInvalidGroupFuncUse         = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
 	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")
@@ -118,7 +118,7 @@ var (
 func init() {
 	mySQLErrCodes := map[terror.ErrCode]uint16{
 		CodeOperandColumns:      mysql.ErrOperandColumns,
-		CodeMultiWildCard:       mysql.ErrParse,
+		CodeInvalidWildCard:     mysql.ErrParse,
 		CodeInvalidGroupFuncUse: mysql.ErrInvalidGroupFuncUse,
 		CodeIllegalReference:    mysql.ErrIllegalReference,
 	}

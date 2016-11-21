@@ -84,6 +84,7 @@ func init() {
 	tidbSysVars[DistSQLScanConcurrencyVar] = true
 	tidbSysVars[DistSQLJoinConcurrencyVar] = true
 	tidbSysVars[TiDBSnapshot] = true
+	tidbSysVars[TiDBSkipConstraintCheck] = true
 }
 
 // we only support MySQL now
@@ -590,6 +591,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeGlobal | ScopeSession, DistSQLScanConcurrencyVar, "10"},
 	{ScopeGlobal | ScopeSession, DistSQLJoinConcurrencyVar, "5"},
+	{ScopeSession, TiDBSkipConstraintCheck, "0"},
 }
 
 // TiDB system variables
@@ -597,6 +599,7 @@ const (
 	TiDBSnapshot              = "tidb_snapshot"
 	DistSQLScanConcurrencyVar = "tidb_distsql_scan_concurrency"
 	DistSQLJoinConcurrencyVar = "tidb_distsql_join_concurrency"
+	TiDBSkipConstraintCheck   = "tidb_skip_constraint_check"
 )
 
 // SetNamesVariables is the system variable names related to set names statements.

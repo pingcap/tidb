@@ -86,7 +86,7 @@ func (s *testMockTiKVSuite) mustGetOK(c *C, key string, ts uint64, expect string
 }
 
 func (s *testMockTiKVSuite) mustPutOK(c *C, key, value string, startTS, commitTS uint64) {
-	errs := s.store.Prewrite(putMutations(key, value), encodeKey(key), startTS)
+	errs := s.store.Prewrite(putMutations(key, value), encodeKey(key), startTS, 0)
 	for _, err := range errs {
 		c.Assert(err, IsNil)
 	}
@@ -101,7 +101,7 @@ func (s *testMockTiKVSuite) mustDeleteOK(c *C, key string, startTS, commitTS uin
 			Key: encodeKey(key),
 		},
 	}
-	errs := s.store.Prewrite(mutations, encodeKey(key), startTS)
+	errs := s.store.Prewrite(mutations, encodeKey(key), startTS, 0)
 	for _, err := range errs {
 		c.Assert(err, IsNil)
 	}
@@ -120,7 +120,7 @@ func (s *testMockTiKVSuite) mustScanOK(c *C, start string, limit int, ts uint64,
 }
 
 func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64) {
-	errs := s.store.Prewrite(mutations, encodeKey(primary), startTS)
+	errs := s.store.Prewrite(mutations, encodeKey(primary), startTS, 0)
 	for _, err := range errs {
 		c.Assert(err, IsNil)
 	}

@@ -167,16 +167,13 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	}
 
 	// sort for tables
-	var tableNames []string
-	for _, v := range e.is.SchemaTables(e.DBName) {
-		tableNames = append(tableNames, v.Meta().Name.O)
-	}
-	sort.Strings(tableNames)
+	tables := e.is.SchemaTables(e.DBName)
+	sort.Sort(table.Slice(tables))
 
-	for _, v := range tableNames {
+	for _, t := range tables {
 		now := mysql.CurrentTime(mysql.TypeDatetime)
-		data := types.MakeDatums(v, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
-			now, now, now, "utf8_general_ci", "", "", "")
+		data := types.MakeDatums(t.Meta().Name.O, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
+			now, now, now, "utf8_general_ci", "", "", t.Meta().Comment)
 		e.rows = append(e.rows, &Row{Data: data})
 	}
 	return nil
