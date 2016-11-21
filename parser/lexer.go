@@ -102,6 +102,8 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return toInt(s, v, lit)
 	case floatLit:
 		return toFloat(s, v, lit)
+	case decLit:
+		return toDecimal(s, v, lit)
 	case hexLit:
 		return toHex(s, v, lit)
 	case bitLit:
@@ -520,9 +522,16 @@ func (s *Scanner) scanFloat(beg *Pos) (tok int, pos Pos, lit string) {
 	}
 	if ch0 == 'e' || ch0 == 'E' {
 		s.r.inc()
+		ch0 = s.r.peek()
+		if ch0 == '-' || ch0 == '+' {
+			s.r.inc()
+		}
 		s.scanDigits()
+		tok = floatLit
+	} else {
+		tok = decLit
 	}
-	tok, pos, lit = floatLit, *beg, s.r.data(beg)
+	pos, lit = *beg, s.r.data(beg)
 	return
 }
 
