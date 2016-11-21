@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// PruneColumns implements LogicalPlan interface.
+// ResolveIndicesAndCorCols implements LogicalPlan interface.
 func (p *Projection) ResolveIndicesAndCorCols() {
 	p.baseLogicalPlan.ResolveIndicesAndCorCols()
 	for _, expr := range p.Exprs {
@@ -26,6 +26,7 @@ func (p *Projection) ResolveIndicesAndCorCols() {
 	}
 }
 
+// ResolveIndicesAndCorCols implements LogicalPlan interface.
 func (p *Join) ResolveIndicesAndCorCols() {
 	p.baseLogicalPlan.ResolveIndicesAndCorCols()
 	lSchema := p.GetChildByIndex(0).GetSchema()
@@ -45,6 +46,7 @@ func (p *Join) ResolveIndicesAndCorCols() {
 	}
 }
 
+// ResolveIndicesAndCorCols implements LogicalPlan interface.
 func (p *Selection) ResolveIndicesAndCorCols() {
 	p.baseLogicalPlan.ResolveIndicesAndCorCols()
 	for _, expr := range p.Conditions {
@@ -52,6 +54,7 @@ func (p *Selection) ResolveIndicesAndCorCols() {
 	}
 }
 
+// ResolveIndicesAndCorCols implements LogicalPlan interface.
 func (p *Aggregation) ResolveIndicesAndCorCols() {
 	p.baseLogicalPlan.ResolveIndicesAndCorCols()
 	for _, aggFun := range p.AggFuncs {
@@ -64,6 +67,7 @@ func (p *Aggregation) ResolveIndicesAndCorCols() {
 	}
 }
 
+// ResolveIndicesAndCorCols implements LogicalPlan interface.
 func (p *Sort) ResolveIndicesAndCorCols() {
 	p.baseLogicalPlan.ResolveIndicesAndCorCols()
 	for _, item := range p.ByItems {
@@ -71,6 +75,7 @@ func (p *Sort) ResolveIndicesAndCorCols() {
 	}
 }
 
+// ResolveIndicesAndCorCols implements LogicalPlan interface.
 func (p *Apply) ResolveIndicesAndCorCols() {
 	p.baseLogicalPlan.ResolveIndicesAndCorCols()
 	p.InnerPlan.ResolveIndicesAndCorCols()
@@ -104,6 +109,7 @@ func (p *Apply) ResolveIndicesAndCorCols() {
 	}
 }
 
+// ResolveIndicesAndCorCols implements LogicalPlan interface.
 func (p *Update) ResolveIndicesAndCorCols() {
 	p.baseLogicalPlan.ResolveIndicesAndCorCols()
 	orderedList := make([]*expression.Assignment, len(p.OrderedList))
