@@ -16,7 +16,6 @@ package infoschema
 import (
 	"fmt"
 	"sort"
-	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -536,9 +535,9 @@ type infoschemaTable struct {
 	meta   *model.TableInfo
 	cols   []*table.Column
 	rows   [][]types.Datum
-	mu     sync.Mutex
 }
 
+// schemasSorter implements the sort.Interface interface, sorts DBInfo by name.
 type schemasSorter []*model.DBInfo
 
 func (s schemasSorter) Len() int {
