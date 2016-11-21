@@ -225,10 +225,9 @@ func propagateConstant(conditions []expression.Expression) []expression.Expressi
 					conditions = append(conditions, newFunc)
 				}
 			} else {
-				for i := 0; i < len(factors); i++ {
+				for i := 0; i < len(factors); i += 2 {
 					newFunc, _ := expression.NewFunction(funcName, types.NewFieldType(mysql.TypeTiny), k, factors[i])
 					conditions = append(conditions, newFunc)
-					i++
 				}
 			}
 		}
@@ -490,7 +489,7 @@ func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret 
 	var push []expression.Expression
 	for _, cond := range predicates {
 		canSubstitute := true
-		extractedCols, _ := extractColumn(cond, nil, nil)
+		extractedCols := extractColumns(cond, nil)
 		for _, col := range extractedCols {
 			id := p.GetSchema().GetIndex(col)
 			if _, ok := p.Exprs[id].(*expression.ScalarFunction); ok {
@@ -565,7 +564,7 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 			// with value 0 rather than an empty query result.
 			ret = append(ret, cond)
 		case *expression.ScalarFunction:
-			extractedCols, _ := extractColumn(cond, nil, nil)
+			extractedCols := extractColumns(cond, nil)
 			ok := true
 			for _, col := range extractedCols {
 				if p.getGbyColIndex(col) == -1 {
@@ -592,7 +591,7 @@ func (p *Apply) PredicatePushDown(predicates []expression.Expression) (ret []exp
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	var push []expression.Expression
 	for _, cond := range predicates {
-		extractedCols, _ := extractColumn(cond, nil, nil)
+		extractedCols := extractColumns(cond, nil)
 		canPush := true
 		for _, col := range extractedCols {
 			if child.GetSchema().GetIndex(col) == -1 {
@@ -607,6 +606,10 @@ func (p *Apply) PredicatePushDown(predicates []expression.Expression) (ret []exp
 		}
 	}
 	childRet, _, err := child.PredicatePushDown(push)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	_, p.InnerPlan, err = p.InnerPlan.PredicatePushDown(nil)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
