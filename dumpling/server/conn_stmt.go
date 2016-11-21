@@ -185,6 +185,10 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			continue
 		}
 
+		if (i<<1)+1 >= len(paramTypes) {
+			return mysql.ErrMalformPacket
+		}
+
 		tp := paramTypes[i<<1]
 		isUnsigned := (paramTypes[(i<<1)+1] & 0x80) > 0
 
