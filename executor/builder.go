@@ -15,6 +15,7 @@ package executor
 
 import (
 	"math"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -490,11 +491,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
-	var memDB bool
-	switch v.DBName.L {
-	case "information_schema", "performance_schema":
-		memDB = true
-	}
+	memDB := infoschema.IsMemoryDB(v.DBName.L)
 	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
 		st := &XSelectTableExec{
@@ -529,7 +526,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		schema:       v.GetSchema(),
 		seekHandle:   math.MinInt64,
 		ranges:       v.Ranges,
-		isInfoSchema: v.DBName.L == "information_schema",
+		isInfoSchema: strings.EqualFold(v.DBName.L, infoschema.Name),
 	}
 	if v.Desc {
 		return &ReverseExec{Src: ts}
@@ -544,11 +541,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
-	var memDB bool
-	switch v.DBName.L {
-	case "information_schema", "performance_schema":
-		memDB = true
-	}
+	memDB := infoschema.IsMemoryDB(v.DBName.L)
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
 		st := &XSelectIndexExec{

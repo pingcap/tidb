@@ -340,3 +340,8 @@ func initInfoSchemaDB() {
 		Tables:  infoSchemaTables,
 	}
 }
+
+// IsMemoryDB checks if the db is in memory.
+func IsMemoryDB(dbName string) bool {
+	return dbName == "information_schema" || dbName == "performance_schema"
+}

@@ -231,7 +231,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 func (b *Builder) createSchemaTablesForDB(di *model.DBInfo) error {
 	schTbls := &schemaTables{
 		dbInfo: di,
-		tables: make(map[string]table.Table),
+		tables: make(map[string]table.Table, len(di.Tables)),
 	}
 	b.is.schemaMap[di.Name.L] = schTbls
 	for _, t := range di.Tables {
@@ -270,7 +270,7 @@ func (b *Builder) createSchemaTablesForPerfSchemaDB() {
 func (b *Builder) createSchemaTablesForInfoSchemaDB() {
 	infoSchemaSchemaTables := &schemaTables{
 		dbInfo: infoSchemaDB,
-		tables: make(map[string]table.Table),
+		tables: make(map[string]table.Table, len(infoSchemaDB.Tables)),
 	}
 	b.is.schemaMap[infoSchemaDB.Name.L] = infoSchemaSchemaTables
 	for _, t := range infoSchemaDB.Tables {
