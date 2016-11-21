@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"bytes"
+	"math"
 	"sync"
 
 	"github.com/juju/errors"
@@ -106,14 +107,14 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	txnWriteSizeHistogram.Observe(float64(size / 1024))
 
 	// Increase lockTTL for large transactions.
-	// The algorithm is simply linearly increasing according to the size of the
-	// data to be written. The lockTTL will reach to maxLockTTL(120s) at a
-	// write size of 20MB, approximately equivalent to removing about 1 million
-	// keys.
+	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
+	// When writeSize <= 256K, ttl is defaultTTL (3s);
+	// When writeSize is 1MiB, 100MiB, or 400MiB, ttl is 6s, 60s, 120s correspondingly;
+	// When writeSize >= 400MiB, ttl is maxTTL (120s).
 	var lockTTL uint64
 	if size > txnCommitBatchSize {
-		sizeMB := float64(size) / 1024 / 1024
-		lockTTL = uint64(sizeMB * float64(ttlPerMB))
+		sizeMiB := float64(size) / 1024 / 1024
+		lockTTL = uint64(float64(ttlFactor) * math.Sqrt(float64(sizeMiB)))
 		if lockTTL < defaultLockTTL {
 			lockTTL = defaultLockTTL
 		}

@@ -215,19 +215,19 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	// Huge txn has a greater TTL.
 	txn, err = s.store.Begin()
 	txn.Set(kv.Key("key"), []byte("value"))
-	for i := 0; i < 1024; i++ {
+	for i := 0; i < 2048; i++ {
 		k, v := randKV(1024, 1024)
 		txn.Set(kv.Key(k), []byte(v))
 	}
 	s.prewriteTxn(c, txn.(*tikvTxn))
 	l = s.mustGetLock(c, []byte("key"))
-	c.Assert(l.TTL, Equals, uint64(2*ttlPerMB))
+	c.Assert(l.TTL, Equals, uint64(ttlFactor*2))
 }
 
 func init() {
 	// Speed up tests.
 	defaultLockTTL = 3
 	maxLockTTL = 120
-	ttlPerMB = 6
+	ttlFactor = 6
 	oracleUpdateInterval = 2
 }
