@@ -212,79 +212,78 @@ func (b *Builder) copySchemaTables(dbName string) {
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo and schema version.
 func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) (*Builder, error) {
-	err := b.initMemorySchemas()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
 	for _, di := range dbInfos {
-		schTbls := &schemaTables{
-			dbInfo: di,
-			tables: make(map[string]table.Table, len(di.Tables)),
-		}
-		info.schemaMap[di.Name.L] = schTbls
-		for _, t := range di.Tables {
-			alloc := autoid.NewAllocator(b.handle.store, di.ID)
-			var tbl table.Table
-			tbl, err = table.TableFromMeta(alloc, t)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			schTbls.tables[t.Name.L] = tbl
-			sortedTables := info.sortedTablesBuckets[tableBucketIdx(t.ID)]
-			info.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTables, tbl)
+		err := b.createSchemaTablesForDB(di)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
+	b.createSchemaTablesForPerfSchemaDB()
+	b.createSchemaTablesForInfoSchemaDB()
 	for _, v := range info.sortedTablesBuckets {
 		sort.Sort(v)
 	}
 	return b, nil
 }
 
-func (b *Builder) initMemorySchemas() error {
-	info := b.is
-	infoSchemaTblNames := &schemaTables{
-		dbInfo: infoSchemaDB,
-		tables: make(map[string]table.Table, len(infoSchemaDB.Tables)),
+func (b *Builder) createSchemaTablesForDB(di *model.DBInfo) error {
+	schTbls := &schemaTables{
+		dbInfo: di,
+		tables: make(map[string]table.Table, len(di.Tables)),
 	}
-
-	info.schemaMap[infoSchemaDB.Name.L] = infoSchemaTblNames
-	for _, t := range infoSchemaDB.Tables {
-		tbl := b.handle.memSchema.nameToTable[t.Name.L]
-		infoSchemaTblNames.tables[t.Name.L] = tbl
-		bucketIdx := tableBucketIdx(t.ID)
-		info.sortedTablesBuckets[bucketIdx] = append(info.sortedTablesBuckets[bucketIdx], tbl)
+	b.is.schemaMap[di.Name.L] = schTbls
+	for _, t := range di.Tables {
+		alloc := autoid.NewAllocator(b.handle.store, di.ID)
+		var tbl table.Table
+		tbl, err := tables.TableFromMeta(alloc, t)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		schTbls.tables[t.Name.L] = tbl
+		sortedTables := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
+		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTables, tbl)
 	}
+	return nil
+}
 
-	perfHandle := b.handle.memSchema.perfHandle
+func (b *Builder) createSchemaTablesForPerfSchemaDB() {
+	perfHandle := b.handle.perfHandle
 	perfSchemaDB := perfHandle.GetDBMeta()
 	perfSchemaTblNames := &schemaTables{
 		dbInfo: perfSchemaDB,
 		tables: make(map[string]table.Table, len(perfSchemaDB.Tables)),
 	}
-	info.schemaMap[perfSchemaDB.Name.L] = perfSchemaTblNames
-
+	b.is.schemaMap[perfSchemaDB.Name.L] = perfSchemaTblNames
 	for _, t := range perfSchemaDB.Tables {
 		tbl, ok := perfHandle.GetTable(t.Name.O)
 		if !ok {
-			return ErrTableNotExists.Gen("table `%s` is missing.", t.Name)
+			continue
 		}
 		perfSchemaTblNames.tables[t.Name.L] = tbl
 		bucketIdx := tableBucketIdx(t.ID)
-		info.sortedTablesBuckets[bucketIdx] = append(info.sortedTablesBuckets[bucketIdx], tbl)
+		b.is.sortedTablesBuckets[bucketIdx] = append(b.is.sortedTablesBuckets[bucketIdx], tbl)
 	}
-	return nil
+}
+
+func (b *Builder) createSchemaTablesForInfoSchemaDB() {
+	infoSchemaSchemaTables := &schemaTables{
+		dbInfo: infoSchemaDB,
+		tables: make(map[string]table.Table, len(infoSchemaDB.Tables)),
+	}
+	b.is.schemaMap[infoSchemaDB.Name.L] = infoSchemaSchemaTables
+	for _, t := range infoSchemaDB.Tables {
+		tbl := createInfoSchemaTable(b.handle, t)
+		infoSchemaSchemaTables.tables[t.Name.L] = tbl
+		bucketIdx := tableBucketIdx(t.ID)
+		b.is.sortedTablesBuckets[bucketIdx] = append(b.is.sortedTablesBuckets[bucketIdx], tbl)
+	}
 }
 
 // Build sets new InfoSchema to the handle in the Builder.
-func (b *Builder) Build() error {
-	err := b.handle.refillMemoryTables(b.is.AllSchemas())
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (b *Builder) Build() {
 	b.handle.value.Store(b.is)
-	return nil
 }
 
 // NewBuilder creates a new Builder with a Handle.
