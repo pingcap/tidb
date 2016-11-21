@@ -172,7 +172,7 @@ func (h *rpcHandler) onPrewrite(req *kvrpcpb.CmdPrewriteRequest) *kvrpcpb.CmdPre
 			panic("onPrewrite: key not in region")
 		}
 	}
-	errors := h.mvccStore.Prewrite(req.Mutations, req.PrimaryLock, req.GetStartVersion())
+	errors := h.mvccStore.Prewrite(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetLockTtl())
 	return &kvrpcpb.CmdPrewriteResponse{
 		Errors: convertToKeyErrors(errors),
 	}
@@ -249,6 +249,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				Key:         locked.Key,
 				PrimaryLock: locked.Primary,
 				LockVersion: locked.StartTS,
+				LockTtl:     locked.TTL,
 			},
 		}
 	}

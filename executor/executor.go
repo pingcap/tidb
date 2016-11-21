@@ -21,7 +21,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/inspectkv"
@@ -46,7 +45,6 @@ var (
 	_ Executor = &DistinctExec{}
 	_ Executor = &DummyScanExec{}
 	_ Executor = &ExistsExec{}
-	_ Executor = &FilterExec{}
 	_ Executor = &HashAggExec{}
 	_ Executor = &HashJoinExec{}
 	_ Executor = &HashSemiJoinExec{}
@@ -229,45 +227,6 @@ func (e *CheckTableExec) Next() (*Row, error) {
 // Close implements plan.Plan Close interface.
 func (e *CheckTableExec) Close() error {
 	return nil
-}
-
-// FilterExec represents a filter executor.
-// It evaluates the condition for every source row, returns the source row only if
-// the condition evaluates to true.
-type FilterExec struct {
-	Src       Executor
-	Condition ast.ExprNode
-	ctx       context.Context
-}
-
-// Schema implements the Executor Schema interface.
-func (e *FilterExec) Schema() expression.Schema {
-	return e.Src.Schema()
-}
-
-// Next implements the Executor Next interface.
-func (e *FilterExec) Next() (*Row, error) {
-	for {
-		srcRow, err := e.Src.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if srcRow == nil {
-			return nil, nil
-		}
-		match, err := evaluator.EvalBool(e.ctx, e.Condition)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if match {
-			return srcRow, nil
-		}
-	}
-}
-
-// Close implements the Executor Close interface.
-func (e *FilterExec) Close() error {
-	return e.Src.Close()
 }
 
 // SelectLockExec represents a select lock executor.
