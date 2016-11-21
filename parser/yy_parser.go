@@ -155,15 +155,10 @@ func toInt(l yyLexer, lval *yySymType, str string) int {
 func toDecimal(l yyLexer, lval *yySymType, str string) int {
 	dec := new(mysql.MyDecimal)
 	err := dec.FromString(hack.Slice(str))
-	if err == nil {
-		lval.item = dec
-		return decLit
-	}
-	if terror.ErrorEqual(err, mysql.ErrOverflow) || terror.ErrorEqual(err, mysql.ErrTruncated) {
-		return toFloat(l, lval, str)
+	if err != nil {
+		l.Errorf("decimal literal: %v", err)
 	}
 	lval.item = dec
-	l.Errorf("decimal literal: %v", err)
 	return decLit
 }
 

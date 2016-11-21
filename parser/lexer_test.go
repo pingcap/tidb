@@ -15,10 +15,10 @@ package parser
 
 import (
 	"fmt"
+	"unicode"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
-	"unicode"
 )
 
 var _ = Suite(&testLexerSuite{})
