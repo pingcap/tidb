@@ -244,7 +244,6 @@ func (p *PhysicalUnionScan) matchProperty(prop *requiredProperty, childPlanInfo 
 	return res
 }
 
-
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Projection) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	np := *p
