@@ -828,7 +828,7 @@ func (ff *firstRowFunction) GetType() *types.FieldType {
 // Update implements AggregationFunction interface.
 func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := ff.getContext(groupKey)
-	if !ctx.Value.IsNull() {
+	if ctx.GotFirstRow {
 		return nil
 	}
 	if len(ff.Args) != 1 {
@@ -839,13 +839,14 @@ func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx cont
 		return errors.Trace(err)
 	}
 	ctx.Value = value
+	ctx.GotFirstRow = true
 	return nil
 }
 
 // StreamUpdate implements AggregationFunction interface.
 func (ff *firstRowFunction) StreamUpdate(row []types.Datum, ectx context.Context) error {
 	ctx := ff.getStreamedContext()
-	if !ctx.Value.IsNull() {
+	if ctx.GotFirstRow {
 		return nil
 	}
 	if len(ff.Args) != 1 {
@@ -856,6 +857,7 @@ func (ff *firstRowFunction) StreamUpdate(row []types.Datum, ectx context.Context
 		return errors.Trace(err)
 	}
 	ctx.Value = value
+	ctx.GotFirstRow = true
 	return nil
 }
 

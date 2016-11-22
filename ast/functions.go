@@ -531,4 +531,5 @@ type AggEvaluateContext struct {
 	Count           int64
 	Value           types.Datum
 	Buffer          *bytes.Buffer // Buffer is used for group_concat.
+	GotFirstRow     bool
 }
