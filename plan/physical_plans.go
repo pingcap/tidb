@@ -389,13 +389,13 @@ func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
 		"\"db\": \"%s\","+
-		"\n \"table\": \"%s\","+
-		"\n \"index\": \"%s\","+
-		"\n \"ranges\": \"%s\","+
-		"\n \"desc\": %v,"+
-		"\n \"out of order\": %v,"+
-		"\n \"double read\": %v,"+
-		"\n \"push down info\": %s\n}",
+			"\n \"table\": \"%s\","+
+			"\n \"index\": \"%s\","+
+			"\n \"ranges\": \"%s\","+
+			"\n \"desc\": %v,"+
+			"\n \"out of order\": %v,"+
+			"\n \"double read\": %v,"+
+			"\n \"push down info\": %s\n}",
 		p.DBName.O, p.Table.Name.O, p.Index.Name.O, p.Ranges, p.Desc, p.OutOfOrder, p.DoubleRead, pushDownInfo))
 	return buffer.Bytes(), nil
 }
@@ -415,10 +415,10 @@ func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
 		" \"db\": \"%s\","+
-		"\n \"table\": \"%s\","+
-		"\n \"desc\": %v,"+
-		"\n \"keep order\": %v,"+
-		"\n \"push down info\": %s}",
+			"\n \"table\": \"%s\","+
+			"\n \"desc\": %v,"+
+			"\n \"keep order\": %v,"+
+			"\n \"push down info\": %s}",
 		p.DBName.O, p.Table.Name.O, p.Desc, p.KeepOrder, pushDownInfo))
 	return buffer.Bytes(), nil
 }
@@ -437,9 +437,9 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 	}
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
-		"\"innerPlan\": \"%s\",\n " +
-		"\"outerPlan\": \"%s\",\n " +
-		"\"condition\": %s\n}", p.InnerPlan.GetID(), p.children[0].GetID(), checker))
+		"\"innerPlan\": \"%s\",\n "+
+			"\"outerPlan\": \"%s\",\n "+
+			"\"condition\": %s\n}", p.InnerPlan.GetID(), p.children[0].GetID(), checker))
 	return buffer.Bytes(), nil
 }
 
@@ -471,7 +471,7 @@ func (p *PhysicalHashSemiJoin) MarshalJSON() ([]byte, error) {
 	}
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
-			"\"with aux\": %v,"+
+		"\"with aux\": %v,"+
 			"\"anti\": %v,"+
 			"\"eqCond\": %s,\n "+
 			"\"leftCond\": %s,\n "+
@@ -512,7 +512,7 @@ func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 	}
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
-			"\"eqCond\": %s,\n "+
+		"\"eqCond\": %s,\n "+
 			"\"leftCond\": %s,\n "+
 			"\"rightCond\": %s,\n "+
 			"\"otherCond\": %s,\n"+
@@ -542,7 +542,7 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf("" +
+	buffer.WriteString(fmt.Sprintf(""+
 		" \"condition\": %s,\n"+
 		" \"child\": \"%s\"\n}", conds, p.children[0].GetID()))
 	return buffer.Bytes(), nil
@@ -563,7 +563,7 @@ func (p *Projection) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
 		" \"exprs\": %s,\n"+
-		" \"child\": \"%s\"\n}", exprs, p.children[0].GetID()))
+			" \"child\": \"%s\"\n}", exprs, p.children[0].GetID()))
 	return buffer.Bytes(), nil
 }
 
@@ -597,8 +597,8 @@ func (p *Limit) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
 		" \"limit\": %d,\n"+
-		" \"offset\": %d,\n"+
-		" \"child\": \"%s\"}", p.Count, p.Offset, child.GetID()))
+			" \"offset\": %d,\n"+
+			" \"child\": \"%s\"}", p.Count, p.Offset, child.GetID()))
 	return buffer.Bytes(), nil
 }
 
@@ -627,8 +627,8 @@ func (p *Sort) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
 		" \"exprs\": %s,\n"+
-		" \"limit\": %s,\n"+
-		" \"child\": \"%s\"}", exprs, limit, p.children[0].GetID()))
+			" \"limit\": %s,\n"+
+			" \"child\": \"%s\"}", exprs, limit, p.children[0].GetID()))
 	return buffer.Bytes(), nil
 }
 
@@ -669,8 +669,8 @@ func (p *PhysicalAggregation) MarshalJSON() ([]byte, error) {
 	}
 	buffer.WriteString(fmt.Sprintf(
 		"\"AggFuncs\": %s,\n"+
-		"\"GroupByItems\": %s,\n"+
-		"\"child\": \"%s\"}", aggFuncs, gbyExprs, p.children[0].GetID()))
+			"\"GroupByItems\": %s,\n"+
+			"\"child\": \"%s\"}", aggFuncs, gbyExprs, p.children[0].GetID()))
 	return buffer.Bytes(), nil
 }
 
