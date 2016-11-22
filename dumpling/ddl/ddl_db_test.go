@@ -156,7 +156,7 @@ func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	ctx := s.s.(context.Context)
 	domain := sessionctx.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
-	err := domain.MustReload()
+	err := domain.Reload()
 	c.Assert(err, IsNil)
 	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
 	c.Assert(err, IsNil)
