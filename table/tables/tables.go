@@ -368,6 +368,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		handleVal, _ := codec.EncodeValue(nil, types.NewIntDatum(recordID))
 		bin := append(handleVal, value...)
 		mutation.InsertedRows = append(mutation.InsertedRows, bin)
+		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Insert)
 	}
 	variable.GetSessionVars(ctx).AddAffectedRows(1)
 	return recordID, nil
@@ -547,6 +548,7 @@ func (t *Table) addUpdateBinlog(ctx context.Context, h int64, old []types.Datum,
 		bin = append(oldData, newValue...)
 	}
 	mutation.UpdatedRows = append(mutation.UpdatedRows, bin)
+	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Update)
 	return nil
 }
 
@@ -554,6 +556,7 @@ func (t *Table) addDeleteBinlog(ctx context.Context, h int64, r []types.Datum) e
 	mutation := t.getMutation(ctx)
 	if t.meta.PKIsHandle {
 		mutation.DeletedIds = append(mutation.DeletedIds, h)
+		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeleteID)
 		return nil
 	}
 
@@ -576,6 +579,7 @@ func (t *Table) addDeleteBinlog(ctx context.Context, h int64, r []types.Datum) e
 			return errors.Trace(err)
 		}
 		mutation.DeletedPks = append(mutation.DeletedPks, data)
+		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeletePK)
 		return nil
 	}
 	colIDs := make([]int64, len(t.Cols()))
@@ -587,6 +591,7 @@ func (t *Table) addDeleteBinlog(ctx context.Context, h int64, r []types.Datum) e
 		return errors.Trace(err)
 	}
 	mutation.DeletedRows = append(mutation.DeletedRows, data)
+	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeleteRow)
 	return nil
 }
 
