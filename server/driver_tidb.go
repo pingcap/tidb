@@ -212,7 +212,7 @@ func (tc *TiDBContext) Auth(user string, auth []byte, salt []byte) bool {
 
 // FieldList implements IContext FieldList method.
 func (tc *TiDBContext) FieldList(table string) (colums []*ColumnInfo, err error) {
-	rs, err := tc.Execute("SELECT * FROM " + table + " LIMIT 0")
+	rs, err := tc.Execute("SELECT * FROM `" + table + "` LIMIT 0")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

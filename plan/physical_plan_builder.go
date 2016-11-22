@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -155,11 +156,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
 		if client != nil {
-			var memDB bool
-			switch p.DBName.L {
-			case "information_schema", "performance_schema":
-				memDB = true
-			}
+			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
 				ts.ConditionPBExpr, ts.conditions, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
 			}
@@ -236,11 +233,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		}
 		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
 		if client != nil {
-			var memDB bool
-			switch p.DBName.L {
-			case "information_schema", "performance_schema":
-				memDB = true
-			}
+			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
 				is.ConditionPBExpr, is.conditions, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
 			}

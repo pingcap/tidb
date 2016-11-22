@@ -21,6 +21,7 @@ type ErrLocked struct {
 	Key     []byte
 	Primary []byte
 	StartTS uint64
+	TTL     uint64
 }
 
 // Error formats the lock to a string.
