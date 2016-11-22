@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"strings"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -159,6 +160,8 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 
+	// fix data race
+	var mu sync.Mutex
 	checkOK = false
 	tc.onJobUpdated = func(job *model.Job) {
 		if job.State != model.JobDone {
@@ -166,7 +169,9 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		}
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 		s.testForeignKeyExist(c, t, "c1_fk", false)
+		mu.Lock()
 		checkOK = true
+		mu.Unlock()
 	}
 
 	d.close()
@@ -174,7 +179,9 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
 	testCheckJobDone(c, d, job, false)
+	mu.Lock()
 	c.Assert(checkOK, IsTrue)
+	mu.Unlock()
 
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
