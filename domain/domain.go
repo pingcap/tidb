@@ -273,7 +273,7 @@ const loadRetryTimes = 5
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
 	// for test
-	if do.SchemaValidity.MockReloadFailed {
+	if do.SchemaValidity.MockReloadFailed.getValue() {
 		return do.mockReloadFailed()
 	}
 
@@ -401,13 +401,33 @@ func (c *ddlCallback) OnChanged(err error) error {
 	return nil
 }
 
+// MockFailure mocks reload failed.
+// It's used for fixing data race in tests.
+type MockFailure struct {
+	sync.RWMutex
+	val bool // val is true means we need to mock reload failed.
+}
+
+// SetValue sets whether we need to mock reload failed.
+func (m *MockFailure) SetValue(isFailed bool) {
+	m.Lock()
+	defer m.Unlock()
+	m.val = isFailed
+}
+
+func (m *MockFailure) getValue() bool {
+	m.RLock()
+	defer m.RUnlock()
+	return m.val
+}
+
 type schemaValidityInfo struct {
 	isValid          bool
 	firstValidTS     uint64 // It's used for recording the first txn TS of schema vaild.
 	mux              sync.RWMutex
-	lastReloadTime   int64  // It's used for recording the time of last reload schema.
-	lastSuccTS       uint64 // It's used for recording the last txn TS of loading schema succeed.
-	MockReloadFailed bool   // It mocks reload failed.
+	lastReloadTime   int64       // It's used for recording the time of last reload schema.
+	lastSuccTS       uint64      // It's used for recording the last txn TS of loading schema succeed.
+	MockReloadFailed MockFailure // It mocks reload failed.
 }
 
 func (s *schemaValidityInfo) updateTimeInfo(lastReloadTime int64, lastSuccTS uint64) {
