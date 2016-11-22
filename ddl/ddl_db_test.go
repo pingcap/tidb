@@ -299,20 +299,21 @@ LOOP:
 		matchRows(c, rows, [][]interface{}{{keys[index]}, {keys[index+1]}, {keys[index+2]}})
 	}
 
-	// TODO: support explain in future.
-	//rows := s.mustQuery(c, "explain select c1 from t1 where c3 >= 100")
+	// TODO: Support explain in future.
+	// rows := s.mustQuery(c, "explain select c1 from t1 where c3 >= 100")
 
-	//ay := dumpRows(c, rows)
-	//c.Assert(strings.Contains(fmt.Sprintf("%v", ay), "c3_index"), IsTrue)
+	// ay := dumpRows(c, rows)
+	// c.Assert(strings.Contains(fmt.Sprintf("%v", ay), "c3_index"), IsTrue)
 
 	// get all row handles
 	ctx := s.s.(context.Context)
 	t := s.testGetTable(c, "t1")
 	handles := make(map[int64]struct{})
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
-		return true, nil
-	})
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(),
+		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+			handles[h] = struct{}{}
+			return true, nil
+		})
 	c.Assert(err, IsNil)
 
 	// check in index
@@ -411,7 +412,7 @@ LOOP:
 			break
 		}
 	}
-	// Make sure there is no index with name c3_index
+	// Make sure there is no index with name c3_index.
 	c.Assert(nidx, IsNil)
 	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
 	txn, err := ctx.GetTxn(true)
@@ -523,18 +524,19 @@ LOOP:
 	i := 0
 	j := 0
 	defer ctx.RollbackTxn()
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		i++
-		// c4 must be -1 or > 0
-		v, err1 := data[3].ToInt64()
-		c.Assert(err1, IsNil)
-		if v == -1 {
-			j++
-		} else {
-			c.Assert(v, Greater, int64(0))
-		}
-		return true, nil
-	})
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(),
+		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+			i++
+			// c4 must be -1 or > 0
+			v, err1 := data[3].ToInt64()
+			c.Assert(err1, IsNil)
+			if v == -1 {
+				j++
+			} else {
+				c.Assert(v, Greater, int64(0))
+			}
+			return true, nil
+		})
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int(count))
 	c.Assert(i, LessEqual, num+step)
@@ -572,13 +574,14 @@ LOOP:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
 				_, err := s.db.Exec("insert into t2 values (?, ?, ?)", i, i, i)
-				if err != nil {
-					// if err is failed, the column number must be 4 now.
-					values := s.showColumns(c, "t2")
-					if len(values) != 4 {
-						c.Log(errors.ErrorStack(err))
-						c.FailNow()
-					}
+				if err == nil {
+					continue
+				}
+				// If executing is failed, the column number must be 4 now.
+				values := s.showColumns(c, "t2")
+				if len(values) != 4 {
+					c.Log(errors.ErrorStack(err))
+					c.FailNow()
 				}
 			}
 			num += step
@@ -738,7 +741,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(newTblInfo.Meta().ID, Greater, oldTblID)
 
-	// verify that the old table data has been deleted by background worker.
+	// Verify that the old table data has been deleted by background worker.
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
 	for i := 0; i < 30; i++ {
