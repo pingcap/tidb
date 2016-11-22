@@ -47,7 +47,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	go ts.server.Run()
 	waitUntilServerOnline()
 
-	// run this test here because parallel would affect the result of it
+	// Run this test here because parallel would affect the result of it.
 	runTestStmtCount(c)
 }
 

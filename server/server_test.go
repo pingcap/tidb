@@ -80,7 +80,7 @@ func runTestsOnNewDB(c *C, dbName string, tests ...func(dbt *DBTest)) {
 	}
 
 	_, err = db.Exec(dropDB)
-	c.Assert(err, IsNil, Commentf("Error create database %s", dbName))
+	c.Assert(err, IsNil, Commentf("Error drop database %s", dbName))
 }
 
 type DBTest struct {

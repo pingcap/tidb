@@ -625,7 +625,7 @@ func (runner *suiteRunner) run() *Result {
 						break
 					}
 				}
-				// wait those parallel tests finish.
+				// Wait those parallel tests finish.
 				for _, delayed := range delayedC {
 					<-delayed.done
 				}
