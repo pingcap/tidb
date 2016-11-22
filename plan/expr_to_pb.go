@@ -126,7 +126,7 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 		return logicalOpsToPBExpr(client, expr)
 	case ast.And, ast.Or, ast.BitNeg, ast.Xor, ast.LeftShift, ast.RightShift:
 		return bitwiseFuncToPBExpr(client, expr)
-	case ast.Case, ast.Coalesce, ast.If:
+	case ast.Case, ast.Coalesce, ast.If, ast.Nullif:
 		return builtinFuncToPBExpr(client, expr)
 	default:
 		return nil
@@ -361,7 +361,7 @@ func aggFuncToPBExpr(client kv.Client, aggFunc expression.AggregationFunction) *
 
 func builtinFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb.Expr {
 	switch expr.FuncName.L {
-	case ast.Case, ast.If:
+	case ast.Case, ast.If, ast.Nullif:
 		return controlFuncsToPBExpr(client, expr)
 	case ast.Coalesce:
 		return otherFuncsToPBExpr(client, expr)
@@ -386,6 +386,8 @@ func controlFuncsToPBExpr(client kv.Client, expr *expression.ScalarFunction) *ti
 		tp = tipb.ExprType_If
 	case ast.Case:
 		tp = tipb.ExprType_Case
+	case ast.Nullif:
+		tp = tipb.ExprType_NullIf
 	}
 	return convertToPBExpr(client, expr, tp)
 }
