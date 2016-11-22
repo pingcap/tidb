@@ -1989,7 +1989,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	default:
 	}
 	// Make sure loading information schema is failed and server is invalid.
-	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed = true
+	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(true)
 	sessionctx.GetDomain(ctx).Reload()
 	lease := sessionctx.GetDomain(ctx).DDL().GetLease()
 	time.Sleep(lease)
@@ -2013,7 +2013,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 	sessionctx.GetDomain(ctx).SchemaValidity.SetValidity(true, ver.Ver)
-	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed = false
+	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
 	time.Sleep(lease)
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (a int);")
