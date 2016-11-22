@@ -143,7 +143,7 @@ type LogicalPlan interface {
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
 	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan, error)
 
-	// PruneColumns prunes the unused columns and .
+	// PruneColumns prunes the unused columns.
 	PruneColumns([]*expression.Column)
 
 	extractCorrelatedCols() []*expression.CorrelatedColumn

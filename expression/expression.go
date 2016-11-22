@@ -51,7 +51,7 @@ type Expression interface {
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema Schema) Expression
 
-	// ResolveIndices resolve indices by the given schema.
+	// ResolveIndices resolves indices by the given schema.
 	ResolveIndices(schema Schema)
 }
 

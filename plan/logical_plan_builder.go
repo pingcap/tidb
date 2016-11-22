@@ -16,7 +16,6 @@ package plan
 import (
 	"fmt"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -167,15 +166,12 @@ func extractCorColumns(expr expression.Expression, cols []*expression.Correlated
 func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
 	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
 	otherCond []expression.Expression) {
-	log.Warnf("conditions %s", conditions)
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && binop.FuncName.L == ast.EQ {
 			ln, lOK := binop.Args[0].(*expression.Column)
 			rn, rOK := binop.Args[1].(*expression.Column)
 			if lOK && rOK {
-				log.Warnf("ln %s rn %s", ln, rn)
-				log.Warnf("lschema %s rschema %s", left.GetSchema(), right.GetSchema())
 				if left.GetSchema().GetIndex(ln) != -1 && right.GetSchema().GetIndex(rn) != -1 {
 					eqCond = append(eqCond, binop)
 					continue
