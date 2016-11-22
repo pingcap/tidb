@@ -269,6 +269,7 @@ func (do *Domain) mockReloadFailed() error {
 }
 
 const doReloadSleepTime = 500 * time.Millisecond
+const loadRetryTimes = 5
 
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
@@ -283,7 +284,7 @@ func (do *Domain) Reload() error {
 	defer do.m.Unlock()
 
 	var err error
-	for {
+	for i := 0; i < loadRetryTimes; i++ {
 		startTime := time.Now()
 		var ver kv.Version
 		ver, err = do.store.CurrentVersion()
@@ -303,7 +304,6 @@ func (do *Domain) Reload() error {
 		log.Errorf("[ddl] load schema err %v, ver:%v, retry again", errors.ErrorStack(err), ver.Ver)
 		// TODO: Use a backoff algorithm.
 		time.Sleep(doReloadSleepTime)
-		continue
 	}
 
 	return errors.Trace(err)
@@ -347,6 +347,7 @@ func (do *Domain) checkValidityInLoop(lease time.Duration) {
 			}
 
 			lease = newLease
+			log.Infof("[ddl] check loop, lease:%v, new:%v", lease, newLease)
 			timer.Reset(0)
 		}
 	}
@@ -394,7 +395,12 @@ func (c *ddlCallback) OnChanged(err error) error {
 	}
 	log.Infof("[ddl] on DDL change, must reload")
 
-	return c.do.Reload()
+	err = c.do.Reload()
+	if err != nil {
+		log.Errorf("[ddl] on DDL change reload err %v", err)
+	}
+
+	return nil
 }
 
 type schemaValidityInfo struct {
