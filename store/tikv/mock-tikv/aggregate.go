@@ -86,7 +86,7 @@ type aggItem struct {
 	value types.Datum
 	// TODO: support group_concat
 	buffer *bytes.Buffer // Buffer is used for group_concat.
-
+	// It will check if the agg has met the first row key.
 	gotFirstRow bool
 }
 
