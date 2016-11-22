@@ -1950,22 +1950,30 @@ func (e *TempStoreExec) Schema() expression.Schema {
 // Close implements the Executor Close interface.
 func (e *TempStoreExec) Close() error {
 	e.cursor = 0
-	if !e.closed {
-		e.closed = true
-		return e.Src.Close()
-	}
 	return nil
 }
 
 // Next implements the Executor Next interface.
 func (e *TempStoreExec) Next() (*Row, error) {
-	if e.cursor == len(e.storedRows) {
+	if e.closed {
+		e.cursor++
+		if e.cursor > len(e.storedRows) {
+			return nil, nil
+		}
+		return e.storedRows[e.cursor-1], nil
+	} else {
 		row, err := e.Src.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		e.storedRows = append(e.storedRows, row)
+		if row == nil {
+			e.closed = true
+			err := e.Src.Close()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		return row, nil
 	}
-	e.cursor++
-	return e.storedRows[e.cursor-1], nil
 }
