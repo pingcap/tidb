@@ -544,8 +544,8 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 }
 
 func getScanConcurrency(ctx context.Context) (int, error) {
-	sessionVars := variable.GetSessionVars(ctx)
-	concurrency, err := sessionVars.GetTiDBSystemVar(ctx, variable.DistSQLScanConcurrencyVar)
+	sessionVars := ctx.GetSessionVars()
+	concurrency, err := sessionVars.GetTiDBSystemVar(variable.DistSQLScanConcurrencyVar)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -847,7 +847,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 				return nil, nil
 			}
 			duration := time.Since(startTs)
-			connID := variable.GetSessionVars(e.ctx).ConnectionID
+			connID := e.ctx.GetSessionVars().ConnectionID
 			if duration > 30*time.Millisecond {
 				log.Infof("[%d] [TIME_TABLE_SCAN] %v", connID, duration)
 			} else {

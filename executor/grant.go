@@ -24,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/db"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
@@ -371,7 +369,7 @@ func composeTablePrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name 
 			}
 		}
 	}
-	return fmt.Sprintf(`Table_priv="%s", Column_priv="%s", Grantor="%s"`, newTablePriv, newColumnPriv, variable.GetSessionVars(ctx).User), nil
+	return fmt.Sprintf(`Table_priv="%s", Column_priv="%s", Grantor="%s"`, newTablePriv, newColumnPriv, ctx.GetSessionVars().User), nil
 }
 
 // Compose update stmt assignment list for column scope privilege update.
@@ -489,7 +487,7 @@ func (e *GrantExec) getTargetSchema() (*model.DBInfo, error) {
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		// Grant *, use current schema
-		dbName = db.GetCurrentSchema(e.ctx)
+		dbName = e.ctx.GetSessionVars().CurrentDB
 		if len(dbName) == 0 {
 			return nil, errors.New("miss DB name for grant privilege")
 		}

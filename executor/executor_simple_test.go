@@ -131,7 +131,7 @@ func (s *testSuite) TestSetCharset(c *C) {
 	tk.MustExec(`SET NAMES latin1`)
 
 	ctx := tk.Se.(context.Context)
-	sessionVars := variable.GetSessionVars(ctx)
+	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.SetNamesVariables {
 		sVar := sessionVars.GetSystemVar(v)
 		c.Assert(sVar.GetString() != "utf8", IsTrue)
@@ -169,7 +169,7 @@ func (s *testSuite) TestTransaction(c *C) {
 }
 
 func inTxn(ctx context.Context) bool {
-	return (variable.GetSessionVars(ctx).Status & mysql.ServerStatusInTrans) > 0
+	return (ctx.GetSessionVars().Status & mysql.ServerStatusInTrans) > 0
 }
 
 func (s *testSuite) TestCreateUser(c *C) {
