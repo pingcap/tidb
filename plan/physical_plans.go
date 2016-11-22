@@ -770,14 +770,3 @@ func (p *TempStore) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
-
-// MarshalJSON implements json.Marshaler interface.
-func (p *TempStore) MarshalJSON() ([]byte, error) {
-	child, err := json.Marshal(p.children[0])
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf("\"type\": \"Temp\",\n\"child\": %s}", child))
-	return buffer.Bytes(), nil
-}

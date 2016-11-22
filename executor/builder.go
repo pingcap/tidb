@@ -669,9 +669,9 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 }
 
 func (b *executorBuilder) buildTempStore(v *plan.TempStore) Executor {
-	selExec := b.build(v.GetChildByIndex(0))
+	src := b.build(v.GetChildByIndex(0))
 	return &TempStoreExec{
 		schema: v.GetSchema(),
-		Src:    selExec,
+		Src:    src,
 	}
 }

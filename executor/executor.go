@@ -1932,13 +1932,14 @@ func (e *DummyScanExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-// TempStoreExec represents TmpStore executor.
+// TempStoreExec represents TempStore executor.
 // it stores the return values of the executor of its child node.
 type TempStoreExec struct {
 	schema     expression.Schema
 	Src        Executor
 	storedRows []*Row
 	cursor     int
+	closed     bool
 }
 
 // Schema implements the Executor Schema interface.
@@ -1949,6 +1950,10 @@ func (e *TempStoreExec) Schema() expression.Schema {
 // Close implements the Executor Close interface.
 func (e *TempStoreExec) Close() error {
 	e.cursor = 0
+	if !e.closed {
+		e.closed = true
+		return e.Src.Close()
+	}
 	return nil
 }
 

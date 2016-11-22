@@ -253,9 +253,7 @@ func (p *Projection) matchProperty(_ *requiredProperty, childPlanInfo ...*physic
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *TempStore) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
-	np := *p
-	np.SetChildren(childPlanInfo[0].p)
-	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
+	panic("You can't call this function!")
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
