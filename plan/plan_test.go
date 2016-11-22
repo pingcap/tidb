@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -260,7 +261,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitXor, tipb.ExprType_BitNeg:
 		return true
 	// control functions
-	case tipb.ExprType_Case, tipb.ExprType_If:
+	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull:
 		return true
 	// other functions
 	case tipb.ExprType_Coalesce:
@@ -557,6 +558,11 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			sql:  "a = if(a, 1, 0)",
 			cond: "eq(test.t.a, if(test.t.a, 1, 0))",
 		},
+		// ifnull
+		{
+			sql:  "a = ifnull(null, a)",
+			cond: "eq(test.t.a, ifnull(<nil>, test.t.a))",
+		},
 		// coalesce
 		{
 			sql:  "a = coalesce(null, null, a, b)",
@@ -565,6 +571,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 	}
 	for _, ca := range cases {
 		sql := "select * from t where " + ca.sql
+		log.Error(sql)
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
@@ -2037,18 +2044,6 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		{
 			sql: "select (1,2) < 3",
 			err: ErrSameColumns,
-		},
-		{
-			sql: "select 1, * from t",
-			err: ErrInvalidWildCard,
-		},
-		{
-			sql: "select *, 1 from t",
-			err: nil,
-		},
-		{
-			sql: "select 1, t.* from t",
-			err: nil,
 		},
 	}
 	for _, ca := range cases {
