@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -59,7 +60,9 @@ func (m *MockExec) Close() error {
 }
 
 func (s *testSuite) TestAggregation(c *C) {
+	plan.JoinConcurrency = 1
 	defer func() {
+		plan.JoinConcurrency = 5
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
