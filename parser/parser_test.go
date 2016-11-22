@@ -37,6 +37,44 @@ type testParserSuite struct {
 func (s *testParserSuite) TestSimple(c *C) {
 	defer testleak.AfterTest(c)()
 	parser := New()
+
+	reservedKws := []string{
+		"add", "all", "alter", "analyze", "and", "as", "asc", "between", "bigint",
+		"binary", "blob", "both", "by", "cascade", "case", "character", "check", "collate",
+		"column", "constraint", "convert", "create", "cross", "current_date", "current_time",
+		"current_timestamp", "current_user", "database", "databases", "day_hour", "day_microsecond",
+		"day_minute", "day_second", "decimal", "default", "delete", "desc", "describe",
+		"distinct", "div", "double", "drop", "dual", "else", "enclosed", "escaped",
+		"exists", "explain", "false", "float", "for", "force", "foreign", "from",
+		"fulltext", "grant", "group", "having", "hour_microsecond", "hour_minute",
+		"hour_second", "if", "ignore", "in", "index", "infile", "inner", "insert", "int", "into", "integer",
+		"interval", "is", "join", "key", "keys", "leading", "left", "like", "limit", "lines", "load",
+		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "mediumint", "mediumtext",
+		"minute_microsecond", "minute_second", "mod", "not", "no_write_to_binlog", "null", "numeric",
+		"on", "option", "or", "order", "outer", "precision", "primary", "procedure", "read", "real",
+		"references", "regexp", "repeat", "replace", "restrict", "right", "rlike",
+		"schema", "schemas", "second_microsecond", "select", "set", "show", "smallint",
+		"starting", "table", "terminated", "then", "tinyblob", "tinyint", "tinytext", "to",
+		"trailing", "true", "union", "unique", "unlock", "unsigned",
+		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
+		"when", "where", "write", "xor", "year_month", "zerofill",
+		// TODO: support the following keywords
+		// "delayed" , "high_priority" , "low_priority", "with",
+	}
+	for _, kw := range reservedKws {
+		src := fmt.Sprintf("SELECT * FROM db.%s;", kw)
+		_, err := parser.ParseOneStmt(src, "", "")
+		c.Assert(err, IsNil, Commentf("source %s", src))
+
+		src = fmt.Sprintf("SELECT * FROM %s.desc", kw)
+		_, err = parser.ParseOneStmt(src, "", "")
+		c.Assert(err, IsNil, Commentf("source %s", src))
+
+		src = fmt.Sprintf("SELECT t.%s FROM t", kw)
+		_, err = parser.ParseOneStmt(src, "", "")
+		c.Assert(err, IsNil, Commentf("source %s", src))
+	}
+
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
@@ -79,6 +117,16 @@ func (s *testParserSuite) TestSimple(c *C) {
 	stmt := stmts[0]
 	_, ok := stmt.(*ast.SetStmt)
 	c.Assert(ok, IsTrue)
+
+	// For issue #2017
+	src = "insert into blobtable (a) values ('/*! truncated */');"
+	stmt, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+	is, ok := stmt.(*ast.InsertStmt)
+	c.Assert(ok, IsTrue)
+	c.Assert(is.Lists, HasLen, 1)
+	c.Assert(is.Lists[0], HasLen, 1)
+	c.Assert(is.Lists[0][0].GetDatum().GetString(), Equals, "/*! truncated */")
 
 	// Testcase for CONVERT(expr,type)
 	src = "SELECT CONVERT('111', SIGNED);"
@@ -717,6 +765,11 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{`select 1 a, 1 "a", 1 'a'`, true},
 		{`select * from t as "a"`, false},
 		{`select * from t a`, true},
+		// reserved keyword can't be used as identifier directly, but A.B pattern is an exception
+		{`select COUNT from DESC`, false},
+		{`select COUNT from SELECT.DESC`, true},
+		{"use `select`", true},
+		{"use select", false},
 		{`select * from t as a`, true},
 		{"select 1 full, 1 row, 1 abs", true},
 		{"select * from t full, t1 row, t2 abs", true},

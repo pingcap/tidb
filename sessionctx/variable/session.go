@@ -123,6 +123,9 @@ type SessionVars struct {
 	// SnapshotInfoschema is used with SnapshotTS, when the schema version at snapshotTS less than current schema
 	// version, we load an old version schema for query.
 	SnapshotInfoschema interface{}
+
+	// SkipConstraintCheck is true when importing data.
+	SkipConstraintCheck bool
 }
 
 // sessionVarsKeyType is a dummy type to avoid naming collision in context.
@@ -269,6 +272,8 @@ func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 	case AutocommitVar:
 		isAutocommit := strings.EqualFold(sVal, "ON") || sVal == "1"
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
+	case TiDBSkipConstraintCheck:
+		s.setSkipConstraintCheck(sVal)
 	}
 	s.systems[key] = sVal
 	return nil
@@ -291,6 +296,14 @@ func (s *SessionVars) setSnapshotTS(sVal string) error {
 	return nil
 }
 
+func (s *SessionVars) setSkipConstraintCheck(sVal string) {
+	if sVal == "1" {
+		s.SkipConstraintCheck = true
+	} else {
+		s.SkipConstraintCheck = false
+	}
+}
+
 // GetSystemVar gets a system variable.
 func (s *SessionVars) GetSystemVar(key string) types.Datum {
 	var d types.Datum
@@ -298,6 +311,11 @@ func (s *SessionVars) GetSystemVar(key string) types.Datum {
 	sVal, ok := s.systems[key]
 	if ok {
 		d.SetString(sVal)
+	} else {
+		// TiDBSkipConstraintCheck is a session scope vars. We do not store it in the global table.
+		if key == TiDBSkipConstraintCheck {
+			d.SetString(SysVars[TiDBSkipConstraintCheck].Value)
+		}
 	}
 	return d
 }

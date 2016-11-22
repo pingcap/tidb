@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"golang.org/x/net/context"
 )
 
 type testStoreSuite struct {
@@ -63,9 +64,10 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	o := &mockOracle{}
 	s.store.oracle = o
 
-	t1, err := s.store.getTimestampWithRetry(NewBackoffer(100))
+	ctx := context.Background()
+	t1, err := s.store.getTimestampWithRetry(NewBackoffer(100, ctx))
 	c.Assert(err, IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackoffer(100))
+	t2, err := s.store.getTimestampWithRetry(NewBackoffer(100, ctx))
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
 
@@ -82,7 +84,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 	go func() {
 		defer wg.Done()
-		t3, err := s.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff))
+		t3, err := s.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff, ctx))
 		c.Assert(err, IsNil)
 		c.Assert(t2, Less, t3)
 		expired := s.store.oracle.IsExpired(t2, 50)

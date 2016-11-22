@@ -37,6 +37,9 @@ type Scanner struct {
 
 	errs         []error
 	stmtStartPos int
+
+	// for scanning such kind of comment: /*! MySQL-specific code */
+	specialComment *Scanner
 }
 
 // Errors returns the errors during a scan.
@@ -99,11 +102,13 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return toInt(s, v, lit)
 	case floatLit:
 		return toFloat(s, v, lit)
+	case decLit:
+		return toDecimal(s, v, lit)
 	case hexLit:
 		return toHex(s, v, lit)
 	case bitLit:
 		return toBit(s, v, lit)
-	case userVar, sysVar, database, currentUser, replace, cast, sysDate, currentTs, currentTime, currentDate, curDate, utcDate, extract, repeat, secondMicrosecond, minuteMicrosecond, minuteSecond, hourMicrosecond, hourMinute, hourSecond, dayMicrosecond, dayMinute, daySecond, dayHour, yearMonth, ifKwd, left, convert:
+	case userVar, sysVar, cast, sysDate, curDate, extract:
 		v.item = lit
 		return tok
 	case null:
@@ -127,6 +132,21 @@ func (s *Scanner) skipWhitespace() rune {
 }
 
 func (s *Scanner) scan() (tok int, pos Pos, lit string) {
+	if s.specialComment != nil {
+		// enter specialComment scan mode.
+		// for scanning such kind of comment: /*! MySQL-specific code */
+		specialComment := s.specialComment
+		tok, pos, lit = specialComment.scan()
+		if tok != 0 {
+			// return the specialComment scan result as the result
+			pos.Line += s.r.p.Line
+			pos.Offset += s.r.p.Col
+			return
+		}
+		// leave specialComment scan mode after all stream consumed.
+		s.specialComment = nil
+	}
+
 	ch0 := s.r.peek()
 	if unicode.IsSpace(ch0) {
 		ch0 = s.skipWhitespace()
@@ -236,6 +256,15 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 				break
 			}
 		}
+
+		// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
+		// Convert "/*!VersionNumber MySQL-specific-code */" to "MySQL-specific-code".
+		comment := s.r.data(&pos)
+		if strings.HasPrefix(comment, "/*!") {
+			sql := specCodePattern.ReplaceAllStringFunc(comment, trimComment)
+			s.specialComment = NewScanner(sql)
+		}
+
 		return s.scan()
 	}
 	tok = int('/')
@@ -493,9 +522,16 @@ func (s *Scanner) scanFloat(beg *Pos) (tok int, pos Pos, lit string) {
 	}
 	if ch0 == 'e' || ch0 == 'E' {
 		s.r.inc()
+		ch0 = s.r.peek()
+		if ch0 == '-' || ch0 == '+' {
+			s.r.inc()
+		}
 		s.scanDigits()
+		tok = floatLit
+	} else {
+		tok = decLit
 	}
-	tok, pos, lit = floatLit, *beg, s.r.data(beg)
+	pos, lit = *beg, s.r.data(beg)
 	return
 }
 

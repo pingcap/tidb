@@ -42,6 +42,7 @@ type mvccLock struct {
 	primary []byte
 	value   []byte
 	op      kvrpcpb.Op
+	ttl     uint64
 }
 
 type mvccEntry struct {
@@ -73,6 +74,7 @@ func (e *mvccEntry) Clone() *mvccEntry {
 			primary: append([]byte(nil), e.lock.primary...),
 			value:   append([]byte(nil), e.lock.value...),
 			op:      e.lock.op,
+			ttl:     e.lock.ttl,
 		}
 	}
 	return &entry
@@ -87,6 +89,7 @@ func (e *mvccEntry) lockErr() error {
 		Key:     e.key,
 		Primary: e.lock.primary,
 		StartTS: e.lock.startTS,
+		TTL:     e.lock.ttl,
 	}
 }
 
@@ -104,7 +107,7 @@ func (e *mvccEntry) Get(ts uint64) ([]byte, error) {
 	return nil, nil
 }
 
-func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary []byte) error {
+func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64) error {
 	if len(e.values) > 0 {
 		if e.values[0].commitTS >= startTS {
 			return ErrRetryable("write conflict")
@@ -121,6 +124,7 @@ func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary
 		primary: primary,
 		value:   mutation.Value,
 		op:      mutation.GetOp(),
+		ttl:     ttl,
 	}
 	return nil
 }
@@ -311,14 +315,14 @@ func (s *MvccStore) submit(ents ...*mvccEntry) {
 }
 
 // Prewrite acquires a lock on a key. (1st phase of 2PC).
-func (s *MvccStore) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64) []error {
+func (s *MvccStore) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64, ttl uint64) []error {
 	s.Lock()
 	defer s.Unlock()
 
 	var errs []error
 	for _, m := range mutations {
 		entry := s.getOrNewEntry(m.Key)
-		err := entry.Prewrite(m, startTS, primary)
+		err := entry.Prewrite(m, startTS, primary, ttl)
 		s.submit(entry)
 		errs = append(errs, err)
 	}

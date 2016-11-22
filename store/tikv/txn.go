@@ -21,6 +21,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -39,7 +40,7 @@ type tikvTxn struct {
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
-	bo := NewBackoffer(tsoMaxBackoff)
+	bo := NewBackoffer(tsoMaxBackoff, context.Background())
 	startTS, err := store.getTimestampWithRetry(bo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -123,14 +124,14 @@ func (txn *tikvTxn) Commit() error {
 		return errors.Trace(err)
 	}
 
-	committer, err := newTxnCommitter(txn)
+	committer, err := newTwoPhaseCommitter(txn)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if committer == nil {
 		return nil
 	}
-	err = committer.Commit()
+	err = committer.execute()
 	if err != nil {
 		committer.writeFinishBinlog(binlog.BinlogType_Rollback, 0)
 		return errors.Trace(err)

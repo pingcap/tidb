@@ -376,7 +376,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	}
 	var conditions []expression.Expression
 	if show.Pattern != nil {
-		expr, _, _, err := b.rewrite(show.Pattern, p, nil, false)
+		expr, _, err := b.rewrite(show.Pattern, p, nil, false)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
@@ -386,7 +386,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	if show.Where != nil {
 		conds := splitWhere(show.Where)
 		for _, cond := range conds {
-			expr, _, _, err := b.rewrite(cond, p, nil, false)
+			expr, _, err := b.rewrite(cond, p, nil, false)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
