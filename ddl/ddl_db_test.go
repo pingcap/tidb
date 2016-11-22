@@ -44,32 +44,29 @@ import (
 
 var _ = Suite(&testDBSuite{})
 
-const (
-	defaultBatchSize = 1024
-)
+const defaultBatchSize = 1024
 
 type testDBSuite struct {
 	store      kv.Storage
 	schemaName string
-
-	s     tidb.Session
-	lease time.Duration
+	tk         *testkit.TestKit
+	s          tidb.Session
+	lease      time.Duration
 }
 
 func (s *testDBSuite) SetUpSuite(c *C) {
 	var err error
 
 	s.schemaName = "test_db"
-
-	uri := tidb.EngineGoLevelDBMemory
-	s.store, err = tidb.NewStore(uri)
+	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = true
 	s.s, err = tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
+
 	_, err = s.s.Execute("create database test_db")
 	c.Assert(err, IsNil)
-	_, err = s.s.Execute("use test_db")
+	_, err = s.s.Execute("use " + s.schemaName)
 	c.Assert(err, IsNil)
 	_, err = s.s.Execute("create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
 	c.Assert(err, IsNil)
@@ -88,8 +85,8 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.s.Close()
 }
 
-func (s *testDBSuite) testErrorCode(c *C, sql string, tk *testkit.TestKit, errCode int) {
-	_, err := tk.Exec(sql)
+func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
+	_, err := s.tk.Exec(sql)
 	c.Assert(err, NotNil)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
@@ -99,54 +96,56 @@ func (s *testDBSuite) testErrorCode(c *C, sql string, tk *testkit.TestKit, errCo
 
 func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	defer testleak.AfterTest(c)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
 
 	// create database
 	sql := "create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	s.testErrorCode(c, sql, tk, tmysql.ErrTooLongIdent)
+	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
 	sql = "create database test"
-	s.testErrorCode(c, sql, tk, tmysql.ErrDBCreateExists)
+	s.testErrorCode(c, sql, tmysql.ErrDBCreateExists)
 	// drop database
 	sql = "drop database db_not_exist"
-	s.testErrorCode(c, sql, tk, tmysql.ErrDBDropExists)
+	s.testErrorCode(c, sql, tmysql.ErrDBDropExists)
 	// crate table
-	tk.MustExec("create table test_error_code_succ (c1 int, c2 int, c3 int)")
+	s.tk.MustExec("create table test_error_code_succ (c1 int, c2 int, c3 int)")
 	sql = "create table test_error_code_succ (c1 int, c2 int, c3 int)"
-	s.testErrorCode(c, sql, tk, tmysql.ErrTableExists)
+	s.testErrorCode(c, sql, tmysql.ErrTableExists)
 	sql = "create table test_error_code1 (c1 int, c2 int, c2 int)"
-	s.testErrorCode(c, sql, tk, tmysql.ErrDupFieldName)
+	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
 	sql = "create table test_error_code1 (c1 int, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int)"
-	s.testErrorCode(c, sql, tk, tmysql.ErrTooLongIdent)
+	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
 	sql = "create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int)"
-	s.testErrorCode(c, sql, tk, tmysql.ErrTooLongIdent)
+	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
 	sql = "create table test_error_code1 (c1 int, c2 int, key aa (c1, c2), key aa (c1))"
-	s.testErrorCode(c, sql, tk, tmysql.ErrDupKeyName)
+	s.testErrorCode(c, sql, tmysql.ErrDupKeyName)
 	sql = "create table test_error_code1 (c1 int, c2 int, c3 int, key(c_not_exist))"
-	s.testErrorCode(c, sql, tk, tmysql.ErrKeyColumnDoesNotExits)
+	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
 	sql = "create table test_error_code1 (c1 int, c2 int, c3 int, primary key(c_not_exist))"
-	s.testErrorCode(c, sql, tk, tmysql.ErrKeyColumnDoesNotExits)
+	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
-	s.testErrorCode(c, sql, tk, tmysql.ErrDupFieldName)
+	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
 	sql = "alter table test_error_code_succ add column aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int"
-	s.testErrorCode(c, sql, tk, tmysql.ErrTooLongIdent)
+	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
 	// drop column
 	sql = "alter table test_error_code_succ drop c_not_exist"
-	s.testErrorCode(c, sql, tk, tmysql.ErrCantDropFieldOrKey)
+	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
-	s.testErrorCode(c, sql, tk, tmysql.ErrKeyColumnDoesNotExits)
-	tk.Exec("alter table test_error_code_succ add index idx (c1)")
+	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
+	s.tk.Exec("alter table test_error_code_succ add index idx (c1)")
 	sql = "alter table test_error_code_succ add index idx (c1)"
-	s.testErrorCode(c, sql, tk, tmysql.ErrDupKeyName)
+	s.testErrorCode(c, sql, tmysql.ErrDupKeyName)
 	// drop index
 	sql = "alter table test_error_code_succ drop index idx_not_exist"
-	s.testErrorCode(c, sql, tk, tmysql.ErrCantDropFieldOrKey)
+	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
 }
 
 func (s *testDBSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
 	s.testAddIndex(c)
 	s.testDropIndex(c)
 	s.testAddUniqueIndexRollback(c)
@@ -440,10 +439,10 @@ func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {
 
 func (s *testDBSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use " + s.schemaName)
-	s.testAddColumn(c, tk)
-	s.testDropColumn(c, tk)
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.testAddColumn(c)
+	s.testDropColumn(c)
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
@@ -457,13 +456,13 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 	se.Close()
 }
 
-func (s *testDBSuite) testAddColumn(c *C, tk *testkit.TestKit) {
+func (s *testDBSuite) testAddColumn(c *C) {
 	done := make(chan struct{}, 1)
 
 	num := defaultBatchSize + 10
 	// add some rows
 	for i := 0; i < num; i++ {
-		tk.MustExec("insert into t2 values (?, ?, ?)", i, i, i)
+		s.tk.MustExec("insert into t2 values (?, ?, ?)", i, i, i)
 	}
 
 	go func() {
@@ -483,8 +482,8 @@ LOOP:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
-				tk.MustExec("delete from t2 where c1 = ?", n)
-				_, err := tk.Exec("insert into t2 values (?, ?, ?)", i, i, i)
+				s.tk.MustExec("delete from t2 where c1 = ?", n)
+				_, err := s.tk.Exec("insert into t2 values (?, ?, ?)", i, i, i)
 				if err != nil {
 					// if err is failed, the column number must be 4 now.
 					values := s.showColumns(c, "t2")
@@ -497,7 +496,7 @@ LOOP:
 
 	// add data, here c4 must exist
 	for i := num; i < num+step; i++ {
-		tk.MustExec("insert into t2 values (?, ?, ?, ?)", i, i, i, i)
+		s.tk.MustExec("insert into t2 values (?, ?, ?, ?)", i, i, i, i)
 	}
 
 	rows := s.mustQuery(c, "select count(c4) from t2")
@@ -539,7 +538,7 @@ LOOP:
 	c.Assert(j, Equals, int(count)-step)
 }
 
-func (s *testDBSuite) testDropColumn(c *C, tk *testkit.TestKit) {
+func (s *testDBSuite) testDropColumn(c *C) {
 	done := make(chan struct{}, 1)
 
 	s.mustExec(c, "delete from t2")
@@ -569,7 +568,7 @@ LOOP:
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
-				_, err := tk.Exec("insert into t2 values (?, ?, ?)", i, i, i)
+				_, err := s.tk.Exec("insert into t2 values (?, ?, ?)", i, i, i)
 				if err != nil {
 					// if err is failed, the column number must be 4 now.
 					values := s.showColumns(c, "t2")
@@ -601,17 +600,13 @@ LOOP:
 }
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) ast.RecordSet {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use " + s.schemaName)
-	r, err := tk.Exec(query, args...)
+	r, err := s.tk.Exec(query, args...)
 	c.Assert(err, IsNil, Commentf("query %s, args %v", query, args))
 	return r
 }
 
 func (s *testDBSuite) mustQuery(c *C, query string, args ...interface{}) [][]interface{} {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use " + s.schemaName)
-	r := tk.MustQuery(query, args...)
+	r := s.tk.MustQuery(query, args...)
 	return r.Rows()
 }
 
