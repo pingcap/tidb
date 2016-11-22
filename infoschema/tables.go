@@ -17,11 +17,13 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -318,13 +320,12 @@ var filesCols = []columnInfo{
 	{"EXTRA", mysql.TypeVarchar, 255, 0, nil, nil},
 }
 
-func dataForSchemata(schemas []string) [][]types.Datum {
-	sort.Strings(schemas)
+func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 	rows := [][]types.Datum{}
 	for _, schema := range schemas {
 		record := types.MakeDatums(
 			catalogVal,                 // CATALOG_NAME
-			schema,                     // SCHEMA_NAME
+			schema.Name.O,              // SCHEMA_NAME
 			mysql.DefaultCharset,       // DEFAULT_CHARACTER_SET_NAME
 			mysql.DefaultCollationName, // DEFAULT_COLLATION_NAME
 			nil,
@@ -517,7 +518,162 @@ var tableNameToColumns = map[string]([]columnInfo){
 	tableReferConst:    referConstCols,
 }
 
-func createMemoryTable(meta *model.TableInfo, alloc autoid.Allocator) (table.Table, error) {
-	tbl, _ := tables.MemoryTableFromMeta(alloc, meta)
-	return tbl, nil
+func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
+	columns := make([]*table.Column, len(meta.Columns))
+	for i, col := range meta.Columns {
+		columns[i] = (*table.Column)(col)
+	}
+	return &infoschemaTable{
+		handle: handle,
+		meta:   meta,
+		cols:   columns,
+	}
+}
+
+type infoschemaTable struct {
+	handle *Handle
+	meta   *model.TableInfo
+	cols   []*table.Column
+	rows   [][]types.Datum
+}
+
+// schemasSorter implements the sort.Interface interface, sorts DBInfo by name.
+type schemasSorter []*model.DBInfo
+
+func (s schemasSorter) Len() int {
+	return len(s)
+}
+
+func (s schemasSorter) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (s schemasSorter) Less(i, j int) bool {
+	return s[i].Name.L < s[j].Name.L
+}
+
+func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) [][]types.Datum {
+	is := it.handle.Get()
+	dbs := is.AllSchemas()
+	sort.Sort(schemasSorter(dbs))
+	var fullRows [][]types.Datum
+	switch it.meta.Name.O {
+	case tableSchemata:
+		fullRows = dataForSchemata(dbs)
+	case tableTables:
+		fullRows = dataForTables(dbs)
+	case tableColumns:
+		fullRows = dataForColumns(dbs)
+	case tableStatistics:
+		fullRows = dataForStatistics(dbs)
+	case tableCharacterSets:
+		fullRows = dataForCharacterSets()
+	case tableCollations:
+		fullRows = dataForColltions()
+	case tableFiles:
+	case tableProfiling:
+	case tablePartitions:
+	case tableKeyColumm:
+	case tableReferConst:
+	}
+	if len(cols) == len(it.cols) {
+		return fullRows
+	}
+	rows := make([][]types.Datum, len(fullRows))
+	for i, fullRow := range fullRows {
+		row := make([]types.Datum, len(cols))
+		for j, col := range cols {
+			row[j] = fullRow[col.Offset]
+		}
+		rows[i] = row
+	}
+	return rows
+}
+
+func (it *infoschemaTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.Column,
+	fn table.RecordIterFunc) error {
+	if len(startKey) != 0 {
+		return table.ErrUnsupportedOp
+	}
+	rows := it.getRows(ctx, cols)
+	for i, row := range rows {
+		more, err := fn(int64(i), row, cols)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !more {
+			break
+		}
+	}
+	return nil
+}
+
+func (it *infoschemaTable) RowWithCols(ctx context.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+	return nil, table.ErrUnsupportedOp
+}
+
+// Row implements table.Table Row interface.
+func (it *infoschemaTable) Row(ctx context.Context, h int64) ([]types.Datum, error) {
+	return nil, table.ErrUnsupportedOp
+}
+
+func (it *infoschemaTable) Cols() []*table.Column {
+	return it.cols
+}
+
+func (it *infoschemaTable) WritableCols() []*table.Column {
+	return it.cols
+}
+
+func (it *infoschemaTable) Indices() []table.Index {
+	return nil
+}
+
+func (it *infoschemaTable) RecordPrefix() kv.Key {
+	return nil
+}
+
+func (it *infoschemaTable) IndexPrefix() kv.Key {
+	return nil
+}
+
+func (it *infoschemaTable) FirstKey() kv.Key {
+	return nil
+}
+
+func (it *infoschemaTable) RecordKey(h int64) kv.Key {
+	return nil
+}
+
+func (it *infoschemaTable) AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error) {
+	return 0, table.ErrUnsupportedOp
+}
+
+func (it *infoschemaTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum) error {
+	return table.ErrUnsupportedOp
+}
+
+func (it *infoschemaTable) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum, newData []types.Datum, touched map[int]bool) error {
+	return table.ErrUnsupportedOp
+}
+
+func (it *infoschemaTable) AllocAutoID() (int64, error) {
+	return 0, table.ErrUnsupportedOp
+}
+
+func (it *infoschemaTable) Allocator() autoid.Allocator {
+	return nil
+}
+
+func (it *infoschemaTable) RebaseAutoID(newBase int64, isSetStep bool) error {
+	return table.ErrUnsupportedOp
+}
+
+func (it *infoschemaTable) Meta() *model.TableInfo {
+	return it.meta
+}
+
+// Seek is the first method called for table scan, we lazy initialize it here.
+func (it *infoschemaTable) Seek(ctx context.Context, h int64) (int64, bool, error) {
+	return 0, false, table.ErrUnsupportedOp
 }

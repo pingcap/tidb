@@ -14,7 +14,6 @@
 package ddl_test
 
 import (
-	"database/sql"
 	"fmt"
 	"io"
 	"math/rand"
@@ -47,7 +46,6 @@ var _ = Suite(&testDBSuite{})
 
 const (
 	defaultBatchSize = 1024
-	lease            = 500 * time.Millisecond
 )
 
 type testDBSuite struct {
@@ -79,7 +77,7 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 
 	// set proper schema lease
-	s.lease = 500 * time.Millisecond
+	s.lease = 50 * time.Millisecond
 	ctx := s.s.(context.Context)
 	sessionctx.GetDomain(ctx).SetLease(s.lease)
 }
@@ -158,7 +156,7 @@ func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	ctx := s.s.(context.Context)
 	domain := sessionctx.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
-	err := domain.MustReload()
+	err := domain.Reload()
 	c.Assert(err, IsNil)
 	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
 	c.Assert(err, IsNil)
@@ -301,20 +299,21 @@ LOOP:
 		matchRows(c, rows, [][]interface{}{{keys[index]}, {keys[index+1]}, {keys[index+2]}})
 	}
 
-	// TODO: support explain in future.
-	//rows := s.mustQuery(c, "explain select c1 from t1 where c3 >= 100")
+	// TODO: Support explain in future.
+	// rows := s.mustQuery(c, "explain select c1 from t1 where c3 >= 100")
 
-	//ay := dumpRows(c, rows)
-	//c.Assert(strings.Contains(fmt.Sprintf("%v", ay), "c3_index"), IsTrue)
+	// ay := dumpRows(c, rows)
+	// c.Assert(strings.Contains(fmt.Sprintf("%v", ay), "c3_index"), IsTrue)
 
 	// get all row handles
 	ctx := s.s.(context.Context)
 	t := s.testGetTable(c, "t1")
 	handles := make(map[int64]struct{})
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
-		return true, nil
-	})
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(),
+		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+			handles[h] = struct{}{}
+			return true, nil
+		})
 	c.Assert(err, IsNil)
 
 	// check in index
@@ -411,7 +410,7 @@ LOOP:
 			break
 		}
 	}
-	// Make sure there is no index with name c3_index
+	// Make sure there is no index with name c3_index.
 	c.Assert(nidx, IsNil)
 	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
 	txn, err := ctx.GetTxn(true)
@@ -521,18 +520,19 @@ LOOP:
 	i := 0
 	j := 0
 	defer ctx.RollbackTxn()
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		i++
-		// c4 must be -1 or > 0
-		v, err1 := data[3].ToInt64()
-		c.Assert(err1, IsNil)
-		if v == -1 {
-			j++
-		} else {
-			c.Assert(v, Greater, int64(0))
-		}
-		return true, nil
-	})
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(),
+		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+			i++
+			// c4 must be -1 or > 0
+			v, err1 := data[3].ToInt64()
+			c.Assert(err1, IsNil)
+			if v == -1 {
+				j++
+			} else {
+				c.Assert(v, Greater, int64(0))
+			}
+			return true, nil
+		})
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int(count))
 	c.Assert(i, LessEqual, num+step)
@@ -613,29 +613,6 @@ func (s *testDBSuite) mustQuery(c *C, query string, args ...interface{}) [][]int
 	tk.MustExec("use " + s.schemaName)
 	r := tk.MustQuery(query, args...)
 	return r.Rows()
-}
-
-func dumpRows(c *C, rows *sql.Rows) [][]interface{} {
-	cols, err := rows.Columns()
-	c.Assert(err, IsNil)
-	ay := make([][]interface{}, 0)
-	for rows.Next() {
-		v := make([]interface{}, len(cols))
-		for i := range v {
-			v[i] = new(interface{})
-		}
-		err = rows.Scan(v...)
-		c.Assert(err, IsNil)
-
-		for i := range v {
-			v[i] = *(v[i].(*interface{}))
-		}
-		ay = append(ay, v)
-	}
-
-	rows.Close()
-	c.Assert(rows.Err(), IsNil, Commentf("%v", ay))
-	return ay
 }
 
 func matchRows(c *C, rows [][]interface{}, expected [][]interface{}) {
@@ -737,7 +714,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(newTblInfo.Meta().ID, Greater, oldTblID)
 
-	// verify that the old table data has been deleted by background worker.
+	// Verify that the old table data has been deleted by background worker.
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
 	for i := 0; i < 30; i++ {

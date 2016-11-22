@@ -69,16 +69,36 @@ func (s TxnStatus) IsCommitted() bool { return s > 0 }
 // CommitTS returns the txn's commitTS. It is valid iff `IsCommitted` is true.
 func (s TxnStatus) CommitTS() uint64 { return uint64(s) }
 
-// locks after 3000ms is considered unusual (the client created the lock might
-// be dead). Other client may cleanup this kind of lock.
+// By default, locks after 3000ms is considered unusual (the client created the
+// lock might be dead). Other client may cleanup this kind of lock.
 // For locks created recently, we will do backoff and retry.
-var lockTTL uint64 = 3000
+var defaultLockTTL uint64 = 3000
+
+// TODO: Consider if it's appropriate.
+var maxLockTTL uint64 = 120000
+
+// ttl = ttlFactor * sqrt(writeSizeInMiB)
+var ttlFactor = 6000
 
 // Lock represents a lock from tikv server.
 type Lock struct {
 	Key     []byte
 	Primary []byte
 	TxnID   uint64
+	TTL     uint64
+}
+
+func newLock(l *kvrpcpb.LockInfo) *Lock {
+	ttl := l.GetLockTtl()
+	if ttl == 0 {
+		ttl = defaultLockTTL
+	}
+	return &Lock{
+		Key:     l.GetKey(),
+		Primary: l.GetPrimaryLock(),
+		TxnID:   l.GetLockVersion(),
+		TTL:     ttl,
+	}
 }
 
 func (lr *LockResolver) saveResolved(txnID uint64, status TxnStatus) {
@@ -123,7 +143,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err
 
 	var expiredLocks []*Lock
 	for _, l := range locks {
-		if lr.store.oracle.IsExpired(l.TxnID, lockTTL) {
+		if lr.store.oracle.IsExpired(l.TxnID, l.TTL) {
 			lockResolverCounter.WithLabelValues("expired").Inc()
 			expiredLocks = append(expiredLocks, l)
 		} else {
