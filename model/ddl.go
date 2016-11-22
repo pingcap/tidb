@@ -75,22 +75,22 @@ func (action ActionType) String() string {
 
 // HistoryInfo is used for binlog.
 type HistoryInfo struct {
-	Version   int64
-	DBInfo    *DBInfo
-	TableInfo *TableInfo
+	SchemaVersion int64
+	DBInfo        *DBInfo
+	TableInfo     *TableInfo
 }
 
 // AddDBInfo adds schema version and schema information that are used for binlog.
 // dbInfo is added in the following operations: create database, drop database.
-func (h *HistoryInfo) AddDBInfo(ver int64, dbInfo *DBInfo) {
-	h.Version = ver
+func (h *HistoryInfo) AddDBInfo(schemaVer int64, dbInfo *DBInfo) {
+	h.SchemaVersion = schemaVer
 	h.DBInfo = dbInfo
 }
 
 // AddTableInfo adds schema version and table information that are used for binlog.
 // tblInfo is added except for the following operations: create database, drop database.
-func (h *HistoryInfo) AddTableInfo(ver int64, tblInfo *TableInfo) {
-	h.Version = ver
+func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
+	h.SchemaVersion = schemaVer
 	h.TableInfo = tblInfo
 }
 

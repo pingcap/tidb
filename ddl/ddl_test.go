@@ -82,13 +82,13 @@ func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobAr
 	c.Assert(err, IsNil)
 
 	if args.tbl != nil {
-		c.Assert(historyJob.BinlogInfo.Version, Equals, args.ver)
+		c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)
 		checkEqualTable(c, historyJob.BinlogInfo.TableInfo, args.tbl)
 		return
 	}
 
 	// for handling schema job
-	c.Assert(historyJob.BinlogInfo.Version, Equals, args.ver)
+	c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)
 	c.Assert(historyJob.BinlogInfo.DBInfo, DeepEquals, args.db)
 	// only for creating schema job
 	if args.db != nil && len(args.tblIDs) == 0 {
