@@ -21,7 +21,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/inspectkv"
@@ -46,7 +45,6 @@ var (
 	_ Executor = &DistinctExec{}
 	_ Executor = &DummyScanExec{}
 	_ Executor = &ExistsExec{}
-	_ Executor = &FilterExec{}
 	_ Executor = &HashAggExec{}
 	_ Executor = &HashJoinExec{}
 	_ Executor = &HashSemiJoinExec{}
@@ -229,45 +227,6 @@ func (e *CheckTableExec) Next() (*Row, error) {
 // Close implements plan.Plan Close interface.
 func (e *CheckTableExec) Close() error {
 	return nil
-}
-
-// FilterExec represents a filter executor.
-// It evaluates the condition for every source row, returns the source row only if
-// the condition evaluates to true.
-type FilterExec struct {
-	Src       Executor
-	Condition ast.ExprNode
-	ctx       context.Context
-}
-
-// Schema implements the Executor Schema interface.
-func (e *FilterExec) Schema() expression.Schema {
-	return e.Src.Schema()
-}
-
-// Next implements the Executor Next interface.
-func (e *FilterExec) Next() (*Row, error) {
-	for {
-		srcRow, err := e.Src.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if srcRow == nil {
-			return nil, nil
-		}
-		match, err := evaluator.EvalBool(e.ctx, e.Condition)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if match {
-			return srcRow, nil
-		}
-	}
-}
-
-// Close implements the Executor Close interface.
-func (e *FilterExec) Close() error {
-	return e.Src.Close()
 }
 
 // SelectLockExec represents a select lock executor.
@@ -1369,6 +1328,10 @@ type TableScanExec struct {
 	cursor     int
 	schema     expression.Schema
 	columns    []*model.ColumnInfo
+
+	isInfoSchema     bool
+	infoSchemaRows   [][]types.Datum
+	infoSchemaCursor int
 }
 
 // Schema implements the Executor Schema interface.
@@ -1378,6 +1341,9 @@ func (e *TableScanExec) Schema() expression.Schema {
 
 // Next implements the Executor interface.
 func (e *TableScanExec) Next() (*Row, error) {
+	if e.isInfoSchema {
+		return e.nextForInfoSchema()
+	}
 	for {
 		if e.cursor >= len(e.ranges) {
 			return nil, nil
@@ -1415,6 +1381,28 @@ func (e *TableScanExec) Next() (*Row, error) {
 		e.seekHandle = handle + 1
 		return row, nil
 	}
+}
+
+func (e *TableScanExec) nextForInfoSchema() (*Row, error) {
+	if e.infoSchemaRows == nil {
+		columns := make([]*table.Column, len(e.schema))
+		for i, v := range e.columns {
+			columns[i] = table.ToColumn(v)
+		}
+		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+			e.infoSchemaRows = append(e.infoSchemaRows, rec)
+			return true, nil
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if e.infoSchemaCursor >= len(e.infoSchemaRows) {
+		return nil, nil
+	}
+	row := &Row{Data: e.infoSchemaRows[e.infoSchemaCursor]}
+	e.infoSchemaCursor++
+	return row, nil
 }
 
 // seekRange increments the range cursor to the range

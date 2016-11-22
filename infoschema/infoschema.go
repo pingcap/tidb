@@ -14,7 +14,7 @@
 package infoschema
 
 import (
-	"strings"
+	"sort"
 	"sync/atomic"
 
 	"github.com/juju/errors"
@@ -25,9 +25,6 @@ import (
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
-	// import table implementation to init table.TableFromMeta
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -81,34 +78,66 @@ const (
 	Name = "INFORMATION_SCHEMA"
 )
 
+type sortedTables []table.Table
+
+func (s sortedTables) Len() int {
+	return len(s)
+}
+
+func (s sortedTables) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (s sortedTables) Less(i, j int) bool {
+	return s[i].Meta().ID < s[j].Meta().ID
+}
+
+func (s sortedTables) searchTable(id int64) int {
+	idx := sort.Search(len(s), func(i int) bool {
+		return s[i].Meta().ID >= id
+	})
+	if idx == len(s) || s[idx].Meta().ID != id {
+		return -1
+	}
+	return idx
+}
+
+type schemaTables struct {
+	dbInfo *model.DBInfo
+	tables map[string]table.Table
+}
+
+const bucketCount = 512
+
 type infoSchema struct {
-	schemaNameToID map[string]int64
-	tableNameToID  map[string]int64
-	schemas        map[int64]*model.DBInfo
-	tables         map[int64]table.Table
+	schemaMap map[string]*schemaTables
+
+	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
+	sortedTablesBuckets []sortedTables
 
 	// We should check version when change schema.
 	schemaMetaVersion int64
 }
 
-type schemaHandle struct {
-	tableNameToID map[string]int64
-}
-
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
-	result.schemaNameToID = make(map[string]int64)
-	result.tableNameToID = make(map[string]int64)
-	result.schemas = make(map[int64]*model.DBInfo)
-	result.tables = make(map[int64]table.Table)
-
-	result.schemaNameToID["test"] = 0
-	result.schemas[0] = &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
-	for i, tb := range tbList {
-		tn := makeTableName("test", tb.Name.L)
-		result.tableNameToID[string(tn)] = int64(i)
-		result.tables[int64(i)] = table.MockTableFromMeta(tb)
+	result.schemaMap = make(map[string]*schemaTables)
+	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
+	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
+	tableNames := &schemaTables{
+		dbInfo: dbInfo,
+		tables: make(map[string]table.Table),
+	}
+	result.schemaMap["test"] = tableNames
+	for _, tb := range tbList {
+		tbl := table.MockTableFromMeta(tb)
+		tableNames.tables[tb.Name.L] = tbl
+		bucketIdx := tableBucketIdx(tb.ID)
+		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
+	}
+	for i := range result.sortedTablesBuckets {
+		sort.Sort(result.sortedTablesBuckets[i])
 	}
 	return result
 }
@@ -116,12 +145,11 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 var _ InfoSchema = (*infoSchema)(nil)
 
 func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-	id, ok := is.schemaNameToID[schema.L]
+	tableNames, ok := is.schemaMap[schema.L]
 	if !ok {
 		return
 	}
-	val, ok = is.schemas[id]
-	return
+	return tableNames.dbInfo, true
 }
 
 func (is *infoSchema) SchemaMetaVersion() int64 {
@@ -129,46 +157,48 @@ func (is *infoSchema) SchemaMetaVersion() int64 {
 }
 
 func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
-	_, ok := is.schemaNameToID[schema.L]
+	_, ok := is.schemaMap[schema.L]
 	return ok
 }
 
 func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
-	name := makeTableName(schema.L, table.L)
-	id, ok := is.tableNameToID[string(name)]
-	if !ok {
-		return nil, ErrTableNotExists.Gen("table %s.%s does not exist", schema, table)
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
+		if t, ok = tbNames.tables[table.L]; ok {
+			return
+		}
 	}
-	t = is.tables[id]
-	return
+	return nil, ErrTableNotExists.Gen("table %s.%s does not exist", schema, table)
 }
 
 func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
-	name := makeTableName(schema.L, table.L)
-	_, ok := is.tableNameToID[string(name)]
-	return ok
-}
-
-func makeTableName(schema, table string) []byte {
-	name := make([]byte, len(schema)+1+len(table))
-	copy(name, schema)
-	name[len(schema)] = '.'
-	copy(name[len(schema)+1:], table)
-	return name
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
+		if _, ok = tbNames.tables[table.L]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
-	val, ok = is.schemas[id]
-	return
+	for _, v := range is.schemaMap {
+		if v.dbInfo.ID == id {
+			return v.dbInfo, true
+		}
+	}
+	return nil, false
 }
 
 func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
-	val, ok = is.tables[id]
-	return
+	slice := is.sortedTablesBuckets[tableBucketIdx(id)]
+	idx := slice.searchTable(id)
+	if idx == -1 {
+		return nil, false
+	}
+	return slice[idx], true
 }
 
 func (is *infoSchema) AllocByID(id int64) (autoid.Allocator, bool) {
-	tbl, ok := is.tables[id]
+	tbl, ok := is.TableByID(id)
 	if !ok {
 		return nil, false
 	}
@@ -176,42 +206,42 @@ func (is *infoSchema) AllocByID(id int64) (autoid.Allocator, bool) {
 }
 
 func (is *infoSchema) AllSchemaNames() (names []string) {
-	for _, v := range is.schemas {
-		names = append(names, v.Name.O)
+	for _, v := range is.schemaMap {
+		names = append(names, v.dbInfo.Name.O)
 	}
 	return
 }
 
 func (is *infoSchema) AllSchemas() (schemas []*model.DBInfo) {
-	for _, v := range is.schemas {
-		schemas = append(schemas, v)
+	for _, v := range is.schemaMap {
+		schemas = append(schemas, v.dbInfo)
 	}
 	return
 }
 
 func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
-	di, ok := is.SchemaByName(schema)
+	schemaTables, ok := is.schemaMap[schema.L]
 	if !ok {
 		return
 	}
-	for _, ti := range di.Tables {
-		tables = append(tables, is.tables[ti.ID])
+	for _, tbl := range schemaTables.tables {
+		tables = append(tables, tbl)
 	}
 	return
 }
 
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
-	for _, v := range is.schemas {
-		result = append(result, v.Clone())
+	for _, v := range is.schemaMap {
+		result = append(result, v.dbInfo.Clone())
 	}
 	return
 }
 
 // Handle handles information schema, including getting and setting.
 type Handle struct {
-	value     atomic.Value
-	store     kv.Storage
-	memSchema *memSchemaHandle
+	value      atomic.Value
+	store      kv.Storage
+	perfHandle perfschema.PerfSchema
 }
 
 // NewHandle creates a new Handle.
@@ -221,114 +251,14 @@ func NewHandle(store kv.Storage) (*Handle, error) {
 	}
 	// init memory tables
 	var err error
-	h.memSchema, err = newMemSchemaHandle()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return h, nil
-}
-
-// Init memory schemas including infoschema and perfshcema.
-func newMemSchemaHandle() (*memSchemaHandle, error) {
-	h := &memSchemaHandle{
-		nameToTable: make(map[string]table.Table),
-	}
-	err := initMemoryTables(h)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	h.perfHandle, err = perfschema.NewPerfHandle()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return h, nil
-}
-
-// memSchemaHandle is used to store memory schema information.
-type memSchemaHandle struct {
-	// Information Schema
-	schemataTbl   table.Table
-	tablesTbl     table.Table
-	columnsTbl    table.Table
-	statisticsTbl table.Table
-	charsetTbl    table.Table
-	collationsTbl table.Table
-	filesTbl      table.Table
-	defTbl        table.Table
-	profilingTbl  table.Table
-	partitionsTbl table.Table
-	nameToTable   map[string]table.Table
-	// Performance Schema
-	perfHandle perfschema.PerfSchema
-}
-
-func initMemoryTables(h *memSchemaHandle) error {
-	// Init Information_Schema
-	var (
-		err error
-		tbl table.Table
-	)
-	for _, tblInfo := range infoSchemaDB.Tables {
-		alloc := autoid.NewMemoryAllocator(infoSchemaDB.ID)
-		tbl, err = createMemoryTable(tblInfo, alloc)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		h.nameToTable[tblInfo.Name.L] = tbl
-	}
-	h.schemataTbl = h.nameToTable[strings.ToLower(tableSchemata)]
-	h.tablesTbl = h.nameToTable[strings.ToLower(tableTables)]
-	h.columnsTbl = h.nameToTable[strings.ToLower(tableColumns)]
-	h.statisticsTbl = h.nameToTable[strings.ToLower(tableStatistics)]
-	h.charsetTbl = h.nameToTable[strings.ToLower(tableCharacterSets)]
-	h.collationsTbl = h.nameToTable[strings.ToLower(tableCollations)]
-
-	// CharacterSets/Collations contain static data. Init them now.
-	err = insertData(h.charsetTbl, dataForCharacterSets())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = insertData(h.collationsTbl, dataForColltions())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func insertData(tbl table.Table, rows [][]types.Datum) error {
-	for _, r := range rows {
-		_, err := tbl.AddRecord(nil, r)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func refillMemoryTable(tbl table.Table, rows [][]types.Datum) error {
-	tbl.(*tables.MemoryTable).Truncate()
-	return insertData(tbl, rows)
-}
-
-func (h *Handle) refillMemoryTables(schemas []*model.DBInfo) error {
-	dbNames := make([]string, 0, len(schemas))
-	for _, v := range schemas {
-		dbNames = append(dbNames, v.Name.L)
-	}
-	err := refillMemoryTable(h.memSchema.schemataTbl, dataForSchemata(dbNames))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = refillMemoryTable(h.memSchema.tablesTbl, dataForTables(schemas))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = refillMemoryTable(h.memSchema.columnsTbl, dataForColumns(schemas))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = refillMemoryTable(h.memSchema.statisticsTbl, dataForStatistics(schemas))
-	return errors.Trace(err)
 }
 
 // Get gets information schema from Handle.
@@ -340,14 +270,14 @@ func (h *Handle) Get() InfoSchema {
 
 // GetPerfHandle gets performance schema from handle.
 func (h *Handle) GetPerfHandle() perfschema.PerfSchema {
-	return h.memSchema.perfHandle
+	return h.perfHandle
 }
 
 // EmptyClone creates a new Handle with the same store and memSchema, but the value is not set.
 func (h *Handle) EmptyClone() *Handle {
 	newHandle := &Handle{
-		store:     h.store,
-		memSchema: h.memSchema,
+		store:      h.store,
+		perfHandle: h.perfHandle,
 	}
 	return newHandle
 }
@@ -409,4 +339,9 @@ func initInfoSchemaDB() {
 		Collate: mysql.DefaultCollationName,
 		Tables:  infoSchemaTables,
 	}
+}
+
+// IsMemoryDB checks if the db is in memory.
+func IsMemoryDB(dbName string) bool {
+	return dbName == "information_schema" || dbName == "performance_schema"
 }

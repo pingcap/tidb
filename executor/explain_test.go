@@ -20,7 +20,10 @@ import (
 )
 
 func (s *testSuite) TestExplain(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -39,9 +42,11 @@ func (s *testSuite) TestExplain(c *C) {
     "table": "t1",
     "desc": false,
     "keep order": false,
-    "access condition": null,
-    "count of pushed aggregate functions": 0,
-    "limit": 0
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "filter conditions": null
+    }
 }`,
 		},
 		{
@@ -55,9 +60,11 @@ func (s *testSuite) TestExplain(c *C) {
     "desc": false,
     "out of order": false,
     "double read": false,
-    "access condition": null,
-    "count of pushed aggregate functions": 0,
-    "limit": 0
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "filter conditions": null
+    }
 }`,
 		},
 		{
@@ -77,9 +84,11 @@ func (s *testSuite) TestExplain(c *C) {
         "table": "t2",
         "desc": false,
         "keep order": false,
-        "access condition": null,
-        "count of pushed aggregate functions": 0,
-        "limit": 0
+        "push down info": {
+            "limit": 0,
+            "access conditions": null,
+            "filter conditions": null
+        }
     }
 }`,
 		},
@@ -91,11 +100,13 @@ func (s *testSuite) TestExplain(c *C) {
     "table": "t1",
     "desc": false,
     "keep order": false,
-    "access condition": [
-        "gt(test.t1.c1, 0)"
-    ],
-    "count of pushed aggregate functions": 0,
-    "limit": 0
+    "push down info": {
+        "limit": 0,
+        "access conditions": [
+            "gt(test.t1.c1, 0)"
+        ],
+        "filter conditions": null
+    }
 }`,
 		},
 		{
@@ -109,11 +120,13 @@ func (s *testSuite) TestExplain(c *C) {
     "desc": false,
     "out of order": true,
     "double read": false,
-    "access condition": [
-        "eq(test.t1.c2, 1)"
-    ],
-    "count of pushed aggregate functions": 0,
-    "limit": 0
+    "push down info": {
+        "limit": 0,
+        "access conditions": [
+            "eq(test.t1.c2, 1)"
+        ],
+        "filter conditions": null
+    }
 }`,
 		},
 		{
@@ -132,11 +145,13 @@ func (s *testSuite) TestExplain(c *C) {
         "table": "t1",
         "desc": false,
         "keep order": false,
-        "access condition": [
-            "gt(test.t1.c1, 1)"
-        ],
-        "count of pushed aggregate functions": 0,
-        "limit": 0
+        "push down info": {
+            "limit": 0,
+            "access conditions": [
+                "gt(test.t1.c1, 1)"
+            ],
+            "filter conditions": null
+        }
     },
     "rightPlan": {
         "type": "TableScan",
@@ -144,9 +159,11 @@ func (s *testSuite) TestExplain(c *C) {
         "table": "t2",
         "desc": false,
         "keep order": false,
-        "access condition": null,
-        "count of pushed aggregate functions": 0,
-        "limit": 0
+        "push down info": {
+            "limit": 0,
+            "access conditions": null,
+            "filter conditions": null
+        }
     }
 }`,
 		},
@@ -161,11 +178,13 @@ func (s *testSuite) TestExplain(c *C) {
             "table": "t1",
             "desc": false,
             "keep order": false,
-            "access condition": [
-                "eq(test.t1.c1, 1)"
-            ],
-            "count of pushed aggregate functions": 0,
-            "limit": 0
+            "push down info": {
+                "limit": 0,
+                "access conditions": [
+                    "eq(test.t1.c1, 1)"
+                ],
+                "filter conditions": null
+            }
         }
     ]
 }`,
@@ -184,29 +203,31 @@ func (s *testSuite) TestExplain(c *C) {
             "desc": false,
             "out of order": true,
             "double read": false,
-            "access condition": [
-                "eq(test.t1.c2, 1)"
-            ],
-            "count of pushed aggregate functions": 0,
-            "limit": 0
+            "push down info": {
+                "limit": 0,
+                "access conditions": [
+                    "eq(test.t1.c2, 1)"
+                ],
+                "filter conditions": null
+            }
         }
     ]
 }`,
 		},
 		{
-			"select count(b.b) from t a, t b where a.a = b.a group by a.b",
+			"select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1",
 			`{
     "type": "CompleteAgg",
     "AggFuncs": [
         "count(join_agg_0)"
     ],
     "GroupByItems": [
-        "a.b"
+        "a.c1"
     ],
     "child": {
         "type": "InnerJoin",
         "eqCond": [
-            "eq(a.a, b.a)"
+            "eq(a.c1, b.c2)"
         ],
         "leftCond": null,
         "rightCond": null,
@@ -214,31 +235,43 @@ func (s *testSuite) TestExplain(c *C) {
         "leftPlan": {
             "type": "TableScan",
             "db": "test",
-            "table": "t",
+            "table": "t1",
             "desc": false,
             "keep order": false,
-            "access condition": null,
-            "count of pushed aggregate functions": 0,
-            "limit": 0
+            "push down info": {
+                "limit": 0,
+                "access conditions": null,
+                "filter conditions": null
+            }
         },
         "rightPlan": {
             "type": "FinalAgg",
             "AggFuncs": [
-                "count([b.b])",
-                "firstrow([b.a])"
+                "count([b.c2])",
+                "firstrow([b.c2])"
             ],
             "GroupByItems": [
-                "[b.a]"
+                "[b.c2]"
             ],
             "child": {
                 "type": "TableScan",
                 "db": "test",
-                "table": "t",
+                "table": "t2",
                 "desc": false,
                 "keep order": false,
-                "access condition": null,
-                "count of pushed aggregate functions": 2,
-                "limit": 0
+                "push down info": {
+                    "limit": 0,
+                    "aggregated push down": true,
+                    "gby items": [
+                        "b.c2"
+                    ],
+                    "agg funcs": [
+                        "count(b.c2)",
+                        "firstrow(b.c2)"
+                    ],
+                    "access conditions": null,
+                    "filter conditions": null
+                }
             }
         }
     }

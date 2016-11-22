@@ -28,7 +28,10 @@ import (
 )
 
 func (s *testSuite) TestInsert(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists insert_test;create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
@@ -108,7 +111,10 @@ func (s *testSuite) TestInsert(c *C) {
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
@@ -192,7 +198,10 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 }
 
 func (s *testSuite) TestInsertIgnore(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists t;
@@ -214,7 +223,10 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 }
 
 func (s *testSuite) TestReplace(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
@@ -336,7 +348,10 @@ func (s *testSuite) TestReplace(c *C) {
 }
 
 func (s *testSuite) TestUpdate(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "update_test")
@@ -391,7 +406,6 @@ func (s *testSuite) TestUpdate(c *C) {
 	r = tk.MustQuery("select * from update_test;")
 	r.Check(testkit.Rows("2"))
 	tk.MustExec("commit")
-	tk.MustExec("drop table update_test")
 }
 
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
@@ -406,7 +420,10 @@ func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
 }
 
 func (s *testSuite) TestMultipleTableUpdate(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillMultiTableForUpdate(tk)
@@ -464,7 +481,10 @@ func (s *testSuite) TestMultipleTableUpdate(c *C) {
 }
 
 func (s *testSuite) TestDelete(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	s.fillData(tk, "delete_test")
 
@@ -511,7 +531,10 @@ func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
 }
 
 func (s *testSuite) TestMultiTableDelete(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	s.fillDataMultiTable(tk)
 
@@ -524,7 +547,10 @@ func (s *testSuite) TestMultiTableDelete(c *C) {
 }
 
 func (s *testSuite) TestQualifiedDelete(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -558,12 +584,13 @@ func (s *testSuite) TestQualifiedDelete(c *C) {
 
 	_, err = tk.Exec("delete t1, t2 from t1 as a join t2 as b where a.c2 = b.c1")
 	c.Assert(err, NotNil)
-
-	tk.MustExec("drop table t1, t2")
 }
 
 func (s *testSuite) TestLoadData(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists load_data_test;
@@ -742,7 +769,10 @@ func (s *testSuite) TestLoadData(c *C) {
 }
 
 func (s *testSuite) TestLoadDataEscape(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")

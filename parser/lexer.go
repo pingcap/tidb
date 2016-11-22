@@ -102,11 +102,13 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return toInt(s, v, lit)
 	case floatLit:
 		return toFloat(s, v, lit)
+	case decLit:
+		return toDecimal(s, v, lit)
 	case hexLit:
 		return toHex(s, v, lit)
 	case bitLit:
 		return toBit(s, v, lit)
-	case userVar, sysVar, database, currentUser, replace, cast, sysDate, currentTs, currentTime, currentDate, curDate, utcDate, extract, repeat, secondMicrosecond, minuteMicrosecond, minuteSecond, hourMicrosecond, hourMinute, hourSecond, dayMicrosecond, dayMinute, daySecond, dayHour, yearMonth, ifKwd, left, convert:
+	case userVar, sysVar, cast, sysDate, curDate, extract:
 		v.item = lit
 		return tok
 	case null:
@@ -137,6 +139,8 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		tok, pos, lit = specialComment.scan()
 		if tok != 0 {
 			// return the specialComment scan result as the result
+			pos.Line += s.r.p.Line
+			pos.Offset += s.r.p.Col
 			return
 		}
 		// leave specialComment scan mode after all stream consumed.
@@ -518,9 +522,16 @@ func (s *Scanner) scanFloat(beg *Pos) (tok int, pos Pos, lit string) {
 	}
 	if ch0 == 'e' || ch0 == 'E' {
 		s.r.inc()
+		ch0 = s.r.peek()
+		if ch0 == '-' || ch0 == '+' {
+			s.r.inc()
+		}
 		s.scanDigits()
+		tok = floatLit
+	} else {
+		tok = decLit
 	}
-	tok, pos, lit = floatLit, *beg, s.r.data(beg)
+	pos, lit = *beg, s.r.data(beg)
 	return
 }
 

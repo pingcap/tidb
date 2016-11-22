@@ -738,10 +738,14 @@ func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 }
 
 func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectField) (resultList []*ast.SelectField) {
-	for _, field := range selectFields {
+	for i, field := range selectFields {
 		if field.WildCard == nil {
 			resultList = append(resultList, field)
 			continue
+		}
+		if field.WildCard.Table.L == "" && i > 0 {
+			b.err = ErrInvalidWildCard
+			return
 		}
 		dbName := field.WildCard.Schema
 		tblName := field.WildCard.Table
@@ -781,6 +785,9 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		return nil
 	}
 	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
+	if b.err != nil {
+		return nil
+	}
 	if sel.GroupBy != nil {
 		p, gbyCols = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 		if b.err != nil {

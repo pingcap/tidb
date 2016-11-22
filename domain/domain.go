@@ -84,7 +84,8 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	}
 	log.Infof("[ddl] full load InfoSchema from version %d to %d, in %v",
 		usedSchemaVersion, latestSchemaVersion, time.Since(startTime))
-	return newISBuilder.Build()
+	newISBuilder.Build()
+	return nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
@@ -183,10 +184,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			return false, errors.Trace(err)
 		}
 	}
-	err := builder.Build()
-	if err != nil {
-		return false, errors.Trace(err)
-	}
+	builder.Build()
 	return true, nil
 }
 

@@ -1226,7 +1226,7 @@ func (s *testSessionSuite) TestShow(c *C) {
 	match(c, row.Data, "autocommit", "ON")
 
 	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table if not exists t (c int)")
+	mustExecSQL(c, se, `create table if not exists t (c int) comment '注释'`)
 	r = mustExecSQL(c, se, `show columns from t`)
 	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
@@ -1253,6 +1253,13 @@ func (s *testSessionSuite) TestShow(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(row.Data, HasLen, 2)
 	c.Assert(row.Data[0].GetString(), Equals, "t")
+
+	r = mustExecSQL(c, se, fmt.Sprintf("show table status from %s like 't';", s.dbName))
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, HasLen, 18)
+	c.Assert(row.Data[0].GetString(), Equals, "t")
+	c.Assert(row.Data[17].GetString(), Equals, "注释")
 
 	r = mustExecSQL(c, se, "show databases like 'test'")
 	row, err = r.Next()

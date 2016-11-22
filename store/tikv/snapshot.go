@@ -258,11 +258,3 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 	}
 	return nil, errors.Errorf("unexpected KeyError: %s", keyErr.String())
 }
-
-func newLock(l *pb.LockInfo) *Lock {
-	return &Lock{
-		Key:     l.GetKey(),
-		Primary: l.GetPrimaryLock(),
-		TxnID:   l.GetLockVersion(),
-	}
-}

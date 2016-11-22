@@ -368,6 +368,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		handleVal, _ := codec.EncodeValue(nil, types.NewIntDatum(recordID))
 		bin := append(handleVal, value...)
 		mutation.InsertedRows = append(mutation.InsertedRows, bin)
+		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Insert)
 	}
 	variable.GetSessionVars(ctx).AddAffectedRows(1)
 	return recordID, nil
@@ -391,6 +392,10 @@ func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 	return strings.Join(strVals, "-"), nil
 }
 
+func skipConstraintCheck(ctx context.Context) bool {
+	return variable.GetSessionVars(ctx).SkipConstraintCheck
+}
+
 // Add data into indices.
 func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum, bs *kv.BufferStore) (int64, error) {
 	txn, err := ctx.GetTxn(false)
@@ -399,7 +404,8 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 	}
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
-	if t.meta.PKIsHandle {
+	skipCheck := skipConstraintCheck(ctx)
+	if t.meta.PKIsHandle && !skipCheck {
 		// Check key exists.
 		recordKey := t.RecordKey(recordID)
 		e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
@@ -423,7 +429,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			return 0, errors.Trace(err2)
 		}
 		var dupKeyErr error
-		if v.Meta().Unique || v.Meta().Primary {
+		if !skipCheck && (v.Meta().Unique || v.Meta().Primary) {
 			entryKey, err1 := t.genIndexKeyStr(colVals)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
@@ -542,6 +548,7 @@ func (t *Table) addUpdateBinlog(ctx context.Context, h int64, old []types.Datum,
 		bin = append(oldData, newValue...)
 	}
 	mutation.UpdatedRows = append(mutation.UpdatedRows, bin)
+	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Update)
 	return nil
 }
 
@@ -549,6 +556,7 @@ func (t *Table) addDeleteBinlog(ctx context.Context, h int64, r []types.Datum) e
 	mutation := t.getMutation(ctx)
 	if t.meta.PKIsHandle {
 		mutation.DeletedIds = append(mutation.DeletedIds, h)
+		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeleteID)
 		return nil
 	}
 
@@ -571,6 +579,7 @@ func (t *Table) addDeleteBinlog(ctx context.Context, h int64, r []types.Datum) e
 			return errors.Trace(err)
 		}
 		mutation.DeletedPks = append(mutation.DeletedPks, data)
+		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeletePK)
 		return nil
 	}
 	colIDs := make([]int64, len(t.Cols()))
@@ -582,6 +591,7 @@ func (t *Table) addDeleteBinlog(ctx context.Context, h int64, r []types.Datum) e
 		return errors.Trace(err)
 	}
 	mutation.DeletedRows = append(mutation.DeletedRows, data)
+	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeleteRow)
 	return nil
 }
 

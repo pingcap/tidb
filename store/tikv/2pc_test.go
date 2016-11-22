@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"math/rand"
+	"strings"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -133,7 +134,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTxnCommitter(txn1)
+	committer, err := newTwoPhaseCommitter(txn1)
 	c.Assert(err, IsNil)
 	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), committer.keys)
 	c.Assert(err, IsNil)
@@ -151,7 +152,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		c.Assert(err, IsNil)
 		err = txn1.Set([]byte("b"), []byte("b1"))
 		c.Assert(err, IsNil)
-		committer, err = newTxnCommitter(txn1)
+		committer, err = newTwoPhaseCommitter(txn1)
 		c.Assert(err, IsNil)
 		err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), committer.keys)
 		c.Assert(err, IsNil)
@@ -173,13 +174,40 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTxnCommitter(txn1)
+	committer, err := newTwoPhaseCommitter(txn1)
 	c.Assert(err, IsNil)
 
 	bo := NewBackoffer(prewriteMaxBackoff, context.Background())
-	bo.ctx = context.WithValue(bo.ctx, cancelOnFirstError, struct{}{})
 	cancel := bo.WithCancel()
 	cancel() // cancel the context
 	err = committer.prewriteKeys(bo, committer.keys)
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
+}
+
+func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
+	txn1, txn2, txn3 := s.begin(c), s.begin(c), s.begin(c)
+	// txn1 locks "b"
+	err := txn1.Set([]byte("b"), []byte("b1"))
+	c.Assert(err, IsNil)
+	committer, err := newTwoPhaseCommitter(txn1)
+	c.Assert(err, IsNil)
+	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), committer.keys)
+	c.Assert(err, IsNil)
+	// txn3 writes "c"
+	err = txn3.Set([]byte("c"), []byte("c3"))
+	c.Assert(err, IsNil)
+	err = txn3.Commit()
+	c.Assert(err, IsNil)
+	// txn2 writes "a"(PK), "b", "c" on different regions.
+	// "c" will return a retryable error.
+	// "b" will get a Locked error first, then the context must be canceled after backoff for lock.
+	err = txn2.Set([]byte("a"), []byte("a2"))
+	c.Assert(err, IsNil)
+	err = txn2.Set([]byte("b"), []byte("b2"))
+	c.Assert(err, IsNil)
+	err = txn2.Set([]byte("c"), []byte("c2"))
+	c.Assert(err, IsNil)
+	err = txn2.Commit()
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), txnRetryableMark), IsTrue)
 }
