@@ -25,9 +25,10 @@ import (
 // ExplainExec represents an explain executor.
 // See https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
 type ExplainExec struct {
-	StmtPlan  plan.Plan
-	schema    expression.Schema
-	evaluated bool
+	StmtPlan plan.Plan
+	schema   expression.Schema
+	rows     []*Row
+	cursor   int
 }
 
 // Schema implements the Executor Schema interface.
@@ -35,23 +36,41 @@ func (e *ExplainExec) Schema() expression.Schema {
 	return e.schema
 }
 
-// Next implements Execution Next interface.
-func (e *ExplainExec) Next() (*Row, error) {
-	if e.evaluated {
-		return nil, nil
+func (e *ExplainExec) prepareExplainInfo(p plan.Plan) error {
+	for _, child := range p.GetChildren() {
+		err := e.prepareExplainInfo(child)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	e.evaluated = true
-	explain, err := json.MarshalIndent(e.StmtPlan, "", "    ")
+	explain, err := json.MarshalIndent(p, "", "    ")
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	row := &Row{
-		Data: types.MakeDatums("EXPLAIN", string(explain)),
+		Data: types.MakeDatums(p.GetID(), string(explain)),
 	}
-	return row, nil
+	e.rows = append(e.rows, row)
+	return nil
+}
+
+// Next implements Execution Next interface.
+func (e *ExplainExec) Next() (*Row, error) {
+	if e.cursor == 0 {
+		err := e.prepareExplainInfo(e.StmtPlan)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	e.cursor++
+	if e.cursor > len(e.rows) {
+		return nil, nil
+	}
+	return e.rows[e.cursor-1], nil
 }
 
 // Close implements the Executor Close interface.
 func (e *ExplainExec) Close() error {
+	e.rows = nil
 	return nil
 }

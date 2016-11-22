@@ -141,6 +141,9 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
+	ts.tp = "TableScan"
+	ts.allocator = p.allocator
+	ts.initID()
 	if txn != nil {
 		ts.readOnly = txn.IsReadOnly()
 	} else {
@@ -217,6 +220,9 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
+	is.tp = "IndexScan"
+	is.allocator = p.allocator
+	is.initID()
 	if txn != nil {
 		is.readOnly = txn.IsReadOnly()
 	} else {
@@ -330,6 +336,9 @@ func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPl
 				}
 				if !result {
 					dummy := &PhysicalDummyScan{}
+					dummy.tp = "Dummy"
+					dummy.allocator = p.allocator
+					dummy.initID()
 					dummy.SetSchema(p.schema)
 					info := &physicalPlanInfo{p: dummy}
 					p.storePlanInfo(prop, info)
@@ -452,6 +461,9 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 		OtherConditions: p.OtherConditions,
 		Anti:            p.anti,
 	}
+	join.tp = "HashSemiJoin"
+	join.allocator = p.allocator
+	join.initID()
 	join.SetSchema(p.schema)
 	lProp := prop
 	if !allLeft {
@@ -502,6 +514,9 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 		Concurrency:   JoinConcurrency,
 		DefaultValues: p.DefaultValues,
 	}
+	join.tp = "HashLeftJoin"
+	join.allocator = p.allocator
+	join.initID()
 	join.SetSchema(p.schema)
 	if innerJoin {
 		join.JoinType = InnerJoin
@@ -571,6 +586,9 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 		Concurrency:   JoinConcurrency,
 		DefaultValues: p.DefaultValues,
 	}
+	join.tp = "HashRightJoin"
+	join.allocator = p.allocator
+	join.initID()
 	join.SetSchema(p.schema)
 	if innerJoin {
 		join.JoinType = InnerJoin
@@ -661,6 +679,9 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 	}
+	agg.tp = "StreamAgg"
+	agg.allocator = p.allocator
+	agg.initID()
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
 	// TODO: Consider distinct key.
@@ -706,6 +727,9 @@ func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, child
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 	}
+	agg.tp = "HashAgg"
+	agg.allocator = p.allocator
+	agg.initID()
 	agg.SetSchema(p.schema)
 	agg.HasGby = len(p.GroupByItems) > 0
 	schema := x.addAggregation(agg)
@@ -727,6 +751,9 @@ func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanIn
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 	}
+	agg.tp = "HashAgg"
+	agg.allocator = p.allocator
+	agg.initID()
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
 	info := addPlanToResponse(agg, childInfo)
@@ -1032,6 +1059,9 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		Checker:     p.Checker,
 		InnerPlan:   innerInfo.p,
 	}
+	np.tp = "PhysicalAppy"
+	np.allocator = p.allocator
+	np.initID()
 	np.SetSchema(p.GetSchema())
 	limit := prop.limit
 	info, err = child.convert2PhysicalPlan(removeLimit(prop))
