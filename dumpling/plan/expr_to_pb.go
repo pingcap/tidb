@@ -126,7 +126,7 @@ func scalarFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 		return logicalOpsToPBExpr(client, expr)
 	case ast.And, ast.Or, ast.BitNeg, ast.Xor, ast.LeftShift, ast.RightShift:
 		return bitwiseFuncToPBExpr(client, expr)
-	case ast.Case, ast.Coalesce, ast.If:
+	case ast.Case, ast.Coalesce, ast.If, ast.IsNull:
 		return builtinFuncToPBExpr(client, expr)
 	default:
 		return nil
@@ -363,7 +363,7 @@ func builtinFuncToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tip
 	switch expr.FuncName.L {
 	case ast.Case, ast.If:
 		return controlFuncsToPBExpr(client, expr)
-	case ast.Coalesce:
+	case ast.Coalesce, ast.IsNull:
 		return otherFuncsToPBExpr(client, expr)
 	default:
 		return nil
@@ -375,6 +375,8 @@ func otherFuncsToPBExpr(client kv.Client, expr *expression.ScalarFunction) *tipb
 	switch expr.FuncName.L {
 	case ast.Coalesce:
 		tp = tipb.ExprType_Coalesce
+	case ast.IsNull:
+		tp = tipb.ExprType_IsNull
 	}
 	return convertToPBExpr(client, expr, tp)
 }
