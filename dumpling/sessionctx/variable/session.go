@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
@@ -105,6 +104,9 @@ type SessionVars struct {
 	// Current user
 	User string
 
+	// Current DB
+	CurrentDB string
+
 	// Strict SQL mode
 	StrictSQLMode bool
 
@@ -126,38 +128,22 @@ type SessionVars struct {
 
 	// SkipConstraintCheck is true when importing data.
 	SkipConstraintCheck bool
+
+	// GlobalAccessor is used to set and get global variables.
+	GlobalVarsAccessor GlobalVarAccessor
 }
 
-// sessionVarsKeyType is a dummy type to avoid naming collision in context.
-type sessionVarsKeyType int
-
-// String defines a Stringer function for debugging and pretty printing.
-func (k sessionVarsKeyType) String() string {
-	return "session_vars"
-}
-
-const sessionVarsKey sessionVarsKeyType = 0
-
-// BindSessionVars creates a session vars object and binds it to context.
-func BindSessionVars(ctx context.Context) {
-	v := &SessionVars{
+// NewSessionVars creates a session vars object.
+func NewSessionVars() *SessionVars {
+	return &SessionVars{
 		Users:                make(map[string]string),
 		systems:              make(map[string]string),
 		PreparedStmts:        make(map[uint32]interface{}),
 		PreparedStmtNameToID: make(map[string]uint32),
 		RetryInfo:            &RetryInfo{},
 		StrictSQLMode:        true,
+		Status:               mysql.ServerStatusAutocommit,
 	}
-	ctx.SetValue(sessionVarsKey, v)
-}
-
-// GetSessionVars gets the session vars from context.
-func GetSessionVars(ctx context.Context) *SessionVars {
-	v, ok := ctx.Value(sessionVarsKey).(*SessionVars)
-	if !ok {
-		return nil
-	}
-	return v
 }
 
 const (
@@ -174,17 +160,10 @@ const (
 // For comparisons of strings with column values, collation_connection does not matter because columns
 // have their own collation, which has a higher collation precedence.
 // See https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
-func GetCharsetInfo(ctx context.Context) (charset, collation string) {
-	sessionVars := GetSessionVars(ctx)
-	charset = sessionVars.systems[characterSetConnection]
-	collation = sessionVars.systems[collationConnection]
+func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
+	charset = s.systems[characterSetConnection]
+	collation = s.systems[collationConnection]
 	return
-}
-
-// GetSnapshotTS gets snapshot timestamp that has been set by set variable statement.
-func GetSnapshotTS(ctx context.Context) uint64 {
-	sessionVars := GetSessionVars(ctx)
-	return sessionVars.SnapshotTS
 }
 
 // SetLastInsertID saves the last insert id to the session context.
@@ -222,6 +201,15 @@ func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 // GetStatusFlag gets the session server status variable, returns true if it is on.
 func (s *SessionVars) GetStatusFlag(flag uint16) bool {
 	return s.Status&flag > 0
+}
+
+// ShouldAutocommit checks if current session should autocommit.
+// With START TRANSACTION, autocommit remains disabled until you end
+// the transaction with COMMIT or ROLLBACK.
+func (s *SessionVars) ShouldAutocommit() bool {
+	isAutomcommit := s.GetStatusFlag(mysql.ServerStatusAutocommit)
+	inTransaction := s.GetStatusFlag(mysql.ServerStatusInTrans)
+	return isAutomcommit && !inTransaction
 }
 
 // GetNextPreparedStmtID generates and returns the next session scope prepared statement id.
@@ -323,7 +311,7 @@ func (s *SessionVars) GetSystemVar(key string) types.Datum {
 // GetTiDBSystemVar gets variable value for name.
 // The variable should be a TiDB specific system variable (The vars in tidbSysVars map).
 // We load the variable from session first, if not found, use local defined default variable.
-func (s *SessionVars) GetTiDBSystemVar(ctx context.Context, name string) (string, error) {
+func (s *SessionVars) GetTiDBSystemVar(name string) (string, error) {
 	key := strings.ToLower(name)
 	_, ok := tidbSysVars[key]
 	if !ok {
