@@ -374,6 +374,11 @@ type PhysicalUnionScan struct {
 	Condition expression.Expression
 }
 
+// Cache plan is a physical plan which stores the result of its child node.
+type Cache struct {
+	basePlan
+}
+
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalIndexScan) Copy() PhysicalPlan {
 	np := *p
@@ -756,6 +761,12 @@ func (p *Show) Copy() PhysicalPlan {
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalUnionScan) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *Cache) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }

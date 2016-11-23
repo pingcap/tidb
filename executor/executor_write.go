@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
@@ -105,8 +104,8 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	}
 	if !rowChanged {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
-		if variable.GetSessionVars(ctx).ClientCapability&mysql.ClientFoundRows > 0 {
-			variable.GetSessionVars(ctx).AddAffectedRows(1)
+		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
+			ctx.GetSessionVars().AddAffectedRows(1)
 		}
 		return nil
 	}
@@ -132,9 +131,9 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 
 	// Record affected rows.
 	if !onDuplicateUpdate {
-		variable.GetSessionVars(ctx).AddAffectedRows(1)
+		ctx.GetSessionVars().AddAffectedRows(1)
 	} else {
-		variable.GetSessionVars(ctx).AddAffectedRows(2)
+		ctx.GetSessionVars().AddAffectedRows(2)
 	}
 	return nil
 }
@@ -241,7 +240,7 @@ func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data
 		return errors.Trace(err)
 	}
 	getDirtyDB(ctx).deleteRow(t.Meta().ID, h)
-	variable.GetSessionVars(ctx).AddAffectedRows(1)
+	ctx.GetSessionVars().AddAffectedRows(1)
 	return nil
 }
 
@@ -409,7 +408,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
 		e.insertVal.currRow++
 	}
 	if e.insertVal.lastInsertID != 0 {
-		variable.GetSessionVars(e.insertVal.ctx).LastInsertID = e.insertVal.lastInsertID
+		e.insertVal.ctx.GetSessionVars().LastInsertID = e.insertVal.lastInsertID
 	}
 
 	return curData, nil
@@ -620,7 +619,7 @@ func (e *InsertExec) Next() (*Row, error) {
 	}
 
 	if e.lastInsertID != 0 {
-		variable.GetSessionVars(e.ctx).LastInsertID = e.lastInsertID
+		e.ctx.GetSessionVars().LastInsertID = e.lastInsertID
 	}
 	e.finished = true
 	return nil, nil
@@ -845,8 +844,8 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 	for i, c := range e.Table.Cols() {
 		// It's used for retry.
 		if mysql.HasAutoIncrementFlag(c.Flag) && row[i].IsNull() &&
-			variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
-			id, err := variable.GetSessionVars(e.ctx).RetryInfo.GetCurrAutoIncrementID()
+			e.ctx.GetSessionVars().RetryInfo.Retrying {
+			id, err := e.ctx.GetSessionVars().RetryInfo.GetCurrAutoIncrementID()
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -884,8 +883,8 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				e.lastInsertID = uint64(recordID)
 			}
 			// It's used for retry.
-			if !variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
-				variable.GetSessionVars(e.ctx).RetryInfo.AddAutoIncrementID(recordID)
+			if !e.ctx.GetSessionVars().RetryInfo.Retrying {
+				e.ctx.GetSessionVars().RetryInfo.AddAutoIncrementID(recordID)
 			}
 		} else {
 			var err error
@@ -1049,7 +1048,7 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		}
 		if rowUnchanged {
 			// If row unchanged, we do not need to do insert.
-			variable.GetSessionVars(e.ctx).AddAffectedRows(1)
+			e.ctx.GetSessionVars().AddAffectedRows(1)
 			idx++
 			continue
 		}
@@ -1059,11 +1058,11 @@ func (e *ReplaceExec) Next() (*Row, error) {
 			return nil, errors.Trace(err1)
 		}
 		getDirtyDB(e.ctx).deleteRow(e.Table.Meta().ID, h)
-		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
+		e.ctx.GetSessionVars().AddAffectedRows(1)
 	}
 
 	if e.lastInsertID != 0 {
-		variable.GetSessionVars(e.ctx).LastInsertID = e.lastInsertID
+		e.ctx.GetSessionVars().LastInsertID = e.lastInsertID
 	}
 	e.finished = true
 	return nil, nil
