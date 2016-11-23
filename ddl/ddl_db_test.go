@@ -242,6 +242,8 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 	t := s.testGetTable(c, "t_anonymous_index")
 	c.Assert(t.Indices(), HasLen, 0)
 	s.mustExec(c, "alter table t_anonymous_index add index (c2)")
+	_, err = s.db.Exec("alter table t_anonymous_index add index (c2)")
+	c.Assert(err, NotNil)
 	s.mustExec(c, "alter table t_anonymous_index add index (c3)")
 	s.mustExec(c, "alter table t_anonymous_index drop index c2")
 	t = s.testGetTable(c, "t_anonymous_index")
