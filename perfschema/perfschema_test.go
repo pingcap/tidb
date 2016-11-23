@@ -56,6 +56,7 @@ var testConnID uint64
 
 func newSession(c *C, store kv.Storage, dbName string) tidb.Session {
 	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
 	id := atomic.AddUint64(&testConnID, 1)
 	se.SetConnectionID(id)
 	c.Assert(err, IsNil)

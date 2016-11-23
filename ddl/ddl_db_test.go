@@ -20,12 +20,10 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	_ "github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -462,7 +460,7 @@ func (s *testDBSuite) testAddColumn(c *C) {
 	num := defaultBatchSize + 10
 	// add some rows
 	for i := 0; i < num; i++ {
-		s.tk.MustExec("insert into t2 values (?, ?, ?)", i, i, i)
+		s.mustExec(c, "insert into t2 values (?, ?, ?)", i, i, i)
 	}
 
 	go func() {
@@ -569,13 +567,14 @@ LOOP:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
 				_, err := s.tk.Exec("insert into t2 values (?, ?, ?)", i, i, i)
-				if err != nil {
-					// if err is failed, the column number must be 4 now.
-					values := s.showColumns(c, "t2")
-					if len(values) != 4 {
-						c.Log(errors.ErrorStack(err))
-						c.FailNow()
-					}
+				if err == nil {
+					continue
+				}
+				// If executing is failed, the column number must be 4 now.
+				values := s.showColumns(c, "t2")
+				if len(values) != 4 {
+					c.Log(errors.ErrorStack(err))
+					c.FailNow()
 				}
 			}
 			num += step
@@ -599,10 +598,8 @@ LOOP:
 	ctx.CommitTxn()
 }
 
-func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) ast.RecordSet {
-	r, err := s.tk.Exec(query, args...)
-	c.Assert(err, IsNil, Commentf("query %s, args %v", query, args))
-	return r
+func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
+	s.tk.MustExec(query, args...)
 }
 
 func (s *testDBSuite) mustQuery(c *C, query string, args ...interface{}) [][]interface{} {
