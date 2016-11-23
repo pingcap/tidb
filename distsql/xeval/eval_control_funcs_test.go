@@ -166,6 +166,11 @@ func (s *testEvalSuite) TestEvalNullIf(c *C) {
 				types.NewIntDatum(123), types.NewIntDatum(111)),
 			result: types.NewIntDatum(123),
 		},
+		{
+			expr: buildExpr(tipb.ExprType_NullIf,
+				types.NewIntDatum(123), null),
+			result: types.NewIntDatum(123),
+		},
 	}
 	for _, ca := range cases {
 		result, err := xevaluator.Eval(ca.expr)
