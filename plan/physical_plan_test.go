@@ -179,6 +179,11 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			sql:  "a = if(a, 1, 0)",
 			cond: "eq(test.t.a, if(test.t.a, 1, 0))",
 		},
+		// ifnull
+		{
+			sql:  "a = ifnull(null, a)",
+			cond: "eq(test.t.a, ifnull(<nil>, test.t.a))",
+		},
 		// coalesce
 		{
 			sql:  "a = coalesce(null, null, a, b)",
