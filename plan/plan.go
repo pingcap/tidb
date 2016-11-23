@@ -148,7 +148,7 @@ type LogicalPlan interface {
 
 	extractCorrelatedCols() []*expression.CorrelatedColumn
 
-	// ResolveIndicesAndCorCols resolves the index for columns.
+	// ResolveIndicesAndCorCols resolves the index for columns and initializes the correlated columns.
 	ResolveIndicesAndCorCols()
 
 	// convert2PhysicalPlan converts the logical plan to the physical plan.
