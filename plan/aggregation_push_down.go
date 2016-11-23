@@ -53,7 +53,7 @@ func (a *aggPushDownSolver) getAggFuncChildIdx(aggFunc expression.AggregationFun
 	fromLeft, fromRight := false, false
 	var cols []*expression.Column
 	for _, arg := range aggFunc.GetArgs() {
-		cols = extractColumns(arg, cols)
+		cols = append(cols, extractColumns(arg)...)
 	}
 	for _, col := range cols {
 		if schema.GetIndex(col) != -1 {
@@ -101,7 +101,7 @@ func (a *aggPushDownSolver) collectAggFuncs(agg *Aggregation, join *Join) (valid
 func (a *aggPushDownSolver) collectGbyCols(agg *Aggregation, join *Join) (leftGbyCols, rightGbyCols []*expression.Column) {
 	leftChild := join.GetChildByIndex(0)
 	for _, gbyExpr := range agg.GroupByItems {
-		cols := extractColumns(gbyExpr, nil)
+		cols := extractColumns(gbyExpr)
 		for _, col := range cols {
 			if leftChild.GetSchema().GetIndex(col) != -1 {
 				leftGbyCols = append(leftGbyCols, col)
@@ -116,15 +116,15 @@ func (a *aggPushDownSolver) collectGbyCols(agg *Aggregation, join *Join) (leftGb
 		rightGbyCols = a.addGbyCol(rightGbyCols, eqFunc.Args[1].(*expression.Column))
 	}
 	for _, leftCond := range join.LeftConditions {
-		cols := extractColumns(leftCond, nil)
+		cols := extractColumns(leftCond)
 		leftGbyCols = a.addGbyCol(leftGbyCols, cols...)
 	}
 	for _, rightCond := range join.RightConditions {
-		cols := extractColumns(rightCond, nil)
+		cols := extractColumns(rightCond)
 		rightGbyCols = a.addGbyCol(rightGbyCols, cols...)
 	}
 	for _, otherCond := range join.OtherConditions {
-		cols := extractColumns(otherCond, nil)
+		cols := extractColumns(otherCond)
 		for _, col := range cols {
 			if leftChild.GetSchema().GetIndex(col) != -1 {
 				leftGbyCols = a.addGbyCol(leftGbyCols, col)

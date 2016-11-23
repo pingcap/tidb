@@ -489,7 +489,7 @@ func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret 
 	var push []expression.Expression
 	for _, cond := range predicates {
 		canSubstitute := true
-		extractedCols := extractColumns(cond, nil)
+		extractedCols := extractColumns(cond)
 		for _, col := range extractedCols {
 			id := p.GetSchema().GetIndex(col)
 			if _, ok := p.Exprs[id].(*expression.ScalarFunction); ok {
@@ -564,7 +564,7 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 			// with value 0 rather than an empty query result.
 			ret = append(ret, cond)
 		case *expression.ScalarFunction:
-			extractedCols := extractColumns(cond, nil)
+			extractedCols := extractColumns(cond)
 			ok := true
 			for _, col := range extractedCols {
 				if p.getGbyColIndex(col) == -1 {
@@ -591,7 +591,7 @@ func (p *Apply) PredicatePushDown(predicates []expression.Expression) (ret []exp
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	var push []expression.Expression
 	for _, cond := range predicates {
-		extractedCols := extractColumns(cond, nil)
+		extractedCols := extractColumns(cond)
 		canPush := true
 		for _, col := range extractedCols {
 			if child.GetSchema().GetIndex(col) == -1 {

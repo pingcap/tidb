@@ -118,7 +118,7 @@ func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.
 			}
 			id := -1
 			rate := 1.0
-			cols := extractColumns(f, nil)
+			cols := extractColumns(f)
 			for _, col := range cols {
 				idx := findColumnIndexByGroup(group, col)
 				if id == -1 {

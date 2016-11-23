@@ -61,16 +61,16 @@ type Join struct {
 func (p *Join) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, fun := range p.EqualConditions {
-		corCols = extractCorColumns(fun, corCols)
+		corCols = append(corCols, extractCorColumns(fun)...)
 	}
 	for _, fun := range p.LeftConditions {
-		corCols = extractCorColumns(fun, corCols)
+		corCols = append(corCols, extractCorColumns(fun)...)
 	}
 	for _, fun := range p.RightConditions {
-		corCols = extractCorColumns(fun, corCols)
+		corCols = append(corCols, extractCorColumns(fun)...)
 	}
 	for _, fun := range p.OtherConditions {
-		corCols = extractCorColumns(fun, corCols)
+		corCols = append(corCols, extractCorColumns(fun)...)
 	}
 	return corCols
 }
@@ -84,7 +84,7 @@ type Projection struct {
 func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range p.Exprs {
-		corCols = extractCorColumns(expr, corCols)
+		corCols = append(corCols, extractCorColumns(expr)...)
 	}
 	return corCols
 }
@@ -104,11 +104,11 @@ type Aggregation struct {
 func (p *Aggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range p.GroupByItems {
-		corCols = extractCorColumns(expr, corCols)
+		corCols = append(corCols, extractCorColumns(expr)...)
 	}
 	for _, fun := range p.AggFuncs {
 		for _, arg := range fun.GetArgs() {
-			corCols = extractCorColumns(arg, corCols)
+			corCols = append(corCols, extractCorColumns(arg)...)
 		}
 	}
 	return corCols
@@ -130,7 +130,7 @@ type Selection struct {
 func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, cond := range p.Conditions {
-		corCols = extractCorColumns(cond, corCols)
+		corCols = append(corCols, extractCorColumns(cond)...)
 	}
 	return corCols
 }
@@ -148,7 +148,7 @@ func (p *Apply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	corCols = append(corCols, p.InnerPlan.extractCorrelatedCols()...)
 	if p.Checker != nil {
-		corCols = extractCorColumns(p.Checker.Condition, corCols)
+		corCols = append(corCols, extractCorColumns(p.Checker.Condition)...)
 	}
 	return corCols
 }
@@ -207,7 +207,7 @@ type Sort struct {
 func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, item := range p.ByItems {
-		corCols = extractCorColumns(item.Expr, corCols)
+		corCols = append(corCols, extractCorColumns(item.Expr)...)
 	}
 	return corCols
 }

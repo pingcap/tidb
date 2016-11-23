@@ -137,30 +137,28 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 	}
 }
 
-func extractColumns(expr expression.Expression, cols []*expression.Column) []*expression.Column {
+func extractColumns(expr expression.Expression) (cols []*expression.Column) {
 	switch v := expr.(type) {
 	case *expression.Column:
-		return append(cols, v)
+		return []*expression.Column{v}
 	case *expression.ScalarFunction:
 		for _, arg := range v.Args {
-			cols = extractColumns(arg, cols)
+			cols = append(cols, extractColumns(arg)...)
 		}
-		return cols
 	}
-	return cols
+	return
 }
 
-func extractCorColumns(expr expression.Expression, cols []*expression.CorrelatedColumn) []*expression.CorrelatedColumn {
+func extractCorColumns(expr expression.Expression) (cols []*expression.CorrelatedColumn) {
 	switch v := expr.(type) {
 	case *expression.CorrelatedColumn:
-		return append(cols, v)
+		return []*expression.CorrelatedColumn{v}
 	case *expression.ScalarFunction:
 		for _, arg := range v.Args {
-			cols = extractCorColumns(arg, cols)
+			cols = append(cols, extractCorColumns(arg)...)
 		}
-		return cols
 	}
-	return cols
+	return
 }
 
 func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
@@ -183,7 +181,7 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 				}
 			}
 		}
-		columns := extractColumns(expr, nil)
+		columns := extractColumns(expr)
 		allFromLeft, allFromRight := true, true
 		for _, col := range columns {
 			if left.GetSchema().GetIndex(col) == -1 {
