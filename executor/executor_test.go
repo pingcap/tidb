@@ -1217,7 +1217,7 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("set @@global.sql_mode = 'STRICT_TRANS_TABLES'")
 }
 
-func (s *testSuite) TestNewSubquery(c *C) {
+func (s *testSuite) TestSubquery(c *C) {
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
@@ -1276,6 +1276,12 @@ func (s *testSuite) TestNewSubquery(c *C) {
 
 	result = tk.MustQuery("select * from a b where c = (select d from b a where a.c = 2 and b.c = 1)")
 	result.Check(testkit.Rows("1 2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c int)")
+	tk.MustExec("insert t values(10), (8), (7), (9), (11)")
+	result = tk.MustQuery("select * from t where 9 in (select c from t s where s.c < t.c limit 3)")
+	result.Check(testkit.Rows("10"))
 }
 
 func (s *testSuite) TestNewTableDual(c *C) {
