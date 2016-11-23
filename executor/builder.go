@@ -15,6 +15,7 @@ package executor
 
 import (
 	"math"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -24,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx/autocommit"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -144,7 +143,7 @@ func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 
 func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	if autocommit.ShouldAutocommit(b.ctx) {
+	if b.ctx.GetSessionVars().ShouldAutocommit() {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
@@ -209,7 +208,7 @@ func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 		schema:      v.GetSchema(),
 	}
 	if e.Tp == ast.ShowGrants && len(e.User) == 0 {
-		e.User = variable.GetSessionVars(e.ctx).User
+		e.User = e.ctx.GetSessionVars().User
 	}
 	return e
 }
@@ -473,7 +472,7 @@ func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
 }
 
 func (b *executorBuilder) getStartTS() uint64 {
-	startTS := variable.GetSnapshotTS(b.ctx)
+	startTS := b.ctx.GetSessionVars().SnapshotTS
 	if startTS == 0 {
 		txn, err := b.ctx.GetTxn(false)
 		if err != nil {
@@ -492,11 +491,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
-	var memDB bool
-	switch v.DBName.L {
-	case "information_schema", "performance_schema":
-		memDB = true
-	}
+	memDB := infoschema.IsMemoryDB(v.DBName.L)
 	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
 		st := &XSelectTableExec{
@@ -524,13 +519,14 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	}
 
 	ts := &TableScanExec{
-		t:          table,
-		asName:     v.TableAsName,
-		ctx:        b.ctx,
-		columns:    v.Columns,
-		schema:     v.GetSchema(),
-		seekHandle: math.MinInt64,
-		ranges:     v.Ranges,
+		t:            table,
+		asName:       v.TableAsName,
+		ctx:          b.ctx,
+		columns:      v.Columns,
+		schema:       v.GetSchema(),
+		seekHandle:   math.MinInt64,
+		ranges:       v.Ranges,
+		isInfoSchema: strings.EqualFold(v.DBName.L, infoschema.Name),
 	}
 	if v.Desc {
 		return &ReverseExec{Src: ts}
@@ -545,11 +541,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
-	var memDB bool
-	switch v.DBName.L {
-	case "information_schema", "performance_schema":
-		memDB = true
-	}
+	memDB := infoschema.IsMemoryDB(v.DBName.L)
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
 		st := &XSelectIndexExec{

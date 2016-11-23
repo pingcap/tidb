@@ -586,8 +586,8 @@ func (e *Evaluator) values(v *ast.ValuesExpr) bool {
 
 func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	name := strings.ToLower(v.Name)
-	sessionVars := variable.GetSessionVars(e.ctx)
-	globalVars := variable.GetGlobalVarAccessor(e.ctx)
+	sessionVars := e.ctx.GetSessionVars()
+	globalVars := sessionVars.GlobalVarsAccessor
 	if !v.IsSystem {
 		if v.Value != nil && !v.Value.GetDatum().IsNull() {
 			strVal, err := v.Value.GetDatum().ToString()
@@ -627,7 +627,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 				d.SetString(sysVar.Value)
 			} else {
 				// Get global system variable and fill it in session.
-				globalVal, err := globalVars.GetGlobalSysVar(e.ctx, name)
+				globalVal, err := globalVars.GetGlobalSysVar(name)
 				if err != nil {
 					e.err = errors.Trace(err)
 					return false
@@ -643,7 +643,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 		v.SetDatum(d)
 		return true
 	}
-	value, err := globalVars.GetGlobalSysVar(e.ctx, name)
+	value, err := globalVars.GetGlobalSysVar(name)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false

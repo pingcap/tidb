@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/db"
 )
 
 var (
@@ -565,7 +564,7 @@ func (i Ident) Full(ctx context.Context) (full Ident) {
 	if i.Schema.O != "" {
 		full.Schema = i.Schema
 	} else {
-		full.Schema = model.NewCIStr(db.GetCurrentSchema(ctx))
+		full.Schema = model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	}
 	return
 }

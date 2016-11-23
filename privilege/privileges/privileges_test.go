@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -102,7 +101,7 @@ func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 		Name: model.NewCIStr("test"),
 	}
 	ctx, _ := se.(context.Context)
-	variable.GetSessionVars(ctx).User = "test@localhost"
+	ctx.GetSessionVars().User = "test@localhost"
 	r, err := pc.Check(ctx, db, nil, mysql.SelectPriv)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsFalse)
@@ -135,7 +134,7 @@ func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 		Name: model.NewCIStr("test"),
 	}
 	ctx, _ := se.(context.Context)
-	variable.GetSessionVars(ctx).User = "test1@localhost"
+	ctx.GetSessionVars().User = "test1@localhost"
 	r, err := pc.Check(ctx, db, tbl, mysql.SelectPriv)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsFalse)
@@ -248,22 +247,22 @@ func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(context.Context)
 	mustExec(c, se, `CREATE TABLE todrop(c int);`)
-	variable.GetSessionVars(ctx).User = "root@localhost"
+	ctx.GetSessionVars().User = "root@localhost"
 	mustExec(c, se, `CREATE USER 'drop'@'localhost' identified by '123';`)
 	mustExec(c, se, `GRANT Select ON test.todrop TO  'drop'@'localhost';`)
 
-	variable.GetSessionVars(ctx).User = "drop@localhost"
+	ctx.GetSessionVars().User = "drop@localhost"
 	mustExec(c, se, `SELECT * FROM todrop;`)
 
 	_, err := se.Execute("DROP TABLE todrop;")
 	c.Assert(err, NotNil)
 
-	variable.GetSessionVars(ctx).User = "root@localhost"
+	ctx.GetSessionVars().User = "root@localhost"
 	mustExec(c, se, `GRANT Drop ON test.todrop TO  'drop'@'localhost';`)
 
 	se1 := newSession(c, s.store, s.dbName)
 	ctx1, _ := se1.(context.Context)
-	variable.GetSessionVars(ctx1).User = "drop@localhost"
+	ctx1.GetSessionVars().User = "drop@localhost"
 	mustExec(c, se1, `DROP TABLE todrop;`)
 }
 

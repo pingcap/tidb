@@ -184,6 +184,11 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			sql:  "a = coalesce(null, null, a, b)",
 			cond: "eq(test.t.a, coalesce(<nil>, <nil>, test.t.a, test.t.b))",
 		},
+		// isnull
+		{
+			sql:  "b is null",
+			cond: "isnull(test.t.b)",
+		},
 	}
 	for _, ca := range cases {
 		sql := "select * from t where " + ca.sql

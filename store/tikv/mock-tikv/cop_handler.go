@@ -20,6 +20,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/kv"
@@ -107,7 +108,16 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 		selResp.Error = toPBError(err)
 		selResp.Chunks = chunks
 		if err != nil {
-			resp.OtherError = err.Error()
+			if locked, ok := errors.Cause(err).(*ErrLocked); ok {
+				resp.Locked = &kvrpcpb.LockInfo{
+					Key:         locked.Key,
+					PrimaryLock: locked.Primary,
+					LockVersion: locked.StartTS,
+					LockTtl:     locked.TTL,
+				}
+			} else {
+				resp.OtherError = err.Error()
+			}
 		}
 		data, err := proto.Marshal(selResp)
 		if err != nil {
@@ -520,7 +530,6 @@ func (h *rpcHandler) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, d
 			pair = pairs[0]
 		}
 		if pair.Err != nil {
-			// TODO: handle lock error.
 			return nil, errors.Trace(pair.Err)
 		}
 		if pair.Key == nil {

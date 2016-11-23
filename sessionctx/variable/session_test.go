@@ -28,9 +28,7 @@ type testSessionSuite struct {
 func (*testSessionSuite) TestSession(c *C) {
 	ctx := mock.NewContext()
 
-	variable.BindSessionVars(ctx)
-
-	v := variable.GetSessionVars(ctx)
+	v := ctx.GetSessionVars()
 	c.Assert(v, NotNil)
 
 	// For AffectedRows
@@ -63,7 +61,7 @@ func (*testSessionSuite) TestSession(c *C) {
 
 	v.SetSystemVar("character_set_connection", types.NewStringDatum("utf8"))
 	v.SetSystemVar("collation_connection", types.NewStringDatum("utf8_general_ci"))
-	charset, collation := variable.GetCharsetInfo(ctx)
+	charset, collation := v.GetCharsetInfo()
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_general_ci")
 

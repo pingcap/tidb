@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -224,7 +223,6 @@ func mockResolve(node ast.Node) error {
 	}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{table})
 	ctx := mock.NewContext()
-	variable.BindSessionVars(ctx)
 	err := MockResolveName(node, is, "test", ctx)
 	if err != nil {
 		return err
@@ -263,7 +261,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 	case tipb.ExprType_Case, tipb.ExprType_If:
 		return true
 	// other functions
-	case tipb.ExprType_Coalesce:
+	case tipb.ExprType_Coalesce, tipb.ExprType_IsNull:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
