@@ -297,6 +297,11 @@ func (do *Domain) Reload() error {
 		if err == nil {
 			atomic.StoreInt64(&do.lastLeaseTS, time.Now().UnixNano())
 			do.SchemaValidity.updateTimeInfo(startTime.UnixNano(), ver.Ver)
+			sub := time.Since(startTime)
+			lease := do.DDL().GetLease()
+			if sub > lease && lease > 0 {
+				log.Infof("[ddl] loading schema takes a long time %v", sub)
+			}
 			break
 		}
 		log.Errorf("[ddl] load schema err %v, ver:%v, retry again", errors.ErrorStack(err), ver.Ver)
