@@ -53,7 +53,7 @@ func (a *aggPushDownSolver) getAggFuncChildIdx(aggFunc expression.AggregationFun
 	fromLeft, fromRight := false, false
 	var cols []*expression.Column
 	for _, arg := range aggFunc.GetArgs() {
-		cols, _ = extractColumn(arg, cols, nil)
+		cols = append(cols, extractColumns(arg)...)
 	}
 	for _, col := range cols {
 		if schema.GetIndex(col) != -1 {
@@ -101,7 +101,7 @@ func (a *aggPushDownSolver) collectAggFuncs(agg *Aggregation, join *Join) (valid
 func (a *aggPushDownSolver) collectGbyCols(agg *Aggregation, join *Join) (leftGbyCols, rightGbyCols []*expression.Column) {
 	leftChild := join.GetChildByIndex(0)
 	for _, gbyExpr := range agg.GroupByItems {
-		cols, _ := extractColumn(gbyExpr, nil, nil)
+		cols := extractColumns(gbyExpr)
 		for _, col := range cols {
 			if leftChild.GetSchema().GetIndex(col) != -1 {
 				leftGbyCols = append(leftGbyCols, col)
@@ -116,15 +116,15 @@ func (a *aggPushDownSolver) collectGbyCols(agg *Aggregation, join *Join) (leftGb
 		rightGbyCols = a.addGbyCol(rightGbyCols, eqFunc.Args[1].(*expression.Column))
 	}
 	for _, leftCond := range join.LeftConditions {
-		cols, _ := extractColumn(leftCond, nil, nil)
+		cols := extractColumns(leftCond)
 		leftGbyCols = a.addGbyCol(leftGbyCols, cols...)
 	}
 	for _, rightCond := range join.RightConditions {
-		cols, _ := extractColumn(rightCond, nil, nil)
+		cols := extractColumns(rightCond)
 		rightGbyCols = a.addGbyCol(rightGbyCols, cols...)
 	}
 	for _, otherCond := range join.OtherConditions {
-		cols, _ := extractColumn(otherCond, nil, nil)
+		cols := extractColumns(otherCond)
 		for _, col := range cols {
 			if leftChild.GetSchema().GetIndex(col) != -1 {
 				leftGbyCols = a.addGbyCol(leftGbyCols, col)
@@ -223,7 +223,7 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 		}
 	}
 	for _, gbyCol := range gbyCols {
-		firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+		firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
 		newAggFuncs = append(newAggFuncs, firstRow)
 		schema = append(schema, gbyCol.Clone().(*expression.Column))
 		agg.correlated = agg.correlated || gbyCol.IsCorrelated()
