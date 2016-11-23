@@ -36,9 +36,9 @@ func (e *ExplainExec) Schema() expression.Schema {
 	return e.schema
 }
 
-func (e *ExplainExec) prepareExplainInfo(p plan.Plan) error {
+func (e *ExplainExec) prepareExplainInfo(p plan.Plan, parent plan.Plan) error {
 	for _, child := range p.GetChildren() {
-		err := e.prepareExplainInfo(child)
+		err := e.prepareExplainInfo(child, p)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -47,8 +47,12 @@ func (e *ExplainExec) prepareExplainInfo(p plan.Plan) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	parentStr := ""
+	if parent != nil {
+		parentStr = parent.GetID()
+	}
 	row := &Row{
-		Data: types.MakeDatums(p.GetID(), string(explain)),
+		Data: types.MakeDatums(p.GetID(), string(explain), parentStr),
 	}
 	e.rows = append(e.rows, row)
 	return nil
@@ -57,7 +61,7 @@ func (e *ExplainExec) prepareExplainInfo(p plan.Plan) error {
 // Next implements Execution Next interface.
 func (e *ExplainExec) Next() (*Row, error) {
 	if e.cursor == 0 {
-		err := e.prepareExplainInfo(e.StmtPlan)
+		err := e.prepareExplainInfo(e.StmtPlan, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

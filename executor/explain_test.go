@@ -31,14 +31,18 @@ func (s *testSuite) TestExplain(c *C) {
 	tk.MustExec("create table t2 (c1 int unique, c2 int)")
 
 	cases := []struct {
-		sql    string
-		ids    []string
-		result []string
+		sql       string
+		ids       []string
+		parentIds []string
+		result    []string
 	}{
 		{
 			"select * from t1",
 			[]string{
 				"TableScan_3",
+			},
+			[]string{
+				"",
 			},
 			[]string{
 				`{
@@ -58,6 +62,9 @@ func (s *testSuite) TestExplain(c *C) {
 			"select * from t1 order by c2",
 			[]string{
 				"IndexScan_5",
+			},
+			[]string{
+				"",
 			},
 			[]string{
 				`{
@@ -80,6 +87,9 @@ func (s *testSuite) TestExplain(c *C) {
 			"select * from t2 order by c2",
 			[]string{
 				"TableScan_6", "Sort_3",
+			},
+			[]string{
+				"Sort_3", "",
 			},
 			[]string{
 				`{
@@ -110,6 +120,9 @@ func (s *testSuite) TestExplain(c *C) {
 			[]string{
 				"TableScan_4",
 			},
+			[]string{
+				"",
+			},
 			[]string{`{
     "db": "test",
     "table": "t1",
@@ -129,6 +142,9 @@ func (s *testSuite) TestExplain(c *C) {
 			"select * from t1 where t1.c2 = 1",
 			[]string{
 				"IndexScan_5",
+			},
+			[]string{
+				"",
 			},
 			[]string{`{
     "db": "test",
@@ -152,6 +168,9 @@ func (s *testSuite) TestExplain(c *C) {
 			"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
 			[]string{
 				"TableScan_8", "TableScan_10", "HashLeftJoin_7",
+			},
+			[]string{
+				"HashLeftJoin_7", "HashLeftJoin_7", "",
 			},
 			[]string{
 				`{
@@ -195,6 +214,9 @@ func (s *testSuite) TestExplain(c *C) {
 			[]string{
 				"TableScan_4", "Update_3",
 			},
+			[]string{
+				"Update_3", "",
+			},
 			[]string{`{
     "db": "test",
     "table": "t1",
@@ -219,6 +241,9 @@ func (s *testSuite) TestExplain(c *C) {
 			"delete from t1 where t1.c2 = 1",
 			[]string{
 				"IndexScan_5", "Delete_3",
+			},
+			[]string{
+				"Delete_3", "",
 			},
 			[]string{`{
     "db": "test",
@@ -247,6 +272,9 @@ func (s *testSuite) TestExplain(c *C) {
 			"select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1",
 			[]string{
 				"TableScan_10", "TableScan_12", "HashAgg_14", "HashLeftJoin_9", "HashAgg_19",
+			},
+			[]string{
+				"HashLeftJoin_9", "HashAgg_14", "HashLeftJoin_9", "HashAgg_19", "",
 			},
 			[]string{`{
     "db": "test",
@@ -314,7 +342,7 @@ func (s *testSuite) TestExplain(c *C) {
 		result := tk.MustQuery("explain " + ca.sql)
 		var resultList []string
 		for i := range ca.ids {
-			resultList = append(resultList, ca.ids[i]+" "+ca.result[i])
+			resultList = append(resultList, ca.ids[i]+" "+ca.result[i]+" "+ca.parentIds[i])
 		}
 		result.Check(testkit.Rows(resultList...))
 	}
