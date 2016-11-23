@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -105,7 +104,7 @@ func (e *PrepareExec) Close() error {
 // DoPrepare prepares the statement, it can be called multiple times without
 // side effect.
 func (e *PrepareExec) DoPrepare() {
-	vars := variable.GetSessionVars(e.Ctx)
+	vars := e.Ctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
 		// Make sure it is idempotent.
@@ -114,7 +113,7 @@ func (e *PrepareExec) DoPrepare() {
 			return
 		}
 	}
-	charset, collation := variable.GetCharsetInfo(e.Ctx)
+	charset, collation := vars.GetCharsetInfo()
 	var (
 		stmts []ast.StmtNode
 		err   error
@@ -201,7 +200,7 @@ func (e *ExecuteExec) Close() error {
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build() error {
-	vars := variable.GetSessionVars(e.Ctx)
+	vars := e.Ctx.GetSessionVars()
 	if e.Name != "" {
 		e.ID = vars.PreparedStmtNameToID[e.Name]
 	}
@@ -261,7 +260,7 @@ func (e *DeallocateExec) Schema() expression.Schema {
 
 // Next implements the Executor Next interface.
 func (e *DeallocateExec) Next() (*Row, error) {
-	vars := variable.GetSessionVars(e.ctx)
+	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
 		return nil, ErrStmtNotFound

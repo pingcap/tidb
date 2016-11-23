@@ -16,8 +16,6 @@ package evaluator
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/db"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -29,8 +27,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	d, err := builtinDatabase(types.MakeDatums(), ctx)
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
-
-	db.BindCurrentSchema(ctx, "test")
+	ctx.GetSessionVars().CurrentDB = "test"
 	d, err = builtinDatabase(types.MakeDatums(), ctx)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
@@ -40,11 +37,6 @@ func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	d, err := builtinFoundRows(types.MakeDatums(), ctx)
-	c.Assert(err, NotNil)
-
-	variable.BindSessionVars(ctx)
-
-	d, err = builtinFoundRows(types.MakeDatums(), ctx)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(0))
 }
@@ -52,8 +44,7 @@ func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 func (s *testEvaluatorSuite) TestUser(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
-	variable.BindSessionVars(ctx)
-	sessionVars := variable.GetSessionVars(ctx)
+	sessionVars := ctx.GetSessionVars()
 	sessionVars.User = "root@localhost"
 
 	d, err := builtinUser(types.MakeDatums(), ctx)
@@ -64,8 +55,7 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
-	variable.BindSessionVars(ctx)
-	sessionVars := variable.GetSessionVars(ctx)
+	sessionVars := ctx.GetSessionVars()
 	sessionVars.User = "root@localhost"
 
 	d, err := builtinCurrentUser(types.MakeDatums(), ctx)
@@ -76,8 +66,7 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
-	variable.BindSessionVars(ctx)
-	sessionVars := variable.GetSessionVars(ctx)
+	sessionVars := ctx.GetSessionVars()
 	sessionVars.ConnectionID = uint64(1)
 
 	d, err := builtinConnectionID(types.MakeDatums(), ctx)

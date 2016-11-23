@@ -464,6 +464,7 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 	join.tp = "HashSemiJoin"
 	join.allocator = p.allocator
 	join.initID()
+	join.correlated = p.IsCorrelated()
 	join.SetSchema(p.schema)
 	lProp := prop
 	if !allLeft {
@@ -479,6 +480,12 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 	rInfo, err := rChild.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if lInfo.p != nil {
+		join.correlated = join.correlated || lInfo.p.IsCorrelated()
+	}
+	if rInfo.p != nil {
+		join.correlated = join.correlated || rInfo.p.IsCorrelated()
 	}
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
 	if p.JoinType == SemiJoin {
@@ -518,6 +525,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	join.allocator = p.allocator
 	join.initID()
 	join.SetSchema(p.schema)
+	join.correlated = p.IsCorrelated()
 	if innerJoin {
 		join.JoinType = InnerJoin
 	} else {
@@ -540,6 +548,12 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	rInfo, err := rChild.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if lInfo.p != nil {
+		join.correlated = join.correlated || lInfo.p.IsCorrelated()
+	}
+	if rInfo.p != nil {
+		join.correlated = join.correlated || rInfo.p.IsCorrelated()
 	}
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
 	if !allLeft {
@@ -589,6 +603,7 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	join.tp = "HashRightJoin"
 	join.allocator = p.allocator
 	join.initID()
+	join.correlated = p.IsCorrelated()
 	join.SetSchema(p.schema)
 	if innerJoin {
 		join.JoinType = InnerJoin
@@ -613,6 +628,12 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if lInfo.p != nil {
+		join.correlated = join.correlated || lInfo.p.IsCorrelated()
+	}
+	if rInfo.p != nil {
+		join.correlated = join.correlated || rInfo.p.IsCorrelated()
 	}
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
 	if !allRight {
@@ -682,6 +703,7 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 	agg.tp = "StreamAgg"
 	agg.allocator = p.allocator
 	agg.initID()
+	agg.correlated = p.IsCorrelated()
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
 	// TODO: Consider distinct key.
@@ -730,6 +752,7 @@ func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, child
 	agg.tp = "HashAgg"
 	agg.allocator = p.allocator
 	agg.initID()
+	agg.correlated = p.IsCorrelated()
 	agg.SetSchema(p.schema)
 	agg.HasGby = len(p.GroupByItems) > 0
 	schema := x.addAggregation(agg)
@@ -754,6 +777,7 @@ func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanIn
 	agg.tp = "HashAgg"
 	agg.allocator = p.allocator
 	agg.initID()
+	agg.correlated = p.IsCorrelated()
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
 	info := addPlanToResponse(agg, childInfo)
@@ -1031,6 +1055,28 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	return sortedPlanInfo, nil
 }
 
+// addCachePlan will add a Cache plan above the plan whose father's IsCorrelated() is true but its own IsCorrelated() is false.
+func addCachePlan(p PhysicalPlan) PhysicalPlan {
+	if len(p.GetChildren()) == 0 {
+		return p
+	}
+	np := p
+	newChildren := make([]Plan, 0, len(np.GetChildren()))
+	for _, child := range p.GetChildren() {
+		if child.IsCorrelated() {
+			newChildren = append(newChildren, addCachePlan(child.(PhysicalPlan)))
+		} else {
+			newChild := &Cache{}
+			addChild(newChild, child)
+			newChild.SetSchema(child.GetSchema())
+			newChild.SetParents(np)
+			newChildren = append(newChildren, newChild)
+		}
+	}
+	np.SetChildren(newChildren...)
+	return np
+}
+
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
@@ -1051,6 +1097,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	innerInfo, err := p.InnerPlan.convert2PhysicalPlan(&requiredProperty{})
+	innerInfo.p = addCachePlan(innerInfo.p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1062,6 +1109,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	np.tp = "PhysicalAppy"
 	np.allocator = p.allocator
 	np.initID()
+	np.correlated = p.IsCorrelated()
 	np.SetSchema(p.GetSchema())
 	limit := prop.limit
 	info, err = child.convert2PhysicalPlan(removeLimit(prop))

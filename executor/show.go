@@ -301,8 +301,8 @@ func (e *ShowExec) fetchShowCharset() error {
 }
 
 func (e *ShowExec) fetchShowVariables() error {
-	sessionVars := variable.GetSessionVars(e.ctx)
-	globalVars := variable.GetGlobalVarAccessor(e.ctx)
+	sessionVars := e.ctx.GetSessionVars()
+	globalVars := sessionVars.GlobalVarsAccessor
 	for _, v := range variable.SysVars {
 		var err error
 		var value string
@@ -310,7 +310,7 @@ func (e *ShowExec) fetchShowVariables() error {
 			// Try to get Session Scope variable value first.
 			sv := sessionVars.GetSystemVar(v.Name)
 			if sv.IsNull() {
-				value, err = globalVars.GetGlobalSysVar(e.ctx, v.Name)
+				value, err = globalVars.GetGlobalSysVar(v.Name)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -322,7 +322,7 @@ func (e *ShowExec) fetchShowVariables() error {
 			}
 			value = sv.GetString()
 		} else {
-			value, err = globalVars.GetGlobalSysVar(e.ctx, v.Name)
+			value, err = globalVars.GetGlobalSysVar(v.Name)
 			if err != nil {
 				return errors.Trace(err)
 			}

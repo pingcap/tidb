@@ -39,9 +39,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
@@ -125,11 +123,13 @@ type session struct {
 	// For performance_schema only.
 	stmtState *perfschema.StatementState
 	parser    *parser.Parser
+
+	sessionVars *variable.SessionVars
 }
 
 func (s *session) cleanRetryInfo() {
-	if !variable.GetSessionVars(s).RetryInfo.Retrying {
-		variable.GetSessionVars(s).RetryInfo.Clean()
+	if !s.sessionVars.RetryInfo.Retrying {
+		s.sessionVars.RetryInfo.Clean()
 	}
 }
 
@@ -146,7 +146,7 @@ func (s *session) checkSchemaValidOrRollback() error {
 
 	if err1 := s.RollbackTxn(); err1 != nil {
 		// TODO: handle this error.
-		log.Errorf("[%d] rollback txn failed, err:%v", variable.GetSessionVars(s).ConnectionID, errors.ErrorStack(err1))
+		log.Errorf("[%d] rollback txn failed, err:%v", s.sessionVars.ConnectionID, errors.ErrorStack(err1))
 		errMsg := fmt.Sprintf("schema is invalid, rollback txn err:%v", err1.Error())
 		return domain.ErrLoadSchemaTimeOut.Gen(errMsg)
 	}
@@ -154,15 +154,15 @@ func (s *session) checkSchemaValidOrRollback() error {
 }
 
 func (s *session) Status() uint16 {
-	return variable.GetSessionVars(s).Status
+	return s.sessionVars.Status
 }
 
 func (s *session) LastInsertID() uint64 {
-	return variable.GetSessionVars(s).LastInsertID
+	return s.sessionVars.LastInsertID
 }
 
 func (s *session) AffectedRows() uint64 {
-	return variable.GetSessionVars(s).AffectedRows
+	return s.sessionVars.AffectedRows
 }
 
 func (s *session) resetHistory() {
@@ -171,11 +171,11 @@ func (s *session) resetHistory() {
 }
 
 func (s *session) SetClientCapability(capability uint32) {
-	variable.GetSessionVars(s).ClientCapability = capability
+	s.sessionVars.ClientCapability = capability
 }
 
 func (s *session) SetConnectionID(connectionID uint64) {
-	variable.GetSessionVars(s).ConnectionID = connectionID
+	s.sessionVars.ConnectionID = connectionID
 }
 
 func (s *session) finishTxn(rollback bool) error {
@@ -186,7 +186,7 @@ func (s *session) finishTxn(rollback bool) error {
 	defer func() {
 		s.ClearValue(executor.DirtyDBKey)
 		s.txn = nil
-		variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, false)
+		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		binloginfo.ClearBinlog(s)
 	}()
 
@@ -211,7 +211,7 @@ func (s *session) finishTxn(rollback bool) error {
 	}
 	err := s.txn.Commit()
 	if err != nil {
-		if !variable.GetSessionVars(s).RetryInfo.Retrying && kv.IsRetryableError(err) {
+		if !s.sessionVars.RetryInfo.Retrying && kv.IsRetryableError(err) {
 			err = s.Retry()
 		}
 		if err != nil {
@@ -243,11 +243,11 @@ func (s *session) GetClient() kv.Client {
 
 func (s *session) String() string {
 	// TODO: how to print binded context in values appropriately?
-	sessVars := variable.GetSessionVars(s)
+	sessVars := s.sessionVars
 	data := map[string]interface{}{
 		"id":         sessVars.ConnectionID,
 		"user":       sessVars.User,
-		"currDBName": db.GetCurrentSchema(s),
+		"currDBName": sessVars.CurrentDB,
 		"stauts":     sessVars.Status,
 		"strictMode": sessVars.StrictSQLMode,
 	}
@@ -271,7 +271,7 @@ func (s *session) String() string {
 const sqlLogMaxLen = 1024
 
 func (s *session) Retry() error {
-	variable.GetSessionVars(s).RetryInfo.Retrying = true
+	s.sessionVars.RetryInfo.Retrying = true
 	nh := s.history.clone()
 	// Debug infos.
 	if len(nh.history) == 0 {
@@ -281,7 +281,7 @@ func (s *session) Retry() error {
 	}
 	defer func() {
 		s.history.history = nh.history
-		variable.GetSessionVars(s).RetryInfo.Retrying = false
+		s.sessionVars.RetryInfo.Retrying = false
 	}()
 
 	if forUpdate := s.Value(forupdate.ForUpdateKey); forUpdate != nil {
@@ -290,7 +290,7 @@ func (s *session) Retry() error {
 	var err error
 	retryCnt := 0
 	for {
-		variable.GetSessionVars(s).RetryInfo.Attempts = retryCnt + 1
+		s.sessionVars.RetryInfo.Attempts = retryCnt + 1
 		s.resetHistory()
 		log.Info("RollbackTxn for retry txn.")
 		err = s.RollbackTxn()
@@ -299,7 +299,7 @@ func (s *session) Retry() error {
 			log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
 		}
 		success := true
-		variable.GetSessionVars(s).RetryInfo.ResetOffset()
+		s.sessionVars.RetryInfo.ResetOffset()
 		for _, sr := range nh.history {
 			st := sr.st
 			txt := st.OriginText()
@@ -338,7 +338,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.Record
 	if err := s.checkSchemaValidOrRollback(); err != nil {
 		return nil, errors.Trace(err)
 	}
-	charset, collation := getCtxCharsetInfo(s)
+	charset, collation := s.sessionVars.GetCharsetInfo()
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -356,10 +356,9 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.Record
 	// For example only support DML on system meta table.
 	// TODO: Add more restrictions.
 	log.Debugf("Executing %s [%s]", st.OriginText(), sql)
-	sessVar := variable.GetSessionVars(ctx)
-	sessVar.InRestrictedSQL = true
+	s.sessionVars.InRestrictedSQL = true
 	rs, err := st.Exec(ctx)
-	sessVar.InRestrictedSQL = false
+	s.sessionVars.InRestrictedSQL = false
 	return rs, errors.Trace(err)
 }
 
@@ -392,14 +391,14 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
-func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
-	if ctx.Value(context.Initing) != nil {
+func (s *session) GetGlobalSysVar(name string) (string, error) {
+	if s.Value(context.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, name)
-	sysVar, err := s.getExecRet(ctx, sql)
+	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
 		if terror.ExecResultIsEmpty.Equal(err) {
 			return "", variable.UnknownSystemVar.Gen("unknown sys variable:%s", name)
@@ -410,26 +409,16 @@ func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, err
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
-func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string) error {
+func (s *session) SetGlobalSysVar(name string, value string) error {
 	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, value, strings.ToLower(name))
-	_, err := s.ExecRestrictedSQL(ctx, sql)
+	_, err := s.ExecRestrictedSQL(s, sql)
 	return errors.Trace(err)
 }
 
 // IsAutocommit checks if it is in the auto-commit mode.
 func (s *session) isAutocommit(ctx context.Context) bool {
-	sessionVar := variable.GetSessionVars(ctx)
-	return sessionVar.GetStatusFlag(mysql.ServerStatusAutocommit)
-}
-
-func (s *session) ShouldAutocommit(ctx context.Context) bool {
-	// With START TRANSACTION, autocommit remains disabled until you end
-	// the transaction with COMMIT or ROLLBACK.
-	sessVar := variable.GetSessionVars(ctx)
-	isAutomcommit := sessVar.GetStatusFlag(mysql.ServerStatusAutocommit)
-	inTransaction := sessVar.GetStatusFlag(mysql.ServerStatusInTrans)
-	return isAutomcommit && !inTransaction
+	return s.sessionVars.GetStatusFlag(mysql.ServerStatusAutocommit)
 }
 
 func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
@@ -441,8 +430,8 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		return nil, errors.Trace(err)
 	}
 	startTS := time.Now()
-	charset, collation := getCtxCharsetInfo(s)
-	connID := variable.GetSessionVars(s).ConnectionID
+	charset, collation := s.sessionVars.GetCharsetInfo()
+	connID := s.sessionVars.ConnectionID
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
 		log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
@@ -477,7 +466,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		}
 	}
 
-	if variable.GetSessionVars(s).ClientCapability&mysql.ClientMultiResults == 0 && len(rs) > 1 {
+	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(rs) > 1 {
 		// return the first recordset if client doesn't support ClientMultiResults.
 		rs = rs[:1]
 	}
@@ -562,7 +551,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	if err := s.checkSchemaValidOrRollback(); err != nil {
 		return errors.Trace(err)
 	}
-	vars := variable.GetSessionVars(s)
+	vars := s.sessionVars
 	if _, ok := vars.PreparedStmts[stmtID]; !ok {
 		return executor.ErrStmtNotFound
 	}
@@ -578,7 +567,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		err error
 		ac  bool
 	)
-	sessVars := variable.GetSessionVars(s)
+	sessVars := s.sessionVars
 	if s.txn == nil {
 		err = s.loadCommonGlobalVariablesIfNeeded()
 		if err != nil {
@@ -591,7 +580,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		}
 		ac = s.isAutocommit(s)
 		if !ac {
-			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
+			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		log.Infof("[%d] new txn:%s", sessVars.ConnectionID, s.txn)
 	} else if forceNew {
@@ -605,11 +594,11 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		}
 		ac = s.isAutocommit(s)
 		if !ac {
-			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
+			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		log.Warnf("[%d] force new txn:%s", sessVars.ConnectionID, s.txn)
 	}
-	retryInfo := variable.GetSessionVars(s).RetryInfo
+	retryInfo := s.sessionVars.RetryInfo
 	if retryInfo.Retrying {
 		s.txn.SetOption(kv.RetryAttempts, retryInfo.Attempts)
 	}
@@ -632,6 +621,11 @@ func (s *session) ClearValue(key fmt.Stringer) {
 // Close function does some clean work when session end.
 func (s *session) Close() error {
 	return s.RollbackTxn()
+}
+
+// GetSessionVars implements the context.Context interface
+func (s *session) GetSessionVars() *variable.SessionVars {
+	return s.sessionVars
 }
 
 func (s *session) getPassword(name, host string) (string, error) {
@@ -680,7 +674,7 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	if !bytes.Equal(auth, checkAuth) {
 		return false
 	}
-	variable.GetSessionVars(s).SetCurrentUser(user)
+	s.sessionVars.SetCurrentUser(user)
 	return true
 }
 
@@ -704,21 +698,16 @@ func CreateSession(store kv.Storage) (Session, error) {
 		debugInfos:  make(map[string]interface{}),
 		maxRetryCnt: 10,
 		parser:      parser.New(),
+		sessionVars: variable.NewSessionVars(),
 	}
 	domain, err := domap.Get(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	sessionctx.BindDomain(s, domain)
-
-	variable.BindSessionVars(s)
-	variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusAutocommit, true)
-
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
-	variable.BindGlobalVarAccessor(s, s)
+	s.sessionVars.GlobalVarsAccessor = s
 
-	// session implements autocommit.Checker. Bind it to ctx
-	autocommit.BindAutocommitChecker(s, s)
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 
@@ -807,7 +796,7 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 // LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session
 // right before creating a transaction for the first time.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
-	vars := variable.GetSessionVars(s)
+	vars := s.sessionVars
 	if vars.CommonGlobalLoaded {
 		return nil
 	}
