@@ -100,9 +100,6 @@ race:
 tikv_integration_test:
 	$(GOTEST) ./store/tikv/. -with-tikv=true
 
-interpreter:
-	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
-
 server: parser
 ifeq ($(TARGET), "")
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
