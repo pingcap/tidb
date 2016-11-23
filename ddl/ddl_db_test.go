@@ -145,6 +145,7 @@ func (s *testDBSuite) TestIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.testAddIndex(c)
+	s.testAddAnonymousIndex(c)
 	s.testDropIndex(c)
 	s.testAddUniqueIndexRollback(c)
 }
@@ -230,6 +231,23 @@ LOOP:
 		s.mustExec(c, "delete from t1 where c1 = ?", i+10)
 	}
 	sessionExec(c, s.store, "create index c3_index on t1 (c3)")
+}
+
+func (s *testDBSuite) testAddAnonymousIndex(c *C) {
+	s.mustExec(c, "create table t_anonymous_index (c1 int, c2 int, c3 int)")
+	s.mustExec(c, "alter table t_anonymous_index add index (c1, c2)")
+	_, err := s.db.Exec("alter table t_anonymous_index drop index")
+	c.Assert(err, NotNil)
+	s.mustExec(c, "alter table t_anonymous_index drop index c1")
+	t := s.testGetTable(c, "t_anonymous_index")
+	c.Assert(t.Indices(), HasLen, 0)
+	s.mustExec(c, "alter table t_anonymous_index add index (c2)")
+	s.mustExec(c, "alter table t_anonymous_index add index (c3)")
+	s.mustExec(c, "alter table t_anonymous_index drop index c2")
+	t = s.testGetTable(c, "t_anonymous_index")
+	c.Assert(t.Indices(), HasLen, 1)
+	idx := t.Indices()[0].Meta().Name.L
+	c.Assert(idx, Equals, "c3")
 }
 
 func (s *testDBSuite) testAddIndex(c *C) {

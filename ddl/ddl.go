@@ -1206,6 +1206,11 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 		return errors.Trace(err)
 	}
 
+	// Deal with anonymous index.
+	if len(indexName.L) == 0 {
+		indexName = idxColNames[0].Column.Name
+	}
+
 	job := &model.Job{
 		SchemaID: schema.ID,
 		TableID:  t.Meta().ID,
