@@ -58,10 +58,35 @@ type Join struct {
 	DefaultValues []types.Datum
 }
 
+func (p *Join) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
+	for _, fun := range p.EqualConditions {
+		corCols = append(corCols, extractCorColumns(fun)...)
+	}
+	for _, fun := range p.LeftConditions {
+		corCols = append(corCols, extractCorColumns(fun)...)
+	}
+	for _, fun := range p.RightConditions {
+		corCols = append(corCols, extractCorColumns(fun)...)
+	}
+	for _, fun := range p.OtherConditions {
+		corCols = append(corCols, extractCorColumns(fun)...)
+	}
+	return corCols
+}
+
 // Projection represents a select fields plan.
 type Projection struct {
 	baseLogicalPlan
 	Exprs []expression.Expression
+}
+
+func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
+	for _, expr := range p.Exprs {
+		corCols = append(corCols, extractCorColumns(expr)...)
+	}
+	return corCols
 }
 
 // Aggregation represents an aggregate plan.
@@ -74,6 +99,19 @@ type Aggregation struct {
 
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
+}
+
+func (p *Aggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
+	for _, expr := range p.GroupByItems {
+		corCols = append(corCols, extractCorColumns(expr)...)
+	}
+	for _, fun := range p.AggFuncs {
+		for _, arg := range fun.GetArgs() {
+			corCols = append(corCols, extractCorColumns(arg)...)
+		}
+	}
+	return corCols
 }
 
 // Selection means a filter.
@@ -89,15 +127,30 @@ type Selection struct {
 	onTable bool
 }
 
+func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
+	for _, cond := range p.Conditions {
+		corCols = append(corCols, extractCorColumns(cond)...)
+	}
+	return corCols
+}
+
 // Apply gets one row from outer executor and gets one row from inner executor according to outer row.
 type Apply struct {
 	baseLogicalPlan
 
-	InnerPlan        LogicalPlan
-	Checker          *ApplyConditionChecker
-	corColsInCurPlan []*expression.CorrelatedColumn
-	// corColsInOuterPlan is the correlated columns that don't belong to this plan.
-	corColsInOuterPlan []*expression.CorrelatedColumn
+	InnerPlan LogicalPlan
+	Checker   *ApplyConditionChecker
+	corCols   []*expression.CorrelatedColumn
+}
+
+func (p *Apply) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
+	corCols = append(corCols, p.InnerPlan.extractCorrelatedCols()...)
+	if p.Checker != nil {
+		corCols = append(corCols, extractCorColumns(p.Checker.Condition)...)
+	}
+	return corCols
 }
 
 // Exists checks if a query returns result.
@@ -149,6 +202,14 @@ type Sort struct {
 
 	ByItems   []*ByItems
 	ExecLimit *Limit
+}
+
+func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
+	for _, item := range p.ByItems {
+		corCols = append(corCols, extractCorColumns(item.Expr)...)
+	}
+	return corCols
 }
 
 // Update represents Update plan.
