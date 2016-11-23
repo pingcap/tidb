@@ -774,6 +774,14 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "Table(t)->Selection->Projection",
 		},
 		{
+			sql:  "select a from t where c between 1 and 2",
+			best: "Index(t.c_d_e)[[1,2]]->Projection",
+		},
+		{
+			sql:  "select a from t where c not between 1 and 2",
+			best: "Index(t.c_d_e)[[-inf,1) (2,+inf]]->Projection",
+		},
+		{
 			sql:  "select a from t where c <= 5 and c >= 3 and d = 1",
 			best: "Index(t.c_d_e)[[3,5]]->Selection->Projection",
 		},
@@ -1260,7 +1268,7 @@ func (s *testPlanSuite) TestNewRangeBuilder(c *C) {
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
 		result := fullRange
 		for _, cond := range selection.Conditions {
-			result = rb.intersection(result, rb.build(cond))
+			result = rb.intersection(result, rb.build(pushDownNot(cond, false)))
 		}
 		c.Assert(rb.err, IsNil)
 		got := fmt.Sprintf("%v", result)
