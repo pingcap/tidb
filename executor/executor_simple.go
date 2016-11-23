@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -106,11 +105,11 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	if !exists {
 		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", dbname)
 	}
-	db.BindCurrentSchema(e.ctx, dbname.O)
+	e.ctx.GetSessionVars().CurrentDB = dbname.O
 	// character_set_database is the character set used by the default database.
 	// The server sets this variable whenever the default database changes.
 	// See http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
-	sessionVars := variable.GetSessionVars(e.ctx)
+	sessionVars := e.ctx.GetSessionVars()
 	err := sessionVars.SetSystemVar(variable.CharsetDatabase, types.NewStringDatum(dbinfo.Charset))
 	if err != nil {
 		return errors.Trace(err)
@@ -123,8 +122,8 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 }
 
 func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
-	sessionVars := variable.GetSessionVars(e.ctx)
-	globalVars := variable.GetGlobalVarAccessor(e.ctx)
+	sessionVars := e.ctx.GetSessionVars()
+	globalVars := sessionVars.GlobalVarsAccessor
 	for _, v := range s.Variables {
 		// Variable is case insensitive, we use lower case.
 		if v.Name == ast.SetNames {
@@ -184,7 +183,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = globalVars.SetGlobalSysVar(e.ctx, name, svalue)
+			err = globalVars.SetGlobalSysVar(name, svalue)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -237,7 +236,7 @@ func (e *SimpleExec) getVarValue(v *ast.VariableAssignment, sysVar *variable.Sys
 		if sysVar != nil {
 			value = types.NewStringDatum(sysVar.Value)
 		} else {
-			s, err1 := globalVars.GetGlobalSysVar(e.ctx, strings.ToLower(v.Name))
+			s, err1 := globalVars.GetGlobalSysVar(strings.ToLower(v.Name))
 			if err1 != nil {
 				return value, errors.Trace(err1)
 			}
@@ -257,7 +256,7 @@ func (e *SimpleExec) setCharset(cs, co string) error {
 			return errors.Trace(err)
 		}
 	}
-	sessionVars := variable.GetSessionVars(e.ctx)
+	sessionVars := e.ctx.GetSessionVars()
 	for _, v := range variable.SetNamesVariables {
 		err = sessionVars.SetSystemVar(v, types.NewStringDatum(cs))
 		if err != nil {
@@ -289,18 +288,18 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
-	variable.GetSessionVars(e.ctx).SetStatusFlag(mysql.ServerStatusInTrans, true)
+	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	return nil
 }
 
 func (e *SimpleExec) executeCommit(s *ast.CommitStmt) error {
 	err := e.ctx.CommitTxn()
-	variable.GetSessionVars(e.ctx).SetStatusFlag(mysql.ServerStatusInTrans, false)
+	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return errors.Trace(err)
 }
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
-	sessVars := variable.GetSessionVars(e.ctx)
+	sessVars := e.ctx.GetSessionVars()
 	log.Infof("[%d] execute rollback statement", sessVars.ConnectionID)
 	err := e.ctx.RollbackTxn()
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)

@@ -20,10 +20,8 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -88,18 +86,15 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 // Create a new session on store but only do ddl works.
 func (s *testSessionSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	ss := &session{
-		values: make(map[fmt.Stringer]interface{}),
-		store:  store,
-		parser: parser.New(),
+		values:      make(map[fmt.Stringer]interface{}),
+		store:       store,
+		parser:      parser.New(),
+		sessionVars: variable.NewSessionVars(),
 	}
 	ss.SetValue(context.Initing, true)
 	domain, err := domap.Get(store)
 	c.Assert(err, IsNil)
 	sessionctx.BindDomain(ss, domain)
-	variable.BindSessionVars(ss)
-	variable.GetSessionVars(ss).SetStatusFlag(mysql.ServerStatusAutocommit, true)
-	// session implements autocommit.Checker. Bind it to ctx
-	autocommit.BindAutocommitChecker(ss, ss)
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 	b, err := checkBootstrapped(ss)

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -116,7 +115,7 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
 	casted, err = val.ConvertTo(&col.FieldType)
 	if err != nil {
-		if variable.GetSessionVars(ctx).StrictSQLMode {
+		if ctx.GetSessionVars().StrictSQLMode {
 			return casted, errors.Trace(err)
 		}
 		// TODO: add warnings.
@@ -246,7 +245,7 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum
 	if mysql.HasNoDefaultValueFlag(col.Flag) && col.Tp != mysql.TypeEnum {
 		err := errNoDefaultValue.Gen("Field '%s' doesn't have a default value", col.Name)
 		if ctx != nil {
-			sessVars := variable.GetSessionVars(ctx)
+			sessVars := ctx.GetSessionVars()
 			if !sessVars.StrictSQLMode {
 				// TODO: add warning.
 				return GetZeroValue(col), true, nil
