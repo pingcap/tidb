@@ -141,7 +141,7 @@ func (col *Column) Decorrelate(_ Schema) Expression {
 // HashCode implements Expression interface.
 func (col *Column) HashCode() []byte {
 	var bytes []byte
-	bytes, _ = codec.EncodeKey(bytes, types.NewStringDatum(col.FromID), types.NewIntDatum(int64(col.Position)))
+	bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(col.FromID), types.NewIntDatum(int64(col.Position)))
 	return bytes
 }
 
