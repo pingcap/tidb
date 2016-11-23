@@ -130,8 +130,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Distinct"
 	case *Trim:
 		str = "Trim"
-	case *TempStore:
-		str = "TempStore"
+	case *Cache:
+		str = "Cache"
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

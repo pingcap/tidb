@@ -1035,15 +1035,18 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	return sortedPlanInfo, nil
 }
 
-// addTempStore will add a TempStore plan above the plan whose father's IsCorrelated() is true but its own IsCorrelated() is false.
-func addTempStore(p PhysicalPlan) PhysicalPlan {
+// addCachePlan will add a Cache plan above the plan whose father's IsCorrelated() is true but its own IsCorrelated() is false.
+func addCachePlan(p PhysicalPlan) PhysicalPlan {
+	if len(p.GetChildren()) == 0 {
+		return p
+	}
 	np := p
 	newChildren := make([]Plan, 0, len(np.GetChildren()))
 	for _, child := range p.GetChildren() {
 		if child.IsCorrelated() {
-			newChildren = append(newChildren, addTempStore(child.(PhysicalPlan)))
+			newChildren = append(newChildren, addCachePlan(child.(PhysicalPlan)))
 		} else {
-			newChild := &TempStore{}
+			newChild := &Cache{}
 			addChild(newChild, child)
 			newChild.SetSchema(child.GetSchema())
 			newChild.SetParents(np)
@@ -1074,7 +1077,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	innerInfo, err := p.InnerPlan.convert2PhysicalPlan(&requiredProperty{})
-	innerInfo.p = addTempStore(innerInfo.p)
+	innerInfo.p = addCachePlan(innerInfo.p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

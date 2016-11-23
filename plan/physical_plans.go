@@ -374,8 +374,8 @@ type PhysicalUnionScan struct {
 	Condition expression.Expression
 }
 
-// TempStore represents a temp plan below Apply that stores the result.
-type TempStore struct {
+// Cache plan is a physical plan which stores the result of its child node.
+type Cache struct {
 	basePlan
 }
 
@@ -766,7 +766,7 @@ func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *TempStore) Copy() PhysicalPlan {
+func (p *Cache) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }

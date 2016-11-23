@@ -252,7 +252,7 @@ func (p *Projection) matchProperty(_ *requiredProperty, childPlanInfo ...*physic
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
-func (p *TempStore) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+func (p *Cache) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }
 
