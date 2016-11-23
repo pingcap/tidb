@@ -66,11 +66,12 @@ func (e *ExplainExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-	e.cursor++
-	if e.cursor > len(e.rows) {
+	if e.cursor >= len(e.rows) {
 		return nil, nil
 	}
-	return e.rows[e.cursor-1], nil
+	row := e.rows[e.cursor]
+	e.cursor++
+	return row, nil
 }
 
 // Close implements the Executor Close interface.
