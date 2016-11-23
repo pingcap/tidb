@@ -612,11 +612,11 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
-			best: "Table(t)->Apply(LeftHashJoin{RightHashJoin{Table(t)->Selection->Table(t)}(t2.a,t3.a)->Table(t)}(t3.a,t1.a)->Projection)->Selection->Projection",
+			best: "Table(t)->Apply(LeftHashJoin{RightHashJoin{Table(t)->Cache->Selection->Table(t)->Cache}(t2.a,t3.a)->Table(t)->Cache}(t3.a,t1.a)->Projection)->Selection->Projection",
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)",
-			best: "Table(t)->Apply(LeftHashJoin{LeftHashJoin{Table(t)->Table(t)}->Table(t)->Selection}->Projection)->Selection->Projection",
+			best: "Table(t)->Apply(LeftHashJoin{LeftHashJoin{Table(t)->Table(t)}->Cache->Table(t)->Cache->Selection}->Projection)->Selection->Projection",
 		},
 	}
 	for _, ca := range cases {

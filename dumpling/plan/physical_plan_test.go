@@ -481,7 +481,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t1.a > 1)",
-			ans: "Table(t)->Apply(Table(t)->Selection->Projection)->Selection->Projection",
+			ans: "Table(t)->Apply(Table(t)->Cache->Selection->Projection)->Selection->Projection",
 		},
 	}
 	for _, ca := range cases {
