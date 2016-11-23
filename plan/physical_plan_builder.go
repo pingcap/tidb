@@ -1028,7 +1028,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		return nil, errors.Trace(err)
 	}
 	np := &PhysicalApply{
-		OuterSchema: p.CorCols,
+		OuterSchema: p.corCols,
 		Checker:     p.Checker,
 		InnerPlan:   innerInfo.p,
 	}

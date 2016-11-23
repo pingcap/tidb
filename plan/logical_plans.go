@@ -141,7 +141,7 @@ type Apply struct {
 
 	InnerPlan LogicalPlan
 	Checker   *ApplyConditionChecker
-	CorCols   []*expression.CorrelatedColumn
+	corCols   []*expression.CorrelatedColumn
 }
 
 func (p *Apply) extractCorrelatedCols() []*expression.CorrelatedColumn {

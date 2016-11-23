@@ -102,7 +102,7 @@ func (p *Apply) ResolveIndicesAndCorCols() {
 			length++
 		}
 	}
-	p.CorCols = resultCorCols[:length]
+	p.corCols = resultCorCols[:length]
 
 	if p.Checker != nil {
 		p.Checker.Condition.ResolveIndices(append(childSchema, p.InnerPlan.GetSchema()...))
