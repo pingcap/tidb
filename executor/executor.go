@@ -1972,6 +1972,7 @@ func (e *CacheExec) Next() (*Row, error) {
 		}
 		e.storedRows = append(e.storedRows, row)
 	}
+	row := e.storedRows[e.cursor]
 	e.cursor++
-	return e.storedRows[e.cursor-1], nil
+	return row, nil
 }
