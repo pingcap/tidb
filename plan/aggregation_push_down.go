@@ -211,17 +211,22 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 	child.SetParents(agg)
 	agg.SetChildren(child)
 	agg.initID()
+	agg.correlated = child.IsCorrelated()
 	var newAggFuncs []expression.AggregationFunction
 	schema := make(expression.Schema, 0, len(aggFuncs))
 	for _, aggFunc := range aggFuncs {
 		var newFuncs []expression.AggregationFunction
 		newFuncs, schema = a.decompose(aggFunc, schema, agg.GetID())
 		newAggFuncs = append(newAggFuncs, newFuncs...)
+		for _, arg := range aggFunc.GetArgs() {
+			agg.correlated = agg.correlated || arg.IsCorrelated()
+		}
 	}
 	for _, gbyCol := range gbyCols {
 		firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
 		newAggFuncs = append(newAggFuncs, firstRow)
 		schema = append(schema, gbyCol.Clone().(*expression.Column))
+		agg.correlated = agg.correlated || gbyCol.IsCorrelated()
 	}
 	agg.AggFuncs = newAggFuncs
 	agg.SetSchema(schema)

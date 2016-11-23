@@ -75,6 +75,8 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		return e.evalControlFuncs(expr)
 	case tipb.ExprType_Coalesce:
 		return e.evalCoalesce(expr)
+	case tipb.ExprType_IsNull:
+		return e.evalIsNull(expr)
 	}
 	return types.Datum{}, nil
 }
@@ -93,4 +95,18 @@ func (e *Evaluator) evalTwoChildren(expr *tipb.Expr) (left, right types.Datum, e
 		return types.Datum{}, types.Datum{}, errors.Trace(err)
 	}
 	return
+}
+
+func (e *Evaluator) evalIsNull(expr *tipb.Expr) (types.Datum, error) {
+	if len(expr.Children) != 1 {
+		return types.Datum{}, ErrInvalid.Gen("ISNULL need 1 operand, got %d", len(expr.Children))
+	}
+	d, err := e.Eval(expr.Children[0])
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if d.IsNull() {
+		return types.NewIntDatum(1), nil
+	}
+	return types.NewIntDatum(0), nil
 }

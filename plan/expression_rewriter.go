@@ -448,8 +448,8 @@ func datumToConstant(d types.Datum, tp byte) *expression.Constant {
 func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	stkLen := len(er.ctxStack)
 	name := strings.ToLower(v.Name)
-	sessionVars := variable.GetSessionVars(er.b.ctx)
-	globalVars := variable.GetGlobalVarAccessor(er.b.ctx)
+	sessionVars := er.b.ctx.GetSessionVars()
+	globalVars := sessionVars.GlobalVarsAccessor
 	if !v.IsSystem {
 		if v.Value != nil {
 			er.ctxStack[stkLen-1], er.err = expression.NewFunction(ast.SetVar,
@@ -487,7 +487,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 
 	if v.IsGlobal {
-		value, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
+		value, err := globalVars.GetGlobalSysVar(name)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return
@@ -501,7 +501,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			d.SetString(sysVar.Value)
 		} else {
 			// Get global system variable and fill it in session.
-			globalVal, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
+			globalVal, err := globalVars.GetGlobalSysVar(name)
 			if err != nil {
 				er.err = errors.Trace(err)
 				return

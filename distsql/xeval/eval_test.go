@@ -462,6 +462,39 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 	}
 }
 
+func (s *testEvalSuite) TestEvalIsNull(c *C) {
+	colID := int64(1)
+	row := make(map[int64]types.Datum)
+	row[colID] = types.NewIntDatum(100)
+	xevaluator := &Evaluator{Row: row}
+	null, trueAns, falseAns := types.Datum{}, types.NewIntDatum(1), types.NewIntDatum(0)
+	cases := []struct {
+		expr   *tipb.Expr
+		result types.Datum
+	}{
+		{
+			expr:   buildExpr(tipb.ExprType_IsNull, types.NewStringDatum("abc")),
+			result: falseAns,
+		},
+		{
+			expr:   buildExpr(tipb.ExprType_IsNull, null),
+			result: trueAns,
+		},
+		{
+			expr:   buildExpr(tipb.ExprType_IsNull, types.NewIntDatum(0)),
+			result: falseAns,
+		},
+	}
+	for _, ca := range cases {
+		result, err := xevaluator.Eval(ca.expr)
+		c.Assert(err, IsNil)
+		c.Assert(result.Kind(), Equals, ca.result.Kind())
+		cmp, err := result.CompareDatum(ca.result)
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
+	}
+}
+
 func inExpr(target interface{}, list ...interface{}) *tipb.Expr {
 	targetDatum := types.NewDatum(target)
 	var listDatums []types.Datum

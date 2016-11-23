@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/db"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -31,7 +29,7 @@ import (
 // ResolveName resolves table name and column name.
 // It generates ResultFields for ResultSetNode and resolves ColumnNameExpr to a ResultField.
 func ResolveName(node ast.Node, info infoschema.InfoSchema, ctx context.Context) error {
-	defaultSchema := db.GetCurrentSchema(ctx)
+	defaultSchema := ctx.GetSessionVars().CurrentDB
 	resolver := nameResolver{Info: info, Ctx: ctx, DefaultSchema: model.NewCIStr(defaultSchema)}
 	node.Accept(&resolver)
 	return errors.Trace(resolver.Err)
@@ -367,7 +365,7 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 		ast.ValueExpr
 		ast.ResultField
 	}, len(tn.TableInfo.Columns))
-	sVars := variable.GetSessionVars(nr.Ctx)
+	sVars := nr.Ctx.GetSessionVars()
 	for i, v := range tn.TableInfo.Columns {
 		if sVars.InUpdateStmt {
 			switch v.State {

@@ -31,8 +31,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx/autocommit"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -100,25 +98,10 @@ func SetSchemaLease(lease time.Duration) {
 	schemaLease = lease
 }
 
-// What character set should the server translate a statement to after receiving it?
-// For this, the server uses the character_set_connection and collation_connection system variables.
-// It converts statements sent by the client from character_set_client to character_set_connection
-// (except for string literals that have an introducer such as _latin1 or _utf8).
-// collation_connection is important for comparisons of literal strings.
-// For comparisons of strings with column values, collation_connection does not matter because columns
-// have their own collation, which has a higher collation precedence.
-// See https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
-func getCtxCharsetInfo(ctx context.Context) (string, string) {
-	sessionVars := variable.GetSessionVars(ctx)
-	charset := sessionVars.GetSystemVar("character_set_connection")
-	collation := sessionVars.GetSystemVar("collation_connection")
-	return charset.GetString(), collation.GetString()
-}
-
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
-	charset, collation := getCtxCharsetInfo(ctx)
+	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	stmts, err := parser.New().Parse(src, charset, collation)
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", src, err)
@@ -141,7 +124,7 @@ func runStmt(ctx context.Context, s ast.Statement, args ...interface{}) (ast.Rec
 	var err error
 	var rs ast.RecordSet
 	// before every execution, we must clear affectedrows.
-	variable.GetSessionVars(ctx).SetAffectedRows(0)
+	ctx.GetSessionVars().SetAffectedRows(0)
 	if s.IsDDL() {
 		err = ctx.CommitTxn()
 		if err != nil {
@@ -153,7 +136,7 @@ func runStmt(ctx context.Context, s ast.Statement, args ...interface{}) (ast.Rec
 	se := ctx.(*session)
 	se.history.add(0, s)
 	// MySQL DDL should be auto-commit.
-	if s.IsDDL() || autocommit.ShouldAutocommit(ctx) {
+	if s.IsDDL() || se.sessionVars.ShouldAutocommit() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
 			ctx.RollbackTxn()
