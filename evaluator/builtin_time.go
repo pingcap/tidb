@@ -675,49 +675,57 @@ func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, 
 	return builtinDateFormat([]types.Datum{d, args[1]}, nil)
 }
 
-func strToDate(t *time.Time, date string, format string) error {
-	if len(format) == 0 {
-		return nil
+// strToDate convert date string according to format, return true on success,
+// the value will be stored in argument t.
+func strToDate(t *time.Time, date string, format string) bool {
+	date = skipWhiteSpace(date)
+	format = skipWhiteSpace(format)
+
+	token, format1, succ := getFormatToken(format)
+	if !succ {
+		return false
 	}
 
-	token, format1, err := getFormatToken(format)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	if token == "" {
-		if date == "" {
-			return nil
-		}
-		return errors.New("not enough data in date")
+		return date == ""
 	}
 
-	date1, err := matchDateWithToken(t, date, token)
-	if err != nil {
-		return errors.Trace(err)
+	date1, succ := matchDateWithToken(t, date, token)
+	if !succ {
+		return false
 	}
 
 	return strToDate(t, date1, format1)
 }
 
-func getFormatToken(format string) (token string, remain string, err error) {
+func getFormatToken(format string) (token string, remain string, succ bool) {
 	if len(format) == 0 {
-		return "", "", nil
+		return "", "", true
 	}
 
 	// Just one character.
 	if len(format) == 1 {
 		if format[0] == '%' {
-			return "", "", errors.New("bad format")
+			return "", "", false
 		}
-		return format[:1], format[1:], nil
+		return format[:1], format[1:], true
 	}
 
 	// More than one character.
 	if format[0] == '%' {
-		return format[:2], format[2:], nil
+		return format[:2], format[2:], true
 	}
 
-	return format[:1], format[1:], nil
+	return format[:1], format[1:], true
+}
+
+func skipWhiteSpace(input string) string {
+	for i, c := range input {
+		if !unicode.IsSpace(c) {
+			return input[i:]
+		}
+	}
+	return ""
 }
 
 var weekdayAbbrev = map[string]time.Weekday{
@@ -745,7 +753,7 @@ var monthAbbrev = map[string]time.Month{
 	"Dec": time.December,
 }
 
-func matchDateWithToken(t *time.Time, date string, token string) (remain string, err error) {
+func matchDateWithToken(t *time.Time, date string, token string) (remain string, succ bool) {
 	var value dateValue
 	switch token {
 	case "%a":
@@ -782,22 +790,17 @@ func matchDateWithToken(t *time.Time, date string, token string) (remain string,
 
 	default:
 		if strings.HasPrefix(date, token) {
-			return date[len(token):], nil
+			return date[len(token):], true
 		}
-		return date, wrongFormat(date, token)
+		return date, false
 	}
 
 	if date1, succ := value.fromString(date); succ {
 		value.setDate(t)
-		return date1, nil
+		return date1, true
 	}
 
-	return date, wrongFormat(date, token)
-}
-
-func wrongFormat(date, token string) error {
-	err := errors.NewErr("match date %s with format %s failed", date, token)
-	return &err
+	return date, false
 }
 
 type dateValue interface {
@@ -1068,10 +1071,9 @@ func builtinStrToDate(args []types.Datum, _ context.Context) (types.Datum, error
 		goTime time.Time
 	)
 	goTime = mysql.ZeroTime
-	err := strToDate(&goTime, date, format)
-	if err != nil {
+	if !strToDate(&goTime, date, format) {
 		d.SetNull()
-		return d, errors.Trace(err)
+		return d, nil
 	}
 
 	t := mysql.Time{

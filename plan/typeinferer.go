@@ -303,7 +303,6 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		}
 	case "str_to_date":
 		tp = types.NewFieldType(mysql.TypeDatetime)
-		tp.Decimal = v.getFsp(x)
 	case "dayname", "version", "database", "user", "current_user",
 		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
 		"replace", "ucase", "upper", "convert", "substring",
