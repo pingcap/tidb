@@ -754,60 +754,33 @@ var monthAbbrev = map[string]time.Month{
 }
 
 func matchDateWithToken(t *time.Time, date string, token string) (remain string, succ bool) {
-	var value dateValue
 	switch token {
 	case "%a":
-		var v abbreviatedWeekday
-		value = &v
+		return abbreviatedWeekday(t, date)
 	case "%b":
-		var v abbreviatedMonth
-		value = &v
+		return abbreviatedMonth(t, date)
 	case "%c":
-		var v monthNumeric
-		value = &v
+		return monthNumeric(t, date)
 	case "%D":
-		var v dayOfMonthWithSuffix
-		value = &v
-
+		return dayOfMonthWithSuffix(t, date)
 	case "%Y":
-		var v yearNumericFourDigits
-		value = &v
+		return yearNumericFourDigits(t, date)
 	case "%m":
-		var v monthNumericTwoDigits
-		value = &v
+		return monthNumericTwoDigits(t, date)
 	case "%d":
-		var v dayOfMonthNumericTwoDigits
-		value = &v
+		return dayOfMonthNumericTwoDigits(t, date)
 	case "%H":
-		var v hour24TwoDigits
-		value = &v
+		return hour24TwoDigits(t, date)
 	case "%i":
-		var v minutesNumeric
-		value = &v
+		return minutesNumeric(t, date)
 	case "%s":
-		var v secondsNumeric
-		value = &v
-
-	default:
-		if strings.HasPrefix(date, token) {
-			return date[len(token):], true
-		}
-		return date, false
+		return secondsNumeric(t, date)
 	}
 
-	if date1, succ := value.fromString(date); succ {
-		value.setDate(t)
-		return date1, true
+	if strings.HasPrefix(date, token) {
+		return date[len(token):], true
 	}
-
 	return date, false
-}
-
-type dateValue interface {
-	// fromString get data from input, return success or not, and the remain data if success.
-	fromString(input string) (string, bool)
-	// setDate set the time.Time use itself
-	setDate(t *time.Time)
 }
 
 func parseTwoDigits(input string) (int, bool) {
@@ -822,65 +795,43 @@ func parseTwoDigits(input string) (int, bool) {
 	return int(v), true
 }
 
-type hour24TwoDigits int
-
-func (h *hour24TwoDigits) fromString(input string) (string, bool) {
+func hour24TwoDigits(t *time.Time, input string) (string, bool) {
 	v, succ := parseTwoDigits(input)
 	if !succ || v >= 24 {
 		return input, false
 	}
-	*h = hour24TwoDigits(v)
+	timeSetHour(t, v)
 	return input[2:], true
 }
-func (h *hour24TwoDigits) setDate(t *time.Time) {
-	timeSetHour(t, int(*h))
-}
 
-type secondsNumeric int
-
-func (s *secondsNumeric) fromString(input string) (string, bool) {
+func secondsNumeric(t *time.Time, input string) (string, bool) {
 	v, succ := parseTwoDigits(input)
 	if !succ || v >= 60 {
 		return input, false
 	}
-	*s = secondsNumeric(v)
+	timeSetSecond(t, v)
 	return input[2:], true
 }
-func (s *secondsNumeric) setDate(t *time.Time) {
-	*t = t.Add(time.Duration(*s) * time.Second)
-}
 
-type minutesNumeric int
-
-func (m *minutesNumeric) fromString(input string) (string, bool) {
+func minutesNumeric(t *time.Time, input string) (string, bool) {
 	v, succ := parseTwoDigits(input)
 	if !succ || v >= 60 {
 		return input, false
 	}
-	*m = minutesNumeric(v)
+	timeSetMinute(t, v)
 	return input[2:], true
 }
-func (m *minutesNumeric) setDate(t *time.Time) {
-	timeSetMinute(t, int(*m))
-}
 
-type dayOfMonthNumericTwoDigits int
-
-func (d *dayOfMonthNumericTwoDigits) fromString(input string) (string, bool) {
+func dayOfMonthNumericTwoDigits(t *time.Time, input string) (string, bool) {
 	v, succ := parseTwoDigits(input)
 	if !succ || v >= 32 {
 		return input, false
 	}
-	*d = dayOfMonthNumericTwoDigits(v)
+	timeSetDay(t, v)
 	return input[2:], true
 }
-func (d *dayOfMonthNumericTwoDigits) setDate(t *time.Time) {
-	timeSetDay(t, int(*d))
-}
 
-type yearNumericFourDigits int
-
-func (year *yearNumericFourDigits) fromString(input string) (string, bool) {
+func yearNumericFourDigits(t *time.Time, input string) (string, bool) {
 	if len(input) < 4 {
 		return input, false
 	}
@@ -889,100 +840,63 @@ func (year *yearNumericFourDigits) fromString(input string) (string, bool) {
 	if err != nil {
 		return input, false
 	}
-	*year = yearNumericFourDigits(v)
+	timeSetYear(t, int(v))
 	return input[4:], true
 }
-func (year *yearNumericFourDigits) setDate(t *time.Time) {
-	timeSetYear(t, int(*year))
-}
 
-type monthNumericTwoDigits int
-
-func (m *monthNumericTwoDigits) fromString(input string) (string, bool) {
+func monthNumericTwoDigits(t *time.Time, input string) (string, bool) {
 	v, succ := parseTwoDigits(input)
 	if !succ || v > 12 {
 		return input, false
 	}
 
-	*m = monthNumericTwoDigits(v)
+	timeSetMonth(t, time.Month(v))
 	return input[2:], true
 }
-func (m *monthNumericTwoDigits) setDate(t *time.Time) {
-	timeSetMonth(t, time.Month(*m))
-}
 
-type abbreviatedWeekday time.Weekday
-
-func (v *abbreviatedWeekday) fromString(input string) (string, bool) {
+func abbreviatedWeekday(t *time.Time, input string) (string, bool) {
 	if len(input) >= 3 {
 		dayName := input[:3]
 		if day, ok := weekdayAbbrev[dayName]; ok {
-			*v = abbreviatedWeekday(day)
+			timeSetDay(t, int(day))
 			return input[len(dayName):], true
 		}
 	}
 	return input, false
 }
-func (v *abbreviatedWeekday) setDate(t *time.Time) {
-	day := time.Weekday(*v)
-	year, month, _ := t.Date()
-	hour, min, sec := t.Clock()
-	*t = time.Date(year, month, int(day), hour, min, sec, int(t.UnixNano()), t.Location())
-}
 
-type abbreviatedMonth time.Month
-
-func (v *abbreviatedMonth) fromString(input string) (string, bool) {
+func abbreviatedMonth(t *time.Time, input string) (string, bool) {
 	if len(input) >= 3 {
 		monthName := input[:3]
 		if month, ok := monthAbbrev[monthName]; ok {
-			*v = abbreviatedMonth(month)
+			timeSetMonth(t, month)
 			return input[len(monthName):], true
 		}
 	}
 	return input, false
 }
-func (v *abbreviatedMonth) setDate(t *time.Time) {
-	month := time.Month(*v)
-	year, _, day := t.Date()
-	hour, min, sec := t.Clock()
-	*t = time.Date(year, month, int(day), hour, min, sec, int(t.UnixNano()), t.Location())
-}
 
-type monthNumeric time.Month
-
-func (v *monthNumeric) fromString(input string) (string, bool) {
+func monthNumeric(t *time.Time, input string) (string, bool) {
 	// TODO: this code is ugly!
-	for i := int64(12); i >= 0; i-- {
-		str := strconv.FormatInt(i, 10)
+	for i := 12; i >= 0; i-- {
+		str := strconv.FormatInt(int64(i), 10)
 		if strings.HasPrefix(input, str) {
-			*v = monthNumeric(i)
+			timeSetMonth(t, time.Month(i))
 			return input[len(str):], true
 		}
 	}
 
 	return input, false
 }
-func (v *monthNumeric) setDate(t *time.Time) {
-	month := time.Month(*v)
-	year, _, day := t.Date()
-	hour, min, sec := t.Clock()
-	*t = time.Date(year, month, int(day), hour, min, sec, int(t.UnixNano()), t.Location())
-}
 
 // 0th 1st 2nd 3rd ...
-type dayOfMonthWithSuffix int
-
-func (v *dayOfMonthWithSuffix) fromString(input string) (string, bool) {
+func dayOfMonthWithSuffix(t *time.Time, input string) (string, bool) {
 	month, remain := parseOrdinalNumbers(input)
 	if month >= 0 {
-		*v = dayOfMonthWithSuffix(month)
+		timeSetMonth(t, time.Month(month))
 		return remain, true
 	}
 	return input, false
-}
-func (v *dayOfMonthWithSuffix) setDate(t *time.Time) {
-	*t = t.AddDate(0, 0, int(*v))
 }
 
 func parseOrdinalNumbers(input string) (value int, remain string) {
