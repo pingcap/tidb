@@ -80,7 +80,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 	case tipb.ExprType_Case, tipb.ExprType_If:
 		return true
 	// other functions
-	case tipb.ExprType_Coalesce:
+	case tipb.ExprType_Coalesce, tipb.ExprType_IsNull:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
