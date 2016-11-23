@@ -95,7 +95,6 @@ func (s *testSessionSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	domain, err := domap.Get(store)
 	c.Assert(err, IsNil)
 	sessionctx.BindDomain(ss, domain)
-	// session implements autocommit.Checker. Bind it to ctx
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 	b, err := checkBootstrapped(ss)
