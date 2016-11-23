@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -200,7 +199,7 @@ func (e *CheckTableExec) Next() (*Row, error) {
 		return nil, nil
 	}
 
-	dbName := model.NewCIStr(db.GetCurrentSchema(e.ctx))
+	dbName := model.NewCIStr(e.ctx.GetSessionVars().CurrentDB)
 	is := sessionctx.GetDomain(e.ctx).InfoSchema()
 
 	for _, t := range e.tables {

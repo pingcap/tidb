@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 )
@@ -43,7 +42,6 @@ func testCreateStore(c *C, name string) kv.Storage {
 
 func testNewContext(c *C, d *ddl) context.Context {
 	ctx := d.newMockContext()
-	variable.BindSessionVars(ctx)
 	return ctx
 }
 

@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -370,7 +369,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		mutation.InsertedRows = append(mutation.InsertedRows, bin)
 		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Insert)
 	}
-	variable.GetSessionVars(ctx).AddAffectedRows(1)
+	ctx.GetSessionVars().AddAffectedRows(1)
 	return recordID, nil
 }
 
@@ -392,10 +391,6 @@ func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 	return strings.Join(strVals, "-"), nil
 }
 
-func skipConstraintCheck(ctx context.Context) bool {
-	return variable.GetSessionVars(ctx).SkipConstraintCheck
-}
-
 // Add data into indices.
 func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum, bs *kv.BufferStore) (int64, error) {
 	txn, err := ctx.GetTxn(false)
@@ -404,7 +399,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 	}
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
-	skipCheck := skipConstraintCheck(ctx)
+	skipCheck := ctx.GetSessionVars().SkipConstraintCheck
 	if t.meta.PKIsHandle && !skipCheck {
 		// Check key exists.
 		recordKey := t.RecordKey(recordID)
@@ -751,8 +746,7 @@ func shouldWriteBinlog(ctx context.Context) bool {
 	if binloginfo.PumpClient == nil {
 		return false
 	}
-	sessVar := variable.GetSessionVars(ctx)
-	return !sessVar.InRestrictedSQL
+	return !ctx.GetSessionVars().InRestrictedSQL
 }
 
 func (t *Table) getMutation(ctx context.Context) *binlog.TableMutation {

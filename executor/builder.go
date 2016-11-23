@@ -25,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx/autocommit"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -143,7 +141,7 @@ func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 
 func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	if autocommit.ShouldAutocommit(b.ctx) {
+	if b.ctx.GetSessionVars().ShouldAutocommit() {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
@@ -208,7 +206,7 @@ func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 		schema:      v.GetSchema(),
 	}
 	if e.Tp == ast.ShowGrants && len(e.User) == 0 {
-		e.User = variable.GetSessionVars(e.ctx).User
+		e.User = e.ctx.GetSessionVars().User
 	}
 	return e
 }
@@ -472,7 +470,7 @@ func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
 }
 
 func (b *executorBuilder) getStartTS() uint64 {
-	startTS := variable.GetSnapshotTS(b.ctx)
+	startTS := b.ctx.GetSessionVars().SnapshotTS
 	if startTS == 0 {
 		txn, err := b.ctx.GetTxn(false)
 		if err != nil {
