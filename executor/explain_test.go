@@ -271,10 +271,10 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1",
 			[]string{
-				"TableScan_10", "TableScan_12", "HashAgg_14", "HashLeftJoin_9", "HashAgg_19",
+				"TableScan_10", "TableScan_12", "HashAgg_14", "HashLeftJoin_9", "HashAgg_17",
 			},
 			[]string{
-				"HashLeftJoin_9", "HashAgg_14", "HashLeftJoin_9", "HashAgg_19", "",
+				"HashLeftJoin_9", "HashAgg_14", "HashLeftJoin_9", "HashAgg_17", "",
 			},
 			[]string{`{
     "db": "test",
