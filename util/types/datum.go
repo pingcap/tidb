@@ -958,7 +958,7 @@ func (d *Datum) convertToMysqlDecimal(target *FieldType) (Datum, error) {
 	case KindString, KindBytes:
 		err = dec.FromString(d.GetBytes())
 	case KindMysqlDecimal:
-		dec = d.GetMysqlDecimal()
+		*dec = *d.GetMysqlDecimal()
 	case KindMysqlTime:
 		dec = d.GetMysqlTime().ToNumber()
 	case KindMysqlDuration:

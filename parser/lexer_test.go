@@ -15,10 +15,10 @@ package parser
 
 import (
 	"fmt"
+	"unicode"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
-	"unicode"
 )
 
 var _ = Suite(&testLexerSuite{})
@@ -92,8 +92,10 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{`""a""`, stringLit},
 		{`\'a\'`, int('\\')},
 		{`\"a\"`, int('\\')},
-		{"0.2314", floatLit},
+		{"0.2314", decLit},
+		{"132.313", decLit},
 		{"132.3e231", floatLit},
+		{"132.3e-231", floatLit},
 		{"23416", intLit},
 		{"123test", identifier},
 		{"123" + string(unicode.ReplacementChar) + "xxx", identifier},

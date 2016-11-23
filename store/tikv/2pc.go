@@ -223,7 +223,9 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		if e := <-ch; e != nil {
 			log.Warnf("2PC doActionOnBatches %s failed: %v, tid: %d", action, e, c.startTS)
 			if cancel != nil {
+				// Cancel other requests and return the first error.
 				cancel()
+				return errors.Trace(e)
 			}
 			err = e
 		}

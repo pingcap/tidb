@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // Error instances.
@@ -149,6 +150,16 @@ func toInt(l yyLexer, lval *yySymType, str string) int {
 		lval.item = uint64(n)
 	}
 	return intLit
+}
+
+func toDecimal(l yyLexer, lval *yySymType, str string) int {
+	dec := new(mysql.MyDecimal)
+	err := dec.FromString(hack.Slice(str))
+	if err != nil {
+		l.Errorf("decimal literal: %v", err)
+	}
+	lval.item = dec
+	return decLit
 }
 
 func toFloat(l yyLexer, lval *yySymType, str string) int {
