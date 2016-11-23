@@ -408,7 +408,7 @@ func isTrueOpFactory(op opcode.Op) BuiltinFunc {
 }
 
 func unaryOpFactory(op opcode.Op) BuiltinFunc {
-	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 		defer func() {
 			if er := recover(); er != nil {
 				err = errors.Errorf("%v", er)
@@ -507,12 +507,12 @@ func CastFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
 	// Parser has restricted this.
 	case mysql.TypeString, mysql.TypeDuration, mysql.TypeDatetime,
 		mysql.TypeDate, mysql.TypeLonglong, mysql.TypeNewDecimal:
-		return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+		return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 			d = args[0]
 			if d.IsNull() {
 				return
 			}
-			return d.ConvertTo(tp)
+			return d.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
 		}, nil
 	}
 	return nil, errors.Errorf("unknown cast type - %v", tp)

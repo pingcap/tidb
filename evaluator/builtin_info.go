@@ -40,7 +40,7 @@ func builtinFoundRows(arg []types.Datum, ctx context.Context) (d types.Datum, er
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
 
-	d.SetUint64(data.FoundRows)
+	d.SetUint64(data.StmtCtx.FoundRows())
 	return d, nil
 }
 

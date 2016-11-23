@@ -365,9 +365,9 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 		ast.ValueExpr
 		ast.ResultField
 	}, len(tn.TableInfo.Columns))
-	sVars := nr.Ctx.GetSessionVars()
+	status := nr.Ctx.GetSessionVars().StmtCtx
 	for i, v := range tn.TableInfo.Columns {
-		if sVars.InUpdateStmt {
+		if status.InUpdateStmt {
 			switch v.State {
 			case model.StatePublic, model.StateWriteOnly, model.StateWriteReorganization:
 			default:
