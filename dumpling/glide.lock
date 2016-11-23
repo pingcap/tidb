@@ -1,5 +1,5 @@
-hash: dfa58f0d029ce6c5c1c888aa0b84212ebbb99456eca7589da5aaa00cf453af90
-updated: 2016-11-22T16:23:03.852130993+08:00
+hash: 20845207374fd5794f8bfccb9b750918af46e30d52b2a3be0001a7abf5c8f326
+updated: 2016-11-22T17:58:05.179450567+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -82,7 +82,7 @@ imports:
 - name: github.com/peterh/liner
   version: 3f3a91ddf7d2784892a58e27ddf48d70e3304bb7
 - name: github.com/pingcap/check
-  version: 5ebf485998c8549fd2ccfd8f716adebe2e69d689
+  version: 9b266636177e249ec28b0aeffe8e86bc272bb481
 - name: github.com/pingcap/goleveldb
   version: 158edde5a354460121af007d02a00b01c8d03443
   subpackages:
