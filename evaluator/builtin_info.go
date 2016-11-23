@@ -26,11 +26,11 @@ import (
 
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
 func builtinDatabase(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	s := ctx.GetSessionVars().CurrentDB
-	if s == "" {
+	currentDB := ctx.GetSessionVars().CurrentDB
+	if currentDB == "" {
 		return d, nil
 	}
-	d.SetString(s)
+	d.SetString(currentDB)
 	return d, nil
 }
 
