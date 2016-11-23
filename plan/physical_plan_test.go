@@ -179,6 +179,11 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			sql:  "a = if(a, 1, 0)",
 			cond: "eq(test.t.a, if(test.t.a, 1, 0))",
 		},
+		// nullif
+		{
+			sql:  "a = nullif(a, 1)",
+			cond: "eq(test.t.a, nullif(test.t.a, 1))",
+		},
 		// ifnull
 		{
 			sql:  "a = ifnull(null, a)",
