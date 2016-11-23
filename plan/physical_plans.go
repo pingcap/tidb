@@ -392,15 +392,15 @@ func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf("\"type\": \"IndexScan\",\n"+
+	buffer.WriteString(fmt.Sprintf(
 		"\"db\": \"%s\","+
-		"\n \"table\": \"%s\","+
-		"\n \"index\": \"%s\","+
-		"\n \"ranges\": \"%s\","+
-		"\n \"desc\": %v,"+
-		"\n \"out of order\": %v,"+
-		"\n \"double read\": %v,"+
-		"\n \"push down info\": %s\n}",
+			"\n \"table\": \"%s\","+
+			"\n \"index\": \"%s\","+
+			"\n \"ranges\": \"%s\","+
+			"\n \"desc\": %v,"+
+			"\n \"out of order\": %v,"+
+			"\n \"double read\": %v,"+
+			"\n \"push down info\": %s\n}",
 		p.DBName.O, p.Table.Name.O, p.Index.Name.O, p.Ranges, p.Desc, p.OutOfOrder, p.DoubleRead, pushDownInfo))
 	return buffer.Bytes(), nil
 }
@@ -418,12 +418,12 @@ func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf("\"type\": \"TableScan\",\n"+
+	buffer.WriteString(fmt.Sprintf(
 		" \"db\": \"%s\","+
-		"\n \"table\": \"%s\","+
-		"\n \"desc\": %v,"+
-		"\n \"keep order\": %v,"+
-		"\n \"push down info\": %s}",
+			"\n \"table\": \"%s\","+
+			"\n \"desc\": %v,"+
+			"\n \"keep order\": %v,"+
+			"\n \"push down info\": %s}",
 		p.DBName.O, p.Table.Name.O, p.Desc, p.KeepOrder, pushDownInfo))
 	return buffer.Bytes(), nil
 }
@@ -436,20 +436,15 @@ func (p *PhysicalApply) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
-	innerPlan, err := json.Marshal(p.InnerPlan.(PhysicalPlan))
+	checker, err := json.Marshal(p.Checker)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	outerPlan, err := json.Marshal(p.children[0].(PhysicalPlan))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	cond := "null"
-	if p.Checker != nil {
-		cond = "\"" + p.Checker.Condition.String() + "\""
 	}
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf("\"type\": \"Apply\",\"innerPlan\": %v,\n \"outerPlan\": %v,\n \"condition\": %s\n}", innerPlan, outerPlan, cond))
+	buffer.WriteString(fmt.Sprintf(
+		"\"innerPlan\": \"%s\",\n "+
+			"\"outerPlan\": \"%s\",\n "+
+			"\"condition\": %s\n}", p.InnerPlan.GetID(), p.children[0].GetID(), checker))
 	return buffer.Bytes(), nil
 }
 
@@ -461,14 +456,8 @@ func (p *PhysicalHashSemiJoin) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalHashSemiJoin) MarshalJSON() ([]byte, error) {
-	leftChild, err := json.Marshal(p.children[0].(PhysicalPlan))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rightChild, err := json.Marshal(p.children[1].(PhysicalPlan))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	leftChild := p.children[0].(PhysicalPlan)
+	rightChild := p.children[1].(PhysicalPlan)
 	eqConds, err := json.Marshal(p.EqualConditions)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -487,17 +476,16 @@ func (p *PhysicalHashSemiJoin) MarshalJSON() ([]byte, error) {
 	}
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
-		"\"type\": \"SemiJoin\",\n "+
-			"\"with aux\": %v,"+
+		"\"with aux\": %v,"+
 			"\"anti\": %v,"+
 			"\"eqCond\": %s,\n "+
 			"\"leftCond\": %s,\n "+
 			"\"rightCond\": %s,\n "+
 			"\"otherCond\": %s,\n"+
-			"\"leftPlan\": %s,\n "+
-			"\"rightPlan\": %s"+
+			"\"leftPlan\": \"%s\",\n "+
+			"\"rightPlan\": \"%s\""+
 			"}",
-		p.WithAux, p.Anti, eqConds, leftConds, rightConds, otherConds, leftChild, rightChild))
+		p.WithAux, p.Anti, eqConds, leftConds, rightConds, otherConds, leftChild.GetID(), rightChild.GetID()))
 	return buffer.Bytes(), nil
 }
 
@@ -509,20 +497,8 @@ func (p *PhysicalHashJoin) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
-	leftChild, err := json.Marshal(p.children[0].(PhysicalPlan))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rightChild, err := json.Marshal(p.children[1].(PhysicalPlan))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	tp := "InnerJoin"
-	if p.JoinType == LeftOuterJoin {
-		tp = "LeftJoin"
-	} else if p.JoinType == RightOuterJoin {
-		tp = "RightJoin"
-	}
+	leftChild := p.children[0].(PhysicalPlan)
+	rightChild := p.children[1].(PhysicalPlan)
 	eqConds, err := json.Marshal(p.EqualConditions)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -541,15 +517,14 @@ func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 	}
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
-		"\"type\": \"%s\",\n "+
-			"\"eqCond\": %s,\n "+
+		"\"eqCond\": %s,\n "+
 			"\"leftCond\": %s,\n "+
 			"\"rightCond\": %s,\n "+
 			"\"otherCond\": %s,\n"+
-			"\"leftPlan\": %s,\n "+
-			"\"rightPlan\": %s"+
+			"\"leftPlan\": \"%s\",\n "+
+			"\"rightPlan\": \"%s\""+
 			"}",
-		tp, eqConds, leftConds, rightConds, otherConds, leftChild, rightChild))
+		eqConds, leftConds, rightConds, otherConds, leftChild.GetID(), rightChild.GetID()))
 	return buffer.Bytes(), nil
 }
 
@@ -567,18 +542,14 @@ func (p *Selection) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *Selection) MarshalJSON() ([]byte, error) {
-	child, err := json.Marshal(p.children[0].(PhysicalPlan))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	conds, err := json.Marshal(p.Conditions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf("\"type\": \"Selection\",\n"+
+	buffer.WriteString(fmt.Sprintf(""+
 		" \"condition\": %s,\n"+
-		" \"child\": %s\n}", conds, child))
+		" \"child\": \"%s\"\n}", conds, p.children[0].GetID()))
 	return buffer.Bytes(), nil
 }
 
@@ -590,18 +561,14 @@ func (p *Projection) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *Projection) MarshalJSON() ([]byte, error) {
-	child, err := json.Marshal(p.children[0].(PhysicalPlan))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	exprs, err := json.Marshal(p.Exprs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf("\"type\": \"Projection\",\n"+
+	buffer.WriteString(fmt.Sprintf(
 		" \"exprs\": %s,\n"+
-		" \"child\": %s\n}", exprs, child))
+			" \"child\": \"%s\"\n}", exprs, p.children[0].GetID()))
 	return buffer.Bytes(), nil
 }
 
@@ -631,19 +598,12 @@ func (p *Limit) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *Limit) MarshalJSON() ([]byte, error) {
-	var child PhysicalPlan
-	if len(p.children) > 0 {
-		child = p.children[0].(PhysicalPlan)
-	}
-	childStr, err := json.Marshal(child)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	child := p.children[0].(PhysicalPlan)
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf("\"type\": \"Limit\",\n"+
+	buffer.WriteString(fmt.Sprintf(
 		" \"limit\": %d,\n"+
-		" \"offset\": %d,\n"+
-		" \"child\": %s}", p.Count, p.Offset, childStr))
+			" \"offset\": %d,\n"+
+			" \"child\": \"%s\"}", p.Count, p.Offset, child.GetID()))
 	return buffer.Bytes(), nil
 }
 
@@ -661,10 +621,6 @@ func (p *Sort) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *Sort) MarshalJSON() ([]byte, error) {
-	child, err := json.Marshal(p.children[0].(PhysicalPlan))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	limit, err := json.Marshal(p.ExecLimit)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -674,10 +630,10 @@ func (p *Sort) MarshalJSON() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf("\"type\": \"Sort\",\n"+
+	buffer.WriteString(fmt.Sprintf(
 		" \"exprs\": %s,\n"+
-		" \"limit\": %s,\n"+
-		" \"child\": %s}", exprs, limit, child))
+			" \"limit\": %s,\n"+
+			" \"child\": \"%s\"}", exprs, limit, p.children[0].GetID()))
 	return buffer.Bytes(), nil
 }
 
@@ -707,19 +663,7 @@ func (p *PhysicalAggregation) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalAggregation) MarshalJSON() ([]byte, error) {
-	child, err := json.Marshal(p.children[0].(PhysicalPlan))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	buffer := bytes.NewBufferString("{")
-	var tp string
-	if p.AggType == StreamedAgg {
-		tp = "StreamedAgg"
-	} else if p.AggType == FinalAgg {
-		tp = "FinalAgg"
-	} else {
-		tp = "CompleteAgg"
-	}
 	aggFuncs, err := json.Marshal(p.AggFuncs)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -728,10 +672,10 @@ func (p *PhysicalAggregation) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	buffer.WriteString(fmt.Sprintf("\"type\": \"%s\",\n"+
+	buffer.WriteString(fmt.Sprintf(
 		"\"AggFuncs\": %s,\n"+
-		"\"GroupByItems\": %s,\n"+
-		"\"child\": %s}", tp, aggFuncs, gbyExprs, child))
+			"\"GroupByItems\": %s,\n"+
+			"\"child\": \"%s\"}", aggFuncs, gbyExprs, p.children[0].GetID()))
 	return buffer.Bytes(), nil
 }
 
