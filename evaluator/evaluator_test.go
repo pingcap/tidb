@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -83,8 +82,7 @@ func (s *testEvaluatorSuite) TestBetween(c *C) {
 func (s *testEvaluatorSuite) TestSleep(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
-	variable.BindSessionVars(ctx)
-	sessVars := variable.GetSessionVars(ctx)
+	sessVars := ctx.GetSessionVars()
 
 	// non-strict model
 	sessVars.StrictSQLMode = false
@@ -697,7 +695,6 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 	}
 
 	ctx := mock.NewContext()
-	variable.BindSessionVars(ctx)
 	c.Log(ctx)
 	for _, ca := range cases {
 		expr := &ast.FuncCallExpr{
@@ -952,8 +949,7 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
 	ctx := mock.NewContext()
-	variable.BindSessionVars(ctx)
-	sessionVars := variable.GetSessionVars(ctx)
+	sessionVars := ctx.GetSessionVars()
 	sessionVars.SetSystemVar("timestamp", types.NewStringDatum(""))
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
 	c.Assert(err, IsNil)

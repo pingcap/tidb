@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/table"
@@ -57,7 +56,6 @@ func (s *testSuite) SetUpSuite(c *C) {
 
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
-	variable.BindSessionVars(s.ctx)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)

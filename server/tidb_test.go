@@ -15,6 +15,7 @@
 package server
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/ngaut/log"
@@ -44,7 +45,21 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	ts.server = server
 	go ts.server.Run()
-	time.Sleep(time.Millisecond * 100)
+	waitUntilServerOnline()
+
+	// Run this test here because parallel would affect the result of it.
+	runTestStmtCount(c)
+}
+
+func waitUntilServerOnline() {
+	for {
+		time.Sleep(time.Millisecond * 10)
+		db, err := sql.Open("mysql", dsn)
+		if err == nil {
+			db.Close()
+			break
+		}
+	}
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {
@@ -55,7 +70,8 @@ func (ts *TidbTestSuite) TearDownSuite(c *C) {
 
 func (ts *TidbTestSuite) TestRegression(c *C) {
 	if regression {
-		runTestRegression(c)
+		c.Parallel()
+		runTestRegression(c, "Regression")
 	}
 }
 
@@ -64,10 +80,12 @@ func (ts *TidbTestSuite) TestUint64(c *C) {
 }
 
 func (ts *TidbTestSuite) TestSpecialType(c *C) {
+	c.Parallel()
 	runTestSpecialType(c)
 }
 
 func (ts *TidbTestSuite) TestPreparedString(c *C) {
+	c.Parallel()
 	runTestPreparedString(c)
 }
 
@@ -92,6 +110,7 @@ func (ts *TidbTestSuite) TestIssues(c *C) {
 }
 
 func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
+	c.Parallel()
 	runTestResultFieldTableIsNull(c)
 }
 
@@ -104,10 +123,12 @@ func (ts *TidbTestSuite) TestMultiPacket(c *C) {
 }
 
 func (ts *TidbTestSuite) TestMultiStatements(c *C) {
+	c.Parallel()
 	runTestMultiStatements(c)
 }
 
 func (ts *TidbTestSuite) TestSocket(c *C) {
+	c.Parallel()
 	cfg := &Config{
 		LogLevel:   "debug",
 		StatusAddr: ":10091",
@@ -119,11 +140,7 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 	time.Sleep(time.Millisecond * 100)
 	tcpDsn := dsn
 	dsn = "root@unix(/tmp/tidbtest.sock)/test?strict=true"
-	runTestRegression(c)
+	runTestRegression(c, "SocketRegression")
 	dsn = tcpDsn
 	server.Close()
-}
-
-func (ts *TidbTestSuite) TestStmtCount(c *C) {
-	runTestStmtCount(c)
 }

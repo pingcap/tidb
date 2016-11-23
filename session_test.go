@@ -274,7 +274,7 @@ func checkTxn(c *C, se Session, stmt string, expect uint16) {
 }
 
 func checkAutocommit(c *C, se Session, expect uint16) {
-	ret := variable.GetSessionVars(se.(*session)).Status & mysql.ServerStatusAutocommit
+	ret := se.(*session).sessionVars.Status & mysql.ServerStatusAutocommit
 	c.Assert(ret, Equals, expect)
 }
 
@@ -316,7 +316,7 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 
 func checkInTrans(c *C, se Session, stmt string, expect uint16) {
 	checkTxn(c, se, stmt, expect)
-	ret := variable.GetSessionVars(se.(*session)).Status & mysql.ServerStatusInTrans
+	ret := se.(*session).sessionVars.Status & mysql.ServerStatusInTrans
 	c.Assert(ret, Equals, expect)
 }
 
@@ -2289,34 +2289,34 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName).(*session)
 	// Get globalSysVar twice and get the same value
-	v, err := se.GetGlobalSysVar(se, varName)
+	v, err := se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue)
-	v, err = se.GetGlobalSysVar(se, varName)
+	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue)
 	// Set global var to another value
-	err = se.SetGlobalSysVar(se, varName, varValue1)
+	err = se.SetGlobalSysVar(varName, varValue1)
 	c.Assert(err, IsNil)
-	v, err = se.GetGlobalSysVar(se, varName)
+	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue1)
 	c.Assert(se.CommitTxn(), IsNil)
 
 	// Change global variable value in another session
 	se1 := newSession(c, store, s.dbName).(*session)
-	v, err = se1.GetGlobalSysVar(se1, varName)
+	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue1)
-	err = se1.SetGlobalSysVar(se1, varName, varValue2)
+	err = se1.SetGlobalSysVar(varName, varValue2)
 	c.Assert(err, IsNil)
-	v, err = se1.GetGlobalSysVar(se1, varName)
+	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue2)
 	c.Assert(se1.CommitTxn(), IsNil)
 
 	// Make sure the change is visible to any client that accesses that global variable.
-	v, err = se.GetGlobalSysVar(se, varName)
+	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue2)
 
@@ -2367,6 +2367,7 @@ func newSessionWithoutInit(c *C, store kv.Storage) *session {
 		store:       store,
 		debugInfos:  make(map[string]interface{}),
 		maxRetryCnt: 10,
+		sessionVars: variable.NewSessionVars(),
 	}
 	return s
 }
@@ -2376,8 +2377,7 @@ func (s *testSessionSuite) TestRetryAttempts(c *C) {
 	store := kv.NewMockStorage()
 	se := newSessionWithoutInit(c, store)
 	c.Assert(se, NotNil)
-	variable.BindSessionVars(se)
-	sv := variable.GetSessionVars(se)
+	sv := se.sessionVars
 	// Prevent getting variable value from storage.
 	sv.SetSystemVar("autocommit", types.NewDatum("ON"))
 	sv.CommonGlobalLoaded = true
