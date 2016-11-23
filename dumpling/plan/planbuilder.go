@@ -461,10 +461,20 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	}
 	p := &Explain{StmtPlan: targetPlan}
 	addChild(p, targetPlan)
-	col := &expression.Column{
+	schema := make(expression.Schema, 0, 3)
+	schema = append(schema, &expression.Column{
+		ColName: model.NewCIStr("ID"),
 		RetType: types.NewFieldType(mysql.TypeString),
-	}
-	p.SetSchema([]*expression.Column{col, col})
+	})
+	schema = append(schema, &expression.Column{
+		ColName: model.NewCIStr("Json"),
+		RetType: types.NewFieldType(mysql.TypeString),
+	})
+	schema = append(schema, &expression.Column{
+		ColName: model.NewCIStr("ParentID"),
+		RetType: types.NewFieldType(mysql.TypeString),
+	})
+	p.SetSchema(schema)
 	return p
 }
 

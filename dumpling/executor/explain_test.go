@@ -31,13 +31,21 @@ func (s *testSuite) TestExplain(c *C) {
 	tk.MustExec("create table t2 (c1 int unique, c2 int)")
 
 	cases := []struct {
-		sql    string
-		result string
+		sql       string
+		ids       []string
+		parentIds []string
+		result    []string
 	}{
 		{
 			"select * from t1",
-			`{
-    "type": "TableScan",
+			[]string{
+				"TableScan_3",
+			},
+			[]string{
+				"",
+			},
+			[]string{
+				`{
     "db": "test",
     "table": "t1",
     "desc": false,
@@ -48,11 +56,18 @@ func (s *testSuite) TestExplain(c *C) {
         "filter conditions": null
     }
 }`,
+			},
 		},
 		{
 			"select * from t1 order by c2",
-			`{
-    "type": "IndexScan",
+			[]string{
+				"IndexScan_5",
+			},
+			[]string{
+				"",
+			},
+			[]string{
+				`{
     "db": "test",
     "table": "t1",
     "index": "c2",
@@ -66,11 +81,29 @@ func (s *testSuite) TestExplain(c *C) {
         "filter conditions": null
     }
 }`,
+			},
 		},
 		{
 			"select * from t2 order by c2",
-			`{
-    "type": "Sort",
+			[]string{
+				"TableScan_6", "Sort_3",
+			},
+			[]string{
+				"Sort_3", "",
+			},
+			[]string{
+				`{
+    "db": "test",
+    "table": "t2",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "filter conditions": null
+    }
+}`,
+				`{
     "exprs": [
         {
             "Expr": "t2.c2",
@@ -78,24 +111,19 @@ func (s *testSuite) TestExplain(c *C) {
         }
     ],
     "limit": null,
-    "child": {
-        "type": "TableScan",
-        "db": "test",
-        "table": "t2",
-        "desc": false,
-        "keep order": false,
-        "push down info": {
-            "limit": 0,
-            "access conditions": null,
-            "filter conditions": null
-        }
-    }
+    "child": "TableScan_6"
 }`,
+			},
 		},
 		{
 			"select * from t1 where t1.c1 > 0",
-			`{
-    "type": "TableScan",
+			[]string{
+				"TableScan_4",
+			},
+			[]string{
+				"",
+			},
+			[]string{`{
     "db": "test",
     "table": "t1",
     "desc": false,
@@ -108,11 +136,17 @@ func (s *testSuite) TestExplain(c *C) {
         "filter conditions": null
     }
 }`,
+			},
 		},
 		{
 			"select * from t1 where t1.c2 = 1",
-			`{
-    "type": "IndexScan",
+			[]string{
+				"IndexScan_5",
+			},
+			[]string{
+				"",
+			},
+			[]string{`{
     "db": "test",
     "table": "t1",
     "index": "c2",
@@ -128,158 +162,188 @@ func (s *testSuite) TestExplain(c *C) {
         "filter conditions": null
     }
 }`,
+			},
 		},
 		{
 			"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
-			`{
-    "type": "LeftJoin",
+			[]string{
+				"TableScan_8", "TableScan_10", "HashLeftJoin_7",
+			},
+			[]string{
+				"HashLeftJoin_7", "HashLeftJoin_7", "",
+			},
+			[]string{
+				`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": [
+            "gt(test.t1.c1, 1)"
+        ],
+        "filter conditions": null
+    }
+}`,
+				`{
+    "db": "test",
+    "table": "t2",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "filter conditions": null
+    }
+}`,
+				`{
     "eqCond": [
         "eq(test.t1.c2, test.t2.c1)"
     ],
     "leftCond": null,
     "rightCond": null,
     "otherCond": null,
-    "leftPlan": {
-        "type": "TableScan",
-        "db": "test",
-        "table": "t1",
-        "desc": false,
-        "keep order": false,
-        "push down info": {
-            "limit": 0,
-            "access conditions": [
-                "gt(test.t1.c1, 1)"
-            ],
-            "filter conditions": null
-        }
-    },
-    "rightPlan": {
-        "type": "TableScan",
-        "db": "test",
-        "table": "t2",
-        "desc": false,
-        "keep order": false,
-        "push down info": {
-            "limit": 0,
-            "access conditions": null,
-            "filter conditions": null
-        }
-    }
+    "leftPlan": "TableScan_8",
+    "rightPlan": "TableScan_10"
 }`,
+			},
 		},
 		{
 			"update t1 set t1.c2 = 2 where t1.c1 = 1",
-			`{
-    "id": "Update_3",
+			[]string{
+				"TableScan_4", "Update_3",
+			},
+			[]string{
+				"Update_3", "",
+			},
+			[]string{`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": [
+            "eq(test.t1.c1, 1)"
+        ],
+        "filter conditions": null
+    }
+}`,
+				`{
     "children": [
-        {
-            "type": "TableScan",
-            "db": "test",
-            "table": "t1",
-            "desc": false,
-            "keep order": false,
-            "push down info": {
-                "limit": 0,
-                "access conditions": [
-                    "eq(test.t1.c1, 1)"
-                ],
-                "filter conditions": null
-            }
-        }
+        "TableScan_4"
     ]
 }`,
+			},
 		},
 		{
 			"delete from t1 where t1.c2 = 1",
-			`{
-    "id": "Delete_3",
+			[]string{
+				"IndexScan_5", "Delete_3",
+			},
+			[]string{
+				"Delete_3", "",
+			},
+			[]string{`{
+    "db": "test",
+    "table": "t1",
+    "index": "c2",
+    "ranges": "[[1,1]]",
+    "desc": false,
+    "out of order": true,
+    "double read": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": [
+            "eq(test.t1.c2, 1)"
+        ],
+        "filter conditions": null
+    }
+}`,
+				`{
     "children": [
-        {
-            "type": "IndexScan",
-            "db": "test",
-            "table": "t1",
-            "index": "c2",
-            "ranges": "[[1,1]]",
-            "desc": false,
-            "out of order": true,
-            "double read": false,
-            "push down info": {
-                "limit": 0,
-                "access conditions": [
-                    "eq(test.t1.c2, 1)"
-                ],
-                "filter conditions": null
-            }
-        }
+        "IndexScan_5"
     ]
 }`,
+			},
 		},
 		{
 			"select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1",
-			`{
-    "type": "CompleteAgg",
+			[]string{
+				"TableScan_10", "TableScan_12", "HashAgg_14", "HashLeftJoin_9", "HashAgg_17",
+			},
+			[]string{
+				"HashLeftJoin_9", "HashAgg_14", "HashLeftJoin_9", "HashAgg_17", "",
+			},
+			[]string{`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "filter conditions": null
+    }
+}`,
+				`{
+    "db": "test",
+    "table": "t2",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "aggregated push down": true,
+        "gby items": [
+            "b.c2"
+        ],
+        "agg funcs": [
+            "count(b.c2)",
+            "firstrow(b.c2)"
+        ],
+        "access conditions": null,
+        "filter conditions": null
+    }
+}`,
+				`{
+    "AggFuncs": [
+        "count([b.c2])",
+        "firstrow([b.c2])"
+    ],
+    "GroupByItems": [
+        "[b.c2]"
+    ],
+    "child": "TableScan_12"
+}`,
+				`{
+    "eqCond": [
+        "eq(a.c1, b.c2)"
+    ],
+    "leftCond": null,
+    "rightCond": null,
+    "otherCond": null,
+    "leftPlan": "TableScan_10",
+    "rightPlan": "HashAgg_14"
+}`,
+				`{
     "AggFuncs": [
         "count(join_agg_0)"
     ],
     "GroupByItems": [
         "a.c1"
     ],
-    "child": {
-        "type": "InnerJoin",
-        "eqCond": [
-            "eq(a.c1, b.c2)"
-        ],
-        "leftCond": null,
-        "rightCond": null,
-        "otherCond": null,
-        "leftPlan": {
-            "type": "TableScan",
-            "db": "test",
-            "table": "t1",
-            "desc": false,
-            "keep order": false,
-            "push down info": {
-                "limit": 0,
-                "access conditions": null,
-                "filter conditions": null
-            }
-        },
-        "rightPlan": {
-            "type": "FinalAgg",
-            "AggFuncs": [
-                "count([b.c2])",
-                "firstrow([b.c2])"
-            ],
-            "GroupByItems": [
-                "[b.c2]"
-            ],
-            "child": {
-                "type": "TableScan",
-                "db": "test",
-                "table": "t2",
-                "desc": false,
-                "keep order": false,
-                "push down info": {
-                    "limit": 0,
-                    "aggregated push down": true,
-                    "gby items": [
-                        "b.c2"
-                    ],
-                    "agg funcs": [
-                        "count(b.c2)",
-                        "firstrow(b.c2)"
-                    ],
-                    "access conditions": null,
-                    "filter conditions": null
-                }
-            }
-        }
-    }
+    "child": "HashLeftJoin_9"
 }`,
+			},
 		},
 	}
 	for _, ca := range cases {
 		result := tk.MustQuery("explain " + ca.sql)
-		result.Check(testkit.Rows("EXPLAIN " + ca.result))
+		var resultList []string
+		for i := range ca.ids {
+			resultList = append(resultList, ca.ids[i]+" "+ca.result[i]+" "+ca.parentIds[i])
+		}
+		result.Check(testkit.Rows(resultList...))
 	}
 }

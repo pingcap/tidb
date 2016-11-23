@@ -297,12 +297,16 @@ type basePlan struct {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *basePlan) MarshalJSON() ([]byte, error) {
-	children, err := json.Marshal(p.children)
+	children := make([]string, 0, len(p.children))
+	for _, child := range p.children {
+		children = append(children, child.GetID())
+	}
+	childrenStrs, err := json.Marshal(children)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf("\"id\": \"%s\",\n \"children\": %s", p.id, children))
+	buffer.WriteString(fmt.Sprintf("\"children\": %s", childrenStrs))
 	buffer.WriteString("}")
 	return buffer.Bytes(), nil
 }
