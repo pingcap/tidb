@@ -112,6 +112,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildTrim(v)
 	case *plan.PhysicalDummyScan:
 		return b.buildDummyScan(v)
+	case *plan.Cache:
+		return b.buildCache(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -655,5 +657,13 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 		SelectExec:   selExec,
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
+	}
+}
+
+func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
+	src := b.build(v.GetChildByIndex(0))
+	return &CacheExec{
+		schema: v.GetSchema(),
+		Src:    src,
 	}
 }
