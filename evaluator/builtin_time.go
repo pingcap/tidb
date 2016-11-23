@@ -21,8 +21,10 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -671,6 +673,414 @@ func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, 
 		return
 	}
 	return builtinDateFormat([]types.Datum{d, args[1]}, nil)
+}
+
+func strToDate(t *time.Time, date string, format string) error {
+	if len(format) == 0 {
+		return nil
+	}
+
+	token, format1, err := getFormatToken(format)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if token == "" {
+		if date == "" {
+			return nil
+		}
+		return errors.New("not enough data in date")
+	}
+
+	date1, err := matchDateWithToken(t, date, token)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return strToDate(t, date1, format1)
+}
+
+func getFormatToken(format string) (token string, remain string, err error) {
+	if len(format) == 0 {
+		return "", "", nil
+	}
+
+	// Just one character.
+	if len(format) == 1 {
+		if format[0] == '%' {
+			return "", "", errors.New("bad format")
+		}
+		return format[:1], format[1:], nil
+	}
+
+	// More than one character.
+	if format[0] == '%' {
+		return format[:2], format[2:], nil
+	}
+
+	return format[:1], format[1:], nil
+}
+
+var weekdayAbbrev = map[string]time.Weekday{
+	"Sun": time.Sunday,
+	"Mon": time.Monday,
+	"Tue": time.Tuesday,
+	"Wed": time.Wednesday,
+	"Thu": time.Tuesday,
+	"Fri": time.Friday,
+	"Sat": time.Saturday,
+}
+
+var monthAbbrev = map[string]time.Month{
+	"Jan": time.January,
+	"Feb": time.February,
+	"Mar": time.March,
+	"Apr": time.April,
+	"May": time.May,
+	"Jun": time.June,
+	"Jul": time.July,
+	"Aug": time.August,
+	"Sep": time.September,
+	"Oct": time.October,
+	"Nov": time.November,
+	"Dec": time.December,
+}
+
+func matchDateWithToken(t *time.Time, date string, token string) (remain string, err error) {
+	var value dateValue
+	switch token {
+	case "%a":
+		var v abbreviatedWeekday
+		value = &v
+	case "%b":
+		var v abbreviatedMonth
+		value = &v
+	case "%c":
+		var v monthNumeric
+		value = &v
+	case "%D":
+		var v dayOfMonthWithSuffix
+		value = &v
+
+	case "%Y":
+		var v yearNumericFourDigits
+		value = &v
+	case "%m":
+		var v monthNumericTwoDigits
+		value = &v
+	case "%d":
+		var v dayOfMonthNumericTwoDigits
+		value = &v
+	case "%H":
+		var v hour24TwoDigits
+		value = &v
+	case "%i":
+		var v minutesNumeric
+		value = &v
+	case "%s":
+		var v secondsNumeric
+		value = &v
+
+	default:
+		if strings.HasPrefix(date, token) {
+			return date[len(token):], nil
+		}
+		return date, wrongFormat(date, token)
+	}
+
+	if date1, succ := value.fromString(date); succ {
+		value.setDate(t)
+		return date1, nil
+	}
+
+	return date, wrongFormat(date, token)
+}
+
+func wrongFormat(date, token string) error {
+	err := errors.NewErr("match date %s with format %s failed", date, token)
+	return &err
+}
+
+type dateValue interface {
+	// fromString get data from input, return success or not, and the remain data if success.
+	fromString(input string) (string, bool)
+	// setDate set the time.Time use itself
+	setDate(t *time.Time)
+}
+
+func parseTwoDigits(input string) (int, bool) {
+	if len(input) < 2 {
+		return 0, false
+	}
+
+	v, err := strconv.ParseUint(input[:2], 10, 64)
+	if err != nil {
+		return int(v), false
+	}
+	return int(v), true
+}
+
+type hour24TwoDigits int
+
+func (h *hour24TwoDigits) fromString(input string) (string, bool) {
+	v, succ := parseTwoDigits(input)
+	if !succ || v >= 24 {
+		return input, false
+	}
+	*h = hour24TwoDigits(v)
+	return input[2:], true
+}
+func (h *hour24TwoDigits) setDate(t *time.Time) {
+	timeSetHour(t, int(*h))
+}
+
+type secondsNumeric int
+
+func (s *secondsNumeric) fromString(input string) (string, bool) {
+	v, succ := parseTwoDigits(input)
+	if !succ || v >= 60 {
+		return input, false
+	}
+	*s = secondsNumeric(v)
+	return input[2:], true
+}
+func (s *secondsNumeric) setDate(t *time.Time) {
+	*t = t.Add(time.Duration(*s) * time.Second)
+}
+
+type minutesNumeric int
+
+func (m *minutesNumeric) fromString(input string) (string, bool) {
+	v, succ := parseTwoDigits(input)
+	if !succ || v >= 60 {
+		return input, false
+	}
+	*m = minutesNumeric(v)
+	return input[2:], true
+}
+func (m *minutesNumeric) setDate(t *time.Time) {
+	timeSetMinute(t, int(*m))
+}
+
+type dayOfMonthNumericTwoDigits int
+
+func (d *dayOfMonthNumericTwoDigits) fromString(input string) (string, bool) {
+	v, succ := parseTwoDigits(input)
+	if !succ || v >= 32 {
+		return input, false
+	}
+	*d = dayOfMonthNumericTwoDigits(v)
+	return input[2:], true
+}
+func (d *dayOfMonthNumericTwoDigits) setDate(t *time.Time) {
+	timeSetDay(t, int(*d))
+}
+
+type yearNumericFourDigits int
+
+func (year *yearNumericFourDigits) fromString(input string) (string, bool) {
+	if len(input) < 4 {
+		return input, false
+	}
+
+	v, err := strconv.ParseUint(input[:4], 10, 64)
+	if err != nil {
+		return input, false
+	}
+	*year = yearNumericFourDigits(v)
+	return input[4:], true
+}
+func (year *yearNumericFourDigits) setDate(t *time.Time) {
+	timeSetYear(t, int(*year))
+}
+
+type monthNumericTwoDigits int
+
+func (m *monthNumericTwoDigits) fromString(input string) (string, bool) {
+	v, succ := parseTwoDigits(input)
+	if !succ || v > 12 {
+		return input, false
+	}
+
+	*m = monthNumericTwoDigits(v)
+	return input[2:], true
+}
+func (m *monthNumericTwoDigits) setDate(t *time.Time) {
+	timeSetMonth(t, time.Month(*m))
+}
+
+type abbreviatedWeekday time.Weekday
+
+func (v *abbreviatedWeekday) fromString(input string) (string, bool) {
+	if len(input) >= 3 {
+		dayName := input[:3]
+		if day, ok := weekdayAbbrev[dayName]; ok {
+			*v = abbreviatedWeekday(day)
+			return input[len(dayName):], true
+		}
+	}
+	return input, false
+}
+func (v *abbreviatedWeekday) setDate(t *time.Time) {
+	day := time.Weekday(*v)
+	year, month, _ := t.Date()
+	hour, min, sec := t.Clock()
+	*t = time.Date(year, month, int(day), hour, min, sec, int(t.UnixNano()), t.Location())
+}
+
+type abbreviatedMonth time.Month
+
+func (v *abbreviatedMonth) fromString(input string) (string, bool) {
+	if len(input) >= 3 {
+		monthName := input[:3]
+		if month, ok := monthAbbrev[monthName]; ok {
+			*v = abbreviatedMonth(month)
+			return input[len(monthName):], true
+		}
+	}
+	return input, false
+}
+func (v *abbreviatedMonth) setDate(t *time.Time) {
+	month := time.Month(*v)
+	year, _, day := t.Date()
+	hour, min, sec := t.Clock()
+	*t = time.Date(year, month, int(day), hour, min, sec, int(t.UnixNano()), t.Location())
+}
+
+type monthNumeric time.Month
+
+func (v *monthNumeric) fromString(input string) (string, bool) {
+	// TODO: this code is ugly!
+	for i := int64(12); i >= 0; i-- {
+		str := strconv.FormatInt(i, 10)
+		if strings.HasPrefix(input, str) {
+			*v = monthNumeric(i)
+			return input[len(str):], true
+		}
+	}
+
+	return input, false
+}
+func (v *monthNumeric) setDate(t *time.Time) {
+	month := time.Month(*v)
+	year, _, day := t.Date()
+	hour, min, sec := t.Clock()
+	*t = time.Date(year, month, int(day), hour, min, sec, int(t.UnixNano()), t.Location())
+}
+
+// 0th 1st 2nd 3rd ...
+type dayOfMonthWithSuffix int
+
+func (v *dayOfMonthWithSuffix) fromString(input string) (string, bool) {
+	month, remain := parseOrdinalNumbers(input)
+	if month >= 0 {
+		*v = dayOfMonthWithSuffix(month)
+		return remain, true
+	}
+	return input, false
+}
+func (v *dayOfMonthWithSuffix) setDate(t *time.Time) {
+	*t = t.AddDate(0, 0, int(*v))
+}
+
+func parseOrdinalNumbers(input string) (value int, remain string) {
+	for i, c := range input {
+		if !unicode.IsDigit(c) {
+			v, err := strconv.ParseUint(input[:i], 10, 64)
+			if err != nil {
+				return -1, input
+			}
+			value = int(v)
+			break
+		}
+	}
+	switch {
+	case strings.HasPrefix(remain, "st"):
+		if value == 1 {
+			remain = remain[2:]
+			return
+		}
+	case strings.HasPrefix(remain, "nd"):
+		if value == 2 {
+			remain = remain[2:]
+			return
+		}
+	case strings.HasPrefix(remain, "th"):
+		remain = remain[2:]
+		return
+	}
+	return -1, input
+}
+
+func timeSetYear(t *time.Time, year int) {
+	_, month, day := t.Date()
+	hour, min, sec := t.Clock()
+	nsec := t.Nanosecond()
+	loc := t.Location()
+	*t = time.Date(year, month, day, hour, min, sec, nsec, loc)
+}
+
+func timeSetMonth(t *time.Time, month time.Month) {
+	year, _, day := t.Date()
+	hour, min, sec := t.Clock()
+	nsec := t.Nanosecond()
+	loc := t.Location()
+	*t = time.Date(year, month, day, hour, min, sec, nsec, loc)
+}
+
+func timeSetDay(t *time.Time, day int) {
+	year, month, _ := t.Date()
+	hour, min, sec := t.Clock()
+	nsec := t.Nanosecond()
+	loc := t.Location()
+	*t = time.Date(year, month, day, hour, min, sec, nsec, loc)
+}
+
+func timeSetHour(t *time.Time, hour int) {
+	year, month, day := t.Date()
+	_, min, sec := t.Clock()
+	nsec := t.Nanosecond()
+	loc := t.Location()
+	*t = time.Date(year, month, day, hour, min, sec, nsec, loc)
+}
+
+func timeSetMinute(t *time.Time, min int) {
+	year, month, day := t.Date()
+	hour, _, sec := t.Clock()
+	nsec := t.Nanosecond()
+	loc := t.Location()
+	*t = time.Date(year, month, day, hour, min, sec, nsec, loc)
+}
+
+func timeSetSecond(t *time.Time, sec int) {
+	year, month, day := t.Date()
+	hour, min, _ := t.Clock()
+	nsec := t.Nanosecond()
+	loc := t.Location()
+	*t = time.Date(year, month, day, hour, min, sec, nsec, loc)
+}
+
+// See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_str-to-date
+func builtinStrToDate(args []types.Datum, _ context.Context) (types.Datum, error) {
+	date := args[0].GetString()
+	format := args[1].GetString()
+	var (
+		d      types.Datum
+		goTime time.Time
+	)
+	goTime = mysql.ZeroTime
+	err := strToDate(&goTime, date, format)
+	if err != nil {
+		d.SetNull()
+		return d, errors.Trace(err)
+	}
+
+	t := mysql.Time{
+		Time: goTime,
+		Type: mysql.TypeDatetime,
+		Fsp:  mysql.UnspecifiedFsp,
+	}
+	d.SetMysqlTime(t)
+	return d, nil
 }
 
 func builtinSysDate(args []types.Datum, ctx context.Context) (types.Datum, error) {
