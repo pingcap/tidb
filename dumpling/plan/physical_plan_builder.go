@@ -373,6 +373,7 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 			ExecLimit: prop.limit,
 		}
 		sort.SetSchema(info.p.GetSchema())
+		sort.correlated = info.p.IsCorrelated()
 		info = addPlanToResponse(sort, info)
 		count := info.count
 		if prop.limit != nil {
@@ -380,8 +381,9 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		}
 		info.cost += sortCost(count)
 	} else if prop.limit != nil {
-		limit := prop.limit.Copy()
+		limit := prop.limit.Copy().(*Limit)
 		limit.SetSchema(info.p.GetSchema())
+		limit.correlated = info.p.IsCorrelated()
 		info = addPlanToResponse(limit, info)
 	}
 	if prop.limit != nil && prop.limit.Count < info.count {
