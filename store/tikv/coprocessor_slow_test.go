@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
+// The test takes too long under the race detector.
 func (s *testCoprocessorSuite) TestBuildHugeTasks(c *C) {
 	cluster := mocktikv.NewCluster()
 	var splitKeys [][]byte

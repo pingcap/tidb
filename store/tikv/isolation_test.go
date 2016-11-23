@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 )
 
+// The test suite takes too long under the race detector.
 type testIsolationSuite struct {
 	store *tikvStore
 }

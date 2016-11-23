@@ -17,6 +17,7 @@ package tikv
 
 import . "github.com/pingcap/check"
 
+// The test takes too long under the race detector.
 func (s *testCommitterSuite) TestCommitMultipleRegions(c *C) {
 	m := make(map[string]string)
 	for i := 0; i < 100; i++ {
