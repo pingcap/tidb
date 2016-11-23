@@ -23,6 +23,7 @@ type ConnTestSuite struct{}
 var _ = Suite(ConnTestSuite{})
 
 func (ts ConnTestSuite) TestHandshakeResponseFromData(c *C) {
+	c.Parallel()
 	// test data from http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse41
 	var p handshakeResponse41
 	data := []byte{
@@ -72,6 +73,7 @@ func (ts ConnTestSuite) TestHandshakeResponseFromData(c *C) {
 }
 
 func (ts ConnTestSuite) TestIssue1768(c *C) {
+	c.Parallel()
 	// this data is from captured handshake packet, using mysql client.
 	// TiDB should handle authorization correctly, even mysql client set
 	// the ClientPluginAuthLenencClientData capability.

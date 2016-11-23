@@ -145,6 +145,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.MustExec("insert local_binlog2 values ('abc', 16), ('def', 18)")
 	tk.MustExec("delete from local_binlog2 where name = 'def'")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
+	c.Assert(prewriteVal.Mutations[0].Sequence[0], Equals, binlog.MutationType_DeletePK)
 	_, deletedPK, _ := codec.DecodeOne(prewriteVal.Mutations[0].DeletedPks[0])
 	c.Assert(deletedPK.GetString(), Equals, "def")
 
@@ -161,11 +162,27 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 
 	tk.MustExec("delete from local_binlog3 where c1 = 3 and c2 = 3")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
+	c.Assert(prewriteVal.Mutations[0].Sequence[0], Equals, binlog.MutationType_DeleteRow)
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3)
 	expected = [][]types.Datum{
 		{types.NewIntDatum(3), types.NewIntDatum(3)},
 	}
 	c.Assert(gotRows, DeepEquals, expected)
+
+	// Test Mutation Sequence.
+	tk.MustExec("create table local_binlog4 (c1 int primary key, c2 int)")
+	tk.MustExec("insert local_binlog4 values (1, 1), (2, 2), (3, 2)")
+	tk.MustExec("begin")
+	tk.MustExec("delete from local_binlog4 where c1 = 1")
+	tk.MustExec("insert local_binlog4 values (1, 1)")
+	tk.MustExec("update local_binlog4 set c2 = 3 where c1 = 3")
+	tk.MustExec("commit")
+	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
+	c.Assert(prewriteVal.Mutations[0].Sequence, DeepEquals, []binlog.MutationType{
+		binlog.MutationType_DeleteID,
+		binlog.MutationType_Insert,
+		binlog.MutationType_Update,
+	})
 
 	checkBinlogCount(c, pump)
 

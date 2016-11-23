@@ -44,34 +44,40 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		return nil, errors.Trace(builder.err)
 	}
 	if logic, ok := p.(LogicalPlan); ok {
-		var err error
-		_, logic, err = logic.PredicatePushDown(nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		solver := &aggPushDownSolver{
-			ctx:   ctx,
-			alloc: allocator,
-		}
-		solver.aggPushDown(logic)
-		_, err = logic.PruneColumnsAndResolveIndices(p.GetSchema())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !AllowCartesianProduct && existsCartesianProduct(logic) {
-			return nil, ErrCartesianProductUnsupported
-		}
-		info, err := logic.convert2PhysicalPlan(&requiredProperty{})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		pp := info.p
-		pp = EliminateProjection(pp)
-		log.Debugf("[PLAN] %s", ToString(pp))
-		return pp, nil
+		return doOptimize(logic, ctx, allocator)
 	}
 	return p, nil
 }
+
+func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
+	var err error
+	_, logic, err = logic.PredicatePushDown(nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	solver := &aggPushDownSolver{
+		ctx:   ctx,
+		alloc: allocator,
+	}
+	solver.aggPushDown(logic)
+	logic.PruneColumns(logic.GetSchema())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	logic.ResolveIndicesAndCorCols()
+	if !AllowCartesianProduct && existsCartesianProduct(logic) {
+		return nil, ErrCartesianProductUnsupported
+	}
+	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	pp := info.p
+	pp = EliminateProjection(pp)
+	log.Debugf("[PLAN] %s", ToString(pp))
+	return pp, nil
+}
+
 func existsCartesianProduct(p LogicalPlan) bool {
 	if join, ok := p.(*Join); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin

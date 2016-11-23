@@ -29,8 +29,9 @@ var _ context.Context = (*Context)(nil)
 type Context struct {
 	values map[fmt.Stringer]interface{}
 	// mock global variable
-	txn   kv.Transaction
-	Store kv.Storage
+	txn         kv.Transaction
+	Store       kv.Storage
+	sessionVars *variable.SessionVars
 }
 
 // SetValue implements context.Context SetValue interface.
@@ -47,6 +48,11 @@ func (c *Context) Value(key fmt.Stringer) interface{} {
 // ClearValue implements context.Context ClearValue interface.
 func (c *Context) ClearValue(key fmt.Stringer) {
 	delete(c.values, key)
+}
+
+// GetSessionVars implements the context.Context GetSessionVars interface.
+func (c *Context) GetSessionVars() *variable.SessionVars {
+	return c.sessionVars
 }
 
 // GetTxn implements context.Context GetTxn interface.
@@ -125,6 +131,7 @@ func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
 	return &Context{
-		values: make(map[fmt.Stringer]interface{}),
+		values:      make(map[fmt.Stringer]interface{}),
+		sessionVars: variable.NewSessionVars(),
 	}
 }

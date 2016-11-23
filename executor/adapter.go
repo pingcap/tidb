@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 // recordSet wraps an executor, implements ast.RecordSet interface
@@ -110,7 +109,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		// In history read mode, we can not do write operations.
 		switch e.(type) {
 		case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadData, *DDLExec:
-			snapshotTS := variable.GetSnapshotTS(ctx)
+			snapshotTS := ctx.GetSessionVars().SnapshotTS
 			if snapshotTS != 0 {
 				return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 			}

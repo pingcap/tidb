@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -200,7 +199,7 @@ func (e *CheckTableExec) Next() (*Row, error) {
 		return nil, nil
 	}
 
-	dbName := model.NewCIStr(db.GetCurrentSchema(e.ctx))
+	dbName := model.NewCIStr(e.ctx.GetSessionVars().CurrentDB)
 	is := sessionctx.GetDomain(e.ctx).InfoSchema()
 
 	for _, t := range e.tables {
@@ -1328,6 +1327,10 @@ type TableScanExec struct {
 	cursor     int
 	schema     expression.Schema
 	columns    []*model.ColumnInfo
+
+	isInfoSchema     bool
+	infoSchemaRows   [][]types.Datum
+	infoSchemaCursor int
 }
 
 // Schema implements the Executor Schema interface.
@@ -1337,6 +1340,9 @@ func (e *TableScanExec) Schema() expression.Schema {
 
 // Next implements the Executor interface.
 func (e *TableScanExec) Next() (*Row, error) {
+	if e.isInfoSchema {
+		return e.nextForInfoSchema()
+	}
 	for {
 		if e.cursor >= len(e.ranges) {
 			return nil, nil
@@ -1374,6 +1380,28 @@ func (e *TableScanExec) Next() (*Row, error) {
 		e.seekHandle = handle + 1
 		return row, nil
 	}
+}
+
+func (e *TableScanExec) nextForInfoSchema() (*Row, error) {
+	if e.infoSchemaRows == nil {
+		columns := make([]*table.Column, len(e.schema))
+		for i, v := range e.columns {
+			columns[i] = table.ToColumn(v)
+		}
+		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+			e.infoSchemaRows = append(e.infoSchemaRows, rec)
+			return true, nil
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if e.infoSchemaCursor >= len(e.infoSchemaRows) {
+		return nil, nil
+	}
+	row := &Row{Data: e.infoSchemaRows[e.infoSchemaCursor]}
+	e.infoSchemaCursor++
+	return row, nil
 }
 
 // seekRange increments the range cursor to the range
@@ -1930,4 +1958,49 @@ func (e *DummyScanExec) Close() error {
 // Next implements the Executor Next interface.
 func (e *DummyScanExec) Next() (*Row, error) {
 	return nil, nil
+}
+
+// CacheExec represents Cache executor.
+// it stores the return values of the executor of its child node.
+type CacheExec struct {
+	schema      expression.Schema
+	Src         Executor
+	storedRows  []*Row
+	cursor      int
+	srcFinished bool
+}
+
+// Schema implements the Executor Schema interface.
+func (e *CacheExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Close implements the Executor Close interface.
+func (e *CacheExec) Close() error {
+	e.cursor = 0
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *CacheExec) Next() (*Row, error) {
+	if e.srcFinished && e.cursor >= len(e.storedRows) {
+		return nil, nil
+	}
+	if !e.srcFinished {
+		row, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			e.srcFinished = true
+			err := e.Src.Close()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		e.storedRows = append(e.storedRows, row)
+	}
+	row := e.storedRows[e.cursor]
+	e.cursor++
+	return row, nil
 }
