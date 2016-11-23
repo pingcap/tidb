@@ -278,7 +278,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{1, opcode.Plus, 1, 2},
 		{1, opcode.Plus, uint64(1), 2},
 		{1, opcode.Plus, "1", 2},
-		{1, opcode.Plus, mysql.NewDecFromInt(1), 2},
+		{1, opcode.Plus, types.NewDecFromInt(1), 2},
 		{uint64(1), opcode.Plus, 1, 2},
 		{uint64(1), opcode.Plus, uint64(1), 2},
 		{uint64(1), opcode.Plus, -1, 0},
@@ -292,24 +292,24 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{1, opcode.Minus, 1, 0},
 		{1, opcode.Minus, uint64(1), 0},
 		{1, opcode.Minus, float64(1), 0},
-		{1, opcode.Minus, mysql.NewDecFromInt(1), 0},
+		{1, opcode.Minus, types.NewDecFromInt(1), 0},
 		{uint64(1), opcode.Minus, 1, 0},
 		{uint64(1), opcode.Minus, uint64(1), 0},
-		{mysql.NewDecFromInt(1), opcode.Minus, 1, 0},
+		{types.NewDecFromInt(1), opcode.Minus, 1, 0},
 		{"1", opcode.Minus, []byte("1"), 0},
 
 		// mul
 		{1, opcode.Mul, 1, 1},
 		{1, opcode.Mul, uint64(1), 1},
 		{1, opcode.Mul, float64(1), 1},
-		{1, opcode.Mul, mysql.NewDecFromInt(1), 1},
+		{1, opcode.Mul, types.NewDecFromInt(1), 1},
 		{uint64(1), opcode.Mul, 1, 1},
 		{uint64(1), opcode.Mul, uint64(1), 1},
-		{mysql.Time{}, opcode.Mul, 0, 0},
-		{mysql.ZeroDuration, opcode.Mul, 0, 0},
-		{mysql.Time{Time: time.Now(), Fsp: 0, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},
-		{mysql.Time{Time: time.Now(), Fsp: 6, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},
-		{mysql.Duration{Duration: 100000000, Fsp: 6}, opcode.Mul, 0, 0},
+		{types.Time{}, opcode.Mul, 0, 0},
+		{types.ZeroDuration, opcode.Mul, 0, 0},
+		{types.Time{Time: time.Now(), Fsp: 0, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},
+		{types.Time{Time: time.Now(), Fsp: 6, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},
+		{types.Duration{Duration: 100000000, Fsp: 6}, opcode.Mul, 0, 0},
 
 		// div
 		{1, opcode.Div, float64(1), 1},
@@ -342,8 +342,8 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{uint64(10), opcode.Mod, -2, 0},
 		{float64(10), opcode.Mod, 2, 0},
 		{float64(10), opcode.Mod, 0, nil},
-		{mysql.NewDecFromInt(10), opcode.Mod, 2, 0},
-		{mysql.NewDecFromInt(10), opcode.Mod, 0, nil},
+		{types.NewDecFromInt(10), opcode.Mod, 2, 0},
+		{types.NewDecFromInt(10), opcode.Mod, 0, nil},
 	}
 
 	for _, t := range tbl {
@@ -873,14 +873,14 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		op     opcode.Op
 		result interface{}
 	}{
-		{mysql.NewDecFromInt(1), opcode.Plus, mysql.NewDecFromInt(1)},
-		{mysql.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: mysql.DefaultFsp}, opcode.Plus,
-			mysql.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: mysql.DefaultFsp}},
-		{mysql.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}, opcode.Plus, mysql.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}},
+		{types.NewDecFromInt(1), opcode.Plus, types.NewDecFromInt(1)},
+		{types.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: types.DefaultFsp}, opcode.Plus,
+			types.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: types.DefaultFsp}},
+		{types.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}, opcode.Plus, types.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}},
 
-		{mysql.NewDecFromInt(1), opcode.Minus, mysql.NewDecFromInt(-1)},
-		{mysql.ZeroDuration, opcode.Minus, new(mysql.MyDecimal)},
-		{mysql.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}, opcode.Minus, mysql.NewDecFromInt(-20091110230000)},
+		{types.NewDecFromInt(1), opcode.Minus, types.NewDecFromInt(-1)},
+		{types.ZeroDuration, opcode.Minus, new(types.MyDecimal)},
+		{types.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}, opcode.Minus, types.NewDecFromInt(-20091110230000)},
 	}
 
 	for _, t := range tbl {
@@ -934,14 +934,14 @@ func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
 
 	result, err = Eval(ctx, avg)
 	c.Assert(err, IsNil)
-	expect := mysql.NewDecFromInt(3)
+	expect := types.NewDecFromInt(3)
 	c.Assert(result.Kind(), Equals, types.KindMysqlDecimal)
 	c.Assert(result.GetMysqlDecimal().Compare(expect), Equals, 0)
 }
 
 func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 	defer testleak.AfterTest(c)()
-	v, err := GetTimeValue(nil, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
+	v, err := GetTimeValue(nil, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
 	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
@@ -951,7 +951,7 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.SetSystemVar("timestamp", types.NewStringDatum(""))
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
+	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
 	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
@@ -959,7 +959,7 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
 	sessionVars.SetSystemVar("timestamp", types.NewStringDatum("0"))
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
+	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
 	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
@@ -967,7 +967,7 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
 	sessionVars.SetSystemVar("timestamp", types.Datum{})
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
+	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
 	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
@@ -981,7 +981,7 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 		Ret  interface{}
 	}{
 		{"2012-12-12 00:00:00", "2012-12-12 00:00:00"},
-		{CurrentTimestamp, time.Unix(1234, 0).Format(mysql.TimeFormat)},
+		{CurrentTimestamp, time.Unix(1234, 0).Format(types.TimeFormat)},
 		{ZeroTimestamp, "0000-00-00 00:00:00"},
 		{ast.NewValueExpr("2012-12-12 00:00:00"), "2012-12-12 00:00:00"},
 		{ast.NewValueExpr(int64(0)), "0000-00-00 00:00:00"},
@@ -992,7 +992,7 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 
 	for i, t := range tbl {
 		comment := Commentf("expr: %d", i)
-		v, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, mysql.MinFsp)
+		v, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, types.MinFsp)
 		c.Assert(err, IsNil)
 
 		switch v.Kind() {
@@ -1014,7 +1014,7 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 	}
 
 	for _, t := range errTbl {
-		_, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, mysql.MinFsp)
+		_, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, types.MinFsp)
 		c.Assert(err, NotNil)
 	}
 }

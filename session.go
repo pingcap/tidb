@@ -488,8 +488,8 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 }
 
 // checkArgs makes sure all the arguments' types are known and can be handled.
-// integer types are converted to int64 and uint64, time.Time is converted to mysql.Time.
-// time.Duration is converted to mysql.Duration, other known types are leaved as it is.
+// integer types are converted to int64 and uint64, time.Time is converted to types.Time.
+// time.Duration is converted to types.Duration, other known types are leaved as it is.
 func checkArgs(args ...interface{}) error {
 	for i, v := range args {
 		switch x := v.(type) {
@@ -522,9 +522,9 @@ func checkArgs(args ...interface{}) error {
 		case string:
 		case []byte:
 		case time.Duration:
-			args[i] = mysql.Duration{Duration: x}
+			args[i] = types.Duration{Duration: x}
 		case time.Time:
-			args[i] = mysql.Time{Time: x, Type: mysql.TypeDatetime}
+			args[i] = types.Time{Time: x, Type: mysql.TypeDatetime}
 		case nil:
 		default:
 			return errors.Errorf("cannot use arg[%d] (type %T):unsupported type", i, v)

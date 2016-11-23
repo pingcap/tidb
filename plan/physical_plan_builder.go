@@ -246,7 +246,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		}
 		err := buildIndexRange(is)
 		if err != nil {
-			if !terror.ErrorEqual(err, mysql.ErrTruncated) {
+			if !terror.ErrorEqual(err, types.ErrTruncated) {
 				return nil, errors.Trace(err)
 			}
 			log.Warn("truncate error in buildIndexRange")

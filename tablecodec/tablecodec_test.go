@@ -62,7 +62,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	row := make([]types.Datum, 3)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
-	row[2] = types.NewDecimalDatum(mysql.NewDecFromInt(1))
+	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
 	// Encode
 	colIDs := make([]int64, 0, 3)
 	for _, col := range cols {
@@ -143,7 +143,7 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	row := make([]types.Datum, 3)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
-	ts, err := mysql.ParseTimestamp("2016-06-23 11:30:45")
+	ts, err := types.ParseTimestamp("2016-06-23 11:30:45")
 	c.Assert(err, IsNil)
 	row[2] = types.NewDatum(ts)
 	// Encode

@@ -17,7 +17,6 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
@@ -106,8 +105,8 @@ func ComputePlus(a, b Datum) (d Datum, err error) {
 	case KindMysqlDecimal:
 		switch b.Kind() {
 		case KindMysqlDecimal:
-			r := new(mysql.MyDecimal)
-			err = mysql.DecimalAdd(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
+			r := new(MyDecimal)
+			err = DecimalAdd(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
 			d.SetMysqlDecimal(r)
 			return d, err
 		}
@@ -151,8 +150,8 @@ func ComputeMinus(a, b Datum) (d Datum, err error) {
 	case KindMysqlDecimal:
 		switch b.Kind() {
 		case KindMysqlDecimal:
-			r := new(mysql.MyDecimal)
-			err = mysql.DecimalSub(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
+			r := new(MyDecimal)
+			err = DecimalSub(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
 			d.SetMysqlDecimal(r)
 			return d, err
 		}
@@ -196,8 +195,8 @@ func ComputeMul(a, b Datum) (d Datum, err error) {
 	case KindMysqlDecimal:
 		switch b.Kind() {
 		case KindMysqlDecimal:
-			r := new(mysql.MyDecimal)
-			err = mysql.DecimalMul(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
+			r := new(MyDecimal)
+			err = DecimalMul(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
 			d.SetMysqlDecimal(r)
 			return d, nil
 		}
@@ -240,9 +239,9 @@ func ComputeDiv(a, b Datum) (d Datum, err error) {
 			return d, errors.Trace(err1)
 		}
 		// division by zero return null
-		to := new(mysql.MyDecimal)
-		err = mysql.DecimalDiv(xa, xb, to, mysql.DivFracIncr)
-		if err != mysql.ErrDivByZero {
+		to := new(MyDecimal)
+		err = DecimalDiv(xa, xb, to, DivFracIncr)
+		if err != ErrDivByZero {
 			d.SetMysqlDecimal(to)
 		} else {
 			err = nil
@@ -314,9 +313,9 @@ func ComputeMod(a, b Datum) (d Datum, err error) {
 		switch b.Kind() {
 		case KindMysqlDecimal:
 			y := b.GetMysqlDecimal()
-			to := new(mysql.MyDecimal)
-			err = mysql.DecimalMod(x, y, to)
-			if err != mysql.ErrDivByZero {
+			to := new(MyDecimal)
+			err = DecimalMod(x, y, to)
+			if err != ErrDivByZero {
 				d.SetMysqlDecimal(to)
 			} else {
 				// div by zero returns nil without error.
@@ -383,9 +382,9 @@ func ComputeIntDiv(a, b Datum) (d Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	to := new(mysql.MyDecimal)
-	err = mysql.DecimalDiv(x, y, to, mysql.DivFracIncr)
-	if err == mysql.ErrDivByZero {
+	to := new(MyDecimal)
+	err = DecimalDiv(x, y, to, DivFracIncr)
+	if err == ErrDivByZero {
 		return d, nil
 	}
 	iVal, err1 := to.ToInt()
@@ -397,8 +396,8 @@ func ComputeIntDiv(a, b Datum) (d Datum, err error) {
 }
 
 // decimal2RoundUint converts a MyDecimal to an uint64 after rounding.
-func decimal2RoundUint(x *mysql.MyDecimal) (uint64, error) {
-	roundX := new(mysql.MyDecimal)
+func decimal2RoundUint(x *MyDecimal) (uint64, error) {
+	roundX := new(MyDecimal)
 	x.Round(roundX, 0)
 	var (
 		uintX uint64
@@ -406,13 +405,13 @@ func decimal2RoundUint(x *mysql.MyDecimal) (uint64, error) {
 	)
 	if roundX.IsNegative() {
 		intX, err := roundX.ToInt()
-		if err != nil && err != mysql.ErrTruncated {
+		if err != nil && err != ErrTruncated {
 			return 0, errors.Trace(err)
 		}
 		uintX = uint64(intX)
 	} else {
 		uintX, err = roundX.ToUint()
-		if err != nil && err != mysql.ErrTruncated {
+		if err != nil && err != ErrTruncated {
 			return 0, errors.Trace(err)
 		}
 	}

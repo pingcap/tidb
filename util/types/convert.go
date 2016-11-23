@@ -253,11 +253,11 @@ func ToString(value interface{}) (string, error) {
 		return v, nil
 	case []byte:
 		return string(v), nil
-	case mysql.Time:
+	case Time:
 		return v.String(), nil
-	case mysql.Duration:
+	case Duration:
 		return v.String(), nil
-	case *mysql.MyDecimal:
+	case *MyDecimal:
 		return v.String(), nil
 	case mysql.Hex:
 		return v.ToString(), nil
