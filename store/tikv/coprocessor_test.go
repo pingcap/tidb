@@ -17,41 +17,12 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
-	"github.com/pingcap/tidb/util/codec"
 	"golang.org/x/net/context"
 )
 
 type testCoprocessorSuite struct{}
 
 var _ = Suite(&testCoprocessorSuite{})
-
-func (s *testCoprocessorSuite) TestBuildHugeTasks(c *C) {
-	cluster := mocktikv.NewCluster()
-	var splitKeys [][]byte
-	for ch := byte('a'); ch <= byte('z'); ch++ {
-		splitKeys = append(splitKeys, []byte{ch})
-	}
-	mocktikv.BootstrapWithMultiRegions(cluster, splitKeys...)
-
-	bo := NewBackoffer(3000, context.Background())
-	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
-
-	const rangesPerRegion = 1e6
-	ranges := make([]kv.KeyRange, 0, 26*rangesPerRegion)
-	for ch := byte('a'); ch <= byte('z'); ch++ {
-		for i := 0; i < rangesPerRegion; i++ {
-			start := make([]byte, 0, 9)
-			end := make([]byte, 0, 9)
-			ranges = append(ranges, kv.KeyRange{
-				StartKey: codec.EncodeInt(append(start, ch), int64(i*2)),
-				EndKey:   codec.EncodeInt(append(end, ch), int64(i*2+1)),
-			})
-		}
-	}
-
-	_, err := buildCopTasks(bo, cache, &copRanges{mid: ranges}, false)
-	c.Assert(err, IsNil)
-}
 
 func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	// nil --- 'g' --- 'n' --- 't' --- nil

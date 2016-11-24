@@ -35,7 +35,7 @@ import (
 
 func convertToTime(arg types.Datum, tp byte) (d types.Datum, err error) {
 	f := types.NewFieldType(tp)
-	f.Decimal = mysql.MaxFsp
+	f.Decimal = types.MaxFsp
 
 	d, err = arg.ConvertTo(f)
 	if err != nil {
@@ -119,7 +119,7 @@ func to12Hour(arg types.Datum) (types.Datum, error) {
 		}
 		str = "AM"
 	}
-	duration := mysql.Duration{
+	duration := types.Duration{
 		Duration: d.GetMysqlDuration().Duration - time.Duration(hour)*time.Hour,
 		Fsp:      0}
 	str = fmt.Sprintf("%v %s", duration, str)
@@ -194,7 +194,7 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 	case 'T':
 		d, err = builtinTime([]types.Datum{arg}, nil)
 		if err == nil && !d.IsNull() {
-			duration := mysql.Duration{
+			duration := types.Duration{
 				Duration: d.GetMysqlDuration().Duration,
 				Fsp:      0}
 			d.SetMysqlDuration(duration)
@@ -324,7 +324,7 @@ func builtinDay(args []types.Datum, ctx context.Context) (types.Datum, error) {
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_hour
 func builtinHour(args []types.Datum, _ context.Context) (types.Datum, error) {
-	d, err := convertToDuration(args[0], mysql.MaxFsp)
+	d, err := convertToDuration(args[0], types.MaxFsp)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -337,7 +337,7 @@ func builtinHour(args []types.Datum, _ context.Context) (types.Datum, error) {
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_minute
 func builtinMinute(args []types.Datum, _ context.Context) (types.Datum, error) {
-	d, err := convertToDuration(args[0], mysql.MaxFsp)
+	d, err := convertToDuration(args[0], types.MaxFsp)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -350,7 +350,7 @@ func builtinMinute(args []types.Datum, _ context.Context) (types.Datum, error) {
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_second
 func builtinSecond(args []types.Datum, _ context.Context) (types.Datum, error) {
-	d, err := convertToDuration(args[0], mysql.MaxFsp)
+	d, err := convertToDuration(args[0], types.MaxFsp)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -363,7 +363,7 @@ func builtinSecond(args []types.Datum, _ context.Context) (types.Datum, error) {
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_microsecond
 func builtinMicroSecond(args []types.Datum, _ context.Context) (types.Datum, error) {
-	d, err := convertToDuration(args[0], mysql.MaxFsp)
+	d, err := convertToDuration(args[0], types.MaxFsp)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -401,14 +401,14 @@ func builtinMonthName(args []types.Datum, _ context.Context) (types.Datum, error
 	}
 
 	mon := int(d.GetInt64())
-	if mon <= 0 || mon > len(mysql.MonthNames) {
+	if mon <= 0 || mon > len(types.MonthNames) {
 		d.SetNull()
 		if mon == 0 {
 			return d, nil
 		}
 		return d, errors.Errorf("no name for invalid month: %d.", mon)
 	}
-	d.SetString(mysql.MonthNames[mon-1])
+	d.SetString(types.MonthNames[mon-1])
 
 	return d, nil
 }
@@ -424,11 +424,11 @@ func builtinNow(args []types.Datum, _ context.Context) (d types.Datum, err error
 		}
 	}
 
-	t := mysql.Time{
+	t := types.Time{
 		Time: time.Now(),
 		Type: mysql.TypeDatetime,
 		// set unspecified for later round
-		Fsp: mysql.UnspecifiedFsp,
+		Fsp: types.UnspecifiedFsp,
 	}
 
 	tr, err := t.RoundFrac(int(fsp))
@@ -447,11 +447,11 @@ func builtinDayName(args []types.Datum, ctx context.Context) (types.Datum, error
 		return d, errors.Trace(err)
 	}
 	weekday := d.GetInt64()
-	if (weekday < 0) || (weekday >= int64(len(mysql.WeekdayNames))) {
+	if (weekday < 0) || (weekday >= int64(len(types.WeekdayNames))) {
 		d.SetNull()
 		return d, errors.Errorf("no name for invalid weekday: %d.", weekday)
 	}
-	d.SetString(mysql.WeekdayNames[weekday])
+	d.SetString(types.WeekdayNames[weekday])
 	return d, nil
 }
 
@@ -619,7 +619,7 @@ func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, 
 		return
 	}
 	integralPart, err := unixTimeStamp.ToInt()
-	if err == mysql.ErrTruncated {
+	if err == types.ErrTruncated {
 		err = nil
 	}
 	if err != nil {
@@ -632,41 +632,41 @@ func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, 
 	// e.g. for timestamp 12345.678,
 	// first get the integral part 12345,
 	// then (12345.678 - 12345) * (10^9) to get the decimal part and convert it to nanosecond precision.
-	integerDecimalTp := new(mysql.MyDecimal).FromInt(integralPart)
-	fracDecimalTp := new(mysql.MyDecimal)
-	err = mysql.DecimalSub(unixTimeStamp, integerDecimalTp, fracDecimalTp)
+	integerDecimalTp := new(types.MyDecimal).FromInt(integralPart)
+	fracDecimalTp := new(types.MyDecimal)
+	err = types.DecimalSub(unixTimeStamp, integerDecimalTp, fracDecimalTp)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	nano := new(mysql.MyDecimal).FromInt(int64(time.Second))
-	x := new(mysql.MyDecimal)
-	err = mysql.DecimalMul(fracDecimalTp, nano, x)
+	nano := new(types.MyDecimal).FromInt(int64(time.Second))
+	x := new(types.MyDecimal)
+	err = types.DecimalMul(fracDecimalTp, nano, x)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 	fractionalPart, err := x.ToInt() // here fractionalPart is result multiplying the original fractional part by 10^9.
-	if err == mysql.ErrTruncated {
+	if err == types.ErrTruncated {
 		err = nil
 	}
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	t := mysql.Time{
+	t := types.Time{
 		Time: time.Unix(integralPart, fractionalPart),
 		Type: mysql.TypeDatetime,
-		Fsp:  mysql.UnspecifiedFsp,
+		Fsp:  types.UnspecifiedFsp,
 	}
 	_, fracDigitsNumber := unixTimeStamp.PrecisionAndFrac()
 	fsp := fracDigitsNumber
-	if fracDigitsNumber > mysql.MaxFsp {
-		fsp = mysql.MaxFsp
+	if fracDigitsNumber > types.MaxFsp {
+		fsp = types.MaxFsp
 	}
 	t, err = t.RoundFrac(fsp)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 	if args[0].Kind() == types.KindString { // Keep consistent with MySQL.
-		t.Fsp = mysql.MaxFsp
+		t.Fsp = types.MaxFsp
 	}
 	d.SetMysqlTime(t)
 	if len(args) == 1 {
@@ -1009,7 +1009,7 @@ func builtinSysDate(args []types.Datum, ctx context.Context) (types.Datum, error
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curdate
 func builtinCurrentDate(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	year, month, day := time.Now().Date()
-	t := mysql.Time{
+	t := types.Time{
 		Time: time.Date(year, month, day, 0, 0, 0, 0, time.Local),
 		Type: mysql.TypeDate, Fsp: 0}
 	d.SetMysqlTime(t)
@@ -1055,9 +1055,9 @@ func builtinTime(args []types.Datum, _ context.Context) (d types.Datum, err erro
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-date
 func builtinUTCDate(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	year, month, day := time.Now().UTC().Date()
-	t := mysql.Time{
+	t := types.Time{
 		Time: time.Date(year, month, day, 0, 0, 0, 0, time.UTC),
-		Type: mysql.TypeDate, Fsp: mysql.UnspecifiedFsp}
+		Type: mysql.TypeDate, Fsp: types.UnspecifiedFsp}
 	d.SetMysqlTime(t)
 	return d, nil
 }
@@ -1073,7 +1073,7 @@ func builtinExtract(args []types.Datum, _ context.Context) (d types.Datum, err e
 	}
 
 	f := types.NewFieldType(mysql.TypeDatetime)
-	f.Decimal = mysql.MaxFsp
+	f.Decimal = types.MaxFsp
 	val, err := vd.ConvertTo(f)
 	if err != nil {
 		d.SetNull()
@@ -1089,7 +1089,7 @@ func builtinExtract(args []types.Datum, _ context.Context) (d types.Datum, err e
 		return d, errors.Errorf("need time type, but got %T", val)
 	}
 	t := val.GetMysqlTime()
-	n, err1 := mysql.ExtractTimeNum(unit, t)
+	n, err1 := types.ExtractTimeNum(unit, t)
 	if err1 != nil {
 		d.SetNull()
 		return d, errors.Trace(err1)
@@ -1103,7 +1103,7 @@ func checkFsp(arg types.Datum) (int, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if int(fsp) > mysql.MaxFsp {
+	if int(fsp) > types.MaxFsp {
 		return 0, errors.Errorf("Too big precision %d specified. Maximum is 6.", fsp)
 	} else if fsp < 0 {
 		return 0, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
@@ -1137,22 +1137,22 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 		}
 	case types.KindString:
 		x := nodeDate.GetString()
-		if !mysql.IsDateFormat(x) {
+		if !types.IsDateFormat(x) {
 			fieldType = mysql.TypeDatetime
 		}
 	case types.KindInt64:
 		x := nodeDate.GetInt64()
-		if t, err1 := mysql.ParseTimeFromInt64(x); err1 == nil {
+		if t, err1 := types.ParseTimeFromInt64(x); err1 == nil {
 			if (t.Type == mysql.TypeDatetime) || (t.Type == mysql.TypeTimestamp) {
 				fieldType = mysql.TypeDatetime
 			}
 		}
 	}
-	if mysql.IsClockUnit(nodeInterval.Unit) {
+	if types.IsClockUnit(nodeInterval.Unit) {
 		fieldType = mysql.TypeDatetime
 	}
 	resultField = types.NewFieldType(fieldType)
-	resultField.Decimal = mysql.MaxFsp
+	resultField.Decimal = types.MaxFsp
 	value, err := nodeDate.ConvertTo(resultField)
 	if err != nil {
 		return d, ErrInvalidOperation.Gen("DateArith invalid args, need date but get %T", nodeDate)
@@ -1183,7 +1183,7 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 			interval = fmt.Sprintf("%v", ii)
 		}
 	}
-	year, month, day, duration, err := mysql.ExtractTimeValue(nodeInterval.Unit, interval)
+	year, month, day, duration, err := types.ExtractTimeValue(nodeInterval.Unit, interval)
 	if err != nil {
 		return d, errors.Trace(err)
 	}

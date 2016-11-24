@@ -33,7 +33,7 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		p := newTS.tryToAddUnionScan(&newTS)
 		return enforceProperty(prop, &physicalPlanInfo{p: p, cost: cost, count: infos[0].count})
 	}
-	if len(prop.props) == 1 && ts.pkCol != nil && ts.pkCol == prop.props[0].col {
+	if len(prop.props) == 1 && ts.pkCol != nil && ts.pkCol.Equal(prop.props[0].col) {
 		sortedTS := *ts
 		sortedTS.Desc = prop.props[0].desc
 		sortedTS.KeepOrder = true
@@ -249,6 +249,11 @@ func (p *Projection) matchProperty(_ *requiredProperty, childPlanInfo ...*physic
 	np := *p
 	np.SetChildren(childPlanInfo[0].p)
 	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
+}
+
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Cache) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.

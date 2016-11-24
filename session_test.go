@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -273,7 +274,7 @@ func checkTxn(c *C, se Session, stmt string, expect uint16) {
 }
 
 func checkAutocommit(c *C, se Session, expect uint16) {
-	ret := variable.GetSessionVars(se.(*session)).Status & mysql.ServerStatusAutocommit
+	ret := se.(*session).sessionVars.Status & mysql.ServerStatusAutocommit
 	c.Assert(ret, Equals, expect)
 }
 
@@ -315,7 +316,7 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 
 func checkInTrans(c *C, se Session, stmt string, expect uint16) {
 	checkTxn(c, se, stmt, expect)
-	ret := variable.GetSessionVars(se.(*session)).Status & mysql.ServerStatusInTrans
+	ret := se.(*session).sessionVars.Status & mysql.ServerStatusInTrans
 	c.Assert(ret, Equals, expect)
 }
 
@@ -1281,7 +1282,7 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
-	last := time.Now().Format(mysql.TimeFormat)
+	last := time.Now().Format(types.TimeFormat)
 	r := mustExecSQL(c, se, "select now(), now(6), current_timestamp, current_timestamp(), current_timestamp(6), sysdate(), sysdate(6)")
 	row, err := r.Next()
 	c.Assert(err, IsNil)
@@ -1290,7 +1291,7 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 		c.Assert(n.String(), GreaterEqual, last)
 	}
 
-	last = time.Now().Format(mysql.DateFormat)
+	last = time.Now().Format(types.DateFormat)
 	r = mustExecSQL(c, se, "select current_date, current_date(), curdate()")
 	row, err = r.Next()
 	c.Assert(err, IsNil)
@@ -1936,11 +1937,14 @@ func (s *testSessionSuite) TestIssue1265(c *C) {
 
 func (s *testSessionSuite) TestIssue1435(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStore(c, s.dbName)
+	localstore.MockRemoteStore = true
+	store := newStore(c, s.dbName+"issue1435")
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
 	se2 := newSession(c, store, s.dbName)
 
+	ctx := se.(context.Context)
+	sessionctx.GetDomain(ctx).SetLease(20 * time.Millisecond)
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (a int);")
 	mustExecSQL(c, se, "drop table if exists t1;")
@@ -1985,9 +1989,10 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	default:
 	}
 	// Make sure loading information schema is failed and server is invalid.
-	ctx := se.(context.Context)
-	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed = true
-	sessionctx.GetDomain(ctx).MustReload()
+	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(true)
+	sessionctx.GetDomain(ctx).Reload()
+	lease := sessionctx.GetDomain(ctx).DDL().GetLease()
+	time.Sleep(lease)
 	// Make sure insert to table t1 transaction executes.
 	startCh1 <- struct{}{}
 	// Make sure executing insert statement is failed when server is invalid.
@@ -2003,15 +2008,20 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 		c.FailNow()
 	default:
 	}
-	sessionctx.GetDomain(ctx).SchemaValidity.SetValidity(true)
-	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed = false
+
+	ver, err := store.CurrentVersion()
+	c.Assert(err, IsNil)
+	c.Assert(ver, NotNil)
+	sessionctx.GetDomain(ctx).SchemaValidity.SetValidity(true, ver.Ver)
+	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
+	time.Sleep(lease)
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (a int);")
 	mustExecSQL(c, se, "insert t values (100);")
 	// Make sure insert to table t2 transaction executes.
 	startCh2 <- struct{}{}
 	err = <-endCh2
-	c.Assert(err, IsNil)
+	c.Assert(err, IsNil, Commentf("err:%v", err))
 
 	err = se.Close()
 	c.Assert(err, IsNil)
@@ -2021,6 +2031,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	c.Assert(err, IsNil)
 	err = store.Close()
 	c.Assert(err, IsNil)
+	localstore.MockRemoteStore = false
 }
 
 // Testcase for session
@@ -2278,34 +2289,34 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName).(*session)
 	// Get globalSysVar twice and get the same value
-	v, err := se.GetGlobalSysVar(se, varName)
+	v, err := se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue)
-	v, err = se.GetGlobalSysVar(se, varName)
+	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue)
 	// Set global var to another value
-	err = se.SetGlobalSysVar(se, varName, varValue1)
+	err = se.SetGlobalSysVar(varName, varValue1)
 	c.Assert(err, IsNil)
-	v, err = se.GetGlobalSysVar(se, varName)
+	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue1)
 	c.Assert(se.CommitTxn(), IsNil)
 
 	// Change global variable value in another session
 	se1 := newSession(c, store, s.dbName).(*session)
-	v, err = se1.GetGlobalSysVar(se1, varName)
+	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue1)
-	err = se1.SetGlobalSysVar(se1, varName, varValue2)
+	err = se1.SetGlobalSysVar(varName, varValue2)
 	c.Assert(err, IsNil)
-	v, err = se1.GetGlobalSysVar(se1, varName)
+	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue2)
 	c.Assert(se1.CommitTxn(), IsNil)
 
 	// Make sure the change is visible to any client that accesses that global variable.
-	v, err = se.GetGlobalSysVar(se, varName)
+	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue2)
 
@@ -2356,6 +2367,7 @@ func newSessionWithoutInit(c *C, store kv.Storage) *session {
 		store:       store,
 		debugInfos:  make(map[string]interface{}),
 		maxRetryCnt: 10,
+		sessionVars: variable.NewSessionVars(),
 	}
 	return s
 }
@@ -2365,8 +2377,7 @@ func (s *testSessionSuite) TestRetryAttempts(c *C) {
 	store := kv.NewMockStorage()
 	se := newSessionWithoutInit(c, store)
 	c.Assert(se, NotNil)
-	variable.BindSessionVars(se)
-	sv := variable.GetSessionVars(se)
+	sv := se.sessionVars
 	// Prevent getting variable value from storage.
 	sv.SetSystemVar("autocommit", types.NewDatum("ON"))
 	sv.CommonGlobalLoaded = true

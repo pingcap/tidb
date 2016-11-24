@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -196,7 +195,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		b, r, err = DecodeInt(b)
 		if err == nil {
 			// use max fsp, let outer to do round manually.
-			v := mysql.Duration{Duration: time.Duration(r), Fsp: mysql.MaxFsp}
+			v := types.Duration{Duration: time.Duration(r), Fsp: types.MaxFsp}
 			d.SetValue(v)
 		}
 	case NilFlag:
@@ -238,7 +237,7 @@ func peek(b []byte) (length int, err error) {
 	case compactBytesFlag:
 		l, err = peekCompactBytes(b)
 	case decimalFlag:
-		l, err = mysql.DecimalPeak(b)
+		l, err = types.DecimalPeak(b)
 	case varintFlag:
 		l, err = peekVarint(b)
 	case uvarintFlag:

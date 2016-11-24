@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Error instances.
@@ -153,7 +154,7 @@ func toInt(l yyLexer, lval *yySymType, str string) int {
 }
 
 func toDecimal(l yyLexer, lval *yySymType, str string) int {
-	dec := new(mysql.MyDecimal)
+	dec := new(types.MyDecimal)
 	err := dec.FromString(hack.Slice(str))
 	if err != nil {
 		l.Errorf("decimal literal: %v", err)

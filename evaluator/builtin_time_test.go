@@ -21,7 +21,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -342,12 +341,12 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	v, err := builtinSysDate(types.MakeDatums(nil), nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
-	c.Assert(n.String(), GreaterEqual, last.Format(mysql.TimeFormat))
+	c.Assert(n.String(), GreaterEqual, last.Format(types.TimeFormat))
 
 	v, err = builtinSysDate(types.MakeDatums(6), nil)
 	c.Assert(err, IsNil)
 	n = v.GetMysqlTime()
-	c.Assert(n.String(), GreaterEqual, last.Format(mysql.TimeFormat))
+	c.Assert(n.String(), GreaterEqual, last.Format(types.TimeFormat))
 
 	_, err = builtinSysDate(types.MakeDatums(-2), nil)
 	c.Assert(err, NotNil)
@@ -413,7 +412,7 @@ func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
 	v, err := builtinCurrentDate(types.MakeDatums(nil), nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
-	c.Assert(n.String(), GreaterEqual, last.Format(mysql.DateFormat))
+	c.Assert(n.String(), GreaterEqual, last.Format(types.DateFormat))
 }
 
 func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
@@ -452,7 +451,7 @@ func (s *testEvaluatorSuite) TestUTCDate(c *C) {
 	v, err := builtinUTCDate(types.MakeDatums(nil), nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
-	c.Assert(n.String(), GreaterEqual, last.Format(mysql.DateFormat))
+	c.Assert(n.String(), GreaterEqual, last.Format(types.DateFormat))
 }
 
 func (s *testEvaluatorSuite) TestDateArith(c *C) {

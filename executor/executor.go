@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -200,7 +199,7 @@ func (e *CheckTableExec) Next() (*Row, error) {
 		return nil, nil
 	}
 
-	dbName := model.NewCIStr(db.GetCurrentSchema(e.ctx))
+	dbName := model.NewCIStr(e.ctx.GetSessionVars().CurrentDB)
 	is := sessionctx.GetDomain(e.ctx).InfoSchema()
 
 	for _, t := range e.tables {
@@ -1959,4 +1958,49 @@ func (e *DummyScanExec) Close() error {
 // Next implements the Executor Next interface.
 func (e *DummyScanExec) Next() (*Row, error) {
 	return nil, nil
+}
+
+// CacheExec represents Cache executor.
+// it stores the return values of the executor of its child node.
+type CacheExec struct {
+	schema      expression.Schema
+	Src         Executor
+	storedRows  []*Row
+	cursor      int
+	srcFinished bool
+}
+
+// Schema implements the Executor Schema interface.
+func (e *CacheExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Close implements the Executor Close interface.
+func (e *CacheExec) Close() error {
+	e.cursor = 0
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *CacheExec) Next() (*Row, error) {
+	if e.srcFinished && e.cursor >= len(e.storedRows) {
+		return nil, nil
+	}
+	if !e.srcFinished {
+		row, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			e.srcFinished = true
+			err := e.Src.Close()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		e.storedRows = append(e.storedRows, row)
+	}
+	row := e.storedRows[e.cursor]
+	e.cursor++
+	return row, nil
 }
