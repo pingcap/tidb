@@ -120,13 +120,13 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
 		{"abc", mysql.TypeVarString},
 		{1.1, mysql.TypeNewDecimal},
 		{[]byte("abc"), mysql.TypeBlob},
-		{mysql.Bit{}, mysql.TypeBit},
-		{mysql.Hex{}, mysql.TypeVarchar},
+		{Bit{}, mysql.TypeBit},
+		{Hex{}, mysql.TypeVarchar},
 		{Time{Type: mysql.TypeDatetime}, mysql.TypeDatetime},
 		{Duration{}, mysql.TypeDuration},
 		{&MyDecimal{}, mysql.TypeNewDecimal},
-		{mysql.Enum{}, mysql.TypeEnum},
-		{mysql.Set{}, mysql.TypeSet},
+		{Enum{}, mysql.TypeEnum},
+		{Set{}, mysql.TypeSet},
 		{nil, mysql.TypeNull},
 	}
 	for _, ca := range cases {

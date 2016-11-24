@@ -205,26 +205,26 @@ func (d *Datum) SetNull() {
 	d.x = nil
 }
 
-// GetMysqlBit gets mysql.Bit value
-func (d *Datum) GetMysqlBit() mysql.Bit {
+// GetMysqlBit gets Bit value
+func (d *Datum) GetMysqlBit() Bit {
 	width := int(d.length)
 	value := uint64(d.i)
-	return mysql.Bit{Value: value, Width: width}
+	return Bit{Value: value, Width: width}
 }
 
-// SetMysqlBit sets mysql.Bit value
-func (d *Datum) SetMysqlBit(b mysql.Bit) {
+// SetMysqlBit sets Bit value
+func (d *Datum) SetMysqlBit(b Bit) {
 	d.k = KindMysqlBit
 	d.length = uint32(b.Width)
 	d.i = int64(b.Value)
 }
 
-// GetMysqlDecimal gets mysql.Decimal value
+// GetMysqlDecimal gets Decimal value
 func (d *Datum) GetMysqlDecimal() *MyDecimal {
 	return d.x.(*MyDecimal)
 }
 
-// SetMysqlDecimal sets mysql.Decimal value
+// SetMysqlDecimal sets Decimal value
 func (d *Datum) SetMysqlDecimal(b *MyDecimal) {
 	d.k = KindMysqlDecimal
 	d.x = b
@@ -242,37 +242,37 @@ func (d *Datum) SetMysqlDuration(b Duration) {
 	d.decimal = uint16(b.Fsp)
 }
 
-// GetMysqlEnum gets mysql.Enum value
-func (d *Datum) GetMysqlEnum() mysql.Enum {
-	return mysql.Enum{Value: uint64(d.i), Name: hack.String(d.b)}
+// GetMysqlEnum gets Enum value
+func (d *Datum) GetMysqlEnum() Enum {
+	return Enum{Value: uint64(d.i), Name: hack.String(d.b)}
 }
 
-// SetMysqlEnum sets mysql.Enum value
-func (d *Datum) SetMysqlEnum(b mysql.Enum) {
+// SetMysqlEnum sets Enum value
+func (d *Datum) SetMysqlEnum(b Enum) {
 	d.k = KindMysqlEnum
 	d.i = int64(b.Value)
 	sink(b.Name)
 	d.b = hack.Slice(b.Name)
 }
 
-// GetMysqlHex gets mysql.Hex value
-func (d *Datum) GetMysqlHex() mysql.Hex {
-	return mysql.Hex{Value: d.i}
+// GetMysqlHex gets Hex value
+func (d *Datum) GetMysqlHex() Hex {
+	return Hex{Value: d.i}
 }
 
-// SetMysqlHex sets mysql.Hex value
-func (d *Datum) SetMysqlHex(b mysql.Hex) {
+// SetMysqlHex sets Hex value
+func (d *Datum) SetMysqlHex(b Hex) {
 	d.k = KindMysqlHex
 	d.i = b.Value
 }
 
-// GetMysqlSet gets mysql.Set value
-func (d *Datum) GetMysqlSet() mysql.Set {
-	return mysql.Set{Value: uint64(d.i), Name: hack.String(d.b)}
+// GetMysqlSet gets Set value
+func (d *Datum) GetMysqlSet() Set {
+	return Set{Value: uint64(d.i), Name: hack.String(d.b)}
 }
 
-// SetMysqlSet sets mysql.Set value
-func (d *Datum) SetMysqlSet(b mysql.Set) {
+// SetMysqlSet sets Set value
+func (d *Datum) SetMysqlSet(b Set) {
 	d.k = KindMysqlSet
 	d.i = int64(b.Value)
 	sink(b.Name)
@@ -349,17 +349,17 @@ func (d *Datum) SetValue(val interface{}) {
 		d.SetString(x)
 	case []byte:
 		d.SetBytes(x)
-	case mysql.Bit:
+	case Bit:
 		d.SetMysqlBit(x)
 	case *MyDecimal:
 		d.SetMysqlDecimal(x)
 	case Duration:
 		d.SetMysqlDuration(x)
-	case mysql.Enum:
+	case Enum:
 		d.SetMysqlEnum(x)
-	case mysql.Hex:
+	case Hex:
 		d.SetMysqlHex(x)
-	case mysql.Set:
+	case Set:
 		d.SetMysqlSet(x)
 	case Time:
 		d.SetMysqlTime(x)
@@ -537,7 +537,7 @@ func (d *Datum) compareBytes(b []byte) (int, error) {
 	return d.compareString(hack.String(b))
 }
 
-func (d *Datum) compareMysqlBit(bit mysql.Bit) (int, error) {
+func (d *Datum) compareMysqlBit(bit Bit) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), bit.ToString()), nil
@@ -572,7 +572,7 @@ func (d *Datum) compareMysqlDuration(dur Duration) (int, error) {
 	}
 }
 
-func (d *Datum) compareMysqlEnum(enum mysql.Enum) (int, error) {
+func (d *Datum) compareMysqlEnum(enum Enum) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), enum.String()), nil
@@ -581,7 +581,7 @@ func (d *Datum) compareMysqlEnum(enum mysql.Enum) (int, error) {
 	}
 }
 
-func (d *Datum) compareMysqlHex(e mysql.Hex) (int, error) {
+func (d *Datum) compareMysqlHex(e Hex) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), e.ToString()), nil
@@ -590,7 +590,7 @@ func (d *Datum) compareMysqlHex(e mysql.Hex) (int, error) {
 	}
 }
 
-func (d *Datum) compareMysqlSet(set mysql.Set) (int, error) {
+func (d *Datum) compareMysqlSet(set Set) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), set.String()), nil
@@ -1026,8 +1026,8 @@ func (d *Datum) convertToMysqlBit(target *FieldType) (Datum, error) {
 	// check bit boundary, if bit has n width, the boundary is
 	// in [0, (1 << n) - 1]
 	width := target.Flen
-	if width == 0 || width == mysql.UnspecifiedBitWidth {
-		width = mysql.MinBitWidth
+	if width == 0 || width == UnspecifiedBitWidth {
+		width = MinBitWidth
 	}
 	maxValue := uint64(1)<<uint64(width) - 1
 	val := x.GetUint64()
@@ -1036,26 +1036,26 @@ func (d *Datum) convertToMysqlBit(target *FieldType) (Datum, error) {
 		return x, overflow(val, target.Tp)
 	}
 	var ret Datum
-	ret.SetValue(mysql.Bit{Value: val, Width: width})
+	ret.SetValue(Bit{Value: val, Width: width})
 	return ret, nil
 }
 
 func (d *Datum) convertToMysqlEnum(target *FieldType) (Datum, error) {
 	var (
 		ret Datum
-		e   mysql.Enum
+		e   Enum
 		err error
 	)
 	switch d.k {
 	case KindString, KindBytes:
-		e, err = mysql.ParseEnumName(target.Elems, d.GetString())
+		e, err = ParseEnumName(target.Elems, d.GetString())
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(target)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-		e, err = mysql.ParseEnumValue(target.Elems, uintDatum.GetUint64())
+		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
 		return invalidConv(d, target.Tp)
@@ -1067,19 +1067,19 @@ func (d *Datum) convertToMysqlEnum(target *FieldType) (Datum, error) {
 func (d *Datum) convertToMysqlSet(target *FieldType) (Datum, error) {
 	var (
 		ret Datum
-		s   mysql.Set
+		s   Set
 		err error
 	)
 	switch d.k {
 	case KindString, KindBytes:
-		s, err = mysql.ParseSetName(target.Elems, d.GetString())
+		s, err = ParseSetName(target.Elems, d.GetString())
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(target)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-		s, err = mysql.ParseSetValue(target.Elems, uintDatum.GetUint64())
+		s, err = ParseSetValue(target.Elems, uintDatum.GetUint64())
 	}
 
 	if err != nil {
