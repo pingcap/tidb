@@ -195,11 +195,13 @@ func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
 
 	testSQL = `use test_db;`
 	tk.MustExec(testSQL)
+	tk.MustQuery(`select database();`).Check(testkit.Rows("test_db"))
 	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
 
 	testSQL = `drop database test_db;`
 	tk.MustExec(testSQL)
+	tk.MustQuery(`select database();`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("utf8"))
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_unicode_ci"))
 }
