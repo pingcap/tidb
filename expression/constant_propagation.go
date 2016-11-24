@@ -88,7 +88,7 @@ func (s *propagateConstantSolver) propagateInEQ() {
 	for i := 0; i < condsLen; i++ {
 		cond := s.conditions[i]
 		col, con := s.validPropagateCond(cond, inEqFuncNameMap)
-		if col != nil {
+		if col == nil {
 			continue
 		}
 		id := s.getColID(col)
