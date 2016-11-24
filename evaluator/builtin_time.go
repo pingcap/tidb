@@ -675,7 +675,7 @@ func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, 
 	return builtinDateFormat([]types.Datum{d, args[1]}, nil)
 }
 
-// strToDate convert date string according to format, return true on success,
+// strToDate converts date string according to format, return true on success,
 // the value will be stored in argument t.
 func strToDate(t *time.Time, date string, format string) bool {
 	date = skipWhiteSpace(date)
