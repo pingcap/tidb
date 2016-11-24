@@ -681,7 +681,7 @@ func strToDate(t *time.Time, date string, format string) bool {
 	date = skipWhiteSpace(date)
 	format = skipWhiteSpace(format)
 
-	token, format1, succ := getFormatToken(format)
+	token, formatRemain, succ := getFormatToken(format)
 	if !succ {
 		return false
 	}
@@ -690,12 +690,12 @@ func strToDate(t *time.Time, date string, format string) bool {
 		return date == ""
 	}
 
-	date1, succ := matchDateWithToken(t, date, token)
+	dateRemain, succ := matchDateWithToken(t, date, token)
 	if !succ {
 		return false
 	}
 
-	return strToDate(t, date1, format1)
+	return strToDate(t, dateRemain, formatRemain)
 }
 
 func getFormatToken(format string) (token string, remain string, succ bool) {
@@ -708,7 +708,7 @@ func getFormatToken(format string) (token string, remain string, succ bool) {
 		if format[0] == '%' {
 			return "", "", false
 		}
-		return format[:1], format[1:], true
+		return format, "", true
 	}
 
 	// More than one character.
@@ -984,16 +984,16 @@ func builtinStrToDate(args []types.Datum, _ context.Context) (types.Datum, error
 		d      types.Datum
 		goTime time.Time
 	)
-	goTime = mysql.ZeroTime
+	goTime = types.ZeroTime
 	if !strToDate(&goTime, date, format) {
 		d.SetNull()
 		return d, nil
 	}
 
-	t := mysql.Time{
+	t := types.Time{
 		Time: goTime,
 		Type: mysql.TypeDatetime,
-		Fsp:  mysql.UnspecifiedFsp,
+		Fsp:  types.UnspecifiedFsp,
 	}
 	d.SetMysqlTime(t)
 	return d, nil
