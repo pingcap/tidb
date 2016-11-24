@@ -753,28 +753,24 @@ var monthAbbrev = map[string]time.Month{
 	"Dec": time.December,
 }
 
+type dateFormatParser func(t *time.Time, date string) (remain string, succ bool)
+
+var dateFormatParserTable = map[string]dateFormatParser{
+	"%a": abbreviatedWeekday,
+	"%b": abbreviatedMonth,
+	"%c": monthNumeric,
+	"%D": dayOfMonthWithSuffix,
+	"%Y": yearNumericFourDigits,
+	"%m": monthNumericTwoDigits,
+	"%d": dayOfMonthNumericTwoDigits,
+	"%H": hour24TwoDigits,
+	"%i": minutesNumeric,
+	"%s": secondsNumeric,
+}
+
 func matchDateWithToken(t *time.Time, date string, token string) (remain string, succ bool) {
-	switch token {
-	case "%a":
-		return abbreviatedWeekday(t, date)
-	case "%b":
-		return abbreviatedMonth(t, date)
-	case "%c":
-		return monthNumeric(t, date)
-	case "%D":
-		return dayOfMonthWithSuffix(t, date)
-	case "%Y":
-		return yearNumericFourDigits(t, date)
-	case "%m":
-		return monthNumericTwoDigits(t, date)
-	case "%d":
-		return dayOfMonthNumericTwoDigits(t, date)
-	case "%H":
-		return hour24TwoDigits(t, date)
-	case "%i":
-		return minutesNumeric(t, date)
-	case "%s":
-		return secondsNumeric(t, date)
+	if parse, ok := dateFormatParserTable[token]; ok {
+		return parse(t, date)
 	}
 
 	if strings.HasPrefix(date, token) {
@@ -857,9 +853,9 @@ func monthNumericTwoDigits(t *time.Time, input string) (string, bool) {
 func abbreviatedWeekday(t *time.Time, input string) (string, bool) {
 	if len(input) >= 3 {
 		dayName := input[:3]
-		if day, ok := weekdayAbbrev[dayName]; ok {
-			timeSetDay(t, int(day))
-			return input[len(dayName):], true
+		if _, ok := weekdayAbbrev[dayName]; ok {
+			// TODO: we need refact mysql time to support this
+			return input, false
 		}
 	}
 	return input, false
