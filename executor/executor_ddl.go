@@ -25,9 +25,8 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -137,9 +136,9 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 			err = infoschema.ErrDatabaseDropExists.Gen("Can't drop database '%s'; database doesn't exist", s.Name)
 		}
 	}
-	if currentSchema := db.GetCurrentSchema(e.ctx); err == nil && strings.ToLower(currentSchema)== dbName.L {
-		db.BindCurrentSchema(e.ctx, "")
-		sessionVars := variable.GetSessionVars(e.ctx)
+	sessionVars := e.ctx.GetSessionVars()
+	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
+		sessionVars.CurrentDB = ""
 		err = sessionVars.SetSystemVar(variable.CharsetDatabase, types.NewStringDatum("utf8"))
 		if err != nil {
 			return errors.Trace(err)
