@@ -25,6 +25,81 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
+func (s *testPlanSuite) TestPushDownAggregation(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql       string
+		best      string
+		aggFuns   string
+		aggFields string
+		gbyItems  string
+	}{
+		{
+			sql:       "select count(*) from t",
+			best:      "Table(t)->HashAgg->Projection",
+			aggFuns:   "[count(1)]",
+			aggFields: "[blob bigint(21)]",
+			gbyItems:  "[]",
+		},
+		{
+			sql:       "select sum(b) from t group by c",
+			best:      "Table(t)->HashAgg->Projection",
+			aggFuns:   "[sum(test.t.b)]",
+			aggFields: "[blob decimal]",
+			gbyItems:  "[test.t.c]",
+		},
+		{
+			sql:       "select max(b + c), min(case when b then 1 else 2 end) from t group by d + e, a",
+			best:      "Table(t)->HashAgg->Projection",
+			aggFuns:   "[max(plus(test.t.b, test.t.c)) min(case(test.t.b, 1, 2))]",
+			aggFields: "[blob bigint bigint]",
+			gbyItems:  "[plus(test.t.d, test.t.e) test.t.a]",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		lp.PruneColumns(lp.GetSchema())
+		lp.ResolveIndicesAndCorCols()
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		c.Assert(err, IsNil)
+		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
+		p = info.p
+		for {
+			var ts *physicalTableSource
+			switch x := p.(type) {
+			case *PhysicalTableScan:
+				ts = &x.physicalTableSource
+			case *PhysicalIndexScan:
+				ts = &x.physicalTableSource
+			}
+			if ts != nil {
+				c.Assert(fmt.Sprintf("%s", ts.aggFuncs), Equals, ca.aggFuns, Commentf("for %s", ca.sql))
+				c.Assert(fmt.Sprintf("%s", ts.gbyItems), Equals, ca.gbyItems, Commentf("for %s", ca.sql))
+				c.Assert(fmt.Sprintf("%s", ts.AggFields), Equals, ca.aggFields, Commentf("for %s", ca.sql))
+				break
+			}
+			p = p.GetChildByIndex(0)
+		}
+	}
+}
+
 func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
