@@ -26,6 +26,9 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/sessionctx/db"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // DDLExec represents a DDL executor.
@@ -125,12 +128,25 @@ func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 }
 
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
-	err := sessionctx.GetDomain(e.ctx).DDL().DropSchema(e.ctx, model.NewCIStr(s.Name))
+	dbName := model.NewCIStr(s.Name)
+	err := sessionctx.GetDomain(e.ctx).DDL().DropSchema(e.ctx, dbName)
 	if terror.ErrorEqual(err, infoschema.ErrDatabaseNotExists) {
 		if s.IfExists {
 			err = nil
 		} else {
 			err = infoschema.ErrDatabaseDropExists.Gen("Can't drop database '%s'; database doesn't exist", s.Name)
+		}
+	}
+	if currentSchema := db.GetCurrentSchema(e.ctx); err == nil && strings.ToLower(currentSchema)== dbName.L {
+		db.BindCurrentSchema(e.ctx, "")
+		sessionVars := variable.GetSessionVars(e.ctx)
+		err = sessionVars.SetSystemVar(variable.CharsetDatabase, types.NewStringDatum("utf8"))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = sessionVars.SetSystemVar(variable.CollationDatabase, types.NewStringDatum("utf8_unicode_ci"))
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return errors.Trace(err)
