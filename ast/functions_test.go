@@ -16,7 +16,6 @@ package ast
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -140,7 +139,7 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 		agg.Update()
 	}
 	ctx := agg.GetContext()
-	expect := mysql.NewDecFromInt(1)
+	expect := types.NewDecFromInt(1)
 	c.Assert(ctx.Value.Kind(), Equals, types.KindMysqlDecimal)
 	c.Assert(ctx.Value.GetMysqlDecimal().Compare(expect), Equals, 0)
 	// sum without distinct
@@ -158,7 +157,7 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 		agg.Update()
 	}
 	ctx = agg.GetContext()
-	expect = mysql.NewDecFromInt(4)
+	expect = types.NewDecFromInt(4)
 	c.Assert(ctx.Value.Kind(), Equals, types.KindMysqlDecimal)
 	c.Assert(ctx.Value.GetMysqlDecimal().Compare(expect), Equals, 0)
 }

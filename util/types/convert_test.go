@@ -135,29 +135,29 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft.Decimal = 3
 	v, err = Convert("10:11:12.123456", ft)
 	c.Assert(err, IsNil)
-	c.Assert(v.(mysql.Duration).String(), Equals, "10:11:12.123")
+	c.Assert(v.(Duration).String(), Equals, "10:11:12.123")
 	ft.Decimal = 1
 	vv, err := Convert(v, ft)
 	c.Assert(err, IsNil)
-	c.Assert(vv.(mysql.Duration).String(), Equals, "10:11:12.1")
+	c.Assert(vv.(Duration).String(), Equals, "10:11:12.1")
 
-	vt, err := mysql.ParseTime("2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
+	vt, err := ParseTime("2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
 	c.Assert(vt.String(), Equals, "2010-10-10 10:11:11.12")
 	c.Assert(err, IsNil)
 	v, err = Convert(vt, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v.(mysql.Duration).String(), Equals, "10:11:11.1")
+	c.Assert(v.(Duration).String(), Equals, "10:11:11.1")
 
 	// For mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate
 	ft = NewFieldType(mysql.TypeTimestamp)
 	ft.Decimal = 3
 	v, err = Convert("2010-10-10 10:11:11.12345", ft)
 	c.Assert(err, IsNil)
-	c.Assert(v.(mysql.Time).String(), Equals, "2010-10-10 10:11:11.123")
+	c.Assert(v.(Time).String(), Equals, "2010-10-10 10:11:11.123")
 	ft.Decimal = 1
 	vv, err = Convert(v, ft)
 	c.Assert(err, IsNil)
-	c.Assert(vv.(mysql.Time).String(), Equals, "2010-10-10 10:11:11.1")
+	c.Assert(vv.(Time).String(), Equals, "2010-10-10 10:11:11.1")
 
 	// For TypeLonglong
 	ft = NewFieldType(mysql.TypeLonglong)
@@ -203,16 +203,16 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft.Decimal = 4
 	v, err = Convert(3.1416, ft)
 	c.Assert(err, IsNil, Commentf(errors.ErrorStack(err)))
-	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "3.1416")
+	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("3.1415926", ft)
-	c.Assert(terror.ErrorEqual(err, mysql.ErrTruncated), IsTrue)
-	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "3.1416")
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("99999", ft)
-	c.Assert(terror.ErrorEqual(err, mysql.ErrOverflow), IsTrue)
-	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "9999.9999")
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	c.Assert(v.(*MyDecimal).String(), Equals, "9999.9999")
 	v, err = Convert("-10000", ft)
-	c.Assert(terror.ErrorEqual(err, mysql.ErrOverflow), IsTrue)
-	c.Assert(v.(*mysql.MyDecimal).String(), Equals, "-9999.9999")
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	c.Assert(v.(*MyDecimal).String(), Equals, "-9999.9999")
 
 	// For TypeYear
 	ft = NewFieldType(mysql.TypeYear)
@@ -224,11 +224,11 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(1800, ft)
 	c.Assert(err, NotNil)
-	dt, err := mysql.ParseDate("2015-11-11")
+	dt, err := ParseDate("2015-11-11")
 	c.Assert(err, IsNil)
 	v, err = Convert(dt, ft)
 	c.Assert(v, Equals, int64(2015))
-	v, err = Convert(mysql.ZeroDuration, ft)
+	v, err = Convert(ZeroDuration, ft)
 	c.Assert(v, Equals, int64(time.Now().Year()))
 
 	// For enum
@@ -285,11 +285,11 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, mysql.Enum{Name: "a", Value: 1}, "a")
 	testToString(c, mysql.Set{Name: "a", Value: 1}, "a")
 
-	t, err := mysql.ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
+	t, err := ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
 	testToString(c, t, "2011-11-10 11:11:11.999999")
 
-	td, err := mysql.ParseDuration("11:11:11.999999", 6)
+	td, err := ParseDuration("11:11:11.999999", 6)
 	c.Assert(err, IsNil)
 	testToString(c, td, "11:11:11.999999")
 
@@ -297,7 +297,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	ft.Flen = 10
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
-	c.Assert(terror.ErrorEqual(err, mysql.ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
 	testToString(c, v, "3.14159")
 
 	_, err = ToString(&invalidMockType{})
@@ -522,12 +522,12 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	// time from string
 	signedAccept(c, mysql.TypeDate, "2012-08-23", "2012-08-23")
 	signedAccept(c, mysql.TypeDatetime, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
-	signedAccept(c, mysql.TypeDatetime, mysql.ZeroDatetime, "0000-00-00 00:00:00")
+	signedAccept(c, mysql.TypeDatetime, ZeroDatetime, "0000-00-00 00:00:00")
 	signedAccept(c, mysql.TypeDatetime, int64(0), "0000-00-00 00:00:00")
 	signedAccept(c, mysql.TypeTimestamp, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
 	signedAccept(c, mysql.TypeDuration, "10:11:12", "10:11:12")
-	signedAccept(c, mysql.TypeDuration, mysql.ZeroDatetime, "00:00:00")
-	signedAccept(c, mysql.TypeDuration, mysql.ZeroDuration, "00:00:00")
+	signedAccept(c, mysql.TypeDuration, ZeroDatetime, "00:00:00")
+	signedAccept(c, mysql.TypeDuration, ZeroDuration, "00:00:00")
 
 	signedDeny(c, mysql.TypeDate, "2012-08-x", "0000-00-00")
 	signedDeny(c, mysql.TypeDatetime, "2012-08-x", "0000-00-00 00:00:00")
@@ -540,8 +540,8 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 
 	// string from integer
 	signedAccept(c, mysql.TypeString, 5678, "5678")
-	signedAccept(c, mysql.TypeString, mysql.ZeroDuration, "00:00:00")
-	signedAccept(c, mysql.TypeString, mysql.ZeroDatetime, "0000-00-00 00:00:00")
+	signedAccept(c, mysql.TypeString, ZeroDuration, "00:00:00")
+	signedAccept(c, mysql.TypeString, ZeroDatetime, "0000-00-00 00:00:00")
 	signedAccept(c, mysql.TypeString, []byte("123"), "123")
 
 	//TODO add more tests
@@ -551,8 +551,8 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, float32(123), "123")
 	signedAccept(c, mysql.TypeNewDecimal, 123.456, "123.456")
 	signedAccept(c, mysql.TypeNewDecimal, "-123.456", "-123.456")
-	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecFromInt(12300000), "12300000")
-	dec := mysql.NewDecFromInt(-123)
+	signedAccept(c, mysql.TypeNewDecimal, NewDecFromInt(12300000), "12300000")
+	dec := NewDecFromInt(-123)
 	dec.Shift(-5)
 	dec.Round(dec, 5)
 	signedAccept(c, mysql.TypeNewDecimal, dec, "-0.00123")

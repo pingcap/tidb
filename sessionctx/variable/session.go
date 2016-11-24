@@ -275,7 +275,7 @@ func (s *SessionVars) setSnapshotTS(sVal string) error {
 		s.SnapshotTS = 0
 		return nil
 	}
-	t, err := mysql.ParseTime(sVal, mysql.TypeTimestamp, mysql.MaxFsp)
+	t, err := types.ParseTime(sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -1282,7 +1282,7 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
-	last := time.Now().Format(mysql.TimeFormat)
+	last := time.Now().Format(types.TimeFormat)
 	r := mustExecSQL(c, se, "select now(), now(6), current_timestamp, current_timestamp(), current_timestamp(6), sysdate(), sysdate(6)")
 	row, err := r.Next()
 	c.Assert(err, IsNil)
@@ -1291,7 +1291,7 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 		c.Assert(n.String(), GreaterEqual, last)
 	}
 
-	last = time.Now().Format(mysql.DateFormat)
+	last = time.Now().Format(types.DateFormat)
 	r = mustExecSQL(c, se, "select current_date, current_date(), curdate()")
 	row, err = r.Next()
 	c.Assert(err, IsNil)
