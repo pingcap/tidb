@@ -55,7 +55,8 @@ for details on submitting patches and the contribution workflow.
 
 ## Follow us
 
-### Twitter: [@PingCAP](https://twitter.com/PingCAP)
+### Twitter 
+[@PingCAP](https://twitter.com/PingCAP)
 
 ### Mailing lists
 
