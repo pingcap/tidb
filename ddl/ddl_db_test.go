@@ -234,10 +234,12 @@ LOOP:
 }
 
 func (s *testDBSuite) testAddAnonymousIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
 	s.mustExec(c, "create table t_anonymous_index (c1 int, c2 int, C3 int)")
 	s.mustExec(c, "alter table t_anonymous_index add index (c1, c2)")
 	// for dropping empty index
-	_, err := s.db.Exec("alter table t_anonymous_index drop index")
+	_, err := s.tk.Exec("alter table t_anonymous_index drop index")
 	c.Assert(err, NotNil)
 	// The index name is c1 when adding index (c1, c2).
 	s.mustExec(c, "alter table t_anonymous_index drop index c1")
@@ -245,7 +247,7 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 	c.Assert(t.Indices(), HasLen, 0)
 	// for adding some indices that the first column name is c1
 	s.mustExec(c, "alter table t_anonymous_index add index (c1)")
-	_, err = s.db.Exec("alter table t_anonymous_index add index c1 (c2)")
+	_, err = s.tk.Exec("alter table t_anonymous_index add index c1 (c2)")
 	c.Assert(err, NotNil)
 	t = s.testGetTable(c, "t_anonymous_index")
 	c.Assert(t.Indices(), HasLen, 1)
