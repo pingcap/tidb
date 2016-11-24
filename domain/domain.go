@@ -47,19 +47,19 @@ type Domain struct {
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
 // infoschema version, if it is the same as the schema version at startTS, we don't need to reload again.
-func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64, startTS uint64) error {
+func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64, startTS uint64) (int64, error) {
 	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersion()
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	if usedSchemaVersion != 0 && usedSchemaVersion == latestSchemaVersion {
 		log.Debugf("[ddl] schema version is still %d, no need reload", usedSchemaVersion)
-		return nil
+		return latestSchemaVersion, nil
 	}
 	startTime := time.Now()
 	ok, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
@@ -70,22 +70,22 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	if ok {
 		log.Infof("[ddl] diff load InfoSchema from version %d to %d, in %v",
 			usedSchemaVersion, latestSchemaVersion, time.Since(startTime))
-		return nil
+		return latestSchemaVersion, nil
 	}
 
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
 	newISBuilder, err := infoschema.NewBuilder(handle).InitWithDBInfos(schemas, latestSchemaVersion)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	log.Infof("[ddl] full load InfoSchema from version %d to %d, in %v",
 		usedSchemaVersion, latestSchemaVersion, time.Since(startTime))
 	newISBuilder.Build()
-	return nil
+	return latestSchemaVersion, nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
@@ -196,7 +196,7 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 // GetSnapshotInfoSchema gets a snapshot information schema.
 func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
 	snapHandle := do.infoHandle.EmptyClone()
-	err := do.loadInfoSchema(snapHandle, do.infoHandle.Get().SchemaMetaVersion(), snapshotTS)
+	_, err := do.loadInfoSchema(snapHandle, do.infoHandle.Get().SchemaMetaVersion(), snapshotTS)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -282,6 +282,7 @@ func (do *Domain) Reload() error {
 	defer do.m.Unlock()
 
 	var err error
+	var latestSchemaVersion int64
 	for i := 0; i < loadRetryTimes; i++ {
 		startTime := time.Now()
 		var ver kv.Version
@@ -292,11 +293,12 @@ func (do *Domain) Reload() error {
 			if oldInfoSchema != nil {
 				schemaVersion = oldInfoSchema.SchemaMetaVersion()
 			}
-			err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
+			latestSchemaVersion, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
 		}
 		if err == nil {
 			atomic.StoreInt64(&do.lastLeaseTS, time.Now().UnixNano())
 			do.SchemaValidity.updateTimeInfo(startTime.UnixNano(), ver.Ver)
+			do.SchemaValidity.updateSchemaVersion(latestSchemaVersion)
 			sub := time.Since(startTime)
 			lease := do.DDL().GetLease()
 			if sub > lease && lease > 0 {
@@ -433,27 +435,35 @@ func (m *MockFailure) getValue() bool {
 }
 
 type schemaValidityInfo struct {
-	isValid          bool
-	firstValidTS     uint64 // It's used for recording the first txn TS of schema vaild.
-	mux              sync.RWMutex
-	lastReloadTime   int64       // It's used for recording the time of last reload schema.
-	lastSuccTS       uint64      // It's used for recording the last txn TS of loading schema succeed.
+	mux           sync.RWMutex
+	isValid       bool
+	firstValidTS  uint64 // It's used for recording the first txn TS of schema vaild.
+	lastSchemaVer int64  // It's used for recording the last schema version.
+	timeInfo      struct {
+		mux            sync.RWMutex
+		lastReloadTime int64  // It's used for recording the time of last reload schema.
+		lastSuccTS     uint64 // It's used for recording the last txn TS of loading schema succeed.
+	}
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
 
-func (s *schemaValidityInfo) updateTimeInfo(lastReloadTime int64, lastSuccTS uint64) {
-	s.mux.Lock()
-	defer s.mux.Unlock()
+func (s *schemaValidityInfo) updateSchemaVersion(version int64) {
+	atomic.StoreInt64(&s.lastSchemaVer, version)
+}
 
-	s.lastReloadTime = lastReloadTime
-	s.lastSuccTS = lastSuccTS
+func (s *schemaValidityInfo) updateTimeInfo(lastReloadTime int64, lastSuccTS uint64) {
+	s.timeInfo.mux.Lock()
+	defer s.timeInfo.mux.Unlock()
+
+	s.timeInfo.lastReloadTime = lastReloadTime
+	s.timeInfo.lastSuccTS = lastSuccTS
 }
 
 func (s *schemaValidityInfo) getTimeInfo() (int64, uint64) {
-	s.mux.RLock()
-	defer s.mux.RUnlock()
+	s.timeInfo.mux.Lock()
+	defer s.timeInfo.mux.Unlock()
 
-	return s.lastReloadTime, s.lastSuccTS
+	return s.timeInfo.lastReloadTime, s.timeInfo.lastSuccTS
 }
 
 // SetValidity sets the schema validity value.
@@ -471,14 +481,18 @@ func (s *schemaValidityInfo) SetValidity(v bool, lastSuccTS uint64) {
 	s.mux.Unlock()
 }
 
-func (s *schemaValidityInfo) Check(txnTS uint64) error {
+// Check checks schema validity. It returns the current schema version and an error.
+func (s *schemaValidityInfo) Check(txnTS uint64, schemaVer int64) (int64, error) {
+	currVer := atomic.LoadInt64(&s.lastSchemaVer)
 	s.mux.RLock()
-	if s.isValid && (txnTS == 0 || txnTS > s.firstValidTS) {
-		s.mux.RUnlock()
-		return nil
+	if s.isValid {
+		if txnTS == 0 || txnTS > s.firstValidTS || schemaVer == currVer {
+			s.mux.RUnlock()
+			return currVer, nil
+		}
 	}
 	s.mux.RUnlock()
-	return ErrLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
+	return currVer, ErrLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
 }
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.

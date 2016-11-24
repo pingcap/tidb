@@ -112,7 +112,8 @@ func (h *stmtHistory) clone() *stmtHistory {
 const unlimitedRetryCnt = -1
 
 type session struct {
-	txn         kv.Transaction // Current transaction
+	txn         kv.Transaction // current transaction
+	schemaVer   int64          // schema version
 	values      map[fmt.Stringer]interface{}
 	store       kv.Storage
 	history     stmtHistory
@@ -133,15 +134,32 @@ func (s *session) cleanRetryInfo() {
 	}
 }
 
+// TODO: Set them as system variables.
+var (
+	checkSchemaValidityRetryTimes = 10
+	checkSchemaValiditySleepTime  = 1 * time.Second
+)
+
 // If the schema is invalid, we need to rollback the current transaction.
 func (s *session) checkSchemaValidOrRollback() error {
 	var ts uint64
 	if s.txn != nil {
 		ts = s.txn.StartTS()
 	}
-	err := sessionctx.GetDomain(s).SchemaValidity.Check(ts)
-	if err == nil {
-		return nil
+
+	var err error
+	var currSchemaVer int64
+	for i := 0; i < checkSchemaValidityRetryTimes; i++ {
+		currSchemaVer, err = sessionctx.GetDomain(s).SchemaValidity.Check(ts, s.schemaVer)
+		if i == 0 && s.txn == nil {
+			s.schemaVer = currSchemaVer
+		}
+		if err == nil {
+			return nil
+		}
+		log.Infof("schema version original %d, current %d, sleep time %v",
+			s.schemaVer, currSchemaVer, checkSchemaValiditySleepTime)
+		time.Sleep(checkSchemaValiditySleepTime)
 	}
 
 	if err1 := s.RollbackTxn(); err1 != nil {
