@@ -300,7 +300,7 @@ func Unflatten(datum types.Datum, ft *types.FieldType, inIndex bool) (types.Datu
 		mysql.TypeString:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		var t mysql.Time
+		var t types.Time
 		t.Type = ft.Tp
 		t.Fsp = ft.Decimal
 		var err error
@@ -311,7 +311,7 @@ func Unflatten(datum types.Datum, ft *types.FieldType, inIndex bool) (types.Datu
 		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration:
-		dur := mysql.Duration{Duration: time.Duration(datum.GetInt64())}
+		dur := types.Duration{Duration: time.Duration(datum.GetInt64())}
 		datum.SetValue(dur)
 		return datum, nil
 	case mysql.TypeEnum:

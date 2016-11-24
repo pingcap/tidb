@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mysql
+package types
 
 import (
 	"bytes"
@@ -23,6 +23,7 @@ import (
 	"unicode"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
 )
 
 // Portable analogs of some common call errors.
@@ -66,21 +67,21 @@ var (
 	// ZeroDatetime is the zero value for datetime Time.
 	ZeroDatetime = Time{
 		Time: ZeroTime,
-		Type: TypeDatetime,
+		Type: mysql.TypeDatetime,
 		Fsp:  DefaultFsp,
 	}
 
 	// ZeroTimestamp is the zero value for timestamp Time.
 	ZeroTimestamp = Time{
 		Time: ZeroTime,
-		Type: TypeTimestamp,
+		Type: mysql.TypeTimestamp,
 		Fsp:  DefaultFsp,
 	}
 
 	// ZeroDate is the zero value for date Time.
 	ZeroDate = Time{
 		Time: ZeroTime,
-		Type: TypeDate,
+		Type: mysql.TypeDate,
 		Fsp:  DefaultFsp,
 	}
 
@@ -137,14 +138,14 @@ func CurrentTime(tp uint8) Time {
 
 func (t Time) String() string {
 	if t.IsZero() {
-		if t.Type == TypeDate {
+		if t.Type == mysql.TypeDate {
 			return zeroDateStr
 		}
 
 		return zeroDatetimeStr
 	}
 
-	if t.Type == TypeDate {
+	if t.Type == mysql.TypeDate {
 		return t.Time.Format(DateFormat)
 	}
 
@@ -177,7 +178,7 @@ func (t Time) ToNumber() *MyDecimal {
 	// Fix issue #1046
 	// Prevents from converting 2012-12-12 to 20121212000000
 	var tfStr string
-	if t.Type == TypeDate {
+	if t.Type == mysql.TypeDate {
 		tfStr = dateFormat
 	} else {
 		tfStr = numberFormat
@@ -201,18 +202,18 @@ func (t Time) Convert(tp uint8) (Time, error) {
 	}
 
 	switch tp {
-	case TypeDatetime:
-		return Time{Time: t.Time, Type: TypeDatetime, Fsp: t.Fsp}, nil
-	case TypeTimestamp:
-		nt := Time{Time: t.Time, Type: TypeTimestamp, Fsp: t.Fsp}
+	case mysql.TypeDatetime:
+		return Time{Time: t.Time, Type: mysql.TypeDatetime, Fsp: t.Fsp}, nil
+	case mysql.TypeTimestamp:
+		nt := Time{Time: t.Time, Type: mysql.TypeTimestamp, Fsp: t.Fsp}
 		if !checkTimestamp(nt) {
 			return ZeroTimestamp, errors.Trace(ErrInvalidTimeFormat)
 		}
 		return nt, nil
-	case TypeDate:
+	case mysql.TypeDate:
 		year, month, day := t.Time.Date()
 		return Time{Time: time.Date(year, month, day, 0, 0, 0, 0, time.Local),
-			Type: TypeDate, Fsp: 0}, nil
+			Type: mysql.TypeDate, Fsp: 0}, nil
 	default:
 		return Time{Time: ZeroTime, Type: tp}, errors.Errorf("invalid time type %d", tp)
 	}
@@ -265,7 +266,7 @@ func (t Time) CompareString(str string) (int, error) {
 // so 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:11
 // and 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
 func (t Time) RoundFrac(fsp int) (Time, error) {
-	if t.Type == TypeDate {
+	if t.Type == mysql.TypeDate {
 		// date type has no fsp
 		return t, nil
 	}
@@ -303,7 +304,7 @@ func (t Time) ToPackedUint() uint64 {
 	if t.IsZero() {
 		return 0
 	}
-	if t.Type == TypeTimestamp {
+	if t.Type == mysql.TypeTimestamp {
 		tm = t.UTC()
 	}
 	year, month, day := tm.Date()
@@ -338,7 +339,7 @@ func (t *Time) FromPackedUint(packed uint64) error {
 		return errors.Trace(err)
 	}
 	loc := local
-	if t.Type == TypeTimestamp {
+	if t.Type == mysql.TypeTimestamp {
 		loc = time.UTC
 	}
 	t.Time = time.Date(year, time.Month(month), day, hour, minute, second, nanosec, loc).In(local)
@@ -467,7 +468,7 @@ func parseDatetime(str string, fsp int) (Time, error) {
 
 	nt := Time{
 		Time: t,
-		Type: TypeDatetime,
+		Type: mysql.TypeDatetime,
 		Fsp:  fsp}
 
 	return nt, nil
@@ -614,7 +615,7 @@ func (d Duration) ConvertToTime(tp uint8) (Time, error) {
 
 	t := Time{
 		Time: n,
-		Type: TypeDatetime,
+		Type: mysql.TypeDatetime,
 		Fsp:  d.Fsp,
 	}
 
@@ -920,7 +921,7 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 	}
 
 	// Set TypeDatetime type.
-	t.Type = TypeDatetime
+	t.Type = mysql.TypeDatetime
 
 	// Adjust year
 	// YYMMDDHHMMSS, 2000-2069
@@ -971,18 +972,18 @@ func ParseTime(str string, tp byte, fsp int) (Time, error) {
 
 // ParseDatetime is a helper function wrapping ParseTime with datetime type and default fsp.
 func ParseDatetime(str string) (Time, error) {
-	return ParseTime(str, TypeDatetime, DefaultFsp)
+	return ParseTime(str, mysql.TypeDatetime, DefaultFsp)
 }
 
 // ParseTimestamp is a helper function wrapping ParseTime with timestamp type and default fsp.
 func ParseTimestamp(str string) (Time, error) {
-	return ParseTime(str, TypeTimestamp, DefaultFsp)
+	return ParseTime(str, mysql.TypeTimestamp, DefaultFsp)
 }
 
 // ParseDate is a helper function wrapping ParseTime with date type.
 func ParseDate(str string) (Time, error) {
 	// date has no fractional seconds precision
-	return ParseTime(str, TypeDate, MinFsp)
+	return ParseTime(str, mysql.TypeDate, MinFsp)
 }
 
 // ParseTimeFromNum parses a formatted int64,
@@ -1008,18 +1009,18 @@ func ParseTimeFromNum(num int64, tp byte, fsp int) (Time, error) {
 
 // ParseDatetimeFromNum is a helper function wrapping ParseTimeFromNum with datetime type and default fsp.
 func ParseDatetimeFromNum(num int64) (Time, error) {
-	return ParseTimeFromNum(num, TypeDatetime, DefaultFsp)
+	return ParseTimeFromNum(num, mysql.TypeDatetime, DefaultFsp)
 }
 
 // ParseTimestampFromNum is a helper function wrapping ParseTimeFromNum with timestamp type and default fsp.
 func ParseTimestampFromNum(num int64) (Time, error) {
-	return ParseTimeFromNum(num, TypeTimestamp, DefaultFsp)
+	return ParseTimeFromNum(num, mysql.TypeTimestamp, DefaultFsp)
 }
 
 // ParseDateFromNum is a helper function wrapping ParseTimeFromNum with date type.
 func ParseDateFromNum(num int64) (Time, error) {
 	// date has no fractional seconds precision
-	return ParseTimeFromNum(num, TypeDate, MinFsp)
+	return ParseTimeFromNum(num, mysql.TypeDate, MinFsp)
 }
 
 func checkDatetime(t Time) bool {
