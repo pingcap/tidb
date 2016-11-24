@@ -141,11 +141,11 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeBlob
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-	case mysql.Bit:
+	case Bit:
 		tp.Tp = mysql.TypeBit
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-	case mysql.Hex:
+	case Hex:
 		tp.Tp = mysql.TypeVarchar
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
@@ -161,11 +161,11 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeNewDecimal
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-	case mysql.Enum:
+	case Enum:
 		tp.Tp = mysql.TypeEnum
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-	case mysql.Set:
+	case Set:
 		tp.Tp = mysql.TypeSet
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin

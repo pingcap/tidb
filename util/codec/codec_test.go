@@ -65,12 +65,12 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		},
 
 		{
-			types.MakeDatums(mysql.Hex{Value: 100}, mysql.Bit{Value: 100, Width: 8}),
+			types.MakeDatums(types.Hex{Value: 100}, types.Bit{Value: 100, Width: 8}),
 			types.MakeDatums(int64(100), uint64(100)),
 		},
 
 		{
-			types.MakeDatums(mysql.Enum{Name: "a", Value: 1}, mysql.Set{Name: "a", Value: 1}),
+			types.MakeDatums(types.Enum{Name: "a", Value: 1}, types.Set{Name: "a", Value: 1}),
 			types.MakeDatums(uint64(1), uint64(1)),
 		},
 	}
@@ -737,12 +737,12 @@ func (s *testCodecSuite) TestCut(c *C) {
 		},
 
 		{
-			types.MakeDatums(mysql.Hex{Value: 100}, mysql.Bit{Value: 100, Width: 8}),
+			types.MakeDatums(types.Hex{Value: 100}, types.Bit{Value: 100, Width: 8}),
 			types.MakeDatums(int64(100), uint64(100)),
 		},
 
 		{
-			types.MakeDatums(mysql.Enum{Name: "a", Value: 1}, mysql.Set{Name: "a", Value: 1}),
+			types.MakeDatums(types.Enum{Name: "a", Value: 1}, types.Set{Name: "a", Value: 1}),
 			types.MakeDatums(uint64(1), uint64(1)),
 		},
 		{

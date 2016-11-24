@@ -165,11 +165,11 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 		},
 		{
 			types.NewFieldType(mysql.TypeBit),
-			types.NewDatum(mysql.Bit{Value: 0, Width: mysql.MinBitWidth}),
+			types.NewDatum(types.Bit{Value: 0, Width: types.MinBitWidth}),
 		},
 		{
 			types.NewFieldType(mysql.TypeSet),
-			types.NewDatum(mysql.Set{}),
+			types.NewDatum(types.Set{}),
 		},
 	}
 	for _, ca := range cases {

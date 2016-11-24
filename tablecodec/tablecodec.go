@@ -315,21 +315,21 @@ func Unflatten(datum types.Datum, ft *types.FieldType, inIndex bool) (types.Datu
 		datum.SetValue(dur)
 		return datum, nil
 	case mysql.TypeEnum:
-		enum, err := mysql.ParseEnumValue(ft.Elems, datum.GetUint64())
+		enum, err := types.ParseEnumValue(ft.Elems, datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
 		datum.SetValue(enum)
 		return datum, nil
 	case mysql.TypeSet:
-		set, err := mysql.ParseSetValue(ft.Elems, datum.GetUint64())
+		set, err := types.ParseSetValue(ft.Elems, datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
 		datum.SetValue(set)
 		return datum, nil
 	case mysql.TypeBit:
-		bit := mysql.Bit{Value: datum.GetUint64(), Width: ft.Flen}
+		bit := types.Bit{Value: datum.GetUint64(), Width: ft.Flen}
 		datum.SetValue(bit)
 		return datum, nil
 	}
