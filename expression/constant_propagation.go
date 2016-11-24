@@ -36,23 +36,43 @@ var inEqFuncNameMap = map[string]bool{
 	ast.NE: true,
 }
 
+type transitiveMatrix struct {
+	parent []int
+}
+
+func (m *transitiveMatrix) init(l int) {
+	m.parent = make([]int, l)
+	for i := range m.parent {
+		m.parent[i] = i
+	}
+}
+
+func (m *transitiveMatrix) addRelation(a int, b int) {
+	m.parent[m.findRoot(a)] = m.findRoot(b)
+}
+
+func (m *transitiveMatrix) findRoot(a int) int {
+	if a == m.parent[a] {
+		return a
+	}
+	m.parent[a] = m.findRoot(m.parent[a])
+	return m.parent[a]
+}
+
 type propagateConstantSolver struct {
-	colMapper        map[string]int // colMapper maps column to its index
-	transitiveMatrix [][]bool       // transitiveMatrix[i][j] = true means we can infer that col i = col j
-	eqList           []*Constant    // if eqList[i] != nil, it means col i = eqList[i]
-	columns          []*Column      // columns stores all columns appearing in the conditions
-	conditions       []Expression
-	foreverFalse     bool
+	colMapper  map[string]int    // colMapper maps column to its index
+	matrix     *transitiveMatrix // matrix[i][j] = true means we can infer that col i = col j
+	eqList     []*Constant       // if eqList[i] != nil, it means col i = eqList[i]
+	columns    []*Column         // columns stores all columns appearing in the conditions
+	conditions []Expression
 }
 
 // propagateInEQ propagates all in-equal conditions.
-// e.g. For expression a = b and b = c and c = d and c < 1 , we can get a < 1 and b < 1.
+// e.g. For expression a = b and b = c and c = d and c < 1 , we can get a < 1 and b < 1 and c < 1 and d < 1.
 // We maintain a matrix representing the equivalent for every two columns.
 func (s *propagateConstantSolver) propagateInEQ() {
-	s.transitiveMatrix = make([][]bool, len(s.columns))
-	for i := range s.transitiveMatrix {
-		s.transitiveMatrix[i] = make([]bool, len(s.columns))
-	}
+	s.matrix = &transitiveMatrix{}
+	s.matrix.init(len(s.columns))
 	for i := 0; i < len(s.conditions); i++ {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.Args[0].(*Column)
@@ -60,19 +80,7 @@ func (s *propagateConstantSolver) propagateInEQ() {
 			if lOk && rOk {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
-				s.transitiveMatrix[lID][rID] = true
-				s.transitiveMatrix[rID][lID] = true
-			}
-		}
-	}
-	colLen := len(s.colMapper)
-	// We implement a floyd-warshall algorithm, see https://en.wikipedia.org/wiki/Floyd%E2%80%93Warshall_algorithm.
-	for k := 0; k < colLen; k++ {
-		for i := 0; i < colLen; i++ {
-			for j := 0; j < colLen; j++ {
-				if !s.transitiveMatrix[i][j] {
-					s.transitiveMatrix[i][j] = s.transitiveMatrix[i][k] && s.transitiveMatrix[k][j]
-				}
+				s.matrix.addRelation(lID, rID)
 			}
 		}
 	}
@@ -82,17 +90,23 @@ func (s *propagateConstantSolver) propagateInEQ() {
 		col, con := s.validPropagateCond(cond, inEqFuncNameMap)
 		if col != nil {
 			id := s.getColID(col)
-			for to, connected := range s.transitiveMatrix[id] {
-				if to != id && connected {
-					newFunc, _ := NewFunction(cond.(*ScalarFunction).FuncName.L, cond.GetType(), s.columns[to], con)
-					s.conditions = append(s.conditions, newFunc)
+			for j := range s.columns {
+				if id != j && s.matrix.findRoot(id) == s.matrix.findRoot(j) {
+					funName := cond.(*ScalarFunction).FuncName.L
+					var newExpr Expression
+					if _, ok := cond.(*ScalarFunction).Args[0].(*Column); ok {
+						newExpr, _ = NewFunction(funName, cond.GetType(), s.columns[j], con)
+					} else {
+						newExpr, _ = NewFunction(funName, cond.GetType(), con, s.columns[j])
+					}
+					s.conditions = append(s.conditions, newExpr)
 				}
 			}
 		}
 	}
 }
 
-// propagatesEQ propagates equal expression multiple times. Like a = d and b * 2 = c and c = d + 2 and b = 1, the process is:
+// propagatesEQ propagates equal expression multiple times. An example runs as following:
 // a = d & b * 2 = c & c = d + 2 & b = 1 & a = 4, we pick eq cond b = 1 and a = 4
 // d = 4 & 2 = c & c = d + 2 & b = 1 & a = 4, we propagate b = 1 and a = 4 and pick eq cond c = 2 and d = 4
 // d = 4 & 2 = c & false & b = 1 & a = 4, we propagate c = 2 and d = 4, and do constant folding: c = d + 2 will be folded as false.
@@ -101,7 +115,7 @@ func (s *propagateConstantSolver) propagateEQ() {
 	visited := make([]bool, len(s.conditions))
 	for i := 0; i < MaxPropagateColsCnt; i++ {
 		mapper := s.pickNewEQConds(visited)
-		if s.foreverFalse || len(mapper) == 0 {
+		if mapper == nil || len(mapper) == 0 {
 			return
 		}
 		cols := make(Schema, 0, len(mapper))
@@ -118,7 +132,7 @@ func (s *propagateConstantSolver) propagateEQ() {
 	}
 }
 
-// In this function we check if the cond is an expression like [column op constant] and op is in the funNameMap.
+// validPropagateCond checks if the cond is an expression like [column op constant] and op is in the funNameMap.
 func (s *propagateConstantSolver) validPropagateCond(cond Expression, funNameMap map[string]bool) (*Column, *Constant) {
 	if eq, ok := cond.(*ScalarFunction); ok {
 		if _, ok := funNameMap[eq.FuncName.L]; !ok {
@@ -138,51 +152,57 @@ func (s *propagateConstantSolver) validPropagateCond(cond Expression, funNameMap
 	return nil, nil
 }
 
+func (s *propagateConstantSolver) setConds2ConstFalse() {
+	s.conditions = []Expression{&Constant{
+		Value:   types.NewDatum(false),
+		RetType: types.NewFieldType(mysql.TypeTiny),
+	}}
+}
+
 // pickNewEQConds tries to pick new equal conds and puts them to retMapper.
 func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Constant) {
 	retMapper = make(map[int]*Constant)
 	for i, cond := range s.conditions {
-		if !visited[i] {
-			col, con := s.validPropagateCond(cond, eqFuncNameMap)
-			if col != nil {
-				visited[i] = true
-				if s.tryToUpdateEQList(col, con) {
-					retMapper[s.getColID(col)] = con
-				} else if s.foreverFalse {
-					return
+		if visited[i] {
+			continue
+		}
+		col, con := s.validPropagateCond(cond, eqFuncNameMap)
+		if col == nil {
+			if con, ok := cond.(*Constant); ok {
+				value, _ := EvalBool(con, nil, nil)
+				if !value {
+					s.setConds2ConstFalse()
+					return nil
 				}
 			}
+			continue
+		}
+		visited[i] = true
+		updated, foreverFalse := s.tryToUpdateEQList(col, con)
+		if foreverFalse {
+			s.setConds2ConstFalse()
+			return nil
+		}
+		if updated {
+			retMapper[s.getColID(col)] = con
 		}
 	}
 	return
 }
 
 // tryToUpdateEQList tries to update the eqList. When the eqList has store this column with a different constant, like
-// a = 1 and a = 2, we set conditions to false.
-func (s *propagateConstantSolver) tryToUpdateEQList(col *Column, con *Constant) bool {
+// a = 1 and a = 2, we set the second return value to false.
+func (s *propagateConstantSolver) tryToUpdateEQList(col *Column, con *Constant) (bool, bool) {
 	if con.Value.IsNull() {
-		s.foreverFalse = true
-		s.conditions = []Expression{&Constant{
-			Value:   types.NewDatum(false),
-			RetType: types.NewFieldType(mysql.TypeTiny),
-		}}
-		return false
+		return false, true
 	}
 	id := s.getColID(col)
 	oldCon := s.eqList[id]
 	if oldCon != nil {
-		log.Warnf("old %s new %s", oldCon, con)
-		if !oldCon.Equal(con) {
-			s.foreverFalse = true
-			s.conditions = []Expression{&Constant{
-				Value:   types.NewDatum(false),
-				RetType: types.NewFieldType(mysql.TypeTiny),
-			}}
-		}
-		return false
+		return false, !oldCon.Equal(con)
 	}
 	s.eqList[id] = con
-	return true
+	return true, false
 }
 
 func (s *propagateConstantSolver) solve(conditions []Expression) []Expression {
