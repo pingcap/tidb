@@ -1196,9 +1196,8 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 	indexName := colName
 	for i := 0; i < l; i++ {
 		if t.Indices()[i].Meta().Name.L == indexName.L {
-			indexName.L = fmt.Sprintf("%s_%d", colName.L, id)
-			indexName.O = fmt.Sprintf("%s_%d", colName.O, id)
-			i = 0
+			indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
+			i = -1
 			id++
 		}
 	}
