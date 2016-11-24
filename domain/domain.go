@@ -336,11 +336,13 @@ func (do *Domain) checkValidityInLoop(lease time.Duration) {
 				// We need to reduce wait time to check the validity more frequently.
 				if sub >= lease {
 					waitTime = minInterval(lease)
+					log.Warnf("[ddl] check validity in a loop, sub:%v, lease:%v, succ:%v, waitTime:%v",
+						sub, lease, lastSuccTS, waitTime)
 				} else {
 					waitTime -= sub
 				}
 			}
-			log.Infof("[ddl] check validity in a loop, sub:%v, lease:%v, succ:%v, waitTime:%v",
+			log.Debugf("[ddl] check validity in a loop, sub:%v, lease:%v, succ:%v, waitTime:%v",
 				sub, lease, lastSuccTS, waitTime)
 			timer.Reset(waitTime)
 		case newLease := <-do.checkCh:
@@ -458,11 +460,14 @@ func (s *schemaValidityInfo) getTimeInfo() (int64, uint64) {
 // It's public in order to do the test.
 func (s *schemaValidityInfo) SetValidity(v bool, lastSuccTS uint64) {
 	s.mux.Lock()
-	log.Infof("[ddl] SetValidity, original:%v current:%v lastSuccTS:%v", s.isValid, v, lastSuccTS)
-	if !v && s.isValid != v {
-		s.firstValidTS = lastSuccTS
+	if s.isValid != v {
+		log.Infof("[ddl] SetValidity, original:%v current:%v lastSuccTS:%v", s.isValid, v, lastSuccTS)
+		if !v {
+			log.Errorf("[ddl] SetValidity, schema validity is %v, lastSuccTS:%v", v, lastSuccTS)
+			s.firstValidTS = lastSuccTS
+		}
+		s.isValid = v
 	}
-	s.isValid = v
 	s.mux.Unlock()
 }
 
