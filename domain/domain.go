@@ -500,7 +500,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 		d.loadCh = make(chan time.Duration, 1)
 		go d.checkValidityInLoop(lease)
 	}
-	// Some tests need to reload schema when lease is 0.
+	// Local store needs to get the change information for every DDL state in each session.
 	go d.loadSchemaInLoop(lease)
 
 	return d, nil
