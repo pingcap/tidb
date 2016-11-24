@@ -468,14 +468,14 @@ func (s *testCodecSuite) TestBytes(c *C) {
 	}
 }
 
-func parseTime(c *C, s string) mysql.Time {
-	m, err := mysql.ParseTime(s, mysql.TypeDatetime, mysql.DefaultFsp)
+func parseTime(c *C, s string) types.Time {
+	m, err := types.ParseTime(s, mysql.TypeDatetime, types.DefaultFsp)
 	c.Assert(err, IsNil)
 	return m
 }
 
-func parseDuration(c *C, s string) mysql.Duration {
-	m, err := mysql.ParseDuration(s, mysql.DefaultFsp)
+func parseDuration(c *C, s string) types.Duration {
+	m, err := types.ParseDuration(s, types.DefaultFsp)
 	c.Assert(err, IsNil)
 	return m
 }
@@ -495,7 +495,7 @@ func (s *testCodecSuite) TestTime(c *C) {
 		c.Assert(err, IsNil)
 		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
-		var t mysql.Time
+		var t types.Time
 		t.Type = mysql.TypeDatetime
 		t.FromPackedUint(v[0].GetUint64())
 		c.Assert(types.NewDatum(t), DeepEquals, m)
@@ -540,7 +540,7 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		c.Assert(err, IsNil)
 		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
-		m.Fsp = mysql.MaxFsp
+		m.Fsp = types.MaxFsp
 		c.Assert(v, DeepEquals, types.MakeDatums(m))
 	}
 
@@ -588,7 +588,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 	}
 
 	for _, t := range tbl {
-		dec := new(mysql.MyDecimal)
+		dec := new(types.MyDecimal)
 		err := dec.FromString([]byte(t))
 		c.Assert(err, IsNil)
 		b, err := EncodeKey(nil, types.NewDatum(dec))
@@ -693,7 +693,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		-0.0099, 0, 0.001, 0.0012, 0.12, 1.2, 1.23, 123.3, 2424.242424}
 	var decs [][]byte
 	for i := range floats {
-		dec := mysql.NewDecFromFloatForTest(floats[i])
+		dec := types.NewDecFromFloatForTest(floats[i])
 		var d types.Datum
 		d.SetLength(20)
 		d.SetFrac(6)
@@ -750,8 +750,8 @@ func (s *testCodecSuite) TestCut(c *C) {
 			types.MakeDatums(float64(1), float64(3.15), []byte("123456789012345")),
 		},
 		{
-			types.MakeDatums(mysql.NewDecFromInt(0), mysql.NewDecFromFloatForTest(-1.3)),
-			types.MakeDatums(mysql.NewDecFromInt(0), mysql.NewDecFromFloatForTest(-1.3)),
+			types.MakeDatums(types.NewDecFromInt(0), types.NewDecFromFloatForTest(-1.3)),
+			types.MakeDatums(types.NewDecFromInt(0), types.NewDecFromFloatForTest(-1.3)),
 		},
 	}
 	for i, t := range table {
