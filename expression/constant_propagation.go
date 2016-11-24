@@ -61,7 +61,7 @@ func (m *multiEqualSet) findRoot(a int) int {
 
 type propagateConstantSolver struct {
 	colMapper  map[string]int // colMapper maps column to its index
-	matrix     *multiEqualSet // matrix[i][j] = true means we can infer that col_i = col_j
+	unionSet   *multiEqualSet // unionSet stores the relations like col_i = col_j
 	eqList     []*Constant    // if eqList[i] != nil, it means col_i = eqList[i]
 	columns    []*Column      // columns stores all columns appearing in the conditions
 	conditions []Expression
@@ -69,10 +69,10 @@ type propagateConstantSolver struct {
 
 // propagateInEQ propagates all in-equal conditions.
 // e.g. For expression a = b and b = c and c = d and c < 1 , we can get extra a < 1 and b < 1 and d < 1.
-// We maintain a matrix representing the equivalent for every two columns.
+// We maintain a unionSet representing the equivalent for every two columns.
 func (s *propagateConstantSolver) propagateInEQ() {
-	s.matrix = &multiEqualSet{}
-	s.matrix.init(len(s.columns))
+	s.unionSet = &multiEqualSet{}
+	s.unionSet.init(len(s.columns))
 	for i := range s.conditions {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.Args[0].(*Column)
@@ -80,7 +80,7 @@ func (s *propagateConstantSolver) propagateInEQ() {
 			if lOk && rOk {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
-				s.matrix.addRelation(lID, rID)
+				s.unionSet.addRelation(lID, rID)
 			}
 		}
 	}
@@ -93,7 +93,7 @@ func (s *propagateConstantSolver) propagateInEQ() {
 		}
 		id := s.getColID(col)
 		for j := range s.columns {
-			if id != j && s.matrix.findRoot(id) == s.matrix.findRoot(j) {
+			if id != j && s.unionSet.findRoot(id) == s.unionSet.findRoot(j) {
 				funName := cond.(*ScalarFunction).FuncName.L
 				var newExpr Expression
 				if _, ok := cond.(*ScalarFunction).Args[0].(*Column); ok {
