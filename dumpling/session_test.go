@@ -1317,7 +1317,7 @@ func (s *testSessionSuite) TestBit(c *C) {
 	r := mustExecSQL(c, se, "select * from t where c1 = 2")
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlBit(), Equals, mysql.Bit{Value: 2, Width: 2})
+	c.Assert(row.Data[0].GetMysqlBit(), Equals, types.Bit{Value: 2, Width: 2})
 
 	err = store.Close()
 	c.Assert(err, IsNil)

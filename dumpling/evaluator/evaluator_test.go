@@ -283,10 +283,10 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{uint64(1), opcode.Plus, uint64(1), 2},
 		{uint64(1), opcode.Plus, -1, 0},
 		{1, opcode.Plus, []byte("1"), 2},
-		{1, opcode.Plus, mysql.Hex{Value: 1}, 2},
-		{1, opcode.Plus, mysql.Bit{Value: 1, Width: 1}, 2},
-		{1, opcode.Plus, mysql.Enum{Name: "a", Value: 1}, 2},
-		{1, opcode.Plus, mysql.Set{Name: "a", Value: 1}, 2},
+		{1, opcode.Plus, types.Hex{Value: 1}, 2},
+		{1, opcode.Plus, types.Bit{Value: 1, Width: 1}, 2},
+		{1, opcode.Plus, types.Enum{Name: "a", Value: 1}, 2},
+		{1, opcode.Plus, types.Set{Name: "a", Value: 1}, 2},
 
 		// minus
 		{1, opcode.Minus, 1, 0},
@@ -819,10 +819,10 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{1, opcode.Not, int64(0)},
 		{0, opcode.Not, int64(1)},
 		{nil, opcode.Not, nil},
-		{mysql.Hex{Value: 0}, opcode.Not, int64(1)},
-		{mysql.Bit{Value: 0, Width: 1}, opcode.Not, int64(1)},
-		{mysql.Enum{Name: "a", Value: 1}, opcode.Not, int64(0)},
-		{mysql.Set{Name: "a", Value: 1}, opcode.Not, int64(0)},
+		{types.Hex{Value: 0}, opcode.Not, int64(1)},
+		{types.Bit{Value: 0, Width: 1}, opcode.Not, int64(1)},
+		{types.Enum{Name: "a", Value: 1}, opcode.Not, int64(0)},
+		{types.Set{Name: "a", Value: 1}, opcode.Not, int64(0)},
 
 		// test BitNeg.
 		{nil, opcode.BitNeg, nil},
@@ -836,12 +836,12 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{uint64(1), opcode.Plus, uint64(1)},
 		{"1.0", opcode.Plus, "1.0"},
 		{[]byte("1.0"), opcode.Plus, []byte("1.0")},
-		{mysql.Hex{Value: 1}, opcode.Plus, mysql.Hex{Value: 1}},
-		{mysql.Bit{Value: 1, Width: 1}, opcode.Plus, mysql.Bit{Value: 1, Width: 1}},
+		{types.Hex{Value: 1}, opcode.Plus, types.Hex{Value: 1}},
+		{types.Bit{Value: 1, Width: 1}, opcode.Plus, types.Bit{Value: 1, Width: 1}},
 		{true, opcode.Plus, int64(1)},
 		{false, opcode.Plus, int64(0)},
-		{mysql.Enum{Name: "a", Value: 1}, opcode.Plus, mysql.Enum{Name: "a", Value: 1}},
-		{mysql.Set{Name: "a", Value: 1}, opcode.Plus, mysql.Set{Name: "a", Value: 1}},
+		{types.Enum{Name: "a", Value: 1}, opcode.Plus, types.Enum{Name: "a", Value: 1}},
+		{types.Set{Name: "a", Value: 1}, opcode.Plus, types.Set{Name: "a", Value: 1}},
 
 		// test Minus.
 		{nil, opcode.Minus, nil},
@@ -851,12 +851,12 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{uint64(1), opcode.Minus, -int64(1)},
 		{"1.0", opcode.Minus, -1.0},
 		{[]byte("1.0"), opcode.Minus, -1.0},
-		{mysql.Hex{Value: 1}, opcode.Minus, -1.0},
-		{mysql.Bit{Value: 1, Width: 1}, opcode.Minus, -1.0},
+		{types.Hex{Value: 1}, opcode.Minus, -1.0},
+		{types.Bit{Value: 1, Width: 1}, opcode.Minus, -1.0},
 		{true, opcode.Minus, int64(-1)},
 		{false, opcode.Minus, int64(0)},
-		{mysql.Enum{Name: "a", Value: 1}, opcode.Minus, -1.0},
-		{mysql.Set{Name: "a", Value: 1}, opcode.Minus, -1.0},
+		{types.Enum{Name: "a", Value: 1}, opcode.Minus, -1.0},
+		{types.Set{Name: "a", Value: 1}, opcode.Minus, -1.0},
 	}
 	ctx := mock.NewContext()
 	for i, t := range tbl {
