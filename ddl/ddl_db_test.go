@@ -71,8 +71,8 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	_, err = s.s.Execute("create table t2 (c1 int, c2 int, c3 int)")
 	c.Assert(err, IsNil)
 
-	// set proper schema lease
-	s.lease = 50 * time.Millisecond
+	// Set proper schema lease.
+	s.lease = 100 * time.Millisecond
 	ctx := s.s.(context.Context)
 	sessionctx.GetDomain(ctx).SetLease(s.lease)
 }

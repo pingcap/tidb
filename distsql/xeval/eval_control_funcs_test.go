@@ -141,6 +141,47 @@ func (s *testEvalSuite) TestEvalIf(c *C) {
 	}
 }
 
+func (s *testEvalSuite) TestEvalNullIf(c *C) {
+	colID := int64(1)
+	row := make(map[int64]types.Datum)
+	row[colID] = types.NewIntDatum(100)
+	xevaluator := &Evaluator{Row: row}
+	null := types.Datum{}
+	cases := []struct {
+		expr   *tipb.Expr
+		result types.Datum
+	}{
+		{
+			expr: buildExpr(tipb.ExprType_NullIf,
+				types.NewStringDatum("abc"), types.NewStringDatum("abc")),
+			result: null,
+		},
+		{
+			expr: buildExpr(tipb.ExprType_NullIf,
+				null, null),
+			result: null,
+		},
+		{
+			expr: buildExpr(tipb.ExprType_NullIf,
+				types.NewIntDatum(123), types.NewIntDatum(111)),
+			result: types.NewIntDatum(123),
+		},
+		{
+			expr: buildExpr(tipb.ExprType_NullIf,
+				types.NewIntDatum(123), null),
+			result: types.NewIntDatum(123),
+		},
+	}
+	for _, ca := range cases {
+		result, err := xevaluator.Eval(ca.expr)
+		c.Assert(err, IsNil)
+		c.Assert(result.Kind(), Equals, ca.result.Kind())
+		cmp, err := result.CompareDatum(ca.result)
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
+	}
+}
+
 func (s *testEvalSuite) TestEvalIfNull(c *C) {
 	colID := int64(1)
 	row := make(map[int64]types.Datum)

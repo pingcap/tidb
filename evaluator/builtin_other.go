@@ -467,20 +467,20 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 			case types.KindFloat32:
 				d.SetFloat32(-aDatum.GetFloat32())
 			case types.KindMysqlDuration:
-				dec := new(mysql.MyDecimal)
-				err = mysql.DecimalSub(new(mysql.MyDecimal), aDatum.GetMysqlDuration().ToNumber(), dec)
+				dec := new(types.MyDecimal)
+				err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlDuration().ToNumber(), dec)
 				d.SetMysqlDecimal(dec)
 			case types.KindMysqlTime:
-				dec := new(mysql.MyDecimal)
-				err = mysql.DecimalSub(new(mysql.MyDecimal), aDatum.GetMysqlTime().ToNumber(), dec)
+				dec := new(types.MyDecimal)
+				err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlTime().ToNumber(), dec)
 				d.SetMysqlDecimal(dec)
 			case types.KindString, types.KindBytes:
 				f, err1 := types.StrToFloat(aDatum.GetString())
 				err = errors.Trace(err1)
 				d.SetFloat64(-f)
 			case types.KindMysqlDecimal:
-				dec := new(mysql.MyDecimal)
-				err = mysql.DecimalSub(new(mysql.MyDecimal), aDatum.GetMysqlDecimal(), dec)
+				dec := new(types.MyDecimal)
+				err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlDecimal(), dec)
 				d.SetMysqlDecimal(dec)
 			case types.KindMysqlHex:
 				d.SetFloat64(-aDatum.GetMysqlHex().ToNumber())

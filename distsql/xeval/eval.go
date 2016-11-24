@@ -71,7 +71,7 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		tipb.ExprType_BitXor, tipb.ExprType_LeftShift, tipb.ExprType_RighShift:
 		return e.evalBitOps(expr)
 	// control functions
-	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull:
+	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull, tipb.ExprType_NullIf:
 		return e.evalControlFuncs(expr)
 	case tipb.ExprType_Coalesce:
 		return e.evalCoalesce(expr)

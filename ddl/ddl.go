@@ -584,8 +584,8 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 			return nil, nil
 		}
 
-		// If value is mysql.Time, convert it to string.
-		if vv, ok := value.(mysql.Time); ok {
+		// If value is types.Time, convert it to string.
+		if vv, ok := value.(types.Time); ok {
 			return vv.String(), nil
 		}
 

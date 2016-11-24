@@ -560,10 +560,10 @@ func (af *avgFunction) calculateResult(ctx *ast.AggEvaluateContext) (d types.Dat
 		d.SetValue(t)
 	case types.KindMysqlDecimal:
 		x := ctx.Value.GetMysqlDecimal()
-		y := mysql.NewDecFromInt(ctx.Count)
-		to := new(mysql.MyDecimal)
-		mysql.DecimalDiv(x, y, to, mysql.DivFracIncr)
-		to.Round(to, ctx.Value.Frac()+mysql.DivFracIncr)
+		y := types.NewDecFromInt(ctx.Count)
+		to := new(types.MyDecimal)
+		types.DecimalDiv(x, y, to, types.DivFracIncr)
+		to.Round(to, ctx.Value.Frac()+types.DivFracIncr)
 		d.SetMysqlDecimal(to)
 	}
 	return

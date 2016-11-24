@@ -58,16 +58,16 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	testDatumToBool(c, "0.1", 0)
 	testDatumToBool(c, []byte{}, 0)
 	testDatumToBool(c, []byte("0.1"), 0)
-	testDatumToBool(c, mysql.Hex{Value: 0}, 0)
-	testDatumToBool(c, mysql.Bit{Value: 0, Width: 8}, 0)
-	testDatumToBool(c, mysql.Enum{Name: "a", Value: 1}, 1)
-	testDatumToBool(c, mysql.Set{Name: "a", Value: 1}, 1)
+	testDatumToBool(c, Hex{Value: 0}, 0)
+	testDatumToBool(c, Bit{Value: 0, Width: 8}, 0)
+	testDatumToBool(c, Enum{Name: "a", Value: 1}, 1)
+	testDatumToBool(c, Set{Name: "a", Value: 1}, 1)
 
-	t, err := mysql.ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
+	t, err := ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
 	testDatumToBool(c, t, 1)
 
-	td, err := mysql.ParseDuration("11:11:11.999999", 6)
+	td, err := ParseDuration("11:11:11.999999", 6)
 	c.Assert(err, IsNil)
 	testDatumToBool(c, td, 1)
 
@@ -129,16 +129,16 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	testDatumToInt64(c, uint64(0), int64(0))
 	testDatumToInt64(c, float32(3.1), int64(3))
 	testDatumToInt64(c, float64(3.1), int64(3))
-	testDatumToInt64(c, mysql.Hex{Value: 100}, int64(100))
-	testDatumToInt64(c, mysql.Bit{Value: 100, Width: 8}, int64(100))
-	testDatumToInt64(c, mysql.Enum{Name: "a", Value: 1}, int64(1))
-	testDatumToInt64(c, mysql.Set{Name: "a", Value: 1}, int64(1))
+	testDatumToInt64(c, Hex{Value: 100}, int64(100))
+	testDatumToInt64(c, Bit{Value: 100, Width: 8}, int64(100))
+	testDatumToInt64(c, Enum{Name: "a", Value: 1}, int64(1))
+	testDatumToInt64(c, Set{Name: "a", Value: 1}, int64(1))
 
-	t, err := mysql.ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
+	t, err := ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, t, int64(20111110111112))
 
-	td, err := mysql.ParseDuration("11:11:11.999999", 6)
+	td, err := ParseDuration("11:11:11.999999", 6)
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, td, int64(111112))
 
@@ -202,8 +202,8 @@ func (ts *testDatumSuite) TestCoerceDatum(c *C) {
 		kind byte
 	}{
 		{NewIntDatum(1), NewIntDatum(1), KindInt64},
-		{NewUintDatum(1), NewDecimalDatum(mysql.NewDecFromInt(1)), KindMysqlDecimal},
-		{NewFloat64Datum(1), NewDecimalDatum(mysql.NewDecFromInt(1)), KindFloat64},
+		{NewUintDatum(1), NewDecimalDatum(NewDecFromInt(1)), KindMysqlDecimal},
+		{NewFloat64Datum(1), NewDecimalDatum(NewDecFromInt(1)), KindFloat64},
 		{NewFloat64Datum(1), NewFloat64Datum(1), KindFloat64},
 	}
 	for _, ca := range testCases {
