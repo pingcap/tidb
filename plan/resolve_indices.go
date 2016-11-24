@@ -78,8 +78,9 @@ func (p *Sort) ResolveIndicesAndCorCols() {
 // ResolveIndicesAndCorCols implements LogicalPlan interface.
 func (p *Apply) ResolveIndicesAndCorCols() {
 	p.baseLogicalPlan.ResolveIndicesAndCorCols()
-	p.InnerPlan.ResolveIndicesAndCorCols()
-	corCols := p.InnerPlan.extractCorrelatedCols()
+	innerPlan := p.children[1].(LogicalPlan)
+	innerPlan.ResolveIndicesAndCorCols()
+	corCols := innerPlan.extractCorrelatedCols()
 	childSchema := p.children[0].GetSchema()
 	resultCorCols := make([]*expression.CorrelatedColumn, len(childSchema))
 	for _, corCol := range corCols {
@@ -105,7 +106,7 @@ func (p *Apply) ResolveIndicesAndCorCols() {
 	p.corCols = resultCorCols[:length]
 
 	if p.Checker != nil {
-		p.Checker.Condition.ResolveIndices(append(childSchema, p.InnerPlan.GetSchema()...))
+		p.Checker.Condition.ResolveIndices(append(childSchema, innerPlan.GetSchema()...))
 	}
 }
 
