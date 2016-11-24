@@ -59,6 +59,8 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = true
+	// It makes domain doesn't check schema validity.
+	tidb.SetSchemaLease(0)
 	s.s, err = tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
 
@@ -71,8 +73,8 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	_, err = s.s.Execute("create table t2 (c1 int, c2 int, c3 int)")
 	c.Assert(err, IsNil)
 
-	// set proper schema lease
-	s.lease = 50 * time.Millisecond
+	// Set proper schema lease, it's used for DDL.
+	s.lease = 10 * time.Millisecond
 	ctx := s.s.(context.Context)
 	sessionctx.GetDomain(ctx).SetLease(s.lease)
 }
