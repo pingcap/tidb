@@ -698,6 +698,8 @@ func strToDate(t *time.Time, date string, format string) bool {
 	return strToDate(t, dateRemain, formatRemain)
 }
 
+// getFormatToken takes one format control token from the string.
+// format "%d %H %m" will get token "%d" and the remain is " %H %m".
 func getFormatToken(format string) (token string, remain string, succ bool) {
 	if len(format) == 0 {
 		return "", "", true
