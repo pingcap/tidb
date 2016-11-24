@@ -36,22 +36,22 @@ var inEqFuncNameMap = map[string]bool{
 	ast.NE: true,
 }
 
-type transitiveMatrix struct {
+type multiEqualSet struct {
 	parent []int
 }
 
-func (m *transitiveMatrix) init(l int) {
+func (m *multiEqualSet) init(l int) {
 	m.parent = make([]int, l)
 	for i := range m.parent {
 		m.parent[i] = i
 	}
 }
 
-func (m *transitiveMatrix) addRelation(a int, b int) {
+func (m *multiEqualSet) addRelation(a int, b int) {
 	m.parent[m.findRoot(a)] = m.findRoot(b)
 }
 
-func (m *transitiveMatrix) findRoot(a int) int {
+func (m *multiEqualSet) findRoot(a int) int {
 	if a == m.parent[a] {
 		return a
 	}
@@ -60,20 +60,20 @@ func (m *transitiveMatrix) findRoot(a int) int {
 }
 
 type propagateConstantSolver struct {
-	colMapper  map[string]int    // colMapper maps column to its index
-	matrix     *transitiveMatrix // matrix[i][j] = true means we can infer that col i = col j
-	eqList     []*Constant       // if eqList[i] != nil, it means col i = eqList[i]
-	columns    []*Column         // columns stores all columns appearing in the conditions
+	colMapper  map[string]int // colMapper maps column to its index
+	matrix     *multiEqualSet // matrix[i][j] = true means we can infer that col_i = col_j
+	eqList     []*Constant    // if eqList[i] != nil, it means col_i = eqList[i]
+	columns    []*Column      // columns stores all columns appearing in the conditions
 	conditions []Expression
 }
 
 // propagateInEQ propagates all in-equal conditions.
-// e.g. For expression a = b and b = c and c = d and c < 1 , we can get a < 1 and b < 1 and c < 1 and d < 1.
+// e.g. For expression a = b and b = c and c = d and c < 1 , we can get extra a < 1 and b < 1 and d < 1.
 // We maintain a matrix representing the equivalent for every two columns.
 func (s *propagateConstantSolver) propagateInEQ() {
-	s.matrix = &transitiveMatrix{}
+	s.matrix = &multiEqualSet{}
 	s.matrix.init(len(s.columns))
-	for i := 0; i < len(s.conditions); i++ {
+	for i := range s.conditions {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.Args[0].(*Column)
 			rCol, rOk := fun.Args[1].(*Column)
@@ -89,18 +89,19 @@ func (s *propagateConstantSolver) propagateInEQ() {
 		cond := s.conditions[i]
 		col, con := s.validPropagateCond(cond, inEqFuncNameMap)
 		if col != nil {
-			id := s.getColID(col)
-			for j := range s.columns {
-				if id != j && s.matrix.findRoot(id) == s.matrix.findRoot(j) {
-					funName := cond.(*ScalarFunction).FuncName.L
-					var newExpr Expression
-					if _, ok := cond.(*ScalarFunction).Args[0].(*Column); ok {
-						newExpr, _ = NewFunction(funName, cond.GetType(), s.columns[j], con)
-					} else {
-						newExpr, _ = NewFunction(funName, cond.GetType(), con, s.columns[j])
-					}
-					s.conditions = append(s.conditions, newExpr)
+			continue
+		}
+		id := s.getColID(col)
+		for j := range s.columns {
+			if id != j && s.matrix.findRoot(id) == s.matrix.findRoot(j) {
+				funName := cond.(*ScalarFunction).FuncName.L
+				var newExpr Expression
+				if _, ok := cond.(*ScalarFunction).Args[0].(*Column); ok {
+					newExpr, _ = NewFunction(funName, cond.GetType(), s.columns[j], con)
+				} else {
+					newExpr, _ = NewFunction(funName, cond.GetType(), con, s.columns[j])
 				}
+				s.conditions = append(s.conditions, newExpr)
 			}
 		}
 	}
@@ -167,6 +168,7 @@ func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[
 			continue
 		}
 		col, con := s.validPropagateCond(cond, eqFuncNameMap)
+		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		if col == nil {
 			if con, ok := cond.(*Constant); ok {
 				value, _ := EvalBool(con, nil, nil)
