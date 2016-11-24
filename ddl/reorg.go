@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -31,10 +33,11 @@ var _ context.Context = &mockContext{}
 
 // mockContext implements context.Context interface for testing.
 type mockContext struct {
-	store kv.Storage
-	mux   sync.Mutex
-	m     map[fmt.Stringer]interface{}
-	txn   kv.Transaction
+	store       kv.Storage
+	mux         sync.Mutex
+	m           map[fmt.Stringer]interface{}
+	txn         kv.Transaction
+	sessionVars *variable.SessionVars
 }
 
 func (c *mockContext) GetTxn(forceNew bool) (kv.Transaction, error) {
@@ -102,12 +105,17 @@ func (c *mockContext) ClearValue(key fmt.Stringer) {
 	delete(c.m, key)
 }
 
+func (c *mockContext) GetSessionVars() *variable.SessionVars {
+	return c.sessionVars
+}
+
 func (d *ddl) newMockContext() context.Context {
 	c := &mockContext{
-		store: d.store,
-		m:     make(map[fmt.Stringer]interface{}),
+		store:       d.store,
+		m:           make(map[fmt.Stringer]interface{}),
+		sessionVars: variable.NewSessionVars(),
 	}
-
+	c.sessionVars.SetStatusFlag(mysql.ServerStatusAutocommit, false)
 	return c
 }
 

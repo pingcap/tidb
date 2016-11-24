@@ -79,23 +79,6 @@ func randKV(keyLen, valLen int) (string, string) {
 	return string(k), string(v)
 }
 
-func (s *testCommitterSuite) TestCommitMultipleRegions(c *C) {
-	m := make(map[string]string)
-	for i := 0; i < 100; i++ {
-		k, v := randKV(10, 10)
-		m[k] = v
-	}
-	s.mustCommit(c, m)
-
-	// Test big values.
-	m = make(map[string]string)
-	for i := 0; i < 50; i++ {
-		k, v := randKV(11, txnCommitBatchSize/7)
-		m[k] = v
-	}
-	s.mustCommit(c, m)
-}
-
 func (s *testCommitterSuite) TestCommitRollback(c *C) {
 	s.mustCommit(c, map[string]string{
 		"a": "a",

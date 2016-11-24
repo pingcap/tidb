@@ -137,7 +137,7 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 		},
 		{
 			types.NewFieldType(mysql.TypeNewDecimal),
-			types.NewDecimalDatum(mysql.NewDecFromInt(0)),
+			types.NewDecimalDatum(types.NewDecFromInt(0)),
 		},
 		{
 			types.NewFieldType(mysql.TypeVarchar),
@@ -149,27 +149,27 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 		},
 		{
 			types.NewFieldType(mysql.TypeDuration),
-			types.NewDurationDatum(mysql.ZeroDuration),
+			types.NewDurationDatum(types.ZeroDuration),
 		},
 		{
 			types.NewFieldType(mysql.TypeDatetime),
-			types.NewDatum(mysql.ZeroDatetime),
+			types.NewDatum(types.ZeroDatetime),
 		},
 		{
 			types.NewFieldType(mysql.TypeTimestamp),
-			types.NewDatum(mysql.ZeroTimestamp),
+			types.NewDatum(types.ZeroTimestamp),
 		},
 		{
 			types.NewFieldType(mysql.TypeDate),
-			types.NewDatum(mysql.ZeroDate),
+			types.NewDatum(types.ZeroDate),
 		},
 		{
 			types.NewFieldType(mysql.TypeBit),
-			types.NewDatum(mysql.Bit{Value: 0, Width: mysql.MinBitWidth}),
+			types.NewDatum(types.Bit{Value: 0, Width: types.MinBitWidth}),
 		},
 		{
 			types.NewFieldType(mysql.TypeSet),
-			types.NewDatum(mysql.Set{}),
+			types.NewDatum(types.Set{}),
 		},
 	}
 	for _, ca := range cases {

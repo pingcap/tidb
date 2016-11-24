@@ -49,13 +49,12 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 }
 
 type expressionRewriter struct {
-	ctxStack  []expression.Expression
-	p         LogicalPlan
-	schema    expression.Schema
-	err       error
-	aggrMap   map[*ast.AggregateFuncExpr]int
-	columnMap map[*ast.ColumnNameExpr]expression.Expression
-	b         *planBuilder
+	ctxStack []expression.Expression
+	p        LogicalPlan
+	schema   expression.Schema
+	err      error
+	aggrMap  map[*ast.AggregateFuncExpr]int
+	b        *planBuilder
 	// asScalar means the return value must be a scalar value.
 	asScalar bool
 }
@@ -232,21 +231,8 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		}
 		er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
 	} else {
-		_, np, er.err = np.PredicatePushDown(nil)
-		if er.err != nil {
-			return v, true
-		}
-		_, err := np.PruneColumnsAndResolveIndices(np.GetSchema())
-		if err != nil {
-			er.err = errors.Trace(err)
-			return v, true
-		}
-		info, err := np.convert2PhysicalPlan(&requiredProperty{})
-		if err != nil {
-			er.err = errors.Trace(err)
-			return v, true
-		}
-		d, err := EvalSubquery(info.p, er.b.is, er.b.ctx)
+		physicalPlan, err := doOptimize(np, er.b.ctx, er.b.allocator)
+		d, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return v, true
@@ -344,21 +330,8 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		}
 		return v, true
 	}
-	_, np, er.err = np.PredicatePushDown(nil)
-	if er.err != nil {
-		return v, true
-	}
-	_, err := np.PruneColumnsAndResolveIndices(np.GetSchema())
-	if err != nil {
-		er.err = errors.Trace(err)
-		return v, true
-	}
-	info, err := np.convert2PhysicalPlan(&requiredProperty{})
-	if err != nil {
-		er.err = errors.Trace(err)
-		return v, true
-	}
-	d, err := EvalSubquery(info.p, er.b.is, er.b.ctx)
+	physicalPlan, err := doOptimize(np, er.b.ctx, er.b.allocator)
+	d, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true
@@ -448,8 +421,8 @@ func datumToConstant(d types.Datum, tp byte) *expression.Constant {
 func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	stkLen := len(er.ctxStack)
 	name := strings.ToLower(v.Name)
-	sessionVars := variable.GetSessionVars(er.b.ctx)
-	globalVars := variable.GetGlobalVarAccessor(er.b.ctx)
+	sessionVars := er.b.ctx.GetSessionVars()
+	globalVars := sessionVars.GlobalVarsAccessor
 	if !v.IsSystem {
 		if v.Value != nil {
 			er.ctxStack[stkLen-1], er.err = expression.NewFunction(ast.SetVar,
@@ -487,7 +460,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 
 	if v.IsGlobal {
-		value, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
+		value, err := globalVars.GetGlobalSysVar(name)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return
@@ -501,7 +474,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			d.SetString(sysVar.Value)
 		} else {
 			// Get global system variable and fill it in session.
-			globalVal, err := globalVars.GetGlobalSysVar(er.b.ctx, name)
+			globalVal, err := globalVars.GetGlobalSysVar(name)
 			if err != nil {
 				er.err = errors.Trace(err)
 				return
@@ -799,7 +772,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		return
 	}
 	if column != nil {
-		er.ctxStack = append(er.ctxStack, column)
+		er.ctxStack = append(er.ctxStack, column.Clone())
 		return
 	}
 	for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {

@@ -16,7 +16,6 @@ package codec
 import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -47,7 +46,7 @@ func DecodeDecimal(b []byte) ([]byte, types.Datum, error) {
 	precision := int(b[0])
 	frac := int(b[1])
 	b = b[2:]
-	dec := new(mysql.MyDecimal)
+	dec := new(types.MyDecimal)
 	binSize, err := dec.FromBin(b, precision, frac)
 	b = b[binSize:]
 	if err != nil {

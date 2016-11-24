@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -32,7 +31,7 @@ func builtinSleep(args []types.Datum, ctx context.Context) (d types.Datum, err e
 		return d, errors.Errorf("Missing context when evalue builtin")
 	}
 
-	sessVars := variable.GetSessionVars(ctx)
+	sessVars := ctx.GetSessionVars()
 	if args[0].IsNull() {
 		if sessVars.StrictSQLMode {
 			return d, errors.New("incorrect arguments to sleep")
@@ -468,20 +467,20 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 			case types.KindFloat32:
 				d.SetFloat32(-aDatum.GetFloat32())
 			case types.KindMysqlDuration:
-				dec := new(mysql.MyDecimal)
-				err = mysql.DecimalSub(new(mysql.MyDecimal), aDatum.GetMysqlDuration().ToNumber(), dec)
+				dec := new(types.MyDecimal)
+				err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlDuration().ToNumber(), dec)
 				d.SetMysqlDecimal(dec)
 			case types.KindMysqlTime:
-				dec := new(mysql.MyDecimal)
-				err = mysql.DecimalSub(new(mysql.MyDecimal), aDatum.GetMysqlTime().ToNumber(), dec)
+				dec := new(types.MyDecimal)
+				err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlTime().ToNumber(), dec)
 				d.SetMysqlDecimal(dec)
 			case types.KindString, types.KindBytes:
 				f, err1 := types.StrToFloat(aDatum.GetString())
 				err = errors.Trace(err1)
 				d.SetFloat64(-f)
 			case types.KindMysqlDecimal:
-				dec := new(mysql.MyDecimal)
-				err = mysql.DecimalSub(new(mysql.MyDecimal), aDatum.GetMysqlDecimal(), dec)
+				dec := new(types.MyDecimal)
+				err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlDecimal(), dec)
 				d.SetMysqlDecimal(dec)
 			case types.KindMysqlHex:
 				d.SetFloat64(-aDatum.GetMysqlHex().ToNumber())
@@ -520,7 +519,7 @@ func CastFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
 }
 
 func builtinSetVar(args []types.Datum, ctx context.Context) (types.Datum, error) {
-	sessionVars := variable.GetSessionVars(ctx)
+	sessionVars := ctx.GetSessionVars()
 	varName, _ := args[0].ToString()
 	if !args[1].IsNull() {
 		strVal, err := args[1].ToString()
@@ -533,7 +532,7 @@ func builtinSetVar(args []types.Datum, ctx context.Context) (types.Datum, error)
 }
 
 func builtinGetVar(args []types.Datum, ctx context.Context) (types.Datum, error) {
-	sessionVars := variable.GetSessionVars(ctx)
+	sessionVars := ctx.GetSessionVars()
 	varName, _ := args[0].ToString()
 	if v, ok := sessionVars.Users[varName]; ok {
 		return types.NewDatum(v), nil

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -73,12 +72,12 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.Datum{},
 		},
 		{
-			datumExpr(types.NewDurationDatum(mysql.Duration{Duration: time.Hour})),
-			types.NewDurationDatum(mysql.Duration{Duration: time.Hour}),
+			datumExpr(types.NewDurationDatum(types.Duration{Duration: time.Hour})),
+			types.NewDurationDatum(types.Duration{Duration: time.Hour}),
 		},
 		{
-			datumExpr(types.NewDecimalDatum(mysql.NewDecFromFloatForTest(1.1))),
-			types.NewDecimalDatum(mysql.NewDecFromFloatForTest(1.1)),
+			datumExpr(types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1))),
+			types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1)),
 		},
 		{
 			columnExpr(1),
@@ -459,6 +458,39 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 				c.Check(res.GetInt64(), Equals, int64(0))
 			}
 		}
+	}
+}
+
+func (s *testEvalSuite) TestEvalIsNull(c *C) {
+	colID := int64(1)
+	row := make(map[int64]types.Datum)
+	row[colID] = types.NewIntDatum(100)
+	xevaluator := &Evaluator{Row: row}
+	null, trueAns, falseAns := types.Datum{}, types.NewIntDatum(1), types.NewIntDatum(0)
+	cases := []struct {
+		expr   *tipb.Expr
+		result types.Datum
+	}{
+		{
+			expr:   buildExpr(tipb.ExprType_IsNull, types.NewStringDatum("abc")),
+			result: falseAns,
+		},
+		{
+			expr:   buildExpr(tipb.ExprType_IsNull, null),
+			result: trueAns,
+		},
+		{
+			expr:   buildExpr(tipb.ExprType_IsNull, types.NewIntDatum(0)),
+			result: falseAns,
+		},
+	}
+	for _, ca := range cases {
+		result, err := xevaluator.Eval(ca.expr)
+		c.Assert(err, IsNil)
+		c.Assert(result.Kind(), Equals, ca.result.Kind())
+		cmp, err := result.CompareDatum(ca.result)
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
 	}
 }
 

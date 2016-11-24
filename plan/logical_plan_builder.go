@@ -137,20 +137,28 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 	}
 }
 
-func extractColumn(expr expression.Expression, cols []*expression.Column, corCols []*expression.CorrelatedColumn) (
-	[]*expression.Column, []*expression.CorrelatedColumn) {
+func extractColumns(expr expression.Expression) (cols []*expression.Column) {
 	switch v := expr.(type) {
 	case *expression.Column:
-		return append(cols, v), corCols
+		return []*expression.Column{v}
 	case *expression.ScalarFunction:
 		for _, arg := range v.Args {
-			cols, corCols = extractColumn(arg, cols, corCols)
+			cols = append(cols, extractColumns(arg)...)
 		}
-		return cols, corCols
-	case *expression.CorrelatedColumn:
-		return cols, append(corCols, v)
 	}
-	return cols, corCols
+	return
+}
+
+func extractCorColumns(expr expression.Expression) (cols []*expression.CorrelatedColumn) {
+	switch v := expr.(type) {
+	case *expression.CorrelatedColumn:
+		return []*expression.CorrelatedColumn{v}
+	case *expression.ScalarFunction:
+		for _, arg := range v.Args {
+			cols = append(cols, extractCorColumns(arg)...)
+		}
+	}
+	return
 }
 
 func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
@@ -173,7 +181,7 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 				}
 			}
 		}
-		columns, _ := extractColumn(expr, nil, nil)
+		columns := extractColumns(expr)
 		allFromLeft, allFromRight := true, true
 		for _, col := range columns {
 			if left.GetSchema().GetIndex(col) == -1 {
@@ -921,40 +929,20 @@ type ApplyConditionChecker struct {
 // innerPlan. This way is the so-called correlated execution.
 func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, checker *ApplyConditionChecker) LogicalPlan {
 	ap := &Apply{
-		InnerPlan:        innerPlan,
-		Checker:          checker,
-		corColsInCurPlan: make([]*expression.CorrelatedColumn, len(outerPlan.GetSchema())),
-		baseLogicalPlan:  newBaseLogicalPlan(App, b.allocator),
+		InnerPlan:       innerPlan,
+		Checker:         checker,
+		baseLogicalPlan: newBaseLogicalPlan(App, b.allocator),
 	}
 	ap.self = ap
 	ap.initID()
 	addChild(ap, outerPlan)
-	_, innerPlan, b.err = innerPlan.PredicatePushDown(nil)
-	if b.err != nil {
-		return nil
-	}
-	corColumns, err := innerPlan.PruneColumnsAndResolveIndices(innerPlan.GetSchema())
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
+	corColumns := innerPlan.extractCorrelatedCols()
+	ap.correlated = outerPlan.IsCorrelated()
 	for _, corCol := range corColumns {
 		// If the outer column can't be resolved from this outer schema, it should be resolved by outer schema.
 		if idx := outerPlan.GetSchema().GetIndex(&corCol.Column); idx == -1 {
-			ap.corColsInOuterPlan = append(ap.corColsInOuterPlan, corCol)
-		} else {
-			if ap.corColsInCurPlan[idx] == nil {
-				ap.corColsInCurPlan[idx] = &expression.CorrelatedColumn{
-					Column: *outerPlan.GetSchema()[idx],
-					Data:   &types.Datum{},
-				}
-			}
-			corCol.Data = ap.corColsInCurPlan[idx].Data
-		}
-	}
-	for i := len(ap.corColsInCurPlan) - 1; i >= 0; i-- {
-		if ap.corColsInCurPlan[i] == nil {
-			ap.corColsInCurPlan = append(ap.corColsInCurPlan[:i], ap.corColsInCurPlan[i+1:]...)
+			ap.correlated = true
+			break
 		}
 	}
 	innerSchema := innerPlan.GetSchema().Clone()
@@ -971,7 +959,6 @@ func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, checker *Appl
 			IsAggOrSubq: true,
 		}))
 	}
-	ap.correlated = outerPlan.IsCorrelated() || len(ap.corColsInOuterPlan) > 0
 	return ap
 }
 
@@ -1105,7 +1092,7 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([
 			return nil, nil
 		}
 		p = np
-		newList[offset] = &expression.Assignment{Col: col, Expr: newExpr}
+		newList[offset] = &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr}
 	}
 	return newList, p
 }

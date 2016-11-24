@@ -89,8 +89,8 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
-		c.Assert(err, IsNil)
+		lp.PruneColumns(lp.GetSchema())
+		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -179,10 +179,25 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			sql:  "a = if(a, 1, 0)",
 			cond: "eq(test.t.a, if(test.t.a, 1, 0))",
 		},
+		// nullif
+		{
+			sql:  "a = nullif(a, 1)",
+			cond: "eq(test.t.a, nullif(test.t.a, 1))",
+		},
+		// ifnull
+		{
+			sql:  "a = ifnull(null, a)",
+			cond: "eq(test.t.a, ifnull(<nil>, test.t.a))",
+		},
 		// coalesce
 		{
 			sql:  "a = coalesce(null, null, a, b)",
 			cond: "eq(test.t.a, coalesce(<nil>, <nil>, test.t.a, test.t.b))",
+		},
+		// isnull
+		{
+			sql:  "b is null",
+			cond: "isnull(test.t.b)",
 		},
 	}
 	for _, ca := range cases {
@@ -205,8 +220,8 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
-		c.Assert(err, IsNil)
+		lp.PruneColumns(lp.GetSchema())
+		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		p = info.p
@@ -386,8 +401,8 @@ func (s *testPlanSuite) TestCBO(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
-		c.Assert(err, IsNil)
+		lp.PruneColumns(lp.GetSchema())
+		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		c.Assert(ToString(EliminateProjection(info.p)), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -476,7 +491,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t1.a > 1)",
-			ans: "Table(t)->Apply(Table(t)->Selection->Projection)->Selection->Projection",
+			ans: "Table(t)->Apply(Table(t)->Cache->Selection->Projection)->Selection->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -497,8 +512,8 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		lp := p.(LogicalPlan)
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		_, err = lp.PruneColumnsAndResolveIndices(lp.GetSchema())
-		c.Assert(err, IsNil)
+		lp.PruneColumns(lp.GetSchema())
+		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		p = EliminateProjection(info.p)
 		c.Assert(ToString(p), Equals, ca.ans, Commentf("for %s", ca.sql))

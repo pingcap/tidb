@@ -253,19 +253,19 @@ func ToString(value interface{}) (string, error) {
 		return v, nil
 	case []byte:
 		return string(v), nil
-	case mysql.Time:
+	case Time:
 		return v.String(), nil
-	case mysql.Duration:
+	case Duration:
 		return v.String(), nil
-	case *mysql.MyDecimal:
+	case *MyDecimal:
 		return v.String(), nil
-	case mysql.Hex:
+	case Hex:
 		return v.ToString(), nil
-	case mysql.Bit:
+	case Bit:
 		return v.ToString(), nil
-	case mysql.Enum:
+	case Enum:
 		return v.String(), nil
-	case mysql.Set:
+	case Set:
 		return v.String(), nil
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", value, value)
