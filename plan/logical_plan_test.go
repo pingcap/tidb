@@ -523,17 +523,17 @@ func (s *testPlanSuite) TestLogicalPlanBuilder(c *C) {
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (select b from t s where s.a = t.a)",
-			best: "DataScan(t)->Apply(DataScan(t)->Selection->Projection)->Selection->Projection",
+			best: "Apply{DataScan(t)->DataScan(t)->Selection->Projection}->Selection->Projection",
 		},
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
-			best: "DataScan(t)->Apply(DataScan(t)->Selection->Projection)->Selection->Projection",
+			best: "Apply{DataScan(t)->DataScan(t)->Selection->Projection}->Selection->Projection",
 		},
 		{
 			// This will be resolved as in function.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)), 10)",
-			best: "DataScan(t)->Apply(DataScan(t)->Selection->Projection->MaxOneRow)->Selection->Projection",
+			best: "Apply{DataScan(t)->DataScan(t)->Selection->Projection->MaxOneRow}->Selection->Projection",
 		},
 	}
 	for _, ca := range cases {
