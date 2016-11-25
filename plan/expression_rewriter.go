@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -299,6 +300,10 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	// a in (subq) will be rewrited as a = any(subq).
 	// a not in (subq) will be rewrited as a != all(subq).
 	checkCondition, err := constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return v, true
+	}
 	if !np.IsCorrelated() {
 		er.p = er.b.buildSemiJoin(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
 		if asScalar {
@@ -311,10 +316,6 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	}
 	if v.Not {
 		checkCondition, _ = expression.NewFunction(ast.UnaryNot, &v.Type, checkCondition)
-	}
-	if err != nil {
-		er.err = errors.Trace(err)
-		return v, true
 	}
 	er.p = er.b.buildApply(er.p, np, &ApplyConditionChecker{Condition: checkCondition, All: v.Not})
 	// The parent expression only use the last column in schema, which represents whether the condition is matched.
@@ -348,6 +349,10 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		return v, true
 	}
 	physicalPlan, err := doOptimize(np, er.b.ctx, er.b.allocator)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return v, true
+	}
 	d, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
 	if err != nil {
 		er.err = errors.Trace(err)
@@ -485,7 +490,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.ctxStack = append(er.ctxStack, datumToConstant(types.NewDatum(value), mysql.TypeString))
 		return
 	}
-	d := sessionVars.GetSystemVar(name)
+	d := varsutil.GetSystemVar(sessionVars, name)
 	if d.IsNull() {
 		if sysVar.Scope&variable.ScopeGlobal == 0 {
 			d.SetString(sysVar.Value)
@@ -497,7 +502,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 				return
 			}
 			d.SetString(globalVal)
-			err = sessionVars.SetSystemVar(name, d)
+			err = varsutil.SetSystemVar(sessionVars, name, d)
 			if err != nil {
 				er.err = errors.Trace(err)
 				return
@@ -733,19 +738,11 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	}
 	var op string
 	var l, r expression.Expression
-	if v.Not {
-		l, er.err = expression.NewFunction(ast.LT, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
-		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.GT, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
-		}
-		op = ast.OrOr
-	} else {
-		l, er.err = expression.NewFunction(ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
-		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
-		}
-		op = ast.AndAnd
+	l, er.err = expression.NewFunction(ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
+	if er.err == nil {
+		r, er.err = expression.NewFunction(ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
 	}
+	op = ast.AndAnd
 	if er.err != nil {
 		er.err = errors.Trace(er.err)
 		return
@@ -754,6 +751,13 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
+	}
+	if v.Not {
+		function, err = expression.NewFunction(ast.UnaryNot, &v.Type, function)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
+		}
 	}
 	er.ctxStack = er.ctxStack[:stkLen-3]
 	er.ctxStack = append(er.ctxStack, function)
