@@ -342,6 +342,7 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
+	mustExecSQL(c, se, "insert t values (1);")
 	// Make sure insert to table t2 transaction executes.
 	startCh2 <- struct{}{}
 	err = <-endCh2
