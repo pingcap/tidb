@@ -284,10 +284,10 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	mustExecSQL(c, se, "create table t1 (a int);")
 	mustExecSQL(c, se, "drop table if exists t2;")
 	mustExecSQL(c, se, "create table t2 (a int);")
-	startCh1 := make(chan struct{}, 0)
-	startCh2 := make(chan struct{}, 0)
-	endCh1 := make(chan error, 0)
-	endCh2 := make(chan error, 0)
+	startCh1 := make(chan struct{})
+	startCh2 := make(chan struct{})
+	endCh1 := make(chan error)
+	endCh2 := make(chan error)
 	execFailedFunc := func(s Session, tbl string, start chan struct{}, end chan error) {
 		// execute successfully
 		_, err := exec(s, "begin;")

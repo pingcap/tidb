@@ -436,15 +436,15 @@ func (m *MockFailure) getValue() bool {
 }
 
 type schemaValidityInfo struct {
-	mux           sync.RWMutex
-	isExpired     bool   // Whether information schema is out of date.
-	recoveredTS   uint64 // It's used for recording the first txn TS of schema vaild.
-	lastSchemaVer int64  // It's used for recording the last schema version.
-	timeInfo      struct {
+	mux         sync.RWMutex
+	isExpired   bool   // Whether information schema is out of date.
+	recoveredTS uint64 // It's used for recording the first txn TS of schema vaild.
+	timeInfo    struct {
 		mux            sync.RWMutex
 		lastReloadTime int64  // It's used for recording the time of last reload schema.
 		lastSuccTS     uint64 // It's used for recording the last txn TS of loading schema succeed.
 	}
+	lastSchemaVer    int64       // It's used for recording the last schema version.
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
 
