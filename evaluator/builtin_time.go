@@ -675,7 +675,7 @@ func builtinFromUnixTime(args []types.Datum, _ context.Context) (d types.Datum, 
 	return builtinDateFormat([]types.Datum{d, args[1]}, nil)
 }
 
-// strToDate converts date string according to format, return true on success,
+// strToDate converts date string according to format, returns true on success,
 // the value will be stored in argument t.
 func strToDate(t *time.Time, date string, format string) bool {
 	date = skipWhiteSpace(date)
@@ -856,7 +856,7 @@ func abbreviatedWeekday(t *time.Time, input string) (string, bool) {
 	if len(input) >= 3 {
 		dayName := input[:3]
 		if _, ok := weekdayAbbrev[dayName]; ok {
-			// TODO: we need refact mysql time to support this
+			// TODO: We need refact mysql time to support this.
 			return input, false
 		}
 	}
@@ -875,7 +875,7 @@ func abbreviatedMonth(t *time.Time, input string) (string, bool) {
 }
 
 func monthNumeric(t *time.Time, input string) (string, bool) {
-	// TODO: this code is ugly!
+	// TODO: This code is ugly!
 	for i := 12; i >= 0; i-- {
 		str := strconv.FormatInt(int64(i), 10)
 		if strings.HasPrefix(input, str) {
