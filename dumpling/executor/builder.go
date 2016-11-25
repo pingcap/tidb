@@ -590,7 +590,7 @@ func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 	src := b.build(v.GetChildByIndex(0))
 	apply := &ApplyExec{
 		schema:      v.GetSchema(),
-		innerExec:   b.build(v.InnerPlan),
+		innerExec:   b.build(v.GetChildByIndex(1)),
 		outerSchema: v.OuterSchema,
 		Src:         src,
 	}
