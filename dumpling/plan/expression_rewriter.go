@@ -137,6 +137,23 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if v.Sel != nil {
 			return er.handleInSubquery(v)
 		}
+		if len(v.List) != 1 {
+			break
+		}
+		// For 10 in ((select * from t)), the parser won't set v.Sel.
+		// So we must process this case here.
+		x := v.List[0]
+		for {
+			switch y := x.(type) {
+			case *ast.SubqueryExpr:
+				v.Sel = y
+				return er.handleInSubquery(v)
+			case *ast.ParenthesesExpr:
+				x = y.Expr
+			default:
+				return inNode, false
+			}
+		}
 	case *ast.SubqueryExpr:
 		return er.handleScalarSubquery(v)
 	case *ast.ParenthesesExpr:
