@@ -1088,9 +1088,10 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	if info != nil {
 		return info, nil
 	}
+	innerPlan := p.children[1].(LogicalPlan)
 	allFromOuter := true
 	for _, col := range prop.props {
-		if p.InnerPlan.GetSchema().GetIndex(col.col) != -1 {
+		if innerPlan.GetSchema().GetIndex(col.col) != -1 {
 			allFromOuter = false
 		}
 	}
@@ -1098,7 +1099,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		return &physicalPlanInfo{cost: math.MaxFloat64}, err
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
-	innerInfo, err := p.InnerPlan.convert2PhysicalPlan(&requiredProperty{})
+	innerInfo, err := innerPlan.convert2PhysicalPlan(&requiredProperty{})
 	innerInfo.p = addCachePlan(innerInfo.p)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1106,9 +1107,8 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	np := &PhysicalApply{
 		OuterSchema: p.corCols,
 		Checker:     p.Checker,
-		InnerPlan:   innerInfo.p,
 	}
-	np.tp = "PhysicalAppy"
+	np.tp = "PhysicalApply"
 	np.allocator = p.allocator
 	np.initID()
 	np.correlated = p.IsCorrelated()
@@ -1119,6 +1119,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		return nil, errors.Trace(err)
 	}
 	info = addPlanToResponse(np, info)
+	addChild(info.p, innerInfo.p)
 	info = enforceProperty(limitProperty(limit), info)
 	p.storePlanInfo(prop, info)
 	return info, nil
