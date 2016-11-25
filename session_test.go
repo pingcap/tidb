@@ -2014,7 +2014,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
-	sessionctx.GetDomain(ctx).SchemaValidity.SetValidity(true, ver.Ver)
+	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
 	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
 	time.Sleep(lease)
 	mustExecSQL(c, se, "drop table if exists t;")

@@ -328,9 +328,9 @@ func (do *Domain) checkValidityInLoop(lease time.Duration) {
 			if sub > lease {
 				// If sub is greater than a lease,
 				// it means that the schema version hasn't update for a lease.
-				do.SchemaValidity.SetValidity(false, lastSuccTS)
+				do.SchemaValidity.SetExpireInfo(true, lastSuccTS)
 			} else {
-				do.SchemaValidity.SetValidity(true, lastSuccTS)
+				do.SchemaValidity.SetExpireInfo(false, lastSuccTS)
 			}
 
 			waitTime := lease
@@ -437,8 +437,8 @@ func (m *MockFailure) getValue() bool {
 
 type schemaValidityInfo struct {
 	mux           sync.RWMutex
-	isValid       bool
-	firstValidTS  uint64 // It's used for recording the first txn TS of schema vaild.
+	isExpired     bool   // Whether information schema is out of date.
+	recoveredTS   uint64 // It's used for recording the first txn TS of schema vaild.
 	lastSchemaVer int64  // It's used for recording the last schema version.
 	timeInfo      struct {
 		mux            sync.RWMutex
@@ -467,17 +467,17 @@ func (s *schemaValidityInfo) getTimeInfo() (int64, uint64) {
 	return s.timeInfo.lastReloadTime, s.timeInfo.lastSuccTS
 }
 
-// SetValidity sets the schema validity value.
+// SetExpireInfo sets the schema validity value.
 // It's public in order to do the test.
-func (s *schemaValidityInfo) SetValidity(v bool, lastSuccTS uint64) {
+func (s *schemaValidityInfo) SetExpireInfo(expired bool, lastSuccTS uint64) {
 	s.mux.Lock()
-	if s.isValid != v {
-		log.Infof("[ddl] SetValidity, original:%v current:%v lastSuccTS:%v", s.isValid, v, lastSuccTS)
-		if !v {
-			log.Errorf("[ddl] SetValidity, schema validity is %v, lastSuccTS:%v", v, lastSuccTS)
-			s.firstValidTS = lastSuccTS
+	if s.isExpired != expired {
+		log.Infof("[ddl] SetExpireInfo, original:%v current:%v lastSuccTS:%v", s.isExpired, expired, lastSuccTS)
+		if expired {
+			log.Errorf("[ddl] SetExpireInfo, schema validity is %v, lastSuccTS:%v", expired, lastSuccTS)
+			s.recoveredTS = lastSuccTS
 		}
-		s.isValid = v
+		s.isExpired = expired
 	}
 	s.mux.Unlock()
 }
@@ -486,14 +486,22 @@ func (s *schemaValidityInfo) SetValidity(v bool, lastSuccTS uint64) {
 func (s *schemaValidityInfo) Check(txnTS uint64, schemaVer int64) (int64, error) {
 	currVer := atomic.LoadInt64(&s.lastSchemaVer)
 	s.mux.RLock()
-	if s.isValid {
-		if txnTS == 0 || txnTS > s.firstValidTS || schemaVer == currVer {
-			s.mux.RUnlock()
-			return currVer, nil
-		}
+	if s.isExpired {
+		s.mux.RUnlock()
+		return currVer, ErrLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
+	}
+
+	// txnTS != 0, it means the transition isn't nil.
+	// txnTS <= s.recoveredTS, it means the transition begins before schema is recovered.
+	// schemaVer != currVer, it means the schema version is changed.
+	if txnTS != 0 && txnTS <= s.recoveredTS && schemaVer != currVer {
+		s.mux.RUnlock()
+		log.Warnf("check schema validity, txnTS:%v recordTS:%v schema version original:%v input:%v",
+			txnTS, s.recoveredTS, currVer, schemaVer)
+		return currVer, ErrLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
 	}
 	s.mux.RUnlock()
-	return currVer, ErrLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
+	return currVer, nil
 }
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
@@ -509,7 +517,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	if err = d.Reload(); err != nil {
 		return nil, errors.Trace(err)
 	}
-	d.SchemaValidity.SetValidity(true, 0)
+	d.SchemaValidity.SetExpireInfo(false, 0)
 
 	variable.RegisterStatistics(d)
 

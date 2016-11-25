@@ -112,12 +112,13 @@ func (h *stmtHistory) clone() *stmtHistory {
 const unlimitedRetryCnt = -1
 
 type session struct {
-	txn         kv.Transaction // current transaction
-	schemaVer   int64          // schema version
-	values      map[fmt.Stringer]interface{}
-	store       kv.Storage
-	history     stmtHistory
-	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
+	txn kv.Transaction // current transaction
+	// It is the schema version in current transition. If it's 0, the transaction is nil.
+	schemaVerInCurrTxn int64
+	values             map[fmt.Stringer]interface{}
+	store              kv.Storage
+	history            stmtHistory
+	maxRetryCnt        int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
 
@@ -145,20 +146,22 @@ func (s *session) checkSchemaValidOrRollback() error {
 	var ts uint64
 	if s.txn != nil {
 		ts = s.txn.StartTS()
+	} else {
+		s.schemaVerInCurrTxn = 0
 	}
 
 	var err error
 	var currSchemaVer int64
 	for i := 0; i < checkSchemaValidityRetryTimes; i++ {
-		currSchemaVer, err = sessionctx.GetDomain(s).SchemaValidity.Check(ts, s.schemaVer)
-		if i == 0 && s.txn == nil {
-			s.schemaVer = currSchemaVer
-		}
+		currSchemaVer, err = sessionctx.GetDomain(s).SchemaValidity.Check(ts, s.schemaVerInCurrTxn)
 		if err == nil {
+			if s.txn == nil {
+				s.schemaVerInCurrTxn = currSchemaVer
+			}
 			return nil
 		}
 		log.Infof("schema version original %d, current %d, sleep time %v",
-			s.schemaVer, currSchemaVer, checkSchemaValiditySleepTime)
+			s.schemaVerInCurrTxn, currSchemaVer, checkSchemaValiditySleepTime)
 		time.Sleep(checkSchemaValiditySleepTime)
 	}
 
