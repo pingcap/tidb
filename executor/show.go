@@ -171,7 +171,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	sort.Sort(table.Slice(tables))
 
 	for _, t := range tables {
-		now := mysql.CurrentTime(mysql.TypeDatetime)
+		now := types.CurrentTime(mysql.TypeDatetime)
 		data := types.MakeDatums(t.Meta().Name.O, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
 			now, now, now, "utf8_general_ci", "", "", t.Meta().Comment)
 		e.rows = append(e.rows, &Row{Data: data})

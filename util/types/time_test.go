@@ -11,20 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mysql
+package types
 
 import (
-	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 )
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
 
 var _ = Suite(&testTimeSuite{})
 
@@ -71,7 +66,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	}
 
 	for _, test := range fspTbl {
-		t, err := ParseTime(test.Input, TypeDatetime, test.Fsp)
+		t, err := ParseTime(test.Input, mysql.TypeDatetime, test.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -328,7 +323,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	packed := t.ToPackedUint()
 
 	var t1 Time
-	t1.Type = TypeTimestamp
+	t1.Type = mysql.TypeTimestamp
 
 	z := s.getLocation(c)
 	local = z
@@ -345,7 +340,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	packed = t1.ToPackedUint()
 
 	var t2 Time
-	t2.Type = TypeTimestamp
+	t2.Type = mysql.TypeTimestamp
 	err = t2.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t1.String(), Equals, t2.String())
@@ -353,7 +348,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	packed = ZeroDatetime.ToPackedUint()
 
 	var t3 Time
-	t3.Type = TypeDatetime
+	t3.Type = mysql.TypeDatetime
 	err = t3.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t3.String(), Equals, ZeroDatetime.String())
@@ -363,7 +358,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	packed = t.ToPackedUint()
 
 	var t4 Time
-	t4.Type = TypeDatetime
+	t4.Type = mysql.TypeDatetime
 	err = t4.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t.String(), Equals, t4.String())
@@ -376,13 +371,13 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	}
 
 	for _, test := range tbl {
-		t, err := ParseTime(test, TypeDatetime, MaxFsp)
+		t, err := ParseTime(test, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
 
 		packed = t.ToPackedUint()
 
 		var dest Time
-		dest.Type = TypeDatetime
+		dest.Type = mysql.TypeDatetime
 		dest.Fsp = MaxFsp
 		err = dest.FromPackedUint(packed)
 		c.Assert(err, IsNil)
@@ -434,7 +429,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 			c.Assert(err, NotNil)
 		} else {
 			c.Assert(err, IsNil)
-			c.Assert(t.Type, Equals, TypeDatetime)
+			c.Assert(t.Type, Equals, mysql.TypeDatetime)
 		}
 		c.Assert(t.String(), Equals, test.ExpectDateTimeValue)
 
@@ -444,7 +439,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 			c.Assert(err, NotNil)
 		} else {
 			c.Assert(err, IsNil)
-			c.Assert(t.Type, Equals, TypeTimestamp)
+			c.Assert(t.Type, Equals, mysql.TypeTimestamp)
 		}
 		c.Assert(t.String(), Equals, test.ExpectTimeStampValue)
 
@@ -455,7 +450,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 			c.Assert(err, NotNil)
 		} else {
 			c.Assert(err, IsNil)
-			c.Assert(t.Type, Equals, TypeDate)
+			c.Assert(t.Type, Equals, mysql.TypeDate)
 		}
 		c.Assert(t.String(), Equals, test.ExpectDateValue)
 	}
@@ -480,7 +475,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDateTime {
-		t, err := ParseTime(test.Input, TypeDatetime, test.Fsp)
+		t, err := ParseTime(test.Input, mysql.TypeDatetime, test.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
 	}
@@ -503,7 +498,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDate {
-		t, err := ParseTime(test.Input, TypeDate, 0)
+		t, err := ParseTime(test.Input, mysql.TypeDate, 0)
 		c.Assert(err, IsNil)
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
 	}
@@ -571,7 +566,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	}
 
 	for _, t := range tbl {
-		v, err := ParseTime(t.Input, TypeDatetime, MaxFsp)
+		v, err := ParseTime(t.Input, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
 		nv, err := v.RoundFrac(t.Fsp)
 		c.Assert(err, IsNil)
@@ -615,7 +610,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 	}
 
 	for _, t := range tbl {
-		v, err := ParseTime(t.Input, TypeDatetime, t.Fsp)
+		v, err := ParseTime(t.Input, mysql.TypeDatetime, t.Fsp)
 		c.Assert(err, IsNil)
 		nv, err := v.ConvertToDuration()
 		c.Assert(err, IsNil)
@@ -637,7 +632,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		c.Assert(err, IsNil)
 		year, month, day := time.Now().Date()
 		n := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
-		t, err := v.ConvertToTime(TypeDatetime)
+		t, err := v.ConvertToTime(mysql.TypeDatetime)
 		c.Assert(err, IsNil)
 		c.Assert(t.Time.Sub(n), Equals, v.Duration)
 	}
@@ -658,7 +653,7 @@ func (s *testTimeSuite) TestCompare(c *C) {
 	}
 
 	for _, t := range tbl {
-		v1, err := ParseTime(t.Arg1, TypeDatetime, MaxFsp)
+		v1, err := ParseTime(t.Arg1, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
 
 		ret, err := v1.CompareString(t.Arg2)

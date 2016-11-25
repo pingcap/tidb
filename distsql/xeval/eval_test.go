@@ -18,7 +18,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -73,12 +72,12 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.Datum{},
 		},
 		{
-			datumExpr(types.NewDurationDatum(mysql.Duration{Duration: time.Hour})),
-			types.NewDurationDatum(mysql.Duration{Duration: time.Hour}),
+			datumExpr(types.NewDurationDatum(types.Duration{Duration: time.Hour})),
+			types.NewDurationDatum(types.Duration{Duration: time.Hour}),
 		},
 		{
-			datumExpr(types.NewDecimalDatum(mysql.NewDecFromFloatForTest(1.1))),
-			types.NewDecimalDatum(mysql.NewDecFromFloatForTest(1.1)),
+			datumExpr(types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1))),
+			types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1)),
 		},
 		{
 			columnExpr(1),

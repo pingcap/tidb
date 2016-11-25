@@ -25,6 +25,10 @@ func (e *Evaluator) evalControlFuncs(expr *tipb.Expr) (d types.Datum, err error)
 		return e.evalCaseWhen(expr)
 	case tipb.ExprType_If:
 		return e.evalIf(expr)
+	case tipb.ExprType_NullIf:
+		return e.evalNullIf(expr)
+	case tipb.ExprType_IfNull:
+		return e.evalIfNull(expr)
 	}
 	return
 }
@@ -86,4 +90,33 @@ func (e *Evaluator) evalIf(expr *tipb.Expr) (d types.Datum, err error) {
 		d, err = e.Eval(expr.Children[2])
 	}
 	return d, errors.Trace(err)
+}
+
+func (e *Evaluator) evalNullIf(expr *tipb.Expr) (d types.Datum, err error) {
+	left, right, err := e.evalTwoChildren(expr)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if left.IsNull() || right.IsNull() {
+		return left, nil
+	}
+	x, err := left.CompareDatum(right)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if x == 0 {
+		return d, nil
+	}
+	return left, nil
+}
+
+func (e *Evaluator) evalIfNull(expr *tipb.Expr) (d types.Datum, err error) {
+	left, right, err := e.evalTwoChildren(expr)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if left.IsNull() {
+		return right, nil
+	}
+	return left, nil
 }

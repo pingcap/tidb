@@ -22,11 +22,6 @@ import (
 var (
 	ErrBadConn       = errors.New("connection was bad")
 	ErrMalformPacket = errors.New("Malform packet error")
-
-	ErrTruncated = errors.New("truncated")
-	ErrOverflow  = errors.New("overflow")
-	ErrDivByZero = errors.New("div by zero")
-	ErrBadNumber = errors.New("bad number")
 )
 
 // SQLError records an error information, from executing SQL.

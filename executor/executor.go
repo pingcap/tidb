@@ -1959,3 +1959,48 @@ func (e *DummyScanExec) Close() error {
 func (e *DummyScanExec) Next() (*Row, error) {
 	return nil, nil
 }
+
+// CacheExec represents Cache executor.
+// it stores the return values of the executor of its child node.
+type CacheExec struct {
+	schema      expression.Schema
+	Src         Executor
+	storedRows  []*Row
+	cursor      int
+	srcFinished bool
+}
+
+// Schema implements the Executor Schema interface.
+func (e *CacheExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Close implements the Executor Close interface.
+func (e *CacheExec) Close() error {
+	e.cursor = 0
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *CacheExec) Next() (*Row, error) {
+	if e.srcFinished && e.cursor >= len(e.storedRows) {
+		return nil, nil
+	}
+	if !e.srcFinished {
+		row, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			e.srcFinished = true
+			err := e.Src.Close()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		e.storedRows = append(e.storedRows, row)
+	}
+	row := e.storedRows[e.cursor]
+	e.cursor++
+	return row, nil
+}
