@@ -1470,6 +1470,14 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			err: nil,
 		},
 		{
+			sql: "select row(1,(2,3)) in (select a,b from t)",
+			err: ErrSameColumns,
+		},
+		{
+			sql: "select row(1,2) in (select a,b from t)",
+			err: nil,
+		},
+		{
 			sql: "select (1,2) in ((3,4),5)",
 			err: ErrSameColumns,
 		},
