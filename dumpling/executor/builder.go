@@ -217,8 +217,17 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	switch s := v.Statement.(type) {
 	case *ast.GrantStmt:
 		return b.buildGrant(s)
+	case *ast.SetStmt:
+		return b.buildSet(s)
 	}
 	return &SimpleExec{Statement: v.Statement, ctx: b.ctx}
+}
+
+func (b *executorBuilder) buildSet(v *ast.SetStmt) Executor {
+	return &SetExecutor{
+		ctx:  b.ctx,
+		stmt: v,
+	}
 }
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {

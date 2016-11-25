@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
@@ -2379,7 +2380,7 @@ func (s *testSessionSuite) TestRetryAttempts(c *C) {
 	c.Assert(se, NotNil)
 	sv := se.sessionVars
 	// Prevent getting variable value from storage.
-	sv.SetSystemVar("autocommit", types.NewDatum("ON"))
+	varsutil.SetSystemVar(se.sessionVars, "autocommit", types.NewDatum("ON"))
 	sv.CommonGlobalLoaded = true
 
 	// Add retry info.
