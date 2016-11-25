@@ -15,7 +15,6 @@ package variable
 
 import (
 	"strings"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
@@ -279,7 +278,7 @@ func (s *SessionVars) setSnapshotTS(sVal string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
+	ts := t.Time.Microsecond() << epochShiftBits
 	s.SnapshotTS = uint64(ts)
 	return nil
 }
