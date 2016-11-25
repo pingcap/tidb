@@ -139,14 +139,12 @@ func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 type Apply struct {
 	baseLogicalPlan
 
-	InnerPlan LogicalPlan
-	Checker   *ApplyConditionChecker
-	corCols   []*expression.CorrelatedColumn
+	Checker *ApplyConditionChecker
+	corCols []*expression.CorrelatedColumn
 }
 
 func (p *Apply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
-	corCols = append(corCols, p.InnerPlan.extractCorrelatedCols()...)
 	if p.Checker != nil {
 		corCols = append(corCols, extractCorColumns(p.Checker.Condition)...)
 	}

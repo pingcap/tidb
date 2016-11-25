@@ -929,13 +929,13 @@ type ApplyConditionChecker struct {
 // innerPlan. This way is the so-called correlated execution.
 func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, checker *ApplyConditionChecker) LogicalPlan {
 	ap := &Apply{
-		InnerPlan:       innerPlan,
 		Checker:         checker,
 		baseLogicalPlan: newBaseLogicalPlan(App, b.allocator),
 	}
 	ap.self = ap
 	ap.initID()
 	addChild(ap, outerPlan)
+	addChild(ap, innerPlan)
 	corColumns := innerPlan.extractCorrelatedCols()
 	ap.correlated = outerPlan.IsCorrelated()
 	for _, corCol := range corColumns {
