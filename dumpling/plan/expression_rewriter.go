@@ -716,19 +716,11 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	}
 	var op string
 	var l, r expression.Expression
-	if v.Not {
-		l, er.err = expression.NewFunction(ast.LT, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
-		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.GT, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
-		}
-		op = ast.OrOr
-	} else {
-		l, er.err = expression.NewFunction(ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
-		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
-		}
-		op = ast.AndAnd
+	l, er.err = expression.NewFunction(ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
+	if er.err == nil {
+		r, er.err = expression.NewFunction(ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
 	}
+	op = ast.AndAnd
 	if er.err != nil {
 		er.err = errors.Trace(er.err)
 		return
@@ -737,6 +729,13 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
+	}
+	if v.Not {
+		function, err = expression.NewFunction(ast.UnaryNot, &v.Type, function)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
+		}
 	}
 	er.ctxStack = er.ctxStack[:stkLen-3]
 	er.ctxStack = append(er.ctxStack, function)
