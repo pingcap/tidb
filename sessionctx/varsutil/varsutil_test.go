@@ -14,11 +14,12 @@
 package varsutil
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"testing"
 )
 
 func TestT(t *testing.T) {
