@@ -15,12 +15,10 @@ package variable
 
 import (
 	"strings"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
 )
 
 const (
@@ -28,9 +26,10 @@ const (
 	codeCantSetToNull  terror.ErrCode = 2
 )
 
+// Error instances.
 var (
 	errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
-	errCantSetToNull  = terror.ClassVariable.New(codeCantSetToNull, "cannot set variable to null")
+	ErrCantSetToNull  = terror.ClassVariable.New(codeCantSetToNull, "cannot set variable to null")
 )
 
 // RetryInfo saves retry information.
@@ -77,7 +76,7 @@ type SessionVars struct {
 	// user-defined variables
 	Users map[string]string
 	// system variables
-	systems map[string]string
+	Systems map[string]string
 	// prepared statement
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -137,7 +136,7 @@ type SessionVars struct {
 func NewSessionVars() *SessionVars {
 	return &SessionVars{
 		Users:                make(map[string]string),
-		systems:              make(map[string]string),
+		Systems:              make(map[string]string),
 		PreparedStmts:        make(map[uint32]interface{}),
 		PreparedStmtNameToID: make(map[string]uint32),
 		RetryInfo:            &RetryInfo{},
@@ -161,8 +160,8 @@ const (
 // have their own collation, which has a higher collation precedence.
 // See https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
 func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
-	charset = s.systems[characterSetConnection]
-	collation = s.systems[collationConnection]
+	charset = s.Systems[characterSetConnection]
+	collation = s.Systems[collationConnection]
 	return
 }
 
@@ -218,95 +217,12 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
-// SetCurrentUser saves the current user to the session context.
-func (s *SessionVars) SetCurrentUser(user string) {
-	s.User = user
-}
-
 // special session variables.
 const (
 	SQLModeVar          = "sql_mode"
 	AutocommitVar       = "autocommit"
-	characterSetResults = "character_set_results"
+	CharacterSetResults = "character_set_results"
 )
-
-// SetSystemVar sets a system variable.
-func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
-	key = strings.ToLower(key)
-	if value.IsNull() {
-		if key != characterSetResults {
-			return errCantSetToNull
-		}
-		delete(s.systems, key)
-		return nil
-	}
-	sVal, err := value.ToString()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	switch key {
-	case SQLModeVar:
-		sVal = strings.ToUpper(sVal)
-		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
-			s.StrictSQLMode = true
-		} else {
-			s.StrictSQLMode = false
-		}
-	case TiDBSnapshot:
-		err = s.setSnapshotTS(sVal)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	case AutocommitVar:
-		isAutocommit := strings.EqualFold(sVal, "ON") || sVal == "1"
-		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
-	case TiDBSkipConstraintCheck:
-		s.setSkipConstraintCheck(sVal)
-	}
-	s.systems[key] = sVal
-	return nil
-}
-
-// epochShiftBits is used to reserve logical part of the timestamp.
-const epochShiftBits = 18
-
-func (s *SessionVars) setSnapshotTS(sVal string) error {
-	if sVal == "" {
-		s.SnapshotTS = 0
-		return nil
-	}
-	t, err := types.ParseTime(sVal, mysql.TypeTimestamp, types.MaxFsp)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
-	s.SnapshotTS = uint64(ts)
-	return nil
-}
-
-func (s *SessionVars) setSkipConstraintCheck(sVal string) {
-	if sVal == "1" {
-		s.SkipConstraintCheck = true
-	} else {
-		s.SkipConstraintCheck = false
-	}
-}
-
-// GetSystemVar gets a system variable.
-func (s *SessionVars) GetSystemVar(key string) types.Datum {
-	var d types.Datum
-	key = strings.ToLower(key)
-	sVal, ok := s.systems[key]
-	if ok {
-		d.SetString(sVal)
-	} else {
-		// TiDBSkipConstraintCheck is a session scope vars. We do not store it in the global table.
-		if key == TiDBSkipConstraintCheck {
-			d.SetString(SysVars[TiDBSkipConstraintCheck].Value)
-		}
-	}
-	return d
-}
 
 // GetTiDBSystemVar gets variable value for name.
 // The variable should be a TiDB specific system variable (The vars in tidbSysVars map).
@@ -318,7 +234,7 @@ func (s *SessionVars) GetTiDBSystemVar(name string) (string, error) {
 		return "", errors.Errorf("%s is not a TiDB specific system variable.", name)
 	}
 
-	sVal, ok := s.systems[key]
+	sVal, ok := s.Systems[key]
 	if ok {
 		return sVal, nil
 	}
