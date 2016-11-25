@@ -1190,6 +1190,20 @@ func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
 	return errors.Trace(err)
 }
 
+func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
+	id := 2
+	l := len(t.Indices())
+	indexName := colName
+	for i := 0; i < l; i++ {
+		if t.Indices()[i].Meta().Name.L == indexName.L {
+			indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
+			i = -1
+			id++
+		}
+	}
+	return indexName
+}
+
 func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexName model.CIStr, idxColNames []*ast.IndexColName) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
@@ -1204,6 +1218,11 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	indexID, err := d.genGlobalID()
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// Deal with anonymous index.
+	if len(indexName.L) == 0 {
+		indexName = getAnonymousIndex(t, idxColNames[0].Column.Name)
 	}
 
 	job := &model.Job{
