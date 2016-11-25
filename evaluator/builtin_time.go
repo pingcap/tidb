@@ -488,7 +488,7 @@ func builtinDayOfWeek(args []types.Datum, _ context.Context) (d types.Datum, err
 	}
 
 	// 1 is Sunday, 2 is Monday, .... 7 is Saturday
-	d.SetInt64(int64(t.Time.Weekday()+1))
+	d.SetInt64(int64(t.Time.Weekday() + 1))
 	return d, nil
 }
 

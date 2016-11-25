@@ -291,8 +291,8 @@ func (t Time) IsZero() bool {
 		return true
 	}
 	return t.Time.Year() == 0 && t.Time.Month() == 0 && t.Time.Day() == 0 &&
-	t.Time.Hour() == 0 && t.Time.Minute() == 0 && t.Time.Second() == 0 &&
-	t.Time.Microsecond() == 0
+		t.Time.Hour() == 0 && t.Time.Minute() == 0 && t.Time.Second() == 0 &&
+		t.Time.Microsecond() == 0
 }
 
 const numberFormat = "20060102150405"
@@ -469,8 +469,8 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	minute := int((hms >> 6) & (1<<6 - 1))
 	hour := int(hms >> 12)
 
-	microsec := int(packed%(1<<24))
-	err := checkTime(year, month, day, hour, minute, second, microsec * 1000)
+	microsec := int(packed % (1 << 24))
+	err := checkTime(year, month, day, hour, minute, second, microsec*1000)
 	if err != nil {
 		return errors.Trace(err)
 	}
