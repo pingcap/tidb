@@ -162,6 +162,9 @@ func (s *session) checkSchemaValidOrRollback() error {
 		}
 		log.Infof("schema version original %d, current %d, sleep time %v",
 			s.schemaVerInCurrTxn, currSchemaVer, checkSchemaValiditySleepTime)
+		if currSchemaVer != s.schemaVerInCurrTxn && s.schemaVerInCurrTxn != 0 {
+			break
+		}
 		time.Sleep(checkSchemaValiditySleepTime)
 	}
 
