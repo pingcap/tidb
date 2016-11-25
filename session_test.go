@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
@@ -1282,7 +1283,7 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
-	last := time.Now().Format(mysql.TimeFormat)
+	last := time.Now().Format(types.TimeFormat)
 	r := mustExecSQL(c, se, "select now(), now(6), current_timestamp, current_timestamp(), current_timestamp(6), sysdate(), sysdate(6)")
 	row, err := r.Next()
 	c.Assert(err, IsNil)
@@ -1291,7 +1292,7 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 		c.Assert(n.String(), GreaterEqual, last)
 	}
 
-	last = time.Now().Format(mysql.DateFormat)
+	last = time.Now().Format(types.DateFormat)
 	r = mustExecSQL(c, se, "select current_date, current_date(), curdate()")
 	row, err = r.Next()
 	c.Assert(err, IsNil)
@@ -1317,7 +1318,7 @@ func (s *testSessionSuite) TestBit(c *C) {
 	r := mustExecSQL(c, se, "select * from t where c1 = 2")
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlBit(), Equals, mysql.Bit{Value: 2, Width: 2})
+	c.Assert(row.Data[0].GetMysqlBit(), Equals, types.Bit{Value: 2, Width: 2})
 
 	err = store.Close()
 	c.Assert(err, IsNil)
@@ -2379,7 +2380,7 @@ func (s *testSessionSuite) TestRetryAttempts(c *C) {
 	c.Assert(se, NotNil)
 	sv := se.sessionVars
 	// Prevent getting variable value from storage.
-	sv.SetSystemVar("autocommit", types.NewDatum("ON"))
+	varsutil.SetSystemVar(se.sessionVars, "autocommit", types.NewDatum("ON"))
 	sv.CommonGlobalLoaded = true
 
 	// Add retry info.

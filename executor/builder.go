@@ -217,8 +217,17 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	switch s := v.Statement.(type) {
 	case *ast.GrantStmt:
 		return b.buildGrant(s)
+	case *ast.SetStmt:
+		return b.buildSet(s)
 	}
 	return &SimpleExec{Statement: v.Statement, ctx: b.ctx}
+}
+
+func (b *executorBuilder) buildSet(v *ast.SetStmt) Executor {
+	return &SetExecutor{
+		ctx:  b.ctx,
+		stmt: v,
+	}
 }
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
@@ -590,7 +599,7 @@ func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 	src := b.build(v.GetChildByIndex(0))
 	apply := &ApplyExec{
 		schema:      v.GetSchema(),
-		innerExec:   b.build(v.InnerPlan),
+		innerExec:   b.build(v.GetChildByIndex(1)),
 		outerSchema: v.OuterSchema,
 		Src:         src,
 	}

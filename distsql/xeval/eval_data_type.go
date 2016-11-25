@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -117,6 +116,6 @@ func (e *Evaluator) evalDuration(val []byte) (types.Datum, error) {
 	if err != nil {
 		return d, ErrInvalid.Gen("invalid duration %d", i)
 	}
-	d.SetMysqlDuration(mysql.Duration{Duration: time.Duration(i), Fsp: mysql.MaxFsp})
+	d.SetMysqlDuration(types.Duration{Duration: time.Duration(i), Fsp: types.MaxFsp})
 	return d, nil
 }

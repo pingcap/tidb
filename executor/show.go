@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
@@ -171,7 +172,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	sort.Sort(table.Slice(tables))
 
 	for _, t := range tables {
-		now := mysql.CurrentTime(mysql.TypeDatetime)
+		now := types.CurrentTime(mysql.TypeDatetime)
 		data := types.MakeDatums(t.Meta().Name.O, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
 			now, now, now, "utf8_general_ci", "", "", t.Meta().Comment)
 		e.rows = append(e.rows, &Row{Data: data})
@@ -308,14 +309,14 @@ func (e *ShowExec) fetchShowVariables() error {
 		var value string
 		if !e.GlobalScope {
 			// Try to get Session Scope variable value first.
-			sv := sessionVars.GetSystemVar(v.Name)
+			sv := varsutil.GetSystemVar(sessionVars, v.Name)
 			if sv.IsNull() {
 				value, err = globalVars.GetGlobalSysVar(v.Name)
 				if err != nil {
 					return errors.Trace(err)
 				}
 				sv.SetString(value)
-				err = sessionVars.SetSystemVar(v.Name, sv)
+				err = varsutil.SetSystemVar(sessionVars, v.Name, sv)
 				if err != nil {
 					return errors.Trace(err)
 				}

@@ -336,11 +336,13 @@ func (do *Domain) checkValidityInLoop(lease time.Duration) {
 				// We need to reduce wait time to check the validity more frequently.
 				if sub >= lease {
 					waitTime = minInterval(lease)
+					log.Warnf("[ddl] check validity in a loop, sub:%v, lease:%v, succ:%v, waitTime:%v",
+						sub, lease, lastSuccTS, waitTime)
 				} else {
 					waitTime -= sub
 				}
 			}
-			log.Infof("[ddl] check validity in a loop, sub:%v, lease:%v, succ:%v, waitTime:%v",
+			log.Debugf("[ddl] check validity in a loop, sub:%v, lease:%v, succ:%v, waitTime:%v",
 				sub, lease, lastSuccTS, waitTime)
 			timer.Reset(waitTime)
 		case newLease := <-do.checkCh:
@@ -358,8 +360,12 @@ func (do *Domain) checkValidityInLoop(lease time.Duration) {
 
 // minInterval gets a minimal interval.
 // It uses to reload schema and check schema validity after the schema is invalid.
+// If lease is 0, it's used for local store and minimal interval is 5ms.
 func minInterval(lease time.Duration) time.Duration {
-	return lease / 4
+	if lease > 0 {
+		return lease / 4
+	}
+	return 5 * time.Millisecond
 }
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
@@ -454,11 +460,14 @@ func (s *schemaValidityInfo) getTimeInfo() (int64, uint64) {
 // It's public in order to do the test.
 func (s *schemaValidityInfo) SetValidity(v bool, lastSuccTS uint64) {
 	s.mux.Lock()
-	log.Infof("[ddl] SetValidity, original:%v current:%v lastSuccTS:%v", s.isValid, v, lastSuccTS)
-	if !v && s.isValid != v {
-		s.firstValidTS = lastSuccTS
+	if s.isValid != v {
+		log.Infof("[ddl] SetValidity, original:%v current:%v lastSuccTS:%v", s.isValid, v, lastSuccTS)
+		if !v {
+			log.Errorf("[ddl] SetValidity, schema validity is %v, lastSuccTS:%v", v, lastSuccTS)
+			s.firstValidTS = lastSuccTS
+		}
+		s.isValid = v
 	}
-	s.isValid = v
 	s.mux.Unlock()
 }
 
@@ -492,11 +501,12 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop and checkValidityInLoop.
 	if lease > 0 {
-		d.loadCh = make(chan time.Duration, 1)
 		d.checkCh = make(chan time.Duration, 1)
-		go d.loadSchemaInLoop(lease)
+		d.loadCh = make(chan time.Duration, 1)
 		go d.checkValidityInLoop(lease)
 	}
+	// Local store needs to get the change information for every DDL state in each session.
+	go d.loadSchemaInLoop(lease)
 
 	return d, nil
 }

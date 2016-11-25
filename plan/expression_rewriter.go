@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -470,7 +471,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.ctxStack = append(er.ctxStack, datumToConstant(types.NewDatum(value), mysql.TypeString))
 		return
 	}
-	d := sessionVars.GetSystemVar(name)
+	d := varsutil.GetSystemVar(sessionVars, name)
 	if d.IsNull() {
 		if sysVar.Scope&variable.ScopeGlobal == 0 {
 			d.SetString(sysVar.Value)
@@ -482,7 +483,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 				return
 			}
 			d.SetString(globalVal)
-			err = sessionVars.SetSystemVar(name, d)
+			err = varsutil.SetSystemVar(sessionVars, name, d)
 			if err != nil {
 				er.err = errors.Trace(err)
 				return
@@ -719,19 +720,11 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	}
 	var op string
 	var l, r expression.Expression
-	if v.Not {
-		l, er.err = expression.NewFunction(ast.LT, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
-		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.GT, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
-		}
-		op = ast.OrOr
-	} else {
-		l, er.err = expression.NewFunction(ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
-		if er.err == nil {
-			r, er.err = expression.NewFunction(ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
-		}
-		op = ast.AndAnd
+	l, er.err = expression.NewFunction(ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
+	if er.err == nil {
+		r, er.err = expression.NewFunction(ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
 	}
+	op = ast.AndAnd
 	if er.err != nil {
 		er.err = errors.Trace(er.err)
 		return
@@ -740,6 +733,13 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
+	}
+	if v.Not {
+		function, err = expression.NewFunction(ast.UnaryNot, &v.Type, function)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
+		}
 	}
 	er.ctxStack = er.ctxStack[:stkLen-3]
 	er.ctxStack = append(er.ctxStack, function)
