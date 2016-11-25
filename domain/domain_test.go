@@ -90,7 +90,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, NotNil)
 	dom.SchemaValidity.MockReloadFailed.SetValue(false)
 	dom.SchemaValidity.SetValidity(true, 0)
-	_, err := dom.SchemaValidity.Check(0, 0)
+	_, err = dom.SchemaValidity.Check(1, 0)
 	c.Assert(err, NotNil)
 	schemaVer1, err := dom.SchemaValidity.Check(0, schemaVer)
 	c.Assert(err, IsNil)
