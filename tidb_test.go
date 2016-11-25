@@ -80,7 +80,7 @@ func (s *testMainSuite) SetUpSuite(c *C) {
 func (s *testMainSuite) TearDownSuite(c *C) {
 	defer testleak.AfterTest(c)()
 	removeStore(c, s.dbName)
-	checkSchemaValidityRetryTimes = 10
+	checkSchemaValidityRetryTimes = 30
 	checkSchemaValiditySleepTime = 1 * time.Second
 }
 

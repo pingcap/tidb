@@ -63,7 +63,7 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 
 func (s *testSessionSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
-	checkSchemaValidityRetryTimes = 10
+	checkSchemaValidityRetryTimes = 30
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {

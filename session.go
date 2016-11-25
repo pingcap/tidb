@@ -113,7 +113,7 @@ const unlimitedRetryCnt = -1
 
 type session struct {
 	txn kv.Transaction // current transaction
-	// It is the schema version in current transition. If it's 0, the transaction is nil.
+	// It is the schema version in current transaction. If it's 0, the transaction is nil.
 	schemaVerInCurrTxn int64
 	values             map[fmt.Stringer]interface{}
 	store              kv.Storage
@@ -137,7 +137,7 @@ func (s *session) cleanRetryInfo() {
 
 // TODO: Set them as system variables.
 var (
-	checkSchemaValidityRetryTimes = 10
+	checkSchemaValidityRetryTimes = 30
 	checkSchemaValiditySleepTime  = 1 * time.Second
 )
 

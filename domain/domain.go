@@ -474,7 +474,7 @@ func (s *schemaValidityInfo) SetExpireInfo(expired bool, lastSuccTS uint64) {
 	if s.isExpired != expired {
 		log.Infof("[ddl] SetExpireInfo, original:%v current:%v lastSuccTS:%v", s.isExpired, expired, lastSuccTS)
 		if expired {
-			log.Errorf("[ddl] SetExpireInfo, schema validity is %v, lastSuccTS:%v", expired, lastSuccTS)
+			log.Errorf("[ddl] SetExpireInfo, information schema is expired %v, lastSuccTS:%v", expired, lastSuccTS)
 			s.recoveredTS = lastSuccTS
 		}
 		s.isExpired = expired
