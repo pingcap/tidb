@@ -142,7 +142,6 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		// For 10 in ((select * from t)), the parser won't set v.Sel.
 		// So we must process this case here.
 		x := v.List[0]
-	loop:
 		for {
 			switch y := x.(type) {
 			case *ast.SubqueryExpr:
@@ -151,7 +150,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			case *ast.ParenthesesExpr:
 				x = y.Expr
 			default:
-				break loop
+				return inNode, false
 			}
 		}
 	case *ast.SubqueryExpr:
