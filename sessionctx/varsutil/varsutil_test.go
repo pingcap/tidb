@@ -30,7 +30,7 @@ var _ = Suite(&testVarsutilSuite{})
 type testVarsutilSuite struct {
 }
 
-func (s *testVarsutilSuite) TestDomain(c *C) {
+func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	defer testleak.AfterTest(c)()
 	v := variable.NewSessionVars()
 
