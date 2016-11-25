@@ -70,10 +70,6 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 	} else if pos.Tp == ast.ColumnPositionAfter {
 		c := findCol(cols, pos.RelativeColumn.Name.L)
 		if c == nil {
-			/*
-				mysql> alter table t add a int not null after b;
-				ERROR 1054 (42S22): Unknown column 'b' in 't'
-			*/
 			return nil, 0, infoschema.ErrColumnNotExists.GenByArgs(pos.RelativeColumn, tblInfo.Name)
 		}
 
@@ -436,10 +432,6 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 	oldCol := findCol(tblInfo.Columns, newCol.Name.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobCancelled
-		/*
-			mysql> alter table t modify a int not null;
-			ERROR 1054 (42S22): Unknown column 'a' in 't'
-		*/
 		return infoschema.ErrColumnNotExists.GenByArgs(newCol.Name, tblInfo.Name)
 	}
 	*oldCol = *newCol

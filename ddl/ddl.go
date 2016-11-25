@@ -757,10 +757,6 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		if constr.Tp == ast.ConstraintForeignKey {
 			for _, fk := range tbInfo.ForeignKeys {
 				if fk.Name.L == strings.ToLower(constr.Name) {
-					/*
-						mysql> create table s (dd int,mm int,foreign key xx (dd) REFERENCES t (id), foreign key xx(dd) REFERENCES t (id));
-						ERROR 1215 (HY000): Cannot add foreign key constraint
-					*/
 					return nil, infoschema.ErrCannotAddForeign
 				}
 			}
@@ -777,17 +773,10 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 			fk.OnDelete = int(constr.Refer.OnDelete.ReferOpt)
 			fk.OnUpdate = int(constr.Refer.OnUpdate.ReferOpt)
 			if len(fk.Cols) != len(fk.RefCols) {
-				/*
-					mysql> create table s (dd int,mm int,foreign key xx (dd,mm) REFERENCES t (id));
-					ERROR 1239 (42000): Incorrect foreign key definition for 'xx': Key reference and table reference don't match
-				*/
 				return nil, infoschema.ErrForeignKeyNotMatch
 			}
 			if len(fk.Cols) == 0 {
-				// TODO: In MySQL, this case will report a parse error:
-				// mysql> create table s (dd int,foreign key xx (dd) REFERENCES t ());
-				// ERROR 1064 (42000): You have an error in your SQL syntax; check the manual
-				// that corresponds to your MySQL server version for the right syntax to use near '))' at line 1
+				// TODO: In MySQL, this case will report a parse error.
 				return nil, infoschema.ErrCannotAddForeign
 			}
 			tbInfo.ForeignKeys = append(tbInfo.ForeignKeys, &fk)
