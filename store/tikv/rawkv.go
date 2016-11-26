@@ -35,14 +35,20 @@ func NewRawKVClient(pdAddrs []string) (*RawKVClient, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return nil, &RawKVClient{
+	return &RawKVClient{
 		clusterID:   pdCli.GetClusterID(),
 		regionCache: NewRegionCache(pdCli),
 		rpcClient:   newRPCClient(),
 	}, nil
 }
 
-// Get queries value with the key.
+// ClusterID returns the TiKV cluster ID.
+func (c *RawKVClient) ClusterID() uint64 {
+	return c.clusterID
+}
+
+// Get queries value with the key. When the key does not exist, it returns
+// `nil, nil`, while `[]byte{}, nil` means an empty value.
 func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 	req := &kvrpcpb.Request{
 		Type: kvrpcpb.MessageType_CmdRawGet,
@@ -82,7 +88,7 @@ func (c *RawKVClient) Put(key, value []byte) error {
 		return errors.Trace(errBodyMissing)
 	}
 	if cmdResp.GetError() != "" {
-		return nil, errors.New(cmdResp.GetError())
+		return errors.New(cmdResp.GetError())
 	}
 	return nil
 }
@@ -104,7 +110,7 @@ func (c *RawKVClient) Delete(key []byte) error {
 		return errors.Trace(errBodyMissing)
 	}
 	if cmdResp.GetError() != "" {
-		return nil, errors.New(cmdResp.GetError())
+		return errors.New(cmdResp.GetError())
 	}
 	return nil
 }
