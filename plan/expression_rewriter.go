@@ -137,6 +137,23 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if v.Sel != nil {
 			return er.handleInSubquery(v)
 		}
+		if len(v.List) != 1 {
+			break
+		}
+		// For 10 in ((select * from t)), the parser won't set v.Sel.
+		// So we must process this case here.
+		x := v.List[0]
+		for {
+			switch y := x.(type) {
+			case *ast.SubqueryExpr:
+				v.Sel = y
+				return er.handleInSubquery(v)
+			case *ast.ParenthesesExpr:
+				x = y.Expr
+			default:
+				return inNode, false
+			}
+		}
 	case *ast.SubqueryExpr:
 		return er.handleScalarSubquery(v)
 	case *ast.ParenthesesExpr:
@@ -285,6 +302,10 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	// a in (subq) will be rewrited as a = any(subq).
 	// a not in (subq) will be rewrited as a != all(subq).
 	checkCondition, err := constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return v, true
+	}
 	if !np.IsCorrelated() {
 		er.p = er.b.buildSemiJoin(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
 		if asScalar {
@@ -297,10 +318,6 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	}
 	if v.Not {
 		checkCondition, _ = expression.NewFunction(ast.UnaryNot, &v.Type, checkCondition)
-	}
-	if err != nil {
-		er.err = errors.Trace(err)
-		return v, true
 	}
 	er.p = er.b.buildApply(er.p, np, &ApplyConditionChecker{Condition: checkCondition, All: v.Not})
 	// The parent expression only use the last column in schema, which represents whether the condition is matched.
@@ -334,6 +351,10 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		return v, true
 	}
 	physicalPlan, err := doOptimize(np, er.b.ctx, er.b.allocator)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return v, true
+	}
 	d, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
 	if err != nil {
 		er.err = errors.Trace(err)
