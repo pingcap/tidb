@@ -57,7 +57,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"starting", "table", "terminated", "then", "tinyblob", "tinyint", "tinytext", "to",
 		"trailing", "true", "union", "unique", "unlock", "unsigned",
 		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
-		"when", "where", "write", "xor", "year_month", "zerofill",
+		"when", "where", "write", "xor", "year_month", "zerofill", "events",
 		// TODO: support the following keywords
 		// "delayed" , "high_priority" , "low_priority", "with",
 	}
@@ -381,6 +381,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW INDEX IN t;`, true},
 		{`SHOW KEYS IN t;`, true},
 		{`SHOW INDEXES IN t;`, true},
+		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		// For show character set
 		{"show character set;", true},
 		// For show collation
