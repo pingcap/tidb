@@ -72,7 +72,7 @@ func (s *testMainSuite) SetUpSuite(c *C) {
     CREATE TABLE tbl_test1(id INT NOT NULL DEFAULT 2, name varchar(255), PRIMARY KEY(id), INDEX name(name));
     CREATE TABLE tbl_test2(id INT NOT NULL DEFAULT 3, name varchar(255), PRIMARY KEY(id));`
 	s.selectSQL = `SELECT * from tbl_test;`
-	checkSchemaValidityRetryTimes = 3
+	checkSchemaValidityRetryTimes = 5
 	checkSchemaValiditySleepTime = 20 * time.Millisecond
 	runtime.GOMAXPROCS(runtime.NumCPU())
 }
@@ -342,12 +342,12 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
+	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
 	mustExecSQL(c, se, "insert t values (1);")
 	// Make sure insert to table t2 transaction executes.
 	startCh2 <- struct{}{}
 	err = <-endCh2
 	c.Assert(err, IsNil, Commentf("err:%v", err))
-	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
 
 	err = se.Close()
 	c.Assert(err, IsNil)
