@@ -55,12 +55,11 @@ for details on submitting patches and the contribution workflow.
 
 ## Follow us
 
-### Twitter 
+### Twitter
+
 [@PingCAP](https://twitter.com/PingCAP)
 
-### Mailing lists
-
-Users of TiDB trade notes on:
+### Mailing list
 
 tidb-user@googlegroups.com
 
