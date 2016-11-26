@@ -23,7 +23,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/kvproto/pkg/errorpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
@@ -183,79 +182,8 @@ func (s *tikvStore) GetClient() kv.Client {
 	}
 }
 
-// sendKVReq sends req to tikv server. It will retry internally to find the right
-// region leader if i) fails to establish a connection to server or ii) server
-// returns `NotLeader`.
 func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVerID, timeout time.Duration) (*pb.Response, error) {
-	for {
-		select {
-		case <-bo.ctx.Done():
-			return nil, errors.Trace(bo.ctx.Err())
-		default:
-		}
-
-		region := s.regionCache.GetRegionByVerID(regionID)
-		if region == nil {
-			// If the region is not found in cache, it must be out
-			// of date and already be cleaned up. We can skip the
-			// RPC by returning RegionError directly.
-			return &pb.Response{
-				Type:        req.GetType(),
-				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
-			}, nil
-		}
-		req.Context = region.GetContext()
-		resp, err := s.client.SendKVReq(region.GetAddress(), req, timeout)
-		if err != nil {
-			s.regionCache.NextPeer(region.VerID())
-			err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, req.Context))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			continue
-		}
-		if regionErr := resp.GetRegionError(); regionErr != nil {
-			reportRegionError(regionErr)
-			// Retry if error is `NotLeader`.
-			if notLeader := regionErr.GetNotLeader(); notLeader != nil {
-				log.Warnf("tikv reports `NotLeader`: %s, ctx: %s, retry later", notLeader, req.Context)
-				s.regionCache.UpdateLeader(region.VerID(), notLeader.GetLeader().GetId())
-				if notLeader.GetLeader() == nil {
-					err = bo.Backoff(boRegionMiss, errors.Errorf("not leader: %v, ctx: %s", notLeader, req.Context))
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-				}
-				continue
-			}
-			if staleEpoch := regionErr.GetStaleEpoch(); staleEpoch != nil {
-				log.Warnf("tikv reports `StaleEpoch`, ctx: %s, retry later", req.Context)
-				err = s.regionCache.OnRegionStale(region, staleEpoch.NewRegions)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				continue
-			}
-			// Retry if the error is `ServerIsBusy`.
-			if regionErr.GetServerIsBusy() != nil {
-				log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", req.Context)
-				err = bo.Backoff(boServerBusy, errors.Errorf("server is busy"))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				continue
-			}
-			// For other errors, we only drop cache here.
-			// Because caller may need to re-split the request.
-			log.Warnf("tikv reports region error: %s, ctx: %s", resp.GetRegionError(), req.Context)
-			s.regionCache.DropRegion(region.VerID())
-			return resp, nil
-		}
-		if resp.GetType() != req.GetType() {
-			return nil, errors.Trace(errMismatch(resp, req))
-		}
-		return resp, nil
-	}
+	return sendKVReq(s.regionCache, s.client, bo, req, regionID, timeout)
 }
 
 func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
