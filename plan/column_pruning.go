@@ -199,6 +199,7 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 // So only c in parentUsedCols and id in outerSchema can be passed to TableScan.
 func (p *Apply) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.GetChildByIndex(0).(LogicalPlan)
+	innerPlan := p.GetChildByIndex(1).(LogicalPlan)
 	var usedCols []*expression.Column
 	if p.Checker != nil {
 		parentUsedCols = append(parentUsedCols, extractColumns(p.Checker.Condition)...)
@@ -208,8 +209,8 @@ func (p *Apply) PruneColumns(parentUsedCols []*expression.Column) {
 			usedCols = append(usedCols, col)
 		}
 	}
-	p.InnerPlan.PruneColumns(p.InnerPlan.GetSchema())
-	corCols := p.InnerPlan.extractCorrelatedCols()
+	innerPlan.PruneColumns(innerPlan.GetSchema())
+	corCols := innerPlan.extractCorrelatedCols()
 	for _, corCol := range corCols {
 		idx := child.GetSchema().GetIndex(&corCol.Column)
 		if idx != -1 {
@@ -217,7 +218,7 @@ func (p *Apply) PruneColumns(parentUsedCols []*expression.Column) {
 		}
 	}
 	child.PruneColumns(usedCols)
-	combinedSchema := append(child.GetSchema().Clone(), p.InnerPlan.GetSchema().Clone()...)
+	combinedSchema := append(child.GetSchema().Clone(), innerPlan.GetSchema().Clone()...)
 	if p.Checker == nil {
 		p.schema = combinedSchema
 	} else {

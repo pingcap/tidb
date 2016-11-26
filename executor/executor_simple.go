@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -65,8 +64,6 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeUse(x)
 	case *ast.FlushTableStmt:
 		err = e.executeFlushTable(x)
-	case *ast.SetStmt:
-		err = e.executeSet(x)
 	case *ast.DoStmt:
 		err = e.executeDo(x)
 	case *ast.BeginStmt:
@@ -110,163 +107,8 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	// The server sets this variable whenever the default database changes.
 	// See http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
 	sessionVars := e.ctx.GetSessionVars()
-	err := sessionVars.SetSystemVar(variable.CharsetDatabase, types.NewStringDatum(dbinfo.Charset))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = sessionVars.SetSystemVar(variable.CollationDatabase, types.NewStringDatum(dbinfo.Collate))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
-	sessionVars := e.ctx.GetSessionVars()
-	globalVars := sessionVars.GlobalVarsAccessor
-	for _, v := range s.Variables {
-		// Variable is case insensitive, we use lower case.
-		if v.Name == ast.SetNames {
-			// This is set charset stmt.
-			cs := v.Value.GetValue().(string)
-			var co string
-			if v.ExtendValue != nil {
-				co = v.ExtendValue.GetValue().(string)
-			}
-			err := e.setCharset(cs, co)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			continue
-		}
-		name := strings.ToLower(v.Name)
-		if !v.IsSystem {
-			// Set user variable.
-			value, err := evaluator.Eval(e.ctx, v.Value)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			if value.IsNull() {
-				delete(sessionVars.Users, name)
-			} else {
-				svalue, err1 := value.ToString()
-				if err1 != nil {
-					return errors.Trace(err1)
-				}
-				sessionVars.Users[name] = fmt.Sprintf("%v", svalue)
-			}
-			continue
-		}
-
-		// Set system variable
-		sysVar := variable.GetSysVar(name)
-		if sysVar == nil {
-			return variable.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
-		}
-		if sysVar.Scope == variable.ScopeNone {
-			return errors.Errorf("Variable '%s' is a read only variable", name)
-		}
-		if v.IsGlobal {
-			// Set global scope system variable.
-			if sysVar.Scope&variable.ScopeGlobal == 0 {
-				return errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
-			}
-			value, err := e.getVarValue(v, sysVar, nil)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if value.IsNull() {
-				value.SetString("")
-			}
-			svalue, err := value.ToString()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = globalVars.SetGlobalSysVar(name, svalue)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
-			// Set session scope system variable.
-			if sysVar.Scope&variable.ScopeSession == 0 {
-				return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
-			}
-			value, err := e.getVarValue(v, nil, globalVars)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = sessionVars.SetSystemVar(name, value)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, value.GetString())
-			if name == variable.TiDBSnapshot {
-				err = e.loadSnapshotInfoSchemaIfNeeded(sessionVars)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func (e *SimpleExec) loadSnapshotInfoSchemaIfNeeded(sessionVars *variable.SessionVars) error {
-	if sessionVars.SnapshotTS == 0 {
-		sessionVars.SnapshotInfoschema = nil
-		return nil
-	}
-	log.Infof("[%d] loadSnapshotInfoSchema, SnapshotTS:%d", sessionVars.ConnectionID, sessionVars.SnapshotTS)
-	dom := sessionctx.GetDomain(e.ctx)
-	snapInfo, err := dom.GetSnapshotInfoSchema(sessionVars.SnapshotTS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	sessionVars.SnapshotInfoschema = snapInfo
-	return nil
-}
-
-func (e *SimpleExec) getVarValue(v *ast.VariableAssignment, sysVar *variable.SysVar, globalVars variable.GlobalVarAccessor) (value types.Datum, err error) {
-	switch v.Value.(type) {
-	case *ast.DefaultExpr:
-		// To set a SESSION variable to the GLOBAL value or a GLOBAL value
-		// to the compiled-in MySQL default value, use the DEFAULT keyword.
-		// See http://dev.mysql.com/doc/refman/5.7/en/set-statement.html
-		if sysVar != nil {
-			value = types.NewStringDatum(sysVar.Value)
-		} else {
-			s, err1 := globalVars.GetGlobalSysVar(strings.ToLower(v.Name))
-			if err1 != nil {
-				return value, errors.Trace(err1)
-			}
-			value = types.NewStringDatum(s)
-		}
-	default:
-		value, err = evaluator.Eval(e.ctx, v.Value)
-	}
-	return value, errors.Trace(err)
-}
-
-func (e *SimpleExec) setCharset(cs, co string) error {
-	var err error
-	if len(co) == 0 {
-		co, err = charset.GetDefaultCollation(cs)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	sessionVars := e.ctx.GetSessionVars()
-	for _, v := range variable.SetNamesVariables {
-		err = sessionVars.SetSystemVar(v, types.NewStringDatum(cs))
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	err = sessionVars.SetSystemVar(variable.CollationConnection, types.NewStringDatum(co))
-	if err != nil {
-		return errors.Trace(err)
-	}
+	sessionVars.Systems[variable.CharsetDatabase] = dbinfo.Charset
+	sessionVars.Systems[variable.CollationDatabase] = dbinfo.Collate
 	return nil
 }
 
