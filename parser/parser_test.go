@@ -57,7 +57,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"starting", "table", "terminated", "then", "tinyblob", "tinyint", "tinytext", "to",
 		"trailing", "true", "union", "unique", "unlock", "unsigned",
 		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
-		"when", "where", "write", "xor", "year_month", "zerofill", "events",
+		"when", "where", "write", "xor", "year_month", "zerofill",
 		// TODO: support the following keywords
 		// "delayed" , "high_priority" , "low_priority", "with",
 	}
@@ -88,7 +88,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
-		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist",
+		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
