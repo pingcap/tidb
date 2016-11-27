@@ -86,7 +86,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 
 	if !found {
 		job.State = model.JobCancelled
-		return infoschema.ErrForeignKeyNotExists.Gen("foreign key %s doesn't exist", fkName)
+		return infoschema.ErrForeignKeyNotExists.GenByArgs(fkName)
 	}
 
 	nfks := tblInfo.ForeignKeys[:0]

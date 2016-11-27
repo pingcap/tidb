@@ -70,7 +70,7 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 	} else if pos.Tp == ast.ColumnPositionAfter {
 		c := findCol(cols, pos.RelativeColumn.Name.L)
 		if c == nil {
-			return nil, 0, infoschema.ErrColumnNotExists.Gen("no such column: %v", pos.RelativeColumn)
+			return nil, 0, infoschema.ErrColumnNotExists.GenByArgs(pos.RelativeColumn, tblInfo.Name)
 		}
 
 		// Insert position is after the mentioned column.
@@ -113,7 +113,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		if columnInfo.State == model.StatePublic {
 			// We already have a column with the same column name.
 			job.State = model.JobCancelled
-			return infoschema.ErrColumnExists.Gen("column already exist %s", col.Name)
+			return infoschema.ErrColumnExists.GenByArgs(col.Name)
 		}
 	} else {
 		columnInfo, offset, err = d.createColumnInfo(tblInfo, col, pos)
@@ -432,7 +432,7 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 	oldCol := findCol(tblInfo.Columns, newCol.Name.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobCancelled
-		return infoschema.ErrColumnNotExists.Gen("column %s doesn't exist", newCol.Name)
+		return infoschema.ErrColumnNotExists.GenByArgs(newCol.Name, tblInfo.Name)
 	}
 	*oldCol = *newCol
 	err = t.UpdateTable(job.SchemaID, tblInfo)

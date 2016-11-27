@@ -326,81 +326,6 @@ func mockContext() context.Context {
 	return ctx
 }
 
-func (s *testPlanSuite) TestPushDownAggregation(c *C) {
-	defer testleak.AfterTest(c)()
-	cases := []struct {
-		sql       string
-		best      string
-		aggFuns   string
-		aggFields string
-		gbyItems  string
-	}{
-		{
-			sql:       "select count(*) from t",
-			best:      "Table(t)->HashAgg->Projection",
-			aggFuns:   "[count(1)]",
-			aggFields: "[blob bigint(21)]",
-			gbyItems:  "[]",
-		},
-		{
-			sql:       "select sum(b) from t group by c",
-			best:      "Table(t)->HashAgg->Projection",
-			aggFuns:   "[sum(test.t.b)]",
-			aggFields: "[blob decimal]",
-			gbyItems:  "[test.t.c]",
-		},
-		{
-			sql:       "select max(b + c), min(case when b then 1 else 2 end) from t group by d + e, a",
-			best:      "Table(t)->HashAgg->Projection",
-			aggFuns:   "[max(plus(test.t.b, test.t.c)) min(case(test.t.b, 1, 2))]",
-			aggFields: "[blob bigint bigint]",
-			gbyItems:  "[plus(test.t.d, test.t.e) test.t.a]",
-		},
-	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
-		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
-
-		err = mockResolve(stmt)
-		c.Assert(err, IsNil)
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
-		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
-		lp := p.(LogicalPlan)
-
-		_, lp, err = lp.PredicatePushDown(nil)
-		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema())
-		lp.ResolveIndicesAndCorCols()
-		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
-		c.Assert(err, IsNil)
-		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
-		p = info.p
-		for {
-			var ts *physicalTableSource
-			switch x := p.(type) {
-			case *PhysicalTableScan:
-				ts = &x.physicalTableSource
-			case *PhysicalIndexScan:
-				ts = &x.physicalTableSource
-			}
-			if ts != nil {
-				c.Assert(fmt.Sprintf("%s", ts.aggFuncs), Equals, ca.aggFuns, Commentf("for %s", ca.sql))
-				c.Assert(fmt.Sprintf("%s", ts.gbyItems), Equals, ca.gbyItems, Commentf("for %s", ca.sql))
-				c.Assert(fmt.Sprintf("%s", ts.AggFields), Equals, ca.aggFields, Commentf("for %s", ca.sql))
-				break
-			}
-			p = p.GetChildByIndex(0)
-		}
-	}
-}
-
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
@@ -510,8 +435,8 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:   "select (select count(*) from t where t.a = k.a) from t k",
-			first: "DataScan(k)->Apply(DataScan(t)->Selection->Aggr(count(1))->Projection->MaxOneRow)->Projection",
-			best:  "DataScan(k)->Apply(DataScan(t)->Selection->Aggr(count(1))->Projection->MaxOneRow)->Projection",
+			first: "Apply{DataScan(k)->DataScan(t)->Selection->Aggr(count(1))->Projection->MaxOneRow}->Projection",
+			best:  "Apply{DataScan(k)->DataScan(t)->Selection->Aggr(count(1))->Projection->MaxOneRow}->Projection",
 		},
 		{
 			sql:   "select a from t where exists(select 1 from t as x where x.a < t.a)",
@@ -589,6 +514,47 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestLogicalPlanBuilder(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql  string
+		best string
+	}{
+		{
+			// This will be resolved as in sub query.
+			sql:  "select * from t where 10 in (select b from t s where s.a = t.a)",
+			best: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Selection->Projection",
+		},
+		{
+			// This will be resolved as in sub query.
+			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
+			best: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Selection->Projection",
+		},
+		{
+			// This will be resolved as in function.
+			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)), 10)",
+			best: "Apply{DataScan(t)->DataScan(s)->Selection->Projection->MaxOneRow}->Selection->Projection",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mock.NewContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		c.Assert(ToString(p.(LogicalPlan)), Equals, ca.best, Commentf("for %s", ca.sql))
+	}
+}
+
 func (s *testPlanSuite) TestJoinReOrder(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
@@ -613,11 +579,11 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
-			best: "DataScan(o)->Apply(Join{Join{DataScan(t2)->Selection->DataScan(t3)}(t2.a,t3.a)->DataScan(t1)}(t3.a,t1.a)->Projection)->Selection->Projection",
+			best: "Apply{DataScan(o)->Join{Join{DataScan(t2)->Selection->DataScan(t3)}(t2.a,t3.a)->DataScan(t1)}(t3.a,t1.a)->Projection}->Selection->Projection",
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)",
-			best: "DataScan(o)->Apply(Join{Join{DataScan(t1)->Selection->DataScan(t3)->Selection}->DataScan(t2)->Selection}->Projection)->Selection->Projection",
+			best: "Apply{DataScan(o)->Join{Join{DataScan(t1)->Selection->DataScan(t3)->Selection}->DataScan(t2)->Selection}->Projection}->Selection->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -646,7 +612,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestLogicalPlan(c *C) {
+func (s *testPlanSuite) TestAggPushDown(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql  string
@@ -773,6 +739,14 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		{
 			sql:  "select a from t where d <= 5 and d > 3",
 			best: "Table(t)->Selection->Projection",
+		},
+		{
+			sql:  "select a from t where c between 1 and 2",
+			best: "Index(t.c_d_e)[[1,2]]->Projection",
+		},
+		{
+			sql:  "select a from t where c not between 1 and 2",
+			best: "Index(t.c_d_e)[[-inf,1) (2,+inf]]->Projection",
 		},
 		{
 			sql:  "select a from t where c <= 5 and c >= 3 and d = 1",
@@ -1262,7 +1236,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
 		result := fullRange
 		for _, cond := range selection.Conditions {
-			result = rb.intersection(result, rb.build(cond))
+			result = rb.intersection(result, rb.build(pushDownNot(cond, false)))
 		}
 		c.Assert(rb.err, IsNil)
 		got := fmt.Sprintf("%v", result)
@@ -1435,43 +1409,51 @@ func (s *testPlanSuite) TestValidate(c *C) {
 	}{
 		{
 			sql: "select date_format((1,2), '%H');",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select cast((1,2) as date)",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) between (3,4) and (5,6)",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) rlike '1'",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) like '1'",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select case(1,2) when(1,2) then true end",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) in ((3,4),(5,6))",
 			err: nil,
 		},
 		{
+			sql: "select row(1,(2,3)) in (select a,b from t)",
+			err: ErrOperandColumns,
+		},
+		{
+			sql: "select row(1,2) in (select a,b from t)",
+			err: nil,
+		},
+		{
 			sql: "select (1,2) in ((3,4),5)",
-			err: ErrSameColumns,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) is true",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) is null",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (+(1,2))=(1,2)",
@@ -1479,11 +1461,11 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 		{
 			sql: "select (-(1,2))=(1,2)",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2)||(1,2)",
-			err: ErrOneColumn,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) < (3,4)",
@@ -1491,7 +1473,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 		{
 			sql: "select (1,2) < 3",
-			err: ErrSameColumns,
+			err: ErrOperandColumns,
 		},
 		{
 			sql: "select 1, * from t",

@@ -26,7 +26,7 @@ func ToString(p Plan) string {
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch in.(type) {
-	case *Join, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin:
+	case *Join, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin, *Apply, *PhysicalApply:
 		idxs = append(idxs, len(strs))
 	}
 
@@ -71,10 +71,13 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		} else {
 			str = "SemiJoin{" + strings.Join(children, "->") + "}"
 		}
-	case *Apply:
-		str = fmt.Sprintf("Apply(%s)", ToString(x.InnerPlan))
-	case *PhysicalApply:
-		str = fmt.Sprintf("Apply(%s)", ToString(x.InnerPlan))
+	case *Apply, *PhysicalApply:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		str = "Apply{" + strings.Join(children, "->") + "}"
 	case *Exists:
 		str = "Exists"
 	case *MaxOneRow:

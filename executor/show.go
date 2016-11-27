@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
@@ -308,14 +309,14 @@ func (e *ShowExec) fetchShowVariables() error {
 		var value string
 		if !e.GlobalScope {
 			// Try to get Session Scope variable value first.
-			sv := sessionVars.GetSystemVar(v.Name)
+			sv := varsutil.GetSystemVar(sessionVars, v.Name)
 			if sv.IsNull() {
 				value, err = globalVars.GetGlobalSysVar(v.Name)
 				if err != nil {
 					return errors.Trace(err)
 				}
 				sv.SetString(value)
-				err = sessionVars.SetSystemVar(v.Name, sv)
+				err = varsutil.SetSystemVar(sessionVars, v.Name, sv)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -488,7 +489,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("Unknown database '%s'", e.DBName.O)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(e.DBName.O)
 	}
 
 	var buf bytes.Buffer
