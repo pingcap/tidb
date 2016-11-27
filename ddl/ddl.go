@@ -1118,10 +1118,6 @@ func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 	colName := spec.Column.Name.Name
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
-		/*
-			mysql> alter table t modify a int not null;
-			ERROR 1054 (42S22): Unknown column 'a' in 't'
-		*/
 		return infoschema.ErrColumnNotExists.GenByArgs(colName, ident.Name)
 	}
 	if spec.Constraint != nil || spec.Position.Tp != ast.ColumnPositionNone ||
