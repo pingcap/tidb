@@ -55,7 +55,15 @@ for details on submitting patches and the contribution workflow.
 
 ## Follow us
 
-Twitter: [@PingCAP](https://twitter.com/PingCAP)
+### Twitter
+
+[@PingCAP](https://twitter.com/PingCAP)
+
+### Mailing list
+
+tidb-user@googlegroups.com
+
+[Google Group](https://groups.google.com/forum/#!forum/tidb-user)
 
 ## License
 TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
