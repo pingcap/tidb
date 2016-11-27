@@ -228,6 +228,14 @@ func (e *Error) Gen(format string, args ...interface{}) *Error {
 	return &err
 }
 
+// GenByArgs generates a new *Error with the same class and code, and new arguments.
+func (e *Error) GenByArgs(args ...interface{}) *Error {
+	err := *e
+	err.args = args
+	_, err.file, err.line, _ = runtime.Caller(1)
+	return &err
+}
+
 // FastGen generates a new *Error with the same class and code, and a new formatted message.
 // This will not call runtime.Caller to get file and line.
 func (e *Error) FastGen(format string, args ...interface{}) *Error {

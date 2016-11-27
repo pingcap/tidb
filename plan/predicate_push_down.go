@@ -613,7 +613,7 @@ func (p *Apply) PredicatePushDown(predicates []expression.Expression) (ret []exp
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	_, p.InnerPlan, err = p.InnerPlan.PredicatePushDown(nil)
+	_, p.children[1], err = p.children[1].(LogicalPlan).PredicatePushDown(nil)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -611,7 +612,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	sysVar, ok := variable.SysVars[name]
 	if !ok {
 		// select null sys vars is not permitted
-		e.err = variable.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
+		e.err = variable.UnknownSystemVar.GenByArgs(name)
 		return false
 	}
 	if sysVar.Scope == variable.ScopeNone {
@@ -620,7 +621,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	}
 
 	if !v.IsGlobal {
-		d := sessionVars.GetSystemVar(name)
+		d := varsutil.GetSystemVar(sessionVars, name)
 		if d.IsNull() {
 			if sysVar.Scope&variable.ScopeGlobal == 0 {
 				d.SetString(sysVar.Value)
@@ -632,7 +633,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 					return false
 				}
 				d.SetString(globalVal)
-				err = sessionVars.SetSystemVar(name, d)
+				err = varsutil.SetSystemVar(sessionVars, name, d)
 				if err != nil {
 					e.err = errors.Trace(err)
 					return false
