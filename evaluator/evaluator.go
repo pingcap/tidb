@@ -612,7 +612,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	sysVar, ok := variable.SysVars[name]
 	if !ok {
 		// select null sys vars is not permitted
-		e.err = variable.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
+		e.err = variable.UnknownSystemVar.GenByArgs(name)
 		return false
 	}
 	if sysVar.Scope == variable.ScopeNone {

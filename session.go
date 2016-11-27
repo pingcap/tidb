@@ -402,7 +402,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
 		if terror.ExecResultIsEmpty.Equal(err) {
-			return "", variable.UnknownSystemVar.Gen("unknown sys variable:%s", name)
+			return "", variable.UnknownSystemVar.GenByArgs(name)
 		}
 		return "", errors.Trace(err)
 	}

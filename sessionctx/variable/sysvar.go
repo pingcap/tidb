@@ -64,7 +64,7 @@ var tidbSysVars map[string]bool
 // Variable errors
 var (
 	UnknownStatusVar = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable")
+	UnknownSystemVar = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
 )
 
 func init() {
