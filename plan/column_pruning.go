@@ -42,7 +42,7 @@ func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
 		}
 	}
 	for _, expr := range p.Exprs {
-		selfUsedCols = append(selfUsedCols, extractColumns(expr)...)
+		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
 	}
 	child.PruneColumns(selfUsedCols)
 	p.schema.InitIndices()
@@ -52,7 +52,7 @@ func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
 func (p *Selection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	for _, cond := range p.Conditions {
-		parentUsedCols = append(parentUsedCols, extractColumns(cond)...)
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(cond)...)
 	}
 	child.PruneColumns(parentUsedCols)
 	p.SetSchema(child.GetSchema())
@@ -71,11 +71,11 @@ func (p *Aggregation) PruneColumns(parentUsedCols []*expression.Column) {
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range p.AggFuncs {
 		for _, arg := range aggrFunc.GetArgs() {
-			selfUsedCols = append(selfUsedCols, extractColumns(arg)...)
+			selfUsedCols = append(selfUsedCols, expression.ExtractColumns(arg)...)
 		}
 	}
 	for _, expr := range p.GroupByItems {
-		selfUsedCols = append(selfUsedCols, extractColumns(expr)...)
+		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
 	}
 	child.PruneColumns(selfUsedCols)
 	p.schema.InitIndices()
@@ -85,7 +85,7 @@ func (p *Aggregation) PruneColumns(parentUsedCols []*expression.Column) {
 func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	for _, item := range p.ByItems {
-		parentUsedCols = append(parentUsedCols, extractColumns(item.Expr)...)
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(item.Expr)...)
 	}
 	child.PruneColumns(parentUsedCols)
 	p.SetSchema(p.GetChildByIndex(0).GetSchema())
@@ -157,16 +157,16 @@ func (p *Insert) PruneColumns(_ []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 	for _, eqCond := range p.EqualConditions {
-		parentUsedCols = append(parentUsedCols, extractColumns(eqCond)...)
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
 	}
 	for _, leftCond := range p.LeftConditions {
-		parentUsedCols = append(parentUsedCols, extractColumns(leftCond)...)
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(leftCond)...)
 	}
 	for _, rightCond := range p.RightConditions {
-		parentUsedCols = append(parentUsedCols, extractColumns(rightCond)...)
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(rightCond)...)
 	}
 	for _, otherCond := range p.OtherConditions {
-		parentUsedCols = append(parentUsedCols, extractColumns(otherCond)...)
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(otherCond)...)
 	}
 	lChild := p.GetChildByIndex(0).(LogicalPlan)
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
@@ -202,7 +202,7 @@ func (p *Apply) PruneColumns(parentUsedCols []*expression.Column) {
 	innerPlan := p.GetChildByIndex(1).(LogicalPlan)
 	var usedCols []*expression.Column
 	if p.Checker != nil {
-		parentUsedCols = append(parentUsedCols, extractColumns(p.Checker.Condition)...)
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(p.Checker.Condition)...)
 	}
 	for _, col := range parentUsedCols {
 		if child.GetSchema().GetIndex(col) != -1 {
