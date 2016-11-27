@@ -100,6 +100,11 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		str = "Join{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
+		for _, eq := range x.EqualConditions {
+			l := eq.Args[0].String()
+			r := eq.Args[1].String()
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
 	case *Union:
 		last := len(idxs) - 1
 		idx := idxs[last]
@@ -108,7 +113,11 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "UnionAll{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
 	case *DataSource:
-		str = fmt.Sprintf("DataScan(%v)", x.Table.Name.L)
+		if x.TableAsName != nil && x.TableAsName.L != "" {
+			str = fmt.Sprintf("DataScan(%s)", x.TableAsName)
+		} else {
+			str = fmt.Sprintf("DataScan(%s)", x.Table.Name)
+		}
 	case *Selection:
 		str = "Selection"
 	case *Projection:
