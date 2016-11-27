@@ -44,7 +44,7 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 		return nil, nil, errors.Errorf("context len %v is invalid", len(er.ctxStack))
 	}
 	if getRowLen(er.ctxStack[0]) != 1 {
-		return nil, nil, ErrOneColumn
+		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
 	return er.ctxStack[0], er.p, nil
 }
@@ -85,7 +85,7 @@ func constructBinaryOpFunction(l expression.Expression, r expression.Expression,
 	if lLen == 1 && rLen == 1 {
 		return expression.NewFunction(op, types.NewFieldType(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
-		return nil, ErrSameColumns
+		return nil, ErrOperandColumns.GenByArgs(lLen)
 	}
 	funcs := make([]expression.Expression, lLen)
 	for i := 0; i < lLen; i++ {
@@ -181,11 +181,12 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	// Only (a,b,c) = all (...) and (a,b,c) != any () can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
 	if !canMultiCol && (getRowLen(lexpr) != 1 || len(np.GetSchema()) != 1) {
-		er.err = ErrOneColumn
+		er.err = ErrOperandColumns.GenByArgs(1)
 		return v, true
 	}
-	if getRowLen(lexpr) != len(np.GetSchema()) {
-		er.err = ErrSameColumns
+	lLen := getRowLen(lexpr)
+	if lLen != len(np.GetSchema()) {
+		er.err = ErrOperandColumns.GenByArgs(lLen)
 		return v, true
 	}
 	var checkCondition expression.Expression
@@ -279,8 +280,9 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	if er.err != nil {
 		return v, true
 	}
-	if getRowLen(lexpr) != len(np.GetSchema()) {
-		er.err = ErrSameColumns
+	lLen := getRowLen(lexpr)
+	if lLen != len(np.GetSchema()) {
+		er.err = ErrOperandColumns.GenByArgs(lLen)
 		return v, true
 	}
 	var rexpr expression.Expression
@@ -473,7 +475,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	sysVar, ok := variable.SysVars[name]
 	if !ok {
 		// select null sys vars is not permitted
-		er.err = variable.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
+		er.err = variable.UnknownSystemVar.GenByArgs(name)
 		return
 	}
 	if sysVar.Scope == variable.ScopeNone {
@@ -531,7 +533,7 @@ func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		return
 	}
 	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
-		er.err = ErrOneColumn
+		er.err = ErrOperandColumns.GenByArgs(1)
 		return
 	}
 	er.ctxStack[stkLen-1], er.err = expression.NewFunction(op, &v.Type, er.ctxStack[stkLen-1])
@@ -550,11 +552,11 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		switch v.Op {
 		case opcode.GT, opcode.GE, opcode.LT, opcode.LE:
 			if lLen != rLen {
-				er.err = ErrSameColumns
+				er.err = ErrOperandColumns.GenByArgs(lLen)
 			}
 		default:
 			if lLen != 1 || rLen != 1 {
-				er.err = ErrOneColumn
+				er.err = ErrOperandColumns.GenByArgs(1)
 			}
 		}
 		if er.err != nil {
@@ -592,7 +594,7 @@ func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.
 func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 	stkLen := len(er.ctxStack)
 	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
-		er.err = ErrOneColumn
+		er.err = ErrOperandColumns.GenByArgs(1)
 		return
 	}
 	function := er.notToExpression(v.Not, ast.IsNull, &v.Type, er.ctxStack[stkLen-1])
@@ -615,7 +617,7 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 		op = ast.IsFalsity
 	}
 	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
-		er.err = ErrOneColumn
+		er.err = ErrOperandColumns.GenByArgs(1)
 		return
 	}
 	function := er.notToExpression(v.Not, op, &v.Type, er.ctxStack[stkLen-1])
@@ -630,8 +632,9 @@ func (er *expressionRewriter) inToExpression(v *ast.PatternInExpr) {
 	stkLen := len(er.ctxStack)
 	lLen := len(v.List)
 	for i := 0; i < lLen; i++ {
-		if getRowLen(er.ctxStack[stkLen-lLen-1]) != getRowLen(er.ctxStack[stkLen-lLen+i]) {
-			er.err = ErrSameColumns
+		l := getRowLen(er.ctxStack[stkLen-lLen-1])
+		if l != getRowLen(er.ctxStack[stkLen-lLen+i]) {
+			er.err = ErrOperandColumns.GenByArgs(l)
 			return
 		}
 	}
@@ -766,7 +769,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 func (er *expressionRewriter) checkArgsOneColumn(args ...expression.Expression) {
 	for _, arg := range args {
 		if getRowLen(arg) != 1 {
-			er.err = ErrOneColumn
+			er.err = ErrOperandColumns.GenByArgs(1)
 			return
 		}
 	}
