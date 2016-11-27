@@ -29,27 +29,27 @@ import (
 
 var (
 	// ErrDatabaseDropExists returns for dropping a non-existent database.
-	ErrDatabaseDropExists = terror.ClassSchema.New(codeDBDropExists, "database doesn't exist")
+	ErrDatabaseDropExists = terror.ClassSchema.New(codeDBDropExists, "Can't drop database '%s'; database doesn't exist")
 	// ErrDatabaseNotExists returns for database not exists.
-	ErrDatabaseNotExists = terror.ClassSchema.New(codeDatabaseNotExists, "database not exists")
+	ErrDatabaseNotExists = terror.ClassSchema.New(codeDatabaseNotExists, "Unknown database '%s'")
 	// ErrTableNotExists returns for table not exists.
-	ErrTableNotExists = terror.ClassSchema.New(codeTableNotExists, "table not exists")
+	ErrTableNotExists = terror.ClassSchema.New(codeTableNotExists, "Table '%s.%s' doesn't exist")
 	// ErrColumnNotExists returns for column not exists.
-	ErrColumnNotExists = terror.ClassSchema.New(codeColumnNotExists, "field not exists")
+	ErrColumnNotExists = terror.ClassSchema.New(codeColumnNotExists, "Unknown column '%s' in '%s'")
 	// ErrForeignKeyNotMatch returns for foreign key not match.
-	ErrForeignKeyNotMatch = terror.ClassSchema.New(codeCannotAddForeign, "foreign key not match")
-	// ErrForeignKeyExists returns for foreign key exists.
-	ErrForeignKeyExists = terror.ClassSchema.New(codeCannotAddForeign, "foreign key already exists")
+	ErrForeignKeyNotMatch = terror.ClassSchema.New(codeWrongFkDef, "Incorrect foreign key definition for '%s': Key reference and table reference don't match")
+	// ErrCannotAddForeign returns for foreign key exists.
+	ErrCannotAddForeign = terror.ClassSchema.New(codeCannotAddForeign, "Cannot add foreign key constraint")
 	// ErrForeignKeyNotExists returns for foreign key not exists.
-	ErrForeignKeyNotExists = terror.ClassSchema.New(codeForeignKeyNotExists, "foreign key not exists")
+	ErrForeignKeyNotExists = terror.ClassSchema.New(codeForeignKeyNotExists, "Can't DROP '%s'; check that column/key exists")
 	// ErrDatabaseExists returns for database already exists.
-	ErrDatabaseExists = terror.ClassSchema.New(codeDatabaseExists, "database already exists")
+	ErrDatabaseExists = terror.ClassSchema.New(codeDatabaseExists, "Can't create database '%s'; database exists")
 	// ErrTableExists returns for table already exists.
-	ErrTableExists = terror.ClassSchema.New(codeTableExists, "table already exists")
+	ErrTableExists = terror.ClassSchema.New(codeTableExists, "Table '%s' already exists")
 	// ErrTableDropExists returns for dropping a non-existent table.
-	ErrTableDropExists = terror.ClassSchema.New(codeBadTable, "unknown table")
+	ErrTableDropExists = terror.ClassSchema.New(codeBadTable, "Unknown table '%s'")
 	// ErrColumnExists returns for column already exists.
-	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column")
+	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column name '%s'")
 	// ErrIndexExists returns for index already exists.
 	ErrIndexExists = terror.ClassSchema.New(codeIndexExists, "Duplicate Index")
 )
@@ -167,7 +167,7 @@ func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err
 			return
 		}
 	}
-	return nil, ErrTableNotExists.Gen("table %s.%s does not exist", schema, table)
+	return nil, ErrTableNotExists.GenByArgs(schema, table)
 }
 
 func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
@@ -291,6 +291,7 @@ const (
 
 	codeCannotAddForeign    = 1215
 	codeForeignKeyNotExists = 1091
+	codeWrongFkDef          = 1239
 
 	codeDatabaseExists = 1007
 	codeTableExists    = 1050
@@ -306,6 +307,7 @@ func init() {
 		codeTableNotExists:      mysql.ErrNoSuchTable,
 		codeColumnNotExists:     mysql.ErrBadField,
 		codeCannotAddForeign:    mysql.ErrCannotAddForeign,
+		codeWrongFkDef:          mysql.ErrWrongFkDef,
 		codeForeignKeyNotExists: mysql.ErrCantDropFieldOrKey,
 		codeDatabaseExists:      mysql.ErrDBCreateExists,
 		codeTableExists:         mysql.ErrTableExists,

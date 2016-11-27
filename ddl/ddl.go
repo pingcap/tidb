@@ -299,7 +299,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(schema)
 	if ok {
-		return errors.Trace(infoschema.ErrDatabaseExists)
+		return errors.Trace(infoschema.ErrDatabaseExists.GenByArgs(schema))
 	}
 
 	if err = checkTooLongSchema(schema); err != nil {
@@ -661,7 +661,7 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		nameLower := colDef.Name.Name.O
 		if colNames[nameLower] {
-			return infoschema.ErrColumnExists.Gen("duplicate column %s", colDef.Name.Name)
+			return infoschema.ErrColumnExists.GenByArgs(colDef.Name.Name)
 		}
 		colNames[nameLower] = true
 	}
@@ -684,7 +684,7 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	nameLower := strings.ToLower(name)
 	if namesMap[nameLower] {
 		if foreign {
-			return infoschema.ErrForeignKeyExists.Gen("duplicate foreign key %s", name)
+			return infoschema.ErrCannotAddForeign
 		}
 		return errDupKeyName.Gen("duplicate key name %s", name)
 	}
@@ -757,7 +757,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		if constr.Tp == ast.ConstraintForeignKey {
 			for _, fk := range tbInfo.ForeignKeys {
 				if fk.Name.L == strings.ToLower(constr.Name) {
-					return nil, infoschema.ErrForeignKeyExists.Gen("foreign key %s already exists.", constr.Name)
+					return nil, infoschema.ErrCannotAddForeign
 				}
 			}
 			var fk model.FKInfo
@@ -773,10 +773,11 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 			fk.OnDelete = int(constr.Refer.OnDelete.ReferOpt)
 			fk.OnUpdate = int(constr.Refer.OnUpdate.ReferOpt)
 			if len(fk.Cols) != len(fk.RefCols) {
-				return nil, infoschema.ErrForeignKeyNotMatch.Gen("foreign key not match keys len %d, refkeys len %d .", len(fk.Cols), len(fk.RefCols))
+				return nil, infoschema.ErrForeignKeyNotMatch
 			}
 			if len(fk.Cols) == 0 {
-				return nil, infoschema.ErrForeignKeyNotMatch.Gen("foreign key should have one key at least.")
+				// TODO: In MySQL, this case will report a parse error.
+				return nil, infoschema.ErrCannotAddForeign
 			}
 			tbInfo.ForeignKeys = append(tbInfo.ForeignKeys, &fk)
 			continue
@@ -846,10 +847,10 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ident.Schema)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
-		return errors.Trace(infoschema.ErrTableExists)
+		return errors.Trace(infoschema.ErrTableExists.GenByArgs(ident))
 	}
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return errors.Trace(err)
@@ -1005,7 +1006,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	colName := spec.Column.Name.Name.O
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
-		return infoschema.ErrColumnExists.Gen("column %s already exists", colName)
+		return infoschema.ErrColumnExists.GenByArgs(colName)
 	}
 
 	if len(colName) > mysql.MaxColumnNameLength {
@@ -1117,7 +1118,7 @@ func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 	colName := spec.Column.Name.Name
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
-		return infoschema.ErrColumnNotExists.Gen("column %s doesn't exist", colName.O)
+		return infoschema.ErrColumnNotExists.GenByArgs(colName, ident.Name)
 	}
 	if spec.Constraint != nil || spec.Position.Tp != ast.ColumnPositionNone ||
 		len(spec.Column.Options) != 0 || spec.Column.Tp == nil {
@@ -1146,12 +1147,12 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s doesn't exist", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
 	}
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists)
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti))
 	}
 
 	job := &model.Job{
@@ -1169,7 +1170,7 @@ func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s doesn't exist", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
 	}
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
@@ -1208,7 +1209,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -1269,7 +1270,7 @@ func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.C
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -1299,7 +1300,7 @@ func (d *ddl) DropForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIS
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
