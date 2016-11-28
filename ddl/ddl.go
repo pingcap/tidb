@@ -1440,7 +1440,7 @@ func checkIndexGrammer(indexColNames []*ast.IndexColName) error {
 		for j := i + 1; j < len(indexColNames); j++ {
 			name2 := indexColNames[j].Column.Name
 			if name1.L == name2.L {
-				return errors.Errorf("Duplicate column name '%s'", name2.O)
+				return infoschema.ErrColumnExists.GenByArgs(name2)
 			}
 		}
 	}
