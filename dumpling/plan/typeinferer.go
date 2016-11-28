@@ -301,6 +301,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			chs = v.defaultCharset
 		}
+	case "str_to_date":
+		tp = types.NewFieldType(mysql.TypeDatetime)
 	case "dayname", "version", "database", "user", "current_user",
 		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
 		"replace", "ucase", "upper", "convert", "substring",
