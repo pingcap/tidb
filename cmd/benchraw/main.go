@@ -17,7 +17,6 @@ import (
 	"flag"
 	"fmt"
 	"github.com/juju/errors"
-	"io/ioutil"
 	"net/http"
 	_ "net/http/pprof"
 	"strings"
@@ -26,7 +25,6 @@ import (
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
@@ -34,44 +32,9 @@ var (
 	workerCnt = flag.Int("C", 100, "concurrent num")
 	pdAddr    = flag.String("pd", "localhost:2379", "pd address:localhost:2379")
 	valueSize = flag.Int("V", 5, "value size in byte")
-
-	txnCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tikv",
-			Subsystem: "txn",
-			Name:      "total",
-			Help:      "Counter of txns.",
-		}, []string{"type"})
-
-	txnRolledbackCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tikv",
-			Subsystem: "txn",
-			Name:      "failed_total",
-			Help:      "Counter of rolled back txns.",
-		}, []string{"type"})
-
-	txnDurations = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "tikv",
-			Subsystem: "txn",
-			Name:      "durations_histogram_seconds",
-			Help:      "Txn latency distributions.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 13),
-		}, []string{"type"})
 )
 
-// Init initializes informations.
-func Init() {
-	prometheus.MustRegister(txnCounter)
-	prometheus.MustRegister(txnRolledbackCounter)
-	prometheus.MustRegister(txnDurations)
-	http.Handle("/metrics", prometheus.Handler())
-
-	go http.ListenAndServe(":9191", nil)
-}
-
-// without conflict
+// blind put bench
 func batchRawPut(value []byte) {
 	cli, err := tikv.NewRawKVClient(strings.Split(*pdAddr, ","))
 	if err != nil {
@@ -86,16 +49,12 @@ func batchRawPut(value []byte) {
 			defer wg.Done()
 
 			for j := 0; j < base; j++ {
-				txnCounter.WithLabelValues("txn").Inc()
-				start := time.Now()
 				k := base*i + j
 				key := fmt.Sprintf("key_%d", k)
 				err = cli.Put([]byte(key), value)
 				if err != nil {
 					log.Fatal(errors.ErrorStack(err))
 				}
-
-				txnDurations.WithLabelValues("txn").Observe(time.Since(start).Seconds())
 			}
 		}(i)
 	}
@@ -105,23 +64,11 @@ func batchRawPut(value []byte) {
 func main() {
 	flag.Parse()
 	log.SetLevelByString("warn")
-	Init()
+	go http.ListenAndServe(":9191", nil)
 
 	value := make([]byte, *valueSize)
 	t := time.Now()
 	batchRawPut(value)
-	resp, err := http.Get("http://localhost:9191/metrics")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	defer resp.Body.Close()
-	text, err1 := ioutil.ReadAll(resp.Body)
-	if err1 != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println(string(text))
 
 	fmt.Printf("\nelapse:%v, total %v\n", time.Since(t), *dataCnt)
 }
