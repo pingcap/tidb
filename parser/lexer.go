@@ -108,7 +108,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return toHex(s, v, lit)
 	case bitLit:
 		return toBit(s, v, lit)
-	case userVar, sysVar, cast, sysDate, curDate, extract:
+	case userVar, sysVar, cast, curDate, extract:
 		v.item = lit
 		return tok
 	case null:

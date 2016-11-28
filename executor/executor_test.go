@@ -1004,6 +1004,14 @@ func (s *testSuite) TestBuiltin(c *C) {
 	unixTime = time.Unix(1451606400, 999999000).String()[:26]
 	result.Check(testkit.Rows(unixTime))
 
+	// test strcmp
+	result = tk.MustQuery("select strcmp('abc', 'def')")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select strcmp('abc', 'aba')")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select strcmp('abc', 'abc')")
+	result.Check(testkit.Rows("0"))
+
 	// for case
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(255), b int)")
