@@ -20,6 +20,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	_ "net/http/pprof"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,7 +73,7 @@ func Init() {
 
 // without conflict
 func batchRawPut(value []byte) {
-	cli, err := tikv.NewRawKVClient([]string{"localhost:2379"})
+	cli, err := tikv.NewRawKVClient(strings.Split(*pdAddr, ","))
 	if err != nil {
 		log.Fatal(err)
 	}
