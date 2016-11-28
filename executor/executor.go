@@ -459,8 +459,10 @@ type HashJoinExec struct {
 	targetTypes []*types.FieldType
 
 	finished bool
-	// for sync multiple join workers.
+	// For sync multiple join workers.
 	wg sync.WaitGroup
+	// closeMu add a lock for closing executor.
+	closeMu sync.Mutex
 
 	// Concurrent channels.
 	concurrency      int
@@ -484,6 +486,9 @@ type hashJoinCtx struct {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
+	e.finished = true
+	e.closeMu.Lock()
+	e.closeMu.Unlock()
 	e.prepared = false
 	e.cursor = 0
 	return e.smallExec.Close()
@@ -539,20 +544,22 @@ var batchSize = 128
 // and sends the rows to multiple channels which will be read by multiple join workers.
 func (e *HashJoinExec) fetchBigExec() {
 	cnt := 0
+	e.wg.Add(1)
 	defer func() {
 		for _, cn := range e.bigTableRows {
 			close(cn)
 		}
 		e.bigExec.Close()
+		e.wg.Done()
 	}()
 	curBatchSize := 1
 	for {
-		if e.finished {
-			break
-		}
 		rows := make([]*Row, 0, batchSize)
 		done := false
 		for i := 0; i < curBatchSize; i++ {
+			if e.finished {
+				break
+			}
 			row, err := e.bigExec.Next()
 			if err != nil {
 				e.bigTableErr <- errors.Trace(err)
@@ -580,8 +587,10 @@ func (e *HashJoinExec) fetchBigExec() {
 // prepare runs the first time when 'Next' is called, it starts one worker goroutine to fetch rows from the big table,
 // and reads all data from the small table to build a hash table, then starts multiple join worker goroutines.
 func (e *HashJoinExec) prepare() error {
+	e.closeMu.Lock()
 	e.finished = false
 	e.bigTableRows = make([]chan []*Row, e.concurrency)
+	e.wg = sync.WaitGroup{}
 	for i := 0; i < e.concurrency; i++ {
 		e.bigTableRows[i] = make(chan []*Row, e.concurrency*batchSize)
 	}
@@ -629,7 +638,6 @@ func (e *HashJoinExec) prepare() error {
 	e.resultRows = make(chan *Row, e.concurrency*1000)
 	e.resultErr = make(chan error, 1)
 
-	e.wg = sync.WaitGroup{}
 	for i := 0; i < e.concurrency; i++ {
 		e.wg.Add(1)
 		go e.runJoinWorker(i)
@@ -644,6 +652,7 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.wg.Wait()
 	close(e.resultRows)
 	e.hashTable = nil
+	e.closeMu.Unlock()
 }
 
 // doJoin does join job in one goroutine.
