@@ -467,7 +467,7 @@ func (s *schemaValidityInfo) getTimeInfo() (int64, uint64) {
 	return s.timeInfo.lastReloadTime, s.timeInfo.lastSuccTS
 }
 
-// SetExpireInfo sets the schema validity value.
+// SetExpireInfo sets the information of whether information schema is out of date.
 // It's public in order to do the test.
 func (s *schemaValidityInfo) SetExpireInfo(expired bool, lastSuccTS uint64) {
 	s.mux.Lock()
