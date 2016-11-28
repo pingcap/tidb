@@ -148,6 +148,7 @@ func (s *testDBSuite) TestIndex(c *C) {
 	s.testAddAnonymousIndex(c)
 	s.testDropIndex(c)
 	s.testAddUniqueIndexRollback(c)
+	s.testAddIndexWithDupCols(c)
 }
 
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
@@ -468,6 +469,21 @@ LOOP:
 	}
 
 	c.Assert(handles, HasLen, 0)
+}
+
+func (s *testDBSuite) testAddIndexWithDupCols(c *C) {
+	s.tk.MustExec("create table t (a int, b int)")
+	_, err := s.tk.Exec("create index c on t(b, a, b)")
+	c.Check(err, NotNil)
+
+	_, err = s.tk.Exec("create index c on t(b, a, B)")
+	c.Check(err, NotNil)
+
+	_, err = s.tk.Exec("alter table t add index c (b, a, b)")
+	c.Check(err, NotNil)
+
+	_, err = s.tk.Exec("alter table t add index c (b, a, B)")
+	c.Check(err, NotNil)
 }
 
 func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {
