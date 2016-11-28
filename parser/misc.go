@@ -465,6 +465,8 @@ var tokenMap = map[string]int{
 	"CASCADE":             cascade,
 	"NO":                  no,
 	"ACTION":              action,
+	"PARTITION":           partition,
+	"PARTITIONS":          partitions,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {
