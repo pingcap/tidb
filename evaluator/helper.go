@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -117,7 +118,7 @@ func getSystemTimestamp(ctx context.Context) (time.Time, error) {
 
 	// check whether use timestamp varibale
 	sessionVars := ctx.GetSessionVars()
-	ts := sessionVars.GetSystemVar("timestamp")
+	ts := varsutil.GetSystemVar(sessionVars, "timestamp")
 	if !ts.IsNull() && ts.GetString() != "" {
 		timestamp, err := ts.ToInt64()
 		if err != nil {

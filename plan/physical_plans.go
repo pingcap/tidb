@@ -311,7 +311,6 @@ type PhysicalDummyScan struct {
 type PhysicalApply struct {
 	basePlan
 
-	InnerPlan   PhysicalPlan
 	OuterSchema []*expression.CorrelatedColumn
 	Checker     *ApplyConditionChecker
 }
@@ -444,7 +443,7 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(
 		"\"innerPlan\": \"%s\",\n "+
 			"\"outerPlan\": \"%s\",\n "+
-			"\"condition\": %s\n}", p.InnerPlan.GetID(), p.children[0].GetID(), checker))
+			"\"condition\": %s\n}", p.children[1].GetID(), p.children[0].GetID(), checker))
 	return buffer.Bytes(), nil
 }
 

@@ -368,6 +368,8 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		p.SetSchema(buildShowProcedureSchema())
 	case ast.ShowTriggers:
 		p.SetSchema(buildShowTriggerSchema())
+	case ast.ShowEvents:
+		p.SetSchema(buildShowEventsSchema())
 	default:
 		p.SetSchema(expression.ResultFieldsToSchema(show.GetResultFields()))
 	}
@@ -506,6 +508,27 @@ func buildShowTriggerSchema() expression.Schema {
 	schema = append(schema, buildColumn(tblName, "Created", mysql.TypeDatetime, 19))
 	schema = append(schema, buildColumn(tblName, "sql_mode", mysql.TypeBlob, 8192))
 	schema = append(schema, buildColumn(tblName, "Definer", mysql.TypeVarchar, 128))
+	schema = append(schema, buildColumn(tblName, "character_set_client", mysql.TypeVarchar, 32))
+	schema = append(schema, buildColumn(tblName, "collation_connection", mysql.TypeVarchar, 32))
+	schema = append(schema, buildColumn(tblName, "Database Collation", mysql.TypeVarchar, 32))
+	return schema
+}
+
+func buildShowEventsSchema() expression.Schema {
+	tblName := "EVENTS"
+	schema := make(expression.Schema, 0, 15)
+	schema = append(schema, buildColumn(tblName, "Db", mysql.TypeVarchar, 128))
+	schema = append(schema, buildColumn(tblName, "Name", mysql.TypeVarchar, 128))
+	schema = append(schema, buildColumn(tblName, "Time zone", mysql.TypeVarchar, 32))
+	schema = append(schema, buildColumn(tblName, "Definer", mysql.TypeVarchar, 128))
+	schema = append(schema, buildColumn(tblName, "Type", mysql.TypeVarchar, 128))
+	schema = append(schema, buildColumn(tblName, "Execute At", mysql.TypeDatetime, 19))
+	schema = append(schema, buildColumn(tblName, "Interval Value", mysql.TypeVarchar, 128))
+	schema = append(schema, buildColumn(tblName, "Interval Field", mysql.TypeVarchar, 128))
+	schema = append(schema, buildColumn(tblName, "Starts", mysql.TypeDatetime, 19))
+	schema = append(schema, buildColumn(tblName, "Ends", mysql.TypeDatetime, 19))
+	schema = append(schema, buildColumn(tblName, "Status", mysql.TypeVarchar, 32))
+	schema = append(schema, buildColumn(tblName, "Originator", mysql.TypeInt24, 4))
 	schema = append(schema, buildColumn(tblName, "character_set_client", mysql.TypeVarchar, 32))
 	schema = append(schema, buildColumn(tblName, "collation_connection", mysql.TypeVarchar, 32))
 	schema = append(schema, buildColumn(tblName, "Database Collation", mysql.TypeVarchar, 32))

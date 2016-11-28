@@ -121,7 +121,8 @@ var (
 	}
 )
 
-type timeInternal interface {
+// TimeInternal is the internal representation for mysql time in TiDB.
+type TimeInternal interface {
 	Year() int
 	Month() int
 	Day() int
@@ -233,17 +234,20 @@ func (t timeInternalZero) GoTime() time.Time {
 	return time.Date(0, 0, 0, 0, 0, 0, 0, time.Local)
 }
 
-func FromGoTime(t time.Time) timeInternal {
+// FromGoTime translates time.Time to mysql time internal representation.
+func FromGoTime(t time.Time) TimeInternal {
 	return timeInternalImpl(t)
 }
 
-func FromDate(year int, month int, day int, hour int, minute int, second int, microsecond int) timeInternal {
+// FromDate makes a internal time representation from the given date.
+func FromDate(year int, month int, day int, hour int, minute int, second int, microsecond int) TimeInternal {
 	if year == 0 && month == 0 && day == 0 && hour == 0 && minute == 0 && second == 0 {
 		return timeInternalZero{}
 	}
 	return timeInternalImpl(time.Date(year, time.Month(month), day, hour, minute, second, microsecond*1000, time.Local))
 }
 
+// Clock returns the hour, minute, and second within the day specified by t.
 func (t Time) Clock() (hour int, minute int, second int) {
 	return t.Time.Hour(), t.Time.Minute(), t.Time.Second()
 }
@@ -251,7 +255,7 @@ func (t Time) Clock() (hour int, minute int, second int) {
 // Time is the struct for handling datetime, timestamp and date.
 // TODO: check if need a NewTime function to set Fsp default value?
 type Time struct {
-	Time timeInternal
+	Time TimeInternal
 	Type uint8
 	// Fsp is short for Fractional Seconds Precision.
 	// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
@@ -649,7 +653,7 @@ func ParseYear(str string) (int16, error) {
 	return y, nil
 }
 
-func newTime(year int, month int, day int, hour int, minute int, second int, frac int) (timeInternal, error) {
+func newTime(year int, month int, day int, hour int, minute int, second int, frac int) (TimeInternal, error) {
 	if year == 0 && month == 0 && day == 0 && hour == 0 && minute == 0 && second == 0 {
 		// Should we check fractional fractional here?
 		// But go time.Time can not support zero time 0000-00-00 00:00:00.

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -956,7 +957,7 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.SetSystemVar("timestamp", types.NewStringDatum(""))
+	varsutil.SetSystemVar(sessionVars, "timestamp", types.NewStringDatum(""))
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -964,7 +965,7 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
-	sessionVars.SetSystemVar("timestamp", types.NewStringDatum("0"))
+	varsutil.SetSystemVar(sessionVars, "timestamp", types.NewStringDatum("0"))
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -972,7 +973,7 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
-	sessionVars.SetSystemVar("timestamp", types.Datum{})
+	varsutil.SetSystemVar(sessionVars, "timestamp", types.Datum{})
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -980,7 +981,7 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
-	sessionVars.SetSystemVar("timestamp", types.NewStringDatum("1234"))
+	varsutil.SetSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
 
 	tbl := []struct {
 		Expr interface{}

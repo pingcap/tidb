@@ -918,7 +918,7 @@ func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
 			"sql_mode", "Definer", "character_set_client", "collation_connection", "Database Collation"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
-	case ast.ShowProcedureStatus:
+	case ast.ShowProcedureStatus, ast.ShowEvents:
 		names = []string{}
 		ftypes = []byte{}
 	case ast.ShowIndex:
