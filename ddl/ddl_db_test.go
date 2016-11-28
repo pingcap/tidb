@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb"
 	_ "github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -472,18 +473,23 @@ LOOP:
 }
 
 func (s *testDBSuite) testAddIndexWithDupCols(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	err1 := infoschema.ErrColumnExists.GenByArgs("b")
+	err2 := infoschema.ErrColumnExists.GenByArgs("B")
+
 	s.tk.MustExec("create table t (a int, b int)")
 	_, err := s.tk.Exec("create index c on t(b, a, b)")
-	c.Check(err, NotNil)
+	c.Check(err1.Equal(err), Equals, true)
 
 	_, err = s.tk.Exec("create index c on t(b, a, B)")
-	c.Check(err, NotNil)
+	c.Check(err2.Equal(err), Equals, true)
 
 	_, err = s.tk.Exec("alter table t add index c (b, a, b)")
-	c.Check(err, NotNil)
+	c.Check(err1.Equal(err), Equals, true)
 
 	_, err = s.tk.Exec("alter table t add index c (b, a, B)")
-	c.Check(err, NotNil)
+	c.Check(err2.Equal(err), Equals, true)
 }
 
 func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {

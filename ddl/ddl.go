@@ -1206,7 +1206,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 }
 
 func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexName model.CIStr, idxColNames []*ast.IndexColName) error {
-	err := checkIndexGrammer(idxColNames)
+	err := checkDuplicateColumnName(idxColNames)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1433,8 +1433,8 @@ func findCol(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
 	return nil
 }
 
-// checkCreateIndexGrammar checks if index exists duplicated columns.
-func checkIndexGrammer(indexColNames []*ast.IndexColName) error {
+// checkDuplicateColumnName checks if index exists duplicated columns.
+func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 	for i := 0; i < len(indexColNames); i++ {
 		name1 := indexColNames[i].Column.Name
 		for j := i + 1; j < len(indexColNames); j++ {
