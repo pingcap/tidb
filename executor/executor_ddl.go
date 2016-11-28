@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -115,7 +116,7 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 		if s.IfNotExists {
 			return nil
 		}
-		return infoschema.ErrTableExists.Gen("CREATE TABLE: table exists %s", ident)
+		return err
 	}
 	return errors.Trace(err)
 }
@@ -133,17 +134,17 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 		if s.IfExists {
 			err = nil
 		} else {
-			err = infoschema.ErrDatabaseDropExists.Gen("Can't drop database '%s'; database doesn't exist", s.Name)
+			err = infoschema.ErrDatabaseDropExists.GenByArgs(s.Name)
 		}
 	}
 	sessionVars := e.ctx.GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
-		err = sessionVars.SetSystemVar(variable.CharsetDatabase, types.NewStringDatum("utf8"))
+		err = varsutil.SetSystemVar(sessionVars, variable.CharsetDatabase, types.NewStringDatum("utf8"))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = sessionVars.SetSystemVar(variable.CollationDatabase, types.NewStringDatum("utf8_unicode_ci"))
+		err = varsutil.SetSystemVar(sessionVars, variable.CollationDatabase, types.NewStringDatum("utf8_unicode_ci"))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -163,7 +164,7 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			continue
 		}
 		tb, err := e.is.TableByName(tn.Schema, tn.Name)
-		if err != nil && strings.HasSuffix(err.Error(), "not exist") {
+		if err != nil && infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 			continue
 		} else if err != nil {
@@ -187,7 +188,7 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 		}
 	}
 	if len(notExistTables) > 0 && !s.IfExists {
-		return infoschema.ErrTableDropExists.Gen("DROP TABLE: table %s does not exist", strings.Join(notExistTables, ","))
+		return infoschema.ErrTableDropExists.GenByArgs(strings.Join(notExistTables, ","))
 	}
 	return nil
 }

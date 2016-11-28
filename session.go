@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -425,7 +426,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
 		if terror.ExecResultIsEmpty.Equal(err) {
-			return "", variable.UnknownSystemVar.Gen("unknown sys variable:%s", name)
+			return "", variable.UnknownSystemVar.GenByArgs(name)
 		}
 		return "", errors.Trace(err)
 	}
@@ -698,7 +699,7 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	if !bytes.Equal(auth, checkAuth) {
 		return false
 	}
-	s.sessionVars.SetCurrentUser(user)
+	s.sessionVars.User = user
 	return true
 }
 
@@ -847,8 +848,8 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 			break
 		}
 		varName := row.Data[0].GetString()
-		if d := vars.GetSystemVar(varName); d.IsNull() {
-			vars.SetSystemVar(varName, row.Data[1])
+		if d := varsutil.GetSystemVar(vars, varName); d.IsNull() {
+			varsutil.SetSystemVar(s.sessionVars, varName, row.Data[1])
 		}
 	}
 	vars.CommonGlobalLoaded = true

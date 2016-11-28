@@ -137,18 +137,6 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 	}
 }
 
-func extractColumns(expr expression.Expression) (cols []*expression.Column) {
-	switch v := expr.(type) {
-	case *expression.Column:
-		return []*expression.Column{v}
-	case *expression.ScalarFunction:
-		for _, arg := range v.Args {
-			cols = append(cols, extractColumns(arg)...)
-		}
-	}
-	return
-}
-
 func extractCorColumns(expr expression.Expression) (cols []*expression.CorrelatedColumn) {
 	switch v := expr.(type) {
 	case *expression.CorrelatedColumn:
@@ -181,7 +169,7 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 				}
 			}
 		}
-		columns := extractColumns(expr)
+		columns := expression.ExtractColumns(expr)
 		allFromLeft, allFromRight := true, true
 		for _, col := range columns {
 			if left.GetSchema().GetIndex(col) == -1 {
@@ -929,13 +917,13 @@ type ApplyConditionChecker struct {
 // innerPlan. This way is the so-called correlated execution.
 func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, checker *ApplyConditionChecker) LogicalPlan {
 	ap := &Apply{
-		InnerPlan:       innerPlan,
 		Checker:         checker,
 		baseLogicalPlan: newBaseLogicalPlan(App, b.allocator),
 	}
 	ap.self = ap
 	ap.initID()
 	addChild(ap, outerPlan)
+	addChild(ap, innerPlan)
 	corColumns := innerPlan.extractCorrelatedCols()
 	ap.correlated = outerPlan.IsCorrelated()
 	for _, corCol := range corColumns {
