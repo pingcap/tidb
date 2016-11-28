@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
@@ -57,11 +58,15 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.dropTableSQL = `Drop TABLE if exists t;`
 	s.createTableSQL = `CREATE TABLE t(id TEXT);`
 	s.selectSQL = `SELECT * from t;`
+	checkSchemaValidityRetryTimes = 3
+	checkSchemaValiditySleepTime = 20 * time.Millisecond
 	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
 func (s *testSessionSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
+	checkSchemaValidityRetryTimes = 30
+	checkSchemaValiditySleepTime = 1 * time.Second
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {
@@ -1317,7 +1322,7 @@ func (s *testSessionSuite) TestBit(c *C) {
 	r := mustExecSQL(c, se, "select * from t where c1 = 2")
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlBit(), Equals, mysql.Bit{Value: 2, Width: 2})
+	c.Assert(row.Data[0].GetMysqlBit(), Equals, types.Bit{Value: 2, Width: 2})
 
 	err = store.Close()
 	c.Assert(err, IsNil)
@@ -2012,7 +2017,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
-	sessionctx.GetDomain(ctx).SchemaValidity.SetValidity(true, ver.Ver)
+	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
 	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
 	time.Sleep(lease)
 	mustExecSQL(c, se, "drop table if exists t;")
@@ -2379,7 +2384,7 @@ func (s *testSessionSuite) TestRetryAttempts(c *C) {
 	c.Assert(se, NotNil)
 	sv := se.sessionVars
 	// Prevent getting variable value from storage.
-	sv.SetSystemVar("autocommit", types.NewDatum("ON"))
+	varsutil.SetSystemVar(se.sessionVars, "autocommit", types.NewDatum("ON"))
 	sv.CommonGlobalLoaded = true
 
 	// Add retry info.

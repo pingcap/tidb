@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -47,105 +46,6 @@ func (s *testSuite) TestCharsetDatabase(c *C) {
 	tk.MustExec(testSQL)
 	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
-}
-
-func (s *testSuite) TestSetVar(c *C) {
-	defer testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
-	testSQL := "SET @a = 1;"
-	tk.MustExec(testSQL)
-
-	testSQL = `SET @a = "1";`
-	tk.MustExec(testSQL)
-
-	testSQL = "SET @a = null;"
-	tk.MustExec(testSQL)
-
-	testSQL = "SET @@global.autocommit = 1;"
-	tk.MustExec(testSQL)
-
-	// TODO: this test case should returns error.
-	// testSQL = "SET @@global.autocommit = null;"
-	// _, err := tk.Exec(testSQL)
-	// c.Assert(err, NotNil)
-
-	testSQL = "SET @@autocommit = 1;"
-	tk.MustExec(testSQL)
-
-	testSQL = "SET @@autocommit = null;"
-	_, err := tk.Exec(testSQL)
-	c.Assert(err, NotNil)
-
-	errTestSql := "SET @@date_format = 1;"
-	_, err = tk.Exec(errTestSql)
-	c.Assert(err, NotNil)
-
-	errTestSql = "SET @@rewriter_enabled = 1;"
-	_, err = tk.Exec(errTestSql)
-	c.Assert(err, NotNil)
-
-	errTestSql = "SET xxx = abcd;"
-	_, err = tk.Exec(errTestSql)
-	c.Assert(err, NotNil)
-
-	errTestSql = "SET @@global.a = 1;"
-	_, err = tk.Exec(errTestSql)
-	c.Assert(err, NotNil)
-
-	errTestSql = "SET @@global.timestamp = 1;"
-	_, err = tk.Exec(errTestSql)
-	c.Assert(err, NotNil)
-
-	// For issue 998
-	testSQL = "SET @issue998a=1, @issue998b=5;"
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select @issue998a, @issue998b;`).Check(testkit.Rows("1 5"))
-	testSQL = "SET @@autocommit=0, @issue998a=2;"
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select @issue998a, @@autocommit;`).Check(testkit.Rows("2 0"))
-	testSQL = "SET @@global.autocommit=1, @issue998b=6;"
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select @issue998b, @@global.autocommit;`).Check(testkit.Rows("6 1"))
-
-	// Set default
-	// {ScopeGlobal | ScopeSession, "low_priority_updates", "OFF"},
-	// For global var
-	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("OFF"))
-	tk.MustExec(`set @@global.low_priority_updates="ON";`)
-	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("ON"))
-	tk.MustExec(`set @@global.low_priority_updates=DEFAULT;`) // It will be set to compiled-in default value.
-	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("OFF"))
-	// For session
-	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("OFF"))
-	tk.MustExec(`set @@global.low_priority_updates="ON";`)
-	tk.MustExec(`set @@session.low_priority_updates=DEFAULT;`) // It will be set to global var value.
-	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("ON"))
-
-	// For mysql jdbc driver issue.
-	tk.MustQuery(`select @@session.tx_read_only;`).Check(testkit.Rows("0"))
-}
-
-func (s *testSuite) TestSetCharset(c *C) {
-	defer testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`SET NAMES latin1`)
-
-	ctx := tk.Se.(context.Context)
-	sessionVars := ctx.GetSessionVars()
-	for _, v := range variable.SetNamesVariables {
-		sVar := sessionVars.GetSystemVar(v)
-		c.Assert(sVar.GetString() != "utf8", IsTrue)
-	}
-	tk.MustExec(`SET NAMES utf8`)
-	for _, v := range variable.SetNamesVariables {
-		sVar := sessionVars.GetSystemVar(v)
-		c.Assert(sVar.GetString(), Equals, "utf8")
-	}
-	sVar := sessionVars.GetSystemVar(variable.CollationConnection)
-	c.Assert(sVar.GetString(), Equals, "utf8_general_ci")
-
-	// Issue 1523
-	tk.MustExec(`SET NAMES binary`)
 }
 
 func (s *testSuite) TestDo(c *C) {

@@ -185,3 +185,23 @@ func (s *testSuite) TestAlterTableModifyColumn(c *C) {
 	expected := "CREATE TABLE `mc` (\n  `c1` bigint(21) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB"
 	c.Assert(createSQL, Equals, expected)
 }
+
+func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+
+	testSQL := `create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
+	tk.MustExec(testSQL)
+
+	testSQL = `use test_db;`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select database();`).Check(testkit.Rows("test_db"))
+	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
+	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
+
+	testSQL = `drop database test_db;`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select database();`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("utf8"))
+	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_unicode_ci"))
+}

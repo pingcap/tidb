@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -112,11 +113,13 @@ func (h *stmtHistory) clone() *stmtHistory {
 const unlimitedRetryCnt = -1
 
 type session struct {
-	txn         kv.Transaction // Current transaction
-	values      map[fmt.Stringer]interface{}
-	store       kv.Storage
-	history     stmtHistory
-	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
+	txn kv.Transaction // current transaction
+	// It is the schema version in current transaction. If it's 0, the transaction is nil.
+	schemaVerInCurrTxn int64
+	values             map[fmt.Stringer]interface{}
+	store              kv.Storage
+	history            stmtHistory
+	maxRetryCnt        int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
 
@@ -133,15 +136,37 @@ func (s *session) cleanRetryInfo() {
 	}
 }
 
+// TODO: Set them as system variables.
+var (
+	checkSchemaValidityRetryTimes = 30
+	checkSchemaValiditySleepTime  = 1 * time.Second
+)
+
 // If the schema is invalid, we need to rollback the current transaction.
 func (s *session) checkSchemaValidOrRollback() error {
 	var ts uint64
 	if s.txn != nil {
 		ts = s.txn.StartTS()
+	} else {
+		s.schemaVerInCurrTxn = 0
 	}
-	err := sessionctx.GetDomain(s).SchemaValidity.Check(ts)
-	if err == nil {
-		return nil
+
+	var err error
+	var currSchemaVer int64
+	for i := 0; i < checkSchemaValidityRetryTimes; i++ {
+		currSchemaVer, err = sessionctx.GetDomain(s).SchemaValidity.Check(ts, s.schemaVerInCurrTxn)
+		if err == nil {
+			if s.txn == nil {
+				s.schemaVerInCurrTxn = currSchemaVer
+			}
+			return nil
+		}
+		log.Infof("schema version original %d, current %d, sleep time %v",
+			s.schemaVerInCurrTxn, currSchemaVer, checkSchemaValiditySleepTime)
+		if currSchemaVer != s.schemaVerInCurrTxn && s.schemaVerInCurrTxn != 0 {
+			break
+		}
+		time.Sleep(checkSchemaValiditySleepTime)
 	}
 
 	if err1 := s.RollbackTxn(); err1 != nil {
@@ -401,7 +426,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
 		if terror.ExecResultIsEmpty.Equal(err) {
-			return "", variable.UnknownSystemVar.Gen("unknown sys variable:%s", name)
+			return "", variable.UnknownSystemVar.GenByArgs(name)
 		}
 		return "", errors.Trace(err)
 	}
@@ -674,7 +699,7 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	if !bytes.Equal(auth, checkAuth) {
 		return false
 	}
-	s.sessionVars.SetCurrentUser(user)
+	s.sessionVars.User = user
 	return true
 }
 
@@ -823,8 +848,8 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 			break
 		}
 		varName := row.Data[0].GetString()
-		if d := vars.GetSystemVar(varName); d.IsNull() {
-			vars.SetSystemVar(varName, row.Data[1])
+		if d := varsutil.GetSystemVar(vars, varName); d.IsNull() {
+			varsutil.SetSystemVar(s.sessionVars, varName, row.Data[1])
 		}
 	}
 	vars.CommonGlobalLoaded = true
