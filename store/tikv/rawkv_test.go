@@ -14,10 +14,9 @@
 package tikv
 
 import (
-	"context"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"golang.org/x/net/context"
 )
 
 type testRawKVSuite struct {

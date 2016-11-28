@@ -16,12 +16,11 @@
 package tikv
 
 import (
-	"context"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/util/codec"
+	"golang.org/x/net/context"
 )
 
 // The test takes too long under the race detector.
