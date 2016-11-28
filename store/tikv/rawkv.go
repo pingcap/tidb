@@ -14,11 +14,10 @@
 package tikv
 
 import (
-	"context"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
+	"golang.org/x/net/context"
 )
 
 // RawKVClient is a client of TiKV server which is used as a key-value storage,
