@@ -488,7 +488,7 @@ func (s *schemaValidityInfo) Check(txnTS uint64, schemaVer int64) (int64, error)
 	s.mux.RLock()
 	if s.isExpired {
 		s.mux.RUnlock()
-		return currVer, ErrLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
+		return currVer, ErrInfoSchemaExpired
 	}
 
 	// txnTS != 0, it means the transition isn't nil.
@@ -498,7 +498,7 @@ func (s *schemaValidityInfo) Check(txnTS uint64, schemaVer int64) (int64, error)
 		s.mux.RUnlock()
 		log.Warnf("check schema validity, txnTS:%v recordTS:%v schema version original:%v input:%v",
 			txnTS, s.recoveredTS, currVer, schemaVer)
-		return currVer, ErrLoadSchemaTimeOut.Gen("InfomationSchema is out of date.")
+		return currVer, ErrInfoSchemaExpired
 	}
 	s.mux.RUnlock()
 	return currVer, nil
@@ -536,10 +536,10 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 
 // Domain error codes.
 const (
-	codeLoadSchemaTimeOut terror.ErrCode = 1
+	codeInfoSchemaExpired terror.ErrCode = 1
 )
 
 var (
-	// ErrLoadSchemaTimeOut returns for loading schema time out.
-	ErrLoadSchemaTimeOut = terror.ClassDomain.New(codeLoadSchemaTimeOut, "reload schema timeout")
+	// ErrInfoSchemaExpired returns for information schema out of date.
+	ErrInfoSchemaExpired = terror.ClassDomain.New(codeInfoSchemaExpired, "InfomationSchema is out of date.")
 )
