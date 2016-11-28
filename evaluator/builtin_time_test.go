@@ -579,3 +579,31 @@ func (s *testEvaluatorSuite) TestDateArith(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestStrToDate(c *C) {
+	tests := []struct {
+		Date    string
+		Format  string
+		Success bool
+		Expect  time.Time
+	}{
+		{"20161122165022", "%Y%m%d%H%i%s", true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
+		{"2016 11 22 16 50 22", "%Y%m%d%H%i%s", true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
+		{"16-50-22 2016 11 22", "%H-%i-%s%Y%m%d", true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
+		{"16-50 2016 11 22", "%H-%i-%s%Y%m%d", false, time.Time{}},
+	}
+
+	for _, test := range tests {
+		date := types.NewStringDatum(test.Date)
+		format := types.NewStringDatum(test.Format)
+		result, err := builtinStrToDate([]types.Datum{date, format}, nil)
+		if !test.Success {
+			c.Assert(err, IsNil)
+			c.Assert(result.IsNull(), IsTrue)
+			continue
+		}
+		c.Assert(result.Kind(), Equals, types.KindMysqlTime)
+		value := result.GetMysqlTime()
+		c.Assert(value.Time, Equals, test.Expect)
+	}
+}

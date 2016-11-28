@@ -104,6 +104,7 @@ const (
 	MonthName        = "monthname"
 	Now              = "now"
 	Second           = "second"
+	StrToDate        = "str_to_date"
 	Sysdate          = "sysdate"
 	Time             = "time"
 	UTCDate          = "utc_date"
