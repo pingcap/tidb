@@ -29,7 +29,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -119,6 +118,7 @@ type session struct {
 	values             map[fmt.Stringer]interface{}
 	store              kv.Storage
 	history            stmtHistory
+	currRetryCnt       int // current retry times
 	maxRetryCnt        int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
@@ -138,12 +138,24 @@ func (s *session) cleanRetryInfo() {
 
 // TODO: Set them as system variables.
 var (
-	checkSchemaValidityRetryTimes = 30
+	checkSchemaValidityRetryTimes = 10
 	checkSchemaValiditySleepTime  = 1 * time.Second
 )
 
 // If the schema is invalid, we need to rollback the current transaction.
 func (s *session) checkSchemaValidOrRollback() error {
+	err := s.checkSchemaValid()
+	if err != nil {
+		err1 := s.RollbackTxn()
+		if err1 != nil {
+			// TODO: Handle this error.
+			log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err1))
+		}
+	}
+	return errors.Trace(err)
+}
+
+func (s *session) checkSchemaValid() error {
 	var ts uint64
 	if s.txn != nil {
 		ts = s.txn.StartTS()
@@ -167,13 +179,6 @@ func (s *session) checkSchemaValidOrRollback() error {
 			break
 		}
 		time.Sleep(checkSchemaValiditySleepTime)
-	}
-
-	if err1 := s.RollbackTxn(); err1 != nil {
-		// TODO: handle this error.
-		log.Errorf("[%d] rollback txn failed, err:%v", s.sessionVars.ConnectionID, errors.ErrorStack(err1))
-		errMsg := fmt.Sprintf("schema is invalid, rollback txn err:%v", err1.Error())
-		return domain.ErrLoadSchemaTimeOut.Gen(errMsg)
 	}
 	return errors.Trace(err)
 }
@@ -234,13 +239,30 @@ func (s *session) finishTxn(rollback bool) error {
 			s.txn.SetOption(kv.BinlogData, bin)
 		}
 	}
-	err := s.txn.Commit()
-	if err != nil {
+
+	if err := s.checkSchemaValid(); err != nil {
+		if !s.sessionVars.RetryInfo.Retrying {
+			err = s.Retry()
+		} else {
+			err1 := s.txn.Rollback()
+			if err1 != nil {
+				// TODO: Handle this error.
+				log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
+			}
+		}
+		if err != nil {
+			log.Warnf("finished txn:%s, %v", s.txn, err)
+		}
+		s.resetHistory()
+		s.cleanRetryInfo()
+		return errors.Trace(err)
+	}
+	if err := s.txn.Commit(); err != nil {
 		if !s.sessionVars.RetryInfo.Retrying && kv.IsRetryableError(err) {
 			err = s.Retry()
 		}
 		if err != nil {
-			log.Warnf("txn:%s, %v", s.txn, err)
+			log.Warnf("finished txn:%s, %v", s.txn, err)
 			return errors.Trace(err)
 		}
 	}
@@ -251,10 +273,6 @@ func (s *session) finishTxn(rollback bool) error {
 }
 
 func (s *session) CommitTxn() error {
-	if err := s.checkSchemaValidOrRollback(); err != nil {
-		return errors.Trace(err)
-	}
-
 	return s.finishTxn(false)
 }
 
@@ -313,9 +331,8 @@ func (s *session) Retry() error {
 		return errors.Errorf("can not retry select for update statement")
 	}
 	var err error
-	retryCnt := 0
 	for {
-		s.sessionVars.RetryInfo.Attempts = retryCnt + 1
+		s.sessionVars.RetryInfo.Attempts = s.currRetryCnt + 1
 		s.resetHistory()
 		log.Info("RollbackTxn for retry txn.")
 		err = s.RollbackTxn()
@@ -348,11 +365,11 @@ func (s *session) Retry() error {
 				break
 			}
 		}
-		retryCnt++
-		if (s.maxRetryCnt != unlimitedRetryCnt) && (retryCnt >= s.maxRetryCnt) {
+		s.currRetryCnt++
+		if (s.maxRetryCnt != unlimitedRetryCnt) && (s.currRetryCnt >= s.maxRetryCnt) {
 			return errors.Trace(err)
 		}
-		kv.BackOff(retryCnt)
+		kv.BackOff(s.currRetryCnt)
 	}
 	return err
 }

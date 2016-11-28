@@ -80,7 +80,7 @@ func (s *testMainSuite) SetUpSuite(c *C) {
 func (s *testMainSuite) TearDownSuite(c *C) {
 	defer testleak.AfterTest(c)()
 	removeStore(c, s.dbName)
-	checkSchemaValidityRetryTimes = 30
+	checkSchemaValidityRetryTimes = 10
 	checkSchemaValiditySleepTime = 1 * time.Second
 }
 
@@ -343,6 +343,8 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	c.Assert(ver, NotNil)
 	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
 	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (a int);")
 	mustExecSQL(c, se, "insert t values (1);")
 	// Make sure insert to table t2 transaction executes.
 	startCh2 <- struct{}{}

@@ -65,7 +65,7 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 
 func (s *testSessionSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
-	checkSchemaValidityRetryTimes = 30
+	checkSchemaValidityRetryTimes = 10
 	checkSchemaValiditySleepTime = 1 * time.Second
 }
 
@@ -1947,6 +1947,10 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
 	se2 := newSession(c, store, s.dbName)
+	// Make sure statements can't retry.
+	se.(*session).sessionVars.RetryInfo.Retrying = true
+	se1.(*session).sessionVars.RetryInfo.Retrying = true
+	se2.(*session).sessionVars.RetryInfo.Retrying = true
 
 	ctx := se.(context.Context)
 	sessionctx.GetDomain(ctx).SetLease(20 * time.Millisecond)
