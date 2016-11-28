@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
+	"sync/atomic"
 )
 
 var (
@@ -458,7 +459,7 @@ type HashJoinExec struct {
 	// targetTypes means the target the type that both smallHashKey and bigHashKey should convert to.
 	targetTypes []*types.FieldType
 
-	finished bool
+	finished atomic.Value
 	// For sync multiple join workers.
 	wg sync.WaitGroup
 	// closeMu add a lock for closing executor.
@@ -486,7 +487,7 @@ type hashJoinCtx struct {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
-	e.finished = true
+	e.finished.Store(true)
 	e.closeMu.Lock()
 	e.closeMu.Unlock()
 	e.prepared = false
@@ -544,7 +545,6 @@ var batchSize = 128
 // and sends the rows to multiple channels which will be read by multiple join workers.
 func (e *HashJoinExec) fetchBigExec() {
 	cnt := 0
-	e.wg.Add(1)
 	defer func() {
 		for _, cn := range e.bigTableRows {
 			close(cn)
@@ -557,7 +557,7 @@ func (e *HashJoinExec) fetchBigExec() {
 		rows := make([]*Row, 0, batchSize)
 		done := false
 		for i := 0; i < curBatchSize; i++ {
-			if e.finished {
+			if e.finished.Load().(bool) {
 				break
 			}
 			row, err := e.bigExec.Next()
@@ -588,7 +588,7 @@ func (e *HashJoinExec) fetchBigExec() {
 // and reads all data from the small table to build a hash table, then starts multiple join worker goroutines.
 func (e *HashJoinExec) prepare() error {
 	e.closeMu.Lock()
-	e.finished = false
+	e.finished.Store(false)
 	e.bigTableRows = make([]chan []*Row, e.concurrency)
 	e.wg = sync.WaitGroup{}
 	for i := 0; i < e.concurrency; i++ {
@@ -597,6 +597,7 @@ func (e *HashJoinExec) prepare() error {
 	e.bigTableErr = make(chan error, 1)
 
 	// Start a worker to fetch big table rows.
+	e.wg.Add(1)
 	go e.fetchBigExec()
 
 	e.hashTable = make(map[string][]*Row)
@@ -671,7 +672,7 @@ func (e *HashJoinExec) runJoinWorker(idx int) {
 			e.resultErr <- errors.Trace(err)
 			break
 		}
-		if !ok || e.finished {
+		if !ok || e.finished.Load().(bool) {
 			break
 		}
 		for _, bigRow := range bigRows {
@@ -786,7 +787,7 @@ func (e *HashJoinExec) Next() (*Row, error) {
 	case err, ok = <-e.resultErr:
 	}
 	if err != nil {
-		e.finished = true
+		e.finished.Store(true)
 		return nil, errors.Trace(err)
 	}
 	if !ok {
