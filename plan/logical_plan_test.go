@@ -518,22 +518,26 @@ func (s *testPlanSuite) TestLogicalPlanBuilder(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql  string
-		best string
+		plan string
 	}{
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (select b from t s where s.a = t.a)",
-			best: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Selection->Projection",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Selection->Projection",
 		},
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
-			best: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Selection->Projection",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Selection->Projection",
 		},
 		{
 			// This will be resolved as in function.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)), 10)",
-			best: "Apply{DataScan(t)->DataScan(s)->Selection->Projection->MaxOneRow}->Selection->Projection",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection->MaxOneRow}->Selection->Projection",
+		},
+		{
+			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
+			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a),sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -551,7 +555,7 @@ func (s *testPlanSuite) TestLogicalPlanBuilder(c *C) {
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		c.Assert(ToString(p.(LogicalPlan)), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(p.(LogicalPlan)), Equals, ca.plan, Commentf("for %s", ca.sql))
 	}
 }
 
