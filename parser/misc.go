@@ -228,6 +228,7 @@ var tokenMap = map[string]int{
 	"ENUM":                enum,
 	"ESCAPE":              escape,
 	"ESCAPED":             escaped,
+	"EVENTS":              events,
 	"EXECUTE":             execute,
 	"EXISTS":              exists,
 	"EXPLAIN":             explain,

@@ -109,7 +109,7 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowTriggers()
 	case ast.ShowVariables:
 		return e.fetchShowVariables()
-	case ast.ShowWarnings, ast.ShowProcessList:
+	case ast.ShowWarnings, ast.ShowProcessList, ast.ShowEvents:
 		// empty result
 	}
 	return nil
@@ -489,7 +489,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.Gen("Unknown database '%s'", e.DBName.O)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(e.DBName.O)
 	}
 
 	var buf bytes.Buffer

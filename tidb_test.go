@@ -27,7 +27,10 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -69,12 +72,16 @@ func (s *testMainSuite) SetUpSuite(c *C) {
     CREATE TABLE tbl_test1(id INT NOT NULL DEFAULT 2, name varchar(255), PRIMARY KEY(id), INDEX name(name));
     CREATE TABLE tbl_test2(id INT NOT NULL DEFAULT 3, name varchar(255), PRIMARY KEY(id));`
 	s.selectSQL = `SELECT * from tbl_test;`
+	checkSchemaValidityRetryTimes = 5
+	checkSchemaValiditySleepTime = 20 * time.Millisecond
 	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
 func (s *testMainSuite) TearDownSuite(c *C) {
 	defer testleak.AfterTest(c)()
 	removeStore(c, s.dbName)
+	checkSchemaValidityRetryTimes = 30
+	checkSchemaValiditySleepTime = 1 * time.Second
 }
 
 func checkResult(c *C, se Session, affectedRows uint64, insertID uint64) {
@@ -259,6 +266,98 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 	c.Assert(err, NotNil)
 	elapse := time.Since(begin)
 	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
+}
+
+// TODO: Merge TestIssue1435 in session test.
+func (s *testMainSuite) TestSchemaValidity(c *C) {
+	localstore.MockRemoteStore = true
+	store := newStore(c, s.dbName+"schema_validity")
+	se := newSession(c, store, s.dbName)
+	se1 := newSession(c, store, s.dbName)
+	se2 := newSession(c, store, s.dbName)
+
+	ctx := se.(context.Context)
+	sessionctx.GetDomain(ctx).SetLease(20 * time.Millisecond)
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (a int);")
+	mustExecSQL(c, se, "drop table if exists t1;")
+	mustExecSQL(c, se, "create table t1 (a int);")
+	mustExecSQL(c, se, "drop table if exists t2;")
+	mustExecSQL(c, se, "create table t2 (a int);")
+	startCh1 := make(chan struct{})
+	startCh2 := make(chan struct{})
+	endCh1 := make(chan error)
+	endCh2 := make(chan error)
+	execFailedFunc := func(s Session, tbl string, start chan struct{}, end chan error) {
+		// execute successfully
+		_, err := exec(s, "begin;")
+		<-start
+		<-start
+		if err == nil {
+			// execute failed
+			_, err = exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
+		}
+
+		// table t1 executes failed
+		// table t2 executes successfully
+		_, err = exec(s, "commit")
+		end <- err
+	}
+
+	go execFailedFunc(se1, "t1", startCh1, endCh1)
+	go execFailedFunc(se2, "t2", startCh2, endCh2)
+	// Make sure two insert transactions are begin.
+	startCh1 <- struct{}{}
+	startCh2 <- struct{}{}
+
+	select {
+	case <-endCh1:
+		// Make sure the first insert statement isn't finish.
+		c.Error("The statement shouldn't be executed")
+		c.FailNow()
+	default:
+	}
+	// Make sure loading information schema is failed and server is invalid.
+	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(true)
+	sessionctx.GetDomain(ctx).Reload()
+	lease := sessionctx.GetDomain(ctx).DDL().GetLease()
+	time.Sleep(lease)
+	// Make sure insert to table t1 transaction executes.
+	startCh1 <- struct{}{}
+	// Make sure executing insert statement is failed when server is invalid.
+	mustExecFailed(c, se, "insert t values (100);")
+	err := <-endCh1
+	c.Assert(err, NotNil)
+
+	// recover
+	select {
+	case <-endCh2:
+		// Make sure the second insert statement isn't finish.
+		c.Error("The statement shouldn't be executed")
+		c.FailNow()
+	default:
+	}
+
+	ver, err := store.CurrentVersion()
+	c.Assert(err, IsNil)
+	c.Assert(ver, NotNil)
+	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
+	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
+	mustExecSQL(c, se, "insert t values (1);")
+	// Make sure insert to table t2 transaction executes.
+	startCh2 <- struct{}{}
+	err = <-endCh2
+	c.Assert(err, IsNil, Commentf("err:%v", err))
+
+	err = se.Close()
+	c.Assert(err, IsNil)
+	err = se1.Close()
+	c.Assert(err, IsNil)
+	err = se2.Close()
+	c.Assert(err, IsNil)
+	err = store.Close()
+	c.Assert(err, IsNil)
+	localstore.MockRemoteStore = false
 }
 
 func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {

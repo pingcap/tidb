@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
@@ -83,12 +84,13 @@ func NewFunction(funcName string, retType *types.FieldType, args ...Expression) 
 		fn := f.F
 		newArgs, err := fn(datums, nil)
 		if err != nil {
-			return nil, errors.Trace(err)
+			log.Warnf("There may exist an error during constant folding. The function name is %s, args are %s", funcName, args)
+		} else {
+			return &Constant{
+				Value:   newArgs,
+				RetType: retType,
+			}, nil
 		}
-		return &Constant{
-			Value:   newArgs,
-			RetType: retType,
-		}, nil
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)

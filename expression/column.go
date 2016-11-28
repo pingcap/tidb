@@ -84,6 +84,8 @@ type Column struct {
 
 	// Only used for execution.
 	Index int
+
+	hashcode []byte
 }
 
 // Equal implements Expression interface.
@@ -140,9 +142,11 @@ func (col *Column) Decorrelate(_ Schema) Expression {
 
 // HashCode implements Expression interface.
 func (col *Column) HashCode() []byte {
-	var bytes []byte
-	bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(col.FromID), types.NewIntDatum(int64(col.Position)))
-	return bytes
+	if len(col.hashcode) != 0 {
+		return col.hashcode
+	}
+	col.hashcode, _ = codec.EncodeValue(col.hashcode, types.NewStringDatum(col.FromID), types.NewIntDatum(int64(col.Position)))
+	return col.hashcode
 }
 
 // ResolveIndices implements Expression interface.

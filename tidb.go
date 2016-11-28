@@ -64,6 +64,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		lease = schemaLease
 	}
 	err = util.RunWithRetry(defaultMaxRetries, retryInterval, func() (retry bool, err1 error) {
+		log.Infof("store %v new domain, lease %v", store.UUID(), lease)
 		d, err1 = domain.NewDomain(store, lease)
 		return true, errors.Trace(err1)
 	})
