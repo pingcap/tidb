@@ -34,11 +34,12 @@ type rpcHandler struct {
 }
 
 func newRPCHandler(cluster *Cluster, mvccStore *MvccStore, storeID uint64) *rpcHandler {
-	return &rpcHandler{
+	h := &rpcHandler{
 		cluster:   cluster,
 		mvccStore: mvccStore,
 		storeID:   storeID,
 	}
+	return h
 }
 
 func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
@@ -66,6 +67,13 @@ func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
 		resp.CmdResolveLockResp = h.onResolveLock(req.CmdResolveLockReq)
 	case kvrpcpb.MessageType_CmdResolveLock:
 		resp.CmdResolveLockResp = h.onResolveLock(req.CmdResolveLockReq)
+
+	case kvrpcpb.MessageType_CmdRawGet:
+		resp.CmdRawGetResp = h.onRawGet(req.CmdRawGetReq)
+	case kvrpcpb.MessageType_CmdRawPut:
+		resp.CmdRawPutResp = h.onRawPut(req.CmdRawPutReq)
+	case kvrpcpb.MessageType_CmdRawDelete:
+		resp.CmdRawDeleteResp = h.onRawDelete(req.CmdRawDeleteReq)
 	}
 	return resp
 }
@@ -240,6 +248,22 @@ func (h *rpcHandler) onResolveLock(req *kvrpcpb.CmdResolveLockRequest) *kvrpcpb.
 		}
 	}
 	return &kvrpcpb.CmdResolveLockResponse{}
+}
+
+func (h *rpcHandler) onRawGet(req *kvrpcpb.CmdRawGetRequest) *kvrpcpb.CmdRawGetResponse {
+	return &kvrpcpb.CmdRawGetResponse{
+		Value: h.mvccStore.RawGet(req.GetKey()),
+	}
+}
+
+func (h *rpcHandler) onRawPut(req *kvrpcpb.CmdRawPutRequest) *kvrpcpb.CmdRawPutResponse {
+	h.mvccStore.RawPut(req.GetKey(), req.GetValue())
+	return &kvrpcpb.CmdRawPutResponse{}
+}
+
+func (h *rpcHandler) onRawDelete(req *kvrpcpb.CmdRawDeleteRequest) *kvrpcpb.CmdRawDeleteResponse {
+	h.mvccStore.RawDelete(req.GetKey())
+	return &kvrpcpb.CmdRawDeleteResponse{}
 }
 
 func convertToKeyError(err error) *kvrpcpb.KeyError {
