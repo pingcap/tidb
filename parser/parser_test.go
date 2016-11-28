@@ -674,6 +674,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
 
+		// For strcmp
+		{`select strcmp('abc', 'def')`, true},
+
+		// For utc_date
+		{`select utc_date(), utc_date()+0`, true},
+
 		// For adddate
 		{`select adddate("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval 10 second)`, true},

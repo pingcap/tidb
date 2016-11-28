@@ -77,6 +77,7 @@ var Funcs = map[string]Func{
 	ast.MonthName:        {builtinMonthName, 1, 1},
 	ast.Now:              {builtinNow, 0, 1},
 	ast.Second:           {builtinSecond, 1, 1},
+	ast.StrToDate:        {builtinStrToDate, 2, 2},
 	ast.Sysdate:          {builtinSysDate, 0, 1},
 	ast.Time:             {builtinTime, 1, 1},
 	ast.UTCDate:          {builtinUTCDate, 0, 0},
