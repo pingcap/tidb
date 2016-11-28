@@ -249,8 +249,10 @@ func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) er
 	c.dropRegionFromCache(old.VerID())
 
 	for _, meta := range newRegions {
-		if err := decodeRegionMetaKey(meta); err != nil {
-			return errors.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)
+		if _, ok := c.pdClient.(*codecPDClient); ok {
+			if err := decodeRegionMetaKey(meta); err != nil {
+				return errors.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)
+			}
 		}
 		moveLeaderToFirst(meta, old.peer.GetStoreId())
 		leader := meta.Peers[0]
