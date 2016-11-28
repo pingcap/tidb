@@ -58,11 +58,15 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.dropTableSQL = `Drop TABLE if exists t;`
 	s.createTableSQL = `CREATE TABLE t(id TEXT);`
 	s.selectSQL = `SELECT * from t;`
+	checkSchemaValidityRetryTimes = 3
+	checkSchemaValiditySleepTime = 20 * time.Millisecond
 	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
 func (s *testSessionSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
+	checkSchemaValidityRetryTimes = 30
+	checkSchemaValiditySleepTime = 1 * time.Second
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {
@@ -2013,7 +2017,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
-	sessionctx.GetDomain(ctx).SchemaValidity.SetValidity(true, ver.Ver)
+	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
 	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
 	time.Sleep(lease)
 	mustExecSQL(c, se, "drop table if exists t;")
