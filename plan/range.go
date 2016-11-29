@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -95,6 +96,7 @@ func (r *rangePointSorter) Swap(i, j int) {
 
 type rangeBuilder struct {
 	err error
+	sc  *variable.StatementContext
 }
 
 func (r *rangeBuilder) build(expr expression.Expression) []rangePoint {
@@ -472,7 +474,7 @@ func (r *rangeBuilder) convertPoint(point rangePoint, tp *types.FieldType) range
 	case types.KindMaxValue, types.KindMinNotNull:
 		return point
 	}
-	casted, err := point.value.ConvertTo(tp)
+	casted, err := point.value.ConvertTo(r.sc, tp)
 	if err != nil {
 		r.err = errors.Trace(err)
 	}

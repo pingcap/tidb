@@ -182,13 +182,15 @@ func (e *mvccEntry) Rollback(startTS uint64) error {
 // MvccStore is an in-memory, multi-versioned, transaction-supported kv storage.
 type MvccStore struct {
 	sync.RWMutex
-	tree *llrb.LLRB
+	tree  *llrb.LLRB
+	rawkv map[string][]byte
 }
 
 // NewMvccStore creates a MvccStore.
 func NewMvccStore() *MvccStore {
 	return &MvccStore{
-		tree: llrb.New(),
+		tree:  llrb.New(),
+		rawkv: make(map[string][]byte),
 	}
 }
 
@@ -434,4 +436,28 @@ func (s *MvccStore) ResolveLock(startKey, endKey []byte, startTS, commitTS uint6
 	}
 	s.submit(ents...)
 	return nil
+}
+
+// RawGet queries value with the key.
+func (s *MvccStore) RawGet(key []byte) []byte {
+	s.RLock()
+	defer s.RUnlock()
+	return s.rawkv[string(key)]
+}
+
+// RawPut stores a key-value pair.
+func (s *MvccStore) RawPut(key, value []byte) {
+	s.Lock()
+	defer s.Unlock()
+	if value == nil {
+		value = []byte{}
+	}
+	s.rawkv[string(key)] = value
+}
+
+// RawDelete deletes a key-value pair.
+func (s *MvccStore) RawDelete(key []byte) {
+	s.Lock()
+	defer s.Unlock()
+	delete(s.rawkv, string(key))
 }

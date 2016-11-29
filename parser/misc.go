@@ -366,6 +366,7 @@ var tokenMap = map[string]int{
 	"STATUS":              status,
 	"SUBDATE":             subDate,
 	"STRCMP":              strcmp,
+	"STR_TO_DATE":         strToDate,
 	"SUBSTR":              substring,
 	"SUBSTRING":           substring,
 	"SUBSTRING_INDEX":     substringIndex,
@@ -465,6 +466,8 @@ var tokenMap = map[string]int{
 	"CASCADE":             cascade,
 	"NO":                  no,
 	"ACTION":              action,
+	"PARTITION":           partition,
+	"PARTITIONS":          partitions,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {

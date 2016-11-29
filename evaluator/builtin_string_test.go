@@ -675,9 +675,9 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 	}
 
 	dtbl := tblToDtbl(tbl)
-
+	ctx := mock.NewContext()
 	for _, t := range dtbl {
-		d, err := builtinHex(t["Input"], nil)
+		d, err := builtinHex(t["Input"], ctx)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
 
@@ -695,9 +695,9 @@ func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
 	}
 
 	dtbl := tblToDtbl(tbl)
-
+	ctx := mock.NewContext()
 	for _, t := range dtbl {
-		d, err := builtinUnHex(t["Input"], nil)
+		d, err := builtinUnHex(t["Input"], ctx)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
 
