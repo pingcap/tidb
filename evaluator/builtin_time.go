@@ -425,19 +425,20 @@ func builtinNow(args []types.Datum, _ context.Context) (d types.Datum, err error
 		}
 	}
 
-	t := types.Time{
-		Time: types.FromGoTime(time.Now()),
-		Type: mysql.TypeDatetime,
-		// set unspecified for later round
-		Fsp: types.UnspecifiedFsp,
-	}
-
-	tr, err := t.RoundFrac(int(fsp))
+	tr, err := types.RoundFrac(time.Now(), int(fsp))
 	if err != nil {
 		d.SetNull()
 		return d, errors.Trace(err)
 	}
-	d.SetMysqlTime(tr)
+
+	t := types.Time{
+		Time: types.FromGoTime(tr),
+		Type: mysql.TypeDatetime,
+		// set unspecified for later round
+		Fsp: fsp,
+	}
+
+	d.SetMysqlTime(t)
 	return d, nil
 }
 
@@ -652,19 +653,21 @@ func builtinFromUnixTime(args []types.Datum, ctx context.Context) (d types.Datum
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	t := types.Time{
-		Time: types.FromGoTime(time.Unix(integralPart, fractionalPart)),
-		Type: mysql.TypeDatetime,
-		Fsp:  types.UnspecifiedFsp,
-	}
+
 	_, fracDigitsNumber := unixTimeStamp.PrecisionAndFrac()
 	fsp := fracDigitsNumber
 	if fracDigitsNumber > types.MaxFsp {
 		fsp = types.MaxFsp
 	}
-	t, err = t.RoundFrac(fsp)
+	tr, err := types.RoundFrac(time.Unix(integralPart, fractionalPart), fsp)
 	if err != nil {
 		return d, errors.Trace(err)
+	}
+
+	t := types.Time{
+		Time: types.FromGoTime(tr),
+		Type: mysql.TypeDatetime,
+		Fsp:  fsp,
 	}
 	if args[0].Kind() == types.KindString { // Keep consistent with MySQL.
 		t.Fsp = types.MaxFsp

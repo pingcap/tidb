@@ -62,7 +62,7 @@ var (
 	ZeroDuration = Duration{Duration: time.Duration(0), Fsp: DefaultFsp}
 
 	// ZeroTime is the zero value for time.Time type.
-	ZeroTime = timeInternalZero{}
+	ZeroTime = mysqlTime{}
 
 	// ZeroDatetime is the zero value for datetime Time.
 	ZeroDatetime = Time{
@@ -236,15 +236,15 @@ func (t timeInternalZero) GoTime() time.Time {
 
 // FromGoTime translates time.Time to mysql time internal representation.
 func FromGoTime(t time.Time) TimeInternal {
-	return timeInternalImpl(t)
+	year, month, day := t.Date()
+	hour, minute, second := t.Clock()
+	microsecond := t.Nanosecond() / 1000
+	return newMysqlTime(year, int(month), day, hour, minute, second, microsecond)
 }
 
 // FromDate makes a internal time representation from the given date.
 func FromDate(year int, month int, day int, hour int, minute int, second int, microsecond int) TimeInternal {
-	if year == 0 && month == 0 && day == 0 && hour == 0 && minute == 0 && second == 0 {
-		return timeInternalZero{}
-	}
-	return timeInternalImpl(time.Date(year, time.Month(month), day, hour, minute, second, microsecond*1000, time.Local))
+	return newMysqlTime(year, month, day, hour, minute, second, microsecond)
 }
 
 // Clock returns the hour, minute, and second within the day specified by t.
@@ -290,13 +290,7 @@ func (t Time) String() string {
 
 // IsZero returns a boolean indicating whether the time is equal to ZeroTime.
 func (t Time) IsZero() bool {
-	// To avoid panic when Time{} is used.
-	if t.Time == nil {
-		return true
-	}
-	return t.Time.Year() == 0 && t.Time.Month() == 0 && t.Time.Day() == 0 &&
-		t.Time.Hour() == 0 && t.Time.Minute() == 0 && t.Time.Second() == 0 &&
-		t.Time.Microsecond() == 0
+	return t.Time == mysqlTime{}
 }
 
 const numberFormat = "20060102150405"
@@ -400,11 +394,7 @@ func (t Time) CompareString(str string) (int, error) {
 	return t.Compare(o), nil
 }
 
-// RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
-// We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
-// so 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:11
-// and 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
-func (t Time) RoundFrac(fsp int) (Time, error) {
+func (t Time) roundFrac(fsp int) (Time, error) {
 	if t.Type == mysql.TypeDate {
 		// date type has no fsp
 		return t, nil
@@ -422,6 +412,18 @@ func (t Time) RoundFrac(fsp int) (Time, error) {
 
 	nt := t.Time.GoTime().Round(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond)
 	return Time{Time: FromGoTime(nt), Type: t.Type, Fsp: fsp}, nil
+}
+
+// RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
+// We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
+// so 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:11
+// and 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
+func RoundFrac(t time.Time, fsp int) (time.Time, error) {
+	_, err := checkFsp(fsp)
+	if err != nil {
+		return t, errors.Trace(err)
+	}
+	return t.Round(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond), nil
 }
 
 // ToPackedUint encodes Time to a packed uint64 value.
