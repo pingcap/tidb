@@ -83,7 +83,7 @@ func NewFunction(funcName string, retType *types.FieldType, args ...Expression) 
 
 	if canConstantFolding {
 		fn := f.F
-		// TODO: add argument in NewFunction and replace mock context.
+		// TODO: Add argument in NewFunction and replace mock context.
 		ctx := mock.NewContext()
 		newArgs, err := fn(datums, ctx)
 		if err != nil {

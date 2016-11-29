@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"context"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -66,7 +65,6 @@ type propagateConstantSolver struct {
 	eqList     []*Constant    // if eqList[i] != nil, it means col_i = eqList[i]
 	columns    []*Column      // columns stores all columns appearing in the conditions
 	conditions []Expression
-	ctx        context.Context
 }
 
 // propagateInEQ propagates all in-equal conditions.

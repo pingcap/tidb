@@ -15,11 +15,11 @@ package variable
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
-	"sync"
 )
 
 const (
