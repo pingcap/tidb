@@ -196,6 +196,17 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			return
 		}
 	}
+	for _, constraint := range stmt.Constraints {
+		switch tp := constraint.Tp; tp {
+		case ast.ConstraintKey:
+			err := CheckDuplicateColumnName(constraint.Keys)
+			if err != nil {
+				v.err = err
+				return
+			}
+		}
+	}
+
 }
 
 func isPrimary(ops []*ast.ColumnOption) int {
@@ -208,14 +219,20 @@ func isPrimary(ops []*ast.ColumnOption) int {
 }
 
 func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
-	for i := 0; i < len(stmt.IndexColNames); i++ {
-		name1 := stmt.IndexColNames[i].Column.Name
-		for j := i + 1; j < len(stmt.IndexColNames); j++ {
-			name2 := stmt.IndexColNames[j].Column.Name
+	v.err = CheckDuplicateColumnName(stmt.IndexColNames)
+	return
+}
+
+// CheckDuplicateColumnName checks if index exists duplicated columns.
+func CheckDuplicateColumnName(indexColNames []*ast.IndexColName) error {
+	for i := 0; i < len(indexColNames); i++ {
+		name1 := indexColNames[i].Column.Name
+		for j := i + 1; j < len(indexColNames); j++ {
+			name2 := indexColNames[j].Column.Name
 			if name1.L == name2.L {
-				v.err = infoschema.ErrColumnExists.GenByArgs(name2)
-				return
+				return infoschema.ErrColumnExists.GenByArgs(name2)
 			}
 		}
 	}
+	return nil
 }

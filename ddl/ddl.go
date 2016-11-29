@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -1206,7 +1207,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 }
 
 func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexName model.CIStr, idxColNames []*ast.IndexColName) error {
-	err := checkDuplicateColumnName(idxColNames)
+	err := plan.CheckDuplicateColumnName(idxColNames)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1430,20 +1431,6 @@ func findCol(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
 		}
 	}
 
-	return nil
-}
-
-// checkDuplicateColumnName checks if index exists duplicated columns.
-func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
-	for i := 0; i < len(indexColNames); i++ {
-		name1 := indexColNames[i].Column.Name
-		for j := i + 1; j < len(indexColNames); j++ {
-			name2 := indexColNames[j].Column.Name
-			if name1.L == name2.L {
-				return infoschema.ErrColumnExists.GenByArgs(name2)
-			}
-		}
-	}
 	return nil
 }
 
