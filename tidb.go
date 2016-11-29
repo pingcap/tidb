@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -111,6 +112,24 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	return stmts, nil
 }
 
+// Before every execution, we must clear statement status.
+func resetStmtStatus(ctx context.Context, s ast.StmtNode) {
+	sessVars := ctx.GetSessionVars()
+	var sc variable.StatementContext
+	switch stmt := s.(type) {
+	case *ast.ShowStmt:
+		if stmt.Tp == ast.ShowWarnings {
+			sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
+		}
+	case *ast.UpdateStmt:
+		sc.InUpdateStmt = true
+		sc.TruncateAsError = sessVars.StrictSQLMode
+	case *ast.InsertStmt, *ast.DeleteStmt:
+		sc.TruncateAsError = sessVars.StrictSQLMode
+	}
+	*sessVars.StmtCtx = sc
+}
+
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
 	compiler := executor.Compiler{}
@@ -121,11 +140,10 @@ func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
 	return st, nil
 }
 
-func runStmt(ctx context.Context, s ast.Statement, args ...interface{}) (ast.RecordSet, error) {
+// runStmt executes the ast.Statement and commit or rollback the current transaction.
+func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	var err error
 	var rs ast.RecordSet
-	// before every execution, we must clear affectedrows.
-	ctx.GetSessionVars().SetAffectedRows(0)
 	if s.IsDDL() {
 		err = ctx.CommitTxn()
 		if err != nil {

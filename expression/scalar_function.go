@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -82,7 +83,9 @@ func NewFunction(funcName string, retType *types.FieldType, args ...Expression) 
 
 	if canConstantFolding {
 		fn := f.F
-		newArgs, err := fn(datums, nil)
+		// TODO: Add argument in NewFunction and replace mock context.
+		ctx := mock.NewContext()
+		newArgs, err := fn(datums, ctx)
 		if err != nil {
 			log.Warnf("There may exist an error during constant folding. The function name is %s, args are %s", funcName, args)
 		} else {
