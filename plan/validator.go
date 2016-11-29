@@ -187,7 +187,7 @@ func (v *validator) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 }
 
 func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
-	countPrimayKey := 0
+	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		tp := colDef.Tp
 		if tp.Tp == mysql.TypeString &&
@@ -195,15 +195,26 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			v.err = errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
 			return
 		}
-		countPrimayKey += isPrimary(colDef.Options)
-		if countPrimayKey > 1 {
-			v.err = errors.Errorf("Multiple primary key defined")
+		countPrimaryKey += isPrimary(colDef.Options)
+		if countPrimaryKey > 1 {
+			v.err = infoschema.ErrMultiplePriKey
 			return
 		}
 	}
 	for _, constraint := range stmt.Constraints {
 		switch tp := constraint.Tp; tp {
-		case ast.ConstraintKey:
+		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+			err := checkDuplicateColumnName(constraint.Keys)
+			if err != nil {
+				v.err = err
+				return
+			}
+		case ast.ConstraintPrimaryKey:
+			if countPrimaryKey > 0 {
+				v.err = infoschema.ErrMultiplePriKey
+				return
+			}
+			countPrimaryKey++
 			err := checkDuplicateColumnName(constraint.Keys)
 			if err != nil {
 				v.err = err
@@ -211,7 +222,6 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			}
 		}
 	}
-
 }
 
 func isPrimary(ops []*ast.ColumnOption) int {
