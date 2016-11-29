@@ -122,12 +122,13 @@ var tablesCols = []columnInfo{
 	{"TABLE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
 }
 
+// See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
 var columnsCols = []columnInfo{
 	{"TABLE_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
 	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"COLUMN_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ORIGINAL_POSITION", mysql.TypeLonglong, 64, 0, nil, nil},
+	{"ORDINAL_POSITION", mysql.TypeLonglong, 64, 0, nil, nil},
 	{"COLUMN_DEFAULT", mysql.TypeBlob, 196606, 0, nil, nil},
 	{"IS_NULLABLE", mysql.TypeVarchar, 3, 0, nil, nil},
 	{"DATA_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
