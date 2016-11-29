@@ -83,7 +83,7 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 			return d, errors.Trace(err)
 		}
 		ft := types.NewFieldType(mysql.TypeLonglong)
-		xval, err := v.ConvertTo(ft)
+		xval, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx, ft)
 		if err != nil {
 			return d, errors.Trace(err)
 		}

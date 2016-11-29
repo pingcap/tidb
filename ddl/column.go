@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -300,7 +301,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	seekHandle := reorgInfo.Handle
 	version := reorgInfo.SnapshotVer
 	count := job.GetRowCount()
-
+	ctx := d.newMockContext()
 	for {
 		startTime := time.Now()
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
@@ -313,7 +314,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 		count += int64(len(handles))
 		seekHandle = handles[len(handles)-1] + 1
 		sub := time.Since(startTime).Seconds()
-		err = d.backfillColumn(t, columnInfo, handles, reorgInfo)
+		err = d.backfillColumn(ctx, t, columnInfo, handles, reorgInfo)
 		if err != nil {
 			log.Warnf("[ddl] added column for %v rows failed, take time %v", count, sub)
 			return errors.Trace(err)
@@ -372,11 +373,11 @@ func (d *ddl) backfillColumnInTxn(t table.Table, colID int64, handles []int64, c
 	return nextHandle, nil
 }
 
-func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, handles []int64, reorgInfo *reorgInfo) error {
+func (d *ddl) backfillColumn(ctx context.Context, t table.Table, columnInfo *model.ColumnInfo, handles []int64, reorgInfo *reorgInfo) error {
 	var defaultVal types.Datum
 	var err error
 	if columnInfo.DefaultValue != nil {
-		defaultVal, _, err = table.GetColDefaultValue(nil, columnInfo)
+		defaultVal, _, err = table.GetColDefaultValue(ctx, columnInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}

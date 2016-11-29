@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -227,7 +228,7 @@ func mockResolve(node ast.Node) error {
 	if err != nil {
 		return err
 	}
-	return InferType(node)
+	return InferType(ctx.GetSessionVars().StmtCtx, node)
 }
 
 func supportExpr(exprType tipb.ExprType) bool {
@@ -1067,7 +1068,7 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 
 func (s *testPlanSuite) TestRangeBuilder(c *C) {
 	defer testleak.AfterTest(c)()
-	rb := &rangeBuilder{}
+	rb := &rangeBuilder{sc: new(variable.StatementContext)}
 
 	cases := []struct {
 		exprStr   string

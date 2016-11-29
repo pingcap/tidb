@@ -121,12 +121,14 @@ func (s *Server) skipAuth() bool {
 	return s.cfg.SkipAuth
 }
 
+const tokenLimit = 1000
+
 // NewServer creates a new Server.
 func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
-		concurrentLimiter: NewTokenLimiter(100),
+		concurrentLimiter: NewTokenLimiter(tokenLimit),
 		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
 	}
