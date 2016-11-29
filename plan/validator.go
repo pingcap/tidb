@@ -197,13 +197,23 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 		countPrimayKey += isPrimary(colDef.Options)
 		if countPrimayKey > 1 {
-			v.err = errors.Errorf("Multiple primary key defined")
+			v.err = infoschema.ErrMultiplePriKey
 			return
 		}
 	}
 	for _, constraint := range stmt.Constraints {
 		switch tp := constraint.Tp; tp {
-		case ast.ConstraintKey:
+		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+			err := checkDuplicateColumnName(constraint.Keys)
+			if err != nil {
+				v.err = err
+				return
+			}
+		case ast.ConstraintPrimaryKey:
+			if countPrimayKey > 0 {
+				v.err = infoschema.ErrMultiplePriKey
+				return
+			}
 			err := checkDuplicateColumnName(constraint.Keys)
 			if err != nil {
 				v.err = err
@@ -211,7 +221,6 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			}
 		}
 	}
-
 }
 
 func isPrimary(ops []*ast.ColumnOption) int {
