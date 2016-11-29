@@ -23,7 +23,7 @@ func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression,
 		Conditions:      conditions,
 		baseLogicalPlan: newBaseLogicalPlan(Sel, allocator)}
 	selection.self = selection
-	selection.initID()
+	selection.initIDAndContext(p.context())
 	selection.SetSchema(child.GetSchema().Clone())
 	selection.correlated = child.IsCorrelated()
 	for _, cond := range conditions {
@@ -183,8 +183,9 @@ func outerJoinSimplify(p *Join, predicates []expression.Expression) error {
 	}
 	// then simplify embedding outer join.
 	canBeSimplified := false
+	eb := expression.NewBuilder(p.ctx)
 	for _, expr := range predicates {
-		isOk, err := isNullRejected(innerTable.GetSchema(), expr)
+		isOk, err := isNullRejected(eb, innerTable.GetSchema(), expr)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -204,8 +205,8 @@ func outerJoinSimplify(p *Join, predicates []expression.Expression) error {
 // If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
-func isNullRejected(schema expression.Schema, expr expression.Expression) (bool, error) {
-	result, err := expression.EvaluateExprWithNull(schema, expr)
+func isNullRejected(eb expression.Builder, schema expression.Schema, expr expression.Expression) (bool, error) {
+	result, err := expression.EvaluateExprWithNull(eb, schema, expr)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -250,7 +251,8 @@ func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret 
 			}
 		}
 		if canSubstitute {
-			push = append(push, expression.ColumnSubstitute(cond, p.GetSchema(), p.Exprs))
+			eb := expression.NewBuilder(p.ctx)
+			push = append(push, eb.ColumnSubstitute(cond, p.GetSchema(), p.Exprs))
 		} else {
 			ret = append(ret, cond)
 		}
@@ -275,7 +277,8 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 	for _, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		for _, cond := range predicates {
-			newCond := expression.ColumnSubstitute(cond, p.GetSchema(), expression.Schema2Exprs(proj.GetSchema()))
+			eb := expression.NewBuilder(p.ctx)
+			newCond := eb.ColumnSubstitute(cond, p.GetSchema(), expression.Schema2Exprs(proj.GetSchema()))
 			newExprs = append(newExprs, newCond)
 		}
 		retCond, _, err := proj.(LogicalPlan).PredicatePushDown(newExprs)
@@ -325,7 +328,8 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 				}
 			}
 			if ok {
-				newFunc := expression.ColumnSubstitute(cond.Clone(), p.GetSchema(), exprsOriginal)
+				eb := expression.NewBuilder(p.ctx)
+				newFunc := eb.ColumnSubstitute(cond.Clone(), p.GetSchema(), exprsOriginal)
 				condsToPush = append(condsToPush, newFunc)
 			} else {
 				ret = append(ret, cond)

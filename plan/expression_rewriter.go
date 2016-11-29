@@ -32,6 +32,7 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 		schema:   p.GetSchema(),
 		b:        b,
 		asScalar: asScalar,
+		eb:       expression.NewBuilder(b.ctx),
 	}
 	expr.Accept(er)
 	if er.err != nil {
@@ -56,6 +57,7 @@ type expressionRewriter struct {
 	err      error
 	aggrMap  map[*ast.AggregateFuncExpr]int
 	b        *planBuilder
+	eb       expression.Builder
 	// asScalar means the return value must be a scalar value.
 	asScalar bool
 }
@@ -80,22 +82,22 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 }
 
 // constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2).
-func constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
+func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := getRowLen(l), getRowLen(r)
 	if lLen == 1 && rLen == 1 {
-		return expression.NewFunction(op, types.NewFieldType(mysql.TypeTiny), l, r)
+		return er.eb.NewFunction(op, types.NewFieldType(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
 		return nil, ErrOperandColumns.GenByArgs(lLen)
 	}
 	funcs := make([]expression.Expression, lLen)
 	for i := 0; i < lLen; i++ {
 		var err error
-		funcs[i], err = constructBinaryOpFunction(getRowArg(l, i), getRowArg(r, i), op)
+		funcs[i], err = er.constructBinaryOpFunction(getRowArg(l, i), getRowArg(r, i), op)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	return expression.ComposeCNFCondition(funcs), nil
+	return er.eb.ComposeCNFCondition(funcs), nil
 }
 
 func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) LogicalPlan {
@@ -198,7 +200,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 		for _, col := range np.GetSchema() {
 			args = append(args, col.Clone())
 		}
-		rexpr, er.err = expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), args...)
+		rexpr, er.err = er.eb.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), args...)
 		if er.err != nil {
 			er.err = errors.Trace(er.err)
 			return v, true
@@ -207,14 +209,14 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	switch v.Op {
 	// Only EQ, NE and NullEQ can be composed with and.
 	case opcode.EQ, opcode.NE, opcode.NullEQ:
-		checkCondition, er.err = constructBinaryOpFunction(lexpr, rexpr, opcode.Ops[v.Op])
+		checkCondition, er.err = er.constructBinaryOpFunction(lexpr, rexpr, opcode.Ops[v.Op])
 		if er.err != nil {
 			er.err = errors.Trace(er.err)
 			return v, true
 		}
 	// If op is not EQ, NE, NullEQ, say LT, it will remain as row(a,b) < row(c,d), and be compared as row datum.
 	default:
-		checkCondition, er.err = expression.NewFunction(opcode.Ops[v.Op],
+		checkCondition, er.err = er.eb.NewFunction(opcode.Ops[v.Op],
 			types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
 		if er.err != nil {
 			er.err = errors.Trace(er.err)
@@ -293,7 +295,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		for _, col := range np.GetSchema() {
 			args = append(args, col.Clone())
 		}
-		rexpr, er.err = expression.NewFunction(ast.RowFunc, nil, args...)
+		rexpr, er.err = er.eb.NewFunction(ast.RowFunc, nil, args...)
 		if er.err != nil {
 			er.err = errors.Trace(er.err)
 			return v, true
@@ -301,7 +303,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	}
 	// a in (subq) will be rewrited as a = any(subq).
 	// a not in (subq) will be rewrited as a != all(subq).
-	checkCondition, err := constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
+	checkCondition, err := er.constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true
@@ -317,7 +319,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		return v, true
 	}
 	if v.Not {
-		checkCondition, _ = expression.NewFunction(ast.UnaryNot, &v.Type, checkCondition)
+		checkCondition, _ = er.eb.NewFunction(ast.UnaryNot, &v.Type, checkCondition)
 	}
 	er.p = er.b.buildApply(er.p, np, &ApplyConditionChecker{Condition: checkCondition, All: v.Not})
 	// The parent expression only use the last column in schema, which represents whether the condition is matched.
@@ -339,7 +341,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 			for _, col := range np.GetSchema() {
 				newCols = append(newCols, col.Clone())
 			}
-			expr, err := expression.NewFunction(ast.RowFunc, nil, newCols...)
+			expr, err := er.eb.NewFunction(ast.RowFunc, nil, newCols...)
 			if err != nil {
 				er.err = errors.Trace(err)
 				return v, true
@@ -367,7 +369,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 				Value:   data,
 				RetType: np.GetSchema()[i].GetType()})
 		}
-		expr, err1 := expression.NewFunction(ast.RowFunc, nil, newCols...)
+		expr, err1 := er.eb.NewFunction(ast.RowFunc, nil, newCols...)
 		if err1 != nil {
 			er.err = errors.Trace(err1)
 			return v, true
@@ -449,14 +451,14 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	globalVars := sessionVars.GlobalVarsAccessor
 	if !v.IsSystem {
 		if v.Value != nil {
-			er.ctxStack[stkLen-1], er.err = expression.NewFunction(ast.SetVar,
+			er.ctxStack[stkLen-1], er.err = er.eb.NewFunction(ast.SetVar,
 				er.ctxStack[stkLen-1].GetType(),
 				datumToConstant(types.NewDatum(name), mysql.TypeString),
 				er.ctxStack[stkLen-1])
 			return
 		}
 		if _, ok := sessionVars.Users[name]; ok {
-			f, err := expression.NewFunction(ast.GetVar,
+			f, err := er.eb.NewFunction(ast.GetVar,
 				// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
 				types.NewFieldType(mysql.TypeString),
 				datumToConstant(types.NewStringDatum(name), mysql.TypeString))
@@ -536,7 +538,7 @@ func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		er.err = ErrOperandColumns.GenByArgs(1)
 		return
 	}
-	er.ctxStack[stkLen-1], er.err = expression.NewFunction(op, &v.Type, er.ctxStack[stkLen-1])
+	er.ctxStack[stkLen-1], er.err = er.eb.NewFunction(op, &v.Type, er.ctxStack[stkLen-1])
 }
 
 func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
@@ -544,7 +546,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 	var function expression.Expression
 	switch v.Op {
 	case opcode.EQ, opcode.NE, opcode.NullEQ:
-		function, er.err = constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
+		function, er.err = er.constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
 			opcode.Ops[v.Op])
 	default:
 		lLen := getRowLen(er.ctxStack[stkLen-2])
@@ -562,7 +564,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		if er.err != nil {
 			return
 		}
-		function, er.err = expression.NewFunction(opcode.Ops[v.Op], &v.Type, er.ctxStack[stkLen-2:]...)
+		function, er.err = er.eb.NewFunction(opcode.Ops[v.Op], &v.Type, er.ctxStack[stkLen-2:]...)
 	}
 	if er.err != nil {
 		er.err = errors.Trace(er.err)
@@ -574,7 +576,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 
 func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.FieldType,
 	args ...expression.Expression) expression.Expression {
-	opFunc, err := expression.NewFunction(op, tp, args...)
+	opFunc, err := er.eb.NewFunction(op, tp, args...)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return nil
@@ -583,7 +585,7 @@ func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.
 		return opFunc
 	}
 
-	opFunc, err = expression.NewFunction(ast.UnaryNot, tp, opFunc)
+	opFunc, err = er.eb.NewFunction(ast.UnaryNot, tp, opFunc)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return nil
@@ -666,7 +668,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		value := er.ctxStack[stkLen-argsLen-1]
 		args = make([]expression.Expression, 0, argsLen)
 		for i := stkLen - argsLen; i < stkLen-1; i += 2 {
-			arg, err := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), value.Clone(), er.ctxStack[i])
+			arg, err := er.eb.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), value.Clone(), er.ctxStack[i])
 			if err != nil {
 				er.err = errors.Trace(err)
 				return
@@ -685,7 +687,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		//        else clause
 		args = er.ctxStack[stkLen-argsLen:]
 	}
-	function, err := expression.NewFunction(ast.Case, &v.Type, args...)
+	function, err := er.eb.NewFunction(ast.Case, &v.Type, args...)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
@@ -725,7 +727,7 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 		rows = append(rows, er.ctxStack[i])
 	}
 	er.ctxStack = er.ctxStack[:stkLen-length]
-	function, err := expression.NewFunction(ast.RowFunc, nil, rows...)
+	function, err := er.eb.NewFunction(ast.RowFunc, nil, rows...)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
@@ -741,22 +743,22 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	}
 	var op string
 	var l, r expression.Expression
-	l, er.err = expression.NewFunction(ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
+	l, er.err = er.eb.NewFunction(ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
 	if er.err == nil {
-		r, er.err = expression.NewFunction(ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
+		r, er.err = er.eb.NewFunction(ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
 	}
 	op = ast.AndAnd
 	if er.err != nil {
 		er.err = errors.Trace(er.err)
 		return
 	}
-	function, err := expression.NewFunction(op, &v.Type, l, r)
+	function, err := er.eb.NewFunction(op, &v.Type, l, r)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
 	}
 	if v.Not {
-		function, err = expression.NewFunction(ast.UnaryNot, &v.Type, function)
+		function, err = er.eb.NewFunction(ast.UnaryNot, &v.Type, function)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return
@@ -783,7 +785,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 		return
 	}
 	var function expression.Expression
-	function, er.err = expression.NewFunction(v.FnName.L, &v.Type, args...)
+	function, er.err = er.eb.NewFunction(v.FnName.L, &v.Type, args...)
 	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
 	er.ctxStack = append(er.ctxStack, function)
 }

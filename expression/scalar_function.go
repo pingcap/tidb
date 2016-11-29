@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -57,7 +56,7 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 }
 
 // NewFunction creates a new scalar function or constant.
-func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+func (eb Builder) NewFunction(funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	_, canConstantFolding := evaluator.DynamicFuncs[funcName]
 	canConstantFolding = !canConstantFolding
 
@@ -83,9 +82,7 @@ func NewFunction(funcName string, retType *types.FieldType, args ...Expression) 
 
 	if canConstantFolding {
 		fn := f.F
-		// TODO: Add argument in NewFunction and replace mock context.
-		ctx := mock.NewContext()
-		newArgs, err := fn(datums, ctx)
+		newArgs, err := fn(datums, eb.ctx)
 		if err != nil {
 			log.Warnf("There may exist an error during constant folding. The function name is %s, args are %s", funcName, args)
 		} else {

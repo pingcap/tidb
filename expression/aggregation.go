@@ -85,22 +85,22 @@ type AggregationFunction interface {
 }
 
 // NewAggFunction creates a new AggregationFunction.
-func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) AggregationFunction {
+func (eb Builder) NewAggFunction(funcType string, funcArgs []Expression, distinct bool) AggregationFunction {
 	switch tp := strings.ToLower(funcType); tp {
 	case ast.AggFuncSum:
-		return &sumFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
+		return &sumFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct)}
 	case ast.AggFuncCount:
-		return &countFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
+		return &countFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct)}
 	case ast.AggFuncAvg:
-		return &avgFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
+		return &avgFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct)}
 	case ast.AggFuncGroupConcat:
-		return &concatFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
+		return &concatFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct)}
 	case ast.AggFuncMax:
-		return &maxMinFunction{aggFunction: newAggFunc(tp, funcArgs, distinct), isMax: true}
+		return &maxMinFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct), isMax: true}
 	case ast.AggFuncMin:
-		return &maxMinFunction{aggFunction: newAggFunc(tp, funcArgs, distinct), isMax: false}
+		return &maxMinFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct), isMax: false}
 	case ast.AggFuncFirstRow:
-		return &firstRowFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
+		return &firstRowFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct)}
 	}
 	return nil
 }
@@ -124,6 +124,7 @@ type aggFunction struct {
 	Distinct     bool
 	resultMapper aggCtxMapper
 	streamCtx    *ast.AggEvaluateContext
+	eb           Builder
 }
 
 // Equal implements AggregationFunction interface.
@@ -163,12 +164,14 @@ func (af *aggFunction) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-func newAggFunc(name string, args []Expression, dist bool) aggFunction {
+func (eb Builder) newAggFunc(name string, args []Expression, dist bool) aggFunction {
 	return aggFunction{
 		name:         name,
 		Args:         args,
 		resultMapper: make(aggCtxMapper, 0),
-		Distinct:     dist}
+		Distinct:     dist,
+		eb:           eb,
+	}
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
@@ -335,7 +338,7 @@ func (sf *sumFunction) GetStreamResult() (d types.Datum) {
 // CalculateDefaultValue implements AggregationFunction interface.
 func (sf *sumFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
 	arg := sf.Args[0]
-	result, err := EvaluateExprWithNull(schema, arg)
+	result, err := EvaluateExprWithNull(sf.eb, schema, arg)
 	if err != nil {
 		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", sf, err.Error())
 		return d, false
@@ -376,7 +379,7 @@ func (cf *countFunction) Clone() AggregationFunction {
 // CalculateDefaultValue implements AggregationFunction interface.
 func (cf *countFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
 	for _, arg := range cf.Args {
-		result, err := EvaluateExprWithNull(schema, arg)
+		result, err := EvaluateExprWithNull(cf.eb, schema, arg)
 		if err != nil {
 			log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", cf, err.Error())
 			return d, false
@@ -719,7 +722,7 @@ func (mmf *maxMinFunction) Clone() AggregationFunction {
 // CalculateDefaultValue implements AggregationFunction interface.
 func (mmf *maxMinFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
 	arg := mmf.Args[0]
-	result, err := EvaluateExprWithNull(schema, arg)
+	result, err := EvaluateExprWithNull(mmf.eb, schema, arg)
 	if err != nil {
 		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", mmf, err.Error())
 		return d, false
@@ -879,7 +882,7 @@ func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 // CalculateDefaultValue implements AggregationFunction interface.
 func (ff *firstRowFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
 	arg := ff.Args[0]
-	result, err := EvaluateExprWithNull(schema, arg)
+	result, err := EvaluateExprWithNull(ff.eb, schema, arg)
 	if err != nil {
 		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", ff, err.Error())
 		return d, false

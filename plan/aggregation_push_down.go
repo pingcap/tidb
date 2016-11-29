@@ -210,7 +210,7 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 	}
 	child.SetParents(agg)
 	agg.SetChildren(child)
-	agg.initID()
+	agg.initIDAndContext(a.ctx)
 	agg.correlated = child.IsCorrelated()
 	var newAggFuncs []expression.AggregationFunction
 	schema := make(expression.Schema, 0, len(aggFuncs))
@@ -222,8 +222,9 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 			agg.correlated = agg.correlated || arg.IsCorrelated()
 		}
 	}
+	eb := expression.NewBuilder(a.ctx)
 	for _, gbyCol := range gbyCols {
-		firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
+		firstRow := eb.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
 		newAggFuncs = append(newAggFuncs, firstRow)
 		schema = append(schema, gbyCol.Clone().(*expression.Column))
 		agg.correlated = agg.correlated || gbyCol.IsCorrelated()

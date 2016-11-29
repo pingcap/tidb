@@ -139,8 +139,18 @@ func (c *Constant) HashCode() []byte {
 func (c *Constant) ResolveIndices(_ Schema) {
 }
 
+// Builder builds function expressions.
+type Builder struct {
+	ctx context.Context
+}
+
+// NewBuilder creates a Builder.
+func NewBuilder(ctx context.Context) Builder {
+	return Builder{ctx: ctx}
+}
+
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
-func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expression {
+func (eb Builder) composeConditionWithBinaryOp(conditions []Expression, funcName string) Expression {
 	length := len(conditions)
 	if length == 0 {
 		return nil
@@ -148,21 +158,21 @@ func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expr
 	if length == 1 {
 		return conditions[0]
 	}
-	expr, _ := NewFunction(funcName,
+	expr, _ := eb.NewFunction(funcName,
 		types.NewFieldType(mysql.TypeTiny),
-		composeConditionWithBinaryOp(conditions[:length/2], funcName),
-		composeConditionWithBinaryOp(conditions[length/2:], funcName))
+		eb.composeConditionWithBinaryOp(conditions[:length/2], funcName),
+		eb.composeConditionWithBinaryOp(conditions[length/2:], funcName))
 	return expr
 }
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeCNFCondition(conditions []Expression) Expression {
-	return composeConditionWithBinaryOp(conditions, ast.AndAnd)
+func (eb Builder) ComposeCNFCondition(conditions []Expression) Expression {
+	return eb.composeConditionWithBinaryOp(conditions, ast.AndAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
-func ComposeDNFCondition(conditions []Expression) Expression {
-	return composeConditionWithBinaryOp(conditions, ast.OrOr)
+func (eb Builder) ComposeDNFCondition(conditions []Expression) Expression {
+	return eb.composeConditionWithBinaryOp(conditions, ast.OrOr)
 }
 
 // Assignment represents a set assignment in Update, such as
@@ -201,18 +211,18 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(schema Schema, expr Expression) (Expression, error) {
+func EvaluateExprWithNull(eb Builder, schema Schema, expr Expression) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		var err error
 		args := make([]Expression, len(x.Args))
 		for i, arg := range x.Args {
-			args[i], err = EvaluateExprWithNull(schema, arg)
+			args[i], err = EvaluateExprWithNull(eb, schema, arg)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		return NewFunction(x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		return eb.NewFunction(x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
 	case *Column:
 		if schema.GetIndex(x) == -1 {
 			return x, nil

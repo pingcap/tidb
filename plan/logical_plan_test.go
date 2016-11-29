@@ -1060,9 +1060,9 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 	pA := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
 
 	pB := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
-
-	pA.initID()
-	pB.initID()
+	ctx := mock.NewContext()
+	pA.initIDAndContext(ctx)
+	pB.initIDAndContext(ctx)
 	c.Assert(pA.id, Equals, pB.id)
 }
 
@@ -1240,8 +1240,9 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		}
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
 		result := fullRange
+		eb := expression.NewBuilder(builder.ctx)
 		for _, cond := range selection.Conditions {
-			result = rb.intersection(result, rb.build(pushDownNot(cond, false)))
+			result = rb.intersection(result, rb.build(pushDownNot(eb, cond, false)))
 		}
 		c.Assert(rb.err, IsNil)
 		got := fmt.Sprintf("%v", result)
@@ -1316,8 +1317,8 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 
 		selection := p.GetChildByIndex(0).(*Selection)
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
-
-		c.Assert(expression.ComposeCNFCondition(selection.Conditions).String(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
+		eb := expression.NewBuilder(builder.ctx)
+		c.Assert(eb.ComposeCNFCondition(selection.Conditions).String(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
 	}
 }
 

@@ -65,6 +65,7 @@ type propagateConstantSolver struct {
 	eqList     []*Constant    // if eqList[i] != nil, it means col_i = eqList[i]
 	columns    []*Column      // columns stores all columns appearing in the conditions
 	conditions []Expression
+	eb         Builder
 }
 
 // propagateInEQ propagates all in-equal conditions.
@@ -97,9 +98,9 @@ func (s *propagateConstantSolver) propagateInEQ() {
 				funName := cond.(*ScalarFunction).FuncName.L
 				var newExpr Expression
 				if _, ok := cond.(*ScalarFunction).Args[0].(*Column); ok {
-					newExpr, _ = NewFunction(funName, cond.GetType(), s.columns[j], con)
+					newExpr, _ = s.eb.NewFunction(funName, cond.GetType(), s.columns[j], con)
 				} else {
-					newExpr, _ = NewFunction(funName, cond.GetType(), con, s.columns[j])
+					newExpr, _ = s.eb.NewFunction(funName, cond.GetType(), con, s.columns[j])
 				}
 				s.conditions = append(s.conditions, newExpr)
 			}
@@ -127,7 +128,7 @@ func (s *propagateConstantSolver) propagateEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				s.conditions[i] = ColumnSubstitute(cond, Schema(cols), cons)
+				s.conditions[i] = s.eb.ColumnSubstitute(cond, Schema(cols), cons)
 			}
 		}
 	}
@@ -226,9 +227,9 @@ func (s *propagateConstantSolver) solve(conditions []Expression) []Expression {
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.OrOr {
 			dnfItems := SplitDNFItems(cond)
 			for j, item := range dnfItems {
-				dnfItems[j] = ComposeCNFCondition(PropagateConstant([]Expression{item}))
+				dnfItems[j] = s.eb.ComposeCNFCondition(PropagateConstant([]Expression{item}))
 			}
-			s.conditions[i] = ComposeDNFCondition(dnfItems)
+			s.conditions[i] = s.eb.ComposeDNFCondition(dnfItems)
 		}
 	}
 	return s.conditions

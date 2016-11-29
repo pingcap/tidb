@@ -143,7 +143,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	}
 	ts.tp = "TableScan"
 	ts.allocator = p.allocator
-	ts.initID()
+	ts.initIDAndContext(p.ctx)
 	if txn != nil {
 		ts.readOnly = txn.IsReadOnly()
 	} else {
@@ -157,7 +157,8 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
+		eb := expression.NewBuilder(p.ctx)
+		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(eb, conds, table)
 		if client != nil {
 			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
@@ -222,7 +223,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 	}
 	is.tp = "IndexScan"
 	is.allocator = p.allocator
-	is.initID()
+	is.initIDAndContext(p.ctx)
 	if txn != nil {
 		is.readOnly = txn.IsReadOnly()
 	} else {
@@ -237,7 +238,8 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
+		eb := expression.NewBuilder(p.ctx)
+		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(eb, conds, is)
 		if client != nil {
 			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
@@ -345,9 +347,10 @@ func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPl
 				}
 				if !result {
 					dummy := &PhysicalDummyScan{}
+					dummy.ctx = p.ctx
 					dummy.tp = "Dummy"
 					dummy.allocator = p.allocator
-					dummy.initID()
+					dummy.initIDAndContext(p.ctx)
 					dummy.SetSchema(p.schema)
 					info := &physicalPlanInfo{p: dummy}
 					p.storePlanInfo(prop, info)
@@ -472,9 +475,10 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 		OtherConditions: p.OtherConditions,
 		Anti:            p.anti,
 	}
+	join.ctx = p.ctx
 	join.tp = "HashSemiJoin"
 	join.allocator = p.allocator
-	join.initID()
+	join.initIDAndContext(p.ctx)
 	join.correlated = p.IsCorrelated()
 	join.SetSchema(p.schema)
 	lProp := prop
@@ -534,7 +538,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	}
 	join.tp = "HashLeftJoin"
 	join.allocator = p.allocator
-	join.initID()
+	join.initIDAndContext(lChild.context())
 	join.SetSchema(p.schema)
 	join.correlated = p.IsCorrelated()
 	if innerJoin {
@@ -613,7 +617,7 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	}
 	join.tp = "HashRightJoin"
 	join.allocator = p.allocator
-	join.initID()
+	join.initIDAndContext(p.ctx)
 	join.correlated = p.IsCorrelated()
 	join.SetSchema(p.schema)
 	if innerJoin {
@@ -713,7 +717,7 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 	}
 	agg.tp = "StreamAgg"
 	agg.allocator = p.allocator
-	agg.initID()
+	agg.initIDAndContext(p.ctx)
 	agg.correlated = p.IsCorrelated()
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
@@ -762,7 +766,7 @@ func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, child
 	}
 	agg.tp = "HashAgg"
 	agg.allocator = p.allocator
-	agg.initID()
+	agg.initIDAndContext(p.ctx)
 	agg.correlated = p.IsCorrelated()
 	agg.SetSchema(p.schema)
 	agg.HasGby = len(p.GroupByItems) > 0
@@ -787,7 +791,7 @@ func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanIn
 	}
 	agg.tp = "HashAgg"
 	agg.allocator = p.allocator
-	agg.initID()
+	agg.initIDAndContext(p.ctx)
 	agg.correlated = p.IsCorrelated()
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
@@ -1121,7 +1125,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	}
 	np.tp = "PhysicalApply"
 	np.allocator = p.allocator
-	np.initID()
+	np.initIDAndContext(p.ctx)
 	np.correlated = p.IsCorrelated()
 	np.SetSchema(p.GetSchema())
 	limit := prop.limit
