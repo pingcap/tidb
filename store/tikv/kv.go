@@ -56,7 +56,10 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 
 	pdCli, err := pd.NewClient(etcdAddrs)
 	if err != nil {
-		return nil, errors.Annotate(errors.Trace(err), "try again later")
+		if strings.Contains(err.Error(), "i/o timeout") {
+			return nil, errors.Annotate(errors.Trace(err), "try again later")
+		}
+		return nil, errors.Trace(err)
 	}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
