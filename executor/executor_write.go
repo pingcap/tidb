@@ -105,7 +105,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	if !rowChanged {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
-			ctx.GetSessionVars().AddAffectedRows(1)
+			ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 		}
 		return nil
 	}
@@ -131,9 +131,9 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 
 	// Record affected rows.
 	if !onDuplicateUpdate {
-		ctx.GetSessionVars().AddAffectedRows(1)
+		ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	} else {
-		ctx.GetSessionVars().AddAffectedRows(2)
+		ctx.GetSessionVars().StmtCtx.AddAffectedRows(2)
 	}
 	return nil
 }
@@ -240,7 +240,7 @@ func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data
 		return errors.Trace(err)
 	}
 	getDirtyDB(ctx).deleteRow(t.Meta().ID, h)
-	ctx.GetSessionVars().AddAffectedRows(1)
+	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
 }
 
@@ -408,7 +408,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
 		e.insertVal.currRow++
 	}
 	if e.insertVal.lastInsertID != 0 {
-		e.insertVal.ctx.GetSessionVars().LastInsertID = e.insertVal.lastInsertID
+		e.insertVal.ctx.GetSessionVars().SetLastInsertID(e.insertVal.lastInsertID)
 	}
 
 	return curData, nil
@@ -619,7 +619,7 @@ func (e *InsertExec) Next() (*Row, error) {
 	}
 
 	if e.lastInsertID != 0 {
-		e.ctx.GetSessionVars().LastInsertID = e.lastInsertID
+		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 	e.finished = true
 	return nil, nil
@@ -1048,7 +1048,7 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		}
 		if rowUnchanged {
 			// If row unchanged, we do not need to do insert.
-			e.ctx.GetSessionVars().AddAffectedRows(1)
+			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 			idx++
 			continue
 		}
@@ -1058,11 +1058,11 @@ func (e *ReplaceExec) Next() (*Row, error) {
 			return nil, errors.Trace(err1)
 		}
 		getDirtyDB(e.ctx).deleteRow(e.Table.Meta().ID, h)
-		e.ctx.GetSessionVars().AddAffectedRows(1)
+		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	}
 
 	if e.lastInsertID != 0 {
-		e.ctx.GetSessionVars().LastInsertID = e.lastInsertID
+		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 	e.finished = true
 	return nil, nil

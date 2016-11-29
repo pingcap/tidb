@@ -110,6 +110,20 @@ func BenchmarkTableScan(b *testing.B) {
 	}
 }
 
+func BenchmarkExplainTableScan(b *testing.B) {
+	b.StopTimer()
+	se := prepareBenchSession()
+	prepareBenchData(se, "int", "%v", 0)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute("explain select * from t")
+		if err != nil {
+			b.Fatal(err)
+		}
+		readResult(rs[0], 1)
+	}
+}
+
 func BenchmarkTableLookup(b *testing.B) {
 	b.StopTimer()
 	se := prepareBenchSession()
@@ -117,6 +131,20 @@ func BenchmarkTableLookup(b *testing.B) {
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute("select * from t where pk = 64")
+		if err != nil {
+			b.Fatal(err)
+		}
+		readResult(rs[0], 1)
+	}
+}
+
+func BenchmarkExplainTableLookup(b *testing.B) {
+	b.StopTimer()
+	se := prepareBenchSession()
+	prepareBenchData(se, "int", "%d", 0)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute("explain select * from t where pk = 64")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -135,6 +163,20 @@ func BenchmarkStringIndexScan(b *testing.B) {
 			b.Fatal(err)
 		}
 		readResult(rs[0], smallCount)
+	}
+}
+
+func BenchmarkExplainStringIndexScan(b *testing.B) {
+	b.StopTimer()
+	se := prepareBenchSession()
+	prepareBenchData(se, "varchar(255)", "'hello %d'", 0)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute("explain select * from t where col > 'hello'")
+		if err != nil {
+			b.Fatal(err)
+		}
+		readResult(rs[0], 1)
 	}
 }
 

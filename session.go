@@ -187,7 +187,7 @@ func (s *session) LastInsertID() uint64 {
 }
 
 func (s *session) AffectedRows() uint64 {
-	return s.sessionVars.AffectedRows
+	return s.sessionVars.StmtCtx.AffectedRows()
 }
 
 func (s *session) resetHistory() {
@@ -357,8 +357,10 @@ func (s *session) Retry() error {
 	return err
 }
 
-// ExecRestrictedSQL implements SQLHelper interface.
-// This is used for executing some restricted sql statements.
+// ExecRestrictedSQL implements RestrictedSQLExecutor interface.
+// This is used for executing some restricted sql statements, usually executed during a normal statement execution.
+// Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
+// and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error) {
 	if err := s.checkSchemaValidOrRollback(); err != nil {
 		return nil, errors.Trace(err)
@@ -372,6 +374,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.Record
 		log.Errorf("ExecRestrictedSQL only executes one statement. Too many/few statement in %s", sql)
 		return nil, errors.New("wrong number of statement")
 	}
+	// Some execution is done in compile stage, so we reset it before compile.
 	st, err := Compile(s, rawStmts[0])
 	if err != nil {
 		log.Errorf("Compile %s with error: %v", sql, err)
@@ -468,6 +471,8 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	ph := sessionctx.GetDomain(s).PerfSchema()
 	for i, rst := range rawStmts {
 		startTS := time.Now()
+		// Some execution is done in compile stage, so we reset it before compile.
+		resetStmtStatus(s, rawStmts[0])
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
 			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
@@ -568,7 +573,7 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 		return nil, errors.Trace(err)
 	}
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
-	r, err := runStmt(s, st, args...)
+	r, err := runStmt(s, st)
 	return r, errors.Trace(err)
 }
 

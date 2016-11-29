@@ -684,7 +684,7 @@ func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
 		return true
 	}
 	var err error
-	d, err = d.Cast(v.Tp)
+	d, err = d.Cast(e.ctx.GetSessionVars().StmtCtx, v.Tp)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
