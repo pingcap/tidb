@@ -2495,3 +2495,12 @@ func (s *testSessionSuite) TestTruncateAlloc(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
 }
+
+// Test infomation_schema.columns.
+func (s *testSessionSuite) TestISColumns(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	sql := "select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;"
+	mustExecSQL(c, se, sql)
+}
