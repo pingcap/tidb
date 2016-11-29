@@ -62,7 +62,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"create table t (a int, b int, unique index(a, b, A))", true, errors.New("[schema:1060]Duplicate column name 'A'")},
 		{"create table t(c1 int not null primary key, c2 int not null primary key)", true, errors.New("[schema:1068]Multiple primary key defined")},
 		{"create table t(c1 int not null primary key, c2 int not null, primary key(c1))", true, errors.New("[schema:1068]Multiple primary key defined")},
-		{"create table t(c1 int not null primary key, c2 int not null, primary key(c1), primary key(c2))", true, errors.New("[schema:1068]Multiple primary key defined")},
+		{"create table t(c1 int not null, c2 int not null, primary key(c1), primary key(c2))", true, errors.New("[schema:1068]Multiple primary key defined")},
 	}
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
