@@ -126,7 +126,7 @@ func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
-		concurrentLimiter: NewTokenLimiter(100),
+		concurrentLimiter: NewTokenLimiter(1000),
 		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
 	}
