@@ -300,7 +300,6 @@ const (
 	codeBadTable       = 1051
 	codeColumnExists   = 1060
 	codeIndexExists    = 1831
-
 	codeMultiplePriKey = 1068
 )
 
