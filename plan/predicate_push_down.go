@@ -14,7 +14,6 @@ package plan
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -41,7 +40,6 @@ func (p *Selection) PredicatePushDown(predicates []expression.Expression) ([]exp
 	}
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(retConditions)
-		log.Warnf("conds %s", p.Conditions)
 		return nil, p, nil
 	}
 	err = RemovePlan(p)

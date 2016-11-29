@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/types"
@@ -212,7 +213,7 @@ func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		for j := i + 1; j < len(stmt.IndexColNames); j++ {
 			name2 := stmt.IndexColNames[j].Column.Name
 			if name1.L == name2.L {
-				v.err = errors.Errorf("Duplicate column name '%s'", name1.O)
+				v.err = infoschema.ErrColumnExists.GenByArgs(name2)
 				return
 			}
 		}
