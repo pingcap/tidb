@@ -42,7 +42,7 @@ type validator struct {
 }
 
 func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch in.(type) {
+	switch node := in.(type) {
 	case *ast.AggregateFuncExpr:
 		if v.inAggregate {
 			// Aggregate function can not contain aggregate function.
@@ -51,12 +51,17 @@ func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 		v.inAggregate = true
 	case *ast.CreateTableStmt:
-		v.checkCreateTableGrammar(in.(*ast.CreateTableStmt))
+		v.checkCreateTableGrammar(node)
 		if v.err != nil {
 			return in, true
 		}
 	case *ast.CreateIndexStmt:
-		v.checkCreateIndexGrammar(in.(*ast.CreateIndexStmt))
+		v.checkCreateIndexGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
+	case *ast.AlterTableStmt:
+		v.checkAlterTableGrammar(node)
 		if v.err != nil {
 			return in, true
 		}
@@ -199,7 +204,7 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	for _, constraint := range stmt.Constraints {
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey:
-			err := CheckDuplicateColumnName(constraint.Keys)
+			err := checkDuplicateColumnName(constraint.Keys)
 			if err != nil {
 				v.err = err
 				return
@@ -219,12 +224,33 @@ func isPrimary(ops []*ast.ColumnOption) int {
 }
 
 func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
-	v.err = CheckDuplicateColumnName(stmt.IndexColNames)
+	v.err = checkDuplicateColumnName(stmt.IndexColNames)
 	return
 }
 
-// CheckDuplicateColumnName checks if index exists duplicated columns.
-func CheckDuplicateColumnName(indexColNames []*ast.IndexColName) error {
+func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
+	specs := stmt.Specs
+	for _, spec := range specs {
+		switch spec.Tp {
+		case ast.AlterTableAddConstraint:
+			switch spec.Constraint.Tp {
+			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
+				ast.ConstraintUniqKey:
+				v.err = checkDuplicateColumnName(spec.Constraint.Keys)
+				if v.err != nil {
+					return
+				}
+			default:
+				// Nothing to do now.
+			}
+		default:
+			// Nothing to do now.
+		}
+	}
+}
+
+// checkDuplicateColumnName checks if index exists duplicated columns.
+func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 	for i := 0; i < len(indexColNames); i++ {
 		name1 := indexColNames[i].Column.Name
 		for j := i + 1; j < len(indexColNames); j++ {
