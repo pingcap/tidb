@@ -23,14 +23,17 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -46,7 +49,7 @@ type mockBinlogPump struct {
 	}
 }
 
-func (p *mockBinlogPump) WriteBinlog(ctx context.Context, req *binlog.WriteBinlogReq) (*binlog.WriteBinlogResp, error) {
+func (p *mockBinlogPump) WriteBinlog(ctx goctx.Context, req *binlog.WriteBinlogReq) (*binlog.WriteBinlogResp, error) {
 	p.mu.Lock()
 	p.mu.payloads = append(p.mu.payloads, req.Payload)
 	p.mu.Unlock()
@@ -54,7 +57,7 @@ func (p *mockBinlogPump) WriteBinlog(ctx context.Context, req *binlog.WriteBinlo
 }
 
 // PullBinlogs implements PumpServer interface.
-func (p *mockBinlogPump) PullBinlogs(ctx context.Context, req *binlog.PullBinlogReq) (*binlog.PullBinlogResp, error) {
+func (p *mockBinlogPump) PullBinlogs(ctx goctx.Context, req *binlog.PullBinlogReq) (*binlog.PullBinlogResp, error) {
 	return &binlog.PullBinlogResp{}, nil
 }
 
@@ -65,6 +68,8 @@ type testBinlogSuite struct {
 	unixFile string
 	serv     *grpc.Server
 	pump     *mockBinlogPump
+	tk       *testkit.TestKit
+	ddl      ddl.DDL
 }
 
 func (s *testBinlogSuite) SetUpSuite(c *C) {
@@ -75,6 +80,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	s.store = store
 	tidb.SetSchemaLease(0)
 	s.unixFile = "/tmp/mock-binlog-pump"
+	os.Remove(s.unixFile)
 	l, err := net.Listen("unix", s.unixFile)
 	c.Assert(err, IsNil)
 	s.serv = grpc.NewServer()
@@ -88,9 +94,14 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(clientCon, NotNil)
 	binloginfo.PumpClient = binlog.NewPumpClient(clientCon)
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	domain := sessionctx.GetDomain(s.tk.Se.(context.Context))
+	s.ddl = domain.DDL()
 }
 
 func (s *testBinlogSuite) TearDownSuite(c *C) {
+	s.ddl.Stop()
 	binloginfo.PumpClient = nil
 	s.serv.Stop()
 	os.Remove(s.unixFile)
@@ -98,8 +109,7 @@ func (s *testBinlogSuite) TearDownSuite(c *C) {
 }
 
 func (s *testBinlogSuite) TestBinlog(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+	tk := s.tk
 	pump := s.pump
 	tk.MustExec("drop table if exists local_binlog")
 	ddlQuery := "create table local_binlog (id int primary key, name varchar(10))"
