@@ -983,14 +983,13 @@ func builtinStrToDate(args []types.Datum, _ context.Context) (types.Datum, error
 		d      types.Datum
 		goTime time.Time
 	)
-	goTime = types.ZeroTime
 	if !strToDate(&goTime, date, format) {
 		d.SetNull()
 		return d, nil
 	}
 
 	t := types.Time{
-		Time: goTime,
+		Time: types.FromGoTime(goTime),
 		Type: mysql.TypeDatetime,
 		Fsp:  types.UnspecifiedFsp,
 	}
