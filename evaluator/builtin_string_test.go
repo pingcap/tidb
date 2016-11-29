@@ -41,7 +41,7 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{"abc", 3},
 		{1, 1},
 		{3.14, 4},
-		{types.Time{Time: time.Now(), Fsp: 6, Type: mysql.TypeDatetime}, 26},
+		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, 26},
 		{types.Bit{Value: 1, Width: 8}, 1},
 		{types.Hex{Value: 1}, 1},
 		{types.Set{Value: 1, Name: "abc"}, 3},

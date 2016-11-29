@@ -1001,7 +1001,7 @@ func (d *Datum) convertToMysqlYear(target *FieldType) (Datum, error) {
 	case KindString, KindBytes:
 		y, err = StrToInt(d.GetString())
 	case KindMysqlTime:
-		y = int64(d.GetMysqlTime().Year())
+		y = int64(d.GetMysqlTime().Time.Year())
 	case KindMysqlDuration:
 		y = int64(time.Now().Year())
 	default:

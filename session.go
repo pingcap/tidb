@@ -576,7 +576,7 @@ func checkArgs(args ...interface{}) error {
 		case time.Duration:
 			args[i] = types.Duration{Duration: x}
 		case time.Time:
-			args[i] = types.Time{Time: x, Type: mysql.TypeDatetime}
+			args[i] = types.Time{Time: types.FromGoTime(x), Type: mysql.TypeDatetime}
 		case nil:
 		default:
 			return errors.Errorf("cannot use arg[%d] (type %T):unsupported type", i, v)
