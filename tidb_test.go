@@ -72,7 +72,7 @@ func (s *testMainSuite) SetUpSuite(c *C) {
     CREATE TABLE tbl_test1(id INT NOT NULL DEFAULT 2, name varchar(255), PRIMARY KEY(id), INDEX name(name));
     CREATE TABLE tbl_test2(id INT NOT NULL DEFAULT 3, name varchar(255), PRIMARY KEY(id));`
 	s.selectSQL = `SELECT * from tbl_test;`
-	checkSchemaValidityRetryTimes = 5
+	schemaExpiredRetryTimes = 5
 	checkSchemaValiditySleepTime = 20 * time.Millisecond
 	runtime.GOMAXPROCS(runtime.NumCPU())
 }
@@ -80,7 +80,7 @@ func (s *testMainSuite) SetUpSuite(c *C) {
 func (s *testMainSuite) TearDownSuite(c *C) {
 	defer testleak.AfterTest(c)()
 	removeStore(c, s.dbName)
-	checkSchemaValidityRetryTimes = 30
+	schemaExpiredRetryTimes = 30
 	checkSchemaValiditySleepTime = 1 * time.Second
 }
 
@@ -343,6 +343,8 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	c.Assert(ver, NotNil)
 	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
 	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (a int);")
 	mustExecSQL(c, se, "insert t values (1);")
 	// Make sure insert to table t2 transaction executes.
 	startCh2 <- struct{}{}
