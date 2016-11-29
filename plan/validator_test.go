@@ -56,6 +56,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"create index ib on t(b,a,b);", true, errors.New("[schema:1060]Duplicate column name 'b'")},
 		{"create table t (a int, b int, key(a, b, A))", true, errors.New("[schema:1060]Duplicate column name 'A'")},
 		{"create table t(c1 int not null primary key, c2 int not null primary key)", true, errors.New("Multiple primary key defined")},
+		{"alter table t add index idx(a, b, A)", true, errors.New("[schema:1060]Duplicate column name 'A'")},
 	}
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
