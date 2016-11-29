@@ -138,8 +138,8 @@ func (s *session) cleanRetryInfo() {
 
 // TODO: Set them as system variables.
 var (
-	checkSchemaValidityRetryTimes = 10
-	checkSchemaValiditySleepTime  = 1 * time.Second
+	schemaExpiredRetryTimes      = 30
+	checkSchemaValiditySleepTime = 1 * time.Second
 )
 
 // If the schema is invalid, we need to rollback the current transaction.
@@ -165,7 +165,7 @@ func (s *session) checkSchemaValid() error {
 
 	var err error
 	var currSchemaVer int64
-	for i := 0; i < checkSchemaValidityRetryTimes; i++ {
+	for i := 0; i < schemaExpiredRetryTimes; i++ {
 		currSchemaVer, err = sessionctx.GetDomain(s).SchemaValidity.Check(ts, s.schemaVerInCurrTxn)
 		if err == nil {
 			if s.txn == nil {
@@ -175,7 +175,7 @@ func (s *session) checkSchemaValid() error {
 		}
 		log.Infof("schema version original %d, current %d, sleep time %v",
 			s.schemaVerInCurrTxn, currSchemaVer, checkSchemaValiditySleepTime)
-		if currSchemaVer != s.schemaVerInCurrTxn && s.schemaVerInCurrTxn != 0 {
+		if terror.ErrorEqual(err, domain.ErrInfoSchemaChanged) {
 			break
 		}
 		time.Sleep(checkSchemaValiditySleepTime)
@@ -241,7 +241,7 @@ func (s *session) finishTxn(rollback bool) error {
 	}
 
 	if err := s.checkSchemaValid(); err != nil {
-		if !s.sessionVars.RetryInfo.Retrying {
+		if !s.sessionVars.RetryInfo.Retrying && s.isRetryableError(err) {
 			err = s.Retry()
 		} else {
 			err1 := s.txn.Rollback()
@@ -314,7 +314,7 @@ func (s *session) String() string {
 const sqlLogMaxLen = 1024
 
 func (s *session) isRetryableError(err error) bool {
-	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaExpired)
+	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)
 }
 
 func (s *session) Retry() error {
