@@ -215,7 +215,7 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	var s kv.Storage
 	util.RunWithRetry(maxRetries, retryInterval, func() (bool, error) {
 		s, err = d.Open(path)
-		return true, err
+		return kv.IsRetryableError(err), err
 	})
 	return s, errors.Trace(err)
 }
