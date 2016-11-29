@@ -44,7 +44,7 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 	case string:
 		upperX := strings.ToUpper(x)
 		if upperX == CurrentTimestamp {
-			value.Time = defaultTime
+			value.Time = types.FromGoTime(defaultTime)
 		} else if upperX == ZeroTimestamp {
 			value, _ = types.ParseTimeFromNum(0, tp, fsp)
 		} else {

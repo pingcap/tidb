@@ -389,7 +389,7 @@ func builtinMonth(args []types.Datum, ctx context.Context) (types.Datum, error) 
 		d.SetInt64(i)
 		return d, nil
 	}
-	i = int64(t.Month())
+	i = int64(t.Time.Month())
 	d.SetInt64(i)
 	return d, nil
 }
@@ -426,7 +426,7 @@ func builtinNow(args []types.Datum, _ context.Context) (d types.Datum, err error
 	}
 
 	t := types.Time{
-		Time: time.Now(),
+		Time: types.FromGoTime(time.Now()),
 		Type: mysql.TypeDatetime,
 		// set unspecified for later round
 		Fsp: types.UnspecifiedFsp,
@@ -471,7 +471,7 @@ func builtinDayOfMonth(args []types.Datum, ctx context.Context) (d types.Datum, 
 		return d, nil
 	}
 
-	d.SetInt64(int64(t.Day()))
+	d.SetInt64(int64(t.Time.Day()))
 	return d, nil
 }
 
@@ -491,7 +491,7 @@ func builtinDayOfWeek(args []types.Datum, ctx context.Context) (d types.Datum, e
 	}
 
 	// 1 is Sunday, 2 is Monday, .... 7 is Saturday
-	d.SetInt64(int64(t.Weekday()) + 1)
+	d.SetInt64(int64(t.Time.Weekday() + 1))
 	return d, nil
 }
 
@@ -509,7 +509,7 @@ func builtinDayOfYear(args []types.Datum, ctx context.Context) (types.Datum, err
 		return d, nil
 	}
 
-	yd := int64(t.YearDay())
+	yd := int64(t.Time.YearDay())
 	d.SetInt64(yd)
 	return d, nil
 }
@@ -530,7 +530,7 @@ func builtinWeek(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	}
 
 	// TODO: support multi mode for week
-	_, week := t.ISOWeek()
+	_, week := t.Time.ISOWeek()
 	wi := int64(week)
 	d.SetInt64(wi)
 	return d, nil
@@ -554,7 +554,7 @@ func builtinWeekDay(args []types.Datum, ctx context.Context) (types.Datum, error
 	// Monday is 0, ... Sunday = 6 in MySQL
 	// but in go, Sunday is 0, ... Saturday is 6
 	// w will do a conversion.
-	w := (int64(t.Weekday()) + 6) % 7
+	w := (int64(t.Time.Weekday()) + 6) % 7
 	d.SetInt64(w)
 	return d, nil
 }
@@ -581,7 +581,7 @@ func builtinYear(args []types.Datum, ctx context.Context) (types.Datum, error) {
 		return d, nil
 	}
 
-	d.SetInt64(int64(t.Year()))
+	d.SetInt64(int64(t.Time.Year()))
 	return d, nil
 }
 
@@ -601,7 +601,7 @@ func builtinYearWeek(args []types.Datum, ctx context.Context) (types.Datum, erro
 	}
 
 	// TODO: support multi mode for week
-	year, week := t.ISOWeek()
+	year, week := t.Time.ISOWeek()
 	d.SetInt64(int64(year*100 + week))
 	if d.GetInt64() < 0 {
 		d.SetInt64(math.MaxUint32)
@@ -653,7 +653,7 @@ func builtinFromUnixTime(args []types.Datum, ctx context.Context) (d types.Datum
 		return d, errors.Trace(err)
 	}
 	t := types.Time{
-		Time: time.Unix(integralPart, fractionalPart),
+		Time: types.FromGoTime(time.Unix(integralPart, fractionalPart)),
 		Type: mysql.TypeDatetime,
 		Fsp:  types.UnspecifiedFsp,
 	}
@@ -983,14 +983,13 @@ func builtinStrToDate(args []types.Datum, _ context.Context) (types.Datum, error
 		d      types.Datum
 		goTime time.Time
 	)
-	goTime = types.ZeroTime
 	if !strToDate(&goTime, date, format) {
 		d.SetNull()
 		return d, nil
 	}
 
 	t := types.Time{
-		Time: goTime,
+		Time: types.FromGoTime(goTime),
 		Type: mysql.TypeDatetime,
 		Fsp:  types.UnspecifiedFsp,
 	}
@@ -1009,7 +1008,7 @@ func builtinSysDate(args []types.Datum, ctx context.Context) (types.Datum, error
 func builtinCurrentDate(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	year, month, day := time.Now().Date()
 	t := types.Time{
-		Time: time.Date(year, month, day, 0, 0, 0, 0, time.Local),
+		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
 		Type: mysql.TypeDate, Fsp: 0}
 	d.SetMysqlTime(t)
 	return d, nil
@@ -1055,7 +1054,7 @@ func builtinTime(args []types.Datum, ctx context.Context) (d types.Datum, err er
 func builtinUTCDate(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	year, month, day := time.Now().UTC().Date()
 	t := types.Time{
-		Time: time.Date(year, month, day, 0, 0, 0, 0, time.UTC),
+		Time: types.FromGoTime(time.Date(year, month, day, 0, 0, 0, 0, time.UTC)),
 		Type: mysql.TypeDate, Fsp: types.UnspecifiedFsp}
 	d.SetMysqlTime(t)
 	return d, nil
@@ -1190,11 +1189,13 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	if op == ast.DateSub {
 		year, month, day, duration = -year, -month, -day, -duration
 	}
-	result.Time = result.Time.Add(duration)
-	result.Time = result.Time.AddDate(int(year), int(month), int(day))
-	if result.Time.Nanosecond() == 0 {
+	t := result.Time.GoTime()
+	t = t.Add(duration)
+	t = t.AddDate(int(year), int(month), int(day))
+	if t.Nanosecond() == 0 {
 		result.Fsp = 0
 	}
+	result.Time = types.FromGoTime(t)
 	d.SetMysqlTime(result)
 	return d, nil
 }
