@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -188,7 +189,8 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 		State:        model.StatePublic,
 		DefaultValue: 1.0,
 	}
-	val, ok, err := GetColDefaultValue(nil, colInfo)
+	ctx := mock.NewContext()
+	val, ok, err := GetColDefaultValue(ctx, colInfo)
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsTrue)
 	c.Assert(val.Kind(), Equals, types.KindInt64)

@@ -27,16 +27,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 )
 
-var (
-	// ErrValueTruncated is used when a value has been truncated during conversion.
-	ErrValueTruncated = errors.New("value has been truncated")
-)
-
-// InvConv returns a failed conversion error.
-func invConv(val interface{}, tp byte) (interface{}, error) {
-	return nil, errors.Errorf("cannot convert %v (type %T) to type %s", val, val, TypeStr(tp))
-}
-
 func truncateStr(str string, flen int) string {
 	if flen != UnspecifiedLength && len(str) > flen {
 		str = str[:flen]
@@ -146,16 +136,6 @@ func isCastType(tp byte) bool {
 	return false
 }
 
-// Convert converts the val with type tp.
-func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
-	d := NewDatum(val)
-	ret, err := d.ConvertTo(target)
-	if err != nil {
-		return ret.GetValue(), errors.Trace(err)
-	}
-	return ret.GetValue(), nil
-}
-
 // StrToInt converts a string to an integer in best effort.
 // TODO: handle overflow and add unittest.
 func StrToInt(str string) (int64, error) {
@@ -194,7 +174,7 @@ func StrToFloat(str string) (float64, error) {
 	validStr := getValidFloatPrefix(str)
 	var err error
 	if validStr != str {
-		err = ErrValueTruncated
+		err = ErrTruncated
 	}
 	f, err1 := strconv.ParseFloat(validStr, 64)
 	if err == nil {
