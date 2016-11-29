@@ -29,6 +29,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -118,7 +119,6 @@ type session struct {
 	values             map[fmt.Stringer]interface{}
 	store              kv.Storage
 	history            stmtHistory
-	currRetryCnt       int // current retry times
 	maxRetryCnt        int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
@@ -258,7 +258,7 @@ func (s *session) finishTxn(rollback bool) error {
 		return errors.Trace(err)
 	}
 	if err := s.txn.Commit(); err != nil {
-		if !s.sessionVars.RetryInfo.Retrying && kv.IsRetryableError(err) {
+		if !s.sessionVars.RetryInfo.Retrying && s.isRetryableError(err) {
 			err = s.Retry()
 		}
 		if err != nil {
@@ -313,6 +313,10 @@ func (s *session) String() string {
 
 const sqlLogMaxLen = 1024
 
+func (s *session) isRetryableError(err error) bool {
+	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaExpired)
+}
+
 func (s *session) Retry() error {
 	s.sessionVars.RetryInfo.Retrying = true
 	nh := s.history.clone()
@@ -331,8 +335,9 @@ func (s *session) Retry() error {
 		return errors.Errorf("can not retry select for update statement")
 	}
 	var err error
+	retryCnt := 0
 	for {
-		s.sessionVars.RetryInfo.Attempts = s.currRetryCnt + 1
+		s.sessionVars.RetryInfo.Attempts = retryCnt + 1
 		s.resetHistory()
 		log.Info("RollbackTxn for retry txn.")
 		err = s.RollbackTxn()
@@ -351,7 +356,7 @@ func (s *session) Retry() error {
 			log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
 			_, err = runStmt(s, st)
 			if err != nil {
-				if kv.IsRetryableError(err) {
+				if s.isRetryableError(err) {
 					success = false
 					break
 				}
@@ -361,15 +366,15 @@ func (s *session) Retry() error {
 		}
 		if success {
 			err = s.CommitTxn()
-			if !kv.IsRetryableError(err) {
+			if !s.isRetryableError(err) {
 				break
 			}
 		}
-		s.currRetryCnt++
-		if (s.maxRetryCnt != unlimitedRetryCnt) && (s.currRetryCnt >= s.maxRetryCnt) {
+		retryCnt++
+		if (s.maxRetryCnt != unlimitedRetryCnt) && (retryCnt >= s.maxRetryCnt) {
 			return errors.Trace(err)
 		}
-		kv.BackOff(s.currRetryCnt)
+		kv.BackOff(retryCnt)
 	}
 	return err
 }
