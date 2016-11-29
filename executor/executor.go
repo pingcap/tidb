@@ -462,8 +462,8 @@ type HashJoinExec struct {
 	finished atomic.Value
 	// For sync multiple join workers.
 	wg sync.WaitGroup
-	// closeMu add a lock for closing executor.
-	closeLock chan struct{}
+	// closeCh add a lock for closing executor.
+	closeCh chan struct{}
 
 	// Concurrent channels.
 	concurrency      int
@@ -488,7 +488,7 @@ type hashJoinCtx struct {
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
 	e.finished.Store(true)
-	<-e.closeLock
+	<-e.closeCh
 	e.prepared = false
 	e.cursor = 0
 	return e.smallExec.Close()
@@ -586,7 +586,7 @@ func (e *HashJoinExec) fetchBigExec() {
 // prepare runs the first time when 'Next' is called, it starts one worker goroutine to fetch rows from the big table,
 // and reads all data from the small table to build a hash table, then starts multiple join worker goroutines.
 func (e *HashJoinExec) prepare() error {
-	e.closeLock = make(chan struct{}, 1)
+	e.closeCh = make(chan struct{}, 1)
 	e.finished.Store(false)
 	e.bigTableRows = make([]chan []*Row, e.concurrency)
 	e.wg = sync.WaitGroup{}
@@ -651,7 +651,7 @@ func (e *HashJoinExec) prepare() error {
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.wg.Wait()
 	close(e.resultRows)
-	close(e.closeLock)
+	close(e.closeCh)
 	e.hashTable = nil
 }
 
