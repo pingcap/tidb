@@ -38,9 +38,9 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		{"2011-11-11 10:10:10", "2011-11-11"},
 	}
 	dtblDate := tblToDtbl(tblDate)
-
+	ctx := mock.NewContext()
 	for _, t := range dtblDate {
-		v, err := builtinDate(t["Input"], nil)
+		v, err := builtinDate(t["Input"], ctx)
 		c.Assert(err, IsNil)
 		if v.Kind() != types.KindMysqlTime {
 			c.Assert(v, testutil.DatumEquals, t["Expect"][0])
@@ -72,47 +72,47 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 	dtbl := tblToDtbl(tbl)
 	for _, t := range dtbl {
 		args := t["Input"]
-		v, err := builtinYear(args, nil)
+		v, err := builtinYear(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Year"][0])
 
-		v, err = builtinMonth(args, nil)
+		v, err = builtinMonth(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Month"][0])
 
-		v, err = builtinMonthName(args, nil)
+		v, err = builtinMonthName(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["MonthName"][0])
 
-		v, err = builtinDayOfMonth(args, nil)
+		v, err = builtinDayOfMonth(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["DayOfMonth"][0])
 
-		v, err = builtinDayOfWeek(args, nil)
+		v, err = builtinDayOfWeek(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["DayOfWeek"][0])
 
-		v, err = builtinDayOfYear(args, nil)
+		v, err = builtinDayOfYear(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["DayOfYear"][0])
 
-		v, err = builtinWeekDay(args, nil)
+		v, err = builtinWeekDay(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["WeekDay"][0])
 
-		v, err = builtinDayName(args, nil)
+		v, err = builtinDayName(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["DayName"][0])
 
-		v, err = builtinWeek(args, nil)
+		v, err = builtinWeek(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Week"][0])
 
-		v, err = builtinWeekOfYear(args, nil)
+		v, err = builtinWeekOfYear(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["WeekOfYear"][0])
 
-		v, err = builtinYearWeek(args, nil)
+		v, err = builtinYearWeek(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["YearWeek"][0])
 	}
@@ -139,47 +139,47 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 	dtblNil := tblToDtbl(tblNil)
 	for _, t := range dtblNil {
 		args := t["Input"]
-		v, err := builtinYear(args, nil)
+		v, err := builtinYear(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Year"][0])
 
-		v, err = builtinMonth(args, nil)
+		v, err = builtinMonth(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Month"][0])
 
-		v, err = builtinMonthName(args, nil)
+		v, err = builtinMonthName(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["MonthName"][0])
 
-		v, err = builtinDayOfMonth(args, nil)
+		v, err = builtinDayOfMonth(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["DayOfMonth"][0])
 
-		v, err = builtinDayOfWeek(args, nil)
+		v, err = builtinDayOfWeek(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["DayOfWeek"][0])
 
-		v, err = builtinDayOfYear(args, nil)
+		v, err = builtinDayOfYear(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["DayOfYear"][0])
 
-		v, err = builtinWeekDay(args, nil)
+		v, err = builtinWeekDay(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["WeekDay"][0])
 
-		v, err = builtinWeekDay(args, nil)
+		v, err = builtinWeekDay(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["DayName"][0])
 
-		v, err = builtinWeek(args, nil)
+		v, err = builtinWeek(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Week"][0])
 
-		v, err = builtinWeekOfYear(args, nil)
+		v, err = builtinWeekOfYear(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["WeekOfYear"][0])
 
-		v, err = builtinYearWeek(args, nil)
+		v, err = builtinYearWeek(args, ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["YearWeek"][0])
 	}
@@ -211,9 +211,9 @@ func (s *testEvaluatorSuite) TestDateFormat(c *C) {
 			"Oct October 10 10 1st 01 1 275 0 00 00 AM 12:00:00 AM 00:00:00 00 000000 40 2012 2012 12 %"},
 	}
 	dtblDate := tblToDtbl(tblDate)
-
+	ctx := mock.NewContext()
 	for i, t := range dtblDate {
-		v, err := builtinDateFormat(t["Input"], nil)
+		v, err := builtinDateFormat(t["Input"], ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Expect"][0], Commentf("no.%d \nobtain:%v \nexpect:%v\n", i,
 			v.GetValue(), t["Expect"][0].GetValue()))
@@ -222,7 +222,7 @@ func (s *testEvaluatorSuite) TestDateFormat(c *C) {
 	// error
 	ds := types.MakeDatums("0000-01-00 00:00:00.123456",
 		"%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%")
-	_, err := builtinDateFormat(ds, nil)
+	_, err := builtinDateFormat(ds, ctx)
 	// Some like dayofweek() doesn't support the date format like 2000-00-00 returns 0,
 	// so it returns an error.
 	c.Assert(err, NotNil)
@@ -245,47 +245,48 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		{"2010-10-10 11:11:11.11", 11, 11, 11, 110000, "11:11:11.11"},
 	}
 
+	ctx := mock.NewContext()
 	dtbl := tblToDtbl(tbl)
 	for _, t := range dtbl {
-		v, err := builtinHour(t["Input"], nil)
+		v, err := builtinHour(t["Input"], ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Hour"][0])
 
-		v, err = builtinMinute(t["Input"], nil)
+		v, err = builtinMinute(t["Input"], ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Minute"][0])
 
-		v, err = builtinSecond(t["Input"], nil)
+		v, err = builtinSecond(t["Input"], ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Second"][0])
 
-		v, err = builtinMicroSecond(t["Input"], nil)
+		v, err = builtinMicroSecond(t["Input"], ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["MicroSecond"][0])
 
-		v, err = builtinTime(t["Input"], nil)
+		v, err = builtinTime(t["Input"], ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Time"][0])
 	}
 
 	// nil
-	v, err := builtinHour(types.MakeDatums(nil), nil)
+	v, err := builtinHour(types.MakeDatums(nil), ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 
-	v, err = builtinMinute(types.MakeDatums(nil), nil)
+	v, err = builtinMinute(types.MakeDatums(nil), ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 
-	v, err = builtinSecond(types.MakeDatums(nil), nil)
+	v, err = builtinSecond(types.MakeDatums(nil), ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 
-	v, err = builtinMicroSecond(types.MakeDatums(nil), nil)
+	v, err = builtinMicroSecond(types.MakeDatums(nil), ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 
-	v, err = builtinTime(types.MakeDatums(nil), nil)
+	v, err = builtinTime(types.MakeDatums(nil), ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 
@@ -297,58 +298,60 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 
 	for _, t := range errTbl {
 		td := types.MakeDatums(t)
-		_, err := builtinHour(td, nil)
+		_, err := builtinHour(td, ctx)
 		c.Assert(err, NotNil)
 
-		_, err = builtinMinute(td, nil)
+		_, err = builtinMinute(td, ctx)
 		c.Assert(err, NotNil)
 
-		_, err = builtinSecond(td, nil)
+		_, err = builtinSecond(td, ctx)
 		c.Assert(err, NotNil)
 
-		_, err = builtinMicroSecond(td, nil)
+		_, err = builtinMicroSecond(td, ctx)
 		c.Assert(err, NotNil)
 
-		_, err = builtinTime(td, nil)
+		_, err = builtinTime(td, ctx)
 		c.Assert(err, NotNil)
 	}
 }
 
 func (s *testEvaluatorSuite) TestNow(c *C) {
 	defer testleak.AfterTest(c)()
-	v, err := builtinNow(nil, nil)
+	ctx := mock.NewContext()
+	v, err := builtinNow(nil, ctx)
 	c.Assert(err, IsNil)
 	t := v.GetMysqlTime()
 	// we canot use a constant value to check now, so here
 	// just to check whether has fractional seconds part.
 	c.Assert(strings.Contains(t.String(), "."), IsFalse)
 
-	v, err = builtinNow(types.MakeDatums(6), nil)
+	v, err = builtinNow(types.MakeDatums(6), ctx)
 	c.Assert(err, IsNil)
 	t = v.GetMysqlTime()
 	c.Assert(strings.Contains(t.String(), "."), IsTrue)
 
-	_, err = builtinNow(types.MakeDatums(8), nil)
+	_, err = builtinNow(types.MakeDatums(8), ctx)
 	c.Assert(err, NotNil)
 
-	_, err = builtinNow(types.MakeDatums(-2), nil)
+	_, err = builtinNow(types.MakeDatums(-2), ctx)
 	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	defer testleak.AfterTest(c)()
 	last := time.Now()
-	v, err := builtinSysDate(types.MakeDatums(nil), nil)
+	ctx := mock.NewContext()
+	v, err := builtinSysDate(types.MakeDatums(nil), ctx)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
 	c.Assert(n.String(), GreaterEqual, last.Format(types.TimeFormat))
 
-	v, err = builtinSysDate(types.MakeDatums(6), nil)
+	v, err = builtinSysDate(types.MakeDatums(6), ctx)
 	c.Assert(err, IsNil)
 	n = v.GetMysqlTime()
 	c.Assert(n.String(), GreaterEqual, last.Format(types.TimeFormat))
 
-	_, err = builtinSysDate(types.MakeDatums(-2), nil)
+	_, err = builtinSysDate(types.MakeDatums(-2), ctx)
 	c.Assert(err, NotNil)
 }
 
@@ -372,7 +375,7 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 		{true, 1451606400, 999999000, 1451606400.999999, "%Y %D %M %h:%i:%s %x", 26},
 		{true, 1451606400, 999999900, 1451606400.9999999, "%Y %D %M %h:%i:%s %x", 19},
 	}
-
+	ctx := mock.NewContext()
 	for _, t := range tbl {
 		var timestamp types.Datum
 		if !t.isDecimal {
@@ -383,25 +386,25 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 		// result of from_unixtime() is dependent on specific time zone.
 		unixTime := time.Unix(t.integralPart, t.fractionalPart).Round(time.Microsecond).String()[:t.ansLen]
 		if len(t.format) == 0 {
-			v, err := builtinFromUnixTime([]types.Datum{timestamp}, nil)
+			v, err := builtinFromUnixTime([]types.Datum{timestamp}, ctx)
 			c.Assert(err, IsNil)
 			ans := v.GetMysqlTime()
 			c.Assert(ans.String(), Equals, unixTime)
 		} else {
 			format := types.NewStringDatum(t.format)
-			v, err := builtinFromUnixTime([]types.Datum{timestamp, format}, nil)
+			v, err := builtinFromUnixTime([]types.Datum{timestamp, format}, ctx)
 			c.Assert(err, IsNil)
-			result, err := builtinDateFormat([]types.Datum{types.NewStringDatum(unixTime), format}, nil)
+			result, err := builtinDateFormat([]types.Datum{types.NewStringDatum(unixTime), format}, ctx)
 			c.Assert(err, IsNil)
 			c.Assert(v.GetString(), Equals, result.GetString())
 		}
 	}
 
-	v, err := builtinFromUnixTime([]types.Datum{types.NewIntDatum(-12345)}, nil)
+	v, err := builtinFromUnixTime([]types.Datum{types.NewIntDatum(-12345)}, ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 
-	_, err = builtinFromUnixTime([]types.Datum{types.NewIntDatum(math.MaxInt32 + 1)}, nil)
+	_, err = builtinFromUnixTime([]types.Datum{types.NewIntDatum(math.MaxInt32 + 1)}, ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 }
@@ -409,7 +412,7 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
 	defer testleak.AfterTest(c)()
 	last := time.Now()
-	v, err := builtinCurrentDate(types.MakeDatums(nil), nil)
+	v, err := builtinCurrentDate(types.MakeDatums(nil), mock.NewContext())
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
 	c.Assert(n.String(), GreaterEqual, last.Format(types.DateFormat))
@@ -419,36 +422,37 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	defer testleak.AfterTest(c)()
 	tfStr := "15:04:05"
 
+	ctx := mock.NewContext()
 	last := time.Now()
-	v, err := builtinCurrentTime(types.MakeDatums(nil), nil)
+	v, err := builtinCurrentTime(types.MakeDatums(nil), ctx)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlDuration()
 	c.Assert(n.String(), HasLen, 8)
 	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
 
-	v, err = builtinCurrentTime(types.MakeDatums(3), nil)
+	v, err = builtinCurrentTime(types.MakeDatums(3), ctx)
 	c.Assert(err, IsNil)
 	n = v.GetMysqlDuration()
 	c.Assert(n.String(), HasLen, 12)
 	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
 
-	v, err = builtinCurrentTime(types.MakeDatums(6), nil)
+	v, err = builtinCurrentTime(types.MakeDatums(6), ctx)
 	c.Assert(err, IsNil)
 	n = v.GetMysqlDuration()
 	c.Assert(n.String(), HasLen, 15)
 	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
 
-	v, err = builtinCurrentTime(types.MakeDatums(-1), nil)
+	v, err = builtinCurrentTime(types.MakeDatums(-1), ctx)
 	c.Assert(err, NotNil)
 
-	v, err = builtinCurrentTime(types.MakeDatums(7), nil)
+	v, err = builtinCurrentTime(types.MakeDatums(7), ctx)
 	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestUTCDate(c *C) {
 	defer testleak.AfterTest(c)()
 	last := time.Now().UTC()
-	v, err := builtinUTCDate(types.MakeDatums(nil), nil)
+	v, err := builtinUTCDate(types.MakeDatums(nil), mock.NewContext())
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
 	c.Assert(n.String(), GreaterEqual, last.Format(types.DateFormat))
@@ -593,10 +597,11 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		{"16-50 2016 11 22", "%H-%i-%s%Y%m%d", false, time.Time{}},
 	}
 
+	ctx := mock.NewContext()
 	for _, test := range tests {
 		date := types.NewStringDatum(test.Date)
 		format := types.NewStringDatum(test.Format)
-		result, err := builtinStrToDate([]types.Datum{date, format}, nil)
+		result, err := builtinStrToDate([]types.Datum{date, format}, ctx)
 		if !test.Success {
 			c.Assert(err, IsNil)
 			c.Assert(result.IsNull(), IsTrue)

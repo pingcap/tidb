@@ -462,7 +462,7 @@ func builtinLocate(args []types.Datum, _ context.Context) (d types.Datum, err er
 const spaceChars = "\n\t\r "
 
 // See http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
-func builtinHex(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinHex(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	switch args[0].Kind() {
 	case types.KindNull:
 		return d, nil
@@ -474,7 +474,7 @@ func builtinHex(args []types.Datum, _ context.Context) (d types.Datum, err error
 		d.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))))
 		return d, nil
 	case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
-		x, _ := args[0].Cast(types.NewFieldType(mysql.TypeLonglong))
+		x, _ := args[0].Cast(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
 		h := fmt.Sprintf("%x", uint64(x.GetInt64()))
 		d.SetString(strings.ToUpper(h))
 		return d, nil
@@ -484,7 +484,7 @@ func builtinHex(args []types.Datum, _ context.Context) (d types.Datum, err error
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_unhex
-func builtinUnHex(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinUnHex(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	switch args[0].Kind() {
 	case types.KindNull:
 		return d, nil
@@ -500,7 +500,7 @@ func builtinUnHex(args []types.Datum, _ context.Context) (d types.Datum, err err
 		d.SetString(string(bytes))
 		return d, nil
 	case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
-		x, _ := args[0].Cast(types.NewFieldType(mysql.TypeString))
+		x, _ := args[0].Cast(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeString))
 		if x.IsNull() {
 			return d, nil
 		}
