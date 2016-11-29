@@ -287,6 +287,13 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 	return true
 }
 
+func (p *DataSource) need2ConsiderIndex(prop *requiredProperty) bool {
+	if _, ok := p.parents[0].(*Selection); ok || len(prop.props) > 0 {
+		return true
+	}
+	return false
+}
+
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 // If there is no index that matches the required property, the returned physicalPlanInfo
 // will be table scan and has the cost of MaxInt64. But this can be ignored because the parent will call
@@ -311,13 +318,15 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 			return nil, errors.Trace(err)
 		}
 	}
-	for _, index := range indices {
-		indexInfo, err := p.convert2IndexScan(prop, index)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if info == nil || indexInfo.cost < info.cost {
-			info = indexInfo
+	if !includeTableScan || p.need2ConsiderIndex(prop) {
+		for _, index := range indices {
+			indexInfo, err := p.convert2IndexScan(prop, index)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if info == nil || indexInfo.cost < info.cost {
+				info = indexInfo
+			}
 		}
 	}
 	return info, errors.Trace(p.storePlanInfo(prop, info))
@@ -884,13 +893,15 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Secondly, we push nothing and enforce this property.
-	infoEnforce, err := p.convert2PhysicalPlanEnforce(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if infoEnforce.cost < info.cost {
-		info = infoEnforce
+	if len(prop.props) > 0 {
+		// Secondly, we push nothing and enforce this property.
+		infoEnforce, err := p.convert2PhysicalPlanEnforce(prop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if infoEnforce.cost < info.cost {
+			info = infoEnforce
+		}
 	}
 	if _, ok := p.GetChildByIndex(0).(*DataSource); !ok {
 		info = p.matchProperty(prop, info)
