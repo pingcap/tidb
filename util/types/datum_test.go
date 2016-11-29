@@ -16,6 +16,7 @@ package types
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 var _ = Suite(&testDatumSuite{})
@@ -152,20 +153,21 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	ft := NewFieldType(mysql.TypeFloat)
 	var datum = NewFloat64Datum(281.37)
-	converted, err := datum.ConvertTo(ft)
+	sc := new(variable.StatementContext)
+	converted, err := datum.ConvertTo(sc, ft)
 	c.Assert(err, IsNil)
 	c.Assert(converted.Kind(), Equals, KindFloat32)
 	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
 
 	datum.SetString("281.37")
-	converted, err = datum.ConvertTo(ft)
+	converted, err = datum.ConvertTo(sc, ft)
 	c.Assert(err, IsNil)
 	c.Assert(converted.Kind(), Equals, KindFloat32)
 	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
 
 	ft = NewFieldType(mysql.TypeDouble)
 	datum = NewFloat32Datum(281.37)
-	converted, err = datum.ConvertTo(ft)
+	converted, err = datum.ConvertTo(sc, ft)
 	c.Assert(err, IsNil)
 	c.Assert(converted.Kind(), Equals, KindFloat64)
 	// Convert to float32 and convert back to float64, we will get a different value.

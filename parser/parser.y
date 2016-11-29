@@ -158,6 +158,8 @@ import (
 	or		"OR"
 	order		"ORDER"
 	outer		"OUTER"
+	partition	"PARTITION"
+	partitions	"PARTITIONS"
 	precisionType	"PRECISION"
 	primary		"PRIMARY"
 	procedure	"PROCEDURE"
@@ -540,6 +542,7 @@ import (
 	OrderByOptional		"Optional ORDER BY clause optional"
 	ByList			"BY list"
 	QuickOptional		"QUICK or empty"
+	PartitionOpt		"Partition option"
 	PasswordOpt		"Password option"
 	ColumnPosition		"Column position [First|After ColumnName]"
 	PreparedStmt		"PreparedStmt"
@@ -1392,7 +1395,7 @@ DatabaseOptionList:
  *      )
  *******************************************************************/
 CreateTableStmt:
-	"CREATE" "TABLE" IfNotExists TableName '(' TableElementList ')' TableOptionListOpt
+	"CREATE" "TABLE" IfNotExists TableName '(' TableElementList ')' TableOptionListOpt PartitionOpt
 	{
 		tes := $6.([]interface {})
 		var columnDefs []*ast.ColumnDef
@@ -1433,6 +1436,11 @@ DefaultOpt:
 DefaultKwdOpt:
 	{}
 |	"DEFAULT"
+
+PartitionOpt:
+	{}
+|	"PARTITION" "BY" "HASH" '(' Expression ')' "PARTITIONS" NUM
+	{}
 
 /******************************************************************
  * Do statement
@@ -1999,7 +2007,7 @@ UnReservedKeyword:
 |	"COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
 |	"MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
-|	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS"
+|	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -2014,7 +2022,7 @@ ReservedKeyword:
 | "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
 | "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
 | "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC"
-| "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "READ" | "REAL"
+| "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "READ" | "REAL"
 | "REFERENCES" | "REGEXP" | "REPEAT" | "REPLACE" | "RESTRICT" | "RIGHT" | "RLIKE"
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
 | "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"

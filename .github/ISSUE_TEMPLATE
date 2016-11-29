@@ -1,17 +1,16 @@
 Please answer these questions before submitting your issue. Thanks!
 
-1. What version of Go are you using (`go version`)?
-
-
-2. What operating system and processor architecture are you using (`go env`)?
-
-
-3. What did you do?
+1. What did you do?
 If possible, provide a recipe for reproducing the error.
-A complete runnable program is good.
 
 
-4. What did you expect to see?
+2. What did you expect to see?
 
 
-5. What did you see instead?
+
+3. What did you see instead?
+
+
+
+4. What version of Go are you using (`go version`)?
+

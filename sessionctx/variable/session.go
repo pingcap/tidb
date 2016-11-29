@@ -15,6 +15,7 @@ package variable
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
@@ -89,16 +90,12 @@ type SessionVars struct {
 	// following variables are special for current session
 	Status       uint16
 	LastInsertID uint64
-	AffectedRows uint64
 
 	// Client capability
 	ClientCapability uint32
 
 	// Connection ID
 	ConnectionID uint64
-
-	// Found rows
-	FoundRows uint64
 
 	// Current user
 	User string
@@ -111,9 +108,6 @@ type SessionVars struct {
 
 	// CommonGlobalLoaded indicates if common global variable has been loaded for this session.
 	CommonGlobalLoaded bool
-
-	// InUpdateStmt indicates if the session is handling update stmt.
-	InUpdateStmt bool
 
 	// InRestrictedSQL indicates if the session is handling restricted SQL execution.
 	InRestrictedSQL bool
@@ -130,6 +124,9 @@ type SessionVars struct {
 
 	// GlobalAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
+
+	// StmtCtx holds variables for current executing statement.
+	StmtCtx *StatementContext
 }
 
 // NewSessionVars creates a session vars object.
@@ -142,6 +139,7 @@ func NewSessionVars() *SessionVars {
 		RetryInfo:            &RetryInfo{},
 		StrictSQLMode:        true,
 		Status:               mysql.ServerStatusAutocommit,
+		StmtCtx:              new(StatementContext),
 	}
 }
 
@@ -169,21 +167,6 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
 	s.LastInsertID = insertID
-}
-
-// SetAffectedRows saves the affected rows to the session context.
-func (s *SessionVars) SetAffectedRows(affectedRows uint64) {
-	s.AffectedRows = affectedRows
-}
-
-// AddAffectedRows adds affected rows with the argument rows.
-func (s *SessionVars) AddAffectedRows(rows uint64) {
-	s.AffectedRows += rows
-}
-
-// AddFoundRows adds found rows with the argument rows.
-func (s *SessionVars) AddFoundRows(rows uint64) {
-	s.FoundRows += rows
 }
 
 // SetStatusFlag sets the session server status variable.
@@ -239,4 +222,73 @@ func (s *SessionVars) GetTiDBSystemVar(name string) (string, error) {
 		return sVal, nil
 	}
 	return SysVars[key].Value, nil
+}
+
+// StatementContext contains variables for a statement.
+// It should be reset before executing a statement.
+type StatementContext struct {
+	/* Variables that are set before execution */
+	InUpdateStmt    bool
+	TruncateAsError bool
+
+	/* Variables that changes during execution. */
+	mu struct {
+		sync.Mutex
+		affectedRows uint64
+		foundRows    uint64
+		warnings     []error
+	}
+}
+
+// AddAffectedRows adds affected rows.
+func (sc *StatementContext) AddAffectedRows(rows uint64) {
+	sc.mu.Lock()
+	sc.mu.affectedRows += rows
+	sc.mu.Unlock()
+}
+
+// AffectedRows gets affected rows.
+func (sc *StatementContext) AffectedRows() uint64 {
+	sc.mu.Lock()
+	rows := sc.mu.affectedRows
+	sc.mu.Unlock()
+	return rows
+}
+
+// FoundRows gets found rows.
+func (sc *StatementContext) FoundRows() uint64 {
+	sc.mu.Lock()
+	rows := sc.mu.foundRows
+	sc.mu.Unlock()
+	return rows
+}
+
+// AddFoundRows adds found rows.
+func (sc *StatementContext) AddFoundRows(rows uint64) {
+	sc.mu.Lock()
+	sc.mu.foundRows += rows
+	sc.mu.Unlock()
+}
+
+// GetWarnings gets warnings.
+func (sc *StatementContext) GetWarnings() []error {
+	sc.mu.Lock()
+	warns := make([]error, len(sc.mu.warnings))
+	copy(warns, sc.mu.warnings)
+	sc.mu.Unlock()
+	return warns
+}
+
+// SetWarnings sets warnings.
+func (sc *StatementContext) SetWarnings(warns []error) {
+	sc.mu.Lock()
+	sc.mu.warnings = warns
+	sc.mu.Unlock()
+}
+
+// AppendWarning appends a warning.
+func (sc *StatementContext) AppendWarning(warn error) {
+	sc.mu.Lock()
+	sc.mu.warnings = append(sc.mu.warnings, warn)
+	sc.mu.Unlock()
 }

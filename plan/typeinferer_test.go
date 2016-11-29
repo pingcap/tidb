@@ -156,7 +156,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
-		plan.InferType(stmt)
+		plan.InferType(ctx.GetSessionVars().StmtCtx, stmt)
 		tp := stmt.GetResultFields()[0].Column.Tp
 		chs := stmt.GetResultFields()[0].Column.Charset
 		c.Assert(tp, Equals, ca.tp, Commentf("Tp for %s", ca.expr))
