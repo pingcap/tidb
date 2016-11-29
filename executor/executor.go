@@ -17,6 +17,7 @@ import (
 	"container/heap"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
-	"sync/atomic"
 )
 
 var (
@@ -463,7 +463,7 @@ type HashJoinExec struct {
 	// For sync multiple join workers.
 	wg sync.WaitGroup
 	// closeMu add a lock for closing executor.
-	closeMu sync.Mutex
+	closeLock chan bool
 
 	// Concurrent channels.
 	concurrency      int
@@ -488,8 +488,9 @@ type hashJoinCtx struct {
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
 	e.finished.Store(true)
-	e.closeMu.Lock()
-	e.closeMu.Unlock()
+	select {
+	case _ = <-e.closeLock:
+	}
 	e.prepared = false
 	e.cursor = 0
 	return e.smallExec.Close()
@@ -587,7 +588,7 @@ func (e *HashJoinExec) fetchBigExec() {
 // prepare runs the first time when 'Next' is called, it starts one worker goroutine to fetch rows from the big table,
 // and reads all data from the small table to build a hash table, then starts multiple join worker goroutines.
 func (e *HashJoinExec) prepare() error {
-	e.closeMu.Lock()
+	e.closeLock = make(chan bool, 1)
 	e.finished.Store(false)
 	e.bigTableRows = make([]chan []*Row, e.concurrency)
 	e.wg = sync.WaitGroup{}
@@ -652,8 +653,8 @@ func (e *HashJoinExec) prepare() error {
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.wg.Wait()
 	close(e.resultRows)
+	close(e.closeLock)
 	e.hashTable = nil
-	e.closeMu.Unlock()
 }
 
 // doJoin does join job in one goroutine.
