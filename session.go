@@ -138,12 +138,24 @@ func (s *session) cleanRetryInfo() {
 
 // TODO: Set them as system variables.
 var (
-	checkSchemaValidityRetryTimes = 30
-	checkSchemaValiditySleepTime  = 1 * time.Second
+	schemaExpiredRetryTimes      = 30
+	checkSchemaValiditySleepTime = 1 * time.Second
 )
 
 // If the schema is invalid, we need to rollback the current transaction.
 func (s *session) checkSchemaValidOrRollback() error {
+	err := s.checkSchemaValid()
+	if err != nil {
+		err1 := s.RollbackTxn()
+		if err1 != nil {
+			// TODO: Handle this error.
+			log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err1))
+		}
+	}
+	return errors.Trace(err)
+}
+
+func (s *session) checkSchemaValid() error {
 	var ts uint64
 	if s.txn != nil {
 		ts = s.txn.StartTS()
@@ -153,7 +165,7 @@ func (s *session) checkSchemaValidOrRollback() error {
 
 	var err error
 	var currSchemaVer int64
-	for i := 0; i < checkSchemaValidityRetryTimes; i++ {
+	for i := 0; i < schemaExpiredRetryTimes; i++ {
 		currSchemaVer, err = sessionctx.GetDomain(s).SchemaValidity.Check(ts, s.schemaVerInCurrTxn)
 		if err == nil {
 			if s.txn == nil {
@@ -163,17 +175,10 @@ func (s *session) checkSchemaValidOrRollback() error {
 		}
 		log.Infof("schema version original %d, current %d, sleep time %v",
 			s.schemaVerInCurrTxn, currSchemaVer, checkSchemaValiditySleepTime)
-		if currSchemaVer != s.schemaVerInCurrTxn && s.schemaVerInCurrTxn != 0 {
+		if terror.ErrorEqual(err, domain.ErrInfoSchemaChanged) {
 			break
 		}
 		time.Sleep(checkSchemaValiditySleepTime)
-	}
-
-	if err1 := s.RollbackTxn(); err1 != nil {
-		// TODO: handle this error.
-		log.Errorf("[%d] rollback txn failed, err:%v", s.sessionVars.ConnectionID, errors.ErrorStack(err1))
-		errMsg := fmt.Sprintf("schema is invalid, rollback txn err:%v", err1.Error())
-		return domain.ErrLoadSchemaTimeOut.Gen(errMsg)
 	}
 	return errors.Trace(err)
 }
@@ -234,13 +239,30 @@ func (s *session) finishTxn(rollback bool) error {
 			s.txn.SetOption(kv.BinlogData, bin)
 		}
 	}
-	err := s.txn.Commit()
-	if err != nil {
-		if !s.sessionVars.RetryInfo.Retrying && kv.IsRetryableError(err) {
+
+	if err := s.checkSchemaValid(); err != nil {
+		if !s.sessionVars.RetryInfo.Retrying && s.isRetryableError(err) {
+			err = s.Retry()
+		} else {
+			err1 := s.txn.Rollback()
+			if err1 != nil {
+				// TODO: Handle this error.
+				log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
+			}
+		}
+		if err != nil {
+			log.Warnf("finished txn:%s, %v", s.txn, err)
+		}
+		s.resetHistory()
+		s.cleanRetryInfo()
+		return errors.Trace(err)
+	}
+	if err := s.txn.Commit(); err != nil {
+		if !s.sessionVars.RetryInfo.Retrying && s.isRetryableError(err) {
 			err = s.Retry()
 		}
 		if err != nil {
-			log.Warnf("txn:%s, %v", s.txn, err)
+			log.Warnf("finished txn:%s, %v", s.txn, err)
 			return errors.Trace(err)
 		}
 	}
@@ -251,10 +273,6 @@ func (s *session) finishTxn(rollback bool) error {
 }
 
 func (s *session) CommitTxn() error {
-	if err := s.checkSchemaValidOrRollback(); err != nil {
-		return errors.Trace(err)
-	}
-
 	return s.finishTxn(false)
 }
 
@@ -295,6 +313,10 @@ func (s *session) String() string {
 
 const sqlLogMaxLen = 1024
 
+func (s *session) isRetryableError(err error) bool {
+	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)
+}
+
 func (s *session) Retry() error {
 	s.sessionVars.RetryInfo.Retrying = true
 	nh := s.history.clone()
@@ -334,7 +356,7 @@ func (s *session) Retry() error {
 			log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
 			_, err = runStmt(s, st)
 			if err != nil {
-				if kv.IsRetryableError(err) {
+				if s.isRetryableError(err) {
 					success = false
 					break
 				}
@@ -344,7 +366,7 @@ func (s *session) Retry() error {
 		}
 		if success {
 			err = s.CommitTxn()
-			if !kv.IsRetryableError(err) {
+			if !s.isRetryableError(err) {
 				break
 			}
 		}

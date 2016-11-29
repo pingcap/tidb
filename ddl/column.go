@@ -301,7 +301,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	seekHandle := reorgInfo.Handle
 	version := reorgInfo.SnapshotVer
 	count := job.GetRowCount()
-	ctx := d.newMockContext()
+	ctx := d.newContext()
 	for {
 		startTime := time.Now()
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
