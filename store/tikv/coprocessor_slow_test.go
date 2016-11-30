@@ -34,7 +34,8 @@ func (s *testCoprocessorSuite) TestBuildHugeTasks(c *C) {
 	mocktikv.BootstrapWithMultiRegions(cluster, splitKeys...)
 
 	bo := NewBackoffer(3000, context.Background())
-	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
+	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	cache := NewRegionCache(pdCli)
 
 	const rangesPerRegion = 1e6
 	ranges := make([]kv.KeyRange, 0, 26*rangesPerRegion)
