@@ -35,7 +35,8 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
 	mvccStore := mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
-	store, err := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), client, false)
+	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	store, err := newTikvStore("mock-tikv-store", pdCli, client, false)
 	c.Assert(err, IsNil)
 	s.store = store
 }
