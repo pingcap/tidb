@@ -298,7 +298,6 @@ func sqlOffsetInComment(comment string) int {
 		if !unicode.IsSpace(rune(comment[offset])) {
 			break
 		}
-
 	}
 	return offset
 }
