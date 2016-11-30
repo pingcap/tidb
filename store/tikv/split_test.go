@@ -33,7 +33,8 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	mvccStore := mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
-	store, err := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), client, false)
+	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	store, err := newTikvStore("mock-tikv-store", pdCli, client, false)
 	c.Assert(err, IsNil)
 	s.store = store
 	s.bo = NewBackoffer(5000, context.Background())

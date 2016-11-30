@@ -640,6 +640,7 @@ func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 	e := &UnionExec{
 		schema: v.GetSchema(),
 		Srcs:   make([]Executor, len(v.GetChildren())),
+		ctx:    b.ctx,
 	}
 	for i, sel := range v.GetChildren() {
 		selExec := b.build(sel)

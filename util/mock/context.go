@@ -16,6 +16,7 @@ package mock
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -32,6 +33,8 @@ type Context struct {
 	txn         kv.Transaction
 	Store       kv.Storage
 	sessionVars *variable.SessionVars
+	// Fix data race in ddl test.
+	mux sync.Mutex
 }
 
 // SetValue implements context.Context SetValue interface.
@@ -57,6 +60,8 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 
 // GetTxn implements context.Context GetTxn interface.
 func (c *Context) GetTxn(forceNew bool) (kv.Transaction, error) {
+	c.mux.Lock()
+	defer c.mux.Unlock()
 	if c.Store == nil {
 		return nil, nil
 	}

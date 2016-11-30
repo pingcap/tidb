@@ -52,6 +52,8 @@ var (
 	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column name '%s'")
 	// ErrIndexExists returns for index already exists.
 	ErrIndexExists = terror.ClassSchema.New(codeIndexExists, "Duplicate Index")
+	// ErrMultiplePriKey returns for multiple primary keys.
+	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -298,6 +300,7 @@ const (
 	codeBadTable       = 1051
 	codeColumnExists   = 1060
 	codeIndexExists    = 1831
+	codeMultiplePriKey = 1068
 )
 
 func init() {
@@ -314,6 +317,7 @@ func init() {
 		codeBadTable:            mysql.ErrBadTable,
 		codeColumnExists:        mysql.ErrDupFieldName,
 		codeIndexExists:         mysql.ErrDupIndex,
+		codeMultiplePriKey:      mysql.ErrMultiplePriKey,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()

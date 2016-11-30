@@ -51,7 +51,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"interval", "is", "join", "key", "keys", "leading", "left", "like", "limit", "lines", "load",
 		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "mediumint", "mediumtext",
 		"minute_microsecond", "minute_second", "mod", "not", "no_write_to_binlog", "null", "numeric",
-		"on", "option", "or", "order", "outer", "precision", "primary", "procedure", "read", "real",
+		"on", "option", "or", "order", "outer", "partition", "precision", "primary", "procedure", "read", "real",
 		"references", "regexp", "repeat", "replace", "restrict", "right", "rlike",
 		"schema", "schemas", "second_microsecond", "select", "set", "show", "smallint",
 		"starting", "table", "terminated", "then", "tinyblob", "tinyint", "tinytext", "to",
@@ -84,7 +84,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
-		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
+		"delay_key_write", "isolation", "partitions", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
@@ -674,6 +674,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
 
+		// For strcmp
+		{`select strcmp('abc', 'def')`, true},
+
+		// For utc_date
+		{`select utc_date(), utc_date()+0`, true},
+
 		// For adddate
 		{`select adddate("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval 10 second)`, true},
@@ -840,6 +846,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) STATS_PERSISTENT = default", true},
 		{"create table t (c int) STATS_PERSISTENT = 0", true},
 		{"create table t (c int) STATS_PERSISTENT = 1", true},
+		// Partition option
+		{"create table t (c int) PARTITION BY HASH (c) PARTITIONS 32;", true},
 		// For check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
