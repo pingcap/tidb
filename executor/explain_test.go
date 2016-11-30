@@ -271,10 +271,10 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1",
 			[]string{
-				"TableScan_10", "TableScan_12", "HashAgg_14", "HashLeftJoin_9", "HashAgg_17",
+				"TableScan_10", "TableScan_11", "HashAgg_12", "HashLeftJoin_9", "HashAgg_15",
 			},
 			[]string{
-				"HashLeftJoin_9", "HashAgg_14", "HashLeftJoin_9", "HashAgg_17", "",
+				"HashLeftJoin_9", "HashAgg_12", "HashLeftJoin_9", "HashAgg_15", "",
 			},
 			[]string{`{
     "db": "test",
@@ -314,7 +314,7 @@ func (s *testSuite) TestExplain(c *C) {
     "GroupByItems": [
         "[b.c2]"
     ],
-    "child": "TableScan_12"
+    "child": "TableScan_11"
 }`,
 				`{
     "eqCond": [
@@ -324,7 +324,7 @@ func (s *testSuite) TestExplain(c *C) {
     "rightCond": null,
     "otherCond": null,
     "leftPlan": "TableScan_10",
-    "rightPlan": "HashAgg_14"
+    "rightPlan": "HashAgg_12"
 }`,
 				`{
     "AggFuncs": [

@@ -113,7 +113,7 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 
 // CastValue casts a value based on column type.
 func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
-	casted, err = val.ConvertTo(&col.FieldType)
+	casted, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType)
 	if err != nil {
 		if ctx.GetSessionVars().StrictSQLMode {
 			return casted, errors.Trace(err)

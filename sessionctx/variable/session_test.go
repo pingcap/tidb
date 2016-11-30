@@ -26,22 +26,22 @@ type testSessionSuite struct {
 func (*testSessionSuite) TestSession(c *C) {
 	ctx := mock.NewContext()
 
-	v := ctx.GetSessionVars()
-	c.Assert(v, NotNil)
+	ss := ctx.GetSessionVars().StmtCtx
+	c.Assert(ss, NotNil)
 
 	// For AffectedRows
-	v.AddAffectedRows(1)
-	c.Assert(v.AffectedRows, Equals, uint64(1))
-	v.AddAffectedRows(1)
-	c.Assert(v.AffectedRows, Equals, uint64(2))
+	ss.AddAffectedRows(1)
+	c.Assert(ss.AffectedRows(), Equals, uint64(1))
+	ss.AddAffectedRows(1)
+	c.Assert(ss.AffectedRows(), Equals, uint64(2))
 
 	// For FoundRows
-	v.AddFoundRows(1)
-	c.Assert(v.FoundRows, Equals, uint64(1))
-	v.AddFoundRows(1)
-	c.Assert(v.FoundRows, Equals, uint64(2))
+	ss.AddFoundRows(1)
+	c.Assert(ss.FoundRows(), Equals, uint64(1))
+	ss.AddFoundRows(1)
+	c.Assert(ss.FoundRows(), Equals, uint64(2))
 
 	// For last insert id
-	v.SetLastInsertID(uint64(1))
-	c.Assert(v.LastInsertID, Equals, uint64(1))
+	ctx.GetSessionVars().SetLastInsertID(1)
+	c.Assert(ctx.GetSessionVars().LastInsertID, Equals, uint64(1))
 }

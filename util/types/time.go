@@ -62,7 +62,7 @@ var (
 	ZeroDuration = Duration{Duration: time.Duration(0), Fsp: DefaultFsp}
 
 	// ZeroTime is the zero value for time.Time type.
-	ZeroTime = time.Date(0, 0, 0, 0, 0, 0, 0, time.Local)
+	ZeroTime = timeInternalZero{}
 
 	// ZeroDatetime is the zero value for datetime Time.
 	ZeroDatetime = Time{
@@ -121,10 +121,141 @@ var (
 	}
 )
 
+// TimeInternal is the internal representation for mysql time in TiDB.
+type TimeInternal interface {
+	Year() int
+	Month() int
+	Day() int
+	Hour() int
+	Minute() int
+	Second() int
+	Weekday() time.Weekday
+	YearDay() int
+	ISOWeek() (int, int)
+	Microsecond() int
+	GoTime() time.Time
+}
+
+type timeInternalImpl time.Time
+
+func (t timeInternalImpl) Year() int {
+	year, _, _ := time.Time(t).Date()
+	return year
+}
+
+func (t timeInternalImpl) Month() int {
+	_, month, _ := time.Time(t).Date()
+	return int(month)
+}
+
+func (t timeInternalImpl) Day() int {
+	_, _, day := time.Time(t).Date()
+	return day
+}
+
+func (t timeInternalImpl) Hour() int {
+	hour, _, _ := time.Time(t).Clock()
+	return hour
+}
+
+func (t timeInternalImpl) Minute() int {
+	_, minute, _ := time.Time(t).Clock()
+	return minute
+}
+
+func (t timeInternalImpl) Second() int {
+	_, _, second := time.Time(t).Clock()
+	return second
+}
+
+func (t timeInternalImpl) Microsecond() int {
+	return time.Time(t).Nanosecond() / 1000
+}
+
+func (t timeInternalImpl) Weekday() time.Weekday {
+	return time.Time(t).Weekday()
+}
+
+func (t timeInternalImpl) YearDay() int {
+	return time.Time(t).YearDay()
+}
+
+func (t timeInternalImpl) ISOWeek() (int, int) {
+	return time.Time(t).ISOWeek()
+}
+
+func (t timeInternalImpl) GoTime() time.Time {
+	return time.Time(t)
+}
+
+type timeInternalZero struct{}
+
+func (t timeInternalZero) Year() int {
+	return 0
+}
+
+func (t timeInternalZero) Month() int {
+	return 0
+}
+
+func (t timeInternalZero) Day() int {
+	return 0
+}
+
+func (t timeInternalZero) Hour() int {
+	return 0
+}
+
+func (t timeInternalZero) Minute() int {
+	return 0
+}
+
+func (t timeInternalZero) Second() int {
+	return 0
+}
+
+func (t timeInternalZero) Microsecond() int {
+	return 0
+}
+
+func (t timeInternalZero) Weekday() time.Weekday {
+	return time.Monday
+}
+
+func (t timeInternalZero) YearDay() int {
+	return 0
+}
+
+func (t timeInternalZero) ISOWeek() (int, int) {
+	return 0, 0
+}
+
+func (t timeInternalZero) GoTime() time.Time {
+	return time.Date(0, 0, 0, 0, 0, 0, 0, time.Local)
+}
+
+// FromGoTime translates time.Time to mysql time internal representation.
+func FromGoTime(t time.Time) TimeInternal {
+	return timeInternalImpl(t)
+}
+
+// FromDate makes a internal time representation from the given date.
+func FromDate(year int, month int, day int, hour int, minute int, second int, microsecond int) TimeInternal {
+	if year == 0 && month == 0 && day == 0 && hour == 0 && minute == 0 && second == 0 {
+		return timeInternalZero{}
+	}
+	return timeInternalImpl(time.Date(year, time.Month(month), day, hour, minute, second, microsecond*1000, time.Local))
+}
+
+// Clock returns the hour, minute, and second within the day specified by t.
+func (t Time) Clock() (hour int, minute int, second int) {
+	return t.Time.Hour(), t.Time.Minute(), t.Time.Second()
+}
+
 // Time is the struct for handling datetime, timestamp and date.
 // TODO: check if need a NewTime function to set Fsp default value?
 type Time struct {
-	time.Time
+	Time TimeInternal
 	Type uint8
 	// Fsp is short for Fractional Seconds Precision.
 	// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
@@ -133,7 +264,7 @@ type Time struct {
 
 // CurrentTime returns current time with type tp.
 func CurrentTime(tp uint8) Time {
-	return Time{Time: time.Now(), Type: tp, Fsp: 0}
+	return Time{Time: FromGoTime(time.Now()), Type: tp, Fsp: 0}
 }
 
 func (t Time) String() string {
@@ -146,7 +277,7 @@ func (t Time) String() string {
 	}
 
 	if t.Type == mysql.TypeDate {
-		return t.Time.Format(DateFormat)
+		return t.Time.GoTime().Format(DateFormat)
 	}
 
 	tfStr := TimeFormat
@@ -154,12 +285,18 @@ func (t Time) String() string {
 		tfStr = fmt.Sprintf("%s.%s", tfStr, strings.Repeat("0", t.Fsp))
 	}
 
-	return t.Time.Format(tfStr)
+	return t.Time.GoTime().Format(tfStr)
 }
 
 // IsZero returns a boolean indicating whether the time is equal to ZeroTime.
 func (t Time) IsZero() bool {
-	return t.Time.Equal(ZeroTime)
+	// To avoid panic when Time{} is used.
+	if t.Time == nil {
+		return true
+	}
+	return t.Time.Year() == 0 && t.Time.Month() == 0 && t.Time.Day() == 0 &&
+		t.Time.Hour() == 0 && t.Time.Minute() == 0 && t.Time.Second() == 0 &&
+		t.Time.Microsecond() == 0
 }
 
 const numberFormat = "20060102150405"
@@ -188,7 +325,7 @@ func (t Time) ToNumber() *MyDecimal {
 		tfStr = fmt.Sprintf("%s.%s", tfStr, strings.Repeat("0", t.Fsp))
 	}
 
-	s := t.Time.Format(tfStr)
+	s := t.Time.GoTime().Format(tfStr)
 	// We skip checking error here because time formatted string can be parsed certainly.
 	dec := new(MyDecimal)
 	dec.FromString([]byte(s))
@@ -211,8 +348,8 @@ func (t Time) Convert(tp uint8) (Time, error) {
 		}
 		return nt, nil
 	case mysql.TypeDate:
-		year, month, day := t.Time.Date()
-		return Time{Time: time.Date(year, month, day, 0, 0, 0, 0, time.Local),
+		year, month, day := t.Time.Year(), t.Time.Month(), t.Time.Day()
+		return Time{Time: FromDate(year, month, day, 0, 0, 0, 0),
 			Type: mysql.TypeDate, Fsp: 0}, nil
 	default:
 		return Time{Time: ZeroTime, Type: tp}, errors.Errorf("invalid time type %d", tp)
@@ -229,7 +366,7 @@ func (t Time) ConvertToDuration() (Duration, error) {
 	}
 
 	hour, minute, second := t.Clock()
-	frac := t.Nanosecond()
+	frac := t.Time.Microsecond() * 1000
 
 	d := time.Duration(hour*3600+minute*60+second)*time.Second + time.Duration(frac)
 
@@ -240,9 +377,11 @@ func (t Time) ConvertToDuration() (Duration, error) {
 // Compare returns an integer comparing the time instant t to o.
 // If t is after o, return 1, equal o, return 0, before o, return -1.
 func (t Time) Compare(o Time) int {
-	if t.Time.After(o.Time) {
+	t1 := t.Time.GoTime()
+	o1 := o.Time.GoTime()
+	if t1.After(o1) {
 		return 1
-	} else if t.Time.Equal(o.Time) {
+	} else if t1.Equal(o1) {
 		return 0
 	} else {
 		return -1
@@ -281,8 +420,8 @@ func (t Time) RoundFrac(fsp int) (Time, error) {
 		return t, nil
 	}
 
-	nt := t.Time.Round(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond)
-	return Time{Time: nt, Type: t.Type, Fsp: fsp}, nil
+	nt := t.Time.GoTime().Round(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond)
+	return Time{Time: FromGoTime(nt), Type: t.Type, Fsp: fsp}, nil
 }
 
 // ToPackedUint encodes Time to a packed uint64 value.
@@ -305,13 +444,14 @@ func (t Time) ToPackedUint() uint64 {
 		return 0
 	}
 	if t.Type == mysql.TypeTimestamp {
-		tm = t.UTC()
+		utc := t.Time.GoTime().UTC()
+		tm = FromGoTime(utc)
 	}
-	year, month, day := tm.Date()
-	hour, minute, sec := tm.Clock()
+	year, month, day := tm.Year(), tm.Month(), tm.Day()
+	hour, minute, sec := tm.Hour(), tm.Minute(), tm.Second()
 	ymd := uint64(((year*13 + int(month)) << 5) | day)
 	hms := uint64(hour<<12 | minute<<6 | sec)
-	micro := uint64(tm.Nanosecond() / 1000)
+	micro := uint64(tm.Microsecond())
 	return ((ymd<<17 | hms) << 24) | micro
 }
 
@@ -333,8 +473,8 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	minute := int((hms >> 6) & (1<<6 - 1))
 	hour := int(hms >> 12)
 
-	nanosec := int(packed%(1<<24)) * 1000
-	err := checkTime(year, month, day, hour, minute, second, nanosec)
+	microsec := int(packed % (1 << 24))
+	err := checkTime(year, month, day, hour, minute, second, microsec*1000)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -342,7 +482,8 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	if t.Type == mysql.TypeTimestamp {
 		loc = time.UTC
 	}
-	t.Time = time.Date(year, time.Month(month), day, hour, minute, second, nanosec, loc).In(local)
+	t.Time = FromGoTime(time.Date(year, time.Month(month), day, hour, minute, second, microsec*1000, loc).In(local))
+
 	return nil
 }
 
@@ -512,7 +653,7 @@ func ParseYear(str string) (int16, error) {
 	return y, nil
 }
 
-func newTime(year int, month int, day int, hour int, minute int, second int, frac int) (time.Time, error) {
+func newTime(year int, month int, day int, hour int, minute int, second int, frac int) (TimeInternal, error) {
 	if year == 0 && month == 0 && day == 0 && hour == 0 && minute == 0 && second == 0 {
 		// Should we check fractional fractional here?
 		// But go time.Time can not support zero time 0000-00-00 00:00:00.
@@ -523,7 +664,7 @@ func newTime(year int, month int, day int, hour int, minute int, second int, fra
 		return ZeroTime, errors.Trace(err)
 	}
 
-	return time.Date(year, time.Month(month), day, hour, minute, second, frac*1000, time.Local), nil
+	return FromDate(year, month, day, hour, minute, second, frac), nil
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/two-digit-years.html
@@ -614,7 +755,7 @@ func (d Duration) ConvertToTime(tp uint8) (Time, error) {
 	n = n.Add(d.Duration)
 
 	t := Time{
-		Time: n,
+		Time: FromGoTime(n),
 		Type: mysql.TypeDatetime,
 		Fsp:  d.Fsp,
 	}
@@ -636,7 +777,7 @@ func (d Duration) RoundFrac(fsp int) (Duration, error) {
 		return d, nil
 	}
 
-	n := ZeroTime
+	n := time.Date(0, 0, 0, 0, 0, 0, 0, time.Local)
 	nd := n.Add(d.Duration).Round(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond).Sub(n)
 	return Duration{Duration: nd, Fsp: fsp}, nil
 }
@@ -1028,7 +1169,7 @@ func checkDatetime(t Time) bool {
 		return true
 	}
 
-	if t.Time.After(MaxDatetime) || t.Time.Before(MinDatetime) {
+	if t.Time.GoTime().After(MaxDatetime) || t.Time.GoTime().Before(MinDatetime) {
 		return false
 	}
 
@@ -1040,7 +1181,7 @@ func checkTimestamp(t Time) bool {
 		return true
 	}
 
-	if t.Time.After(MaxTimestamp) || t.Time.Before(MinTimestamp) {
+	if t.Time.GoTime().After(MaxTimestamp) || t.Time.GoTime().Before(MinTimestamp) {
 		return false
 	}
 
@@ -1051,40 +1192,40 @@ func checkTimestamp(t Time) bool {
 func ExtractTimeNum(unit string, t Time) (int64, error) {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		return int64(t.Nanosecond() / 1000), nil
+		return int64(t.Time.Microsecond()), nil
 	case "SECOND":
-		return int64(t.Second()), nil
+		return int64(t.Time.Second()), nil
 	case "MINUTE":
-		return int64(t.Minute()), nil
+		return int64(t.Time.Minute()), nil
 	case "HOUR":
-		return int64(t.Hour()), nil
+		return int64(t.Time.Hour()), nil
 	case "DAY":
-		return int64(t.Day()), nil
+		return int64(t.Time.Day()), nil
 	case "WEEK":
-		_, week := t.ISOWeek()
+		_, week := t.Time.GoTime().ISOWeek()
 		return int64(week), nil
 	case "MONTH":
-		return int64(t.Month()), nil
+		return int64(t.Time.Month()), nil
 	case "QUARTER":
-		m := int64(t.Month())
+		m := int64(t.Time.Month())
 		// 1 - 3 -> 1
 		// 4 - 6 -> 2
 		// 7 - 9 -> 3
 		// 10 - 12 -> 4
 		return (m + 2) / 3, nil
 	case "YEAR":
-		return int64(t.Year()), nil
+		return int64(t.Time.Year()), nil
 	case "SECOND_MICROSECOND":
-		return int64(t.Second())*1000000 + int64(t.Nanosecond())/1000, nil
+		return int64(t.Time.Second())*1000000 + int64(t.Time.Microsecond()), nil
 	case "MINUTE_MICROSECOND":
 		_, m, s := t.Clock()
-		return int64(m)*100000000 + int64(s)*1000000 + int64(t.Nanosecond())/1000, nil
+		return int64(m)*100000000 + int64(s)*1000000 + int64(t.Time.Microsecond()), nil
 	case "MINUTE_SECOND":
 		_, m, s := t.Clock()
 		return int64(m*100 + s), nil
 	case "HOUR_MICROSECOND":
 		h, m, s := t.Clock()
-		return int64(h)*10000000000 + int64(m)*100000000 + int64(s)*1000000 + int64(t.Nanosecond())/1000, nil
+		return int64(h)*10000000000 + int64(m)*100000000 + int64(s)*1000000 + int64(t.Time.Microsecond()), nil
 	case "HOUR_SECOND":
 		h, m, s := t.Clock()
 		return int64(h)*10000 + int64(m)*100 + int64(s), nil
@@ -1093,22 +1234,22 @@ func ExtractTimeNum(unit string, t Time) (int64, error) {
 		return int64(h)*100 + int64(m), nil
 	case "DAY_MICROSECOND":
 		h, m, s := t.Clock()
-		d := t.Day()
-		return int64(d*1000000+h*10000+m*100+s)*1000000 + int64(t.Nanosecond())/1000, nil
+		d := t.Time.Day()
+		return int64(d*1000000+h*10000+m*100+s)*1000000 + int64(t.Time.Microsecond()), nil
 	case "DAY_SECOND":
 		h, m, s := t.Clock()
-		d := t.Day()
+		d := t.Time.Day()
 		return int64(d)*1000000 + int64(h)*10000 + int64(m)*100 + int64(s), nil
 	case "DAY_MINUTE":
 		h, m, _ := t.Clock()
-		d := t.Day()
+		d := t.Time.Day()
 		return int64(d)*10000 + int64(h)*100 + int64(m), nil
 	case "DAY_HOUR":
 		h, _, _ := t.Clock()
-		d := t.Day()
+		d := t.Time.Day()
 		return int64(d)*100 + int64(h), nil
 	case "YEAR_MONTH":
-		y, m, _ := t.Date()
+		y, m := t.Time.Year(), t.Time.Month()
 		return int64(y)*100 + int64(m), nil
 	default:
 		return 0, errors.Errorf("invalid unit %s", unit)

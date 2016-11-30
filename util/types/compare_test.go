@@ -49,11 +49,11 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{"1", float64(2), -1},
 		{"1", uint64(1), 0},
 		{"1", NewDecFromInt(1), 0},
-		{"2011-01-01 11:11:11", Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 0}, -1},
+		{"2011-01-01 11:11:11", Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 0}, -1},
 		{"12:00:00", ZeroDuration, 1},
 		{ZeroDuration, ZeroDuration, 0},
-		{Time{Time: time.Now().Add(time.Second * 10), Type: mysql.TypeDatetime, Fsp: 0},
-			Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 0}, 1},
+		{Time{Time: FromGoTime(time.Now().Add(time.Second * 10)), Type: mysql.TypeDatetime, Fsp: 0},
+			Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 0}, 1},
 
 		{nil, 2, -1},
 		{nil, nil, 0},
@@ -91,9 +91,9 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{[]byte(""), nil, 1},
 		{[]byte(""), []byte("sff"), -1},
 
-		{Time{}, nil, 1},
-		{Time{}, Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 3}, -1},
-		{Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 3}, "0000-00-00 00:00:00", 1},
+		{Time{Time: ZeroTime}, nil, 1},
+		{Time{Time: ZeroTime}, Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 3}, -1},
+		{Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 3}, "0000-00-00 00:00:00", 1},
 
 		{Duration{Duration: time.Duration(34), Fsp: 2}, nil, 1},
 		{Duration{Duration: time.Duration(34), Fsp: 2}, Duration{Duration: time.Duration(29034), Fsp: 2}, -1},

@@ -14,8 +14,6 @@
 package ddl
 
 import (
-	"fmt"
-	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -25,97 +23,15 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/mock"
 )
 
-var _ context.Context = &mockContext{}
-
-// mockContext implements context.Context interface for testing.
-type mockContext struct {
-	store       kv.Storage
-	mux         sync.Mutex
-	m           map[fmt.Stringer]interface{}
-	txn         kv.Transaction
-	sessionVars *variable.SessionVars
-}
-
-func (c *mockContext) GetTxn(forceNew bool) (kv.Transaction, error) {
-	c.mux.Lock()
-	defer c.mux.Unlock()
-	if forceNew {
-		if c.txn != nil {
-			if err := c.txn.Commit(); err != nil {
-				return nil, errors.Trace(err)
-			}
-			c.txn = nil
-		}
-	}
-	if c.txn != nil {
-		return c.txn, nil
-	}
-
-	txn, err := c.store.Begin()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	c.txn = txn
-	return c.txn, nil
-}
-
-func (c *mockContext) finishTxn(rollback bool) error {
-	if c.txn == nil {
-		return nil
-	}
-
-	var err error
-	if rollback {
-		err = c.txn.Rollback()
-	} else {
-		err = c.txn.Commit()
-	}
-
-	c.txn = nil
-
-	return errors.Trace(err)
-}
-
-func (c *mockContext) RollbackTxn() error {
-	return c.finishTxn(true)
-}
-
-func (c *mockContext) CommitTxn() error {
-	return c.finishTxn(false)
-}
-
-func (c *mockContext) GetClient() kv.Client {
-	return c.store.GetClient()
-}
-
-func (c *mockContext) SetValue(key fmt.Stringer, value interface{}) {
-	c.m[key] = value
-}
-
-func (c *mockContext) Value(key fmt.Stringer) interface{} {
-	return c.m[key]
-}
-
-func (c *mockContext) ClearValue(key fmt.Stringer) {
-	delete(c.m, key)
-}
-
-func (c *mockContext) GetSessionVars() *variable.SessionVars {
-	return c.sessionVars
-}
-
-func (d *ddl) newMockContext() context.Context {
-	c := &mockContext{
-		store:       d.store,
-		m:           make(map[fmt.Stringer]interface{}),
-		sessionVars: variable.NewSessionVars(),
-	}
-	c.sessionVars.SetStatusFlag(mysql.ServerStatusAutocommit, false)
+// newContext gets a context. It is only used for adding column in reorganization state.
+func (d *ddl) newContext() context.Context {
+	c := mock.NewContext()
+	c.Store = d.store
+	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
 	return c
 }
 

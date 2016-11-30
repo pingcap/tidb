@@ -336,7 +336,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(t.String(), Equals, t1.String())
 
-	t1.Time = time.Now()
+	t1.Time = FromGoTime(time.Now())
 	packed = t1.ToPackedUint()
 
 	var t2 Time
@@ -634,7 +634,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		n := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
 		t, err := v.ConvertToTime(mysql.TypeDatetime)
 		c.Assert(err, IsNil)
-		c.Assert(t.Time.Sub(n), Equals, v.Duration)
+		c.Assert(t.Time.GoTime().Sub(n), Equals, v.Duration)
 	}
 }
 

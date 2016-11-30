@@ -502,6 +502,7 @@ type havingAndOrderbyExprResolver struct {
 	aggMapper    map[*ast.AggregateFuncExpr]int
 	colMapper    map[*ast.ColumnNameExpr]int
 	gbyItems     []*ast.ByItem
+	outerSchemas []expression.Schema
 }
 
 // Enter implements Visitor interface.
@@ -598,6 +599,12 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 			return node, false
 		}
 		if index == -1 {
+			// If we can't find it any where, it may be a correlated columns.
+			for _, schema := range a.outerSchemas {
+				if col, _ := schema.FindColumn(v.Name); col != nil {
+					return n, true
+				}
+			}
 			a.err = errors.Errorf("Unknown Column %s", v.Name.Name.L)
 			return node, false
 		}
@@ -616,6 +623,7 @@ func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 		selectFields: sel.Fields.Fields,
 		aggMapper:    make(map[*ast.AggregateFuncExpr]int),
 		colMapper:    b.colMapper,
+		outerSchemas: b.outerSchemas,
 	}
 	if sel.GroupBy != nil {
 		extractor.gbyItems = sel.GroupBy.Items

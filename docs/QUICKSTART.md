@@ -34,16 +34,6 @@ cd $GOPATH/src/github.com/pingcap/tidb
 make
 ```
 
-#### __Run command line interpreter__
-
-Interpreter is an interactive command line TiDB client.
-You can just enter some SQL statements and get the result.
-```
-make interpreter
-cd interpreter && ./interpreter
-```
-Press `Ctrl+C` to quit.
-
 #### __Run as MySQL protocol server__
 
 ```

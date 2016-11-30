@@ -369,7 +369,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		mutation.InsertedRows = append(mutation.InsertedRows, bin)
 		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Insert)
 	}
-	ctx.GetSessionVars().AddAffectedRows(1)
+	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return recordID, nil
 }
 
