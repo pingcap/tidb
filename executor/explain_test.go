@@ -110,7 +110,8 @@ func (s *testSuite) TestExplain(c *C) {
             "Desc": false
         }
     ],
-    "limit": null,
+    "limit count": null,
+    "limit offset": null,
     "child": "TableScan_6"
 }`,
 			},
