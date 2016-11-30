@@ -337,6 +337,150 @@ func (s *testSuite) TestExplain(c *C) {
 }`,
 			},
 		},
+		{
+			"select * from t1 where t1.c2=(select min(t3.c2) from t1 t3, t1 t4, t1 t5 where t3.c1=t1.c1)",
+			[]string{
+				"TableScan_32", "TableScan_21", "", "Selection_16", "HashAgg_23", "TableScan_25", "", "HashRightJoin_26",
+				"HashAgg_27", "TableScan_28", "", "HashLeftJoin_19", "HashAgg_30", "MaxOneRow_11", "PhysicalApply_31",
+				"Selection_2", "Projection_13",
+			},
+			[]string{
+				"PhysicalApply_31", "", "Selection_16", "HashAgg_23", "HashRightJoin_26", "", "HashRightJoin_26", "HashAgg_27",
+				"HashLeftJoin_19", "", "HashLeftJoin_19", "HashAgg_30", "MaxOneRow_11", "PhysicalApply_31", "Selection_2",
+				"Projection_13", "",
+			},
+			[]string{
+				`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "filter conditions": null
+    }
+}`,
+				`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "filter conditions": null
+    }
+}`,
+				`{
+    "children": [
+        "TableScan_21"
+    ]
+}`,
+				`{
+    "condition": [
+        "eq(t3.c1, test.t1.c1)"
+    ],
+    "child": ""
+}`,
+				`{
+    "AggFuncs": [
+        "min(t3.c2)"
+    ],
+    "GroupByItems": [
+        "0"
+    ],
+    "child": "Selection_16"
+}`,
+				`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "filter conditions": null
+    }
+}`,
+				`{
+    "children": [
+        "TableScan_25"
+    ]
+}`,
+				`{
+    "eqCond": null,
+    "leftCond": null,
+    "rightCond": null,
+    "otherCond": null,
+    "leftPlan": "HashAgg_23",
+    "rightPlan": ""
+}`,
+				`{
+    "AggFuncs": [
+        "min(join_agg_0)"
+    ],
+    "GroupByItems": [
+        "0"
+    ],
+    "child": "HashRightJoin_26"
+}`,
+				`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "filter conditions": null
+    }
+}`,
+				`{
+    "children": [
+        "TableScan_28"
+    ]
+}`,
+				`{
+    "eqCond": null,
+    "leftCond": null,
+    "rightCond": null,
+    "otherCond": null,
+    "leftPlan": "HashAgg_27",
+    "rightPlan": ""
+}`,
+				`{
+    "AggFuncs": [
+        "min(join_agg_0)"
+    ],
+    "GroupByItems": null,
+    "child": "HashLeftJoin_19"
+}`,
+				`{
+    "children": [
+        "HashAgg_30"
+    ]
+}`,
+				`{
+    "innerPlan": "MaxOneRow_11",
+    "outerPlan": "TableScan_32",
+    "condition": null
+}`,
+				`{
+    "condition": [
+        "eq(test.t1.c2, min(t3.c2))"
+    ],
+    "child": "PhysicalApply_31"
+}`,
+				`{
+    "exprs": [
+        "test.t1.c1",
+        "test.t1.c2"
+    ],
+    "child": "Selection_2"
+}`,
+			},
+		},
 	}
 	for _, ca := range cases {
 		result := tk.MustQuery("explain " + ca.sql)
