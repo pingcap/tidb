@@ -654,8 +654,8 @@ func (e *HashJoinExec) prepare() error {
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.wg.Wait()
 	close(e.resultRows)
-	close(e.closeCh)
 	e.hashTable = nil
+	close(e.closeCh)
 }
 
 // doJoin does join job in one goroutine.

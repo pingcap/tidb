@@ -43,7 +43,8 @@ func (s *testRegionCacheSuite) SetUpTest(c *C) {
 	s.store2 = storeIDs[1]
 	s.peer1 = peerIDs[0]
 	s.peer2 = peerIDs[1]
-	s.cache = NewRegionCache(mocktikv.NewPDClient(s.cluster))
+	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	s.cache = NewRegionCache(pdCli)
 	s.bo = NewBackoffer(5000, context.Background())
 }
 

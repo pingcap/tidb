@@ -129,9 +129,9 @@ func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	// Region epoch does not match.
 	if !proto.Equal(region.GetRegionEpoch(), ctx.GetRegionEpoch()) {
 		nextRegion, _ := h.cluster.GetRegionByKey(region.GetEndKey())
-		newRegions := []*metapb.Region{encodeRegionKey(region)}
+		newRegions := []*metapb.Region{region}
 		if nextRegion != nil {
-			newRegions = append(newRegions, encodeRegionKey(nextRegion))
+			newRegions = append(newRegions, nextRegion)
 		}
 		return &errorpb.Error{
 			Message: proto.String("stale epoch"),
@@ -145,7 +145,7 @@ func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
 }
 
 func (h *rpcHandler) keyInRegion(key []byte) bool {
-	return regionContains(h.startKey, h.endKey, key)
+	return regionContains(h.startKey, h.endKey, []byte(newMvccKey(key)))
 }
 
 func (h *rpcHandler) onGet(req *kvrpcpb.CmdGetRequest) *kvrpcpb.CmdGetResponse {
@@ -270,7 +270,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if locked, ok := err.(*ErrLocked); ok {
 		return &kvrpcpb.KeyError{
 			Locked: &kvrpcpb.LockInfo{
-				Key:         locked.Key,
+				Key:         locked.Key.Raw(),
 				PrimaryLock: locked.Primary,
 				LockVersion: locked.StartTS,
 				LockTtl:     locked.TTL,
