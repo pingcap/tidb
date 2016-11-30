@@ -273,7 +273,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 				Pos: Pos{
 					pos.Line,
 					pos.Col,
-					pos.Offset + len("/*!40101 "),
+					pos.Offset + 9, // 9 is length for pattern like "/*!40101 "
 				},
 			}
 		}
