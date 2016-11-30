@@ -273,7 +273,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 				Pos: Pos{
 					pos.Line,
 					pos.Col,
-					pos.Offset + 9, // 9 is length for pattern like "/*!40101 "
+					pos.Offset + sqlOffsetInComment(comment),
 				},
 			}
 		}
@@ -282,6 +282,25 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 	}
 	tok = int('/')
 	return
+}
+
+func sqlOffsetInComment(comment string) int {
+	// find the first SQL token offset in pattern like "/*!40101 mysql specific code */"
+	offset := 0
+	for i := 0; i < len(comment); i++ {
+		if unicode.IsSpace(rune(comment[i])) {
+			offset = i
+			break
+		}
+	}
+	for offset < len(comment) {
+		offset++
+		if !unicode.IsSpace(rune(comment[offset])) {
+			break
+		}
+
+	}
+	return offset
 }
 
 func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
