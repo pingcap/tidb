@@ -46,13 +46,13 @@ func (*testSuite) TestSchemaValidity(c *C) {
 	c.Assert(valid, IsTrue)
 
 	// sleep for a while, check it's still valid.
-	time.Sleep(lease/2)
+	time.Sleep(lease / 2)
 	reload(svi, leaseCh)
 	valid = svi.Check(item.leaseGrantTS, item.schemaVer)
 	c.Assert(valid, IsTrue)
 
 	// sleep for a long time, check it's invalid.
-	time.Sleep(lease*2)
+	time.Sleep(lease * 2)
 	reload(svi, leaseCh)
 	valid = svi.Check(item.leaseGrantTS, item.schemaVer)
 	c.Assert(valid, IsFalse)
