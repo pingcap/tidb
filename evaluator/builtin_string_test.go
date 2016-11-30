@@ -41,7 +41,7 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{"abc", 3},
 		{1, 1},
 		{3.14, 4},
-		{types.Time{Time: time.Now(), Fsp: 6, Type: mysql.TypeDatetime}, 26},
+		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, 26},
 		{types.Bit{Value: 1, Width: 8}, 1},
 		{types.Hex{Value: 1}, 1},
 		{types.Set{Value: 1, Name: "abc"}, 3},
@@ -675,9 +675,9 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 	}
 
 	dtbl := tblToDtbl(tbl)
-
+	ctx := mock.NewContext()
 	for _, t := range dtbl {
-		d, err := builtinHex(t["Input"], nil)
+		d, err := builtinHex(t["Input"], ctx)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
 
@@ -695,9 +695,9 @@ func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
 	}
 
 	dtbl := tblToDtbl(tbl)
-
+	ctx := mock.NewContext()
 	for _, t := range dtbl {
-		d, err := builtinUnHex(t["Input"], nil)
+		d, err := builtinUnHex(t["Input"], ctx)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
 

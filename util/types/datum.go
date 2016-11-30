@@ -22,6 +22,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -632,15 +633,15 @@ func (d *Datum) compareRow(row []Datum) (int, error) {
 }
 
 // Cast casts datum to certain types.
-func (d *Datum) Cast(target *FieldType) (ad Datum, err error) {
+func (d *Datum) Cast(sc *variable.StatementContext, target *FieldType) (ad Datum, err error) {
 	if !isCastType(target.Tp) {
 		return ad, errors.Errorf("unknown cast type - %v", target)
 	}
-	return d.ConvertTo(target)
+	return d.ConvertTo(sc, target)
 }
 
 // ConvertTo converts a datum to the target field type.
-func (d *Datum) ConvertTo(target *FieldType) (Datum, error) {
+func (d *Datum) ConvertTo(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	if d.k == KindNull {
 		return Datum{}, nil
 	}
@@ -1000,7 +1001,7 @@ func (d *Datum) convertToMysqlYear(target *FieldType) (Datum, error) {
 	case KindString, KindBytes:
 		y, err = StrToInt(d.GetString())
 	case KindMysqlTime:
-		y = int64(d.GetMysqlTime().Year())
+		y = int64(d.GetMysqlTime().Time.Year())
 	case KindMysqlDuration:
 		y = int64(time.Now().Year())
 	default:

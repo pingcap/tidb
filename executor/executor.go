@@ -17,6 +17,7 @@ import (
 	"container/heap"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -458,9 +460,11 @@ type HashJoinExec struct {
 	// targetTypes means the target the type that both smallHashKey and bigHashKey should convert to.
 	targetTypes []*types.FieldType
 
-	finished bool
-	// for sync multiple join workers.
+	finished atomic.Value
+	// For sync multiple join workers.
 	wg sync.WaitGroup
+	// closeCh add a lock for closing executor.
+	closeCh chan struct{}
 
 	// Concurrent channels.
 	concurrency      int
@@ -484,6 +488,8 @@ type hashJoinCtx struct {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
+	e.finished.Store(true)
+	<-e.closeCh
 	e.prepared = false
 	e.cursor = 0
 	return e.smallExec.Close()
@@ -504,7 +510,8 @@ func makeJoinRow(a *Row, b *Row) *Row {
 
 // getHashKey gets the hash key when given a row and hash columns.
 // It will return a boolean value representing if the hash key has null, a byte slice representing the result hash code.
-func getHashKey(cols []*expression.Column, row *Row, targetTypes []*types.FieldType, vals []types.Datum, bytes []byte) (bool, []byte, error) {
+func getHashKey(sc *variable.StatementContext, cols []*expression.Column, row *Row, targetTypes []*types.FieldType,
+	vals []types.Datum, bytes []byte) (bool, []byte, error) {
 	var err error
 	for i, col := range cols {
 		vals[i], err = col.Eval(row.Data, nil)
@@ -515,7 +522,7 @@ func getHashKey(cols []*expression.Column, row *Row, targetTypes []*types.FieldT
 			return true, nil, nil
 		}
 		if targetTypes[i].Tp != col.RetType.Tp {
-			vals[i], err = vals[i].ConvertTo(targetTypes[i])
+			vals[i], err = vals[i].ConvertTo(sc, targetTypes[i])
 			if err != nil {
 				return false, nil, errors.Trace(err)
 			}
@@ -544,15 +551,16 @@ func (e *HashJoinExec) fetchBigExec() {
 			close(cn)
 		}
 		e.bigExec.Close()
+		e.wg.Done()
 	}()
 	curBatchSize := 1
 	for {
-		if e.finished {
-			break
-		}
 		rows := make([]*Row, 0, batchSize)
 		done := false
 		for i := 0; i < curBatchSize; i++ {
+			if e.finished.Load().(bool) {
+				break
+			}
 			row, err := e.bigExec.Next()
 			if err != nil {
 				e.bigTableErr <- errors.Trace(err)
@@ -580,18 +588,22 @@ func (e *HashJoinExec) fetchBigExec() {
 // prepare runs the first time when 'Next' is called, it starts one worker goroutine to fetch rows from the big table,
 // and reads all data from the small table to build a hash table, then starts multiple join worker goroutines.
 func (e *HashJoinExec) prepare() error {
-	e.finished = false
+	e.closeCh = make(chan struct{}, 1)
+	e.finished.Store(false)
 	e.bigTableRows = make([]chan []*Row, e.concurrency)
+	e.wg = sync.WaitGroup{}
 	for i := 0; i < e.concurrency; i++ {
 		e.bigTableRows[i] = make(chan []*Row, e.concurrency*batchSize)
 	}
 	e.bigTableErr = make(chan error, 1)
 
 	// Start a worker to fetch big table rows.
+	e.wg.Add(1)
 	go e.fetchBigExec()
 
 	e.hashTable = make(map[string][]*Row)
 	e.cursor = 0
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for {
 		row, err := e.smallExec.Next()
 		if err != nil {
@@ -612,7 +624,7 @@ func (e *HashJoinExec) prepare() error {
 				continue
 			}
 		}
-		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes, e.hashJoinContexts[0].datumBuffer, nil)
+		hasNull, hashcode, err := getHashKey(sc, e.smallHashKey, row, e.targetTypes, e.hashJoinContexts[0].datumBuffer, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -629,7 +641,6 @@ func (e *HashJoinExec) prepare() error {
 	e.resultRows = make(chan *Row, e.concurrency*1000)
 	e.resultErr = make(chan error, 1)
 
-	e.wg = sync.WaitGroup{}
 	for i := 0; i < e.concurrency; i++ {
 		e.wg.Add(1)
 		go e.runJoinWorker(i)
@@ -643,6 +654,7 @@ func (e *HashJoinExec) prepare() error {
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.wg.Wait()
 	close(e.resultRows)
+	close(e.closeCh)
 	e.hashTable = nil
 }
 
@@ -662,7 +674,7 @@ func (e *HashJoinExec) runJoinWorker(idx int) {
 			e.resultErr <- errors.Trace(err)
 			break
 		}
-		if !ok || e.finished {
+		if !ok || e.finished.Load().(bool) {
 			break
 		}
 		for _, bigRow := range bigRows {
@@ -710,7 +722,8 @@ func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row) bool {
 
 // constructMatchedRows creates matching result rows from a row in the big table.
 func (e *HashJoinExec) constructMatchedRows(ctx *hashJoinCtx, bigRow *Row) (matchedRows []*Row, err error) {
-	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes, ctx.datumBuffer, ctx.hashKeyBuffer[0:0:cap(ctx.hashKeyBuffer)])
+	sc := e.ctx.GetSessionVars().StmtCtx
+	hasNull, hashcode, err := getHashKey(sc, e.bigHashKey, bigRow, e.targetTypes, ctx.datumBuffer, ctx.hashKeyBuffer[0:0:cap(ctx.hashKeyBuffer)])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -777,7 +790,7 @@ func (e *HashJoinExec) Next() (*Row, error) {
 	case err, ok = <-e.resultErr:
 	}
 	if err != nil {
-		e.finished = true
+		e.finished.Store(true)
 		return nil, errors.Trace(err)
 	}
 	if !ok {
@@ -829,6 +842,7 @@ func (e *HashSemiJoinExec) Schema() expression.Schema {
 // them in a hash table.
 func (e *HashSemiJoinExec) prepare() error {
 	e.hashTable = make(map[string][]*Row)
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for {
 		row, err := e.smallExec.Next()
 		if err != nil {
@@ -849,7 +863,7 @@ func (e *HashSemiJoinExec) prepare() error {
 				continue
 			}
 		}
-		hasNull, hashcode, err := getHashKey(e.smallHashKey, row, e.targetTypes, make([]types.Datum, len(e.smallHashKey)), nil)
+		hasNull, hashcode, err := getHashKey(sc, e.smallHashKey, row, e.targetTypes, make([]types.Datum, len(e.smallHashKey)), nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -869,7 +883,8 @@ func (e *HashSemiJoinExec) prepare() error {
 }
 
 func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, hasNull bool, err error) {
-	hasNull, hashcode, err := getHashKey(e.bigHashKey, bigRow, e.targetTypes, make([]types.Datum, len(e.smallHashKey)), nil)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	hasNull, hashcode, err := getHashKey(sc, e.bigHashKey, bigRow, e.targetTypes, make([]types.Datum, len(e.smallHashKey)), nil)
 	if err != nil {
 		return false, false, errors.Trace(err)
 	}
@@ -1888,6 +1903,7 @@ func (e *TrimExec) Next() (*Row, error) {
 type UnionExec struct {
 	schema expression.Schema
 	Srcs   []Executor
+	ctx    context.Context
 	cursor int
 }
 
@@ -1916,7 +1932,7 @@ func (e *UnionExec) Next() (*Row, error) {
 				// The column value should be casted as the same type of the first select statement in corresponding position.
 				col := e.schema[i]
 				var val types.Datum
-				val, err = row.Data[i].ConvertTo(col.RetType)
+				val, err = row.Data[i].ConvertTo(e.ctx.GetSessionVars().StmtCtx, col.RetType)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
