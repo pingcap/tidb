@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -277,11 +276,10 @@ func (s *testSuite) TestStreamAgg(c *C) {
 	gbyCol := &expression.Column{
 		Index: 0,
 	}
-	ctx := mock.NewContext()
-	sumAgg := expression.NewAggFunction(ctx, ast.AggFuncSum, []expression.Expression{col}, false)
-	cntAgg := expression.NewAggFunction(ctx, ast.AggFuncCount, []expression.Expression{col}, false)
-	avgAgg := expression.NewAggFunction(ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
-	maxAgg := expression.NewAggFunction(ctx, ast.AggFuncMax, []expression.Expression{col}, false)
+	sumAgg := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{col}, false)
+	cntAgg := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{col}, false)
+	avgAgg := expression.NewAggFunction(ast.AggFuncAvg, []expression.Expression{col}, false)
+	maxAgg := expression.NewAggFunction(ast.AggFuncMax, []expression.Expression{col}, false)
 	cases := []struct {
 		aggFunc expression.AggregationFunction
 		result  string

@@ -223,7 +223,7 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 		}
 	}
 	for _, gbyCol := range gbyCols {
-		firstRow := expression.NewAggFunction(a.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
+		firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
 		newAggFuncs = append(newAggFuncs, firstRow)
 		schema = append(schema, gbyCol.Clone().(*expression.Column))
 		agg.correlated = agg.correlated || gbyCol.IsCorrelated()
@@ -250,7 +250,7 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 func (a *aggPushDownSolver) getDefaultValues(agg *Aggregation) ([]types.Datum, bool) {
 	defaultValues := make([]types.Datum, 0, len(agg.GetSchema()))
 	for _, aggFunc := range agg.AggFuncs {
-		value, existsDefaultValue := aggFunc.CalculateDefaultValue(agg.children[0].GetSchema())
+		value, existsDefaultValue := aggFunc.CalculateDefaultValue(agg.children[0].GetSchema(), a.ctx)
 		if !existsDefaultValue {
 			return nil, false
 		}

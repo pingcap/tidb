@@ -257,7 +257,7 @@ func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation) expressio
 	agg.GroupByItems = []expression.Expression{schema[cursor]}
 	newAggFuncs := make([]expression.AggregationFunction, len(agg.AggFuncs))
 	for i, aggFun := range agg.AggFuncs {
-		fun := expression.NewAggFunction(agg.ctx, aggFun.GetName(), nil, false)
+		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
 		colName := model.NewCIStr(fmt.Sprint(aggFun.GetArgs()))
 		if needCount(fun) {
