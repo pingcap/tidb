@@ -345,7 +345,6 @@ func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPl
 				}
 				if !result {
 					dummy := &PhysicalDummyScan{}
-					dummy.ctx = p.ctx
 					dummy.tp = "Dummy"
 					dummy.allocator = p.allocator
 					dummy.initIDAndContext(p.ctx)

@@ -216,7 +216,7 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return FoldConstant(ctx, newFunc)
+		return FoldConstant(ctx, newFunc), nil
 	case *Column:
 		if schema.GetIndex(x) == -1 {
 			return x, nil

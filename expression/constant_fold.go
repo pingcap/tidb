@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
@@ -22,22 +21,19 @@ import (
 )
 
 // FoldConstant does constant folding optimization on an expression.
-func FoldConstant(ctx context.Context, expr Expression) (Expression, error) {
+func FoldConstant(ctx context.Context, expr Expression) Expression {
 	scalarFunc, ok := expr.(*ScalarFunction)
 	if !ok {
-		return expr, nil
+		return expr
 	}
 	if _, isDynamic := evaluator.DynamicFuncs[scalarFunc.FuncName.L]; isDynamic {
-		return expr, nil
+		return expr
 	}
 	args := scalarFunc.Args
 	datums := make([]types.Datum, 0, len(args))
 	canFold := true
 	for i := 0; i < len(args); i++ {
-		foldedArg, err := FoldConstant(ctx, args[i])
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		foldedArg := FoldConstant(ctx, args[i])
 		scalarFunc.Args[i] = foldedArg
 		if con, ok := foldedArg.(*Constant); ok {
 			datums = append(datums, con.Value)
@@ -46,15 +42,15 @@ func FoldConstant(ctx context.Context, expr Expression) (Expression, error) {
 		}
 	}
 	if !canFold {
-		return expr, nil
+		return expr
 	}
 	value, err := scalarFunc.Function(datums, ctx)
 	if err != nil {
 		log.Warnf("There may exist an error during constant folding. The function name is %s, args are %s", scalarFunc.FuncName, args)
-		return nil, errors.Trace(err)
+		return expr
 	}
 	return &Constant{
 		Value:   value,
 		RetType: scalarFunc.RetType,
-	}, nil
+	}
 }

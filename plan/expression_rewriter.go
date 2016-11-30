@@ -47,8 +47,8 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-	result, err := expression.FoldConstant(b.ctx, er.ctxStack[0])
-	return result, er.p, errors.Trace(err)
+	result := expression.FoldConstant(b.ctx, er.ctxStack[0])
+	return result, er.p, nil
 }
 
 type expressionRewriter struct {
