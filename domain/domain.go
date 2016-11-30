@@ -59,7 +59,6 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		return 0, errors.Trace(err)
 	}
 	if usedSchemaVersion != 0 && usedSchemaVersion == latestSchemaVersion {
-		log.Debugf("[ddl] schema version is still %d, no need reload", usedSchemaVersion)
 		return latestSchemaVersion, nil
 	}
 	startTime := time.Now()
