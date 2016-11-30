@@ -1060,9 +1060,9 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 	pA := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
 
 	pB := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
-
-	pA.initID()
-	pB.initID()
+	ctx := mock.NewContext()
+	pA.initIDAndContext(ctx)
+	pB.initIDAndContext(ctx)
 	c.Assert(pA.id, Equals, pB.id)
 }
 
@@ -1316,7 +1316,6 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 
 		selection := p.GetChildByIndex(0).(*Selection)
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
-
 		c.Assert(expression.ComposeCNFCondition(selection.Conditions).String(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
 	}
 }
@@ -1367,7 +1366,7 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 		},
 		{
 			sql:   "a = 1 and cast(null as SIGNED) is null",
-			after: "eq(test.t.a, 1), isnull(cast(<nil>))",
+			after: "1, eq(test.t.a, 1)",
 		},
 	}
 	for _, ca := range cases {
