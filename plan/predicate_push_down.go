@@ -206,7 +206,7 @@ func outerJoinSimplify(p *Join, predicates []expression.Expression) error {
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
 func isNullRejected(eb expression.Builder, schema expression.Schema, expr expression.Expression) (bool, error) {
-	result, err := expression.EvaluateExprWithNull(eb, schema, expr)
+	result, err := eb.EvaluateExprWithNull(schema, expr)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

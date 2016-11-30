@@ -211,13 +211,13 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(eb Builder, schema Schema, expr Expression) (Expression, error) {
+func (eb Builder) EvaluateExprWithNull(schema Schema, expr Expression) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		var err error
 		args := make([]Expression, len(x.Args))
 		for i, arg := range x.Args {
-			args[i], err = EvaluateExprWithNull(eb, schema, arg)
+			args[i], err = eb.EvaluateExprWithNull(schema, arg)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
