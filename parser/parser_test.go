@@ -49,9 +49,9 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"fulltext", "grant", "group", "having", "hour_microsecond", "hour_minute",
 		"hour_second", "if", "ignore", "in", "index", "infile", "inner", "insert", "int", "into", "integer",
 		"interval", "is", "join", "key", "keys", "leading", "left", "like", "limit", "lines", "load",
-		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "mediumint", "mediumtext",
+		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "maxvalue", "mediumint", "mediumtext",
 		"minute_microsecond", "minute_second", "mod", "not", "no_write_to_binlog", "null", "numeric",
-		"on", "option", "or", "order", "outer", "partition", "precision", "primary", "procedure", "read", "real",
+		"on", "option", "or", "order", "outer", "partition", "precision", "primary", "procedure", "range", "read", "real",
 		"references", "regexp", "repeat", "replace", "restrict", "right", "rlike",
 		"schema", "schemas", "second_microsecond", "select", "set", "show", "smallint",
 		"starting", "table", "terminated", "then", "tinyblob", "tinyint", "tinytext", "to",
@@ -88,7 +88,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
-		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events",
+		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -848,6 +848,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) STATS_PERSISTENT = 1", true},
 		// Partition option
 		{"create table t (c int) PARTITION BY HASH (c) PARTITIONS 32;", true},
+		{"create table t (c int) PARTITION BY RANGE (Year(VDate)) (PARTITION p1980 VALUES LESS THAN (1980) ENGINE = MyISAM, PARTITION p1990 VALUES LESS THAN (1990) ENGINE = MyISAM, PARTITION pothers VALUES LESS THAN MAXVALUE ENGINE = MyISAM)", true},
 		// For check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
