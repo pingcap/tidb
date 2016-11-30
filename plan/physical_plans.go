@@ -620,19 +620,28 @@ func (p *Sort) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *Sort) MarshalJSON() ([]byte, error) {
-	limit, err := json.Marshal(p.ExecLimit)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	exprs, err := json.Marshal(p.ByItems)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	limitCount := []byte("null")
+	limitOffset := []byte("null")
+	if p.ExecLimit != nil {
+		limitCount, err = json.Marshal(p.ExecLimit.Count)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		limitOffset, err = json.Marshal(p.ExecLimit.Offset)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
 		" \"exprs\": %s,\n"+
-			" \"limit\": %s,\n"+
-			" \"child\": \"%s\"}", exprs, limit, p.children[0].GetID()))
+			" \"limit count\": %s,\n"+
+			" \"limit offset\": %s,\n"+
+			" \"child\": \"%s\"}", exprs, limitCount, limitOffset, p.children[0].GetID()))
 	return buffer.Bytes(), nil
 }
 
