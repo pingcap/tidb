@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 package types
 
 import (
-	"time"
+	gotime "time"
 )
 
 type mysqlTime struct {
@@ -24,7 +24,7 @@ type mysqlTime struct {
 	hour        uint8  // hour <= 23
 	minute      uint8  // minute <= 59
 	second      uint8  // second <= 59
-	microsecond uint
+	microsecond uint32
 }
 
 func (t mysqlTime) Year() int {
@@ -55,7 +55,7 @@ func (t mysqlTime) Microsecond() int {
 	return int(t.microsecond)
 }
 
-func (t mysqlTime) Weekday() time.Weekday {
+func (t mysqlTime) Weekday() gotime.Weekday {
 	return t.GoTime().Weekday()
 }
 
@@ -67,8 +67,8 @@ func (t mysqlTime) ISOWeek() (int, int) {
 	return t.GoTime().ISOWeek()
 }
 
-func (t mysqlTime) GoTime() time.Time {
-	return time.Date(t.Year(), time.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, time.Local)
+func (t mysqlTime) GoTime() gotime.Time {
+	return gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, gotime.Local)
 }
 
 func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysqlTime {
@@ -79,6 +79,6 @@ func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysql
 		uint8(hour),
 		uint8(minute),
 		uint8(second),
-		uint(microsecond),
+		uint32(microsecond),
 	}
 }
