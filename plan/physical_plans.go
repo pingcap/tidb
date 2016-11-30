@@ -625,13 +625,8 @@ func (p *Sort) MarshalJSON() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	limitCount := []byte("null")
-	limitOffset := []byte("null")
 	if p.ExecLimit != nil {
 		limitCount, err = json.Marshal(p.ExecLimit.Count)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		limitOffset, err = json.Marshal(p.ExecLimit.Offset)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -639,9 +634,8 @@ func (p *Sort) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
 		" \"exprs\": %s,\n"+
-			" \"limit count\": %s,\n"+
-			" \"limit offset\": %s,\n"+
-			" \"child\": \"%s\"}", exprs, limitCount, limitOffset, p.children[0].GetID()))
+			" \"limit\": %s,\n"+
+			" \"child\": \"%s\"}", exprs, limitCount, p.children[0].GetID()))
 	return buffer.Bytes(), nil
 }
 

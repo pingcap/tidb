@@ -110,8 +110,7 @@ func (s *testSuite) TestExplain(c *C) {
             "Desc": false
         }
     ],
-    "limit count": null,
-    "limit offset": null,
+    "limit": null,
     "child": "TableScan_6"
 }`,
 			},
@@ -335,6 +334,38 @@ func (s *testSuite) TestExplain(c *C) {
         "a.c1"
     ],
     "child": "HashLeftJoin_9"
+}`,
+			},
+		},
+		{
+			"select * from t2 order by t2.c2 limit 0, 1",
+			[]string{
+				"TableScan_5", "",
+			},
+			[]string{
+				"", "",
+			},
+			[]string{
+				`{
+    "db": "test",
+    "table": "t2",
+    "desc": false,
+    "keep order": true,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "filter conditions": null
+    }
+}`,
+				`{
+    "exprs": [
+        {
+            "Expr": "test.t2.c2",
+            "Desc": false
+        }
+    ],
+    "limit": 1,
+    "child": "TableScan_5"
 }`,
 			},
 		},
