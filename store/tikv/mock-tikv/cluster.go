@@ -186,7 +186,7 @@ func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, peerIDs []uint
 	c.Lock()
 	defer c.Unlock()
 
-	newRegion := c.regions[regionID].split(newRegionID, key, peerIDs, leaderPeerID)
+	newRegion := c.regions[regionID].split(newRegionID, []byte(newMvccKey(key)), peerIDs, leaderPeerID)
 	c.regions[newRegionID] = newRegion
 }
 
