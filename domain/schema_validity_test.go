@@ -26,7 +26,7 @@ type leaseItem struct {
 }
 
 func (*testSuite) TestSchemaValidity(c *C) {
-	lease := 5 * time.Millisecond
+	lease := 2 * time.Millisecond
 	leaseCh := make(chan leaseItem)
 	go serverFunc(lease, leaseCh)
 
@@ -41,17 +41,18 @@ func (*testSuite) TestSchemaValidity(c *C) {
 
 	// take a lease, check it's valid.
 	item := <-leaseCh
+	reload(svi, leaseCh)
 	valid := svi.Check(item.leaseGrantTS, item.schemaVer)
 	c.Assert(valid, IsTrue)
 
 	// sleep for a while, check it's still valid.
-	time.Sleep(time.Millisecond)
+	time.Sleep(lease/2)
 	reload(svi, leaseCh)
 	valid = svi.Check(item.leaseGrantTS, item.schemaVer)
 	c.Assert(valid, IsTrue)
 
 	// sleep for a long time, check it's invalid.
-	time.Sleep(lease)
+	time.Sleep(lease*2)
 	reload(svi, leaseCh)
 	valid = svi.Check(item.leaseGrantTS, item.schemaVer)
 	c.Assert(valid, IsFalse)
