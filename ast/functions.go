@@ -20,6 +20,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -319,21 +320,21 @@ func (n *AggregateFuncExpr) Clear() {
 }
 
 // Update is used for update aggregate context.
-func (n *AggregateFuncExpr) Update() error {
+func (n *AggregateFuncExpr) Update(sc *variable.StatementContext) error {
 	name := strings.ToLower(n.F)
 	switch name {
 	case AggFuncCount:
-		return n.updateCount()
+		return n.updateCount(sc)
 	case AggFuncFirstRow:
-		return n.updateFirstRow()
+		return n.updateFirstRow(sc)
 	case AggFuncGroupConcat:
-		return n.updateGroupConcat()
+		return n.updateGroupConcat(sc)
 	case AggFuncMax:
-		return n.updateMaxMin(true)
+		return n.updateMaxMin(sc, true)
 	case AggFuncMin:
-		return n.updateMaxMin(false)
+		return n.updateMaxMin(sc, false)
 	case AggFuncSum, AggFuncAvg:
-		return n.updateSum()
+		return n.updateSum(sc)
 	}
 	return nil
 }
@@ -359,7 +360,7 @@ func (n *AggregateFuncExpr) SetContext(ctx map[string](*AggEvaluateContext)) {
 	n.contextPerGroupMap = ctx
 }
 
-func (n *AggregateFuncExpr) updateCount() error {
+func (n *AggregateFuncExpr) updateCount(sc *variable.StatementContext) error {
 	ctx := n.GetContext()
 	vals := make([]interface{}, 0, len(n.Args))
 	for _, a := range n.Args {
@@ -382,7 +383,7 @@ func (n *AggregateFuncExpr) updateCount() error {
 	return nil
 }
 
-func (n *AggregateFuncExpr) updateFirstRow() error {
+func (n *AggregateFuncExpr) updateFirstRow(sc *variable.StatementContext) error {
 	ctx := n.GetContext()
 	if !ctx.Value.IsNull() {
 		return nil
@@ -394,7 +395,7 @@ func (n *AggregateFuncExpr) updateFirstRow() error {
 	return nil
 }
 
-func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
+func (n *AggregateFuncExpr) updateMaxMin(sc *variable.StatementContext, max bool) error {
 	ctx := n.GetContext()
 	if len(n.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
@@ -404,7 +405,7 @@ func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
 		ctx.Value = v
 		return nil
 	}
-	c, err := ctx.Value.CompareDatum(v)
+	c, err := ctx.Value.CompareDatum(sc, v)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -421,7 +422,7 @@ func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
 	return nil
 }
 
-func (n *AggregateFuncExpr) updateSum() error {
+func (n *AggregateFuncExpr) updateSum(sc *variable.StatementContext) error {
 	ctx := n.GetContext()
 	value := *n.Args[0].GetDatum()
 	if value.IsNull() {
@@ -437,7 +438,7 @@ func (n *AggregateFuncExpr) updateSum() error {
 		}
 	}
 	var err error
-	ctx.Value, err = types.CalculateSum(ctx.Value, value)
+	ctx.Value, err = types.CalculateSum(sc, ctx.Value, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -445,7 +446,7 @@ func (n *AggregateFuncExpr) updateSum() error {
 	return nil
 }
 
-func (n *AggregateFuncExpr) updateGroupConcat() error {
+func (n *AggregateFuncExpr) updateGroupConcat(sc *variable.StatementContext) error {
 	ctx := n.GetContext()
 	vals := make([]interface{}, 0, len(n.Args))
 	for _, a := range n.Args {

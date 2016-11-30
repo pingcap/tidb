@@ -193,7 +193,7 @@ func convertIndexRangeTypes(sc *variable.StatementContext, ran *plan.IndexRange,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cmp, err := converted.CompareDatum(ran.LowVal[i])
+		cmp, err := converted.CompareDatum(sc, ran.LowVal[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -222,7 +222,7 @@ func convertIndexRangeTypes(sc *variable.StatementContext, ran *plan.IndexRange,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cmp, err := converted.CompareDatum(ran.HighVal[i])
+		cmp, err := converted.CompareDatum(sc, ran.HighVal[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -512,11 +512,12 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 
 	totalHandles := 0
 	startTs := time.Now()
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(idxResult)
 		if err != nil || finish {
 			e.tasksErr = errors.Trace(err)
-			if totalHandles >= 100000 && len(e.indexPlan.Ranges) == 1 && e.indexPlan.Ranges[0].IsPoint() {
+			if totalHandles >= 100000 && len(e.indexPlan.Ranges) == 1 && e.indexPlan.Ranges[0].IsPoint(sc) {
 				log.Warnf("[TIME_INDEX_SCAN] time: %v handles: %d concurrency: %d",
 					time.Since(startTs),
 					totalHandles,

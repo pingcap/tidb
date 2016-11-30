@@ -16,6 +16,7 @@ package ast
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -85,6 +86,7 @@ func (ts *testFunctionsSuite) TestAggregateFuncExtractor(c *C) {
 }
 
 func (ts *testFunctionsSuite) TestAggFuncCount(c *C) {
+	sc := new(variable.StatementContext)
 	args := make([]ExprNode, 1)
 	// count with distinct
 	agg := &AggregateFuncExpr{
@@ -99,7 +101,7 @@ func (ts *testFunctionsSuite) TestAggFuncCount(c *C) {
 	exprs := []ExprNode{expr, expr1, expr2}
 	for _, e := range exprs {
 		args[0] = e
-		agg.Update()
+		agg.Update(sc)
 	}
 	ctx := agg.GetContext()
 	c.Assert(ctx.Count, Equals, int64(1))
@@ -115,13 +117,14 @@ func (ts *testFunctionsSuite) TestAggFuncCount(c *C) {
 	exprs = []ExprNode{expr, expr1, expr2}
 	for _, e := range exprs {
 		args[0] = e
-		agg.Update()
+		agg.Update(sc)
 	}
 	ctx = agg.GetContext()
 	c.Assert(ctx.Count, Equals, int64(2))
 }
 
 func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
+	sc := new(variable.StatementContext)
 	args := make([]ExprNode, 1)
 	// sum with distinct
 	agg := &AggregateFuncExpr{
@@ -136,7 +139,7 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 	exprs := []ExprNode{expr, expr1, expr2}
 	for _, e := range exprs {
 		args[0] = e
-		agg.Update()
+		agg.Update(sc)
 	}
 	ctx := agg.GetContext()
 	expect := types.NewDecFromInt(1)
@@ -154,7 +157,7 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 	exprs = []ExprNode{expr, expr1, expr2}
 	for _, e := range exprs {
 		args[0] = e
-		agg.Update()
+		agg.Update(sc)
 	}
 	ctx = agg.GetContext()
 	expect = types.NewDecFromInt(4)
@@ -163,6 +166,7 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 }
 
 func (ts *testFunctionsSuite) TestAggFuncMaxMin(c *C) {
+	sc := new(variable.StatementContext)
 	args := make([]ExprNode, 1)
 	// test max
 	agg := &AggregateFuncExpr{
@@ -176,7 +180,7 @@ func (ts *testFunctionsSuite) TestAggFuncMaxMin(c *C) {
 	exprs := []ExprNode{expr, expr1, expr2}
 	for _, e := range exprs {
 		args[0] = e
-		agg.Update()
+		agg.Update(sc)
 	}
 	ctx := agg.GetContext()
 	c.Assert(ctx.Value.Kind(), Equals, types.KindInt64)
@@ -193,7 +197,7 @@ func (ts *testFunctionsSuite) TestAggFuncMaxMin(c *C) {
 	exprs = []ExprNode{expr, expr1, expr2}
 	for _, e := range exprs {
 		args[0] = e
-		agg.Update()
+		agg.Update(sc)
 	}
 	ctx = agg.GetContext()
 	c.Assert(ctx.Value.Kind(), Equals, types.KindInt64)

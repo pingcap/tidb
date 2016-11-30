@@ -211,8 +211,9 @@ func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err er
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func builtinGreatest(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinGreatest(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	max := 0
+	sc := ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(args); i++ {
 		if args[i].IsNull() {
 			d.SetNull()
@@ -220,7 +221,7 @@ func builtinGreatest(args []types.Datum, _ context.Context) (d types.Datum, err 
 		}
 
 		var cmp int
-		if cmp, err = args[i].CompareDatum(args[max]); err != nil {
+		if cmp, err = args[i].CompareDatum(sc, args[max]); err != nil {
 			return
 		}
 

@@ -1396,7 +1396,7 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 			}
 			v = v.GetChildByIndex(0).(LogicalPlan)
 		}
-		newConds := expression.PropagateConstant(sel.Conditions)
+		newConds := expression.PropagateConstant(builder.ctx, sel.Conditions)
 		for _, v := range newConds {
 			result = append(result, v.String())
 		}

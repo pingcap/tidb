@@ -202,7 +202,7 @@ func (t *BoundedTable) AddRecord(ctx context.Context, r []types.Datum) (int64, e
 	var recordID int64
 	var err error
 	if t.pkHandleCol != nil {
-		recordID, err = r[t.pkHandleCol.Offset].ToInt64()
+		recordID, err = r[t.pkHandleCol.Offset].ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return invalidRecordID, errors.Trace(err)
 		}
