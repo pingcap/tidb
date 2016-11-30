@@ -39,7 +39,12 @@ type Scanner struct {
 	stmtStartPos int
 
 	// for scanning such kind of comment: /*! MySQL-specific code */
-	specialComment *Scanner
+	specialComment *specialCommentScanner
+}
+
+type specialCommentScanner struct {
+	*Scanner
+	Pos
 }
 
 // Errors returns the errors during a scan.
@@ -139,8 +144,9 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		tok, pos, lit = specialComment.scan()
 		if tok != 0 {
 			// return the specialComment scan result as the result
-			pos.Line += s.r.p.Line
-			pos.Offset += s.r.p.Col
+			pos.Line += s.specialComment.Line
+			pos.Col += s.specialComment.Col
+			pos.Offset += s.specialComment.Offset
 			return
 		}
 		// leave specialComment scan mode after all stream consumed.
@@ -262,7 +268,14 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		comment := s.r.data(&pos)
 		if strings.HasPrefix(comment, "/*!") {
 			sql := specCodePattern.ReplaceAllStringFunc(comment, trimComment)
-			s.specialComment = NewScanner(sql)
+			s.specialComment = &specialCommentScanner{
+				Scanner: NewScanner(sql),
+				Pos: Pos{
+					pos.Line,
+					pos.Col,
+					pos.Offset + len("/*!40101 "),
+				},
+			}
 		}
 
 		return s.scan()
