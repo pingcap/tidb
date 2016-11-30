@@ -181,9 +181,8 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	if p.readOnly {
 		return resultPlan
 	}
-	eb := expression.NewBuilder(resultPlan.context())
 	us := &PhysicalUnionScan{
-		Condition: eb.ComposeCNFCondition(append(p.conditions, p.AccessCondition...)),
+		Condition: expression.ComposeCNFCondition(append(p.conditions, p.AccessCondition...)),
 	}
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.GetSchema())
@@ -257,9 +256,8 @@ func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation) expressio
 	schema = append(schema, &expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems))})
 	agg.GroupByItems = []expression.Expression{schema[cursor]}
 	newAggFuncs := make([]expression.AggregationFunction, len(agg.AggFuncs))
-	eb := expression.NewBuilder(agg.ctx)
 	for i, aggFun := range agg.AggFuncs {
-		fun := eb.NewAggFunction(aggFun.GetName(), nil, false)
+		fun := expression.NewAggFunction(agg.ctx, aggFun.GetName(), nil, false)
 		var args []expression.Expression
 		colName := model.NewCIStr(fmt.Sprint(aggFun.GetArgs()))
 		if needCount(fun) {

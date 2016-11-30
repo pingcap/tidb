@@ -1240,9 +1240,8 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		}
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
 		result := fullRange
-		eb := expression.NewBuilder(builder.ctx)
 		for _, cond := range selection.Conditions {
-			result = rb.intersection(result, rb.build(pushDownNot(eb, cond, false)))
+			result = rb.intersection(result, rb.build(pushDownNot(cond, false)))
 		}
 		c.Assert(rb.err, IsNil)
 		got := fmt.Sprintf("%v", result)
@@ -1317,8 +1316,7 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 
 		selection := p.GetChildByIndex(0).(*Selection)
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
-		eb := expression.NewBuilder(builder.ctx)
-		c.Assert(eb.ComposeCNFCondition(selection.Conditions).String(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
+		c.Assert(expression.ComposeCNFCondition(selection.Conditions).String(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
 	}
 }
 
@@ -1368,7 +1366,7 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 		},
 		{
 			sql:   "a = 1 and cast(null as SIGNED) is null",
-			after: "eq(test.t.a, 1), isnull(cast(<nil>))",
+			after: "1, eq(test.t.a, 1)",
 		},
 	}
 	for _, ca := range cases {

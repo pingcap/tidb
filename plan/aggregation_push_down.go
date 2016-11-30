@@ -222,9 +222,8 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 			agg.correlated = agg.correlated || arg.IsCorrelated()
 		}
 	}
-	eb := expression.NewBuilder(a.ctx)
 	for _, gbyCol := range gbyCols {
-		firstRow := eb.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
+		firstRow := expression.NewAggFunction(a.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
 		newAggFuncs = append(newAggFuncs, firstRow)
 		schema = append(schema, gbyCol.Clone().(*expression.Column))
 		agg.correlated = agg.correlated || gbyCol.IsCorrelated()

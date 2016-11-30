@@ -139,18 +139,8 @@ func (c *Constant) HashCode() []byte {
 func (c *Constant) ResolveIndices(_ Schema) {
 }
 
-// Builder builds function expressions.
-type Builder struct {
-	ctx context.Context
-}
-
-// NewBuilder creates a Builder.
-func NewBuilder(ctx context.Context) Builder {
-	return Builder{ctx: ctx}
-}
-
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
-func (eb Builder) composeConditionWithBinaryOp(conditions []Expression, funcName string) Expression {
+func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expression {
 	length := len(conditions)
 	if length == 0 {
 		return nil
@@ -158,21 +148,21 @@ func (eb Builder) composeConditionWithBinaryOp(conditions []Expression, funcName
 	if length == 1 {
 		return conditions[0]
 	}
-	expr, _ := eb.NewFunction(funcName,
+	expr, _ := NewFunction(funcName,
 		types.NewFieldType(mysql.TypeTiny),
-		eb.composeConditionWithBinaryOp(conditions[:length/2], funcName),
-		eb.composeConditionWithBinaryOp(conditions[length/2:], funcName))
+		composeConditionWithBinaryOp(conditions[:length/2], funcName),
+		composeConditionWithBinaryOp(conditions[length/2:], funcName))
 	return expr
 }
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func (eb Builder) ComposeCNFCondition(conditions []Expression) Expression {
-	return eb.composeConditionWithBinaryOp(conditions, ast.AndAnd)
+func ComposeCNFCondition(conditions []Expression) Expression {
+	return composeConditionWithBinaryOp(conditions, ast.AndAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
-func (eb Builder) ComposeDNFCondition(conditions []Expression) Expression {
-	return eb.composeConditionWithBinaryOp(conditions, ast.OrOr)
+func ComposeDNFCondition(conditions []Expression) Expression {
+	return composeConditionWithBinaryOp(conditions, ast.OrOr)
 }
 
 // Assignment represents a set assignment in Update, such as
@@ -222,7 +212,11 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 				return nil, errors.Trace(err)
 			}
 		}
-		return NewBuilder(ctx).NewFunction(x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		newFunc, err := NewFunction(x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return FoldConstant(ctx, newFunc)
 	case *Column:
 		if schema.GetIndex(x) == -1 {
 			return x, nil

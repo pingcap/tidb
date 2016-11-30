@@ -85,22 +85,22 @@ type AggregationFunction interface {
 }
 
 // NewAggFunction creates a new AggregationFunction.
-func (eb Builder) NewAggFunction(funcType string, funcArgs []Expression, distinct bool) AggregationFunction {
+func NewAggFunction(ctx context.Context, funcType string, funcArgs []Expression, distinct bool) AggregationFunction {
 	switch tp := strings.ToLower(funcType); tp {
 	case ast.AggFuncSum:
-		return &sumFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct)}
+		return &sumFunction{aggFunction: newAggFunc(ctx, tp, funcArgs, distinct)}
 	case ast.AggFuncCount:
-		return &countFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct)}
+		return &countFunction{aggFunction: newAggFunc(ctx, tp, funcArgs, distinct)}
 	case ast.AggFuncAvg:
-		return &avgFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct)}
+		return &avgFunction{aggFunction: newAggFunc(ctx, tp, funcArgs, distinct)}
 	case ast.AggFuncGroupConcat:
-		return &concatFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct)}
+		return &concatFunction{aggFunction: newAggFunc(ctx, tp, funcArgs, distinct)}
 	case ast.AggFuncMax:
-		return &maxMinFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct), isMax: true}
+		return &maxMinFunction{aggFunction: newAggFunc(ctx, tp, funcArgs, distinct), isMax: true}
 	case ast.AggFuncMin:
-		return &maxMinFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct), isMax: false}
+		return &maxMinFunction{aggFunction: newAggFunc(ctx, tp, funcArgs, distinct), isMax: false}
 	case ast.AggFuncFirstRow:
-		return &firstRowFunction{aggFunction: eb.newAggFunc(tp, funcArgs, distinct)}
+		return &firstRowFunction{aggFunction: newAggFunc(ctx, tp, funcArgs, distinct)}
 	}
 	return nil
 }
@@ -164,13 +164,13 @@ func (af *aggFunction) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-func (eb Builder) newAggFunc(name string, args []Expression, dist bool) aggFunction {
+func newAggFunc(ctx context.Context, name string, args []Expression, dist bool) aggFunction {
 	return aggFunction{
 		name:         name,
 		Args:         args,
 		resultMapper: make(aggCtxMapper, 0),
 		Distinct:     dist,
-		ctx:          eb.ctx,
+		ctx:          ctx,
 	}
 }
 

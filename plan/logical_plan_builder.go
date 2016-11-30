@@ -68,8 +68,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			agg.correlated = agg.correlated || newArg.IsCorrelated()
 			newArgList = append(newArgList, newArg)
 		}
-		eb := expression.NewBuilder(b.ctx)
-		newFunc := eb.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct)
+		newFunc := expression.NewAggFunction(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
 		combined := false
 		for j, oldFunc := range agg.AggFuncs {
 			if oldFunc.Equal(newFunc) {
@@ -163,8 +162,7 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 					continue
 				}
 				if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
-					eb := expression.NewBuilder(left.context())
-					cond, _ := eb.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
+					cond, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
 					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
 				}

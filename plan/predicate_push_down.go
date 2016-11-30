@@ -251,8 +251,7 @@ func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret 
 			}
 		}
 		if canSubstitute {
-			eb := expression.NewBuilder(p.ctx)
-			push = append(push, eb.ColumnSubstitute(cond, p.GetSchema(), p.Exprs))
+			push = append(push, expression.ColumnSubstitute(cond, p.GetSchema(), p.Exprs))
 		} else {
 			ret = append(ret, cond)
 		}
@@ -277,8 +276,7 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 	for _, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		for _, cond := range predicates {
-			eb := expression.NewBuilder(p.ctx)
-			newCond := eb.ColumnSubstitute(cond, p.GetSchema(), expression.Schema2Exprs(proj.GetSchema()))
+			newCond := expression.ColumnSubstitute(cond, p.GetSchema(), expression.Schema2Exprs(proj.GetSchema()))
 			newExprs = append(newExprs, newCond)
 		}
 		retCond, _, err := proj.(LogicalPlan).PredicatePushDown(newExprs)
@@ -328,8 +326,7 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 				}
 			}
 			if ok {
-				eb := expression.NewBuilder(p.ctx)
-				newFunc := eb.ColumnSubstitute(cond.Clone(), p.GetSchema(), exprsOriginal)
+				newFunc := expression.ColumnSubstitute(cond.Clone(), p.GetSchema(), exprsOriginal)
 				condsToPush = append(condsToPush, newFunc)
 			} else {
 				ret = append(ret, cond)

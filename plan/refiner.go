@@ -128,12 +128,12 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 	return conditions
 }
 
-func detachIndexScanConditions(eb expression.Builder, conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
+func detachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
 	accessConds := make([]expression.Expression, len(indexScan.Index.Columns))
 	var filterConds []expression.Expression
 	// pushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, cond := range conditions {
-		conditions[i] = pushDownNot(eb, cond, false)
+		conditions[i] = pushDownNot(cond, false)
 	}
 	for _, cond := range conditions {
 		offset := getEQFunctionOffset(cond, indexScan.Index.Columns)
@@ -187,7 +187,7 @@ func detachIndexScanConditions(eb expression.Builder, conditions []expression.Ex
 }
 
 // detachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
-func detachTableScanConditions(eb expression.Builder, conditions []expression.Expression, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
+func detachTableScanConditions(conditions []expression.Expression, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
 	var pkName model.CIStr
 	if table.PKIsHandle {
 		for _, colInfo := range table.Columns {
@@ -206,7 +206,7 @@ func detachTableScanConditions(eb expression.Builder, conditions []expression.Ex
 		tableName: table.Name,
 		pkName:    pkName}
 	for _, cond := range conditions {
-		cond = pushDownNot(eb, cond, false)
+		cond = pushDownNot(cond, false)
 		if !checker.check(cond) {
 			filterConditions = append(filterConditions, cond)
 			continue
@@ -400,50 +400,50 @@ var oppositeOp = map[string]string{
 	ast.NE: ast.EQ,
 }
 
-func pushDownNot(eb expression.Builder, expr expression.Expression, not bool) expression.Expression {
+func pushDownNot(expr expression.Expression, not bool) expression.Expression {
 	if f, ok := expr.(*expression.ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			return pushDownNot(eb, f.Args[0], !not)
+			return pushDownNot(f.Args[0], !not)
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
-				nf, _ := eb.NewFunction(oppositeOp[f.FuncName.L], f.GetType(), f.Args...)
+				nf, _ := expression.NewFunction(oppositeOp[f.FuncName.L], f.GetType(), f.Args...)
 				return nf
 			}
 			for i, arg := range f.Args {
-				f.Args[i] = pushDownNot(eb, arg, false)
+				f.Args[i] = pushDownNot(arg, false)
 			}
 			return f
 		case ast.AndAnd:
 			if not {
 				args := f.Args
 				for i, a := range args {
-					args[i] = pushDownNot(eb, a, true)
+					args[i] = pushDownNot(a, true)
 				}
-				nf, _ := eb.NewFunction(ast.OrOr, f.GetType(), args...)
+				nf, _ := expression.NewFunction(ast.OrOr, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.Args {
-				f.Args[i] = pushDownNot(eb, arg, false)
+				f.Args[i] = pushDownNot(arg, false)
 			}
 			return f
 		case ast.OrOr:
 			if not {
 				args := f.Args
 				for i, a := range args {
-					args[i] = pushDownNot(eb, a, true)
+					args[i] = pushDownNot(a, true)
 				}
-				nf, _ := eb.NewFunction(ast.AndAnd, f.GetType(), args...)
+				nf, _ := expression.NewFunction(ast.AndAnd, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.Args {
-				f.Args[i] = pushDownNot(eb, arg, false)
+				f.Args[i] = pushDownNot(arg, false)
 			}
 			return f
 		}
 	}
 	if not {
-		expr, _ = eb.NewFunction(ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
+		expr, _ = expression.NewFunction(ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
 	}
 	return expr
 }

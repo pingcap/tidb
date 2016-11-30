@@ -277,11 +277,11 @@ func (s *testSuite) TestStreamAgg(c *C) {
 	gbyCol := &expression.Column{
 		Index: 0,
 	}
-	eb := expression.NewBuilder(mock.NewContext())
-	sumAgg := eb.NewAggFunction(ast.AggFuncSum, []expression.Expression{col}, false)
-	cntAgg := eb.NewAggFunction(ast.AggFuncCount, []expression.Expression{col}, false)
-	avgAgg := eb.NewAggFunction(ast.AggFuncAvg, []expression.Expression{col}, false)
-	maxAgg := eb.NewAggFunction(ast.AggFuncMax, []expression.Expression{col}, false)
+	ctx := mock.NewContext()
+	sumAgg := expression.NewAggFunction(ctx, ast.AggFuncSum, []expression.Expression{col}, false)
+	cntAgg := expression.NewAggFunction(ctx, ast.AggFuncCount, []expression.Expression{col}, false)
+	avgAgg := expression.NewAggFunction(ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
+	maxAgg := expression.NewAggFunction(ctx, ast.AggFuncMax, []expression.Expression{col}, false)
 	cases := []struct {
 		aggFunc expression.AggregationFunction
 		result  string

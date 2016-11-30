@@ -157,8 +157,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		eb := expression.NewBuilder(p.ctx)
-		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(eb, conds, table)
+		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
 		if client != nil {
 			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
@@ -238,8 +237,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		eb := expression.NewBuilder(p.ctx)
-		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(eb, conds, is)
+		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
 		if client != nil {
 			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
