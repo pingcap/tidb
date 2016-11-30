@@ -47,12 +47,12 @@ type mvccLock struct {
 }
 
 type mvccEntry struct {
-	key    []byte
+	key    mvccKey
 	values []mvccValue
 	lock   *mvccLock
 }
 
-func newEntry(key []byte) *mvccEntry {
+func newEntry(key mvccKey) *mvccEntry {
 	return &mvccEntry{
 		key: key,
 	}
@@ -200,10 +200,10 @@ func (s *MvccStore) Get(key []byte, startTS uint64) ([]byte, error) {
 	s.RLock()
 	defer s.RUnlock()
 
-	return s.get(encodeKey(key), startTS)
+	return s.get(newMvccKey(key), startTS)
 }
 
-func (s *MvccStore) get(key []byte, startTS uint64) ([]byte, error) {
+func (s *MvccStore) get(key mvccKey, startTS uint64) ([]byte, error) {
 	entry := s.tree.Get(newEntry(key))
 	if entry == nil {
 		return nil, nil
@@ -225,7 +225,7 @@ func (s *MvccStore) BatchGet(ks [][]byte, startTS uint64) []Pair {
 
 	var pairs []Pair
 	for _, k := range ks {
-		val, err := s.get(encodeKey(k), startTS)
+		val, err := s.get(newMvccKey(k), startTS)
 		if val == nil && err == nil {
 			continue
 		}
@@ -248,8 +248,8 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 	s.RLock()
 	defer s.RUnlock()
 
-	startKey = encodeKey(startKey)
-	endKey = encodeKey(endKey)
+	startKey = newMvccKey(startKey)
+	endKey = newMvccKey(endKey)
 
 	var pairs []Pair
 	iterator := func(item llrb.Item) bool {
@@ -263,7 +263,7 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 		val, err := s.get(k, startTS)
 		if val != nil || err != nil {
 			pairs = append(pairs, Pair{
-				Key:   decodeKey(k),
+				Key:   k.Raw(),
 				Value: val,
 				Err:   err,
 			})
@@ -280,8 +280,8 @@ func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint
 	s.RLock()
 	defer s.RUnlock()
 
-	startKey = encodeKey(startKey)
-	endKey = encodeKey(endKey)
+	startKey = newMvccKey(startKey)
+	endKey = newMvccKey(endKey)
 
 	var pairs []Pair
 	iterator := func(item llrb.Item) bool {
@@ -298,7 +298,7 @@ func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint
 		val, err := s.get(k, startTS)
 		if val != nil || err != nil {
 			pairs = append(pairs, Pair{
-				Key:   decodeKey(k),
+				Key:   k.Raw(),
 				Value: val,
 				Err:   err,
 			})
@@ -330,7 +330,7 @@ func (s *MvccStore) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, star
 
 	var errs []error
 	for _, m := range mutations {
-		entry := s.getOrNewEntry(encodeKey(m.Key))
+		entry := s.getOrNewEntry(newMvccKey(m.Key))
 		err := entry.Prewrite(m, startTS, primary, ttl)
 		s.submit(entry)
 		errs = append(errs, err)
@@ -345,7 +345,7 @@ func (s *MvccStore) Commit(keys [][]byte, startTS, commitTS uint64) error {
 
 	var ents []*mvccEntry
 	for _, k := range keys {
-		entry := s.getOrNewEntry(encodeKey(k))
+		entry := s.getOrNewEntry(newMvccKey(k))
 		err := entry.Commit(startTS, commitTS)
 		if err != nil {
 			return err
@@ -361,7 +361,7 @@ func (s *MvccStore) Cleanup(key []byte, startTS uint64) error {
 	s.Lock()
 	defer s.Unlock()
 
-	entry := s.getOrNewEntry(encodeKey(key))
+	entry := s.getOrNewEntry(newMvccKey(key))
 	err := entry.Rollback(startTS)
 	if err != nil {
 		return err
@@ -377,7 +377,7 @@ func (s *MvccStore) Rollback(keys [][]byte, startTS uint64) error {
 
 	var ents []*mvccEntry
 	for _, k := range keys {
-		entry := s.getOrNewEntry(encodeKey(k))
+		entry := s.getOrNewEntry(newMvccKey(k))
 		err := entry.Rollback(startTS)
 		if err != nil {
 			return err
@@ -403,7 +403,7 @@ func (s *MvccStore) ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.
 			locks = append(locks, &kvrpcpb.LockInfo{
 				PrimaryLock: ent.lock.primary,
 				LockVersion: ent.lock.startTS,
-				Key:         decodeKey(ent.key),
+				Key:         ent.key.Raw(),
 			})
 		}
 		return true
@@ -469,14 +469,18 @@ func (s *MvccStore) RawDelete(key []byte) {
 	delete(s.rawkv, string(key))
 }
 
-func encodeKey(key []byte) []byte {
+// On TiKV, keys are encoded before they are saved into storage engine.
+type mvccKey []byte
+
+func newMvccKey(key []byte) mvccKey {
 	if len(key) == 0 {
 		return nil
 	}
 	return codec.EncodeBytes(nil, key)
 }
 
-func decodeKey(key []byte) []byte {
+// Raw decodes a mvccKey to original key.
+func (key mvccKey) Raw() []byte {
 	if len(key) == 0 {
 		return nil
 	}

@@ -145,7 +145,7 @@ func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
 }
 
 func (h *rpcHandler) keyInRegion(key []byte) bool {
-	return regionContains(h.startKey, h.endKey, encodeKey(key))
+	return regionContains(h.startKey, h.endKey, []byte(newMvccKey(key)))
 }
 
 func (h *rpcHandler) onGet(req *kvrpcpb.CmdGetRequest) *kvrpcpb.CmdGetResponse {
@@ -270,7 +270,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if locked, ok := err.(*ErrLocked); ok {
 		return &kvrpcpb.KeyError{
 			Locked: &kvrpcpb.LockInfo{
-				Key:         decodeKey(locked.Key),
+				Key:         locked.Key.Raw(),
 				PrimaryLock: locked.Primary,
 				LockVersion: locked.StartTS,
 				LockTtl:     locked.TTL,
