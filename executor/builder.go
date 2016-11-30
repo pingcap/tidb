@@ -319,7 +319,7 @@ func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 	}
 }
 
-func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) *UnionScanExec {
+func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor {
 	src := b.build(v.GetChildByIndex(0))
 	if b.err != nil {
 		return nil
@@ -345,7 +345,8 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) *UnionSc
 		us.condition = v.Condition
 		us.buildAndSortAddedRows(x.table, x.asName)
 	default:
-		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", src)
+		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
+		return src
 	}
 	return us
 }
