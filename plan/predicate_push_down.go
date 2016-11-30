@@ -14,6 +14,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -183,9 +184,8 @@ func outerJoinSimplify(p *Join, predicates []expression.Expression) error {
 	}
 	// then simplify embedding outer join.
 	canBeSimplified := false
-	eb := expression.NewBuilder(p.ctx)
 	for _, expr := range predicates {
-		isOk, err := isNullRejected(eb, innerTable.GetSchema(), expr)
+		isOk, err := isNullRejected(p.ctx, innerTable.GetSchema(), expr)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -205,8 +205,8 @@ func outerJoinSimplify(p *Join, predicates []expression.Expression) error {
 // If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
-func isNullRejected(eb expression.Builder, schema expression.Schema, expr expression.Expression) (bool, error) {
-	result, err := eb.EvaluateExprWithNull(schema, expr)
+func isNullRejected(ctx context.Context, schema expression.Schema, expr expression.Expression) (bool, error) {
+	result, err := expression.EvaluateExprWithNull(ctx, schema, expr)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
