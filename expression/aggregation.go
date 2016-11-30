@@ -81,7 +81,7 @@ type AggregationFunction interface {
 	// CalculateDefaultValue gets the default value when the aggregate function's input is null.
 	// The input stands for the schema of Aggregation's child. If the function can't produce a default value, the second
 	// return value will be false.
-	CalculateDefaultValue(schema Schema) (types.Datum, bool)
+	CalculateDefaultValue(schema Schema, ctx context.Context) (types.Datum, bool)
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -168,11 +168,12 @@ func newAggFunc(name string, args []Expression, dist bool) aggFunction {
 		name:         name,
 		Args:         args,
 		resultMapper: make(aggCtxMapper, 0),
-		Distinct:     dist}
+		Distinct:     dist,
+	}
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (af *aggFunction) CalculateDefaultValue(schema Schema) (types.Datum, bool) {
+func (af *aggFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (types.Datum, bool) {
 	return types.Datum{}, false
 }
 
@@ -333,9 +334,9 @@ func (sf *sumFunction) GetStreamResult() (d types.Datum) {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (sf *sumFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
+func (sf *sumFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := sf.Args[0]
-	result, err := EvaluateExprWithNull(schema, arg)
+	result, err := EvaluateExprWithNull(ctx, schema, arg)
 	if err != nil {
 		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", sf, err.Error())
 		return d, false
@@ -374,9 +375,9 @@ func (cf *countFunction) Clone() AggregationFunction {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (cf *countFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
+func (cf *countFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (d types.Datum, valid bool) {
 	for _, arg := range cf.Args {
-		result, err := EvaluateExprWithNull(schema, arg)
+		result, err := EvaluateExprWithNull(ctx, schema, arg)
 		if err != nil {
 			log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", cf, err.Error())
 			return d, false
@@ -717,9 +718,9 @@ func (mmf *maxMinFunction) Clone() AggregationFunction {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (mmf *maxMinFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
+func (mmf *maxMinFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := mmf.Args[0]
-	result, err := EvaluateExprWithNull(schema, arg)
+	result, err := EvaluateExprWithNull(ctx, schema, arg)
 	if err != nil {
 		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", mmf, err.Error())
 		return d, false
@@ -877,9 +878,9 @@ func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (ff *firstRowFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
+func (ff *firstRowFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := ff.Args[0]
-	result, err := EvaluateExprWithNull(schema, arg)
+	result, err := EvaluateExprWithNull(ctx, schema, arg)
 	if err != nil {
 		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", ff, err.Error())
 		return d, false

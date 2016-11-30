@@ -18,12 +18,10 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -58,42 +56,13 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 
 // NewFunction creates a new scalar function or constant.
 func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	_, canConstantFolding := evaluator.DynamicFuncs[funcName]
-	canConstantFolding = !canConstantFolding
-
 	f, ok := evaluator.Funcs[funcName]
 	if !ok {
 		return nil, errors.Errorf("Function %s is not implemented.", funcName)
 	}
-
 	if len(args) < f.MinArgs || (f.MaxArgs != -1 && len(args) > f.MaxArgs) {
 		return nil, evaluator.ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].",
 			f.MinArgs, f.MaxArgs)
-	}
-
-	datums := make([]types.Datum, 0, len(args))
-
-	for i := 0; i < len(args) && canConstantFolding; i++ {
-		if v, ok := args[i].(*Constant); ok {
-			datums = append(datums, types.NewDatum(v.Value.GetValue()))
-		} else {
-			canConstantFolding = false
-		}
-	}
-
-	if canConstantFolding {
-		fn := f.F
-		// TODO: Add argument in NewFunction and replace mock context.
-		ctx := mock.NewContext()
-		newArgs, err := fn(datums, ctx)
-		if err != nil {
-			log.Warnf("There may exist an error during constant folding. The function name is %s, args are %s", funcName, args)
-		} else {
-			return &Constant{
-				Value:   newArgs,
-				RetType: retType,
-			}, nil
-		}
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
