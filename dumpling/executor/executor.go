@@ -17,6 +17,7 @@ import (
 	"container/heap"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -459,9 +460,11 @@ type HashJoinExec struct {
 	// targetTypes means the target the type that both smallHashKey and bigHashKey should convert to.
 	targetTypes []*types.FieldType
 
-	finished bool
-	// for sync multiple join workers.
+	finished atomic.Value
+	// For sync multiple join workers.
 	wg sync.WaitGroup
+	// closeCh add a lock for closing executor.
+	closeCh chan struct{}
 
 	// Concurrent channels.
 	concurrency      int
@@ -485,6 +488,8 @@ type hashJoinCtx struct {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
+	e.finished.Store(true)
+	<-e.closeCh
 	e.prepared = false
 	e.cursor = 0
 	return e.smallExec.Close()
@@ -546,15 +551,16 @@ func (e *HashJoinExec) fetchBigExec() {
 			close(cn)
 		}
 		e.bigExec.Close()
+		e.wg.Done()
 	}()
 	curBatchSize := 1
 	for {
-		if e.finished {
-			break
-		}
 		rows := make([]*Row, 0, batchSize)
 		done := false
 		for i := 0; i < curBatchSize; i++ {
+			if e.finished.Load().(bool) {
+				break
+			}
 			row, err := e.bigExec.Next()
 			if err != nil {
 				e.bigTableErr <- errors.Trace(err)
@@ -582,14 +588,17 @@ func (e *HashJoinExec) fetchBigExec() {
 // prepare runs the first time when 'Next' is called, it starts one worker goroutine to fetch rows from the big table,
 // and reads all data from the small table to build a hash table, then starts multiple join worker goroutines.
 func (e *HashJoinExec) prepare() error {
-	e.finished = false
+	e.closeCh = make(chan struct{}, 1)
+	e.finished.Store(false)
 	e.bigTableRows = make([]chan []*Row, e.concurrency)
+	e.wg = sync.WaitGroup{}
 	for i := 0; i < e.concurrency; i++ {
 		e.bigTableRows[i] = make(chan []*Row, e.concurrency*batchSize)
 	}
 	e.bigTableErr = make(chan error, 1)
 
 	// Start a worker to fetch big table rows.
+	e.wg.Add(1)
 	go e.fetchBigExec()
 
 	e.hashTable = make(map[string][]*Row)
@@ -632,7 +641,6 @@ func (e *HashJoinExec) prepare() error {
 	e.resultRows = make(chan *Row, e.concurrency*1000)
 	e.resultErr = make(chan error, 1)
 
-	e.wg = sync.WaitGroup{}
 	for i := 0; i < e.concurrency; i++ {
 		e.wg.Add(1)
 		go e.runJoinWorker(i)
@@ -646,6 +654,7 @@ func (e *HashJoinExec) prepare() error {
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.wg.Wait()
 	close(e.resultRows)
+	close(e.closeCh)
 	e.hashTable = nil
 }
 
@@ -665,7 +674,7 @@ func (e *HashJoinExec) runJoinWorker(idx int) {
 			e.resultErr <- errors.Trace(err)
 			break
 		}
-		if !ok || e.finished {
+		if !ok || e.finished.Load().(bool) {
 			break
 		}
 		for _, bigRow := range bigRows {
@@ -781,7 +790,7 @@ func (e *HashJoinExec) Next() (*Row, error) {
 	case err, ok = <-e.resultErr:
 	}
 	if err != nil {
-		e.finished = true
+		e.finished.Store(true)
 		return nil, errors.Trace(err)
 	}
 	if !ok {
