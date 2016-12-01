@@ -204,32 +204,10 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 	if a.allFirstRow(aggFuncs) {
 		return child
 	}
-	agg := &Aggregation{
-		GroupByItems:    expression.Schema2Exprs(gbyCols),
-		baseLogicalPlan: newBaseLogicalPlan(Agg, a.alloc),
-	}
+	agg := a.makeNewAgg(aggFuncs, gbyCols)
 	child.SetParents(agg)
 	agg.SetChildren(child)
-	agg.initID()
-	agg.correlated = child.IsCorrelated()
-	var newAggFuncs []expression.AggregationFunction
-	schema := make(expression.Schema, 0, len(aggFuncs))
-	for _, aggFunc := range aggFuncs {
-		var newFuncs []expression.AggregationFunction
-		newFuncs, schema = a.decompose(aggFunc, schema, agg.GetID())
-		newAggFuncs = append(newAggFuncs, newFuncs...)
-		for _, arg := range aggFunc.GetArgs() {
-			agg.correlated = agg.correlated || arg.IsCorrelated()
-		}
-	}
-	for _, gbyCol := range gbyCols {
-		firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
-		newAggFuncs = append(newAggFuncs, firstRow)
-		schema = append(schema, gbyCol.Clone().(*expression.Column))
-		agg.correlated = agg.correlated || gbyCol.IsCorrelated()
-	}
-	agg.AggFuncs = newAggFuncs
-	agg.SetSchema(schema)
+	agg.correlated = agg.correlated || child.IsCorrelated()
 	// If agg has no group-by item, it will return a default value, which may cause some bugs.
 	// So here we add a group-by item forcely.
 	if len(agg.GroupByItems) == 0 {
@@ -268,6 +246,54 @@ func (a *aggPushDownSolver) checkAnyCountAndSum(aggFuncs []expression.Aggregatio
 	return false
 }
 
+func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction, gbyCols []*expression.Column) *Aggregation {
+	agg := &Aggregation{
+		GroupByItems:    expression.Schema2Exprs(gbyCols),
+		baseLogicalPlan: newBaseLogicalPlan(Agg, a.alloc),
+		groupByCols:     gbyCols,
+	}
+	agg.initID()
+	var newAggFuncs []expression.AggregationFunction
+	schema := make(expression.Schema, 0, len(aggFuncs))
+	for _, aggFunc := range aggFuncs {
+		var newFuncs []expression.AggregationFunction
+		newFuncs, schema = a.decompose(aggFunc, schema, agg.GetID())
+		newAggFuncs = append(newAggFuncs, newFuncs...)
+		for _, arg := range aggFunc.GetArgs() {
+			agg.correlated = agg.correlated || arg.IsCorrelated()
+		}
+	}
+	for _, gbyCol := range gbyCols {
+		firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
+		newAggFuncs = append(newAggFuncs, firstRow)
+		schema = append(schema, gbyCol.Clone().(*expression.Column))
+	}
+	agg.AggFuncs = newAggFuncs
+	agg.SetSchema(schema)
+	return agg
+}
+
+func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, oldSchema expression.Schema, p LogicalPlan) LogicalPlan {
+	newAgg := (*agg)
+	newAgg.initID()
+	for i, aggFunc := range agg.AggFuncs {
+		newAggFunc := aggFunc.Clone()
+		newArgs := make([]expression.Expression, 0, len(newAggFunc.GetArgs()))
+		for _, arg := range newAggFunc.GetArgs() {
+			newArgs = append(newArgs, expression.ColumnSubstitute(arg, oldSchema, expression.Schema2Exprs(p.GetSchema())))
+		}
+		newAggFunc.SetArgs(newArgs)
+		newAgg.AggFuncs[i] = newAggFunc
+	}
+	for i, gbyExpr := range agg.GroupByItems {
+		agg.GroupByItems[i] = expression.ColumnSubstitute(gbyExpr, agg.groupByCols, expression.Schema2Exprs(p.GetSchema()))
+	}
+	newAgg.collectGroupByColumns()
+	newAgg.SetChildren(p)
+	p.SetParents(&newAgg)
+	return &newAgg
+}
+
 // aggPushDown tries to push down aggregate functions to join paths.
 func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) {
 	if agg, ok := p.(*Aggregation); ok {
@@ -294,6 +320,17 @@ func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) {
 				rChild.SetParents(join)
 				join.SetSchema(append(lChild.GetSchema().Clone(), rChild.GetSchema().Clone()...))
 			}
+		} else if union, ok1 := child.(*Union); ok1 {
+			pushedAgg := a.makeNewAgg(agg.AggFuncs, agg.groupByCols)
+			oldSchema := union.schema
+			union.SetSchema(pushedAgg.schema)
+			newChildren := make([]Plan, 0, len(union.children))
+			for _, child := range union.children {
+				newChild := a.pushAggCrossUnion(pushedAgg, oldSchema, child.(LogicalPlan))
+				newChildren = append(newChildren, newChild)
+				newChild.SetParents(union)
+			}
+			union.SetChildren(newChildren...)
 		}
 	}
 	for _, child := range p.GetChildren() {
