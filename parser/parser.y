@@ -3116,12 +3116,8 @@ CastType:
 		x.Flen = fopt.Flen
 		x.Decimal = fopt.Decimal
 		if fopt.Flen == types.UnspecifiedLength {
-			// TODO: change it back when we supported StatementContext.
-			// x.Flen = mysql.GetDefaultFieldLength(mysql.TypeNewDecimal)
-			// x.Decimal = mysql.GetDefaultDecimal(mysql.TypeNewDecimal)
-			// Set it to max decimal value to prevent truncate error.
-			x.Flen = 65
-			x.Decimal = 30
+			x.Flen = mysql.GetDefaultFieldLength(mysql.TypeNewDecimal)
+			x.Decimal = mysql.GetDefaultDecimal(mysql.TypeNewDecimal)
 		}
 		$$ = x
 	}
