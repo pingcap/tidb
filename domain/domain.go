@@ -43,6 +43,7 @@ type Domain struct {
 	lastLeaseTS    int64 // nano seconds
 	m              sync.Mutex
 	SchemaValidity *schemaValidityInfo
+	exit           chan struct{}
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -218,26 +219,6 @@ func (do *Domain) Store() kv.Storage {
 	return do.store
 }
 
-// SetLease will reset the lease time for online DDL change.
-func (do *Domain) SetLease(lease time.Duration) {
-	if lease <= 0 {
-		log.Warnf("[ddl] set the current lease:%v into a new lease:%v failed, so do nothing",
-			do.ddl.GetLease(), lease)
-		return
-	}
-
-	if do.loadCh == nil {
-		log.Errorf("[ddl] set the current lease:%v into a new lease:%v failed, so do nothing",
-			do.ddl.GetLease(), lease)
-		return
-	}
-
-	do.checkCh <- lease
-	do.loadCh <- lease
-	// let ddl to reset lease too.
-	do.ddl.SetLease(lease)
-}
-
 // Stats returns the domain statistic.
 func (do *Domain) Stats() (map[string]interface{}, error) {
 	m := make(map[string]interface{})
@@ -395,6 +376,12 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	}
 }
 
+// Close closes the Domain and release its resource.
+func (do *Domain) Close() {
+	do.ddl.Stop()
+	close(do.exit)
+}
+
 type ddlCallback struct {
 	ddl.BaseCallback
 	do *Domain
@@ -505,8 +492,11 @@ func (s *schemaValidityInfo) Check(txnTS uint64, schemaVer int64) (int64, error)
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
-	d = &Domain{store: store,
-		SchemaValidity: &schemaValidityInfo{}}
+	d = &Domain{
+		store:          store,
+		SchemaValidity: &schemaValidityInfo{},
+		exit:           make(chan struct{}),
+	}
 
 	d.infoHandle, err = infoschema.NewHandle(d.store)
 	if err != nil {

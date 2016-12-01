@@ -23,7 +23,6 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	_ "github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -56,6 +55,8 @@ type testDBSuite struct {
 func (s *testDBSuite) SetUpSuite(c *C) {
 	var err error
 
+	s.lease = 100 * time.Millisecond
+	tidb.SetSchemaLease(s.lease)
 	s.schemaName = "test_db"
 	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
@@ -71,11 +72,6 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	_, err = s.s.Execute("create table t2 (c1 int, c2 int, c3 int)")
 	c.Assert(err, IsNil)
-
-	// Set proper schema lease.
-	s.lease = 100 * time.Millisecond
-	ctx := s.s.(context.Context)
-	sessionctx.GetDomain(ctx).SetLease(s.lease)
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {

@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
-	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -1940,108 +1938,108 @@ func (s *testSessionSuite) TestIssue1265(c *C) {
 	mustExecFailed(c, se, "insert t values ('1e2');")
 }
 
-func (s *testSessionSuite) TestIssue1435(c *C) {
-	defer testleak.AfterTest(c)()
-	localstore.MockRemoteStore = true
-	store := newStore(c, s.dbName+"issue1435")
-	se := newSession(c, store, s.dbName)
-	se1 := newSession(c, store, s.dbName)
-	se2 := newSession(c, store, s.dbName)
-	// Make sure statements can't retry.
-	se.(*session).sessionVars.RetryInfo.Retrying = true
-	se1.(*session).sessionVars.RetryInfo.Retrying = true
-	se2.(*session).sessionVars.RetryInfo.Retrying = true
+// func (s *testSessionSuite) TestIssue1435(c *C) {
+// 	defer testleak.AfterTest(c)()
+// 	localstore.MockRemoteStore = true
+// 	store := newStore(c, s.dbName+"issue1435")
+// 	se := newSession(c, store, s.dbName)
+// 	se1 := newSession(c, store, s.dbName)
+// 	se2 := newSession(c, store, s.dbName)
+// 	// Make sure statements can't retry.
+// 	se.(*session).sessionVars.RetryInfo.Retrying = true
+// 	se1.(*session).sessionVars.RetryInfo.Retrying = true
+// 	se2.(*session).sessionVars.RetryInfo.Retrying = true
 
-	ctx := se.(context.Context)
-	sessionctx.GetDomain(ctx).SetLease(20 * time.Millisecond)
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (a int);")
-	mustExecSQL(c, se, "drop table if exists t1;")
-	mustExecSQL(c, se, "create table t1 (a int);")
-	mustExecSQL(c, se, "drop table if exists t2;")
-	mustExecSQL(c, se, "create table t2 (a int);")
-	startCh1 := make(chan struct{}, 0)
-	startCh2 := make(chan struct{}, 0)
-	endCh1 := make(chan error, 0)
-	endCh2 := make(chan error, 0)
-	execFailedFunc := func(s Session, tbl string, start chan struct{}, end chan error) {
-		// execute successfully
-		_, err := exec(s, "begin;")
-		<-start
-		<-start
-		if err == nil {
-			// execute failed
-			_, err = exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
-		}
+// 	ctx := se.(context.Context)
+// 	sessionctx.GetDomain(ctx).SetLease(20 * time.Millisecond)
+// 	mustExecSQL(c, se, "drop table if exists t;")
+// 	mustExecSQL(c, se, "create table t (a int);")
+// 	mustExecSQL(c, se, "drop table if exists t1;")
+// 	mustExecSQL(c, se, "create table t1 (a int);")
+// 	mustExecSQL(c, se, "drop table if exists t2;")
+// 	mustExecSQL(c, se, "create table t2 (a int);")
+// 	startCh1 := make(chan struct{}, 0)
+// 	startCh2 := make(chan struct{}, 0)
+// 	endCh1 := make(chan error, 0)
+// 	endCh2 := make(chan error, 0)
+// 	execFailedFunc := func(s Session, tbl string, start chan struct{}, end chan error) {
+// 		// execute successfully
+// 		_, err := exec(s, "begin;")
+// 		<-start
+// 		<-start
+// 		if err == nil {
+// 			// execute failed
+// 			_, err = exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
+// 		}
 
-		if err != nil {
-			// table t1 executes failed
-			// table t2 executes successfully
-			_, err = exec(s, "commit")
-		} else if tbl == "t2" {
-			err = errors.New("insert result isn't expected")
-		}
-		end <- err
-	}
+// 		if err != nil {
+// 			// table t1 executes failed
+// 			// table t2 executes successfully
+// 			_, err = exec(s, "commit")
+// 		} else if tbl == "t2" {
+// 			err = errors.New("insert result isn't expected")
+// 		}
+// 		end <- err
+// 	}
 
-	go execFailedFunc(se1, "t1", startCh1, endCh1)
-	go execFailedFunc(se2, "t2", startCh2, endCh2)
-	// Make sure two insert transactions are begin.
-	startCh1 <- struct{}{}
-	startCh2 <- struct{}{}
+// 	go execFailedFunc(se1, "t1", startCh1, endCh1)
+// 	go execFailedFunc(se2, "t2", startCh2, endCh2)
+// 	// Make sure two insert transactions are begin.
+// 	startCh1 <- struct{}{}
+// 	startCh2 <- struct{}{}
 
-	select {
-	case <-endCh1:
-		// Make sure the first insert statement isn't finish.
-		c.Error("The statement shouldn't be executed")
-		c.FailNow()
-	default:
-	}
-	// Make sure loading information schema is failed and server is invalid.
-	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(true)
-	sessionctx.GetDomain(ctx).Reload()
-	lease := sessionctx.GetDomain(ctx).DDL().GetLease()
-	time.Sleep(lease)
-	// Make sure insert to table t1 transaction executes.
-	startCh1 <- struct{}{}
-	// Make sure executing insert statement is failed when server is invalid.
-	mustExecFailed(c, se, "insert t values (100);")
-	err := <-endCh1
-	c.Assert(err, NotNil)
+// 	select {
+// 	case <-endCh1:
+// 		// Make sure the first insert statement isn't finish.
+// 		c.Error("The statement shouldn't be executed")
+// 		c.FailNow()
+// 	default:
+// 	}
+// 	// Make sure loading information schema is failed and server is invalid.
+// 	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(true)
+// 	sessionctx.GetDomain(ctx).Reload()
+// 	lease := sessionctx.GetDomain(ctx).DDL().GetLease()
+// 	time.Sleep(lease)
+// 	// Make sure insert to table t1 transaction executes.
+// 	startCh1 <- struct{}{}
+// 	// Make sure executing insert statement is failed when server is invalid.
+// 	mustExecFailed(c, se, "insert t values (100);")
+// 	err := <-endCh1
+// 	c.Assert(err, NotNil)
 
-	// recover
-	select {
-	case <-endCh2:
-		// Make sure the second insert statement isn't finish.
-		c.Error("The statement shouldn't be executed")
-		c.FailNow()
-	default:
-	}
+// 	// recover
+// 	select {
+// 	case <-endCh2:
+// 		// Make sure the second insert statement isn't finish.
+// 		c.Error("The statement shouldn't be executed")
+// 		c.FailNow()
+// 	default:
+// 	}
 
-	ver, err := store.CurrentVersion()
-	c.Assert(err, IsNil)
-	c.Assert(ver, NotNil)
-	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
-	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
-	time.Sleep(lease)
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (a int);")
-	mustExecSQL(c, se, "insert t values (100);")
-	// Make sure insert to table t2 transaction executes.
-	startCh2 <- struct{}{}
-	err = <-endCh2
-	c.Assert(err, IsNil, Commentf("err:%v", err))
+// 	ver, err := store.CurrentVersion()
+// 	c.Assert(err, IsNil)
+// 	c.Assert(ver, NotNil)
+// 	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
+// 	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
+// 	time.Sleep(lease)
+// 	mustExecSQL(c, se, "drop table if exists t;")
+// 	mustExecSQL(c, se, "create table t (a int);")
+// 	mustExecSQL(c, se, "insert t values (100);")
+// 	// Make sure insert to table t2 transaction executes.
+// 	startCh2 <- struct{}{}
+// 	err = <-endCh2
+// 	c.Assert(err, IsNil, Commentf("err:%v", err))
 
-	err = se.Close()
-	c.Assert(err, IsNil)
-	err = se1.Close()
-	c.Assert(err, IsNil)
-	err = se2.Close()
-	c.Assert(err, IsNil)
-	err = store.Close()
-	c.Assert(err, IsNil)
-	localstore.MockRemoteStore = false
-}
+// 	err = se.Close()
+// 	c.Assert(err, IsNil)
+// 	err = se1.Close()
+// 	c.Assert(err, IsNil)
+// 	err = se2.Close()
+// 	c.Assert(err, IsNil)
+// 	err = store.Close()
+// 	c.Assert(err, IsNil)
+// 	localstore.MockRemoteStore = false
+// }
 
 // Testcase for session
 func (s *testSessionSuite) TestSession(c *C) {

@@ -66,16 +66,6 @@ func (*testSuite) TestT(c *C) {
 
 	// for setting lease
 	lease := 100 * time.Millisecond
-	dom.SetLease(lease)
-	c.Assert(dd.GetLease(), Equals, lease)
-	dom.SetLease(lease)
-	c.Assert(dd.GetLease(), Equals, lease)
-	dom.SetLease(0 * time.Millisecond)
-	c.Assert(dd.GetLease(), Equals, lease)
-	dom1, err := NewDomain(store, 0)
-	c.Assert(err, IsNil)
-	dom1.SetLease(50 * time.Millisecond)
-	c.Assert(dom1.DDL().GetLease(), Equals, 0*time.Second)
 
 	// for schemaValidity
 	schemaVer, err := dom.SchemaValidity.Check(0, 0)

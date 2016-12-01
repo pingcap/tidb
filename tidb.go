@@ -76,6 +76,12 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	return
 }
 
+func (dm *domainMap) Delete(store kv.Storage) {
+	dm.mu.Lock()
+	delete(dm.domains, store.UUID())
+	dm.mu.Unlock()
+}
+
 var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
