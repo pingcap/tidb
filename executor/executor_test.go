@@ -982,6 +982,8 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1991-09-05 11:11:11"))
 	result = tk.MustQuery("select cast('11:11:11' as time)")
 	result.Check(testkit.Rows("11:11:11"))
+	result = tk.MustQuery("select * from t where a > cast(2 as decimal)")
+	result.Check(testkit.Rows("3 2"))
 
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")

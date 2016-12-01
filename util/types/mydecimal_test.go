@@ -393,6 +393,21 @@ func (s *testMyDecimalSuite) TestToBinFromBin(c *C) {
 		str := dec2.ToString()
 		c.Assert(string(str), Equals, ca.output)
 	}
+	var dec MyDecimal
+	dec.FromInt(1)
+	errCases := []struct {
+		prec int
+		frac int
+	}{
+		{82, 1},
+		{-1, 1},
+		{10, 31},
+		{10, -1},
+	}
+	for _, ca := range errCases {
+		_, err := dec.ToBin(ca.prec, ca.frac)
+		c.Assert(ErrBadNumber.Equal(err), IsTrue)
+	}
 }
 
 func (s *testMyDecimalSuite) TestCompare(c *C) {
