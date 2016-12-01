@@ -16,8 +16,6 @@ package domain
 import (
 	"sync"
 	"time"
-
-	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 // SchemaValidityInfo is the interface for checking the validity of schema version.
@@ -94,6 +92,6 @@ func (s *schemaValidityInfo1) Latest() int64 {
 }
 
 func extractPhysicalTime(ts uint64) time.Time {
-	t := oracle.ExtractPhysical(ts)
+	t := int64(ts >> 18) // 18 for physicalShiftBits
 	return time.Unix(t/1e3, (t%1e3)*1e6)
 }
