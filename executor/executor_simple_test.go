@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -124,6 +125,18 @@ func (s *testSuite) TestUser(c *C) {
 	c.Check(err, NotNil)
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test3" and Host="localhost"`)
 	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("333")))
+	result.Check(testkit.Rows(rowStr))
+	// Test alter user user().
+	alterUserSQL = `ALTER USER USER() IDENTIFIED BY '1';`
+	_, err = tk.Exec(alterUserSQL)
+	c.Check(err, NotNil)
+	tk.Se, err = tidb.CreateSession(s.store)
+	c.Check(err, IsNil)
+	ctx := tk.Se.(context.Context)
+	ctx.GetSessionVars().User = "test1@localhost"
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("1")))
 	result.Check(testkit.Rows(rowStr))
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(dropUserSQL)

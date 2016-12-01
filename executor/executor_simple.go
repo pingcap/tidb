@@ -187,6 +187,18 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 }
 
 func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
+	if s.CurrentAuth != nil {
+		user := e.ctx.GetSessionVars().User
+		if len(user) == 0 {
+			return errors.New("Session user is empty")
+		}
+		spec := &ast.UserSpec{
+			User:    user,
+			AuthOpt: s.CurrentAuth,
+		}
+		s.Specs = []*ast.UserSpec{spec}
+	}
+
 	failedUsers := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
 		userName, host := parseUser(spec.User)
@@ -196,7 +208,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		}
 		if !exists {
 			failedUsers = append(failedUsers, spec.User)
-			if !s.IfExists {
+			if s.IfExists {
 				// TODO: Make this error as a warning.
 			}
 			continue
@@ -216,6 +228,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 			failedUsers = append(failedUsers, spec.User)
 		}
 	}
+
 	err := e.ctx.CommitTxn()
 	if err != nil {
 		return errors.Trace(err)

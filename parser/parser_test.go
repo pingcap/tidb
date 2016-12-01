@@ -1016,6 +1016,8 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+		{`ALTER USER USER() IDENTIFIED BY 'new-password'`, true},
+		{`ALTER USER IF EXISTS USER() IDENTIFIED BY 'new-password'`, true},
 		{`DROP USER 'root'@'localhost', 'root1'@'localhost'`, true},
 		{`DROP USER IF EXISTS 'root'@'localhost'`, true},
 

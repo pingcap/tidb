@@ -396,8 +396,9 @@ func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
 type AlterUserStmt struct {
 	stmtNode
 
-	IfExists bool
-	Specs    []*UserSpec
+	IfExists    bool
+	CurrentAuth *AuthOption
+	Specs       []*UserSpec
 }
 
 // Accept implements Node Accept interface.
