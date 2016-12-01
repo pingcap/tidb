@@ -664,7 +664,7 @@ func (d *Datum) ConvertTo(sc *variable.StatementContext, target *FieldType) (Dat
 	case mysql.TypeBit:
 		return d.convertToMysqlBit(target)
 	case mysql.TypeDecimal, mysql.TypeNewDecimal:
-		return d.convertToMysqlDecimal(target)
+		return d.convertToMysqlDecimal(sc, target)
 	case mysql.TypeYear:
 		return d.convertToMysqlYear(target)
 	case mysql.TypeEnum:
@@ -943,7 +943,7 @@ func (d *Datum) convertToMysqlDuration(target *FieldType) (Datum, error) {
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlDecimal(target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	var ret Datum
 	ret.SetLength(target.Flen)
 	ret.SetFrac(target.Decimal)
@@ -983,7 +983,9 @@ func (d *Datum) convertToMysqlDecimal(target *FieldType) (Datum, error) {
 		} else if frac != target.Decimal {
 			dec.Round(dec, target.Decimal)
 			if frac > target.Decimal {
-				err = errors.Trace(ErrTruncated)
+				if sc.TruncateAsError {
+					err = errors.Trace(ErrTruncated)
+				}
 			}
 		}
 	}

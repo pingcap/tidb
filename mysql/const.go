@@ -18,7 +18,7 @@ const (
 	MinProtocolVersion byte = 10
 	MaxPayloadLen      int  = 1<<24 - 1
 	// The version number should be three digits.
-	// See: https://dev.mysql.com/doc/refman/5.7/en/which-version.html
+	// See https://dev.mysql.com/doc/refman/5.7/en/which-version.html
 	ServerVersion string = "5.7.1-TiDB-1.0"
 )
 
