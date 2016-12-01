@@ -405,7 +405,7 @@ func (s *testMyDecimalSuite) TestToBinFromBin(c *C) {
 		{10, -1},
 	}
 	for _, ca := range errCases {
-		_, err := dec.ToBin(ca.prec, ca.prec)
+		_, err := dec.ToBin(ca.prec, ca.frac)
 		c.Assert(ErrBadNumber.Equal(err), IsTrue)
 	}
 }
