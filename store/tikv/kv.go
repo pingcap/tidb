@@ -56,6 +56,9 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 
 	pdCli, err := pd.NewClient(etcdAddrs)
 	if err != nil {
+		if strings.Contains(err.Error(), "i/o timeout") {
+			return nil, errors.Annotate(err, txnRetryableMark)
+		}
 		return nil, errors.Trace(err)
 	}
 
