@@ -376,7 +376,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg",
 		},
 		{
-			sql: "select sum(b.a) from t a , t b where a.c = b.c group by b.d",
+			sql:  "select sum(b.a) from t a , t b where a.c = b.c group by b.d",
 			best: "LeftHashJoin{Table(t)->Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg}(a.c,b.c)->HashAgg",
 		},
 		{
@@ -481,7 +481,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		solver := aggPushDownSolver{
-			ctx: builder.ctx,
+			ctx:   builder.ctx,
 			alloc: builder.allocator,
 		}
 		solver.aggPushDown(lp)
