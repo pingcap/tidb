@@ -143,7 +143,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	}
 	ts.tp = "TableScan"
 	ts.allocator = p.allocator
-	ts.initID()
+	ts.initIDAndContext(p.ctx)
 	if txn != nil {
 		ts.readOnly = txn.IsReadOnly()
 	} else {
@@ -222,7 +222,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 	}
 	is.tp = "IndexScan"
 	is.allocator = p.allocator
-	is.initID()
+	is.initIDAndContext(p.ctx)
 	if txn != nil {
 		is.readOnly = txn.IsReadOnly()
 	} else {
@@ -244,7 +244,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 				is.ConditionPBExpr, is.conditions, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
 			}
 		}
-		err := buildIndexRange(is)
+		err := buildIndexRange(p.ctx.GetSessionVars().StmtCtx, is)
 		if err != nil {
 			if !terror.ErrorEqual(err, types.ErrTruncated) {
 				return nil, errors.Trace(err)
@@ -261,7 +261,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			resultPlan = &newSel
 		}
 	} else {
-		rb := rangeBuilder{}
+		rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
 		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
@@ -285,6 +285,13 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 		}
 	}
 	return true
+}
+
+func (p *DataSource) need2ConsiderIndex(prop *requiredProperty) bool {
+	if _, ok := p.parents[0].(*Selection); ok || len(prop.props) > 0 {
+		return true
+	}
+	return false
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
@@ -311,13 +318,15 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 			return nil, errors.Trace(err)
 		}
 	}
-	for _, index := range indices {
-		indexInfo, err := p.convert2IndexScan(prop, index)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if info == nil || indexInfo.cost < info.cost {
-			info = indexInfo
+	if !includeTableScan || p.need2ConsiderIndex(prop) {
+		for _, index := range indices {
+			indexInfo, err := p.convert2IndexScan(prop, index)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if info == nil || indexInfo.cost < info.cost {
+				info = indexInfo
+			}
 		}
 	}
 	return info, errors.Trace(p.storePlanInfo(prop, info))
@@ -338,7 +347,7 @@ func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPl
 					dummy := &PhysicalDummyScan{}
 					dummy.tp = "Dummy"
 					dummy.allocator = p.allocator
-					dummy.initID()
+					dummy.initIDAndContext(p.ctx)
 					dummy.SetSchema(p.schema)
 					info := &physicalPlanInfo{p: dummy}
 					p.storePlanInfo(prop, info)
@@ -463,9 +472,10 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 		OtherConditions: p.OtherConditions,
 		Anti:            p.anti,
 	}
+	join.ctx = p.ctx
 	join.tp = "HashSemiJoin"
 	join.allocator = p.allocator
-	join.initID()
+	join.initIDAndContext(p.ctx)
 	join.correlated = p.IsCorrelated()
 	join.SetSchema(p.schema)
 	lProp := prop
@@ -525,7 +535,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	}
 	join.tp = "HashLeftJoin"
 	join.allocator = p.allocator
-	join.initID()
+	join.initIDAndContext(lChild.context())
 	join.SetSchema(p.schema)
 	join.correlated = p.IsCorrelated()
 	if innerJoin {
@@ -604,7 +614,7 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	}
 	join.tp = "HashRightJoin"
 	join.allocator = p.allocator
-	join.initID()
+	join.initIDAndContext(p.ctx)
 	join.correlated = p.IsCorrelated()
 	join.SetSchema(p.schema)
 	if innerJoin {
@@ -704,7 +714,7 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 	}
 	agg.tp = "StreamAgg"
 	agg.allocator = p.allocator
-	agg.initID()
+	agg.initIDAndContext(p.ctx)
 	agg.correlated = p.IsCorrelated()
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
@@ -753,7 +763,7 @@ func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, child
 	}
 	agg.tp = "HashAgg"
 	agg.allocator = p.allocator
-	agg.initID()
+	agg.initIDAndContext(p.ctx)
 	agg.correlated = p.IsCorrelated()
 	agg.SetSchema(p.schema)
 	agg.HasGby = len(p.GroupByItems) > 0
@@ -778,7 +788,7 @@ func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanIn
 	}
 	agg.tp = "HashAgg"
 	agg.allocator = p.allocator
-	agg.initID()
+	agg.initIDAndContext(p.ctx)
 	agg.correlated = p.IsCorrelated()
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
@@ -884,13 +894,15 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Secondly, we push nothing and enforce this property.
-	infoEnforce, err := p.convert2PhysicalPlanEnforce(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if infoEnforce.cost < info.cost {
-		info = infoEnforce
+	if len(prop.props) > 0 {
+		// Secondly, we push nothing and enforce this property.
+		infoEnforce, err := p.convert2PhysicalPlanEnforce(prop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if infoEnforce.cost < info.cost {
+			info = infoEnforce
+		}
 	}
 	if _, ok := p.GetChildByIndex(0).(*DataSource); !ok {
 		info = p.matchProperty(prop, info)
@@ -1110,7 +1122,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	}
 	np.tp = "PhysicalApply"
 	np.allocator = p.allocator
-	np.initID()
+	np.initIDAndContext(p.ctx)
 	np.correlated = p.IsCorrelated()
 	np.SetSchema(p.GetSchema())
 	limit := prop.limit

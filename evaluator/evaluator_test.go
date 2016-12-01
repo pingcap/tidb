@@ -308,8 +308,8 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{uint64(1), opcode.Mul, uint64(1), 1},
 		{types.Time{}, opcode.Mul, 0, 0},
 		{types.ZeroDuration, opcode.Mul, 0, 0},
-		{types.Time{Time: time.Now(), Fsp: 0, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},
-		{types.Time{Time: time.Now(), Fsp: 6, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},
+		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},
+		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},
 		{types.Duration{Duration: 100000000, Fsp: 6}, opcode.Mul, 0, 0},
 
 		// div
@@ -877,11 +877,17 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{types.NewDecFromInt(1), opcode.Plus, types.NewDecFromInt(1)},
 		{types.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: types.DefaultFsp}, opcode.Plus,
 			types.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: types.DefaultFsp}},
-		{types.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}, opcode.Plus, types.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}},
-
+		{types.Time{
+			Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)),
+			Type: mysql.TypeDatetime,
+			Fsp:  0},
+			opcode.Plus,
+			types.Time{
+				Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)),
+				Type: mysql.TypeDatetime, Fsp: 0}},
 		{types.NewDecFromInt(1), opcode.Minus, types.NewDecFromInt(-1)},
 		{types.ZeroDuration, opcode.Minus, new(types.MyDecimal)},
-		{types.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}, opcode.Minus, types.NewDecFromInt(-20091110230000)},
+		{types.Time{Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)), Type: mysql.TypeDatetime, Fsp: 0}, opcode.Minus, types.NewDecFromInt(-20091110230000)},
 	}
 
 	for _, t := range tbl {

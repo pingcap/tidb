@@ -39,7 +39,12 @@ type Scanner struct {
 	stmtStartPos int
 
 	// for scanning such kind of comment: /*! MySQL-specific code */
-	specialComment *Scanner
+	specialComment *specialCommentScanner
+}
+
+type specialCommentScanner struct {
+	*Scanner
+	Pos
 }
 
 // Errors returns the errors during a scan.
@@ -139,8 +144,9 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		tok, pos, lit = specialComment.scan()
 		if tok != 0 {
 			// return the specialComment scan result as the result
-			pos.Line += s.r.p.Line
-			pos.Offset += s.r.p.Col
+			pos.Line += s.specialComment.Line
+			pos.Col += s.specialComment.Col
+			pos.Offset += s.specialComment.Offset
 			return
 		}
 		// leave specialComment scan mode after all stream consumed.
@@ -262,13 +268,38 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		comment := s.r.data(&pos)
 		if strings.HasPrefix(comment, "/*!") {
 			sql := specCodePattern.ReplaceAllStringFunc(comment, trimComment)
-			s.specialComment = NewScanner(sql)
+			s.specialComment = &specialCommentScanner{
+				Scanner: NewScanner(sql),
+				Pos: Pos{
+					pos.Line,
+					pos.Col,
+					pos.Offset + sqlOffsetInComment(comment),
+				},
+			}
 		}
 
 		return s.scan()
 	}
 	tok = int('/')
 	return
+}
+
+func sqlOffsetInComment(comment string) int {
+	// find the first SQL token offset in pattern like "/*!40101 mysql specific code */"
+	offset := 0
+	for i := 0; i < len(comment); i++ {
+		if unicode.IsSpace(rune(comment[i])) {
+			offset = i
+			break
+		}
+	}
+	for offset < len(comment) {
+		offset++
+		if !unicode.IsSpace(rune(comment[offset])) {
+			break
+		}
+	}
+	return offset
 }
 
 func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {

@@ -29,7 +29,8 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	cluster := mocktikv.NewCluster()
 	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
+	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	cache := NewRegionCache(pdCli)
 
 	bo := NewBackoffer(3000, context.Background())
 
@@ -90,7 +91,8 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	// <-  0  -> <- 1 ->
 	cluster := mocktikv.NewCluster()
 	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
-	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
+	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	cache := NewRegionCache(pdCli)
 	bo := NewBackoffer(3000, context.Background())
 
 	tasks, err := buildCopTasks(bo, cache, s.buildKeyRanges("a", "z"), false)

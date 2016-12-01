@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -99,6 +100,8 @@ type Plan interface {
 	SetParents(...Plan)
 	// SetParents sets the children for the plan.
 	SetChildren(...Plan)
+
+	context() context.Context
 }
 
 type columnProp struct {
@@ -277,8 +280,9 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 	p.SetSchema(child.GetSchema())
 }
 
-func (p *basePlan) initID() {
+func (p *basePlan) initIDAndContext(ctx context.Context) {
 	p.id = p.tp + p.allocator.allocID()
+	p.ctx = ctx
 }
 
 // basePlan implements base Plan interface.
@@ -293,6 +297,7 @@ type basePlan struct {
 	tp        string
 	id        string
 	allocator *idAllocator
+	ctx       context.Context
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -397,4 +402,8 @@ func (p *basePlan) SetParents(pars ...Plan) {
 // RemoveAllParents implements Plan RemoveAllParents interface.
 func (p *basePlan) SetChildren(children ...Plan) {
 	p.children = children
+}
+
+func (p *basePlan) context() context.Context {
+	return p.ctx
 }

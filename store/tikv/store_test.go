@@ -42,7 +42,8 @@ func (s *testStoreSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	mvccStore := mocktikv.NewMvccStore()
 	clientFactory := mocktikv.NewRPCClient(s.cluster, mvccStore)
-	store, err := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(s.cluster), clientFactory, false)
+	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	store, err := newTikvStore("mock-tikv-store", pdCli, clientFactory, false)
 	c.Assert(err, IsNil)
 	s.store = store
 }
