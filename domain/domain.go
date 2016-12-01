@@ -39,7 +39,6 @@ type Domain struct {
 	infoHandle     *infoschema.Handle
 	ddl            ddl.DDL
 	checkCh        chan time.Duration
-	loadCh         chan time.Duration
 	lastLeaseTS    int64 // nano seconds
 	m              sync.Mutex
 	SchemaValidity *schemaValidityInfo
@@ -328,15 +327,8 @@ func (do *Domain) checkValidityInLoop(lease time.Duration) {
 			log.Debugf("[ddl] check validity in a loop, sub:%v, lease:%v, succ:%v, waitTime:%v",
 				sub, lease, lastSuccTS, waitTime)
 			timer.Reset(waitTime)
-		case newLease := <-do.checkCh:
-			if newLease == lease {
-				// Nothing to do.
-				continue
-			}
-
-			lease = newLease
-			log.Infof("[ddl] check loop, lease:%v, new:%v", lease, newLease)
-			timer.Reset(0)
+		case <-do.exit:
+			return
 		}
 	}
 }
@@ -353,7 +345,7 @@ func minInterval(lease time.Duration) time.Duration {
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	ticker := time.NewTicker(minInterval(lease))
-	defer func() { ticker.Stop() }()
+	defer ticker.Stop()
 
 	for {
 		select {
@@ -362,16 +354,8 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
-		case newLease := <-do.loadCh:
-			if newLease == lease {
-				// Nothing to do.
-				continue
-			}
-
-			lease = newLease
-			log.Infof("[ddl] load loop, lease:%v, new:%v", lease, newLease)
-			ticker.Stop()
-			ticker = time.NewTicker(minInterval(lease))
+		case <-do.exit:
+			return
 		}
 	}
 }
@@ -514,7 +498,6 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	// If the store is local, it doesn't need loadSchemaInLoop and checkValidityInLoop.
 	if lease > 0 {
 		d.checkCh = make(chan time.Duration, 1)
-		d.loadCh = make(chan time.Duration, 1)
 		go d.checkValidityInLoop(lease)
 	}
 	// Local store needs to get the change information for every DDL state in each session.
