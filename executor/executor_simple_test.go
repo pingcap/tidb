@@ -72,7 +72,7 @@ func inTxn(ctx context.Context) bool {
 	return (ctx.GetSessionVars().Status & mysql.ServerStatusInTrans) > 0
 }
 
-func (s *testSuite) TestCreateUser(c *C) {
+func (s *testSuite) TestUser(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.
@@ -103,6 +103,29 @@ func (s *testSuite) TestCreateUser(c *C) {
 	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("")))
 	result.Check(testkit.Rows(rowStr))
 	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost' ;`
+	tk.MustExec(dropUserSQL)
+
+	// Test alter user.
+	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123';`
+	tk.MustExec(createUserSQL)
+	alterUserSQL := `ALTER USER 'test1'@'localhost' IDENTIFIED BY '111';`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("111")))
+	result.Check(testkit.Rows(rowStr))
+	alterUserSQL = `ALTER USER IF EXISTS 'test2'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '1';`
+	_, err = tk.Exec(alterUserSQL)
+	c.Check(err, NotNil)
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test2" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("222")))
+	result.Check(testkit.Rows(rowStr))
+	alterUserSQL = `ALTER USER IF EXISTS'test_not_exist'@'localhost' IDENTIFIED BY '1', 'test3'@'localhost' IDENTIFIED BY '333';`
+	_, err = tk.Exec(alterUserSQL)
+	c.Check(err, NotNil)
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test3" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("333")))
+	result.Check(testkit.Rows(rowStr))
+	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(dropUserSQL)
 
 	// Test drop user if exists.
