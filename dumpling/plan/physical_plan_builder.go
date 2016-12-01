@@ -767,6 +767,9 @@ func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, child
 	agg.correlated = p.IsCorrelated()
 	agg.SetSchema(p.schema)
 	agg.HasGby = len(p.GroupByItems) > 0
+	if childInfo.p != nil {
+		agg.correlated = agg.correlated || childInfo.p.IsCorrelated()
+	}
 	schema := x.addAggregation(agg)
 	if len(schema) == 0 {
 		return nil
@@ -792,6 +795,9 @@ func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanIn
 	agg.correlated = p.IsCorrelated()
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
+	if childInfo.p != nil {
+		agg.correlated = agg.correlated || childInfo.p.IsCorrelated()
+	}
 	info := addPlanToResponse(agg, childInfo)
 	info.cost += float64(info.count) * memoryFactor
 	info.count = uint64(float64(info.count) * aggFactor)
