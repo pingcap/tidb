@@ -376,6 +376,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg",
 		},
 		{
+			sql:  "select sum(b.a) from t a , t b where a.c = b.c group by b.d",
+			best: "LeftHashJoin{Table(t)->Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg}(a.c,b.c)->HashAgg",
+		},
+		{
 			sql:  "select count(*) from t group by e order by d limit 1",
 			best: "Table(t)->HashAgg->Sort + Limit(1) + Offset(0)->Trim",
 		},
@@ -476,6 +480,11 @@ func (s *testPlanSuite) TestCBO(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
+		solver := aggPushDownSolver{
+			ctx:   builder.ctx,
+			alloc: builder.allocator,
+		}
+		solver.aggPushDown(lp)
 		lp.PruneColumns(lp.GetSchema())
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
