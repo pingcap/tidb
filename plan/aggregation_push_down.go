@@ -207,6 +207,7 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 	agg := &Aggregation{
 		GroupByItems:    expression.Schema2Exprs(gbyCols),
 		baseLogicalPlan: newBaseLogicalPlan(Agg, a.alloc),
+		groupByCols:     gbyCols,
 	}
 	child.SetParents(agg)
 	agg.SetChildren(child)
