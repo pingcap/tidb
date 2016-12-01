@@ -274,24 +274,31 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 }
 
 func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, oldSchema expression.Schema, p LogicalPlan) LogicalPlan {
-	newAgg := (*agg)
+	newAgg := &Aggregation{
+		AggFuncs:        make([]expression.AggregationFunction, 0, len(agg.AggFuncs)),
+		GroupByItems:    make([]expression.Expression, 0, len(agg.GroupByItems)),
+		baseLogicalPlan: newBaseLogicalPlan(Agg, a.alloc),
+	}
+	newAgg.SetSchema(agg.schema.Clone())
+	newAgg.correlated = agg.correlated
 	newAgg.initIDAndContext(a.ctx)
-	for i, aggFunc := range agg.AggFuncs {
+	for _, aggFunc := range agg.AggFuncs {
 		newAggFunc := aggFunc.Clone()
 		newArgs := make([]expression.Expression, 0, len(newAggFunc.GetArgs()))
 		for _, arg := range newAggFunc.GetArgs() {
 			newArgs = append(newArgs, expression.ColumnSubstitute(arg, oldSchema, expression.Schema2Exprs(p.GetSchema())))
 		}
 		newAggFunc.SetArgs(newArgs)
-		newAgg.AggFuncs[i] = newAggFunc
+		newAgg.AggFuncs = append(newAgg.AggFuncs, newAggFunc)
 	}
-	for i, gbyExpr := range agg.GroupByItems {
-		agg.GroupByItems[i] = expression.ColumnSubstitute(gbyExpr, agg.groupByCols, expression.Schema2Exprs(p.GetSchema()))
+	for _, gbyExpr := range agg.GroupByItems {
+		newExpr := expression.ColumnSubstitute(gbyExpr, oldSchema, expression.Schema2Exprs(p.GetSchema()))
+		newAgg.GroupByItems = append(newAgg.GroupByItems, newExpr)
 	}
 	newAgg.collectGroupByColumns()
 	newAgg.SetChildren(p)
-	p.SetParents(&newAgg)
-	return &newAgg
+	p.SetParents(newAgg)
+	return newAgg
 }
 
 // aggPushDown tries to push down aggregate functions to join paths.
