@@ -228,7 +228,7 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 func (a *aggPushDownSolver) getDefaultValues(agg *Aggregation) ([]types.Datum, bool) {
 	defaultValues := make([]types.Datum, 0, len(agg.GetSchema()))
 	for _, aggFunc := range agg.AggFuncs {
-		value, existsDefaultValue := aggFunc.CalculateDefaultValue(agg.children[0].GetSchema())
+		value, existsDefaultValue := aggFunc.CalculateDefaultValue(agg.children[0].GetSchema(), a.ctx)
 		if !existsDefaultValue {
 			return nil, false
 		}
@@ -252,7 +252,7 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 		baseLogicalPlan: newBaseLogicalPlan(Agg, a.alloc),
 		groupByCols:     gbyCols,
 	}
-	agg.initID()
+	agg.initIDAndContext(a.ctx)
 	var newAggFuncs []expression.AggregationFunction
 	schema := make(expression.Schema, 0, len(aggFuncs))
 	for _, aggFunc := range aggFuncs {
@@ -275,7 +275,7 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 
 func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, oldSchema expression.Schema, p LogicalPlan) LogicalPlan {
 	newAgg := (*agg)
-	newAgg.initID()
+	newAgg.initIDAndContext(a.ctx)
 	for i, aggFunc := range agg.AggFuncs {
 		newAggFunc := aggFunc.Clone()
 		newArgs := make([]expression.Expression, 0, len(newAggFunc.GetArgs()))

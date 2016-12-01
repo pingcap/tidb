@@ -982,6 +982,8 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1991-09-05 11:11:11"))
 	result = tk.MustQuery("select cast('11:11:11' as time)")
 	result.Check(testkit.Rows("11:11:11"))
+	result = tk.MustQuery("select * from t where a > cast(2 as decimal)")
+	result.Check(testkit.Rows("3 2"))
 
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
@@ -1297,6 +1299,12 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("insert t values(10), (8), (7), (9), (11)")
 	result = tk.MustQuery("select * from t where 9 in (select c from t s where s.c < t.c limit 3)")
 	result.Check(testkit.Rows("10"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, v int)")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
+	result = tk.MustQuery("select * from t where v=(select min(t1.v) from t t1, t t2, t t3 where t1.id=t2.id and t2.id=t3.id and t1.id=t.id)")
+	result.Check(testkit.Rows("1 1", "2 2", "3 3"))
 }
 
 func (s *testSuite) TestNewTableDual(c *C) {
