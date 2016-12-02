@@ -15,6 +15,7 @@ package xeval
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -30,32 +31,32 @@ func (e *Evaluator) evalBitOps(expr *tipb.Expr) (types.Datum, error) {
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
-		a, err := types.CoerceArithmetic(operand)
+		a, err := types.CoerceArithmetic(e.sc, operand)
 		if err != nil {
 			return result, errors.Trace(err)
 		}
-		return types.ComputeBitNeg(a)
+		return types.ComputeBitNeg(e.sc, a)
 	}
 	left, right, err := e.evalTwoChildren(expr)
 	if err != nil {
 		return result, errors.Trace(err)
 	}
-	return ComputeBit(expr.GetTp(), left, right)
+	return ComputeBit(e.sc, expr.GetTp(), left, right)
 }
 
 // ComputeBit computes the bitwise operation on two datums.
-func ComputeBit(op tipb.ExprType, left, right types.Datum) (types.Datum, error) {
+func ComputeBit(sc *variable.StatementContext, op tipb.ExprType, left, right types.Datum) (types.Datum, error) {
 	var result types.Datum
-	a, err := types.CoerceArithmetic(left)
+	a, err := types.CoerceArithmetic(sc, left)
 	if err != nil {
 		return result, errors.Trace(err)
 	}
 
-	b, err := types.CoerceArithmetic(right)
+	b, err := types.CoerceArithmetic(sc, right)
 	if err != nil {
 		return result, errors.Trace(err)
 	}
-	a, b, err = types.CoerceDatum(a, b)
+	a, b, err = types.CoerceDatum(sc, a, b)
 	if err != nil {
 		return result, errors.Trace(err)
 	}
@@ -65,15 +66,15 @@ func ComputeBit(op tipb.ExprType, left, right types.Datum) (types.Datum, error) 
 
 	switch op {
 	case tipb.ExprType_BitAnd:
-		return types.ComputeBitAnd(a, b)
+		return types.ComputeBitAnd(sc, a, b)
 	case tipb.ExprType_BitOr:
-		return types.ComputeBitOr(a, b)
+		return types.ComputeBitOr(sc, a, b)
 	case tipb.ExprType_BitXor:
-		return types.ComputeBitXor(a, b)
+		return types.ComputeBitXor(sc, a, b)
 	case tipb.ExprType_LeftShift:
-		return types.ComputeLeftShift(a, b)
+		return types.ComputeLeftShift(sc, a, b)
 	case tipb.ExprType_RighShift:
-		return types.ComputeRightShift(a, b)
+		return types.ComputeRightShift(sc, a, b)
 	default:
 		return result, errors.Errorf("Unknown binop type: %v", op)
 	}

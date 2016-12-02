@@ -335,7 +335,8 @@ func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, 
 		return errors.Trace(err)
 	}
 	columnSamples := rowsToColumnSamples(sampleRows)
-	t, err := statistics.NewTable(tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	t, err := statistics.NewTable(sc, tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples)
 	if err != nil {
 		return errors.Trace(err)
 	}

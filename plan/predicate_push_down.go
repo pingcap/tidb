@@ -19,7 +19,7 @@ import (
 )
 
 func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) error {
-	conditions = expression.PropagateConstant(conditions)
+	conditions = expression.PropagateConstant(p.context(), conditions)
 	selection := &Selection{
 		Conditions:      conditions,
 		baseLogicalPlan: newBaseLogicalPlan(Sel, allocator)}
@@ -40,7 +40,7 @@ func (p *Selection) PredicatePushDown(predicates []expression.Expression) ([]exp
 		return nil, nil, errors.Trace(err)
 	}
 	if len(retConditions) > 0 {
-		p.Conditions = expression.PropagateConstant(retConditions)
+		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		return nil, p, nil
 	}
 	err = RemovePlan(p)
@@ -93,7 +93,7 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
-		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(expression.PropagateConstant(tempCond), leftPlan, rightPlan)
+		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(expression.PropagateConstant(p.ctx, tempCond), leftPlan, rightPlan)
 	}
 	switch p.JoinType {
 	case LeftOuterJoin, SemiJoinWithAux:
@@ -214,9 +214,10 @@ func isNullRejected(ctx context.Context, schema expression.Schema, expr expressi
 	if !ok {
 		return false, nil
 	}
+	sc := ctx.GetSessionVars().StmtCtx
 	if x.Value.IsNull() {
 		return true, nil
-	} else if isTrue, err := x.Value.ToBool(); err != nil || isTrue == 0 {
+	} else if isTrue, err := x.Value.ToBool(sc); err != nil || isTrue == 0 {
 		return true, errors.Trace(err)
 	}
 	return false, nil

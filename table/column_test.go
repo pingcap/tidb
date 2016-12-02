@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -173,11 +174,12 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 			types.NewDatum(types.Set{}),
 		},
 	}
+	sc := new(variable.StatementContext)
 	for _, ca := range cases {
 		colInfo := &model.ColumnInfo{FieldType: *ca.ft}
 		zv := GetZeroValue(colInfo)
 		c.Assert(zv.Kind(), Equals, ca.value.Kind())
-		cmp, err := zv.CompareDatum(ca.value)
+		cmp, err := zv.CompareDatum(sc, ca.value)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}

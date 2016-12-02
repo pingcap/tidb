@@ -59,7 +59,7 @@ func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 	leftDatum := o.L.GetDatum()
 	rightDatum := o.R.GetDatum()
 	if !leftDatum.IsNull() {
-		x, err := leftDatum.ToBool()
+		x, err := leftDatum.ToBool(e.sc)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return false
@@ -70,7 +70,7 @@ func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 		}
 	}
 	if !rightDatum.IsNull() {
-		y, err := rightDatum.ToBool()
+		y, err := rightDatum.ToBool(e.sc)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return false
@@ -90,7 +90,7 @@ func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 	leftDatum := o.L.GetDatum()
 	if !leftDatum.IsNull() {
-		x, err := leftDatum.ToBool()
+		x, err := leftDatum.ToBool(e.sc)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return false
@@ -102,7 +102,7 @@ func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 	}
 	righDatum := o.R.GetDatum()
 	if !righDatum.IsNull() {
-		y, err := righDatum.ToBool()
+		y, err := righDatum.ToBool(e.sc)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return false
@@ -126,13 +126,13 @@ func (e *Evaluator) handleXor(o *ast.BinaryOperationExpr) bool {
 		o.SetNull()
 		return true
 	}
-	x, err := leftDatum.ToBool()
+	x, err := leftDatum.ToBool(e.sc)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
 	}
 
-	y, err := righDatum.ToBool()
+	y, err := righDatum.ToBool(e.sc)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
@@ -149,7 +149,7 @@ func (e *Evaluator) handleComparisonOp(o *ast.BinaryOperationExpr) bool {
 	var a, b = *o.L.GetDatum(), *o.R.GetDatum()
 	var err error
 	if o.Op != opcode.NullEQ {
-		a, b, err = types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum())
+		a, b, err = types.CoerceDatum(e.sc, *o.L.GetDatum(), *o.R.GetDatum())
 		if err != nil {
 			e.err = errors.Trace(err)
 			return false
@@ -170,7 +170,7 @@ func (e *Evaluator) handleComparisonOp(o *ast.BinaryOperationExpr) bool {
 		return true
 	}
 
-	n, err := a.CompareDatum(b)
+	n, err := a.CompareDatum(e.sc, b)
 
 	if err != nil {
 		e.err = errors.Trace(err)
@@ -212,7 +212,7 @@ func getCompResult(op opcode.Op, value int) (bool, error) {
 }
 
 func (e *Evaluator) handleBitOp(o *ast.BinaryOperationExpr) bool {
-	a, b, err := types.CoerceDatum(*o.L.GetDatum(), *o.R.GetDatum())
+	a, b, err := types.CoerceDatum(e.sc, *o.L.GetDatum(), *o.R.GetDatum())
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
@@ -222,13 +222,13 @@ func (e *Evaluator) handleBitOp(o *ast.BinaryOperationExpr) bool {
 		return true
 	}
 
-	x, err := a.ToInt64()
+	x, err := a.ToInt64(e.sc)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
 	}
 
-	y, err := b.ToInt64()
+	y, err := b.ToInt64(e.sc)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
@@ -254,18 +254,18 @@ func (e *Evaluator) handleBitOp(o *ast.BinaryOperationExpr) bool {
 }
 
 func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
-	a, err := types.CoerceArithmetic(*o.L.GetDatum())
+	a, err := types.CoerceArithmetic(e.sc, *o.L.GetDatum())
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
 	}
-	b, err := types.CoerceArithmetic(*o.R.GetDatum())
+	b, err := types.CoerceArithmetic(e.sc, *o.R.GetDatum())
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
 	}
 
-	a, b, err = types.CoerceDatum(a, b)
+	a, b, err = types.CoerceDatum(e.sc, a, b)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
@@ -284,11 +284,11 @@ func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
 	case opcode.Mul:
 		result, e.err = types.ComputeMul(a, b)
 	case opcode.Div:
-		result, e.err = types.ComputeDiv(a, b)
+		result, e.err = types.ComputeDiv(e.sc, a, b)
 	case opcode.Mod:
-		result, e.err = types.ComputeMod(a, b)
+		result, e.err = types.ComputeMod(e.sc, a, b)
 	case opcode.IntDiv:
-		result, e.err = types.ComputeIntDiv(a, b)
+		result, e.err = types.ComputeIntDiv(e.sc, a, b)
 	default:
 		e.err = ErrInvalidOperation.Gen("invalid op %v in arithmetic operation", o.Op)
 		return false
