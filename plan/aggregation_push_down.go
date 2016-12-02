@@ -327,6 +327,23 @@ func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) {
 				rChild.SetParents(join)
 				join.SetSchema(append(lChild.GetSchema().Clone(), rChild.GetSchema().Clone()...))
 			}
+		} else if proj, ok1 := child.(*Projection); ok1 {
+			// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
+			// so we must do this optimization.
+			for i, gbyItem := range agg.GroupByItems {
+				agg.GroupByItems[i] = expression.ColumnSubstitute(gbyItem, proj.schema, proj.Exprs)
+			}
+			agg.collectGroupByColumns()
+			for _, aggFunc := range agg.AggFuncs {
+				newArgs := make([]expression.Expression, 0, len(aggFunc.GetArgs()))
+				for _, arg := range aggFunc.GetArgs() {
+					newArgs = append(newArgs, expression.ColumnSubstitute(arg, proj.schema, proj.Exprs))
+				}
+				aggFunc.SetArgs(newArgs)
+			}
+			projChild := proj.children[0]
+			agg.SetChildren(projChild)
+			projChild.SetParents(agg)
 		} else if union, ok1 := child.(*Union); ok1 {
 			pushedAgg := a.makeNewAgg(agg.AggFuncs, agg.groupByCols)
 			newChildren := make([]Plan, 0, len(union.children))
