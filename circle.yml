@@ -9,6 +9,8 @@ machine:
     - sudo tar -C /usr/local -xzf download/$GODIST
 
 dependencies:
+  cache_directories:
+    - ~/download
   override:
     - sudo add-apt-repository ppa:masterminds/glide -y
     - sudo apt-get update
