@@ -25,6 +25,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 func truncateStr(str string, flen int) string {
@@ -138,7 +139,7 @@ func isCastType(tp byte) bool {
 
 // StrToInt converts a string to an integer in best effort.
 // TODO: handle overflow and add unittest.
-func StrToInt(str string) (int64, error) {
+func StrToInt(sc *variable.StatementContext, str string) (int64, error) {
 	str = strings.TrimSpace(str)
 	if len(str) == 0 {
 		return 0, nil
@@ -166,7 +167,7 @@ func StrToInt(str string) (int64, error) {
 }
 
 // StrToFloat converts a string to a float64 in best effort.
-func StrToFloat(str string) (float64, error) {
+func StrToFloat(sc *variable.StatementContext, str string) (float64, error) {
 	str = strings.TrimSpace(str)
 	if len(str) == 0 {
 		return 0, nil

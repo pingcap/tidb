@@ -120,7 +120,7 @@ func getSystemTimestamp(ctx context.Context) (time.Time, error) {
 	sessionVars := ctx.GetSessionVars()
 	ts := varsutil.GetSystemVar(sessionVars, "timestamp")
 	if !ts.IsNull() && ts.GetString() != "" {
-		timestamp, err := ts.ToInt64()
+		timestamp, err := ts.ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return time.Time{}, errors.Trace(err)
 		}

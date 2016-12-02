@@ -115,7 +115,7 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 // Before every execution, we must clear statement status.
 func resetStmtStatus(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
-	var sc variable.StatementContext
+	sc := new(variable.StatementContext)
 	switch stmt := s.(type) {
 	case *ast.ShowStmt:
 		if stmt.Tp == ast.ShowWarnings {
@@ -127,7 +127,7 @@ func resetStmtStatus(ctx context.Context, s ast.StmtNode) {
 	case *ast.InsertStmt, *ast.DeleteStmt:
 		sc.TruncateAsError = sessVars.StrictSQLMode
 	}
-	*sessVars.StmtCtx = sc
+	sessVars.StmtCtx = sc
 }
 
 // Compile is safe for concurrent use by multiple goroutines.

@@ -15,6 +15,7 @@ package xeval
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -38,6 +39,13 @@ const (
 type Evaluator struct {
 	Row        map[int64]types.Datum // column values.
 	valueLists map[*tipb.Expr]*decodedValueList
+	sc         *variable.StatementContext
+}
+
+// NewEvaluator creates a new Evaluator instance.
+func NewEvaluator() *Evaluator {
+	// TODO: use StatementContext input, which require coprocessor handle sql_mode.
+	return &Evaluator{Row: make(map[int64]types.Datum), sc: new(variable.StatementContext)}
 }
 
 type decodedValueList struct {

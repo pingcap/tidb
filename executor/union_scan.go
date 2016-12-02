@@ -215,10 +215,11 @@ func (us *UnionScanExec) Close() error {
 }
 
 func (us *UnionScanExec) compare(a, b *Row) (int, error) {
+	sc := us.ctx.GetSessionVars().StmtCtx
 	for _, colOff := range us.usedIndex {
 		aColumn := a.Data[colOff]
 		bColumn := b.Data[colOff]
-		cmp, err := aColumn.CompareDatum(bColumn)
+		cmp, err := aColumn.CompareDatum(sc, bColumn)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

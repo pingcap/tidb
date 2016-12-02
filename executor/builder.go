@@ -442,7 +442,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 		return &StreamAggExec{
 			Src:          src,
 			schema:       v.GetSchema(),
-			ctx:          b.ctx,
+			Ctx:          b.ctx,
 			AggFuncs:     v.AggFuncs,
 			GroupByItems: v.GroupByItems,
 		}

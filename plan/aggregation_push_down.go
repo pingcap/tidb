@@ -152,7 +152,7 @@ func (a *aggPushDownSolver) addGbyCol(gbyCols []*expression.Column, cols ...*exp
 	for _, c := range cols {
 		duplicate := false
 		for _, gbyCol := range gbyCols {
-			if c.Equal(gbyCol) {
+			if c.Equal(gbyCol, a.ctx) {
 				duplicate = true
 				break
 			}

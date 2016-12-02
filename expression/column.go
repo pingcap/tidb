@@ -42,9 +42,9 @@ func (col *CorrelatedColumn) Eval(row []types.Datum, _ context.Context) (types.D
 }
 
 // Equal implements Expression interface.
-func (col *CorrelatedColumn) Equal(expr Expression) bool {
+func (col *CorrelatedColumn) Equal(expr Expression, ctx context.Context) bool {
 	if cc, ok := expr.(*CorrelatedColumn); ok {
-		return col.Column.Equal(&cc.Column)
+		return col.Column.Equal(&cc.Column, ctx)
 	}
 	return false
 }
@@ -89,7 +89,7 @@ type Column struct {
 }
 
 // Equal implements Expression interface.
-func (col *Column) Equal(expr Expression) bool {
+func (col *Column) Equal(expr Expression, _ context.Context) bool {
 	if newCol, ok := expr.(*Column); ok {
 		return newCol.FromID == col.FromID && newCol.Position == col.Position
 	}

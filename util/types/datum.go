@@ -376,7 +376,7 @@ func (d *Datum) SetValue(val interface{}) {
 
 // CompareDatum compares datum to another datum.
 // TODO: return error properly.
-func (d *Datum) CompareDatum(ad Datum) (int, error) {
+func (d *Datum) CompareDatum(sc *variable.StatementContext, ad Datum) (int, error) {
 	switch ad.k {
 	case KindNull:
 		if d.k == KindNull {
@@ -396,37 +396,37 @@ func (d *Datum) CompareDatum(ad Datum) (int, error) {
 		}
 		return -1, nil
 	case KindInt64:
-		return d.compareInt64(ad.GetInt64())
+		return d.compareInt64(sc, ad.GetInt64())
 	case KindUint64:
-		return d.compareUint64(ad.GetUint64())
+		return d.compareUint64(sc, ad.GetUint64())
 	case KindFloat32, KindFloat64:
-		return d.compareFloat64(ad.GetFloat64())
+		return d.compareFloat64(sc, ad.GetFloat64())
 	case KindString:
-		return d.compareString(ad.GetString())
+		return d.compareString(sc, ad.GetString())
 	case KindBytes:
-		return d.compareBytes(ad.GetBytes())
+		return d.compareBytes(sc, ad.GetBytes())
 	case KindMysqlBit:
-		return d.compareMysqlBit(ad.GetMysqlBit())
+		return d.compareMysqlBit(sc, ad.GetMysqlBit())
 	case KindMysqlDecimal:
-		return d.compareMysqlDecimal(ad.GetMysqlDecimal())
+		return d.compareMysqlDecimal(sc, ad.GetMysqlDecimal())
 	case KindMysqlDuration:
-		return d.compareMysqlDuration(ad.GetMysqlDuration())
+		return d.compareMysqlDuration(sc, ad.GetMysqlDuration())
 	case KindMysqlEnum:
-		return d.compareMysqlEnum(ad.GetMysqlEnum())
+		return d.compareMysqlEnum(sc, ad.GetMysqlEnum())
 	case KindMysqlHex:
-		return d.compareMysqlHex(ad.GetMysqlHex())
+		return d.compareMysqlHex(sc, ad.GetMysqlHex())
 	case KindMysqlSet:
-		return d.compareMysqlSet(ad.GetMysqlSet())
+		return d.compareMysqlSet(sc, ad.GetMysqlSet())
 	case KindMysqlTime:
-		return d.compareMysqlTime(ad.GetMysqlTime())
+		return d.compareMysqlTime(sc, ad.GetMysqlTime())
 	case KindRow:
-		return d.compareRow(ad.GetRow())
+		return d.compareRow(sc, ad.GetRow())
 	default:
 		return 0, nil
 	}
 }
 
-func (d *Datum) compareInt64(i int64) (int, error) {
+func (d *Datum) compareInt64(sc *variable.StatementContext, i int64) (int, error) {
 	switch d.k {
 	case KindMaxValue:
 		return 1, nil
@@ -438,11 +438,11 @@ func (d *Datum) compareInt64(i int64) (int, error) {
 		}
 		return CompareInt64(d.i, i), nil
 	default:
-		return d.compareFloat64(float64(i))
+		return d.compareFloat64(sc, float64(i))
 	}
 }
 
-func (d *Datum) compareUint64(u uint64) (int, error) {
+func (d *Datum) compareUint64(sc *variable.StatementContext, u uint64) (int, error) {
 	switch d.k {
 	case KindMaxValue:
 		return 1, nil
@@ -454,11 +454,11 @@ func (d *Datum) compareUint64(u uint64) (int, error) {
 	case KindUint64:
 		return CompareUint64(d.GetUint64(), u), nil
 	default:
-		return d.compareFloat64(float64(u))
+		return d.compareFloat64(sc, float64(u))
 	}
 }
 
-func (d *Datum) compareFloat64(f float64) (int, error) {
+func (d *Datum) compareFloat64(sc *variable.StatementContext, f float64) (int, error) {
 	switch d.k {
 	case KindNull, KindMinNotNull:
 		return -1, nil
@@ -471,7 +471,7 @@ func (d *Datum) compareFloat64(f float64) (int, error) {
 	case KindFloat32, KindFloat64:
 		return CompareFloat64(d.GetFloat64(), f), nil
 	case KindString, KindBytes:
-		fVal, err := StrToFloat(d.GetString())
+		fVal, err := StrToFloat(sc, d.GetString())
 		return CompareFloat64(fVal, f), err
 	case KindMysqlBit:
 		fVal := d.GetMysqlBit().ToNumber()
@@ -499,7 +499,7 @@ func (d *Datum) compareFloat64(f float64) (int, error) {
 	}
 }
 
-func (d *Datum) compareString(s string) (int, error) {
+func (d *Datum) compareString(sc *variable.StatementContext, s string) (int, error) {
 	switch d.k {
 	case KindNull, KindMinNotNull:
 		return -1, nil
@@ -526,28 +526,28 @@ func (d *Datum) compareString(s string) (int, error) {
 	case KindMysqlEnum:
 		return CompareString(d.GetMysqlEnum().String(), s), nil
 	default:
-		fVal, err := StrToFloat(s)
+		fVal, err := StrToFloat(sc, s)
 		if err != nil {
 			return 0, err
 		}
-		return d.compareFloat64(fVal)
+		return d.compareFloat64(sc, fVal)
 	}
 }
 
-func (d *Datum) compareBytes(b []byte) (int, error) {
-	return d.compareString(hack.String(b))
+func (d *Datum) compareBytes(sc *variable.StatementContext, b []byte) (int, error) {
+	return d.compareString(sc, hack.String(b))
 }
 
-func (d *Datum) compareMysqlBit(bit Bit) (int, error) {
+func (d *Datum) compareMysqlBit(sc *variable.StatementContext, bit Bit) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), bit.ToString()), nil
 	default:
-		return d.compareFloat64(bit.ToNumber())
+		return d.compareFloat64(sc, bit.ToNumber())
 	}
 }
 
-func (d *Datum) compareMysqlDecimal(dec *MyDecimal) (int, error) {
+func (d *Datum) compareMysqlDecimal(sc *variable.StatementContext, dec *MyDecimal) (int, error) {
 	switch d.k {
 	case KindMysqlDecimal:
 		return d.GetMysqlDecimal().Compare(dec), nil
@@ -557,11 +557,11 @@ func (d *Datum) compareMysqlDecimal(dec *MyDecimal) (int, error) {
 		return dDec.Compare(dec), err
 	default:
 		fVal, _ := dec.ToFloat64()
-		return d.compareFloat64(fVal)
+		return d.compareFloat64(sc, fVal)
 	}
 }
 
-func (d *Datum) compareMysqlDuration(dur Duration) (int, error) {
+func (d *Datum) compareMysqlDuration(sc *variable.StatementContext, dur Duration) (int, error) {
 	switch d.k {
 	case KindMysqlDuration:
 		return d.GetMysqlDuration().Compare(dur), nil
@@ -569,38 +569,38 @@ func (d *Datum) compareMysqlDuration(dur Duration) (int, error) {
 		dDur, err := ParseDuration(d.GetString(), MaxFsp)
 		return dDur.Compare(dur), err
 	default:
-		return d.compareFloat64(dur.Seconds())
+		return d.compareFloat64(sc, dur.Seconds())
 	}
 }
 
-func (d *Datum) compareMysqlEnum(enum Enum) (int, error) {
+func (d *Datum) compareMysqlEnum(sc *variable.StatementContext, enum Enum) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), enum.String()), nil
 	default:
-		return d.compareFloat64(enum.ToNumber())
+		return d.compareFloat64(sc, enum.ToNumber())
 	}
 }
 
-func (d *Datum) compareMysqlHex(e Hex) (int, error) {
+func (d *Datum) compareMysqlHex(sc *variable.StatementContext, e Hex) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), e.ToString()), nil
 	default:
-		return d.compareFloat64(e.ToNumber())
+		return d.compareFloat64(sc, e.ToNumber())
 	}
 }
 
-func (d *Datum) compareMysqlSet(set Set) (int, error) {
+func (d *Datum) compareMysqlSet(sc *variable.StatementContext, set Set) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), set.String()), nil
 	default:
-		return d.compareFloat64(set.ToNumber())
+		return d.compareFloat64(sc, set.ToNumber())
 	}
 }
 
-func (d *Datum) compareMysqlTime(time Time) (int, error) {
+func (d *Datum) compareMysqlTime(sc *variable.StatementContext, time Time) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		dt, err := ParseDatetime(d.GetString())
@@ -609,11 +609,11 @@ func (d *Datum) compareMysqlTime(time Time) (int, error) {
 		return d.GetMysqlTime().Compare(time), nil
 	default:
 		fVal, _ := time.ToNumber().ToFloat64()
-		return d.compareFloat64(fVal)
+		return d.compareFloat64(sc, fVal)
 	}
 }
 
-func (d *Datum) compareRow(row []Datum) (int, error) {
+func (d *Datum) compareRow(sc *variable.StatementContext, row []Datum) (int, error) {
 	var dRow []Datum
 	if d.k == KindRow {
 		dRow = d.GetRow()
@@ -621,7 +621,7 @@ func (d *Datum) compareRow(row []Datum) (int, error) {
 		dRow = []Datum{*d}
 	}
 	for i := 0; i < len(row) && i < len(dRow); i++ {
-		cmp, err := dRow[i].CompareDatum(row[i])
+		cmp, err := dRow[i].CompareDatum(sc, row[i])
 		if err != nil {
 			return 0, err
 		}
@@ -649,28 +649,28 @@ func (d *Datum) ConvertTo(sc *variable.StatementContext, target *FieldType) (Dat
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		unsigned := mysql.HasUnsignedFlag(target.Flag)
 		if unsigned {
-			return d.convertToUint(target)
+			return d.convertToUint(sc, target)
 		}
-		return d.convertToInt(target)
+		return d.convertToInt(sc, target)
 	case mysql.TypeFloat, mysql.TypeDouble:
-		return d.convertToFloat(target)
+		return d.convertToFloat(sc, target)
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
-		return d.convertToString(target)
+		return d.convertToString(sc, target)
 	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate:
-		return d.convertToMysqlTime(target)
+		return d.convertToMysqlTime(sc, target)
 	case mysql.TypeDuration:
-		return d.convertToMysqlDuration(target)
+		return d.convertToMysqlDuration(sc, target)
 	case mysql.TypeBit:
-		return d.convertToMysqlBit(target)
+		return d.convertToMysqlBit(sc, target)
 	case mysql.TypeDecimal, mysql.TypeNewDecimal:
 		return d.convertToMysqlDecimal(sc, target)
 	case mysql.TypeYear:
-		return d.convertToMysqlYear(target)
+		return d.convertToMysqlYear(sc, target)
 	case mysql.TypeEnum:
-		return d.convertToMysqlEnum(target)
+		return d.convertToMysqlEnum(sc, target)
 	case mysql.TypeSet:
-		return d.convertToMysqlSet(target)
+		return d.convertToMysqlSet(sc, target)
 	case mysql.TypeNull:
 		return Datum{}, nil
 	default:
@@ -678,7 +678,7 @@ func (d *Datum) ConvertTo(sc *variable.StatementContext, target *FieldType) (Dat
 	}
 }
 
-func (d *Datum) convertToFloat(target *FieldType) (Datum, error) {
+func (d *Datum) convertToFloat(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	var (
 		f   float64
 		ret Datum
@@ -694,7 +694,7 @@ func (d *Datum) convertToFloat(target *FieldType) (Datum, error) {
 	case KindFloat32, KindFloat64:
 		f = d.GetFloat64()
 	case KindString, KindBytes:
-		f, err = StrToFloat(d.GetString())
+		f, err = StrToFloat(sc, d.GetString())
 	case KindMysqlTime:
 		f, _ = d.GetMysqlTime().ToNumber().ToFloat64()
 	case KindMysqlDuration:
@@ -729,7 +729,7 @@ func (d *Datum) convertToFloat(target *FieldType) (Datum, error) {
 	return ret, errors.Trace(err)
 }
 
-func (d *Datum) convertToString(target *FieldType) (Datum, error) {
+func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	var ret Datum
 	var s string
 	switch d.k {
@@ -791,12 +791,12 @@ func (d *Datum) convertToString(target *FieldType) (Datum, error) {
 	return ret, errors.Trace(err)
 }
 
-func (d *Datum) convertToInt(target *FieldType) (Datum, error) {
-	i64, err := d.toSignedInteger(target.Tp)
+func (d *Datum) convertToInt(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+	i64, err := d.toSignedInteger(sc, target.Tp)
 	return NewIntDatum(i64), errors.Trace(err)
 }
 
-func (d *Datum) convertToUint(target *FieldType) (Datum, error) {
+func (d *Datum) convertToUint(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	tp := target.Tp
 	upperBound := unsignedUpperBound[tp]
 	var (
@@ -812,7 +812,7 @@ func (d *Datum) convertToUint(target *FieldType) (Datum, error) {
 	case KindFloat32, KindFloat64:
 		val, err = convertFloatToUint(d.GetFloat64(), upperBound, tp)
 	case KindString, KindBytes:
-		fval, err1 := StrToFloat(d.GetString())
+		fval, err1 := StrToFloat(sc, d.GetString())
 		val, err = convertFloatToUint(fval, upperBound, tp)
 		if err == nil {
 			err = err1
@@ -858,7 +858,7 @@ func (d *Datum) convertToUint(target *FieldType) (Datum, error) {
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlTime(target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlTime(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	tp := target.Tp
 	fsp := DefaultFsp
 	if target.Decimal != UnspecifiedLength {
@@ -906,7 +906,7 @@ func (d *Datum) convertToMysqlTime(target *FieldType) (Datum, error) {
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlDuration(target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlDuration(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	tp := target.Tp
 	fsp := DefaultFsp
 	if target.Decimal != UnspecifiedLength {
@@ -993,7 +993,7 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 	return ret, err
 }
 
-func (d *Datum) convertToMysqlYear(target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlYear(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	var (
 		ret Datum
 		y   int64
@@ -1001,13 +1001,13 @@ func (d *Datum) convertToMysqlYear(target *FieldType) (Datum, error) {
 	)
 	switch d.k {
 	case KindString, KindBytes:
-		y, err = StrToInt(d.GetString())
+		y, err = StrToInt(sc, d.GetString())
 	case KindMysqlTime:
 		y = int64(d.GetMysqlTime().Time.Year())
 	case KindMysqlDuration:
 		y = int64(time.Now().Year())
 	default:
-		ret, err = d.convertToInt(NewFieldType(mysql.TypeLonglong))
+		ret, err = d.convertToInt(sc, NewFieldType(mysql.TypeLonglong))
 		if err != nil {
 			return invalidConv(d, target.Tp)
 		}
@@ -1021,8 +1021,8 @@ func (d *Datum) convertToMysqlYear(target *FieldType) (Datum, error) {
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlBit(target *FieldType) (Datum, error) {
-	x, err := d.convertToUint(target)
+func (d *Datum) convertToMysqlBit(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+	x, err := d.convertToUint(sc, target)
 	if err != nil {
 		return x, errors.Trace(err)
 	}
@@ -1043,7 +1043,7 @@ func (d *Datum) convertToMysqlBit(target *FieldType) (Datum, error) {
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlEnum(target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlEnum(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	var (
 		ret Datum
 		e   Enum
@@ -1054,7 +1054,7 @@ func (d *Datum) convertToMysqlEnum(target *FieldType) (Datum, error) {
 		e, err = ParseEnumName(target.Elems, d.GetString())
 	default:
 		var uintDatum Datum
-		uintDatum, err = d.convertToUint(target)
+		uintDatum, err = d.convertToUint(sc, target)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
@@ -1067,7 +1067,7 @@ func (d *Datum) convertToMysqlEnum(target *FieldType) (Datum, error) {
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlSet(target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlSet(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	var (
 		ret Datum
 		s   Set
@@ -1078,7 +1078,7 @@ func (d *Datum) convertToMysqlSet(target *FieldType) (Datum, error) {
 		s, err = ParseSetName(target.Elems, d.GetString())
 	default:
 		var uintDatum Datum
-		uintDatum, err = d.convertToUint(target)
+		uintDatum, err = d.convertToUint(sc, target)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
@@ -1094,7 +1094,7 @@ func (d *Datum) convertToMysqlSet(target *FieldType) (Datum, error) {
 
 // ToBool converts to a bool.
 // We will use 1 for true, and 0 for false.
-func (d *Datum) ToBool() (int64, error) {
+func (d *Datum) ToBool(sc *variable.StatementContext) (int64, error) {
 	isZero := false
 	switch d.Kind() {
 	case KindInt64:
@@ -1110,7 +1110,7 @@ func (d *Datum) ToBool() (int64, error) {
 		if len(s) == 0 {
 			isZero = true
 		}
-		n, err := StrToInt(s)
+		n, err := StrToInt(sc, s)
 		if err != nil {
 			return 0, err
 		}
@@ -1120,7 +1120,7 @@ func (d *Datum) ToBool() (int64, error) {
 		if len(bs) == 0 {
 			isZero = true
 		} else {
-			n, err := StrToInt(string(bs))
+			n, err := StrToInt(sc, string(bs))
 			if err != nil {
 				return 0, err
 			}
@@ -1151,7 +1151,7 @@ func (d *Datum) ToBool() (int64, error) {
 }
 
 // ConvertDatumToDecimal converts datum to decimal.
-func ConvertDatumToDecimal(d Datum) (*MyDecimal, error) {
+func ConvertDatumToDecimal(sc *variable.StatementContext, d Datum) (*MyDecimal, error) {
 	dec := new(MyDecimal)
 	var err error
 	switch d.Kind() {
@@ -1182,23 +1182,23 @@ func ConvertDatumToDecimal(d Datum) (*MyDecimal, error) {
 }
 
 // ToDecimal converts to a decimal.
-func (d *Datum) ToDecimal() (*MyDecimal, error) {
+func (d *Datum) ToDecimal(sc *variable.StatementContext) (*MyDecimal, error) {
 	switch d.Kind() {
 	case KindMysqlTime:
 		return d.GetMysqlTime().ToNumber(), nil
 	case KindMysqlDuration:
 		return d.GetMysqlDuration().ToNumber(), nil
 	default:
-		return ConvertDatumToDecimal(*d)
+		return ConvertDatumToDecimal(sc, *d)
 	}
 }
 
 // ToInt64 converts to a int64.
-func (d *Datum) ToInt64() (int64, error) {
-	return d.toSignedInteger(mysql.TypeLonglong)
+func (d *Datum) ToInt64(sc *variable.StatementContext) (int64, error) {
+	return d.toSignedInteger(sc, mysql.TypeLonglong)
 }
 
-func (d *Datum) toSignedInteger(tp byte) (int64, error) {
+func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, error) {
 	lowerBound := signedLowerBound[tp]
 	upperBound := signedUpperBound[tp]
 	switch d.Kind() {
@@ -1212,7 +1212,7 @@ func (d *Datum) toSignedInteger(tp byte) (int64, error) {
 		return convertFloatToInt(d.GetFloat64(), lowerBound, upperBound, tp)
 	case KindString:
 		s := d.GetString()
-		fval, err := StrToFloat(s)
+		fval, err := StrToFloat(sc, s)
 		i64, err1 := convertFloatToInt(fval, lowerBound, upperBound, tp)
 		if err == nil {
 			err = err1
@@ -1220,7 +1220,7 @@ func (d *Datum) toSignedInteger(tp byte) (int64, error) {
 		return i64, errors.Trace(err)
 	case KindBytes:
 		s := string(d.GetBytes())
-		fval, err := StrToFloat(s)
+		fval, err := StrToFloat(sc, s)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -1272,7 +1272,7 @@ func (d *Datum) toSignedInteger(tp byte) (int64, error) {
 }
 
 // ToFloat64 converts to a float64
-func (d *Datum) ToFloat64() (float64, error) {
+func (d *Datum) ToFloat64(sc *variable.StatementContext) (float64, error) {
 	switch d.Kind() {
 	case KindInt64:
 		return float64(d.GetInt64()), nil
@@ -1283,9 +1283,9 @@ func (d *Datum) ToFloat64() (float64, error) {
 	case KindFloat64:
 		return d.GetFloat64(), nil
 	case KindString:
-		return StrToFloat(d.GetString())
+		return StrToFloat(sc, d.GetString())
 	case KindBytes:
-		return StrToFloat(string(d.GetBytes()))
+		return StrToFloat(sc, string(d.GetBytes()))
 	case KindMysqlTime:
 		f, err := d.GetMysqlTime().ToNumber().ToFloat64()
 		return f, err
@@ -1367,7 +1367,7 @@ func (d *Datum) convergeType(hasUint, hasDecimal, hasFloat *bool) (x Datum) {
 // If a or b is Float, changes the both to Float.
 // Else if a or b is Decimal, changes the both to Decimal.
 // Else if a or b is Uint and op is not div, mod, or intDiv changes the both to Uint.
-func CoerceDatum(a, b Datum) (x, y Datum, err error) {
+func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err error) {
 	if a.IsNull() || b.IsNull() {
 		return x, y, nil
 	}
@@ -1393,7 +1393,7 @@ func CoerceDatum(a, b Datum) (x, y Datum, err error) {
 		case KindMysqlSet:
 			x.SetFloat64(x.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			fval, err := x.ToFloat64()
+			fval, err := x.ToFloat64(sc)
 			if err != nil {
 				return x, y, errors.Trace(err)
 			}
@@ -1413,7 +1413,7 @@ func CoerceDatum(a, b Datum) (x, y Datum, err error) {
 		case KindMysqlSet:
 			y.SetFloat64(y.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			fval, err := y.ToFloat64()
+			fval, err := y.ToFloat64(sc)
 			if err != nil {
 				return x, y, errors.Trace(err)
 			}
@@ -1421,12 +1421,12 @@ func CoerceDatum(a, b Datum) (x, y Datum, err error) {
 		}
 	} else if hasDecimal {
 		var dec *MyDecimal
-		dec, err = ConvertDatumToDecimal(x)
+		dec, err = ConvertDatumToDecimal(sc, x)
 		if err != nil {
 			return x, y, errors.Trace(err)
 		}
 		x.SetMysqlDecimal(dec)
-		dec, err = ConvertDatumToDecimal(y)
+		dec, err = ConvertDatumToDecimal(sc, y)
 		if err != nil {
 			return x, y, errors.Trace(err)
 		}
@@ -1523,7 +1523,7 @@ func MaxValueDatum() Datum {
 }
 
 // EqualDatums compare if a and b contains the same datum values.
-func EqualDatums(a []Datum, b []Datum) (bool, error) {
+func EqualDatums(sc *variable.StatementContext, a []Datum, b []Datum) (bool, error) {
 	if len(a) != len(b) {
 		return false, nil
 	}
@@ -1534,7 +1534,7 @@ func EqualDatums(a []Datum, b []Datum) (bool, error) {
 		return false, nil
 	}
 	for i, ai := range a {
-		v, err := ai.CompareDatum(b[i])
+		v, err := ai.CompareDatum(sc, b[i])
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -1546,14 +1546,15 @@ func EqualDatums(a []Datum, b []Datum) (bool, error) {
 }
 
 // SortDatums sorts a slice of datum.
-func SortDatums(datums []Datum) error {
-	sorter := datumsSorter{datums: datums}
+func SortDatums(sc *variable.StatementContext, datums []Datum) error {
+	sorter := datumsSorter{datums: datums, sc: sc}
 	sort.Sort(&sorter)
 	return sorter.err
 }
 
 type datumsSorter struct {
 	datums []Datum
+	sc     *variable.StatementContext
 	err    error
 }
 
@@ -1562,7 +1563,7 @@ func (ds *datumsSorter) Len() int {
 }
 
 func (ds *datumsSorter) Less(i, j int) bool {
-	cmp, err := ds.datums[i].CompareDatum(ds.datums[j])
+	cmp, err := ds.datums[i].CompareDatum(ds.sc, ds.datums[j])
 	if err != nil {
 		ds.err = errors.Trace(err)
 		return true

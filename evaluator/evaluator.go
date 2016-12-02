@@ -41,7 +41,7 @@ func Eval(ctx context.Context, expr ast.ExprNode) (d types.Datum, err error) {
 	if ast.IsEvaluated(expr) {
 		return *expr.GetDatum(), nil
 	}
-	e := &Evaluator{ctx: ctx}
+	e := &Evaluator{ctx: ctx, sc: ctx.GetSessionVars().StmtCtx}
 	expr.Accept(e)
 	if e.err != nil {
 		return d, errors.Trace(e.err)
@@ -62,7 +62,7 @@ func EvalBool(ctx context.Context, expr ast.ExprNode) (bool, error) {
 		return false, nil
 	}
 
-	i, err := val.ToBool()
+	i, err := val.ToBool(ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -79,6 +79,7 @@ func boolToInt64(v bool) int64 {
 // Evaluator is an ast Visitor that evaluates an expression.
 type Evaluator struct {
 	ctx context.Context
+	sc  *variable.StatementContext
 	err error
 }
 
@@ -181,7 +182,7 @@ func (e *Evaluator) caseExpr(v *ast.CaseExpr) bool {
 	}
 	if !target.IsNull() {
 		for _, val := range v.WhenClauses {
-			cmp, err := target.CompareDatum(*val.Expr.GetDatum())
+			cmp, err := target.CompareDatum(e.sc, *val.Expr.GetDatum())
 			if err != nil {
 				e.err = errors.Trace(err)
 				return false
@@ -233,13 +234,14 @@ func (e *Evaluator) checkResult(cs *ast.CompareSubqueryExpr, lv types.Datum, res
 
 func (e *Evaluator) checkAllResult(cs *ast.CompareSubqueryExpr, lv types.Datum, result []types.Datum) (d types.Datum, err error) {
 	hasNull := false
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for _, v := range result {
 		if v.IsNull() {
 			hasNull = true
 			continue
 		}
 
-		comRes, err1 := lv.CompareDatum(v)
+		comRes, err1 := lv.CompareDatum(sc, v)
 		if err1 != nil {
 			return d, errors.Trace(err1)
 		}
@@ -271,7 +273,7 @@ func (e *Evaluator) checkAnyResult(cs *ast.CompareSubqueryExpr, lv types.Datum, 
 			continue
 		}
 
-		comRes, err1 := lv.CompareDatum(v)
+		comRes, err1 := lv.CompareDatum(e.sc, v)
 		if err1 != nil {
 			return d, errors.Trace(err1)
 		}
@@ -366,12 +368,12 @@ func (e *Evaluator) checkInList(not bool, in types.Datum, list []types.Datum) (d
 			continue
 		}
 
-		a, b, err := types.CoerceDatum(in, v)
+		a, b, err := types.CoerceDatum(e.sc, in, v)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return d
 		}
-		r, err := a.CompareDatum(b)
+		r, err := a.CompareDatum(e.sc, b)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return d
@@ -442,7 +444,7 @@ func (e *Evaluator) isTruth(v *ast.IsTruthExpr) bool {
 	var boolVal bool
 	datum := v.Expr.GetDatum()
 	if !datum.IsNull() {
-		ival, err := datum.ToBool()
+		ival, err := datum.ToBool(e.sc)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return false
@@ -494,7 +496,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 	}
 	switch op := u.Op; op {
 	case opcode.Not:
-		n, err := aDatum.ToBool()
+		n, err := aDatum.ToBool(e.sc)
 		if err != nil {
 			e.err = errors.Trace(err)
 		} else if n == 0 {
@@ -504,7 +506,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		}
 	case opcode.BitNeg:
 		// for bit operation, we will use int64 first, then return uint64
-		n, err := aDatum.ToInt64()
+		n, err := aDatum.ToInt64(e.sc)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return false
@@ -551,7 +553,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 			types.DecimalSub(&zero, dec, &to)
 			u.SetMysqlDecimal(&to)
 		case types.KindString, types.KindBytes:
-			f, err := types.StrToFloat(aDatum.GetString())
+			f, err := types.StrToFloat(e.sc, aDatum.GetString())
 			e.err = errors.Trace(err)
 			u.SetFloat64(-f)
 		case types.KindMysqlDecimal:
