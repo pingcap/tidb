@@ -485,6 +485,22 @@ func (s *testSuite) TestUnion(c *C) {
 	r.Check(testkit.Rows("abc", "1"))
 
 	tk.MustExec("commit")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c int, d int)")
+	tk.MustExec("insert t1 values (NULL, 1)")
+	tk.MustExec("insert t1 values (1, 1)")
+	tk.MustExec("insert t1 values (1, 2)")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (c int, d int)")
+	tk.MustExec("insert t2 values (1, 3)")
+	tk.MustExec("insert t2 values (1, 1)")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3 (c int, d int)")
+	tk.MustExec("insert t3 values (3, 2)")
+	tk.MustExec("insert t3 values (4, 3)")
+	r = tk.MustQuery(`select sum(c1), c2 from (select c c1, d c2 from t1 union all select d c1, c c2 from t2 union all select c c1, d c2 from t3) x group by c2`)
+	r.Check(testkit.Rows("5 1", "4 2", "4 3"))
 }
 
 func (s *testSuite) TestIn(c *C) {
