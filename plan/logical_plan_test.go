@@ -676,7 +676,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			best: "Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0))->Projection",
 		},
 		{
-			sql: "select sum(a) from (select * from t) x",
+			sql:  "select sum(a) from (select * from t) x",
 			best: "DataScan(t)->Aggr(sum(test.t.a))->Projection",
 		},
 	}
