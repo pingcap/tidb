@@ -237,11 +237,25 @@ func userExists(ctx context.Context, name string, host string) (bool, error) {
 }
 
 func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
-	// TODO: If len(s.User) == 0, use CURRENT_USER()
+	if len(s.User) == 0 {
+		vars := e.ctx.GetSessionVars()
+		s.User = vars.User
+		if len(s.User) == 0 {
+			return errors.New("Session error is empty")
+		}
+	}
 	userName, host := parseUser(s.User)
-	// Update mysql.user
+	exists, err := userExists(e.ctx, userName, host)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !exists {
+		return errors.Trace(ErrPasswordNoMatch)
+	}
+
+	// update mysql.user
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, util.EncodePassword(s.Password), userName, host)
-	_, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
 }
 
