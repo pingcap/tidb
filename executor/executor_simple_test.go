@@ -17,12 +17,15 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -132,17 +135,36 @@ func (s *testSuite) TestCreateUser(c *C) {
 func (s *testSuite) TestSetPwd(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+
 	createUserSQL := `CREATE USER 'testpwd'@'localhost' IDENTIFIED BY '';`
 	tk.MustExec(createUserSQL)
-
 	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	rowStr := fmt.Sprintf("%v", []byte(""))
 	result.Check(testkit.Rows(rowStr))
 
+	// set password for
 	tk.MustExec(`SET PASSWORD FOR 'testpwd'@'localhost' = 'password';`)
-
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("password")))
+	result.Check(testkit.Rows(rowStr))
+
+	// set password
+	setPwdSQL := `SET PASSWORD = 'pwd'`
+	// Session user is empty.
+	_, err := tk.Exec(setPwdSQL)
+	c.Check(err, NotNil)
+	tk.Se, err = tidb.CreateSession(s.store)
+	c.Check(err, IsNil)
+	ctx := tk.Se.(context.Context)
+	ctx.GetSessionVars().User = "testpwd1@localhost"
+	// Session user doesn't exist.
+	_, err = tk.Exec(setPwdSQL)
+	c.Check(terror.ErrorEqual(err, executor.ErrPasswordNoMatch), IsTrue)
+	// normal
+	ctx.GetSessionVars().User = "testpwd@localhost"
+	tk.MustExec(setPwdSQL)
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("pwd")))
 	result.Check(testkit.Rows(rowStr))
 }
 
