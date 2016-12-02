@@ -202,9 +202,9 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	failedUsers := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
 		userName, host := parseUser(spec.User)
-		exists, err1 := userExists(e.ctx, userName, host)
-		if err1 != nil {
-			return errors.Trace(err1)
+		exists, err := userExists(e.ctx, userName, host)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		if !exists {
 			failedUsers = append(failedUsers, spec.User)
@@ -223,7 +223,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		}
 		sql := fmt.Sprintf(`UPDATE %s.%s SET Password = "%s" WHERE Host = "%s" and User = "%s";`,
 			mysql.SystemDB, mysql.UserTable, pwd, host, userName)
-		_, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 		if err != nil {
 			failedUsers = append(failedUsers, spec.User)
 		}
