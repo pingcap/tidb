@@ -675,6 +675,10 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			sql:  "select sum(a.a) from t a right join t b on a.c = b.c",
 			best: "Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0))->Projection",
 		},
+		{
+			sql: "select sum(a) from (select * from t) x",
+			best: "DataScan(t)->Aggr(sum(test.t.a))->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
