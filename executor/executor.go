@@ -67,26 +67,28 @@ var (
 
 // Error instances.
 var (
-	ErrUnknownPlan     = terror.ClassExecutor.New(CodeUnknownPlan, "Unknown plan")
-	ErrPrepareMulti    = terror.ClassExecutor.New(CodePrepareMulti, "Can not prepare multiple statements")
-	ErrStmtNotFound    = terror.ClassExecutor.New(CodeStmtNotFound, "Prepared statement not found")
-	ErrSchemaChanged   = terror.ClassExecutor.New(CodeSchemaChanged, "Schema has changed")
-	ErrWrongParamCount = terror.ClassExecutor.New(CodeWrongParamCount, "Wrong parameter count")
-	ErrRowKeyCount     = terror.ClassExecutor.New(CodeRowKeyCount, "Wrong row key entry count")
-	ErrPrepareDDL      = terror.ClassExecutor.New(CodePrepareDDL, "Can not prepare DDL statements")
+	ErrUnknownPlan     = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
+	ErrPrepareMulti    = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
+	ErrStmtNotFound    = terror.ClassExecutor.New(codeStmtNotFound, "Prepared statement not found")
+	ErrSchemaChanged   = terror.ClassExecutor.New(codeSchemaChanged, "Schema has changed")
+	ErrWrongParamCount = terror.ClassExecutor.New(codeWrongParamCount, "Wrong parameter count")
+	ErrRowKeyCount     = terror.ClassExecutor.New(codeRowKeyCount, "Wrong row key entry count")
+	ErrPrepareDDL      = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
+	ErrPasswordNoMatch = terror.ClassExecutor.New(CodePasswordNoMatch, "Can't find any matching row in the user table")
 )
 
 // Error codes.
 const (
-	CodeUnknownPlan     terror.ErrCode = 1
-	CodePrepareMulti    terror.ErrCode = 2
-	CodeStmtNotFound    terror.ErrCode = 3
-	CodeSchemaChanged   terror.ErrCode = 4
-	CodeWrongParamCount terror.ErrCode = 5
-	CodeRowKeyCount     terror.ErrCode = 6
-	CodePrepareDDL      terror.ErrCode = 7
+	codeUnknownPlan     terror.ErrCode = 1
+	codePrepareMulti    terror.ErrCode = 2
+	codeStmtNotFound    terror.ErrCode = 3
+	codeSchemaChanged   terror.ErrCode = 4
+	codeWrongParamCount terror.ErrCode = 5
+	codeRowKeyCount     terror.ErrCode = 6
+	codePrepareDDL      terror.ErrCode = 7
 	// MySQL error code
-	CodeCannotUser terror.ErrCode = 1396
+	CodePasswordNoMatch terror.ErrCode = 1133
+	CodeCannotUser      terror.ErrCode = 1396
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
@@ -435,7 +437,8 @@ func init() {
 		return row.Data, nil
 	}
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeCannotUser: mysql.ErrCannotUser,
+		CodeCannotUser:      mysql.ErrCannotUser,
+		CodePasswordNoMatch: mysql.ErrPasswordNoMatch,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }
