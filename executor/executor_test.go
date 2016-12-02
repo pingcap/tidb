@@ -499,7 +499,6 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("create table t3 (c int, d int)")
 	tk.MustExec("insert t3 values (3, 2)")
 	tk.MustExec("insert t3 values (4, 3)")
-
 	r = tk.MustQuery(`select sum(c1), c2 from (select c c1, d c2 from t1 union all select d c1, c c2 from t2 union all select c c1, d c2 from t3) x group by c2`)
 	r.Check(testkit.Rows("5 1", "4 2", "4 3"))
 }
