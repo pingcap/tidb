@@ -127,6 +127,41 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 	return conditions
 }
 
+func judgeIndexExpression(arg expression.Expression, indexColumns []*model.IndexColumn) bool {
+	_, ok := arg.(*expression.Constant)
+	if ok {
+		return true
+	}
+	if c, ok := arg.(*expression.Column); ok {
+		for _, col := range indexColumns {
+			if col.Name.L == c.ColName.L {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func judgeIndexCondition(condition expression.Expression, indexColumns []*model.IndexColumn) bool {
+	f, ok := condition.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	return judgeIndexExpression(f.Args[0], indexColumns) && judgeIndexExpression(f.Args[1], indexColumns)
+}
+
+func detachIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn) ([]expression.Expression, []expression.Expression) {
+	var indexConditions, filterConditions []expression.Expression
+	for _, cond := range conditions {
+		if judgeIndexCondition(cond, indexColumns) {
+			indexConditions = append(indexConditions, cond)
+		} else {
+			filterConditions = append(filterConditions, cond)
+		}
+	}
+	return indexConditions, filterConditions
+}
+
 func detachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
 	accessConds := make([]expression.Expression, len(indexScan.Index.Columns))
 	var filterConds []expression.Expression

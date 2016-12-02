@@ -241,7 +241,12 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		if client != nil {
 			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
-				is.ConditionPBExpr, is.conditions, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
+				var indexConditions, pbConditions []expression.Expression
+				indexConditions, newSel.Conditions = detachIndexFilterConditions(newSel.Conditions, is.Index.Columns)
+				is.IndexPBExpr, is.conditions, indexConditions = expressionsToPB(indexConditions, client)
+				is.ConditionPBExpr, pbConditions, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
+                newSel.Conditions = append(newSel.Conditions, indexConditions...)
+				is.conditions = append(is.conditions, pbConditions...)
 			}
 		}
 		err := buildIndexRange(is)

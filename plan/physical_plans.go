@@ -97,6 +97,8 @@ type physicalTableSource struct {
 
 	// ConditionPBExpr is the pb structure of conditions that be pushed down.
 	ConditionPBExpr *tipb.Expr
+	// IndexPBExpr is the pb structure of conditions that used in the index scan.
+	IndexPBExpr *tipb.Expr
 
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
