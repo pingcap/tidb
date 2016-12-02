@@ -21,6 +21,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -73,11 +74,11 @@ func (c *Column) String() string {
 }
 
 // EqualRowCount estimates the row count where the column equals to value.
-func (c *Column) EqualRowCount(value types.Datum) (int64, error) {
+func (c *Column) EqualRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
 	if len(c.Numbers) == 0 {
 		return pseudoRowCount / pseudoEqualRate, nil
 	}
-	index, match, err := c.search(value)
+	index, match, err := c.search(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -92,11 +93,11 @@ func (c *Column) EqualRowCount(value types.Datum) (int64, error) {
 }
 
 // GreaterRowCount estimates the row count where the column greater than value.
-func (c *Column) GreaterRowCount(value types.Datum) (int64, error) {
+func (c *Column) GreaterRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
 	if len(c.Numbers) == 0 {
 		return pseudoRowCount / pseudoLessRate, nil
 	}
-	index, match, err := c.search(value)
+	index, match, err := c.search(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -116,11 +117,11 @@ func (c *Column) GreaterRowCount(value types.Datum) (int64, error) {
 }
 
 // LessRowCount estimates the row count where the column less than value.
-func (c *Column) LessRowCount(value types.Datum) (int64, error) {
+func (c *Column) LessRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
 	if len(c.Numbers) == 0 {
 		return pseudoRowCount / pseudoLessRate, nil
 	}
-	index, match, err := c.search(value)
+	index, match, err := c.search(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -140,15 +141,15 @@ func (c *Column) LessRowCount(value types.Datum) (int64, error) {
 }
 
 // BetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (c *Column) BetweenRowCount(a, b types.Datum) (int64, error) {
+func (c *Column) BetweenRowCount(sc *variable.StatementContext, a, b types.Datum) (int64, error) {
 	if len(c.Numbers) == 0 {
 		return pseudoRowCount / pseudoBetweenRate, nil
 	}
-	lessCountA, err := c.LessRowCount(a)
+	lessCountA, err := c.LessRowCount(sc, a)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	lessCountB, err := c.LessRowCount(b)
+	lessCountB, err := c.LessRowCount(sc, b)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -170,9 +171,9 @@ func (c *Column) inBucketBetweenCount() int64 {
 	return c.bucketRowCount()/3 + 1
 }
 
-func (c *Column) search(target types.Datum) (index int, match bool, err error) {
+func (c *Column) search(sc *variable.StatementContext, target types.Datum) (index int, match bool, err error) {
 	index = sort.Search(len(c.Values), func(i int) bool {
-		cmp, err1 := c.Values[i].CompareDatum(target)
+		cmp, err1 := c.Values[i].CompareDatum(sc, target)
 		if err1 != nil {
 			err = errors.Trace(err1)
 			return false
@@ -228,12 +229,12 @@ func (t *Table) ToPB() (*TablePB, error) {
 }
 
 // buildColumn builds column statistics from samples.
-func (t *Table) buildColumn(offset int, samples []types.Datum, bucketCount int64) error {
-	err := types.SortDatums(samples)
+func (t *Table) buildColumn(sc *variable.StatementContext, offset int, samples []types.Datum, bucketCount int64) error {
+	err := types.SortDatums(sc, samples)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	estimatedNDV, err := estimateNDV(t.Count, samples)
+	estimatedNDV, err := estimateNDV(sc, t.Count, samples)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -252,7 +253,7 @@ func (t *Table) buildColumn(offset int, samples []types.Datum, bucketCount int64
 	bucketIdx := 0
 	var lastNumber int64
 	for i := int64(0); i < int64(len(samples)); i++ {
-		cmp, err := col.Values[bucketIdx].CompareDatum(samples[i])
+		cmp, err := col.Values[bucketIdx].CompareDatum(sc, samples[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -283,13 +284,13 @@ func (t *Table) buildColumn(offset int, samples []types.Datum, bucketCount int64
 // estimateNDV estimates the number of distinct value given a count and samples.
 // It implements a simplified Good–Turing frequency estimation algorithm.
 // See https://en.wikipedia.org/wiki/Good%E2%80%93Turing_frequency_estimation
-func estimateNDV(count int64, samples []types.Datum) (int64, error) {
+func estimateNDV(sc *variable.StatementContext, count int64, samples []types.Datum) (int64, error) {
 	lastValue := samples[0]
 	occurrence := 1
 	sampleDistinct := 1
 	occurredOnceCount := 0
 	for i := 1; i < len(samples); i++ {
-		cmp, err := lastValue.CompareDatum(samples[i])
+		cmp, err := lastValue.CompareDatum(sc, samples[i])
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -311,7 +312,7 @@ func estimateNDV(count int64, samples []types.Datum) (int64, error) {
 }
 
 // NewTable creates a table statistics.
-func NewTable(ti *model.TableInfo, ts, count, numBuckets int64, columnSamples [][]types.Datum) (*Table, error) {
+func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, numBuckets int64, columnSamples [][]types.Datum) (*Table, error) {
 	t := &Table{
 		info:    ti,
 		TS:      ts,
@@ -319,7 +320,7 @@ func NewTable(ti *model.TableInfo, ts, count, numBuckets int64, columnSamples []
 		Columns: make([]*Column, len(columnSamples)),
 	}
 	for i, sample := range columnSamples {
-		err := t.buildColumn(i, sample, defaultBucketCount)
+		err := t.buildColumn(sc, i, sample, defaultBucketCount)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

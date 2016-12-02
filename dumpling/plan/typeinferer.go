@@ -241,7 +241,7 @@ func (v *typeInferrer) handleValuesExpr(x *ast.ValuesExpr) {
 
 func (v *typeInferrer) getFsp(x *ast.FuncCallExpr) int {
 	if len(x.Args) == 1 {
-		fsp, err := x.Args[0].GetDatum().ToInt64()
+		fsp, err := x.Args[0].GetDatum().ToInt64(v.sc)
 		if err != nil {
 			v.err = err
 		}
@@ -438,7 +438,7 @@ func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
 				if err != nil {
 					v.err = errors.Trace(err)
 				}
-				cmp, err := newDatum.CompareDatum(valueExpr.Datum)
+				cmp, err := newDatum.CompareDatum(v.sc, valueExpr.Datum)
 				if err != nil {
 					v.err = errors.Trace(err)
 				}

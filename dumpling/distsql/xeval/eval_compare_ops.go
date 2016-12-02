@@ -31,7 +31,7 @@ func (e *Evaluator) evalTwoBoolChildren(expr *tipb.Expr) (leftBool, rightBool in
 	if left.IsNull() {
 		leftBool = compareResultNull
 	} else {
-		leftBool, err = left.ToBool()
+		leftBool, err = left.ToBool(e.sc)
 		if err != nil {
 			return 0, 0, errors.Trace(err)
 		}
@@ -39,7 +39,7 @@ func (e *Evaluator) evalTwoBoolChildren(expr *tipb.Expr) (leftBool, rightBool in
 	if right.IsNull() {
 		rightBool = compareResultNull
 	} else {
-		rightBool, err = right.ToBool()
+		rightBool, err = right.ToBool(e.sc)
 		if err != nil {
 			return 0, 0, errors.Trace(err)
 		}
@@ -90,7 +90,7 @@ func (e *Evaluator) compareTwoChildren(expr *tipb.Expr) (int, error) {
 	if left.IsNull() || right.IsNull() {
 		return compareResultNull, nil
 	}
-	return left.CompareDatum(right)
+	return left.CompareDatum(e.sc, right)
 }
 
 func (e *Evaluator) evalLT(cmp int) (types.Datum, error) {
@@ -140,7 +140,7 @@ func (e *Evaluator) evalNullEQ(expr *tipb.Expr) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	cmp, err := left.CompareDatum(right)
+	cmp, err := left.CompareDatum(e.sc, right)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
@@ -249,7 +249,7 @@ func (e *Evaluator) evalIn(expr *tipb.Expr) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	in, err := checkIn(target, decoded.values)
+	in, err := e.checkIn(target, decoded.values)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
@@ -263,11 +263,11 @@ func (e *Evaluator) evalIn(expr *tipb.Expr) (types.Datum, error) {
 }
 
 // The value list is in sorted order so we can do a binary search.
-func checkIn(target types.Datum, list []types.Datum) (bool, error) {
+func (e *Evaluator) checkIn(target types.Datum, list []types.Datum) (bool, error) {
 	var outerErr error
 	n := sort.Search(len(list), func(i int) bool {
 		val := list[i]
-		cmp, err := val.CompareDatum(target)
+		cmp, err := val.CompareDatum(e.sc, target)
 		if err != nil {
 			outerErr = errors.Trace(err)
 			return false
@@ -280,7 +280,7 @@ func checkIn(target types.Datum, list []types.Datum) (bool, error) {
 	if n < 0 || n >= len(list) {
 		return false, nil
 	}
-	cmp, err := list[n].CompareDatum(target)
+	cmp, err := list[n].CompareDatum(e.sc, target)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

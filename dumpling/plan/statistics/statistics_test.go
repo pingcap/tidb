@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -53,13 +54,15 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	for i := start; i < len(samples); i += 5 {
 		samples[i].SetInt64(samples[i].GetInt64() + 2)
 	}
-	err := types.SortDatums(samples)
+	sc := new(variable.StatementContext)
+	err := types.SortDatums(sc, samples)
 	c.Check(err, IsNil)
 	s.samples = samples
 }
 
 func (s *testStatisticsSuite) TestEstimateNDV(c *C) {
-	ndv, err := estimateNDV(s.count, s.samples)
+	sc := new(variable.StatementContext)
+	ndv, err := estimateNDV(sc, s.count, s.samples)
 	c.Check(err, IsNil)
 	c.Check(ndv, Equals, int64(49792))
 }
@@ -77,17 +80,18 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	tblInfo.Columns = columns
 	timestamp := int64(10)
 	bucketCount := int64(256)
-	t, err := NewTable(tblInfo, timestamp, s.count, bucketCount, [][]types.Datum{s.samples})
+	sc := new(variable.StatementContext)
+	t, err := NewTable(sc, tblInfo, timestamp, s.count, bucketCount, [][]types.Datum{s.samples})
 	c.Check(err, IsNil)
 
 	col := t.Columns[0]
-	count, err := col.EqualRowCount(types.NewIntDatum(1000))
+	count, err := col.EqualRowCount(sc, types.NewIntDatum(1000))
 	c.Check(err, IsNil)
 	c.Check(count, Equals, int64(2))
-	count, err = col.LessRowCount(types.NewIntDatum(2000))
+	count, err = col.LessRowCount(sc, types.NewIntDatum(2000))
 	c.Check(err, IsNil)
 	c.Check(count, Equals, int64(19955))
-	count, err = col.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
+	count, err = col.BetweenRowCount(sc, types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(err, IsNil)
 	c.Check(count, Equals, int64(5075))
 
@@ -119,13 +123,14 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	col := tbl.Columns[0]
 	c.Assert(col.ID, Greater, int64(0))
 	c.Assert(col.NDV, Greater, int64(0))
-	count, err := col.LessRowCount(types.NewIntDatum(100))
+	sc := new(variable.StatementContext)
+	count, err := col.LessRowCount(sc, types.NewIntDatum(100))
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, int64(3333333))
-	count, err = col.EqualRowCount(types.NewIntDatum(1000))
+	count, err = col.EqualRowCount(sc, types.NewIntDatum(1000))
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, int64(10000))
-	count, err = col.BetweenRowCount(types.NewIntDatum(1000), types.NewIntDatum(5000))
+	count, err = col.BetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000))
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, int64(2500000))
 }
