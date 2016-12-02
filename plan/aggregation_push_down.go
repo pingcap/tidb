@@ -273,7 +273,7 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 	return agg
 }
 
-func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, oldSchema expression.Schema, p LogicalPlan) LogicalPlan {
+func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema expression.Schema, unionChild LogicalPlan) LogicalPlan {
 	newAgg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(agg.AggFuncs)),
 		GroupByItems:    make([]expression.Expression, 0, len(agg.GroupByItems)),
@@ -286,18 +286,18 @@ func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, oldSchema expres
 		newAggFunc := aggFunc.Clone()
 		newArgs := make([]expression.Expression, 0, len(newAggFunc.GetArgs()))
 		for _, arg := range newAggFunc.GetArgs() {
-			newArgs = append(newArgs, expression.ColumnSubstitute(arg, oldSchema, expression.Schema2Exprs(p.GetSchema())))
+			newArgs = append(newArgs, expression.ColumnSubstitute(arg, unionSchema, expression.Schema2Exprs(unionChild.GetSchema())))
 		}
 		newAggFunc.SetArgs(newArgs)
 		newAgg.AggFuncs = append(newAgg.AggFuncs, newAggFunc)
 	}
 	for _, gbyExpr := range agg.GroupByItems {
-		newExpr := expression.ColumnSubstitute(gbyExpr, oldSchema, expression.Schema2Exprs(p.GetSchema()))
+		newExpr := expression.ColumnSubstitute(gbyExpr, unionSchema, expression.Schema2Exprs(unionChild.GetSchema()))
 		newAgg.GroupByItems = append(newAgg.GroupByItems, newExpr)
 	}
 	newAgg.collectGroupByColumns()
-	newAgg.SetChildren(p)
-	p.SetParents(newAgg)
+	newAgg.SetChildren(unionChild)
+	unionChild.SetParents(newAgg)
 	return newAgg
 }
 
@@ -329,15 +329,14 @@ func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) {
 			}
 		} else if union, ok1 := child.(*Union); ok1 {
 			pushedAgg := a.makeNewAgg(agg.AggFuncs, agg.groupByCols)
-			oldSchema := union.schema
-			union.SetSchema(pushedAgg.schema)
 			newChildren := make([]Plan, 0, len(union.children))
 			for _, child := range union.children {
-				newChild := a.pushAggCrossUnion(pushedAgg, oldSchema, child.(LogicalPlan))
+				newChild := a.pushAggCrossUnion(pushedAgg, union.schema, child.(LogicalPlan))
 				newChildren = append(newChildren, newChild)
 				newChild.SetParents(union)
 			}
 			union.SetChildren(newChildren...)
+			union.SetSchema(pushedAgg.schema)
 		}
 	}
 	for _, child := range p.GetChildren() {
