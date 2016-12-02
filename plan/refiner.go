@@ -134,7 +134,7 @@ func judgeIndexExpression(arg expression.Expression, indexColumns []*model.Index
 	}
 	if c, ok := arg.(*expression.Column); ok {
 		for _, col := range indexColumns {
-			if col.Name.L == c.ColName.L {
+			if col.Name.L == c.ColName.L && col.Length == types.UnspecifiedLength {
 				return true
 			}
 		}
