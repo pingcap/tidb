@@ -28,7 +28,9 @@ type leaseItem struct {
 func (*testSuite) TestSchemaValidity(c *C) {
 	lease := 2 * time.Millisecond
 	leaseCh := make(chan leaseItem)
-	go serverFunc(lease, leaseCh)
+	oracleCh := make(chan uint64)
+	exit := make(chan struct{})
+	go serverFunc(lease, leaseCh, oracleCh, exit)
 
 	svi := newSchemaValidityInfo(lease)
 
@@ -41,24 +43,24 @@ func (*testSuite) TestSchemaValidity(c *C) {
 
 	// take a lease, check it's valid.
 	item := <-leaseCh
-	reload(svi, leaseCh)
+	svi.Update(item.leaseGrantTS, item.schemaVer)
 	valid := svi.Check(item.leaseGrantTS, item.schemaVer)
 	c.Assert(valid, IsTrue)
 
-	// sleep for a while, check it's still valid.
-	time.Sleep(lease / 2)
-	reload(svi, leaseCh)
-	valid = svi.Check(item.leaseGrantTS, item.schemaVer)
-	c.Assert(valid, IsTrue)
+	// sleep for a long time, check schema is invalid.
+	time.Sleep(lease)
+	ts := <-oracleCh
+	valid = svi.Check(ts, item.schemaVer)
+	c.Assert(valid, IsFalse)
 
-	// sleep for a long time, check it's invalid.
-	time.Sleep(lease * 2)
 	reload(svi, leaseCh)
-	valid = svi.Check(item.leaseGrantTS, item.schemaVer)
+	valid = svi.Check(ts, item.schemaVer)
 	c.Assert(valid, IsFalse)
 
 	// check the latest schema version must changed.
 	c.Assert(item.schemaVer, LessEqual, svi.Latest())
+
+	exit <- struct{}{}
 }
 
 func reload(svi SchemaValidityInfo, leaseCh chan leaseItem) {
@@ -66,16 +68,21 @@ func reload(svi SchemaValidityInfo, leaseCh chan leaseItem) {
 	svi.Update(item.leaseGrantTS, item.schemaVer)
 }
 
-func serverFunc(lease time.Duration, requireLease chan leaseItem) {
+func serverFunc(lease time.Duration, requireLease chan leaseItem, oracleCh chan uint64, exit chan struct{}) {
 	var version int64
+	leaseTS := uint64(time.Now().UnixNano())
 	for {
 		select {
 		case <-time.Tick(lease):
 			version++
+			leaseTS = uint64(time.Now().UnixNano())
 		case requireLease <- leaseItem{
-			leaseGrantTS: uint64(time.Now().UnixNano()),
+			leaseGrantTS: leaseTS,
 			schemaVer:    version,
 		}:
+		case oracleCh <- uint64(time.Now().UnixNano()):
+		case <-exit:
+			return
 		}
 	}
 }
