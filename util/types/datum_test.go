@@ -44,7 +44,8 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 func testDatumToBool(c *C, in interface{}, res int) {
 	datum := NewDatum(in)
 	res64 := int64(res)
-	b, err := datum.ToBool()
+	sc := new(variable.StatementContext)
+	b, err := datum.ToBool(sc)
 	c.Assert(err, IsNil)
 	c.Assert(b, Equals, res64)
 }
@@ -78,7 +79,8 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	c.Assert(err, IsNil)
 	testDatumToBool(c, v, 0)
 	d := NewDatum(&invalidMockType{})
-	_, err = d.ToBool()
+	sc := new(variable.StatementContext)
+	_, err = d.ToBool(sc)
 	c.Assert(err, NotNil)
 }
 
@@ -111,14 +113,16 @@ func (ts *testDatumSuite) TestEqualDatums(c *C) {
 }
 
 func testEqualDatums(c *C, a []interface{}, b []interface{}, same bool) {
-	res, err := EqualDatums(MakeDatums(a), MakeDatums(b))
+	sc := new(variable.StatementContext)
+	res, err := EqualDatums(sc, MakeDatums(a), MakeDatums(b))
 	c.Assert(err, IsNil)
 	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
 }
 
 func testDatumToInt64(c *C, val interface{}, expect int64) {
 	d := NewDatum(val)
-	b, err := d.ToInt64()
+	sc := new(variable.StatementContext)
+	b, err := d.ToInt64(sc)
 	c.Assert(err, IsNil)
 	c.Assert(b, Equals, expect)
 }
@@ -208,8 +212,9 @@ func (ts *testDatumSuite) TestCoerceDatum(c *C) {
 		{NewFloat64Datum(1), NewDecimalDatum(NewDecFromInt(1)), KindFloat64},
 		{NewFloat64Datum(1), NewFloat64Datum(1), KindFloat64},
 	}
+	sc := new(variable.StatementContext)
 	for _, ca := range testCases {
-		x, y, err := CoerceDatum(ca.a, ca.b)
+		x, y, err := CoerceDatum(sc, ca.a, ca.b)
 		c.Check(err, IsNil)
 		c.Check(x.Kind(), Equals, y.Kind())
 		c.Check(x.Kind(), Equals, ca.kind)
@@ -269,19 +274,20 @@ func (ts *testDatumSuite) TestBitOps(c *C) {
 			result Datum
 			err    error
 		)
+		sc := new(variable.StatementContext)
 		switch ca.bitop {
 		case "And":
-			result, err = ComputeBitAnd(ca.a, ca.b)
+			result, err = ComputeBitAnd(sc, ca.a, ca.b)
 		case "Or":
-			result, err = ComputeBitOr(ca.a, ca.b)
+			result, err = ComputeBitOr(sc, ca.a, ca.b)
 		case "Not":
-			result, err = ComputeBitNeg(ca.a)
+			result, err = ComputeBitNeg(sc, ca.a)
 		case "Xor":
-			result, err = ComputeBitXor(ca.a, ca.b)
+			result, err = ComputeBitXor(sc, ca.a, ca.b)
 		case "LeftShift":
-			result, err = ComputeLeftShift(ca.a, ca.b)
+			result, err = ComputeLeftShift(sc, ca.a, ca.b)
 		case "RightShift":
-			result, err = ComputeRightShift(ca.a, ca.b)
+			result, err = ComputeRightShift(sc, ca.a, ca.b)
 		}
 		c.Check(err, Equals, nil)
 		c.Assert(result.GetUint64(), Equals, ca.result.GetUint64())

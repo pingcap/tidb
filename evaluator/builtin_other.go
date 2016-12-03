@@ -27,10 +27,6 @@ import (
 
 // See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
 func builtinSleep(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	if ctx == nil {
-		return d, errors.Errorf("Missing context when evalue builtin")
-	}
-
 	sessVars := ctx.GetSessionVars()
 	if args[0].IsNull() {
 		if sessVars.StrictSQLMode {
@@ -41,7 +37,8 @@ func builtinSleep(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	}
 	// processing argument is negative
 	zero := types.NewIntDatum(0)
-	ret, err := args[0].CompareDatum(zero)
+	sc := sessVars.StmtCtx
+	ret, err := args[0].CompareDatum(sc, zero)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -61,12 +58,13 @@ func builtinSleep(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	return
 }
 
-func builtinAndAnd(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinAndAnd(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	leftDatum := args[0]
 	rightDatum := args[1]
+	sc := ctx.GetSessionVars().StmtCtx
 	if !leftDatum.IsNull() {
 		var x int64
-		x, err = leftDatum.ToBool()
+		x, err = leftDatum.ToBool(sc)
 		if err != nil {
 			return d, errors.Trace(err)
 		} else if x == 0 {
@@ -77,7 +75,7 @@ func builtinAndAnd(args []types.Datum, _ context.Context) (d types.Datum, err er
 	}
 	if !rightDatum.IsNull() {
 		var y int64
-		y, err = rightDatum.ToBool()
+		y, err = rightDatum.ToBool(sc)
 		if err != nil {
 			return d, errors.Trace(err)
 		} else if y == 0 {
@@ -92,12 +90,13 @@ func builtinAndAnd(args []types.Datum, _ context.Context) (d types.Datum, err er
 	return
 }
 
-func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinOrOr(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
 	leftDatum := args[0]
 	rightDatum := args[1]
 	if !leftDatum.IsNull() {
 		var x int64
-		x, err = leftDatum.ToBool()
+		x, err = leftDatum.ToBool(sc)
 		if err != nil {
 			return d, errors.Trace(err)
 		} else if x == 1 {
@@ -108,7 +107,7 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	}
 	if !rightDatum.IsNull() {
 		var y int64
-		y, err = rightDatum.ToBool()
+		y, err = rightDatum.ToBool(sc)
 		if err != nil {
 			return d, errors.Trace(err)
 		} else if y == 1 {
@@ -124,13 +123,14 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func builtinCaseWhen(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinCaseWhen(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
 	l := len(args)
 	for i := 0; i < l-1; i += 2 {
 		if args[i].IsNull() {
 			continue
 		}
-		b, err1 := args[i].ToBool()
+		b, err1 := args[i].ToBool(sc)
 		if err1 != nil {
 			return d, errors.Trace(err1)
 		}
@@ -198,11 +198,11 @@ func builtinRegexp(args []types.Datum, _ context.Context) (d types.Datum, err er
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
-func builtinIn(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinIn(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		return
 	}
-
+	sc := ctx.GetSessionVars().StmtCtx
 	var hasNull bool
 	for _, v := range args[1:] {
 		if v.IsNull() {
@@ -210,11 +210,11 @@ func builtinIn(args []types.Datum, _ context.Context) (d types.Datum, err error)
 			continue
 		}
 
-		a, b, err := types.CoerceDatum(args[0], v)
+		a, b, err := types.CoerceDatum(sc, args[0], v)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-		ret, err := a.CompareDatum(b)
+		ret, err := a.CompareDatum(sc, b)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -233,18 +233,19 @@ func builtinIn(args []types.Datum, _ context.Context) (d types.Datum, err error)
 	return
 }
 
-func builtinLogicXor(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinLogicXor(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	leftDatum := args[0]
 	righDatum := args[1]
 	if leftDatum.IsNull() || righDatum.IsNull() {
 		return
 	}
-	x, err := leftDatum.ToBool()
+	sc := ctx.GetSessionVars().StmtCtx
+	x, err := leftDatum.ToBool(sc)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	y, err := righDatum.ToBool()
+	y, err := righDatum.ToBool(sc)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -257,10 +258,11 @@ func builtinLogicXor(args []types.Datum, _ context.Context) (d types.Datum, err 
 }
 
 func compareFuncFactory(op opcode.Op) BuiltinFunc {
-	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+		sc := ctx.GetSessionVars().StmtCtx
 		var a, b = args[0], args[1]
 		if op != opcode.NullEQ {
-			a, b, err = types.CoerceDatum(a, b)
+			a, b, err = types.CoerceDatum(sc, a, b)
 			if err != nil {
 				return d, errors.Trace(err)
 			}
@@ -278,7 +280,7 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 			return
 		}
 
-		n, err := a.CompareDatum(b)
+		n, err := a.CompareDatum(sc, b)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -309,8 +311,9 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 }
 
 func bitOpFactory(op opcode.Op) BuiltinFunc {
-	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		a, b, err := types.CoerceDatum(args[0], args[1])
+	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+		sc := ctx.GetSessionVars().StmtCtx
+		a, b, err := types.CoerceDatum(sc, args[0], args[1])
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -318,12 +321,12 @@ func bitOpFactory(op opcode.Op) BuiltinFunc {
 			return
 		}
 
-		x, err := a.ToInt64()
+		x, err := a.ToInt64(sc)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
 
-		y, err := b.ToInt64()
+		y, err := b.ToInt64(sc)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -348,17 +351,18 @@ func bitOpFactory(op opcode.Op) BuiltinFunc {
 }
 
 func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
-	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		a, err := types.CoerceArithmetic(args[0])
+	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+		sc := ctx.GetSessionVars().StmtCtx
+		a, err := types.CoerceArithmetic(sc, args[0])
 		if err != nil {
 			return d, errors.Trace(err)
 		}
 
-		b, err := types.CoerceArithmetic(args[1])
+		b, err := types.CoerceArithmetic(sc, args[1])
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-		a, b, err = types.CoerceDatum(a, b)
+		a, b, err = types.CoerceDatum(sc, a, b)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -374,11 +378,11 @@ func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 		case opcode.Mul:
 			return types.ComputeMul(a, b)
 		case opcode.Div:
-			return types.ComputeDiv(a, b)
+			return types.ComputeDiv(sc, a, b)
 		case opcode.Mod:
-			return types.ComputeMod(a, b)
+			return types.ComputeMod(sc, a, b)
 		case opcode.IntDiv:
-			return types.ComputeIntDiv(a, b)
+			return types.ComputeIntDiv(sc, a, b)
 		default:
 			return d, ErrInvalidOperation.Gen("invalid op %v in arithmetic operation", op)
 		}
@@ -391,10 +395,10 @@ func builtinRow(row []types.Datum, _ context.Context) (d types.Datum, err error)
 }
 
 func isTrueOpFactory(op opcode.Op) BuiltinFunc {
-	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 		var boolVal bool
 		if !args[0].IsNull() {
-			iVal, err := args[0].ToBool()
+			iVal, err := args[0].ToBool(ctx.GetSessionVars().StmtCtx)
 			if err != nil {
 				return d, errors.Trace(err)
 			}
@@ -418,10 +422,11 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 		if aDatum.IsNull() {
 			return
 		}
+		sc := ctx.GetSessionVars().StmtCtx
 		switch op {
 		case opcode.Not:
 			var n int64
-			n, err = aDatum.ToBool()
+			n, err = aDatum.ToBool(sc)
 			if err != nil {
 				err = errors.Trace(err)
 			} else if n == 0 {
@@ -432,7 +437,7 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 		case opcode.BitNeg:
 			var n int64
 			// for bit operation, we will use int64 first, then return uint64
-			n, err = aDatum.ToInt64()
+			n, err = aDatum.ToInt64(sc)
 			if err != nil {
 				return d, errors.Trace(err)
 			}
@@ -475,7 +480,7 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 				err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlTime().ToNumber(), dec)
 				d.SetMysqlDecimal(dec)
 			case types.KindString, types.KindBytes:
-				f, err1 := types.StrToFloat(aDatum.GetString())
+				f, err1 := types.StrToFloat(sc, aDatum.GetString())
 				err = errors.Trace(err1)
 				d.SetFloat64(-f)
 			case types.KindMysqlDecimal:

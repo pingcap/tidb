@@ -348,18 +348,19 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 }
 
 func testStrToInt(c *C, str string, expect int64) {
-	b, _ := StrToInt(str)
+	b, _ := StrToInt(new(variable.StatementContext), str)
 	c.Assert(b, Equals, expect)
 }
 
 func testStrToUint(c *C, str string, expect uint64) {
 	d := NewDatum(str)
-	d, _ = d.convertToUint(NewFieldType(mysql.TypeLonglong))
+	sc := new(variable.StatementContext)
+	d, _ = d.convertToUint(sc, NewFieldType(mysql.TypeLonglong))
 	c.Assert(d.GetUint64(), Equals, expect)
 }
 
 func testStrToFloat(c *C, str string, expect float64) {
-	b, _ := StrToFloat(str)
+	b, _ := StrToFloat(new(variable.StatementContext), str)
 	c.Assert(b, Equals, expect)
 }
 

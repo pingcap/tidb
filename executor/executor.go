@@ -1105,7 +1105,7 @@ type StreamAggExec struct {
 	schema             expression.Schema
 	executed           bool
 	hasData            bool
-	ctx                context.Context
+	Ctx                context.Context
 	AggFuncs           []expression.AggregationFunction
 	GroupByItems       []expression.Expression
 	curGroupEncodedKey []byte
@@ -1159,7 +1159,7 @@ func (e *StreamAggExec) Next() (*Row, error) {
 			break
 		}
 		for _, af := range e.AggFuncs {
-			err = af.StreamUpdate(row.Data, e.ctx)
+			err = af.StreamUpdate(row.Data, e.Ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1184,13 +1184,14 @@ func (e *StreamAggExec) meetNewGroup(row *Row) (bool, error) {
 	if len(e.curGroupKey) == 0 {
 		matched, firstGroup = false, true
 	}
+	sc := e.Ctx.GetSessionVars().StmtCtx
 	for i, item := range e.GroupByItems {
-		v, err := item.Eval(row.Data, e.ctx)
+		v, err := item.Eval(row.Data, e.Ctx)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if matched {
-			c, err := v.CompareDatum(e.curGroupKey[i])
+			c, err := v.CompareDatum(sc, e.curGroupKey[i])
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -1507,11 +1508,12 @@ func (e *SortExec) Swap(i, j int) {
 
 // Less implements sort.Interface Less interface.
 func (e *SortExec) Less(i, j int) bool {
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for index, by := range e.ByItems {
 		v1 := e.Rows[i].key[index]
 		v2 := e.Rows[j].key[index]
 
-		ret, err := v1.CompareDatum(v2)
+		ret, err := v1.CompareDatum(sc, v2)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return true
@@ -1579,11 +1581,12 @@ type TopnExec struct {
 
 // Less implements heap.Interface Less interface.
 func (e *TopnExec) Less(i, j int) bool {
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for index, by := range e.ByItems {
 		v1 := e.Rows[i].key[index]
 		v2 := e.Rows[j].key[index]
 
-		ret, err := v1.CompareDatum(v2)
+		ret, err := v1.CompareDatum(sc, v2)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return true
@@ -1709,7 +1712,7 @@ func (c *conditionChecker) check(rowData []types.Datum) (finished bool, data typ
 		c.dataHasNull = true
 		matched = 0
 	} else {
-		matched, err = data.ToBool()
+		matched, err = data.ToBool(c.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return false, data, errors.Trace(err)
 		}

@@ -109,8 +109,8 @@ type columnProp struct {
 	desc bool
 }
 
-func (c *columnProp) equal(nc *columnProp) bool {
-	return c.col.Equal(nc.col) && c.desc == nc.desc
+func (c *columnProp) equal(nc *columnProp, ctx context.Context) bool {
+	return c.col.Equal(nc.col, ctx) && c.desc == nc.desc
 }
 
 type requiredProperty struct {

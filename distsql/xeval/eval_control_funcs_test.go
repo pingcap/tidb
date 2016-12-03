@@ -21,9 +21,8 @@ import (
 
 func (s *testEvalSuite) TestEvalCaseWhen(c *C) {
 	colID := int64(1)
-	row := make(map[int64]types.Datum)
-	row[colID] = types.NewIntDatum(100)
-	xevaluator := &Evaluator{Row: row}
+	xevaluator := NewEvaluator()
+	xevaluator.Row[colID] = types.NewIntDatum(100)
 	trueCond := types.NewIntDatum(1)
 	falseCond := types.NewIntDatum(0)
 	nullCond := types.Datum{}
@@ -77,7 +76,7 @@ func (s *testEvalSuite) TestEvalCaseWhen(c *C) {
 		result, err := xevaluator.Eval(ca.expr)
 		c.Assert(err, IsNil)
 		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(ca.result)
+		cmp, err := result.CompareDatum(xevaluator.sc, ca.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -85,9 +84,8 @@ func (s *testEvalSuite) TestEvalCaseWhen(c *C) {
 
 func (s *testEvalSuite) TestEvalIf(c *C) {
 	colID := int64(1)
-	row := make(map[int64]types.Datum)
-	row[colID] = types.NewIntDatum(100)
-	xevaluator := &Evaluator{Row: row}
+	xevaluator := NewEvaluator()
+	xevaluator.Row[colID] = types.NewIntDatum(100)
 	trueCond, falseCond, null := types.NewIntDatum(1), types.NewIntDatum(0), types.Datum{}
 	expr1, expr2 := types.NewStringDatum("expr1"), types.NewStringDatum("expr2")
 	cases := []struct {
@@ -135,7 +133,7 @@ func (s *testEvalSuite) TestEvalIf(c *C) {
 		result, err := xevaluator.Eval(ca.expr)
 		c.Assert(err, IsNil)
 		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(ca.result)
+		cmp, err := result.CompareDatum(xevaluator.sc, ca.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -143,9 +141,8 @@ func (s *testEvalSuite) TestEvalIf(c *C) {
 
 func (s *testEvalSuite) TestEvalNullIf(c *C) {
 	colID := int64(1)
-	row := make(map[int64]types.Datum)
-	row[colID] = types.NewIntDatum(100)
-	xevaluator := &Evaluator{Row: row}
+	xevaluator := NewEvaluator()
+	xevaluator.Row[colID] = types.NewDatum(100)
 	null := types.Datum{}
 	cases := []struct {
 		expr   *tipb.Expr
@@ -176,7 +173,7 @@ func (s *testEvalSuite) TestEvalNullIf(c *C) {
 		result, err := xevaluator.Eval(ca.expr)
 		c.Assert(err, IsNil)
 		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(ca.result)
+		cmp, err := result.CompareDatum(xevaluator.sc, ca.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -184,9 +181,8 @@ func (s *testEvalSuite) TestEvalNullIf(c *C) {
 
 func (s *testEvalSuite) TestEvalIfNull(c *C) {
 	colID := int64(1)
-	row := make(map[int64]types.Datum)
-	row[colID] = types.NewIntDatum(100)
-	xevaluator := &Evaluator{Row: row}
+	xevaluator := NewEvaluator()
+	xevaluator.Row[colID] = types.NewDatum(100)
 	null, notNull, expr := types.Datum{}, types.NewStringDatum("left"), types.NewStringDatum("right")
 	cases := []struct {
 		expr   *tipb.Expr
@@ -212,7 +208,7 @@ func (s *testEvalSuite) TestEvalIfNull(c *C) {
 		result, err := xevaluator.Eval(ca.expr)
 		c.Assert(err, IsNil)
 		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(ca.result)
+		cmp, err := result.CompareDatum(xevaluator.sc, ca.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
