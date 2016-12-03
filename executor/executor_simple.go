@@ -74,6 +74,8 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeRollback(x)
 	case *ast.CreateUserStmt:
 		err = e.executeCreateUser(x)
+	case *ast.AlterUserStmt:
+		err = e.executeAlterUser(x)
 	case *ast.DropUserStmt:
 		err = e.executeDropUser(x)
 	case *ast.SetPwdStmt:
@@ -180,6 +182,60 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 	_, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
+	if s.CurrentAuth != nil {
+		user := e.ctx.GetSessionVars().User
+		if len(user) == 0 {
+			return errors.New("Session user is empty")
+		}
+		spec := &ast.UserSpec{
+			User:    user,
+			AuthOpt: s.CurrentAuth,
+		}
+		s.Specs = []*ast.UserSpec{spec}
+	}
+
+	failedUsers := make([]string, 0, len(s.Specs))
+	for _, spec := range s.Specs {
+		userName, host := parseUser(spec.User)
+		exists, err := userExists(e.ctx, userName, host)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !exists {
+			failedUsers = append(failedUsers, spec.User)
+			if s.IfExists {
+				// TODO: Make this error as a warning.
+			}
+			continue
+		}
+		pwd := ""
+		if spec.AuthOpt != nil {
+			if spec.AuthOpt.ByAuthString {
+				pwd = util.EncodePassword(spec.AuthOpt.AuthString)
+			} else {
+				pwd = util.EncodePassword(spec.AuthOpt.HashString)
+			}
+		}
+		sql := fmt.Sprintf(`UPDATE %s.%s SET Password = "%s" WHERE Host = "%s" and User = "%s";`,
+			mysql.SystemDB, mysql.UserTable, pwd, host, userName)
+		_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		if err != nil {
+			failedUsers = append(failedUsers, spec.User)
+		}
+	}
+
+	err := e.ctx.CommitTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(failedUsers) > 0 {
+		errMsg := "Operation ALTER USER failed for " + strings.Join(failedUsers, ",")
+		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
 	}
 	return nil
 }
