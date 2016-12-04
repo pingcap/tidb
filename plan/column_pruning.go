@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -30,13 +31,30 @@ func getUsedList(usedCols []*expression.Column, schema expression.Schema) []bool
 	return used
 }
 
+// exprHasSetVar checks if the expression has set-var function. If do, we should not prune it.
+func exprHasSetVar(expr expression.Expression) bool {
+	if fun, ok := expr.(*expression.ScalarFunction); ok {
+		canPrune := true
+		if fun.FuncName.L == ast.SetVar {
+			return false
+		}
+		for _, arg := range fun.Args {
+			canPrune = canPrune && exprHasSetVar(arg)
+			if !canPrune {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // PruneColumns implements LogicalPlan interface.
 func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	var selfUsedCols []*expression.Column
 	used := getUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] {
+		if !used[i] && exprHasSetVar(p.Exprs[i]) {
 			p.schema = append(p.schema[:i], p.schema[i+1:]...)
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
