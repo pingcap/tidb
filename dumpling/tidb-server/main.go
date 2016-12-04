@@ -91,6 +91,7 @@ func main() {
 			log.Fatal(errors.ErrorStack(err))
 		}
 		log.SetRotateByDay()
+		log.SetHighlighting(false)
 	}
 
 	if joinCon != nil && *joinCon > 0 {
