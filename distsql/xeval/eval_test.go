@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -35,9 +36,8 @@ type testEvalSuite struct{}
 // TODO: add more tests.
 func (s *testEvalSuite) TestEval(c *C) {
 	colID := int64(1)
-	row := make(map[int64]types.Datum)
-	row[colID] = types.NewIntDatum(100)
-	xevaluator := &Evaluator{Row: row}
+	xevaluator := NewEvaluator()
+	xevaluator.Row[colID] = types.NewIntDatum(100)
 	cases := []struct {
 		expr   *tipb.Expr
 		result types.Datum
@@ -269,7 +269,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 		result, err := xevaluator.Eval(ca.expr)
 		c.Assert(err, IsNil)
 		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(ca.result)
+		cmp, err := result.CompareDatum(xevaluator.sc, ca.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -398,7 +398,7 @@ func (s *testEvalSuite) TestLike(c *C) {
 			result: 0,
 		},
 	}
-	ev := &Evaluator{}
+	ev := NewEvaluator()
 	for _, ca := range cases {
 		res, err := ev.Eval(ca.expr)
 		c.Check(err, IsNil)
@@ -444,7 +444,7 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 			result: false,
 		},
 	}
-	ev := &Evaluator{}
+	ev := NewEvaluator()
 	for _, ca := range cases {
 		res, err := ev.Eval(ca.expr)
 		c.Check(err, IsNil)
@@ -463,9 +463,8 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 
 func (s *testEvalSuite) TestEvalIsNull(c *C) {
 	colID := int64(1)
-	row := make(map[int64]types.Datum)
-	row[colID] = types.NewIntDatum(100)
-	xevaluator := &Evaluator{Row: row}
+	xevaluator := NewEvaluator()
+	xevaluator.Row[colID] = types.NewIntDatum(100)
 	null, trueAns, falseAns := types.Datum{}, types.NewIntDatum(1), types.NewIntDatum(0)
 	cases := []struct {
 		expr   *tipb.Expr
@@ -488,7 +487,7 @@ func (s *testEvalSuite) TestEvalIsNull(c *C) {
 		result, err := xevaluator.Eval(ca.expr)
 		c.Assert(err, IsNil)
 		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(ca.result)
+		cmp, err := result.CompareDatum(xevaluator.sc, ca.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -500,7 +499,8 @@ func inExpr(target interface{}, list ...interface{}) *tipb.Expr {
 	for _, v := range list {
 		listDatums = append(listDatums, types.NewDatum(v))
 	}
-	types.SortDatums(listDatums)
+	sc := new(variable.StatementContext)
+	types.SortDatums(sc, listDatums)
 	targetExpr := datumExpr(targetDatum)
 	val, _ := codec.EncodeValue(nil, listDatums...)
 	listExpr := &tipb.Expr{Tp: tipb.ExprType_ValueList, Val: val}

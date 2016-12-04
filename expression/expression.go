@@ -43,7 +43,7 @@ type Expression interface {
 	HashCode() []byte
 
 	// Equal checks whether two expressions are equal.
-	Equal(e Expression) bool
+	Equal(e Expression, ctx context.Context) bool
 
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
@@ -65,7 +65,7 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 		return false, nil
 	}
 
-	i, err := data.ToBool()
+	i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -106,12 +106,12 @@ func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error)
 }
 
 // Equal implements Expression interface.
-func (c *Constant) Equal(b Expression) bool {
+func (c *Constant) Equal(b Expression, ctx context.Context) bool {
 	y, ok := b.(*Constant)
 	if !ok {
 		return false
 	}
-	con, err := c.Value.CompareDatum(y.Value)
+	con, err := c.Value.CompareDatum(ctx.GetSessionVars().StmtCtx, y.Value)
 	if err != nil || con != 0 {
 		return false
 	}

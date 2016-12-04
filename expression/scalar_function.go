@@ -103,7 +103,7 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 }
 
 // Equal implements Expression interface.
-func (sf *ScalarFunction) Equal(e Expression) bool {
+func (sf *ScalarFunction) Equal(e Expression, ctx context.Context) bool {
 	fun, ok := e.(*ScalarFunction)
 	if !ok {
 		return false
@@ -115,7 +115,7 @@ func (sf *ScalarFunction) Equal(e Expression) bool {
 		return false
 	}
 	for i, argX := range sf.Args {
-		if !argX.Equal(fun.Args[i]) {
+		if !argX.Equal(fun.Args[i], ctx) {
 			return false
 		}
 	}

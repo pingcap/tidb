@@ -27,7 +27,7 @@ import (
 )
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_abs
-func builtinAbs(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinAbs(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	d = args[0]
 	switch d.Kind() {
 	case types.KindNull:
@@ -45,20 +45,20 @@ func builtinAbs(args []types.Datum, _ context.Context) (d types.Datum, err error
 	default:
 		// we will try to convert other types to float
 		// TODO: if time has no precision, it will be a integer
-		f, err := d.ToFloat64()
+		f, err := d.ToFloat64(ctx.GetSessionVars().StmtCtx)
 		d.SetFloat64(math.Abs(f))
 		return d, errors.Trace(err)
 	}
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_ceiling
-func builtinCeil(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinCeil(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() ||
 		args[0].Kind() == types.KindUint64 || args[0].Kind() == types.KindInt64 {
 		return args[0], nil
 	}
 
-	f, err := args[0].ToFloat64()
+	f, err := args[0].ToFloat64(ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -67,9 +67,9 @@ func builtinCeil(args []types.Datum, _ context.Context) (d types.Datum, err erro
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
-func builtinRand(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinRand(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if len(args) == 1 && !args[0].IsNull() {
-		seed, err := args[0].ToInt64()
+		seed, err := args[0].ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -80,13 +80,14 @@ func builtinRand(args []types.Datum, _ context.Context) (d types.Datum, err erro
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_pow
-func builtinPow(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	x, err := args[0].ToFloat64()
+func builtinPow(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	x, err := args[0].ToFloat64(sc)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	y, err := args[1].ToFloat64()
+	y, err := args[1].ToFloat64(sc)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -95,15 +96,16 @@ func builtinPow(args []types.Datum, _ context.Context) (d types.Datum, err error
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
-func builtinRound(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	x, err := args[0].ToFloat64()
+func builtinRound(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	x, err := args[0].ToFloat64(sc)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
 	dec := 0
 	if len(args) == 2 {
-		y, err1 := args[1].ToInt64()
+		y, err1 := args[1].ToInt64(sc)
 		if err1 != nil {
 			return d, errors.Trace(err1)
 		}

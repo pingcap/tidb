@@ -423,6 +423,7 @@ import (
 	AlterTableStmt		"Alter table statement"
 	AlterTableSpec		"Alter table specification"
 	AlterTableSpecList	"Alter table specification list"
+	AlterUserStmt		"Alter user statement"
 	AnalyzeTableStmt	"Analyze table statement"
 	AnyOrAll		"Any or All for subquery"
 	Assignment		"assignment"
@@ -4303,6 +4304,7 @@ Statement:
 	EmptyStmt
 |	AdminStmt
 |	AlterTableStmt
+|	AlterUserStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
 |	BinlogStmt
@@ -5057,6 +5059,27 @@ CreateUserStmt:
 		$$ = &ast.CreateUserStmt{
 			IfNotExists: $3.(bool),
 			Specs: $4.([]*ast.UserSpec),
+		}
+	}
+
+/* See http://dev.mysql.com/doc/refman/5.7/en/alter-user.html */
+AlterUserStmt:
+	"ALTER" "USER" IfExists UserSpecList
+	{
+		$$ = &ast.AlterUserStmt{
+			IfExists: $3.(bool),
+			Specs: $4.([]*ast.UserSpec),
+		}
+	}
+| 	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString
+	{
+		auth := &ast.AuthOption {
+			AuthString: $9.(string),
+			ByAuthString: true,
+		}
+		$$ = &ast.AlterUserStmt{
+			IfExists: $3.(bool),
+			CurrentAuth: auth,
 		}
 	}
 

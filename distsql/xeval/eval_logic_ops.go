@@ -97,7 +97,7 @@ func (e *Evaluator) evalNot(expr *tipb.Expr) (types.Datum, error) {
 	if d.IsNull() {
 		return d, nil
 	}
-	boolVal, err := d.ToBool()
+	boolVal, err := d.ToBool(e.sc)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
