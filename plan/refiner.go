@@ -133,9 +133,9 @@ func judgeIndexExpression(arg expression.Expression, indexColumns []*model.Index
 		return true
 	}
 	if c, ok := arg.(*expression.Column); ok {
-    if pKName.L == c.ColName.L {
-            return true
-        }
+		if pKName.L == c.ColName.L {
+			return true
+		}
 		for _, col := range indexColumns {
 			if col.Name.L == c.ColName.L && col.Length == types.UnspecifiedLength {
 				return true
@@ -151,11 +151,11 @@ func judgeIndexCondition(condition expression.Expression, indexColumns []*model.
 		return false
 	}
 	for _, arg := range f.Args {
-		if !judgeIndexExpression(arg,indexColumns, pKName) {
-			return false;
+		if !judgeIndexExpression(arg, indexColumns, pKName) {
+			return false
 		}
 	}
-	return true;
+	return true
 }
 
 func detachIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
