@@ -127,12 +127,15 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 	return conditions
 }
 
-func judgeIndexExpression(arg expression.Expression, indexColumns []*model.IndexColumn) bool {
+func judgeIndexExpression(arg expression.Expression, indexColumns []*model.IndexColumn, pKName model.CIStr) bool {
 	_, ok := arg.(*expression.Constant)
 	if ok {
 		return true
 	}
 	if c, ok := arg.(*expression.Column); ok {
+    if pKName.L == c.ColName.L {
+            return true
+        }
 		for _, col := range indexColumns {
 			if col.Name.L == c.ColName.L && col.Length == types.UnspecifiedLength {
 				return true
@@ -142,18 +145,32 @@ func judgeIndexExpression(arg expression.Expression, indexColumns []*model.Index
 	return false
 }
 
-func judgeIndexCondition(condition expression.Expression, indexColumns []*model.IndexColumn) bool {
+func judgeIndexCondition(condition expression.Expression, indexColumns []*model.IndexColumn, pKName model.CIStr) bool {
 	f, ok := condition.(*expression.ScalarFunction)
 	if !ok {
 		return false
 	}
-	return judgeIndexExpression(f.Args[0], indexColumns) && judgeIndexExpression(f.Args[1], indexColumns)
+	for _, arg := range f.Args {
+		if !judgeIndexExpression(arg,indexColumns, pKName) {
+			return false;
+		}
+	}
+	return true;
 }
 
-func detachIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn) ([]expression.Expression, []expression.Expression) {
+func detachIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
+	var pKName model.CIStr
+	if table.PKIsHandle {
+		for _, colInfo := range table.Columns {
+			if mysql.HasPriKeyFlag(colInfo.Flag) {
+				pKName = colInfo.Name
+				break
+			}
+		}
+	}
 	var indexConditions, filterConditions []expression.Expression
 	for _, cond := range conditions {
-		if judgeIndexCondition(cond, indexColumns) {
+		if judgeIndexCondition(cond, indexColumns, pKName) {
 			indexConditions = append(indexConditions, cond)
 		} else {
 			filterConditions = append(filterConditions, cond)

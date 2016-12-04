@@ -242,10 +242,10 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
 				var indexConditions, pbConditions []expression.Expression
-				indexConditions, newSel.Conditions = detachIndexFilterConditions(newSel.Conditions, is.Index.Columns)
+				indexConditions, newSel.Conditions = detachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
 				is.IndexPBExpr, is.conditions, indexConditions = expressionsToPB(indexConditions, client)
 				is.ConditionPBExpr, pbConditions, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
-                newSel.Conditions = append(newSel.Conditions, indexConditions...)
+				newSel.Conditions = append(newSel.Conditions, indexConditions...)
 				is.conditions = append(is.conditions, pbConditions...)
 			}
 		}
