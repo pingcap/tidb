@@ -675,6 +675,14 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			sql:  "select sum(a.a) from t a right join t b on a.c = b.c",
 			best: "Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0))->Projection",
 		},
+		{
+			sql:  "select sum(a) from (select * from t) x",
+			best: "DataScan(t)->Aggr(sum(test.t.a))->Projection",
+		},
+		{
+			sql:  "select sum(c1) from (select c c1, d c2 from t a union all select a c1, b c2 from t b union all select b c1, e c2 from t c) x group by c2",
+			best: "UnionAll{DataScan(a)->Aggr(sum(a.c),firstrow(a.d))->DataScan(b)->Aggr(sum(b.a),firstrow(b.b))->DataScan(c)->Aggr(sum(c.b),firstrow(c.e))}->Aggr(sum(join_agg_0))->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -1396,7 +1404,7 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 			}
 			v = v.GetChildByIndex(0).(LogicalPlan)
 		}
-		newConds := expression.PropagateConstant(sel.Conditions)
+		newConds := expression.PropagateConstant(builder.ctx, sel.Conditions)
 		for _, v := range newConds {
 			result = append(result, v.String())
 		}

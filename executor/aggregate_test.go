@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -327,11 +328,13 @@ func (s *testSuite) TestStreamAgg(c *C) {
 			},
 		},
 	}
+	ctx := mock.NewContext()
 	for _, ca := range cases {
 		mock := &MockExec{}
 		e := &executor.StreamAggExec{
 			AggFuncs: []expression.AggregationFunction{ca.aggFunc},
 			Src:      mock,
+			Ctx:      ctx,
 		}
 		row, err := e.Next()
 		c.Check(err, IsNil)

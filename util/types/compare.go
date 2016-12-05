@@ -60,13 +60,3 @@ func CompareString(x, y string) int {
 
 	return 1
 }
-
-// Compare returns an integer comparing the interface a with b.
-// a > b -> 1
-// a = b -> 0
-// a < b -> -1
-func Compare(a, b interface{}) (int, error) {
-	aDatum := NewDatum(a)
-	bDatum := NewDatum(b)
-	return aDatum.CompareDatum(bDatum)
-}

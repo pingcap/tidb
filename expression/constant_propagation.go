@@ -16,6 +16,7 @@ package expression
 import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -65,6 +66,7 @@ type propagateConstantSolver struct {
 	eqList     []*Constant    // if eqList[i] != nil, it means col_i = eqList[i]
 	columns    []*Column      // columns stores all columns appearing in the conditions
 	conditions []Expression
+	ctx        context.Context
 }
 
 // propagateInEQ propagates all in-equal conditions.
@@ -171,7 +173,7 @@ func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		if col == nil {
 			if con, ok := cond.(*Constant); ok {
-				value, _ := EvalBool(con, nil, nil)
+				value, _ := EvalBool(con, nil, s.ctx)
 				if !value {
 					s.setConds2ConstFalse()
 					return nil
@@ -201,7 +203,7 @@ func (s *propagateConstantSolver) tryToUpdateEQList(col *Column, con *Constant) 
 	id := s.getColID(col)
 	oldCon := s.eqList[id]
 	if oldCon != nil {
-		return false, !oldCon.Equal(con)
+		return false, !oldCon.Equal(con, s.ctx)
 	}
 	s.eqList[id] = con
 	return true, false
@@ -226,7 +228,7 @@ func (s *propagateConstantSolver) solve(conditions []Expression) []Expression {
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.OrOr {
 			dnfItems := SplitDNFItems(cond)
 			for j, item := range dnfItems {
-				dnfItems[j] = ComposeCNFCondition(PropagateConstant([]Expression{item}))
+				dnfItems[j] = ComposeCNFCondition(PropagateConstant(s.ctx, []Expression{item}))
 			}
 			s.conditions[i] = ComposeDNFCondition(dnfItems)
 		}
@@ -249,9 +251,10 @@ func (s *propagateConstantSolver) insertCol(col *Column) {
 }
 
 // PropagateConstant propagate constant values of equality predicates and inequality predicates in a condition.
-func PropagateConstant(conditions []Expression) []Expression {
+func PropagateConstant(ctx context.Context, conditions []Expression) []Expression {
 	solver := &propagateConstantSolver{
 		colMapper: make(map[string]int),
+		ctx:       ctx,
 	}
 	return solver.solve(conditions)
 }

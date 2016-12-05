@@ -35,8 +35,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 
 func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	defer testleak.AfterTest(c)()
-	ctx := mock.NewContext()
-	d, err := builtinFoundRows(types.MakeDatums(), ctx)
+	d, err := builtinFoundRows(types.MakeDatums(), s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(0))
 }
@@ -76,8 +75,7 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 
 func (s *testEvaluatorSuite) TestVersion(c *C) {
 	defer testleak.AfterTest(c)()
-	ctx := mock.NewContext()
-	v, err := builtinVersion(nil, ctx)
+	v, err := builtinVersion(nil, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
 }

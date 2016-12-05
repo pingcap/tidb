@@ -37,7 +37,7 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 	Dtbl := tblToDtbl(tbl)
 
 	for _, t := range Dtbl {
-		v, err := builtinAbs(t["Arg"], nil)
+		v, err := builtinAbs(t["Arg"], s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -60,7 +60,7 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 	Dtbl := tblToDtbl(tbl)
 
 	for _, t := range Dtbl {
-		v, err := builtinCeil(t["Arg"], nil)
+		v, err := builtinCeil(t["Arg"], s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
 	}
@@ -68,7 +68,7 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 
 func (s *testEvaluatorSuite) TestRand(c *C) {
 	defer testleak.AfterTest(c)()
-	v, err := builtinRand(make([]types.Datum, 0), nil)
+	v, err := builtinRand(make([]types.Datum, 0), s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Less, float64(1))
 	c.Assert(v.GetFloat64(), GreaterEqual, float64(0))
@@ -89,7 +89,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 	Dtbl := tblToDtbl(tbl)
 
 	for _, t := range Dtbl {
-		v, err := builtinPow(t["Arg"], nil)
+		v, err := builtinPow(t["Arg"], s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -105,7 +105,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 
 	errDtbl := tblToDtbl(errTbl)
 	for _, t := range errDtbl {
-		_, err := builtinPow(t["Arg"], nil)
+		_, err := builtinPow(t["Arg"], s.ctx)
 		c.Assert(err, NotNil)
 	}
 }
@@ -129,7 +129,7 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 	Dtbl := tblToDtbl(tbl)
 
 	for _, t := range Dtbl {
-		v, err := builtinRound(t["Arg"], nil)
+		v, err := builtinRound(t["Arg"], s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}

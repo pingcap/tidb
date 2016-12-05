@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -82,6 +83,8 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 		if job.SchemaState == prevState {
 			return
 		}
+		hookCtx := mock.NewContext()
+		hookCtx.Store = s.store
 		prevState = job.SchemaState
 		var err error
 		switch job.SchemaState {
@@ -95,7 +98,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddWriteOnly(d, ctx, deleteOnlyTable, writeOnlyTable)
+			err = s.checkAddWriteOnly(d, hookCtx, deleteOnlyTable, writeOnlyTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -105,7 +108,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddPublic(d, ctx, writeOnlyTable, publicTable)
+			err = s.checkAddPublic(d, hookCtx, writeOnlyTable, publicTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -135,6 +138,8 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 		if job.SchemaState == prevState {
 			return
 		}
+		hookCtx := mock.NewContext()
+		hookCtx.Store = s.store
 		prevState = job.SchemaState
 		var err error
 		switch job.SchemaState {
@@ -148,7 +153,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			_, err = writeOnlyTable.AddRecord(ctx, types.MakeDatums(10, 10))
+			_, err = writeOnlyTable.AddRecord(hookCtx, types.MakeDatums(10, 10))
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}

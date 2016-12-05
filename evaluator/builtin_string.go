@@ -21,7 +21,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -116,12 +115,12 @@ func builtinConcatWS(args []types.Datum, _ context.Context) (d types.Datum, err 
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_left
-func builtinLeft(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinLeft(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	str, err := args[0].ToString()
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	length, err := args[1].ToInt64()
+	length, err := args[1].ToInt64(ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -191,19 +190,19 @@ func builtinReverse(args []types.Datum, _ context.Context) (d types.Datum, err e
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_space
-func builtinSpace(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinSpace(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	x := args[0]
 	if x.IsNull() {
 		return d, nil
 	}
-
+	sc := ctx.GetSessionVars().StmtCtx
 	if x.Kind() == types.KindString || x.Kind() == types.KindBytes {
-		if _, e := strconv.ParseInt(x.GetString(), 10, 64); e != nil {
+		if _, e := types.StrToInt(sc, x.GetString()); e != nil {
 			return d, errors.Trace(e)
 		}
 	}
 
-	v, err := x.ToInt64()
+	v, err := x.ToInt64(ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -361,7 +360,7 @@ func builtinSubstring(args []types.Datum, _ context.Context) (d types.Datum, err
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
-func builtinSubstringIndex(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinSubstringIndex(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	// The meaning of the elements of args.
 	// args[0] -> StrExpr
 	// args[1] -> Delim
@@ -380,7 +379,7 @@ func builtinSubstringIndex(args []types.Datum, _ context.Context) (d types.Datum
 		return d, nil
 	}
 
-	c, err := args[2].ToInt64()
+	c, err := args[2].ToInt64(ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -408,7 +407,7 @@ func builtinSubstringIndex(args []types.Datum, _ context.Context) (d types.Datum
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
-func builtinLocate(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinLocate(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	// The meaning of the elements of args.
 	// args[0] -> SubStr
 	// args[1] -> Str
@@ -432,7 +431,7 @@ func builtinLocate(args []types.Datum, _ context.Context) (d types.Datum, err er
 	// eval pos
 	pos := int64(0)
 	if len(args) == 3 {
-		p, err := args[2].ToInt64()
+		p, err := args[2].ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}

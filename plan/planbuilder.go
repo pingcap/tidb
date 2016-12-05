@@ -93,8 +93,9 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildUpdate(x)
 	case *ast.ShowStmt:
 		return b.buildShow(x)
-	case *ast.AnalyzeTableStmt, *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt, *ast.SetStmt, *ast.DoStmt, *ast.BeginStmt,
-		*ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.GrantStmt, *ast.DropUserStmt:
+	case *ast.AnalyzeTableStmt, *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt, *ast.SetStmt, *ast.DoStmt,
+		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
+		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case *ast.TruncateTableStmt:
 		return b.buildDDL(x)

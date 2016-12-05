@@ -33,7 +33,7 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		p := newTS.tryToAddUnionScan(&newTS)
 		return enforceProperty(prop, &physicalPlanInfo{p: p, cost: cost, count: infos[0].count})
 	}
-	if len(prop.props) == 1 && ts.pkCol != nil && ts.pkCol.Equal(prop.props[0].col) {
+	if len(prop.props) == 1 && ts.pkCol != nil && ts.pkCol.Equal(prop.props[0].col, ts.ctx) {
 		sortedTS := *ts
 		sortedTS.Desc = prop.props[0].desc
 		sortedTS.KeepOrder = true
@@ -46,7 +46,7 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 	}
 	if prop.limit != nil {
 		sortedTS := *ts
-		success := sortedTS.addTopN(prop)
+		success := sortedTS.addTopN(ts.ctx, prop)
 		if success {
 			cost += rowCount * cpuFactor
 		} else {
@@ -144,7 +144,7 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 	}
 	if prop.limit != nil {
 		sortedIS := *is
-		success := sortedIS.addTopN(prop)
+		success := sortedIS.addTopN(is.ctx, prop)
 		if success {
 			cost += float64(infos[0].count) * cpuFactor
 		} else {

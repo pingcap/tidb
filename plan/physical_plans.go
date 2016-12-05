@@ -20,6 +20,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -61,8 +62,8 @@ type PhysicalIndexScan struct {
 // physicalDistSQLPlan means the plan that can be executed distributively.
 // We can push down other plan like selection, limit, aggregation, topn into this plan.
 type physicalDistSQLPlan interface {
-	addAggregation(agg *PhysicalAggregation) expression.Schema
-	addTopN(prop *requiredProperty) bool
+	addAggregation(ctx context.Context, agg *PhysicalAggregation) expression.Schema
+	addTopN(ctx context.Context, prop *requiredProperty) bool
 	addLimit(limit *Limit)
 	calculateCost(count uint64) float64
 }
@@ -196,7 +197,7 @@ func (p *physicalTableSource) addLimit(l *Limit) {
 	}
 }
 
-func (p *physicalTableSource) addTopN(prop *requiredProperty) bool {
+func (p *physicalTableSource) addTopN(ctx context.Context, prop *requiredProperty) bool {
 	if len(prop.props) == 0 && prop.limit != nil {
 		p.addLimit(prop.limit)
 		return true
@@ -207,10 +208,11 @@ func (p *physicalTableSource) addTopN(prop *requiredProperty) bool {
 	if prop.limit == nil {
 		return false
 	}
+	sc := ctx.GetSessionVars().StmtCtx
 	count := int64(prop.limit.Count + prop.limit.Offset)
 	p.LimitCount = &count
 	for _, prop := range prop.props {
-		item := sortByItemToPB(p.client, prop.col, prop.desc)
+		item := sortByItemToPB(sc, p.client, prop.col, prop.desc)
 		if item == nil {
 			// When we fail to convert any sortItem to PB struct, we should clear the environments.
 			p.clearForTopnPushDown()
@@ -222,12 +224,13 @@ func (p *physicalTableSource) addTopN(prop *requiredProperty) bool {
 	return true
 }
 
-func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation) expression.Schema {
+func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalAggregation) expression.Schema {
 	if p.client == nil {
 		return nil
 	}
+	sc := ctx.GetSessionVars().StmtCtx
 	for _, f := range agg.AggFuncs {
-		pb := aggFuncToPBExpr(p.client, f)
+		pb := aggFuncToPBExpr(sc, p.client, f)
 		if pb == nil {
 			// When we fail to convert any agg function to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
@@ -237,7 +240,7 @@ func (p *physicalTableSource) addAggregation(agg *PhysicalAggregation) expressio
 		p.aggFuncs = append(p.aggFuncs, f.Clone())
 	}
 	for _, item := range agg.GroupByItems {
-		pb := groupByItemToPB(p.client, item)
+		pb := groupByItemToPB(sc, p.client, item)
 		if pb == nil {
 			// When we fail to convert any group-by item to PB struct, we should clear the environments.
 			p.clearForAggPushDown()

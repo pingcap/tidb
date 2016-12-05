@@ -67,26 +67,28 @@ var (
 
 // Error instances.
 var (
-	ErrUnknownPlan     = terror.ClassExecutor.New(CodeUnknownPlan, "Unknown plan")
-	ErrPrepareMulti    = terror.ClassExecutor.New(CodePrepareMulti, "Can not prepare multiple statements")
-	ErrStmtNotFound    = terror.ClassExecutor.New(CodeStmtNotFound, "Prepared statement not found")
-	ErrSchemaChanged   = terror.ClassExecutor.New(CodeSchemaChanged, "Schema has changed")
-	ErrWrongParamCount = terror.ClassExecutor.New(CodeWrongParamCount, "Wrong parameter count")
-	ErrRowKeyCount     = terror.ClassExecutor.New(CodeRowKeyCount, "Wrong row key entry count")
-	ErrPrepareDDL      = terror.ClassExecutor.New(CodePrepareDDL, "Can not prepare DDL statements")
+	ErrUnknownPlan     = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
+	ErrPrepareMulti    = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
+	ErrStmtNotFound    = terror.ClassExecutor.New(codeStmtNotFound, "Prepared statement not found")
+	ErrSchemaChanged   = terror.ClassExecutor.New(codeSchemaChanged, "Schema has changed")
+	ErrWrongParamCount = terror.ClassExecutor.New(codeWrongParamCount, "Wrong parameter count")
+	ErrRowKeyCount     = terror.ClassExecutor.New(codeRowKeyCount, "Wrong row key entry count")
+	ErrPrepareDDL      = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
+	ErrPasswordNoMatch = terror.ClassExecutor.New(CodePasswordNoMatch, "Can't find any matching row in the user table")
 )
 
 // Error codes.
 const (
-	CodeUnknownPlan     terror.ErrCode = 1
-	CodePrepareMulti    terror.ErrCode = 2
-	CodeStmtNotFound    terror.ErrCode = 3
-	CodeSchemaChanged   terror.ErrCode = 4
-	CodeWrongParamCount terror.ErrCode = 5
-	CodeRowKeyCount     terror.ErrCode = 6
-	CodePrepareDDL      terror.ErrCode = 7
+	codeUnknownPlan     terror.ErrCode = 1
+	codePrepareMulti    terror.ErrCode = 2
+	codeStmtNotFound    terror.ErrCode = 3
+	codeSchemaChanged   terror.ErrCode = 4
+	codeWrongParamCount terror.ErrCode = 5
+	codeRowKeyCount     terror.ErrCode = 6
+	codePrepareDDL      terror.ErrCode = 7
 	// MySQL error code
-	CodeCannotUser terror.ErrCode = 1396
+	CodePasswordNoMatch terror.ErrCode = 1133
+	CodeCannotUser      terror.ErrCode = 1396
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
@@ -435,7 +437,8 @@ func init() {
 		return row.Data, nil
 	}
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeCannotUser: mysql.ErrCannotUser,
+		CodeCannotUser:      mysql.ErrCannotUser,
+		CodePasswordNoMatch: mysql.ErrPasswordNoMatch,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }
@@ -559,7 +562,7 @@ func (e *HashJoinExec) fetchBigExec() {
 		done := false
 		for i := 0; i < curBatchSize; i++ {
 			if e.finished.Load().(bool) {
-				break
+				return
 			}
 			row, err := e.bigExec.Next()
 			if err != nil {
@@ -1102,7 +1105,7 @@ type StreamAggExec struct {
 	schema             expression.Schema
 	executed           bool
 	hasData            bool
-	ctx                context.Context
+	Ctx                context.Context
 	AggFuncs           []expression.AggregationFunction
 	GroupByItems       []expression.Expression
 	curGroupEncodedKey []byte
@@ -1156,7 +1159,7 @@ func (e *StreamAggExec) Next() (*Row, error) {
 			break
 		}
 		for _, af := range e.AggFuncs {
-			err = af.StreamUpdate(row.Data, e.ctx)
+			err = af.StreamUpdate(row.Data, e.Ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1181,13 +1184,14 @@ func (e *StreamAggExec) meetNewGroup(row *Row) (bool, error) {
 	if len(e.curGroupKey) == 0 {
 		matched, firstGroup = false, true
 	}
+	sc := e.Ctx.GetSessionVars().StmtCtx
 	for i, item := range e.GroupByItems {
-		v, err := item.Eval(row.Data, e.ctx)
+		v, err := item.Eval(row.Data, e.Ctx)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if matched {
-			c, err := v.CompareDatum(e.curGroupKey[i])
+			c, err := v.CompareDatum(sc, e.curGroupKey[i])
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -1504,11 +1508,12 @@ func (e *SortExec) Swap(i, j int) {
 
 // Less implements sort.Interface Less interface.
 func (e *SortExec) Less(i, j int) bool {
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for index, by := range e.ByItems {
 		v1 := e.Rows[i].key[index]
 		v2 := e.Rows[j].key[index]
 
-		ret, err := v1.CompareDatum(v2)
+		ret, err := v1.CompareDatum(sc, v2)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return true
@@ -1576,11 +1581,12 @@ type TopnExec struct {
 
 // Less implements heap.Interface Less interface.
 func (e *TopnExec) Less(i, j int) bool {
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for index, by := range e.ByItems {
 		v1 := e.Rows[i].key[index]
 		v2 := e.Rows[j].key[index]
 
-		ret, err := v1.CompareDatum(v2)
+		ret, err := v1.CompareDatum(sc, v2)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return true
@@ -1706,7 +1712,7 @@ func (c *conditionChecker) check(rowData []types.Datum) (finished bool, data typ
 		c.dataHasNull = true
 		matched = 0
 	} else {
-		matched, err = data.ToBool()
+		matched, err = data.ToBool(c.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return false, data, errors.Trace(err)
 		}

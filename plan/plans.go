@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -48,7 +49,7 @@ type IndexRange struct {
 }
 
 // IsPoint returns if the index range is a point.
-func (ir *IndexRange) IsPoint() bool {
+func (ir *IndexRange) IsPoint(sc *variable.StatementContext) bool {
 	if len(ir.LowVal) != len(ir.HighVal) {
 		return false
 	}
@@ -58,7 +59,7 @@ func (ir *IndexRange) IsPoint() bool {
 		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
 			return false
 		}
-		cmp, err := a.CompareDatum(b)
+		cmp, err := a.CompareDatum(sc, b)
 		if err != nil {
 			return false
 		}
