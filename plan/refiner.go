@@ -133,7 +133,7 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 	cols := expression.ExtractColumns(condition)
 	for _, col := range cols {
 		if pKName.L == col.ColName.L {
-			continue;
+			continue
 		}
 		isIndexColumn := false
 		for _, indCol := range indexColumns {

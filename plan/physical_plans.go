@@ -108,9 +108,9 @@ type physicalTableSource struct {
 	SortItemsPB []*tipb.ByItem
 
 	// The following fields are used for explaining and testing. Because pb structures are not human-readable.
-	aggFuncs   []expression.AggregationFunction
-	gbyItems   []expression.Expression
-	sortItems  []*ByItems
+	aggFuncs              []expression.AggregationFunction
+	gbyItems              []expression.Expression
+	sortItems             []*ByItems
 	indexFilterConditions []expression.Expression
 	tableFilterConditions []expression.Expression
 }
