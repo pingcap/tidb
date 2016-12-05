@@ -128,7 +128,7 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 	return conditions
 }
 
-// checkIndexCondition will check whether all columns of condtion is index columns or primary key column.
+// checkIndexCondition will check whether all columns of condition is index columns or primary key column.
 func checkIndexCondition(condition expression.Expression, indexColumns []*model.IndexColumn, pKName model.CIStr) bool {
 	cols := expression.ExtractColumns(condition)
 	for _, col := range cols {
