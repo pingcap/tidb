@@ -19,6 +19,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -172,11 +174,12 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 			types.NewDatum(types.Set{}),
 		},
 	}
+	sc := new(variable.StatementContext)
 	for _, ca := range cases {
 		colInfo := &model.ColumnInfo{FieldType: *ca.ft}
 		zv := GetZeroValue(colInfo)
 		c.Assert(zv.Kind(), Equals, ca.value.Kind())
-		cmp, err := zv.CompareDatum(ca.value)
+		cmp, err := zv.CompareDatum(sc, ca.value)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -188,7 +191,8 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 		State:        model.StatePublic,
 		DefaultValue: 1.0,
 	}
-	val, ok, err := GetColDefaultValue(nil, colInfo)
+	ctx := mock.NewContext()
+	val, ok, err := GetColDefaultValue(ctx, colInfo)
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsTrue)
 	c.Assert(val.Kind(), Equals, types.KindInt64)

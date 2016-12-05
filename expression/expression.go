@@ -43,7 +43,7 @@ type Expression interface {
 	HashCode() []byte
 
 	// Equal checks whether two expressions are equal.
-	Equal(e Expression) bool
+	Equal(e Expression, ctx context.Context) bool
 
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
@@ -65,7 +65,7 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 		return false, nil
 	}
 
-	i, err := data.ToBool()
+	i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -106,12 +106,12 @@ func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error)
 }
 
 // Equal implements Expression interface.
-func (c *Constant) Equal(b Expression) bool {
+func (c *Constant) Equal(b Expression, ctx context.Context) bool {
 	y, ok := b.(*Constant)
 	if !ok {
 		return false
 	}
-	con, err := c.Value.CompareDatum(y.Value)
+	con, err := c.Value.CompareDatum(ctx.GetSessionVars().StmtCtx, y.Value)
 	if err != nil || con != 0 {
 		return false
 	}
@@ -201,18 +201,22 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(schema Schema, expr Expression) (Expression, error) {
+func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		var err error
 		args := make([]Expression, len(x.Args))
 		for i, arg := range x.Args {
-			args[i], err = EvaluateExprWithNull(schema, arg)
+			args[i], err = EvaluateExprWithNull(ctx, schema, arg)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		return NewFunction(x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		newFunc, err := NewFunction(x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return FoldConstant(ctx, newFunc), nil
 	case *Column:
 		if schema.GetIndex(x) == -1 {
 			return x, nil

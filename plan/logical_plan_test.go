@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -227,7 +228,7 @@ func mockResolve(node ast.Node) error {
 	if err != nil {
 		return err
 	}
-	return InferType(node)
+	return InferType(ctx.GetSessionVars().StmtCtx, node)
 }
 
 func supportExpr(exprType tipb.ExprType) bool {
@@ -518,22 +519,26 @@ func (s *testPlanSuite) TestLogicalPlanBuilder(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql  string
-		best string
+		plan string
 	}{
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (select b from t s where s.a = t.a)",
-			best: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Selection->Projection",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Selection->Projection",
 		},
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
-			best: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Selection->Projection",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Selection->Projection",
 		},
 		{
 			// This will be resolved as in function.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)), 10)",
-			best: "Apply{DataScan(t)->DataScan(s)->Selection->Projection->MaxOneRow}->Selection->Projection",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection->MaxOneRow}->Selection->Projection",
+		},
+		{
+			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
+			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a),sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -551,7 +556,7 @@ func (s *testPlanSuite) TestLogicalPlanBuilder(c *C) {
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		c.Assert(ToString(p.(LogicalPlan)), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(p.(LogicalPlan)), Equals, ca.plan, Commentf("for %s", ca.sql))
 	}
 }
 
@@ -669,6 +674,14 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		{
 			sql:  "select sum(a.a) from t a right join t b on a.c = b.c",
 			best: "Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select sum(a) from (select * from t) x",
+			best: "DataScan(t)->Aggr(sum(test.t.a))->Projection",
+		},
+		{
+			sql:  "select sum(c1) from (select c c1, d c2 from t a union all select a c1, b c2 from t b union all select b c1, e c2 from t c) x group by c2",
+			best: "UnionAll{DataScan(a)->Aggr(sum(a.c),firstrow(a.d))->DataScan(b)->Aggr(sum(b.a),firstrow(b.b))->DataScan(c)->Aggr(sum(c.b),firstrow(c.e))}->Aggr(sum(join_agg_0))->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -1055,15 +1068,15 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 	pA := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
 
 	pB := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
-
-	pA.initID()
-	pB.initID()
+	ctx := mock.NewContext()
+	pA.initIDAndContext(ctx)
+	pB.initIDAndContext(ctx)
 	c.Assert(pA.id, Equals, pB.id)
 }
 
 func (s *testPlanSuite) TestRangeBuilder(c *C) {
 	defer testleak.AfterTest(c)()
-	rb := &rangeBuilder{}
+	rb := &rangeBuilder{sc: new(variable.StatementContext)}
 
 	cases := []struct {
 		exprStr   string
@@ -1311,7 +1324,6 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 
 		selection := p.GetChildByIndex(0).(*Selection)
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
-
 		c.Assert(expression.ComposeCNFCondition(selection.Conditions).String(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
 	}
 }
@@ -1362,7 +1374,7 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 		},
 		{
 			sql:   "a = 1 and cast(null as SIGNED) is null",
-			after: "eq(test.t.a, 1), isnull(cast(<nil>))",
+			after: "1, eq(test.t.a, 1)",
 		},
 	}
 	for _, ca := range cases {
@@ -1392,7 +1404,7 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 			}
 			v = v.GetChildByIndex(0).(LogicalPlan)
 		}
-		newConds := expression.PropagateConstant(sel.Conditions)
+		newConds := expression.PropagateConstant(builder.ctx, sel.Conditions)
 		for _, v := range newConds {
 			result = append(result, v.String())
 		}

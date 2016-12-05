@@ -154,14 +154,6 @@ func getSelectStmtLabel(x *ast.SelectStmt) string {
 // then wrappped to an adapter *statement as stmt.Statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
 	stmtCount(node)
-	if _, ok := node.(*ast.UpdateStmt); ok {
-		sVars := ctx.GetSessionVars()
-		sVars.InUpdateStmt = true
-		defer func() {
-			sVars.InUpdateStmt = false
-		}()
-	}
-
 	var is infoschema.InfoSchema
 	sessVar := ctx.GetSessionVars()
 	if snap := sessVar.SnapshotInfoschema; snap != nil {

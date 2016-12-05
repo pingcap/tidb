@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
@@ -32,6 +33,18 @@ type testTypeConvertSuite struct {
 }
 
 type invalidMockType struct {
+}
+
+// Convert converts the val with type tp.
+func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
+	d := NewDatum(val)
+	sc := new(variable.StatementContext)
+	sc.TruncateAsError = true
+	ret, err := d.ConvertTo(sc, target)
+	if err != nil {
+		return ret.GetValue(), errors.Trace(err)
+	}
+	return ret.GetValue(), nil
 }
 
 func (s *testTypeConvertSuite) TestConvertType(c *C) {
@@ -323,7 +336,8 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 		ft.Flen = ca.flen
 		ft.Charset = ca.charset
 		inputDatum := NewStringDatum(ca.input)
-		outputDatum, err := inputDatum.ConvertTo(ft)
+		sc := new(variable.StatementContext)
+		outputDatum, err := inputDatum.ConvertTo(sc, ft)
 		if ca.input != ca.output {
 			c.Assert(ErrDataTooLong.Equal(err), IsTrue)
 		} else {
@@ -334,18 +348,19 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 }
 
 func testStrToInt(c *C, str string, expect int64) {
-	b, _ := StrToInt(str)
+	b, _ := StrToInt(new(variable.StatementContext), str)
 	c.Assert(b, Equals, expect)
 }
 
 func testStrToUint(c *C, str string, expect uint64) {
 	d := NewDatum(str)
-	d, _ = d.convertToUint(NewFieldType(mysql.TypeLonglong))
+	sc := new(variable.StatementContext)
+	d, _ = d.convertToUint(sc, NewFieldType(mysql.TypeLonglong))
 	c.Assert(d.GetUint64(), Equals, expect)
 }
 
 func testStrToFloat(c *C, str string, expect float64) {
-	b, _ := StrToFloat(str)
+	b, _ := StrToFloat(new(variable.StatementContext), str)
 	c.Assert(b, Equals, expect)
 }
 
@@ -396,7 +411,9 @@ func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 		ft.Flag |= mysql.UnsignedFlag
 	}
 	d := NewDatum(value)
-	casted, err := d.ConvertTo(ft)
+	sc := new(variable.StatementContext)
+	sc.TruncateAsError = true
+	casted, err := d.ConvertTo(sc, ft)
 	c.Assert(err, IsNil, Commentf("%v", ft))
 	if casted.IsNull() {
 		c.Assert(expected, Equals, "<nil>")
@@ -421,7 +438,9 @@ func deny(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 		ft.Flag |= mysql.UnsignedFlag
 	}
 	d := NewDatum(value)
-	casted, err := d.ConvertTo(ft)
+	sc := new(variable.StatementContext)
+	sc.TruncateAsError = true
+	casted, err := d.ConvertTo(sc, ft)
 	c.Assert(err, NotNil)
 	if casted.IsNull() {
 		c.Assert(expected, Equals, "<nil>")

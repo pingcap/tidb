@@ -88,7 +88,7 @@ func setSnapshotTS(s *variable.SessionVars, sVal string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
+	ts := (t.Time.GoTime().UnixNano() / int64(time.Millisecond)) << epochShiftBits
 	s.SnapshotTS = uint64(ts)
 	return nil
 }

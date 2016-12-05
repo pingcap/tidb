@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -49,11 +50,11 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{"1", float64(2), -1},
 		{"1", uint64(1), 0},
 		{"1", NewDecFromInt(1), 0},
-		{"2011-01-01 11:11:11", Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 0}, -1},
+		{"2011-01-01 11:11:11", Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 0}, -1},
 		{"12:00:00", ZeroDuration, 1},
 		{ZeroDuration, ZeroDuration, 0},
-		{Time{Time: time.Now().Add(time.Second * 10), Type: mysql.TypeDatetime, Fsp: 0},
-			Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 0}, 1},
+		{Time{Time: FromGoTime(time.Now().Add(time.Second * 10)), Type: mysql.TypeDatetime, Fsp: 0},
+			Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 0}, 1},
 
 		{nil, 2, -1},
 		{nil, nil, 0},
@@ -91,9 +92,9 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{[]byte(""), nil, 1},
 		{[]byte(""), []byte("sff"), -1},
 
-		{Time{}, nil, 1},
-		{Time{}, Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 3}, -1},
-		{Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 3}, "0000-00-00 00:00:00", 1},
+		{Time{Time: ZeroTime}, nil, 1},
+		{Time{Time: ZeroTime}, Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 3}, -1},
+		{Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 3}, "0000-00-00 00:00:00", 1},
 
 		{Duration{Duration: time.Duration(34), Fsp: 2}, nil, 1},
 		{Duration{Duration: time.Duration(34), Fsp: 2}, Duration{Duration: time.Duration(29034), Fsp: 2}, -1},
@@ -149,14 +150,21 @@ func (s *testCompareSuite) TestCompare(c *C) {
 
 	for i, t := range cmpTbl {
 		comment := Commentf("%d %v %v", i, t.lhs, t.rhs)
-		ret, err := Compare(t.lhs, t.rhs)
+		ret, err := compareForTest(t.lhs, t.rhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, t.ret, comment)
 
-		ret, err = Compare(t.rhs, t.lhs)
+		ret, err = compareForTest(t.rhs, t.lhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, -t.ret, comment)
 	}
+}
+
+func compareForTest(a, b interface{}) (int, error) {
+	sc := new(variable.StatementContext)
+	aDatum := NewDatum(a)
+	bDatum := NewDatum(b)
+	return aDatum.CompareDatum(sc, bDatum)
 }
 
 func (s *testCompareSuite) TestCompareDatum(c *C) {
@@ -175,13 +183,14 @@ func (s *testCompareSuite) TestCompareDatum(c *C) {
 		{Datum{}, MinNotNullDatum(), -1},
 		{MinNotNullDatum(), MaxValueDatum(), -1},
 	}
+	sc := new(variable.StatementContext)
 	for i, t := range cmpTbl {
 		comment := Commentf("%d %v %v", i, t.lhs, t.rhs)
-		ret, err := t.lhs.CompareDatum(t.rhs)
+		ret, err := t.lhs.CompareDatum(sc, t.rhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, t.ret, comment)
 
-		ret, err = t.rhs.CompareDatum(t.lhs)
+		ret, err = t.rhs.CompareDatum(sc, t.lhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, -t.ret, comment)
 	}

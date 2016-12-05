@@ -77,6 +77,7 @@ var Funcs = map[string]Func{
 	ast.MonthName:        {builtinMonthName, 1, 1},
 	ast.Now:              {builtinNow, 0, 1},
 	ast.Second:           {builtinSecond, 1, 1},
+	ast.StrToDate:        {builtinStrToDate, 2, 2},
 	ast.Sysdate:          {builtinSysDate, 0, 1},
 	ast.Time:             {builtinTime, 1, 1},
 	ast.UTCDate:          {builtinUTCDate, 0, 0},
@@ -210,8 +211,9 @@ func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err er
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func builtinGreatest(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinGreatest(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	max := 0
+	sc := ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(args); i++ {
 		if args[i].IsNull() {
 			d.SetNull()
@@ -219,7 +221,7 @@ func builtinGreatest(args []types.Datum, _ context.Context) (d types.Datum, err 
 		}
 
 		var cmp int
-		if cmp, err = args[i].CompareDatum(args[max]); err != nil {
+		if cmp, err = args[i].CompareDatum(sc, args[max]); err != nil {
 			return
 		}
 

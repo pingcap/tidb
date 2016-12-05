@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
@@ -57,6 +58,7 @@ type topnSorter struct {
 	orderByItems []*tipb.ByItem
 	rows         []*sortRow
 	err          error
+	ctx          *selectContext
 }
 
 func (t *topnSorter) Len() int {
@@ -72,7 +74,7 @@ func (t *topnSorter) Less(i, j int) bool {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
 
-		ret, err := v1.CompareDatum(v2)
+		ret, err := v1.CompareDatum(t.ctx.sc, v2)
 		if err != nil {
 			t.err = errors.Trace(err)
 			return true
@@ -121,7 +123,7 @@ func (t *topnHeap) Less(i, j int) bool {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
 
-		ret, err := v1.CompareDatum(v2)
+		ret, err := v1.CompareDatum(t.ctx.sc, v2)
 		if err != nil {
 			t.err = errors.Trace(err)
 			return true
@@ -184,6 +186,8 @@ type selectContext struct {
 	colTps map[int64]*types.FieldType
 
 	chunks []tipb.Chunk
+
+	sc *variable.StatementContext
 }
 
 func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
@@ -201,8 +205,9 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			sel:       sel,
 			txn:       txn,
 			keyRanges: req.ranges,
+			sc:        new(variable.StatementContext), // TODO: Use PB defiend statement context.
 		}
-		ctx.eval = &xeval.Evaluator{Row: make(map[int64]types.Datum)}
+		ctx.eval = xeval.NewEvaluator()
 		if sel.Where != nil {
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
 			collectColumnsInExpr(sel.Where, ctx, ctx.whereColumns)
@@ -219,6 +224,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 					totalCount: int(*sel.Limit),
 					topnSorter: topnSorter{
 						orderByItems: sel.OrderBy,
+						ctx:          ctx,
 					},
 				}
 				ctx.topnColumns = make(map[int64]*tipb.ColumnInfo)
@@ -371,7 +377,7 @@ func (rs *localRegion) getRowsFromAgg(ctx *selectContext) error {
 		rowData = append(rowData, types.NewBytesDatum(gk))
 		for _, agg := range ctx.aggregates {
 			agg.currentGroup = gk
-			ds, err := agg.toDatums()
+			ds, err := agg.toDatums(ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -662,7 +668,7 @@ func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64, row map[int6
 	if result.IsNull() {
 		return false, nil
 	}
-	boolResult, err := result.ToBool()
+	boolResult, err := result.ToBool(ctx.sc)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

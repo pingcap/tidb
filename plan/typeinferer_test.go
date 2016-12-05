@@ -146,6 +146,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"hex(12)", mysql.TypeVarString, "utf8"},
 		{"unhex('TiDB')", mysql.TypeVarString, "utf8"},
 		{"unhex(12)", mysql.TypeVarString, "utf8"},
+		{"DATE_FORMAT('2009-10-04 22:23:00', '%W %M %Y')", mysql.TypeVarString, "utf8"},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)
@@ -156,7 +157,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
-		plan.InferType(stmt)
+		plan.InferType(ctx.GetSessionVars().StmtCtx, stmt)
 		tp := stmt.GetResultFields()[0].Column.Tp
 		chs := stmt.GetResultFields()[0].Column.Charset
 		c.Assert(tp, Equals, ca.tp, Commentf("Tp for %s", ca.expr))

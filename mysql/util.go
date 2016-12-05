@@ -23,7 +23,6 @@ import (
 // or column value is calculated from an expression.
 // For example: "select count(*) from t;", the column type is int64 and Flen in ResultField will be 21.
 // See https://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
-// See https://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
 func GetDefaultFieldLength(tp byte) int {
 	switch tp {
 	case TypeTiny:
@@ -38,12 +37,11 @@ func GetDefaultFieldLength(tp byte) int {
 		return 21
 	case TypeDecimal, TypeNewDecimal:
 		// See https://dev.mysql.com/doc/refman/5.7/en/fixed-point-types.html
-		// See https://dev.mysql.com/doc/refman/5.7/en/fixed-point-types.html
 		return 10
 	case TypeBit, TypeBlob:
 		return -1
 	default:
-		//TODO: add more types
+		//TODO: Add more types.
 		return -1
 	}
 }
@@ -53,10 +51,9 @@ func GetDefaultDecimal(tp byte) int {
 	switch tp {
 	case TypeDecimal, TypeNewDecimal:
 		// See https://dev.mysql.com/doc/refman/5.7/en/fixed-point-types.html
-		// See https://dev.mysql.com/doc/refman/5.7/en/fixed-point-types.html
 		return 0
 	default:
-		//TODO: add more types
+		//TODO: Add more types.
 		return -1
 	}
 }
@@ -98,7 +95,7 @@ func myMinInt8(a, b int8) int8 {
 }
 
 // strToInt converts a string to an integer in best effort.
-// TODO: handle overflow and add unittest.
+// TODO: Handle overflow and add unittest.
 func strToInt(str string) (int64, error) {
 	str = strings.TrimSpace(str)
 	if len(str) == 0 {
@@ -122,6 +119,6 @@ func strToInt(str string) (int64, error) {
 	if negative {
 		r = -r
 	}
-	// TODO: if i < len(str), we should return an error.
+	// TODO: If i < len(str), we should return an error.
 	return r, nil
 }

@@ -58,11 +58,15 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.dropTableSQL = `Drop TABLE if exists t;`
 	s.createTableSQL = `CREATE TABLE t(id TEXT);`
 	s.selectSQL = `SELECT * from t;`
+	schemaExpiredRetryTimes = 3
+	checkSchemaValiditySleepTime = 20 * time.Millisecond
 	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
 func (s *testSessionSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
+	schemaExpiredRetryTimes = 30
+	checkSchemaValiditySleepTime = 1 * time.Second
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {
@@ -1943,6 +1947,10 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
 	se2 := newSession(c, store, s.dbName)
+	// Make sure statements can't retry.
+	se.(*session).sessionVars.RetryInfo.Retrying = true
+	se1.(*session).sessionVars.RetryInfo.Retrying = true
+	se2.(*session).sessionVars.RetryInfo.Retrying = true
 
 	ctx := se.(context.Context)
 	sessionctx.GetDomain(ctx).SetLease(20 * time.Millisecond)
@@ -2013,7 +2021,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
-	sessionctx.GetDomain(ctx).SchemaValidity.SetValidity(true, ver.Ver)
+	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
 	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
 	time.Sleep(lease)
 	mustExecSQL(c, se, "drop table if exists t;")
@@ -2490,4 +2498,13 @@ func (s *testSessionSuite) TestTruncateAlloc(c *C) {
 	row, err := rset.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
+}
+
+// Test infomation_schema.columns.
+func (s *testSessionSuite) TestISColumns(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	sql := "select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;"
+	mustExecSQL(c, se, sql)
 }

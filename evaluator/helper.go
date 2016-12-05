@@ -44,7 +44,7 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 	case string:
 		upperX := strings.ToUpper(x)
 		if upperX == CurrentTimestamp {
-			value.Time = defaultTime
+			value.Time = types.FromGoTime(defaultTime)
 		} else if upperX == ZeroTimestamp {
 			value, _ = types.ParseTimeFromNum(0, tp, fsp)
 		} else {
@@ -83,7 +83,7 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 			return d, errors.Trace(err)
 		}
 		ft := types.NewFieldType(mysql.TypeLonglong)
-		xval, err := v.ConvertTo(ft)
+		xval, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx, ft)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -120,7 +120,7 @@ func getSystemTimestamp(ctx context.Context) (time.Time, error) {
 	sessionVars := ctx.GetSessionVars()
 	ts := varsutil.GetSystemVar(sessionVars, "timestamp")
 	if !ts.IsNull() && ts.GetString() != "" {
-		timestamp, err := ts.ToInt64()
+		timestamp, err := ts.ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return time.Time{}, errors.Trace(err)
 		}

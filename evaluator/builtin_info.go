@@ -40,7 +40,7 @@ func builtinFoundRows(arg []types.Datum, ctx context.Context) (d types.Datum, er
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
 
-	d.SetUint64(data.FoundRows)
+	d.SetUint64(data.StmtCtx.FoundRows())
 	return d, nil
 }
 
@@ -79,7 +79,7 @@ func builtinConnectionID(args []types.Datum, ctx context.Context) (d types.Datum
 // See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
 func builtinLastInsertID(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if len(args) == 1 {
-		id, err := args[0].ToInt64()
+		id, err := args[0].ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}

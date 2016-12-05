@@ -154,10 +154,10 @@ func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 	return krs
 }
 
-func indexRangesToKVRanges(tid, idxID int64, ranges []*plan.IndexRange, fieldTypes []*types.FieldType) ([]kv.KeyRange, error) {
+func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, ranges []*plan.IndexRange, fieldTypes []*types.FieldType) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
-		err := convertIndexRangeTypes(ran, fieldTypes)
+		err := convertIndexRangeTypes(sc, ran, fieldTypes)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -183,17 +183,17 @@ func indexRangesToKVRanges(tid, idxID int64, ranges []*plan.IndexRange, fieldTyp
 	return krs, nil
 }
 
-func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType) error {
+func convertIndexRangeTypes(sc *variable.StatementContext, ran *plan.IndexRange, fieldTypes []*types.FieldType) error {
 	for i := range ran.LowVal {
 		if ran.LowVal[i].Kind() == types.KindMinNotNull {
 			ran.LowVal[i].SetBytes([]byte{})
 			continue
 		}
-		converted, err := ran.LowVal[i].ConvertTo(fieldTypes[i])
+		converted, err := ran.LowVal[i].ConvertTo(sc, fieldTypes[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cmp, err := converted.CompareDatum(ran.LowVal[i])
+		cmp, err := converted.CompareDatum(sc, ran.LowVal[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -218,11 +218,11 @@ func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType)
 		if ran.HighVal[i].Kind() == types.KindMaxValue {
 			continue
 		}
-		converted, err := ran.HighVal[i].ConvertTo(fieldTypes[i])
+		converted, err := ran.HighVal[i].ConvertTo(sc, fieldTypes[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cmp, err := converted.CompareDatum(ran.HighVal[i])
+		cmp, err := converted.CompareDatum(sc, ran.HighVal[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -512,11 +512,12 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 
 	totalHandles := 0
 	startTs := time.Now()
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(idxResult)
 		if err != nil || finish {
 			e.tasksErr = errors.Trace(err)
-			if totalHandles >= 100000 && len(e.indexPlan.Ranges) == 1 && e.indexPlan.Ranges[0].IsPoint() {
+			if totalHandles >= 100000 && len(e.indexPlan.Ranges) == 1 && e.indexPlan.Ranges[0].IsPoint(sc) {
 				log.Warnf("[TIME_INDEX_SCAN] time: %v handles: %d concurrency: %d",
 					time.Since(startTs),
 					totalHandles,
@@ -582,7 +583,8 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	for i, v := range e.indexPlan.Index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
-	keyRanges, err := indexRangesToKVRanges(e.table.Meta().ID, e.indexPlan.Index.ID, e.indexPlan.Ranges, fieldTypes)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	keyRanges, err := indexRangesToKVRanges(sc, e.table.Meta().ID, e.indexPlan.Index.ID, e.indexPlan.Ranges, fieldTypes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

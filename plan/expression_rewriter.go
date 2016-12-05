@@ -32,6 +32,7 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 		schema:   p.GetSchema(),
 		b:        b,
 		asScalar: asScalar,
+		ctx:      b.ctx,
 	}
 	expr.Accept(er)
 	if er.err != nil {
@@ -46,7 +47,8 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-	return er.ctxStack[0], er.p, nil
+	result := expression.FoldConstant(b.ctx, er.ctxStack[0])
+	return result, er.p, nil
 }
 
 type expressionRewriter struct {
@@ -56,6 +58,7 @@ type expressionRewriter struct {
 	err      error
 	aggrMap  map[*ast.AggregateFuncExpr]int
 	b        *planBuilder
+	ctx      context.Context
 	// asScalar means the return value must be a scalar value.
 	asScalar bool
 }
@@ -80,7 +83,7 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 }
 
 // constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2).
-func constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
+func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := getRowLen(l), getRowLen(r)
 	if lLen == 1 && rLen == 1 {
 		return expression.NewFunction(op, types.NewFieldType(mysql.TypeTiny), l, r)
@@ -90,7 +93,7 @@ func constructBinaryOpFunction(l expression.Expression, r expression.Expression,
 	funcs := make([]expression.Expression, lLen)
 	for i := 0; i < lLen; i++ {
 		var err error
-		funcs[i], err = constructBinaryOpFunction(getRowArg(l, i), getRowArg(r, i), op)
+		funcs[i], err = er.constructBinaryOpFunction(getRowArg(l, i), getRowArg(r, i), op)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -207,7 +210,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	switch v.Op {
 	// Only EQ, NE and NullEQ can be composed with and.
 	case opcode.EQ, opcode.NE, opcode.NullEQ:
-		checkCondition, er.err = constructBinaryOpFunction(lexpr, rexpr, opcode.Ops[v.Op])
+		checkCondition, er.err = er.constructBinaryOpFunction(lexpr, rexpr, opcode.Ops[v.Op])
 		if er.err != nil {
 			er.err = errors.Trace(er.err)
 			return v, true
@@ -301,7 +304,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	}
 	// a in (subq) will be rewrited as a = any(subq).
 	// a not in (subq) will be rewrited as a != all(subq).
-	checkCondition, err := constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
+	checkCondition, err := er.constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true
@@ -544,7 +547,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 	var function expression.Expression
 	switch v.Op {
 	case opcode.EQ, opcode.NE, opcode.NullEQ:
-		function, er.err = constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
+		function, er.err = er.constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
 			opcode.Ops[v.Op])
 	default:
 		lLen := getRowLen(er.ctxStack[stkLen-2])
