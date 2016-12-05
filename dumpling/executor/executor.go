@@ -562,7 +562,7 @@ func (e *HashJoinExec) fetchBigExec() {
 		done := false
 		for i := 0; i < curBatchSize; i++ {
 			if e.finished.Load().(bool) {
-				break
+				return
 			}
 			row, err := e.bigExec.Next()
 			if err != nil {
