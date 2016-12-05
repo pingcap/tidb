@@ -38,7 +38,6 @@ type Domain struct {
 	store          kv.Storage
 	infoHandle     *infoschema.Handle
 	ddl            ddl.DDL
-	checkCh        chan time.Duration
 	lastLeaseTS    int64 // nano seconds
 	m              sync.Mutex
 	SchemaValidity *schemaValidityInfo
@@ -497,7 +496,6 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop and checkValidityInLoop.
 	if lease > 0 {
-		d.checkCh = make(chan time.Duration, 1)
 		go d.checkValidityInLoop(lease)
 	}
 	// Local store needs to get the change information for every DDL state in each session.
