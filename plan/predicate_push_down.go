@@ -14,16 +14,17 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
 
 func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) error {
-	conditions = expression.PropagateConstant(conditions)
+	conditions = expression.PropagateConstant(p.context(), conditions)
 	selection := &Selection{
 		Conditions:      conditions,
 		baseLogicalPlan: newBaseLogicalPlan(Sel, allocator)}
 	selection.self = selection
-	selection.initID()
+	selection.initIDAndContext(p.context())
 	selection.SetSchema(child.GetSchema().Clone())
 	selection.correlated = child.IsCorrelated()
 	for _, cond := range conditions {
@@ -39,7 +40,7 @@ func (p *Selection) PredicatePushDown(predicates []expression.Expression) ([]exp
 		return nil, nil, errors.Trace(err)
 	}
 	if len(retConditions) > 0 {
-		p.Conditions = expression.PropagateConstant(retConditions)
+		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		return nil, p, nil
 	}
 	err = RemovePlan(p)
@@ -92,7 +93,7 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
-		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(expression.PropagateConstant(tempCond), leftPlan, rightPlan)
+		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(expression.PropagateConstant(p.ctx, tempCond), leftPlan, rightPlan)
 	}
 	switch p.JoinType {
 	case LeftOuterJoin, SemiJoinWithAux:
@@ -184,7 +185,7 @@ func outerJoinSimplify(p *Join, predicates []expression.Expression) error {
 	// then simplify embedding outer join.
 	canBeSimplified := false
 	for _, expr := range predicates {
-		isOk, err := isNullRejected(innerTable.GetSchema(), expr)
+		isOk, err := isNullRejected(p.ctx, innerTable.GetSchema(), expr)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -204,8 +205,8 @@ func outerJoinSimplify(p *Join, predicates []expression.Expression) error {
 // If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
-func isNullRejected(schema expression.Schema, expr expression.Expression) (bool, error) {
-	result, err := expression.EvaluateExprWithNull(schema, expr)
+func isNullRejected(ctx context.Context, schema expression.Schema, expr expression.Expression) (bool, error) {
+	result, err := expression.EvaluateExprWithNull(ctx, schema, expr)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -213,9 +214,10 @@ func isNullRejected(schema expression.Schema, expr expression.Expression) (bool,
 	if !ok {
 		return false, nil
 	}
+	sc := ctx.GetSessionVars().StmtCtx
 	if x.Value.IsNull() {
 		return true, nil
-	} else if isTrue, err := x.Value.ToBool(); err != nil || isTrue == 0 {
+	} else if isTrue, err := x.Value.ToBool(sc); err != nil || isTrue == 0 {
 		return true, errors.Trace(err)
 	}
 	return false, nil

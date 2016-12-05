@@ -675,6 +675,14 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			sql:  "select sum(a.a) from t a right join t b on a.c = b.c",
 			best: "Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0))->Projection",
 		},
+		{
+			sql:  "select sum(a) from (select * from t) x",
+			best: "DataScan(t)->Aggr(sum(test.t.a))->Projection",
+		},
+		{
+			sql:  "select sum(c1) from (select c c1, d c2 from t a union all select a c1, b c2 from t b union all select b c1, e c2 from t c) x group by c2",
+			best: "UnionAll{DataScan(a)->Aggr(sum(a.c),firstrow(a.d))->DataScan(b)->Aggr(sum(b.a),firstrow(b.b))->DataScan(c)->Aggr(sum(c.b),firstrow(c.e))}->Aggr(sum(join_agg_0))->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -1060,9 +1068,9 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 	pA := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
 
 	pB := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
-
-	pA.initID()
-	pB.initID()
+	ctx := mock.NewContext()
+	pA.initIDAndContext(ctx)
+	pB.initIDAndContext(ctx)
 	c.Assert(pA.id, Equals, pB.id)
 }
 
@@ -1316,7 +1324,6 @@ func (s *testPlanSuite) TestConstantFolding(c *C) {
 
 		selection := p.GetChildByIndex(0).(*Selection)
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
-
 		c.Assert(expression.ComposeCNFCondition(selection.Conditions).String(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
 	}
 }
@@ -1367,7 +1374,7 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 		},
 		{
 			sql:   "a = 1 and cast(null as SIGNED) is null",
-			after: "eq(test.t.a, 1), isnull(cast(<nil>))",
+			after: "1, eq(test.t.a, 1)",
 		},
 	}
 	for _, ca := range cases {
@@ -1397,7 +1404,7 @@ func (s *testPlanSuite) TestConstantPropagation(c *C) {
 			}
 			v = v.GetChildByIndex(0).(LogicalPlan)
 		}
-		newConds := expression.PropagateConstant(sel.Conditions)
+		newConds := expression.PropagateConstant(builder.ctx, sel.Conditions)
 		for _, v := range newConds {
 			result = append(result, v.String())
 		}

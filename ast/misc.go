@@ -23,6 +23,7 @@ import (
 
 var (
 	_ StmtNode = &AdminStmt{}
+	_ StmtNode = &AlterUserStmt{}
 	_ StmtNode = &BeginStmt{}
 	_ StmtNode = &BinlogStmt{}
 	_ StmtNode = &CommitStmt{}
@@ -387,6 +388,26 @@ func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateUserStmt)
+	return v.Leave(n)
+}
+
+// AlterUserStmt modifies user account.
+// See https://dev.mysql.com/doc/refman/5.7/en/alter-user.html
+type AlterUserStmt struct {
+	stmtNode
+
+	IfExists    bool
+	CurrentAuth *AuthOption
+	Specs       []*UserSpec
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterUserStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterUserStmt)
 	return v.Leave(n)
 }
 

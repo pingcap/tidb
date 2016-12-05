@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -149,14 +150,21 @@ func (s *testCompareSuite) TestCompare(c *C) {
 
 	for i, t := range cmpTbl {
 		comment := Commentf("%d %v %v", i, t.lhs, t.rhs)
-		ret, err := Compare(t.lhs, t.rhs)
+		ret, err := compareForTest(t.lhs, t.rhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, t.ret, comment)
 
-		ret, err = Compare(t.rhs, t.lhs)
+		ret, err = compareForTest(t.rhs, t.lhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, -t.ret, comment)
 	}
+}
+
+func compareForTest(a, b interface{}) (int, error) {
+	sc := new(variable.StatementContext)
+	aDatum := NewDatum(a)
+	bDatum := NewDatum(b)
+	return aDatum.CompareDatum(sc, bDatum)
 }
 
 func (s *testCompareSuite) TestCompareDatum(c *C) {
@@ -175,13 +183,14 @@ func (s *testCompareSuite) TestCompareDatum(c *C) {
 		{Datum{}, MinNotNullDatum(), -1},
 		{MinNotNullDatum(), MaxValueDatum(), -1},
 	}
+	sc := new(variable.StatementContext)
 	for i, t := range cmpTbl {
 		comment := Commentf("%d %v %v", i, t.lhs, t.rhs)
-		ret, err := t.lhs.CompareDatum(t.rhs)
+		ret, err := t.lhs.CompareDatum(sc, t.rhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, t.ret, comment)
 
-		ret, err = t.rhs.CompareDatum(t.lhs)
+		ret, err = t.rhs.CompareDatum(sc, t.lhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, -t.ret, comment)
 	}

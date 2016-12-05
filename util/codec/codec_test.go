@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -665,14 +666,14 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		{uint64(math.MaxUint64), uint64(0), 1},
 		{uint64(0), uint64(math.MaxUint64), -1},
 	}
-
+	sc := new(variable.StatementContext)
 	for _, t := range tblCmp {
 		d1 := types.NewDatum(t.Arg1)
-		dec1, err := d1.ToDecimal()
+		dec1, err := d1.ToDecimal(sc)
 		c.Assert(err, IsNil)
 		d1.SetMysqlDecimal(dec1)
 		d2 := types.NewDatum(t.Arg2)
-		dec2, err := d2.ToDecimal()
+		dec2, err := d2.ToDecimal(sc)
 		c.Assert(err, IsNil)
 		d2.SetMysqlDecimal(dec2)
 

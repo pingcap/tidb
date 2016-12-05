@@ -93,8 +93,9 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildUpdate(x)
 	case *ast.ShowStmt:
 		return b.buildShow(x)
-	case *ast.AnalyzeTableStmt, *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt, *ast.SetStmt, *ast.DoStmt, *ast.BeginStmt,
-		*ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.GrantStmt, *ast.DropUserStmt:
+	case *ast.AnalyzeTableStmt, *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt, *ast.SetStmt, *ast.DoStmt,
+		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
+		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case *ast.TruncateTableStmt:
 		return b.buildDDL(x)
@@ -257,7 +258,7 @@ func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *Select
 		baseLogicalPlan: newBaseLogicalPlan(Lock, b.allocator),
 	}
 	selectLock.self = selectLock
-	selectLock.initID()
+	selectLock.initIDAndContext(b.ctx)
 	addChild(selectLock, src)
 	selectLock.SetSchema(src.GetSchema())
 	return selectLock
@@ -361,7 +362,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		baseLogicalPlan: newBaseLogicalPlan("Show", b.allocator),
 	}
 	resultPlan = p
-	p.initID()
+	p.initIDAndContext(b.ctx)
 	p.self = p
 	switch show.Tp {
 	case ast.ShowProcedureStatus:
@@ -401,7 +402,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 			baseLogicalPlan: newBaseLogicalPlan(Sel, b.allocator),
 			Conditions:      conditions,
 		}
-		sel.initID()
+		sel.initIDAndContext(b.ctx)
 		sel.self = sel
 		addChild(sel, p)
 		resultPlan = sel
@@ -425,7 +426,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		Ignore:          insert.Ignore,
 		baseLogicalPlan: newBaseLogicalPlan(Ins, b.allocator),
 	}
-	insertPlan.initID()
+	insertPlan.initIDAndContext(b.ctx)
 	insertPlan.self = insertPlan
 	if insert.Select != nil {
 		selectPlan := b.build(insert.Select)

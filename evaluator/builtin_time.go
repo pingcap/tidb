@@ -414,12 +414,13 @@ func builtinMonthName(args []types.Datum, ctx context.Context) (types.Datum, err
 	return d, nil
 }
 
-func builtinNow(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinNow(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	// TODO: if NOW is used in stored function or trigger, NOW will return the beginning time
 	// of the execution.
 	fsp := 0
+	sc := ctx.GetSessionVars().StmtCtx
 	if len(args) == 1 && !args[0].IsNull() {
-		if fsp, err = checkFsp(args[0]); err != nil {
+		if fsp, err = checkFsp(sc, args[0]); err != nil {
 			d.SetNull()
 			return d, errors.Trace(err)
 		}
@@ -612,7 +613,8 @@ func builtinYearWeek(args []types.Datum, ctx context.Context) (types.Datum, erro
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
 func builtinFromUnixTime(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	unixTimeStamp, err := args[0].ToDecimal()
+	sc := ctx.GetSessionVars().StmtCtx
+	unixTimeStamp, err := args[0].ToDecimal(sc)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -1020,8 +1022,9 @@ func builtinCurrentDate(args []types.Datum, _ context.Context) (d types.Datum, e
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curtime
 func builtinCurrentTime(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	fsp := 0
+	sc := ctx.GetSessionVars().StmtCtx
 	if len(args) == 1 && !args[0].IsNull() {
-		if fsp, err = checkFsp(args[0]); err != nil {
+		if fsp, err = checkFsp(sc, args[0]); err != nil {
 			d.SetNull()
 			return d, errors.Trace(err)
 		}
@@ -1045,12 +1048,13 @@ func builtinTime(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	if idx != -1 {
 		fsp = len(str) - idx - 1
 	}
+	sc := ctx.GetSessionVars().StmtCtx
 	fspD := types.NewIntDatum(int64(fsp))
-	if fsp, err = checkFsp(fspD); err != nil {
+	if fsp, err = checkFsp(sc, fspD); err != nil {
 		return d, errors.Trace(err)
 	}
 
-	return convertToDuration(ctx.GetSessionVars().StmtCtx, args[0], fsp)
+	return convertToDuration(sc, args[0], fsp)
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-date
@@ -1099,8 +1103,8 @@ func builtinExtract(args []types.Datum, ctx context.Context) (d types.Datum, err
 	return d, nil
 }
 
-func checkFsp(arg types.Datum) (int, error) {
-	fsp, err := arg.ToInt64()
+func checkFsp(sc *variable.StatementContext, arg types.Datum) (int, error) {
+	fsp, err := arg.ToInt64(sc)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1149,6 +1153,7 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 			}
 		}
 	}
+	sc := ctx.GetSessionVars().StmtCtx
 	if types.IsClockUnit(nodeInterval.Unit) {
 		fieldType = mysql.TypeDatetime
 	}
@@ -1168,7 +1173,7 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	// parse interval
 	var interval string
 	if strings.ToLower(nodeInterval.Unit) == "day" {
-		day, err1 := parseDayInterval(*nodeIntervalIntervalDatum)
+		day, err1 := parseDayInterval(sc, *nodeIntervalIntervalDatum)
 		if err1 != nil {
 			return d, ErrInvalidOperation.Gen("DateArith invalid day interval, need int but got %T", nodeIntervalIntervalDatum.GetString())
 		}
@@ -1177,7 +1182,7 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 		if nodeIntervalIntervalDatum.Kind() == types.KindString {
 			interval = fmt.Sprintf("%v", nodeIntervalIntervalDatum.GetString())
 		} else {
-			ii, err1 := nodeIntervalIntervalDatum.ToInt64()
+			ii, err1 := nodeIntervalIntervalDatum.ToInt64(sc)
 			if err1 != nil {
 				return d, errors.Trace(err1)
 			}
@@ -1205,7 +1210,7 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 
 var reg = regexp.MustCompile(`[\d]+`)
 
-func parseDayInterval(value types.Datum) (int64, error) {
+func parseDayInterval(sc *variable.StatementContext, value types.Datum) (int64, error) {
 	switch value.Kind() {
 	case types.KindString:
 		vs := value.GetString()
@@ -1217,5 +1222,5 @@ func parseDayInterval(value types.Datum) (int64, error) {
 		}
 		value.SetString(reg.FindString(vs))
 	}
-	return value.ToInt64()
+	return value.ToInt64(sc)
 }
