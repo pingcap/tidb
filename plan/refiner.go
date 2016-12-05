@@ -128,31 +128,21 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 	return conditions
 }
 
-func judgeIndexExpression(arg expression.Expression, indexColumns []*model.IndexColumn, pKName model.CIStr) bool {
-	_, ok := arg.(*expression.Constant)
-	if ok {
-		return true
-	}
-	if c, ok := arg.(*expression.Column); ok {
-		if pKName.L == c.ColName.L {
-			return true
+// checkIndexCondition will check whether all columns of condtion is index columns or primary key column.
+func checkIndexCondition(condition expression.Expression, indexColumns []*model.IndexColumn, pKName model.CIStr) bool {
+	cols := expression.ExtractColumns(condition)
+	for _, col := range cols {
+		if pKName.L == col.ColName.L {
+			continue;
 		}
-		for _, col := range indexColumns {
-			if col.Name.L == c.ColName.L && col.Length == types.UnspecifiedLength {
-				return true
+		isIndexColumn := false
+		for _, indCol := range indexColumns {
+			if col.ColName.L == indCol.Name.L && indCol.Length == types.UnspecifiedLength {
+				isIndexColumn = true
+				break
 			}
 		}
-	}
-	return false
-}
-
-func judgeIndexCondition(condition expression.Expression, indexColumns []*model.IndexColumn, pKName model.CIStr) bool {
-	f, ok := condition.(*expression.ScalarFunction)
-	if !ok {
-		return false
-	}
-	for _, arg := range f.Args {
-		if !judgeIndexExpression(arg, indexColumns, pKName) {
+		if !isIndexColumn {
 			return false
 		}
 	}
@@ -171,7 +161,7 @@ func detachIndexFilterConditions(conditions []expression.Expression, indexColumn
 	}
 	var indexConditions, filterConditions []expression.Expression
 	for _, cond := range conditions {
-		if judgeIndexCondition(cond, indexColumns, pKName) {
+		if checkIndexCondition(cond, indexColumns, pKName) {
 			indexConditions = append(indexConditions, cond)
 		} else {
 			filterConditions = append(filterConditions, cond)
