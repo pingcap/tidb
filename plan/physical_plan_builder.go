@@ -164,7 +164,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		if client != nil {
 			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-				ts.ConditionPBExpr, ts.conditions, newSel.Conditions = expressionsToPB(sc, newSel.Conditions, client)
+				ts.ConditionPBExpr, ts.tableFilterConditions, newSel.Conditions = expressionsToPB(sc, newSel.Conditions, client)
 			}
 		}
 		err := buildTableRange(ts)
@@ -245,12 +245,11 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		if client != nil {
 			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
-				var indexConditions, pbConditions []expression.Expression
+				var indexConditions []expression.Expression
 				indexConditions, newSel.Conditions = detachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
-				is.IndexPBExpr, is.conditions, indexConditions = expressionsToPB(sc, indexConditions, client)
-				is.ConditionPBExpr, pbConditions, newSel.Conditions = expressionsToPB(sc, newSel.Conditions, client)
+				is.IndexPBExpr, is.indexFilterConditions, indexConditions = expressionsToPB(sc, indexConditions, client)
+				is.ConditionPBExpr, is.tableFilterConditions, newSel.Conditions = expressionsToPB(sc, newSel.Conditions, client)
 				newSel.Conditions = append(newSel.Conditions, indexConditions...)
-				is.conditions = append(is.conditions, pbConditions...)
 			}
 		}
 		err := buildIndexRange(p.ctx.GetSessionVars().StmtCtx, is)

@@ -53,7 +53,8 @@ func (s *testSuite) TestExplain(c *C) {
     "push down info": {
         "limit": 0,
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 			},
@@ -78,7 +79,8 @@ func (s *testSuite) TestExplain(c *C) {
     "push down info": {
         "limit": 0,
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 			},
@@ -100,7 +102,8 @@ func (s *testSuite) TestExplain(c *C) {
     "push down info": {
         "limit": 0,
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -133,7 +136,8 @@ func (s *testSuite) TestExplain(c *C) {
         "access conditions": [
             "gt(test.t1.c1, 0)"
         ],
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 			},
@@ -159,7 +163,8 @@ func (s *testSuite) TestExplain(c *C) {
         "access conditions": [
             "eq(test.t1.c2, 1)"
         ],
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 			},
@@ -183,7 +188,8 @@ func (s *testSuite) TestExplain(c *C) {
         "access conditions": [
             "gt(test.t1.c1, 1)"
         ],
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -194,7 +200,8 @@ func (s *testSuite) TestExplain(c *C) {
     "push down info": {
         "limit": 0,
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -227,7 +234,8 @@ func (s *testSuite) TestExplain(c *C) {
         "access conditions": [
             "eq(test.t1.c1, 1)"
         ],
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -258,7 +266,8 @@ func (s *testSuite) TestExplain(c *C) {
         "access conditions": [
             "eq(test.t1.c2, 1)"
         ],
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -284,7 +293,8 @@ func (s *testSuite) TestExplain(c *C) {
     "push down info": {
         "limit": 0,
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -303,7 +313,8 @@ func (s *testSuite) TestExplain(c *C) {
             "firstrow(b.c2)"
         ],
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -354,7 +365,8 @@ func (s *testSuite) TestExplain(c *C) {
     "push down info": {
         "limit": 0,
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{

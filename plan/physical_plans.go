@@ -111,7 +111,8 @@ type physicalTableSource struct {
 	aggFuncs   []expression.AggregationFunction
 	gbyItems   []expression.Expression
 	sortItems  []*ByItems
-	conditions []expression.Expression
+	indexFilterConditions []expression.Expression
+	tableFilterConditions []expression.Expression
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -145,13 +146,18 @@ func (p *physicalTableSource) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	filter, err := json.Marshal(p.conditions)
+	indexFilter, err := json.Marshal(p.indexFilterConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tableFilter, err := json.Marshal(p.tableFilterConditions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// print condition infos
 	buffer.WriteString(fmt.Sprintf("\"access conditions\": %s, \n", access))
-	buffer.WriteString(fmt.Sprintf("\"filter conditions\": %s}", filter))
+	buffer.WriteString(fmt.Sprintf("\"index filter conditions\": %s, \n", indexFilter))
+	buffer.WriteString(fmt.Sprintf("\"table filter conditions\": %s}", tableFilter))
 	return buffer.Bytes(), nil
 }
 
@@ -184,8 +190,9 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	if p.readOnly {
 		return resultPlan
 	}
+	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := &PhysicalUnionScan{
-		Condition: expression.ComposeCNFCondition(append(p.conditions, p.AccessCondition...)),
+		Condition: expression.ComposeCNFCondition(append(conditions, p.AccessCondition...)),
 	}
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.GetSchema())
