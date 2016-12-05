@@ -18,8 +18,8 @@ import (
 	"time"
 )
 
-// SchemaValidityInfo is the interface for checking the validity of schema version.
-type SchemaValidityInfo interface {
+// SchemaValidator is the interface for checking the validity of schema version.
+type SchemaValidator interface {
 	// Update the schema validity info, add a new item, delete the expired items.
 	// The schemaVer is valid within leaseGrantTime plus lease duration.
 	Update(leaseGrantTime uint64, schemaVer int64)
@@ -36,7 +36,7 @@ type schemaValidityInfo1 struct {
 	latestSchemaVer int64
 }
 
-func newSchemaValidityInfo(lease time.Duration) SchemaValidityInfo {
+func newSchemaValidator(lease time.Duration) SchemaValidator {
 	return &schemaValidityInfo1{
 		lease: lease,
 		items: make(map[int64]time.Time),
@@ -50,10 +50,10 @@ func (s *schemaValidityInfo1) Update(leaseGrantTS uint64, schemaVer int64) {
 	leaseGrantTime := extractPhysicalTime(leaseGrantTS)
 	leaseExpire := leaseGrantTime.Add(s.lease)
 
-	// renewal lease
+	// Renewal lease.
 	s.items[schemaVer] = leaseExpire
 
-	// delete expired items, leastGrantTime is server current time, actually.
+	// Delete expired items, leastGrantTime is server current time, actually.
 	for k, expire := range s.items {
 		if leaseGrantTime.After(expire) {
 			delete(s.items, k)

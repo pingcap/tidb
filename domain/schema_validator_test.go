@@ -32,10 +32,10 @@ func (*testSuite) TestSchemaValidity(c *C) {
 	exit := make(chan struct{})
 	go serverFunc(lease, leaseCh, oracleCh, exit)
 
-	svi := newSchemaValidityInfo(lease)
+	svi := newSchemaValidator(lease)
 
 	for i := 0; i < 10; i++ {
-		delay := time.Duration(time.Duration(100+rand.Intn(900)) * time.Microsecond)
+		delay := time.Duration(100+rand.Intn(900)) * time.Microsecond
 		time.Sleep(delay)
 		// reload can run arbitrarily, at any time.
 		reload(svi, leaseCh)
@@ -63,7 +63,7 @@ func (*testSuite) TestSchemaValidity(c *C) {
 	exit <- struct{}{}
 }
 
-func reload(svi SchemaValidityInfo, leaseCh chan leaseItem) {
+func reload(svi SchemaValidator, leaseCh chan leaseItem) {
 	item := <-leaseCh
 	svi.Update(item.leaseGrantTS, item.schemaVer)
 }
@@ -71,9 +71,10 @@ func reload(svi SchemaValidityInfo, leaseCh chan leaseItem) {
 func serverFunc(lease time.Duration, requireLease chan leaseItem, oracleCh chan uint64, exit chan struct{}) {
 	var version int64
 	leaseTS := uint64(time.Now().UnixNano())
+	ticker := time.NewTicker(lease)
 	for {
 		select {
-		case <-time.Tick(lease):
+		case <-ticker.C:
 			version++
 			leaseTS = uint64(time.Now().UnixNano())
 		case requireLease <- leaseItem{
