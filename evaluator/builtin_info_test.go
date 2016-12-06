@@ -34,7 +34,10 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	c.Assert(d.GetString(), Equals, "test")
 
 	f := Funcs[ast.Schema]
-	c.Assert(f.F, Equals, builtinDatabase)
+	c.Assert(f, NotNil)
+	d, err = f.F(types.MakeDatums(), ctx)
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "test")
 }
 
 func (s *testEvaluatorSuite) TestFoundRows(c *C) {
