@@ -872,7 +872,7 @@ func (d *Datum) convertToMysqlTime(sc *variable.StatementContext, target *FieldT
 			ret.SetValue(t)
 			return ret, errors.Trace(err)
 		}
-		t, err = t.RoundFrac(fsp)
+		t, err = t.roundFrac(fsp)
 		ret.SetValue(t)
 		if err != nil {
 			return ret, errors.Trace(err)
@@ -883,7 +883,7 @@ func (d *Datum) convertToMysqlTime(sc *variable.StatementContext, target *FieldT
 			ret.SetValue(t)
 			return ret, errors.Trace(err)
 		}
-		t, err = t.RoundFrac(fsp)
+		t, err = t.roundFrac(fsp)
 		ret.SetValue(t)
 		if err != nil {
 			return ret, errors.Trace(err)
