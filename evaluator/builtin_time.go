@@ -1197,7 +1197,10 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	if op == ast.DateSub {
 		year, month, day, duration = -year, -month, -day, -duration
 	}
-	t := result.Time.GoTime()
+	t, err := result.Time.GoTime()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	t = t.Add(duration)
 	t = t.AddDate(int(year), int(month), int(day))
 	if t.Nanosecond() == 0 {

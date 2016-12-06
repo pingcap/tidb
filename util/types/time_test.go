@@ -82,7 +82,9 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := ParseDatetime(test)
+		t, err := ParseDatetime(test)
+		c.Assert(err, IsNil)
+		err = checkTime(t.Time.Year(), t.Time.Month(), t.Time.Day(), t.Time.Hour(), t.Time.Minute(), t.Time.Second(), t.Time.Microsecond())
 		c.Assert(err, NotNil)
 	}
 }
@@ -634,7 +636,8 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		n := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
 		t, err := v.ConvertToTime(mysql.TypeDatetime)
 		c.Assert(err, IsNil)
-		c.Assert(t.Time.GoTime().Sub(n), Equals, v.Duration)
+		t1, _ := t.Time.GoTime()
+		c.Assert(t1.Sub(n), Equals, v.Duration)
 	}
 }
 
