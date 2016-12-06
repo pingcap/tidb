@@ -95,8 +95,10 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("rollback")
 
 	// Updating column is PK handle.
+	// Make sure the record is "1, 1, nil, 1".
 	r := tk.MustQuery("select * from insert_test where id = 1;")
 	rowStr := fmt.Sprintf("%v %v %v %v", "1", "1", nil, "1")
+	r.Check(testkit.Rows(rowStr))
 	insertSQL := `insert into insert_test (id, c3) values (1, 2) on duplicate key update id=values(id), c2=10;`
 	tk.MustExec(insertSQL)
 	r = tk.MustQuery("select * from insert_test where id = 1;")
