@@ -116,12 +116,13 @@ func (c *RawKVClient) Delete(key []byte) error {
 
 func (c *RawKVClient) sendKVReq(key []byte, req *kvrpcpb.Request) (*kvrpcpb.Response, error) {
 	bo := NewBackoffer(rawkvMaxBackoff, context.Background())
+	sender := NewRegionRequestSender(bo, c.regionCache, c.rpcClient)
 	for {
 		region, err := c.regionCache.GetRegion(bo, key)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := sendKVReq(c.regionCache, c.rpcClient, bo, req, region.VerID(), readTimeoutShort)
+		resp, err := sender.SendKVReq(req, region.VerID(), readTimeoutShort)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
