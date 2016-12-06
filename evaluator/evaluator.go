@@ -582,6 +582,16 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 }
 
 func (e *Evaluator) values(v *ast.ValuesExpr) bool {
+	values := e.ctx.GetSessionVars().CurrValues
+	if values != nil {
+		row := values.([]types.Datum)
+		off := v.Column.Refer.Column.Offset
+		if len(row) > off {
+			v.SetDatum(row[off])
+			return true
+		}
+	}
+
 	v.SetDatum(*v.Column.GetDatum())
 	return true
 }

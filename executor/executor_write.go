@@ -597,6 +597,7 @@ func (e *InsertExec) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
+	defer func() { e.ctx.GetSessionVars().CurrValues = nil }()
 	for _, row := range rows {
 		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
@@ -617,6 +618,10 @@ func (e *InsertExec) Next() (*Row, error) {
 			}
 			return nil, errors.Trace(err)
 		}
+
+		// For evaluating ValuesExpr
+		// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+		e.ctx.GetSessionVars().CurrValues = row
 		if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -908,20 +913,18 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 	return nil
 }
 
+// onDuplicateUpdate updates the duplicate row.
+// TODO: Report rows affected and last insert id.
 func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]*ast.Assignment) error {
-	// On duplicate key update the duplicate row.
-	// Evaluate the updated value.
-	// TODO: report rows affected and last insert id.
 	data, err := e.Table.Row(e.ctx, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// For evaluate ValuesExpr
-	// http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+	// for evaluating value
 	for i, rf := range e.fields {
-		rf.Expr.SetValue(row[i].GetValue())
+		rf.Expr.SetValue(data[i].GetValue())
 	}
-	// Evaluate assignment
+	// evaluate assignment
 	newData := make([]types.Datum, len(data))
 	for i, c := range row {
 		asgn, ok := cols[i]
