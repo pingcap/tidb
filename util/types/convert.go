@@ -131,9 +131,8 @@ func convertFloatToUint(sc *variable.StatementContext, fval float64, upperBound 
 	if val != fval {
 		if sc.TruncateAsError {
 			return uint64(val), errors.Trace(ErrTruncated)
-		} else {
-			sc.AppendWarning(ErrTruncated)
 		}
+		sc.AppendWarning(ErrTruncated)
 	}
 	return uint64(val), nil
 }
@@ -237,7 +236,7 @@ func floatStrToIntStr(validFloat string) (string, error) {
 // StrToFloat converts a string to a float64 in best effort.
 func StrToFloat(sc *variable.StatementContext, str string) (float64, error) {
 	str = strings.TrimSpace(str)
-	validStr,err := getValidFloatPrefix(sc, str)
+	validStr, err := getValidFloatPrefix(sc, str)
 	f, err1 := strconv.ParseFloat(validStr, 64)
 	if err1 != nil {
 		return f, errors.Trace(err1)
