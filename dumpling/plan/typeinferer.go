@@ -306,7 +306,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		}
 	case "str_to_date":
 		tp = types.NewFieldType(mysql.TypeDatetime)
-	case "dayname", "version", "database", "user", "current_user",
+	case "dayname", "version", "database", "user", "current_user", "schema",
 		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
 		"replace", "ucase", "upper", "convert", "substring",
 		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex", "date_format":
