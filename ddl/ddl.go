@@ -1107,7 +1107,8 @@ func (d *ddl) modifiable(origin *types.FieldType, to *types.FieldType) bool {
 	}
 }
 
-func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) (*model.Job, error) {
+func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, originalColName model.CIStr,
+	spec *ast.AlterTableSpec) (*model.Job, error) {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -1118,10 +1119,9 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, spec 
 		return nil, errors.Trace(infoschema.ErrTableNotExists)
 	}
 
-	colName := spec.NewColumn.Name.Name
-	col := table.FindCol(t.Cols(), colName.L)
+	col := table.FindCol(t.Cols(), originalColName.L)
 	if col == nil {
-		return nil, infoschema.ErrColumnNotExists.GenByArgs(colName, ident.Name)
+		return nil, infoschema.ErrColumnNotExists.GenByArgs(originalColName, ident.Name)
 	}
 	if spec.Constraint != nil || (spec.Position != nil && spec.Position.Tp != ast.ColumnPositionNone) ||
 		len(spec.NewColumn.Options) != 0 || spec.NewColumn.Tp == nil {
@@ -1135,11 +1135,12 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, spec 
 
 	newCol := *col
 	newCol.FieldType = *spec.NewColumn.Tp
+	newCol.Name = spec.NewColumn.Name.Name
 	job := &model.Job{
 		SchemaID: schema.ID,
 		TableID:  t.Meta().ID,
 		Type:     model.ActionModifyColumn,
-		Args:     []interface{}{&newCol, col.Name},
+		Args:     []interface{}{&newCol, originalColName},
 	}
 	return job, nil
 }
@@ -1161,14 +1162,11 @@ func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 		return errWrongTableName.GenByArgs(spec.OldColumnName.Table.O)
 	}
 
-	newColName := spec.NewColumn.Name
-	spec.NewColumn.Name = spec.OldColumnName
-	job, err := d.getModifiableColumnJob(ctx, ident, spec)
+	job, err := d.getModifiableColumnJob(ctx, ident, spec.OldColumnName.Name, spec)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	job.Args[0].(*table.Column).Name = newColName.Name
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
@@ -1177,7 +1175,8 @@ func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 // ModifyColumn does modification on an existing column, currently we only support limited kind of changes
 // that do not need to change or check data on the table.
 func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	job, err := d.getModifiableColumnJob(ctx, ident, spec)
+	originalColName := spec.NewColumn.Name.Name
+	job, err := d.getModifiableColumnJob(ctx, ident, originalColName, spec)
 	if err != nil {
 		return errors.Trace(err)
 	}
