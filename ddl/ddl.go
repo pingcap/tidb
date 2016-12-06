@@ -943,7 +943,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 		case ast.AlterTableAddColumn:
 			err = d.AddColumn(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
-			err = d.DropColumn(ctx, ident, spec.DropColumn.Name)
+			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
 		case ast.AlterTableAddConstraint:
@@ -990,7 +990,7 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 // AddColumn will add a new column to the table.
 func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
 	// Check whether the added column constraints are supported.
-	err := checkColumnConstraint(spec.Column.Options)
+	err := checkColumnConstraint(spec.NewColumn.Options)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1007,7 +1007,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	}
 
 	// Check whether added column has existed.
-	colName := spec.Column.Name.Name.O
+	colName := spec.NewColumn.Name.Name.O
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
 		return infoschema.ErrColumnExists.GenByArgs(colName)
@@ -1020,7 +1020,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	// Ingore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, later we will change the
 	// column's offset later.
-	col, _, err = d.buildColumnAndConstraint(ctx, len(t.Cols()), spec.Column)
+	col, _, err = d.buildColumnAndConstraint(ctx, len(t.Cols()), spec.NewColumn)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1118,23 +1118,23 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, spec 
 		return nil, errors.Trace(infoschema.ErrTableNotExists)
 	}
 
-	colName := spec.Column.Name.Name
+	colName := spec.NewColumn.Name.Name
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
 		return nil, infoschema.ErrColumnNotExists.GenByArgs(colName, ident.Name)
 	}
 	if spec.Constraint != nil || (spec.Position != nil && spec.Position.Tp != ast.ColumnPositionNone) ||
-		len(spec.Column.Options) != 0 || spec.Column.Tp == nil {
+		len(spec.NewColumn.Options) != 0 || spec.NewColumn.Tp == nil {
 		// Make sure the column definition is simple field type.
 		return nil, errUnsupportedModifyColumn
 	}
-	d.setCharsetCollationFlenDecimal(spec.Column.Tp)
-	if !d.modifiable(&col.FieldType, spec.Column.Tp) {
+	d.setCharsetCollationFlenDecimal(spec.NewColumn.Tp)
+	if !d.modifiable(&col.FieldType, spec.NewColumn.Tp) {
 		return nil, errUnsupportedModifyColumn
 	}
 
 	newCol := *col
-	newCol.FieldType = *spec.Column.Tp
+	newCol.FieldType = *spec.NewColumn.Tp
 	job := &model.Job{
 		SchemaID: schema.ID,
 		TableID:  t.Meta().ID,
@@ -1148,21 +1148,21 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, spec 
 // currently we only support limited kind of changes
 // that do not need to change or check data on the table.
 func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	if len(spec.Column.Name.Schema.O) != 0 && ident.Schema.L != spec.Column.Name.Schema.L {
-		return errWrongDBName.GenByArgs(spec.Column.Name.Schema.O)
+	if len(spec.NewColumn.Name.Schema.O) != 0 && ident.Schema.L != spec.NewColumn.Name.Schema.L {
+		return errWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
 	}
-	if len(spec.DropColumn.Schema.O) != 0 && ident.Schema.L != spec.DropColumn.Schema.L {
-		return errWrongDBName.GenByArgs(spec.DropColumn.Schema.O)
+	if len(spec.OldColumnName.Schema.O) != 0 && ident.Schema.L != spec.OldColumnName.Schema.L {
+		return errWrongDBName.GenByArgs(spec.OldColumnName.Schema.O)
 	}
-	if len(spec.Column.Name.Table.O) != 0 && ident.Name.L != spec.Column.Name.Table.L {
-		return errWrongTableName.GenByArgs(spec.Column.Name.Table.O)
+	if len(spec.NewColumn.Name.Table.O) != 0 && ident.Name.L != spec.NewColumn.Name.Table.L {
+		return errWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
 	}
-	if len(spec.DropColumn.Table.O) != 0 && ident.Name.L != spec.DropColumn.Table.L {
-		return errWrongTableName.GenByArgs(spec.DropColumn.Table.O)
+	if len(spec.OldColumnName.Table.O) != 0 && ident.Name.L != spec.OldColumnName.Table.L {
+		return errWrongTableName.GenByArgs(spec.OldColumnName.Table.O)
 	}
 
-	newColName := spec.Column.Name
-	spec.Column.Name = spec.DropColumn
+	newColName := spec.NewColumn.Name
+	spec.NewColumn.Name = spec.OldColumnName
 	job, err := d.getModifiableColumnJob(ctx, ident, spec)
 	if err != nil {
 		return errors.Trace(err)

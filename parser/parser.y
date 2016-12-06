@@ -789,7 +789,7 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp: 		ast.AlterTableAddColumn,
-			Column:		$3.(*ast.ColumnDef),
+			NewColumn:	$3.(*ast.ColumnDef),
 			Position:	$4.(*ast.ColumnPosition),
 		}
 	}
@@ -805,7 +805,7 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableDropColumn,
-			DropColumn: $3.(*ast.ColumnName),
+			OldColumnName: $3.(*ast.ColumnName),
 		}
 	}
 |	"DROP" "PRIMARY" "KEY"
@@ -838,7 +838,7 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:		ast.AlterTableModifyColumn,
-			Column:		$3.(*ast.ColumnDef),
+			NewColumn:	$3.(*ast.ColumnDef),
 			Position:	$4.(*ast.ColumnPosition),
 		}
 	}
@@ -846,8 +846,8 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableChangeColumn,
-			DropColumn:	$3.(*ast.ColumnName),
-			Column: 	$4.(*ast.ColumnDef),
+			OldColumnName:	$3.(*ast.ColumnName),
+			NewColumn: 	$4.(*ast.ColumnDef),
 		}
 	}
 
