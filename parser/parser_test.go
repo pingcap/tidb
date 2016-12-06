@@ -517,6 +517,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// Information Functions
 		{"SELECT DATABASE();", true},
+		{"SELECT SCHEMA();", true},
 		{"SELECT USER();", true},
 		{"SELECT CURRENT_USER();", true},
 		{"SELECT CURRENT_USER;", true},

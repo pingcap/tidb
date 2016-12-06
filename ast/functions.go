@@ -145,6 +145,7 @@ const (
 	ConnectionID = "connection_id"
 	CurrentUser  = "current_user"
 	Database     = "database"
+	Schema       = "schema"
 	FoundRows    = "found_rows"
 	LastInsertId = "last_insert_id"
 	User         = "user"
