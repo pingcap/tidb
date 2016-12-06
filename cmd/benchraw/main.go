@@ -16,13 +16,13 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/juju/errors"
 	"net/http"
 	_ "net/http/pprof"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/store/tikv"
 )
