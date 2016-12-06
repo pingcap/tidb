@@ -604,6 +604,7 @@ const (
 	AlterTableDropIndex
 	AlterTableDropForeignKey
 	AlterTableModifyColumn
+	AlterTableChangeColumn
 
 // TODO: Add more actions
 )

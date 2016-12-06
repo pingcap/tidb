@@ -64,11 +64,12 @@ import (
 	binaryType	"BINARY"
 	blobType	"BLOB"
 	both		"BOTH"
-	charType	"CHAR"
 	by		"BY"
 	cascade		"CASCADE"
 	caseKwd		"CASE"
+	change          "CHANGE"
 	character	"CHARACTER"
+	charType	"CHAR"
 	check 		"CHECK"
 	collate 	"COLLATE"
 	column		"COLUMN"
@@ -841,6 +842,15 @@ AlterTableSpec:
 			Position:	$4.(*ast.ColumnPosition),
 		}
 	}
+|	"CHANGE" ColumnKeywordOpt ColumnName ColumnDef
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableChangeColumn,
+			DropColumn:	$3.(*ast.ColumnName),
+			Column: 	$4.(*ast.ColumnDef),
+		}
+	}
+
 
 KeyOrIndex: "KEY" | "INDEX"
 
@@ -2044,7 +2054,7 @@ UnReservedKeyword:
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
-| "BINARY" | "BLOB" | "BOTH" | "BY" | "CASCADE" | "CASE" | "CHARACTER" | "CHECK" | "COLLATE"
+| "BINARY" | "BLOB" | "BOTH" | "BY" | "CASCADE" | "CASE" | "CHANGE" | "CHARACTER" | "CHECK" | "COLLATE"
 | "COLUMN" | "CONSTRAINT" | "CONVERT" | "CREATE" | "CROSS" | "CURRENT_DATE" | "CURRENT_TIME"
 | "CURRENT_TIMESTAMP" | "CURRENT_USER" | "DATABASE" | "DATABASES" | "DAY_HOUR" | "DAY_MICROSECOND"
 | "DAY_MINUTE" | "DAY_SECOND" | "DECIMAL" | "DEFAULT" | "DELETE" | "DESC" | "DESCRIBE"
