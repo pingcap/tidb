@@ -73,7 +73,6 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 
 	// test error
 	errTable := []string{
-		"1000-00-00 00:00:00",
 		"1000-01-01 00:00:70",
 		"1000-13-00 00:00:00",
 		"10000-01-01 00:00:00",
@@ -82,9 +81,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	}
 
 	for _, test := range errTable {
-		t, err := ParseDatetime(test)
-		c.Assert(err, IsNil)
-		err = checkTime(t.Time.Year(), t.Time.Month(), t.Time.Day(), t.Time.Hour(), t.Time.Minute(), t.Time.Second(), t.Time.Microsecond())
+		_, err := ParseDatetime(test)
 		c.Assert(err, NotNil)
 	}
 }
