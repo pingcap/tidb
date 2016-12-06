@@ -15,6 +15,7 @@ package evaluator
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -31,6 +32,9 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	d, err = builtinDatabase(types.MakeDatums(), ctx)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
+
+	f := Funcs[ast.Schema]
+	c.Assert(f.F, Equals, builtinDatabase)
 }
 
 func (s *testEvaluatorSuite) TestFoundRows(c *C) {

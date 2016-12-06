@@ -117,6 +117,7 @@ var Funcs = map[string]Func{
 	ast.ConnectionID: {builtinConnectionID, 0, 0},
 	ast.CurrentUser:  {builtinCurrentUser, 0, 0},
 	ast.Database:     {builtinDatabase, 0, 0},
+	ast.Schema:       {builtinDatabase, 0, 0},
 	ast.FoundRows:    {builtinFoundRows, 0, 0},
 	ast.LastInsertId: {builtinLastInsertID, 0, 1},
 	ast.User:         {builtinUser, 0, 0},
