@@ -27,7 +27,7 @@ func (s *testSuite) TestExplain(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1 (c1 int primary key, c2 int, index c2 (c2))")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2))")
 	tk.MustExec("create table t2 (c1 int unique, c2 int)")
 
 	cases := []struct {
@@ -53,7 +53,8 @@ func (s *testSuite) TestExplain(c *C) {
     "push down info": {
         "limit": 0,
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 			},
@@ -74,11 +75,12 @@ func (s *testSuite) TestExplain(c *C) {
     "ranges": "[[\u003cnil\u003e,+inf]]",
     "desc": false,
     "out of order": false,
-    "double read": false,
+    "double read": true,
     "push down info": {
         "limit": 0,
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 			},
@@ -100,7 +102,8 @@ func (s *testSuite) TestExplain(c *C) {
     "push down info": {
         "limit": 0,
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -133,13 +136,14 @@ func (s *testSuite) TestExplain(c *C) {
         "access conditions": [
             "gt(test.t1.c1, 0)"
         ],
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 			},
 		},
 		{
-			"select * from t1 where t1.c2 = 1",
+			"select t1.c1, t1.c2 from t1 where t1.c2 = 1",
 			[]string{
 				"IndexScan_5",
 			},
@@ -159,7 +163,8 @@ func (s *testSuite) TestExplain(c *C) {
         "access conditions": [
             "eq(test.t1.c2, 1)"
         ],
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 			},
@@ -183,7 +188,8 @@ func (s *testSuite) TestExplain(c *C) {
         "access conditions": [
             "gt(test.t1.c1, 1)"
         ],
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -194,7 +200,8 @@ func (s *testSuite) TestExplain(c *C) {
     "push down info": {
         "limit": 0,
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -227,7 +234,8 @@ func (s *testSuite) TestExplain(c *C) {
         "access conditions": [
             "eq(test.t1.c1, 1)"
         ],
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -258,7 +266,8 @@ func (s *testSuite) TestExplain(c *C) {
         "access conditions": [
             "eq(test.t1.c2, 1)"
         ],
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -284,7 +293,8 @@ func (s *testSuite) TestExplain(c *C) {
     "push down info": {
         "limit": 0,
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -303,7 +313,8 @@ func (s *testSuite) TestExplain(c *C) {
             "firstrow(b.c2)"
         ],
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -354,7 +365,8 @@ func (s *testSuite) TestExplain(c *C) {
     "push down info": {
         "limit": 0,
         "access conditions": null,
-        "filter conditions": null
+        "index filter conditions": null,
+        "table filter conditions": null
     }
 }`,
 				`{
@@ -366,6 +378,65 @@ func (s *testSuite) TestExplain(c *C) {
     ],
     "limit": 1,
     "child": "TableScan_5"
+}`,
+			},
+		},
+		{
+			"select * from t1 where c1 > 1 and c2 = 1 and c3 < 1",
+			[]string{
+				"IndexScan_5",
+			},
+			[]string{
+				"",
+			},
+			[]string{
+				`{
+    "db": "test",
+    "table": "t1",
+    "index": "c2",
+    "ranges": "[[1,1]]",
+    "desc": false,
+    "out of order": true,
+    "double read": true,
+    "push down info": {
+        "limit": 0,
+        "access conditions": [
+            "eq(test.t1.c2, 1)"
+        ],
+        "index filter conditions": [
+            "gt(test.t1.c1, 1)"
+        ],
+        "table filter conditions": [
+            "lt(test.t1.c3, 1)"
+        ]
+    }
+}`,
+			},
+		},
+		{
+			"select * from t1 where c1 =1 and c2 > 1",
+			[]string{
+				"TableScan_4",
+			},
+			[]string{
+				"",
+			},
+			[]string{
+				`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": [
+            "eq(test.t1.c1, 1)"
+        ],
+        "index filter conditions": null,
+        "table filter conditions": [
+            "gt(test.t1.c2, 1)"
+        ]
+    }
 }`,
 			},
 		},
