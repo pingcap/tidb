@@ -203,11 +203,11 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		},
 	}
 	for {
-		region, err := lr.store.regionCache.GetRegion(bo, primary)
+		loc, err := lr.store.regionCache.LocateKey(bo, primary)
 		if err != nil {
 			return status, errors.Trace(err)
 		}
-		resp, err := lr.store.SendKVReq(bo, req, region.VerID(), readTimeoutShort)
+		resp, err := lr.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return status, errors.Trace(err)
 		}
@@ -239,11 +239,11 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cleanRegions map[RegionVerID]struct{}) error {
 	lockResolverCounter.WithLabelValues("query_resolve_locks").Inc()
 	for {
-		region, err := lr.store.regionCache.GetRegion(bo, l.Key)
+		loc, err := lr.store.regionCache.LocateKey(bo, l.Key)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if _, ok := cleanRegions[region.VerID()]; ok {
+		if _, ok := cleanRegions[loc.Region]; ok {
 			return nil
 		}
 		req := &kvrpcpb.Request{
@@ -255,7 +255,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		if status.IsCommitted() {
 			req.GetCmdResolveLockReq().CommitVersion = status.CommitTS()
 		}
-		resp, err := lr.store.SendKVReq(bo, req, region.VerID(), readTimeoutShort)
+		resp, err := lr.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -273,7 +273,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			return errors.Errorf("unexpected resolve err: %s", keyErr)
 		}
-		cleanRegions[region.VerID()] = struct{}{}
+		cleanRegions[loc.Region] = struct{}{}
 		return nil
 	}
 }
