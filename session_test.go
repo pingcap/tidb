@@ -1465,7 +1465,7 @@ func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
 	mustExecSQL(c, se, "insert into t2 value (930);")
 	// The data in the second src will be casted as the type of the first src.
 	// If use flen=0, it will be truncated.
-	r := mustExecSQL(c, se, "select c from t1 union select c from t2;")
+	r := mustExecSQL(c, se, "select c from t1 union (select c from t2) order by c;")
 	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 2)

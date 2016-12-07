@@ -1907,10 +1907,15 @@ func (e *TrimExec) Next() (*Row, error) {
 // UnionExec has multiple source Executors, it executes them sequentially, and do conversion to the same type
 // as source Executors may has different field type, we need to do conversion.
 type UnionExec struct {
-	schema expression.Schema
-	Srcs   []Executor
-	ctx    context.Context
-	cursor int
+	schema   expression.Schema
+	Srcs     []Executor
+	ctx      context.Context
+	inited   bool
+	finished atomic.Value
+	rowsCh   chan *Row
+	wg       sync.WaitGroup
+	closedCh chan struct{}
+	errCh    chan error
 }
 
 // Schema implements the Executor Schema interface.
@@ -1918,40 +1923,59 @@ func (e *UnionExec) Schema() expression.Schema {
 	return e.schema
 }
 
-// Next implements the Executor Next interface.
-func (e *UnionExec) Next() (*Row, error) {
+func (e *UnionExec) waitAllFinished() {
+	e.wg.Wait()
+	close(e.rowsCh)
+	close(e.closedCh)
+}
+
+func (e *UnionExec) fetchData(idx int) {
+	defer func() {
+		e.wg.Done()
+	}()
 	for {
-		if e.cursor >= len(e.Srcs) {
-			return nil, nil
+		if e.finished.Load().(bool) {
+			return
 		}
-		sel := e.Srcs[e.cursor]
-		row, err := sel.Next()
+		row, err := e.Srcs[idx].Next()
 		if err != nil {
-			return nil, errors.Trace(err)
+			e.finished.Store(true)
+			e.errCh <- err
+			return
 		}
 		if row == nil {
-			e.cursor++
-			continue
+			return
 		}
-		if e.cursor != 0 {
-			for i := range row.Data {
-				// The column value should be casted as the same type of the first select statement in corresponding position.
-				col := e.schema[i]
-				var val types.Datum
-				val, err = row.Data[i].ConvertTo(e.ctx.GetSessionVars().StmtCtx, col.RetType)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				row.Data[i] = val
-			}
+		e.rowsCh <- row
+	}
+}
+
+// Next implements the Executor Next interface.
+func (e *UnionExec) Next() (*Row, error) {
+	if !e.inited {
+		e.finished.Store(false)
+		e.rowsCh = make(chan *Row, 1024*len(e.Srcs))
+		e.errCh = make(chan error, len(e.Srcs))
+		e.closedCh = make(chan struct{}, 1)
+		for i := range e.Srcs {
+			e.wg.Add(1)
+			go e.fetchData(i)
 		}
+		go e.waitAllFinished()
+		e.inited = true
+	}
+	select {
+	case row, _ := <-e.rowsCh:
 		return row, nil
+	case err, _ := <-e.errCh:
+		return nil, errors.Trace(err)
 	}
 }
 
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
-	e.cursor = 0
+	e.finished.Store(true)
+	<-e.closedCh
 	for _, sel := range e.Srcs {
 		er := sel.Close()
 		if er != nil {
