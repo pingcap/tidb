@@ -43,12 +43,10 @@ func newRPCHandler(cluster *Cluster, mvccStore *MvccStore, storeID uint64) *rpcH
 }
 
 func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
-	resp := &kvrpcpb.Response{
-		Type: req.Type,
-	}
+	var resp kvrpcpb.Response
 	if err := h.checkContext(req.GetContext()); err != nil {
 		resp.RegionError = err
-		return resp
+		return &resp
 	}
 	switch req.GetType() {
 	case kvrpcpb.MessageType_CmdGet:
@@ -75,7 +73,8 @@ func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
 	case kvrpcpb.MessageType_CmdRawDelete:
 		resp.CmdRawDeleteResp = h.onRawDelete(req.CmdRawDeleteReq)
 	}
-	return resp
+	resp.Type = req.Type
+	return &resp
 }
 
 func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
