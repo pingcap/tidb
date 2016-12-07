@@ -49,12 +49,12 @@ func (s *testGCWorkerSuite) timeEqual(c *C, t1, t2 time.Time, epsilon time.Durat
 func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 	t1, err := s.gcWorker.getOracleTime()
 	c.Assert(err, IsNil)
-	s.timeEqual(c, time.Now(), t1, time.Millisecond*2)
+	s.timeEqual(c, time.Now(), t1, time.Millisecond*10)
 
 	s.oracle.addOffset(time.Second * 10)
 	t2, err := s.gcWorker.getOracleTime()
 	c.Assert(err, IsNil)
-	s.timeEqual(c, t2, t1.Add(time.Second*10), time.Millisecond*2)
+	s.timeEqual(c, t2, t1.Add(time.Second*10), time.Millisecond*10)
 }
 
 func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
