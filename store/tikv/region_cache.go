@@ -63,7 +63,7 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 	c.mu.RLock()
 	region, ok := c.mu.regions[id]
 	if !ok {
-		defer c.mu.RUnlock()
+		c.mu.RUnlock()
 		return nil, nil
 	}
 	kvCtx := region.GetContext()
@@ -258,7 +258,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 func (c *RegionCache) GetStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	c.storeMu.RLock()
 	if store, ok := c.storeMu.stores[id]; ok {
-		defer c.storeMu.RUnlock()
+		c.storeMu.RUnlock()
 		return store.Addr, nil
 	}
 	c.storeMu.RUnlock()
@@ -285,6 +285,7 @@ func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 			if err = bo.Backoff(boPDRPC, err); err != nil {
 				return "", errors.Trace(err)
 			}
+			continue
 		}
 		if store == nil {
 			return "", nil
