@@ -597,7 +597,7 @@ func (e *InsertExec) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	defer func() { e.ctx.GetSessionVars().CurrValues = nil }()
+	defer func() { e.ctx.GetSessionVars().CurrInsertValues = nil }()
 	for _, row := range rows {
 		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
@@ -621,7 +621,7 @@ func (e *InsertExec) Next() (*Row, error) {
 
 		// For evaluating ValuesExpr
 		// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-		e.ctx.GetSessionVars().CurrValues = row
+		e.ctx.GetSessionVars().CurrInsertValues = row
 		if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
 			return nil, errors.Trace(err)
 		}

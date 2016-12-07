@@ -128,9 +128,9 @@ type SessionVars struct {
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *StatementContext
 
-	// CurrValues is used to record current ValuesExpr's values.
+	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-	CurrValues interface{}
+	CurrInsertValues interface{}
 }
 
 // NewSessionVars creates a session vars object.
