@@ -174,21 +174,24 @@ func (s *RegionRequestSender) onRegionError(region *Region, regionErr *errorpb.E
 				return false, errors.Trace(err)
 			}
 		}
-	} else if staleEpoch := regionErr.GetStaleEpoch(); staleEpoch != nil {
+		return true, nil
+	}
+	if staleEpoch := regionErr.GetStaleEpoch(); staleEpoch != nil {
 		log.Warnf("tikv reports `StaleEpoch`, ctx: %s, retry later", region.GetContext())
 		err = s.regionCache.OnRegionStale(region, staleEpoch.NewRegions)
 		return false, errors.Trace(err)
-	} else if regionErr.GetServerIsBusy() != nil {
+	}
+	if regionErr.GetServerIsBusy() != nil {
 		log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", region.GetContext())
 		err = s.bo.Backoff(boServerBusy, errors.Errorf("server is busy"))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-	} else {
-		// For other errors, we only drop cache here.
-		// Because caller may need to re-split the request.
-		log.Warnf("tikv reports region error: %s, ctx: %s", regionErr, region.GetContext())
-		s.regionCache.DropRegion(region.VerID())
+		return true, nil
 	}
-	return true, nil
+	// For other errors, we only drop cache here.
+	// Because caller may need to re-split the request.
+	log.Warnf("tikv reports region error: %s, ctx: %s", regionErr, region.GetContext())
+	s.regionCache.DropRegion(region.VerID())
+	return false, nil
 }
