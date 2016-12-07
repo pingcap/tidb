@@ -1,5 +1,5 @@
-hash: 20845207374fd5794f8bfccb9b750918af46e30d52b2a3be0001a7abf5c8f326
-updated: 2016-11-22T17:58:05.179450567+08:00
+hash: 0b183dab83d52e7d0829a90857e42c459eb3eab7d0efd4aabdf830955f1156f6
+updated: 2016-12-06T21:13:08.643411904+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -99,7 +99,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: cdfae5d0daef51ca9ad28d7983c58323715bd9be
+  version: 679b4719adb44bb55780ad2480f29a0f234b039e
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -112,12 +112,13 @@ imports:
   - pkg/raft_serverpb
   - pkg/util
 - name: github.com/pingcap/pd
-  version: 447b500dc50e6a5f5cf46abf3bacaf67abb718c1
+  version: e3fdded938ceabe4f6297442e8d179f1d40a9ff4
   subpackages:
   - pd-client
   - pkg/apiutil
-  - pkg/metrics
+  - pkg/metricutil
   - pkg/rpcutil
+  - pkg/timeutil
 - name: github.com/pingcap/tipb
   version: 17699c2d5e3b549d85eec896afd9d4f87879b0eb
   subpackages:
