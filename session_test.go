@@ -151,6 +151,17 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 	c.Assert(int(se.AffectedRows()), Equals, 2)
 	mustExecSQL(c, se, `insert into t values (1, 1) on duplicate key update c2=2;`)
 	c.Assert(int(se.AffectedRows()), Equals, 0)
+	createSQL := `CREATE TABLE IF NOT EXISTS test (
+	  id        VARCHAR(36) PRIMARY KEY NOT NULL,
+	  factor    INTEGER                 NOT NULL                   DEFAULT 2);`
+	mustExecSQL(c, se, createSQL)
+	insertSQL := `INSERT INTO test(id) VALUES('id') ON DUPLICATE KEY UPDATE factor=factor+3;`
+	mustExecSQL(c, se, insertSQL)
+	c.Assert(int(se.AffectedRows()), Equals, 1)
+	mustExecSQL(c, se, insertSQL)
+	c.Assert(int(se.AffectedRows()), Equals, 2)
+	mustExecSQL(c, se, insertSQL)
+	c.Assert(int(se.AffectedRows()), Equals, 2)
 
 	se.SetClientCapability(mysql.ClientFoundRows)
 	mustExecSQL(c, se, s.dropTableSQL)
