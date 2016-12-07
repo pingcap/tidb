@@ -140,14 +140,14 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: 447b500dc50e6a5f5cf46abf3bacaf67abb718c1
+  version: e3fdded938ceabe4f6297442e8d179f1d40a9ff4
 - package: github.com/pingcap/tipb
   version: 17699c2d5e3b549d85eec896afd9d4f87879b0eb
   subpackages:
   - go-binlog
   - go-tipb
 - package: github.com/pingcap/kvproto
-  version: cdfae5d0daef51ca9ad28d7983c58323715bd9be
+  version: 679b4719adb44bb55780ad2480f29a0f234b039e
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:

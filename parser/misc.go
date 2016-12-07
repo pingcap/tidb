@@ -161,6 +161,7 @@ var tokenMap = map[string]int{
 	"CAST":                cast,
 	"CEIL":                ceil,
 	"CEILING":             ceiling,
+	"CHANGE":              change,
 	"CHARACTER":           character,
 	"CHARSET":             charsetKwd,
 	"CHECK":               check,
