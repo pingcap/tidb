@@ -89,6 +89,7 @@ func (s *RegionRequestSender) SendKVReq(req *kvrpcpb.Request, regionID RegionVer
 			if retry {
 				continue
 			}
+			return resp, nil
 		}
 
 		if resp.GetType() != req.GetType() {
