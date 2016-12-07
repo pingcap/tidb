@@ -96,8 +96,10 @@ type physicalTableSource struct {
 	AggFuncsPB []*tipb.Expr
 	GbyItemsPB []*tipb.ByItem
 
-	// ConditionPBExpr is the pb structure of conditions that be pushed down.
-	ConditionPBExpr *tipb.Expr
+	// TableConditionPBExpr is the pb structure of conditions that used in the table scan.
+	TableConditionPBExpr *tipb.Expr
+	// IndexConditionPBExpr is the pb structure of conditions that used in the index scan.
+	IndexConditionPBExpr *tipb.Expr
 
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
@@ -106,10 +108,11 @@ type physicalTableSource struct {
 	SortItemsPB []*tipb.ByItem
 
 	// The following fields are used for explaining and testing. Because pb structures are not human-readable.
-	aggFuncs   []expression.AggregationFunction
-	gbyItems   []expression.Expression
-	sortItems  []*ByItems
-	conditions []expression.Expression
+	aggFuncs              []expression.AggregationFunction
+	gbyItems              []expression.Expression
+	sortItems             []*ByItems
+	indexFilterConditions []expression.Expression
+	tableFilterConditions []expression.Expression
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -143,13 +146,18 @@ func (p *physicalTableSource) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	filter, err := json.Marshal(p.conditions)
+	indexFilter, err := json.Marshal(p.indexFilterConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tableFilter, err := json.Marshal(p.tableFilterConditions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// print condition infos
 	buffer.WriteString(fmt.Sprintf("\"access conditions\": %s, \n", access))
-	buffer.WriteString(fmt.Sprintf("\"filter conditions\": %s}", filter))
+	buffer.WriteString(fmt.Sprintf("\"index filter conditions\": %s, \n", indexFilter))
+	buffer.WriteString(fmt.Sprintf("\"table filter conditions\": %s}", tableFilter))
 	return buffer.Bytes(), nil
 }
 
@@ -182,8 +190,9 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	if p.readOnly {
 		return resultPlan
 	}
+	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := &PhysicalUnionScan{
-		Condition: expression.ComposeCNFCondition(append(p.conditions, p.AccessCondition...)),
+		Condition: expression.ComposeCNFCondition(append(conditions, p.AccessCondition...)),
 	}
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.GetSchema())

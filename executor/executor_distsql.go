@@ -569,10 +569,10 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 		selIdxReq.Limit = e.indexPlan.LimitCount
 	}
 	concurrency := e.scanConcurrency
+	selIdxReq.Where = e.indexPlan.IndexConditionPBExpr
 	if e.singleReadMode {
 		selIdxReq.Aggregates = e.aggFuncs
 		selIdxReq.GroupBy = e.byItems
-		selIdxReq.Where = e.where
 	} else if !e.indexPlan.OutOfOrder {
 		// The cost of index scan double-read is higher than single-read. Usually ordered index scan has a limit
 		// which may not have been pushed down, so we set concurrency to 1 to avoid fetching unnecessary data.
