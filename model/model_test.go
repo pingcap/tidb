@@ -86,9 +86,12 @@ func (*testSuite) TestJobCodec(c *C) {
 		Name string
 	}
 	job := &Job{
-		ID:   1,
-		Args: []interface{}{NewCIStr("a"), A{Name: "abc"}},
+		ID:         1,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{NewCIStr("a"), A{Name: "abc"}},
 	}
+	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: NewCIStr("test_history_db")})
+	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: NewCIStr("test_history_tbl")})
 
 	b, err := job.Encode()
 	c.Assert(err, IsNil)
@@ -96,6 +99,7 @@ func (*testSuite) TestJobCodec(c *C) {
 	newJob := &Job{}
 	err = newJob.Decode(b)
 	c.Assert(err, IsNil)
+	c.Assert(newJob.BinlogInfo, DeepEquals, job.BinlogInfo)
 
 	name := CIStr{}
 	a := A{}
