@@ -501,6 +501,17 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("insert t3 values (4, 3)")
 	r = tk.MustQuery(`select sum(c1), c2 from (select c c1, d c2 from t1 union all select d c1, c c2 from t2 union all select c c1, d c2 from t3) x group by c2 order by c2`)
 	r.Check(testkit.Rows("5 1", "4 2", "4 3"))
+
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1 (a int primary key)")
+	tk.MustExec("create table t2 (a int primary key)")
+	tk.MustExec("create table t3 (a int primary key)")
+	tk.MustExec("insert t1 values (7), (8)")
+	tk.MustExec("insert t2 values (1), (9)")
+	tk.MustExec("insert t3 values (2), (3)")
+	r = tk.MustQuery("select * from t1 union all select * from t2 union all (select * from t3) order by a limit 2")
+	r.Check(testkit.Rows("1", "2"))
+
 }
 
 func (s *testSuite) TestIn(c *C) {

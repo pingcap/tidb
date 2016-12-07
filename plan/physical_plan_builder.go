@@ -872,7 +872,7 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	limit := prop.limit
 	childInfos := make([]*physicalPlanInfo, 0, len(p.children))
 	for _, child := range p.GetChildren() {
-		newProp := convertLimitOffsetToCount(limitProperty(limit))
+		newProp := limitProperty(limit)
 		info, err = child.(LogicalPlan).convert2PhysicalPlan(newProp)
 		if err != nil {
 			return nil, errors.Trace(err)
