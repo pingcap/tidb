@@ -413,6 +413,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 // Handle single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Response, error) {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
+	sender := NewRegionRequestSender(bo, it.store.regionCache, it.store.client)
 	for {
 		it.mu.RLock()
 		if it.mu.finished {
@@ -422,15 +423,16 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 		it.mu.RUnlock()
 
 		req := &coprocessor.Request{
-			Context: task.region.GetContext(),
-			Tp:      it.req.Tp,
-			Data:    it.req.Data,
-			Ranges:  task.ranges.toPBRanges(),
+			Tp:     it.req.Tp,
+			Data:   it.req.Data,
+			Ranges: task.ranges.toPBRanges(),
 		}
-		resp, err := it.store.client.SendCopReq(task.region.GetAddress(), req, readTimeoutMedium)
+		resp, err := sender.SendCopReq(req, task.region.VerID(), readTimeoutMedium)
 		if err != nil {
-			it.store.regionCache.NextPeer(task.region.VerID())
-			err = bo.Backoff(boTiKVRPC, err)
+			return nil, errors.Trace(err)
+		}
+		if regionErr := resp.GetRegionError(); regionErr != nil {
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -438,41 +440,6 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			log.Warnf("send coprocessor request error: %v, try next peer later", err)
-			continue
-		}
-		if e := resp.GetRegionError().GetServerIsBusy(); e != nil {
-			log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", req.Context)
-			err = bo.Backoff(boServerBusy, errors.Errorf("server is busy"))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			continue
-		}
-		if e := resp.GetRegionError(); e != nil {
-			reportRegionError(e)
-			if notLeader := e.GetNotLeader(); notLeader != nil {
-				log.Warnf("tikv reports `NotLeader`: %s, ctx: %s, retry later", notLeader, req.Context)
-				it.store.regionCache.UpdateLeader(task.region.VerID(), notLeader.GetLeader().GetId())
-			} else if staleEpoch := e.GetStaleEpoch(); staleEpoch != nil {
-				log.Warnf("tikv reports `StaleEpoch`, ctx: %s, retry later", req.Context)
-				err = it.store.regionCache.OnRegionStale(task.region, staleEpoch.NewRegions)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			} else {
-				log.Warnf("tikv reports region error: %s, ctx: %s, retry later", e, req.Context)
-				it.store.regionCache.DropRegion(task.region.VerID())
-			}
-			err = bo.Backoff(boRegionMiss, errors.Errorf("regionError: %s", e))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			err = it.rebuildCurrentTask(bo, task)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			log.Warnf("coprocessor region error: %v, retry later", e)
 			continue
 		}
 		if e := resp.GetLocked(); e != nil {

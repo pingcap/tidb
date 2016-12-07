@@ -187,7 +187,8 @@ func (s *tikvStore) GetClient() kv.Client {
 }
 
 func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVerID, timeout time.Duration) (*pb.Response, error) {
-	return sendKVReq(s.regionCache, s.client, bo, req, regionID, timeout)
+	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
+	return sender.SendKVReq(req, regionID, timeout)
 }
 
 func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
