@@ -146,7 +146,7 @@ func isCastType(tp byte) bool {
 	return false
 }
 
-// StrToInt converts a string to an integer in best effort.
+// StrToInt converts a string to an integer at the best-effort.
 func StrToInt(sc *variable.StatementContext, str string) (int64, error) {
 	str = strings.TrimSpace(str)
 	validPrefix, err := getValidIntPrefix(sc, str)
@@ -157,7 +157,7 @@ func StrToInt(sc *variable.StatementContext, str string) (int64, error) {
 	return iVal, errors.Trace(err)
 }
 
-// StrToUint converts a string to an unsigned interger in best effort.
+// StrToUint converts a string to an unsigned interger at the best-effortt.
 func StrToUint(sc *variable.StatementContext, str string) (uint64, error) {
 	str = strings.TrimSpace(str)
 	validPrefix, err := getValidIntPrefix(sc, str)
@@ -233,7 +233,7 @@ func floatStrToIntStr(validFloat string) (string, error) {
 	return validInt, nil
 }
 
-// StrToFloat converts a string to a float64 in best effort.
+// StrToFloat converts a string to a float64 at the best-effort.
 func StrToFloat(sc *variable.StatementContext, str string) (float64, error) {
 	str = strings.TrimSpace(str)
 	validStr, err := getValidFloatPrefix(sc, str)
