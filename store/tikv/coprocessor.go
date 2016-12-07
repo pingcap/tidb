@@ -113,7 +113,7 @@ const (
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
-	region *Region
+	region RegionVerID
 	ranges *copRanges
 
 	status   int
@@ -218,7 +218,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 	rangesLen := ranges.len()
 
 	var tasks []*copTask
-	appendTask := func(region *Region, ranges *copRanges) {
+	appendTask := func(region RegionVerID, ranges *copRanges) {
 		tasks = append(tasks, &copTask{
 			idx:      len(tasks),
 			region:   region,
@@ -229,7 +229,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 	}
 
 	for ranges.len() > 0 {
-		region, err := cache.GetRegion(bo, ranges.at(0).StartKey)
+		loc, err := cache.LocateKey(bo, ranges.at(0).StartKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -238,34 +238,34 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		var i int
 		for ; i < ranges.len(); i++ {
 			r := ranges.at(i)
-			if !(region.Contains(r.EndKey) || bytes.Equal(region.EndKey(), r.EndKey)) {
+			if !(loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)) {
 				break
 			}
 		}
 		// All rest ranges belong to the same region.
 		if i == ranges.len() {
-			appendTask(region, ranges)
+			appendTask(loc.Region, ranges)
 			break
 		}
 
 		r := ranges.at(i)
-		if region.Contains(r.StartKey) {
+		if loc.Contains(r.StartKey) {
 			// Part of r is not in the region. We need to split it.
 			taskRanges := ranges.slice(0, i)
 			taskRanges.last = &kv.KeyRange{
 				StartKey: r.StartKey,
-				EndKey:   region.EndKey(),
+				EndKey:   loc.EndKey,
 			}
-			appendTask(region, taskRanges)
+			appendTask(loc.Region, taskRanges)
 
 			ranges = ranges.slice(i+1, ranges.len())
 			ranges.first = &kv.KeyRange{
-				StartKey: region.EndKey(),
+				StartKey: loc.EndKey,
 				EndKey:   r.EndKey,
 			}
 		} else {
 			// rs[i] is not in the region.
-			appendTask(region, ranges.slice(0, i))
+			appendTask(loc.Region, ranges.slice(0, i))
 			ranges = ranges.slice(i, ranges.len())
 		}
 	}
@@ -427,7 +427,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 			Data:   it.req.Data,
 			Ranges: task.ranges.toPBRanges(),
 		}
-		resp, err := sender.SendCopReq(req, task.region.VerID(), readTimeoutMedium)
+		resp, err := sender.SendCopReq(req, task.region, readTimeoutMedium)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

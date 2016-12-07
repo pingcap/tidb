@@ -46,6 +46,28 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	return c
 }
 
+// RPCContext contains data that is needed to send RPC to a region.
+type RPCContext struct {
+	Region RegionVerID
+	KVCtx  *kvrpcpb.Context
+	Addr   string
+}
+
+// GetRPCContext returns RPCContext for a region. If it returns nil, the region
+// must be out of date and already dropped from cache.
+func (c *RegionCache) GetRPCContext(id RegionVerID) *RPCContext {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if r, ok := c.mu.regions[id]; ok {
+		return &RPCContext{
+			Region: id,
+			KVCtx:  r.GetContext(),
+			Addr:   r.GetAddress(),
+		}
+	}
+	return nil
+}
+
 // GetRegionByVerID finds a Region by Region's verID.
 func (c *RegionCache) GetRegionByVerID(id RegionVerID) *Region {
 	c.mu.RLock()
@@ -57,21 +79,46 @@ func (c *RegionCache) GetRegionByVerID(id RegionVerID) *Region {
 	return nil
 }
 
-// GetRegion find in cache, or get new region.
-func (c *RegionCache) GetRegion(bo *Backoffer, key []byte) (*Region, error) {
+// KeyLocation is the region and range that a key is located.
+type KeyLocation struct {
+	Region   RegionVerID
+	StartKey []byte
+	EndKey   []byte
+}
+
+// Contains checks if key is in [StartKey, EndKey).
+func (l *KeyLocation) Contains(key []byte) bool {
+	return bytes.Compare(l.StartKey, key) <= 0 &&
+		(bytes.Compare(key, l.EndKey) < 0 || len(l.EndKey) == 0)
+}
+
+// LocateKey searches for the region and range that the key is located.
+func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
 	c.mu.RLock()
-	r := c.getRegionFromCache(key)
-	c.mu.RUnlock()
-	if r != nil {
-		return r, nil
+	if r := c.getRegionFromCache(key); r != nil {
+		loc := &KeyLocation{
+			Region:   r.VerID(),
+			StartKey: r.StartKey(),
+			EndKey:   r.EndKey(),
+		}
+		c.mu.RUnlock()
+		return loc, nil
 	}
+	c.mu.RUnlock()
+
 	r, err := c.loadRegion(bo, key)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.insertRegionToCache(r), nil
+	r = c.insertRegionToCache(r)
+	return &KeyLocation{
+		Region:   r.VerID(),
+		StartKey: r.StartKey(),
+		EndKey:   r.EndKey(),
+	}, nil
 }
 
 // GroupKeysByRegion separates keys into groups by their belonging Regions.
@@ -80,20 +127,16 @@ func (c *RegionCache) GetRegion(bo *Backoffer, key []byte) (*Region, error) {
 func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[RegionVerID][][]byte, RegionVerID, error) {
 	groups := make(map[RegionVerID][][]byte)
 	var first RegionVerID
-	var lastRegion *Region
+	var lastLoc *KeyLocation
 	for i, k := range keys {
-		var region *Region
-		if lastRegion != nil && lastRegion.Contains(k) {
-			region = lastRegion
-		} else {
+		if lastLoc == nil || !lastLoc.Contains(k) {
 			var err error
-			region, err = c.GetRegion(bo, k)
+			lastLoc, err = c.LocateKey(bo, k)
 			if err != nil {
 				return nil, first, errors.Trace(err)
 			}
-			lastRegion = region
 		}
-		id := region.VerID()
+		id := lastLoc.Region
 		if i == 0 {
 			first = id
 		}
@@ -170,7 +213,7 @@ func (c *RegionCache) getRegionFromCache(key []byte) *Region {
 		return nil
 	}
 	if r.Contains(key) {
-		return r.Clone()
+		return r
 	}
 	return nil
 }
@@ -242,11 +285,11 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 }
 
 // OnRegionStale removes the old region and inserts new regions into the cache.
-func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) error {
+func (c *RegionCache) OnRegionStale(ctx *RPCContext, newRegions []*metapb.Region) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.dropRegionFromCache(old.VerID())
+	c.dropRegionFromCache(ctx.Region)
 
 	for _, meta := range newRegions {
 		if _, ok := c.pdClient.(*codecPDClient); ok {
@@ -254,12 +297,12 @@ func (c *RegionCache) OnRegionStale(old *Region, newRegions []*metapb.Region) er
 				return errors.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)
 			}
 		}
-		moveLeaderToFirst(meta, old.peer.GetStoreId())
+		moveLeaderToFirst(meta, ctx.KVCtx.GetPeer().GetStoreId())
 		leader := meta.Peers[0]
 		c.insertRegionToCache(&Region{
 			meta: meta,
 			peer: leader,
-			addr: old.GetAddress(),
+			addr: ctx.Addr,
 		})
 	}
 	return nil
