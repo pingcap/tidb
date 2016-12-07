@@ -16,6 +16,7 @@ package types
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/juju/errors"
@@ -229,7 +230,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// For TypeYear
 	ft = NewFieldType(mysql.TypeYear)
-	v, err = Convert("2015-11-11", ft)
+	v, err = Convert("2015", ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(2015, ft)
@@ -347,52 +348,79 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	}
 }
 
-func testStrToInt(c *C, str string, expect int64) {
-	b, _ := StrToInt(new(variable.StatementContext), str)
-	c.Assert(b, Equals, expect)
-}
-
-func testStrToUint(c *C, str string, expect uint64) {
-	d := NewDatum(str)
+func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr error) {
 	sc := new(variable.StatementContext)
-	d, _ = d.convertToUint(sc, NewFieldType(mysql.TypeLonglong))
-	c.Assert(d.GetUint64(), Equals, expect)
+	sc.TruncateAsError = truncateAsErr
+	val, err := StrToInt(sc, str)
+	if expectErr != nil {
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
+	} else {
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, expect)
+	}
 }
 
-func testStrToFloat(c *C, str string, expect float64) {
-	b, _ := StrToFloat(new(variable.StatementContext), str)
-	c.Assert(b, Equals, expect)
+func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectErr error) {
+	sc := new(variable.StatementContext)
+	sc.TruncateAsError = truncateAsErr
+	val, err := StrToUint(sc, str)
+	if expectErr != nil {
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
+	} else {
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, expect)
+	}
+}
+
+func testStrToFloat(c *C, str string, expect float64, truncateAsErr bool, expectErr error) {
+	sc := new(variable.StatementContext)
+	sc.TruncateAsError = truncateAsErr
+	val, err := StrToFloat(sc, str)
+	if expectErr != nil {
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
+	} else {
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, expect)
+	}
 }
 
 func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 	defer testleak.AfterTest(c)()
-	testStrToInt(c, "0", 0)
-	testStrToInt(c, "-1", -1)
-	testStrToInt(c, "100", 100)
-	testStrToInt(c, "65.0", 65)
-	testStrToInt(c, "xx", 0)
-	testStrToInt(c, "11xx", 11)
-	testStrToInt(c, "xx11", 0)
+	testStrToInt(c, "0", 0, true, nil)
+	testStrToInt(c, "-1", -1, true, nil)
+	testStrToInt(c, "100", 100, true, nil)
+	testStrToInt(c, "65.0", 65, false, nil)
+	testStrToInt(c, "65.0", 65, true, nil)
+	testStrToInt(c, "", 0, false, nil)
+	testStrToInt(c, "", 0, true, ErrTruncated)
+	testStrToInt(c, "xx", 0, true, ErrTruncated)
+	testStrToInt(c, "xx", 0, false, nil)
+	testStrToInt(c, "11xx", 11, true, ErrTruncated)
+	testStrToInt(c, "11xx", 11, false, nil)
+	testStrToInt(c, "xx11", 0, false, nil)
 
-	testStrToUint(c, "0", 0)
-	testStrToUint(c, "", 0)
-	testStrToUint(c, "-1", 0xffffffffffffffff)
-	testStrToUint(c, "100", 100)
-	testStrToUint(c, "+100", 100)
-	testStrToUint(c, "65.0", 65)
-	testStrToUint(c, "xx", 0)
+	testStrToUint(c, "0", 0, true, nil)
+	testStrToUint(c, "", 0, false, nil)
+	testStrToUint(c, "", 0, false, nil)
+	testStrToUint(c, "-1", 0xffffffffffffffff, false, ErrOverflow)
+	testStrToUint(c, "100", 100, true, nil)
+	testStrToUint(c, "+100", 100, true, nil)
+	testStrToUint(c, "65.0", 65, true, nil)
+	testStrToUint(c, "xx", 0, true, ErrTruncated)
+	testStrToUint(c, "11xx", 11, true, ErrTruncated)
+	testStrToUint(c, "xx11", 0, true, ErrTruncated)
+
 	// TODO: makes StrToFloat return truncated value instead of zero to make it pass.
-	//	testStrToUint(c, "11xx", 11)
-	testStrToUint(c, "xx11", 0)
-
-	testStrToFloat(c, "", 0)
-	testStrToFloat(c, "-1", -1.0)
-	testStrToFloat(c, "1.11", 1.11)
-	testStrToFloat(c, "1.11.00", 1.11)
-	testStrToFloat(c, "xx", 0.0)
-	testStrToFloat(c, "0x00", 0.0)
-	testStrToFloat(c, "11.xx", 11.0)
-	testStrToFloat(c, "xx.11", 0.0)
+	testStrToFloat(c, "", 0, true, ErrTruncated)
+	testStrToFloat(c, "-1", -1.0, true, nil)
+	testStrToFloat(c, "1.11", 1.11, true, nil)
+	testStrToFloat(c, "1.11.00", 1.11, false, nil)
+	testStrToFloat(c, "1.11.00", 1.11, true, ErrTruncated)
+	testStrToFloat(c, "xx", 0.0, false, nil)
+	testStrToFloat(c, "0x00", 0.0, false, nil)
+	testStrToFloat(c, "11.xx", 11.0, false, nil)
+	testStrToFloat(c, "11.xx", 11.0, true, ErrTruncated)
+	testStrToFloat(c, "xx.11", 0.0, false, nil)
 }
 
 func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
@@ -515,13 +543,23 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	// integer from string
 	signedAccept(c, mysql.TypeLong, "	  234  ", "234")
 	signedAccept(c, mysql.TypeLong, " 2.35e3  ", "2350")
-	signedAccept(c, mysql.TypeLong, " +2.51 ", "3")
-	signedAccept(c, mysql.TypeLong, " -3.58", "-4")
+	signedAccept(c, mysql.TypeLong, " 2.e3  ", "2000")
+	signedAccept(c, mysql.TypeLong, " -2.e3  ", "-2000")
+	signedAccept(c, mysql.TypeLong, " 2e2  ", "200")
+	signedAccept(c, mysql.TypeLong, " 0.002e3  ", "2")
+	signedAccept(c, mysql.TypeLong, " .002e3  ", "2")
+	signedAccept(c, mysql.TypeLong, " 20e-2  ", "0")
+	signedAccept(c, mysql.TypeLong, " -20e-2  ", "0")
+	signedAccept(c, mysql.TypeLong, " +2.51 ", "2")
+	signedAccept(c, mysql.TypeLong, " -3.58", "-3")
 	signedDeny(c, mysql.TypeLong, " 1a ", "1")
+	signedDeny(c, mysql.TypeLong, " +1+ ", "1")
 
 	// integer from float
 	signedAccept(c, mysql.TypeLong, 234.5456, "235")
 	signedAccept(c, mysql.TypeLong, -23.45, "-23")
+	unsignedAccept(c, mysql.TypeLonglong, 234.5456, "235")
+	unsignedDeny(c, mysql.TypeLonglong, -23.45, "18446744073709551593")
 
 	// float from string
 	signedAccept(c, mysql.TypeFloat, "23.523", "23.523")
@@ -532,6 +570,9 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeFloat, float64(123), "123")
 	signedAccept(c, mysql.TypeDouble, " -23.54", "-23.54")
 	signedDeny(c, mysql.TypeDouble, "-23.54a", "-23.54")
+	signedDeny(c, mysql.TypeDouble, "-23.54e2e", "-2354")
+	signedDeny(c, mysql.TypeDouble, "+.e", "0")
+	signedAccept(c, mysql.TypeDouble, "1e+1", "10")
 
 	// year
 	signedDeny(c, mysql.TypeYear, 123, "<nil>")
@@ -590,8 +631,17 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		{"123.23E-10", "123.23E-10"},
 		{"1.1e1.3", "1.1e1"},
 		{"1.1e-13a", "1.1e-13"},
+		{"1.", "1."},
+		{".1", ".1"},
+		{"", "0"},
+		{"123e+", "123"},
+		{"123.e", "123."},
 	}
+	sc := new(variable.StatementContext)
 	for _, ca := range cases {
-		c.Assert(getValidFloatPrefix(ca.origin), Equals, ca.valid)
+		prefix, _ := getValidFloatPrefix(sc, ca.origin)
+		c.Assert(prefix, Equals, ca.valid)
+		_, err := strconv.ParseFloat(prefix, 64)
+		c.Assert(err, IsNil)
 	}
 }
