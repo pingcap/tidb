@@ -317,9 +317,14 @@ func (s *testTimeSuite) getLocation(c *C) *time.Location {
 
 func (s *testTimeSuite) TestCodec(c *C) {
 	defer testleak.AfterTest(c)()
-	t, err := ParseTimestamp("2010-10-10 10:11:11")
+	// mysql timestamp value don't allow month=0 or day=0.
+	t, err := ParseTimestamp("2016-12-00 00:00:00")
+	c.Assert(err, NotNil)
+
+	t, err = ParseTimestamp("2010-10-10 10:11:11")
 	c.Assert(err, IsNil)
-	packed := t.ToPackedUint()
+	packed, err := t.ToPackedUint()
+	c.Assert(err, IsNil)
 
 	var t1 Time
 	t1.Type = mysql.TypeTimestamp
@@ -336,7 +341,8 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	c.Assert(t.String(), Equals, t1.String())
 
 	t1.Time = FromGoTime(time.Now())
-	packed = t1.ToPackedUint()
+	packed, err = t1.ToPackedUint()
+	c.Assert(err, IsNil)
 
 	var t2 Time
 	t2.Type = mysql.TypeTimestamp
@@ -344,7 +350,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(t1.String(), Equals, t2.String())
 
-	packed = ZeroDatetime.ToPackedUint()
+	packed, _ = ZeroDatetime.ToPackedUint()
 
 	var t3 Time
 	t3.Type = mysql.TypeDatetime
@@ -354,7 +360,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 
 	t, err = ParseDatetime("0001-01-01 00:00:00")
 	c.Assert(err, IsNil)
-	packed = t.ToPackedUint()
+	packed, _ = t.ToPackedUint()
 
 	var t4 Time
 	t4.Type = mysql.TypeDatetime
@@ -373,7 +379,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 		t, err := ParseTime(test, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
 
-		packed = t.ToPackedUint()
+		packed, _ = t.ToPackedUint()
 
 		var dest Time
 		dest.Type = mysql.TypeDatetime
