@@ -283,10 +283,13 @@ func getValidFloatPrefix(sc *variable.StatementContext, s string) (valid string,
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(s) {
-		if sc.TruncateAsError {
-			return valid, ErrTruncated
+		if !sc.IgnoreTruncate {
+			if sc.TruncateAsWarning {
+				sc.AppendWarning(ErrTruncated)
+			} else {
+				return valid, ErrTruncated
+			}
 		}
-		sc.AppendWarning(ErrTruncated)
 	}
 	return valid, nil
 }

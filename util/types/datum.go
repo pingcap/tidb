@@ -986,8 +986,12 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 		} else if frac != target.Decimal {
 			dec.Round(dec, target.Decimal)
 			if frac > target.Decimal {
-				if sc.TruncateAsError {
-					err = errors.Trace(ErrTruncated)
+				if !sc.IgnoreTruncate {
+					if sc.TruncateAsWarning {
+						sc.AppendWarning(ErrTruncated)
+					} else {
+						err = ErrTruncated
+					}
 				}
 			}
 		}

@@ -24,6 +24,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -558,6 +559,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
 	selIdxReq.StartTs = e.startTS
 	selIdxReq.TimeZoneOffset = timeZoneOffset()
+	selIdxReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	if len(e.indexPlan.SortItemsPB) > 0 {
 		selIdxReq.OrderBy = e.indexPlan.SortItemsPB
@@ -707,6 +709,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	}
 	selTableReq.StartTs = e.startTS
 	selTableReq.TimeZoneOffset = timeZoneOffset()
+	selTableReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
 	}
@@ -781,6 +784,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq := new(tipb.SelectRequest)
 	selReq.StartTs = e.startTS
 	selReq.TimeZoneOffset = timeZoneOffset()
+	selReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selReq.Where = e.where
 	selReq.TableInfo = &tipb.TableInfo{
 		TableId: e.tableInfo.ID,
@@ -878,4 +882,15 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 func timeZoneOffset() int64 {
 	_, offset := time.Now().Zone()
 	return int64(offset)
+}
+
+// statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
+func statementContextToFlags(sc *variable.StatementContext) uint64 {
+	var flags uint64
+	if sc.IgnoreTruncate {
+		flags |= xeval.FlagIgnoreTruncate
+	} else if sc.TruncateAsWarning {
+		flags |= xeval.FlagTruncateAsWarning
+	}
+	return flags
 }

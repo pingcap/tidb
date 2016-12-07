@@ -162,6 +162,7 @@ func (s *testCompareSuite) TestCompare(c *C) {
 
 func compareForTest(a, b interface{}) (int, error) {
 	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
 	aDatum := NewDatum(a)
 	bDatum := NewDatum(b)
 	return aDatum.CompareDatum(sc, bDatum)
@@ -184,6 +185,7 @@ func (s *testCompareSuite) TestCompareDatum(c *C) {
 		{MinNotNullDatum(), MaxValueDatum(), -1},
 	}
 	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
 	for i, t := range cmpTbl {
 		comment := Commentf("%d %v %v", i, t.lhs, t.rhs)
 		ret, err := t.lhs.CompareDatum(sc, t.rhs)
