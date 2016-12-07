@@ -64,6 +64,8 @@ var (
 	errTooLongKey            = terror.ClassDDL.New(codeTooLongKey, fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
 	errKeyColumnDoesNotExits = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
 	errDupKeyName            = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
+	errWrongDBName           = terror.ClassDDL.New(codeWrongDBName, "Incorrect database name '%s'")
+	errWrongTableName        = terror.ClassDDL.New(codeWrongTableName, "Incorrect table name '%s'")
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -941,7 +943,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 		case ast.AlterTableAddColumn:
 			err = d.AddColumn(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
-			err = d.DropColumn(ctx, ident, spec.DropColumn.Name)
+			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
 		case ast.AlterTableAddConstraint:
@@ -960,6 +962,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 			err = d.DropForeignKey(ctx, ident, model.NewCIStr(spec.Name))
 		case ast.AlterTableModifyColumn:
 			err = d.ModifyColumn(ctx, ident, spec)
+		case ast.AlterTableChangeColumn:
+			err = d.ChangeColumn(ctx, ident, spec)
 		default:
 			// Nothing to do now.
 		}
@@ -986,7 +990,7 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 // AddColumn will add a new column to the table.
 func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
 	// Check whether the added column constraints are supported.
-	err := checkColumnConstraint(spec.Column.Options)
+	err := checkColumnConstraint(spec.NewColumn.Options)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1003,7 +1007,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	}
 
 	// Check whether added column has existed.
-	colName := spec.Column.Name.Name.O
+	colName := spec.NewColumn.Name.Name.O
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
 		return infoschema.ErrColumnExists.GenByArgs(colName)
@@ -1016,7 +1020,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	// Ingore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, later we will change the
 	// column's offset later.
-	col, _, err = d.buildColumnAndConstraint(ctx, len(t.Cols()), spec.Column)
+	col, _, err = d.buildColumnAndConstraint(ctx, len(t.Cols()), spec.NewColumn)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1103,40 +1107,80 @@ func (d *ddl) modifiable(origin *types.FieldType, to *types.FieldType) bool {
 	}
 }
 
-// ModifyColumn does modification on an existing column, currently we only support limited kind of changes
-// that do not need to change or check data on the table.
-func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, originalColName model.CIStr,
+	spec *ast.AlterTableSpec) (*model.Job, error) {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
+		return nil, errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
 	t, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists)
+		return nil, errors.Trace(infoschema.ErrTableNotExists)
 	}
-	colName := spec.Column.Name.Name
-	col := table.FindCol(t.Cols(), colName.L)
+
+	col := table.FindCol(t.Cols(), originalColName.L)
 	if col == nil {
-		return infoschema.ErrColumnNotExists.GenByArgs(colName, ident.Name)
+		return nil, infoschema.ErrColumnNotExists.GenByArgs(originalColName, ident.Name)
 	}
-	if spec.Constraint != nil || spec.Position.Tp != ast.ColumnPositionNone ||
-		len(spec.Column.Options) != 0 || spec.Column.Tp == nil {
+	if spec.Constraint != nil || (spec.Position != nil && spec.Position.Tp != ast.ColumnPositionNone) ||
+		len(spec.NewColumn.Options) != 0 || spec.NewColumn.Tp == nil {
 		// Make sure the column definition is simple field type.
-		return errUnsupportedModifyColumn
+		return nil, errUnsupportedModifyColumn
 	}
-	d.setCharsetCollationFlenDecimal(spec.Column.Tp)
-	if !d.modifiable(&col.FieldType, spec.Column.Tp) {
-		return errUnsupportedModifyColumn
+	d.setCharsetCollationFlenDecimal(spec.NewColumn.Tp)
+	if !d.modifiable(&col.FieldType, spec.NewColumn.Tp) {
+		return nil, errUnsupportedModifyColumn
 	}
+
 	newCol := *col
-	newCol.FieldType = *spec.Column.Tp
+	newCol.FieldType = *spec.NewColumn.Tp
+	newCol.Name = spec.NewColumn.Name.Name
 	job := &model.Job{
 		SchemaID: schema.ID,
 		TableID:  t.Meta().ID,
 		Type:     model.ActionModifyColumn,
-		Args:     []interface{}{&newCol},
+		Args:     []interface{}{&newCol, originalColName},
 	}
+	return job, nil
+}
+
+// ChangeColumn renames an existing column and modifies the column's definition,
+// currently we only support limited kind of changes
+// that do not need to change or check data on the table.
+func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if len(spec.NewColumn.Name.Schema.O) != 0 && ident.Schema.L != spec.NewColumn.Name.Schema.L {
+		return errWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
+	}
+	if len(spec.OldColumnName.Schema.O) != 0 && ident.Schema.L != spec.OldColumnName.Schema.L {
+		return errWrongDBName.GenByArgs(spec.OldColumnName.Schema.O)
+	}
+	if len(spec.NewColumn.Name.Table.O) != 0 && ident.Name.L != spec.NewColumn.Name.Table.L {
+		return errWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
+	}
+	if len(spec.OldColumnName.Table.O) != 0 && ident.Name.L != spec.OldColumnName.Table.L {
+		return errWrongTableName.GenByArgs(spec.OldColumnName.Table.O)
+	}
+
+	job, err := d.getModifiableColumnJob(ctx, ident, spec.OldColumnName.Name, spec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// ModifyColumn does modification on an existing column, currently we only support limited kind of changes
+// that do not need to change or check data on the table.
+func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	originalColName := spec.NewColumn.Name.Name
+	job, err := d.getModifiableColumnJob(ctx, ident, originalColName, spec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
@@ -1458,6 +1502,8 @@ const (
 	codeIncorrectPrefixKey    = 1089
 	codeCantRemoveAllFields   = 1090
 	codeCantDropFieldOrKey    = 1091
+	codeWrongDBName           = 1102
+	codeWrongTableName        = 1103
 	codeBlobKeyWithoutLength  = 1170
 	codeInvalidOnUpdate       = 1294
 )
@@ -1474,6 +1520,8 @@ func init() {
 		codeTooLongKey:            mysql.ErrTooLongKey,
 		codeKeyColumnDoesNotExits: mysql.ErrKeyColumnDoesNotExits,
 		codeDupKeyName:            mysql.ErrDupKeyName,
+		codeWrongDBName:           mysql.ErrWrongDBName,
+		codeWrongTableName:        mysql.ErrWrongTableName,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

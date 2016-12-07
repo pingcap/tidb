@@ -138,6 +138,8 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 		if job.SchemaState == prevState {
 			return
 		}
+		hookCtx := mock.NewContext()
+		hookCtx.Store = s.store
 		prevState = job.SchemaState
 		var err error
 		switch job.SchemaState {
@@ -151,7 +153,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			_, err = writeOnlyTable.AddRecord(ctx, types.MakeDatums(10, 10))
+			_, err = writeOnlyTable.AddRecord(hookCtx, types.MakeDatums(10, 10))
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}

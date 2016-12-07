@@ -78,6 +78,7 @@ func (s *testCharsetSuite) TestGetDefaultCollation(c *C) {
 		succ bool
 	}{
 		{"utf8", "utf8_general_ci", true},
+		{"UTF8", "utf8_general_ci", true},
 		{"latin1", "latin1_swedish_ci", true},
 		{"invalid_cs", "", false},
 		{"", "utf8_general_ci", false},

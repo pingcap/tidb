@@ -425,12 +425,14 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 	newCol := &model.ColumnInfo{}
-	err = job.DecodeArgs(newCol)
+	oldColName := &model.CIStr{}
+	err = job.DecodeArgs(newCol, oldColName)
 	if err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
-	oldCol := findCol(tblInfo.Columns, newCol.Name.L)
+
+	oldCol := findCol(tblInfo.Columns, oldColName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobCancelled
 		return infoschema.ErrColumnNotExists.GenByArgs(newCol.Name, tblInfo.Name)
@@ -441,6 +443,7 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
+
 	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
