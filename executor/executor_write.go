@@ -619,9 +619,6 @@ func (e *InsertExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 
-		// For evaluating ValuesExpr
-		// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-		e.ctx.GetSessionVars().CurrInsertValues = row
 		if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -920,10 +917,14 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	// for evaluating value
 	for i, rf := range e.fields {
 		rf.Expr.SetValue(data[i].GetValue())
 	}
+	// for evaluating ValuesExpr
+	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+	e.ctx.GetSessionVars().CurrInsertValues = row
 	// evaluate assignment
 	newData := make([]types.Datum, len(data))
 	for i, c := range row {
@@ -938,6 +939,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 		}
 		newData[i] = val
 	}
+
 	assignFlag := make([]bool, len(e.Table.Cols()))
 	for i, asgn := range cols {
 		if asgn != nil {

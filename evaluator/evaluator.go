@@ -583,17 +583,20 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 
 func (e *Evaluator) values(v *ast.ValuesExpr) bool {
 	values := e.ctx.GetSessionVars().CurrInsertValues
-	if values != nil {
-		row := values.([]types.Datum)
-		off := v.Column.Refer.Column.Offset
-		if len(row) > off {
-			v.SetDatum(row[off])
-			return true
-		}
+	if values == nil {
+		e.err = errors.New("Session current insert values is nil")
+		return false
 	}
 
-	v.SetDatum(*v.Column.GetDatum())
-	return true
+	row := values.([]types.Datum)
+	off := v.Column.Refer.Column.Offset
+	if len(row) > off {
+		v.SetDatum(row[off])
+		return true
+	}
+
+	e.err = errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), off)
+	return false
 }
 
 func (e *Evaluator) variable(v *ast.VariableExpr) bool {
