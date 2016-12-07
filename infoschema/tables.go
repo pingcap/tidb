@@ -621,13 +621,13 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 		fullRows = dataForCharacterSets()
 	case tableCollations:
 		fullRows = dataForColltions()
+	case tableSessionVar:
+		fullRows, err = dataForSessionVar(ctx)
 	case tableFiles:
 	case tableProfiling:
 	case tablePartitions:
 	case tableKeyColumm:
 	case tableReferConst:
-	case tableSessionVar:
-		fullRows, err = dataForSessionVar(ctx)
 	case tablePlugins:
 	}
 	if err != nil {
