@@ -120,6 +120,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"dayname('2007-02-03')", mysql.TypeVarString, "utf8"},
 		{"version()", mysql.TypeVarString, "utf8"},
 		{"database()", mysql.TypeVarString, "utf8"},
+		{"schema()", mysql.TypeVarString, "utf8"},
 		{"user()", mysql.TypeVarString, "utf8"},
 		{"current_user()", mysql.TypeVarString, "utf8"},
 		{"CONCAT('T', 'i', 'DB')", mysql.TypeVarString, "utf8"},

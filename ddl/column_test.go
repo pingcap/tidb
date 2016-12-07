@@ -895,7 +895,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
-	colDef := stmt.(*ast.AlterTableStmt).Specs[0].Column
+	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumn
 	col, _, err := columnDefToCol(nil, 0, colDef)
 	c.Assert(err, IsNil)
 	return &col.FieldType
