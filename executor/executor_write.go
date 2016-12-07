@@ -597,7 +597,6 @@ func (e *InsertExec) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	defer func() { e.ctx.GetSessionVars().CurrInsertValues = nil }()
 	for _, row := range rows {
 		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
@@ -633,6 +632,7 @@ func (e *InsertExec) Next() (*Row, error) {
 
 // Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
+	e.ctx.GetSessionVars().CurrInsertValues = nil
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
 	}
