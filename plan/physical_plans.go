@@ -96,10 +96,10 @@ type physicalTableSource struct {
 	AggFuncsPB []*tipb.Expr
 	GbyItemsPB []*tipb.ByItem
 
-	// ConditionPBExpr is the pb structure of conditions that be pushed down.
-	ConditionPBExpr *tipb.Expr
-	// IndexPBExpr is the pb structure of conditions that used in the index scan.
-	IndexPBExpr *tipb.Expr
+	// TableConditionPBExpr is the pb structure of conditions that used in the table scan.
+	TableConditionPBExpr *tipb.Expr
+	// IndexConditionPBExpr is the pb structure of conditions that used in the index scan.
+	IndexConditionPBExpr *tipb.Expr
 
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression

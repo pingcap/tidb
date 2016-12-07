@@ -570,7 +570,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 		selIdxReq.Limit = e.indexPlan.LimitCount
 	}
 	concurrency := e.scanConcurrency
-	selIdxReq.Where = e.indexPlan.IndexPBExpr
+	selIdxReq.Where = e.indexPlan.IndexConditionPBExpr
 	if e.singleReadMode {
 		selIdxReq.Aggregates = e.aggFuncs
 		selIdxReq.GroupBy = e.byItems

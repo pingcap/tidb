@@ -159,15 +159,15 @@ func detachIndexFilterConditions(conditions []expression.Expression, indexColumn
 			}
 		}
 	}
-	var indexConditions, filterConditions []expression.Expression
+	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
 		if checkIndexCondition(cond, indexColumns, pKName) {
 			indexConditions = append(indexConditions, cond)
 		} else {
-			filterConditions = append(filterConditions, cond)
+			tableConditions = append(tableConditions, cond)
 		}
 	}
-	return indexConditions, filterConditions
+	return indexConditions, tableConditions
 }
 
 func detachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
