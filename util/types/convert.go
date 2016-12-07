@@ -156,7 +156,7 @@ func StrToUint(sc *variable.StatementContext, str string) (uint64, error) {
 	if err1 != nil {
 		return uVal, errors.Trace(ErrOverflow)
 	}
-	return uVal, err
+	return uVal, errors.Trace(err)
 }
 
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
