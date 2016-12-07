@@ -46,6 +46,9 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	var newHandle types.Datum
 	for i, hasSetExpr := range assignFlag {
 		if !hasSetExpr {
+			if onDuplicateUpdate {
+				newData[i] = oldData[i]
+			}
 			continue
 		}
 		if i < offset || i >= offset+len(cols) {
