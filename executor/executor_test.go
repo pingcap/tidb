@@ -827,6 +827,17 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("INSERT INTO tab1 VALUES(1,37,20.85,30,10.69)")
 	result = tk.MustQuery("SELECT pk FROM tab1 WHERE ((col3 <= 6 OR col3 < 29 AND (col0 < 41)) OR col3 > 42) AND col1 >= 96.1 AND col3 = 30 AND col3 > 17 AND (col0 BETWEEN 36 AND 42)")
 	result.Check(testkit.Rows())
+	tk.MustExec("drop table if exists tab1")
+	tk.MustExec("CREATE TABLE tab1(pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER)")
+	tk.MustExec("CREATE INDEX idx_tab1_0 on tab1 (a)")
+	tk.MustExec("INSERT INTO tab1 VALUES(1,1,1)")
+	tk.MustExec("INSERT INTO tab1 VALUES(2,2,1)")
+	tk.MustExec("INSERT INTO tab1 VALUES(3,1,2)")
+	tk.MustExec("INSERT INTO tab1 VALUES(4,2,2)")
+	result = tk.MustQuery("SELECT * FROM tab1 WHERE pk <= 3 AND a = 1")
+	result.Check(testkit.Rows("1 1 1", "3 1 2"))
+	result = tk.MustQuery("SELECT * FROM tab1 WHERE pk <= 4 AND a = 1 AND b = 2")
+	result.Check(testkit.Rows("3 1 2"))
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
