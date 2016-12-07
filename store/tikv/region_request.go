@@ -62,8 +62,8 @@ func (s *RegionRequestSender) SendKVReq(req *kvrpcpb.Request, regionID RegionVer
 		default:
 		}
 
-		region := s.regionCache.GetRegionByVerID(regionID)
-		if region == nil {
+		ctx := s.regionCache.GetRPCContext(regionID)
+		if ctx == nil {
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the
 			// RPC by returning RegionError directly.
@@ -73,7 +73,7 @@ func (s *RegionRequestSender) SendKVReq(req *kvrpcpb.Request, regionID RegionVer
 			}, nil
 		}
 
-		resp, retry, err := s.sendKVReqToRegion(region, req, timeout)
+		resp, retry, err := s.sendKVReqToRegion(ctx, req, timeout)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -82,7 +82,7 @@ func (s *RegionRequestSender) SendKVReq(req *kvrpcpb.Request, regionID RegionVer
 		}
 
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			retry, err := s.onRegionError(region, regionErr)
+			retry, err := s.onRegionError(ctx, regionErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -101,8 +101,8 @@ func (s *RegionRequestSender) SendKVReq(req *kvrpcpb.Request, regionID RegionVer
 // SendCopReq sends a coprocessor request to tikv server.
 func (s *RegionRequestSender) SendCopReq(req *coprocessor.Request, regionID RegionVerID, timeout time.Duration) (*coprocessor.Response, error) {
 	for {
-		region := s.regionCache.GetRegionByVerID(regionID)
-		if region == nil {
+		ctx := s.regionCache.GetRPCContext(regionID)
+		if ctx == nil {
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the
 			// RPC by returning RegionError directly.
@@ -111,7 +111,7 @@ func (s *RegionRequestSender) SendCopReq(req *coprocessor.Request, regionID Regi
 			}, nil
 		}
 
-		resp, retry, err := s.sendCopReqToRegion(region, req, timeout)
+		resp, retry, err := s.sendCopReqToRegion(ctx, req, timeout)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -120,7 +120,7 @@ func (s *RegionRequestSender) SendCopReq(req *coprocessor.Request, regionID Regi
 		}
 
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			retry, err := s.onRegionError(region, regionErr)
+			retry, err := s.onRegionError(ctx, regionErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -132,11 +132,11 @@ func (s *RegionRequestSender) SendCopReq(req *coprocessor.Request, regionID Regi
 	}
 }
 
-func (s *RegionRequestSender) sendKVReqToRegion(region *Region, req *kvrpcpb.Request, timeout time.Duration) (resp *kvrpcpb.Response, retry bool, err error) {
-	req.Context = region.GetContext()
-	resp, err = s.client.SendKVReq(region.GetAddress(), req, timeout)
+func (s *RegionRequestSender) sendKVReqToRegion(ctx *RPCContext, req *kvrpcpb.Request, timeout time.Duration) (resp *kvrpcpb.Response, retry bool, err error) {
+	req.Context = ctx.KVCtx
+	resp, err = s.client.SendKVReq(ctx.Addr, req, timeout)
 	if err != nil {
-		if e := s.onSendFail(region.VerID(), region.GetContext(), err); e != nil {
+		if e := s.onSendFail(ctx.Region, ctx.KVCtx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}
 		return nil, true, nil
@@ -144,11 +144,11 @@ func (s *RegionRequestSender) sendKVReqToRegion(region *Region, req *kvrpcpb.Req
 	return
 }
 
-func (s *RegionRequestSender) sendCopReqToRegion(region *Region, req *coprocessor.Request, timeout time.Duration) (resp *coprocessor.Response, retry bool, err error) {
-	req.Context = region.GetContext()
-	resp, err = s.client.SendCopReq(region.GetAddress(), req, timeout)
+func (s *RegionRequestSender) sendCopReqToRegion(ctx *RPCContext, req *coprocessor.Request, timeout time.Duration) (resp *coprocessor.Response, retry bool, err error) {
+	req.Context = ctx.KVCtx
+	resp, err = s.client.SendCopReq(ctx.Addr, req, timeout)
 	if err != nil {
-		if e := s.onSendFail(region.VerID(), region.GetContext(), err); e != nil {
+		if e := s.onSendFail(ctx.Region, ctx.KVCtx, err); e != nil {
 			return nil, false, errors.Trace(err)
 		}
 		return nil, true, nil
@@ -162,14 +162,14 @@ func (s *RegionRequestSender) onSendFail(regionID RegionVerID, ctx *kvrpcpb.Cont
 	return errors.Trace(err)
 }
 
-func (s *RegionRequestSender) onRegionError(region *Region, regionErr *errorpb.Error) (retry bool, err error) {
+func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.Error) (retry bool, err error) {
 	reportRegionError(regionErr)
 	if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 		// Retry if error is `NotLeader`.
-		log.Warnf("tikv reports `NotLeader`: %s, ctx: %s, retry later", notLeader, region.GetContext())
-		s.regionCache.UpdateLeader(region.VerID(), notLeader.GetLeader().GetId())
+		log.Warnf("tikv reports `NotLeader`: %s, ctx: %s, retry later", notLeader, ctx.KVCtx)
+		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetId())
 		if notLeader.GetLeader() == nil {
-			err = s.bo.Backoff(boRegionMiss, errors.Errorf("not leader: %v, ctx: %s", notLeader, region.GetContext()))
+			err = s.bo.Backoff(boRegionMiss, errors.Errorf("not leader: %v, ctx: %s", notLeader, ctx.KVCtx))
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -177,12 +177,12 @@ func (s *RegionRequestSender) onRegionError(region *Region, regionErr *errorpb.E
 		return true, nil
 	}
 	if staleEpoch := regionErr.GetStaleEpoch(); staleEpoch != nil {
-		log.Warnf("tikv reports `StaleEpoch`, ctx: %s, retry later", region.GetContext())
-		err = s.regionCache.OnRegionStale(region, staleEpoch.NewRegions)
+		log.Warnf("tikv reports `StaleEpoch`, ctx: %s, retry later", ctx.KVCtx)
+		err = s.regionCache.OnRegionStale(ctx, staleEpoch.NewRegions)
 		return false, errors.Trace(err)
 	}
 	if regionErr.GetServerIsBusy() != nil {
-		log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", region.GetContext())
+		log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", ctx.KVCtx)
 		err = s.bo.Backoff(boServerBusy, errors.Errorf("server is busy"))
 		if err != nil {
 			return false, errors.Trace(err)
@@ -191,7 +191,7 @@ func (s *RegionRequestSender) onRegionError(region *Region, regionErr *errorpb.E
 	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
-	log.Warnf("tikv reports region error: %s, ctx: %s", regionErr, region.GetContext())
-	s.regionCache.DropRegion(region.VerID())
+	log.Warnf("tikv reports region error: %s, ctx: %s", regionErr, ctx.KVCtx)
+	s.regionCache.DropRegion(ctx.Region)
 	return false, nil
 }
