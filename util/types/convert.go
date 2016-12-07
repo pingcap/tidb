@@ -70,12 +70,6 @@ func convertFloatToInt(sc *variable.StatementContext, fval float64, lowerBound, 
 	if val > float64(upperBound) {
 		return upperBound, overflow(val, tp)
 	}
-	if val != fval {
-		if sc.TruncateAsError {
-			return int64(val), errors.Trace(ErrTruncated)
-		}
-		sc.AppendWarning(ErrTruncated)
-	}
 	return int64(val), nil
 }
 
@@ -127,12 +121,6 @@ func convertFloatToUint(sc *variable.StatementContext, fval float64, upperBound 
 
 	if val > float64(upperBound) {
 		return upperBound, overflow(val, tp)
-	}
-	if val != fval {
-		if sc.TruncateAsError {
-			return uint64(val), errors.Trace(ErrTruncated)
-		}
-		sc.AppendWarning(ErrTruncated)
 	}
 	return uint64(val), nil
 }
