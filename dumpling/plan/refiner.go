@@ -270,7 +270,7 @@ func buildTableRange(p *PhysicalTableScan) error {
 		return nil
 	}
 
-	rb := rangeBuilder{}
+	rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
 	rangePoints := fullRange
 	for _, cond := range p.AccessCondition {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
