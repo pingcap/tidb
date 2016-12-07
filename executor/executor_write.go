@@ -918,7 +918,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 		return errors.Trace(err)
 	}
 
-	// for evaluating value
+	// for evaluating ColumnNameExpr
 	for i, rf := range e.fields {
 		rf.Expr.SetValue(data[i].GetValue())
 	}
