@@ -60,7 +60,7 @@ func (t mysqlTime) Microsecond() int {
 func (t mysqlTime) Weekday() gotime.Weekday {
 	t1, err := t.GoTime()
 	if err != nil {
-		// TODO Fix here.
+		// TODO: Fix here.
 		return 0
 	}
 	return t1.Weekday()
@@ -69,7 +69,7 @@ func (t mysqlTime) Weekday() gotime.Weekday {
 func (t mysqlTime) YearDay() int {
 	t1, err := t.GoTime()
 	if err != nil {
-		// TODO Fix here.
+		// TODO: Fix here.
 		return 0
 	}
 	return t1.YearDay()
@@ -78,7 +78,7 @@ func (t mysqlTime) YearDay() int {
 func (t mysqlTime) ISOWeek() (int, int) {
 	t1, err := t.GoTime()
 	if err != nil {
-		// TODO Fix here.
+		// TODO: Fix here.
 		return 0, 0
 	}
 	return t1.ISOWeek()

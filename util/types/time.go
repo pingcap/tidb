@@ -349,7 +349,7 @@ func (t Time) roundFrac(fsp int) (Time, error) {
 	}
 
 	t1, _ := t.Time.GoTime()
-	// TODO Fix here.
+	// TODO: Fix here.
 	nt := t1.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond)
 	return Time{Time: FromGoTime(nt), Type: t.Type, Fsp: fsp}, nil
 }
@@ -390,7 +390,7 @@ func (t Time) ToPackedUint() uint64 {
 			utc := t1.UTC()
 			tm = FromGoTime(utc)
 		} else {
-			// TODO Fix here.
+			// TODO: Fix here.
 		}
 	}
 	year, month, day := tm.Year(), tm.Month(), tm.Day()
@@ -420,6 +420,11 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	hour := int(hms >> 12)
 
 	microsec := int(packed % (1 << 24))
+	err := checkTime(year, month, day, hour, minute, second, microsec*1000)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	loc := local
 	if t.Type == mysql.TypeTimestamp {
 		loc = gotime.UTC

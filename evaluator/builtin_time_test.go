@@ -223,7 +223,7 @@ func (s *testEvaluatorSuite) TestDateFormat(c *C) {
 	// _, err := builtinDateFormat(ds, s.ctx)
 	// Some like dayofweek() doesn't support the date format like 2000-00-00 returns 0,
 	// so it returns an error.
-	// TODO Fix here.
+	// TODO: Fix here.
 	// c.Assert(err, NotNil)
 }
 
