@@ -502,6 +502,7 @@ func (s *testDBSuite) TestColumn(c *C) {
 	s.tk.MustExec("use " + s.schemaName)
 	s.testAddColumn(c)
 	s.testDropColumn(c)
+	s.testChangeColumn(c)
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
@@ -657,6 +658,18 @@ LOOP:
 	_, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 	ctx.CommitTxn()
+}
+
+func (s *testDBSuite) testChangeColumn(c *C) {
+	s.mustExec(c, "create table t3 (a int, b varchar(10))")
+	s.mustExec(c, "insert into t3 values(1, 'a'), (2, 'b')")
+	s.tk.MustQuery("select a from t3").Check(testkit.Rows("1", "2"))
+	s.mustExec(c, "alter table t3 change a aa bigint")
+	s.tk.MustQuery("select aa from t3").Check(testkit.Rows("1", "2"))
+	sql := "alter table t3 change a testx.t3.aa bigint"
+	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
+	sql = "alter table t3 change t.a aa bigint"
+	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 }
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
