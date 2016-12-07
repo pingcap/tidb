@@ -252,7 +252,7 @@ var pluginsCols = []columnInfo{
 	{"PLUGIN_LIBRARY", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"PLUGIN_LIBRARY_VERSION", mysql.TypeVarchar, 20, 0, nil, nil},
 	{"PLUGIN_AUTHOR", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"PLUGIN_DESCRIPTION", mysql.TypeString, types.UnspecifiedLength, 0, nil, nil},
+	{"PLUGIN_DESCRIPTION", mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 	{"PLUGIN_LICENSE", mysql.TypeVarchar, 80, 0, nil, nil},
 	{"LOAD_OPTION", mysql.TypeVarchar, 64, 0, nil, nil},
 }
