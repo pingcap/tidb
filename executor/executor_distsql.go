@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
@@ -558,7 +557,7 @@ func getScanConcurrency(ctx context.Context) (int, error) {
 func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
 	selIdxReq.StartTs = e.startTS
-	selIdxReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
+	selIdxReq.TimeZoneOffset = timeZoneOffset()
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	if len(e.indexPlan.SortItemsPB) > 0 {
 		selIdxReq.OrderBy = e.indexPlan.SortItemsPB
@@ -707,7 +706,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 		selTableReq.Limit = e.indexPlan.LimitCount
 	}
 	selTableReq.StartTs = e.startTS
-	selTableReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
+	selTableReq.TimeZoneOffset = timeZoneOffset()
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
 	}
@@ -781,7 +780,7 @@ func (e *XSelectTableExec) doRequest() error {
 	var err error
 	selReq := new(tipb.SelectRequest)
 	selReq.StartTs = e.startTS
-	selReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
+	selReq.TimeZoneOffset = timeZoneOffset()
 	selReq.Where = e.where
 	selReq.TableInfo = &tipb.TableInfo{
 		TableId: e.tableInfo.ID,
