@@ -604,6 +604,7 @@ const (
 	AlterTableDropIndex
 	AlterTableDropForeignKey
 	AlterTableModifyColumn
+	AlterTableChangeColumn
 
 // TODO: Add more actions
 )
@@ -612,13 +613,13 @@ const (
 type AlterTableSpec struct {
 	node
 
-	Tp         AlterTableType
-	Name       string
-	Constraint *Constraint
-	Options    []*TableOption
-	Column     *ColumnDef
-	DropColumn *ColumnName
-	Position   *ColumnPosition
+	Tp            AlterTableType
+	Name          string
+	Constraint    *Constraint
+	Options       []*TableOption
+	NewColumn     *ColumnDef
+	OldColumnName *ColumnName
+	Position      *ColumnPosition
 }
 
 // Accept implements Node Accept interface.
@@ -635,19 +636,19 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		}
 		n.Constraint = node.(*Constraint)
 	}
-	if n.Column != nil {
-		node, ok := n.Column.Accept(v)
+	if n.NewColumn != nil {
+		node, ok := n.NewColumn.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Column = node.(*ColumnDef)
+		n.NewColumn = node.(*ColumnDef)
 	}
-	if n.DropColumn != nil {
-		node, ok := n.DropColumn.Accept(v)
+	if n.OldColumnName != nil {
+		node, ok := n.OldColumnName.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.DropColumn = node.(*ColumnName)
+		n.OldColumnName = node.(*ColumnName)
 	}
 	if n.Position != nil {
 		node, ok := n.Position.Accept(v)
