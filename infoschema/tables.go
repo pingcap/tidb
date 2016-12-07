@@ -242,6 +242,7 @@ var sessionVarCols = []columnInfo{
 	{"VARIABLE_VALUE", mysql.TypeVarchar, 1024, 0, nil, nil},
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/plugins-table.html
 var pluginsCols = []columnInfo{
 	{"PLUGIN_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"PLUGIN_VERSION", mysql.TypeVarchar, 20, 0, nil, nil},
