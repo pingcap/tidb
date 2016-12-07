@@ -573,7 +573,6 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedDeny(c, mysql.TypeDouble, "-23.54e2e", "-2354")
 	signedDeny(c, mysql.TypeDouble, "+.e", "0")
 	signedAccept(c, mysql.TypeDouble, "1e+1", "10")
-	signedAccept(c, mysql.TypeDouble, "1e+1", "10")
 
 	// year
 	signedDeny(c, mysql.TypeYear, 123, "<nil>")
