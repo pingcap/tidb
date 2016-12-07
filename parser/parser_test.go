@@ -40,7 +40,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 
 	reservedKws := []string{
 		"add", "all", "alter", "analyze", "and", "as", "asc", "between", "bigint",
-		"binary", "blob", "both", "by", "cascade", "case", "character", "check", "collate",
+		"binary", "blob", "both", "by", "cascade", "case", "change", "character", "check", "collate",
 		"column", "constraint", "convert", "create", "cross", "current_date", "current_time",
 		"current_timestamp", "current_user", "database", "databases", "day_hour", "day_microsecond",
 		"day_minute", "day_second", "decimal", "default", "delete", "desc", "describe",
