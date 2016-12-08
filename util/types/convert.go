@@ -204,11 +204,11 @@ func floatStrToIntStr(validFloat string) (string, error) {
 		if err != nil {
 			return validFloat, errors.Trace(err)
 		}
-		intCnt += exp
-		if intCnt < exp {
-			// len(digits) >= 0, exp adds a positive value less than itself means overflow.
+		if exp > 0 && intCnt > (math.MaxInt64-exp) {
+			// (exp + incCnt) overflows MaxInt64.
 			return validFloat, errors.Trace(ErrOverflow)
 		}
+		intCnt += exp
 	}
 	if intCnt <= 0 {
 		return "0", nil
