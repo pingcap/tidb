@@ -561,7 +561,7 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 	}
 
 	for _, t := range tbl {
-		v, err, overflow := parseFrac(t.S, t.Fsp)
+		v, overflow, err := parseFrac(t.S, t.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t.Ret)
 		c.Assert(overflow, Equals, t.Overflow)
