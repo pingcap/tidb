@@ -473,9 +473,9 @@ func handleEscape(s *Scanner) rune {
 
 func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
+	tok = intLit
 	ch0 := s.r.readByte()
-	switch ch0 {
-	case '0':
+	if ch0 == '0' {
 		tok = intLit
 		ch1 := s.r.peek()
 		switch {
@@ -496,14 +496,6 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 			tok = unicode.ReplacementChar
 			return
 		}
-		lit = s.r.data(&pos)
-		return
-	case '.':
-		if isDigit(s.r.peek()) {
-			return s.scanFloat(&pos)
-		}
-		tok, lit = int('.'), "."
-		return
 	}
 
 	s.scanDigits()
@@ -517,7 +509,17 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 		s.r.incAsLongAs(isIdentChar)
 		return identifier, pos, s.r.data(&pos)
 	}
-	tok, lit = intLit, s.r.data(&pos)
+	lit = s.r.data(&pos)
+	return
+}
+
+func startWithDot(s *Scanner) (tok int, pos Pos, lit string) {
+	pos = s.r.pos()
+	s.r.inc()
+	if isDigit(s.r.peek()) {
+		return s.scanFloat(&pos)
+	}
+	tok, lit = int('.'), "."
 	return
 }
 
