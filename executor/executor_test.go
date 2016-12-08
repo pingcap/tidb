@@ -512,6 +512,13 @@ func (s *testSuite) TestUnion(c *C) {
 	r = tk.MustQuery("select * from t1 union all select * from t2 union all (select * from t3) order by a limit 2")
 	r.Check(testkit.Rows("1", "2"))
 
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("insert t1 values (2), (1)")
+	tk.MustExec("insert t2 values (3), (4)")
+	r = tk.MustQuery("select * from t1 union all (select * from t2) order by a limit 1")
+	r.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestIn(c *C) {

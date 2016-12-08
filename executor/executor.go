@@ -1912,7 +1912,9 @@ type UnionExec struct {
 	ctx      context.Context
 	inited   bool
 	finished atomic.Value
-	rowsCh   chan *Row
+	rowsCh   chan []*Row
+	rows     []*Row
+	cursor   int
 	wg       sync.WaitGroup
 	closedCh chan struct{}
 	errCh    chan error
@@ -1934,19 +1936,26 @@ func (e *UnionExec) fetchData(idx int) {
 		e.wg.Done()
 	}()
 	for {
-		if e.finished.Load().(bool) {
-			return
+		rows := make([]*Row, 0, batchSize)
+		for i := 0; i < batchSize; i++ {
+			if e.finished.Load().(bool) {
+				return
+			}
+			row, err := e.Srcs[idx].Next()
+			if err != nil {
+				e.finished.Store(true)
+				e.errCh <- err
+				return
+			}
+			if row == nil {
+				if len(rows) > 0 {
+					e.rowsCh <- rows
+				}
+				return
+			}
+			rows = append(rows, row)
 		}
-		row, err := e.Srcs[idx].Next()
-		if err != nil {
-			e.finished.Store(true)
-			e.errCh <- err
-			return
-		}
-		if row == nil {
-			return
-		}
-		e.rowsCh <- row
+		e.rowsCh <- rows
 	}
 }
 
@@ -1954,7 +1963,7 @@ func (e *UnionExec) fetchData(idx int) {
 func (e *UnionExec) Next() (*Row, error) {
 	if !e.inited {
 		e.finished.Store(false)
-		e.rowsCh = make(chan *Row, 1024*len(e.Srcs))
+		e.rowsCh = make(chan []*Row, batchSize*len(e.Srcs))
 		e.errCh = make(chan error, len(e.Srcs))
 		e.closedCh = make(chan struct{}, 1)
 		for i := range e.Srcs {
@@ -1964,18 +1973,32 @@ func (e *UnionExec) Next() (*Row, error) {
 		go e.waitAllFinished()
 		e.inited = true
 	}
-	select {
-	case row, _ := <-e.rowsCh:
-		return row, nil
-	case err, _ := <-e.errCh:
-		return nil, errors.Trace(err)
+	if e.cursor >= len(e.rows) {
+		var rows []*Row
+		var err error
+		select {
+		case rows, _ = <-e.rowsCh:
+		case err, _ = <-e.errCh:
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if rows == nil {
+			return nil, nil
+		}
+		e.rows = rows
+		e.cursor = 0
 	}
+	row := e.rows[e.cursor]
+	e.cursor++
+	return row, nil
 }
 
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
 	e.finished.Store(true)
 	<-e.closedCh
+	e.cursor = 0
 	for _, sel := range e.Srcs {
 		er := sel.Close()
 		if er != nil {

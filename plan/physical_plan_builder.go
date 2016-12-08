@@ -872,12 +872,15 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	limit := prop.limit
 	childInfos := make([]*physicalPlanInfo, 0, len(p.children))
 	for _, child := range p.GetChildren() {
-		newProp := limitProperty(limit)
-		info, err = child.(LogicalPlan).convert2PhysicalPlan(newProp)
+		newProp := &requiredProperty{}
+		if len(prop.props) == 0 {
+			newProp = limitProperty(limit)
+		}
+		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(newProp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		childInfos = append(childInfos, info)
+		childInfos = append(childInfos, childInfo)
 	}
 	info = p.matchProperty(prop, childInfos...)
 	info = enforceProperty(prop, info)
