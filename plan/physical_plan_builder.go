@@ -871,24 +871,24 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	}
 	limit := prop.limit
 	childInfos := make([]*physicalPlanInfo, 0, len(p.children))
-	var count uint64
 	for _, child := range p.GetChildren() {
-		newProp := convertLimitOffsetToCount(prop)
-		newProp.props = make([]*columnProp, 0, len(prop.props))
-		for _, c := range prop.props {
-			idx := p.GetSchema().GetIndex(c.col)
-			newProp.props = append(newProp.props, &columnProp{col: child.GetSchema()[idx], desc: c.desc})
+		newProp := &requiredProperty{}
+		if limit != nil {
+			newProp = convertLimitOffsetToCount(prop)
+			newProp.props = make([]*columnProp, 0, len(prop.props))
+			for _, c := range prop.props {
+				idx := p.GetSchema().GetIndex(c.col)
+				newProp.props = append(newProp.props, &columnProp{col: child.GetSchema()[idx], desc: c.desc})
+			}
 		}
-		info, err = child.(LogicalPlan).convert2PhysicalPlan(newProp)
-		count += info.count
+		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(newProp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		childInfos = append(childInfos, info)
+		childInfos = append(childInfos, childInfo)
 	}
 	info = p.matchProperty(prop, childInfos...)
-	info = enforceProperty(limitProperty(limit), info)
-	info.count = count
+	info = enforceProperty(prop, info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
