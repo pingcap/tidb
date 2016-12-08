@@ -519,6 +519,8 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("insert t2 values (3), (4)")
 	r = tk.MustQuery("select * from t1 union all (select * from t2) order by a limit 1")
 	r.Check(testkit.Rows("1"))
+	r = tk.MustQuery("select (select * from t1 where a != t.a union all (select * from t2 where a != t.a) order by a limit 1) from t1 t")
+	r.Check(testkit.Rows("1", "2"))
 }
 
 func (s *testSuite) TestIn(c *C) {

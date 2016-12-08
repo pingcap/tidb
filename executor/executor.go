@@ -1999,6 +1999,7 @@ func (e *UnionExec) Close() error {
 	e.finished.Store(true)
 	<-e.closedCh
 	e.cursor = 0
+	e.inited = false
 	for _, sel := range e.Srcs {
 		er := sel.Close()
 		if er != nil {
