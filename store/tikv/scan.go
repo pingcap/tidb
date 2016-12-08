@@ -82,7 +82,7 @@ func (s *Scanner) Next() error {
 		if s.idx >= len(s.cache) {
 			if s.eof {
 				s.Close()
-				return kv.ErrNotExist
+				return nil
 			}
 			err := s.getData(bo)
 			if err != nil {
