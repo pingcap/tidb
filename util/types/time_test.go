@@ -71,6 +71,10 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		c.Assert(t.String(), Equals, test.Expect)
 	}
 
+	t, _ := ParseTime("121231113045.9999999", mysql.TypeDatetime, 6)
+	c.Assert(t.Time.Second(), Equals, 46)
+	c.Assert(t.Time.Microsecond(), Equals, 0)
+
 	// test error
 	errTable := []string{
 		"1000-00-00 00:00:00",

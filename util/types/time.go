@@ -603,6 +603,10 @@ func parseDatetime(str string, fsp int) (Time, error) {
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
 	}
+	if frac >= 1000000 { // handle overflow
+		frac = 0
+		second++
+	}
 
 	t, err := newTime(year, month, day, hour, minute, second, frac)
 	if err != nil {
