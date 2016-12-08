@@ -482,7 +482,7 @@ func (s *testSuite) TestUnion(c *C) {
 	r.Check(testkit.Rows(rowStr1, "abc"))
 
 	r = tk.MustQuery(`select "abc" as a union (select 1) order by a`)
-	r.Check(testkit.Rows("abc", "1"))
+	r.Check(testkit.Rows("1", "abc"))
 
 	tk.MustExec("commit")
 
