@@ -1932,9 +1932,7 @@ func (e *UnionExec) waitAllFinished() {
 }
 
 func (e *UnionExec) fetchData(idx int) {
-	defer func() {
-		e.wg.Done()
-	}()
+	defer e.wg.Done()
 	for {
 		rows := make([]*Row, 0, batchSize)
 		for i := 0; i < batchSize; i++ {
