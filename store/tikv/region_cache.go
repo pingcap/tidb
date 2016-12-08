@@ -160,25 +160,20 @@ func (c *RegionCache) DropRegion(id RegionVerID) {
 }
 
 // UpdateLeader update some region cache with newer leader info.
-func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderID uint64) {
+func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	r, ok := c.mu.regions[regionID]
 	if !ok {
-		log.Debugf("regionCache: cannot find region when updating leader %d,%d", regionID, leaderID)
+		log.Debugf("regionCache: cannot find region when updating leader %d,%d", regionID, leaderStoreID)
 		return
 	}
 
-	for i, p := range r.meta.Peers {
-		if p.GetId() == leaderID {
-			r.curPeerIdx, r.peer = i, p
-			return
-		}
+	if !r.SwitchPeer(leaderStoreID) {
+		log.Debugf("regionCache: cannot find peer when updating leader %d,%d", regionID, leaderStoreID)
+		c.dropRegionFromCache(r.VerID())
 	}
-
-	log.Debugf("regionCache: cannot find peer when updating leader %d,%d", regionID, leaderID)
-	c.dropRegionFromCache(r.VerID())
 }
 
 func (c *RegionCache) getRegionFromCache(key []byte) *Region {
@@ -239,15 +234,12 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 		if len(meta.Peers) == 0 {
 			return nil, errors.New("receive Region with no peer")
 		}
-		// Move leader to the first.
-		if leader != nil {
-			moveLeaderToFirst(meta, leader.GetStoreId())
-		}
-		peer := meta.Peers[0]
 		region := &Region{
-			meta:       meta,
-			peer:       peer,
-			curPeerIdx: 0,
+			meta: meta,
+			peer: meta.Peers[0],
+		}
+		if leader != nil {
+			region.SwitchPeer(leader.GetStoreId())
 		}
 		return region, nil
 	}
@@ -300,8 +292,7 @@ func (c *RegionCache) OnRequestFail(ctx *RPCContext) {
 	regionID := ctx.Region
 	c.mu.Lock()
 	if region, ok := c.mu.regions[regionID]; ok {
-		region.curPeerIdx++
-		if region.curPeerIdx >= len(region.meta.Peers) {
+		if !region.OnRequestFail(ctx.KVCtx.GetPeer().GetStoreId()) {
 			c.dropRegionFromCache(regionID)
 		}
 	}
@@ -327,12 +318,12 @@ func (c *RegionCache) OnRegionStale(ctx *RPCContext, newRegions []*metapb.Region
 				return errors.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)
 			}
 		}
-		moveLeaderToFirst(meta, ctx.KVCtx.GetPeer().GetStoreId())
-		leader := meta.Peers[0]
-		c.insertRegionToCache(&Region{
+		region := &Region{
 			meta: meta,
-			peer: leader,
-		})
+			peer: meta.Peers[0],
+		}
+		region.SwitchPeer(ctx.KVCtx.GetPeer().GetStoreId())
+		c.insertRegionToCache(region)
 	}
 	return nil
 }
@@ -371,11 +362,11 @@ func (item *llrbItem) Less(other llrb.Item) bool {
 	return bytes.Compare(item.key, other.(*llrbItem).key) < 0
 }
 
-// Region stores region info. Region is a readonly class.
+// Region stores region's meta and its leader peer.
 type Region struct {
-	meta       *metapb.Region
-	peer       *metapb.Peer
-	curPeerIdx int
+	meta              *metapb.Region
+	peer              *metapb.Peer
+	unreachableStores []uint64
 }
 
 // GetID returns id.
@@ -416,6 +407,38 @@ func (r *Region) GetContext() *kvrpcpb.Context {
 		RegionEpoch: r.meta.RegionEpoch,
 		Peer:        r.peer,
 	}
+}
+
+// OnRequestFail records unreachable peer and tries to select another valid peer.
+// It returns false if all peers are unreachable.
+func (r *Region) OnRequestFail(storeID uint64) bool {
+	if r.peer.GetStoreId() != storeID {
+		return true
+	}
+	r.unreachableStores = append(r.unreachableStores, storeID)
+L:
+	for _, p := range r.meta.Peers {
+		for _, id := range r.unreachableStores {
+			if p.GetStoreId() == id {
+				continue L
+			}
+		}
+		r.peer = p
+		return true
+	}
+	return false
+}
+
+// SwitchPeer switches current peer to the one on specific store. It returns
+// false if no peer matches the storeID.
+func (r *Region) SwitchPeer(storeID uint64) bool {
+	for _, p := range r.meta.Peers {
+		if p.GetStoreId() == storeID {
+			r.peer = p
+			return true
+		}
+	}
+	return false
 }
 
 // Contains checks whether the key is in the region, for the maximum region endKey is empty.

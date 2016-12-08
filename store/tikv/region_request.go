@@ -174,7 +174,7 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 	if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 		// Retry if error is `NotLeader`.
 		log.Warnf("tikv reports `NotLeader`: %s, ctx: %s, retry later", notLeader, ctx.KVCtx)
-		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetId())
+		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId())
 		if notLeader.GetLeader() == nil {
 			err = s.bo.Backoff(boRegionMiss, errors.Errorf("not leader: %v, ctx: %s", notLeader, ctx.KVCtx))
 			if err != nil {
