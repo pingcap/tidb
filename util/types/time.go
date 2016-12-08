@@ -599,11 +599,11 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		year = adjustYear(year)
 	}
 
-	frac, err = parseFrac(fracStr, fsp)
+	frac, err, overflow := parseFrac(fracStr, fsp)
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
 	}
-	if frac >= 1000000 { // handle overflow
+	if overflow { // handle overflow
 		frac = 0
 		second++
 	}
@@ -876,10 +876,11 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		str = str[n+1:]
 	}
 
+	var overflow bool
 	if n := strings.IndexByte(str, '.'); n >= 0 {
 		// It has fractional precesion parts.
 		fracStr := str[n+1:]
-		frac, err = parseFrac(fracStr, fsp)
+		frac, err, overflow = parseFrac(fracStr, fsp)
 		if err != nil {
 			return ZeroDuration, errors.Trace(err)
 		}
@@ -932,6 +933,10 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		return ZeroDuration, errors.Trace(err)
 	}
 
+	if overflow {
+		second++
+		frac = 0
+	}
 	d := gotime.Duration(day*24*3600+hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)*gotime.Microsecond
 	if sign == -1 {
 		d = -d

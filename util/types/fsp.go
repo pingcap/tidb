@@ -43,17 +43,27 @@ func checkFsp(fsp int) (int, error) {
 	return fsp, nil
 }
 
-func parseFrac(s string, fsp int) (int, error) {
+func parseFrac(s string, fsp int) (int, error, bool) {
 	if len(s) == 0 {
-		return 0, nil
+		return 0, nil, false
 	}
 
 	var err error
 	fsp, err = checkFsp(fsp)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.Trace(err), false
 	}
 
+	// Fill 0 when fsp > string length.
+	if fsp > len(s) {
+		v, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return 0, errors.Trace(err), false
+		}
+		return int(float64(v) * math.Pow10(fsp-len(s))), nil, false
+	}
+
+	// Found when fsp <= string length.
 	// Use float to calculate frac, e.g, "123" -> "0.123"
 	if !strings.HasPrefix(s, ".") && !strings.HasPrefix(s, "0.") {
 		s = "0." + s
@@ -61,7 +71,7 @@ func parseFrac(s string, fsp int) (int, error) {
 
 	frac, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.Trace(err), false
 	}
 
 	// round frac to the nearest value with FSP
@@ -75,10 +85,16 @@ func parseFrac(s string, fsp int) (int, error) {
 		round = math.Floor(digit)
 	}
 
+	if round >= math.Pow10(fsp) {
+		// overflow
+		return 0, nil, true
+	}
+
 	// Get the final frac, with 6 digit number
 	//  0.1236 round 3 -> 124 -> 123000
 	//  0.0312 round 2 -> 3 -> 30000
-	return int(round * math.Pow10(MaxFsp-fsp)), nil
+	//  0.999 round 2 -> 1000 -> overflow
+	return int(round * math.Pow10(MaxFsp-fsp)), nil, false
 }
 
 // alignFrac is used to generate alignment frac, like `100` -> `100000`
