@@ -545,11 +545,11 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 		{"0000567", 5, 60},
 		{"1234567", 5, 123460},
 		{"1234567", 6, 123457},
-		{"9999999", 6, 1000000},
+		{"9999999", 6, 0},
 	}
 
 	for _, t := range tbl {
-		v, err := parseFrac(t.S, t.Fsp)
+		v, _, err := parseFrac(t.S, t.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.Ret, Equals, v)
 	}

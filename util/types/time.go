@@ -170,32 +170,19 @@ func CurrentTime(tp uint8) Time {
 }
 
 func (t Time) String() string {
-	if t.IsZero() {
-		if t.Type == mysql.TypeDate {
-			return zeroDateStr
-		}
-
-		return zeroDatetimeStr
-	}
-
 	if t.Type == mysql.TypeDate {
-		t1, err := t.Time.GoTime()
-		if err != nil {
-			return ErrInvalidTimeFormat.Error()
-		}
-		return t1.Format(DateFormat)
+		// we'll control the format, so no error would occur.
+		str, _ := t.Format("%Y-%m-%d")
+		return str
 	}
 
-	tfStr := TimeFormat
+	str, _ := t.Format("%Y-%m-%d %H:%i:%s")
 	if t.Fsp > 0 {
-		tfStr = fmt.Sprintf("%s.%s", tfStr, strings.Repeat("0", t.Fsp))
+		tmp := fmt.Sprintf(".%06d", t.Time.Microsecond())
+		str = str + tmp[:1+t.Fsp]
 	}
 
-	t1, err := t.Time.GoTime()
-	if err != nil {
-		return ErrInvalidTimeFormat.Error()
-	}
-	return t1.Format(tfStr)
+	return str
 }
 
 // IsZero returns a boolean indicating whether the time is equal to ZeroTime.
@@ -547,9 +534,13 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		year = adjustYear(year)
 	}
 
-	frac, err = parseFrac(fracStr, fsp)
+	frac, overflow, err := parseFrac(fracStr, fsp)
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
+	}
+	if overflow {
+		frac = 0
+		second++
 	}
 
 	t, err := newTime(year, month, day, hour, minute, second, frac)
@@ -820,10 +811,11 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		str = str[n+1:]
 	}
 
+	var overflow bool
 	if n := strings.IndexByte(str, '.'); n >= 0 {
 		// It has fractional precesion parts.
 		fracStr := str[n+1:]
-		frac, err = parseFrac(fracStr, fsp)
+		frac, overflow, err = parseFrac(fracStr, fsp)
 		if err != nil {
 			return ZeroDuration, errors.Trace(err)
 		}
@@ -876,6 +868,10 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		return ZeroDuration, errors.Trace(err)
 	}
 
+	if overflow {
+		second++
+		frac = 0
+	}
 	d := gotime.Duration(day*24*3600+hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)*gotime.Microsecond
 	if sign == -1 {
 		d = -d
@@ -1541,4 +1537,146 @@ func IsDateFormat(format string) bool {
 // ParseTimeFromInt64 parses mysql time value from int64.
 func ParseTimeFromInt64(num int64) (Time, error) {
 	return parseDateTimeFromNum(num)
+}
+
+// Format returns a textual representation of the time value formatted
+// according to layout.
+// See: http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
+func (t Time) Format(layout string) (string, error) {
+	var buf bytes.Buffer
+	inPatternMatch := false
+	for _, b := range layout {
+		if inPatternMatch {
+			if err := t.convertDateFormat(b, &buf); err != nil {
+				return "", errors.Trace(err)
+			}
+			inPatternMatch = false
+			continue
+		}
+
+		// it's not in pattern match now
+		if b == '%' {
+			inPatternMatch = true
+		} else {
+			buf.WriteRune(b)
+		}
+	}
+	return buf.String(), nil
+}
+
+var abbrevMonthName = []string{
+	"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+	"Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+}
+
+var abbrevWeekdayName = []string{
+	"Sun", "Mon", "Tue",
+	"Wed", "Thu", "Fri", "Sat",
+}
+
+func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
+	switch b {
+	case 'b':
+		m := t.Time.Month()
+		if m == 0 || m > 12 {
+			return errors.Trace(ErrInvalidTimeFormat)
+		}
+		buf.WriteString(abbrevMonthName[m-1])
+	case 'M':
+		m := t.Time.Month()
+		if m == 0 || m > 12 {
+			return errors.Trace(ErrInvalidTimeFormat)
+		}
+		buf.WriteString(MonthNames[m-1])
+	case 'm':
+		fmt.Fprintf(buf, "%02d", t.Time.Month())
+	case 'c':
+		fmt.Fprintf(buf, "%d", t.Time.Month())
+	case 'D':
+		fmt.Fprintf(buf, "%d%s", t.Time.Day(), abbrDayOfMonth(t.Time.Day()))
+	case 'd':
+		fmt.Fprintf(buf, "%02d", t.Time.Day())
+	case 'e':
+		fmt.Fprintf(buf, "%d", t.Time.Day())
+	case 'j':
+		fmt.Fprintf(buf, "%03d", t.Time.YearDay())
+	case 'H':
+		fmt.Fprintf(buf, "%02d", t.Time.Hour())
+	case 'k':
+		fmt.Fprintf(buf, "%d", t.Time.Hour())
+	case 'h', 'I':
+		t := t.Time.Hour()
+		if t == 0 || t == 12 {
+			fmt.Fprintf(buf, "%02d", 12)
+		} else {
+			fmt.Fprintf(buf, "%02d", t%12)
+		}
+	case 'l':
+		fmt.Fprintf(buf, "%d", (t.Time.Hour()%12)+1)
+	case 'i':
+		fmt.Fprintf(buf, "%02d", t.Time.Minute())
+	case 'p':
+		if t.Time.Hour() < 12 {
+			buf.WriteString("AM")
+		} else {
+			buf.WriteString("PM")
+		}
+	case 'r':
+		h := t.Time.Hour()
+		switch {
+		case h == 0:
+			fmt.Fprintf(buf, "%02d:%02d:%02d AM", 12, t.Time.Minute(), t.Time.Second())
+		case h == 12:
+			fmt.Fprintf(buf, "%02d:%02d:%02d PM", 12, t.Time.Minute(), t.Time.Second())
+		case h < 12:
+			fmt.Fprintf(buf, "%02d:%02d:%02d AM", h, t.Time.Minute(), t.Time.Second())
+		default:
+			fmt.Fprintf(buf, "%02d:%02d:%02d PM", h-12, t.Time.Minute(), t.Time.Second())
+		}
+	case 'T':
+		fmt.Fprintf(buf, "%02d:%02d:%02d", t.Time.Hour(), t.Time.Minute(), t.Time.Second())
+	case 'S', 's':
+		fmt.Fprintf(buf, "%02d", t.Time.Second())
+	case 'f':
+		fmt.Fprintf(buf, "%06d", t.Time.Microsecond())
+	case 'U', 'u', 'V', 'v':
+		// TODO: Fix here.
+		_, w := t.Time.ISOWeek()
+		fmt.Fprintf(buf, "%02d", w)
+	case 'a':
+		weekday := t.Time.Weekday()
+		buf.WriteString(abbrevWeekdayName[weekday])
+	case 'W':
+		buf.WriteString(t.Time.Weekday().String())
+	case 'w':
+		fmt.Fprintf(buf, "%d", int(t.Time.Weekday()))
+	case 'X', 'x':
+		// TODO: Fix here.
+		year, _ := t.Time.ISOWeek()
+		fmt.Fprintf(buf, "%04d", year)
+	case 'Y':
+		fmt.Fprintf(buf, "%04d", t.Time.Year())
+	case 'y':
+		str := fmt.Sprintf("%04d", t.Time.Year())
+		buf.WriteString(str[2:])
+	default:
+		buf.WriteRune(b)
+	}
+
+	return nil
+}
+
+func abbrDayOfMonth(day int) string {
+	var str string
+	switch day {
+	case 1, 21, 31:
+		str = "st"
+	case 2, 22:
+		str = "nd"
+	case 3, 23:
+		str = "rd"
+	default:
+		str = "th"
+	}
+	return str
 }
