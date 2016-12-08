@@ -873,8 +873,13 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	childInfos := make([]*physicalPlanInfo, 0, len(p.children))
 	for _, child := range p.GetChildren() {
 		newProp := &requiredProperty{}
-		if len(prop.props) == 0 {
-			newProp = limitProperty(limit)
+		if limit != nil {
+			newProp = convertLimitOffsetToCount(prop)
+			newProp.props = make([]*columnProp, 0, len(prop.props))
+			for _, c := range prop.props {
+				idx := p.GetSchema().GetIndex(c.col)
+				newProp.props = append(newProp.props, &columnProp{col: child.GetSchema()[idx], desc: c.desc})
+			}
 		}
 		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(newProp)
 		if err != nil {
