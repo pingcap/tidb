@@ -591,7 +591,7 @@ func (e *HashJoinExec) fetchBigExec() {
 // prepare runs the first time when 'Next' is called, it starts one worker goroutine to fetch rows from the big table,
 // and reads all data from the small table to build a hash table, then starts multiple join worker goroutines.
 func (e *HashJoinExec) prepare() error {
-	e.closeCh = make(chan struct{}, 1)
+	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 	e.bigTableRows = make([]chan []*Row, e.concurrency)
 	e.wg = sync.WaitGroup{}
@@ -1974,7 +1974,7 @@ func (e *UnionExec) Next() (*Row, error) {
 		e.finished.Store(false)
 		e.rowsCh = make(chan []*Row, batchSize*len(e.Srcs))
 		e.errCh = make(chan error, len(e.Srcs))
-		e.closedCh = make(chan struct{}, 1)
+		e.closedCh = make(chan struct{})
 		for i := range e.Srcs {
 			e.wg.Add(1)
 			go e.fetchData(i)
