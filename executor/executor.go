@@ -1951,6 +1951,17 @@ func (e *UnionExec) fetchData(idx int) {
 				}
 				return
 			}
+			// TODO: Add cast function in plan building phase.
+			for j := range row.Data {
+				col := e.schema[j]
+				val, err := row.Data[j].ConvertTo(e.ctx.GetSessionVars().StmtCtx, col.RetType)
+				if err != nil {
+					e.finished.Store(true)
+					e.errCh <- err
+					return
+				}
+				row.Data[j] = val
+			}
 			rows = append(rows, row)
 		}
 		e.rowsCh <- rows
