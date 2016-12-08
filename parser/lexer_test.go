@@ -60,6 +60,7 @@ func (s *testLexerSuite) TestSingleCharOther(c *C) {
 		{"?", placeholder},
 		{"PLACEHOLDER", identifier},
 		{"=", eq},
+		{".", int('.')},
 	}
 	runTest(c, table)
 }
@@ -105,6 +106,7 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{"0b01", bitLit},
 		{fmt.Sprintf("%c", 0), invalid},
 		{fmt.Sprintf("t1%c", 0), identifier},
+		{".*", int('.')},
 	}
 	runTest(c, table)
 }
@@ -192,6 +194,8 @@ func (s *testLexerSuite) TestIdentifier(c *C) {
 		{"`numeric`", "numeric"},
 		{"\r\n \r \n \tthere\t \n", "there"},
 		{`5number`, `5number`},
+		{"1_x", "1_x"},
+		{"0_x", "0_x"},
 		{replacementString, replacementString},
 		{fmt.Sprintf("t1%cxxx", 0), "t1"},
 	}
