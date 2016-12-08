@@ -216,9 +216,8 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		Offset:       len(tblInfo.Columns),
 		DefaultValue: 0,
 	}
-	var err error
-	col.ID, err = d.genGlobalID()
-	c.Assert(err, IsNil)
+	tblInfo.MaxColumnID++
+	col.ID = tblInfo.MaxColumnID
 	col.FieldType = *types.NewFieldType(mysql.TypeLong)
 	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c5")}}
 

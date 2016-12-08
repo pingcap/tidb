@@ -77,7 +77,8 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 		// Insert position is after the mentioned column.
 		position = c.Offset + 1
 	}
-
+	tblInfo.MaxColumnID++
+	colInfo.ID = tblInfo.MaxColumnID
 	colInfo.State = model.StateNone
 	// To support add column asynchronous, we should mark its offset as the last column.
 	// So that we can use origin column offset to get value from row.

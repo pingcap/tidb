@@ -57,10 +57,7 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 		RefKeys[i] = model.NewCIStr(key)
 	}
 
-	fkID, err := s.d.genGlobalID()
-	c.Assert(err, IsNil)
 	fkInfo := &model.FKInfo{
-		ID:       fkID,
 		Name:     FKName,
 		RefTable: RefTable,
 		RefCols:  RefKeys,
@@ -76,7 +73,7 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 		Type:     model.ActionAddForeignKey,
 		Args:     []interface{}{fkInfo},
 	}
-	err = s.d.doDDLJob(s.ctx, job)
+	err := s.d.doDDLJob(s.ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
