@@ -127,9 +127,10 @@ func init() {
 	initTokenFunc("Xx", startWithXx)
 	initTokenFunc("x", startWithXx)
 	initTokenFunc("b", startWithb)
+	initTokenFunc(".", startWithDot)
 	initTokenFunc("_$ABCDEFGHIJKLMNOPQRSTUVWYZacdefghijklmnopqrstuvwyz", scanIdentifier)
 	initTokenFunc("`", scanQuotedIdent)
-	initTokenFunc("0123456789.", startWithNumber)
+	initTokenFunc("0123456789", startWithNumber)
 	initTokenFunc("'\"", startString)
 }
 
