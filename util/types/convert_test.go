@@ -347,9 +347,9 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	}
 }
 
-func testStrToInt(c *C, str string, expect int64, truncateAsError bool, expectErr error) {
+func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr error) {
 	sc := new(variable.StatementContext)
-	sc.IgnoreTruncate = !truncateAsError
+	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToInt(sc, str)
 	if expectErr != nil {
 		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)

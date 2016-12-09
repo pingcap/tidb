@@ -35,9 +35,14 @@ const (
 	compareResultNull = -2
 )
 
-// Flags
+// Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
 const (
-	FlagIgnoreTruncate    uint64 = 1
+	// FlagIgnoreTruncate indicates if truncate error should be ignore.
+	// Read statements should ignore truncate error, write statements should not ignore truncate error.
+	FlagIgnoreTruncate uint64 = 1
+	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
+	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
+	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
 	FlagTruncateAsWarning uint64 = 1 << 1
 )
 
