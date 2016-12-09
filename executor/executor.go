@@ -591,7 +591,7 @@ func (e *HashJoinExec) fetchBigExec() {
 // prepare runs the first time when 'Next' is called, it starts one worker goroutine to fetch rows from the big table,
 // and reads all data from the small table to build a hash table, then starts multiple join worker goroutines.
 func (e *HashJoinExec) prepare() error {
-	e.closeCh = make(chan struct{}, 1)
+	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 	e.bigTableRows = make([]chan []*Row, e.concurrency)
 	e.wg = sync.WaitGroup{}
@@ -1907,10 +1907,17 @@ func (e *TrimExec) Next() (*Row, error) {
 // UnionExec has multiple source Executors, it executes them sequentially, and do conversion to the same type
 // as source Executors may has different field type, we need to do conversion.
 type UnionExec struct {
-	schema expression.Schema
-	Srcs   []Executor
-	ctx    context.Context
-	cursor int
+	schema   expression.Schema
+	Srcs     []Executor
+	ctx      context.Context
+	inited   bool
+	finished atomic.Value
+	rowsCh   chan []*Row
+	rows     []*Row
+	cursor   int
+	wg       sync.WaitGroup
+	closedCh chan struct{}
+	errCh    chan error
 }
 
 // Schema implements the Executor Schema interface.
@@ -1918,40 +1925,93 @@ func (e *UnionExec) Schema() expression.Schema {
 	return e.schema
 }
 
+func (e *UnionExec) waitAllFinished() {
+	e.wg.Wait()
+	close(e.rowsCh)
+	close(e.closedCh)
+}
+
+func (e *UnionExec) fetchData(idx int) {
+	defer e.wg.Done()
+	for {
+		rows := make([]*Row, 0, batchSize)
+		for i := 0; i < batchSize; i++ {
+			if e.finished.Load().(bool) {
+				return
+			}
+			row, err := e.Srcs[idx].Next()
+			if err != nil {
+				e.finished.Store(true)
+				e.errCh <- err
+				return
+			}
+			if row == nil {
+				if len(rows) > 0 {
+					e.rowsCh <- rows
+				}
+				return
+			}
+			if idx != 0 {
+				// TODO: Add cast function in plan building phase.
+				for j := range row.Data {
+					col := e.schema[j]
+					val, err := row.Data[j].ConvertTo(e.ctx.GetSessionVars().StmtCtx, col.RetType)
+					if err != nil {
+						e.finished.Store(true)
+						e.errCh <- err
+						return
+					}
+					row.Data[j] = val
+				}
+			}
+			rows = append(rows, row)
+		}
+		e.rowsCh <- rows
+	}
+}
+
 // Next implements the Executor Next interface.
 func (e *UnionExec) Next() (*Row, error) {
-	for {
-		if e.cursor >= len(e.Srcs) {
-			return nil, nil
+	if !e.inited {
+		e.finished.Store(false)
+		e.rowsCh = make(chan []*Row, batchSize*len(e.Srcs))
+		e.errCh = make(chan error, len(e.Srcs))
+		e.closedCh = make(chan struct{})
+		for i := range e.Srcs {
+			e.wg.Add(1)
+			go e.fetchData(i)
 		}
-		sel := e.Srcs[e.cursor]
-		row, err := sel.Next()
+		go e.waitAllFinished()
+		e.inited = true
+	}
+	if e.cursor >= len(e.rows) {
+		var rows []*Row
+		var err error
+		select {
+		case rows, _ = <-e.rowsCh:
+		case err, _ = <-e.errCh:
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if row == nil {
-			e.cursor++
-			continue
+		if rows == nil {
+			return nil, nil
 		}
-		if e.cursor != 0 {
-			for i := range row.Data {
-				// The column value should be casted as the same type of the first select statement in corresponding position.
-				col := e.schema[i]
-				var val types.Datum
-				val, err = row.Data[i].ConvertTo(e.ctx.GetSessionVars().StmtCtx, col.RetType)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				row.Data[i] = val
-			}
-		}
-		return row, nil
+		e.rows = rows
+		e.cursor = 0
 	}
+	row := e.rows[e.cursor]
+	e.cursor++
+	return row, nil
 }
 
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
+	e.finished.Store(true)
+	<-e.closedCh
 	e.cursor = 0
+	e.inited = false
+	e.rows = nil
 	for _, sel := range e.Srcs {
 		er := sel.Close()
 		if er != nil {
