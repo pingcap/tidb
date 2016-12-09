@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -26,6 +27,10 @@ const (
 )
 
 func (s *testSuite) TestStatementContext(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table sc (a int)")
@@ -45,9 +50,9 @@ func (s *testSuite) TestStatementContext(c *C) {
 	tk.MustExec("insert sc values ('1.8'+1)")
 	tk.MustQuery("select * from sc").Check(testkit.Rows("3"))
 
-	// handle coprocessor flags, '1x' is an invalid data.
-	// update and delete do select request first which is handled by coprocessor,
-	// in strict mode we expect error.
+	// Handle coprocessor flags, '1x' is an invalid int.
+	// UPDATE and DELETE do select request first which is handled by coprocessor.
+	// In strict mode we expect error.
 	_, err = tk.Exec("update sc set a = 4 where a > '1x'")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("delete from sc where a < '1x'")

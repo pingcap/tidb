@@ -127,7 +127,7 @@ func (e *Evaluator) evalIsNull(expr *tipb.Expr) (types.Datum, error) {
 // FlagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
 func FlagsToStatementContext(flags uint64) *variable.StatementContext {
 	sc := new(variable.StatementContext)
-	sc.IgnoreTruncate = flags&FlagIgnoreTruncate > 0
-	sc.TruncateAsWarning = flags&FlagTruncateAsWarning > 0
+	sc.IgnoreTruncate = (flags & FlagIgnoreTruncate) > 0
+	sc.TruncateAsWarning = (flags & FlagTruncateAsWarning) > 0
 	return sc
 }
