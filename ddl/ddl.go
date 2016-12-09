@@ -997,7 +997,6 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists)
@@ -1042,7 +1041,6 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists)
@@ -1054,8 +1052,14 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
 	}
 
+	tblInfo := t.Meta()
+	// We don't support dropping column with index covered now.
+	// We must drop the index first, then drop the column.
+	if isColumnWithIndex(colName.L, tblInfo.Indices) {
+		return errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
+	}
 	// We don't support dropping column with PK handle covered now.
-	if col.IsPKHandleColumn(t.Meta()) {
+	if col.IsPKHandleColumn(tblInfo) {
 		return errUnsupportedPKHandle
 	}
 
@@ -1262,15 +1266,20 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
 	}
-
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists)
 	}
+
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
 		indexName = getAnonymousIndex(t, idxColNames[0].Column.Name)
 	}
+
+	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
+		return errDupKeyName.Gen("index already exist %s", indexName)
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -1368,10 +1377,13 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists)
+	}
+
+	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
+		return ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
 	}
 
 	job := &model.Job{
