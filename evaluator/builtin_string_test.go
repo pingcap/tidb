@@ -55,6 +55,38 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestBIN(c *C) {
+	defer testleak.AfterTest(c)()
+	v, err := builtinBIN(types.MakeDatums([]interface{}{nil}...), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
+
+	for _, t := range []struct {
+		Input    interface{}
+		Expected string
+	}{
+		{12, "1100"},
+		{267, "100001011"},
+		{589, "1001001101"},
+		{1567, "11000011111"},
+		{2963, "101110010011"},
+		{5863, "1011011100111"},
+		{8735, "10001000011111"},
+		{17534, "100010001111110"},
+		{38967, "1001100000110111"},
+		{68973, "10000110101101101"},
+		{141516, "100010100011001100"},
+		{-1892, "1111111111111111111111111111111111111111111111111111100010011100"},
+	} {
+		v, err = builtinBIN(types.MakeDatums(t.Input), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(v.GetString(), Equals, t.Expected)
+	}
+
+	v, err = builtinBIN(types.MakeDatums([]interface{}{errors.New("must error")}...), s.ctx)
+	c.Assert(err, NotNil)
+}
+
 func (s *testEvaluatorSuite) TestASCII(c *C) {
 	defer testleak.AfterTest(c)()
 	v, err := builtinASCII(types.MakeDatums([]interface{}{nil}...), s.ctx)
