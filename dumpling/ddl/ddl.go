@@ -1184,6 +1184,13 @@ func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 // ModifyColumn does modification on an existing column, currently we only support limited kind of changes
 // that do not need to change or check data on the table.
 func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if len(spec.NewColumn.Name.Schema.O) != 0 && ident.Schema.L != spec.NewColumn.Name.Schema.L {
+		return errWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
+	}
+	if len(spec.NewColumn.Name.Table.O) != 0 && ident.Name.L != spec.NewColumn.Name.Table.L {
+		return errWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
+	}
+
 	originalColName := spec.NewColumn.Name.Name
 	job, err := d.getModifiableColumnJob(ctx, ident, originalColName, spec)
 	if err != nil {
