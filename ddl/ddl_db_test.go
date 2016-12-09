@@ -107,7 +107,7 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	sql = "drop database db_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrDBDropExists)
 	// crate table
-	s.tk.MustExec("create table test_error_code_succ (c1 int, c2 int, c3 int)")
+	s.tk.MustExec("create table test_error_code_succ (c1 int, c2 int, c3 int, primary key(c3))")
 	sql = "create table test_error_code_succ (c1 int, c2 int, c3 int)"
 	s.testErrorCode(c, sql, tmysql.ErrTableExists)
 	sql = "create table test_error_code1 (c1 int, c2 int, c2 int)"
@@ -139,6 +139,8 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	// drop index
 	sql = "alter table test_error_code_succ drop index idx_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
+	sql = "alter table test_error_code_succ drop column c3"
+	s.testErrorCode(c, sql, int(tmysql.ErrUnknown))
 }
 
 func (s *testDBSuite) TestIndex(c *C) {

@@ -644,4 +644,8 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		_, err := strconv.ParseFloat(prefix, 64)
 		c.Assert(err, IsNil)
 	}
+	_, err := floatStrToIntStr("1e9223372036854775807")
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	_, err = floatStrToIntStr("1e21")
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
 }

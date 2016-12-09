@@ -58,6 +58,8 @@ var (
 	errCantDropColWithIndex    = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn    = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
 	errUnsupportedModifyColumn = terror.ClassDDL.New(codeUnsupportedModifyColumn, "unsupported modify column")
+	errUnsupportedPKHandle     = terror.ClassDDL.New(codeUnsupportedDropPKHandle,
+		"unsupported drop integer primary key")
 
 	errBlobKeyWithoutLength  = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specificate a key length")
 	errIncorrectPrefixKey    = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
@@ -464,12 +466,6 @@ func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-
-	col.ID, err = d.genGlobalID()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
 	return col, cts, nil
 }
 
@@ -755,6 +751,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		return nil, errors.Trace(err)
 	}
 	for _, v := range cols {
+		v.ID = allocateColumnID(tbInfo)
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
 	}
 	for _, constr := range constraints {
@@ -837,10 +834,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 			// Use btree as default index type.
 			idxInfo.Tp = model.IndexTypeBtree
 		}
-		idxInfo.ID, err = d.genGlobalID()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		idxInfo.ID = allocateIndexID(tbInfo)
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 	return
@@ -1060,6 +1054,11 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
 	}
 
+	// We don't support dropping column with PK handle covered now.
+	if col.IsPKHandleColumn(t.Meta()) {
+		return errUnsupportedPKHandle
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -1268,22 +1267,16 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists)
 	}
-	indexID, err := d.genGlobalID()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
 		indexName = getAnonymousIndex(t, idxColNames[0].Column.Name)
 	}
-
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, indexID, idxColNames},
+		Args:       []interface{}{unique, indexName, idxColNames},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1292,13 +1285,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 }
 
 func (d *ddl) buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) (*model.FKInfo, error) {
-	fkID, err := d.genGlobalID()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	var fkInfo model.FKInfo
-	fkInfo.ID = fkID
 	fkInfo.Name = fkName
 	fkInfo.RefTable = refer.Table.Name
 
@@ -1505,6 +1492,7 @@ const (
 	codeCantDropColWithIndex    = 201
 	codeUnsupportedAddColumn    = 202
 	codeUnsupportedModifyColumn = 203
+	codeUnsupportedDropPKHandle = 204
 
 	codeBadNull               = 1048
 	codeTooLongIdent          = 1059
