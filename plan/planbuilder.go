@@ -76,7 +76,7 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	case *ast.DropTableStmt:
 		return b.buildDDL(x)
 	case *ast.ExecuteStmt:
-		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
+		return b.buildExecute(x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
 	case *ast.InsertStmt:
@@ -104,6 +104,19 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	}
 	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil
+}
+
+func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
+	vars := make([]expression.Expression, 0, len(v.UsingVars))
+	for _, expr := range v.UsingVars {
+		newExpr, _, err := b.rewrite(expr, nil, nil, true)
+		if err != nil {
+			b.err = errors.Trace(err)
+		}
+		vars = append(vars, newExpr)
+	}
+	exe := &Execute{Name: v.Name, UsingVars: vars}
+	return exe
 }
 
 func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
