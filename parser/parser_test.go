@@ -372,6 +372,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW GRANTS`, true},
 		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
 		{`SHOW COLUMNS FROM City;`, true},
+		{`SHOW COLUMNS FROM tv189.1_t_1_x;`, true},
 		{`SHOW FIELDS FROM City;`, true},
 		{`SHOW TRIGGERS LIKE 't'`, true},
 		{`SHOW DATABASES LIKE 'test2'`, true},
