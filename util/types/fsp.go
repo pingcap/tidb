@@ -63,38 +63,33 @@ func parseFrac(s string, fsp int) (int, bool, error) {
 		return int(float64(v) * math.Pow10(fsp-len(s))), false, nil
 	}
 
-	// Found when fsp <= string length.
-	// Use float to calculate frac, e.g, "123" -> "0.123"
-	if !strings.HasPrefix(s, ".") && !strings.HasPrefix(s, "0.") {
-		s = "0." + s
-	}
+	var v int64
+	// Round when fsp < string length.
+	// Max int64 is 9223372036854775807, long enough for leagel input.
+	if fsp < len(s) {
+		v, err = strconv.ParseInt(s[:fsp+1], 10, 64)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+		v = (v + 5) / 10
 
-	frac, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, false, errors.Trace(err)
-	}
-
-	// round frac to the nearest value with FSP
-	var round float64
-	pow := math.Pow(10, float64(fsp))
-	digit := pow * frac
-	_, div := math.Modf(digit)
-	if div >= 0.5 {
-		round = math.Ceil(digit)
+		if float64(v) >= math.Pow10(fsp) {
+			// overflow
+			return 0, true, nil
+		}
 	} else {
-		round = math.Floor(digit)
-	}
-
-	if round >= math.Pow10(fsp) {
-		// overflow
-		return 0, true, nil
+		// fsp == string length also need pading zero, but not round.
+		v, err = strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
 	}
 
 	// Get the final frac, with 6 digit number
-	//  0.1236 round 3 -> 124 -> 123000
-	//  0.0312 round 2 -> 3 -> 30000
-	//  0.999 round 2 -> 1000 -> overflow
-	return int(round * math.Pow10(MaxFsp-fsp)), false, nil
+	//  1236 round 3 -> 124 -> 124000
+	//  0312 round 2 -> 3 -> 300000
+	//  999 round 2 -> 100 -> overflow
+	return int(float64(v) * math.Pow10(MaxFsp-fsp)), false, nil
 }
 
 // alignFrac is used to generate alignment frac, like `100` -> `100000`
