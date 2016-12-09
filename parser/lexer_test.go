@@ -107,6 +107,7 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{fmt.Sprintf("%c", 0), invalid},
 		{fmt.Sprintf("t1%c", 0), identifier},
 		{".*", int('.')},
+		{".1_t_1_x", int('.')},
 	}
 	runTest(c, table)
 }

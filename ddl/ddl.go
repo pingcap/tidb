@@ -466,12 +466,6 @@ func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-
-	col.ID, err = d.genGlobalID()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
 	return col, cts, nil
 }
 
@@ -757,6 +751,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		return nil, errors.Trace(err)
 	}
 	for _, v := range cols {
+		v.ID = allocateColumnID(tbInfo)
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
 	}
 	for _, constr := range constraints {
@@ -839,10 +834,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 			// Use btree as default index type.
 			idxInfo.Tp = model.IndexTypeBtree
 		}
-		idxInfo.ID, err = d.genGlobalID()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		idxInfo.ID = allocateIndexID(tbInfo)
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 	return
@@ -1005,7 +997,6 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists)
@@ -1050,7 +1041,6 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists)
@@ -1062,8 +1052,14 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
 	}
 
+	tblInfo := t.Meta()
+	// We don't support dropping column with index covered now.
+	// We must drop the index first, then drop the column.
+	if isColumnWithIndex(colName.L, tblInfo.Indices) {
+		return errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
+	}
 	// We don't support dropping column with PK handle covered now.
-	if col.IsPKHandleColumn(t.Meta()) {
+	if col.IsPKHandleColumn(tblInfo) {
 		return errUnsupportedPKHandle
 	}
 
@@ -1270,14 +1266,9 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
 	}
-
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists)
-	}
-	indexID, err := d.genGlobalID()
-	if err != nil {
-		return errors.Trace(err)
 	}
 
 	// Deal with anonymous index.
@@ -1285,12 +1276,16 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 		indexName = getAnonymousIndex(t, idxColNames[0].Column.Name)
 	}
 
+	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
+		return errDupKeyName.Gen("index already exist %s", indexName)
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, indexID, idxColNames},
+		Args:       []interface{}{unique, indexName, idxColNames},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1299,13 +1294,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 }
 
 func (d *ddl) buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) (*model.FKInfo, error) {
-	fkID, err := d.genGlobalID()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	var fkInfo model.FKInfo
-	fkInfo.ID = fkID
 	fkInfo.Name = fkName
 	fkInfo.RefTable = refer.Table.Name
 
@@ -1388,10 +1377,13 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists)
+	}
+
+	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
+		return ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
 	}
 
 	job := &model.Job{

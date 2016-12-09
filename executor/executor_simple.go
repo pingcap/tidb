@@ -22,7 +22,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
@@ -64,8 +63,6 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeUse(x)
 	case *ast.FlushTableStmt:
 		err = e.executeFlushTable(x)
-	case *ast.DoStmt:
-		err = e.executeDo(x)
 	case *ast.BeginStmt:
 		err = e.executeBegin(x)
 	case *ast.CommitStmt:
@@ -111,16 +108,6 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	sessionVars := e.ctx.GetSessionVars()
 	sessionVars.Systems[variable.CharsetDatabase] = dbinfo.Charset
 	sessionVars.Systems[variable.CollationDatabase] = dbinfo.Collate
-	return nil
-}
-
-func (e *SimpleExec) executeDo(s *ast.DoStmt) error {
-	for _, expr := range s.Exprs {
-		_, err := evaluator.Eval(e.ctx, expr)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 	return nil
 }
 

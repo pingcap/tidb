@@ -54,7 +54,8 @@ func (s *testSuite) TestCharsetDatabase(c *C) {
 func (s *testSuite) TestDo(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("do 1, 2")
+	tk.MustExec("do 1, @a:=1")
+	tk.MustQuery("select @a").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestTransaction(c *C) {

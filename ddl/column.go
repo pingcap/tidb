@@ -77,7 +77,7 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 		// Insert position is after the mentioned column.
 		position = c.Offset + 1
 	}
-
+	colInfo.ID = allocateColumnID(tblInfo)
 	colInfo.State = model.StateNone
 	// To support add column asynchronous, we should mark its offset as the last column.
 	// So that we can use origin column offset to get value from row.
@@ -224,15 +224,9 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	}
 
 	// We don't support dropping column with index covered now.
-	// We must drop the index first, then drop the column.
-	for _, indexInfo := range tblInfo.Indices {
-		for _, col := range indexInfo.Columns {
-			if col.Name.L == colName.L {
-				job.State = model.JobCancelled
-				return errCantDropColWithIndex.Gen("can't drop column %s with index %s covered now",
-					colName, indexInfo.Name)
-			}
-		}
+	if isColumnWithIndex(colName.L, tblInfo.Indices) {
+		job.State = model.JobCancelled
+		return errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
 	}
 
 	ver, err := updateSchemaVersion(t, job)
@@ -452,4 +446,20 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 	job.State = model.JobDone
 	addTableHistoryInfo(job, ver, tblInfo)
 	return nil
+}
+
+func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
+	for _, indexInfo := range indices {
+		for _, col := range indexInfo.Columns {
+			if col.Name.L == colName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func allocateColumnID(tblInfo *model.TableInfo) int64 {
+	tblInfo.MaxColumnID++
+	return tblInfo.MaxColumnID
 }
