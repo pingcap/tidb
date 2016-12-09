@@ -73,6 +73,27 @@ func (action ActionType) String() string {
 	}
 }
 
+// HistoryInfo is used for binlog.
+type HistoryInfo struct {
+	SchemaVersion int64
+	DBInfo        *DBInfo
+	TableInfo     *TableInfo
+}
+
+// AddDBInfo adds schema version and schema information that are used for binlog.
+// dbInfo is added in the following operations: create database, drop database.
+func (h *HistoryInfo) AddDBInfo(schemaVer int64, dbInfo *DBInfo) {
+	h.SchemaVersion = schemaVer
+	h.DBInfo = dbInfo
+}
+
+// AddTableInfo adds schema version and table information that are used for binlog.
+// tblInfo is added except for the following operations: create database, drop database.
+func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
+	h.SchemaVersion = schemaVer
+	h.TableInfo = tblInfo
+}
+
 // Job is for a DDL operation.
 type Job struct {
 	ID       int64         `json:"id"`
@@ -96,7 +117,8 @@ type Job struct {
 	// TODO: Use timestamp allocated by TSO.
 	LastUpdateTS int64 `json:"last_update_ts"`
 	// Query string of the ddl job.
-	Query string `json:"query"`
+	Query      string       `json:"query"`
+	BinlogInfo *HistoryInfo `json:"binlog"`
 }
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.

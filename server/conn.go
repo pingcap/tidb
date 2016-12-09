@@ -235,6 +235,10 @@ func handshakeResponseFromData(packet *handshakeResponse41, data []byte) error {
 	}
 
 	if capability&mysql.ClientConnectAtts > 0 {
+		if len(data[pos:]) == 0 {
+			// Defend some ill-formated packet, connection attribute is not important and can be ignored.
+			return nil
+		}
 		if num, null, off := parseLengthEncodedInt(data[pos:]); !null {
 			pos += off
 			kv := data[pos : pos+int(num)]

@@ -164,7 +164,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		if client != nil {
 			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-				ts.ConditionPBExpr, ts.conditions, newSel.Conditions = expressionsToPB(sc, newSel.Conditions, client)
+				ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions = expressionsToPB(sc, newSel.Conditions, client)
 			}
 		}
 		err := buildTableRange(ts)
@@ -200,7 +200,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 			return nil, errors.Trace(err)
 		}
 	}
-	if ts.ConditionPBExpr != nil {
+	if ts.TableConditionPBExpr != nil {
 		rowCount = uint64(float64(rowCount) * selectionFactor)
 	}
 	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount}), nil
@@ -245,7 +245,10 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		if client != nil {
 			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
-				is.ConditionPBExpr, is.conditions, newSel.Conditions = expressionsToPB(sc, newSel.Conditions, client)
+				indexConditions, tableConditions := detachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
+				is.IndexConditionPBExpr, is.indexFilterConditions, indexConditions = expressionsToPB(sc, indexConditions, client)
+				is.TableConditionPBExpr, is.tableFilterConditions, tableConditions = expressionsToPB(sc, tableConditions, client)
+				newSel.Conditions = append(indexConditions, tableConditions...)
 			}
 		}
 		err := buildIndexRange(p.ctx.GetSessionVars().StmtCtx, is)
@@ -868,24 +871,24 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	}
 	limit := prop.limit
 	childInfos := make([]*physicalPlanInfo, 0, len(p.children))
-	var count uint64
 	for _, child := range p.GetChildren() {
-		newProp := convertLimitOffsetToCount(prop)
-		newProp.props = make([]*columnProp, 0, len(prop.props))
-		for _, c := range prop.props {
-			idx := p.GetSchema().GetIndex(c.col)
-			newProp.props = append(newProp.props, &columnProp{col: child.GetSchema()[idx], desc: c.desc})
+		newProp := &requiredProperty{}
+		if limit != nil {
+			newProp = convertLimitOffsetToCount(prop)
+			newProp.props = make([]*columnProp, 0, len(prop.props))
+			for _, c := range prop.props {
+				idx := p.GetSchema().GetIndex(c.col)
+				newProp.props = append(newProp.props, &columnProp{col: child.GetSchema()[idx], desc: c.desc})
+			}
 		}
-		info, err = child.(LogicalPlan).convert2PhysicalPlan(newProp)
-		count += info.count
+		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(newProp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		childInfos = append(childInfos, info)
+		childInfos = append(childInfos, childInfo)
 	}
 	info = p.matchProperty(prop, childInfos...)
-	info = enforceProperty(limitProperty(limit), info)
-	info.count = count
+	info = enforceProperty(prop, info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
