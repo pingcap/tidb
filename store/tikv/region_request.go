@@ -196,6 +196,10 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 		}
 		return true, nil
 	}
+	if regionErr.GetStaleCommand() != nil {
+		log.Warnf("tikv reports `StaleCommand`, ctx: %s", ctx.KVCtx)
+		return true, nil
+	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
 	log.Warnf("tikv reports region error: %s, ctx: %s", regionErr, ctx.KVCtx)
