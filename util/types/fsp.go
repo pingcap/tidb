@@ -43,53 +43,46 @@ func checkFsp(fsp int) (int, error) {
 	return fsp, nil
 }
 
-func parseFrac(s string, fsp int) (int, bool, error) {
+// parseFrac parses the input string according to fsp, returns the microsecond,
+// and also a bool value to indice overflow. eg:
+// "999" fsp=2 will overflow.
+func parseFrac(s string, fsp int) (v int, overflow bool, err error) {
 	if len(s) == 0 {
 		return 0, false, nil
 	}
 
-	var err error
 	fsp, err = checkFsp(fsp)
 	if err != nil {
 		return 0, false, errors.Trace(err)
 	}
 
-	// Fill 0 when fsp > string length.
-	if fsp > len(s) {
-		v, err := strconv.ParseInt(s, 10, 64)
-		if err != nil {
-			return 0, false, errors.Trace(err)
+	if fsp >= len(s) {
+		tmp, e := strconv.ParseInt(s, 10, 64)
+		if e != nil {
+			return 0, false, errors.Trace(e)
 		}
-		return int(float64(v) * math.Pow10(fsp-len(s))), false, nil
+		v = int(float64(tmp) * math.Pow10(MaxFsp-len(s)))
+		return
 	}
 
-	var v int64
 	// Round when fsp < string length.
-	// Max int64 is 9223372036854775807, long enough for leagel input.
-	if fsp < len(s) {
-		v, err = strconv.ParseInt(s[:fsp+1], 10, 64)
-		if err != nil {
-			return 0, false, errors.Trace(err)
-		}
-		v = (v + 5) / 10
+	tmp, e := strconv.ParseInt(s[:fsp+1], 10, 64)
+	if e != nil {
+		return 0, false, errors.Trace(e)
+	}
+	tmp = (tmp + 5) / 10
 
-		if float64(v) >= math.Pow10(fsp) {
-			// overflow
-			return 0, true, nil
-		}
-	} else {
-		// fsp == string length also need pading zero, but not round.
-		v, err = strconv.ParseInt(s, 10, 64)
-		if err != nil {
-			return 0, false, errors.Trace(err)
-		}
+	if float64(tmp) >= math.Pow10(fsp) {
+		// overflow
+		return 0, true, nil
 	}
 
 	// Get the final frac, with 6 digit number
 	//  1236 round 3 -> 124 -> 124000
 	//  0312 round 2 -> 3 -> 300000
 	//  999 round 2 -> 100 -> overflow
-	return int(float64(v) * math.Pow10(MaxFsp-fsp)), false, nil
+	v = int(float64(tmp) * math.Pow10(MaxFsp-fsp))
+	return
 }
 
 // alignFrac is used to generate alignment frac, like `100` -> `100000`

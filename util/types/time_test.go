@@ -547,12 +547,13 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 		{"1234567", 5, 123460, false},
 		{"1234567", 6, 123457, false},
 		// Fill 0 when fsp > string length.
-		{"123", 4, 1230, false},
-		{"123", 5, 12300, false},
+		{"123", 4, 123000, false},
+		{"123", 5, 123000, false},
 		{"123", 6, 123000, false},
-		{"01", 3, 10, false},
-		{"012", 4, 120, false},
-		{"0123", 5, 1230, false},
+		{"11", 6, 110000, false},
+		{"01", 3, 10000, false},
+		{"012", 4, 12000, false},
+		{"0123", 5, 12300, false},
 		// Overflow
 		{"9999999", 6, 0, true},
 		{"999999", 5, 0, true},
