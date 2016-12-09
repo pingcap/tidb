@@ -79,7 +79,7 @@ func parseFrac(s string, fsp int) (v int, overflow bool, err error) {
 
 	// Get the final frac, with 6 digit number
 	//  1236 round 3 -> 124 -> 124000
-	//  0312 round 2 -> 3 -> 300000
+	//  0312 round 2 -> 3 -> 30000
 	//  999 round 2 -> 100 -> overflow
 	v = int(float64(tmp) * math.Pow10(MaxFsp-fsp))
 	return
