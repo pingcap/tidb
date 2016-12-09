@@ -62,7 +62,10 @@ func (s *RegionRequestSender) SendKVReq(req *kvrpcpb.Request, regionID RegionVer
 		default:
 		}
 
-		ctx := s.regionCache.GetRPCContext(regionID)
+		ctx, err := s.regionCache.GetRPCContext(s.bo, regionID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		if ctx == nil {
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the
@@ -102,7 +105,10 @@ func (s *RegionRequestSender) SendKVReq(req *kvrpcpb.Request, regionID RegionVer
 // SendCopReq sends a coprocessor request to tikv server.
 func (s *RegionRequestSender) SendCopReq(req *coprocessor.Request, regionID RegionVerID, timeout time.Duration) (*coprocessor.Response, error) {
 	for {
-		ctx := s.regionCache.GetRPCContext(regionID)
+		ctx, err := s.regionCache.GetRPCContext(s.bo, regionID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		if ctx == nil {
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the
@@ -137,7 +143,7 @@ func (s *RegionRequestSender) sendKVReqToRegion(ctx *RPCContext, req *kvrpcpb.Re
 	req.Context = ctx.KVCtx
 	resp, err = s.client.SendKVReq(ctx.Addr, req, timeout)
 	if err != nil {
-		if e := s.onSendFail(ctx.Region, ctx.KVCtx, err); e != nil {
+		if e := s.onSendFail(ctx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}
 		return nil, true, nil
@@ -149,7 +155,7 @@ func (s *RegionRequestSender) sendCopReqToRegion(ctx *RPCContext, req *coprocess
 	req.Context = ctx.KVCtx
 	resp, err = s.client.SendCopReq(ctx.Addr, req, timeout)
 	if err != nil {
-		if e := s.onSendFail(ctx.Region, ctx.KVCtx, err); e != nil {
+		if e := s.onSendFail(ctx, err); e != nil {
 			return nil, false, errors.Trace(err)
 		}
 		return nil, true, nil
@@ -157,8 +163,8 @@ func (s *RegionRequestSender) sendCopReqToRegion(ctx *RPCContext, req *coprocess
 	return
 }
 
-func (s *RegionRequestSender) onSendFail(regionID RegionVerID, ctx *kvrpcpb.Context, err error) error {
-	s.regionCache.NextPeer(regionID)
+func (s *RegionRequestSender) onSendFail(ctx *RPCContext, err error) error {
+	s.regionCache.OnRequestFail(ctx)
 	err = s.bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, ctx))
 	return errors.Trace(err)
 }
@@ -168,7 +174,7 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 	if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 		// Retry if error is `NotLeader`.
 		log.Warnf("tikv reports `NotLeader`: %s, ctx: %s, retry later", notLeader, ctx.KVCtx)
-		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetId())
+		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId())
 		if notLeader.GetLeader() == nil {
 			err = s.bo.Backoff(boRegionMiss, errors.Errorf("not leader: %v, ctx: %s", notLeader, ctx.KVCtx))
 			if err != nil {

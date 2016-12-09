@@ -204,6 +204,10 @@ func floatStrToIntStr(validFloat string) (string, error) {
 		if err != nil {
 			return validFloat, errors.Trace(err)
 		}
+		if exp > 0 && intCnt > (math.MaxInt64-exp) {
+			// (exp + incCnt) overflows MaxInt64.
+			return validFloat, errors.Trace(ErrOverflow)
+		}
 		intCnt += exp
 	}
 	if intCnt <= 0 {
@@ -216,7 +220,12 @@ func floatStrToIntStr(validFloat string) (string, error) {
 	if intCnt <= len(digits) {
 		validInt = string(digits[:intCnt])
 	} else {
-		validInt = string(digits) + strings.Repeat("0", intCnt-len(digits))
+		extraZeroCount := intCnt - len(digits)
+		if extraZeroCount > 20 {
+			// Return overflow to avoid allocating too much memory.
+			return validFloat, errors.Trace(ErrOverflow)
+		}
+		validInt = string(digits) + strings.Repeat("0", extraZeroCount)
 	}
 	return validInt, nil
 }

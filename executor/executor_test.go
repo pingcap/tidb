@@ -454,7 +454,7 @@ func (s *testSuite) TestUnion(c *C) {
 	r := tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1", "2"))
 
-	testSQL = `select * from (select id from union_test union select id from union_test) t;`
+	testSQL = `select * from (select id from union_test union select id from union_test) t order by id;`
 	tk.MustExec("begin")
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1", "2"))
@@ -465,10 +465,10 @@ func (s *testSuite) TestUnion(c *C) {
 	r = tk.MustQuery("select 1 union all select 1 union select 1")
 	r.Check(testkit.Rows("1"))
 
-	r = tk.MustQuery("select 1 union (select 2) limit 1")
+	r = tk.MustQuery("select 1 as a union (select 2) order by a limit 1")
 	r.Check(testkit.Rows("1"))
 
-	r = tk.MustQuery("select 1 union (select 2) limit 1, 1")
+	r = tk.MustQuery("select 1 as a union (select 2) order by a limit 1, 1")
 	r.Check(testkit.Rows("2"))
 
 	r = tk.MustQuery("select id from union_test union all (select 1) order by id desc")
@@ -477,12 +477,12 @@ func (s *testSuite) TestUnion(c *C) {
 	r = tk.MustQuery("select id as a from union_test union (select 1) order by a desc")
 	r.Check(testkit.Rows("2", "1"))
 
-	r = tk.MustQuery(`select null union select "abc"`)
+	r = tk.MustQuery(`select null as a union (select "abc") order by a`)
 	rowStr1 := fmt.Sprintf("%v", nil)
 	r.Check(testkit.Rows(rowStr1, "abc"))
 
-	r = tk.MustQuery(`select "abc" union select 1`)
-	r.Check(testkit.Rows("abc", "1"))
+	r = tk.MustQuery(`select "abc" as a union (select 1) order by a`)
+	r.Check(testkit.Rows("1", "abc"))
 
 	tk.MustExec("commit")
 
@@ -499,8 +499,28 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("create table t3 (c int, d int)")
 	tk.MustExec("insert t3 values (3, 2)")
 	tk.MustExec("insert t3 values (4, 3)")
-	r = tk.MustQuery(`select sum(c1), c2 from (select c c1, d c2 from t1 union all select d c1, c c2 from t2 union all select c c1, d c2 from t3) x group by c2`)
+	r = tk.MustQuery(`select sum(c1), c2 from (select c c1, d c2 from t1 union all select d c1, c c2 from t2 union all select c c1, d c2 from t3) x group by c2 order by c2`)
 	r.Check(testkit.Rows("5 1", "4 2", "4 3"))
+
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1 (a int primary key)")
+	tk.MustExec("create table t2 (a int primary key)")
+	tk.MustExec("create table t3 (a int primary key)")
+	tk.MustExec("insert t1 values (7), (8)")
+	tk.MustExec("insert t2 values (1), (9)")
+	tk.MustExec("insert t3 values (2), (3)")
+	r = tk.MustQuery("select * from t1 union all select * from t2 union all (select * from t3) order by a limit 2")
+	r.Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("insert t1 values (2), (1)")
+	tk.MustExec("insert t2 values (3), (4)")
+	r = tk.MustQuery("select * from t1 union all (select * from t2) order by a limit 1")
+	r.Check(testkit.Rows("1"))
+	r = tk.MustQuery("select (select * from t1 where a != t.a union all (select * from t2 where a != t.a) order by a limit 1) from t1 t")
+	r.Check(testkit.Rows("1", "2"))
 }
 
 func (s *testSuite) TestIn(c *C) {
