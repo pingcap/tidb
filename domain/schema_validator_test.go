@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 type leaseItem struct {
@@ -25,7 +26,8 @@ type leaseItem struct {
 	schemaVer    int64
 }
 
-func (*testSuite) TestSchemaValidity(c *C) {
+func (*testSuite) TestSchemaValidator(c *C) {
+	defer testleak.AfterTest(c)()
 	lease := 2 * time.Millisecond
 	leaseCh := make(chan leaseItem)
 	oracleCh := make(chan uint64)
@@ -68,6 +70,9 @@ func reload(svi SchemaValidator, leaseCh chan leaseItem) {
 	svi.Update(item.leaseGrantTS, item.schemaVer)
 }
 
+// serverFunc plays the role as a remote server, runs in a seperate goroutine.
+// communicate with it through channel to mock network, it can grant lease and
+// provide timestamp oracle.
 func serverFunc(lease time.Duration, requireLease chan leaseItem, oracleCh chan uint64, exit chan struct{}) {
 	var version int64
 	leaseTS := uint64(time.Now().UnixNano())

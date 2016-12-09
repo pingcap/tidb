@@ -20,7 +20,7 @@ import (
 
 // SchemaValidator is the interface for checking the validity of schema version.
 type SchemaValidator interface {
-	// Update the schema validity info, add a new item, delete the expired items.
+	// Update the schema validator, add a new item, delete the expired items.
 	// The schemaVer is valid within leaseGrantTime plus lease duration.
 	Update(leaseGrantTime uint64, schemaVer int64)
 	// Check is it valid for a transaction to use schemaVer, at timestamp txnTS.
@@ -29,7 +29,7 @@ type SchemaValidator interface {
 	Latest() int64
 }
 
-type schemaValidityInfo1 struct {
+type schemaValidator struct {
 	mux             sync.RWMutex
 	lease           time.Duration
 	items           map[int64]time.Time
@@ -37,13 +37,13 @@ type schemaValidityInfo1 struct {
 }
 
 func newSchemaValidator(lease time.Duration) SchemaValidator {
-	return &schemaValidityInfo1{
+	return &schemaValidator{
 		lease: lease,
 		items: make(map[int64]time.Time),
 	}
 }
 
-func (s *schemaValidityInfo1) Update(leaseGrantTS uint64, schemaVer int64) {
+func (s *schemaValidator) Update(leaseGrantTS uint64, schemaVer int64) {
 	s.mux.Lock()
 
 	s.latestSchemaVer = schemaVer
@@ -64,7 +64,7 @@ func (s *schemaValidityInfo1) Update(leaseGrantTS uint64, schemaVer int64) {
 }
 
 // Check checks schema validity, returns true if use schemaVer at txnTS is legal.
-func (s *schemaValidityInfo1) Check(txnTS uint64, schemaVer int64) bool {
+func (s *schemaValidator) Check(txnTS uint64, schemaVer int64) bool {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 
@@ -87,7 +87,7 @@ func (s *schemaValidityInfo1) Check(txnTS uint64, schemaVer int64) bool {
 }
 
 // Latest returns the latest schema version it knows.
-func (s *schemaValidityInfo1) Latest() int64 {
+func (s *schemaValidator) Latest() int64 {
 	return s.latestSchemaVer
 }
 
