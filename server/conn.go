@@ -235,7 +235,7 @@ func handshakeResponseFromData(packet *handshakeResponse41, data []byte) error {
 	}
 
 	if capability&mysql.ClientConnectAtts > 0 {
-		if len(data[pos:]) <= 0 {
+		if len(data[pos:]) == 0 {
 			// Defend some ill-formated packet, connection attribute is not important and can be ignored.
 			return nil
 		}
