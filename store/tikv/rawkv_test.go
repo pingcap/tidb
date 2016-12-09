@@ -76,13 +76,13 @@ func (s *testRawKVSuite) TestSimple(c *C) {
 }
 
 func (s *testRawKVSuite) TestSplit(c *C) {
-	region1, err := s.client.regionCache.GetRegion(s.bo, []byte("k"))
+	loc, err := s.client.regionCache.LocateKey(s.bo, []byte("k"))
 	c.Assert(err, IsNil)
 	s.mustPut(c, []byte("k1"), []byte("v1"))
 	s.mustPut(c, []byte("k3"), []byte("v3"))
 
 	newRegionID, peerID := s.cluster.AllocID(), s.cluster.AllocID()
-	s.cluster.Split(region1.GetID(), newRegionID, []byte("k2"), []uint64{peerID}, peerID)
+	s.cluster.Split(loc.Region.id, newRegionID, []byte("k2"), []uint64{peerID}, peerID)
 
 	s.mustGet(c, []byte("k1"), []byte("v1"))
 	s.mustGet(c, []byte("k3"), []byte("v3"))

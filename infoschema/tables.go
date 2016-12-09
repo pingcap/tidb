@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
@@ -41,6 +43,8 @@ const (
 	tablePartitions    = "PARTITIONS"
 	tableKeyColumm     = "KEY_COLUMN_USAGE"
 	tableReferConst    = "REFERENTIAL_CONSTRAINTS"
+	tableSessionVar    = "SESSION_VARIABLES"
+	tablePlugins       = "PLUGINS"
 )
 
 type columnInfo struct {
@@ -232,6 +236,27 @@ var referConstCols = []columnInfo{
 	{"REFERENCED_TABLE_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/variables-table.html
+var sessionVarCols = []columnInfo{
+	{"VARIABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"VARIABLE_VALUE", mysql.TypeVarchar, 1024, 0, nil, nil},
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/plugins-table.html
+var pluginsCols = []columnInfo{
+	{"PLUGIN_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PLUGIN_VERSION", mysql.TypeVarchar, 20, 0, nil, nil},
+	{"PLUGIN_STATUS", mysql.TypeVarchar, 10, 0, nil, nil},
+	{"PLUGIN_TYPE", mysql.TypeVarchar, 80, 0, nil, nil},
+	{"PLUGIN_TYPE_VERSION", mysql.TypeVarchar, 20, 0, nil, nil},
+	{"PLUGIN_LIBRARY", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PLUGIN_LIBRARY_VERSION", mysql.TypeVarchar, 20, 0, nil, nil},
+	{"PLUGIN_AUTHOR", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PLUGIN_DESCRIPTION", mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
+	{"PLUGIN_LICENSE", mysql.TypeVarchar, 80, 0, nil, nil},
+	{"LOAD_OPTION", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/partitions-table.html
 var partitionsCols = []columnInfo{
 	{"TABLE_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
@@ -281,6 +306,30 @@ func dataForColltions() (records [][]types.Datum) {
 		types.MakeDatums("utf8mb4_general_ci", "utf8mb4", 5, "Yes", "Yes", 1),
 	)
 	return records
+}
+
+func dataForSessionVar(ctx context.Context) (records [][]types.Datum, err error) {
+	sessionVars := ctx.GetSessionVars()
+	globalVars := sessionVars.GlobalVarsAccessor
+	for _, v := range variable.SysVars {
+		var value string
+		sv := varsutil.GetSystemVar(sessionVars, v.Name)
+		if sv.IsNull() {
+			value, err = globalVars.GetGlobalSysVar(v.Name)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			sv.SetString(value)
+			err = varsutil.SetSystemVar(sessionVars, v.Name, sv)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		value = sv.GetString()
+		row := types.MakeDatums(v.Name, value)
+		records = append(records, row)
+	}
+	return
 }
 
 var filesCols = []columnInfo{
@@ -517,6 +566,8 @@ var tableNameToColumns = map[string]([]columnInfo){
 	tablePartitions:    partitionsCols,
 	tableKeyColumm:     keyColumnUsageCols,
 	tableReferConst:    referConstCols,
+	tableSessionVar:    sessionVarCols,
+	tablePlugins:       pluginsCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -553,11 +604,10 @@ func (s schemasSorter) Less(i, j int) bool {
 	return s[i].Name.L < s[j].Name.L
 }
 
-func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) [][]types.Datum {
+func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	is := it.handle.Get()
 	dbs := is.AllSchemas()
 	sort.Sort(schemasSorter(dbs))
-	var fullRows [][]types.Datum
 	switch it.meta.Name.O {
 	case tableSchemata:
 		fullRows = dataForSchemata(dbs)
@@ -571,14 +621,20 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) []
 		fullRows = dataForCharacterSets()
 	case tableCollations:
 		fullRows = dataForColltions()
+	case tableSessionVar:
+		fullRows, err = dataForSessionVar(ctx)
 	case tableFiles:
 	case tableProfiling:
 	case tablePartitions:
 	case tableKeyColumm:
 	case tableReferConst:
+	case tablePlugins:
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	if len(cols) == len(it.cols) {
-		return fullRows
+		return
 	}
 	rows := make([][]types.Datum, len(fullRows))
 	for i, fullRow := range fullRows {
@@ -588,7 +644,7 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) []
 		}
 		rows[i] = row
 	}
-	return rows
+	return rows, nil
 }
 
 func (it *infoschemaTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.Column,
@@ -596,7 +652,10 @@ func (it *infoschemaTable) IterRecords(ctx context.Context, startKey kv.Key, col
 	if len(startKey) != 0 {
 		return table.ErrUnsupportedOp
 	}
-	rows := it.getRows(ctx, cols)
+	rows, err := it.getRows(ctx, cols)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for i, row := range rows {
 		more, err := fn(int64(i), row, cols)
 		if err != nil {

@@ -265,11 +265,11 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 		default:
 		}
 
-		region, err := w.store.regionCache.GetRegion(bo, key)
+		loc, err := w.store.regionCache.LocateKey(bo, key)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		resp, err := w.store.SendKVReq(bo, req, region.VerID(), readTimeoutMedium)
+		resp, err := w.store.SendKVReq(bo, req, loc.Region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -305,7 +305,7 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 		}
 		regions++
 		totalResolvedLocks += len(locks)
-		key = region.EndKey()
+		key = loc.EndKey
 		if len(key) == 0 {
 			break
 		}
@@ -339,11 +339,11 @@ func (w *GCWorker) DoGC(safePoint uint64) error {
 		default:
 		}
 
-		region, err := w.store.regionCache.GetRegion(bo, key)
+		loc, err := w.store.regionCache.LocateKey(bo, key)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		resp, err := w.store.SendKVReq(bo, req, region.VerID(), readTimeoutLong)
+		resp, err := w.store.SendKVReq(bo, req, loc.Region, readTimeoutLong)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -362,7 +362,7 @@ func (w *GCWorker) DoGC(safePoint uint64) error {
 			return errors.Errorf("unexpected gc error: %s", gcResp.GetError())
 		}
 		regions++
-		key = region.EndKey()
+		key = loc.EndKey
 		if len(key) == 0 {
 			break
 		}

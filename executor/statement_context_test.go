@@ -31,4 +31,8 @@ func (s *testSuite) TestStatementContext(c *C) {
 	tk.MustExec("set sql_mode = 0")
 	tk.MustExec("update sc set a = 3 where a > cast(1.1 as decimal)")
 	tk.MustQuery("select * from sc").Check(testkit.Rows("1", "3"))
+	tk.MustExec("delete from sc")
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+	tk.MustExec("insert sc values ('1.8'+1)")
+	tk.MustQuery("select * from sc").Check(testkit.Rows("3"))
 }
