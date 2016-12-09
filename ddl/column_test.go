@@ -65,8 +65,7 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 		Offset:       len(tblInfo.Columns),
 		DefaultValue: defaultValue,
 	}
-	tblInfo.MaxColumnID++
-	col.ID = tblInfo.MaxColumnID
+	col.ID = allocateColumnID(tblInfo)
 	col.FieldType = *types.NewFieldType(mysql.TypeLong)
 
 	job := &model.Job{

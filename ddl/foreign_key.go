@@ -33,8 +33,7 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
-	tblInfo.MaxIndexID++
-	fkInfo.ID = tblInfo.MaxIndexID
+	fkInfo.ID = allocateIndexID(tblInfo)
 	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
 	ver, err := updateSchemaVersion(t, job)
 	if err != nil {

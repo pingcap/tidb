@@ -751,8 +751,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		return nil, errors.Trace(err)
 	}
 	for _, v := range cols {
-		tbInfo.MaxColumnID++
-		v.ID = tbInfo.MaxColumnID
+		v.ID = allocateColumnID(tbInfo)
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
 	}
 	for _, constr := range constraints {
@@ -835,8 +834,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 			// Use btree as default index type.
 			idxInfo.Tp = model.IndexTypeBtree
 		}
-		tbInfo.MaxIndexID++
-		idxInfo.ID = tbInfo.MaxIndexID
+		idxInfo.ID = allocateIndexID(tbInfo)
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 	return

@@ -58,8 +58,7 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 		}
 
 		col.FieldType = *types.NewFieldType(mysql.TypeLong)
-		tblInfo.MaxColumnID++
-		col.ID = tblInfo.MaxColumnID
+		col.ID = allocateColumnID(tblInfo)
 		cols[i] = col
 	}
 

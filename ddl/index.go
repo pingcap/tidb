@@ -156,8 +156,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 			job.State = model.JobCancelled
 			return errors.Trace(err)
 		}
-		tblInfo.MaxIndexID++
-		indexInfo.ID = tblInfo.MaxIndexID
+		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 	}
 
@@ -517,4 +516,9 @@ func (d *ddl) dropTableIndex(indexInfo *model.IndexInfo, job *model.Job) error {
 	deleteAll := -1
 	_, _, err := d.delKeysWithStartKey(startKey, startKey, ddlJobFlag, job, deleteAll)
 	return errors.Trace(err)
+}
+
+func allocateIndexID(tblInfo *model.TableInfo) int64 {
+	tblInfo.MaxIndexID++
+	return tblInfo.MaxIndexID
 }
