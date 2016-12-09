@@ -448,8 +448,6 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 	return nil
 }
 
-// We don't support dropping column with index covered now.
-// We must drop the index first, then drop the column.
 func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 	for _, indexInfo := range indices {
 		for _, col := range indexInfo.Columns {

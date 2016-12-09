@@ -1054,6 +1054,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 
 	tblInfo := t.Meta()
 	// We don't support dropping column with index covered now.
+	// We must drop the index first, then drop the column.
 	if isColumnWithIndex(colName.L, tblInfo.Indices) {
 		return errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
 	}
@@ -1275,7 +1276,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 		indexName = getAnonymousIndex(t, idxColNames[0].Column.Name)
 	}
 
-	if _, idx := isIndexPublic(indexName.L, t.Meta().Indices); idx != nil {
+	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
 		return errDupKeyName.Gen("index already exist %s", indexName)
 	}
 
@@ -1381,7 +1382,7 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 		return errors.Trace(infoschema.ErrTableNotExists)
 	}
 
-	if _, indexInfo := isIndexPublic(indexName.L, t.Meta().Indices); indexInfo == nil {
+	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
 		return ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
 	}
 
