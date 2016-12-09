@@ -87,6 +87,8 @@ type TableInfo struct {
 	PKIsHandle  bool          `json:"pk_is_handle"`
 	Comment     string        `json:"comment"`
 	AutoIncID   int64         `json:"auto_inc_id"`
+	MaxColumnID int64         `json:"max_col_id"`
+	MaxIndexID  int64         `json:"max_idx_id"`
 }
 
 // Clone clones TableInfo.
