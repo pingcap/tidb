@@ -58,6 +58,8 @@ var (
 	errCantDropColWithIndex    = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn    = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
 	errUnsupportedModifyColumn = terror.ClassDDL.New(codeUnsupportedModifyColumn, "unsupported modify column")
+	errUnsupportedPKHandle     = terror.ClassDDL.New(codeUnsupportedDropPKHandle,
+		"unsupported drop integer primary key")
 
 	errBlobKeyWithoutLength  = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specificate a key length")
 	errIncorrectPrefixKey    = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
@@ -323,9 +325,10 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 	}
 
 	job := &model.Job{
-		SchemaID: schemaID,
-		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{dbInfo},
+		SchemaID:   schemaID,
+		Type:       model.ActionCreateSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{dbInfo},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -341,8 +344,9 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 	}
 
 	job := &model.Job{
-		SchemaID: old.ID,
-		Type:     model.ActionDropSchema,
+		SchemaID:   old.ID,
+		Type:       model.ActionDropSchema,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -880,10 +884,11 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	}
 
 	job := &model.Job{
-		SchemaID: schema.ID,
-		TableID:  tbInfo.ID,
-		Type:     model.ActionCreateTable,
-		Args:     []interface{}{tbInfo},
+		SchemaID:   schema.ID,
+		TableID:    tbInfo.ID,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tbInfo},
 	}
 
 	d.handleTableOptions(options, tbInfo, schema.ID)
@@ -1026,10 +1031,11 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	}
 
 	job := &model.Job{
-		SchemaID: schema.ID,
-		TableID:  t.Meta().ID,
-		Type:     model.ActionAddColumn,
-		Args:     []interface{}{col, spec.Position, 0},
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionAddColumn,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{col, spec.Position, 0},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1056,11 +1062,17 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
 	}
 
+	// We don't support dropping column with PK handle covered now.
+	if col.IsPKHandleColumn(t.Meta()) {
+		return errUnsupportedPKHandle
+	}
+
 	job := &model.Job{
-		SchemaID: schema.ID,
-		TableID:  t.Meta().ID,
-		Type:     model.ActionDropColumn,
-		Args:     []interface{}{colName},
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionDropColumn,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{colName},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1137,10 +1149,11 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	newCol.FieldType = *spec.NewColumn.Tp
 	newCol.Name = spec.NewColumn.Name.Name
 	job := &model.Job{
-		SchemaID: schema.ID,
-		TableID:  t.Meta().ID,
-		Type:     model.ActionModifyColumn,
-		Args:     []interface{}{&newCol, originalColName},
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionModifyColumn,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{&newCol, originalColName},
 	}
 	return job, nil
 }
@@ -1200,9 +1213,10 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 	}
 
 	job := &model.Job{
-		SchemaID: schema.ID,
-		TableID:  tb.Meta().ID,
-		Type:     model.ActionDropTable,
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		Type:       model.ActionDropTable,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1225,10 +1239,11 @@ func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
 		return errors.Trace(err)
 	}
 	job := &model.Job{
-		SchemaID: schema.ID,
-		TableID:  tb.Meta().ID,
-		Type:     model.ActionTruncateTable,
-		Args:     []interface{}{newTableID},
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		Type:       model.ActionTruncateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newTableID},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -1271,10 +1286,11 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	}
 
 	job := &model.Job{
-		SchemaID: schema.ID,
-		TableID:  t.Meta().ID,
-		Type:     model.ActionAddIndex,
-		Args:     []interface{}{unique, indexName, indexID, idxColNames},
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionAddIndex,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{unique, indexName, indexID, idxColNames},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1328,10 +1344,11 @@ func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.C
 	}
 
 	job := &model.Job{
-		SchemaID: schema.ID,
-		TableID:  t.Meta().ID,
-		Type:     model.ActionAddForeignKey,
-		Args:     []interface{}{fkInfo},
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionAddForeignKey,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{fkInfo},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1353,10 +1370,11 @@ func (d *ddl) DropForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIS
 	}
 
 	job := &model.Job{
-		SchemaID: schema.ID,
-		TableID:  t.Meta().ID,
-		Type:     model.ActionDropForeignKey,
-		Args:     []interface{}{fkName},
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionDropForeignKey,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{fkName},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1377,10 +1395,11 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 	}
 
 	job := &model.Job{
-		SchemaID: schema.ID,
-		TableID:  t.Meta().ID,
-		Type:     model.ActionDropIndex,
-		Args:     []interface{}{indexName},
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionDropIndex,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{indexName},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1493,6 +1512,7 @@ const (
 	codeCantDropColWithIndex    = 201
 	codeUnsupportedAddColumn    = 202
 	codeUnsupportedModifyColumn = 203
+	codeUnsupportedDropPKHandle = 204
 
 	codeBadNull               = 1048
 	codeTooLongIdent          = 1059
