@@ -15,8 +15,6 @@ package types
 
 import (
 	gotime "time"
-
-	"github.com/juju/errors"
 )
 
 type mysqlTime struct {
@@ -85,12 +83,17 @@ func (t mysqlTime) ISOWeek() (int, int) {
 }
 
 func (t mysqlTime) GoTime() (gotime.Time, error) {
-	err := checkTime(int(t.year), int(t.month), int(t.day), int(t.hour), int(t.minute), int(t.second), int(t.microsecond))
-	if t.month == 0 || t.day == 0 {
+	tm := gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, gotime.Local)
+	year, month, day := tm.Date()
+	hour, minute, second := tm.Clock()
+	microsec := tm.Nanosecond() / 1000
+	var err error
+	if year != t.Year() || int(month) != t.Month() || day != t.Day() ||
+		hour != t.Hour() || minute != t.Minute() || second != t.Second() ||
+		microsec != t.Microsecond() {
 		err = ErrInvalidTimeFormat
 	}
-	tm := gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, gotime.Local)
-	return tm, errors.Trace(err)
+	return tm, err
 }
 
 func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysqlTime {
