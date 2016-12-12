@@ -60,7 +60,6 @@ func (s *testTableCodecSuite) TestGoroutineLeak(c *C) {
 	sr = &selectResult{
 		resp:    &mockResponse{},
 		results: make(chan PartialResult, 5),
-		done:    make(chan error, 1),
 		closed:  make(chan struct{}),
 	}
 	go sr.Fetch()
