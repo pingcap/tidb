@@ -380,17 +380,18 @@ func RoundFrac(t gotime.Time, fsp int) (gotime.Time, error) {
 //
 //   0YYYYYYY.YYYYYYYY.YYdddddh.hhhhmmmm.mmssssss.ffffffff.ffffffff.ffffffff
 //
-func (t Time) ToPackedUint() uint64 {
+func (t Time) ToPackedUint() (uint64, error) {
 	tm := t.Time
 	if t.IsZero() {
-		return 0
+		return 0, nil
 	}
 	if t.Type == mysql.TypeTimestamp {
 		if t1, err := t.Time.GoTime(); err == nil {
 			utc := t1.UTC()
 			tm = FromGoTime(utc)
 		} else {
-			// TODO: Fix here.
+			// mysql timestamp month and day can't be zero.
+			return 0, errors.Trace(err)
 		}
 	}
 	year, month, day := tm.Year(), tm.Month(), tm.Day()
@@ -398,7 +399,7 @@ func (t Time) ToPackedUint() uint64 {
 	ymd := uint64(((year*13 + int(month)) << 5) | day)
 	hms := uint64(hour<<12 | minute<<6 | sec)
 	micro := uint64(tm.Microsecond())
-	return ((ymd<<17 | hms) << 24) | micro
+	return ((ymd<<17 | hms) << 24) | micro, nil
 }
 
 // FromPackedUint decodes Time from a packed uint64 value.
@@ -428,8 +429,10 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	loc := local
 	if t.Type == mysql.TypeTimestamp {
 		loc = gotime.UTC
+		t.Time = FromGoTime(gotime.Date(year, gotime.Month(month), day, hour, minute, second, microsec*1000, loc).In(local))
+	} else {
+		t.Time = FromDate(year, month, day, hour, minute, second, microsec)
 	}
-	t.Time = FromGoTime(gotime.Date(year, gotime.Month(month), day, hour, minute, second, microsec*1000, loc).In(local))
 
 	return nil
 }
