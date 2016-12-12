@@ -104,7 +104,6 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 	}
 
 	errDtbl := tblToDtbl(errTbl)
-	s.ctx.GetSessionVars().StmtCtx.TruncateAsError = true
 	for _, t := range errDtbl {
 		_, err := builtinPow(t["Arg"], s.ctx)
 		c.Assert(err, NotNil)

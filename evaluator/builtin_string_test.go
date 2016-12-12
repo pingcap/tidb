@@ -146,7 +146,6 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 	c.Assert(err, IsNil)
 
 	args = types.MakeDatums([]interface{}{"abcdefg", "xxx"}...)
-	s.ctx.GetSessionVars().StmtCtx.TruncateAsError = true
 	_, err = builtinLeft(args, s.ctx)
 	c.Assert(err, NotNil)
 }

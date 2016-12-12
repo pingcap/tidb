@@ -15,13 +15,14 @@ package xeval
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 func (s *testEvalSuite) TestEvalCaseWhen(c *C) {
 	colID := int64(1)
-	xevaluator := NewEvaluator()
+	xevaluator := NewEvaluator(new(variable.StatementContext))
 	xevaluator.Row[colID] = types.NewIntDatum(100)
 	trueCond := types.NewIntDatum(1)
 	falseCond := types.NewIntDatum(0)
@@ -84,7 +85,7 @@ func (s *testEvalSuite) TestEvalCaseWhen(c *C) {
 
 func (s *testEvalSuite) TestEvalIf(c *C) {
 	colID := int64(1)
-	xevaluator := NewEvaluator()
+	xevaluator := NewEvaluator(new(variable.StatementContext))
 	xevaluator.Row[colID] = types.NewIntDatum(100)
 	trueCond, falseCond, null := types.NewIntDatum(1), types.NewIntDatum(0), types.Datum{}
 	expr1, expr2 := types.NewStringDatum("expr1"), types.NewStringDatum("expr2")
@@ -141,7 +142,7 @@ func (s *testEvalSuite) TestEvalIf(c *C) {
 
 func (s *testEvalSuite) TestEvalNullIf(c *C) {
 	colID := int64(1)
-	xevaluator := NewEvaluator()
+	xevaluator := NewEvaluator(new(variable.StatementContext))
 	xevaluator.Row[colID] = types.NewDatum(100)
 	null := types.Datum{}
 	cases := []struct {
@@ -181,7 +182,7 @@ func (s *testEvalSuite) TestEvalNullIf(c *C) {
 
 func (s *testEvalSuite) TestEvalIfNull(c *C) {
 	colID := int64(1)
-	xevaluator := NewEvaluator()
+	xevaluator := NewEvaluator(new(variable.StatementContext))
 	xevaluator.Row[colID] = types.NewDatum(100)
 	null, notNull, expr := types.Datum{}, types.NewStringDatum("left"), types.NewStringDatum("right")
 	cases := []struct {

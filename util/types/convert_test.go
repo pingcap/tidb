@@ -40,7 +40,6 @@ type invalidMockType struct {
 func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	d := NewDatum(val)
 	sc := new(variable.StatementContext)
-	sc.TruncateAsError = true
 	ret, err := d.ConvertTo(sc, target)
 	if err != nil {
 		return ret.GetValue(), errors.Trace(err)
@@ -350,7 +349,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 
 func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr error) {
 	sc := new(variable.StatementContext)
-	sc.TruncateAsError = truncateAsErr
+	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToInt(sc, str)
 	if expectErr != nil {
 		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
@@ -362,7 +361,7 @@ func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr 
 
 func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectErr error) {
 	sc := new(variable.StatementContext)
-	sc.TruncateAsError = truncateAsErr
+	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToUint(sc, str)
 	if expectErr != nil {
 		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
@@ -374,7 +373,7 @@ func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectEr
 
 func testStrToFloat(c *C, str string, expect float64, truncateAsErr bool, expectErr error) {
 	sc := new(variable.StatementContext)
-	sc.TruncateAsError = truncateAsErr
+	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToFloat(sc, str)
 	if expectErr != nil {
 		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
@@ -440,7 +439,7 @@ func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	}
 	d := NewDatum(value)
 	sc := new(variable.StatementContext)
-	sc.TruncateAsError = true
+	sc.IgnoreTruncate = true
 	casted, err := d.ConvertTo(sc, ft)
 	c.Assert(err, IsNil, Commentf("%v", ft))
 	if casted.IsNull() {
@@ -467,7 +466,6 @@ func deny(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	}
 	d := NewDatum(value)
 	sc := new(variable.StatementContext)
-	sc.TruncateAsError = true
 	casted, err := d.ConvertTo(sc, ft)
 	c.Assert(err, NotNil)
 	if casted.IsNull() {
