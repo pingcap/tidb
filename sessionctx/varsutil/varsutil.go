@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/ngaut/log"
 )
 
 // GetSystemVar gets a system variable.
@@ -74,6 +75,7 @@ func SetSystemVar(vars *variable.SessionVars, name string, value types.Datum) er
 		vars.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 	case variable.TiDBSkipConstraintCheck:
 		vars.SkipConstraintCheck = (sVal == "1")
+		log.Infof("TiDBSkipConstraintCheck: %v", vars.SkipConstraintCheck)
 	}
 	vars.Systems[name] = sVal
 	return nil
