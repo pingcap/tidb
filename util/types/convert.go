@@ -283,12 +283,9 @@ func getValidFloatPrefix(sc *variable.StatementContext, s string) (valid string,
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(s) {
-		if sc.TruncateAsError {
-			return valid, ErrTruncated
-		}
-		sc.AppendWarning(ErrTruncated)
+		err = errors.Trace(handleTruncateError(sc))
 	}
-	return valid, nil
+	return valid, err
 }
 
 // ToString converts an interface to a string.
