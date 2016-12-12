@@ -15,6 +15,8 @@ package types
 
 import (
 	gotime "time"
+
+	"github.com/juju/errors"
 )
 
 type mysqlTime struct {
@@ -56,19 +58,36 @@ func (t mysqlTime) Microsecond() int {
 }
 
 func (t mysqlTime) Weekday() gotime.Weekday {
-	return t.GoTime().Weekday()
+	t1, err := t.GoTime()
+	if err != nil {
+		// TODO: Fix here.
+		return 0
+	}
+	return t1.Weekday()
 }
 
 func (t mysqlTime) YearDay() int {
-	return t.GoTime().YearDay()
+	t1, err := t.GoTime()
+	if err != nil {
+		// TODO: Fix here.
+		return 0
+	}
+	return t1.YearDay()
 }
 
 func (t mysqlTime) ISOWeek() (int, int) {
-	return t.GoTime().ISOWeek()
+	t1, err := t.GoTime()
+	if err != nil {
+		// TODO: Fix here.
+		return 0, 0
+	}
+	return t1.ISOWeek()
 }
 
-func (t mysqlTime) GoTime() gotime.Time {
-	return gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, gotime.Local)
+func (t mysqlTime) GoTime() (gotime.Time, error) {
+	err := checkTime(int(t.year), int(t.month), int(t.day), int(t.hour), int(t.minute), int(t.second), int(t.microsecond))
+	tm := gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, gotime.Local)
+	return tm, errors.Trace(err)
 }
 
 func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysqlTime {
