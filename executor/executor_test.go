@@ -528,7 +528,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("insert into t (c1, c2) values (1, 2)")
 	tk.MustExec("insert into t (c1, c2) values (2, 3)")
 	r = tk.MustQuery("select * from t where t.c1 = 1 union select * from t where t.id = 1")
-	r.Check(testkit.Rows("1 1 1","2 1 2"))
+	r.Check(testkit.Rows("1 1 1", "2 1 2"))
 }
 
 func (s *testSuite) TestIn(c *C) {
