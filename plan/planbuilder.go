@@ -95,7 +95,9 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildShow(x)
 	case *ast.DoStmt:
 		return b.buildDo(x)
-	case *ast.AnalyzeTableStmt, *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt, *ast.SetStmt,
+	case *ast.SetStmt:
+		return b.buildSet(x)
+	case *ast.AnalyzeTableStmt, *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
 		return b.buildSimple(node.(ast.StmtNode))
@@ -140,6 +142,36 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	p.initIDAndContext(b.ctx)
 	addChild(p, dual)
 	p.self = p
+	return p
+}
+
+func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
+	p := &Set{}
+	p.tp = St
+	p.allocator = b.allocator
+	for _, vars := range v.Variables {
+		assign := &expression.VarAssignment{
+			Name:     vars.Name,
+			IsGlobal: vars.IsGlobal,
+			IsSystem: vars.IsSystem,
+		}
+		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
+			assign.Expr, _, b.err = b.rewrite(vars.Value, nil, nil, true)
+			if b.err != nil {
+				return nil
+			}
+		} else {
+			assign.IsDefault = true
+		}
+		if vars.ExtendValue != nil {
+			assign.ExtendValue = &expression.Constant{
+				Value:   vars.ExtendValue.Datum,
+				RetType: &vars.ExtendValue.Type,
+			}
+		}
+		p.VarAssigns = append(p.VarAssigns, assign)
+	}
+	p.initIDAndContext(b.ctx)
 	return p
 }
 
