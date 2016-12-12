@@ -172,6 +172,15 @@ type Assignment struct {
 	Expr Expression
 }
 
+type VarAssignment struct {
+	Name        string
+	Expr        Expression
+	IsDefault   bool
+	IsGlobal    bool
+	IsSystem    bool
+	ExtendValue *Constant
+}
+
 // splitNormalFormItems split CNF(conjunctive normal form) like "a and b and c", or DNF(disjunctive normal form) like "a or b or c"
 func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
 	switch v := onExpr.(type) {
