@@ -16,7 +16,7 @@ docker run --name tidb-server -d -p 4000:4000 pingcap/tidb:latest
 Then you can use official mysql client to connect to TiDB.
 
 ```
-mysql -h 127.0.0.1 -P 4000 -u root -D test
+mysql -h 127.0.0.1 -P 4000 -u root -D test --prompt="tidb> "  
 ```
 
 Notice: OS X user may use `docker-machine ip` to connect it.
@@ -54,5 +54,5 @@ Run `./tidb-server -h` to see more flag options.
 After you started tidb-server, you can use official `mysql` client to connect to TiDB.
 
 ```
-mysql -h 127.0.0.1 -P 4000 -u root -D test
+mysql -h 127.0.0.1 -P 4000 -u root -D test --prompt="tidb> " 
 ```
