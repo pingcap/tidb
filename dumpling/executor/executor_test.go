@@ -521,6 +521,14 @@ func (s *testSuite) TestUnion(c *C) {
 	r.Check(testkit.Rows("1"))
 	r = tk.MustQuery("select (select * from t1 where a != t.a union all (select * from t2 where a != t.a) order by a limit 1) from t1 t")
 	r.Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int unsigned primary key auto_increment, c1 int, c2 int, index c1_c2 (c1, c2))")
+	tk.MustExec("insert into t (c1, c2) values (1, 1)")
+	tk.MustExec("insert into t (c1, c2) values (1, 2)")
+	tk.MustExec("insert into t (c1, c2) values (2, 3)")
+	r = tk.MustQuery("select * from t where t.c1 = 1 union select * from t where t.id = 1")
+	r.Check(testkit.Rows("1 1 1", "2 1 2"))
 }
 
 func (s *testSuite) TestIn(c *C) {
