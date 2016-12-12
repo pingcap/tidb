@@ -29,10 +29,12 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 	er := &expressionRewriter{
 		p:        p,
 		aggrMap:  aggMapper,
-		schema:   p.GetSchema(),
 		b:        b,
 		asScalar: asScalar,
 		ctx:      b.ctx,
+	}
+	if p != nil {
+		er.schema = p.GetSchema()
 	}
 	expr.Accept(er)
 	if er.err != nil {

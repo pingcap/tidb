@@ -4362,6 +4362,7 @@ ExplainableStmt:
 |	UpdateStmt
 |	InsertIntoStmt
 |	ReplaceIntoStmt
+|	UnionStmt
 
 StatementList:
 	Statement

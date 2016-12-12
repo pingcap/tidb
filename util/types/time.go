@@ -171,7 +171,7 @@ func CurrentTime(tp uint8) Time {
 
 func (t Time) String() string {
 	if t.Type == mysql.TypeDate {
-		// we'll control the format, so no error would occur.
+		// We control the format, so no error would occur.
 		str, _ := t.Format("%Y-%m-%d")
 		return str
 	}
@@ -890,23 +890,6 @@ func splitDuration(t gotime.Duration) (int, int, int, int, int) {
 
 var maxDaysInMonth = []int{31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
 
-// func checkTime(year int, month int, day int, hour int, minute int, second int, frac int) error {
-// 	fmt.Println(year, month, day, hour, minute, second, frac)
-// 	// Notes: for datetime type, `insert t values("0001-01-01 00:00:00");` is valid
-// 	// so here only check year from 0~9999.
-// 	if year < 0 || year > 9999 ||
-// 		month < 0 || month > 12 ||
-// 		day < 0 || (month > 0 && day > maxDaysInMonth[month-1]) ||
-// 		(month == 2 && day == 29 && year%4 != 0) ||
-// 		hour < 0 || hour >= 24 ||
-// 		minute < 0 || minute >= 60 ||
-// 		second < 0 || second >= 60 ||
-// 		frac < 0 {
-// 		return errors.Trace(ErrInvalidTimeFormat)
-// 	}
-// 	return nil
-// }
-
 func checkTimeType(t TimeInternal) error {
 	if t.Year() != 0 || t.Month() != 0 || t.Day() != 0 {
 		return ErrInvalidTimeFormat
@@ -1139,7 +1122,7 @@ func checkDateRange(t TimeInternal) error {
 	// if compareTime(t, FromDate(1000, 1, 1, 0, 0, 0, 0)) < 0 {
 	// 	return ErrInvalidTimeFormat
 	// }
-	// Oddly enough, mysql document say date range should larger than '1000-01-01',
+	// Oddly enough, MySQL document says date range should larger than '1000-01-01',
 	// but we can insert '0001-01-01' actually.
 	if t.Year() < 0 || t.Month() < 0 || t.Day() < 0 {
 		return ErrInvalidTimeFormat
@@ -1626,7 +1609,7 @@ func (t Time) Format(layout string) (string, error) {
 			continue
 		}
 
-		// it's not in pattern match now
+		// It's not in pattern match now.
 		if b == '%' {
 			inPatternMatch = true
 		} else {
@@ -1634,11 +1617,6 @@ func (t Time) Format(layout string) (string, error) {
 		}
 	}
 	return buf.String(), nil
-}
-
-var abbrevMonthName = []string{
-	"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-	"Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 }
 
 var abbrevWeekdayName = []string{
@@ -1653,7 +1631,7 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		if m == 0 || m > 12 {
 			return errors.Trace(ErrInvalidTimeFormat)
 		}
-		buf.WriteString(abbrevMonthName[m-1])
+		buf.WriteString(MonthNames[m-1][:3])
 	case 'M':
 		m := t.Time.Month()
 		if m == 0 || m > 12 {
@@ -1684,7 +1662,12 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 			fmt.Fprintf(buf, "%02d", t%12)
 		}
 	case 'l':
-		fmt.Fprintf(buf, "%d", (t.Time.Hour()%12)+1)
+		t := t.Time.Hour()
+		if t == 0 || t == 12 {
+			fmt.Fprintf(buf, "%d", 12)
+		} else {
+			fmt.Fprintf(buf, "%d", t%12)
+		}
 	case 'i':
 		fmt.Fprintf(buf, "%02d", t.Time.Minute())
 	case 'p':
@@ -1713,6 +1696,8 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		fmt.Fprintf(buf, "%06d", t.Time.Microsecond())
 	case 'U', 'u', 'V', 'v':
 		// TODO: Fix here.
+		// MySQL may use Sunday or Monday as the first day of week, U u V v controls which,
+		// but Go always use Sunday as the first day of week.
 		_, w := t.Time.ISOWeek()
 		fmt.Fprintf(buf, "%02d", w)
 	case 'a':

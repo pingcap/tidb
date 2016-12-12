@@ -113,11 +113,6 @@ func (p *testPerfSchemaSuit) TestInstrument(c *C) {
 
 	cnt := mustQuery(c, se, "select * from performance_schema.setup_instruments")
 	c.Assert(cnt, Greater, 0)
-	mustExec(c, se, "show tables")
-	cnt = mustQuery(c, se, "select * from performance_schema.events_statements_current")
-	c.Assert(cnt, Equals, 2)
-	cnt = mustQuery(c, se, "select * from performance_schema.events_statements_history")
-	c.Assert(cnt, Greater, 0)
 
 	mustExec(c, se, "drop database test_instrument_db")
 }

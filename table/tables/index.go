@@ -165,8 +165,8 @@ func (c *index) Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h in
 		return 0, errors.Trace(err)
 	}
 	if !distinct {
-		// TODO: reconsider value
-		err = rm.Set(key, []byte("timestamp?"))
+		// non-unique index doesn't need store value, write a '0' to reduce space
+		err = rm.Set(key, []byte{'0'})
 		return 0, errors.Trace(err)
 	}
 

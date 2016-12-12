@@ -21,7 +21,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -32,7 +31,7 @@ import (
 
 // SetExecutor executes set statement.
 type SetExecutor struct {
-	stmt *ast.SetStmt
+	vars []*expression.VarAssignment
 	ctx  context.Context
 	done bool
 }
@@ -52,14 +51,14 @@ func (e *SetExecutor) Next() (*Row, error) {
 
 func (e *SetExecutor) executeSet() error {
 	sessionVars := e.ctx.GetSessionVars()
-	for _, v := range e.stmt.Variables {
+	for _, v := range e.vars {
 		// Variable is case insensitive, we use lower case.
 		if v.Name == ast.SetNames {
 			// This is set charset stmt.
-			cs := v.Value.GetValue().(string)
+			cs := v.Expr.(*expression.Constant).Value.GetString()
 			var co string
 			if v.ExtendValue != nil {
-				co = v.ExtendValue.GetValue().(string)
+				co = v.ExtendValue.Value.GetString()
 			}
 			err := e.setCharset(cs, co)
 			if err != nil {
@@ -70,7 +69,7 @@ func (e *SetExecutor) executeSet() error {
 		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
-			value, err := evaluator.Eval(e.ctx, v.Value)
+			value, err := v.Expr.Eval(nil, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -161,9 +160,8 @@ func (e *SetExecutor) setCharset(cs, co string) error {
 	return nil
 }
 
-func (e *SetExecutor) getVarValue(v *ast.VariableAssignment, sysVar *variable.SysVar) (value types.Datum, err error) {
-	switch v.Value.(type) {
-	case *ast.DefaultExpr:
+func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value types.Datum, err error) {
+	if v.IsDefault {
 		// To set a SESSION variable to the GLOBAL value or a GLOBAL value
 		// to the compiled-in MySQL default value, use the DEFAULT keyword.
 		// See http://dev.mysql.com/doc/refman/5.7/en/set-statement.html
@@ -176,9 +174,9 @@ func (e *SetExecutor) getVarValue(v *ast.VariableAssignment, sysVar *variable.Sy
 			}
 			value = types.NewStringDatum(s)
 		}
-	default:
-		value, err = evaluator.Eval(e.ctx, v.Value)
+		return
 	}
+	value, err = v.Expr.Eval(nil, e.ctx)
 	return value, errors.Trace(err)
 }
 

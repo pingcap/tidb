@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -130,7 +131,7 @@ type Execute struct {
 	basePlan
 
 	Name      string
-	UsingVars []ast.ExprNode
+	UsingVars []expression.Expression
 	ID        uint32
 }
 
@@ -155,6 +156,13 @@ type Show struct {
 
 	// Used by show variables
 	GlobalScope bool
+}
+
+// Set represents a plan for set stmt.
+type Set struct {
+	basePlan
+
+	VarAssigns []*expression.VarAssignment
 }
 
 // Simple represents a simple statement plan which doesn't need any optimization.
