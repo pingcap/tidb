@@ -547,9 +547,13 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		year = adjustYear(year)
 	}
 
-	frac, err = parseFrac(fracStr, fsp)
+	frac, overflow, err := parseFrac(fracStr, fsp)
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
+	}
+	if overflow { // handle overflow
+		frac = 0
+		second++
 	}
 
 	t, err := newTime(year, month, day, hour, minute, second, frac)
@@ -820,10 +824,11 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		str = str[n+1:]
 	}
 
+	var overflow bool
 	if n := strings.IndexByte(str, '.'); n >= 0 {
 		// It has fractional precesion parts.
 		fracStr := str[n+1:]
-		frac, err = parseFrac(fracStr, fsp)
+		frac, overflow, err = parseFrac(fracStr, fsp)
 		if err != nil {
 			return ZeroDuration, errors.Trace(err)
 		}
@@ -876,6 +881,10 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		return ZeroDuration, errors.Trace(err)
 	}
 
+	if overflow {
+		second++
+		frac = 0
+	}
 	d := gotime.Duration(day*24*3600+hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)*gotime.Microsecond
 	if sign == -1 {
 		d = -d
@@ -915,8 +924,8 @@ func checkTime(year int, month int, day int, hour int, minute int, second int, f
 	// Notes: for datetime type, `insert t values("0001-01-01 00:00:00");` is valid
 	// so here only check year from 0~9999.
 	if year < 0 || year > 9999 ||
-		month < 0 || month > 12 ||
-		day < 0 || (month > 0 && day > maxDaysInMonth[month-1]) ||
+		month <= 0 || month > 12 ||
+		day <= 0 || (day > maxDaysInMonth[month-1]) ||
 		(month == 2 && day == 29 && year%4 != 0) ||
 		hour < 0 || hour >= 24 ||
 		minute < 0 || minute >= 60 ||

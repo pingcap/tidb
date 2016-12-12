@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
-	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -151,6 +149,17 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 	c.Assert(int(se.AffectedRows()), Equals, 2)
 	mustExecSQL(c, se, `insert into t values (1, 1) on duplicate key update c2=2;`)
 	c.Assert(int(se.AffectedRows()), Equals, 0)
+	createSQL := `CREATE TABLE IF NOT EXISTS test (
+	  id        VARCHAR(36) PRIMARY KEY NOT NULL,
+	  factor    INTEGER                 NOT NULL                   DEFAULT 2);`
+	mustExecSQL(c, se, createSQL)
+	insertSQL := `INSERT INTO test(id) VALUES('id') ON DUPLICATE KEY UPDATE factor=factor+3;`
+	mustExecSQL(c, se, insertSQL)
+	c.Assert(int(se.AffectedRows()), Equals, 1)
+	mustExecSQL(c, se, insertSQL)
+	c.Assert(int(se.AffectedRows()), Equals, 2)
+	mustExecSQL(c, se, insertSQL)
+	c.Assert(int(se.AffectedRows()), Equals, 2)
 
 	se.SetClientCapability(mysql.ClientFoundRows)
 	mustExecSQL(c, se, s.dropTableSQL)
@@ -1454,7 +1463,7 @@ func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
 	mustExecSQL(c, se, "insert into t2 value (930);")
 	// The data in the second src will be casted as the type of the first src.
 	// If use flen=0, it will be truncated.
-	r := mustExecSQL(c, se, "select c from t1 union select c from t2;")
+	r := mustExecSQL(c, se, "select c from t1 union (select c from t2) order by c;")
 	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 2)
@@ -1940,6 +1949,7 @@ func (s *testSessionSuite) TestIssue1265(c *C) {
 	mustExecFailed(c, se, "insert t values ('1e2');")
 }
 
+/*
 func (s *testSessionSuite) TestIssue1435(c *C) {
 	defer testleak.AfterTest(c)()
 	localstore.MockRemoteStore = true
@@ -2042,6 +2052,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
 }
+*/
 
 // Testcase for session
 func (s *testSessionSuite) TestSession(c *C) {

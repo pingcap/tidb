@@ -45,6 +45,7 @@ func testDatumToBool(c *C, in interface{}, res int) {
 	datum := NewDatum(in)
 	res64 := int64(res)
 	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
 	b, err := datum.ToBool(sc)
 	c.Assert(err, IsNil)
 	c.Assert(b, Equals, res64)
@@ -80,6 +81,7 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	testDatumToBool(c, v, 0)
 	d := NewDatum(&invalidMockType{})
 	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
 	_, err = d.ToBool(sc)
 	c.Assert(err, NotNil)
 }
@@ -114,6 +116,7 @@ func (ts *testDatumSuite) TestEqualDatums(c *C) {
 
 func testEqualDatums(c *C, a []interface{}, b []interface{}, same bool) {
 	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
 	res, err := EqualDatums(sc, MakeDatums(a), MakeDatums(b))
 	c.Assert(err, IsNil)
 	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
@@ -122,6 +125,7 @@ func testEqualDatums(c *C, a []interface{}, b []interface{}, same bool) {
 func testDatumToInt64(c *C, val interface{}, expect int64) {
 	d := NewDatum(val)
 	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
 	b, err := d.ToInt64(sc)
 	c.Assert(err, IsNil)
 	c.Assert(b, Equals, expect)
@@ -158,6 +162,7 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	ft := NewFieldType(mysql.TypeFloat)
 	var datum = NewFloat64Datum(281.37)
 	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
 	converted, err := datum.ConvertTo(sc, ft)
 	c.Assert(err, IsNil)
 	c.Assert(converted.Kind(), Equals, KindFloat32)
@@ -213,6 +218,7 @@ func (ts *testDatumSuite) TestCoerceDatum(c *C) {
 		{NewFloat64Datum(1), NewFloat64Datum(1), KindFloat64},
 	}
 	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
 	for _, ca := range testCases {
 		x, y, err := CoerceDatum(sc, ca.a, ca.b)
 		c.Check(err, IsNil)
@@ -275,6 +281,7 @@ func (ts *testDatumSuite) TestBitOps(c *C) {
 			err    error
 		)
 		sc := new(variable.StatementContext)
+		sc.IgnoreTruncate = true
 		switch ca.bitop {
 		case "And":
 			result, err = ComputeBitAnd(sc, ca.a, ca.b)

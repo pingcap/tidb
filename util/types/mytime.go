@@ -86,9 +86,6 @@ func (t mysqlTime) ISOWeek() (int, int) {
 
 func (t mysqlTime) GoTime() (gotime.Time, error) {
 	err := checkTime(int(t.year), int(t.month), int(t.day), int(t.hour), int(t.minute), int(t.second), int(t.microsecond))
-	if t.month == 0 || t.day == 0 {
-		err = ErrInvalidTimeFormat
-	}
 	tm := gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, gotime.Local)
 	return tm, errors.Trace(err)
 }

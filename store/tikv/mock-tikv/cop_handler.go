@@ -67,9 +67,9 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 		ctx := &selectContext{
 			sel:       sel,
 			keyRanges: req.Ranges,
-			sc:        new(variable.StatementContext), // TODO: use PB defined statement context.
+			sc:        xeval.FlagsToStatementContext(sel.Flags),
 		}
-		ctx.eval = xeval.NewEvaluator()
+		ctx.eval = xeval.NewEvaluator(ctx.sc)
 		if sel.Where != nil {
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
 			collectColumnsInExpr(sel.Where, ctx, ctx.whereColumns)

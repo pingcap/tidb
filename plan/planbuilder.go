@@ -76,7 +76,7 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	case *ast.DropTableStmt:
 		return b.buildDDL(x)
 	case *ast.ExecuteStmt:
-		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
+		return b.buildExecute(x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
 	case *ast.InsertStmt:
@@ -93,7 +93,11 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildUpdate(x)
 	case *ast.ShowStmt:
 		return b.buildShow(x)
-	case *ast.AnalyzeTableStmt, *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt, *ast.SetStmt, *ast.DoStmt,
+	case *ast.DoStmt:
+		return b.buildDo(x)
+	case *ast.SetStmt:
+		return b.buildSet(x)
+	case *ast.AnalyzeTableStmt, *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
 		return b.buildSimple(node.(ast.StmtNode))
@@ -102,6 +106,73 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	}
 	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil
+}
+
+func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
+	vars := make([]expression.Expression, 0, len(v.UsingVars))
+	for _, expr := range v.UsingVars {
+		newExpr, _, err := b.rewrite(expr, nil, nil, true)
+		if err != nil {
+			b.err = errors.Trace(err)
+		}
+		vars = append(vars, newExpr)
+	}
+	exe := &Execute{Name: v.Name, UsingVars: vars}
+	return exe
+}
+
+func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
+	exprs := make([]expression.Expression, 0, len(v.Exprs))
+	dual := &TableDual{
+		baseLogicalPlan: newBaseLogicalPlan(Dual, b.allocator),
+	}
+	dual.self = dual
+	for _, astExpr := range v.Exprs {
+		expr, _, err := b.rewrite(astExpr, dual, nil, true)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		exprs = append(exprs, expr)
+	}
+	p := &Projection{
+		Exprs:           exprs,
+		baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
+	}
+	p.initIDAndContext(b.ctx)
+	addChild(p, dual)
+	p.self = p
+	return p
+}
+
+func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
+	p := &Set{}
+	p.tp = St
+	p.allocator = b.allocator
+	for _, vars := range v.Variables {
+		assign := &expression.VarAssignment{
+			Name:     vars.Name,
+			IsGlobal: vars.IsGlobal,
+			IsSystem: vars.IsSystem,
+		}
+		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
+			assign.Expr, _, b.err = b.rewrite(vars.Value, nil, nil, true)
+			if b.err != nil {
+				return nil
+			}
+		} else {
+			assign.IsDefault = true
+		}
+		if vars.ExtendValue != nil {
+			assign.ExtendValue = &expression.Constant{
+				Value:   vars.ExtendValue.Datum,
+				RetType: &vars.ExtendValue.Type,
+			}
+		}
+		p.VarAssigns = append(p.VarAssigns, assign)
+	}
+	p.initIDAndContext(b.ctx)
+	return p
 }
 
 // Detect aggregate function or groupby clause.

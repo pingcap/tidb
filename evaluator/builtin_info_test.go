@@ -15,6 +15,7 @@ package evaluator
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -29,6 +30,13 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	c.Assert(d.Kind(), Equals, types.KindNull)
 	ctx.GetSessionVars().CurrentDB = "test"
 	d, err = builtinDatabase(types.MakeDatums(), ctx)
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "test")
+
+	// Test case for schema().
+	f := Funcs[ast.Schema]
+	c.Assert(f, NotNil)
+	d, err = f.F(types.MakeDatums(), ctx)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 }

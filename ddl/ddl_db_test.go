@@ -23,7 +23,6 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	_ "github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -56,6 +55,8 @@ type testDBSuite struct {
 func (s *testDBSuite) SetUpSuite(c *C) {
 	var err error
 
+	s.lease = 100 * time.Millisecond
+	tidb.SetSchemaLease(s.lease)
 	s.schemaName = "test_db"
 	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
@@ -71,11 +72,6 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	_, err = s.s.Execute("create table t2 (c1 int, c2 int, c3 int)")
 	c.Assert(err, IsNil)
-
-	// Set proper schema lease.
-	s.lease = 100 * time.Millisecond
-	ctx := s.s.(context.Context)
-	sessionctx.GetDomain(ctx).SetLease(s.lease)
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
@@ -107,7 +103,7 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	sql = "drop database db_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrDBDropExists)
 	// crate table
-	s.tk.MustExec("create table test_error_code_succ (c1 int, c2 int, c3 int)")
+	s.tk.MustExec("create table test_error_code_succ (c1 int, c2 int, c3 int, primary key(c3))")
 	sql = "create table test_error_code_succ (c1 int, c2 int, c3 int)"
 	s.testErrorCode(c, sql, tmysql.ErrTableExists)
 	sql = "create table test_error_code1 (c1 int, c2 int, c2 int)"
@@ -139,6 +135,13 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	// drop index
 	sql = "alter table test_error_code_succ drop index idx_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
+	sql = "alter table test_error_code_succ drop column c3"
+	s.testErrorCode(c, sql, int(tmysql.ErrUnknown))
+	// modify column
+	sql = "alter table test_error_code_succ modify testx.test_error_code_succ.c1 bigint"
+	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
+	sql = "alter table test_error_code_succ modify t.c1 bigint"
+	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 }
 
 func (s *testDBSuite) TestIndex(c *C) {
@@ -502,6 +505,7 @@ func (s *testDBSuite) TestColumn(c *C) {
 	s.tk.MustExec("use " + s.schemaName)
 	s.testAddColumn(c)
 	s.testDropColumn(c)
+	s.testChangeColumn(c)
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
@@ -657,6 +661,18 @@ LOOP:
 	_, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 	ctx.CommitTxn()
+}
+
+func (s *testDBSuite) testChangeColumn(c *C) {
+	s.mustExec(c, "create table t3 (a int, b varchar(10))")
+	s.mustExec(c, "insert into t3 values(1, 'a'), (2, 'b')")
+	s.tk.MustQuery("select a from t3").Check(testkit.Rows("1", "2"))
+	s.mustExec(c, "alter table t3 change a aa bigint")
+	s.tk.MustQuery("select aa from t3").Check(testkit.Rows("1", "2"))
+	sql := "alter table t3 change a testx.t3.aa bigint"
+	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
+	sql = "alter table t3 change t.a aa bigint"
+	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 }
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {

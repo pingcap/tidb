@@ -44,12 +44,12 @@ func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 
-	dom, err := NewDomain(store, 10*time.Millisecond)
+	dom, err := NewDomain(store, 80*time.Millisecond)
 	c.Assert(err, IsNil)
 	store = dom.Store()
 	dd := dom.DDL()
 	c.Assert(dd, NotNil)
-	c.Assert(dd.GetLease(), Equals, 10*time.Millisecond)
+	c.Assert(dd.GetLease(), Equals, 80*time.Millisecond)
 	cs := &ast.CharsetOpt{
 		Chs: "utf8",
 		Col: "utf8_bin",
@@ -66,16 +66,6 @@ func (*testSuite) TestT(c *C) {
 
 	// for setting lease
 	lease := 100 * time.Millisecond
-	dom.SetLease(lease)
-	c.Assert(dd.GetLease(), Equals, lease)
-	dom.SetLease(lease)
-	c.Assert(dd.GetLease(), Equals, lease)
-	dom.SetLease(0 * time.Millisecond)
-	c.Assert(dd.GetLease(), Equals, lease)
-	dom1, err := NewDomain(store, 0)
-	c.Assert(err, IsNil)
-	dom1.SetLease(50 * time.Millisecond)
-	c.Assert(dom1.DDL().GetLease(), Equals, 0*time.Second)
 
 	// for schemaValidity
 	schemaVer, err := dom.SchemaValidity.Check(0, 0)

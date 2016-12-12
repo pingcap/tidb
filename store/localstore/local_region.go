@@ -205,9 +205,9 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			sel:       sel,
 			txn:       txn,
 			keyRanges: req.ranges,
-			sc:        new(variable.StatementContext), // TODO: Use PB defiend statement context.
+			sc:        xeval.FlagsToStatementContext(sel.Flags),
 		}
-		ctx.eval = xeval.NewEvaluator()
+		ctx.eval = xeval.NewEvaluator(ctx.sc)
 		if sel.Where != nil {
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
 			collectColumnsInExpr(sel.Where, ctx, ctx.whereColumns)

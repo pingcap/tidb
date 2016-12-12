@@ -207,12 +207,14 @@ func (p *Union) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPla
 	np := *p
 	children := make([]Plan, 0, len(childPlanInfo))
 	cost := float64(0)
+	count := uint64(0)
 	for _, res := range childPlanInfo {
 		children = append(children, res.p)
 		cost += res.cost
+		count += res.count
 	}
 	np.SetChildren(children...)
-	return &physicalPlanInfo{p: &np, cost: cost}
+	return &physicalPlanInfo{p: &np, cost: cost, count: count}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
