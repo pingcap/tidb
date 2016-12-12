@@ -755,7 +755,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 }
 
 // runInBootstrapSession create a special session for boostrap to run.
-// if no bootstrap and storage is remote, we must use a little lease time to
+// If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstap tool for doing this may be better later.
 func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
