@@ -36,7 +36,7 @@ type testEvalSuite struct{}
 // TODO: add more tests.
 func (s *testEvalSuite) TestEval(c *C) {
 	colID := int64(1)
-	xevaluator := NewEvaluator()
+	xevaluator := NewEvaluator(new(variable.StatementContext))
 	xevaluator.Row[colID] = types.NewIntDatum(100)
 	cases := []struct {
 		expr   *tipb.Expr
@@ -398,7 +398,7 @@ func (s *testEvalSuite) TestLike(c *C) {
 			result: 0,
 		},
 	}
-	ev := NewEvaluator()
+	ev := NewEvaluator(new(variable.StatementContext))
 	for _, ca := range cases {
 		res, err := ev.Eval(ca.expr)
 		c.Check(err, IsNil)
@@ -444,7 +444,7 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 			result: false,
 		},
 	}
-	ev := NewEvaluator()
+	ev := NewEvaluator(new(variable.StatementContext))
 	for _, ca := range cases {
 		res, err := ev.Eval(ca.expr)
 		c.Check(err, IsNil)
@@ -463,7 +463,7 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 
 func (s *testEvalSuite) TestEvalIsNull(c *C) {
 	colID := int64(1)
-	xevaluator := NewEvaluator()
+	xevaluator := NewEvaluator(new(variable.StatementContext))
 	xevaluator.Row[colID] = types.NewIntDatum(100)
 	null, trueAns, falseAns := types.Datum{}, types.NewIntDatum(1), types.NewIntDatum(0)
 	cases := []struct {

@@ -986,9 +986,7 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 		} else if frac != target.Decimal {
 			dec.Round(dec, target.Decimal)
 			if frac > target.Decimal {
-				if sc.TruncateAsError {
-					err = errors.Trace(ErrTruncated)
-				}
+				err = errors.Trace(handleTruncateError(sc))
 			}
 		}
 	}
@@ -1556,4 +1554,15 @@ func (ds *datumsSorter) Less(i, j int) bool {
 
 func (ds *datumsSorter) Swap(i, j int) {
 	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
+}
+
+func handleTruncateError(sc *variable.StatementContext) error {
+	if sc.IgnoreTruncate {
+		return nil
+	}
+	if !sc.TruncateAsWarning {
+		return ErrTruncated
+	}
+	sc.AppendWarning(ErrTruncated)
+	return nil
 }
