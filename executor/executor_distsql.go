@@ -441,7 +441,11 @@ func (e *XSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.Dat
 	tableRow := make([]types.Datum, len(e.indexPlan.Columns))
 	for i, tblCol := range e.indexPlan.Columns {
 		if mysql.HasPriKeyFlag(tblCol.Flag) && e.indexPlan.Table.PKIsHandle {
-			tableRow[i] = types.NewIntDatum(handle)
+			if mysql.HasUnsignedFlag(tblCol.FieldType.Flag) {
+				tableRow[i] = types.NewUintDatum(uint64(handle))
+			} else {
+				tableRow[i] = types.NewIntDatum(handle)
+			}
 			continue
 		}
 		for j, idxCol := range e.indexPlan.Index.Columns {
