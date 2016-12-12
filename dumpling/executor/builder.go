@@ -78,6 +78,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildShow(v)
 	case *plan.Simple:
 		return b.buildSimple(v)
+	case *plan.Set:
+		return b.buildSet(v)
 	case *plan.Sort:
 		return b.buildSort(v)
 	case *plan.Union:
@@ -217,16 +219,14 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	switch s := v.Statement.(type) {
 	case *ast.GrantStmt:
 		return b.buildGrant(s)
-	case *ast.SetStmt:
-		return b.buildSet(s)
 	}
 	return &SimpleExec{Statement: v.Statement, ctx: b.ctx}
 }
 
-func (b *executorBuilder) buildSet(v *ast.SetStmt) Executor {
+func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 	return &SetExecutor{
 		ctx:  b.ctx,
-		stmt: v,
+		vars: v.VarAssigns,
 	}
 }
 
