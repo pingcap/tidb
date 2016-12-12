@@ -765,7 +765,7 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	}
 	s, err := createSession(store)
 	if err != nil {
-		// bootstrap fail will cause program exit.
+		// Bootstrap fail will cause program exit.
 		log.Fatal(errors.ErrorStack(err))
 	}
 	schemaLease = saveLease
