@@ -124,11 +124,7 @@ func bootstrap(s Session) {
 		log.Fatal(err)
 	}
 	if b {
-		err = upgrade(s)
-		if err != nil {
-			log.Fatal(err)
-		}
-		return
+		upgrade(s)
 	}
 	doDDLWorks(s)
 	doDMLWorks(s)
@@ -195,18 +191,18 @@ func getTiDBVar(s Session, name string) (types.Datum, error) {
 
 // When the system is boostrapped by low version TiDB server, we should do some upgrade works.
 // For example, add new system variables into mysql.global_variables table.
-func upgrade(s Session) error {
+func upgrade(s Session) {
 	ver, err := getBootstrapVersion(s)
 	if err != nil {
-		return errors.Trace(err)
+		log.Fatal(errors.Trace(err))
 	}
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		if err1 := s.CommitTxn(); err1 != nil {
 			// Make sure that doesn't affect the following operations.
-			return errors.Trace(err1)
+			log.Fatal(errors.Trace(err1))
 		}
-		return nil
+		return
 	}
 	// Do upgrade works then update bootstrap version.
 	if ver < version2 {
@@ -231,14 +227,14 @@ func upgrade(s Session) error {
 			// It is already bootstrapped/upgraded by a higher version TiDB server.
 			if err1 := s.CommitTxn(); err1 != nil {
 				// Make sure that doesn't affect the following operations.
-				return errors.Trace(err1)
+				log.Fatal(errors.Trace(err1))
 			}
-			return nil
+			return
 		}
 		log.Errorf("[Upgrade] upgrade from %d to %d error", ver, currentBootstrapVersion)
 		log.Fatal(err)
 	}
-	return nil
+	return
 }
 
 // Update to version 2.

@@ -27,10 +27,7 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -268,7 +265,7 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
 }
 
-// TODO: Merge TestIssue1435 in session test.
+/* TODO: Merge TestIssue1435 in session test.
 func (s *testMainSuite) TestSchemaValidity(c *C) {
 	localstore.MockRemoteStore = true
 	store := newStore(c, s.dbName+"schema_validity")
@@ -361,6 +358,7 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
 }
+*/
 
 func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {
 	se.Execute("BEGIN;")
