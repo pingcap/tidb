@@ -49,6 +49,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "txn_cmd_seconds",
 			Help:      "Bucketed histogram of processing time of txn cmds.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
 		}, []string{"type"})
 
 	backoffCounter = prometheus.NewCounterVec(
@@ -65,6 +66,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "backoff_seconds",
 			Help:      "Bucketed histogram of sleep seconds of backoff.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
 		}, []string{"type"})
 
 	sendReqHistogram = prometheus.NewHistogramVec(
@@ -73,6 +75,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of sending request duration.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
 		}, []string{"type"})
 
 	copBuildTaskHistogram = prometheus.NewHistogram(
@@ -166,6 +169,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "rawkv_cmd_seconds",
 			Help:      "Bucketed histogram of processing time of rawkv cmds.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
 		}, []string{"type"})
 
 	rawkvSizeHistogram = prometheus.NewHistogramVec(
