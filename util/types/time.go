@@ -171,7 +171,7 @@ func CurrentTime(tp uint8) Time {
 
 func (t Time) String() string {
 	if t.Type == mysql.TypeDate {
-		// we'll control the format, so no error would occur.
+		// We control the format, so no error would occur.
 		str, _ := t.Format("%Y-%m-%d")
 		return str
 	}
@@ -1612,7 +1612,12 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 			fmt.Fprintf(buf, "%02d", t%12)
 		}
 	case 'l':
-		fmt.Fprintf(buf, "%d", (t.Time.Hour()%12)+1)
+		t := t.Time.Hour()
+		if t == 0 || t == 12 {
+			fmt.Fprintf(buf, "%d", 12)
+		} else {
+			fmt.Fprintf(buf, "%d", t%12)
+		}
 	case 'i':
 		fmt.Fprintf(buf, "%02d", t.Time.Minute())
 	case 'p':
@@ -1641,6 +1646,8 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		fmt.Fprintf(buf, "%06d", t.Time.Microsecond())
 	case 'U', 'u', 'V', 'v':
 		// TODO: Fix here.
+		// MySQL may use Sunday or Monday as the first day of week, U u V v controls which,
+		// but Go always use Sunday as the first day of week.
 		_, w := t.Time.ISOWeek()
 		fmt.Fprintf(buf, "%02d", w)
 	case 'a':

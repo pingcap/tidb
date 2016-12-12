@@ -15,6 +15,7 @@ package types
 
 import (
 	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 )
