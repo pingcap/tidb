@@ -744,6 +744,43 @@ func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
 
 // CreateSession creates a new session environment.
 func CreateSession(store kv.Storage) (Session, error) {
+	ver := getStoreBootstrapVersion(store)
+	if ver == notBootstrapped {
+		runInBootstrapSession(store, bootstrap)
+	} else if ver < currentBootstrapVersion {
+		runInBootstrapSession(store, upgrade)
+	}
+
+	return createSession(store)
+}
+
+// runInBootstrapSession create a special session for boostrap to run.
+// If no bootstrap and storage is remote, we must use a little lease time to
+// bootstrap quickly, after bootstrapped, we will reset the lease time.
+// TODO: Using a bootstap tool for doing this may be better later.
+func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
+	saveLease := schemaLease
+	if !localstore.IsLocalStore(store) {
+		schemaLease = chooseMinLease(schemaLease, 100*time.Millisecond)
+	}
+	s, err := createSession(store)
+	if err != nil {
+		// Bootstrap fail will cause program exit.
+		log.Fatal(errors.ErrorStack(err))
+	}
+	schemaLease = saveLease
+
+	s.SetValue(context.Initing, true)
+	bootstrap(s)
+	finishBootstrap(store)
+	s.ClearValue(context.Initing)
+
+	domain := sessionctx.GetDomain(s)
+	domain.Close()
+	domap.Delete(store)
+}
+
+func createSession(store kv.Storage) (*session, error) {
 	s := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
@@ -759,33 +796,6 @@ func CreateSession(store kv.Storage) (Session, error) {
 	sessionctx.BindDomain(s, domain)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
-
-	sessionMu.Lock()
-	defer sessionMu.Unlock()
-
-	ver := getStoreBootstrapVersion(store)
-	if ver == notBootstrapped {
-		// if no bootstrap and storage is remote, we must use a little lease time to
-		// bootstrap quickly, after bootstrapped, we will reset the lease time.
-		// TODO: Using a bootstap tool for doing this may be better later.
-		if !localstore.IsLocalStore(store) {
-			sessionctx.GetDomain(s).SetLease(chooseMinLease(100*time.Millisecond, schemaLease))
-		}
-
-		s.SetValue(context.Initing, true)
-		bootstrap(s)
-		s.ClearValue(context.Initing)
-
-		if !localstore.IsLocalStore(store) {
-			sessionctx.GetDomain(s).SetLease(schemaLease)
-		}
-
-		finishBootstrap(store)
-	} else if ver < currentBootstrapVersion {
-		s.SetValue(context.Initing, true)
-		upgrade(s)
-		s.ClearValue(context.Initing)
-	}
 
 	// TODO: Add auth here
 	privChecker := &privileges.UserPrivileges{}

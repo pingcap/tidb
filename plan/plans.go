@@ -158,6 +158,13 @@ type Show struct {
 	GlobalScope bool
 }
 
+// Set represents a plan for set stmt.
+type Set struct {
+	basePlan
+
+	VarAssigns []*expression.VarAssignment
+}
+
 // Simple represents a simple statement plan which doesn't need any optimization.
 type Simple struct {
 	basePlan

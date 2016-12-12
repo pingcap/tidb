@@ -264,7 +264,7 @@ type VariableAssignment struct {
 	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
 	// For SetCharsetStmt, Value is charset, ExtendValue is collation.
 	// TODO: Use SetStmt to implement set password statement.
-	ExtendValue ExprNode
+	ExtendValue *ValueExpr
 }
 
 // Accept implements Node interface.

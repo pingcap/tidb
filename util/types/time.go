@@ -377,7 +377,8 @@ func (t Time) ToPackedUint() (uint64, error) {
 			utc := t1.UTC()
 			tm = FromGoTime(utc)
 		} else {
-			// TODO: Fix here.
+			// mysql timestamp month and day can't be zero.
+			return 0, errors.Trace(err)
 		}
 	}
 	year, month, day := tm.Year(), tm.Month(), tm.Day()
