@@ -250,6 +250,8 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	for i, k := range batch.keys {
 		mutations[i] = c.mutations[string(k)]
 	}
+
+	skipCheck := c.txn.us.GetOption(kv.SkipCheck)
 	req := &pb.Request{
 		Type: pb.MessageType_CmdPrewrite,
 		CmdPrewriteReq: &pb.CmdPrewriteRequest{
@@ -257,6 +259,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			PrimaryLock:  c.primary(),
 			StartVersion: c.startTS,
 			LockTtl:      c.lockTTL,
+			SkipConstraintCheck: skipCheck != nil,
 		},
 	}
 
