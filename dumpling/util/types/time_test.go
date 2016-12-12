@@ -321,7 +321,7 @@ func (s *testTimeSuite) getLocation(c *C) *time.Location {
 
 func (s *testTimeSuite) TestCodec(c *C) {
 	defer testleak.AfterTest(c)()
-	// mysql timestamp value don't allow month=0 or day=0.
+	// MySQL timestamp value doesn't allow month=0 or day=0.
 	t, err := ParseTimestamp("2016-12-00 00:00:00")
 	c.Assert(err, NotNil)
 
