@@ -77,6 +77,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 
 	// test error
 	errTable := []string{
+		"1000-00-00 00:00:00",
 		"1000-01-01 00:00:70",
 		"1000-13-00 00:00:00",
 		"10000-01-01 00:00:00",
