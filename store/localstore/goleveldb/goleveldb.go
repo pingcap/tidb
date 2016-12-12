@@ -14,6 +14,7 @@
 package goleveldb
 
 import (
+	"github.com/ngaut/log"
 	"sync"
 
 	"github.com/juju/errors"
@@ -82,7 +83,7 @@ func (d *db) SeekReverse(key []byte) ([]byte, []byte, error) {
 func (d *db) Commit(b engine.Batch) error {
 	batch, ok := b.(*leveldb.Batch)
 	if !ok {
-		return errors.Errorf("invalid batch type %T", b)
+		log.Fatalf("invalid batch type %T", b)
 	}
 	err := d.DB.Write(batch, nil)
 	batch.Reset()
