@@ -34,7 +34,7 @@ import (
 
 const maxPrefixLength = 767
 
-func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, indexID int64,
+func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr,
 	idxColNames []*ast.IndexColName) (*model.IndexInfo, error) {
 	// build offsets
 	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
@@ -68,7 +68,6 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 	}
 	// create index info
 	idxInfo := &model.IndexInfo{
-		ID:      indexID,
 		Name:    indexName,
 		Columns: idxColumns,
 		Unique:  unique,
@@ -130,34 +129,27 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 	var (
 		unique      bool
 		indexName   model.CIStr
-		indexID     int64
 		idxColNames []*ast.IndexColName
 	)
-	err = job.DecodeArgs(&unique, &indexName, &indexID, &idxColNames)
+	err = job.DecodeArgs(&unique, &indexName, &idxColNames)
 	if err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
 
-	var indexInfo *model.IndexInfo
-	for _, idx := range tblInfo.Indices {
-		if idx.Name.L == indexName.L {
-			if idx.State == model.StatePublic {
-				// We already have an index with same index name.
-				job.State = model.JobCancelled
-				return errDupKeyName.Gen("index already exist %s", indexName)
-			}
-			indexInfo = idx
-			break
-		}
+	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
+	if indexInfo != nil && indexInfo.State == model.StatePublic {
+		job.State = model.JobCancelled
+		return errDupKeyName.Gen("index already exist %s", indexName)
 	}
 
 	if indexInfo == nil {
-		indexInfo, err = buildIndexInfo(tblInfo, unique, indexName, indexID, idxColNames)
+		indexInfo, err = buildIndexInfo(tblInfo, unique, indexName, idxColNames)
 		if err != nil {
 			job.State = model.JobCancelled
 			return errors.Trace(err)
 		}
+		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 	}
 
@@ -264,14 +256,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	var indexInfo *model.IndexInfo
-	for _, idx := range tblInfo.Indices {
-		if idx.Name.L == indexName.L {
-			indexInfo = idx
-			break
-		}
-	}
-
+	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo == nil {
 		job.State = model.JobCancelled
 		return ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
@@ -517,4 +502,18 @@ func (d *ddl) dropTableIndex(indexInfo *model.IndexInfo, job *model.Job) error {
 	deleteAll := -1
 	_, _, err := d.delKeysWithStartKey(startKey, startKey, ddlJobFlag, job, deleteAll)
 	return errors.Trace(err)
+}
+
+func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
+	for _, idx := range indices {
+		if idx.Name.L == idxName {
+			return idx
+		}
+	}
+	return nil
+}
+
+func allocateIndexID(tblInfo *model.TableInfo) int64 {
+	tblInfo.MaxIndexID++
+	return tblInfo.MaxIndexID
 }

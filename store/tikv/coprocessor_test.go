@@ -106,7 +106,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	regionIDs = append(regionIDs, cluster.AllocID())
 	peerIDs = append(peerIDs, cluster.AllocID())
 	cluster.Split(regionIDs[1], regionIDs[2], []byte("q"), []uint64{peerIDs[2]}, storeID)
-	cache.DropRegion(tasks[1].region.VerID())
+	cache.DropRegion(tasks[1].region)
 
 	tasks, err = buildCopTasks(bo, cache, s.buildKeyRanges("a", "z"), true)
 	c.Assert(err, IsNil)
@@ -156,7 +156,7 @@ func (s *testCoprocessorSuite) buildKeyRanges(keys ...string) *copRanges {
 }
 
 func (s *testCoprocessorSuite) taskEqual(c *C, task *copTask, regionID uint64, keys ...string) {
-	c.Assert(task.region.GetID(), Equals, regionID)
+	c.Assert(task.region.id, Equals, regionID)
 	for i := 0; i < task.ranges.len(); i++ {
 		r := task.ranges.at(i)
 		c.Assert(string(r.StartKey), Equals, keys[2*i])

@@ -20,7 +20,6 @@ import (
 	"github.com/boltdb/bolt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/store/localstore/engine"
-	"github.com/pingcap/tidb/util/bytes"
 )
 
 var (
@@ -44,7 +43,7 @@ func (d *db) Get(key []byte) ([]byte, error) {
 		if v == nil {
 			return errors.Trace(engine.ErrNotFound)
 		}
-		value = bytes.CloneBytes(v)
+		value = cloneBytes(v)
 		return nil
 	})
 
@@ -63,7 +62,7 @@ func (d *db) Seek(startKey []byte) ([]byte, []byte, error) {
 			k, v = c.Seek(startKey)
 		}
 		if k != nil {
-			key, value = bytes.CloneBytes(k), bytes.CloneBytes(v)
+			key, value = cloneBytes(k), cloneBytes(v)
 		}
 		return nil
 	})
@@ -90,7 +89,7 @@ func (d *db) SeekReverse(startKey []byte) ([]byte, []byte, error) {
 			k, v = c.Prev()
 		}
 		if k != nil {
-			key, value = bytes.CloneBytes(k), bytes.CloneBytes(v)
+			key, value = cloneBytes(k), cloneBytes(v)
 		}
 		return nil
 	})
@@ -197,4 +196,9 @@ func (driver Driver) Open(dbPath string) (engine.DB, error) {
 	}
 
 	return &db{d}, nil
+}
+
+// cloneBytes returns a deep copy of slice b.
+func cloneBytes(b []byte) []byte {
+	return append([]byte(nil), b...)
 }

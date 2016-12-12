@@ -65,11 +65,7 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 		Offset:       len(tblInfo.Columns),
 		DefaultValue: defaultValue,
 	}
-
-	var err error
-	col.ID, err = d.genGlobalID()
-	c.Assert(err, IsNil)
-
+	col.ID = allocateColumnID(tblInfo)
 	col.FieldType = *types.NewFieldType(mysql.TypeLong)
 
 	job := &model.Job{
@@ -79,7 +75,7 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 		Args:     []interface{}{col, pos, 0},
 	}
 
-	err = d.doDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -895,7 +891,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
-	colDef := stmt.(*ast.AlterTableStmt).Specs[0].Column
+	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumn
 	col, _, err := columnDefToCol(nil, 0, colDef)
 	c.Assert(err, IsNil)
 	return &col.FieldType

@@ -40,7 +40,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 
 	reservedKws := []string{
 		"add", "all", "alter", "analyze", "and", "as", "asc", "between", "bigint",
-		"binary", "blob", "both", "by", "cascade", "case", "character", "check", "collate",
+		"binary", "blob", "both", "by", "cascade", "case", "change", "character", "check", "collate",
 		"column", "constraint", "convert", "create", "cross", "current_date", "current_time",
 		"current_timestamp", "current_user", "database", "databases", "day_hour", "day_microsecond",
 		"day_minute", "day_second", "decimal", "default", "delete", "desc", "describe",
@@ -288,6 +288,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"ALTER TABLE t DISABLE KEYS", true},
 		{"ALTER TABLE t ENABLE KEYS", true},
 		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
+		{"ALTER TABLE t CHANGE COLUMN a b varchar(255)", true},
 
 		// from join
 		{"SELECT * from t1, t2, t3", true},
@@ -371,6 +372,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW GRANTS`, true},
 		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
 		{`SHOW COLUMNS FROM City;`, true},
+		{`SHOW COLUMNS FROM tv189.1_t_1_x;`, true},
 		{`SHOW FIELDS FROM City;`, true},
 		{`SHOW TRIGGERS LIKE 't'`, true},
 		{`SHOW DATABASES LIKE 'test2'`, true},
@@ -517,6 +519,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// Information Functions
 		{"SELECT DATABASE();", true},
+		{"SELECT SCHEMA();", true},
 		{"SELECT USER();", true},
 		{"SELECT CURRENT_USER();", true},
 		{"SELECT CURRENT_USER;", true},
@@ -1174,4 +1177,17 @@ func BenchmarkParse(b *testing.B) {
 		}
 	}
 	b.ReportAllocs()
+}
+
+func (s *testParserSuite) TestExplain(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{"explain select c1 from t1", true},
+		{"explain delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;", true},
+		{"explain insert into t values (1), (2), (3)", true},
+		{"explain replace into foo values (1 || 2)", true},
+		{"explain update t set id = id + 1 order by id desc;", true},
+		{"explain select c1 from t1 union (select c2 from t2) limit 1, 1", true},
+	}
+	s.RunTest(c, table)
 }

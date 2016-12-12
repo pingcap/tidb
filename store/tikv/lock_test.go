@@ -191,9 +191,9 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 			Version: ver.Ver,
 		},
 	}
-	region, err := s.store.regionCache.GetRegion(bo, key)
+	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
-	resp, err := s.store.SendKVReq(bo, req, region.VerID(), readTimeoutShort)
+	resp, err := s.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
 	cmdGetResp := resp.GetCmdGetResp()
 	c.Assert(cmdGetResp, NotNil)
