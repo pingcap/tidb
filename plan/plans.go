@@ -158,6 +158,7 @@ type Show struct {
 	GlobalScope bool
 }
 
+// Set represents a plan for set stmt.
 type Set struct {
 	basePlan
 

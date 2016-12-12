@@ -172,6 +172,7 @@ type Assignment struct {
 	Expr Expression
 }
 
+// VarAssignment represents a variable assignment in Set, such as set global a = 1.
 type VarAssignment struct {
 	Name        string
 	Expr        Expression
