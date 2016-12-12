@@ -302,7 +302,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{1, opcode.Mul, types.NewDecFromInt(1), 1},
 		{uint64(1), opcode.Mul, 1, 1},
 		{uint64(1), opcode.Mul, uint64(1), 1},
-		{types.Time{}, opcode.Mul, 0, 0},
+		{types.Time{Time: types.FromDate(0, 0, 0, 0, 0, 0, 0)}, opcode.Mul, 0, 0},
 		{types.ZeroDuration, opcode.Mul, 0, 0},
 		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},
 		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},

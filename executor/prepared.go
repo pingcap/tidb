@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
@@ -173,7 +172,7 @@ type ExecuteExec struct {
 	IS        infoschema.InfoSchema
 	Ctx       context.Context
 	Name      string
-	UsingVars []ast.ExprNode
+	UsingVars []expression.Expression
 	ID        uint32
 	StmtExec  Executor
 	Stmt      ast.StmtNode
@@ -215,7 +214,7 @@ func (e *ExecuteExec) Build() error {
 	}
 
 	for i, usingVar := range e.UsingVars {
-		val, err := evaluator.Eval(e.Ctx, usingVar)
+		val, err := usingVar.Eval(nil, e.Ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -278,9 +277,10 @@ func (e *DeallocateExec) Close() error {
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interface{}) ast.Statement {
 	execPlan := &plan.Execute{ID: ID}
-	execPlan.UsingVars = make([]ast.ExprNode, len(args))
+	execPlan.UsingVars = make([]expression.Expression, len(args))
 	for i, val := range args {
-		execPlan.UsingVars[i] = ast.NewValueExpr(val)
+		value := ast.NewValueExpr(val)
+		execPlan.UsingVars[i] = &expression.Constant{Value: value.Datum, RetType: &value.Type}
 	}
 	sa := &statement{
 		is:   sessionctx.GetDomain(ctx).InfoSchema(),

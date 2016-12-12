@@ -44,12 +44,12 @@ func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 
-	dom, err := NewDomain(store, 10*time.Millisecond)
+	dom, err := NewDomain(store, 80*time.Millisecond)
 	c.Assert(err, IsNil)
 	store = dom.Store()
 	dd := dom.DDL()
 	c.Assert(dd, NotNil)
-	c.Assert(dd.GetLease(), Equals, 10*time.Millisecond)
+	c.Assert(dd.GetLease(), Equals, 80*time.Millisecond)
 	cs := &ast.CharsetOpt{
 		Chs: "utf8",
 		Col: "utf8_bin",

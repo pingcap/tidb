@@ -19,7 +19,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"time"
+	gotime "time"
 	"unicode"
 
 	"github.com/juju/errors"
@@ -48,9 +48,9 @@ const (
 	MaxYear int16 = 2155
 
 	// MinTime is the minimum for mysql time type.
-	MinTime = -time.Duration(838*3600+59*60+59) * time.Second
+	MinTime = -gotime.Duration(838*3600+59*60+59) * gotime.Second
 	// MaxTime is the maximum for mysql time type.
-	MaxTime = time.Duration(838*3600+59*60+59) * time.Second
+	MaxTime = gotime.Duration(838*3600+59*60+59) * gotime.Second
 
 	zeroDatetimeStr = "0000-00-00 00:00:00"
 	zeroDateStr     = "0000-00-00"
@@ -59,10 +59,10 @@ const (
 // Zero values for different types.
 var (
 	// ZeroDuration is the zero value for Duration type.
-	ZeroDuration = Duration{Duration: time.Duration(0), Fsp: DefaultFsp}
+	ZeroDuration = Duration{Duration: gotime.Duration(0), Fsp: DefaultFsp}
 
-	// ZeroTime is the zero value for time.Time type.
-	ZeroTime = timeInternalZero{}
+	// ZeroTime is the zero value for TimeInternal type.
+	ZeroTime = mysqlTime{}
 
 	// ZeroDatetime is the zero value for datetime Time.
 	ZeroDatetime = Time{
@@ -85,19 +85,19 @@ var (
 		Fsp:  DefaultFsp,
 	}
 
-	local = time.Local
+	local = gotime.Local
 )
 
 var (
 	// MinDatetime is the minimum for mysql datetime type.
-	MinDatetime = time.Date(1000, 1, 1, 0, 0, 0, 0, time.Local)
+	MinDatetime = gotime.Date(1000, 1, 1, 0, 0, 0, 0, gotime.Local)
 	// MaxDatetime is the maximum for mysql datetime type.
-	MaxDatetime = time.Date(9999, 12, 31, 23, 59, 59, 999999, time.Local)
+	MaxDatetime = gotime.Date(9999, 12, 31, 23, 59, 59, 999999, gotime.Local)
 
 	// MinTimestamp is the minimum for mysql timestamp type.
-	MinTimestamp = time.Date(1970, 1, 1, 0, 0, 1, 0, time.UTC)
+	MinTimestamp = gotime.Date(1970, 1, 1, 0, 0, 1, 0, gotime.UTC)
 	// MaxTimestamp is the maximum for mysql timestamp type.
-	MaxTimestamp = time.Date(2038, 1, 19, 3, 14, 7, 999999, time.UTC)
+	MaxTimestamp = gotime.Date(2038, 1, 19, 3, 14, 7, 999999, gotime.UTC)
 
 	// WeekdayNames lists names of weekdays, which are used in builtin time function `dayname`.
 	WeekdayNames = []string{
@@ -129,122 +129,24 @@ type TimeInternal interface {
 	Hour() int
 	Minute() int
 	Second() int
-	Weekday() time.Weekday
+	Weekday() gotime.Weekday
 	YearDay() int
 	ISOWeek() (int, int)
 	Microsecond() int
-	GoTime() time.Time
-}
-
-type timeInternalImpl time.Time
-
-func (t timeInternalImpl) Year() int {
-	year, _, _ := time.Time(t).Date()
-	return year
-}
-
-func (t timeInternalImpl) Month() int {
-	_, month, _ := time.Time(t).Date()
-	return int(month)
-}
-
-func (t timeInternalImpl) Day() int {
-	_, _, day := time.Time(t).Date()
-	return day
-}
-
-func (t timeInternalImpl) Hour() int {
-	hour, _, _ := time.Time(t).Clock()
-	return hour
-}
-
-func (t timeInternalImpl) Minute() int {
-	_, minute, _ := time.Time(t).Clock()
-	return minute
-}
-
-func (t timeInternalImpl) Second() int {
-	_, _, second := time.Time(t).Clock()
-	return second
-}
-
-func (t timeInternalImpl) Microsecond() int {
-	return time.Time(t).Nanosecond() / 1000
-}
-
-func (t timeInternalImpl) Weekday() time.Weekday {
-	return time.Time(t).Weekday()
-}
-
-func (t timeInternalImpl) YearDay() int {
-	return time.Time(t).YearDay()
-}
-
-func (t timeInternalImpl) ISOWeek() (int, int) {
-	return time.Time(t).ISOWeek()
-}
-
-func (t timeInternalImpl) GoTime() time.Time {
-	return time.Time(t)
-}
-
-type timeInternalZero struct{}
-
-func (t timeInternalZero) Year() int {
-	return 0
-}
-
-func (t timeInternalZero) Month() int {
-	return 0
-}
-
-func (t timeInternalZero) Day() int {
-	return 0
-}
-
-func (t timeInternalZero) Hour() int {
-	return 0
-}
-
-func (t timeInternalZero) Minute() int {
-	return 0
-}
-
-func (t timeInternalZero) Second() int {
-	return 0
-}
-
-func (t timeInternalZero) Microsecond() int {
-	return 0
-}
-
-func (t timeInternalZero) Weekday() time.Weekday {
-	return time.Monday
-}
-
-func (t timeInternalZero) YearDay() int {
-	return 0
-}
-
-func (t timeInternalZero) ISOWeek() (int, int) {
-	return 0, 0
-}
-
-func (t timeInternalZero) GoTime() time.Time {
-	return time.Date(0, 0, 0, 0, 0, 0, 0, time.Local)
+	GoTime() (gotime.Time, error)
 }
 
 // FromGoTime translates time.Time to mysql time internal representation.
-func FromGoTime(t time.Time) TimeInternal {
-	return timeInternalImpl(t)
+func FromGoTime(t gotime.Time) TimeInternal {
+	year, month, day := t.Date()
+	hour, minute, second := t.Clock()
+	microsecond := t.Nanosecond() / 1000
+	return newMysqlTime(year, int(month), day, hour, minute, second, microsecond)
 }
 
 // FromDate makes a internal time representation from the given date.
 func FromDate(year int, month int, day int, hour int, minute int, second int, microsecond int) TimeInternal {
-	if year == 0 && month == 0 && day == 0 && hour == 0 && minute == 0 && second == 0 {
-		return timeInternalZero{}
-	}
-	return timeInternalImpl(time.Date(year, time.Month(month), day, hour, minute, second, microsecond*1000, time.Local))
+	return newMysqlTime(year, month, day, hour, minute, second, microsecond)
 }
 
 // Clock returns the hour, minute, and second within the day specified by t.
@@ -264,7 +166,7 @@ type Time struct {
 
 // CurrentTime returns current time with type tp.
 func CurrentTime(tp uint8) Time {
-	return Time{Time: FromGoTime(time.Now()), Type: tp, Fsp: 0}
+	return Time{Time: FromGoTime(gotime.Now()), Type: tp, Fsp: 0}
 }
 
 func (t Time) String() string {
@@ -277,7 +179,11 @@ func (t Time) String() string {
 	}
 
 	if t.Type == mysql.TypeDate {
-		return t.Time.GoTime().Format(DateFormat)
+		t1, err := t.Time.GoTime()
+		if err != nil {
+			return ErrInvalidTimeFormat.Error()
+		}
+		return t1.Format(DateFormat)
 	}
 
 	tfStr := TimeFormat
@@ -285,18 +191,16 @@ func (t Time) String() string {
 		tfStr = fmt.Sprintf("%s.%s", tfStr, strings.Repeat("0", t.Fsp))
 	}
 
-	return t.Time.GoTime().Format(tfStr)
+	t1, err := t.Time.GoTime()
+	if err != nil {
+		return ErrInvalidTimeFormat.Error()
+	}
+	return t1.Format(tfStr)
 }
 
 // IsZero returns a boolean indicating whether the time is equal to ZeroTime.
 func (t Time) IsZero() bool {
-	// To avoid panic when Time{} is used.
-	if t.Time == nil {
-		return true
-	}
-	return t.Time.Year() == 0 && t.Time.Month() == 0 && t.Time.Day() == 0 &&
-		t.Time.Hour() == 0 && t.Time.Minute() == 0 && t.Time.Second() == 0 &&
-		t.Time.Microsecond() == 0
+	return t.Time == mysqlTime{}
 }
 
 const numberFormat = "20060102150405"
@@ -325,7 +229,13 @@ func (t Time) ToNumber() *MyDecimal {
 		tfStr = fmt.Sprintf("%s.%s", tfStr, strings.Repeat("0", t.Fsp))
 	}
 
-	s := t.Time.GoTime().Format(tfStr)
+	var s string
+	if t1, err := t.Time.GoTime(); err == nil {
+		s = t1.Format(tfStr)
+	} else {
+		s = ErrInvalidTimeFormat.Error()
+	}
+
 	// We skip checking error here because time formatted string can be parsed certainly.
 	dec := new(MyDecimal)
 	dec.FromString([]byte(s))
@@ -368,24 +278,46 @@ func (t Time) ConvertToDuration() (Duration, error) {
 	hour, minute, second := t.Clock()
 	frac := t.Time.Microsecond() * 1000
 
-	d := time.Duration(hour*3600+minute*60+second)*time.Second + time.Duration(frac)
+	d := gotime.Duration(hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)
 
 	// TODO: check convert validation
-	return Duration{Duration: time.Duration(d), Fsp: t.Fsp}, nil
+	return Duration{Duration: gotime.Duration(d), Fsp: t.Fsp}, nil
 }
 
 // Compare returns an integer comparing the time instant t to o.
 // If t is after o, return 1, equal o, return 0, before o, return -1.
 func (t Time) Compare(o Time) int {
-	t1 := t.Time.GoTime()
-	o1 := o.Time.GoTime()
-	if t1.After(o1) {
+	switch {
+	case t.Time.Year() > o.Time.Year():
 		return 1
-	} else if t1.Equal(o1) {
-		return 0
-	} else {
+	case t.Time.Year() < o.Time.Year():
+		return -1
+	case t.Time.Month() > o.Time.Month():
+		return 1
+	case t.Time.Month() < o.Time.Month():
+		return -1
+	case t.Time.Day() > o.Time.Day():
+		return 1
+	case t.Time.Day() < o.Time.Day():
+		return -1
+	case t.Time.Hour() > o.Time.Hour():
+		return 1
+	case t.Time.Hour() < o.Time.Hour():
+		return -1
+	case t.Time.Minute() > o.Time.Minute():
+		return 1
+	case t.Time.Minute() < o.Time.Minute():
+		return -1
+	case t.Time.Second() > o.Time.Second():
+		return 1
+	case t.Time.Second() < o.Time.Second():
+		return -1
+	case t.Time.Microsecond() > o.Time.Microsecond():
+		return 1
+	case t.Time.Microsecond() < o.Time.Microsecond():
 		return -1
 	}
+	return 0
 }
 
 // CompareString is like Compare,
@@ -400,11 +332,7 @@ func (t Time) CompareString(str string) (int, error) {
 	return t.Compare(o), nil
 }
 
-// RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
-// We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
-// so 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:11
-// and 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
-func (t Time) RoundFrac(fsp int) (Time, error) {
+func (t Time) roundFrac(fsp int) (Time, error) {
 	if t.Type == mysql.TypeDate {
 		// date type has no fsp
 		return t, nil
@@ -420,8 +348,22 @@ func (t Time) RoundFrac(fsp int) (Time, error) {
 		return t, nil
 	}
 
-	nt := t.Time.GoTime().Round(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond)
+	t1, _ := t.Time.GoTime()
+	// TODO: Fix here.
+	nt := t1.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond)
 	return Time{Time: FromGoTime(nt), Type: t.Type, Fsp: fsp}, nil
+}
+
+// RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
+// We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
+// so 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:11
+// and 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
+func RoundFrac(t gotime.Time, fsp int) (gotime.Time, error) {
+	_, err := checkFsp(fsp)
+	if err != nil {
+		return t, errors.Trace(err)
+	}
+	return t.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), nil
 }
 
 // ToPackedUint encodes Time to a packed uint64 value.
@@ -444,8 +386,12 @@ func (t Time) ToPackedUint() uint64 {
 		return 0
 	}
 	if t.Type == mysql.TypeTimestamp {
-		utc := t.Time.GoTime().UTC()
-		tm = FromGoTime(utc)
+		if t1, err := t.Time.GoTime(); err == nil {
+			utc := t1.UTC()
+			tm = FromGoTime(utc)
+		} else {
+			// TODO: Fix here.
+		}
 	}
 	year, month, day := tm.Year(), tm.Month(), tm.Day()
 	hour, minute, sec := tm.Hour(), tm.Minute(), tm.Second()
@@ -478,11 +424,12 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	loc := local
 	if t.Type == mysql.TypeTimestamp {
-		loc = time.UTC
+		loc = gotime.UTC
 	}
-	t.Time = FromGoTime(time.Date(year, time.Month(month), day, hour, minute, second, microsec*1000, loc).In(local))
+	t.Time = FromGoTime(gotime.Date(year, gotime.Month(month), day, hour, minute, second, microsec*1000, loc).In(local))
 
 	return nil
 }
@@ -597,9 +544,13 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		year = adjustYear(year)
 	}
 
-	frac, err = parseFrac(fracStr, fsp)
+	frac, overflow, err := parseFrac(fracStr, fsp)
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
+	}
+	if overflow { // handle overflow
+		frac = 0
+		second++
 	}
 
 	t, err := newTime(year, month, day, hour, minute, second, frac)
@@ -689,7 +640,7 @@ func AdjustYear(y int64) (int64, error) {
 
 // Duration is the type for MySQL time type.
 type Duration struct {
-	time.Duration
+	gotime.Duration
 	// Fsp is short for Fractional Seconds Precision.
 	// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
 	Fsp int
@@ -724,7 +675,7 @@ func (d Duration) formatFrac(frac int) string {
 // e.g,
 // 10:10:10 -> 101010
 func (d Duration) ToNumber() *MyDecimal {
-	sign, hours, minutes, seconds, fraction := splitDuration(time.Duration(d.Duration))
+	sign, hours, minutes, seconds, fraction := splitDuration(gotime.Duration(d.Duration))
 	var (
 		s       string
 		signStr string
@@ -749,9 +700,9 @@ func (d Duration) ToNumber() *MyDecimal {
 // ConvertToTime converts duration to Time.
 // Tp is TypeDatetime, TypeTimestamp and TypeDate.
 func (d Duration) ConvertToTime(tp uint8) (Time, error) {
-	year, month, day := time.Now().Date()
+	year, month, day := gotime.Now().Date()
 	// just use current year, month and day.
-	n := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
+	n := gotime.Date(year, month, day, 0, 0, 0, 0, gotime.Local)
 	n = n.Add(d.Duration)
 
 	t := Time{
@@ -777,8 +728,8 @@ func (d Duration) RoundFrac(fsp int) (Duration, error) {
 		return d, nil
 	}
 
-	n := time.Date(0, 0, 0, 0, 0, 0, 0, time.Local)
-	nd := n.Add(d.Duration).Round(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond).Sub(n)
+	n := gotime.Date(0, 0, 0, 0, 0, 0, 0, gotime.Local)
+	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond).Sub(n)
 	return Duration{Duration: nd, Fsp: fsp}, nil
 }
 
@@ -870,10 +821,11 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		str = str[n+1:]
 	}
 
+	var overflow bool
 	if n := strings.IndexByte(str, '.'); n >= 0 {
 		// It has fractional precesion parts.
 		fracStr := str[n+1:]
-		frac, err = parseFrac(fracStr, fsp)
+		frac, overflow, err = parseFrac(fracStr, fsp)
 		if err != nil {
 			return ZeroDuration, errors.Trace(err)
 		}
@@ -926,7 +878,11 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		return ZeroDuration, errors.Trace(err)
 	}
 
-	d := time.Duration(day*24*3600+hour*3600+minute*60+second)*time.Second + time.Duration(frac)*time.Microsecond
+	if overflow {
+		second++
+		frac = 0
+	}
+	d := gotime.Duration(day*24*3600+hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)*gotime.Microsecond
 	if sign == -1 {
 		d = -d
 	}
@@ -941,20 +897,20 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 	return Duration{Duration: d, Fsp: fsp}, errors.Trace(err)
 }
 
-func splitDuration(t time.Duration) (int, int, int, int, int) {
+func splitDuration(t gotime.Duration) (int, int, int, int, int) {
 	sign := 1
 	if t < 0 {
 		t = -t
 		sign = -1
 	}
 
-	hours := t / time.Hour
-	t -= hours * time.Hour
-	minutes := t / time.Minute
-	t -= minutes * time.Minute
-	seconds := t / time.Second
-	t -= seconds * time.Second
-	fraction := t / time.Microsecond
+	hours := t / gotime.Hour
+	t -= hours * gotime.Hour
+	minutes := t / gotime.Minute
+	t -= minutes * gotime.Minute
+	seconds := t / gotime.Second
+	t -= seconds * gotime.Second
+	fraction := t / gotime.Microsecond
 
 	return sign, int(hours), int(minutes), int(seconds), int(fraction)
 }
@@ -966,7 +922,7 @@ func checkTime(year int, month int, day int, hour int, minute int, second int, f
 	// so here only check year from 0~9999.
 	if year < 0 || year > 9999 ||
 		month <= 0 || month > 12 ||
-		day <= 0 || day > maxDaysInMonth[month-1] ||
+		day <= 0 || (day > maxDaysInMonth[month-1]) ||
 		(month == 2 && day == 29 && year%4 != 0) ||
 		hour < 0 || hour >= 24 ||
 		minute < 0 || minute >= 60 ||
@@ -990,14 +946,6 @@ func getTime(num int64, tp byte) (Time, error) {
 	s2 %= 10000
 	minute := int(s2 / 100)
 	second := int(s2 % 100)
-
-	if err := checkTime(year, month, day, hour, minute, second, 0); err != nil {
-		return Time{
-			Time: ZeroTime,
-			Type: tp,
-			Fsp:  DefaultFsp,
-		}, err
-	}
 
 	t, err := newTime(year, month, day, hour, minute, second, 0)
 	return Time{
@@ -1169,7 +1117,12 @@ func checkDatetime(t Time) bool {
 		return true
 	}
 
-	if t.Time.GoTime().After(MaxDatetime) || t.Time.GoTime().Before(MinDatetime) {
+	t1, err := t.Time.GoTime()
+	if err != nil {
+		return false
+	}
+
+	if t1.After(MaxDatetime) || t1.Before(MinDatetime) {
 		return false
 	}
 
@@ -1181,7 +1134,12 @@ func checkTimestamp(t Time) bool {
 		return true
 	}
 
-	if t.Time.GoTime().After(MaxTimestamp) || t.Time.GoTime().Before(MinTimestamp) {
+	t1, err := t.Time.GoTime()
+	if err != nil {
+		return false
+	}
+
+	if t1.After(MaxTimestamp) || t1.Before(MinTimestamp) {
 		return false
 	}
 
@@ -1202,10 +1160,18 @@ func ExtractTimeNum(unit string, t Time) (int64, error) {
 	case "DAY":
 		return int64(t.Time.Day()), nil
 	case "WEEK":
-		_, week := t.Time.GoTime().ISOWeek()
+		t1, err := t.Time.GoTime()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		_, week := t1.ISOWeek()
 		return int64(week), nil
 	case "MONTH":
-		return int64(t.Time.Month()), nil
+		t1, err := t.Time.GoTime()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return int64(t1.Month()), nil
 	case "QUARTER":
 		m := int64(t.Time.Month())
 		// 1 - 3 -> 1
@@ -1256,22 +1222,22 @@ func ExtractTimeNum(unit string, t Time) (int64, error) {
 	}
 }
 
-func extractSingleTimeValue(unit string, format string) (int64, int64, int64, time.Duration, error) {
+func extractSingleTimeValue(unit string, format string) (int64, int64, int64, gotime.Duration, error) {
 	iv, err := strconv.ParseInt(format, 10, 64)
 	if err != nil {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
 	}
 
-	v := time.Duration(iv)
+	v := gotime.Duration(iv)
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		return 0, 0, 0, v * time.Microsecond, nil
+		return 0, 0, 0, v * gotime.Microsecond, nil
 	case "SECOND":
-		return 0, 0, 0, v * time.Second, nil
+		return 0, 0, 0, v * gotime.Second, nil
 	case "MINUTE":
-		return 0, 0, 0, v * time.Minute, nil
+		return 0, 0, 0, v * gotime.Minute, nil
 	case "HOUR":
-		return 0, 0, 0, v * time.Hour, nil
+		return 0, 0, 0, v * gotime.Hour, nil
 	case "DAY":
 		return 0, 0, iv, 0, nil
 	case "WEEK":
@@ -1288,7 +1254,7 @@ func extractSingleTimeValue(unit string, format string) (int64, int64, int64, ti
 }
 
 // Format is `SS.FFFFFF`.
-func extractSecondMicrosecond(format string) (int64, int64, int64, time.Duration, error) {
+func extractSecondMicrosecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ".")
 	if len(fields) != 2 {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
@@ -1304,11 +1270,11 @@ func extractSecondMicrosecond(format string) (int64, int64, int64, time.Duration
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
 	}
 
-	return 0, 0, 0, time.Duration(seconds)*time.Second + time.Duration(microseconds)*time.Microsecond, nil
+	return 0, 0, 0, gotime.Duration(seconds)*gotime.Second + gotime.Duration(microseconds)*gotime.Microsecond, nil
 }
 
 // Format is `MM:SS.FFFFFF`.
-func extractMinuteMicrosecond(format string) (int64, int64, int64, time.Duration, error) {
+func extractMinuteMicrosecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 2 {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
@@ -1324,11 +1290,11 @@ func extractMinuteMicrosecond(format string) (int64, int64, int64, time.Duration
 		return 0, 0, 0, 0, errors.Trace(err)
 	}
 
-	return 0, 0, 0, time.Duration(minutes)*time.Minute + value, nil
+	return 0, 0, 0, gotime.Duration(minutes)*gotime.Minute + value, nil
 }
 
 // Format is `MM:SS`.
-func extractMinuteSecond(format string) (int64, int64, int64, time.Duration, error) {
+func extractMinuteSecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 2 {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
@@ -1344,11 +1310,11 @@ func extractMinuteSecond(format string) (int64, int64, int64, time.Duration, err
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
 	}
 
-	return 0, 0, 0, time.Duration(minutes)*time.Minute + time.Duration(seconds)*time.Second, nil
+	return 0, 0, 0, gotime.Duration(minutes)*gotime.Minute + gotime.Duration(seconds)*gotime.Second, nil
 }
 
 // Format is `HH:MM:SS.FFFFFF`.
-func extractHourMicrosecond(format string) (int64, int64, int64, time.Duration, error) {
+func extractHourMicrosecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 3 {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
@@ -1369,11 +1335,11 @@ func extractHourMicrosecond(format string) (int64, int64, int64, time.Duration, 
 		return 0, 0, 0, 0, errors.Trace(err)
 	}
 
-	return 0, 0, 0, time.Duration(hours)*time.Hour + time.Duration(minutes)*time.Minute + value, nil
+	return 0, 0, 0, gotime.Duration(hours)*gotime.Hour + gotime.Duration(minutes)*gotime.Minute + value, nil
 }
 
 // Format is `HH:MM:SS`.
-func extractHourSecond(format string) (int64, int64, int64, time.Duration, error) {
+func extractHourSecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 3 {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
@@ -1394,11 +1360,11 @@ func extractHourSecond(format string) (int64, int64, int64, time.Duration, error
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
 	}
 
-	return 0, 0, 0, time.Duration(hours)*time.Hour + time.Duration(minutes)*time.Minute + time.Duration(seconds)*time.Second, nil
+	return 0, 0, 0, gotime.Duration(hours)*gotime.Hour + gotime.Duration(minutes)*gotime.Minute + gotime.Duration(seconds)*gotime.Second, nil
 }
 
 // Format is `HH:MM`.
-func extractHourMinute(format string) (int64, int64, int64, time.Duration, error) {
+func extractHourMinute(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 2 {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
@@ -1414,11 +1380,11 @@ func extractHourMinute(format string) (int64, int64, int64, time.Duration, error
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
 	}
 
-	return 0, 0, 0, time.Duration(hours)*time.Hour + time.Duration(minutes)*time.Minute, nil
+	return 0, 0, 0, gotime.Duration(hours)*gotime.Hour + gotime.Duration(minutes)*gotime.Minute, nil
 }
 
 // Format is `DD HH:MM:SS.FFFFFF`.
-func extractDayMicrosecond(format string) (int64, int64, int64, time.Duration, error) {
+func extractDayMicrosecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, " ")
 	if len(fields) != 2 {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
@@ -1438,7 +1404,7 @@ func extractDayMicrosecond(format string) (int64, int64, int64, time.Duration, e
 }
 
 // Format is `DD HH:MM:SS`.
-func extractDaySecond(format string) (int64, int64, int64, time.Duration, error) {
+func extractDaySecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, " ")
 	if len(fields) != 2 {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
@@ -1458,7 +1424,7 @@ func extractDaySecond(format string) (int64, int64, int64, time.Duration, error)
 }
 
 // Format is `DD HH:MM`.
-func extractDayMinute(format string) (int64, int64, int64, time.Duration, error) {
+func extractDayMinute(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, " ")
 	if len(fields) != 2 {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
@@ -1478,7 +1444,7 @@ func extractDayMinute(format string) (int64, int64, int64, time.Duration, error)
 }
 
 // Format is `DD HH`.
-func extractDayHour(format string) (int64, int64, int64, time.Duration, error) {
+func extractDayHour(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, " ")
 	if len(fields) != 2 {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
@@ -1494,11 +1460,11 @@ func extractDayHour(format string) (int64, int64, int64, time.Duration, error) {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
 	}
 
-	return 0, 0, days, time.Duration(hours) * time.Hour, nil
+	return 0, 0, days, gotime.Duration(hours) * gotime.Hour, nil
 }
 
 // Format is `YYYY-MM`.
-func extractYearMonth(format string) (int64, int64, int64, time.Duration, error) {
+func extractYearMonth(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, "-")
 	if len(fields) != 2 {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
@@ -1518,7 +1484,7 @@ func extractYearMonth(format string) (int64, int64, int64, time.Duration, error)
 }
 
 // ExtractTimeValue extracts time value from time unit and format.
-func ExtractTimeValue(unit string, format string) (int64, int64, int64, time.Duration, error) {
+func ExtractTimeValue(unit string, format string) (int64, int64, int64, gotime.Duration, error) {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR":
 		return extractSingleTimeValue(unit, format)

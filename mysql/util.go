@@ -13,11 +13,6 @@
 
 package mysql
 
-import (
-	"strings"
-	"unicode"
-)
-
 // GetDefaultFieldLength is used for Interger Types, Flen is the display length.
 // Call this when no Flen assigned in ddl.
 // or column value is calculated from an expression.
@@ -56,69 +51,4 @@ func GetDefaultDecimal(tp byte) int {
 		//TODO: Add more types.
 		return -1
 	}
-}
-
-func isSpace(c byte) bool {
-	return c == ' ' || c == '\t'
-}
-
-func isDigit(c byte) bool {
-	return c >= '0' && c <= '9'
-}
-
-func myMax(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func myMaxInt8(a, b int8) int8 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func myMin(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func myMinInt8(a, b int8) int8 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// strToInt converts a string to an integer in best effort.
-// TODO: Handle overflow and add unittest.
-func strToInt(str string) (int64, error) {
-	str = strings.TrimSpace(str)
-	if len(str) == 0 {
-		return 0, nil
-	}
-	negative := false
-	i := 0
-	if str[i] == '-' {
-		negative = true
-		i++
-	} else if str[i] == '+' {
-		i++
-	}
-	r := int64(0)
-	for ; i < len(str); i++ {
-		if !unicode.IsDigit(rune(str[i])) {
-			break
-		}
-		r = r*10 + int64(str[i]-'0')
-	}
-	if negative {
-		r = -r
-	}
-	// TODO: If i < len(str), we should return an error.
-	return r, nil
 }

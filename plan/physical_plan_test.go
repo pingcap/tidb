@@ -309,7 +309,8 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 				ts = &x.physicalTableSource
 			}
 			if ts != nil {
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(ts.conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				conditions := append(ts.indexFilterConditions, ts.tableFilterConditions...)
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
 				break
 			}
 			p = p.GetChildByIndex(0)
@@ -454,7 +455,11 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t where t.c = 1 union select t.c from t) k order by a limit 1",
-			best: "UnionAll{Table(t)->Index(t.c_d_e)[[1,1]]->Projection->Index(t.c_d_e)[[<nil>,+inf]]}->Distinct->Limit",
+			best: "UnionAll{Table(t)->Index(t.c_d_e)[[1,1]]->Projection->Table(t)}->Distinct->Sort + Limit(1) + Offset(0)",
+		},
+		{
+			sql:  "select * from (select t.a from t union all select t.d from t where t.c = 1 union all select t.c from t) k order by a limit 1",
+			best: "UnionAll{Table(t)->Limit->Index(t.c_d_e)[[1,1]]->Projection->Index(t.c_d_e)[[<nil>,+inf]]->Limit}->Sort + Limit(1) + Offset(0)",
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t union select t.c from t) k order by a limit 1",
@@ -642,5 +647,81 @@ func (s *testPlanSuite) TestCoveringIndex(c *C) {
 		}
 		covering := isCoveringIndex(columns, indexCols, pkIsHandle)
 		c.Assert(covering, Equals, ca.isCovering)
+	}
+}
+
+func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql         string
+		access      string
+		indexFilter string
+		tableFilter string
+	}{
+		{
+			sql:         "select * from t",
+			access:      "[]",
+			indexFilter: "[]",
+			tableFilter: "[]",
+		},
+		{
+			sql:         "select * from t where t.c < 10000 and t.d = 1 and t.g > 1",
+			access:      "[lt(test.t.c, 10000)]",
+			indexFilter: "[eq(test.t.d, 1)]",
+			tableFilter: "[gt(test.t.g, 1)]",
+		},
+		{
+			sql:         "select * from t where t.a < 1 and t.c < t.d",
+			access:      "[lt(test.t.a, 1)]",
+			indexFilter: "[]",
+			tableFilter: "[lt(test.t.c, test.t.d)]",
+		},
+		{
+			sql:         "select * from t use index(c_d_e) where t.a < 1 and t.c =1 and t.d < t.e and t.b > (t.a - t.d)",
+			access:      "[eq(test.t.c, 1)]",
+			indexFilter: "[lt(test.t.a, 1) lt(test.t.d, test.t.e)]",
+			tableFilter: "[gt(test.t.b, minus(test.t.a, test.t.d))]",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		err = mockResolve(stmt)
+		c.Assert(err, IsNil)
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		lp.PruneColumns(lp.GetSchema())
+		lp.ResolveIndicesAndCorCols()
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		c.Assert(err, IsNil)
+		p = info.p
+		for {
+			var ts *physicalTableSource
+			switch x := p.(type) {
+			case *PhysicalTableScan:
+				ts = &x.physicalTableSource
+			case *PhysicalIndexScan:
+				ts = &x.physicalTableSource
+			}
+			if ts != nil {
+				c.Assert(fmt.Sprintf("%s", ts.AccessCondition), Equals, ca.access, Commentf("for %s", ca.sql))
+				c.Assert(fmt.Sprintf("%s", ts.indexFilterConditions), Equals, ca.indexFilter, Commentf("for %s", ca.sql))
+				c.Assert(fmt.Sprintf("%s", ts.tableFilterConditions), Equals, ca.tableFilter, Commentf("for %s", ca.sql))
+				break
+			}
+			p = p.GetChildByIndex(0)
+		}
 	}
 }

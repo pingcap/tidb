@@ -71,6 +71,10 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		c.Assert(t.String(), Equals, test.Expect)
 	}
 
+	t, _ := ParseTime("121231113045.9999999", mysql.TypeDatetime, 6)
+	c.Assert(t.Time.Second(), Equals, 46)
+	c.Assert(t.Time.Microsecond(), Equals, 0)
+
 	// test error
 	errTable := []string{
 		"1000-00-00 00:00:00",
@@ -531,22 +535,37 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 func (s *testTimeSuite) TestParseFrac(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		S   string
-		Fsp int
-		Ret int
+		S        string
+		Fsp      int
+		Ret      int
+		Overflow bool
 	}{
-		{"1234567", 0, 0},
-		{"1234567", 1, 100000},
-		{"0000567", 5, 60},
-		{"1234567", 5, 123460},
-		{"1234567", 6, 123457},
-		{"9999999", 6, 1000000},
+		// Round when fsp < string length.
+		{"1234567", 0, 0, false},
+		{"1234567", 1, 100000, false},
+		{"0000567", 5, 60, false},
+		{"1234567", 5, 123460, false},
+		{"1234567", 6, 123457, false},
+		// Fill 0 when fsp > string length.
+		{"123", 4, 123000, false},
+		{"123", 5, 123000, false},
+		{"123", 6, 123000, false},
+		{"11", 6, 110000, false},
+		{"01", 3, 10000, false},
+		{"012", 4, 12000, false},
+		{"0123", 5, 12300, false},
+		// Overflow
+		{"9999999", 6, 0, true},
+		{"999999", 5, 0, true},
+		{"999", 2, 0, true},
+		{"999", 3, 999000, false},
 	}
 
 	for _, t := range tbl {
-		v, err := parseFrac(t.S, t.Fsp)
+		v, overflow, err := parseFrac(t.S, t.Fsp)
 		c.Assert(err, IsNil)
-		c.Assert(t.Ret, Equals, v)
+		c.Assert(v, Equals, t.Ret)
+		c.Assert(overflow, Equals, t.Overflow)
 	}
 }
 
@@ -568,7 +587,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	for _, t := range tbl {
 		v, err := ParseTime(t.Input, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
-		nv, err := v.RoundFrac(t.Fsp)
+		nv, err := v.roundFrac(t.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(nv.String(), Equals, t.Except)
 	}
@@ -634,7 +653,8 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		n := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
 		t, err := v.ConvertToTime(mysql.TypeDatetime)
 		c.Assert(err, IsNil)
-		c.Assert(t.Time.GoTime().Sub(n), Equals, v.Duration)
+		t1, _ := t.Time.GoTime()
+		c.Assert(t1.Sub(n), Equals, v.Duration)
 	}
 }
 

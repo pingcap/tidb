@@ -72,10 +72,13 @@ type selectResult struct {
 	resp       kv.Response
 	ignoreData bool
 
-	results chan PartialResult
-	done    chan error
+	results chan resultWithErr
+	closed  chan struct{}
+}
 
-	closed chan struct{}
+type resultWithErr struct {
+	result PartialResult
+	err    error
 }
 
 func (r *selectResult) Fetch() {
@@ -87,7 +90,7 @@ func (r *selectResult) fetch() {
 	for {
 		reader, err := r.resp.Next()
 		if err != nil {
-			r.done <- errors.Trace(err)
+			r.results <- resultWithErr{err: errors.Trace(err)}
 			return
 		}
 		if reader == nil {
@@ -104,7 +107,7 @@ func (r *selectResult) fetch() {
 		go pr.fetch()
 
 		select {
-		case r.results <- pr:
+		case r.results <- resultWithErr{result: pr}:
 		case <-r.closed:
 			// if selectResult called Close() already, make fetch goroutine exit
 			return
@@ -113,19 +116,9 @@ func (r *selectResult) fetch() {
 }
 
 // Next returns the next row.
-func (r *selectResult) Next() (pr PartialResult, err error) {
-	var ok bool
-	select {
-	case pr, ok = <-r.results:
-	case err = <-r.done:
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, nil
-	}
-	return
+func (r *selectResult) Next() (PartialResult, error) {
+	re := <-r.results
+	return re.result, errors.Trace(re.err)
 }
 
 // SetFields sets select result field types.
@@ -301,8 +294,7 @@ func Select(client kv.Client, req *tipb.SelectRequest, keyRanges []kv.KeyRange, 
 	}
 	result := &selectResult{
 		resp:    resp,
-		results: make(chan PartialResult, 5),
-		done:    make(chan error, 1),
+		results: make(chan resultWithErr, 5),
 		closed:  make(chan struct{}),
 	}
 	// If Aggregates is not nil, we should set result fields latter.

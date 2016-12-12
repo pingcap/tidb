@@ -494,7 +494,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	for i, rst := range rawStmts {
 		startTS := time.Now()
 		// Some execution is done in compile stage, so we reset it before compile.
-		resetStmtStatus(s, rawStmts[0])
+		resetStmtCtx(s, rawStmts[0])
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
 			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
