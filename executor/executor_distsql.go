@@ -440,7 +440,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 func (e *XSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.Datum) []types.Datum {
 	tableRow := make([]types.Datum, len(e.indexPlan.Columns))
 	for i, tblCol := range e.indexPlan.Columns {
-		if mysql.HasPriKeyFlag(tblCol.Flag) && e.indexPlan.Table.PKIsHandle {
+		if table.ToColumn(tblCol).IsPKHandleColumn(e.indexPlan.Table) {
 			if mysql.HasUnsignedFlag(tblCol.FieldType.Flag) {
 				tableRow[i] = types.NewUintDatum(uint64(handle))
 			} else {
