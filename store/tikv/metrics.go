@@ -159,6 +159,23 @@ var (
 			Help:      "Size of kv pairs to write in a transaction. (KB)",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
 		})
+
+	rawkvCmdHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "rawkv_cmd_seconds",
+			Help:      "Bucketed histogram of processing time of rawkv cmds.",
+		}, []string{"type"})
+
+	rawkvSizeHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "rawkv_kv_size",
+			Help:      "Size of key/value to put, in bytes.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
+		}, []string{"type"})
 )
 
 func reportRegionError(e *errorpb.Error) {
@@ -195,4 +212,6 @@ func init() {
 	prometheus.MustRegister(regionErrorCounter)
 	prometheus.MustRegister(txnWriteKVCountHistogram)
 	prometheus.MustRegister(txnWriteSizeHistogram)
+	prometheus.MustRegister(rawkvCmdHistogram)
+	prometheus.MustRegister(rawkvSizeHistogram)
 }
