@@ -35,6 +35,17 @@ const (
 	compareResultNull = -2
 )
 
+// Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
+const (
+	// FlagIgnoreTruncate indicates if truncate error should be ignored.
+	// Read-only statements should ignore truncate error, write statements should not ignore truncate error.
+	FlagIgnoreTruncate uint64 = 1
+	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
+	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
+	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
+	FlagTruncateAsWarning uint64 = 1 << 1
+)
+
 // Evaluator evaluates tipb.Expr.
 type Evaluator struct {
 	Row        map[int64]types.Datum // column values.
@@ -43,9 +54,8 @@ type Evaluator struct {
 }
 
 // NewEvaluator creates a new Evaluator instance.
-func NewEvaluator() *Evaluator {
-	// TODO: use StatementContext input, which require coprocessor handle sql_mode.
-	return &Evaluator{Row: make(map[int64]types.Datum), sc: new(variable.StatementContext)}
+func NewEvaluator(sc *variable.StatementContext) *Evaluator {
+	return &Evaluator{Row: make(map[int64]types.Datum), sc: sc}
 }
 
 type decodedValueList struct {
@@ -117,4 +127,12 @@ func (e *Evaluator) evalIsNull(expr *tipb.Expr) (types.Datum, error) {
 		return types.NewIntDatum(1), nil
 	}
 	return types.NewIntDatum(0), nil
+}
+
+// FlagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
+func FlagsToStatementContext(flags uint64) *variable.StatementContext {
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = (flags & FlagIgnoreTruncate) > 0
+	sc.TruncateAsWarning = (flags & FlagTruncateAsWarning) > 0
+	return sc
 }

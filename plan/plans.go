@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -130,7 +131,7 @@ type Execute struct {
 	basePlan
 
 	Name      string
-	UsingVars []ast.ExprNode
+	UsingVars []expression.Expression
 	ID        uint32
 }
 

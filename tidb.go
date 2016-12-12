@@ -112,20 +112,24 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	return stmts, nil
 }
 
-// Before every execution, we must clear statement status.
-func resetStmtStatus(ctx context.Context, s ast.StmtNode) {
+// Before every execution, we must clear statement context.
+func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(variable.StatementContext)
-	switch stmt := s.(type) {
-	case *ast.ShowStmt:
-		if stmt.Tp == ast.ShowWarnings {
-			sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
+	switch s.(type) {
+	case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
+		sc.IgnoreTruncate = false
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		if _, ok := s.(*ast.UpdateStmt); ok {
+			sc.InUpdateStmt = true
 		}
-	case *ast.UpdateStmt:
-		sc.InUpdateStmt = true
-		sc.TruncateAsError = sessVars.StrictSQLMode
-	case *ast.InsertStmt, *ast.DeleteStmt:
-		sc.TruncateAsError = sessVars.StrictSQLMode
+	default:
+		sc.IgnoreTruncate = true
+		if show, ok := s.(*ast.ShowStmt); ok {
+			if show.Tp == ast.ShowWarnings {
+				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
+			}
+		}
 	}
 	sessVars.StmtCtx = sc
 }
