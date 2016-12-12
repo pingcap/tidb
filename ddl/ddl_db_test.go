@@ -141,6 +141,11 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
 	sql = "alter table test_error_code_succ drop column c3"
 	s.testErrorCode(c, sql, int(tmysql.ErrUnknown))
+	// modify column
+	sql = "alter table test_error_code_succ modify testx.test_error_code_succ.c1 bigint"
+	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
+	sql = "alter table test_error_code_succ modify t.c1 bigint"
+	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 }
 
 func (s *testDBSuite) TestIndex(c *C) {

@@ -43,42 +43,46 @@ func checkFsp(fsp int) (int, error) {
 	return fsp, nil
 }
 
-func parseFrac(s string, fsp int) (int, error) {
+// parseFrac parses the input string according to fsp, returns the microsecond,
+// and also a bool value to indice overflow. eg:
+// "999" fsp=2 will overflow.
+func parseFrac(s string, fsp int) (v int, overflow bool, err error) {
 	if len(s) == 0 {
-		return 0, nil
+		return 0, false, nil
 	}
 
-	var err error
 	fsp, err = checkFsp(fsp)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 
-	// Use float to calculate frac, e.g, "123" -> "0.123"
-	if !strings.HasPrefix(s, ".") && !strings.HasPrefix(s, "0.") {
-		s = "0." + s
+	if fsp >= len(s) {
+		tmp, e := strconv.ParseInt(s, 10, 64)
+		if e != nil {
+			return 0, false, errors.Trace(e)
+		}
+		v = int(float64(tmp) * math.Pow10(MaxFsp-len(s)))
+		return
 	}
 
-	frac, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, errors.Trace(err)
+	// Round when fsp < string length.
+	tmp, e := strconv.ParseInt(s[:fsp+1], 10, 64)
+	if e != nil {
+		return 0, false, errors.Trace(e)
 	}
+	tmp = (tmp + 5) / 10
 
-	// round frac to the nearest value with FSP
-	var round float64
-	pow := math.Pow(10, float64(fsp))
-	digit := pow * frac
-	_, div := math.Modf(digit)
-	if div >= 0.5 {
-		round = math.Ceil(digit)
-	} else {
-		round = math.Floor(digit)
+	if float64(tmp) >= math.Pow10(fsp) {
+		// overflow
+		return 0, true, nil
 	}
 
 	// Get the final frac, with 6 digit number
-	//  0.1236 round 3 -> 124 -> 123000
-	//  0.0312 round 2 -> 3 -> 30000
-	return int(round * math.Pow10(MaxFsp-fsp)), nil
+	//  1236 round 3 -> 124 -> 124000
+	//  0312 round 2 -> 3 -> 30000
+	//  999 round 2 -> 100 -> overflow
+	v = int(float64(tmp) * math.Pow10(MaxFsp-fsp))
+	return
 }
 
 // alignFrac is used to generate alignment frac, like `100` -> `100000`
