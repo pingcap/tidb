@@ -83,20 +83,28 @@ func builtinDate(args []types.Datum, ctx context.Context) (types.Datum, error) {
 func builtinTimeDiff(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	t1, t2 := args[0], args[1]
 	sc := ctx.GetSessionVars().StmtCtx
-	if t1.Kind != mysql.TypeDuration {
-		t1, err = convertToDuration(sc, t1)
+	if t1.Kind() != types.KindMysqlTime {
+		t1, err = convertToTime(sc, t1, types.KindMysqlTime)
+		fmt.Println("t1:", t1.GetMysqlTime().String())
 		if err != nil {
 			return d, errors.Trace(err)
 		}
 	}
-	if t2.Kind != mysql.TypeDuration {
-		t2, err = convertToDuration(sc, t2)
+	if t2.Kind() != types.KindMysqlTime {
+		t2, err = convertToTime(sc, t2, types.KindMysqlTime)
+		fmt.Println("t2:", t2.GetMysqlDuration().String())
 		if err != nil {
 			return d, errors.Trace(err)
 		}
 	}
-
-	return
+	d1 := t1.GetMysqlTime()
+	d2 := t2.GetMysqlTime()
+	fmt.Println("d1:", d1.String(), ", d2: ", d2.String())
+	var t types.Duration
+	t.Duration = d1.Time.GoTime().Sub(d2.Time.GoTime())
+	t.Fsp = d1.Fsp
+	d.SetMysqlDuration(t)
+	return d, nil
 }
 
 func abbrDayOfMonth(arg types.Datum, ctx context.Context) (types.Datum, error) {
