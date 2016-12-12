@@ -1554,7 +1554,7 @@ func (t Time) Format(layout string) (string, error) {
 			continue
 		}
 
-		// it's not in pattern match now
+		// It's not in pattern match now.
 		if b == '%' {
 			inPatternMatch = true
 		} else {
@@ -1562,11 +1562,6 @@ func (t Time) Format(layout string) (string, error) {
 		}
 	}
 	return buf.String(), nil
-}
-
-var abbrevMonthName = []string{
-	"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-	"Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 }
 
 var abbrevWeekdayName = []string{
@@ -1581,7 +1576,7 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		if m == 0 || m > 12 {
 			return errors.Trace(ErrInvalidTimeFormat)
 		}
-		buf.WriteString(abbrevMonthName[m-1])
+		buf.WriteString(MonthNames[m-1][:3])
 	case 'M':
 		m := t.Time.Month()
 		if m == 0 || m > 12 {
