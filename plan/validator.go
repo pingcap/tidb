@@ -97,12 +97,15 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
 			return hasAutoIncrement, nil
 		}
 		for _, op := range colDef.Options[num+1:] {
-			if op.Tp == ast.ColumnOptionDefaultValue {
+			if op.Tp == ast.ColumnOptionDefaultValue && !op.Expr.GetDatum().IsNull() {
 				return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
 			}
 		}
 	}
 	if colDef.Options[num].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != num+1 {
+		if colDef.Options[num].Expr.GetDatum().IsNull() {
+			return hasAutoIncrement, nil
+		}
 		for _, op := range colDef.Options[num+1:] {
 			if op.Tp == ast.ColumnOptionAutoIncrement {
 				return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
