@@ -187,9 +187,7 @@ func (t Time) String() string {
 
 // IsZero returns a boolean indicating whether the time is equal to ZeroTime.
 func (t Time) IsZero() bool {
-	return t.Time.Year() == 0 && t.Time.Month() == 0 && t.Time.Day() == 0 &&
-		t.Time.Hour() == 0 && t.Time.Minute() == 0 && t.Time.Second() == 0 &&
-		t.Time.Microsecond() == 0
+	return isZero(t.Time)
 }
 
 const numberFormat = "20060102150405"
@@ -1122,12 +1120,16 @@ func checkMonthDay(year, month, day int) error {
 	return nil
 }
 
+func isZero(t TimeInternal) bool {
+	return t.Year() == 0 && t.Month() == 0 && t.Day() == 0 &&
+		t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0
+}
+
 func checkTimestampType(t TimeInternal) error {
-	if t.Year() == 0 && t.Month() == 0 && t.Day() == 0 &&
-		t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 &&
-		t.Microsecond() == 0 {
+	if isZero(t) {
 		return nil
 	}
+
 	t1, err := t.GoTime()
 	if err != nil {
 		return errors.Trace(err)
