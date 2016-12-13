@@ -937,8 +937,9 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 	if limit != nil && info.p != nil {
 		if np, ok := info.p.(physicalDistSQLPlan); ok {
 			np.addLimit(limit)
+			scanCount := info.count
 			info.count = limit.Count
-			info.cost = np.calculateCost(info.count)
+			info.cost = np.calculateCost(info.count, scanCount)
 		} else {
 			info = enforceProperty(&requiredProperty{limit: limit}, info)
 		}
