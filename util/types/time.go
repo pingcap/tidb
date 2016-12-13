@@ -890,33 +890,6 @@ func splitDuration(t gotime.Duration) (int, int, int, int, int) {
 
 var maxDaysInMonth = []int{31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
 
-func checkTimeType(t TimeInternal) error {
-	if t.Year() != 0 || t.Month() != 0 || t.Day() != 0 {
-		return ErrInvalidTimeFormat
-	}
-
-	if err := checkTimeRange(t); err != nil {
-		return errors.Trace(err)
-	}
-	minute, second, micro := t.Minute(), t.Second(), t.Microsecond()
-	if minute < 0 || minute >= 60 ||
-		second < 0 || second >= 60 ||
-		micro < 0 {
-		return ErrInvalidTimeFormat
-	}
-	return nil
-}
-
-func checkTimeRange(t TimeInternal) error {
-	if compareTime(t, FromDate(0, 0, 0, -838, 59, 59, 0)) < 0 {
-		return ErrInvalidTimeFormat
-	}
-	if compareTime(t, FromDate(0, 0, 0, 838, 59, 59, 0)) > 0 {
-		return ErrInvalidTimeFormat
-	}
-	return nil
-}
-
 func getTime(num int64, tp byte) (Time, error) {
 	s1 := num / 1000000
 	s2 := num - s1*1000000
