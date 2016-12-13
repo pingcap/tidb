@@ -162,8 +162,9 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 			conds = append(conds, cond.Clone())
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
-		if client != nil && !infoschema.IsMemoryDB(p.DBName.L) &&
-			client.SupportRequestType(kv.ReqTypeSelect, 0) {
+		memDB := infoschema.IsMemoryDB(p.DBName.L)
+		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
+		if isDistReq {
 			ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
 				expressionsToPB(sc, newSel.Conditions, client)
 		}
@@ -243,8 +244,9 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			conds = append(conds, cond.Clone())
 		}
 		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
-		if client != nil && !infoschema.IsMemoryDB(p.DBName.L) &&
-			client.SupportRequestType(kv.ReqTypeIndex, 0) {
+		memDB := infoschema.IsMemoryDB(p.DBName.L)
+		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeIndex, 0)
+		if isDistReq {
 			idxConds, tblConds := detachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
 			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = expressionsToPB(sc, idxConds, client)
 			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = expressionsToPB(sc, tblConds, client)
