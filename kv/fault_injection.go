@@ -52,6 +52,15 @@ func (s *InjectedStore) Begin() (Transaction, error) {
 	}, err
 }
 
+// GetSnapshot creates an injected Snapshot.
+func (s *InjectedStore) GetSnapshot(ver Version) (Snapshot, error) {
+	snapshot, err := s.Storage.GetSnapshot(ver)
+	return &InjectedSnapshot{
+		Snapshot: snapshot,
+		cfg:      s.cfg,
+	}, err
+}
+
 // InjectedTransaction wraps a Transaction with injections.
 type InjectedTransaction struct {
 	Transaction
