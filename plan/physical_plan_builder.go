@@ -129,14 +129,7 @@ func getRowCountByTableRange(sc *variable.StatementContext, statsTbl *statistics
 }
 
 func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
-	table := p.Table
 	client := p.ctx.GetClient()
-	sc := p.ctx.GetSessionVars().StmtCtx
-	txn, err := p.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	var resultPlan PhysicalPlan
 	ts := &PhysicalTableScan{
 		Table:               p.Table,
 		Columns:             p.Columns,
@@ -144,16 +137,24 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
-	ts.tp = "TableScan"
+	ts.tp = Tbl
 	ts.allocator = p.allocator
+	ts.SetSchema(p.GetSchema())
 	ts.initIDAndContext(p.ctx)
+	txn, err := p.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if txn != nil {
 		ts.readOnly = txn.IsReadOnly()
 	} else {
 		ts.readOnly = true
 	}
-	ts.SetSchema(p.GetSchema())
+
+	var resultPlan PhysicalPlan
 	resultPlan = ts
+	table := p.Table
+	sc := p.ctx.GetSessionVars().StmtCtx
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
@@ -161,11 +162,11 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 			conds = append(conds, cond.Clone())
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
-		if client != nil {
-			memDB := infoschema.IsMemoryDB(p.DBName.L)
-			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-				ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions = expressionsToPB(sc, newSel.Conditions, client)
-			}
+		memDB := infoschema.IsMemoryDB(p.DBName.L)
+		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
+		if isDistReq {
+			ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
+				expressionsToPB(sc, newSel.Conditions, client)
 		}
 		err := buildTableRange(ts)
 		if err != nil {
@@ -207,14 +208,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 }
 
 func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.IndexInfo) (*physicalPlanInfo, error) {
-	statsTbl := p.statisticTable
-	var resultPlan PhysicalPlan
 	client := p.ctx.GetClient()
-	sc := p.ctx.GetSessionVars().StmtCtx
-	txn, err := p.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	is := &PhysicalIndexScan{
 		Index:               index,
 		Table:               p.Table,
@@ -224,17 +218,25 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
-	is.tp = "IndexScan"
+	is.tp = Idx
 	is.allocator = p.allocator
 	is.initIDAndContext(p.ctx)
+	is.SetSchema(p.schema)
+	txn, err := p.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if txn != nil {
 		is.readOnly = txn.IsReadOnly()
 	} else {
 		is.readOnly = true
 	}
-	is.SetSchema(p.schema)
-	rowCount := uint64(statsTbl.Count)
+
+	var resultPlan PhysicalPlan
 	resultPlan = is
+	statsTbl := p.statisticTable
+	rowCount := uint64(statsTbl.Count)
+	sc := p.ctx.GetSessionVars().StmtCtx
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
@@ -242,14 +244,13 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			conds = append(conds, cond.Clone())
 		}
 		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
-		if client != nil {
-			memDB := infoschema.IsMemoryDB(p.DBName.L)
-			if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
-				indexConditions, tableConditions := detachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
-				is.IndexConditionPBExpr, is.indexFilterConditions, indexConditions = expressionsToPB(sc, indexConditions, client)
-				is.TableConditionPBExpr, is.tableFilterConditions, tableConditions = expressionsToPB(sc, tableConditions, client)
-				newSel.Conditions = append(indexConditions, tableConditions...)
-			}
+		memDB := infoschema.IsMemoryDB(p.DBName.L)
+		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeIndex, 0)
+		if isDistReq {
+			idxConds, tblConds := detachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
+			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = expressionsToPB(sc, idxConds, client)
+			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = expressionsToPB(sc, tblConds, client)
+			newSel.Conditions = append(idxConds, tblConds...)
 		}
 		err := buildIndexRange(p.ctx.GetSessionVars().StmtCtx, is)
 		if err != nil {
@@ -343,23 +344,25 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 // that evaluates to false. If it is, there is no need for a real physical scan, a dummy scan will do.
 func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	sel, isSel := p.GetParentByIndex(0).(*Selection)
-	if isSel {
-		for _, cond := range sel.Conditions {
-			if con, ok := cond.(*expression.Constant); ok {
-				result, err := expression.EvalBool(con, nil, p.ctx)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if !result {
-					dummy := &PhysicalDummyScan{}
-					dummy.tp = "Dummy"
-					dummy.allocator = p.allocator
-					dummy.initIDAndContext(p.ctx)
-					dummy.SetSchema(p.schema)
-					info := &physicalPlanInfo{p: dummy}
-					p.storePlanInfo(prop, info)
-					return info, nil
-				}
+	if !isSel {
+		return nil, nil
+	}
+
+	for _, cond := range sel.Conditions {
+		if con, ok := cond.(*expression.Constant); ok {
+			result, err := expression.EvalBool(con, nil, p.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !result {
+				dummy := &PhysicalDummyScan{}
+				dummy.tp = "Dummy"
+				dummy.allocator = p.allocator
+				dummy.initIDAndContext(p.ctx)
+				dummy.SetSchema(p.schema)
+				info := &physicalPlanInfo{p: dummy}
+				p.storePlanInfo(prop, info)
+				return info, nil
 			}
 		}
 	}
