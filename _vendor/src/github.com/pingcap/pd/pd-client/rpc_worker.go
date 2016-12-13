@@ -219,18 +219,21 @@ func newMsgID() uint64 {
 }
 
 func (w *rpcWorker) initClusterID() error {
-	conn := mustNewConn(w.urls, w.quit)
-	if conn == nil {
-		return errors.New("client closed")
-	}
-	defer conn.Close()
-
 	for i := 0; i < maxInitClusterRetries; i++ {
+		conn := mustNewConn(w.urls, w.quit)
+		if conn == nil {
+			return errors.New("client closed")
+		}
+
 		clusterID, err := w.getClusterID(conn.ReadWriter)
+		// We need to close this connection no matter success or not.
+		conn.Close()
+
 		if err == nil {
 			w.clusterID = clusterID
 			return nil
 		}
+
 		log.Errorf("[pd] failed to get cluster id: %v", err)
 		time.Sleep(time.Second)
 	}
