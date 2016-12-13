@@ -167,20 +167,20 @@ func EncodeComparableVarint(b []byte, v int64) []byte {
 	if v < 0 {
 		// All negative value has a tag byte prefix (negativeTagEnd - length).
 		// Smaller negative value encodes to more bytes, has smaller tag.
-		if v >= 0xff {
+		if v >= -0xff {
 			return append(b, negativeTagEnd-1, byte(v))
-		} else if v >= 0xffff {
+		} else if v >= -0xffff {
 			return append(b, negativeTagEnd-2, byte(v>>8), byte(v))
-		} else if v >= 0xffffff {
+		} else if v >= -0xffffff {
 			return append(b, negativeTagEnd-3, byte(v>>16), byte(v>>8), byte(v))
-		} else if v >= 0xffffffff {
+		} else if v >= -0xffffffff {
 			return append(b, negativeTagEnd-4, byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
-		} else if v >= 0xffffffffff {
+		} else if v >= -0xffffffffff {
 			return append(b, negativeTagEnd-5, byte(v>>32), byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
-		} else if v >= 0xffffffffffff {
+		} else if v >= -0xffffffffffff {
 			return append(b, negativeTagEnd-6, byte(v>>40), byte(v>>32), byte(v>>24), byte(v>>16), byte(v>>8),
 				byte(v))
-		} else if v >= 0xffffffffffffff {
+		} else if v >= -0xffffffffffffff {
 			return append(b, negativeTagEnd-7, byte(v>>48), byte(v>>40), byte(v>>32), byte(v>>24), byte(v>>16),
 				byte(v>>8), byte(v))
 		}
