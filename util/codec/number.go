@@ -162,7 +162,7 @@ const (
 	positiveTagStart = 0xff - 8 // Positive tag is (positiveTagStart + length).
 )
 
-// EncodeCompareableVarint encodes a int64 to a mem-comparable bytes.
+// EncodeComparableVarint encodes a int64 to a mem-comparable bytes.
 func EncodeComparableVarint(b []byte, v int64) []byte {
 	if v < 0 {
 		// All negative value has a tag byte prefix (negativeTagEnd - length).
@@ -221,26 +221,26 @@ func EncodeComparableUvarint(b []byte, v uint64) []byte {
 }
 
 var (
-	decodeInsufficientErr = errors.New("insufficient bytes to decode value")
-	decodeInvalidErr      = errors.New("invalid bytes to decode value")
+	errDecodeInsufficient = errors.New("insufficient bytes to decode value")
+	errDecodeInvalid      = errors.New("invalid bytes to decode value")
 )
 
 // DecodeComparableUvarint decodes mem-comparable uvarint.
 func DecodeComparableUvarint(b []byte) ([]byte, uint64, error) {
 	if len(b) == 0 {
-		return nil, 0, decodeInsufficientErr
+		return nil, 0, errDecodeInsufficient
 	}
 	first := b[0]
 	b = b[1:]
 	if first < negativeTagEnd {
-		return nil, 0, decodeInvalidErr
+		return nil, 0, errors.Trace(errDecodeInvalid)
 	}
 	if first <= positiveTagStart {
 		return b, uint64(first) - negativeTagEnd, nil
 	}
 	length := int(first) - positiveTagStart
 	if len(b) < length {
-		return nil, 0, decodeInsufficientErr
+		return nil, 0, errors.Trace(errDecodeInsufficient)
 	}
 	var v uint64
 	for _, c := range b[:length] {
@@ -252,7 +252,7 @@ func DecodeComparableUvarint(b []byte) ([]byte, uint64, error) {
 // DecodeComparableVarint decodes mem-comparable varint.
 func DecodeComparableVarint(b []byte) ([]byte, int64, error) {
 	if len(b) == 0 {
-		return nil, 0, decodeInsufficientErr
+		return nil, 0, errors.Trace(errDecodeInsufficient)
 	}
 	first := b[0]
 	if first >= negativeTagEnd && first <= positiveTagStart {
@@ -268,7 +268,7 @@ func DecodeComparableVarint(b []byte) ([]byte, int64, error) {
 		length = int(first) - positiveTagStart
 	}
 	if len(b) < length {
-		return nil, 0, errors.New("invalid bytes to decode value")
+		return nil, 0, errors.Trace(errDecodeInsufficient)
 	}
 	for _, c := range b[:length] {
 		v = (v << 8) | uint64(c)
