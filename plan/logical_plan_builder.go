@@ -890,7 +890,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	p := &DataSource{
 		table:           tn,
 		Table:           tn.TableInfo,
-		baseLogicalPlan: newBaseLogicalPlan(Ts, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(Tbl, b.allocator),
 		statisticTable:  statisticTable,
 	}
 	p.self = p
