@@ -28,6 +28,8 @@ import (
 const (
 	// Sel is the type of Selection.
 	Sel = "Selection"
+	// St is the type of Set.
+	St = "Set"
 	// Proj is the type of Projection.
 	Proj = "Projection"
 	// Agg is the type of Aggregation.

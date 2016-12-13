@@ -133,105 +133,7 @@ type TimeInternal interface {
 	YearDay() int
 	ISOWeek() (int, int)
 	Microsecond() int
-	GoTime() gotime.Time
-}
-
-type timeInternalImpl gotime.Time
-
-func (t timeInternalImpl) Year() int {
-	year, _, _ := gotime.Time(t).Date()
-	return year
-}
-
-func (t timeInternalImpl) Month() int {
-	_, month, _ := gotime.Time(t).Date()
-	return int(month)
-}
-
-func (t timeInternalImpl) Day() int {
-	_, _, day := gotime.Time(t).Date()
-	return day
-}
-
-func (t timeInternalImpl) Hour() int {
-	hour, _, _ := gotime.Time(t).Clock()
-	return hour
-}
-
-func (t timeInternalImpl) Minute() int {
-	_, minute, _ := gotime.Time(t).Clock()
-	return minute
-}
-
-func (t timeInternalImpl) Second() int {
-	_, _, second := gotime.Time(t).Clock()
-	return second
-}
-
-func (t timeInternalImpl) Microsecond() int {
-	return gotime.Time(t).Nanosecond() / 1000
-}
-
-func (t timeInternalImpl) Weekday() gotime.Weekday {
-	return gotime.Time(t).Weekday()
-}
-
-func (t timeInternalImpl) YearDay() int {
-	return gotime.Time(t).YearDay()
-}
-
-func (t timeInternalImpl) ISOWeek() (int, int) {
-	return gotime.Time(t).ISOWeek()
-}
-
-func (t timeInternalImpl) GoTime() gotime.Time {
-	return gotime.Time(t)
-}
-
-type timeInternalZero struct{}
-
-func (t timeInternalZero) Year() int {
-	return 0
-}
-
-func (t timeInternalZero) Month() int {
-	return 0
-}
-
-func (t timeInternalZero) Day() int {
-	return 0
-}
-
-func (t timeInternalZero) Hour() int {
-	return 0
-}
-
-func (t timeInternalZero) Minute() int {
-	return 0
-}
-
-func (t timeInternalZero) Second() int {
-	return 0
-}
-
-func (t timeInternalZero) Microsecond() int {
-	return 0
-}
-
-func (t timeInternalZero) Weekday() gotime.Weekday {
-	return gotime.Monday
-}
-
-func (t timeInternalZero) YearDay() int {
-	return 0
-}
-
-func (t timeInternalZero) ISOWeek() (int, int) {
-	return 0, 0
-}
-
-func (t timeInternalZero) GoTime() gotime.Time {
-	return gotime.Date(0, 0, 0, 0, 0, 0, 0, gotime.Local)
+	GoTime() (gotime.Time, error)
 }
 
 // FromGoTime translates time.Time to mysql time internal representation.
@@ -268,24 +170,19 @@ func CurrentTime(tp uint8) Time {
 }
 
 func (t Time) String() string {
-	if t.IsZero() {
-		if t.Type == mysql.TypeDate {
-			return zeroDateStr
-		}
-
-		return zeroDatetimeStr
-	}
-
 	if t.Type == mysql.TypeDate {
-		return t.Time.GoTime().Format(DateFormat)
+		// We control the format, so no error would occur.
+		str, _ := t.Format("%Y-%m-%d")
+		return str
 	}
 
-	tfStr := TimeFormat
+	str, _ := t.Format("%Y-%m-%d %H:%i:%s")
 	if t.Fsp > 0 {
-		tfStr = fmt.Sprintf("%s.%s", tfStr, strings.Repeat("0", t.Fsp))
+		tmp := fmt.Sprintf(".%06d", t.Time.Microsecond())
+		str = str + tmp[:1+t.Fsp]
 	}
 
-	return t.Time.GoTime().Format(tfStr)
+	return str
 }
 
 // IsZero returns a boolean indicating whether the time is equal to ZeroTime.
@@ -319,7 +216,13 @@ func (t Time) ToNumber() *MyDecimal {
 		tfStr = fmt.Sprintf("%s.%s", tfStr, strings.Repeat("0", t.Fsp))
 	}
 
-	s := t.Time.GoTime().Format(tfStr)
+	var s string
+	if t1, err := t.Time.GoTime(); err == nil {
+		s = t1.Format(tfStr)
+	} else {
+		s = ErrInvalidTimeFormat.Error()
+	}
+
 	// We skip checking error here because time formatted string can be parsed certainly.
 	dec := new(MyDecimal)
 	dec.FromString([]byte(s))
@@ -371,15 +274,37 @@ func (t Time) ConvertToDuration() (Duration, error) {
 // Compare returns an integer comparing the time instant t to o.
 // If t is after o, return 1, equal o, return 0, before o, return -1.
 func (t Time) Compare(o Time) int {
-	t1 := t.Time.GoTime()
-	o1 := o.Time.GoTime()
-	if t1.After(o1) {
+	switch {
+	case t.Time.Year() > o.Time.Year():
 		return 1
-	} else if t1.Equal(o1) {
-		return 0
-	} else {
+	case t.Time.Year() < o.Time.Year():
+		return -1
+	case t.Time.Month() > o.Time.Month():
+		return 1
+	case t.Time.Month() < o.Time.Month():
+		return -1
+	case t.Time.Day() > o.Time.Day():
+		return 1
+	case t.Time.Day() < o.Time.Day():
+		return -1
+	case t.Time.Hour() > o.Time.Hour():
+		return 1
+	case t.Time.Hour() < o.Time.Hour():
+		return -1
+	case t.Time.Minute() > o.Time.Minute():
+		return 1
+	case t.Time.Minute() < o.Time.Minute():
+		return -1
+	case t.Time.Second() > o.Time.Second():
+		return 1
+	case t.Time.Second() < o.Time.Second():
+		return -1
+	case t.Time.Microsecond() > o.Time.Microsecond():
+		return 1
+	case t.Time.Microsecond() < o.Time.Microsecond():
 		return -1
 	}
+	return 0
 }
 
 // CompareString is like Compare,
@@ -410,7 +335,9 @@ func (t Time) roundFrac(fsp int) (Time, error) {
 		return t, nil
 	}
 
-	nt := t.Time.GoTime().Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond)
+	t1, _ := t.Time.GoTime()
+	// TODO: Fix here.
+	nt := t1.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond)
 	return Time{Time: FromGoTime(nt), Type: t.Type, Fsp: fsp}, nil
 }
 
@@ -440,21 +367,26 @@ func RoundFrac(t gotime.Time, fsp int) (gotime.Time, error) {
 //
 //   0YYYYYYY.YYYYYYYY.YYdddddh.hhhhmmmm.mmssssss.ffffffff.ffffffff.ffffffff
 //
-func (t Time) ToPackedUint() uint64 {
+func (t Time) ToPackedUint() (uint64, error) {
 	tm := t.Time
 	if t.IsZero() {
-		return 0
+		return 0, nil
 	}
 	if t.Type == mysql.TypeTimestamp {
-		utc := t.Time.GoTime().UTC()
-		tm = FromGoTime(utc)
+		if t1, err := t.Time.GoTime(); err == nil {
+			utc := t1.UTC()
+			tm = FromGoTime(utc)
+		} else {
+			// mysql timestamp month and day can't be zero.
+			return 0, errors.Trace(err)
+		}
 	}
 	year, month, day := tm.Year(), tm.Month(), tm.Day()
 	hour, minute, sec := tm.Hour(), tm.Minute(), tm.Second()
 	ymd := uint64(((year*13 + int(month)) << 5) | day)
 	hms := uint64(hour<<12 | minute<<6 | sec)
 	micro := uint64(tm.Microsecond())
-	return ((ymd<<17 | hms) << 24) | micro
+	return ((ymd<<17 | hms) << 24) | micro, nil
 }
 
 // FromPackedUint decodes Time from a packed uint64 value.
@@ -480,11 +412,14 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	loc := local
 	if t.Type == mysql.TypeTimestamp {
 		loc = gotime.UTC
+		t.Time = FromGoTime(gotime.Date(year, gotime.Month(month), day, hour, minute, second, microsec*1000, loc).In(local))
+	} else {
+		t.Time = FromDate(year, month, day, hour, minute, second, microsec)
 	}
-	t.Time = FromGoTime(gotime.Date(year, gotime.Month(month), day, hour, minute, second, microsec*1000, loc).In(local))
 
 	return nil
 }
@@ -603,6 +538,7 @@ func parseDatetime(str string, fsp int) (Time, error) {
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
 	}
+
 	if overflow { // handle overflow
 		frac = 0
 		second++
@@ -977,7 +913,7 @@ func checkTime(year int, month int, day int, hour int, minute int, second int, f
 	// so here only check year from 0~9999.
 	if year < 0 || year > 9999 ||
 		month <= 0 || month > 12 ||
-		day <= 0 || day > maxDaysInMonth[month-1] ||
+		day <= 0 || (day > maxDaysInMonth[month-1]) ||
 		(month == 2 && day == 29 && year%4 != 0) ||
 		hour < 0 || hour >= 24 ||
 		minute < 0 || minute >= 60 ||
@@ -1001,14 +937,6 @@ func getTime(num int64, tp byte) (Time, error) {
 	s2 %= 10000
 	minute := int(s2 / 100)
 	second := int(s2 % 100)
-
-	if err := checkTime(year, month, day, hour, minute, second, 0); err != nil {
-		return Time{
-			Time: ZeroTime,
-			Type: tp,
-			Fsp:  DefaultFsp,
-		}, err
-	}
 
 	t, err := newTime(year, month, day, hour, minute, second, 0)
 	return Time{
@@ -1180,7 +1108,12 @@ func checkDatetime(t Time) bool {
 		return true
 	}
 
-	if t.Time.GoTime().After(MaxDatetime) || t.Time.GoTime().Before(MinDatetime) {
+	t1, err := t.Time.GoTime()
+	if err != nil {
+		return false
+	}
+
+	if t1.After(MaxDatetime) || t1.Before(MinDatetime) {
 		return false
 	}
 
@@ -1192,7 +1125,12 @@ func checkTimestamp(t Time) bool {
 		return true
 	}
 
-	if t.Time.GoTime().After(MaxTimestamp) || t.Time.GoTime().Before(MinTimestamp) {
+	t1, err := t.Time.GoTime()
+	if err != nil {
+		return false
+	}
+
+	if t1.After(MaxTimestamp) || t1.Before(MinTimestamp) {
 		return false
 	}
 
@@ -1213,10 +1151,18 @@ func ExtractTimeNum(unit string, t Time) (int64, error) {
 	case "DAY":
 		return int64(t.Time.Day()), nil
 	case "WEEK":
-		_, week := t.Time.GoTime().ISOWeek()
+		t1, err := t.Time.GoTime()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		_, week := t1.ISOWeek()
 		return int64(week), nil
 	case "MONTH":
-		return int64(t.Time.Month()), nil
+		t1, err := t.Time.GoTime()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return int64(t1.Month()), nil
 	case "QUARTER":
 		m := int64(t.Time.Month())
 		// 1 - 3 -> 1
@@ -1592,4 +1538,148 @@ func IsDateFormat(format string) bool {
 // ParseTimeFromInt64 parses mysql time value from int64.
 func ParseTimeFromInt64(num int64) (Time, error) {
 	return parseDateTimeFromNum(num)
+}
+
+// Format returns a textual representation of the time value formatted
+// according to layout.
+// See: http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
+func (t Time) Format(layout string) (string, error) {
+	var buf bytes.Buffer
+	inPatternMatch := false
+	for _, b := range layout {
+		if inPatternMatch {
+			if err := t.convertDateFormat(b, &buf); err != nil {
+				return "", errors.Trace(err)
+			}
+			inPatternMatch = false
+			continue
+		}
+
+		// It's not in pattern match now.
+		if b == '%' {
+			inPatternMatch = true
+		} else {
+			buf.WriteRune(b)
+		}
+	}
+	return buf.String(), nil
+}
+
+var abbrevWeekdayName = []string{
+	"Sun", "Mon", "Tue",
+	"Wed", "Thu", "Fri", "Sat",
+}
+
+func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
+	switch b {
+	case 'b':
+		m := t.Time.Month()
+		if m == 0 || m > 12 {
+			return errors.Trace(ErrInvalidTimeFormat)
+		}
+		buf.WriteString(MonthNames[m-1][:3])
+	case 'M':
+		m := t.Time.Month()
+		if m == 0 || m > 12 {
+			return errors.Trace(ErrInvalidTimeFormat)
+		}
+		buf.WriteString(MonthNames[m-1])
+	case 'm':
+		fmt.Fprintf(buf, "%02d", t.Time.Month())
+	case 'c':
+		fmt.Fprintf(buf, "%d", t.Time.Month())
+	case 'D':
+		fmt.Fprintf(buf, "%d%s", t.Time.Day(), abbrDayOfMonth(t.Time.Day()))
+	case 'd':
+		fmt.Fprintf(buf, "%02d", t.Time.Day())
+	case 'e':
+		fmt.Fprintf(buf, "%d", t.Time.Day())
+	case 'j':
+		fmt.Fprintf(buf, "%03d", t.Time.YearDay())
+	case 'H':
+		fmt.Fprintf(buf, "%02d", t.Time.Hour())
+	case 'k':
+		fmt.Fprintf(buf, "%d", t.Time.Hour())
+	case 'h', 'I':
+		t := t.Time.Hour()
+		if t == 0 || t == 12 {
+			fmt.Fprintf(buf, "%02d", 12)
+		} else {
+			fmt.Fprintf(buf, "%02d", t%12)
+		}
+	case 'l':
+		t := t.Time.Hour()
+		if t == 0 || t == 12 {
+			fmt.Fprintf(buf, "%d", 12)
+		} else {
+			fmt.Fprintf(buf, "%d", t%12)
+		}
+	case 'i':
+		fmt.Fprintf(buf, "%02d", t.Time.Minute())
+	case 'p':
+		if t.Time.Hour() < 12 {
+			buf.WriteString("AM")
+		} else {
+			buf.WriteString("PM")
+		}
+	case 'r':
+		h := t.Time.Hour()
+		switch {
+		case h == 0:
+			fmt.Fprintf(buf, "%02d:%02d:%02d AM", 12, t.Time.Minute(), t.Time.Second())
+		case h == 12:
+			fmt.Fprintf(buf, "%02d:%02d:%02d PM", 12, t.Time.Minute(), t.Time.Second())
+		case h < 12:
+			fmt.Fprintf(buf, "%02d:%02d:%02d AM", h, t.Time.Minute(), t.Time.Second())
+		default:
+			fmt.Fprintf(buf, "%02d:%02d:%02d PM", h-12, t.Time.Minute(), t.Time.Second())
+		}
+	case 'T':
+		fmt.Fprintf(buf, "%02d:%02d:%02d", t.Time.Hour(), t.Time.Minute(), t.Time.Second())
+	case 'S', 's':
+		fmt.Fprintf(buf, "%02d", t.Time.Second())
+	case 'f':
+		fmt.Fprintf(buf, "%06d", t.Time.Microsecond())
+	case 'U', 'u', 'V', 'v':
+		// TODO: Fix here.
+		// MySQL may use Sunday or Monday as the first day of week, U u V v controls which,
+		// but Go always use Sunday as the first day of week.
+		_, w := t.Time.ISOWeek()
+		fmt.Fprintf(buf, "%02d", w)
+	case 'a':
+		weekday := t.Time.Weekday()
+		buf.WriteString(abbrevWeekdayName[weekday])
+	case 'W':
+		buf.WriteString(t.Time.Weekday().String())
+	case 'w':
+		fmt.Fprintf(buf, "%d", int(t.Time.Weekday()))
+	case 'X', 'x':
+		// TODO: Fix here.
+		year, _ := t.Time.ISOWeek()
+		fmt.Fprintf(buf, "%04d", year)
+	case 'Y':
+		fmt.Fprintf(buf, "%04d", t.Time.Year())
+	case 'y':
+		str := fmt.Sprintf("%04d", t.Time.Year())
+		buf.WriteString(str[2:])
+	default:
+		buf.WriteRune(b)
+	}
+
+	return nil
+}
+
+func abbrDayOfMonth(day int) string {
+	var str string
+	switch day {
+	case 1, 21, 31:
+		str = "st"
+	case 2, 22:
+		str = "nd"
+	case 3, 23:
+		str = "rd"
+	default:
+		str = "th"
+	}
+	return str
 }
