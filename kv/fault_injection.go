@@ -15,11 +15,13 @@ package kv
 
 import "sync"
 
+// InjectionConfig is used for fault injections for KV components.
 type InjectionConfig struct {
 	sync.RWMutex
 	getError error // kv.Get() always return this error.
 }
 
+// SetGetError injects an error for all kv.Get() methods.
 func (c *InjectionConfig) SetGetError(err error) {
 	c.Lock()
 	defer c.Unlock()
@@ -27,11 +29,13 @@ func (c *InjectionConfig) SetGetError(err error) {
 	c.getError = err
 }
 
+// InjectedStore wraps a Storage with injections.
 type InjectedStore struct {
 	Storage
 	cfg *InjectionConfig
 }
 
+// NewInjectedStore creates a InjectedStore with config.
 func NewInjectedStore(store Storage, cfg *InjectionConfig) Storage {
 	return &InjectedStore{
 		Storage: store,
@@ -39,6 +43,7 @@ func NewInjectedStore(store Storage, cfg *InjectionConfig) Storage {
 	}
 }
 
+// Begin creates an injected Transaction.
 func (s *InjectedStore) Begin() (Transaction, error) {
 	txn, err := s.Storage.Begin()
 	return &InjectedTransaction{
@@ -47,11 +52,13 @@ func (s *InjectedStore) Begin() (Transaction, error) {
 	}, err
 }
 
+// InjectedTransaction wraps a Transaction with injections.
 type InjectedTransaction struct {
 	Transaction
 	cfg *InjectionConfig
 }
 
+// Get returns an error if cfg.getError is set.
 func (t *InjectedTransaction) Get(k Key) ([]byte, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
@@ -61,11 +68,13 @@ func (t *InjectedTransaction) Get(k Key) ([]byte, error) {
 	return t.Transaction.Get(k)
 }
 
+// InjectedSnapshot wraps a Snapshot with injections.
 type InjectedSnapshot struct {
 	Snapshot
 	cfg *InjectionConfig
 }
 
+// Get returns an error if cfg.getError is set.
 func (t *InjectedSnapshot) Get(k Key) ([]byte, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
