@@ -239,6 +239,11 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 		_, v, err = DecodeVarint(b)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t)
+
+		b = EncodeComparableVarint(nil, t)
+		_, v, err = DecodeComparableVarint(b)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, t)
 	}
 
 	tblUint64 := []uint64{
@@ -270,6 +275,11 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 
 		b = EncodeUvarint(nil, t)
 		_, v, err = DecodeUvarint(b)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, t)
+
+		b = EncodeComparableUvarint(nil, t)
+		_, v, err = DecodeComparableUvarint(b)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t)
 	}
@@ -309,6 +319,11 @@ func (s *testCodecSuite) TestNumberOrder(c *C) {
 
 		ret = bytes.Compare(b1, b2)
 		c.Assert(ret, Equals, -t.Ret)
+
+		b1 = EncodeComparableVarint(nil, t.Arg1)
+		b2 = EncodeComparableVarint(nil, t.Arg2)
+		ret = bytes.Compare(b1, b2)
+		c.Assert(ret, Equals, t.Ret)
 	}
 
 	tblUint64 := []struct {
@@ -341,6 +356,11 @@ func (s *testCodecSuite) TestNumberOrder(c *C) {
 
 		ret = bytes.Compare(b1, b2)
 		c.Assert(ret, Equals, -t.Ret)
+
+		b1 = EncodeComparableUvarint(nil, t.Arg1)
+		b2 = EncodeComparableUvarint(nil, t.Arg2)
+		ret = bytes.Compare(b1, b2)
+		c.Assert(ret, Equals, t.Ret)
 	}
 }
 
