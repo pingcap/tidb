@@ -1119,9 +1119,6 @@ func checkDateType(t TimeInternal) error {
 }
 
 func checkDateRange(t TimeInternal) error {
-	// if compareTime(t, FromDate(1000, 1, 1, 0, 0, 0, 0)) < 0 {
-	// 	return ErrInvalidTimeFormat
-	// }
 	// Oddly enough, MySQL document says date range should larger than '1000-01-01',
 	// but we can insert '0001-01-01' actually.
 	if t.Year() < 0 || t.Month() < 0 || t.Day() < 0 {
