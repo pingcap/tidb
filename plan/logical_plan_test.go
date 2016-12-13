@@ -540,6 +540,14 @@ func (s *testPlanSuite) TestLogicalPlanBuilder(c *C) {
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
 			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a),sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
 		},
+		{
+			sql:  "update t set t.a = t.a * 1.5 where t.a >= 1000 order by t.a desc limit 10",
+			plan: "DataScan(t)->Selection->Sort->Limit->*plan.Update",
+		},
+		{
+			sql:  "delete from t where t.a >= 1000 order by t.a desc limit 10",
+			plan: "DataScan(t)->Selection->Sort->Limit->*plan.Delete",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
