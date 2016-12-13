@@ -58,9 +58,7 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 		}
 
 		col.FieldType = *types.NewFieldType(mysql.TypeLong)
-
-		col.ID, err = d.genGlobalID()
-		c.Assert(err, IsNil)
+		col.ID = allocateColumnID(tblInfo)
 		cols[i] = col
 	}
 

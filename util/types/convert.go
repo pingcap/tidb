@@ -21,21 +21,11 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
-
-var (
-	// ErrValueTruncated is used when a value has been truncated during conversion.
-	ErrValueTruncated = errors.New("value has been truncated")
-)
-
-// InvConv returns a failed conversion error.
-func invConv(val interface{}, tp byte) (interface{}, error) {
-	return nil, errors.Errorf("cannot convert %v (type %T) to type %s", val, val, TypeStr(tp))
-}
 
 func truncateStr(str string, flen int) string {
 	if flen != UnspecifiedLength && len(str) > flen {
@@ -71,8 +61,8 @@ var signedLowerBound = map[byte]int64{
 	mysql.TypeLonglong: math.MinInt64,
 }
 
-func convertFloatToInt(val float64, lowerBound int64, upperBound int64, tp byte) (int64, error) {
-	val = RoundFloat(val)
+func convertFloatToInt(sc *variable.StatementContext, fval float64, lowerBound, upperBound int64, tp byte) (int64, error) {
+	val := RoundFloat(fval)
 	if val < float64(lowerBound) {
 		return lowerBound, overflow(val, tp)
 	}
@@ -80,7 +70,6 @@ func convertFloatToInt(val float64, lowerBound int64, upperBound int64, tp byte)
 	if val > float64(upperBound) {
 		return upperBound, overflow(val, tp)
 	}
-
 	return int64(val), nil
 }
 
@@ -124,8 +113,8 @@ func convertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 	return val, nil
 }
 
-func convertFloatToUint(val float64, upperBound uint64, tp byte) (uint64, error) {
-	val = RoundFloat(val)
+func convertFloatToUint(sc *variable.StatementContext, fval float64, upperBound uint64, tp byte) (uint64, error) {
+	val := RoundFloat(fval)
 	if val < 0 {
 		return uint64(int64(val)), overflow(val, tp)
 	}
@@ -133,7 +122,6 @@ func convertFloatToUint(val float64, upperBound uint64, tp byte) (uint64, error)
 	if val > float64(upperBound) {
 		return upperBound, overflow(val, tp)
 	}
-
 	return uint64(val), nil
 }
 
@@ -146,89 +134,158 @@ func isCastType(tp byte) bool {
 	return false
 }
 
-// Convert converts the val with type tp.
-func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
-	d := NewDatum(val)
-	ret, err := d.ConvertTo(target)
+// StrToInt converts a string to an integer at the best-effort.
+func StrToInt(sc *variable.StatementContext, str string) (int64, error) {
+	str = strings.TrimSpace(str)
+	validPrefix, err := getValidIntPrefix(sc, str)
+	iVal, err1 := strconv.ParseInt(validPrefix, 10, 64)
+	if err1 != nil {
+		return iVal, errors.Trace(ErrOverflow)
+	}
+	return iVal, errors.Trace(err)
+}
+
+// StrToUint converts a string to an unsigned interger at the best-effortt.
+func StrToUint(sc *variable.StatementContext, str string) (uint64, error) {
+	str = strings.TrimSpace(str)
+	validPrefix, err := getValidIntPrefix(sc, str)
+	if validPrefix[0] == '+' {
+		validPrefix = validPrefix[1:]
+	}
+	uVal, err1 := strconv.ParseUint(validPrefix, 10, 64)
+	if err1 != nil {
+		return uVal, errors.Trace(ErrOverflow)
+	}
+	return uVal, errors.Trace(err)
+}
+
+// getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
+func getValidIntPrefix(sc *variable.StatementContext, str string) (string, error) {
+	floatPrefix, err := getValidFloatPrefix(sc, str)
 	if err != nil {
-		return ret.GetValue(), errors.Trace(err)
+		return floatPrefix, errors.Trace(err)
 	}
-	return ret.GetValue(), nil
+	return floatStrToIntStr(floatPrefix)
 }
 
-// StrToInt converts a string to an integer in best effort.
-// TODO: handle overflow and add unittest.
-func StrToInt(str string) (int64, error) {
-	str = strings.TrimSpace(str)
-	if len(str) == 0 {
-		return 0, nil
-	}
-	negative := false
-	i := 0
-	if str[i] == '-' {
-		negative = true
-		i++
-	} else if str[i] == '+' {
-		i++
-	}
-	r := int64(0)
-	for ; i < len(str); i++ {
-		if !unicode.IsDigit(rune(str[i])) {
-			break
+// floatStrToIntStr converts a valid float string into valid integer string which can be parsed by
+// strconv.ParseInt, we can't parse float first then convert it to string because precision will
+// be lost.
+func floatStrToIntStr(validFloat string) (string, error) {
+	var dotIdx = -1
+	var eIdx = -1
+	for i := 0; i < len(validFloat); i++ {
+		switch validFloat[i] {
+		case '.':
+			dotIdx = i
+		case 'e', 'E':
+			eIdx = i
 		}
-		r = r*10 + int64(str[i]-'0')
 	}
-	if negative {
-		r = -r
+	if dotIdx == -1 && eIdx == -1 {
+		return validFloat, nil
 	}
-	// TODO: if i < len(str), we should return an error.
-	return r, nil
+	var intCnt int
+	digits := make([]byte, 0, len(validFloat))
+	if dotIdx == -1 {
+		digits = append(digits, validFloat[:eIdx]...)
+		intCnt = len(digits)
+	} else {
+		digits = append(digits, validFloat[:dotIdx]...)
+		intCnt = len(digits)
+		if eIdx == -1 {
+			digits = append(digits, validFloat[dotIdx+1:]...)
+		} else {
+			digits = append(digits, validFloat[dotIdx+1:eIdx]...)
+		}
+	}
+	if eIdx != -1 {
+		exp, err := strconv.Atoi(validFloat[eIdx+1:])
+		if err != nil {
+			return validFloat, errors.Trace(err)
+		}
+		if exp > 0 && intCnt > (math.MaxInt64-exp) {
+			// (exp + incCnt) overflows MaxInt64.
+			return validFloat, errors.Trace(ErrOverflow)
+		}
+		intCnt += exp
+	}
+	if intCnt <= 0 {
+		return "0", nil
+	}
+	if intCnt == 1 && (digits[0] == '-' || digits[0] == '+') {
+		return "0", nil
+	}
+	var validInt string
+	if intCnt <= len(digits) {
+		validInt = string(digits[:intCnt])
+	} else {
+		extraZeroCount := intCnt - len(digits)
+		if extraZeroCount > 20 {
+			// Return overflow to avoid allocating too much memory.
+			return validFloat, errors.Trace(ErrOverflow)
+		}
+		validInt = string(digits) + strings.Repeat("0", extraZeroCount)
+	}
+	return validInt, nil
 }
 
-// StrToFloat converts a string to a float64 in best effort.
-func StrToFloat(str string) (float64, error) {
+// StrToFloat converts a string to a float64 at the best-effort.
+func StrToFloat(sc *variable.StatementContext, str string) (float64, error) {
 	str = strings.TrimSpace(str)
-	if len(str) == 0 {
-		return 0, nil
-	}
-	validStr := getValidFloatPrefix(str)
-	var err error
-	if validStr != str {
-		err = ErrValueTruncated
-	}
+	validStr, err := getValidFloatPrefix(sc, str)
 	f, err1 := strconv.ParseFloat(validStr, 64)
-	if err == nil {
-		err = err1
+	if err1 != nil {
+		return f, errors.Trace(err1)
 	}
 	return f, errors.Trace(err)
 }
 
-func getValidFloatPrefix(str string) string {
+// getValidFloatPrefix gets prefix of string which can be successfully parsed as float.
+func getValidFloatPrefix(sc *variable.StatementContext, s string) (valid string, err error) {
 	var (
-		hasDot bool
-		eIdx   = -1
+		sawDot   bool
+		sawDigit bool
+		validLen int
+		eIdx     int
 	)
-	for i := 0; i < len(str); i++ {
-		c := str[i]
-		if c == '-' || c == '+' {
-			if i != 0 && i != eIdx+1 {
-				return str[:i]
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '+' || c == '-' {
+			if i != 0 && i != eIdx+1 { // "1e+1" is valid.
+				break
 			}
 		} else if c == '.' {
-			if hasDot {
-				return str[:i]
+			if sawDot { // "1.1."
+				break
 			}
-			hasDot = true
+			sawDot = true
+			if sawDigit { // "123." is valid.
+				validLen = i + 1
+			}
 		} else if c == 'e' || c == 'E' {
-			if eIdx != -1 {
-				return str[:i]
+			if !sawDigit { // "+.e"
+				break
+			}
+			if eIdx != 0 { // "1e5e"
+				break
 			}
 			eIdx = i
 		} else if c < '0' || c > '9' {
-			return str[:i]
+			break
+		} else {
+			sawDigit = true
+			validLen = i + 1
 		}
 	}
-	return str
+	valid = s[:validLen]
+	if valid == "" {
+		valid = "0"
+	}
+	if validLen == 0 || validLen != len(s) {
+		err = errors.Trace(handleTruncateError(sc))
+	}
+	return valid, err
 }
 
 // ToString converts an interface to a string.
@@ -253,19 +310,19 @@ func ToString(value interface{}) (string, error) {
 		return v, nil
 	case []byte:
 		return string(v), nil
-	case mysql.Time:
+	case Time:
 		return v.String(), nil
-	case mysql.Duration:
+	case Duration:
 		return v.String(), nil
-	case *mysql.MyDecimal:
+	case *MyDecimal:
 		return v.String(), nil
-	case mysql.Hex:
+	case Hex:
 		return v.ToString(), nil
-	case mysql.Bit:
+	case Bit:
 		return v.ToString(), nil
-	case mysql.Enum:
+	case Enum:
 		return v.String(), nil
-	case mysql.Set:
+	case Set:
 		return v.String(), nil
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", value, value)

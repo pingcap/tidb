@@ -30,7 +30,7 @@ var AllowCartesianProduct = true
 // The node must be prepared first.
 func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	// We have to infer type again because after parameter is set, the expression type may change.
-	if err := InferType(node); err != nil {
+	if err := InferType(ctx.GetSessionVars().StmtCtx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
 	allocator := new(idAllocator)
@@ -44,34 +44,40 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		return nil, errors.Trace(builder.err)
 	}
 	if logic, ok := p.(LogicalPlan); ok {
-		var err error
-		_, logic, err = logic.PredicatePushDown(nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		solver := &aggPushDownSolver{
-			ctx:   ctx,
-			alloc: allocator,
-		}
-		solver.aggPushDown(logic)
-		_, err = logic.PruneColumnsAndResolveIndices(p.GetSchema())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !AllowCartesianProduct && existsCartesianProduct(logic) {
-			return nil, ErrCartesianProductUnsupported
-		}
-		info, err := logic.convert2PhysicalPlan(&requiredProperty{})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		pp := info.p
-		pp = EliminateProjection(pp)
-		log.Debugf("[PLAN] %s", ToString(pp))
-		return pp, nil
+		return doOptimize(logic, ctx, allocator)
 	}
 	return p, nil
 }
+
+func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
+	var err error
+	_, logic, err = logic.PredicatePushDown(nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	solver := &aggPushDownSolver{
+		ctx:   ctx,
+		alloc: allocator,
+	}
+	solver.aggPushDown(logic)
+	logic.PruneColumns(logic.GetSchema())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	logic.ResolveIndicesAndCorCols()
+	if !AllowCartesianProduct && existsCartesianProduct(logic) {
+		return nil, ErrCartesianProductUnsupported
+	}
+	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	pp := info.p
+	pp = EliminateProjection(pp)
+	log.Debugf("[PLAN] %s", ToString(pp))
+	return pp, nil
+}
+
 func existsCartesianProduct(p LogicalPlan) bool {
 	if join, ok := p.(*Join); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
@@ -99,8 +105,7 @@ func PrepareStmt(is infoschema.InfoSchema, ctx context.Context, node ast.Node) e
 
 // Optimizer error codes.
 const (
-	CodeOneColumn           terror.ErrCode = 1
-	CodeSameColumns         terror.ErrCode = 2
+	CodeOperandColumns      terror.ErrCode = 1
 	CodeInvalidWildCard     terror.ErrCode = 3
 	CodeUnsupported         terror.ErrCode = 4
 	CodeInvalidGroupFuncUse terror.ErrCode = 5
@@ -109,8 +114,7 @@ const (
 
 // Optimizer base errors.
 var (
-	ErrOneColumn                   = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
-	ErrSameColumns                 = terror.ClassOptimizer.New(CodeSameColumns, "Operands should contain same columns")
+	ErrOperandColumns              = terror.ClassOptimizer.New(CodeOperandColumns, "Operand should contain %d column(s)")
 	ErrInvalidWildCard             = terror.ClassOptimizer.New(CodeInvalidWildCard, "Wildcard fields without any table name appears in wrong place")
 	ErrCartesianProductUnsupported = terror.ClassOptimizer.New(CodeUnsupported, "Cartesian product is unsupported")
 	ErrInvalidGroupFuncUse         = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
@@ -119,8 +123,7 @@ var (
 
 func init() {
 	mySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeOneColumn:           mysql.ErrOperandColumns,
-		CodeSameColumns:         mysql.ErrOperandColumns,
+		CodeOperandColumns:      mysql.ErrOperandColumns,
 		CodeInvalidWildCard:     mysql.ErrParse,
 		CodeInvalidGroupFuncUse: mysql.ErrInvalidGroupFuncUse,
 		CodeIllegalReference:    mysql.ErrIllegalReference,

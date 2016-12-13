@@ -109,6 +109,7 @@ func (d *ddl) prepareBgJob(t *meta.Meta, ddlJob *model.Job) error {
 		Type:     ddlJob.Type,
 		Args:     ddlJob.Args,
 	}
+
 	err := t.EnQueueBgJob(job)
 	return errors.Trace(err)
 }

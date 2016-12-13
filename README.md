@@ -3,6 +3,7 @@
 [![Build Status](https://travis-ci.org/pingcap/tidb.svg?branch=master)](https://travis-ci.org/pingcap/tidb)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/tidb)](https://goreportcard.com/report/github.com/pingcap/tidb)
 ![Project Status](https://img.shields.io/badge/status-beta-yellow.svg)
+[![CircleCI Status](https://circleci.com/gh/pingcap/tidb.svg?style=shield)](https://circleci.com/gh/pingcap/tidb)
 
 ## What is TiDB?
 
@@ -55,7 +56,15 @@ for details on submitting patches and the contribution workflow.
 
 ## Follow us
 
-Twitter: [@PingCAP](https://twitter.com/PingCAP)
+### Twitter
+
+[@PingCAP](https://twitter.com/PingCAP)
+
+### Mailing list
+
+tidb-user@googlegroups.com
+
+[Google Group](https://groups.google.com/forum/#!forum/tidb-user)
 
 ## License
 TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.

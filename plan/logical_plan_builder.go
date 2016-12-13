@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -45,10 +46,9 @@ func (p *Aggregation) collectGroupByColumns() {
 func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int) {
 	agg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(aggFuncList)),
-		ctx:             b.ctx,
 		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator)}
 	agg.self = agg
-	agg.initID()
+	agg.initIDAndContext(b.ctx)
 	agg.correlated = p.IsCorrelated()
 	for _, item := range gbyItems {
 		agg.correlated = agg.correlated || item.IsCorrelated()
@@ -72,7 +72,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		newFunc := expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct)
 		combined := false
 		for j, oldFunc := range agg.AggFuncs {
-			if oldFunc.Equal(newFunc) {
+			if oldFunc.Equal(newFunc, b.ctx) {
 				aggIndexMap[i] = j
 				combined = true
 				break
@@ -137,20 +137,16 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 	}
 }
 
-func extractColumn(expr expression.Expression, cols []*expression.Column, corCols []*expression.CorrelatedColumn) (
-	[]*expression.Column, []*expression.CorrelatedColumn) {
+func extractCorColumns(expr expression.Expression) (cols []*expression.CorrelatedColumn) {
 	switch v := expr.(type) {
-	case *expression.Column:
-		return append(cols, v), corCols
+	case *expression.CorrelatedColumn:
+		return []*expression.CorrelatedColumn{v}
 	case *expression.ScalarFunction:
 		for _, arg := range v.Args {
-			cols, corCols = extractColumn(arg, cols, corCols)
+			cols = append(cols, extractCorColumns(arg)...)
 		}
-		return cols, corCols
-	case *expression.CorrelatedColumn:
-		return cols, append(corCols, v)
 	}
-	return cols, corCols
+	return
 }
 
 func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
@@ -173,7 +169,7 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 				}
 			}
 		}
-		columns, _ := extractColumn(expr, nil, nil)
+		columns := expression.ExtractColumns(expr)
 		allFromLeft, allFromRight := true, true
 		for _, col := range columns {
 			if left.GetSchema().GetIndex(col) == -1 {
@@ -203,7 +199,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	newSchema := append(leftPlan.GetSchema().Clone(), rightPlan.GetSchema().Clone()...)
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
 	joinPlan.self = joinPlan
-	joinPlan.initID()
+	joinPlan.initIDAndContext(b.ctx)
 	joinPlan.SetSchema(newSchema)
 	joinPlan.correlated = leftPlan.IsCorrelated() || rightPlan.IsCorrelated()
 	if join.On != nil {
@@ -243,7 +239,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := &Selection{baseLogicalPlan: newBaseLogicalPlan(Sel, b.allocator)}
 	selection.self = selection
-	selection.initID()
+	selection.initIDAndContext(b.ctx)
 	selection.correlated = p.IsCorrelated()
 	for _, cond := range conditions {
 		expr, np, err := b.rewrite(cond, p, AggMapper, false)
@@ -274,7 +270,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
 	}
 	proj.self = proj
-	proj.initID()
+	proj.initIDAndContext(b.ctx)
 	proj.correlated = p.IsCorrelated()
 	schema := make(expression.Schema, 0, len(fields))
 	oldLen := 0
@@ -333,7 +329,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 func (b *planBuilder) buildDistinct(src LogicalPlan) LogicalPlan {
 	d := &Distinct{baseLogicalPlan: newBaseLogicalPlan(Dis, b.allocator)}
 	d.self = d
-	d.initID()
+	d.initIDAndContext(b.ctx)
 	addChild(d, src)
 	d.SetSchema(src.GetSchema())
 	d.correlated = src.IsCorrelated()
@@ -343,7 +339,7 @@ func (b *planBuilder) buildDistinct(src LogicalPlan) LogicalPlan {
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	u := &Union{baseLogicalPlan: newBaseLogicalPlan(Un, b.allocator)}
 	u.self = u
-	u.initID()
+	u.initIDAndContext(b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
 		u.children[i] = b.buildSelect(sel)
@@ -412,7 +408,7 @@ func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 	var exprs []*ByItems
 	sort := &Sort{baseLogicalPlan: newBaseLogicalPlan(Srt, b.allocator)}
 	sort.self = sort
-	sort.initID()
+	sort.initIDAndContext(b.ctx)
 	sort.correlated = p.IsCorrelated()
 	for _, item := range byItems {
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
@@ -437,7 +433,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 		baseLogicalPlan: newBaseLogicalPlan(Lim, b.allocator),
 	}
 	li.self = li
-	li.initID()
+	li.initIDAndContext(b.ctx)
 	li.correlated = src.IsCorrelated()
 	addChild(li, src)
 	li.SetSchema(src.GetSchema().Clone())
@@ -506,6 +502,7 @@ type havingAndOrderbyExprResolver struct {
 	aggMapper    map[*ast.AggregateFuncExpr]int
 	colMapper    map[*ast.ColumnNameExpr]int
 	gbyItems     []*ast.ByItem
+	outerSchemas []expression.Schema
 }
 
 // Enter implements Visitor interface.
@@ -602,6 +599,12 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 			return node, false
 		}
 		if index == -1 {
+			// If we can't find it any where, it may be a correlated columns.
+			for _, schema := range a.outerSchemas {
+				if col, _ := schema.FindColumn(v.Name); col != nil {
+					return n, true
+				}
+			}
 			a.err = errors.Errorf("Unknown Column %s", v.Name.Name.L)
 			return node, false
 		}
@@ -620,6 +623,7 @@ func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 		selectFields: sel.Fields.Fields,
 		aggMapper:    make(map[*ast.AggregateFuncExpr]int),
 		colMapper:    b.colMapper,
+		outerSchemas: b.outerSchemas,
 	}
 	if sel.GroupBy != nil {
 		extractor.gbyItems = sel.GroupBy.Items
@@ -859,7 +863,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
 	trim := &Trim{baseLogicalPlan: newBaseLogicalPlan(Trm, b.allocator)}
 	trim.self = trim
-	trim.initID()
+	trim.initIDAndContext(b.ctx)
 	addChild(trim, p)
 	trim.SetSchema(p.GetSchema().Clone()[:len])
 	trim.correlated = p.IsCorrelated()
@@ -869,7 +873,7 @@ func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
 func (b *planBuilder) buildTableDual() LogicalPlan {
 	dual := &TableDual{baseLogicalPlan: newBaseLogicalPlan(Dual, b.allocator)}
 	dual.self = dual
-	dual.initID()
+	dual.initIDAndContext(b.ctx)
 	return dual
 }
 
@@ -884,14 +888,13 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		return nil
 	}
 	p := &DataSource{
-		ctx:             b.ctx,
 		table:           tn,
 		Table:           tn.TableInfo,
 		baseLogicalPlan: newBaseLogicalPlan(Ts, b.allocator),
 		statisticTable:  statisticTable,
 	}
 	p.self = p
-	p.initID()
+	p.initIDAndContext(b.ctx)
 	// Equal condition contains a column from previous joined table.
 	rfs := tn.GetResultFields()
 	schema := make([]*expression.Column, 0, len(rfs))
@@ -921,40 +924,20 @@ type ApplyConditionChecker struct {
 // innerPlan. This way is the so-called correlated execution.
 func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, checker *ApplyConditionChecker) LogicalPlan {
 	ap := &Apply{
-		InnerPlan:        innerPlan,
-		Checker:          checker,
-		corColsInCurPlan: make([]*expression.CorrelatedColumn, len(outerPlan.GetSchema())),
-		baseLogicalPlan:  newBaseLogicalPlan(App, b.allocator),
+		Checker:         checker,
+		baseLogicalPlan: newBaseLogicalPlan(App, b.allocator),
 	}
 	ap.self = ap
-	ap.initID()
+	ap.initIDAndContext(b.ctx)
 	addChild(ap, outerPlan)
-	_, innerPlan, b.err = innerPlan.PredicatePushDown(nil)
-	if b.err != nil {
-		return nil
-	}
-	corColumns, err := innerPlan.PruneColumnsAndResolveIndices(innerPlan.GetSchema())
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
+	addChild(ap, innerPlan)
+	corColumns := innerPlan.extractCorrelatedCols()
+	ap.correlated = outerPlan.IsCorrelated()
 	for _, corCol := range corColumns {
 		// If the outer column can't be resolved from this outer schema, it should be resolved by outer schema.
 		if idx := outerPlan.GetSchema().GetIndex(&corCol.Column); idx == -1 {
-			ap.corColsInOuterPlan = append(ap.corColsInOuterPlan, corCol)
-		} else {
-			if ap.corColsInCurPlan[idx] == nil {
-				ap.corColsInCurPlan[idx] = &expression.CorrelatedColumn{
-					Column: *outerPlan.GetSchema()[idx],
-					Data:   &types.Datum{},
-				}
-			}
-			corCol.Data = ap.corColsInCurPlan[idx].Data
-		}
-	}
-	for i := len(ap.corColsInCurPlan) - 1; i >= 0; i-- {
-		if ap.corColsInCurPlan[i] == nil {
-			ap.corColsInCurPlan = append(ap.corColsInCurPlan[:i], ap.corColsInCurPlan[i+1:]...)
+			ap.correlated = true
+			break
 		}
 	}
 	innerSchema := innerPlan.GetSchema().Clone()
@@ -971,7 +954,6 @@ func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, checker *Appl
 			IsAggOrSubq: true,
 		}))
 	}
-	ap.correlated = outerPlan.IsCorrelated() || len(ap.corColsInOuterPlan) > 0
 	return ap
 }
 
@@ -990,7 +972,7 @@ out:
 	}
 	exists := &Exists{baseLogicalPlan: newBaseLogicalPlan(Ext, b.allocator)}
 	exists.self = exists
-	exists.initID()
+	exists.initIDAndContext(b.ctx)
 	addChild(exists, p)
 	newCol := &expression.Column{
 		FromID:  exists.id,
@@ -1004,7 +986,7 @@ out:
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	maxOneRow := &MaxOneRow{baseLogicalPlan: newBaseLogicalPlan(MOR, b.allocator)}
 	maxOneRow.self = maxOneRow
-	maxOneRow.initID()
+	maxOneRow.initIDAndContext(b.ctx)
 	addChild(maxOneRow, p)
 	maxOneRow.SetSchema(p.GetSchema().Clone())
 	maxOneRow.correlated = p.IsCorrelated()
@@ -1014,7 +996,7 @@ func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) LogicalPlan {
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
 	joinPlan.self = joinPlan
-	joinPlan.initID()
+	joinPlan.initIDAndContext(b.ctx)
 	joinPlan.correlated = outerPlan.IsCorrelated() || innerPlan.IsCorrelated()
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.GetSchema())
@@ -1075,8 +1057,9 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	}
 	p = np
 	updt := &Update{OrderedList: orderedList, baseLogicalPlan: newBaseLogicalPlan(Up, b.allocator)}
+	updt.ctx = b.ctx
 	updt.self = updt
-	updt.initID()
+	updt.initIDAndContext(b.ctx)
 	addChild(updt, p)
 	updt.SetSchema(p.GetSchema())
 	return updt
@@ -1105,7 +1088,7 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([
 			return nil, nil
 		}
 		p = np
-		newList[offset] = &expression.Assignment{Col: col, Expr: newExpr}
+		newList[offset] = &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr}
 	}
 	return newList, p
 }
@@ -1145,7 +1128,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 		baseLogicalPlan: newBaseLogicalPlan(Del, b.allocator),
 	}
 	del.self = del
-	del.initID()
+	del.initIDAndContext(b.ctx)
 	addChild(del, p)
 	return del
 

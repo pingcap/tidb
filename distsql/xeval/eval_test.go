@@ -18,7 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -36,9 +36,8 @@ type testEvalSuite struct{}
 // TODO: add more tests.
 func (s *testEvalSuite) TestEval(c *C) {
 	colID := int64(1)
-	row := make(map[int64]types.Datum)
-	row[colID] = types.NewIntDatum(100)
-	xevaluator := &Evaluator{Row: row}
+	xevaluator := NewEvaluator(new(variable.StatementContext))
+	xevaluator.Row[colID] = types.NewIntDatum(100)
 	cases := []struct {
 		expr   *tipb.Expr
 		result types.Datum
@@ -73,12 +72,12 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.Datum{},
 		},
 		{
-			datumExpr(types.NewDurationDatum(mysql.Duration{Duration: time.Hour})),
-			types.NewDurationDatum(mysql.Duration{Duration: time.Hour}),
+			datumExpr(types.NewDurationDatum(types.Duration{Duration: time.Hour})),
+			types.NewDurationDatum(types.Duration{Duration: time.Hour}),
 		},
 		{
-			datumExpr(types.NewDecimalDatum(mysql.NewDecFromFloatForTest(1.1))),
-			types.NewDecimalDatum(mysql.NewDecFromFloatForTest(1.1)),
+			datumExpr(types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1))),
+			types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1)),
 		},
 		{
 			columnExpr(1),
@@ -270,7 +269,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 		result, err := xevaluator.Eval(ca.expr)
 		c.Assert(err, IsNil)
 		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(ca.result)
+		cmp, err := result.CompareDatum(xevaluator.sc, ca.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -399,7 +398,7 @@ func (s *testEvalSuite) TestLike(c *C) {
 			result: 0,
 		},
 	}
-	ev := &Evaluator{}
+	ev := NewEvaluator(new(variable.StatementContext))
 	for _, ca := range cases {
 		res, err := ev.Eval(ca.expr)
 		c.Check(err, IsNil)
@@ -445,7 +444,7 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 			result: false,
 		},
 	}
-	ev := &Evaluator{}
+	ev := NewEvaluator(new(variable.StatementContext))
 	for _, ca := range cases {
 		res, err := ev.Eval(ca.expr)
 		c.Check(err, IsNil)
@@ -462,13 +461,46 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 	}
 }
 
+func (s *testEvalSuite) TestEvalIsNull(c *C) {
+	colID := int64(1)
+	xevaluator := NewEvaluator(new(variable.StatementContext))
+	xevaluator.Row[colID] = types.NewIntDatum(100)
+	null, trueAns, falseAns := types.Datum{}, types.NewIntDatum(1), types.NewIntDatum(0)
+	cases := []struct {
+		expr   *tipb.Expr
+		result types.Datum
+	}{
+		{
+			expr:   buildExpr(tipb.ExprType_IsNull, types.NewStringDatum("abc")),
+			result: falseAns,
+		},
+		{
+			expr:   buildExpr(tipb.ExprType_IsNull, null),
+			result: trueAns,
+		},
+		{
+			expr:   buildExpr(tipb.ExprType_IsNull, types.NewIntDatum(0)),
+			result: falseAns,
+		},
+	}
+	for _, ca := range cases {
+		result, err := xevaluator.Eval(ca.expr)
+		c.Assert(err, IsNil)
+		c.Assert(result.Kind(), Equals, ca.result.Kind())
+		cmp, err := result.CompareDatum(xevaluator.sc, ca.result)
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
+	}
+}
+
 func inExpr(target interface{}, list ...interface{}) *tipb.Expr {
 	targetDatum := types.NewDatum(target)
 	var listDatums []types.Datum
 	for _, v := range list {
 		listDatums = append(listDatums, types.NewDatum(v))
 	}
-	types.SortDatums(listDatums)
+	sc := new(variable.StatementContext)
+	types.SortDatums(sc, listDatums)
 	targetExpr := datumExpr(targetDatum)
 	val, _ := codec.EncodeValue(nil, listDatums...)
 	listExpr := &tipb.Expr{Tp: tipb.ExprType_ValueList, Val: val}

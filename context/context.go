@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 // Context is an interface for transaction and executive args environment.
@@ -41,6 +42,8 @@ type Context interface {
 
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
+
+	GetSessionVars() *variable.SessionVars
 }
 
 type basicCtxType int

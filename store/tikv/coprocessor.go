@@ -61,6 +61,8 @@ func supportExpr(exprType tipb.ExprType) bool {
 		return true
 	case tipb.ExprType_Plus, tipb.ExprType_Div:
 		return true
+	case tipb.ExprType_Case:
+		return true
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg:
 		return true
 	case kv.ReqSubTypeDesc:
@@ -111,7 +113,7 @@ const (
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
-	region *Region
+	region RegionVerID
 	ranges *copRanges
 
 	status   int
@@ -216,7 +218,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 	rangesLen := ranges.len()
 
 	var tasks []*copTask
-	appendTask := func(region *Region, ranges *copRanges) {
+	appendTask := func(region RegionVerID, ranges *copRanges) {
 		tasks = append(tasks, &copTask{
 			idx:      len(tasks),
 			region:   region,
@@ -227,7 +229,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 	}
 
 	for ranges.len() > 0 {
-		region, err := cache.GetRegion(bo, ranges.at(0).StartKey)
+		loc, err := cache.LocateKey(bo, ranges.at(0).StartKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -236,34 +238,34 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		var i int
 		for ; i < ranges.len(); i++ {
 			r := ranges.at(i)
-			if !(region.Contains(r.EndKey) || bytes.Equal(region.EndKey(), r.EndKey)) {
+			if !(loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)) {
 				break
 			}
 		}
 		// All rest ranges belong to the same region.
 		if i == ranges.len() {
-			appendTask(region, ranges)
+			appendTask(loc.Region, ranges)
 			break
 		}
 
 		r := ranges.at(i)
-		if region.Contains(r.StartKey) {
+		if loc.Contains(r.StartKey) {
 			// Part of r is not in the region. We need to split it.
 			taskRanges := ranges.slice(0, i)
 			taskRanges.last = &kv.KeyRange{
 				StartKey: r.StartKey,
-				EndKey:   region.EndKey(),
+				EndKey:   loc.EndKey,
 			}
-			appendTask(region, taskRanges)
+			appendTask(loc.Region, taskRanges)
 
 			ranges = ranges.slice(i+1, ranges.len())
 			ranges.first = &kv.KeyRange{
-				StartKey: region.EndKey(),
+				StartKey: loc.EndKey,
 				EndKey:   r.EndKey,
 			}
 		} else {
 			// rs[i] is not in the region.
-			appendTask(region, ranges.slice(0, i))
+			appendTask(loc.Region, ranges.slice(0, i))
 			ranges = ranges.slice(i, ranges.len())
 		}
 	}
@@ -411,6 +413,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 // Handle single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Response, error) {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
+	sender := NewRegionRequestSender(bo, it.store.regionCache, it.store.client)
 	for {
 		it.mu.RLock()
 		if it.mu.finished {
@@ -420,15 +423,16 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 		it.mu.RUnlock()
 
 		req := &coprocessor.Request{
-			Context: task.region.GetContext(),
-			Tp:      it.req.Tp,
-			Data:    it.req.Data,
-			Ranges:  task.ranges.toPBRanges(),
+			Tp:     it.req.Tp,
+			Data:   it.req.Data,
+			Ranges: task.ranges.toPBRanges(),
 		}
-		resp, err := it.store.client.SendCopReq(task.region.GetAddress(), req, readTimeoutMedium)
+		resp, err := sender.SendCopReq(req, task.region, readTimeoutMedium)
 		if err != nil {
-			it.store.regionCache.NextPeer(task.region.VerID())
-			err = bo.Backoff(boTiKVRPC, err)
+			return nil, errors.Trace(err)
+		}
+		if regionErr := resp.GetRegionError(); regionErr != nil {
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -436,41 +440,6 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			log.Warnf("send coprocessor request error: %v, try next peer later", err)
-			continue
-		}
-		if e := resp.GetRegionError().GetServerIsBusy(); e != nil {
-			log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", req.Context)
-			err = bo.Backoff(boServerBusy, errors.Errorf("server is busy"))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			continue
-		}
-		if e := resp.GetRegionError(); e != nil {
-			reportRegionError(e)
-			if notLeader := e.GetNotLeader(); notLeader != nil {
-				log.Warnf("tikv reports `NotLeader`: %s, ctx: %s, retry later", notLeader, req.Context)
-				it.store.regionCache.UpdateLeader(task.region.VerID(), notLeader.GetLeader().GetId())
-			} else if staleEpoch := e.GetStaleEpoch(); staleEpoch != nil {
-				log.Warnf("tikv reports `StaleEpoch`, ctx: %s, retry later", req.Context)
-				err = it.store.regionCache.OnRegionStale(task.region, staleEpoch.NewRegions)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			} else {
-				log.Warnf("tikv reports region error: %s, ctx: %s, retry later", e, req.Context)
-				it.store.regionCache.DropRegion(task.region.VerID())
-			}
-			err = bo.Backoff(boRegionMiss, errors.Errorf("regionError: %s", e))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			err = it.rebuildCurrentTask(bo, task)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			log.Warnf("coprocessor region error: %v, retry later", e)
 			continue
 		}
 		if e := resp.GetLocked(); e != nil {

@@ -8,7 +8,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -30,7 +30,7 @@ func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (types.D
 }
 
 func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types.Datum, err error) {
-	value := mysql.Time{
+	value := types.Time{
 		Type: tp,
 		Fsp:  fsp,
 	}
@@ -44,11 +44,11 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 	case string:
 		upperX := strings.ToUpper(x)
 		if upperX == CurrentTimestamp {
-			value.Time = defaultTime
+			value.Time = types.FromGoTime(defaultTime)
 		} else if upperX == ZeroTimestamp {
-			value, _ = mysql.ParseTimeFromNum(0, tp, fsp)
+			value, _ = types.ParseTimeFromNum(0, tp, fsp)
 		} else {
-			value, err = mysql.ParseTime(x, tp, fsp)
+			value, err = types.ParseTime(x, tp, fsp)
 			if err != nil {
 				return d, errors.Trace(err)
 			}
@@ -56,12 +56,12 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 	case *ast.ValueExpr:
 		switch x.Kind() {
 		case types.KindString:
-			value, err = mysql.ParseTime(x.GetString(), tp, fsp)
+			value, err = types.ParseTime(x.GetString(), tp, fsp)
 			if err != nil {
 				return d, errors.Trace(err)
 			}
 		case types.KindInt64:
-			value, err = mysql.ParseTimeFromNum(x.GetInt64(), tp, fsp)
+			value, err = types.ParseTimeFromNum(x.GetInt64(), tp, fsp)
 			if err != nil {
 				return d, errors.Trace(err)
 			}
@@ -83,12 +83,12 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 			return d, errors.Trace(err)
 		}
 		ft := types.NewFieldType(mysql.TypeLonglong)
-		xval, err := v.ConvertTo(ft)
+		xval, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx, ft)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
 
-		value, err = mysql.ParseTimeFromNum(xval.GetInt64(), tp, fsp)
+		value, err = types.ParseTimeFromNum(xval.GetInt64(), tp, fsp)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -117,10 +117,10 @@ func getSystemTimestamp(ctx context.Context) (time.Time, error) {
 	}
 
 	// check whether use timestamp varibale
-	sessionVars := variable.GetSessionVars(ctx)
-	ts := sessionVars.GetSystemVar("timestamp")
+	sessionVars := ctx.GetSessionVars()
+	ts := varsutil.GetSystemVar(sessionVars, "timestamp")
 	if !ts.IsNull() && ts.GetString() != "" {
-		timestamp, err := ts.ToInt64()
+		timestamp, err := ts.ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return time.Time{}, errors.Trace(err)
 		}

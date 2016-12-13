@@ -136,7 +136,8 @@ func flatten(data types.Datum) (types.Datum, error) {
 	switch data.Kind() {
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
-		return types.NewUintDatum(data.GetMysqlTime().ToPackedUint()), nil
+		v, err := data.GetMysqlTime().ToPackedUint()
+		return types.NewUintDatum(v), errors.Trace(err)
 	case types.KindMysqlDuration:
 		// for mysql time type
 		data.SetInt64(int64(data.GetMysqlDuration().Duration))
@@ -300,7 +301,7 @@ func Unflatten(datum types.Datum, ft *types.FieldType, inIndex bool) (types.Datu
 		mysql.TypeString:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		var t mysql.Time
+		var t types.Time
 		t.Type = ft.Tp
 		t.Fsp = ft.Decimal
 		var err error
@@ -311,25 +312,25 @@ func Unflatten(datum types.Datum, ft *types.FieldType, inIndex bool) (types.Datu
 		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration:
-		dur := mysql.Duration{Duration: time.Duration(datum.GetInt64())}
+		dur := types.Duration{Duration: time.Duration(datum.GetInt64())}
 		datum.SetValue(dur)
 		return datum, nil
 	case mysql.TypeEnum:
-		enum, err := mysql.ParseEnumValue(ft.Elems, datum.GetUint64())
+		enum, err := types.ParseEnumValue(ft.Elems, datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
 		datum.SetValue(enum)
 		return datum, nil
 	case mysql.TypeSet:
-		set, err := mysql.ParseSetValue(ft.Elems, datum.GetUint64())
+		set, err := types.ParseSetValue(ft.Elems, datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
 		datum.SetValue(set)
 		return datum, nil
 	case mysql.TypeBit:
-		bit := mysql.Bit{Value: datum.GetUint64(), Width: ft.Flen}
+		bit := types.Bit{Value: datum.GetUint64(), Width: ft.Flen}
 		datum.SetValue(bit)
 		return datum, nil
 	}

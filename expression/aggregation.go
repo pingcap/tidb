@@ -70,7 +70,7 @@ type AggregationFunction interface {
 	SetContext(ctx map[string](*ast.AggEvaluateContext))
 
 	// Equal checks whether two aggregation functions are equal.
-	Equal(agg AggregationFunction) bool
+	Equal(agg AggregationFunction, ctx context.Context) bool
 
 	// Clone copies an aggregate function totally.
 	Clone() AggregationFunction
@@ -81,7 +81,7 @@ type AggregationFunction interface {
 	// CalculateDefaultValue gets the default value when the aggregate function's input is null.
 	// The input stands for the schema of Aggregation's child. If the function can't produce a default value, the second
 	// return value will be false.
-	CalculateDefaultValue(schema Schema) (types.Datum, bool)
+	CalculateDefaultValue(schema Schema, ctx context.Context) (types.Datum, bool)
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -127,7 +127,7 @@ type aggFunction struct {
 }
 
 // Equal implements AggregationFunction interface.
-func (af *aggFunction) Equal(b AggregationFunction) bool {
+func (af *aggFunction) Equal(b AggregationFunction, ctx context.Context) bool {
 	if af.GetName() != b.GetName() {
 		return false
 	}
@@ -136,7 +136,7 @@ func (af *aggFunction) Equal(b AggregationFunction) bool {
 	}
 	if len(af.GetArgs()) == len(b.GetArgs()) {
 		for i, argA := range af.GetArgs() {
-			if !argA.Equal(b.GetArgs()[i]) {
+			if !argA.Equal(b.GetArgs()[i], ctx) {
 				return false
 			}
 		}
@@ -168,11 +168,12 @@ func newAggFunc(name string, args []Expression, dist bool) aggFunction {
 		name:         name,
 		Args:         args,
 		resultMapper: make(aggCtxMapper, 0),
-		Distinct:     dist}
+		Distinct:     dist,
+	}
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (af *aggFunction) CalculateDefaultValue(schema Schema) (types.Datum, bool) {
+func (af *aggFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (types.Datum, bool) {
 	return types.Datum{}, false
 }
 
@@ -258,7 +259,7 @@ func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx contex
 			return nil
 		}
 	}
-	ctx.Value, err = types.CalculateSum(ctx.Value, value)
+	ctx.Value, err = types.CalculateSum(ectx.GetSessionVars().StmtCtx, ctx.Value, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -285,7 +286,7 @@ func (af *aggFunction) streamUpdateSum(row []types.Datum, ectx context.Context) 
 			return nil
 		}
 	}
-	ctx.Value, err = types.CalculateSum(ctx.Value, value)
+	ctx.Value, err = types.CalculateSum(ectx.GetSessionVars().StmtCtx, ctx.Value, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -333,15 +334,15 @@ func (sf *sumFunction) GetStreamResult() (d types.Datum) {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (sf *sumFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
+func (sf *sumFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := sf.Args[0]
-	result, err := EvaluateExprWithNull(schema, arg)
+	result, err := EvaluateExprWithNull(ctx, schema, arg)
 	if err != nil {
 		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", sf, err.Error())
 		return d, false
 	}
 	if con, ok := result.(*Constant); ok {
-		d, err = types.CalculateSum(d, con.Value)
+		d, err = types.CalculateSum(ctx.GetSessionVars().StmtCtx, d, con.Value)
 		if err != nil {
 			log.Warnf("CalculateSum failed in function %s, err msg is %s", sf, err.Error())
 		}
@@ -374,9 +375,9 @@ func (cf *countFunction) Clone() AggregationFunction {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (cf *countFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
+func (cf *countFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (d types.Datum, valid bool) {
 	for _, arg := range cf.Args {
-		result, err := EvaluateExprWithNull(schema, arg)
+		result, err := EvaluateExprWithNull(ctx, schema, arg)
 		if err != nil {
 			log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", cf, err.Error())
 			return d, false
@@ -528,7 +529,7 @@ func (af *avgFunction) updateAvg(row []types.Datum, groupKey []byte, ectx contex
 			return nil
 		}
 	}
-	ctx.Value, err = types.CalculateSum(ctx.Value, value)
+	ctx.Value, err = types.CalculateSum(ectx.GetSessionVars().StmtCtx, ctx.Value, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -560,10 +561,10 @@ func (af *avgFunction) calculateResult(ctx *ast.AggEvaluateContext) (d types.Dat
 		d.SetValue(t)
 	case types.KindMysqlDecimal:
 		x := ctx.Value.GetMysqlDecimal()
-		y := mysql.NewDecFromInt(ctx.Count)
-		to := new(mysql.MyDecimal)
-		mysql.DecimalDiv(x, y, to, mysql.DivFracIncr)
-		to.Round(to, ctx.Value.Frac()+mysql.DivFracIncr)
+		y := types.NewDecFromInt(ctx.Count)
+		to := new(types.MyDecimal)
+		types.DecimalDiv(x, y, to, types.DivFracIncr)
+		to.Round(to, ctx.Value.Frac()+types.DivFracIncr)
 		d.SetMysqlDecimal(to)
 	}
 	return
@@ -717,9 +718,9 @@ func (mmf *maxMinFunction) Clone() AggregationFunction {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (mmf *maxMinFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
+func (mmf *maxMinFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := mmf.Args[0]
-	result, err := EvaluateExprWithNull(schema, arg)
+	result, err := EvaluateExprWithNull(ctx, schema, arg)
 	if err != nil {
 		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", mmf, err.Error())
 		return d, false
@@ -768,7 +769,7 @@ func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte, ectx conte
 		return nil
 	}
 	var c int
-	c, err = ctx.Value.CompareDatum(value)
+	c, err = ctx.Value.CompareDatum(ectx.GetSessionVars().StmtCtx, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -796,7 +797,7 @@ func (mmf *maxMinFunction) StreamUpdate(row []types.Datum, ectx context.Context)
 		return nil
 	}
 	var c int
-	c, err = ctx.Value.CompareDatum(value)
+	c, err = ctx.Value.CompareDatum(ectx.GetSessionVars().StmtCtx, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -828,7 +829,7 @@ func (ff *firstRowFunction) GetType() *types.FieldType {
 // Update implements AggregationFunction interface.
 func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := ff.getContext(groupKey)
-	if !ctx.Value.IsNull() {
+	if ctx.GotFirstRow {
 		return nil
 	}
 	if len(ff.Args) != 1 {
@@ -839,13 +840,14 @@ func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx cont
 		return errors.Trace(err)
 	}
 	ctx.Value = value
+	ctx.GotFirstRow = true
 	return nil
 }
 
 // StreamUpdate implements AggregationFunction interface.
 func (ff *firstRowFunction) StreamUpdate(row []types.Datum, ectx context.Context) error {
 	ctx := ff.getStreamedContext()
-	if !ctx.Value.IsNull() {
+	if ctx.GotFirstRow {
 		return nil
 	}
 	if len(ff.Args) != 1 {
@@ -856,6 +858,7 @@ func (ff *firstRowFunction) StreamUpdate(row []types.Datum, ectx context.Context
 		return errors.Trace(err)
 	}
 	ctx.Value = value
+	ctx.GotFirstRow = true
 	return nil
 }
 
@@ -875,9 +878,9 @@ func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (ff *firstRowFunction) CalculateDefaultValue(schema Schema) (d types.Datum, valid bool) {
+func (ff *firstRowFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := ff.Args[0]
-	result, err := EvaluateExprWithNull(schema, arg)
+	result, err := EvaluateExprWithNull(ctx, schema, arg)
 	if err != nil {
 		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", ff, err.Error())
 		return d, false

@@ -18,12 +18,14 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -41,7 +43,7 @@ const (
 // JoinConcurrency means the number of goroutines that participate in joining.
 var JoinConcurrency = 5
 
-func getRowCountByIndexRanges(table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo) (uint64, error) {
+func getRowCountByIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo) (uint64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
 		count := float64(table.Count)
@@ -54,25 +56,25 @@ func getRowCountByIndexRanges(table *statistics.Table, indexRanges []*IndexRange
 		if l.Kind() == types.KindNull && r.Kind() == types.KindMaxValue {
 			return uint64(table.Count), nil
 		} else if l.Kind() == types.KindMinNotNull {
-			rowCount, err = table.Columns[offset].EqualRowCount(types.Datum{})
+			rowCount, err = table.Columns[offset].EqualRowCount(sc, types.Datum{})
 			if r.Kind() == types.KindMaxValue {
 				rowCount = table.Count - rowCount
 			} else if err == nil {
-				lessCount, err1 := table.Columns[offset].LessRowCount(r)
+				lessCount, err1 := table.Columns[offset].LessRowCount(sc, r)
 				rowCount = lessCount - rowCount
 				err = err1
 			}
 		} else if r.Kind() == types.KindMaxValue {
-			rowCount, err = table.Columns[offset].GreaterRowCount(l)
+			rowCount, err = table.Columns[offset].GreaterRowCount(sc, l)
 		} else {
-			compare, err1 := l.CompareDatum(r)
+			compare, err1 := l.CompareDatum(sc, r)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
 			}
 			if compare == 0 {
-				rowCount, err = table.Columns[offset].EqualRowCount(l)
+				rowCount, err = table.Columns[offset].EqualRowCount(sc, l)
 			} else {
-				rowCount, err = table.Columns[offset].BetweenRowCount(l, r)
+				rowCount, err = table.Columns[offset].BetweenRowCount(sc, l, r)
 			}
 		}
 		if err != nil {
@@ -97,7 +99,7 @@ func getRowCountByIndexRanges(table *statistics.Table, indexRanges []*IndexRange
 	return uint64(totalCount), nil
 }
 
-func getRowCountByTableRange(statsTbl *statistics.Table, ranges []TableRange, offset int) (uint64, error) {
+func getRowCountByTableRange(sc *variable.StatementContext, statsTbl *statistics.Table, ranges []TableRange, offset int) (uint64, error) {
 	var rowCount uint64
 	for _, rg := range ranges {
 		var cnt int64
@@ -105,14 +107,14 @@ func getRowCountByTableRange(statsTbl *statistics.Table, ranges []TableRange, of
 		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
 			cnt = statsTbl.Count
 		} else if rg.LowVal == math.MinInt64 {
-			cnt, err = statsTbl.Columns[offset].LessRowCount(types.NewDatum(rg.HighVal))
+			cnt, err = statsTbl.Columns[offset].LessRowCount(sc, types.NewDatum(rg.HighVal))
 		} else if rg.HighVal == math.MaxInt64 {
-			cnt, err = statsTbl.Columns[offset].GreaterRowCount(types.NewDatum(rg.LowVal))
+			cnt, err = statsTbl.Columns[offset].GreaterRowCount(sc, types.NewDatum(rg.LowVal))
 		} else {
 			if rg.LowVal == rg.HighVal {
-				cnt, err = statsTbl.Columns[offset].EqualRowCount(types.NewDatum(rg.LowVal))
+				cnt, err = statsTbl.Columns[offset].EqualRowCount(sc, types.NewDatum(rg.LowVal))
 			} else {
-				cnt, err = statsTbl.Columns[offset].BetweenRowCount(types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal))
+				cnt, err = statsTbl.Columns[offset].BetweenRowCount(sc, types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal))
 			}
 		}
 		if err != nil {
@@ -129,6 +131,7 @@ func getRowCountByTableRange(statsTbl *statistics.Table, ranges []TableRange, of
 func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	table := p.Table
 	client := p.ctx.GetClient()
+	sc := p.ctx.GetSessionVars().StmtCtx
 	txn, err := p.ctx.GetTxn(false)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -141,6 +144,9 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
+	ts.tp = "TableScan"
+	ts.allocator = p.allocator
+	ts.initIDAndContext(p.ctx)
 	if txn != nil {
 		ts.readOnly = txn.IsReadOnly()
 	} else {
@@ -158,7 +164,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		if client != nil {
 			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-				ts.ConditionPBExpr, ts.conditions, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
+				ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions = expressionsToPB(sc, newSel.Conditions, client)
 			}
 		}
 		err := buildTableRange(ts)
@@ -189,12 +195,12 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 				break
 			}
 		}
-		rowCount, err = getRowCountByTableRange(statsTbl, ts.Ranges, offset)
+		rowCount, err = getRowCountByTableRange(sc, statsTbl, ts.Ranges, offset)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	if ts.ConditionPBExpr != nil {
+	if ts.TableConditionPBExpr != nil {
 		rowCount = uint64(float64(rowCount) * selectionFactor)
 	}
 	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount}), nil
@@ -204,6 +210,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 	statsTbl := p.statisticTable
 	var resultPlan PhysicalPlan
 	client := p.ctx.GetClient()
+	sc := p.ctx.GetSessionVars().StmtCtx
 	txn, err := p.ctx.GetTxn(false)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -217,6 +224,9 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
+	is.tp = "IndexScan"
+	is.allocator = p.allocator
+	is.initIDAndContext(p.ctx)
 	if txn != nil {
 		is.readOnly = txn.IsReadOnly()
 	} else {
@@ -235,17 +245,20 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		if client != nil {
 			memDB := infoschema.IsMemoryDB(p.DBName.L)
 			if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
-				is.ConditionPBExpr, is.conditions, newSel.Conditions = expressionsToPB(newSel.Conditions, client)
+				indexConditions, tableConditions := detachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
+				is.IndexConditionPBExpr, is.indexFilterConditions, indexConditions = expressionsToPB(sc, indexConditions, client)
+				is.TableConditionPBExpr, is.tableFilterConditions, tableConditions = expressionsToPB(sc, tableConditions, client)
+				newSel.Conditions = append(indexConditions, tableConditions...)
 			}
 		}
-		err := buildIndexRange(is)
+		err := buildIndexRange(p.ctx.GetSessionVars().StmtCtx, is)
 		if err != nil {
-			if !terror.ErrorEqual(err, mysql.ErrTruncated) {
+			if !terror.ErrorEqual(err, types.ErrTruncated) {
 				return nil, errors.Trace(err)
 			}
 			log.Warn("truncate error in buildIndexRange")
 		}
-		rowCount, err = getRowCountByIndexRanges(statsTbl, is.Ranges, is.Index)
+		rowCount, err = getRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -255,7 +268,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			resultPlan = &newSel
 		}
 	} else {
-		rb := rangeBuilder{}
+		rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
 		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
@@ -279,6 +292,13 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 		}
 	}
 	return true
+}
+
+func (p *DataSource) need2ConsiderIndex(prop *requiredProperty) bool {
+	if _, ok := p.parents[0].(*Selection); ok || len(prop.props) > 0 {
+		return true
+	}
+	return false
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
@@ -305,13 +325,15 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 			return nil, errors.Trace(err)
 		}
 	}
-	for _, index := range indices {
-		indexInfo, err := p.convert2IndexScan(prop, index)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if info == nil || indexInfo.cost < info.cost {
-			info = indexInfo
+	if !includeTableScan || p.need2ConsiderIndex(prop) {
+		for _, index := range indices {
+			indexInfo, err := p.convert2IndexScan(prop, index)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if info == nil || indexInfo.cost < info.cost {
+				info = indexInfo
+			}
 		}
 	}
 	return info, errors.Trace(p.storePlanInfo(prop, info))
@@ -324,12 +346,15 @@ func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPl
 	if isSel {
 		for _, cond := range sel.Conditions {
 			if con, ok := cond.(*expression.Constant); ok {
-				result, err := expression.EvalBool(con, nil, nil)
+				result, err := expression.EvalBool(con, nil, p.ctx)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				if !result {
 					dummy := &PhysicalDummyScan{}
+					dummy.tp = "Dummy"
+					dummy.allocator = p.allocator
+					dummy.initIDAndContext(p.ctx)
 					dummy.SetSchema(p.schema)
 					info := &physicalPlanInfo{p: dummy}
 					p.storePlanInfo(prop, info)
@@ -364,6 +389,7 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 			ExecLimit: prop.limit,
 		}
 		sort.SetSchema(info.p.GetSchema())
+		sort.correlated = info.p.IsCorrelated()
 		info = addPlanToResponse(sort, info)
 		count := info.count
 		if prop.limit != nil {
@@ -371,8 +397,9 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		}
 		info.cost += sortCost(count)
 	} else if prop.limit != nil {
-		limit := prop.limit.Copy()
+		limit := prop.limit.Copy().(*Limit)
 		limit.SetSchema(info.p.GetSchema())
+		limit.correlated = info.p.IsCorrelated()
 		info = addPlanToResponse(limit, info)
 	}
 	if prop.limit != nil && prop.limit.Count < info.count {
@@ -452,6 +479,11 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 		OtherConditions: p.OtherConditions,
 		Anti:            p.anti,
 	}
+	join.ctx = p.ctx
+	join.tp = "HashSemiJoin"
+	join.allocator = p.allocator
+	join.initIDAndContext(p.ctx)
+	join.correlated = p.IsCorrelated()
 	join.SetSchema(p.schema)
 	lProp := prop
 	if !allLeft {
@@ -467,6 +499,12 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 	rInfo, err := rChild.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if lInfo.p != nil {
+		join.correlated = join.correlated || lInfo.p.IsCorrelated()
+	}
+	if rInfo.p != nil {
+		join.correlated = join.correlated || rInfo.p.IsCorrelated()
 	}
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
 	if p.JoinType == SemiJoin {
@@ -502,7 +540,11 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 		Concurrency:   JoinConcurrency,
 		DefaultValues: p.DefaultValues,
 	}
+	join.tp = "HashLeftJoin"
+	join.allocator = p.allocator
+	join.initIDAndContext(lChild.context())
 	join.SetSchema(p.schema)
+	join.correlated = p.IsCorrelated()
 	if innerJoin {
 		join.JoinType = InnerJoin
 	} else {
@@ -525,6 +567,12 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	rInfo, err := rChild.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if lInfo.p != nil {
+		join.correlated = join.correlated || lInfo.p.IsCorrelated()
+	}
+	if rInfo.p != nil {
+		join.correlated = join.correlated || rInfo.p.IsCorrelated()
 	}
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
 	if !allLeft {
@@ -571,6 +619,10 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 		Concurrency:   JoinConcurrency,
 		DefaultValues: p.DefaultValues,
 	}
+	join.tp = "HashRightJoin"
+	join.allocator = p.allocator
+	join.initIDAndContext(p.ctx)
+	join.correlated = p.IsCorrelated()
 	join.SetSchema(p.schema)
 	if innerJoin {
 		join.JoinType = InnerJoin
@@ -595,6 +647,12 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if lInfo.p != nil {
+		join.correlated = join.correlated || lInfo.p.IsCorrelated()
+	}
+	if rInfo.p != nil {
+		join.correlated = join.correlated || rInfo.p.IsCorrelated()
 	}
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
 	if !allRight {
@@ -661,6 +719,10 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 	}
+	agg.tp = "StreamAgg"
+	agg.allocator = p.allocator
+	agg.initIDAndContext(p.ctx)
+	agg.correlated = p.IsCorrelated()
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
 	// TODO: Consider distinct key.
@@ -706,9 +768,16 @@ func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, child
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 	}
+	agg.tp = "HashAgg"
+	agg.allocator = p.allocator
+	agg.initIDAndContext(p.ctx)
+	agg.correlated = p.IsCorrelated()
 	agg.SetSchema(p.schema)
 	agg.HasGby = len(p.GroupByItems) > 0
-	schema := x.addAggregation(agg)
+	if childInfo.p != nil {
+		agg.correlated = agg.correlated || childInfo.p.IsCorrelated()
+	}
+	schema := x.addAggregation(p.ctx, agg)
 	if len(schema) == 0 {
 		return nil
 	}
@@ -727,8 +796,15 @@ func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanIn
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 	}
+	agg.tp = "HashAgg"
+	agg.allocator = p.allocator
+	agg.initIDAndContext(p.ctx)
+	agg.correlated = p.IsCorrelated()
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
+	if childInfo.p != nil {
+		agg.correlated = agg.correlated || childInfo.p.IsCorrelated()
+	}
 	info := addPlanToResponse(agg, childInfo)
 	info.cost += float64(info.count) * memoryFactor
 	info.count = uint64(float64(info.count) * aggFactor)
@@ -795,24 +871,24 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	}
 	limit := prop.limit
 	childInfos := make([]*physicalPlanInfo, 0, len(p.children))
-	var count uint64
 	for _, child := range p.GetChildren() {
-		newProp := convertLimitOffsetToCount(prop)
-		newProp.props = make([]*columnProp, 0, len(prop.props))
-		for _, c := range prop.props {
-			idx := p.GetSchema().GetIndex(c.col)
-			newProp.props = append(newProp.props, &columnProp{col: child.GetSchema()[idx], desc: c.desc})
+		newProp := &requiredProperty{}
+		if limit != nil {
+			newProp = convertLimitOffsetToCount(prop)
+			newProp.props = make([]*columnProp, 0, len(prop.props))
+			for _, c := range prop.props {
+				idx := p.GetSchema().GetIndex(c.col)
+				newProp.props = append(newProp.props, &columnProp{col: child.GetSchema()[idx], desc: c.desc})
+			}
 		}
-		info, err = child.(LogicalPlan).convert2PhysicalPlan(newProp)
-		count += info.count
+		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(newProp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		childInfos = append(childInfos, info)
+		childInfos = append(childInfos, childInfo)
 	}
 	info = p.matchProperty(prop, childInfos...)
-	info = enforceProperty(limitProperty(limit), info)
-	info.count = count
+	info = enforceProperty(prop, info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
@@ -831,13 +907,15 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Secondly, we push nothing and enforce this property.
-	infoEnforce, err := p.convert2PhysicalPlanEnforce(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if infoEnforce.cost < info.cost {
-		info = infoEnforce
+	if len(prop.props) > 0 {
+		// Secondly, we push nothing and enforce this property.
+		infoEnforce, err := p.convert2PhysicalPlanEnforce(prop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if infoEnforce.cost < info.cost {
+			info = infoEnforce
+		}
 	}
 	if _, ok := p.GetChildByIndex(0).(*DataSource); !ok {
 		info = p.matchProperty(prop, info)
@@ -875,7 +953,7 @@ func (p *Selection) convert2PhysicalPlanEnforce(prop *requiredProperty) (*physic
 	}
 	if prop.limit != nil && len(prop.props) > 0 {
 		if t, ok := info.p.(physicalDistSQLPlan); ok {
-			t.addTopN(prop)
+			t.addTopN(p.ctx, prop)
 		}
 		info = enforceProperty(prop, info)
 	} else if len(prop.props) != 0 {
@@ -930,19 +1008,19 @@ loop:
 	return info, nil
 }
 
-func matchProp(target, new *requiredProperty) bool {
+func matchProp(ctx context.Context, target, new *requiredProperty) bool {
 	if target.sortKeyLen > len(new.props) {
 		return false
 	}
 	for i := 0; i < target.sortKeyLen; i++ {
-		if !target.props[i].equal(new.props[i]) {
+		if !target.props[i].equal(new.props[i], ctx) {
 			return false
 		}
 	}
 	for i := target.sortKeyLen; i < len(target.props); i++ {
 		isMatch := false
 		for _, pro := range new.props {
-			if pro.col.Equal(target.props[i].col) {
+			if pro.col.Equal(target.props[i].col, ctx) {
 				isMatch = true
 				break
 			}
@@ -997,11 +1075,33 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 		np.ExecLimit = selfProp.limit
 		sortedPlanInfo = addPlanToResponse(&np, unSortedPlanInfo)
 	}
-	if !matchProp(prop, selfProp) {
+	if !matchProp(p.ctx, prop, selfProp) {
 		sortedPlanInfo.cost = math.MaxFloat64
 	}
 	p.storePlanInfo(prop, sortedPlanInfo)
 	return sortedPlanInfo, nil
+}
+
+// addCachePlan will add a Cache plan above the plan whose father's IsCorrelated() is true but its own IsCorrelated() is false.
+func addCachePlan(p PhysicalPlan) PhysicalPlan {
+	if len(p.GetChildren()) == 0 {
+		return p
+	}
+	np := p
+	newChildren := make([]Plan, 0, len(np.GetChildren()))
+	for _, child := range p.GetChildren() {
+		if child.IsCorrelated() {
+			newChildren = append(newChildren, addCachePlan(child.(PhysicalPlan)))
+		} else {
+			newChild := &Cache{}
+			addChild(newChild, child)
+			newChild.SetSchema(child.GetSchema())
+			newChild.SetParents(np)
+			newChildren = append(newChildren, newChild)
+		}
+	}
+	np.SetChildren(newChildren...)
+	return np
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
@@ -1013,9 +1113,10 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	if info != nil {
 		return info, nil
 	}
+	innerPlan := p.children[1].(LogicalPlan)
 	allFromOuter := true
 	for _, col := range prop.props {
-		if p.InnerPlan.GetSchema().GetIndex(col.col) != -1 {
+		if innerPlan.GetSchema().GetIndex(col.col) != -1 {
 			allFromOuter = false
 		}
 	}
@@ -1023,15 +1124,19 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		return &physicalPlanInfo{cost: math.MaxFloat64}, err
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
-	innerInfo, err := p.InnerPlan.convert2PhysicalPlan(&requiredProperty{})
+	innerInfo, err := innerPlan.convert2PhysicalPlan(&requiredProperty{})
+	innerInfo.p = addCachePlan(innerInfo.p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	np := &PhysicalApply{
-		OuterSchema: p.corColsInCurPlan,
+		OuterSchema: p.corCols,
 		Checker:     p.Checker,
-		InnerPlan:   innerInfo.p,
 	}
+	np.tp = "PhysicalApply"
+	np.allocator = p.allocator
+	np.initIDAndContext(p.ctx)
+	np.correlated = p.IsCorrelated()
 	np.SetSchema(p.GetSchema())
 	limit := prop.limit
 	info, err = child.convert2PhysicalPlan(removeLimit(prop))
@@ -1039,6 +1144,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		return nil, errors.Trace(err)
 	}
 	info = addPlanToResponse(np, info)
+	addChild(info.p, innerInfo.p)
 	info = enforceProperty(limitProperty(limit), info)
 	p.storePlanInfo(prop, info)
 	return info, nil

@@ -19,6 +19,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -137,7 +139,7 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 		},
 		{
 			types.NewFieldType(mysql.TypeNewDecimal),
-			types.NewDecimalDatum(mysql.NewDecFromInt(0)),
+			types.NewDecimalDatum(types.NewDecFromInt(0)),
 		},
 		{
 			types.NewFieldType(mysql.TypeVarchar),
@@ -149,34 +151,35 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 		},
 		{
 			types.NewFieldType(mysql.TypeDuration),
-			types.NewDurationDatum(mysql.ZeroDuration),
+			types.NewDurationDatum(types.ZeroDuration),
 		},
 		{
 			types.NewFieldType(mysql.TypeDatetime),
-			types.NewDatum(mysql.ZeroDatetime),
+			types.NewDatum(types.ZeroDatetime),
 		},
 		{
 			types.NewFieldType(mysql.TypeTimestamp),
-			types.NewDatum(mysql.ZeroTimestamp),
+			types.NewDatum(types.ZeroTimestamp),
 		},
 		{
 			types.NewFieldType(mysql.TypeDate),
-			types.NewDatum(mysql.ZeroDate),
+			types.NewDatum(types.ZeroDate),
 		},
 		{
 			types.NewFieldType(mysql.TypeBit),
-			types.NewDatum(mysql.Bit{Value: 0, Width: mysql.MinBitWidth}),
+			types.NewDatum(types.Bit{Value: 0, Width: types.MinBitWidth}),
 		},
 		{
 			types.NewFieldType(mysql.TypeSet),
-			types.NewDatum(mysql.Set{}),
+			types.NewDatum(types.Set{}),
 		},
 	}
+	sc := new(variable.StatementContext)
 	for _, ca := range cases {
 		colInfo := &model.ColumnInfo{FieldType: *ca.ft}
 		zv := GetZeroValue(colInfo)
 		c.Assert(zv.Kind(), Equals, ca.value.Kind())
-		cmp, err := zv.CompareDatum(ca.value)
+		cmp, err := zv.CompareDatum(sc, ca.value)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -188,7 +191,8 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 		State:        model.StatePublic,
 		DefaultValue: 1.0,
 	}
-	val, ok, err := GetColDefaultValue(nil, colInfo)
+	ctx := mock.NewContext()
+	val, ok, err := GetColDefaultValue(ctx, colInfo)
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsTrue)
 	c.Assert(val.Kind(), Equals, types.KindInt64)

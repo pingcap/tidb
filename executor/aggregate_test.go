@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -59,7 +61,9 @@ func (m *MockExec) Close() error {
 }
 
 func (s *testSuite) TestAggregation(c *C) {
+	plan.JoinConcurrency = 1
 	defer func() {
+		plan.JoinConcurrency = 5
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
@@ -78,6 +82,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("3", "2", "2"))
 	result = tk.MustQuery("select count(*) from t having 1 = 0")
 	result.Check(testkit.Rows())
+	result = tk.MustQuery("select c,d from t group by d")
+	result.Check(testkit.Rows("<nil> 1", "1 2", "1 3"))
 	result = tk.MustQuery("select - c, c as d from t group by c having null not between c and avg(distinct d) - d")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select - c as c from t group by c having t.c > 5")
@@ -90,7 +96,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	result = tk.MustQuery("select c as a from t group by d having a < 0")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select c as a from t group by d having sum(a) = 2")
-	result.Check(testkit.Rows("1"))
+	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select count(distinct c) from t group by d")
 	result.Check(testkit.Rows("1", "2", "2"))
 	result = tk.MustQuery("select sum(c) from t group by d")
@@ -152,7 +158,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	result = tk.MustQuery("select count(*) from t a join t b where a.c < 0")
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select sum(b.c), count(b.d), a.c from t a left join t b on a.c = b.d group by b.d order by b.d")
-	result.Check(testkit.Rows("<nil> 0 4", "8 12 1", "5 2 3"))
+	result.Check(testkit.Rows("<nil> 0 <nil>", "8 12 1", "5 2 3"))
 	// This two cases prove that having always resolve name from field list firstly.
 	result = tk.MustQuery("select 1-d as d from t having d < 0 order by d desc")
 	result.Check(testkit.Rows("-1", "-1", "-2", "-2"))
@@ -322,11 +328,13 @@ func (s *testSuite) TestStreamAgg(c *C) {
 			},
 		},
 	}
+	ctx := mock.NewContext()
 	for _, ca := range cases {
 		mock := &MockExec{}
 		e := &executor.StreamAggExec{
 			AggFuncs: []expression.AggregationFunction{ca.aggFunc},
 			Src:      mock,
+			Ctx:      ctx,
 		}
 		row, err := e.Next()
 		c.Check(err, IsNil)

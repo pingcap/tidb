@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 // Compiler compiles an ast.StmtNode to a stmt.Statement.
@@ -155,16 +154,8 @@ func getSelectStmtLabel(x *ast.SelectStmt) string {
 // then wrappped to an adapter *statement as stmt.Statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
 	stmtCount(node)
-	if _, ok := node.(*ast.UpdateStmt); ok {
-		sVars := variable.GetSessionVars(ctx)
-		sVars.InUpdateStmt = true
-		defer func() {
-			sVars.InUpdateStmt = false
-		}()
-	}
-
 	var is infoschema.InfoSchema
-	sessVar := variable.GetSessionVars(ctx)
+	sessVar := ctx.GetSessionVars()
 	if snap := sessVar.SnapshotInfoschema; snap != nil {
 		is = snap.(infoschema.InfoSchema)
 		log.Infof("[%d] use snapshot schema %d", sessVar.ConnectionID, is.SchemaMetaVersion())

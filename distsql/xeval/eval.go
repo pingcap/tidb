@@ -15,6 +15,7 @@ package xeval
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -34,10 +35,27 @@ const (
 	compareResultNull = -2
 )
 
+// Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
+const (
+	// FlagIgnoreTruncate indicates if truncate error should be ignored.
+	// Read-only statements should ignore truncate error, write statements should not ignore truncate error.
+	FlagIgnoreTruncate uint64 = 1
+	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
+	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
+	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
+	FlagTruncateAsWarning uint64 = 1 << 1
+)
+
 // Evaluator evaluates tipb.Expr.
 type Evaluator struct {
 	Row        map[int64]types.Datum // column values.
 	valueLists map[*tipb.Expr]*decodedValueList
+	sc         *variable.StatementContext
+}
+
+// NewEvaluator creates a new Evaluator instance.
+func NewEvaluator(sc *variable.StatementContext) *Evaluator {
+	return &Evaluator{Row: make(map[int64]types.Datum), sc: sc}
 }
 
 type decodedValueList struct {
@@ -71,10 +89,12 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		tipb.ExprType_BitXor, tipb.ExprType_LeftShift, tipb.ExprType_RighShift:
 		return e.evalBitOps(expr)
 	// control functions
-	case tipb.ExprType_Case, tipb.ExprType_If:
+	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull, tipb.ExprType_NullIf:
 		return e.evalControlFuncs(expr)
 	case tipb.ExprType_Coalesce:
 		return e.evalCoalesce(expr)
+	case tipb.ExprType_IsNull:
+		return e.evalIsNull(expr)
 	}
 	return types.Datum{}, nil
 }
@@ -93,4 +113,26 @@ func (e *Evaluator) evalTwoChildren(expr *tipb.Expr) (left, right types.Datum, e
 		return types.Datum{}, types.Datum{}, errors.Trace(err)
 	}
 	return
+}
+
+func (e *Evaluator) evalIsNull(expr *tipb.Expr) (types.Datum, error) {
+	if len(expr.Children) != 1 {
+		return types.Datum{}, ErrInvalid.Gen("ISNULL need 1 operand, got %d", len(expr.Children))
+	}
+	d, err := e.Eval(expr.Children[0])
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if d.IsNull() {
+		return types.NewIntDatum(1), nil
+	}
+	return types.NewIntDatum(0), nil
+}
+
+// FlagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
+func FlagsToStatementContext(flags uint64) *variable.StatementContext {
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = (flags & FlagIgnoreTruncate) > 0
+	sc.TruncateAsWarning = (flags & FlagTruncateAsWarning) > 0
+	return sc
 }

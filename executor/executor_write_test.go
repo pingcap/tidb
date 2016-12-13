@@ -94,14 +94,29 @@ func (s *testSuite) TestInsert(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("rollback")
 
-	insertSQL := `insert into insert_test (id, c2) values (1, 1) on duplicate key update c2=10;`
+	// Updating column is PK handle.
+	// Make sure the record is "1, 1, nil, 1".
+	r := tk.MustQuery("select * from insert_test where id = 1;")
+	rowStr := fmt.Sprintf("%v %v %v %v", "1", "1", nil, "1")
+	r.Check(testkit.Rows(rowStr))
+	insertSQL := `insert into insert_test (id, c3) values (1, 2) on duplicate key update id=values(id), c2=10;`
 	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_test where id = 1;")
+	rowStr = fmt.Sprintf("%v %v %v %v", "1", "1", "10", "1")
+	r.Check(testkit.Rows(rowStr))
 
 	insertSQL = `insert into insert_test (id, c2) values (1, 1) on duplicate key update insert_test.c2=10;`
 	tk.MustExec(insertSQL)
 
 	_, err = tk.Exec(`insert into insert_test (id, c2) values(1, 1) on duplicate key update t.c2 = 10`)
 	c.Assert(err, NotNil)
+
+	// for on duplicate key
+	insertSQL = `INSERT INTO insert_test (id, c3) VALUES (1, 2) ON DUPLICATE KEY UPDATE c3=values(c3)+c3+3;`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_test where id = 1;")
+	rowStr = fmt.Sprintf("%v %v %v %v", "1", "1", "10", "6")
+	r.Check(testkit.Rows(rowStr))
 
 	tk.MustExec("create table insert_err (id int, c1 varchar(8))")
 	_, err = tk.Exec("insert insert_err values (1, 'abcdabcdabcd')")

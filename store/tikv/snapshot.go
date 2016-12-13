@@ -190,11 +190,11 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		},
 	}
 	for {
-		region, err := s.store.regionCache.GetRegion(bo, k)
+		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := s.store.SendKVReq(bo, req, region.VerID(), readTimeoutShort)
+		resp, err := s.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

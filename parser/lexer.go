@@ -39,7 +39,12 @@ type Scanner struct {
 	stmtStartPos int
 
 	// for scanning such kind of comment: /*! MySQL-specific code */
-	specialComment *Scanner
+	specialComment *specialCommentScanner
+}
+
+type specialCommentScanner struct {
+	*Scanner
+	Pos
 }
 
 // Errors returns the errors during a scan.
@@ -108,7 +113,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return toHex(s, v, lit)
 	case bitLit:
 		return toBit(s, v, lit)
-	case userVar, sysVar, cast, sysDate, curDate, extract:
+	case userVar, sysVar, cast, curDate, extract:
 		v.item = lit
 		return tok
 	case null:
@@ -139,8 +144,9 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		tok, pos, lit = specialComment.scan()
 		if tok != 0 {
 			// return the specialComment scan result as the result
-			pos.Line += s.r.p.Line
-			pos.Offset += s.r.p.Col
+			pos.Line += s.specialComment.Line
+			pos.Col += s.specialComment.Col
+			pos.Offset += s.specialComment.Offset
 			return
 		}
 		// leave specialComment scan mode after all stream consumed.
@@ -262,13 +268,38 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		comment := s.r.data(&pos)
 		if strings.HasPrefix(comment, "/*!") {
 			sql := specCodePattern.ReplaceAllStringFunc(comment, trimComment)
-			s.specialComment = NewScanner(sql)
+			s.specialComment = &specialCommentScanner{
+				Scanner: NewScanner(sql),
+				Pos: Pos{
+					pos.Line,
+					pos.Col,
+					pos.Offset + sqlOffsetInComment(comment),
+				},
+			}
 		}
 
 		return s.scan()
 	}
 	tok = int('/')
 	return
+}
+
+func sqlOffsetInComment(comment string) int {
+	// find the first SQL token offset in pattern like "/*!40101 mysql specific code */"
+	offset := 0
+	for i := 0; i < len(comment); i++ {
+		if unicode.IsSpace(rune(comment[i])) {
+			offset = i
+			break
+		}
+	}
+	for offset < len(comment) {
+		offset++
+		if !unicode.IsSpace(rune(comment[offset])) {
+			break
+		}
+	}
+	return offset
 }
 
 func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
@@ -442,9 +473,9 @@ func handleEscape(s *Scanner) rune {
 
 func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
+	tok = intLit
 	ch0 := s.r.readByte()
-	switch ch0 {
-	case '0':
+	if ch0 == '0' {
 		tok = intLit
 		ch1 := s.r.peek()
 		switch {
@@ -465,14 +496,6 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 			tok = unicode.ReplacementChar
 			return
 		}
-		lit = s.r.data(&pos)
-		return
-	case '.':
-		if isDigit(s.r.peek()) {
-			return s.scanFloat(&pos)
-		}
-		tok, lit = int('.'), "."
-		return
 	}
 
 	s.scanDigits()
@@ -486,7 +509,23 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 		s.r.incAsLongAs(isIdentChar)
 		return identifier, pos, s.r.data(&pos)
 	}
-	tok, lit = intLit, s.r.data(&pos)
+	lit = s.r.data(&pos)
+	return
+}
+
+func startWithDot(s *Scanner) (tok int, pos Pos, lit string) {
+	pos = s.r.pos()
+	s.r.inc()
+	save := s.r.pos()
+	if isDigit(s.r.peek()) {
+		tok, _, lit = s.scanFloat(&pos)
+		if s.r.eof() || unicode.IsSpace(s.r.peek()) {
+			return
+		}
+		// Fail to parse a float, reset to dot.
+		s.r.p = save
+	}
+	tok, lit = int('.'), "."
 	return
 }
 

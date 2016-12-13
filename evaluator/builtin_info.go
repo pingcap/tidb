@@ -21,35 +21,33 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/db"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
 func builtinDatabase(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	s := db.GetCurrentSchema(ctx)
-	if s == "" {
+	currentDB := ctx.GetSessionVars().CurrentDB
+	if currentDB == "" {
 		return d, nil
 	}
-	d.SetString(s)
+	d.SetString(currentDB)
 	return d, nil
 }
 
 func builtinFoundRows(arg []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := variable.GetSessionVars(ctx)
+	data := ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
 
-	d.SetUint64(data.FoundRows)
+	d.SetUint64(data.StmtCtx.FoundRows())
 	return d, nil
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 // TODO: The value of CURRENT_USER() can differ from the value of USER(). We will finish this after we support grant tables.
 func builtinCurrentUser(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := variable.GetSessionVars(ctx)
+	data := ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -59,7 +57,7 @@ func builtinCurrentUser(args []types.Datum, ctx context.Context) (d types.Datum,
 }
 
 func builtinUser(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := variable.GetSessionVars(ctx)
+	data := ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -69,7 +67,7 @@ func builtinUser(args []types.Datum, ctx context.Context) (d types.Datum, err er
 }
 
 func builtinConnectionID(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := variable.GetSessionVars(ctx)
+	data := ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -81,14 +79,14 @@ func builtinConnectionID(args []types.Datum, ctx context.Context) (d types.Datum
 // See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
 func builtinLastInsertID(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if len(args) == 1 {
-		id, err := args[0].ToInt64()
+		id, err := args[0].ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-		variable.GetSessionVars(ctx).SetLastInsertID(uint64(id))
+		ctx.GetSessionVars().SetLastInsertID(uint64(id))
 	}
 
-	d.SetUint64(variable.GetSessionVars(ctx).LastInsertID)
+	d.SetUint64(ctx.GetSessionVars().LastInsertID)
 	return
 }
 

@@ -15,13 +15,11 @@ package variable
 
 import (
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
 )
 
 const (
@@ -29,9 +27,10 @@ const (
 	codeCantSetToNull  terror.ErrCode = 2
 )
 
+// Error instances.
 var (
 	errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
-	errCantSetToNull  = terror.ClassVariable.New(codeCantSetToNull, "cannot set variable to null")
+	ErrCantSetToNull  = terror.ClassVariable.New(codeCantSetToNull, "cannot set variable to null")
 )
 
 // RetryInfo saves retry information.
@@ -78,7 +77,7 @@ type SessionVars struct {
 	// user-defined variables
 	Users map[string]string
 	// system variables
-	systems map[string]string
+	Systems map[string]string
 	// prepared statement
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -91,7 +90,6 @@ type SessionVars struct {
 	// following variables are special for current session
 	Status       uint16
 	LastInsertID uint64
-	AffectedRows uint64
 
 	// Client capability
 	ClientCapability uint32
@@ -99,20 +97,17 @@ type SessionVars struct {
 	// Connection ID
 	ConnectionID uint64
 
-	// Found rows
-	FoundRows uint64
-
 	// Current user
 	User string
+
+	// Current DB
+	CurrentDB string
 
 	// Strict SQL mode
 	StrictSQLMode bool
 
 	// CommonGlobalLoaded indicates if common global variable has been loaded for this session.
 	CommonGlobalLoaded bool
-
-	// InUpdateStmt indicates if the session is handling update stmt.
-	InUpdateStmt bool
 
 	// InRestrictedSQL indicates if the session is handling restricted SQL execution.
 	InRestrictedSQL bool
@@ -126,38 +121,30 @@ type SessionVars struct {
 
 	// SkipConstraintCheck is true when importing data.
 	SkipConstraintCheck bool
+
+	// GlobalAccessor is used to set and get global variables.
+	GlobalVarsAccessor GlobalVarAccessor
+
+	// StmtCtx holds variables for current executing statement.
+	StmtCtx *StatementContext
+
+	// CurrInsertValues is used to record current ValuesExpr's values.
+	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+	CurrInsertValues interface{}
 }
 
-// sessionVarsKeyType is a dummy type to avoid naming collision in context.
-type sessionVarsKeyType int
-
-// String defines a Stringer function for debugging and pretty printing.
-func (k sessionVarsKeyType) String() string {
-	return "session_vars"
-}
-
-const sessionVarsKey sessionVarsKeyType = 0
-
-// BindSessionVars creates a session vars object and binds it to context.
-func BindSessionVars(ctx context.Context) {
-	v := &SessionVars{
+// NewSessionVars creates a session vars object.
+func NewSessionVars() *SessionVars {
+	return &SessionVars{
 		Users:                make(map[string]string),
-		systems:              make(map[string]string),
+		Systems:              make(map[string]string),
 		PreparedStmts:        make(map[uint32]interface{}),
 		PreparedStmtNameToID: make(map[string]uint32),
 		RetryInfo:            &RetryInfo{},
 		StrictSQLMode:        true,
+		Status:               mysql.ServerStatusAutocommit,
+		StmtCtx:              new(StatementContext),
 	}
-	ctx.SetValue(sessionVarsKey, v)
-}
-
-// GetSessionVars gets the session vars from context.
-func GetSessionVars(ctx context.Context) *SessionVars {
-	v, ok := ctx.Value(sessionVarsKey).(*SessionVars)
-	if !ok {
-		return nil
-	}
-	return v
 }
 
 const (
@@ -174,38 +161,16 @@ const (
 // For comparisons of strings with column values, collation_connection does not matter because columns
 // have their own collation, which has a higher collation precedence.
 // See https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
-func GetCharsetInfo(ctx context.Context) (charset, collation string) {
-	sessionVars := GetSessionVars(ctx)
-	charset = sessionVars.systems[characterSetConnection]
-	collation = sessionVars.systems[collationConnection]
+func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
+	charset = s.Systems[characterSetConnection]
+	collation = s.Systems[collationConnection]
 	return
-}
-
-// GetSnapshotTS gets snapshot timestamp that has been set by set variable statement.
-func GetSnapshotTS(ctx context.Context) uint64 {
-	sessionVars := GetSessionVars(ctx)
-	return sessionVars.SnapshotTS
 }
 
 // SetLastInsertID saves the last insert id to the session context.
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
 	s.LastInsertID = insertID
-}
-
-// SetAffectedRows saves the affected rows to the session context.
-func (s *SessionVars) SetAffectedRows(affectedRows uint64) {
-	s.AffectedRows = affectedRows
-}
-
-// AddAffectedRows adds affected rows with the argument rows.
-func (s *SessionVars) AddAffectedRows(rows uint64) {
-	s.AffectedRows += rows
-}
-
-// AddFoundRows adds found rows with the argument rows.
-func (s *SessionVars) AddFoundRows(rows uint64) {
-	s.FoundRows += rows
 }
 
 // SetStatusFlag sets the session server status variable.
@@ -224,115 +189,111 @@ func (s *SessionVars) GetStatusFlag(flag uint16) bool {
 	return s.Status&flag > 0
 }
 
+// ShouldAutocommit checks if current session should autocommit.
+// With START TRANSACTION, autocommit remains disabled until you end
+// the transaction with COMMIT or ROLLBACK.
+func (s *SessionVars) ShouldAutocommit() bool {
+	isAutomcommit := s.GetStatusFlag(mysql.ServerStatusAutocommit)
+	inTransaction := s.GetStatusFlag(mysql.ServerStatusInTrans)
+	return isAutomcommit && !inTransaction
+}
+
 // GetNextPreparedStmtID generates and returns the next session scope prepared statement id.
 func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	s.preparedStmtID++
 	return s.preparedStmtID
 }
 
-// SetCurrentUser saves the current user to the session context.
-func (s *SessionVars) SetCurrentUser(user string) {
-	s.User = user
-}
-
 // special session variables.
 const (
 	SQLModeVar          = "sql_mode"
 	AutocommitVar       = "autocommit"
-	characterSetResults = "character_set_results"
+	CharacterSetResults = "character_set_results"
 )
-
-// SetSystemVar sets a system variable.
-func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
-	key = strings.ToLower(key)
-	if value.IsNull() {
-		if key != characterSetResults {
-			return errCantSetToNull
-		}
-		delete(s.systems, key)
-		return nil
-	}
-	sVal, err := value.ToString()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	switch key {
-	case SQLModeVar:
-		sVal = strings.ToUpper(sVal)
-		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
-			s.StrictSQLMode = true
-		} else {
-			s.StrictSQLMode = false
-		}
-	case TiDBSnapshot:
-		err = s.setSnapshotTS(sVal)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	case AutocommitVar:
-		isAutocommit := strings.EqualFold(sVal, "ON") || sVal == "1"
-		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
-	case TiDBSkipConstraintCheck:
-		s.setSkipConstraintCheck(sVal)
-	}
-	s.systems[key] = sVal
-	return nil
-}
-
-// epochShiftBits is used to reserve logical part of the timestamp.
-const epochShiftBits = 18
-
-func (s *SessionVars) setSnapshotTS(sVal string) error {
-	if sVal == "" {
-		s.SnapshotTS = 0
-		return nil
-	}
-	t, err := mysql.ParseTime(sVal, mysql.TypeTimestamp, mysql.MaxFsp)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
-	s.SnapshotTS = uint64(ts)
-	return nil
-}
-
-func (s *SessionVars) setSkipConstraintCheck(sVal string) {
-	if sVal == "1" {
-		s.SkipConstraintCheck = true
-	} else {
-		s.SkipConstraintCheck = false
-	}
-}
-
-// GetSystemVar gets a system variable.
-func (s *SessionVars) GetSystemVar(key string) types.Datum {
-	var d types.Datum
-	key = strings.ToLower(key)
-	sVal, ok := s.systems[key]
-	if ok {
-		d.SetString(sVal)
-	} else {
-		// TiDBSkipConstraintCheck is a session scope vars. We do not store it in the global table.
-		if key == TiDBSkipConstraintCheck {
-			d.SetString(SysVars[TiDBSkipConstraintCheck].Value)
-		}
-	}
-	return d
-}
 
 // GetTiDBSystemVar gets variable value for name.
 // The variable should be a TiDB specific system variable (The vars in tidbSysVars map).
 // We load the variable from session first, if not found, use local defined default variable.
-func (s *SessionVars) GetTiDBSystemVar(ctx context.Context, name string) (string, error) {
+func (s *SessionVars) GetTiDBSystemVar(name string) (string, error) {
 	key := strings.ToLower(name)
 	_, ok := tidbSysVars[key]
 	if !ok {
 		return "", errors.Errorf("%s is not a TiDB specific system variable.", name)
 	}
 
-	sVal, ok := s.systems[key]
+	sVal, ok := s.Systems[key]
 	if ok {
 		return sVal, nil
 	}
 	return SysVars[key].Value, nil
+}
+
+// StatementContext contains variables for a statement.
+// It should be reset before executing a statement.
+type StatementContext struct {
+	/* Variables that are set before execution */
+	InUpdateStmt      bool
+	IgnoreTruncate    bool
+	TruncateAsWarning bool
+
+	/* Variables that changes during execution. */
+	mu struct {
+		sync.Mutex
+		affectedRows uint64
+		foundRows    uint64
+		warnings     []error
+	}
+}
+
+// AddAffectedRows adds affected rows.
+func (sc *StatementContext) AddAffectedRows(rows uint64) {
+	sc.mu.Lock()
+	sc.mu.affectedRows += rows
+	sc.mu.Unlock()
+}
+
+// AffectedRows gets affected rows.
+func (sc *StatementContext) AffectedRows() uint64 {
+	sc.mu.Lock()
+	rows := sc.mu.affectedRows
+	sc.mu.Unlock()
+	return rows
+}
+
+// FoundRows gets found rows.
+func (sc *StatementContext) FoundRows() uint64 {
+	sc.mu.Lock()
+	rows := sc.mu.foundRows
+	sc.mu.Unlock()
+	return rows
+}
+
+// AddFoundRows adds found rows.
+func (sc *StatementContext) AddFoundRows(rows uint64) {
+	sc.mu.Lock()
+	sc.mu.foundRows += rows
+	sc.mu.Unlock()
+}
+
+// GetWarnings gets warnings.
+func (sc *StatementContext) GetWarnings() []error {
+	sc.mu.Lock()
+	warns := make([]error, len(sc.mu.warnings))
+	copy(warns, sc.mu.warnings)
+	sc.mu.Unlock()
+	return warns
+}
+
+// SetWarnings sets warnings.
+func (sc *StatementContext) SetWarnings(warns []error) {
+	sc.mu.Lock()
+	sc.mu.warnings = warns
+	sc.mu.Unlock()
+}
+
+// AppendWarning appends a warning.
+func (sc *StatementContext) AppendWarning(warn error) {
+	sc.mu.Lock()
+	sc.mu.warnings = append(sc.mu.warnings, warn)
+	sc.mu.Unlock()
 }

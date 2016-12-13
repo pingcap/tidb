@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -54,6 +55,7 @@ func (rp rangePoint) String() string {
 type rangePointSorter struct {
 	points []rangePoint
 	err    error
+	sc     *variable.StatementContext
 }
 
 func (r *rangePointSorter) Len() int {
@@ -63,15 +65,15 @@ func (r *rangePointSorter) Len() int {
 func (r *rangePointSorter) Less(i, j int) bool {
 	a := r.points[i]
 	b := r.points[j]
-	less, err := rangePointLess(a, b)
+	less, err := rangePointLess(r.sc, a, b)
 	if err != nil {
 		r.err = err
 	}
 	return less
 }
 
-func rangePointLess(a, b rangePoint) (bool, error) {
-	cmp, err := a.value.CompareDatum(b.value)
+func rangePointLess(sc *variable.StatementContext, a, b rangePoint) (bool, error) {
+	cmp, err := a.value.CompareDatum(sc, b.value)
 	if cmp != 0 {
 		return cmp < 0, nil
 	}
@@ -95,6 +97,7 @@ func (r *rangePointSorter) Swap(i, j int) {
 
 type rangeBuilder struct {
 	err error
+	sc  *variable.StatementContext
 }
 
 func (r *rangeBuilder) build(expr expression.Expression) []rangePoint {
@@ -115,7 +118,7 @@ func (r *rangeBuilder) buildFromConstant(expr *expression.Constant) []rangePoint
 		return nil
 	}
 
-	val, err := expr.Value.ToBool()
+	val, err := expr.Value.ToBool(r.sc)
 	if err != nil {
 		r.err = err
 		return nil
@@ -249,7 +252,7 @@ func (r *rangeBuilder) newBuildFromIn(expr *expression.ScalarFunction) []rangePo
 		endPoint := rangePoint{value: types.NewDatum(v.Value.GetValue())}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
-	sorter := rangePointSorter{points: rangePoints}
+	sorter := rangePointSorter{points: rangePoints, sc: r.sc}
 	sort.Sort(&sorter)
 	if sorter.err != nil {
 		r.err = sorter.err
@@ -407,7 +410,7 @@ func (r *rangeBuilder) union(a, b []rangePoint) []rangePoint {
 }
 
 func (r *rangeBuilder) merge(a, b []rangePoint, union bool) []rangePoint {
-	sorter := rangePointSorter{points: append(a, b...)}
+	sorter := rangePointSorter{points: append(a, b...), sc: r.sc}
 	sort.Sort(&sorter)
 	if sorter.err != nil {
 		r.err = sorter.err
@@ -449,7 +452,7 @@ func (r *rangeBuilder) buildIndexRanges(rangePoints []rangePoint, tp *types.Fiel
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := r.convertPoint(rangePoints[i], tp)
 		endPoint := r.convertPoint(rangePoints[i+1], tp)
-		less, err := rangePointLess(startPoint, endPoint)
+		less, err := rangePointLess(r.sc, startPoint, endPoint)
 		if err != nil {
 			r.err = errors.Trace(err)
 		}
@@ -472,11 +475,11 @@ func (r *rangeBuilder) convertPoint(point rangePoint, tp *types.FieldType) range
 	case types.KindMaxValue, types.KindMinNotNull:
 		return point
 	}
-	casted, err := point.value.ConvertTo(tp)
+	casted, err := point.value.ConvertTo(r.sc, tp)
 	if err != nil {
 		r.err = errors.Trace(err)
 	}
-	valCmpCasted, err := point.value.CompareDatum(casted)
+	valCmpCasted, err := point.value.CompareDatum(r.sc, casted)
 	if err != nil {
 		r.err = errors.Trace(err)
 	}
@@ -520,7 +523,7 @@ func (r *rangeBuilder) appendIndexRanges(origin []*IndexRange, rangePoints []ran
 	var newIndexRanges []*IndexRange
 	for i := 0; i < len(origin); i++ {
 		oRange := origin[i]
-		if !oRange.IsPoint() {
+		if !oRange.IsPoint(r.sc) {
 			newIndexRanges = append(newIndexRanges, oRange)
 		} else {
 			newIndexRanges = append(newIndexRanges, r.appendIndexRange(oRange, rangePoints, ft)...)
@@ -534,7 +537,7 @@ func (r *rangeBuilder) appendIndexRange(origin *IndexRange, rangePoints []rangeP
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := r.convertPoint(rangePoints[i], ft)
 		endPoint := r.convertPoint(rangePoints[i+1], ft)
-		less, err := rangePointLess(startPoint, endPoint)
+		less, err := rangePointLess(r.sc, startPoint, endPoint)
 		if err != nil {
 			r.err = errors.Trace(err)
 		}
@@ -568,13 +571,13 @@ func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
 		if startPoint.value.IsNull() || startPoint.value.Kind() == types.KindMinNotNull {
 			startPoint.value.SetInt64(math.MinInt64)
 		}
-		startInt, err := startPoint.value.ToInt64()
+		startInt, err := startPoint.value.ToInt64(r.sc)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
 		}
 		startDatum := types.NewDatum(startInt)
-		cmp, err := startDatum.CompareDatum(startPoint.value)
+		cmp, err := startDatum.CompareDatum(r.sc, startPoint.value)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
@@ -588,13 +591,13 @@ func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
 		} else if endPoint.value.Kind() == types.KindMaxValue {
 			endPoint.value.SetInt64(math.MaxInt64)
 		}
-		endInt, err := endPoint.value.ToInt64()
+		endInt, err := endPoint.value.ToInt64(r.sc)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
 		}
 		endDatum := types.NewDatum(endInt)
-		cmp, err = endDatum.CompareDatum(endPoint.value)
+		cmp, err = endDatum.CompareDatum(r.sc, endPoint.value)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges

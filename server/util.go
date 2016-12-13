@@ -193,21 +193,25 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 	return
 }
 
-func dumpBinaryDateTime(t mysql.Time, loc *time.Location) (data []byte) {
+func dumpBinaryDateTime(t types.Time, loc *time.Location) (data []byte) {
 	if t.Type == mysql.TypeTimestamp && loc != nil {
-		t.Time = t.In(loc)
+		t1, err := t.Time.GoTime()
+		if err != nil {
+			// TODO: Fix here.
+		}
+		t.Time = types.FromGoTime(t1.In(loc))
 	}
 
-	year, mon, day := t.Year(), t.Month(), t.Day()
+	year, mon, day := t.Time.Year(), t.Time.Month(), t.Time.Day()
 	if t.IsZero() {
-		year, mon, day = 1, time.January, 1
+		year, mon, day = 1, int(time.January), 1
 	}
 	switch t.Type {
 	case mysql.TypeTimestamp, mysql.TypeDatetime:
 		data = append(data, 11)
 		data = append(data, dumpUint16(uint16(year))...)
-		data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
-		data = append(data, dumpUint32(uint32((t.Nanosecond() / 1000)))...)
+		data = append(data, byte(mon), byte(day), byte(t.Time.Hour()), byte(t.Time.Minute()), byte(t.Time.Second()))
+		data = append(data, dumpUint32(uint32(t.Time.Microsecond()))...)
 	case mysql.TypeDate, mysql.TypeNewDate:
 		data = append(data, 4)
 		data = append(data, dumpUint16(uint16(year))...) //year

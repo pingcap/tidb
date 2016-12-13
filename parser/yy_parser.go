@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Error instances.
@@ -153,7 +154,7 @@ func toInt(l yyLexer, lval *yySymType, str string) int {
 }
 
 func toDecimal(l yyLexer, lval *yySymType, str string) int {
-	dec := new(mysql.MyDecimal)
+	dec := new(types.MyDecimal)
 	err := dec.FromString(hack.Slice(str))
 	if err != nil {
 		l.Errorf("decimal literal: %v", err)
@@ -175,10 +176,10 @@ func toFloat(l yyLexer, lval *yySymType, str string) int {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
 func toHex(l yyLexer, lval *yySymType, str string) int {
-	h, err := mysql.ParseHex(str)
+	h, err := types.ParseHex(str)
 	if err != nil {
 		// If parse hexadecimal literal to numerical value error, we should treat it as a string.
-		hexStr, err1 := mysql.ParseHexStr(str)
+		hexStr, err1 := types.ParseHexStr(str)
 		if err1 != nil {
 			l.Errorf("hex literal: %v", err)
 			return int(unicode.ReplacementChar)
@@ -192,7 +193,7 @@ func toHex(l yyLexer, lval *yySymType, str string) int {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
 func toBit(l yyLexer, lval *yySymType, str string) int {
-	b, err := mysql.ParseBit(str, -1)
+	b, err := types.ParseBit(str, -1)
 	if err != nil {
 		l.Errorf("bit literal: %v", err)
 		return int(unicode.ReplacementChar)

@@ -16,6 +16,7 @@ package mock
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -29,8 +30,11 @@ var _ context.Context = (*Context)(nil)
 type Context struct {
 	values map[fmt.Stringer]interface{}
 	// mock global variable
-	txn   kv.Transaction
-	Store kv.Storage
+	txn         kv.Transaction
+	Store       kv.Storage
+	sessionVars *variable.SessionVars
+	// Fix data race in ddl test.
+	mux sync.Mutex
 }
 
 // SetValue implements context.Context SetValue interface.
@@ -49,8 +53,15 @@ func (c *Context) ClearValue(key fmt.Stringer) {
 	delete(c.values, key)
 }
 
+// GetSessionVars implements the context.Context GetSessionVars interface.
+func (c *Context) GetSessionVars() *variable.SessionVars {
+	return c.sessionVars
+}
+
 // GetTxn implements context.Context GetTxn interface.
 func (c *Context) GetTxn(forceNew bool) (kv.Transaction, error) {
+	c.mux.Lock()
+	defer c.mux.Unlock()
 	if c.Store == nil {
 		return nil, nil
 	}
@@ -107,7 +118,7 @@ func (c *Context) GetClient() kv.Client {
 func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return "", variable.UnknownSystemVar.Gen("Unknown system variable: %s", name)
+		return "", variable.UnknownSystemVar.GenByArgs(name)
 	}
 	return v.Value, nil
 }
@@ -116,7 +127,7 @@ func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, err
 func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string) error {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return variable.UnknownSystemVar.Gen("Unknown system variable: %s", name)
+		return variable.UnknownSystemVar.GenByArgs(name)
 	}
 	v.Value = value
 	return nil
@@ -125,6 +136,7 @@ func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
 	return &Context{
-		values: make(map[fmt.Stringer]interface{}),
+		values:      make(map[fmt.Stringer]interface{}),
+		sessionVars: variable.NewSessionVars(),
 	}
 }

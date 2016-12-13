@@ -25,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx/autocommit"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -80,6 +78,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildShow(v)
 	case *plan.Simple:
 		return b.buildSimple(v)
+	case *plan.Set:
+		return b.buildSet(v)
 	case *plan.Sort:
 		return b.buildSort(v)
 	case *plan.Union:
@@ -114,6 +114,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildTrim(v)
 	case *plan.PhysicalDummyScan:
 		return b.buildDummyScan(v)
+	case *plan.Cache:
+		return b.buildCache(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -143,7 +145,7 @@ func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 
 func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	if autocommit.ShouldAutocommit(b.ctx) {
+	if b.ctx.GetSessionVars().ShouldAutocommit() {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
@@ -208,7 +210,7 @@ func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 		schema:      v.GetSchema(),
 	}
 	if e.Tp == ast.ShowGrants && len(e.User) == 0 {
-		e.User = variable.GetSessionVars(e.ctx).User
+		e.User = e.ctx.GetSessionVars().User
 	}
 	return e
 }
@@ -219,6 +221,13 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 		return b.buildGrant(s)
 	}
 	return &SimpleExec{Statement: v.Statement, ctx: b.ctx}
+}
+
+func (b *executorBuilder) buildSet(v *plan.Set) Executor {
+	return &SetExecutor{
+		ctx:  b.ctx,
+		vars: v.VarAssigns,
+	}
 }
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
@@ -310,7 +319,7 @@ func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 	}
 }
 
-func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) *UnionScanExec {
+func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor {
 	src := b.build(v.GetChildByIndex(0))
 	if b.err != nil {
 		return nil
@@ -336,7 +345,8 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) *UnionSc
 		us.condition = v.Condition
 		us.buildAndSortAddedRows(x.table, x.asName)
 	default:
-		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", src)
+		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
+		return src
 	}
 	return us
 }
@@ -432,7 +442,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 		return &StreamAggExec{
 			Src:          src,
 			schema:       v.GetSchema(),
-			ctx:          b.ctx,
+			Ctx:          b.ctx,
 			AggFuncs:     v.AggFuncs,
 			GroupByItems: v.GroupByItems,
 		}
@@ -472,7 +482,7 @@ func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
 }
 
 func (b *executorBuilder) getStartTS() uint64 {
-	startTS := variable.GetSnapshotTS(b.ctx)
+	startTS := b.ctx.GetSessionVars().SnapshotTS
 	if startTS == 0 {
 		txn, err := b.ctx.GetTxn(false)
 		if err != nil {
@@ -507,7 +517,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 			desc:        v.Desc,
 			limitCount:  v.LimitCount,
 			keepOrder:   v.KeepOrder,
-			where:       v.ConditionPBExpr,
+			where:       v.TableConditionPBExpr,
 			aggregate:   v.Aggregated,
 			aggFuncs:    v.AggFuncsPB,
 			aggFields:   v.AggFields,
@@ -553,7 +563,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 			indexPlan:      v,
 			singleReadMode: !v.DoubleRead,
 			startTS:        startTS,
-			where:          v.ConditionPBExpr,
+			where:          v.TableConditionPBExpr,
 			aggregate:      v.Aggregated,
 			aggFuncs:       v.AggFuncsPB,
 			aggFields:      v.AggFields,
@@ -590,7 +600,7 @@ func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 	src := b.build(v.GetChildByIndex(0))
 	apply := &ApplyExec{
 		schema:      v.GetSchema(),
-		innerExec:   b.build(v.InnerPlan),
+		innerExec:   b.build(v.GetChildByIndex(1)),
 		outerSchema: v.OuterSchema,
 		Src:         src,
 	}
@@ -631,6 +641,7 @@ func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 	e := &UnionExec{
 		schema: v.GetSchema(),
 		Srcs:   make([]Executor, len(v.GetChildren())),
+		ctx:    b.ctx,
 	}
 	for i, sel := range v.GetChildren() {
 		selExec := b.build(sel)
@@ -657,5 +668,13 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 		SelectExec:   selExec,
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
+	}
+}
+
+func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
+	src := b.build(v.GetChildByIndex(0))
+	return &CacheExec{
+		schema: v.GetSchema(),
+		Src:    src,
 	}
 }

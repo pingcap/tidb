@@ -40,7 +40,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 
 	reservedKws := []string{
 		"add", "all", "alter", "analyze", "and", "as", "asc", "between", "bigint",
-		"binary", "blob", "both", "by", "cascade", "case", "character", "check", "collate",
+		"binary", "blob", "both", "by", "cascade", "case", "change", "character", "check", "collate",
 		"column", "constraint", "convert", "create", "cross", "current_date", "current_time",
 		"current_timestamp", "current_user", "database", "databases", "day_hour", "day_microsecond",
 		"day_minute", "day_second", "decimal", "default", "delete", "desc", "describe",
@@ -49,9 +49,9 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"fulltext", "grant", "group", "having", "hour_microsecond", "hour_minute",
 		"hour_second", "if", "ignore", "in", "index", "infile", "inner", "insert", "int", "into", "integer",
 		"interval", "is", "join", "key", "keys", "leading", "left", "like", "limit", "lines", "load",
-		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "mediumint", "mediumtext",
+		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "maxvalue", "mediumint", "mediumtext",
 		"minute_microsecond", "minute_second", "mod", "not", "no_write_to_binlog", "null", "numeric",
-		"on", "option", "or", "order", "outer", "precision", "primary", "procedure", "read", "real",
+		"on", "option", "or", "order", "outer", "partition", "precision", "primary", "procedure", "range", "read", "real",
 		"references", "regexp", "repeat", "replace", "restrict", "right", "rlike",
 		"schema", "schemas", "second_microsecond", "select", "set", "show", "smallint",
 		"starting", "table", "terminated", "then", "tinyblob", "tinyint", "tinytext", "to",
@@ -84,11 +84,11 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
-		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
+		"delay_key_write", "isolation", "partitions", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
-		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist",
+		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -288,6 +288,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"ALTER TABLE t DISABLE KEYS", true},
 		{"ALTER TABLE t ENABLE KEYS", true},
 		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
+		{"ALTER TABLE t CHANGE COLUMN a b varchar(255)", true},
 
 		// from join
 		{"SELECT * from t1, t2, t3", true},
@@ -371,6 +372,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW GRANTS`, true},
 		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
 		{`SHOW COLUMNS FROM City;`, true},
+		{`SHOW COLUMNS FROM tv189.1_t_1_x;`, true},
 		{`SHOW FIELDS FROM City;`, true},
 		{`SHOW TRIGGERS LIKE 't'`, true},
 		{`SHOW DATABASES LIKE 'test2'`, true},
@@ -381,6 +383,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW INDEX IN t;`, true},
 		{`SHOW KEYS IN t;`, true},
 		{`SHOW INDEXES IN t;`, true},
+		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		// For show character set
 		{"show character set;", true},
 		// For show collation
@@ -516,6 +519,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// Information Functions
 		{"SELECT DATABASE();", true},
+		{"SELECT SCHEMA();", true},
 		{"SELECT USER();", true},
 		{"SELECT CURRENT_USER();", true},
 		{"SELECT CURRENT_USER;", true},
@@ -672,6 +676,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
+
+		// For strcmp
+		{`select strcmp('abc', 'def')`, true},
+
+		// For utc_date
+		{`select utc_date(), utc_date()+0`, true},
 
 		// For adddate
 		{`select adddate("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
@@ -839,6 +849,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) STATS_PERSISTENT = default", true},
 		{"create table t (c int) STATS_PERSISTENT = 0", true},
 		{"create table t (c int) STATS_PERSISTENT = 1", true},
+		// Partition option
+		{"create table t (c int) PARTITION BY HASH (c) PARTITIONS 32;", true},
+		{"create table t (c int) PARTITION BY RANGE (Year(VDate)) (PARTITION p1980 VALUES LESS THAN (1980) ENGINE = MyISAM, PARTITION p1990 VALUES LESS THAN (1990) ENGINE = MyISAM, PARTITION pothers VALUES LESS THAN MAXVALUE ENGINE = MyISAM)", true},
 		// For check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
@@ -1002,6 +1015,12 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+		{`ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
+		{`ALTER USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
+		{`ALTER USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+		{`ALTER USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+		{`ALTER USER USER() IDENTIFIED BY 'new-password'`, true},
+		{`ALTER USER IF EXISTS USER() IDENTIFIED BY 'new-password'`, true},
 		{`DROP USER 'root'@'localhost', 'root1'@'localhost'`, true},
 		{`DROP USER IF EXISTS 'root'@'localhost'`, true},
 
@@ -1158,4 +1177,17 @@ func BenchmarkParse(b *testing.B) {
 		}
 	}
 	b.ReportAllocs()
+}
+
+func (s *testParserSuite) TestExplain(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{"explain select c1 from t1", true},
+		{"explain delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;", true},
+		{"explain insert into t values (1), (2), (3)", true},
+		{"explain replace into foo values (1 || 2)", true},
+		{"explain update t set id = id + 1 order by id desc;", true},
+		{"explain select c1 from t1 union (select c2 from t2) limit 1, 1", true},
+	}
+	s.RunTest(c, table)
 }

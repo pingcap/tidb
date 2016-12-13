@@ -33,8 +33,8 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
+	fkInfo.ID = allocateIndexID(tblInfo)
 	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
-
 	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return errors.Trace(err)
@@ -86,7 +86,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 
 	if !found {
 		job.State = model.JobCancelled
-		return infoschema.ErrForeignKeyNotExists.Gen("foreign key %s doesn't exist", fkName)
+		return infoschema.ErrForeignKeyNotExists.GenByArgs(fkName)
 	}
 
 	nfks := tblInfo.ForeignKeys[:0]

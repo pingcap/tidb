@@ -25,11 +25,14 @@ import (
 	"github.com/pingcap/kvproto/pkg/msgpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/kvproto/pkg/util"
-	"github.com/pingcap/pd/pkg/metrics"
+	"github.com/pingcap/pd/pkg/metricutil"
 	"github.com/twinj/uuid"
 )
 
-const maxPipelineRequest = 10000
+const (
+	maxPipelineRequest    = 10000
+	maxInitClusterRetries = 300
+)
 
 // errInvalidResponse represents response message is invalid.
 var errInvalidResponse = errors.New("invalid response")
@@ -216,19 +219,26 @@ func newMsgID() uint64 {
 }
 
 func (w *rpcWorker) initClusterID() error {
-	conn := mustNewConn(w.urls, w.quit)
-	if conn == nil {
-		return errors.New("client closed")
-	}
-	defer conn.Close()
+	for i := 0; i < maxInitClusterRetries; i++ {
+		conn := mustNewConn(w.urls, w.quit)
+		if conn == nil {
+			return errors.New("client closed")
+		}
 
-	clusterID, err := w.getClusterID(conn.ReadWriter)
-	if err != nil {
-		return errors.Trace(err)
+		clusterID, err := w.getClusterID(conn.ReadWriter)
+		// We need to close this connection no matter success or not.
+		conn.Close()
+
+		if err == nil {
+			w.clusterID = clusterID
+			return nil
+		}
+
+		log.Errorf("[pd] failed to get cluster id: %v", err)
+		time.Sleep(time.Second)
 	}
 
-	w.clusterID = clusterID
-	return nil
+	return errors.New("failed to get cluster id")
 }
 
 func (w *rpcWorker) getClusterID(conn *bufio.ReadWriter) (uint64, error) {
@@ -338,7 +348,7 @@ func (w *rpcWorker) getClusterConfigFromRemote(conn *bufio.ReadWriter, clusterCo
 func (w *rpcWorker) callRPC(conn *bufio.ReadWriter, req *pdpb.Request) (resp *pdpb.Response, err error) {
 	// Record some metrics.
 	start := time.Now()
-	label := metrics.GetCmdLabel(req)
+	label := metricutil.GetCmdLabel(req)
 	defer func() {
 		if err == nil {
 			cmdCounter.WithLabelValues(label).Inc()

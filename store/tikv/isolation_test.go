@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build !race
+
 package tikv
 
 import (
@@ -23,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 )
 
+// The test suite takes too long under the race detector.
 type testIsolationSuite struct {
 	store *tikvStore
 }

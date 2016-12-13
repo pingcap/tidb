@@ -127,9 +127,10 @@ func init() {
 	initTokenFunc("Xx", startWithXx)
 	initTokenFunc("x", startWithXx)
 	initTokenFunc("b", startWithb)
+	initTokenFunc(".", startWithDot)
 	initTokenFunc("_$ABCDEFGHIJKLMNOPQRSTUVWYZacdefghijklmnopqrstuvwyz", scanIdentifier)
 	initTokenFunc("`", scanQuotedIdent)
-	initTokenFunc("0123456789.", startWithNumber)
+	initTokenFunc("0123456789", startWithNumber)
 	initTokenFunc("'\"", startString)
 }
 
@@ -161,6 +162,7 @@ var tokenMap = map[string]int{
 	"CAST":                cast,
 	"CEIL":                ceil,
 	"CEILING":             ceiling,
+	"CHANGE":              change,
 	"CHARACTER":           character,
 	"CHARSET":             charsetKwd,
 	"CHECK":               check,
@@ -228,6 +230,7 @@ var tokenMap = map[string]int{
 	"ENUM":                enum,
 	"ESCAPE":              escape,
 	"ESCAPED":             escaped,
+	"EVENTS":              events,
 	"EXECUTE":             execute,
 	"EXISTS":              exists,
 	"EXPLAIN":             explain,
@@ -282,6 +285,7 @@ var tokenMap = map[string]int{
 	"LEADING":             leading,
 	"LEFT":                left,
 	"LENGTH":              length,
+	"LESS":                less,
 	"LEVEL":               level,
 	"LIKE":                like,
 	"LIMIT":               limit,
@@ -295,6 +299,7 @@ var tokenMap = map[string]int{
 	"LOW_PRIORITY":        lowPriority,
 	"LTRIM":               ltrim,
 	"MAX":                 max,
+	"MAXVALUE":            maxValue,
 	"MAX_ROWS":            maxRows,
 	"MICROSECOND":         microsecond,
 	"MIN":                 min,
@@ -328,6 +333,7 @@ var tokenMap = map[string]int{
 	"PROCESSLIST":         processlist,
 	"QUARTER":             quarter,
 	"QUICK":               quick,
+	"RANGE":               rangeKwd,
 	"RAND":                rand,
 	"READ":                read,
 	"REDUNDANT":           redundant,
@@ -365,6 +371,7 @@ var tokenMap = map[string]int{
 	"STATUS":              status,
 	"SUBDATE":             subDate,
 	"STRCMP":              strcmp,
+	"STR_TO_DATE":         strToDate,
 	"SUBSTR":              substring,
 	"SUBSTRING":           substring,
 	"SUBSTRING_INDEX":     substringIndex,
@@ -373,6 +380,7 @@ var tokenMap = map[string]int{
 	"TABLE":               tableKwd,
 	"TABLES":              tables,
 	"TERMINATED":          terminated,
+	"THAN":                than,
 	"THEN":                then,
 	"TO":                  to,
 	"TRAILING":            trailing,
@@ -464,6 +472,8 @@ var tokenMap = map[string]int{
 	"CASCADE":             cascade,
 	"NO":                  no,
 	"ACTION":              action,
+	"PARTITION":           partition,
+	"PARTITIONS":          partitions,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {

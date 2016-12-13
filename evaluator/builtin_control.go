@@ -20,7 +20,7 @@ import (
 )
 
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
-func builtinIf(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinIf(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	// if(expr1, expr2, expr3)
 	// if expr1 is true, return expr2, otherwise, return expr3
 	v1 := args[0]
@@ -31,7 +31,7 @@ func builtinIf(args []types.Datum, _ context.Context) (d types.Datum, err error)
 		return v3, nil
 	}
 
-	b, err := v1.ToBool()
+	b, err := v1.ToBool(ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		d := types.Datum{}
 		return d, errors.Trace(err)
@@ -60,7 +60,7 @@ func builtinIfNull(args []types.Datum, _ context.Context) (d types.Datum, err er
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_nullif
-func builtinNullIf(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func builtinNullIf(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	// nullif(expr1, expr2)
 	// returns null if expr1 = expr2 is true, otherwise returns expr1
 	v1 := args[0]
@@ -70,7 +70,7 @@ func builtinNullIf(args []types.Datum, _ context.Context) (d types.Datum, err er
 		return v1, nil
 	}
 
-	if n, err1 := v1.CompareDatum(v2); err1 != nil || n == 0 {
+	if n, err1 := v1.CompareDatum(ctx.GetSessionVars().StmtCtx, v2); err1 != nil || n == 0 {
 		d := types.Datum{}
 		return d, errors.Trace(err1)
 	}

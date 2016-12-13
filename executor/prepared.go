@@ -19,13 +19,11 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -105,7 +103,7 @@ func (e *PrepareExec) Close() error {
 // DoPrepare prepares the statement, it can be called multiple times without
 // side effect.
 func (e *PrepareExec) DoPrepare() {
-	vars := variable.GetSessionVars(e.Ctx)
+	vars := e.Ctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
 		// Make sure it is idempotent.
@@ -114,7 +112,7 @@ func (e *PrepareExec) DoPrepare() {
 			return
 		}
 	}
-	charset, collation := variable.GetCharsetInfo(e.Ctx)
+	charset, collation := vars.GetCharsetInfo()
 	var (
 		stmts []ast.StmtNode
 		err   error
@@ -174,7 +172,7 @@ type ExecuteExec struct {
 	IS        infoschema.InfoSchema
 	Ctx       context.Context
 	Name      string
-	UsingVars []ast.ExprNode
+	UsingVars []expression.Expression
 	ID        uint32
 	StmtExec  Executor
 	Stmt      ast.StmtNode
@@ -201,7 +199,7 @@ func (e *ExecuteExec) Close() error {
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build() error {
-	vars := variable.GetSessionVars(e.Ctx)
+	vars := e.Ctx.GetSessionVars()
 	if e.Name != "" {
 		e.ID = vars.PreparedStmtNameToID[e.Name]
 	}
@@ -216,7 +214,7 @@ func (e *ExecuteExec) Build() error {
 	}
 
 	for i, usingVar := range e.UsingVars {
-		val, err := evaluator.Eval(e.Ctx, usingVar)
+		val, err := usingVar.Eval(nil, e.Ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -261,7 +259,7 @@ func (e *DeallocateExec) Schema() expression.Schema {
 
 // Next implements the Executor Next interface.
 func (e *DeallocateExec) Next() (*Row, error) {
-	vars := variable.GetSessionVars(e.ctx)
+	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
 		return nil, ErrStmtNotFound
@@ -279,9 +277,10 @@ func (e *DeallocateExec) Close() error {
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interface{}) ast.Statement {
 	execPlan := &plan.Execute{ID: ID}
-	execPlan.UsingVars = make([]ast.ExprNode, len(args))
+	execPlan.UsingVars = make([]expression.Expression, len(args))
 	for i, val := range args {
-		execPlan.UsingVars[i] = ast.NewValueExpr(val)
+		value := ast.NewValueExpr(val)
+		execPlan.UsingVars[i] = &expression.Constant{Value: value.Datum, RetType: &value.Type}
 	}
 	sa := &statement{
 		is:   sessionctx.GetDomain(ctx).InfoSchema(),

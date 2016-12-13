@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -162,7 +161,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	row, err = rs[0].Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Data, NotNil)
-	c.Assert(row.Data[5].GetMysqlBit(), Equals, mysql.Bit{Value: 6, Width: 8})
+	c.Assert(row.Data[5].GetMysqlBit(), Equals, types.Bit{Value: 6, Width: 8})
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 

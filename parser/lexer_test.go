@@ -60,6 +60,7 @@ func (s *testLexerSuite) TestSingleCharOther(c *C) {
 		{"?", placeholder},
 		{"PLACEHOLDER", identifier},
 		{"=", eq},
+		{".", int('.')},
 	}
 	runTest(c, table)
 }
@@ -105,6 +106,8 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{"0b01", bitLit},
 		{fmt.Sprintf("%c", 0), invalid},
 		{fmt.Sprintf("t1%c", 0), identifier},
+		{".*", int('.')},
+		{".1_t_1_x", int('.')},
 	}
 	runTest(c, table)
 }
@@ -192,6 +195,8 @@ func (s *testLexerSuite) TestIdentifier(c *C) {
 		{"`numeric`", "numeric"},
 		{"\r\n \r \n \tthere\t \n", "there"},
 		{`5number`, `5number`},
+		{"1_x", "1_x"},
+		{"0_x", "0_x"},
 		{replacementString, replacementString},
 		{fmt.Sprintf("t1%cxxx", 0), "t1"},
 	}
@@ -203,4 +208,19 @@ func (s *testLexerSuite) TestIdentifier(c *C) {
 		c.Assert(tok, Equals, identifier)
 		c.Assert(v.ident, Equals, item[1])
 	}
+}
+
+func (s *testLexerSuite) TestSpecialComment(c *C) {
+	l := NewScanner("/*!40101 select\n5*/")
+	tok, pos, lit := l.scan()
+	fmt.Println(tok, pos, lit)
+	c.Assert(tok, Equals, identifier)
+	c.Assert(lit, Equals, "select")
+	c.Assert(pos, Equals, Pos{0, 0, 9})
+
+	tok, pos, lit = l.scan()
+	fmt.Println(tok, pos, lit)
+	c.Assert(tok, Equals, intLit)
+	c.Assert(lit, Equals, "5")
+	c.Assert(pos, Equals, Pos{1, 1, 16})
 }

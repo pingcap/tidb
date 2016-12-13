@@ -14,7 +14,6 @@
 package ddl_test
 
 import (
-	"database/sql"
 	"fmt"
 	"io"
 	"math/rand"
@@ -24,8 +23,8 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	_ "github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -46,49 +45,43 @@ var _ = Suite(&testDBSuite{})
 const defaultBatchSize = 1024
 
 type testDBSuite struct {
-	db *sql.DB
-
 	store      kv.Storage
 	schemaName string
-
-	s     tidb.Session
-	lease time.Duration
+	tk         *testkit.TestKit
+	s          tidb.Session
+	lease      time.Duration
 }
 
 func (s *testDBSuite) SetUpSuite(c *C) {
 	var err error
 
+	s.lease = 100 * time.Millisecond
+	tidb.SetSchemaLease(s.lease)
 	s.schemaName = "test_db"
-
-	uri := "memory://test"
-	s.store, err = tidb.NewStore(uri)
+	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
-
 	localstore.MockRemoteStore = true
-	s.db, err = sql.Open("tidb", fmt.Sprintf("%s/%s", uri, s.schemaName))
-	c.Assert(err, IsNil)
-
 	s.s, err = tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
 
-	s.mustExec(c, "create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
-	s.mustExec(c, "create table t2 (c1 int, c2 int, c3 int)")
-
-	// set proper schema lease
-	s.lease = 50 * time.Millisecond
-	ctx := s.s.(context.Context)
-	sessionctx.GetDomain(ctx).SetLease(s.lease)
+	_, err = s.s.Execute("create database test_db")
+	c.Assert(err, IsNil)
+	_, err = s.s.Execute("use " + s.schemaName)
+	c.Assert(err, IsNil)
+	_, err = s.s.Execute("create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
+	c.Assert(err, IsNil)
+	_, err = s.s.Execute("create table t2 (c1 int, c2 int, c3 int)")
+	c.Assert(err, IsNil)
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
 	localstore.MockRemoteStore = false
-
-	s.db.Close()
+	s.s.Execute("drop database if exists test_db")
 	s.s.Close()
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
-	_, err := s.s.Execute(sql)
+	_, err := s.tk.Exec(sql)
 	c.Assert(err, NotNil)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
@@ -97,8 +90,9 @@ func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
 }
 
 func (s *testDBSuite) TestMySQLErrorCode(c *C) {
-	_, err := s.s.Execute("use test")
-	c.Assert(err, IsNil)
+	defer testleak.AfterTest(c)
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
 
 	// create database
 	sql := "create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -109,8 +103,7 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	sql = "drop database db_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrDBDropExists)
 	// crate table
-	_, err = s.s.Execute("create table test_error_code_succ (c1 int, c2 int, c3 int)")
-	c.Assert(err, IsNil)
+	s.tk.MustExec("create table test_error_code_succ (c1 int, c2 int, c3 int, primary key(c3))")
 	sql = "create table test_error_code_succ (c1 int, c2 int, c3 int)"
 	s.testErrorCode(c, sql, tmysql.ErrTableExists)
 	sql = "create table test_error_code1 (c1 int, c2 int, c2 int)"
@@ -136,27 +129,37 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
-	_, err = s.s.Execute("alter table test_error_code_succ add index idx (c1)")
-	c.Assert(err, IsNil)
+	s.tk.Exec("alter table test_error_code_succ add index idx (c1)")
 	sql = "alter table test_error_code_succ add index idx (c1)"
 	s.testErrorCode(c, sql, tmysql.ErrDupKeyName)
 	// drop index
 	sql = "alter table test_error_code_succ drop index idx_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
+	sql = "alter table test_error_code_succ drop column c3"
+	s.testErrorCode(c, sql, int(tmysql.ErrUnknown))
+	// modify column
+	sql = "alter table test_error_code_succ modify testx.test_error_code_succ.c1 bigint"
+	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
+	sql = "alter table test_error_code_succ modify t.c1 bigint"
+	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 }
 
 func (s *testDBSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
 	s.testAddIndex(c)
+	s.testAddAnonymousIndex(c)
 	s.testDropIndex(c)
 	s.testAddUniqueIndexRollback(c)
+	s.testAddIndexWithDupCols(c)
 }
 
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	ctx := s.s.(context.Context)
 	domain := sessionctx.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
-	err := domain.MustReload()
+	err := domain.Reload()
 	c.Assert(err, IsNil)
 	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
 	c.Assert(err, IsNil)
@@ -233,6 +236,44 @@ LOOP:
 		s.mustExec(c, "delete from t1 where c1 = ?", i+10)
 	}
 	sessionExec(c, s.store, "create index c3_index on t1 (c3)")
+}
+
+func (s *testDBSuite) testAddAnonymousIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.mustExec(c, "create table t_anonymous_index (c1 int, c2 int, C3 int)")
+	s.mustExec(c, "alter table t_anonymous_index add index (c1, c2)")
+	// for dropping empty index
+	_, err := s.tk.Exec("alter table t_anonymous_index drop index")
+	c.Assert(err, NotNil)
+	// The index name is c1 when adding index (c1, c2).
+	s.mustExec(c, "alter table t_anonymous_index drop index c1")
+	t := s.testGetTable(c, "t_anonymous_index")
+	c.Assert(t.Indices(), HasLen, 0)
+	// for adding some indices that the first column name is c1
+	s.mustExec(c, "alter table t_anonymous_index add index (c1)")
+	_, err = s.tk.Exec("alter table t_anonymous_index add index c1 (c2)")
+	c.Assert(err, NotNil)
+	t = s.testGetTable(c, "t_anonymous_index")
+	c.Assert(t.Indices(), HasLen, 1)
+	idx := t.Indices()[0].Meta().Name.L
+	c.Assert(idx, Equals, "c1")
+	// The MySQL will be a warning.
+	s.mustExec(c, "alter table t_anonymous_index add index c1_3 (c1)")
+	s.mustExec(c, "alter table t_anonymous_index add index (c1, c2, C3)")
+	// The MySQL will be a warning.
+	s.mustExec(c, "alter table t_anonymous_index add index (c1)")
+	t = s.testGetTable(c, "t_anonymous_index")
+	c.Assert(t.Indices(), HasLen, 4)
+	s.mustExec(c, "alter table t_anonymous_index drop index c1")
+	s.mustExec(c, "alter table t_anonymous_index drop index c1_2")
+	s.mustExec(c, "alter table t_anonymous_index drop index c1_3")
+	s.mustExec(c, "alter table t_anonymous_index drop index c1_4")
+	// for case insensitive
+	s.mustExec(c, "alter table t_anonymous_index add index (C3)")
+	s.mustExec(c, "alter table t_anonymous_index drop index c3")
+	s.mustExec(c, "alter table t_anonymous_index add index c3 (C3)")
+	s.mustExec(c, "alter table t_anonymous_index drop index C3")
 }
 
 func (s *testDBSuite) testAddIndex(c *C) {
@@ -395,9 +436,7 @@ LOOP:
 	}
 
 	rows := s.mustQuery(c, "explain select c1 from t1 where c3 >= 0")
-
-	ay := dumpRows(c, rows)
-	c.Assert(strings.Contains(fmt.Sprintf("%v", ay), "c3_index"), IsFalse)
+	c.Assert(strings.Contains(fmt.Sprintf("%v", rows), "c3_index"), IsFalse)
 
 	// check in index, must no index in kv
 	ctx := s.s.(context.Context)
@@ -436,16 +475,37 @@ LOOP:
 	c.Assert(handles, HasLen, 0)
 }
 
+func (s *testDBSuite) testAddIndexWithDupCols(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	err1 := infoschema.ErrColumnExists.GenByArgs("b")
+	err2 := infoschema.ErrColumnExists.GenByArgs("B")
+
+	s.tk.MustExec("create table t (a int, b int)")
+	_, err := s.tk.Exec("create index c on t(b, a, b)")
+	c.Check(err1.Equal(err), Equals, true)
+
+	_, err = s.tk.Exec("create index c on t(b, a, B)")
+	c.Check(err2.Equal(err), Equals, true)
+
+	_, err = s.tk.Exec("alter table t add index c (b, a, b)")
+	c.Check(err1.Equal(err), Equals, true)
+
+	_, err = s.tk.Exec("alter table t add index c (b, a, B)")
+	c.Check(err2.Equal(err), Equals, true)
+}
+
 func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {
-	rows := s.mustQuery(c, fmt.Sprintf("show columns from %s", tableName))
-	values := dumpRows(c, rows)
-	return values
+	return s.mustQuery(c, fmt.Sprintf("show columns from %s", tableName))
 }
 
 func (s *testDBSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
 	s.testAddColumn(c)
 	s.testDropColumn(c)
+	s.testChangeColumn(c)
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
@@ -485,9 +545,8 @@ LOOP:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
-				s.mustExec(c, "delete from t2 where c1 = ?", n)
-
-				_, err := s.db.Exec("insert into t2 values (?, ?, ?)", i, i, i)
+				s.tk.MustExec("delete from t2 where c1 = ?", n)
+				_, err := s.tk.Exec("insert into t2 values (?, ?, ?)", i, i, i)
 				if err != nil {
 					// if err is failed, the column number must be 4 now.
 					values := s.showColumns(c, "t2")
@@ -500,14 +559,13 @@ LOOP:
 
 	// add data, here c4 must exist
 	for i := num; i < num+step; i++ {
-		s.mustExec(c, "insert into t2 values (?, ?, ?, ?)", i, i, i, i)
+		s.tk.MustExec("insert into t2 values (?, ?, ?, ?)", i, i, i, i)
 	}
 
 	rows := s.mustQuery(c, "select count(c4) from t2")
-	values := dumpRows(c, rows)
-	c.Assert(values, HasLen, 1)
-	c.Assert(values[0], HasLen, 1)
-	count, ok := values[0][0].(int64)
+	c.Assert(rows, HasLen, 1)
+	c.Assert(rows[0], HasLen, 1)
+	count, ok := rows[0][0].(int64)
 	c.Assert(ok, IsTrue)
 	c.Assert(count, Greater, int64(0))
 
@@ -528,7 +586,7 @@ LOOP:
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
 			// c4 must be -1 or > 0
-			v, err1 := data[3].ToInt64()
+			v, err1 := data[3].ToInt64(ctx.GetSessionVars().StmtCtx)
 			c.Assert(err1, IsNil)
 			if v == -1 {
 				j++
@@ -573,7 +631,7 @@ LOOP:
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
-				_, err := s.db.Exec("insert into t2 values (?, ?, ?)", i, i, i)
+				_, err := s.tk.Exec("insert into t2 values (?, ?, ?)", i, i, i)
 				if err == nil {
 					continue
 				}
@@ -594,10 +652,9 @@ LOOP:
 	}
 
 	rows := s.mustQuery(c, "select count(*) from t2")
-	values := dumpRows(c, rows)
-	c.Assert(values, HasLen, 1)
-	c.Assert(values[0], HasLen, 1)
-	count, ok := values[0][0].(int64)
+	c.Assert(rows, HasLen, 1)
+	c.Assert(rows[0], HasLen, 1)
+	count, ok := rows[0][0].(int64)
 	c.Assert(ok, IsTrue)
 	c.Assert(count, Greater, int64(0))
 
@@ -606,46 +663,31 @@ LOOP:
 	ctx.CommitTxn()
 }
 
-func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) sql.Result {
-	r, err := s.db.Exec(query, args...)
-	c.Assert(err, IsNil, Commentf("query %s, args %v", query, args))
-	return r
+func (s *testDBSuite) testChangeColumn(c *C) {
+	s.mustExec(c, "create table t3 (a int, b varchar(10))")
+	s.mustExec(c, "insert into t3 values(1, 'a'), (2, 'b')")
+	s.tk.MustQuery("select a from t3").Check(testkit.Rows("1", "2"))
+	s.mustExec(c, "alter table t3 change a aa bigint")
+	s.tk.MustQuery("select aa from t3").Check(testkit.Rows("1", "2"))
+	sql := "alter table t3 change a testx.t3.aa bigint"
+	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
+	sql = "alter table t3 change t.a aa bigint"
+	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 }
 
-func (s *testDBSuite) mustQuery(c *C, query string, args ...interface{}) *sql.Rows {
-	r, err := s.db.Query(query, args...)
-	c.Assert(err, IsNil, Commentf("query %s, args %v", query, args))
-	return r
+func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
+	s.tk.MustExec(query, args...)
 }
 
-func dumpRows(c *C, rows *sql.Rows) [][]interface{} {
-	cols, err := rows.Columns()
-	c.Assert(err, IsNil)
-	ay := make([][]interface{}, 0)
-	for rows.Next() {
-		v := make([]interface{}, len(cols))
-		for i := range v {
-			v[i] = new(interface{})
-		}
-		err = rows.Scan(v...)
-		c.Assert(err, IsNil)
-
-		for i := range v {
-			v[i] = *(v[i].(*interface{}))
-		}
-		ay = append(ay, v)
-	}
-
-	rows.Close()
-	c.Assert(rows.Err(), IsNil, Commentf("%v", ay))
-	return ay
+func (s *testDBSuite) mustQuery(c *C, query string, args ...interface{}) [][]interface{} {
+	r := s.tk.MustQuery(query, args...)
+	return r.Rows()
 }
 
-func matchRows(c *C, rows *sql.Rows, expected [][]interface{}) {
-	ay := dumpRows(c, rows)
-	c.Assert(len(ay), Equals, len(expected), Commentf("%v", expected))
-	for i := range ay {
-		match(c, ay[i], expected[i]...)
+func matchRows(c *C, rows [][]interface{}, expected [][]interface{}) {
+	c.Assert(len(rows), Equals, len(expected), Commentf("%v", expected))
+	for i := range rows {
+		match(c, rows[i], expected[i]...)
 	}
 }
 

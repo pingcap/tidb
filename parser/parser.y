@@ -64,11 +64,12 @@ import (
 	binaryType	"BINARY"
 	blobType	"BLOB"
 	both		"BOTH"
-	charType	"CHAR"
 	by		"BY"
 	cascade		"CASCADE"
 	caseKwd		"CASE"
+	change          "CHANGE"
 	character	"CHARACTER"
+	charType	"CHAR"
 	check 		"CHECK"
 	collate 	"COLLATE"
 	column		"COLUMN"
@@ -143,6 +144,7 @@ import (
 	longblobType	"LONGBLOB"
 	longtextType	"LONGTEXT"
 	lowPriority	"LOW_PRIORITY"
+	maxValue	"MAXVALUE"
 	mediumblobType	"MEDIUMBLOB"
 	mediumIntType	"MEDIUMINT"
 	mediumtextType	"MEDIUMTEXT"
@@ -158,9 +160,12 @@ import (
 	or		"OR"
 	order		"ORDER"
 	outer		"OUTER"
+	partition	"PARTITION"
+	partitions	"PARTITIONS"
 	precisionType	"PRECISION"
 	primary		"PRIMARY"
 	procedure	"PROCEDURE"
+	rangeKwd	"RANGE"
 	read		"READ"
 	realType	"REAL"
 	references	"REFERENCES"
@@ -226,6 +231,7 @@ import (
 	dayofmonth	"DAYOFMONTH"
 	dayofweek	"DAYOFWEEK"
 	dayofyear	"DAYOFYEAR"
+	events		"EVENTS"
 	foundRows	"FOUND_ROWS"
 	fromUnixTime	"FROM_UNIXTIME"
 	grant		"GRANT"
@@ -256,10 +262,13 @@ import (
 	second		"SECOND"
 	sleep		"SLEEP"
 	calcFoundRows	"SQL_CALC_FOUND_ROWS"
+	strcmp		"STRCMP"
+	strToDate	"STR_TO_DATE"
 	subDate		"SUBDATE"
 	substring	"SUBSTRING"
 	substringIndex	"SUBSTRING_INDEX"
 	sum		"SUM"
+	sysDate		"SYSDATE"
 	trim		"TRIM"
 	rtrim 		"RTRIM"
 	ucase 		"UCASE"
@@ -328,6 +337,7 @@ import (
 	indexes		"INDEXES"
 	keyBlockSize	"KEY_BLOCK_SIZE"
 	local		"LOCAL"
+	less		"LESS"
 	level		"LEVEL"
 	mode		"MODE"
 	modify		"MODIFY"
@@ -364,6 +374,7 @@ import (
 	global		"GLOBAL"
 	tables		"TABLES"
 	textType	"TEXT"
+	than		"THAN"
 	timeType	"TIME"
 	timestampType	"TIMESTAMP"
 	transaction	"TRANSACTION"
@@ -404,9 +415,7 @@ import (
 	nulleq		"<=>"
 	placeholder	"PLACEHOLDER"
 	rsh		">>"
-	strcmp		"STRCMP"
 	sysVar		"SYS_VAR"
-	sysDate		"SYSDATE"
 	underscoreCS	"UNDERSCORE_CHARSET"
 	userVar		"USER_VAR"
 
@@ -415,6 +424,7 @@ import (
 	AlterTableStmt		"Alter table statement"
 	AlterTableSpec		"Alter table specification"
 	AlterTableSpecList	"Alter table specification list"
+	AlterUserStmt		"Alter user statement"
 	AnalyzeTableStmt	"Analyze table statement"
 	AnyOrAll		"Any or All for subquery"
 	Assignment		"assignment"
@@ -538,6 +548,11 @@ import (
 	OrderByOptional		"Optional ORDER BY clause optional"
 	ByList			"BY list"
 	QuickOptional		"QUICK or empty"
+	PartitionDefinition	"Partition definition"
+	PartitionDefinitionList "Partition definition list"
+	PartitionDefinitionListOpt	"Partition definition list option"
+	PartitionOpt		"Partition option"
+	PartitionNumOpt		"PARTITION NUM option"
 	PasswordOpt		"Password option"
 	ColumnPosition		"Column position [First|After ColumnName]"
 	PreparedStmt		"PreparedStmt"
@@ -774,7 +789,7 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp: 		ast.AlterTableAddColumn,
-			Column:		$3.(*ast.ColumnDef),
+			NewColumn:	$3.(*ast.ColumnDef),
 			Position:	$4.(*ast.ColumnPosition),
 		}
 	}
@@ -790,7 +805,7 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableDropColumn,
-			DropColumn: $3.(*ast.ColumnName),
+			OldColumnName: $3.(*ast.ColumnName),
 		}
 	}
 |	"DROP" "PRIMARY" "KEY"
@@ -823,10 +838,19 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:		ast.AlterTableModifyColumn,
-			Column:		$3.(*ast.ColumnDef),
+			NewColumn:	$3.(*ast.ColumnDef),
 			Position:	$4.(*ast.ColumnPosition),
 		}
 	}
+|	"CHANGE" ColumnKeywordOpt ColumnName ColumnDef
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableChangeColumn,
+			OldColumnName:	$3.(*ast.ColumnName),
+			NewColumn: 	$4.(*ast.ColumnDef),
+		}
+	}
+
 
 KeyOrIndex: "KEY" | "INDEX"
 
@@ -1390,7 +1414,7 @@ DatabaseOptionList:
  *      )
  *******************************************************************/
 CreateTableStmt:
-	"CREATE" "TABLE" IfNotExists TableName '(' TableElementList ')' TableOptionListOpt
+	"CREATE" "TABLE" IfNotExists TableName '(' TableElementList ')' TableOptionListOpt PartitionOpt
 	{
 		tes := $6.([]interface {})
 		var columnDefs []*ast.ColumnDef
@@ -1431,6 +1455,35 @@ DefaultOpt:
 DefaultKwdOpt:
 	{}
 |	"DEFAULT"
+
+PartitionOpt:
+	{}
+|	"PARTITION" "BY" "HASH" '(' Expression ')' PartitionNumOpt PartitionDefinitionListOpt
+	{}
+|	"PARTITION" "BY" "RANGE" '(' Expression ')' PartitionNumOpt  PartitionDefinitionListOpt
+	{}
+
+PartitionNumOpt:
+	{}
+|	"PARTITIONS" NUM
+	{}
+
+PartitionDefinitionListOpt:
+	{}
+|	'(' PartitionDefinitionList ')'
+	{}
+
+PartitionDefinitionList:
+	PartitionDefinition
+	{}
+|	PartitionDefinition ',' PartitionDefinitionList
+	{}
+
+PartitionDefinition:
+	"PARTITION" Identifier "VALUES" "LESS" "THAN" ExpressionList "ENGINE" eq Identifier
+	{}
+|	"PARTITION" Identifier "VALUES" "LESS" "THAN" "MAXVALUE" "ENGINE" eq Identifier
+	{}
 
 /******************************************************************
  * Do statement
@@ -1989,19 +2042,19 @@ Identifier | ReservedKeyword
 
 UnReservedKeyword:
  "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AT" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
-|	"COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO"
-|	"DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FULL" |"GLOBAL"
-|	"HASH" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK"
-|	"SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION"
-|	"TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
-|	"COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
-|	"MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
-|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
-|	"SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY"
+| "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO"
+| "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FULL" |"GLOBAL"
+| "HASH" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" 
+| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIME" | "TIMESTAMP" 
+| "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
+| "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
+| "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
+| "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
+| "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
-| "BINARY" | "BLOB" | "BOTH" | "BY" | "CASCADE" | "CASE" | "CHARACTER" | "CHECK" | "COLLATE"
+| "BINARY" | "BLOB" | "BOTH" | "BY" | "CASCADE" | "CASE" | "CHANGE" | "CHARACTER" | "CHECK" | "COLLATE"
 | "COLUMN" | "CONSTRAINT" | "CONVERT" | "CREATE" | "CROSS" | "CURRENT_DATE" | "CURRENT_TIME"
 | "CURRENT_TIMESTAMP" | "CURRENT_USER" | "DATABASE" | "DATABASES" | "DAY_HOUR" | "DAY_MICROSECOND"
 | "DAY_MINUTE" | "DAY_SECOND" | "DECIMAL" | "DEFAULT" | "DELETE" | "DESC" | "DESCRIBE"
@@ -2010,10 +2063,10 @@ ReservedKeyword:
 | "FULLTEXT" | "GRANT" | "GROUP" | "HAVING" | "HOUR_MICROSECOND" | "HOUR_MINUTE"
 | "HOUR_SECOND" | "IF" | "IGNORE" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT" | "INTO" | "INTEGER"
 | "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
-| "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
+| "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MAXVALUE" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
 | "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC"
-| "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "READ" | "REAL"
-| "REFERENCES" | "REGEXP" | "REPEAT" | "REPLACE" | "RESTRICT" | "RIGHT" | "RLIKE"
+| "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "RANGE" | "READ" 
+| "REAL" | "REFERENCES" | "REGEXP" | "REPEAT" | "REPLACE" | "RESTRICT" | "RIGHT" | "RLIKE"
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
 | "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
 | "TRAILING" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
@@ -2029,8 +2082,8 @@ NotKeywordToken:
 |	"DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
-|	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX"
-|	"SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
+|	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
+"SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 |	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FROM_UNIXTIME"
 
 /************************************************************************************
@@ -2765,7 +2818,11 @@ FunctionCallNonKeyword:
 	}
 |	"STRCMP" '(' Expression ',' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
+	}
+|	"STR_TO_DATE" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
 	}
 |	"SUBSTRING" '(' Expression ',' Expression ')'
 	{
@@ -2808,7 +2865,7 @@ FunctionCallNonKeyword:
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"TIME" '(' Expression ')'
 	{
@@ -3069,6 +3126,10 @@ CastType:
 		x := types.NewFieldType(mysql.TypeNewDecimal)
 		x.Flen = fopt.Flen
 		x.Decimal = fopt.Decimal
+		if fopt.Flen == types.UnspecifiedLength {
+			x.Flen = mysql.GetDefaultFieldLength(mysql.TypeNewDecimal)
+			x.Decimal = mysql.GetDefaultDecimal(mysql.TypeNewDecimal)
+		}
 		$$ = x
 	}
 |	"TIME" OptFieldLen
@@ -4140,7 +4201,13 @@ ShowTargetFilterable:
 			Tp: ast.ShowProcedureStatus,
 		}
 	}
-
+|   "EVENTS" ShowDatabaseNameOpt
+    {
+        $$ = &ast.ShowStmt{
+        	Tp:	ast.ShowEvents,
+        	DBName:	$2.(string),
+       	}
+    }
 ShowLikeOrWhereOpt:
 	{
 		$$ = nil
@@ -4247,6 +4314,7 @@ Statement:
 	EmptyStmt
 |	AdminStmt
 |	AlterTableStmt
+|	AlterUserStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
 |	BinlogStmt
@@ -4294,6 +4362,7 @@ ExplainableStmt:
 |	UpdateStmt
 |	InsertIntoStmt
 |	ReplaceIntoStmt
+|	UnionStmt
 
 StatementList:
 	Statement
@@ -5001,6 +5070,27 @@ CreateUserStmt:
 		$$ = &ast.CreateUserStmt{
 			IfNotExists: $3.(bool),
 			Specs: $4.([]*ast.UserSpec),
+		}
+	}
+
+/* See http://dev.mysql.com/doc/refman/5.7/en/alter-user.html */
+AlterUserStmt:
+	"ALTER" "USER" IfExists UserSpecList
+	{
+		$$ = &ast.AlterUserStmt{
+			IfExists: $3.(bool),
+			Specs: $4.([]*ast.UserSpec),
+		}
+	}
+| 	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString
+	{
+		auth := &ast.AuthOption {
+			AuthString: $9.(string),
+			ByAuthString: true,
+		}
+		$$ = &ast.AlterUserStmt{
+			IfExists: $3.(bool),
+			CurrentAuth: auth,
 		}
 	}
 

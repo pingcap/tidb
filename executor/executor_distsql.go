@@ -20,11 +20,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -154,10 +154,10 @@ func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 	return krs
 }
 
-func indexRangesToKVRanges(tid, idxID int64, ranges []*plan.IndexRange, fieldTypes []*types.FieldType) ([]kv.KeyRange, error) {
+func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, ranges []*plan.IndexRange, fieldTypes []*types.FieldType) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
-		err := convertIndexRangeTypes(ran, fieldTypes)
+		err := convertIndexRangeTypes(sc, ran, fieldTypes)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -183,17 +183,17 @@ func indexRangesToKVRanges(tid, idxID int64, ranges []*plan.IndexRange, fieldTyp
 	return krs, nil
 }
 
-func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType) error {
+func convertIndexRangeTypes(sc *variable.StatementContext, ran *plan.IndexRange, fieldTypes []*types.FieldType) error {
 	for i := range ran.LowVal {
 		if ran.LowVal[i].Kind() == types.KindMinNotNull {
 			ran.LowVal[i].SetBytes([]byte{})
 			continue
 		}
-		converted, err := ran.LowVal[i].ConvertTo(fieldTypes[i])
+		converted, err := ran.LowVal[i].ConvertTo(sc, fieldTypes[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cmp, err := converted.CompareDatum(ran.LowVal[i])
+		cmp, err := converted.CompareDatum(sc, ran.LowVal[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -218,11 +218,11 @@ func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType)
 		if ran.HighVal[i].Kind() == types.KindMaxValue {
 			continue
 		}
-		converted, err := ran.HighVal[i].ConvertTo(fieldTypes[i])
+		converted, err := ran.HighVal[i].ConvertTo(sc, fieldTypes[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cmp, err := converted.CompareDatum(ran.HighVal[i])
+		cmp, err := converted.CompareDatum(sc, ran.HighVal[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -440,8 +440,12 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 func (e *XSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.Datum) []types.Datum {
 	tableRow := make([]types.Datum, len(e.indexPlan.Columns))
 	for i, tblCol := range e.indexPlan.Columns {
-		if mysql.HasPriKeyFlag(tblCol.Flag) && e.indexPlan.Table.PKIsHandle {
-			tableRow[i] = types.NewIntDatum(handle)
+		if table.ToColumn(tblCol).IsPKHandleColumn(e.indexPlan.Table) {
+			if mysql.HasUnsignedFlag(tblCol.FieldType.Flag) {
+				tableRow[i] = types.NewUintDatum(uint64(handle))
+			} else {
+				tableRow[i] = types.NewIntDatum(handle)
+			}
 			continue
 		}
 		for j, idxCol := range e.indexPlan.Index.Columns {
@@ -512,11 +516,12 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 
 	totalHandles := 0
 	startTs := time.Now()
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(idxResult)
 		if err != nil || finish {
 			e.tasksErr = errors.Trace(err)
-			if totalHandles >= 100000 && len(e.indexPlan.Ranges) == 1 && e.indexPlan.Ranges[0].IsPoint() {
+			if totalHandles >= 100000 && len(e.indexPlan.Ranges) == 1 && e.indexPlan.Ranges[0].IsPoint(sc) {
 				log.Warnf("[TIME_INDEX_SCAN] time: %v handles: %d concurrency: %d",
 					time.Since(startTs),
 					totalHandles,
@@ -544,8 +549,8 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 }
 
 func getScanConcurrency(ctx context.Context) (int, error) {
-	sessionVars := variable.GetSessionVars(ctx)
-	concurrency, err := sessionVars.GetTiDBSystemVar(ctx, variable.DistSQLScanConcurrencyVar)
+	sessionVars := ctx.GetSessionVars()
+	concurrency, err := sessionVars.GetTiDBSystemVar(variable.DistSQLScanConcurrencyVar)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -557,7 +562,8 @@ func getScanConcurrency(ctx context.Context) (int, error) {
 func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
 	selIdxReq.StartTs = e.startTS
-	selIdxReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
+	selIdxReq.TimeZoneOffset = timeZoneOffset()
+	selIdxReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	if len(e.indexPlan.SortItemsPB) > 0 {
 		selIdxReq.OrderBy = e.indexPlan.SortItemsPB
@@ -569,10 +575,10 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 		selIdxReq.Limit = e.indexPlan.LimitCount
 	}
 	concurrency := e.scanConcurrency
+	selIdxReq.Where = e.indexPlan.IndexConditionPBExpr
 	if e.singleReadMode {
 		selIdxReq.Aggregates = e.aggFuncs
 		selIdxReq.GroupBy = e.byItems
-		selIdxReq.Where = e.where
 	} else if !e.indexPlan.OutOfOrder {
 		// The cost of index scan double-read is higher than single-read. Usually ordered index scan has a limit
 		// which may not have been pushed down, so we set concurrency to 1 to avoid fetching unnecessary data.
@@ -582,7 +588,8 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	for i, v := range e.indexPlan.Index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
-	keyRanges, err := indexRangesToKVRanges(e.table.Meta().ID, e.indexPlan.Index.ID, e.indexPlan.Ranges, fieldTypes)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	keyRanges, err := indexRangesToKVRanges(sc, e.table.Meta().ID, e.indexPlan.Index.ID, e.indexPlan.Ranges, fieldTypes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -705,7 +712,8 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 		selTableReq.Limit = e.indexPlan.LimitCount
 	}
 	selTableReq.StartTs = e.startTS
-	selTableReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
+	selTableReq.TimeZoneOffset = timeZoneOffset()
+	selTableReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
 	}
@@ -779,7 +787,8 @@ func (e *XSelectTableExec) doRequest() error {
 	var err error
 	selReq := new(tipb.SelectRequest)
 	selReq.StartTs = e.startTS
-	selReq.TimeZoneOffset = proto.Int64(timeZoneOffset())
+	selReq.TimeZoneOffset = timeZoneOffset()
+	selReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selReq.Where = e.where
 	selReq.TableInfo = &tipb.TableInfo{
 		TableId: e.tableInfo.ID,
@@ -847,7 +856,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 				return nil, nil
 			}
 			duration := time.Since(startTs)
-			connID := variable.GetSessionVars(e.ctx).ConnectionID
+			connID := e.ctx.GetSessionVars().ConnectionID
 			if duration > 30*time.Millisecond {
 				log.Infof("[%d] [TIME_TABLE_SCAN] %v", connID, duration)
 			} else {
@@ -877,4 +886,15 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 func timeZoneOffset() int64 {
 	_, offset := time.Now().Zone()
 	return int64(offset)
+}
+
+// statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
+func statementContextToFlags(sc *variable.StatementContext) uint64 {
+	var flags uint64
+	if sc.IgnoreTruncate {
+		flags |= xeval.FlagIgnoreTruncate
+	} else if sc.TruncateAsWarning {
+		flags |= xeval.FlagTruncateAsWarning
+	}
+	return flags
 }

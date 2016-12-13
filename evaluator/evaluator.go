@@ -19,9 +19,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -41,7 +41,7 @@ func Eval(ctx context.Context, expr ast.ExprNode) (d types.Datum, err error) {
 	if ast.IsEvaluated(expr) {
 		return *expr.GetDatum(), nil
 	}
-	e := &Evaluator{ctx: ctx}
+	e := &Evaluator{ctx: ctx, sc: ctx.GetSessionVars().StmtCtx}
 	expr.Accept(e)
 	if e.err != nil {
 		return d, errors.Trace(e.err)
@@ -62,7 +62,7 @@ func EvalBool(ctx context.Context, expr ast.ExprNode) (bool, error) {
 		return false, nil
 	}
 
-	i, err := val.ToBool()
+	i, err := val.ToBool(ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -79,6 +79,7 @@ func boolToInt64(v bool) int64 {
 // Evaluator is an ast Visitor that evaluates an expression.
 type Evaluator struct {
 	ctx context.Context
+	sc  *variable.StatementContext
 	err error
 }
 
@@ -181,7 +182,7 @@ func (e *Evaluator) caseExpr(v *ast.CaseExpr) bool {
 	}
 	if !target.IsNull() {
 		for _, val := range v.WhenClauses {
-			cmp, err := target.CompareDatum(*val.Expr.GetDatum())
+			cmp, err := target.CompareDatum(e.sc, *val.Expr.GetDatum())
 			if err != nil {
 				e.err = errors.Trace(err)
 				return false
@@ -233,13 +234,14 @@ func (e *Evaluator) checkResult(cs *ast.CompareSubqueryExpr, lv types.Datum, res
 
 func (e *Evaluator) checkAllResult(cs *ast.CompareSubqueryExpr, lv types.Datum, result []types.Datum) (d types.Datum, err error) {
 	hasNull := false
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for _, v := range result {
 		if v.IsNull() {
 			hasNull = true
 			continue
 		}
 
-		comRes, err1 := lv.CompareDatum(v)
+		comRes, err1 := lv.CompareDatum(sc, v)
 		if err1 != nil {
 			return d, errors.Trace(err1)
 		}
@@ -271,7 +273,7 @@ func (e *Evaluator) checkAnyResult(cs *ast.CompareSubqueryExpr, lv types.Datum, 
 			continue
 		}
 
-		comRes, err1 := lv.CompareDatum(v)
+		comRes, err1 := lv.CompareDatum(e.sc, v)
 		if err1 != nil {
 			return d, errors.Trace(err1)
 		}
@@ -366,12 +368,12 @@ func (e *Evaluator) checkInList(not bool, in types.Datum, list []types.Datum) (d
 			continue
 		}
 
-		a, b, err := types.CoerceDatum(in, v)
+		a, b, err := types.CoerceDatum(e.sc, in, v)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return d
 		}
-		r, err := a.CompareDatum(b)
+		r, err := a.CompareDatum(e.sc, b)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return d
@@ -442,7 +444,7 @@ func (e *Evaluator) isTruth(v *ast.IsTruthExpr) bool {
 	var boolVal bool
 	datum := v.Expr.GetDatum()
 	if !datum.IsNull() {
-		ival, err := datum.ToBool()
+		ival, err := datum.ToBool(e.sc)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return false
@@ -494,7 +496,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 	}
 	switch op := u.Op; op {
 	case opcode.Not:
-		n, err := aDatum.ToBool()
+		n, err := aDatum.ToBool(e.sc)
 		if err != nil {
 			e.err = errors.Trace(err)
 		} else if n == 0 {
@@ -504,7 +506,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		}
 	case opcode.BitNeg:
 		// for bit operation, we will use int64 first, then return uint64
-		n, err := aDatum.ToInt64()
+		n, err := aDatum.ToInt64(e.sc)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return false
@@ -541,23 +543,23 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		case types.KindFloat32:
 			u.SetFloat32(-aDatum.GetFloat32())
 		case types.KindMysqlDuration:
-			var to = new(mysql.MyDecimal)
-			var zero mysql.MyDecimal
-			mysql.DecimalSub(&zero, aDatum.GetMysqlDuration().ToNumber(), to)
+			var to = new(types.MyDecimal)
+			var zero types.MyDecimal
+			types.DecimalSub(&zero, aDatum.GetMysqlDuration().ToNumber(), to)
 			u.SetMysqlDecimal(to)
 		case types.KindMysqlTime:
 			dec := aDatum.GetMysqlTime().ToNumber()
-			var zero, to mysql.MyDecimal
-			mysql.DecimalSub(&zero, dec, &to)
+			var zero, to types.MyDecimal
+			types.DecimalSub(&zero, dec, &to)
 			u.SetMysqlDecimal(&to)
 		case types.KindString, types.KindBytes:
-			f, err := types.StrToFloat(aDatum.GetString())
+			f, err := types.StrToFloat(e.sc, aDatum.GetString())
 			e.err = errors.Trace(err)
 			u.SetFloat64(-f)
 		case types.KindMysqlDecimal:
 			dec := aDatum.GetMysqlDecimal()
-			var zero, to mysql.MyDecimal
-			mysql.DecimalSub(&zero, dec, &to)
+			var zero, to types.MyDecimal
+			types.DecimalSub(&zero, dec, &to)
 			u.SetMysqlDecimal(&to)
 		case types.KindMysqlHex:
 			u.SetFloat64(-aDatum.GetMysqlHex().ToNumber())
@@ -580,14 +582,27 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 }
 
 func (e *Evaluator) values(v *ast.ValuesExpr) bool {
-	v.SetDatum(*v.Column.GetDatum())
-	return true
+	values := e.ctx.GetSessionVars().CurrInsertValues
+	if values == nil {
+		e.err = errors.New("Session current insert values is nil")
+		return false
+	}
+
+	row := values.([]types.Datum)
+	off := v.Column.Refer.Column.Offset
+	if len(row) > off {
+		v.SetDatum(row[off])
+		return true
+	}
+
+	e.err = errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), off)
+	return false
 }
 
 func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	name := strings.ToLower(v.Name)
-	sessionVars := variable.GetSessionVars(e.ctx)
-	globalVars := variable.GetGlobalVarAccessor(e.ctx)
+	sessionVars := e.ctx.GetSessionVars()
+	globalVars := sessionVars.GlobalVarsAccessor
 	if !v.IsSystem {
 		if v.Value != nil && !v.Value.GetDatum().IsNull() {
 			strVal, err := v.Value.GetDatum().ToString()
@@ -612,7 +627,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	sysVar, ok := variable.SysVars[name]
 	if !ok {
 		// select null sys vars is not permitted
-		e.err = variable.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
+		e.err = variable.UnknownSystemVar.GenByArgs(name)
 		return false
 	}
 	if sysVar.Scope == variable.ScopeNone {
@@ -621,19 +636,19 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	}
 
 	if !v.IsGlobal {
-		d := sessionVars.GetSystemVar(name)
+		d := varsutil.GetSystemVar(sessionVars, name)
 		if d.IsNull() {
 			if sysVar.Scope&variable.ScopeGlobal == 0 {
 				d.SetString(sysVar.Value)
 			} else {
 				// Get global system variable and fill it in session.
-				globalVal, err := globalVars.GetGlobalSysVar(e.ctx, name)
+				globalVal, err := globalVars.GetGlobalSysVar(name)
 				if err != nil {
 					e.err = errors.Trace(err)
 					return false
 				}
 				d.SetString(globalVal)
-				err = sessionVars.SetSystemVar(name, d)
+				err = varsutil.SetSystemVar(sessionVars, name, d)
 				if err != nil {
 					e.err = errors.Trace(err)
 					return false
@@ -643,7 +658,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 		v.SetDatum(d)
 		return true
 	}
-	value, err := globalVars.GetGlobalSysVar(e.ctx, name)
+	value, err := globalVars.GetGlobalSysVar(name)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
@@ -684,7 +699,7 @@ func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
 		return true
 	}
 	var err error
-	d, err = d.Cast(v.Tp)
+	d, err = d.Cast(e.ctx.GetSessionVars().StmtCtx, v.Tp)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
@@ -726,10 +741,10 @@ func (e *Evaluator) evalAggAvg(v *ast.AggregateFuncExpr) {
 		v.SetValue(t)
 	case types.KindMysqlDecimal:
 		x := ctx.Value.GetMysqlDecimal()
-		var y, to mysql.MyDecimal
+		var y, to types.MyDecimal
 		y.FromUint(uint64(ctx.Count))
-		mysql.DecimalDiv(x, &y, &to, mysql.DivFracIncr)
-		to.Round(&to, ctx.Value.Frac()+mysql.DivFracIncr)
+		types.DecimalDiv(x, &y, &to, types.DivFracIncr)
+		to.Round(&to, ctx.Value.Frac()+types.DivFracIncr)
 		v.SetMysqlDecimal(&to)
 	}
 	ctx.Value = *v.GetDatum()

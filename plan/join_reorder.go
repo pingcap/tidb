@@ -118,7 +118,7 @@ func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.
 			}
 			id := -1
 			rate := 1.0
-			cols, _ := extractColumn(f, nil, nil)
+			cols := expression.ExtractColumns(f)
 			for _, col := range cols {
 				idx := findColumnIndexByGroup(group, col)
 				if id == -1 {
@@ -186,7 +186,7 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *Join {
 		baseLogicalPlan: newBaseLogicalPlan(Jn, e.allocator),
 	}
 	join.self = join
-	join.initID()
+	join.initIDAndContext(lChild.context())
 	join.SetChildren(lChild, rChild)
 	join.SetSchema(append(lChild.GetSchema().Clone(), rChild.GetSchema().Clone()...))
 	lChild.SetParents(join)

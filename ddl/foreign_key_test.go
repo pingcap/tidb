@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"strings"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -56,10 +57,7 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 		RefKeys[i] = model.NewCIStr(key)
 	}
 
-	fkID, err := s.d.genGlobalID()
-	c.Assert(err, IsNil)
 	fkInfo := &model.FKInfo{
-		ID:       fkID,
 		Name:     FKName,
 		RefTable: RefTable,
 		RefCols:  RefKeys,
@@ -76,7 +74,7 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkInfo},
 	}
-	err = s.d.doDDLJob(s.ctx, job)
+	err := s.d.doDDLJob(s.ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -136,6 +134,8 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
+	// fix data race
+	var mu sync.Mutex
 	checkOK := false
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
@@ -145,7 +145,9 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 		s.testForeignKeyExist(c, t, "c1_fk", true)
+		mu.Lock()
 		checkOK = true
+		mu.Unlock()
 	}
 
 	d.setHook(tc)
@@ -157,18 +159,24 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	testCheckJobDone(c, d, job, true)
 	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
+	mu.Lock()
 	c.Assert(checkOK, IsTrue)
+	mu.Unlock()
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 
+	mu.Lock()
 	checkOK = false
+	mu.Unlock()
 	tc.onJobUpdated = func(job *model.Job) {
 		if job.State != model.JobDone {
 			return
 		}
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 		s.testForeignKeyExist(c, t, "c1_fk", false)
+		mu.Lock()
 		checkOK = true
+		mu.Unlock()
 	}
 
 	d.close()
@@ -176,7 +184,9 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
 	testCheckJobDone(c, d, job, false)
+	mu.Lock()
 	c.Assert(checkOK, IsTrue)
+	mu.Unlock()
 
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)

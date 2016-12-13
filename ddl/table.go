@@ -50,7 +50,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 		if tbl.Name.L == tbInfo.Name.L {
 			// This table already exists and can't be created, we should cancel this job now.
 			job.State = model.JobCancelled
-			return errors.Trace(infoschema.ErrTableExists)
+			return errors.Trace(infoschema.ErrTableExists.GenByArgs(tbl.Name))
 		}
 	}
 

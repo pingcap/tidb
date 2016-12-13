@@ -24,7 +24,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 
 TARGET = ""
 
-.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv check
+.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check
 
 default: server buildsucc
 
@@ -100,9 +100,6 @@ race:
 tikv_integration_test:
 	$(GOTEST) ./store/tikv/. -with-tikv=true
 
-interpreter:
-	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
-
 server: parser
 ifeq ($(TARGET), "")
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
@@ -112,6 +109,9 @@ endif
 
 benchkv:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchkv cmd/benchkv/main.go
+
+benchraw:
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchraw cmd/benchraw/main.go
 
 benchdb:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go

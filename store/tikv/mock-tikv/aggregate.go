@@ -86,6 +86,8 @@ type aggItem struct {
 	value types.Datum
 	// TODO: support group_concat
 	buffer *bytes.Buffer // Buffer is used for group_concat.
+	// It will check if the agg has met the first row key.
+	gotFirstRow bool
 }
 
 // This is similar to ast.AggregateFuncExpr but use tipb.Expr.
@@ -120,21 +122,21 @@ func (n *aggregateFuncExpr) update(ctx *selectContext, args []types.Datum) error
 	return errors.Errorf("Unknown AggExpr: %v", n.expr.GetTp())
 }
 
-func (n *aggregateFuncExpr) toDatums() (ds []types.Datum, err error) {
+func (n *aggregateFuncExpr) toDatums(ctx *selectContext) (ds []types.Datum, err error) {
 	switch n.expr.GetTp() {
 	case tipb.ExprType_Count:
 		ds = n.getCountDatum()
 	case tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min:
 		ds = n.getValueDatum()
 	case tipb.ExprType_Sum:
-		d, err := getSumValue(n.getAggItem())
+		d, err := getSumValue(ctx, n.getAggItem())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		ds = []types.Datum{d}
 	case tipb.ExprType_Avg:
 		item := n.getAggItem()
-		sum, err := getSumValue(item)
+		sum, err := getSumValue(ctx, item)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -144,12 +146,12 @@ func (n *aggregateFuncExpr) toDatums() (ds []types.Datum, err error) {
 	return
 }
 
-func getSumValue(item *aggItem) (types.Datum, error) {
+func getSumValue(ctx *selectContext, item *aggItem) (types.Datum, error) {
 	v := item.value
 	var d types.Datum
 	if !v.IsNull() {
 		// For sum result, we should convert it to decimal.
-		de, err1 := v.ToDecimal()
+		de, err1 := v.ToDecimal(ctx.sc)
 		if err1 != nil {
 			return d, errors.Trace(err1)
 		}
@@ -200,13 +202,14 @@ func (n *aggregateFuncExpr) updateCount(ctx *selectContext, args []types.Datum) 
 
 func (n *aggregateFuncExpr) updateFirst(ctx *selectContext, args []types.Datum) error {
 	aggItem := n.getAggItem()
-	if !aggItem.value.IsNull() {
+	if aggItem.gotFirstRow {
 		return nil
 	}
 	if len(args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
 	aggItem.value = args[0]
+	aggItem.gotFirstRow = true
 	return nil
 }
 
@@ -227,7 +230,7 @@ func (n *aggregateFuncExpr) updateSum(ctx *selectContext, args []types.Datum) er
 		return nil
 	}
 	var err error
-	aggItem.value, err = xeval.ComputeArithmetic(tipb.ExprType_Plus, arg, aggItem.value)
+	aggItem.value, err = xeval.ComputeArithmetic(ctx.sc, tipb.ExprType_Plus, arg, aggItem.value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -254,7 +257,7 @@ func (n *aggregateFuncExpr) updateMaxMin(ctx *selectContext, args []types.Datum,
 		aggItem.value = arg
 		return nil
 	}
-	c, err := aggItem.value.CompareDatum(arg)
+	c, err := aggItem.value.CompareDatum(ctx.sc, arg)
 	if err != nil {
 		return errors.Trace(err)
 	}

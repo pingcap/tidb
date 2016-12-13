@@ -223,7 +223,9 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		if e := <-ch; e != nil {
 			log.Warnf("2PC doActionOnBatches %s failed: %v, tid: %d", action, e, c.startTS)
 			if cancel != nil {
+				// Cancel other requests and return the first error.
 				cancel()
+				return errors.Trace(e)
 			}
 			err = e
 		}
@@ -498,8 +500,8 @@ func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
 }
 
 // TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's
-// Key+Value size below 32KB.
-const txnCommitBatchSize = 32 * 1024
+// Key+Value size below 4KB.
+const txnCommitBatchSize = 4 * 1024
 
 // batchKeys is a batch of keys in the same region.
 type batchKeys struct {

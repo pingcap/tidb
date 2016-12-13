@@ -19,11 +19,11 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/db"
 )
 
 var (
 	_ StmtNode = &AdminStmt{}
+	_ StmtNode = &AlterUserStmt{}
 	_ StmtNode = &BeginStmt{}
 	_ StmtNode = &BinlogStmt{}
 	_ StmtNode = &CommitStmt{}
@@ -264,7 +264,7 @@ type VariableAssignment struct {
 	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
 	// For SetCharsetStmt, Value is charset, ExtendValue is collation.
 	// TODO: Use SetStmt to implement set password statement.
-	ExtendValue ExprNode
+	ExtendValue *ValueExpr
 }
 
 // Accept implements Node interface.
@@ -388,6 +388,26 @@ func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateUserStmt)
+	return v.Leave(n)
+}
+
+// AlterUserStmt modifies user account.
+// See https://dev.mysql.com/doc/refman/5.7/en/alter-user.html
+type AlterUserStmt struct {
+	stmtNode
+
+	IfExists    bool
+	CurrentAuth *AuthOption
+	Specs       []*UserSpec
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterUserStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterUserStmt)
 	return v.Leave(n)
 }
 
@@ -565,7 +585,7 @@ func (i Ident) Full(ctx context.Context) (full Ident) {
 	if i.Schema.O != "" {
 		full.Schema = i.Schema
 	} else {
-		full.Schema = model.NewCIStr(db.GetCurrentSchema(ctx))
+		full.Schema = model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	}
 	return
 }

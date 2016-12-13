@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -29,8 +30,8 @@ var fullRange = []rangePoint{
 	{value: types.MaxValueDatum()},
 }
 
-func buildIndexRange(p *PhysicalIndexScan) error {
-	rb := rangeBuilder{}
+func buildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error {
+	rb := rangeBuilder{sc: sc}
 	for i := 0; i < p.accessInAndEqCount; i++ {
 		// Build ranges for equal or in access conditions.
 		point := rb.build(p.AccessCondition[i])
@@ -125,6 +126,48 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 		}
 	}
 	return conditions
+}
+
+// checkIndexCondition will check whether all columns of condition is index columns or primary key column.
+func checkIndexCondition(condition expression.Expression, indexColumns []*model.IndexColumn, pKName model.CIStr) bool {
+	cols := expression.ExtractColumns(condition)
+	for _, col := range cols {
+		if pKName.L == col.ColName.L {
+			continue
+		}
+		isIndexColumn := false
+		for _, indCol := range indexColumns {
+			if col.ColName.L == indCol.Name.L && indCol.Length == types.UnspecifiedLength {
+				isIndexColumn = true
+				break
+			}
+		}
+		if !isIndexColumn {
+			return false
+		}
+	}
+	return true
+}
+
+func detachIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
+	var pKName model.CIStr
+	if table.PKIsHandle {
+		for _, colInfo := range table.Columns {
+			if mysql.HasPriKeyFlag(colInfo.Flag) {
+				pKName = colInfo.Name
+				break
+			}
+		}
+	}
+	var indexConditions, tableConditions []expression.Expression
+	for _, cond := range conditions {
+		if checkIndexCondition(cond, indexColumns, pKName) {
+			indexConditions = append(indexConditions, cond)
+		} else {
+			tableConditions = append(tableConditions, cond)
+		}
+	}
+	return indexConditions, tableConditions
 }
 
 func detachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
@@ -227,7 +270,7 @@ func buildTableRange(p *PhysicalTableScan) error {
 		return nil
 	}
 
-	rb := rangeBuilder{}
+	rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
 	rangePoints := fullRange
 	for _, cond := range p.AccessCondition {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
