@@ -65,7 +65,8 @@ type physicalDistSQLPlan interface {
 	addAggregation(ctx context.Context, agg *PhysicalAggregation) expression.Schema
 	addTopN(ctx context.Context, prop *requiredProperty) bool
 	addLimit(limit *Limit)
-	calculateCost(count uint64, scanCount uint64) float64
+	// scanCount means the original row count that need to be scanned and resultCount means the row count after scanning.
+	calculateCost(resultCount uint64, scanCount uint64) float64
 }
 
 func (p *PhysicalIndexScan) calculateCost(resultCount uint64, scanCount uint64) float64 {
