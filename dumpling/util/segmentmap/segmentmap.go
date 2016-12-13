@@ -28,7 +28,7 @@ type SegmentMap struct {
 	crcTable *crc32.Table
 }
 
-// NewSegmentMap create a new SegmentMap.
+// NewSegmentMap creates a new SegmentMap.
 func NewSegmentMap(size int64) (*SegmentMap, error) {
 	if size <= 0 {
 		return nil, errors.Errorf("Invalid size: %d", size)
