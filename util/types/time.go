@@ -1181,9 +1181,6 @@ func checkDatetimeType(t TimeInternal) error {
 	if second < 0 || second >= 60 {
 		return ErrInvalidTimeFormat
 	}
-	if hour == 0 && minute == 0 && second == 0 {
-		return nil
-	}
 
 	return nil
 }

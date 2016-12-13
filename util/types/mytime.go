@@ -92,7 +92,7 @@ func (t mysqlTime) GoTime() (gotime.Time, error) {
 	hour, minute, second := tm.Clock()
 	microsec := tm.Nanosecond() / 1000
 	var err error
-	// This function will check the result, and return error if it's not the same with the origin input.
+	// This function will check the result, and return an error if it's not the same with the origin input.
 	if year != t.Year() || int(month) != t.Month() || day != t.Day() ||
 		hour != t.Hour() || minute != t.Minute() || second != t.Second() ||
 		microsec != t.Microsecond() {
