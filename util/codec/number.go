@@ -162,7 +162,7 @@ const (
 	positiveTagStart = 0xff - 8 // Positive tag is (positiveTagStart + length).
 )
 
-// EncodeComparableVarint encodes a int64 to a mem-comparable bytes.
+// EncodeComparableVarint encodes an int64 to a mem-comparable bytes.
 func EncodeComparableVarint(b []byte, v int64) []byte {
 	if v < 0 {
 		// All negative value has a tag byte prefix (negativeTagEnd - length).
@@ -263,7 +263,7 @@ func DecodeComparableVarint(b []byte) ([]byte, int64, error) {
 	var v uint64
 	if first < negativeTagEnd {
 		length = negativeTagEnd - int(first)
-		v = math.MaxUint64 // negative value has all bits on by default.
+		v = math.MaxUint64 // Negative value has all bits on by default.
 	} else {
 		length = int(first) - positiveTagStart
 	}
