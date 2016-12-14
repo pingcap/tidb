@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -169,11 +170,12 @@ type Simple struct {
 type Insert struct {
 	baseLogicalPlan
 
-	Table       *ast.TableRefsClause
+	Table       *model.TableInfo
+	tableSchema expression.Schema
 	Columns     []*ast.ColumnName
-	Lists       [][]ast.ExprNode
-	Setlist     []*ast.Assignment
-	OnDuplicate []*ast.Assignment
+	Lists       [][]expression.Expression
+	Setlist     []*expression.Assignment
+	OnDuplicate []*expression.Assignment
 
 	IsReplace bool
 	Priority  int

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/table"
 )
 
 // Error instances.
@@ -453,17 +454,112 @@ func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 	return &Simple{Statement: node}
 }
 
+func (b *planBuilder) getDefaultValue(col *model.ColumnInfo) (*expression.Constant, error) {
+	if value, ok, err := table.GetColDefaultValue(b.ctx, col); ok {
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
+	}
+	return nil, errors.Errorf("default column not found - %s", col.Name.O)
+}
+
+func (b *planBuilder) findDefaultValue(cols []*model.ColumnInfo, name *ast.ColumnName) (*expression.Constant, error) {
+	for _, col := range cols {
+		if col.Name.L == name.Name.L {
+			return b.getDefaultValue(col)
+		}
+	}
+	return nil, errors.Errorf("default column not found - %s", name.Name.O)
+}
+
 func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
+	// Get Table
+	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
+	if !ok {
+		b.err = errors.New("Can not get table")
+		return nil
+	}
+	tn, ok := ts.Source.(*ast.TableName)
+	if !ok {
+		b.err = errors.New("Can not get table")
+		return nil
+	}
+	tableInfo := tn.TableInfo
+	schema := expression.TableInfo2Schema(tableInfo)
 	insertPlan := &Insert{
-		Table:           insert.Table,
+		Table:           tableInfo,
 		Columns:         insert.Columns,
-		Lists:           insert.Lists,
-		Setlist:         insert.Setlist,
-		OnDuplicate:     insert.OnDuplicate,
+		tableSchema:     schema,
 		IsReplace:       insert.IsReplace,
 		Priority:        insert.Priority,
 		Ignore:          insert.Ignore,
 		baseLogicalPlan: newBaseLogicalPlan(Ins, b.allocator),
+	}
+	for _, valuesItem := range insert.Lists {
+		exprList := make([]expression.Expression, 0, len(valuesItem))
+		for i, valueItem := range valuesItem {
+			var expr expression.Expression
+			var err error
+			if dft, ok := valueItem.(*ast.DefaultExpr); ok {
+				if dft.Name != nil {
+					expr, err = b.findDefaultValue(tableInfo.Columns, dft.Name)
+				} else {
+					expr, err = b.getDefaultValue(tableInfo.Columns[i])
+				}
+			} else {
+				expr, _, err = b.rewrite(valueItem, nil, nil, true)
+			}
+			if err != nil {
+				b.err = errors.Trace(err)
+			}
+			exprList = append(exprList, expr)
+		}
+		insertPlan.Lists = append(insertPlan.Lists, exprList)
+	}
+	for _, assign := range insert.Setlist {
+		col, err := schema.FindColumn(assign.Column)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		if col == nil {
+			b.err = errors.Errorf("Can't find column %s", assign.Column)
+			return nil
+		}
+		// Here we keep different behaviours with MySQL. MySQL allow set a = b, b = a and the result is NULL, NULL.
+		// It's unreasonable.
+		expr, _, err := b.rewrite(assign.Expr, nil, nil, true)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		insertPlan.Setlist = append(insertPlan.Setlist, &expression.Assignment{
+			Col:  col,
+			Expr: expr,
+		})
+	}
+	mockTablePlan := &TableDual{}
+	mockTablePlan.SetSchema(schema)
+	for _, assign := range insert.OnDuplicate {
+		col, err := schema.FindColumn(assign.Column)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		if col == nil {
+			b.err = errors.Errorf("Can't find column %s", assign.Column)
+			return nil
+		}
+		expr, _, err := b.rewrite(assign.Expr, mockTablePlan, nil, true)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		insertPlan.OnDuplicate = append(insertPlan.OnDuplicate, &expression.Assignment{
+			Col:  col,
+			Expr: expr,
+		})
 	}
 	insertPlan.initIDAndContext(b.ctx)
 	insertPlan.self = insertPlan
