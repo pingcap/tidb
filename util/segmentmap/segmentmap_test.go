@@ -14,9 +14,15 @@
 package segmentmap
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 var _ = Suite(&testSegmentMapSuite{})
 
