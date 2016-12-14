@@ -560,6 +560,7 @@ func builtinReleaseLock(args []types.Datum, _ context.Context) (d types.Datum, e
 	return d, nil
 }
 
+// BuildinValuesFactory generates values builtin function.
 func BuildinValuesFactory(v *ast.ValuesExpr) BuiltinFunc {
 	return func(_ []types.Datum, ctx context.Context) (d types.Datum, err error) {
 		values := ctx.GetSessionVars().CurrInsertValues
