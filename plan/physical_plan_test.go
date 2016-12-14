@@ -341,12 +341,16 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[1 1,1 1] [1 3,1 3] [2 1,2 1] [2 3,2 3]]->HashAgg->Sort->Trim",
 		},
 		{
+			sql:  "select * from t where t.c = 1 and t.e = 1 order by t.a limit 1",
+			best: "Index(t.c_d_e)[[1,1]]->Sort + Limit(1) + Offset(0)",
+		},
+		{
 			sql:  "select * from t t1 ignore index(e) where c < 0",
 			best: "Index(t.c_d_e)[[-inf,0)]",
 		},
 		{
 			sql:  "select * from t t1 ignore index(c_d_e) where c < 0",
-			best: "Table(t)->Selection",
+			best: "Table(t)",
 		},
 		{
 			sql:  "select * from t where f in (1,2) and g in(1,2,3,4,5)",
@@ -373,28 +377,28 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "LeftHashJoin{Table(t)->Table(t)}(a.c,b.c)->HashAgg->Sort->Trim",
 		},
 		{
-			sql:  "select count(*) from t group by c",
-			best: "Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg",
+			sql:  "select count(*) from t where concat(a,b) = 'abc' group by c",
+			best: "Index(t.c_d_e)[[<nil>,+inf]]->Selection->StreamAgg",
 		},
 		{
-			sql:  "select sum(b.a) from t a , t b where a.c = b.c group by b.d",
-			best: "LeftHashJoin{Table(t)->Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg}(a.c,b.c)->HashAgg",
+			sql:  "select sum(b.a) from t a, t b where a.c = b.c and cast(b.d as char) group by b.d",
+			best: "RightHashJoin{Index(t.c_d_e)[[<nil>,+inf]]->Selection->StreamAgg->Table(t)}(b.c,a.c)->HashAgg",
 		},
 		{
 			sql:  "select count(*) from t group by e order by d limit 1",
 			best: "Table(t)->HashAgg->Sort + Limit(1) + Offset(0)->Trim",
 		},
 		{
-			sql:  "select count(*) from t group by a",
-			best: "Table(t)->StreamAgg",
+			sql:  "select count(*) from t where concat(a,b) = 'abc' group by a",
+			best: "Table(t)->Selection->StreamAgg",
 		},
 		{
-			sql:  "select count(*) from t group by a order by a",
-			best: "Table(t)->StreamAgg->Trim",
+			sql:  "select count(*) from t where concat(a,b) = 'abc' group by a order by a",
+			best: "Table(t)->Selection->StreamAgg->Trim",
 		},
 		{
-			sql:  "select count(distinct e) from t where c = 1 group by d",
-			best: "Index(t.c_d_e)[[1,1]]->StreamAgg",
+			sql:  "select count(distinct e) from t where c = 1 and concat(c,d) = 'abc' group by d",
+			best: "Index(t.c_d_e)[[1,1]]->Selection->StreamAgg",
 		},
 		{
 			sql:  "select count(distinct e) from t group by d",
@@ -423,7 +427,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t a where a.c < 10000 order by a.a limit 2",
-			best: "Index(t.c_d_e)[[-inf,10000)]->Sort + Limit(2) + Offset(0)",
+			best: "Table(t)",
 		},
 		{
 			sql:  "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.a limit 2",
@@ -476,7 +480,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
 		p := builder.build(stmt)

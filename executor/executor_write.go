@@ -608,19 +608,21 @@ func (e *InsertExec) Next() (*Row, error) {
 			continue
 		}
 
-		if len(e.OnDuplicate) == 0 || !terror.ErrorEqual(err, kv.ErrKeyExists) {
-			// If you use the IGNORE keyword, errors that occur while executing the INSERT statement are ignored.
+		if terror.ErrorEqual(err, kv.ErrKeyExists) {
+			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
 			if e.Ignore {
 				continue
 			}
-			return nil, errors.Trace(err)
+			if len(e.OnDuplicate) > 0 {
+				if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
+					return nil, errors.Trace(err)
+				}
+				continue
+			}
 		}
-
-		if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
-			return nil, errors.Trace(err)
-		}
+		return nil, errors.Trace(err)
 	}
 
 	if e.lastInsertID != 0 {
