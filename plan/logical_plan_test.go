@@ -541,6 +541,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a),sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
 		},
 		{
+			sql:  "select * from t for update",
+			plan: "DataScan(t)->Lock->Projection",
+		},
+		{
 			sql:  "update t set t.a = t.a * 1.5 where t.a >= 1000 order by t.a desc limit 10",
 			plan: "DataScan(t)->Selection->Sort->Limit->*plan.Update",
 		},
@@ -573,12 +577,16 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			plan: "*plan.DDL",
 		},
 		{
-			sql:  "execute stmt",
+			sql:  "execute stmt using @a, @b",
 			plan: "*plan.Execute",
 		},
 		{
 			sql:  "explain select * from t union all select * from t limit 1, 1",
 			plan: "UnionAll{Table(t)->Table(t)->Limit}->*plan.Explain",
+		},
+		{
+			sql:  "insert into t select * from t",
+			plan: "DataScan(t)->Projection->*plan.Insert",
 		},
 		{
 			sql:  "load data infile 'data' into table t",
@@ -589,7 +597,19 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			plan: "*plan.Prepare",
 		},
 		{
-			sql:  "show databases",
+			sql:  "show columns from t where `Key` = 'pri' like 't*'",
+			plan: "*plan.Show->Selection",
+		},
+		{
+			sql:  "show procedure status",
+			plan: "*plan.Show",
+		},
+		{
+			sql:  "show triggers",
+			plan: "*plan.Show",
+		},
+		{
+			sql:  "show events",
 			plan: "*plan.Show",
 		},
 		{
@@ -597,7 +617,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			plan: "*plan.TableDual->Projection",
 		},
 		{
-			sql:  "set @a = 1",
+			sql:  "set @a = @b + @c",
 			plan: "*plan.Set",
 		},
 		{
