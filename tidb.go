@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
@@ -142,12 +143,25 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
+	PrepareTxnCtx(ctx)
 	compiler := executor.Compiler{}
 	st, err := compiler.Compile(ctx, rawStmt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return st, nil
+}
+
+// PrepareTxnCtx resets transaction context if session is not in a transaction.
+func PrepareTxnCtx(ctx context.Context) {
+	se := ctx.(*session)
+	if se.txn == nil {
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		se.sessionVars.TxnCtx = &variable.TransactionContext{
+			InfoSchema:    is,
+			SchemaVersion: is.SchemaMetaVersion(),
+		}
+	}
 }
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
@@ -172,6 +186,7 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 		} else {
 			err = ctx.CommitTxn()
 		}
+		//PrepareTxnCtx(ctx)
 	}
 	return rs, errors.Trace(err)
 }
