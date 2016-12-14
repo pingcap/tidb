@@ -246,7 +246,7 @@ func DecodeComparableUvarint(b []byte) ([]byte, uint64, error) {
 	for _, c := range b[:length] {
 		v = (v << 8) | uint64(c)
 	}
-	return b, v, nil
+	return b[length:], v, nil
 }
 
 // DecodeComparableVarint decodes mem-comparable varint.
@@ -278,5 +278,5 @@ func DecodeComparableVarint(b []byte) ([]byte, int64, error) {
 	} else if first < negativeTagEnd && v <= math.MaxInt64 {
 		return nil, 0, errors.Trace(errDecodeInvalid)
 	}
-	return b, int64(v), nil
+	return b[length:], int64(v), nil
 }

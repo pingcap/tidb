@@ -283,6 +283,19 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t)
 	}
+	var b []byte
+	b = EncodeComparableVarint(b, -1)
+	b = EncodeComparableUvarint(b, 1)
+	b = EncodeComparableVarint(b, 2)
+	b, i, err := DecodeComparableVarint(b)
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(-1))
+	b, u, err := DecodeComparableUvarint(b)
+	c.Assert(err, IsNil)
+	c.Assert(u, Equals, uint64(1))
+	b, i, err = DecodeComparableVarint(b)
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(2))
 }
 
 func (s *testCodecSuite) TestNumberOrder(c *C) {
