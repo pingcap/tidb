@@ -240,27 +240,24 @@ func (s *session) finishTxn(rollback bool) error {
 		}
 	}
 
-	if err := s.checkSchemaValid(); err != nil {
-		if !s.sessionVars.RetryInfo.Retrying && s.isRetryableError(err) {
-			err = s.Retry()
-		} else {
-			err1 := s.txn.Rollback()
-			if err1 != nil {
-				// TODO: Handle this error.
-				log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
-			}
+	err := s.checkSchemaValid()
+	if err == nil {
+		err = s.txn.Commit()
+	} else {
+		err1 := s.txn.Rollback()
+		if err1 != nil {
+			// TODO: Handle this error.
+			log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
 		}
-		if err != nil {
-			log.Warnf("finished txn:%s, %v", s.txn, err)
-		}
-		s.resetHistory()
-		s.cleanRetryInfo()
-		return errors.Trace(err)
 	}
-	if err := s.txn.Commit(); err != nil {
-		if !s.sessionVars.RetryInfo.Retrying && s.isRetryableError(err) {
-			err = s.Retry()
+	if err != nil {
+		if s.sessionVars.RetryInfo.Retrying || !s.isRetryableError(err) {
+			log.Warnf("finished txn:%s, %v", s.txn, err)
+			return errors.Trace(err)
 		}
+		s.txn = nil
+		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		err = s.Retry()
 		if err != nil {
 			log.Warnf("finished txn:%s, %v", s.txn, err)
 			return errors.Trace(err)
@@ -339,12 +336,6 @@ func (s *session) Retry() error {
 	for {
 		s.sessionVars.RetryInfo.Attempts = retryCnt + 1
 		s.resetHistory()
-		log.Info("RollbackTxn for retry txn.")
-		err = s.RollbackTxn()
-		if err != nil {
-			// TODO: handle this error.
-			log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
-		}
 		success := true
 		s.sessionVars.RetryInfo.ResetOffset()
 		for _, sr := range nh.history {
@@ -353,7 +344,7 @@ func (s *session) Retry() error {
 			if len(txt) > sqlLogMaxLen {
 				txt = txt[:sqlLogMaxLen]
 			}
-			log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
+			log.Warnf("retry %s (len:%d)", txt, len(st.OriginText()))
 			_, err = runStmt(s, st)
 			if err != nil {
 				if s.isRetryableError(err) {
@@ -369,6 +360,13 @@ func (s *session) Retry() error {
 			if !s.isRetryableError(err) {
 				break
 			}
+		} else {
+			log.Info("rollback txn for retry.")
+			err = s.RollbackTxn()
+			if err != nil {
+				// TODO: Handle this error.
+				log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
+			}
 		}
 		retryCnt++
 		if (s.maxRetryCnt != unlimitedRetryCnt) && (retryCnt >= s.maxRetryCnt) {
@@ -376,7 +374,7 @@ func (s *session) Retry() error {
 		}
 		kv.BackOff(retryCnt)
 	}
-	return err
+	return errors.Trace(err)
 }
 
 // ExecRestrictedSQL implements RestrictedSQLExecutor interface.
