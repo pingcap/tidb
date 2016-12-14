@@ -406,7 +406,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		ExpectDateValue      string
 	}{
 		{20101010111111, false, "2010-10-10 11:11:11", false, "2010-10-10 11:11:11", false, "2010-10-10"},
-		{2010101011111, true, zeroDatetimeStr, true, zeroDatetimeStr, true, zeroDateStr},
+		{2010101011111, false, "0201-01-01 01:11:11", true, zeroDatetimeStr, false, "0201-01-01"},
 		{201010101111, false, "2020-10-10 10:11:11", false, "2020-10-10 10:11:11", false, "2020-10-10"},
 		{20101010111, false, "2002-01-01 01:01:11", false, "2002-01-01 01:01:11", false, "2002-01-01"},
 		{2010101011, true, zeroDatetimeStr, true, zeroDatetimeStr, true, zeroDateStr},
@@ -431,11 +431,11 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		{380120031407, false, "2038-01-20 03:14:07", true, zeroDatetimeStr, false, "2038-01-20"},
 	}
 
-	for _, test := range table {
+	for ith, test := range table {
 		// test ParseDatetimeFromNum
 		t, err := ParseDatetimeFromNum(test.Input)
 		if test.ExpectDateTimeError {
-			c.Assert(err, NotNil)
+			c.Assert(err, NotNil, Commentf("%d", ith))
 		} else {
 			c.Assert(err, IsNil)
 			c.Assert(t.Type, Equals, mysql.TypeDatetime)
@@ -447,7 +447,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		if test.ExpectTimeStampError {
 			c.Assert(err, NotNil)
 		} else {
-			c.Assert(err, IsNil)
+			c.Assert(err, IsNil, Commentf("%d", ith))
 			c.Assert(t.Type, Equals, mysql.TypeTimestamp)
 		}
 		c.Assert(t.String(), Equals, test.ExpectTimeStampValue)
