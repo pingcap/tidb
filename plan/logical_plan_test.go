@@ -515,7 +515,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestLogicalPlanBuilder(c *C) {
+func (s *testPlanSuite) TestPlanBuilder(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql  string
@@ -548,6 +548,62 @@ func (s *testPlanSuite) TestLogicalPlanBuilder(c *C) {
 			sql:  "delete from t where t.a >= 1000 order by t.a desc limit 10",
 			plan: "DataScan(t)->Selection->Sort->Limit->*plan.Delete",
 		},
+		{
+			sql:  "admin show ddl",
+			plan: "ShowDDL",
+		},
+		{
+			sql:  "alter table t drop column a",
+			plan: "*plan.DDL",
+		},
+		{
+			sql:  "create index ind on t (a,b,c,d)",
+			plan: "*plan.DDL",
+		},
+		{
+			sql:  "deallocate prepare stmt",
+			plan: "*plan.Deallocate",
+		},
+		{
+			sql:  "drop database test",
+			plan: "*plan.DDL",
+		},
+		{
+			sql:  "drop index ind on t",
+			plan: "*plan.DDL",
+		},
+		{
+			sql:  "execute stmt",
+			plan: "*plan.Execute",
+		},
+		{
+			sql:  "explain select * from t union all select * from t limit 1, 1",
+			plan: "UnionAll{Table(t)->Table(t)->Limit}->*plan.Explain",
+		},
+		{
+			sql:  "load data infile 'data' into table t",
+			plan: "*plan.LoadData",
+		},
+		{
+			sql:  "prepare stmt from 'select * from t'",
+			plan: "*plan.Prepare",
+		},
+		{
+			sql:  "show databases",
+			plan: "*plan.Show",
+		},
+		{
+			sql:  "do sleep(5)",
+			plan: "*plan.TableDual->Projection",
+		},
+		{
+			sql:  "set @a = 1",
+			plan: "*plan.Set",
+		},
+		{
+			sql:  "truncate table t",
+			plan: "*plan.DDL",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -564,7 +620,7 @@ func (s *testPlanSuite) TestLogicalPlanBuilder(c *C) {
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		c.Assert(ToString(p.(LogicalPlan)), Equals, ca.plan, Commentf("for %s", ca.sql))
+		c.Assert(ToString(p.(Plan)), Equals, ca.plan, Commentf("for %s", ca.sql))
 	}
 }
 
