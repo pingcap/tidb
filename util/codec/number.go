@@ -274,7 +274,9 @@ func DecodeComparableVarint(b []byte) ([]byte, int64, error) {
 		v = (v << 8) | uint64(c)
 	}
 	if first > positiveTagStart && v > math.MaxInt64 {
-		return nil, 0, errors.New("value overflows int64")
+		return nil, 0, errors.Trace(errDecodeInvalid)
+	} else if first < negativeTagEnd && v <= math.MaxInt64 {
+		return nil, 0, errors.Trace(errDecodeInvalid)
 	}
 	return b, int64(v), nil
 }
