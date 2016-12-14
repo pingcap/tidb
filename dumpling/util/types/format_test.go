@@ -14,8 +14,6 @@
 package types
 
 import (
-	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 )
@@ -57,7 +55,6 @@ func (s *testTimeSuite) TestTimeFormatMethod(c *C) {
 	for i, t := range tblDate {
 		tm, err := ParseTime(t.Input, mysql.TypeDatetime, 6)
 		c.Assert(err, IsNil, Commentf("parse time fail: %s", t.Input))
-		fmt.Println("lala", tm.Time.Microsecond())
 
 		str, err := tm.Format(t.Format)
 		c.Assert(err, IsNil, Commentf("time format fail: %d", i))
