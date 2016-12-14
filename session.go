@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/store/localstore"
@@ -196,8 +195,6 @@ func (s *session) AffectedRows() uint64 {
 }
 
 func (s *session) resetHistory() {
-	s.ClearValue(executor.DirtyDBKey)
-	s.ClearValue(forupdate.ForUpdateKey)
 	s.history.reset()
 }
 
@@ -217,7 +214,6 @@ func (s *session) finishTxn(rollback bool) error {
 	defer func() {
 		s.txn = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-		binloginfo.ClearBinlog(s)
 	}()
 
 	if rollback {
@@ -331,7 +327,7 @@ func (s *session) Retry() error {
 		s.sessionVars.RetryInfo.Retrying = false
 	}()
 
-	if forUpdate := s.Value(forupdate.ForUpdateKey); forUpdate != nil {
+	if s.sessionVars.TxnCtx.ForUpdate {
 		return errors.Errorf("can not retry select for update statement")
 	}
 	var err error
@@ -530,8 +526,9 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if err := s.checkSchemaValidOrRollback(); err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
+	PrepareTxnCtx(s)
 	prepareExec := &executor.PrepareExec{
-		IS:      sessionctx.GetDomain(s).InfoSchema(),
+		IS:      executor.GetInfoSchema(s),
 		Ctx:     s,
 		SQLText: sql,
 	}
@@ -594,6 +591,7 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	PrepareTxnCtx(s)
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	r, err := runStmt(s, st)
 	return r, errors.Trace(err)
