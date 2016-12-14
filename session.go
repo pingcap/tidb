@@ -196,6 +196,7 @@ func (s *session) AffectedRows() uint64 {
 }
 
 func (s *session) resetHistory() {
+	s.ClearValue(executor.DirtyDBKey)
 	s.ClearValue(forupdate.ForUpdateKey)
 	s.history.reset()
 }
@@ -214,7 +215,6 @@ func (s *session) finishTxn(rollback bool) error {
 		return nil
 	}
 	defer func() {
-		s.ClearValue(executor.DirtyDBKey)
 		s.txn = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		binloginfo.ClearBinlog(s)
@@ -615,41 +615,35 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 // In this situation, if current transaction is still in progress,
 // there will be an implicit commit and create a new transaction.
 func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
-	var (
-		err error
-		ac  bool
-	)
-	sessVars := s.sessionVars
+	if s.txn != nil && !forceNew {
+		return s.txn, nil
+	}
+
+	var err error
+	var force string
 	if s.txn == nil {
 		err = s.loadCommonGlobalVariablesIfNeeded()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		s.resetHistory()
-		s.txn, err = s.store.Begin()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ac = s.isAutocommit(s)
-		if !ac {
-			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
-		}
-		log.Infof("[%d] new txn:%s", sessVars.ConnectionID, s.txn)
 	} else if forceNew {
 		err = s.CommitTxn()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		s.txn, err = s.store.Begin()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ac = s.isAutocommit(s)
-		if !ac {
-			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
-		}
-		log.Warnf("[%d] force new txn:%s", sessVars.ConnectionID, s.txn)
+		force = "force"
 	}
+	s.txn, err = s.store.Begin()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ac := s.isAutocommit(s)
+	if !ac {
+		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+	}
+	log.Infof("[%d] %s new txn:%s", s.sessionVars.ConnectionID, force, s.txn)
+
 	retryInfo := s.sessionVars.RetryInfo
 	if retryInfo.Retrying {
 		s.txn.SetOption(kv.RetryAttempts, retryInfo.Attempts)

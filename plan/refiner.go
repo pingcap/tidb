@@ -197,7 +197,7 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 		}
 	}
 	indexScan.accessInAndEqCount = indexScan.accessEqualCount
-	// We should remove all accessConds , so that they will not be added to filter conditions.
+	// We should remove all accessConds, so that they will not be added to filter conditions.
 	conditions = removeAccessConditions(conditions, accessConds)
 	var curIndex int
 	for curIndex = indexScan.accessEqualCount; curIndex < len(indexScan.Index.Columns); curIndex++ {
