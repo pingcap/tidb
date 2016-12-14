@@ -38,8 +38,6 @@ type RetryInfo struct {
 	Retrying         bool
 	currRetryOff     int
 	autoIncrementIDs []int64
-	// Attempts is the current number of retry attempts.
-	Attempts int
 }
 
 // Clean does some clean work.
@@ -48,7 +46,6 @@ func (r *RetryInfo) Clean() {
 	if len(r.autoIncrementIDs) > 0 {
 		r.autoIncrementIDs = r.autoIncrementIDs[:0]
 	}
-	r.Attempts = 0
 }
 
 // AddAutoIncrementID adds id to AutoIncrementIDs.

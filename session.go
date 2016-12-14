@@ -333,7 +333,6 @@ func (s *session) Retry() error {
 	var err error
 	retryCnt := 0
 	for {
-		s.sessionVars.RetryInfo.Attempts = retryCnt + 1
 		s.resetHistory()
 		log.Info("RollbackTxn for retry txn.")
 		err = s.RollbackTxn()
@@ -641,11 +640,6 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 	}
 	log.Infof("[%d] %s new txn:%s", s.sessionVars.ConnectionID, force, s.txn)
-
-	retryInfo := s.sessionVars.RetryInfo
-	if retryInfo.Retrying {
-		s.txn.SetOption(kv.RetryAttempts, retryInfo.Attempts)
-	}
 	return s.txn, nil
 }
 
