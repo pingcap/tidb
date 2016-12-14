@@ -80,29 +80,33 @@ func builtinDate(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	return convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 }
 
+// Convert datum to gotime.
+// TODO: This is used for timediff(). After we finish time refactor, we should abandan this function.
+func convertToGoTime(sc *variable.StatementContext, d types.Datum) (t time.Time, err error) {
+	if d.Kind() != types.KindMysqlTime {
+		d, err = convertToTime(sc, d, mysql.TypeDatetime)
+		if err != nil {
+			return t, errors.Trace(err)
+		}
+	}
+	t, err = d.GetMysqlTime().Time.GoTime()
+	return t, errors.Trace(err)
+}
+
 func builtinTimeDiff(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	t1, t2 := args[0], args[1]
+	// TODO: use a better way to compute time diff after time refactor finished.
 	sc := ctx.GetSessionVars().StmtCtx
-	if t1.Kind() != types.KindMysqlTime {
-		t1, err = convertToTime(sc, t1, types.KindMysqlTime)
-		fmt.Println("t1:", t1.GetMysqlTime().String())
-		if err != nil {
-			return d, errors.Trace(err)
-		}
+	t1, err := convertToGoTime(sc, args[0])
+	if err != nil {
+		return d, errors.Trace(err)
 	}
-	if t2.Kind() != types.KindMysqlTime {
-		t2, err = convertToTime(sc, t2, types.KindMysqlTime)
-		fmt.Println("t2:", t2.GetMysqlDuration().String())
-		if err != nil {
-			return d, errors.Trace(err)
-		}
+	t2, err := convertToGoTime(sc, args[1])
+	if err != nil {
+		return d, errors.Trace(err)
 	}
-	d1 := t1.GetMysqlTime()
-	d2 := t2.GetMysqlTime()
-	fmt.Println("d1:", d1.String(), ", d2: ", d2.String())
 	var t types.Duration
-	t.Duration = d1.Time.GoTime().Sub(d2.Time.GoTime())
-	t.Fsp = d1.Fsp
+	t.Duration = t1.Sub(t2)
+	t.Fsp = types.MaxFsp
 	d.SetMysqlDuration(t)
 	return d, nil
 }
