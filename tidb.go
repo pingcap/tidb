@@ -177,7 +177,7 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	rs, err = s.Exec(ctx)
 	// All the history should be added here.
 	se := ctx.(*session)
-	se.history.add(0, s)
+	getHistory(ctx).add(0, s)
 	// MySQL DDL should be auto-commit.
 	if s.IsDDL() || se.sessionVars.ShouldAutocommit() {
 		if err != nil {
@@ -186,9 +186,18 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 		} else {
 			err = ctx.CommitTxn()
 		}
-		//PrepareTxnCtx(ctx)
 	}
 	return rs, errors.Trace(err)
+}
+
+func getHistory(ctx context.Context) *stmtHistory {
+	hist, ok := ctx.GetSessionVars().TxnCtx.Histroy.(*stmtHistory)
+	if ok {
+		return hist
+	}
+	hist = new(stmtHistory)
+	ctx.GetSessionVars().TxnCtx.Histroy = hist
+	return hist
 }
 
 // GetRows gets all the rows from a RecordSet.

@@ -75,6 +75,7 @@ type TransactionContext struct {
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
+	Histroy       interface{}
 	SchemaVersion int64
 }
 

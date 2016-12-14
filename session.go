@@ -117,10 +117,7 @@ type session struct {
 	schemaVerInCurrTxn int64
 	values             map[fmt.Stringer]interface{}
 	store              kv.Storage
-	history            stmtHistory
 	maxRetryCnt        int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
-
-	debugInfos map[string]interface{} // Vars for debug and unit tests.
 
 	// For performance_schema only.
 	stmtState *perfschema.StatementState
@@ -194,10 +191,6 @@ func (s *session) AffectedRows() uint64 {
 	return s.sessionVars.StmtCtx.AffectedRows()
 }
 
-func (s *session) resetHistory() {
-	s.history.reset()
-}
-
 func (s *session) SetClientCapability(capability uint32) {
 	s.sessionVars.ClientCapability = capability
 }
@@ -206,8 +199,7 @@ func (s *session) SetConnectionID(connectionID uint64) {
 	s.sessionVars.ConnectionID = connectionID
 }
 
-func (s *session) finishTxn(rollback bool) error {
-	// transaction has already been committed or rolled back
+func (s *session) doCommit() error {
 	if s.txn == nil {
 		return nil
 	}
@@ -215,12 +207,6 @@ func (s *session) finishTxn(rollback bool) error {
 		s.txn = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
-
-	if rollback {
-		s.resetHistory()
-		s.cleanRetryInfo()
-		return s.txn.Rollback()
-	}
 	if binloginfo.PumpClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
@@ -235,45 +221,47 @@ func (s *session) finishTxn(rollback bool) error {
 			s.txn.SetOption(kv.BinlogData, bin)
 		}
 	}
-
 	if err := s.checkSchemaValid(); err != nil {
-		if !s.sessionVars.RetryInfo.Retrying && s.isRetryableError(err) {
-			err = s.Retry()
-		} else {
-			err1 := s.txn.Rollback()
-			if err1 != nil {
-				// TODO: Handle this error.
-				log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
-			}
+		err1 := s.txn.Rollback()
+		if err1 != nil {
+			log.Errorf("rollback txn failed, err:%v", err1)
 		}
-		if err != nil {
-			log.Warnf("finished txn:%s, %v", s.txn, err)
-		}
-		s.resetHistory()
-		s.cleanRetryInfo()
 		return errors.Trace(err)
 	}
 	if err := s.txn.Commit(); err != nil {
-		if !s.sessionVars.RetryInfo.Retrying && s.isRetryableError(err) {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (s *session) doCommitWithRetry() error {
+	err := s.doCommit()
+	if err != nil {
+		if s.isRetryableError(err) {
 			err = s.Retry()
 		}
-		if err != nil {
-			log.Warnf("finished txn:%s, %v", s.txn, err)
-			return errors.Trace(err)
-		}
 	}
-
-	s.resetHistory()
 	s.cleanRetryInfo()
+	if err != nil {
+		log.Warnf("finished txn:%s, %v", s.txn, err)
+		return errors.Trace(err)
+	}
 	return nil
 }
 
 func (s *session) CommitTxn() error {
-	return s.finishTxn(false)
+	return s.doCommitWithRetry()
 }
 
 func (s *session) RollbackTxn() error {
-	return s.finishTxn(true)
+	var err error
+	if s.txn != nil {
+		s.cleanRetryInfo()
+		err = s.txn.Rollback()
+		s.txn = nil
+		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+	}
+	return errors.Trace(err)
 }
 
 func (s *session) GetClient() kv.Client {
@@ -314,32 +302,18 @@ func (s *session) isRetryableError(err error) bool {
 }
 
 func (s *session) Retry() error {
-	s.sessionVars.RetryInfo.Retrying = true
-	nh := s.history.clone()
-	// Debug infos.
-	if len(nh.history) == 0 {
-		s.debugInfos[retryEmptyHistoryList] = true
-	} else {
-		s.debugInfos[retryEmptyHistoryList] = false
-	}
-	defer func() {
-		s.history.history = nh.history
-		s.sessionVars.RetryInfo.Retrying = false
-	}()
-
 	if s.sessionVars.TxnCtx.ForUpdate {
 		return errors.Errorf("can not retry select for update statement")
 	}
+	s.sessionVars.RetryInfo.Retrying = true
+	defer func() {
+		s.sessionVars.RetryInfo.Retrying = false
+	}()
+	nh := getHistory(s)
 	var err error
 	retryCnt := 0
 	for {
-		s.resetHistory()
-		log.Info("RollbackTxn for retry txn.")
-		err = s.RollbackTxn()
-		if err != nil {
-			// TODO: handle this error.
-			log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
-		}
+		PrepareTxnCtx(s)
 		success := true
 		s.sessionVars.RetryInfo.ResetOffset()
 		for _, sr := range nh.history {
@@ -349,7 +323,7 @@ func (s *session) Retry() error {
 				txt = txt[:sqlLogMaxLen]
 			}
 			log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
-			_, err = runStmt(s, st)
+			_, err = st.Exec(s)
 			if err != nil {
 				if s.isRetryableError(err) {
 					success = false
@@ -360,7 +334,7 @@ func (s *session) Retry() error {
 			}
 		}
 		if success {
-			err = s.CommitTxn()
+			err = s.doCommit()
 			if !s.isRetryableError(err) {
 				break
 			}
@@ -623,7 +597,6 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		s.resetHistory()
 	} else if forceNew {
 		err = s.CommitTxn()
 		if err != nil {
@@ -770,7 +743,6 @@ func createSession(store kv.Storage) (*session, error) {
 	s := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
-		debugInfos:  make(map[string]interface{}),
 		maxRetryCnt: 10,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
