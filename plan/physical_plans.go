@@ -71,15 +71,20 @@ type physicalDistSQLPlan interface {
 
 func (p *PhysicalIndexScan) calculateCost(resultCount uint64, scanCount uint64) float64 {
 	// TODO: Eliminate index cost more precisely.
-	cnt := float64(resultCount)
-	// network cost
-	cost := cnt * netWorkFactor
+	cost := float64(resultCount) * netWorkFactor
+	scanCnt := float64(scanCount)
 	if p.DoubleRead {
-		cost *= 2
+		cost += scanCnt * netWorkFactor
+	}
+	if len(p.indexFilterConditions) > 0 {
+		cost += scanCnt * cpuFactor
+	}
+	if len(p.tableFilterConditions) > 0 {
+		cost += scanCnt * cpuFactor
 	}
 	// sort cost
 	if !p.OutOfOrder && p.DoubleRead {
-		cost += cnt * cpuFactor
+		cost += scanCnt * cpuFactor
 	}
 	return cost
 }
