@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
@@ -142,12 +143,25 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
+	PrepareTxnCtx(ctx)
 	compiler := executor.Compiler{}
 	st, err := compiler.Compile(ctx, rawStmt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return st, nil
+}
+
+// PrepareTxnCtx resets transaction context if session is not in a transaction.
+func PrepareTxnCtx(ctx context.Context) {
+	se := ctx.(*session)
+	if se.txn == nil {
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		se.sessionVars.TxnCtx = &variable.TransactionContext{
+			InfoSchema:    is,
+			SchemaVersion: is.SchemaMetaVersion(),
+		}
+	}
 }
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
@@ -163,7 +177,7 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	rs, err = s.Exec(ctx)
 	// All the history should be added here.
 	se := ctx.(*session)
-	se.history.add(0, s)
+	getHistory(ctx).add(0, s)
 	// MySQL DDL should be auto-commit.
 	if s.IsDDL() || se.sessionVars.ShouldAutocommit() {
 		if err != nil {
@@ -174,6 +188,16 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 		}
 	}
 	return rs, errors.Trace(err)
+}
+
+func getHistory(ctx context.Context) *stmtHistory {
+	hist, ok := ctx.GetSessionVars().TxnCtx.Histroy.(*stmtHistory)
+	if ok {
+		return hist
+	}
+	hist = new(stmtHistory)
+	ctx.GetSessionVars().TxnCtx.Histroy = hist
+	return hist
 }
 
 // GetRows gets all the rows from a RecordSet.
