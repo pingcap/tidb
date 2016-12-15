@@ -108,6 +108,7 @@ const (
 	StrToDate        = "str_to_date"
 	Sysdate          = "sysdate"
 	Time             = "time"
+	TimeDiff         = "timediff"
 	UTCDate          = "utc_date"
 	Week             = "week"
 	Weekday          = "weekday"

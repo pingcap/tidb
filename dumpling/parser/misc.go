@@ -380,6 +380,7 @@ var tokenMap = map[string]int{
 	"TABLE":               tableKwd,
 	"TABLES":              tables,
 	"TERMINATED":          terminated,
+	"TIMEDIFF":            timediff,
 	"THAN":                than,
 	"THEN":                then,
 	"TO":                  to,
