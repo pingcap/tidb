@@ -325,30 +325,56 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo *model.IndexInfo) (
-	kv.Key, []types.Datum, error) {
-	// fetch datas
+func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, handles []int64, indexInfo *model.IndexInfo) (
+	[]*indexRecord, error) {
+	// Through handles access to get all row keys and column maps.
 	cols := t.Cols()
-	colMap := make(map[int64]*types.FieldType)
-	for _, v := range indexInfo.Columns {
-		col := cols[v.Offset]
-		colMap[col.ID] = &col.FieldType
+	handlesLen := len(handles)
+	rowKeys := make([]kv.Key, 0, handlesLen)
+	colMaps := make([]map[int64]*types.FieldType, 0, handlesLen)
+	idxRecords := make([]*indexRecord, handlesLen)
+	for i, h := range handles {
+		colMap := make(map[int64]*types.FieldType)
+		for _, v := range indexInfo.Columns {
+			col := cols[v.Offset]
+			colMap[col.ID] = &col.FieldType
+		}
+		rowKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), h)
+		rowKeys = append(rowKeys, rowKey)
+		colMaps = append(colMaps, colMap)
+		idxRecords[i] = &indexRecord{handle: h, key: rowKey}
 	}
-	rowKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
-	rowVal, err := txn.Get(rowKey)
+
+	// Get corresponding raw values for rowKeys.
+	ver := kv.Version{Ver: txn.StartTS()}
+	snap, err := d.store.GetSnapshot(ver)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	row, err := tablecodec.DecodeRow(rowVal, colMap)
+	pairMap, err := snap.BatchGet(rowKeys)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	vals := make([]types.Datum, 0, len(indexInfo.Columns))
-	for _, v := range indexInfo.Columns {
-		col := cols[v.Offset]
-		vals = append(vals, row[col.ID])
+
+	// Get corresponding values for pairMap.
+	for i, idxRecord := range idxRecords {
+		rowVal, ok := pairMap[string(idxRecord.key)]
+		if !ok {
+			// Row doesn't exist, skip it.
+			idxRecord.notExist = true
+			continue
+		}
+		row, err := tablecodec.DecodeRow(rowVal, colMaps[i])
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxRecord.vals = make([]types.Datum, 0, len(indexInfo.Columns))
+		for _, v := range indexInfo.Columns {
+			col := cols[v.Offset]
+			idxRecord.vals = append(idxRecord.vals, row[col.ID])
+		}
 	}
-	return rowKey, vals, nil
+	return idxRecords, nil
 }
 
 const defaultBatchCnt = 1024
@@ -432,41 +458,44 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 	return handles, nil
 }
 
+type indexRecord struct {
+	handle   int64
+	key      []byte
+	vals     []types.Datum
+	notExist bool
+}
+
 // backfillIndexInTxn deals with a part of backfilling index data in a Transaction.
 // This part of the index data rows is defaultSmallBatchCnt.
 func (d *ddl) backfillIndexInTxn(t table.Table, kvIdx table.Index, handles []int64, txn kv.Transaction) (int64, error) {
+	idxRecords, err := d.fetchRowColVals(txn, t, handles, kvIdx.Meta())
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
 	nextHandle := handles[0]
-	for _, handle := range handles {
-		log.Debug("[ddl] backfill index...", handle)
-		rowKey, vals, err := fetchRowColVals(txn, t, handle, kvIdx.Meta())
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
-			// Row doesn't exist, skip it.
-			nextHandle = handle
+	for _, idxRecord := range idxRecords {
+		log.Debug("[ddl] backfill index...", idxRecord.handle)
+		if idxRecord.notExist {
 			continue
-		}
-		if err != nil {
-			return 0, errors.Trace(err)
 		}
 
-		exist, _, err := kvIdx.Exist(txn, vals, handle)
-		if err != nil {
-			return 0, errors.Trace(err)
-		} else if exist {
-			// Index already exists, skip it.
-			nextHandle = handle
-			continue
-		}
-		err = txn.LockKeys(rowKey)
+		err = txn.LockKeys(idxRecord.key)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 
 		// Create the index.
-		_, err = kvIdx.Create(txn, vals, handle)
+		handle, err := kvIdx.Create(txn, idxRecord.vals, idxRecord.handle)
 		if err != nil {
+			if terror.ErrorEqual(err, kv.ErrKeyExists) && idxRecord.handle == handle {
+				// Index already exists, skip it.
+				nextHandle = idxRecord.handle
+				continue
+			}
 			return 0, errors.Trace(err)
 		}
-		nextHandle = handle
+		nextHandle = idxRecord.handle
 	}
 	return nextHandle, nil
 }
