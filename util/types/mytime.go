@@ -190,37 +190,37 @@ func (v weekBehaviour) test(flag weekBehaviour) bool {
 func calcWeek(t *mysqlTime, wb weekBehaviour, year *int) int {
 	var days int
 	daynr := calcDaynr(int(t.year), int(t.month), int(t.day))
-	first_daynr := calcDaynr(int(t.year), 1, 1)
-	monday_first := wb.test(weekBehaviourMondayFirst)
-	week_year := wb.test(weekBehaviourWeekYear)
-	first_weekday := wb.test(weekBehaviourWeekFirstWeekday)
+	firstDaynr := calcDaynr(int(t.year), 1, 1)
+	mondayFirst := wb.test(weekBehaviourMondayFirst)
+	weekYear := wb.test(weekBehaviourWeekYear)
+	firstWeekday := wb.test(weekBehaviourWeekFirstWeekday)
 
-	weekday := calcWeekday(int(first_daynr), !monday_first)
+	weekday := calcWeekday(int(firstDaynr), !mondayFirst)
 	*year = int(t.year)
 
 	if t.month == 1 && int(t.day) <= 7-weekday {
-		if !week_year &&
-			((first_weekday && weekday != 0) || (!first_weekday && weekday >= 4)) {
+		if !weekYear &&
+			((firstWeekday && weekday != 0) || (!firstWeekday && weekday >= 4)) {
 			return 0
 		}
-		week_year = true
+		weekYear = true
 		(*year)--
 		days = calcDaysInYear(*year)
-		first_daynr -= days
+		firstDaynr -= days
 		weekday = (weekday + 53*7 - days) % 7
 	}
 
-	if (first_weekday && weekday != 0) ||
-		(!first_weekday && weekday >= 4) {
-		days = daynr - (first_daynr + 7 - weekday)
+	if (firstWeekday && weekday != 0) ||
+		(!firstWeekday && weekday >= 4) {
+		days = daynr - (firstDaynr + 7 - weekday)
 	} else {
-		days = daynr - (first_daynr - weekday)
+		days = daynr - (firstDaynr - weekday)
 	}
 
-	if week_year && days >= 52*7 {
+	if weekYear && days >= 52*7 {
 		weekday = (weekday + int(calcDaysInYear(*year))) % 7
-		if (!first_weekday && weekday < 4) ||
-			(first_weekday && weekday == 0) {
+		if (!firstWeekday && weekday < 4) ||
+			(firstWeekday && weekday == 0) {
 			(*year)++
 			return 1
 		}
