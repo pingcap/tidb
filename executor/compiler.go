@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 )
 
 // Compiler compiles an ast.StmtNode to a stmt.Statement.
@@ -152,7 +154,15 @@ func getSelectStmtLabel(x *ast.SelectStmt) string {
 // then wrappped to an adapter *statement as stmt.Statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
 	stmtCount(node)
-	is := GetInfoSchema(ctx)
+	var is infoschema.InfoSchema
+	sessVar := ctx.GetSessionVars()
+	if snap := sessVar.SnapshotInfoschema; snap != nil {
+		is = snap.(infoschema.InfoSchema)
+		log.Infof("[%d] use snapshot schema %d", sessVar.ConnectionID, is.SchemaMetaVersion())
+	} else {
+		is = sessionctx.GetDomain(ctx).InfoSchema()
+		binloginfo.SetSchemaVersion(ctx, is.SchemaMetaVersion())
+	}
 	if err := plan.Preprocess(node, is, ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -172,18 +182,4 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 		isDDL: isDDL,
 	}
 	return sa, nil
-}
-
-// GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
-// Otherwise, snapshot schema is returned.
-func GetInfoSchema(ctx context.Context) infoschema.InfoSchema {
-	sessVar := ctx.GetSessionVars()
-	var is infoschema.InfoSchema
-	if snap := sessVar.SnapshotInfoschema; snap != nil {
-		is = snap.(infoschema.InfoSchema)
-		log.Infof("[%d] use snapshot schema %d", sessVar.ConnectionID, is.SchemaMetaVersion())
-	} else {
-		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
-	}
-	return is
 }

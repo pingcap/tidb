@@ -38,6 +38,8 @@ type RetryInfo struct {
 	Retrying         bool
 	currRetryOff     int
 	autoIncrementIDs []int64
+	// Attempts is the current number of retry attempts.
+	Attempts int
 }
 
 // Clean does some clean work.
@@ -46,6 +48,7 @@ func (r *RetryInfo) Clean() {
 	if len(r.autoIncrementIDs) > 0 {
 		r.autoIncrementIDs = r.autoIncrementIDs[:0]
 	}
+	r.Attempts = 0
 }
 
 // AddAutoIncrementID adds id to AutoIncrementIDs.
@@ -69,16 +72,6 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 	return id, nil
 }
 
-// TransactionContext is used to store variables that has transaction scope.
-type TransactionContext struct {
-	ForUpdate     bool
-	DirtyDB       interface{}
-	Binlog        interface{}
-	InfoSchema    interface{}
-	Histroy       interface{}
-	SchemaVersion int64
-}
-
 // SessionVars is to handle user-defined or global variables in current session.
 type SessionVars struct {
 	// user-defined variables
@@ -93,8 +86,6 @@ type SessionVars struct {
 
 	// retry information
 	RetryInfo *RetryInfo
-	// Should be reset on transaction finished.
-	TxnCtx *TransactionContext
 
 	// following variables are special for current session
 	Status       uint16
@@ -149,7 +140,6 @@ func NewSessionVars() *SessionVars {
 		Systems:              make(map[string]string),
 		PreparedStmts:        make(map[uint32]interface{}),
 		PreparedStmtNameToID: make(map[string]uint32),
-		TxnCtx:               &TransactionContext{},
 		RetryInfo:            &RetryInfo{},
 		StrictSQLMode:        true,
 		Status:               mysql.ServerStatusAutocommit,
