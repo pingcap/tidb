@@ -190,7 +190,7 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 	}
 	if regionErr.GetServerIsBusy() != nil {
 		log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", ctx.KVCtx)
-		err = s.bo.Backoff(boServerBusy, errors.Errorf("server is busy"))
+		err = s.bo.Backoff(boServerBusy, errors.Errorf("server is busy, ctx: %s", ctx.KVCtx))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
