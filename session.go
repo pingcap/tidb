@@ -254,13 +254,13 @@ func (s *session) CommitTxn() error {
 }
 
 func (s *session) RollbackTxn() error {
-	var err error
-	if s.txn != nil {
-		s.cleanRetryInfo()
-		err = s.txn.Rollback()
-		s.txn = nil
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+	if s.txn == nil {
+		return nil
 	}
+	s.cleanRetryInfo()
+	err := s.txn.Rollback()
+	s.txn = nil
+	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return errors.Trace(err)
 }
 
