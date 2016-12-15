@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -45,6 +44,7 @@ type SimpleExec struct {
 	Statement ast.StmtNode
 	ctx       context.Context
 	done      bool
+	is        infoschema.InfoSchema
 }
 
 // Schema implements the Executor Schema interface.
@@ -97,7 +97,7 @@ func (e *SimpleExec) Close() error {
 
 func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	dbname := model.NewCIStr(s.DBName)
-	dbinfo, exists := sessionctx.GetDomain(e.ctx).InfoSchema().SchemaByName(dbname)
+	dbinfo, exists := e.is.SchemaByName(dbname)
 	if !exists {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(dbname)
 	}
