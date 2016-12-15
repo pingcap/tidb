@@ -27,6 +27,8 @@ const (
 	// PresumeKeyNotExistsError is the option key for error.
 	// When PresumeKeyNotExists is set and condition is not match, should throw the error.
 	PresumeKeyNotExistsError
+	// RetryAttempts is the number of txn retry attempt.
+	RetryAttempts
 	// BinlogData is the binlog data to write.
 	BinlogData
 )

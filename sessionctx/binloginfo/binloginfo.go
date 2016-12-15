@@ -15,6 +15,7 @@ package binloginfo
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
@@ -30,14 +31,43 @@ func init() {
 // shared by all sessions.
 var PumpClient binlog.PumpClient
 
+// keyType is a dummy type to avoid naming collision in context.
+type keyType int
+
+// String defines a Stringer function for debugging and pretty printing.
+func (k keyType) String() string {
+	if k == schemaVersionKey {
+		return "schema_version"
+	}
+	return "binlog"
+}
+
+const (
+	schemaVersionKey keyType = 0
+	binlogKey        keyType = 1
+)
+
+// SetSchemaVersion sets schema version to the context.
+func SetSchemaVersion(ctx context.Context, version int64) {
+	ctx.SetValue(schemaVersionKey, version)
+}
+
+// GetSchemaVersion gets schema version in the context.
+func GetSchemaVersion(ctx context.Context) int64 {
+	v, ok := ctx.Value(schemaVersionKey).(int64)
+	if !ok {
+		log.Error("get schema version failed")
+	}
+	return v
+}
+
 // GetPrewriteValue gets binlog prewrite value in the context.
 func GetPrewriteValue(ctx context.Context, createIfNotExists bool) *binlog.PrewriteValue {
-	vars := ctx.GetSessionVars()
-	v, ok := vars.TxnCtx.Binlog.(*binlog.PrewriteValue)
+	v, ok := ctx.Value(binlogKey).(*binlog.PrewriteValue)
 	if !ok && createIfNotExists {
-		schemaVer := ctx.GetSessionVars().TxnCtx.SchemaVersion
+		schemaVer := GetSchemaVersion(ctx)
 		v = &binlog.PrewriteValue{SchemaVersion: schemaVer}
-		vars.TxnCtx.Binlog = v
+		ctx.SetValue(binlogKey, v)
 	}
 	return v
 }
@@ -61,4 +91,9 @@ func SetDDLBinlog(txn kv.Transaction, jobID int64, ddlQuery string) {
 		DdlQuery: []byte(ddlQuery),
 	}
 	txn.SetOption(kv.BinlogData, bin)
+}
+
+// ClearBinlog clears binlog in the Context.
+func ClearBinlog(ctx context.Context) {
+	ctx.ClearValue(binlogKey)
 }
