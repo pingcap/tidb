@@ -606,3 +606,22 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		c.Assert(t1, Equals, test.Expect)
 	}
 }
+
+func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
+	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
+	tests := []struct {
+		t1        string
+		t2        string
+		expectStr string
+	}{
+		{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001", "-00:00:00.000001"},
+		{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002", "46:58:57.999999"},
+	}
+	for _, test := range tests {
+		t1 := types.NewStringDatum(test.t1)
+		t2 := types.NewStringDatum(test.t2)
+		result, err := builtinTimeDiff([]types.Datum{t1, t2}, s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(result.GetMysqlDuration().String(), Equals, test.expectStr)
+	}
+}
