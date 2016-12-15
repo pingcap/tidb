@@ -29,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -190,6 +188,7 @@ type CheckTableExec struct {
 	tables []*ast.TableName
 	ctx    context.Context
 	done   bool
+	is     infoschema.InfoSchema
 }
 
 // Schema implements the Executor Schema interface.
@@ -204,10 +203,9 @@ func (e *CheckTableExec) Next() (*Row, error) {
 	}
 
 	dbName := model.NewCIStr(e.ctx.GetSessionVars().CurrentDB)
-	is := sessionctx.GetDomain(e.ctx).InfoSchema()
 
 	for _, t := range e.tables {
-		tb, err := is.TableByName(dbName, t.Name)
+		tb, err := e.is.TableByName(dbName, t.Name)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -260,7 +258,7 @@ func (e *SelectLockExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	if len(row.RowKeys) != 0 && e.Lock == ast.SelectLockForUpdate {
-		forupdate.SetForUpdate(e.ctx)
+		e.ctx.GetSessionVars().TxnCtx.ForUpdate = true
 		txn, err := e.ctx.GetTxn(false)
 		if err != nil {
 			return nil, errors.Trace(err)
