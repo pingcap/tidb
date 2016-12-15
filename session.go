@@ -248,6 +248,8 @@ func (s *session) finishTxn(rollback bool) error {
 				// TODO: Handle this error.
 				log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
 			}
+			log.Warnf("finished txn:%s, %v", s.txn, err)
+			return errors.Trace(err)
 		}
 	} else {
 		err = s.txn.Commit()
