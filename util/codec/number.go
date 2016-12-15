@@ -15,6 +15,7 @@ package codec
 
 import (
 	"encoding/binary"
+	"math"
 
 	"github.com/juju/errors"
 )
@@ -154,4 +155,128 @@ func DecodeUvarint(b []byte) ([]byte, uint64, error) {
 		return nil, 0, errors.New("value larger than 64 bits")
 	}
 	return nil, 0, errors.New("insufficient bytes to decode value")
+}
+
+const (
+	negativeTagEnd   = 8        // Negative tag is (negativeTagEnd - length).
+	positiveTagStart = 0xff - 8 // Positive tag is (positiveTagStart + length).
+)
+
+// EncodeComparableVarint encodes an int64 to a mem-comparable bytes.
+func EncodeComparableVarint(b []byte, v int64) []byte {
+	if v < 0 {
+		// All negative value has a tag byte prefix (negativeTagEnd - length).
+		// Smaller negative value encodes to more bytes, has smaller tag.
+		if v >= -0xff {
+			return append(b, negativeTagEnd-1, byte(v))
+		} else if v >= -0xffff {
+			return append(b, negativeTagEnd-2, byte(v>>8), byte(v))
+		} else if v >= -0xffffff {
+			return append(b, negativeTagEnd-3, byte(v>>16), byte(v>>8), byte(v))
+		} else if v >= -0xffffffff {
+			return append(b, negativeTagEnd-4, byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
+		} else if v >= -0xffffffffff {
+			return append(b, negativeTagEnd-5, byte(v>>32), byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
+		} else if v >= -0xffffffffffff {
+			return append(b, negativeTagEnd-6, byte(v>>40), byte(v>>32), byte(v>>24), byte(v>>16), byte(v>>8),
+				byte(v))
+		} else if v >= -0xffffffffffffff {
+			return append(b, negativeTagEnd-7, byte(v>>48), byte(v>>40), byte(v>>32), byte(v>>24), byte(v>>16),
+				byte(v>>8), byte(v))
+		}
+		return append(b, negativeTagEnd-8, byte(v>>56), byte(v>>48), byte(v>>40), byte(v>>32), byte(v>>24),
+			byte(v>>16), byte(v>>8), byte(v))
+	}
+	return EncodeComparableUvarint(b, uint64(v))
+}
+
+// EncodeComparableUvarint encodes uint64 into mem-comparable bytes.
+func EncodeComparableUvarint(b []byte, v uint64) []byte {
+	// The first byte has 256 values, [0, 7] is reserved for negative tags,
+	// [248, 255] is reserved for larger positive tags,
+	// So we can store value [0, 239] in a single byte.
+	// Values cannot be stored in single byte has a tag byte prefix (positiveTagStart+length).
+	// Larger value encodes to more bytes, has larger tag.
+	if v <= positiveTagStart-negativeTagEnd {
+		return append(b, byte(v)+negativeTagEnd)
+	} else if v <= 0xff {
+		return append(b, positiveTagStart+1, byte(v))
+	} else if v <= 0xffff {
+		return append(b, positiveTagStart+2, byte(v>>8), byte(v))
+	} else if v <= 0xffffff {
+		return append(b, positiveTagStart+3, byte(v>>16), byte(v>>8), byte(v))
+	} else if v <= 0xffffffff {
+		return append(b, positiveTagStart+4, byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
+	} else if v <= 0xffffffffff {
+		return append(b, positiveTagStart+5, byte(v>>32), byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
+	} else if v <= 0xffffffffffff {
+		return append(b, positiveTagStart+6, byte(v>>40), byte(v>>32), byte(v>>24), byte(v>>16), byte(v>>8),
+			byte(v))
+	} else if v <= 0xffffffffffffff {
+		return append(b, positiveTagStart+7, byte(v>>48), byte(v>>40), byte(v>>32), byte(v>>24), byte(v>>16),
+			byte(v>>8), byte(v))
+	}
+	return append(b, positiveTagStart+8, byte(v>>56), byte(v>>48), byte(v>>40), byte(v>>32), byte(v>>24),
+		byte(v>>16), byte(v>>8), byte(v))
+}
+
+var (
+	errDecodeInsufficient = errors.New("insufficient bytes to decode value")
+	errDecodeInvalid      = errors.New("invalid bytes to decode value")
+)
+
+// DecodeComparableUvarint decodes mem-comparable uvarint.
+func DecodeComparableUvarint(b []byte) ([]byte, uint64, error) {
+	if len(b) == 0 {
+		return nil, 0, errDecodeInsufficient
+	}
+	first := b[0]
+	b = b[1:]
+	if first < negativeTagEnd {
+		return nil, 0, errors.Trace(errDecodeInvalid)
+	}
+	if first <= positiveTagStart {
+		return b, uint64(first) - negativeTagEnd, nil
+	}
+	length := int(first) - positiveTagStart
+	if len(b) < length {
+		return nil, 0, errors.Trace(errDecodeInsufficient)
+	}
+	var v uint64
+	for _, c := range b[:length] {
+		v = (v << 8) | uint64(c)
+	}
+	return b[length:], v, nil
+}
+
+// DecodeComparableVarint decodes mem-comparable varint.
+func DecodeComparableVarint(b []byte) ([]byte, int64, error) {
+	if len(b) == 0 {
+		return nil, 0, errors.Trace(errDecodeInsufficient)
+	}
+	first := b[0]
+	if first >= negativeTagEnd && first <= positiveTagStart {
+		return b, int64(first) - negativeTagEnd, nil
+	}
+	b = b[1:]
+	var length int
+	var v uint64
+	if first < negativeTagEnd {
+		length = negativeTagEnd - int(first)
+		v = math.MaxUint64 // Negative value has all bits on by default.
+	} else {
+		length = int(first) - positiveTagStart
+	}
+	if len(b) < length {
+		return nil, 0, errors.Trace(errDecodeInsufficient)
+	}
+	for _, c := range b[:length] {
+		v = (v << 8) | uint64(c)
+	}
+	if first > positiveTagStart && v > math.MaxInt64 {
+		return nil, 0, errors.Trace(errDecodeInvalid)
+	} else if first < negativeTagEnd && v <= math.MaxInt64 {
+		return nil, 0, errors.Trace(errDecodeInvalid)
+	}
+	return b[length:], int64(v), nil
 }
