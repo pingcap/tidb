@@ -203,7 +203,6 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(ctx, types.MakeDatums(2, nil))
 	c.Assert(err, IsNil)
-	ctx.RollbackTxn()
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 }

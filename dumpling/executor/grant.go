@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
@@ -45,7 +45,6 @@ type GrantExec struct {
 	Users      []*ast.UserSpec
 
 	ctx  context.Context
-	is   infoschema.InfoSchema
 	done bool
 }
 
@@ -495,7 +494,8 @@ func (e *GrantExec) getTargetSchema() (*model.DBInfo, error) {
 	}
 	//check if db exists
 	schema := model.NewCIStr(dbName)
-	db, ok := e.is.SchemaByName(schema)
+	is := sessionctx.GetDomain(e.ctx).InfoSchema()
+	db, ok := is.SchemaByName(schema)
 	if !ok {
 		return nil, errors.Errorf("Unknown schema name: %s", dbName)
 	}
@@ -509,7 +509,8 @@ func (e *GrantExec) getTargetSchemaAndTable() (*model.DBInfo, table.Table, error
 		return nil, nil, errors.Trace(err)
 	}
 	name := model.NewCIStr(e.Level.TableName)
-	tbl, err := e.is.TableByName(db.Name, name)
+	is := sessionctx.GetDomain(e.ctx).InfoSchema()
+	tbl, err := is.TableByName(db.Name, name)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

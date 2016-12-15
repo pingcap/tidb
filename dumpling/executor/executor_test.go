@@ -1400,7 +1400,6 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(err, IsNil)
 	compiler := &executor.Compiler{}
 	ctx := se.(context.Context)
-	tidb.PrepareTxnCtx(ctx)
 
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
