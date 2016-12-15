@@ -400,6 +400,27 @@ type Cache struct {
 	basePlan
 }
 
+func (p *PhysicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := p.basePlan.extractCorrelatedCols()
+	if p.Checker != nil {
+		corCols = append(corCols, extractCorColumns(p.Checker.Condition)...)
+	}
+	return corCols
+}
+
+func (p *PhysicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := p.basePlan.extractCorrelatedCols()
+	for _, expr := range p.GroupByItems {
+		corCols = append(corCols, extractCorColumns(expr)...)
+	}
+	for _, fun := range p.AggFuncs {
+		for _, arg := range fun.GetArgs() {
+			corCols = append(corCols, extractCorColumns(arg)...)
+		}
+	}
+	return corCols
+}
+
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalIndexScan) Copy() PhysicalPlan {
 	np := *p

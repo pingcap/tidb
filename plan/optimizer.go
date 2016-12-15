@@ -74,6 +74,12 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 	}
 	pp := info.p
 	pp = EliminateProjection(pp)
+	ps := physicalInitializer{
+		ctx:       ctx,
+		allocator: allocator,
+	}
+	ps.initialize(pp)
+	addCachePlan(pp, allocator)
 	log.Debugf("[PLAN] %s", ToString(pp))
 	return pp, nil
 }
