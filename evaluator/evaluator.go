@@ -572,13 +572,13 @@ func (e *Evaluator) values(v *ast.ValuesExpr) bool {
 	}
 
 	row := values.([]types.Datum)
-	off := v.Column.Refer.Column.Offset
-	if len(row) > off {
-		v.SetDatum(row[off])
+	offset := v.Column.Refer.Column.Offset
+	if len(row) > offset {
+		v.SetDatum(row[offset])
 		return true
 	}
 
-	e.err = errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), off)
+	e.err = errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), offset)
 	return false
 }
 
