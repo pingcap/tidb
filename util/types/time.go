@@ -1706,3 +1706,273 @@ func abbrDayOfMonth(day int) string {
 	}
 	return str
 }
+
+// StrToDate converts date string according to format.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
+func (t *Time) StrToDate(date, format string) bool {
+	var tm mysqlTime
+	if !strToDate(&tm, date, format) {
+		t.Time = ZeroTime
+		t.Type = mysql.TypeDatetime
+		t.Fsp = 0
+		return false
+	}
+
+	t.Time = tm
+	t.Type = mysql.TypeDatetime
+	if t.check() != nil {
+		return false
+	}
+	return true
+}
+
+// strToDate converts date string according to format, returns true on success,
+// the value will be stored in argument t.
+func strToDate(t *mysqlTime, date string, format string) bool {
+	date = skipWhiteSpace(date)
+	format = skipWhiteSpace(format)
+
+	token, formatRemain, succ := getFormatToken(format)
+	if !succ {
+		return false
+	}
+
+	if token == "" {
+		return date == ""
+	}
+
+	dateRemain, succ := matchDateWithToken(t, date, token)
+	if !succ {
+		return false
+	}
+
+	return strToDate(t, dateRemain, formatRemain)
+}
+
+// getFormatToken takes one format control token from the string.
+// format "%d %H %m" will get token "%d" and the remain is " %H %m".
+func getFormatToken(format string) (token string, remain string, succ bool) {
+	if len(format) == 0 {
+		return "", "", true
+	}
+
+	// Just one character.
+	if len(format) == 1 {
+		if format[0] == '%' {
+			return "", "", false
+		}
+		return format, "", true
+	}
+
+	// More than one character.
+	if format[0] == '%' {
+		return format[:2], format[2:], true
+	}
+
+	return format[:1], format[1:], true
+}
+
+func skipWhiteSpace(input string) string {
+	for i, c := range input {
+		if !unicode.IsSpace(c) {
+			return input[i:]
+		}
+	}
+	return ""
+}
+
+var weekdayAbbrev = map[string]gotime.Weekday{
+	"Sun": gotime.Sunday,
+	"Mon": gotime.Monday,
+	"Tue": gotime.Tuesday,
+	"Wed": gotime.Wednesday,
+	"Thu": gotime.Tuesday,
+	"Fri": gotime.Friday,
+	"Sat": gotime.Saturday,
+}
+
+var monthAbbrev = map[string]gotime.Month{
+	"Jan": gotime.January,
+	"Feb": gotime.February,
+	"Mar": gotime.March,
+	"Apr": gotime.April,
+	"May": gotime.May,
+	"Jun": gotime.June,
+	"Jul": gotime.July,
+	"Aug": gotime.August,
+	"Sep": gotime.September,
+	"Oct": gotime.October,
+	"Nov": gotime.November,
+	"Dec": gotime.December,
+}
+
+type dateFormatParser func(t *mysqlTime, date string) (remain string, succ bool)
+
+var dateFormatParserTable = map[string]dateFormatParser{
+	"%a": abbreviatedWeekday,
+	"%b": abbreviatedMonth,
+	"%c": monthNumeric,
+	"%D": dayOfMonthWithSuffix,
+	"%Y": yearNumericFourDigits,
+	"%m": monthNumericTwoDigits,
+	"%d": dayOfMonthNumericTwoDigits,
+	"%H": hour24TwoDigits,
+	"%i": minutesNumeric,
+	"%s": secondsNumeric,
+}
+
+func matchDateWithToken(t *mysqlTime, date string, token string) (remain string, succ bool) {
+	if parse, ok := dateFormatParserTable[token]; ok {
+		return parse(t, date)
+	}
+
+	if strings.HasPrefix(date, token) {
+		return date[len(token):], true
+	}
+	return date, false
+}
+
+func parseTwoDigits(input string) (int, bool) {
+	if len(input) < 2 {
+		return 0, false
+	}
+
+	v, err := strconv.ParseUint(input[:2], 10, 64)
+	if err != nil {
+		return int(v), false
+	}
+	return int(v), true
+}
+
+func hour24TwoDigits(t *mysqlTime, input string) (string, bool) {
+	v, succ := parseTwoDigits(input)
+	if !succ || v >= 24 {
+		return input, false
+	}
+	t.hour = uint8(v)
+	return input[2:], true
+}
+
+func secondsNumeric(t *mysqlTime, input string) (string, bool) {
+	v, succ := parseTwoDigits(input)
+	if !succ || v >= 60 {
+		return input, false
+	}
+	t.second = uint8(v)
+	return input[2:], true
+}
+
+func minutesNumeric(t *mysqlTime, input string) (string, bool) {
+	v, succ := parseTwoDigits(input)
+	if !succ || v >= 60 {
+		return input, false
+	}
+	t.minute = uint8(v)
+	return input[2:], true
+}
+
+func dayOfMonthNumericTwoDigits(t *mysqlTime, input string) (string, bool) {
+	v, succ := parseTwoDigits(input)
+	if !succ || v >= 32 {
+		return input, false
+	}
+	t.day = uint8(v)
+	return input[2:], true
+}
+
+func yearNumericFourDigits(t *mysqlTime, input string) (string, bool) {
+	if len(input) < 4 {
+		return input, false
+	}
+
+	v, err := strconv.ParseUint(input[:4], 10, 64)
+	if err != nil {
+		return input, false
+	}
+	t.year = uint16(v)
+	return input[4:], true
+}
+
+func monthNumericTwoDigits(t *mysqlTime, input string) (string, bool) {
+	v, succ := parseTwoDigits(input)
+	if !succ || v > 12 {
+		return input, false
+	}
+
+	t.month = uint8(v)
+	return input[2:], true
+}
+
+func abbreviatedWeekday(t *mysqlTime, input string) (string, bool) {
+	if len(input) >= 3 {
+		dayName := input[:3]
+		if _, ok := weekdayAbbrev[dayName]; ok {
+			// TODO: We need refact mysql time to support this.
+			return input, false
+		}
+	}
+	return input, false
+}
+
+func abbreviatedMonth(t *mysqlTime, input string) (string, bool) {
+	if len(input) >= 3 {
+		monthName := input[:3]
+		if month, ok := monthAbbrev[monthName]; ok {
+			t.month = uint8(month)
+			return input[len(monthName):], true
+		}
+	}
+	return input, false
+}
+
+func monthNumeric(t *mysqlTime, input string) (string, bool) {
+	// TODO: This code is ugly!
+	for i := 12; i >= 0; i-- {
+		str := strconv.FormatInt(int64(i), 10)
+		if strings.HasPrefix(input, str) {
+			t.month = uint8(i)
+			return input[len(str):], true
+		}
+	}
+
+	return input, false
+}
+
+// 0th 1st 2nd 3rd ...
+func dayOfMonthWithSuffix(t *mysqlTime, input string) (string, bool) {
+	month, remain := parseOrdinalNumbers(input)
+	if month >= 0 {
+		t.month = uint8(month)
+		return remain, true
+	}
+	return input, false
+}
+
+func parseOrdinalNumbers(input string) (value int, remain string) {
+	for i, c := range input {
+		if !unicode.IsDigit(c) {
+			v, err := strconv.ParseUint(input[:i], 10, 64)
+			if err != nil {
+				return -1, input
+			}
+			value = int(v)
+			break
+		}
+	}
+	switch {
+	case strings.HasPrefix(remain, "st"):
+		if value == 1 {
+			remain = remain[2:]
+			return
+		}
+	case strings.HasPrefix(remain, "nd"):
+		if value == 2 {
+			remain = remain[2:]
+			return
+		}
+	case strings.HasPrefix(remain, "th"):
+		remain = remain[2:]
+		return
+	}
+	return -1, input
+}
