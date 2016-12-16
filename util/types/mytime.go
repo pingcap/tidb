@@ -127,7 +127,7 @@ func calcDaynr(year, month, day int) int {
 	} else {
 		delsum -= (month*4 + 23) / 10
 	}
-	temp := (y/100 + 1) * 3 / 4
+	temp := ((y/100 + 1) * 3) / 4
 	return delsum + y/4 - temp
 }
 
@@ -155,14 +155,23 @@ const (
 	weekBehaviourMondayFirst weekBehaviour = 1 << iota
 	// if set, Week is in range 1-53, otherwise Week is in range 0-53
 	// Note that this flag is only releveant if WEEK_JANUARY is not set.
-	weekBehaviourWeekYear
+	weekBehaviourYear
 	// if not set, Weeks are numbered according to ISO 8601:1988.
 	// if set, The week that contains the first 'first-day-of-week' is week 1.
-	weekBehaviourWeekFirstWeekday
+	weekBehaviourFirstWeekday
 )
 
 func (v weekBehaviour) test(flag weekBehaviour) bool {
 	return (v & flag) != 0
+}
+
+func weekMode(mode int) weekBehaviour {
+	var weekFormat weekBehaviour
+	weekFormat = weekBehaviour(mode & 7)
+	if (weekFormat & weekBehaviourMondayFirst) == 0 {
+		weekFormat ^= weekBehaviourFirstWeekday
+	}
+	return weekFormat
 }
 
 // calcWeek calculates week and year for the time.
@@ -171,10 +180,11 @@ func calcWeek(t *mysqlTime, wb weekBehaviour, year *int) int {
 	daynr := calcDaynr(int(t.year), int(t.month), int(t.day))
 	firstDaynr := calcDaynr(int(t.year), 1, 1)
 	mondayFirst := wb.test(weekBehaviourMondayFirst)
-	weekYear := wb.test(weekBehaviourWeekYear)
-	firstWeekday := wb.test(weekBehaviourWeekFirstWeekday)
+	weekYear := wb.test(weekBehaviourYear)
+	firstWeekday := wb.test(weekBehaviourFirstWeekday)
 
 	weekday := calcWeekday(int(firstDaynr), !mondayFirst)
+
 	*year = int(t.year)
 
 	if t.month == 1 && int(t.day) <= 7-weekday {
@@ -197,7 +207,7 @@ func calcWeek(t *mysqlTime, wb weekBehaviour, year *int) int {
 	}
 
 	if weekYear && days >= 52*7 {
-		weekday = (weekday + int(calcDaysInYear(*year))) % 7
+		weekday = (weekday + calcDaysInYear(*year)) % 7
 		if (!firstWeekday && weekday < 4) ||
 			(firstWeekday && weekday == 0) {
 			(*year)++
