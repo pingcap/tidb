@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 )
 
@@ -29,12 +28,9 @@ func (ps *physicalInitializer) initialize(p PhysicalPlan) {
 
 		// init the attribute that will be affected by its children.
 		p.SetCorrelated(p.IsCorrelated() || child.IsCorrelated())
-		log.Warnf("%s %v\n", child.GetID(), child.IsCorrelated())
 	}
 	switch pp := p.(type) {
 	case *PhysicalAggregation:
-		pp.allocator = ps.allocator
-		pp.initIDAndContext(ps.ctx)
 		for _, item := range pp.GroupByItems {
 			pp.correlated = pp.correlated || item.IsCorrelated()
 		}
@@ -63,18 +59,20 @@ func addCachePlan(p PhysicalPlan, allocator *idAllocator) PhysicalPlan {
 	np := p
 	newChildren := make([]Plan, 0, len(np.GetChildren()))
 	for _, child := range p.GetChildren() {
-		if !p.IsCorrelated() || child.IsCorrelated() {
-			newChildren = append(newChildren, addCachePlan(child.(PhysicalPlan), allocator))
-		} else {
+		child = addCachePlan(child.(PhysicalPlan), allocator)
+		if p.IsCorrelated() && !child.IsCorrelated() {
 			newChild := &Cache{}
 			newChild.tp = "Cache"
 			newChild.allocator = allocator
 			newChild.initIDAndContext(np.context())
-			addChild(newChild, child)
 			newChild.SetSchema(child.GetSchema())
+
+			addChild(newChild, child)
 			newChild.SetParents(np)
+
 			newChildren = append(newChildren, newChild)
-			addCachePlan(child.(PhysicalPlan), allocator)
+		} else {
+			newChildren = append(newChildren, child)
 		}
 	}
 	np.SetChildren(newChildren...)
