@@ -125,7 +125,7 @@ func calcDaynr(year, month, day int) int {
 	if month <= 2 {
 		y--
 	} else {
-		delsum -= month*4 + 23/10
+		delsum -= (month*4 + 23) / 10
 	}
 	temp := (y/100 + 1) * 3 / 4
 	return delsum + y/4 - temp
