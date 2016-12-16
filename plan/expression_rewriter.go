@@ -20,8 +20,10 @@ import (
 // EvalSubquery evaluates incorrelated subqueries once.
 var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
 
+// GetInfoSchema gets infoschema from ctx.
 var GetInfoSchema func(ctx context.Context) infoschema.InfoSchema
 
+// EvalAstExpr evaluates ast expression directly.
 func EvalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 	b := &planBuilder{
 		ctx:       ctx,
