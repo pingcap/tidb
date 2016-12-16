@@ -345,6 +345,18 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[1,1]]->Sort + Limit(1) + Offset(0)",
 		},
 		{
+			sql:  "select * from t where t.c = 1 order by t.f limit 1",
+			best: "Index(t.c_d_e)[[1,1]]->Sort + Limit(1) + Offset(0)",
+		},
+		{
+			sql:  "select * from t where t.c = 1 and t.e = 1 order by t.f limit 1",
+			best: "Index(t.c_d_e)[[1,1]]->Sort + Limit(1) + Offset(0)",
+		},
+		{
+			sql:  "select * from t where t.c = 1 and t.e = 1 and t.f = 1 order by t.f limit 1",
+			best: "Index(t.c_d_e)[[1,1]]->Sort + Limit(1) + Offset(0)",
+		},
+		{
 			sql:  "select * from t t1 ignore index(e) where c < 0",
 			best: "Index(t.c_d_e)[[-inf,0)]",
 		},
