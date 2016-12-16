@@ -32,13 +32,22 @@ import (
 var (
 	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
 	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
+	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, "Unknown column '%s' in '%s'")
 )
 
 // Error codes.
 const (
 	CodeUnsupportedType terror.ErrCode = 1
 	SystemInternalError terror.ErrCode = 2
+	CodeUnknownColumn   terror.ErrCode = 1054
 )
+
+func init() {
+	tableMySQLErrCodes := map[terror.ErrCode]uint16{
+		CodeUnknownColumn: mysql.ErrBadField,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
+}
 
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
@@ -461,7 +470,7 @@ func (b *planBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 		}
 		return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
 	}
-	return nil, errors.Errorf("default column not found - %s", col.Name.O)
+	return &expression.Constant{RetType: &col.FieldType}, nil
 }
 
 func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnName) (*expression.Constant, error) {
@@ -470,7 +479,7 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 			return b.getDefaultValue(col)
 		}
 	}
-	return nil, errors.Errorf("default column not found - %s", name.Name.O)
+	return nil, ErrUnknownColumn.GenByArgs(name.Name.O, "field_list")
 }
 
 func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
