@@ -330,11 +330,9 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, handles []int64
 	// Through handles access to get all row keys.
 	handlesLen := len(handles)
 	rowKeys := make([]kv.Key, 0, handlesLen)
-	idxRecords := make([]*indexRecord, handlesLen)
-	for i, h := range handles {
+	for _, h := range handles {
 		rowKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), h)
 		rowKeys = append(rowKeys, rowKey)
-		idxRecords[i] = &indexRecord{handle: h, key: rowKey}
 	}
 
 	// Get corresponding raw values for rowKeys.
@@ -355,22 +353,24 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, handles []int64
 		col := cols[v.Offset]
 		colMap[col.ID] = &col.FieldType
 	}
-	for _, idxRecord := range idxRecords {
-		rowVal, ok := pairMap[string(idxRecord.key)]
+	idxRecords := make([]*indexRecord, 0, handlesLen)
+	for i, rowKey := range rowKeys {
+		rawVal, ok := pairMap[string(rowKey)]
 		if !ok {
 			// Row doesn't exist, skip it.
-			idxRecord.notExist = true
 			continue
 		}
-		row, err := tablecodec.DecodeRow(rowVal, colMap)
+		row, err := tablecodec.DecodeRow(rawVal, colMap)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		idxRecord.vals = make([]types.Datum, 0, len(indexInfo.Columns))
+		rowVal := make([]types.Datum, 0, len(indexInfo.Columns))
 		for _, v := range indexInfo.Columns {
 			col := cols[v.Offset]
-			idxRecord.vals = append(idxRecord.vals, row[col.ID])
+			rowVal = append(rowVal, row[col.ID])
 		}
+		idxRecord := &indexRecord{handle: handles[i], key: rowKey, vals: rowVal}
+		idxRecords = append(idxRecords, idxRecord)
 	}
 	return idxRecords, nil
 }
@@ -457,10 +457,9 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 }
 
 type indexRecord struct {
-	handle   int64
-	key      []byte
-	vals     []types.Datum
-	notExist bool
+	handle int64
+	key    []byte
+	vals   []types.Datum
 }
 
 // backfillIndexInTxn deals with a part of backfilling index data in a Transaction.
@@ -474,10 +473,6 @@ func (d *ddl) backfillIndexInTxn(t table.Table, kvIdx table.Index, handles []int
 	nextHandle := handles[0]
 	for _, idxRecord := range idxRecords {
 		log.Debug("[ddl] backfill index...", idxRecord.handle)
-		if idxRecord.notExist {
-			continue
-		}
-
 		err = txn.LockKeys(idxRecord.key)
 		if err != nil {
 			return 0, errors.Trace(err)
