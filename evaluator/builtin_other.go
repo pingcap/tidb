@@ -569,11 +569,11 @@ func BuildinValuesFactory(v *ast.ValuesExpr) BuiltinFunc {
 			return
 		}
 		row := values.([]types.Datum)
-		off := v.Column.Refer.Column.Offset
-		if len(row) > off {
-			return row[off], nil
+		offset := v.Column.Refer.Column.Offset
+		if len(row) > offset {
+			return row[offset], nil
 		}
-		err = errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), off)
+		err = errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), offset)
 		return
 	}
 }
