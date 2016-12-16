@@ -133,6 +133,7 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 	return &CheckTableExec{
 		tables: v.Tables,
 		ctx:    b.ctx,
+		is:     b.is,
 	}
 }
 
@@ -220,7 +221,7 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	case *ast.GrantStmt:
 		return b.buildGrant(s)
 	}
-	return &SimpleExec{Statement: v.Statement, ctx: b.ctx}
+	return &SimpleExec{Statement: v.Statement, ctx: b.ctx, is: b.is}
 }
 
 func (b *executorBuilder) buildSet(v *plan.Set) Executor {
@@ -305,6 +306,7 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		ObjectType: grant.ObjectType,
 		Level:      grant.Level,
 		Users:      grant.Users,
+		is:         b.is,
 	}
 }
 

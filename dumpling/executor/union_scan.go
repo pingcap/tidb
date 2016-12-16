@@ -72,21 +72,12 @@ type dirtyTable struct {
 	truncated   bool
 }
 
-type dirtyDBKeyType int
-
-func (u dirtyDBKeyType) String() string {
-	return "dirtyDBKeyType"
-}
-
-// DirtyDBKey is the key to *dirtyDB for a context.
-const DirtyDBKey dirtyDBKeyType = 1
-
 func getDirtyDB(ctx context.Context) *dirtyDB {
 	var udb *dirtyDB
-	x := ctx.Value(DirtyDBKey)
+	x := ctx.GetSessionVars().TxnCtx.DirtyDB
 	if x == nil {
 		udb = &dirtyDB{tables: make(map[int64]*dirtyTable)}
-		ctx.SetValue(DirtyDBKey, udb)
+		ctx.GetSessionVars().TxnCtx.DirtyDB = udb
 	} else {
 		udb = x.(*dirtyDB)
 	}
