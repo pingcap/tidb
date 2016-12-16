@@ -193,6 +193,8 @@ func reportRegionError(e *errorpb.Error) {
 		regionErrorCounter.WithLabelValues("stale_epoch").Inc()
 	} else if e.GetServerIsBusy() != nil {
 		regionErrorCounter.WithLabelValues("server_is_busy").Inc()
+	} else if e.GetStaleCommand() != nil {
+		regionErrorCounter.WithLabelValues("stale_command").Inc()
 	} else {
 		regionErrorCounter.WithLabelValues("unknown").Inc()
 	}
