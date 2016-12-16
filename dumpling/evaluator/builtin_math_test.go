@@ -66,6 +66,43 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestLog(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		Arg []interface{}
+		Ret interface{}
+	}{
+		{[]interface{}{int64(2)}, float64(0.6931471805599453)},
+
+		{[]interface{}{int64(2), int64(65536)}, float64(16)},
+		{[]interface{}{int64(10), int64(100)}, float64(2)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		v, err := builtinLog(t["Arg"], s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+	}
+
+	nullTbl := []struct {
+		Arg []interface{}
+	}{
+		{[]interface{}{int64(-2)}},
+		{[]interface{}{int64(1), int64(100)}},
+	}
+
+	nullDtbl := tblToDtbl(nullTbl)
+
+	for _, t := range nullDtbl {
+		v, err := builtinLog(t["Arg"], s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(v.Kind(), Equals, types.KindNull)
+	}
+}
+
 func (s *testEvaluatorSuite) TestRand(c *C) {
 	defer testleak.AfterTest(c)()
 	v, err := builtinRand(make([]types.Datum, 0), s.ctx)

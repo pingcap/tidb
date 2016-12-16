@@ -89,6 +89,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
+		"ln", "log", "log2", "log10",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -504,6 +505,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT ROUND(1.23, 1);", true},
 		{"SELECT CEIL(-1.23);", true},
 		{"SELECT CEILING(1.23);", true},
+		{"SELECT LN(1);", true},
+		{"SELECT LOG(-2);", true},
+		{"SELECT LOG(2, 65536);", true},
+		{"SELECT LOG2(2);", true},
+		{"SELECT LOG10(10);", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
