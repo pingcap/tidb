@@ -454,8 +454,8 @@ func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 	return &Simple{Statement: node}
 }
 
-func (b *planBuilder) getDefaultValue(col *model.ColumnInfo) (*expression.Constant, error) {
-	if value, ok, err := table.GetColDefaultValue(b.ctx, col); ok {
+func (b *planBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
+	if value, ok, err := table.GetColDefaultValue(b.ctx, col.ToInfo()); ok {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -464,7 +464,7 @@ func (b *planBuilder) getDefaultValue(col *model.ColumnInfo) (*expression.Consta
 	return nil, errors.Errorf("default column not found - %s", col.Name.O)
 }
 
-func (b *planBuilder) findDefaultValue(cols []*model.ColumnInfo, name *ast.ColumnName) (*expression.Constant, error) {
+func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnName) (*expression.Constant, error) {
 	for _, col := range cols {
 		if col.Name.L == name.Name.L {
 			return b.getDefaultValue(col)
@@ -487,8 +487,13 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 	tableInfo := tn.TableInfo
 	schema := expression.TableInfo2Schema(tableInfo)
+	table, ok := b.is.TableByID(tableInfo.ID)
+	if !ok {
+		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
+		return nil
+	}
 	insertPlan := &Insert{
-		Table:           tableInfo,
+		Table:           table,
 		Columns:         insert.Columns,
 		tableSchema:     schema,
 		IsReplace:       insert.IsReplace,
@@ -496,6 +501,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		Ignore:          insert.Ignore,
 		baseLogicalPlan: newBaseLogicalPlan(Ins, b.allocator),
 	}
+	cols := table.Cols()
 	for _, valuesItem := range insert.Lists {
 		exprList := make([]expression.Expression, 0, len(valuesItem))
 		for i, valueItem := range valuesItem {
@@ -503,9 +509,9 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			var err error
 			if dft, ok := valueItem.(*ast.DefaultExpr); ok {
 				if dft.Name != nil {
-					expr, err = b.findDefaultValue(tableInfo.Columns, dft.Name)
+					expr, err = b.findDefaultValue(cols, dft.Name)
 				} else {
-					expr, err = b.getDefaultValue(tableInfo.Columns[i])
+					expr, err = b.getDefaultValue(cols[i])
 				}
 			} else {
 				expr, _, err = b.rewrite(valueItem, nil, nil, true)

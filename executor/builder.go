@@ -240,12 +240,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	if len(v.GetChildren()) > 0 {
 		ivs.SelectExec = b.build(v.GetChildByIndex(0))
 	}
-	tbl, ok := b.is.TableByID(v.Table.ID)
-	if !ok {
-		b.err = errors.Errorf("Can not get table %d", v.Table.ID)
-		return nil
-	}
-	ivs.Table = tbl
+	ivs.Table = v.Table
 	if v.IsReplace {
 		return b.buildReplace(ivs)
 	}

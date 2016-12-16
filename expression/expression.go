@@ -253,7 +253,7 @@ func ResultFieldsToSchema(fields []*ast.ResultField) Schema {
 	return schema
 }
 
-// TableInfo2Schema convert table info to schema.
+// TableInfo2Schema converts table info to schema.
 func TableInfo2Schema(tbl *model.TableInfo) Schema {
 	schema := make(Schema, 0, len(tbl.Columns))
 	for i, col := range tbl.Columns {

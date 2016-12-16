@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -170,7 +170,7 @@ type Simple struct {
 type Insert struct {
 	baseLogicalPlan
 
-	Table       *model.TableInfo
+	Table       table.Table
 	tableSchema expression.Schema
 	Columns     []*ast.ColumnName
 	Lists       [][]expression.Expression
