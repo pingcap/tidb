@@ -240,24 +240,21 @@ func (s *session) finishTxn(rollback bool) error {
 		}
 	}
 
-	if err := s.checkSchemaValid(); err != nil {
-		if !s.sessionVars.RetryInfo.Retrying && s.isRetryableError(err) {
-			err = s.Retry()
-		} else {
+	err := s.checkSchemaValid()
+	if err != nil {
+		if !s.isRetryableError(err) {
 			err1 := s.txn.Rollback()
 			if err1 != nil {
 				// TODO: Handle this error.
 				log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
 			}
-		}
-		if err != nil {
 			log.Warnf("finished txn:%s, %v", s.txn, err)
+			return errors.Trace(err)
 		}
-		s.resetHistory()
-		s.cleanRetryInfo()
-		return errors.Trace(err)
+	} else {
+		err = s.txn.Commit()
 	}
-	if err := s.txn.Commit(); err != nil {
+	if err != nil {
 		if !s.sessionVars.RetryInfo.Retrying && s.isRetryableError(err) {
 			err = s.Retry()
 		}
