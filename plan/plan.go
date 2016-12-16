@@ -261,7 +261,7 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 func (p *basePlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	var corCols []*expression.CorrelatedColumn
 	for _, child := range p.children {
-		corCols = append(corCols, child.(Plan).extractCorrelatedCols()...)
+		corCols = append(corCols, child.extractCorrelatedCols()...)
 	}
 	return corCols
 }

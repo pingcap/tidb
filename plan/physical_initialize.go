@@ -52,29 +52,27 @@ func (ps *physicalInitializer) initialize(p PhysicalPlan) {
 }
 
 // addCachePlan will add a Cache plan above the plan whose father's IsCorrelated() is true but its own IsCorrelated() is false.
-func addCachePlan(p PhysicalPlan, allocator *idAllocator) PhysicalPlan {
+func addCachePlan(p PhysicalPlan, allocator *idAllocator) {
 	if len(p.GetChildren()) == 0 {
-		return p
+		return
 	}
-	np := p
-	newChildren := make([]Plan, 0, len(np.GetChildren()))
+	newChildren := make([]Plan, 0, len(p.GetChildren()))
 	for _, child := range p.GetChildren() {
-		child = addCachePlan(child.(PhysicalPlan), allocator)
+		addCachePlan(child.(PhysicalPlan), allocator)
 		if p.IsCorrelated() && !child.IsCorrelated() {
 			newChild := &Cache{}
 			newChild.tp = "Cache"
 			newChild.allocator = allocator
-			newChild.initIDAndContext(np.context())
+			newChild.initIDAndContext(p.context())
 			newChild.SetSchema(child.GetSchema())
 
 			addChild(newChild, child)
-			newChild.SetParents(np)
+			newChild.SetParents(p)
 
 			newChildren = append(newChildren, newChild)
 		} else {
 			newChildren = append(newChildren, child)
 		}
 	}
-	np.SetChildren(newChildren...)
-	return np
+	p.SetChildren(newChildren...)
 }
