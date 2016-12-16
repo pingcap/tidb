@@ -434,6 +434,7 @@ func init() {
 		}
 		return row.Data, nil
 	}
+	plan.GetInfoSchema = GetInfoSchema
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
 		CodeCannotUser:      mysql.ErrCannotUser,
 		CodePasswordNoMatch: mysql.ErrPasswordNoMatch,

@@ -20,6 +20,22 @@ import (
 // EvalSubquery evaluates incorrelated subqueries once.
 var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
 
+var GetInfoSchema func(ctx context.Context) infoschema.InfoSchema
+
+func EvalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
+	b := &planBuilder{
+		ctx:       ctx,
+		allocator: new(idAllocator),
+		colMapper: make(map[*ast.ColumnNameExpr]int),
+		is:        GetInfoSchema(ctx),
+	}
+	newExpr, _, err := b.rewrite(expr, nil, nil, true)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return newExpr.Eval(nil, ctx)
+}
+
 // rewrite function rewrites ast expr to expression.Expression.
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
 // asScalar means whether this expression must be treated as a scalar expression.
