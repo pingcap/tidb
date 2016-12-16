@@ -470,7 +470,6 @@ func (d *ddl) backfillIndexInTxn(t table.Table, kvIdx table.Index, handles []int
 		return 0, errors.Trace(err)
 	}
 
-	nextHandle := handles[0]
 	for _, idxRecord := range idxRecords {
 		log.Debug("[ddl] backfill index...", idxRecord.handle)
 		err = txn.LockKeys(idxRecord.key)
@@ -483,14 +482,12 @@ func (d *ddl) backfillIndexInTxn(t table.Table, kvIdx table.Index, handles []int
 		if err != nil {
 			if terror.ErrorEqual(err, kv.ErrKeyExists) && idxRecord.handle == handle {
 				// Index already exists, skip it.
-				nextHandle = idxRecord.handle
 				continue
 			}
 			return 0, errors.Trace(err)
 		}
-		nextHandle = idxRecord.handle
 	}
-	return nextHandle, nil
+	return idxRecords[len(idxRecords)-1].handle, nil
 }
 
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
