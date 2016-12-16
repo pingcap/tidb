@@ -327,21 +327,13 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 
 func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, handles []int64, indexInfo *model.IndexInfo) (
 	[]*indexRecord, error) {
-	// Through handles access to get all row keys and column maps.
-	cols := t.Cols()
+	// Through handles access to get all row keys.
 	handlesLen := len(handles)
 	rowKeys := make([]kv.Key, 0, handlesLen)
-	colMaps := make([]map[int64]*types.FieldType, 0, handlesLen)
 	idxRecords := make([]*indexRecord, handlesLen)
 	for i, h := range handles {
-		colMap := make(map[int64]*types.FieldType)
-		for _, v := range indexInfo.Columns {
-			col := cols[v.Offset]
-			colMap[col.ID] = &col.FieldType
-		}
 		rowKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), h)
 		rowKeys = append(rowKeys, rowKey)
-		colMaps = append(colMaps, colMap)
 		idxRecords[i] = &indexRecord{handle: h, key: rowKey}
 	}
 
@@ -357,14 +349,20 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, handles []int64
 	}
 
 	// Get corresponding values for pairMap.
-	for i, idxRecord := range idxRecords {
+	cols := t.Cols()
+	colMap := make(map[int64]*types.FieldType)
+	for _, v := range indexInfo.Columns {
+		col := cols[v.Offset]
+		colMap[col.ID] = &col.FieldType
+	}
+	for _, idxRecord := range idxRecords {
 		rowVal, ok := pairMap[string(idxRecord.key)]
 		if !ok {
 			// Row doesn't exist, skip it.
 			idxRecord.notExist = true
 			continue
 		}
-		row, err := tablecodec.DecodeRow(rowVal, colMaps[i])
+		row, err := tablecodec.DecodeRow(rowVal, colMap)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
