@@ -112,6 +112,7 @@ func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysql
 	}
 }
 
+// calcDaynr calculates days since 0000-00-00.
 func calcDaynr(year, month, day int) int {
 	y := year // may be < 0 temporarily
 
@@ -138,7 +139,7 @@ func calcDaysInYear(year int) int {
 	return 365
 }
 
-// calcWeekday calc weekday from daynr, returns 0 for monday, 1 for tuesday ...
+// calcWeekday calc weekday from daynr, returns 0 for Monday, 1 for Tuesday ...
 func calcWeekday(daynr int, sundayFirstDayOfWeek bool) int {
 	daynr += 5
 	if sundayFirstDayOfWeek {
@@ -150,8 +151,13 @@ func calcWeekday(daynr int, sundayFirstDayOfWeek bool) int {
 type weekBehaviour uint
 
 const (
+	// if set, Sunday is first day of week, otherwise Monday is first day of week
 	weekBehaviourMondayFirst weekBehaviour = 1 << iota
+	// if set, Week is in range 1-53, otherwise Week is in range 0-53
+	// Note that this flag is only releveant if WEEK_JANUARY is not set.
 	weekBehaviourWeekYear
+	// if not set, Weeks are numbered according to ISO 8601:1988.
+	// if set, The week that contains the first 'first-day-of-week' is week 1.
 	weekBehaviourWeekFirstWeekday
 )
 
@@ -159,34 +165,7 @@ func (v weekBehaviour) test(flag weekBehaviour) bool {
 	return (v & flag) != 0
 }
 
-/*
-  The bits in week_format has the following meaning:
-   WEEK_MONDAY_FIRST (0)  If not set	Sunday is first day of week
-      		   	  If set	Monday is first day of week
-   WEEK_YEAR (1)	  If not set	Week is in range 0-53
-
-   	Week 0 is returned for the the last week of the previous year (for
-	a date at start of january) In this case one can get 53 for the
-	first week of next year.  This flag ensures that the week is
-	relevant for the given year. Note that this flag is only
-	releveant if WEEK_JANUARY is not set.
-
-			  If set	 Week is in range 1-53.
-
-	In this case one may get week 53 for a date in January (when
-	the week is that last week of previous year) and week 1 for a
-	date in December.
-
-  WEEK_FIRST_WEEKDAY (2)  If not set	Weeks are numbered according
-			   		to ISO 8601:1988
-			  If set	The week that contains the first
-					'first-day-of-week' is week 1.
-
-	ISO 8601:1988 means that if the week containing January 1 has
-	four or more days in the new year, then it is week 1;
-	Otherwise it is the last week of the previous year, and the
-	next week is week 1.
-*/
+// calcWeek calculates week and year for the time.
 func calcWeek(t *mysqlTime, wb weekBehaviour, year *int) int {
 	var days int
 	daynr := calcDaynr(int(t.year), int(t.month), int(t.day))
