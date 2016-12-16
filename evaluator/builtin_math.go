@@ -66,6 +66,77 @@ func builtinCeil(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	return
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log
+func builtinLog(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+
+	switch len(args) {
+	case 1:
+		x, err := args[0].ToFloat64(sc)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		if x <= 0 {
+			return d, nil
+		}
+
+		d.SetFloat64(math.Log(x))
+		return d, nil
+	case 2:
+		b, err := args[0].ToFloat64(sc)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		x, err := args[1].ToFloat64(sc)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		if b <= 1 || x <= 0 {
+			return d, nil
+		}
+
+		d.SetFloat64(math.Log(x) / math.Log(b))
+		return d, nil
+	}
+	return
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log2
+func builtinLog2(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	x, err := args[0].ToFloat64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if x <= 0 {
+		return
+	}
+
+	d.SetFloat64(math.Log2(x))
+	return
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log10
+func builtinLog10(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	x, err := args[0].ToFloat64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if x <= 0 {
+		return
+	}
+
+	d.SetFloat64(math.Log10(x))
+	return
+
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
 func builtinRand(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if len(args) == 1 && !args[0].IsNull() {
