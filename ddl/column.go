@@ -296,6 +296,24 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	version := reorgInfo.SnapshotVer
 	count := job.GetRowCount()
 	ctx := d.newContext()
+
+	colMeta := &columnMeta{
+		colID:     columnInfo.ID,
+		oldColMap: make(map[int64]*types.FieldType)}
+	// Get column default value.
+	var err error
+	if columnInfo.DefaultValue != nil {
+		colMeta.defaultVal, _, err = table.GetColDefaultValue(ctx, columnInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else if mysql.HasNotNullFlag(columnInfo.Flag) {
+		colMeta.defaultVal = table.GetZeroValue(columnInfo)
+	}
+	for _, col := range t.Meta().Columns {
+		colMeta.oldColMap[col.ID] = &col.FieldType
+	}
+
 	for {
 		startTime := time.Now()
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
@@ -308,7 +326,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 		count += int64(len(handles))
 		seekHandle = handles[len(handles)-1] + 1
 		sub := time.Since(startTime).Seconds()
-		err = d.backfillColumn(ctx, t, columnInfo, handles, reorgInfo)
+		err = d.backfillColumn(ctx, t, colMeta, handles, reorgInfo)
 		if err != nil {
 			log.Warnf("[ddl] added column for %v rows failed, take time %v", count, sub)
 			return errors.Trace(err)
@@ -322,8 +340,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 
 // backfillColumnInTxn deals with a part of backfilling column data in a Transaction.
 // This part of the column data rows is defaultSmallBatchCnt.
-func (d *ddl) backfillColumnInTxn(t table.Table, colID int64, handles []int64, colMap map[int64]*types.FieldType,
-	defaultVal types.Datum, txn kv.Transaction) (int64, error) {
+func (d *ddl) backfillColumnInTxn(t table.Table, colMeta *columnMeta, handles []int64, txn kv.Transaction) (int64, error) {
 	nextHandle := handles[0]
 	for _, handle := range handles {
 		log.Debug("[ddl] backfill column...", handle)
@@ -337,11 +354,11 @@ func (d *ddl) backfillColumnInTxn(t table.Table, colID int64, handles []int64, c
 			return 0, errors.Trace(err)
 		}
 
-		rowColumns, err := tablecodec.DecodeRow(rowVal, colMap)
+		rowColumns, err := tablecodec.DecodeRow(rowVal, colMeta.oldColMap)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		if _, ok := rowColumns[colID]; ok {
+		if _, ok := rowColumns[colMeta.colID]; ok {
 			// The column is already added by update or insert statement, skip it.
 			continue
 		}
@@ -352,8 +369,8 @@ func (d *ddl) backfillColumnInTxn(t table.Table, colID int64, handles []int64, c
 			newColumnIDs = append(newColumnIDs, colID)
 			newRow = append(newRow, val)
 		}
-		newColumnIDs = append(newColumnIDs, colID)
-		newRow = append(newRow, defaultVal)
+		newColumnIDs = append(newColumnIDs, colMeta.colID)
+		newRow = append(newRow, colMeta.defaultVal)
 		newRowVal, err := tablecodec.EncodeRow(newRow, newColumnIDs)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -367,23 +384,13 @@ func (d *ddl) backfillColumnInTxn(t table.Table, colID int64, handles []int64, c
 	return nextHandle, nil
 }
 
-func (d *ddl) backfillColumn(ctx context.Context, t table.Table, columnInfo *model.ColumnInfo, handles []int64, reorgInfo *reorgInfo) error {
-	var defaultVal types.Datum
-	var err error
-	if columnInfo.DefaultValue != nil {
-		defaultVal, _, err = table.GetColDefaultValue(ctx, columnInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	} else if mysql.HasNotNullFlag(columnInfo.Flag) {
-		defaultVal = table.GetZeroValue(columnInfo)
-	}
+type columnMeta struct {
+	colID      int64
+	defaultVal types.Datum
+	oldColMap  map[int64]*types.FieldType
+}
 
-	colMap := make(map[int64]*types.FieldType)
-	for _, col := range t.Meta().Columns {
-		colMap[col.ID] = &col.FieldType
-	}
-
+func (d *ddl) backfillColumn(ctx context.Context, t table.Table, colMeta *columnMeta, handles []int64, reorgInfo *reorgInfo) error {
 	var endIdx int
 	for len(handles) > 0 {
 		if len(handles) >= defaultSmallBatchCnt {
@@ -392,12 +399,12 @@ func (d *ddl) backfillColumn(ctx context.Context, t table.Table, columnInfo *mod
 			endIdx = len(handles)
 		}
 
-		err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
 				return errors.Trace(err)
 			}
 
-			nextHandle, err1 := d.backfillColumnInTxn(t, columnInfo.ID, handles[:endIdx], colMap, defaultVal, txn)
+			nextHandle, err1 := d.backfillColumnInTxn(t, colMeta, handles[:endIdx], txn)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
