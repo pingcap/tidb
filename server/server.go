@@ -188,6 +188,10 @@ func (s *Server) Close() {
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(c net.Conn) {
 	conn := s.newConn(c)
+	defer func() {
+		log.Infof("[%d] close connection", conn.connectionID)
+	}()
+
 	if err := conn.handshake(); err != nil {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we use info log level.
@@ -195,9 +199,6 @@ func (s *Server) onConn(c net.Conn) {
 		c.Close()
 		return
 	}
-	defer func() {
-		log.Infof("[%d] close connection", conn.connectionID)
-	}()
 
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
