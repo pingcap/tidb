@@ -603,3 +603,37 @@ func trimRight(str, remstr string) string {
 		str = x
 	}
 }
+
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
+func builtinRpad(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	// RPAD(str,len,padstr)
+	// args[0] string, args[1] int, args[2] string
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	length, err := args[1].ToInt64(ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	l := int(length)
+
+	padStr, err := args[2].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if l < 0 || len(padStr) == 0 {
+		d.SetNull()
+		return d, nil
+	}
+
+	if len(str) >= l {
+		d.SetString(str[:l])
+	} else {
+		dest := str + strings.Repeat(padStr, l-len(str))
+		d.SetString(dest)
+	}
+
+	return d, nil
+}

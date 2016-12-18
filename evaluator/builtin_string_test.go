@@ -696,3 +696,29 @@ func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
 
 	}
 }
+
+func (s *testEvaluatorSuite) TestRpad(c *C) {
+	tests := []struct {
+		str    string
+		len    int64
+		padStr string
+		expect string
+	}{
+		{"hi", 5, "?", "hi???"},
+		{"hi", 1, "?", "h"},
+		{"hi", -1, "?", ""},
+		{"hi", 1, "", ""},
+	}
+	for _, test := range tests {
+		str := types.NewStringDatum(test.str)
+		length := types.NewIntDatum(test.len)
+		padStr := types.NewStringDatum(test.padStr)
+		result, err := builtinRpad([]types.Datum{str, length, padStr}, s.ctx)
+		c.Assert(err, IsNil)
+		if length.GetInt64() < 0 || len(padStr.GetString()) == 0 {
+			c.Assert(result.Kind(), Equals, types.KindNull)
+		} else {
+			c.Assert(result.GetString(), Equals, test.expect)
+		}
+	}
+}

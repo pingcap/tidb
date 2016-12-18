@@ -286,6 +286,7 @@ import (
 	statsPersistent	"STATS_PERSISTENT"
 	getLock		"GET_LOCK"
 	releaseLock	"RELEASE_LOCK"
+	rpad		"RPAD"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -2969,6 +2970,13 @@ FunctionCallNonKeyword:
 |	"RELEASE_LOCK" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"RPAD" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
 	}
 
 DateArithOpt:
