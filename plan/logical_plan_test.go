@@ -15,15 +15,11 @@ package plan
 
 import (
 	"fmt"
-	"sort"
-	"strings"
 	"testing"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -554,34 +550,6 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			plan: "DataScan(t)->Selection->Sort->Limit->*plan.Delete",
 		},
 		{
-			sql:  "admin show ddl",
-			plan: "ShowDDL",
-		},
-		{
-			sql:  "alter table t drop column a",
-			plan: "*plan.DDL",
-		},
-		{
-			sql:  "create index ind on t (a,b,c,d)",
-			plan: "*plan.DDL",
-		},
-		{
-			sql:  "deallocate prepare stmt",
-			plan: "*plan.Deallocate",
-		},
-		{
-			sql:  "drop database test",
-			plan: "*plan.DDL",
-		},
-		{
-			sql:  "drop index ind on t",
-			plan: "*plan.DDL",
-		},
-		{
-			sql:  "execute stmt using @a, @b",
-			plan: "*plan.Execute",
-		},
-		{
 			sql:  "explain select * from t union all select * from t limit 1, 1",
 			plan: "UnionAll{Table(t)->Table(t)->Limit}->*plan.Explain",
 		},
@@ -590,40 +558,12 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			plan: "DataScan(t)->Projection->*plan.Insert",
 		},
 		{
-			sql:  "load data infile 'data' into table t",
-			plan: "*plan.LoadData",
-		},
-		{
-			sql:  "prepare stmt from 'select * from t'",
-			plan: "*plan.Prepare",
-		},
-		{
 			sql:  "show columns from t where `Key` = 'pri' like 't*'",
 			plan: "*plan.Show->Selection",
 		},
 		{
-			sql:  "show procedure status",
-			plan: "*plan.Show",
-		},
-		{
-			sql:  "show triggers",
-			plan: "*plan.Show",
-		},
-		{
-			sql:  "show events",
-			plan: "*plan.Show",
-		},
-		{
 			sql:  "do sleep(5)",
 			plan: "*plan.TableDual->Projection",
-		},
-		{
-			sql:  "set @a = @b + @c",
-			plan: "*plan.Set",
-		},
-		{
-			sql:  "truncate table t",
-			plan: "*plan.DDL",
 		},
 	}
 	for _, ca := range cases {
