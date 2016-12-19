@@ -777,7 +777,7 @@ func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
 		pp := info.p
 		pp = EliminateProjection(pp)
 		ps := physicalInitializer{
-			ctx: builder.ctx,
+			ctx:       builder.ctx,
 			allocator: builder.allocator,
 		}
 		ps.initialize(pp)
