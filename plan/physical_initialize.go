@@ -26,7 +26,7 @@ func (ps *physicalInitializer) initialize(p PhysicalPlan) {
 	for _, child := range p.GetChildren() {
 		ps.initialize(child.(PhysicalPlan))
 
-		// init the attribute that will be affected by its children.
+		// Initialize the attribute that will be affected by its children.
 		p.SetCorrelated(p.IsCorrelated() || child.IsCorrelated())
 	}
 	switch pp := p.(type) {

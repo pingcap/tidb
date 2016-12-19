@@ -98,7 +98,7 @@ type Plan interface {
 	GetID() string
 	// Check whether this plan is correlated or not.
 	IsCorrelated() bool
-	// Set the value of correlated
+	// Set the value of correlated.
 	SetCorrelated(v bool)
 	// SetParents sets the parents for the plan.
 	SetParents(...Plan)
