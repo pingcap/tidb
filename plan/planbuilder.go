@@ -486,12 +486,12 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	// Get Table
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
-		b.err = infoschema.ErrTableNotExists.Gen()
+		b.err = infoschema.ErrTableNotExists.GenByArgs()
 		return nil
 	}
 	tn, ok := ts.Source.(*ast.TableName)
 	if !ok {
-		b.err = infoschema.ErrTableNotExists.Gen()
+		b.err = infoschema.ErrTableNotExists.GenByArgs()
 		return nil
 	}
 	tableInfo := tn.TableInfo
