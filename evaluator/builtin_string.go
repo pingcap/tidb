@@ -628,8 +628,10 @@ func builtinRpad(args []types.Datum, ctx context.Context) (d types.Datum, err er
 		return d, nil
 	}
 
-	for len(str) < l {
-		str += padStr
+	tailLen := l - len(str)
+	if tailLen > 0 {
+		repeatCount := tailLen/len(padStr) + 1
+		str = str + strings.Repeat(padStr, repeatCount)
 	}
 	d.SetString(str[:l])
 
