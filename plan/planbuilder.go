@@ -486,12 +486,12 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	// Get Table
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
-		b.err = errors.New("Can not get table")
+		b.err = infoschema.ErrTableNotExists.Gen()
 		return nil
 	}
 	tn, ok := ts.Source.(*ast.TableName)
 	if !ok {
-		b.err = errors.New("Can not get table")
+		b.err = infoschema.ErrTableNotExists.Gen()
 		return nil
 	}
 	tableInfo := tn.TableInfo
@@ -521,6 +521,11 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 					expr, err = b.findDefaultValue(cols, dft.Name)
 				} else {
 					expr, err = b.getDefaultValue(cols[i])
+				}
+			} else if val, ok := valueItem.(*ast.ValueExpr); ok {
+				expr = &expression.Constant{
+					Value:   val.Datum,
+					RetType: &val.Type,
 				}
 			} else {
 				expr, _, err = b.rewrite(valueItem, nil, nil, true)
