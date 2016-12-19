@@ -99,9 +99,7 @@ func builtinTimeDiff(args []types.Datum, ctx context.Context) (d types.Datum, er
 		return d, errors.Trace(err)
 	}
 
-	var t types.Duration
-	t.Duration = t1.Sub(t2)
-	t.Fsp = types.MaxFsp
+	t := t1.Sub(&t2)
 	d.SetMysqlDuration(t)
 	return d, nil
 }

@@ -265,24 +265,24 @@ func (t Time) Compare(o Time) int {
 }
 
 func compareTime(a, b TimeInternal) int {
-	a1 := datetimeToUint64(a)
-	a2 := datetimeToUint64(b)
+	ta := datetimeToUint64(a)
+	tb := datetimeToUint64(b)
 
 	switch {
-	case a1 < b1:
+	case ta < tb:
 		return -1
-	case a1 > b1:
+	case ta > tb:
 		return 1
 	}
 
 	switch {
-	case a.microsecond < b.microsecond:
+	case a.Microsecond() < b.Microsecond():
 		return -1
-	case a.microsecond > b.microsecond:
+	case a.Microsecond() > b.Microsecond():
 		return 1
 	}
 
-	return 0;
+	return 0
 }
 
 // CompareString is like Compare,
@@ -421,8 +421,11 @@ func (t *Time) Sub(t1 *Time) Duration {
 		b, _ := t1.Time.GoTime()
 		duration = a.Sub(b)
 	} else {
-		seconds, microseconds, neg := calcTimeDiff(t.Time, t.Time, -1)
-		duration = neg * (seconds * 1e9 + microseconds * 1e3)
+		seconds, microseconds, neg := calcTimeDiff(t.Time, t1.Time, 1)
+		duration = gotime.Duration(seconds*1e9 + microseconds*1e3)
+		if neg {
+			duration = -duration
+		}
 	}
 
 	fsp := t.Fsp
@@ -430,8 +433,8 @@ func (t *Time) Sub(t1 *Time) Duration {
 		fsp = t1.Fsp
 	}
 	return Duration{
-		Duration: gotime.Duration(nanosecond),
-		Fsp: fsp,
+		Duration: duration,
+		Fsp:      fsp,
 	}
 }
 
