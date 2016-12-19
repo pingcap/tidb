@@ -153,6 +153,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"unhex('TiDB')", mysql.TypeVarString, "utf8"},
 		{"unhex(12)", mysql.TypeVarString, "utf8"},
 		{"DATE_FORMAT('2009-10-04 22:23:00', '%W %M %Y')", mysql.TypeVarString, "utf8"},
+		{"rpad('TiDB', 12, 'go')", mysql.TypeVarString, charset.CharsetUTF8},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)
