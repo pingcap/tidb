@@ -387,6 +387,7 @@ const defaultSmallBatchCnt = 128
 func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
 	seekHandle := reorgInfo.Handle
 	version := reorgInfo.SnapshotVer
+	kvIdx := tables.NewIndex(t.Meta(), indexInfo)
 	count := job.GetRowCount()
 
 	for {
@@ -400,7 +401,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 
 		count += int64(len(handles))
 		seekHandle = handles[len(handles)-1] + 1
-		err = d.backfillTableIndex(t, indexInfo, handles, reorgInfo)
+		err = d.backfillTableIndex(t, kvIdx, handles, reorgInfo)
 		sub := time.Since(startTime).Seconds()
 		if err != nil {
 			log.Warnf("[ddl] added index for %v rows failed, take time %v", count, sub)
@@ -490,8 +491,7 @@ func (d *ddl) backfillIndexInTxn(t table.Table, kvIdx table.Index, handles []int
 	return idxRecords[len(idxRecords)-1].handle, nil
 }
 
-func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
-	kvIdx := tables.NewIndex(t.Meta(), indexInfo)
+func (d *ddl) backfillTableIndex(t table.Table, kvIdx table.Index, handles []int64, reorgInfo *reorgInfo) error {
 	for len(handles) > 0 {
 		endIdx := int(math.Min(float64(defaultSmallBatchCnt), float64(len(handles))))
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
