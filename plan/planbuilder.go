@@ -49,6 +49,7 @@ type planBuilder struct {
 	ctx          context.Context
 	is           infoschema.InfoSchema
 	outerSchemas []expression.Schema
+	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 }
@@ -200,15 +201,15 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func availableIndices(table *ast.TableName) (indices []*model.IndexInfo, includeTableScan bool) {
+func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indices []*model.IndexInfo, includeTableScan bool) {
 	var usableHints []*ast.IndexHint
-	for _, hint := range table.IndexHints {
+	for _, hint := range hints {
 		if hint.HintScope == ast.HintForScan {
 			usableHints = append(usableHints, hint)
 		}
 	}
-	publicIndices := make([]*model.IndexInfo, 0, len(table.TableInfo.Indices))
-	for _, index := range table.TableInfo.Indices {
+	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
+	for _, index := range tableInfo.Indices {
 		if index.State == model.StatePublic {
 			publicIndices = append(publicIndices, index)
 		}
