@@ -702,13 +702,14 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 		str    string
 		len    int64
 		padStr string
-		expect string
+		expect interface{}
 	}{
 		{"hi", 5, "?", "hi???"},
 		{"hi", 1, "?", "h"},
-		{"hi", -1, "?", ""},
+		{"hi", 0, "?", ""},
+		{"hi", -1, "?", nil},
 		{"hi", 1, "", "h"},
-		{"hi", 5, "", ""},
+		{"hi", 5, "", nil},
 		{"hi", 5, "ab", "hiaba"},
 		{"hi", 6, "ab", "hiabab"},
 	}
@@ -718,10 +719,11 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 		padStr := types.NewStringDatum(test.padStr)
 		result, err := builtinRpad([]types.Datum{str, length, padStr}, s.ctx)
 		c.Assert(err, IsNil)
-		if test.expect == "" {
+		if test.expect == nil {
 			c.Assert(result.Kind(), Equals, types.KindNull)
 		} else {
-			c.Assert(result.GetString(), Equals, test.expect)
+			expect, _ := test.expect.(string)
+			c.Assert(result.GetString(), Equals, expect)
 		}
 	}
 }
