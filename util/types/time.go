@@ -264,38 +264,25 @@ func (t Time) Compare(o Time) int {
 	return compareTime(t.Time, o.Time)
 }
 
-func compareTime(t1, t2 TimeInternal) int {
+func compareTime(a, b TimeInternal) int {
+	a1 := datetimeToUint64(a)
+	a2 := datetimeToUint64(b)
+
 	switch {
-	case t1.Year() > t2.Year():
-		return 1
-	case t1.Year() < t2.Year():
+	case a1 < b1:
 		return -1
-	case t1.Month() > t2.Month():
+	case a1 > b1:
 		return 1
-	case t1.Month() < t2.Month():
-		return -1
-	case t1.Day() > t2.Day():
-		return 1
-	case t1.Day() < t2.Day():
-		return -1
-	case t1.Hour() > t2.Hour():
-		return 1
-	case t1.Hour() < t2.Hour():
-		return -1
-	case t1.Minute() > t2.Minute():
-		return 1
-	case t1.Minute() < t2.Minute():
-		return -1
-	case t1.Second() > t2.Second():
-		return 1
-	case t1.Second() < t2.Second():
-		return -1
-	case t1.Microsecond() > t2.Microsecond():
-		return 1
-	case t1.Microsecond() < t2.Microsecond():
-		return -1
 	}
-	return 0
+
+	switch {
+	case a.microsecond < b.microsecond:
+		return -1
+	case a.microsecond > b.microsecond:
+		return 1
+	}
+
+	return 0;
 }
 
 // CompareString is like Compare,
@@ -423,6 +410,29 @@ func (t *Time) check() error {
 		return checkDateType(t.Time)
 	}
 	return nil
+}
+
+// Sub subs t1 from t, returns a duration value.
+// NOTE that sub should not be done on different time types.
+func (t *Time) Sub(t1 *Time) Duration {
+	var duration gotime.Duration
+	if t.Type == mysql.TypeTimestamp && t1.Type == mysql.TypeTimestamp {
+		a, _ := t.Time.GoTime()
+		b, _ := t1.Time.GoTime()
+		duration = a.Sub(b)
+	} else {
+		seconds, microseconds, neg := calcTimeDiff(t.Time, t.Time, -1)
+		duration = neg * (seconds * 1e9 + microseconds * 1e3)
+	}
+
+	fsp := t.Fsp
+	if fsp < t1.Fsp {
+		fsp = t1.Fsp
+	}
+	return Duration{
+		Duration: gotime.Duration(nanosecond),
+		Fsp: fsp,
+	}
 }
 
 func parseDateFormat(format string) []string {

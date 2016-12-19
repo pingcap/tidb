@@ -111,3 +111,62 @@ func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysql
 		uint32(microsecond),
 	}
 }
+
+func calcTimeFromSec(to *mysqlTime, seconds, microseconds int) {
+	to.hour = uint8(seconds / 3600)
+	seconds = seconds % 3600
+	to.minute = uint8(seconds / 60)
+	to.second = uint8(seconds % 60)
+	to.microsecond = uint32(microseconds)
+}
+
+const SECONDS_IN_24H = 86400
+
+// calcTimeDiff calculates difference between two datetime values as seconds + microseconds.
+// t1 and t2 should be TIME/DATE/DATETIME value.
+func calcTimeDiff(t1, t2 TimeInternal, sign int) (seconds, microseconds int, neg bool) {
+	days := calcDaynr(t1.Year(), t1.Month(), t1.Day())
+	days -= sign * calcDaynr(t2.Year(), t2.Month(), t2.Day())
+
+	tmp := (int64(days) * SECONDS_IN_24H +
+		int64(t1.Hour()) * 3600 + int64(t1.Minute()) * 60 +
+		int64(t1.Second()) -
+		sign * (int64(t2.Hour()) * 3600 + int64(t2.Minute()) * 60 +
+		int64(t2.Second()))) *
+		1000000 +
+		int64(t1.Microsecond()) - sign * int64(t2.Microsecond())
+
+	neg = 0
+	if (tmp < 0) {
+		tmp = -tmp
+		neg = 1
+	}
+	seconds = int(tmp / 1000000)
+	microseconds = int(tmp % 1000000)
+	return
+}
+
+// datetimeToUint64 converts time value to integer in YYYYMMDDHHMMSS format.
+func datetimeToUint64(t TimeInternal) uint64 {
+	return ((uint64) (t.Year() * 10000 +
+		t.Month() * 100 +
+		t.Day()) * 1000000 +
+		(uint64) (t.Hour() * 10000 +
+		uint64(t.Minute()) * 100 +
+		uint64(t.Second())));
+}
+
+// dateToUint64 converts time value to integer in YYYYMMDD format.
+func dateToUint64(t TimeInternal) uint64 {
+	return (uint64) (uint64(t.Year()) * 10000 +
+		uint64(t.Month()) * 100 +
+		uint64(t.Day()));
+}
+
+
+// timeToUint64 converts time value to integer in HHMMSS format.
+func timeToUint64(t TimeInternal) uint64 {
+	return uint64 (uint64(t.Hour()) * 10000 +
+		uint64(t.Minute()) * 100 +
+		uint64(t.Second()));
+}
