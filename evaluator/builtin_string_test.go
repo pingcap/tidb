@@ -707,7 +707,10 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 		{"hi", 5, "?", "hi???"},
 		{"hi", 1, "?", "h"},
 		{"hi", -1, "?", ""},
-		{"hi", 1, "", ""},
+		{"hi", 1, "", "h"},
+		{"hi", 5, "", ""},
+		{"hi", 5, "ab", "hiaba"},
+		{"hi", 6, "ab", "hiabab"},
 	}
 	for _, test := range tests {
 		str := types.NewStringDatum(test.str)
@@ -715,7 +718,7 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 		padStr := types.NewStringDatum(test.padStr)
 		result, err := builtinRpad([]types.Datum{str, length, padStr}, s.ctx)
 		c.Assert(err, IsNil)
-		if length.GetInt64() < 0 || len(padStr.GetString()) == 0 {
+		if test.expect == "" {
 			c.Assert(result.Kind(), Equals, types.KindNull)
 		} else {
 			c.Assert(result.GetString(), Equals, test.expect)

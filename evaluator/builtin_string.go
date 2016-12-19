@@ -623,17 +623,29 @@ func builtinRpad(args []types.Datum, ctx context.Context) (d types.Datum, err er
 		return d, errors.Trace(err)
 	}
 
+	if len(str) >= l && l >= 0 {
+		d.SetString(str[:l])
+		return d, nil
+	}
+
 	if l < 0 || len(padStr) == 0 {
 		d.SetNull()
 		return d, nil
 	}
 
-	if len(str) >= l {
-		d.SetString(str[:l])
-	} else {
-		dest := str + strings.Repeat(padStr, l-len(str))
-		d.SetString(dest)
+	tailLen := l - len(str)
+	padStrBytes := []byte(padStr)
+	tail := make([]byte, 0, tailLen)
+	for tailLen > len(padStr) {
+		tail = append(tail, padStrBytes...)
+		tailLen -= len(padStr)
 	}
+	if tailLen > 0 {
+		tail = append(tail, padStrBytes[:tailLen]...)
+	}
+
+	dest := str + string(tail)
+	d.SetString(dest)
 
 	return d, nil
 }
