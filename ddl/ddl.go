@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -541,7 +542,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				col.Flag |= mysql.OnUpdateNowFlag
 				setOnUpdateNow = true
 			case ast.ColumnOptionComment:
-				value, err := evaluator.Eval(ctx, v.Expr)
+				value, err := plan.EvalAstExpr(v.Expr, ctx)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -591,7 +592,7 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 
 		return value, nil
 	}
-	v, err := evaluator.Eval(ctx, c.Expr)
+	v, err := plan.EvalAstExpr(c.Expr, ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
