@@ -143,8 +143,20 @@ func (*testConstantSuite) TestConstantFolding(c *C) {
 			result:    "lt(test.t.a, 3)",
 		},
 		{
+			condition: newFunction(ast.LT, newColumn("a"), newFunction(ast.Greatest, newLonglong(1), newLonglong(2))),
+			result:    "lt(test.t.a, 2)",
+		},
+		{
 			condition: newFunction(ast.EQ, newColumn("a"), newFunction(ast.Rand)),
 			result:    "eq(test.t.a, rand())",
+		},
+		{
+			condition: newFunction(ast.In, newColumn("a"), newLonglong(1), newLonglong(2), newLonglong(3)),
+			result:    "in(test.t.a, 1, 2, 3)",
+		},
+		{
+			condition: newFunction(ast.IsNull, newLonglong(1)),
+			result:    "0",
 		},
 		{
 			condition: newFunction(ast.EQ, newColumn("a"), newFunction(ast.UnaryNot, newFunction(ast.Plus, newLonglong(1), newLonglong(1)))),
