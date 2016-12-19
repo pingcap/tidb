@@ -22,6 +22,9 @@ var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Cont
 
 // EvalAstExpr evaluates ast expression directly.
 func EvalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
+	if val, ok := expr.(*ast.ValueExpr); ok {
+		return val.Datum, nil
+	}
 	b := &planBuilder{
 		ctx:       ctx,
 		allocator: new(idAllocator),
