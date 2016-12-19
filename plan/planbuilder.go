@@ -200,56 +200,6 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-// extractSelectAgg extracts aggregate functions and converts ColumnNameExpr to aggregate function.
-func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFuncExpr {
-	extractor := &ast.AggregateFuncExtractor{AggFuncs: make([]*ast.AggregateFuncExpr, 0)}
-	for _, f := range sel.GetResultFields() {
-		n, ok := f.Expr.Accept(extractor)
-		if !ok {
-			b.err = errors.New("failed to extract agg expr")
-			return nil
-		}
-		ve, ok := f.Expr.(*ast.ValueExpr)
-		if ok && len(f.Column.Name.O) > 0 {
-			agg := &ast.AggregateFuncExpr{
-				F:    ast.AggFuncFirstRow,
-				Args: []ast.ExprNode{ve},
-			}
-			agg.SetType(ve.GetType())
-			extractor.AggFuncs = append(extractor.AggFuncs, agg)
-			n = agg
-		}
-		f.Expr = n.(ast.ExprNode)
-	}
-	// Extract agg funcs from having clause.
-	if sel.Having != nil {
-		n, ok := sel.Having.Expr.Accept(extractor)
-		if !ok {
-			b.err = errors.New("Failed to extract agg expr from having clause")
-			return nil
-		}
-		sel.Having.Expr = n.(ast.ExprNode)
-	}
-	// Extract agg funcs from orderby clause.
-	if sel.OrderBy != nil {
-		for _, item := range sel.OrderBy.Items {
-			n, ok := item.Expr.Accept(extractor)
-			if !ok {
-				b.err = errors.New("Failed to extract agg expr from orderby clause")
-				return nil
-			}
-			item.Expr = n.(ast.ExprNode)
-			// If item is PositionExpr, we need to rebind it.
-			// For PositionExpr will refer to a ResultField in fieldlist.
-			// After extract AggExpr from fieldlist, it may be changed (See the code above).
-			if pe, ok := item.Expr.(*ast.PositionExpr); ok {
-				pe.Refer = sel.GetResultFields()[pe.N-1]
-			}
-		}
-	}
-	return extractor.AggFuncs
-}
-
 func availableIndices(table *ast.TableName) (indices []*model.IndexInfo, includeTableScan bool) {
 	var usableHints []*ast.IndexHint
 	for _, hint := range table.IndexHints {
