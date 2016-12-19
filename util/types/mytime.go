@@ -131,7 +131,7 @@ func calcDaynr(year, month, day int) int {
 	return delsum + y/4 - temp
 }
 
-// calcDaysInYear calculates days in one year. works with 0 <= year <= 99
+// calcDaysInYear calculates days in one year, it works with 0 <= year <= 99.
 func calcDaysInYear(year int) int {
 	if (year&3) == 0 && (year%100 != 0 || (year%400 == 0 && (year != 0))) {
 		return 366
@@ -139,7 +139,7 @@ func calcDaysInYear(year int) int {
 	return 365
 }
 
-// calcWeekday calc weekday from daynr, returns 0 for Monday, 1 for Tuesday ...
+// calcWeekday calculates weekday from daynr, returns 0 for Monday, 1 for Tuesday ...
 func calcWeekday(daynr int, sundayFirstDayOfWeek bool) int {
 	daynr += 5
 	if sundayFirstDayOfWeek {
@@ -151,13 +151,13 @@ func calcWeekday(daynr int, sundayFirstDayOfWeek bool) int {
 type weekBehaviour uint
 
 const (
-	// if set, Sunday is first day of week, otherwise Monday is first day of week
+	// If set, Sunday is first day of week, otherwise Monday is first day of week.
 	weekBehaviourMondayFirst weekBehaviour = 1 << iota
-	// if set, Week is in range 1-53, otherwise Week is in range 0-53
+	// If set, Week is in range 1-53, otherwise Week is in range 0-53.
 	// Note that this flag is only releveant if WEEK_JANUARY is not set.
 	weekBehaviourYear
-	// if not set, Weeks are numbered according to ISO 8601:1988.
-	// if set, The week that contains the first 'first-day-of-week' is week 1.
+	// If not set, Weeks are numbered according to ISO 8601:1988.
+	// If set, the week that contains the first 'first-day-of-week' is week 1.
 	weekBehaviourFirstWeekday
 )
 
