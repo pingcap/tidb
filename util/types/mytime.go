@@ -114,21 +114,18 @@ func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysql
 
 // calcDaynr calculates days since 0000-00-00.
 func calcDaynr(year, month, day int) int {
-	y := year // may be < 0 temporarily
-
-	if y == 0 && month == 0 {
+	if year == 0 && month == 0 {
 		return 0
 	}
 
-	// Cast to int to be able to handle month == 0.
-	delsum := 365*y + 31*(month-1) + day
+	delsum := 365*year + 31*(month-1) + day
 	if month <= 2 {
-		y--
+		year--
 	} else {
 		delsum -= (month*4 + 23) / 10
 	}
-	temp := ((y/100 + 1) * 3) / 4
-	return delsum + y/4 - temp
+	temp := ((year/100 + 1) * 3) / 4
+	return delsum + year/4 - temp
 }
 
 // calcDaysInYear calculates days in one year, it works with 0 <= year <= 99.
@@ -175,7 +172,7 @@ func weekMode(mode int) weekBehaviour {
 }
 
 // calcWeek calculates week and year for the time.
-func calcWeek(t *mysqlTime, wb weekBehaviour, year *int) int {
+func calcWeek(t *mysqlTime, wb weekBehaviour) (year int, week int) {
 	var days int
 	daynr := calcDaynr(int(t.year), int(t.month), int(t.day))
 	firstDaynr := calcDaynr(int(t.year), 1, 1)
@@ -185,16 +182,17 @@ func calcWeek(t *mysqlTime, wb weekBehaviour, year *int) int {
 
 	weekday := calcWeekday(int(firstDaynr), !mondayFirst)
 
-	*year = int(t.year)
+	year = int(t.year)
 
 	if t.month == 1 && int(t.day) <= 7-weekday {
 		if !weekYear &&
 			((firstWeekday && weekday != 0) || (!firstWeekday && weekday >= 4)) {
-			return 0
+			week = 0
+			return
 		}
 		weekYear = true
-		(*year)--
-		days = calcDaysInYear(*year)
+		(year)--
+		days = calcDaysInYear(year)
 		firstDaynr -= days
 		weekday = (weekday + 53*7 - days) % 7
 	}
@@ -207,12 +205,14 @@ func calcWeek(t *mysqlTime, wb weekBehaviour, year *int) int {
 	}
 
 	if weekYear && days >= 52*7 {
-		weekday = (weekday + calcDaysInYear(*year)) % 7
+		weekday = (weekday + calcDaysInYear(year)) % 7
 		if (!firstWeekday && weekday < 4) ||
 			(firstWeekday && weekday == 0) {
-			(*year)++
-			return 1
+			year++
+			week = 1
+			return
 		}
 	}
-	return days/7 + 1
+	week = days/7 + 1
+	return
 }

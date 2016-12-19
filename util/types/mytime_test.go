@@ -42,8 +42,7 @@ func (s *testMyTimeSuite) TestWeek(c *C) {
 	}
 
 	for ith, t := range cases {
-		var year int
-		week := calcWeek(&t.Input, weekMode(t.Mode), &year)
+		_, week := calcWeek(&t.Input, weekMode(t.Mode))
 		c.Check(week, Equals, t.Expect, Commentf("%d failed.", ith))
 	}
 }
