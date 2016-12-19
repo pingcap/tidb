@@ -48,6 +48,32 @@ func (ps *physicalInitializer) initialize(p PhysicalPlan) {
 				break
 			}
 		}
+	case *PhysicalHashJoin:
+		for _, cond := range pp.EqualConditions {
+			pp.correlated = pp.correlated || cond.IsCorrelated()
+		}
+		for _, cond := range pp.RightConditions {
+			pp.correlated = pp.correlated || cond.IsCorrelated()
+		}
+		for _, cond := range pp.LeftConditions {
+			pp.correlated = pp.correlated || cond.IsCorrelated()
+		}
+		for _, cond := range pp.OtherConditions {
+			pp.correlated = pp.correlated || cond.IsCorrelated()
+		}
+	case *PhysicalHashSemiJoin:
+		for _, cond := range pp.EqualConditions {
+			pp.correlated = pp.correlated || cond.IsCorrelated()
+		}
+		for _, cond := range pp.RightConditions {
+			pp.correlated = pp.correlated || cond.IsCorrelated()
+		}
+		for _, cond := range pp.LeftConditions {
+			pp.correlated = pp.correlated || cond.IsCorrelated()
+		}
+		for _, cond := range pp.OtherConditions {
+			pp.correlated = pp.correlated || cond.IsCorrelated()
+		}
 	}
 }
 
