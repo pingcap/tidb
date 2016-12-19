@@ -182,7 +182,14 @@ type handshakeResponse41 struct {
 	Attrs      map[string]string
 }
 
-func handshakeResponseFromData(packet *handshakeResponse41, data []byte) error {
+func handshakeResponseFromData(packet *handshakeResponse41, data []byte) (err error) {
+	defer func() {
+		// Check malformat packet cause out of range is disgusting, but don't panic!
+		if r := recover(); r != nil {
+			log.Errorf("handshake panic, packet data: %v", data)
+			err = mysql.ErrMalformPacket
+		}
+	}()
 	pos := 0
 	// capability
 	capability := binary.LittleEndian.Uint32(data[:4])
