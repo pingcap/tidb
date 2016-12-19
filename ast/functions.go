@@ -145,6 +145,7 @@ const (
 	Ucase          = "ucase"
 	Hex            = "hex"
 	Unhex          = "unhex"
+	Rpad           = "rpad"
 
 	// information functions
 	ConnectionID = "connection_id"
