@@ -405,12 +405,30 @@ func (p *PhysicalHashJoin) extractCorrelatedCols() []*expression.CorrelatedColum
 	for _, fun := range p.EqualConditions {
 		corCols = append(corCols, extractCorColumns(fun)...)
 	}
+	for _, fun := range p.LeftConditions {
+		corCols = append(corCols, extractCorColumns(fun)...)
+	}
+	for _, fun := range p.RightConditions {
+		corCols = append(corCols, extractCorColumns(fun)...)
+	}
+	for _, fun := range p.OtherConditions {
+		corCols = append(corCols, extractCorColumns(fun)...)
+	}
 	return corCols
 }
 
 func (p *PhysicalHashSemiJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.basePlan.extractCorrelatedCols()
 	for _, fun := range p.EqualConditions {
+		corCols = append(corCols, extractCorColumns(fun)...)
+	}
+	for _, fun := range p.LeftConditions {
+		corCols = append(corCols, extractCorColumns(fun)...)
+	}
+	for _, fun := range p.RightConditions {
+		corCols = append(corCols, extractCorColumns(fun)...)
+	}
+	for _, fun := range p.OtherConditions {
 		corCols = append(corCols, extractCorColumns(fun)...)
 	}
 	return corCols
