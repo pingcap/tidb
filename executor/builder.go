@@ -78,6 +78,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildShow(v)
 	case *plan.Simple:
 		return b.buildSimple(v)
+	case *plan.Set:
+		return b.buildSet(v)
 	case *plan.Sort:
 		return b.buildSort(v)
 	case *plan.Union:
@@ -131,6 +133,7 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 	return &CheckTableExec{
 		tables: v.Tables,
 		ctx:    b.ctx,
+		is:     b.is,
 	}
 }
 
@@ -217,16 +220,14 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	switch s := v.Statement.(type) {
 	case *ast.GrantStmt:
 		return b.buildGrant(s)
-	case *ast.SetStmt:
-		return b.buildSet(s)
 	}
-	return &SimpleExec{Statement: v.Statement, ctx: b.ctx}
+	return &SimpleExec{Statement: v.Statement, ctx: b.ctx, is: b.is}
 }
 
-func (b *executorBuilder) buildSet(v *ast.SetStmt) Executor {
+func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 	return &SetExecutor{
 		ctx:  b.ctx,
-		stmt: v,
+		vars: v.VarAssigns,
 	}
 }
 
@@ -286,6 +287,7 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		ObjectType: grant.ObjectType,
 		Level:      grant.Level,
 		Users:      grant.Users,
+		is:         b.is,
 	}
 }
 

@@ -28,6 +28,8 @@ import (
 const (
 	// Sel is the type of Selection.
 	Sel = "Selection"
+	// St is the type of Set.
+	St = "Set"
 	// Proj is the type of Projection.
 	Proj = "Projection"
 	// Agg is the type of Aggregation.
@@ -36,8 +38,8 @@ const (
 	Jn = "Join"
 	// Un is the type of Union.
 	Un = "Union"
-	// Ts is the type of TableScan.
-	Ts = "TableScan"
+	// Tbl is the type of TableScan.
+	Tbl = "TableScan"
 	// Idx is the type of IndexScan.
 	Idx = "IndexScan"
 	// Srt is the type of Sort.

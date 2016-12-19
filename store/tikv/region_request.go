@@ -165,7 +165,7 @@ func (s *RegionRequestSender) sendCopReqToRegion(ctx *RPCContext, req *coprocess
 
 func (s *RegionRequestSender) onSendFail(ctx *RPCContext, err error) error {
 	s.regionCache.OnRequestFail(ctx)
-	err = s.bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, ctx))
+	err = s.bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, ctx.KVCtx))
 	return errors.Trace(err)
 }
 
@@ -190,10 +190,14 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 	}
 	if regionErr.GetServerIsBusy() != nil {
 		log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", ctx.KVCtx)
-		err = s.bo.Backoff(boServerBusy, errors.Errorf("server is busy"))
+		err = s.bo.Backoff(boServerBusy, errors.Errorf("server is busy, ctx: %s", ctx.KVCtx))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
+		return true, nil
+	}
+	if regionErr.GetStaleCommand() != nil {
+		log.Warnf("tikv reports `StaleCommand`, ctx: %s", ctx.KVCtx)
 		return true, nil
 	}
 	// For other errors, we only drop cache here.

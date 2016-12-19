@@ -77,7 +77,6 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 
 	// test error
 	errTable := []string{
-		"1000-00-00 00:00:00",
 		"1000-01-01 00:00:70",
 		"1000-13-00 00:00:00",
 		"10000-01-01 00:00:00",
@@ -322,9 +321,14 @@ func (s *testTimeSuite) getLocation(c *C) *time.Location {
 
 func (s *testTimeSuite) TestCodec(c *C) {
 	defer testleak.AfterTest(c)()
-	t, err := ParseTimestamp("2010-10-10 10:11:11")
+	// MySQL timestamp value doesn't allow month=0 or day=0.
+	t, err := ParseTimestamp("2016-12-00 00:00:00")
+	c.Assert(err, NotNil)
+
+	t, err = ParseTimestamp("2010-10-10 10:11:11")
 	c.Assert(err, IsNil)
-	packed := t.ToPackedUint()
+	packed, err := t.ToPackedUint()
+	c.Assert(err, IsNil)
 
 	var t1 Time
 	t1.Type = mysql.TypeTimestamp
@@ -341,7 +345,8 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	c.Assert(t.String(), Equals, t1.String())
 
 	t1.Time = FromGoTime(time.Now())
-	packed = t1.ToPackedUint()
+	packed, err = t1.ToPackedUint()
+	c.Assert(err, IsNil)
 
 	var t2 Time
 	t2.Type = mysql.TypeTimestamp
@@ -349,7 +354,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(t1.String(), Equals, t2.String())
 
-	packed = ZeroDatetime.ToPackedUint()
+	packed, _ = ZeroDatetime.ToPackedUint()
 
 	var t3 Time
 	t3.Type = mysql.TypeDatetime
@@ -359,7 +364,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 
 	t, err = ParseDatetime("0001-01-01 00:00:00")
 	c.Assert(err, IsNil)
-	packed = t.ToPackedUint()
+	packed, _ = t.ToPackedUint()
 
 	var t4 Time
 	t4.Type = mysql.TypeDatetime
@@ -378,7 +383,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 		t, err := ParseTime(test, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
 
-		packed = t.ToPackedUint()
+		packed, _ = t.ToPackedUint()
 
 		var dest Time
 		dest.Type = mysql.TypeDatetime
@@ -401,7 +406,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		ExpectDateValue      string
 	}{
 		{20101010111111, false, "2010-10-10 11:11:11", false, "2010-10-10 11:11:11", false, "2010-10-10"},
-		{2010101011111, true, zeroDatetimeStr, true, zeroDatetimeStr, true, zeroDateStr},
+		{2010101011111, false, "0201-01-01 01:11:11", true, zeroDatetimeStr, false, "0201-01-01"},
 		{201010101111, false, "2020-10-10 10:11:11", false, "2020-10-10 10:11:11", false, "2020-10-10"},
 		{20101010111, false, "2002-01-01 01:01:11", false, "2002-01-01 01:01:11", false, "2002-01-01"},
 		{2010101011, true, zeroDatetimeStr, true, zeroDatetimeStr, true, zeroDateStr},
@@ -426,11 +431,11 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		{380120031407, false, "2038-01-20 03:14:07", true, zeroDatetimeStr, false, "2038-01-20"},
 	}
 
-	for _, test := range table {
+	for ith, test := range table {
 		// test ParseDatetimeFromNum
 		t, err := ParseDatetimeFromNum(test.Input)
 		if test.ExpectDateTimeError {
-			c.Assert(err, NotNil)
+			c.Assert(err, NotNil, Commentf("%d", ith))
 		} else {
 			c.Assert(err, IsNil)
 			c.Assert(t.Type, Equals, mysql.TypeDatetime)
@@ -442,7 +447,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		if test.ExpectTimeStampError {
 			c.Assert(err, NotNil)
 		} else {
-			c.Assert(err, IsNil)
+			c.Assert(err, IsNil, Commentf("%d", ith))
 			c.Assert(t.Type, Equals, mysql.TypeTimestamp)
 		}
 		c.Assert(t.String(), Equals, test.ExpectTimeStampValue)
@@ -653,7 +658,8 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		n := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
 		t, err := v.ConvertToTime(mysql.TypeDatetime)
 		c.Assert(err, IsNil)
-		c.Assert(t.Time.GoTime().Sub(n), Equals, v.Duration)
+		t1, _ := t.Time.GoTime()
+		c.Assert(t1.Sub(n), Equals, v.Duration)
 	}
 }
 

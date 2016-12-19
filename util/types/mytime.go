@@ -15,6 +15,8 @@ package types
 
 import (
 	gotime "time"
+
+	"github.com/juju/errors"
 )
 
 type mysqlTime struct {
@@ -56,19 +58,46 @@ func (t mysqlTime) Microsecond() int {
 }
 
 func (t mysqlTime) Weekday() gotime.Weekday {
-	return t.GoTime().Weekday()
+	t1, err := t.GoTime()
+	if err != nil {
+		// TODO: Fix here.
+		return 0
+	}
+	return t1.Weekday()
 }
 
 func (t mysqlTime) YearDay() int {
-	return t.GoTime().YearDay()
+	t1, err := t.GoTime()
+	if err != nil {
+		// TODO: Fix here.
+		return 0
+	}
+	return t1.YearDay()
 }
 
 func (t mysqlTime) ISOWeek() (int, int) {
-	return t.GoTime().ISOWeek()
+	t1, err := t.GoTime()
+	if err != nil {
+		// TODO: Fix here.
+		return 0, 0
+	}
+	return t1.ISOWeek()
 }
 
-func (t mysqlTime) GoTime() gotime.Time {
-	return gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, gotime.Local)
+func (t mysqlTime) GoTime() (gotime.Time, error) {
+	// gotime.Time can't represent month 0 or day 0, date contains 0 would be converted to a nearest date,
+	// For example, 2006-12-00 00:00:00 would become 2015-11-30 23:59:59.
+	tm := gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, gotime.Local)
+	year, month, day := tm.Date()
+	hour, minute, second := tm.Clock()
+	microsec := tm.Nanosecond() / 1000
+	// This function will check the result, and return an error if it's not the same with the origin input.
+	if year != t.Year() || int(month) != t.Month() || day != t.Day() ||
+		hour != t.Hour() || minute != t.Minute() || second != t.Second() ||
+		microsec != t.Microsecond() {
+		return tm, errors.Trace(ErrInvalidTimeFormat)
+	}
+	return tm, nil
 }
 
 func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysqlTime {

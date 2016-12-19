@@ -65,26 +65,36 @@ type physicalDistSQLPlan interface {
 	addAggregation(ctx context.Context, agg *PhysicalAggregation) expression.Schema
 	addTopN(ctx context.Context, prop *requiredProperty) bool
 	addLimit(limit *Limit)
-	calculateCost(count uint64) float64
+	// scanCount means the original row count that need to be scanned and resultCount means the row count after scanning.
+	calculateCost(resultCount uint64, scanCount uint64) float64
 }
 
-func (p *PhysicalIndexScan) calculateCost(count uint64) float64 {
-	cnt := float64(count)
-	// network cost
-	cost := cnt * netWorkFactor
+func (p *PhysicalIndexScan) calculateCost(resultCount uint64, scanCount uint64) float64 {
+	// TODO: Eliminate index cost more precisely.
+	cost := float64(resultCount) * netWorkFactor
+	scanCnt := float64(scanCount)
 	if p.DoubleRead {
-		cost *= 2
+		cost += scanCnt * netWorkFactor
+	}
+	if len(p.indexFilterConditions) > 0 {
+		cost += scanCnt * cpuFactor
+	}
+	if len(p.tableFilterConditions) > 0 {
+		cost += scanCnt * cpuFactor
 	}
 	// sort cost
 	if !p.OutOfOrder && p.DoubleRead {
-		cost += float64(count) * cpuFactor
+		cost += scanCnt * cpuFactor
 	}
 	return cost
 }
 
-func (p *PhysicalTableScan) calculateCost(count uint64) float64 {
-	cnt := float64(count)
-	return cnt * netWorkFactor
+func (p *PhysicalTableScan) calculateCost(resultCount uint64, scanCount uint64) float64 {
+	cost := float64(resultCount) * netWorkFactor
+	if len(p.tableFilterConditions) > 0 {
+		cost += float64(scanCount) * cpuFactor
+	}
+	return cost
 }
 
 type physicalTableSource struct {

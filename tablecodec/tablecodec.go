@@ -136,7 +136,8 @@ func flatten(data types.Datum) (types.Datum, error) {
 	switch data.Kind() {
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
-		return types.NewUintDatum(data.GetMysqlTime().ToPackedUint()), nil
+		v, err := data.GetMysqlTime().ToPackedUint()
+		return types.NewUintDatum(v), errors.Trace(err)
 	case types.KindMysqlDuration:
 		// for mysql time type
 		data.SetInt64(int64(data.GetMysqlDuration().Duration))

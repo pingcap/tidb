@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"time"
@@ -169,8 +170,14 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	log.Warnf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
 	b.errors = append(b.errors, err)
 	if b.totalSleep >= b.maxSleep {
-		e := errors.Errorf("backoffer.maxSleep %dms is exceeded, errors: %v", b.maxSleep, b.errors)
-		return errors.Annotate(e, txnRetryableMark)
+		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
+		for i, err := range b.errors {
+			// Print only last 3 errors for non-DEBUG log levels.
+			if log.GetLogLevel() >= log.LOG_LEVEL_DEBUG || i >= len(b.errors)-3 {
+				errMsg += "\n" + err.Error()
+			}
+		}
+		return errors.Annotate(errors.New(errMsg), txnRetryableMark)
 	}
 	return nil
 }

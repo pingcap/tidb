@@ -14,6 +14,8 @@
 package tikv
 
 import (
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
@@ -49,6 +51,9 @@ func (c *RawKVClient) ClusterID() uint64 {
 // Get queries value with the key. When the key does not exist, it returns
 // `nil, nil`, while `[]byte{}, nil` means an empty value.
 func (c *RawKVClient) Get(key []byte) ([]byte, error) {
+	start := time.Now()
+	defer func() { rawkvCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
+
 	req := &kvrpcpb.Request{
 		Type: kvrpcpb.MessageType_CmdRawGet,
 		CmdRawGetReq: &kvrpcpb.CmdRawGetRequest{
@@ -71,6 +76,11 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 
 // Put stores a key-value pair to TiKV.
 func (c *RawKVClient) Put(key, value []byte) error {
+	start := time.Now()
+	defer func() { rawkvCmdHistogram.WithLabelValues("put").Observe(time.Since(start).Seconds()) }()
+	rawkvSizeHistogram.WithLabelValues("key").Observe(float64(len(key)))
+	rawkvSizeHistogram.WithLabelValues("value").Observe(float64(len(value)))
+
 	req := &kvrpcpb.Request{
 		Type: kvrpcpb.MessageType_CmdRawPut,
 		CmdRawPutReq: &kvrpcpb.CmdRawPutRequest{
@@ -94,6 +104,9 @@ func (c *RawKVClient) Put(key, value []byte) error {
 
 // Delete deletes a key-value pair from TiKV.
 func (c *RawKVClient) Delete(key []byte) error {
+	start := time.Now()
+	defer func() { rawkvCmdHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds()) }()
+
 	req := &kvrpcpb.Request{
 		Type: kvrpcpb.MessageType_CmdRawDelete,
 		CmdRawDeleteReq: &kvrpcpb.CmdRawDeleteRequest{
