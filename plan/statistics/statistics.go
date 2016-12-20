@@ -332,17 +332,7 @@ func estimateNDV(sc *variable.StatementContext, count int64, samples []types.Dat
 	return int64(estimatedDistinct), nil
 }
 
-func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, result ast.RecordSet, bucketCount int64) error {
-	if t.Count < 0 {
-		return t.buildIndexColumnWithoutCount(sc, offset, result, bucketCount)
-	} else {
-		return t.buildIndexColumnWithCount(sc, offset, result, bucketCount)
-	}
-}
-
-// buildIndexWithoutCount is used for when we do not know the total row count.
-func (t *Table) buildIndexColumnWithoutCount(sc *variable.StatementContext, offset int, result ast.RecordSet, bucketCount int64) error {
-	t.Count = 0
+func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, result ast.RecordSet, bucketCount int64, knowCount bool) error {
 	ci := t.info.Columns[offset]
 	col := &Column{
 		ID:      ci.ID,
@@ -352,6 +342,9 @@ func (t *Table) buildIndexColumnWithoutCount(sc *variable.StatementContext, offs
 		Repeats: make([]int64, 1, bucketCount),
 	}
 	var valuesPerBucket, lastNumber, bucketIdx int64 = 1, 0, 0
+	if knowCount {
+		valuesPerBucket = t.Count/bucketCount + 1
+	}
 	for {
 		row, err := result.Next()
 		if err != nil {
@@ -361,7 +354,9 @@ func (t *Table) buildIndexColumnWithoutCount(sc *variable.StatementContext, offs
 		if err != nil {
 			return errors.Trace(err)
 		}
-		t.Count += 1
+		if !knowCount {
+			t.Count += 1
+		}
 		if cmp == 0 {
 			// The new item has the same value as current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
@@ -375,8 +370,8 @@ func (t *Table) buildIndexColumnWithoutCount(sc *variable.StatementContext, offs
 			col.Repeats[bucketIdx] = 0
 			col.NDV += 1
 		} else {
-			// The buckets is full, we should merge buckets
-			if bucketIdx+1 == bucketCount {
+			// All buckets are full, we should merge buckets.
+			if !knowCount && bucketIdx+1 == bucketCount {
 				col.mergeBuckets(bucketIdx)
 				valuesPerBucket *= 2
 				bucketIdx = (bucketIdx + 1) / 2
@@ -386,6 +381,7 @@ func (t *Table) buildIndexColumnWithoutCount(sc *variable.StatementContext, offs
 					lastNumber = col.Numbers[bucketIdx-1]
 				}
 			}
+			// We may merge buckets, so we should check it again.
 			if col.Numbers[bucketIdx]+1-lastNumber <= valuesPerBucket {
 				col.Numbers[bucketIdx] += 1
 				col.Values[bucketIdx] = row.Data[0]
@@ -397,53 +393,6 @@ func (t *Table) buildIndexColumnWithoutCount(sc *variable.StatementContext, offs
 				col.Values = append(col.Values, row.Data[0])
 				col.Repeats = append(col.Repeats, 0)
 			}
-			col.NDV += 1
-		}
-	}
-	t.Columns[offset] = col
-	return nil
-}
-
-// buildIndexWithoutCount is used for when we know the total row count.
-func (t *Table) buildIndexColumnWithCount(sc *variable.StatementContext, offset int, result ast.RecordSet, bucketCount int64) error {
-	ci := t.info.Columns[offset]
-	col := &Column{
-		ID:      ci.ID,
-		NDV:     0,
-		Numbers: make([]int64, 1, bucketCount),
-		Values:  make([]types.Datum, 1, bucketCount),
-		Repeats: make([]int64, 1, bucketCount),
-	}
-	valuesPerBucket := t.Count/bucketCount + 1
-	var lastNumber, bucketIdx int64
-	for {
-		row, err := result.Next()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cmp, err := col.Values[bucketIdx].CompareDatum(sc, row.Data[0])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if cmp == 0 {
-			// The new item has the same value as current bucket value, to ensure that
-			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
-			// valuesPerBucket.
-			col.Numbers[bucketIdx] += 1
-			col.Repeats[bucketIdx] += 1
-		} else if col.Numbers[bucketIdx]+1-lastNumber <= valuesPerBucket {
-			// The bucket still have room to store a new item, update the bucket.
-			col.Numbers[bucketIdx] += 1
-			col.Values[bucketIdx] = row.Data[0]
-			col.Repeats[bucketIdx] = 0
-			col.NDV += 1
-		} else {
-			// The bucket is full, store the item in the next bucket.
-			lastNumber = col.Numbers[bucketIdx]
-			bucketIdx++
-			col.Numbers = append(col.Numbers, lastNumber+1)
-			col.Values = append(col.Values, row.Data[0])
-			col.Repeats = append(col.Repeats, 0)
 			col.NDV += 1
 		}
 	}
@@ -467,7 +416,13 @@ func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, num
 		}
 	}
 	for i, offset := range indOffsets {
-		err := t.buildIndexColumn(sc, offset, indResults[i], numBuckets)
+		var err error
+		if t.Count < 0 {
+			t.Count = 0
+			err = t.buildIndexColumn(sc, offset, indResults[i], numBuckets, false)
+		} else {
+			err = t.buildIndexColumn(sc, offset, indResults[i], numBuckets, true)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
