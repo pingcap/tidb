@@ -195,10 +195,7 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 
 func dumpBinaryDateTime(t types.Time, loc *time.Location) (data []byte) {
 	if t.Type == mysql.TypeTimestamp && loc != nil {
-		t1, err := t.Time.GoTime()
-		if err != nil {
-			// TODO: Fix here.
-		}
+		t1, _ := t.Time.GoTime()
 		t.Time = types.FromGoTime(t1.In(loc))
 	}
 

@@ -66,12 +66,11 @@ func (t mysqlTime) Weekday() gotime.Weekday {
 }
 
 func (t mysqlTime) YearDay() int {
-	t1, err := t.GoTime()
-	if err != nil {
-		// TODO: Fix here.
+	if t.month == 0 || t.day == 0 {
 		return 0
 	}
-	return t1.YearDay()
+	return calcDaynr(int(t.year), int(t.month), int(t.day)) -
+		calcDaynr(int(t.year), 1, 1) + 1
 }
 
 func (t mysqlTime) YearWeek(mode int) (int, int) {
