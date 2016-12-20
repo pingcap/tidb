@@ -180,6 +180,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	case *ast.SubqueryExpr:
 		return er.handleScalarSubquery(v)
 	case *ast.ParenthesesExpr:
+	case *ast.ValuesExpr:
+		er.valuesToScalarFunc(v)
+		return inNode, true
 	default:
 		er.asScalar = true
 	}
@@ -413,7 +416,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
-		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr:
+		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
 	case *ast.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
@@ -854,4 +857,14 @@ func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
 		Function:  bt,
 		ArgValues: make([]types.Datum, 1)}
 	er.ctxStack[len(er.ctxStack)-1] = function
+}
+
+func (er *expressionRewriter) valuesToScalarFunc(v *ast.ValuesExpr) {
+	bt := evaluator.BuildinValuesFactory(v)
+	function := &expression.ScalarFunction{
+		FuncName: model.NewCIStr(ast.Values),
+		RetType:  &v.Type,
+		Function: bt,
+	}
+	er.ctxStack = append(er.ctxStack, function)
 }

@@ -21,7 +21,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -546,8 +545,8 @@ type InsertValues struct {
 
 	Table     table.Table
 	Columns   []*ast.ColumnName
-	Lists     [][]ast.ExprNode
-	Setlist   []*ast.Assignment
+	Lists     [][]expression.Expression
+	Setlist   []*expression.Assignment
 	IsPrepare bool
 }
 
@@ -555,8 +554,7 @@ type InsertValues struct {
 type InsertExec struct {
 	*InsertValues
 
-	OnDuplicate []*ast.Assignment
-	fields      []*ast.ResultField
+	OnDuplicate []*expression.Assignment
 
 	Priority int
 	Ignore   bool
@@ -654,7 +652,7 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		// Process `set` type column.
 		columns := make([]string, 0, len(e.Setlist))
 		for _, v := range e.Setlist {
-			columns = append(columns, v.Column.Name.O)
+			columns = append(columns, v.Col.ColName.O)
 		}
 
 		cols, err = table.FindCols(tableCols, columns)
@@ -696,7 +694,7 @@ func (e *InsertValues) fillValueList() error {
 		if len(e.Lists) > 0 {
 			return errors.Errorf("INSERT INTO %s: set type should not use values", e.Table)
 		}
-		var l []ast.ExprNode
+		l := make([]expression.Expression, 0, len(e.Setlist))
 		for _, v := range e.Setlist {
 			l = append(l, v.Expr)
 		}
@@ -706,6 +704,7 @@ func (e *InsertValues) fillValueList() error {
 }
 
 func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, cols []*table.Column) error {
+	// TODO: This check should be done in plan builder.
 	if insertValueCount != valueCount {
 		// "insert into t values (), ()" is valid.
 		// "insert into t values (), (1)" is not valid.
@@ -723,27 +722,9 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 	return nil
 }
 
-func (e *InsertValues) getColumnDefaultValues(cols []*table.Column) (map[string]types.Datum, error) {
-	defaultValMap := map[string]types.Datum{}
-	for _, col := range cols {
-		if value, ok, err := table.GetColDefaultValue(e.ctx, col.ToInfo()); ok {
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			defaultValMap[col.Name.L] = value
-		}
-	}
-	return defaultValMap, nil
-}
-
 func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	defaultVals, err := e.getColumnDefaultValues(e.Table.Cols())
-	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -754,7 +735,7 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 			return nil, errors.Trace(err)
 		}
 		e.currRow = i
-		rows[i], err = e.getRow(cols, list, defaultVals)
+		rows[i], err = e.getRow(cols, list)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -762,28 +743,13 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 	return
 }
 
-func (e *InsertValues) getRow(cols []*table.Column, list []ast.ExprNode, defaultVals map[string]types.Datum) ([]types.Datum, error) {
+func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression) ([]types.Datum, error) {
 	vals := make([]types.Datum, len(list))
-	var err error
 	for i, expr := range list {
-		if d, ok := expr.(*ast.DefaultExpr); ok {
-			cn := d.Name
-			if cn == nil {
-				vals[i] = defaultVals[cols[i].Name.L]
-				continue
-			}
-			var found bool
-			vals[i], found = defaultVals[cn.Name.L]
-			if !found {
-				return nil, errors.Errorf("default column not found - %s", cn.Name.O)
-			}
-		} else {
-			var val types.Datum
-			val, err = evaluator.Eval(e.ctx, expr)
-			vals[i] = val
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+		val, err := expr.Eval(nil, e.ctx)
+		vals[i] = val
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	return e.fillRowData(cols, vals, false)
@@ -914,17 +880,12 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 
 // onDuplicateUpdate updates the duplicate row.
 // TODO: Report rows affected and last insert id.
-func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]*ast.Assignment) error {
+func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]*expression.Assignment) error {
 	data, err := e.Table.Row(e.ctx, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// for evaluating ColumnNameExpr
-	for i, rf := range e.fields {
-		rf.Expr.SetValue(data[i].GetValue())
-	}
-	// for evaluating ValuesExpr
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.ctx.GetSessionVars().CurrInsertValues = row
 	// evaluate assignment
@@ -935,7 +896,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 			newData[i] = c
 			continue
 		}
-		val, err1 := evaluator.Eval(e.ctx, asgn.Expr)
+		val, err1 := asgn.Expr.Eval(data, e.ctx)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -968,12 +929,12 @@ func findColumnByName(t table.Table, tableName, colName string) (*table.Column, 
 	return c, nil
 }
 
-func getOnDuplicateUpdateColumns(assignList []*ast.Assignment, t table.Table) (map[int]*ast.Assignment, error) {
-	m := make(map[int]*ast.Assignment, len(assignList))
+func getOnDuplicateUpdateColumns(assignList []*expression.Assignment, t table.Table) (map[int]*expression.Assignment, error) {
+	m := make(map[int]*expression.Assignment, len(assignList))
 
 	for _, v := range assignList {
-		col := v.Column
-		c, err := findColumnByName(t, col.Table.L, col.Name.L)
+		col := v.Col
+		c, err := findColumnByName(t, col.TblName.L, col.ColName.L)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
