@@ -148,7 +148,9 @@ func (*testSuite) TestAsyn(c *C) {
 	var mu sync.Mutex
 	wg := sync.WaitGroup{}
 	m := map[int64]struct{}{}
-	errCh := make(chan error, 100)
+	count := 100
+	errCh := make(chan error, count)
+	defer close(errCh)
 
 	allocIDs := func() {
 		alloc := NewAllocator(store, dbID)
@@ -169,7 +171,7 @@ func (*testSuite) TestAsyn(c *C) {
 			mu.Unlock()
 		}
 	}
-	for i := 0; i < 100; i++ {
+	for i := 0; i < count; i++ {
 		wg.Add(1)
 		time.Sleep(time.Duration(i%10) * time.Microsecond)
 
@@ -180,11 +182,9 @@ func (*testSuite) TestAsyn(c *C) {
 	}
 	wg.Wait()
 
-	if len(errCh) > 0 {
-		select {
-		case err := <-errCh:
-			c.Assert(err, IsNil)
-		default:
-		}
+	select {
+	case err := <-errCh:
+		c.Assert(err, IsNil)
+	default:
 	}
 }
