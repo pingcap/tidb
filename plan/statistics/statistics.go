@@ -20,6 +20,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
@@ -186,6 +187,26 @@ func (c *Column) search(sc *variable.StatementContext, target types.Datum) (inde
 	return
 }
 
+func (c *Column) mergeBuckets(bucketIdx int64) {
+	curBuck := 0
+	for i := int64(0); i+1 <= bucketIdx; i += 2 {
+		c.Numbers[curBuck] = c.Numbers[i+1]
+		c.Values[curBuck] = c.Values[i+1]
+		c.Repeats[curBuck] = c.Repeats[i+1]
+		curBuck += 1
+	}
+	if bucketIdx%2 == 0 {
+		c.Numbers[curBuck] = c.Numbers[bucketIdx]
+		c.Values[curBuck] = c.Values[bucketIdx]
+		c.Repeats[curBuck] = c.Repeats[bucketIdx]
+		curBuck += 1
+	}
+	c.Numbers = c.Numbers[:curBuck]
+	c.Values = c.Values[:curBuck]
+	c.Repeats = c.Repeats[:curBuck]
+	return
+}
+
 // Table represents statistics for a table.
 type Table struct {
 	info    *model.TableInfo
@@ -311,16 +332,142 @@ func estimateNDV(sc *variable.StatementContext, count int64, samples []types.Dat
 	return int64(estimatedDistinct), nil
 }
 
+func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, result ast.RecordSet, bucketCount int64) error {
+	if t.Count < 0 {
+		return t.buildIndexColumnWithoutCount(sc, offset, result, bucketCount)
+	} else {
+		return t.buildIndexColumnWithCount(sc, offset, result, bucketCount)
+	}
+}
+
+// buildIndexWithoutCount is used for when we do not know the total row count.
+func (t *Table) buildIndexColumnWithoutCount(sc *variable.StatementContext, offset int, result ast.RecordSet, bucketCount int64) error {
+	t.Count = 0
+	ci := t.info.Columns[offset]
+	col := &Column{
+		ID:      ci.ID,
+		NDV:     0,
+		Numbers: make([]int64, 1, bucketCount),
+		Values:  make([]types.Datum, 1, bucketCount),
+		Repeats: make([]int64, 1, bucketCount),
+	}
+	var valuesPerBucket, lastNumber, bucketIdx int64 = 1, 0, 0
+	for {
+		row, err := result.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cmp, err := col.Values[bucketIdx].CompareDatum(sc, row.Data[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		t.Count += 1
+		if cmp == 0 {
+			// The new item has the same value as current bucket value, to ensure that
+			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
+			// valuesPerBucket.
+			col.Numbers[bucketIdx] += 1
+			col.Repeats[bucketIdx] += 1
+		} else if col.Numbers[bucketIdx]+1-lastNumber <= valuesPerBucket {
+			// The bucket still have room to store a new item, update the bucket.
+			col.Numbers[bucketIdx] += 1
+			col.Values[bucketIdx] = row.Data[0]
+			col.Repeats[bucketIdx] = 0
+			col.NDV += 1
+		} else {
+			// The buckets is full, we should merge buckets
+			if bucketIdx+1 == bucketCount {
+				col.mergeBuckets(bucketIdx)
+				valuesPerBucket *= 2
+				bucketIdx = (bucketIdx + 1) / 2
+				if bucketIdx == 0 {
+					lastNumber = 0
+				} else {
+					lastNumber = col.Numbers[bucketIdx-1]
+				}
+			}
+			if col.Numbers[bucketIdx]+1-lastNumber <= valuesPerBucket {
+				col.Numbers[bucketIdx] += 1
+				col.Values[bucketIdx] = row.Data[0]
+				col.Repeats[bucketIdx] = 0
+			} else {
+				lastNumber = col.Numbers[bucketIdx]
+				bucketIdx++
+				col.Numbers = append(col.Numbers, lastNumber+1)
+				col.Values = append(col.Values, row.Data[0])
+				col.Repeats = append(col.Repeats, 0)
+			}
+			col.NDV += 1
+		}
+	}
+	t.Columns[offset] = col
+	return nil
+}
+
+// buildIndexWithoutCount is used for when we know the total row count.
+func (t *Table) buildIndexColumnWithCount(sc *variable.StatementContext, offset int, result ast.RecordSet, bucketCount int64) error {
+	ci := t.info.Columns[offset]
+	col := &Column{
+		ID:      ci.ID,
+		NDV:     0,
+		Numbers: make([]int64, 1, bucketCount),
+		Values:  make([]types.Datum, 1, bucketCount),
+		Repeats: make([]int64, 1, bucketCount),
+	}
+	valuesPerBucket := t.Count/bucketCount + 1
+	var lastNumber, bucketIdx int64
+	for {
+		row, err := result.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cmp, err := col.Values[bucketIdx].CompareDatum(sc, row.Data[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if cmp == 0 {
+			// The new item has the same value as current bucket value, to ensure that
+			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
+			// valuesPerBucket.
+			col.Numbers[bucketIdx] += 1
+			col.Repeats[bucketIdx] += 1
+		} else if col.Numbers[bucketIdx]+1-lastNumber <= valuesPerBucket {
+			// The bucket still have room to store a new item, update the bucket.
+			col.Numbers[bucketIdx] += 1
+			col.Values[bucketIdx] = row.Data[0]
+			col.Repeats[bucketIdx] = 0
+			col.NDV += 1
+		} else {
+			// The bucket is full, store the item in the next bucket.
+			lastNumber = col.Numbers[bucketIdx]
+			bucketIdx++
+			col.Numbers = append(col.Numbers, lastNumber+1)
+			col.Values = append(col.Values, row.Data[0])
+			col.Repeats = append(col.Repeats, 0)
+			col.NDV += 1
+		}
+	}
+	t.Columns[offset] = col
+	return nil
+}
+
 // NewTable creates a table statistics.
-func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, numBuckets int64, columnSamples [][]types.Datum) (*Table, error) {
+func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, numBuckets int64, columnSamples [][]types.Datum,
+	colOffsets []int, indResults []ast.RecordSet, indOffsets []int) (*Table, error) {
 	t := &Table{
 		info:    ti,
 		TS:      ts,
 		Count:   count,
 		Columns: make([]*Column, len(columnSamples)),
 	}
-	for i, sample := range columnSamples {
-		err := t.buildColumn(sc, i, sample, defaultBucketCount)
+	for i, offset := range colOffsets {
+		err := t.buildColumn(sc, offset, columnSamples[i], numBuckets)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	for i, offset := range indOffsets {
+		err := t.buildIndexColumn(sc, offset, indResults[i], numBuckets)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

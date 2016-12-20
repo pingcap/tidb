@@ -81,7 +81,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	timestamp := int64(10)
 	bucketCount := int64(256)
 	sc := new(variable.StatementContext)
-	t, err := NewTable(sc, tblInfo, timestamp, s.count, bucketCount, [][]types.Datum{s.samples})
+	t, err := NewTable(sc, tblInfo, timestamp, s.count, bucketCount, [][]types.Datum{s.samples}, []int{0}, nil, nil)
 	c.Check(err, IsNil)
 
 	col := t.Columns[0]

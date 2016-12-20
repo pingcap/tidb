@@ -329,21 +329,76 @@ func (e *SimpleExec) createStatisticsForTable(tn *ast.TableName) error {
 	} else {
 		tableName = tn.Schema.L + "." + tn.Name.L
 	}
-	sql := "select * from " + tableName
-	result, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
-	if err != nil {
-		return errors.Trace(err)
+	indOffsets, colOffsets := detachIndexColumns(tn.TableInfo)
+	var count int64 = -1
+	var colSamples []*ast.Row
+	if colOffsets != nil {
+		var colNames []string
+		for _, offset := range colOffsets {
+			colNames = append(colNames, tn.TableInfo.Columns[offset].Name.L)
+		}
+		sql := "select " + strings.Join(colNames, ",") + " from " + tableName
+		result, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		count, colSamples, err = e.collectSamples(result)
+		result.Close()
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	count, samples, err := e.collectSamples(result)
-	result.Close()
-	if err != nil {
-		return errors.Trace(err)
+	var indResults []ast.RecordSet
+	if indOffsets != nil {
+		for _, offset := range indOffsets {
+			colName := tn.TableInfo.Columns[offset].Name.L
+			sql := "select " + colName + " from " + tableName + " order by " + colName
+			result, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			indResults = append(indResults, result)
+		}
 	}
-	err = e.buildStatisticsAndSaveToKV(tn, count, samples)
+	err := e.buildStatisticsAndSaveToKV(tn, count, colSamples, colOffsets, indResults, indOffsets)
+	for _, result := range indResults {
+		result.Close()
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func detachIndexColumns(tbl *model.TableInfo) (indexOffset []int, columnOffset []int) {
+	var indNames []string
+	if tbl.PKIsHandle {
+		for _, col := range tbl.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				indNames = append(indNames, col.Name.L)
+			}
+		}
+	}
+	for _, ind := range tbl.Indices {
+		if ind.Columns[0].Length == types.UnspecifiedLength {
+			indNames = append(indNames, ind.Columns[0].Name.L)
+		}
+	}
+	for i, col := range tbl.Columns {
+		isIndexCol := false
+		for _, ind := range indNames {
+			if ind == col.Name.L {
+				isIndexCol = true
+				break
+			}
+		}
+		if isIndexCol {
+			indexOffset = append(indexOffset, i)
+		} else {
+			columnOffset = append(columnOffset, i)
+		}
+	}
+	return
 }
 
 // collectSamples collects sample from the result set, using Reservoir Sampling algorithm.
@@ -372,14 +427,14 @@ func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples 
 	return count, samples, nil
 }
 
-func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, sampleRows []*ast.Row) error {
+func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, sampleRows []*ast.Row, colOffsets []int, indResults []ast.RecordSet, indOffsets []int) error {
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	columnSamples := rowsToColumnSamples(sampleRows)
 	sc := e.ctx.GetSessionVars().StmtCtx
-	t, err := statistics.NewTable(sc, tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples)
+	t, err := statistics.NewTable(sc, tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples, colOffsets, indResults, indOffsets)
 	if err != nil {
 		return errors.Trace(err)
 	}
