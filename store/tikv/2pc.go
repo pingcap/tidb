@@ -261,10 +261,10 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	req := &pb.Request{
 		Type: pb.MessageType_CmdPrewrite,
 		CmdPrewriteReq: &pb.CmdPrewriteRequest{
-			Mutations:    mutations,
-			PrimaryLock:  c.primary(),
-			StartVersion: c.startTS,
-			LockTtl:      c.lockTTL,
+			Mutations:           mutations,
+			PrimaryLock:         c.primary(),
+			StartVersion:        c.startTS,
+			LockTtl:             c.lockTTL,
 			SkipConstraintCheck: skipCheck,
 		},
 	}
