@@ -173,12 +173,11 @@ func (*testSuite) TestAsyn(c *C) {
 	}
 	for i := 0; i < count; i++ {
 		wg.Add(1)
-		time.Sleep(time.Duration(i%10) * time.Microsecond)
-
-		go func() {
+		go func(num int) {
+			time.Sleep(time.Duration(num%10) * time.Microsecond)
 			defer wg.Done()
 			allocIDs()
-		}()
+		}(i)
 	}
 	wg.Wait()
 
