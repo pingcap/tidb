@@ -11,15 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package autoid_test
+package autoid
 
 import (
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -55,7 +57,7 @@ func (*testSuite) TestT(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	alloc := autoid.NewAllocator(store, 1)
+	alloc := NewAllocator(store, 1)
 	c.Assert(alloc, NotNil)
 
 	id, err := alloc.Alloc(1)
@@ -89,13 +91,13 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3011))
 
-	alloc = autoid.NewAllocator(store, 1)
+	alloc = NewAllocator(store, 1)
 	c.Assert(alloc, NotNil)
 	id, err = alloc.Alloc(1)
 	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(autoid.GetStep()+1))
+	c.Assert(id, Equals, int64(GetStep()+1))
 
-	alloc = autoid.NewAllocator(store, 1)
+	alloc = NewAllocator(store, 1)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(2, int64(1), false)
 	c.Assert(err, IsNil)
@@ -103,11 +105,11 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
 
-	alloc = autoid.NewAllocator(store, 1)
+	alloc = NewAllocator(store, 1)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3210), false)
 	c.Assert(err, IsNil)
-	alloc = autoid.NewAllocator(store, 1)
+	alloc = NewAllocator(store, 1)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3000), false)
 	c.Assert(err, IsNil)
@@ -119,4 +121,70 @@ func (*testSuite) TestT(c *C) {
 	id, err = alloc.Alloc(3)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(6544))
+}
+
+func (*testSuite) TestAsyn(c *C) {
+	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
+	store, err := driver.Open("memory")
+	c.Assert(err, IsNil)
+	defer store.Close()
+	step = 100
+	defer func() {
+		step = 5000
+	}()
+
+	dbID := int64(2)
+	tblID := int64(100)
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
+		c.Assert(err, IsNil)
+		err = m.CreateTable(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
+		c.Assert(err, IsNil)
+		return nil
+	})
+	c.Assert(err, IsNil)
+
+	var mu sync.Mutex
+	wg := sync.WaitGroup{}
+	m := map[int64]struct{}{}
+	errCh := make(chan error, 100)
+
+	allocIDs := func() {
+		alloc := NewAllocator(store, dbID)
+		for j := 0; j < int(step)+5; j++ {
+			id, err := alloc.Alloc(tblID)
+			if err != nil {
+				errCh <- err
+				break
+			}
+
+			mu.Lock()
+			if _, ok := m[id]; ok {
+				errCh <- fmt.Errorf("duplicate id:%v", id)
+				mu.Unlock()
+				break
+			}
+			m[id] = struct{}{}
+			mu.Unlock()
+		}
+	}
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		time.Sleep(time.Duration(i%10) * time.Microsecond)
+
+		go func() {
+			defer wg.Done()
+			allocIDs()
+		}()
+	}
+	wg.Wait()
+
+	if len(errCh) > 0 {
+		select {
+		case err := <-errCh:
+			c.Assert(err, IsNil)
+		default:
+		}
+	}
 }
