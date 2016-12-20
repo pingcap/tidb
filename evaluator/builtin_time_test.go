@@ -63,13 +63,13 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		WeekOfYear int64
 		YearWeek   int64
 	}{
-		{"2000-01-01", 2000, 1, "January", 1, 7, 1, 5, "Saturday", 52, 52, 199952},
+		{"2000-01-01", 2000, 1, "January", 1, 7, 1, 5, "Saturday", 0, 52, 199952},
 		{"2011-11-11", 2011, 11, "November", 11, 6, 315, 4, "Friday", 45, 45, 201145},
-		{"0000-01-01", int64(0), 1, "January", 1, 7, 1, 5, "Saturday", 52, 52, math.MaxUint32},
+		{"0000-01-01", int64(0), 1, "January", 1, 7, 1, 5, "Saturday", 1, 52, 1},
 	}
 
 	dtbl := tblToDtbl(tbl)
-	for _, t := range dtbl {
+	for ith, t := range dtbl {
 		args := t["Input"]
 		v, err := builtinYear(args, s.ctx)
 		c.Assert(err, IsNil)
@@ -105,7 +105,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 
 		v, err = builtinWeek(args, s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(v, testutil.DatumEquals, t["Week"][0])
+		c.Assert(v, testutil.DatumEquals, t["Week"][0], Commentf("no.%d", ith))
 
 		v, err = builtinWeekOfYear(args, s.ctx)
 		c.Assert(err, IsNil)
@@ -113,7 +113,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 
 		v, err = builtinYearWeek(args, s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(v, testutil.DatumEquals, t["YearWeek"][0])
+		c.Assert(v, testutil.DatumEquals, t["YearWeek"][0], Commentf("no.%d", ith))
 	}
 
 	// test nil
@@ -623,5 +623,45 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		result, err := builtinTimeDiff([]types.Datum{t1, t2}, s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(result.GetMysqlDuration().String(), Equals, test.expectStr)
+	}
+}
+
+func (s *testEvaluatorSuite) TestWeek(c *C) {
+	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_week
+	tests := []struct {
+		t      string
+		mode   int64
+		expect int64
+	}{
+		{"2008-02-20", 0, 7},
+		{"2008-02-20", 1, 8},
+		{"2008-12-31", 1, 53},
+	}
+	for _, test := range tests {
+		arg1 := types.NewStringDatum(test.t)
+		arg2 := types.NewIntDatum(test.mode)
+		result, err := builtinWeek([]types.Datum{arg1, arg2}, s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(result.GetInt64(), Equals, test.expect)
+	}
+
+}
+
+func (s *testEvaluatorSuite) TestYearWeek(c *C) {
+	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
+	tests := []struct {
+		t      string
+		mode   int64
+		expect int64
+	}{
+		{"1987-01-01", 0, 198652},
+		{"2000-01-01", 0, 199952},
+	}
+	for _, test := range tests {
+		arg1 := types.NewStringDatum(test.t)
+		arg2 := types.NewIntDatum(test.mode)
+		result, err := builtinYearWeek([]types.Datum{arg1, arg2}, s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(result.GetInt64(), Equals, test.expect)
 	}
 }
