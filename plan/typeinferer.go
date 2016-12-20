@@ -281,11 +281,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		} else {
 			tp = types.NewFieldType(mysql.TypeLonglong)
 		}
+	case "ln", "log", "log2", "log10":
+		tp = types.NewFieldType(mysql.TypeDouble)
 	case "pow", "power", "rand":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "curdate", "current_date", "date":
 		tp = types.NewFieldType(mysql.TypeDate)
-	case "curtime", "current_time":
+	case "curtime", "current_time", "timediff":
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
 	case "current_timestamp", "date_arith":
@@ -309,7 +311,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case "dayname", "version", "database", "user", "current_user", "schema",
 		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
 		"replace", "ucase", "upper", "convert", "substring",
-		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex", "date_format":
+		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex", "date_format", "rpad":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case "strcmp", "isnull":

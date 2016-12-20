@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -283,7 +282,7 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 		execPlan.UsingVars[i] = &expression.Constant{Value: value.Datum, RetType: &value.Type}
 	}
 	sa := &statement{
-		is:   sessionctx.GetDomain(ctx).InfoSchema(),
+		is:   GetInfoSchema(ctx),
 		plan: execPlan,
 	}
 	return sa

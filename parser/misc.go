@@ -290,10 +290,14 @@ var tokenMap = map[string]int{
 	"LIKE":                like,
 	"LIMIT":               limit,
 	"LINES":               lines,
+	"LN":                  ln,
 	"LOAD":                load,
 	"LOCAL":               local,
 	"LOCATE":              locate,
 	"LOCK":                lock,
+	"LOG":                 log,
+	"LOG2":                log2,
+	"LOG10":               log10,
 	"LOWER":               lower,
 	"LCASE":               lcase,
 	"LOW_PRIORITY":        lowPriority,
@@ -380,6 +384,7 @@ var tokenMap = map[string]int{
 	"TABLE":               tableKwd,
 	"TABLES":              tables,
 	"TERMINATED":          terminated,
+	"TIMEDIFF":            timediff,
 	"THAN":                than,
 	"THEN":                then,
 	"TO":                  to,
@@ -474,6 +479,7 @@ var tokenMap = map[string]int{
 	"ACTION":              action,
 	"PARTITION":           partition,
 	"PARTITIONS":          partitions,
+	"RPAD":                rpad,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {

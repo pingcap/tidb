@@ -50,6 +50,10 @@ var Funcs = map[string]Func{
 	ast.Abs:     {builtinAbs, 1, 1},
 	ast.Ceil:    {builtinCeil, 1, 1},
 	ast.Ceiling: {builtinCeil, 1, 1},
+	ast.Ln:      {builtinLog, 1, 1},
+	ast.Log:     {builtinLog, 1, 2},
+	ast.Log2:    {builtinLog2, 1, 1},
+	ast.Log10:   {builtinLog10, 1, 1},
 	ast.Pow:     {builtinPow, 2, 2},
 	ast.Power:   {builtinPow, 2, 2},
 	ast.Rand:    {builtinRand, 0, 1},
@@ -87,6 +91,7 @@ var Funcs = map[string]Func{
 	ast.Year:             {builtinYear, 1, 1},
 	ast.YearWeek:         {builtinYearWeek, 1, 2},
 	ast.FromUnixTime:     {builtinFromUnixTime, 1, 2},
+	ast.TimeDiff:         {builtinTimeDiff, 2, 2},
 
 	// string functions
 	ast.ASCII:          {builtinASCII, 1, 1},
@@ -112,6 +117,7 @@ var Funcs = map[string]Func{
 	ast.Ucase:          {builtinUpper, 1, 1},
 	ast.Hex:            {builtinHex, 1, 1},
 	ast.Unhex:          {builtinUnHex, 1, 1},
+	ast.Rpad:           {builtinRpad, 3, 3},
 
 	// information functions
 	ast.ConnectionID: {builtinConnectionID, 0, 0},
