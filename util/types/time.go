@@ -412,8 +412,8 @@ func (t *Time) check() error {
 	return nil
 }
 
-// Sub subs t1 from t, returns a duration value.
-// NOTE that sub should not be done on different time types.
+// Sub subtracts t1 from t, returns a duration value.
+// Note that sub should not be done on different time types.
 func (t *Time) Sub(t1 *Time) Duration {
 	var duration gotime.Duration
 	if t.Type == mysql.TypeTimestamp && t1.Type == mysql.TypeTimestamp {

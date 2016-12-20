@@ -133,26 +133,21 @@ func calcTimeDiff(t1, t2 TimeInternal, sign int) (seconds, microseconds int, neg
 		int64(t1.Second())-
 		int64(sign)*(int64(t2.Hour())*3600+int64(t2.Minute())*60+
 			int64(t2.Second())))*
-		1000000 +
+		1e6 +
 		int64(t1.Microsecond()) - int64(sign)*int64(t2.Microsecond())
 
 	if tmp < 0 {
 		tmp = -tmp
 		neg = true
 	}
-	seconds = int(tmp / 1000000)
-	microseconds = int(tmp % 1000000)
+	seconds = int(tmp / 1e6)
+	microseconds = int(tmp % 1e6)
 	return
 }
 
 // datetimeToUint64 converts time value to integer in YYYYMMDDHHMMSS format.
 func datetimeToUint64(t TimeInternal) uint64 {
-	return (uint64(t.Year())*10000+
-		uint64(t.Month())*100+
-		uint64(t.Day()))*1000000 +
-		uint64(t.Hour())*10000 +
-		uint64(t.Minute())*100 +
-		uint64(t.Second())
+	return dateToUint64(t)*1000000 + timeToUint64(t)
 }
 
 // dateToUint64 converts time value to integer in YYYYMMDD format.
