@@ -322,7 +322,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 
 	skipCheck := ctx.GetSessionVars().SkipConstraintCheck
 	if skipCheck {
-		txn.SetOption(kv.SkipCheck, true)
+		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
 
 	bs := kv.NewBufferStore(txn)
