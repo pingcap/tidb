@@ -130,3 +130,11 @@ func (p *Update) ResolveIndicesAndCorCols() {
 	}
 	p.OrderedList = orderedList
 }
+
+// ResolveIndicesAndCorCols implements LogicalPlan interface.
+func (p *Insert) ResolveIndicesAndCorCols() {
+	p.baseLogicalPlan.ResolveIndicesAndCorCols()
+	for _, asgn := range p.OnDuplicate {
+		asgn.Expr.ResolveIndices(p.tableSchema)
+	}
+}
