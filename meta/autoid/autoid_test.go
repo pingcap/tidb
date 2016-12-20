@@ -150,7 +150,6 @@ func (*testSuite) TestAsyn(c *C) {
 	m := map[int64]struct{}{}
 	count := 100
 	errCh := make(chan error, count)
-	defer close(errCh)
 
 	allocIDs := func() {
 		alloc := NewAllocator(store, dbID)
@@ -174,16 +173,14 @@ func (*testSuite) TestAsyn(c *C) {
 	for i := 0; i < count; i++ {
 		wg.Add(1)
 		go func(num int) {
-			time.Sleep(time.Duration(num%10) * time.Microsecond)
 			defer wg.Done()
+			time.Sleep(time.Duration(num%10) * time.Microsecond)
 			allocIDs()
 		}(i)
 	}
 	wg.Wait()
 
-	select {
-	case err := <-errCh:
-		c.Assert(err, IsNil)
-	default:
-	}
+	close(errCh)
+	err, ok := <-errCh
+	c.Assert(ok, IsFalse, Commentf("err:%v", err))
 }
