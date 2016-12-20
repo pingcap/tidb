@@ -99,7 +99,7 @@ type Plan interface {
 	// Check whether this plan is correlated or not.
 	IsCorrelated() bool
 	// Set the value of correlated.
-	SetCorrelated(v bool)
+	SetCorrelated()
 	// SetParents sets the parents for the plan.
 	SetParents(...Plan)
 	// SetParents sets the children for the plan.
@@ -325,8 +325,10 @@ func (p *basePlan) IsCorrelated() bool {
 	return p.correlated
 }
 
-func (p *basePlan) SetCorrelated(v bool) {
-	p.correlated = v
+func (p *basePlan) SetCorrelated() {
+	for _, child := range p.children {
+		p.correlated = p.correlated || child.IsCorrelated()
+	}
 }
 
 // GetID implements Plan GetID interface.
