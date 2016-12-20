@@ -317,6 +317,15 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		},
 	}
 
+	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
+	// transaction has been successfully committed.
+	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
+	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
+	// workaround seems to be an infinite retry util server recovers and returns a success or failure response.
+	if bytes.Compare(batch.keys[0], c.primary()) == 0 {
+		bo = NewBackoffer(commitPrimaryMaxBackoff, bo.ctx)
+	}
+
 	resp, err := c.store.SendKVReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
