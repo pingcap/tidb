@@ -558,6 +558,7 @@ func buildShowEventsSchema() expression.Schema {
 	return schema
 }
 
+// getShowColNamesAndTypes gets column names and types. If the `ftypes` is empty, every column is set to varchar type.
 func getShowColNamesAndTypes(s *ast.ShowStmt) (names []string, ftypes []byte) {
 	switch s.Tp {
 	case ast.ShowEngines:
