@@ -74,7 +74,7 @@ func (p *Join) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// SetCorrelated implements Plan SetCorrelated interface.
+// SetCorrelated implements Plan interface.
 func (p *Join) SetCorrelated() {
 	p.basePlan.SetCorrelated()
 	for _, cond := range p.EqualConditions {
@@ -105,7 +105,7 @@ func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// SetCorrelated implements Plan SetCorrelated interface.
+// SetCorrelated implements Plan interface.
 func (p *Projection) SetCorrelated() {
 	p.basePlan.SetCorrelated()
 	for _, expr := range p.Exprs {
@@ -137,7 +137,7 @@ func (p *Aggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// SetCorrelated implements Plan SetCorrelated interface.
+// SetCorrelated implements Plan interface.
 func (p *Aggregation) SetCorrelated() {
 	p.basePlan.SetCorrelated()
 	for _, item := range p.GroupByItems {
@@ -171,7 +171,7 @@ func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// SetCorrelated implements Plan SetCorrelated interface.
+// SetCorrelated implements Plan interface.
 func (p *Selection) SetCorrelated() {
 	p.basePlan.SetCorrelated()
 	for _, cond := range p.Conditions {
@@ -195,7 +195,7 @@ func (p *Apply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// SetCorrelated implements Plan SetCorrelated interface.
+// SetCorrelated implements Plan interface.
 func (p *Apply) SetCorrelated() {
 	corCols := p.GetChildren()[1].extractCorrelatedCols()
 	p.correlated = p.GetChildren()[0].IsCorrelated()
@@ -266,7 +266,7 @@ func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// SetCorrelated implements Plan SetCorrelated interface.
+// SetCorrelated implements Plan interface.
 func (p *Sort) SetCorrelated() {
 	p.basePlan.SetCorrelated()
 	for _, it := range p.ByItems {

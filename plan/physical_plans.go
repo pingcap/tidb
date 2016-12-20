@@ -524,7 +524,7 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// SetCorrelated implements Plan SetCorrelated interface.
+// SetCorrelated implements Plan interface.
 func (p *PhysicalApply) SetCorrelated() {
 	corColumns := p.GetChildren()[1].extractCorrelatedCols()
 	p.correlated = p.GetChildren()[0].IsCorrelated()
@@ -577,7 +577,7 @@ func (p *PhysicalHashSemiJoin) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// SetCorrelated implements Plan SetCorrelated interface.
+// SetCorrelated implements Plan interface.
 func (p *PhysicalHashSemiJoin) SetCorrelated() {
 	p.basePlan.SetCorrelated()
 	for _, cond := range p.EqualConditions {
@@ -633,7 +633,7 @@ func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// SetCorrelated implements Plan SetCorrelated interface.
+// SetCorrelated implements Plan interface.
 func (p *PhysicalHashJoin) SetCorrelated() {
 	p.basePlan.SetCorrelated()
 	for _, cond := range p.EqualConditions {
@@ -804,7 +804,7 @@ func (p *PhysicalAggregation) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// SetCorrelated implements Plan SetCorrelated interface.
+// SetCorrelated implements Plan interface.
 func (p *PhysicalAggregation) SetCorrelated() {
 	p.basePlan.SetCorrelated()
 	for _, item := range p.GroupByItems {
