@@ -560,8 +560,16 @@ func builtinWeek(args []types.Datum, ctx context.Context) (types.Datum, error) {
 		return d, nil
 	}
 
-	// TODO: support multi mode for week
-	_, week := t.Time.ISOWeek()
+	var mode int
+	if len(args) > 1 {
+		v, err := args[1].ToInt64(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		mode = int(v)
+	}
+
+	week := t.Time.Week(mode)
 	wi := int64(week)
 	d.SetInt64(wi)
 	return d, nil
@@ -631,9 +639,17 @@ func builtinYearWeek(args []types.Datum, ctx context.Context) (types.Datum, erro
 		return d, nil
 	}
 
-	// TODO: support multi mode for week
-	year, week := t.Time.ISOWeek()
-	d.SetInt64(int64(year*100 + week))
+	var mode int64
+	if len(args) > 1 {
+		v, err := args[1].ToInt64(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		mode = v
+	}
+
+	year, week := t.Time.YearWeek(int(mode))
+	d.SetInt64(int64(week + year*100))
 	if d.GetInt64() < 0 {
 		d.SetInt64(math.MaxUint32)
 	}

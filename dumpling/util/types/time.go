@@ -131,7 +131,8 @@ type TimeInternal interface {
 	Second() int
 	Weekday() gotime.Weekday
 	YearDay() int
-	ISOWeek() (int, int)
+	YearWeek(mode int) (int, int)
+	Week(mode int) int
 	Microsecond() int
 	GoTime() (gotime.Time, error)
 }
@@ -1174,11 +1175,7 @@ func ExtractTimeNum(unit string, t Time) (int64, error) {
 	case "DAY":
 		return int64(t.Time.Day()), nil
 	case "WEEK":
-		t1, err := t.Time.GoTime()
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		_, week := t1.ISOWeek()
+		week := t.Time.Week(0)
 		return int64(week), nil
 	case "MONTH":
 		t1, err := t.Time.GoTime()
@@ -1663,11 +1660,17 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		fmt.Fprintf(buf, "%02d", t.Time.Second())
 	case 'f':
 		fmt.Fprintf(buf, "%06d", t.Time.Microsecond())
-	case 'U', 'u', 'V', 'v':
-		// TODO: Fix here.
-		// MySQL may use Sunday or Monday as the first day of week, U u V v controls which,
-		// but Go always use Sunday as the first day of week.
-		_, w := t.Time.ISOWeek()
+	case 'U':
+		w := t.Time.Week(0)
+		fmt.Fprintf(buf, "%02d", w)
+	case 'u':
+		w := t.Time.Week(1)
+		fmt.Fprintf(buf, "%02d", w)
+	case 'V':
+		w := t.Time.Week(2)
+		fmt.Fprintf(buf, "%02d", w)
+	case 'v':
+		_, w := t.Time.YearWeek(3)
 		fmt.Fprintf(buf, "%02d", w)
 	case 'a':
 		weekday := t.Time.Weekday()
@@ -1675,10 +1678,12 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	case 'W':
 		buf.WriteString(t.Time.Weekday().String())
 	case 'w':
-		fmt.Fprintf(buf, "%d", int(t.Time.Weekday()))
-	case 'X', 'x':
-		// TODO: Fix here.
-		year, _ := t.Time.ISOWeek()
+		fmt.Fprintf(buf, "%d", t.Time.Weekday())
+	case 'X':
+		year, _ := t.Time.YearWeek(2)
+		fmt.Fprintf(buf, "%04d", year)
+	case 'x':
+		year, _ := t.Time.YearWeek(3)
 		fmt.Fprintf(buf, "%04d", year)
 	case 'Y':
 		fmt.Fprintf(buf, "%04d", t.Time.Year())
