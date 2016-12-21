@@ -172,3 +172,7 @@ func (txn *tikvTxn) IsReadOnly() bool {
 func (txn *tikvTxn) StartTS() uint64 {
 	return txn.startTS
 }
+
+func (txn *tikvTxn) Valid() bool {
+	return txn.valid
+}
