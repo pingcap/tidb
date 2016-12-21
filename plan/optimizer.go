@@ -18,6 +18,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -129,4 +130,5 @@ func init() {
 		CodeIllegalReference:    mysql.ErrIllegalReference,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
+	expression.EvalAstExpr = evalAstExpr
 }
