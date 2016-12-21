@@ -314,10 +314,26 @@ func (t Time) roundFrac(fsp int) (Time, error) {
 		return t, nil
 	}
 
-	t1, _ := t.Time.GoTime()
-	// TODO: Fix here.
-	nt := t1.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond)
-	return Time{Time: FromGoTime(nt), Type: t.Type, Fsp: fsp}, nil
+	var nt TimeInternal
+	if t1, err := t.Time.GoTime(); err == nil {
+		nt = FromGoTime(t1.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond))
+	} else {
+		// Take the hh:mm:ss part out to avoid handle month or day = 0.
+		hour, minute, second, microsecond := t.Time.Hour(), t.Time.Minute(), t.Time.Second(), t.Time.Microsecond()
+		t1 := gotime.Date(1, 1, 1, hour, minute, second, microsecond*1000, gotime.Local)
+		t2 := t1.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond)
+		hour, minute, second = t2.Clock()
+		microsecond = t2.Nanosecond() / 1000
+		day := t2.Day() - 1
+
+		// TODO: Can't handle this currently, but never mind.
+		if day > 0 {
+			return t, errors.Trace(ErrInvalidTimeFormat)
+		}
+		nt = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day()+day, hour, minute, second, microsecond)
+	}
+
+	return Time{Time: nt, Type: t.Type, Fsp: fsp}, nil
 }
 
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.

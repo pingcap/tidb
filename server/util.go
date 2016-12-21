@@ -41,6 +41,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
@@ -197,7 +198,7 @@ func dumpBinaryDateTime(t types.Time, loc *time.Location) (data []byte) {
 	if t.Type == mysql.TypeTimestamp && loc != nil {
 		t1, err := t.Time.GoTime()
 		if err != nil {
-			// TODO: Fix here.
+			log.Fatalf("convert timestamp %v go time return error!", t.Time)
 		}
 		t.Time = types.FromGoTime(t1.In(loc))
 	}
