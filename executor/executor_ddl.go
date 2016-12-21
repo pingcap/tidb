@@ -72,6 +72,7 @@ func (e *DDLExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
 	e.done = true
 	return nil, nil
 }
