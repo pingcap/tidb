@@ -55,3 +55,52 @@ func (s *testMyTimeSuite) TestCalcDaynr(c *C) {
 	c.Assert(calcDaynr(10, 1, 2), Equals, 3654)
 	c.Assert(calcDaynr(2008, 2, 20), Equals, 733457)
 }
+
+func (s *testMyTimeSuite) TestCalcTimeDiff(c *C) {
+	cases := []struct {
+		T1     mysqlTime
+		T2     mysqlTime
+		Sign   int
+		Expect mysqlTime
+	}{
+		// calcTimeDiff can be used for month = 0.
+		{
+			mysqlTime{2006, 0, 1, 12, 23, 21, 0},
+			mysqlTime{2006, 0, 3, 21, 23, 22, 0},
+			1,
+			mysqlTime{0, 0, 0, 57, 0, 1, 0},
+		},
+		{
+			mysqlTime{0, 0, 0, 21, 23, 24, 0},
+			mysqlTime{0, 0, 0, 11, 23, 22, 0},
+			1,
+			mysqlTime{0, 0, 0, 10, 0, 2, 0},
+		},
+	}
+
+	for i, t := range cases {
+		seconds, microseconds, _ := calcTimeDiff(&t.T1, &t.T2, t.Sign)
+		var result mysqlTime
+		calcTimeFromSec(&result, seconds, microseconds)
+		c.Assert(result, Equals, t.Expect, Commentf("%d failed.", i))
+	}
+}
+
+func (s *testMyTimeSuite) TestCompareTime(c *C) {
+	cases := []struct {
+		T1     mysqlTime
+		T2     mysqlTime
+		Expect int
+	}{
+		{mysqlTime{0, 0, 0, 0, 0, 0, 0}, mysqlTime{0, 0, 0, 0, 0, 0, 0}, 0},
+		{mysqlTime{0, 0, 0, 0, 1, 0, 0}, mysqlTime{0, 0, 0, 0, 0, 0, 0}, 1},
+		{mysqlTime{2006, 1, 2, 3, 4, 5, 6}, mysqlTime{2016, 1, 2, 3, 4, 5, 0}, -1},
+		{mysqlTime{0, 0, 0, 11, 22, 33, 0}, mysqlTime{0, 0, 0, 12, 21, 33, 0}, -1},
+		{mysqlTime{9999, 12, 30, 23, 59, 59, 999999}, mysqlTime{0, 1, 2, 3, 4, 5, 6}, 1},
+	}
+
+	for _, t := range cases {
+		c.Assert(compareTime(&t.T1, &t.T2), Equals, t.Expect)
+		c.Assert(compareTime(&t.T2, &t.T1), Equals, -t.Expect)
+	}
+}
