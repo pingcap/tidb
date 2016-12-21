@@ -350,7 +350,7 @@ func (t Time) roundFrac(fsp int) (Time, error) {
 		if t2.Day()-1 > 0 {
 			return t, errors.Trace(ErrInvalidTimeFormat)
 		}
-		nt = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day()+day, hour, minute, second, microsecond)
+		nt = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day(), hour, minute, second, microsecond)
 	}
 
 	return Time{Time: nt, Type: t.Type, Fsp: fsp}, nil
