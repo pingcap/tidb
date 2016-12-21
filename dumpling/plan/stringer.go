@@ -116,7 +116,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		if x.TableAsName != nil && x.TableAsName.L != "" {
 			str = fmt.Sprintf("DataScan(%s)", x.TableAsName)
 		} else {
-			str = fmt.Sprintf("DataScan(%s)", x.Table.Name)
+			str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
 		}
 	case *Selection:
 		str = "Selection"

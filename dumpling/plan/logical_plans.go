@@ -168,11 +168,11 @@ type TableDual struct {
 type DataSource struct {
 	baseLogicalPlan
 
-	table   *ast.TableName
-	Table   *model.TableInfo
-	Columns []*model.ColumnInfo
-	DBName  *model.CIStr
-	Desc    bool
+	indexHints []*ast.IndexHint
+	tableInfo  *model.TableInfo
+	Columns    []*model.ColumnInfo
+	DBName     *model.CIStr
+	Desc       bool
 
 	TableAsName *model.CIStr
 
