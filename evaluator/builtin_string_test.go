@@ -727,3 +727,19 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestBitLength(c *C) {
+	tests := []struct {
+		str    string
+		expect uint64
+	}{
+		{"hi", 16},
+		{"你好", 48},
+	}
+	for _, test := range tests {
+		str := types.NewStringDatum(test.str)
+		result, err := builtinBitLength([]types.Datum{str}, s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(result.GetUint64(), Equals, test.expect)
+	}
+}

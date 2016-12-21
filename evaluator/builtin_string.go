@@ -637,3 +637,16 @@ func builtinRpad(args []types.Datum, ctx context.Context) (d types.Datum, err er
 
 	return d, nil
 }
+
+// https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_bit-length
+func builtinBitLength(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	// args[0] string
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetUint64(uint64(len(str) * 8))
+
+	return d, nil
+}
