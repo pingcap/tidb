@@ -116,9 +116,11 @@ type Executor interface {
 
 // ShowDDLExec represents a show DDL executor.
 type ShowDDLExec struct {
-	schema expression.Schema
-	ctx    context.Context
-	done   bool
+	schema  expression.Schema
+	ctx     context.Context
+	ddlInfo *inspectkv.DDLInfo
+	bgInfo  *inspectkv.DDLInfo
+	done    bool
 }
 
 // Schema implements the Executor Schema interface.
@@ -132,42 +134,28 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 		return nil, nil
 	}
 
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	ddlInfo, err := inspectkv.GetDDLInfo(txn)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	bgInfo, err := inspectkv.GetBgDDLInfo(txn)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	var ddlOwner, ddlJob string
-	if ddlInfo.Owner != nil {
-		ddlOwner = ddlInfo.Owner.String()
+	if e.ddlInfo.Owner != nil {
+		ddlOwner = e.ddlInfo.Owner.String()
 	}
-	if ddlInfo.Job != nil {
-		ddlJob = ddlInfo.Job.String()
+	if e.ddlInfo.Job != nil {
+		ddlJob = e.ddlInfo.Job.String()
 	}
 
 	var bgOwner, bgJob string
-	if bgInfo.Owner != nil {
-		bgOwner = bgInfo.Owner.String()
+	if e.bgInfo.Owner != nil {
+		bgOwner = e.bgInfo.Owner.String()
 	}
-	if bgInfo.Job != nil {
-		bgJob = bgInfo.Job.String()
+	if e.bgInfo.Job != nil {
+		bgJob = e.bgInfo.Job.String()
 	}
 
 	row := &Row{}
 	row.Data = types.MakeDatums(
-		ddlInfo.SchemaVer,
+		e.ddlInfo.SchemaVer,
 		ddlOwner,
 		ddlJob,
-		bgInfo.SchemaVer,
+		e.bgInfo.SchemaVer,
 		bgOwner,
 		bgJob,
 	)
