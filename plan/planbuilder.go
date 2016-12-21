@@ -587,9 +587,7 @@ func getShowColNamesAndTypes(s *ast.ShowStmt) (names []string, ftypes []byte) {
 	case ast.ShowCharset:
 		names = []string{"Charset", "Description", "Default collation", "Maxlen"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
-	case ast.ShowVariables:
-		names = []string{"Variable_name", "Value"}
-	case ast.ShowStatus:
+	case ast.ShowVariables, ast.ShowStatus:
 		names = []string{"Variable_name", "Value"}
 	case ast.ShowCollation:
 		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
@@ -633,7 +631,7 @@ func buildShowDefaultSchema(s *ast.ShowStmt) expression.Schema {
 		}
 		var retType types.FieldType
 		if len(ftypes) == 0 || ftypes[i] == 0 {
-			// use varchar as the default return column type
+			// Use varchar as the default return column type.
 			retType.Tp = mysql.TypeVarchar
 		} else {
 			retType.Tp = ftypes[i]
