@@ -189,7 +189,6 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	// All the history should be added here.
 	se := ctx.(*session)
 	getHistory(ctx).add(0, s)
-	// MySQL DDL should be auto-commit.
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")

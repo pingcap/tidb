@@ -66,7 +66,7 @@ func (e *SimpleExec) Next() (*Row, error) {
 	case *ast.BeginStmt:
 		err = e.executeBegin(x)
 	case *ast.CommitStmt:
-		err = e.executeCommit(x)
+		e.executeCommit(x)
 	case *ast.RollbackStmt:
 		err = e.executeRollback(x)
 	case *ast.CreateUserStmt:
@@ -123,9 +123,8 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeCommit(s *ast.CommitStmt) error {
+func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
-	return nil
 }
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
