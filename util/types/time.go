@@ -344,11 +344,10 @@ func (t Time) roundFrac(fsp int) (Time, error) {
 		t2 := roundTime(t1, fsp)
 		hour, minute, second = t2.Clock()
 		microsecond = t2.Nanosecond() / 1000
-		day := t2.Day() - 1
 
-		// TODO: day > 0 means hh:mm:ss overflow one day after rounding, it should be add to yy:mm:dd part,
+		// TODO: when hh:mm:ss overflow one day after rounding, it should be add to yy:mm:dd part,
 		// but mm:dd may contain 0, it makes the code complex, so we ignore it here.
-		if day > 0 {
+		if t2.Day()-1 > 0 {
 			return t, errors.Trace(ErrInvalidTimeFormat)
 		}
 		nt = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day()+day, hour, minute, second, microsecond)
