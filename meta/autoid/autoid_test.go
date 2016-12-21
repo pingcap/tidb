@@ -123,7 +123,9 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(id, Equals, int64(6544))
 }
 
-func (*testSuite) TestAsyn(c *C) {
+// TestConcurrentAlloc is used for the test that
+// multiple alloctors allocate ID with the same table ID concurrently.
+func (*testSuite) TestConcurrentAlloc(c *C) {
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
@@ -181,6 +183,6 @@ func (*testSuite) TestAsyn(c *C) {
 	wg.Wait()
 
 	close(errCh)
-	err, ok := <-errCh
-	c.Assert(ok, IsFalse, Commentf("err:%v", err))
+	err = <-errCh
+	c.Assert(err, IsNil)
 }
