@@ -117,6 +117,7 @@ var Funcs = map[string]Func{
 	ast.Ucase:          {builtinUpper, 1, 1},
 	ast.Hex:            {builtinHex, 1, 1},
 	ast.Unhex:          {builtinUnHex, 1, 1},
+	ast.Rpad:           {builtinRpad, 3, 3},
 
 	// information functions
 	ast.ConnectionID: {builtinConnectionID, 0, 0},

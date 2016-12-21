@@ -69,6 +69,7 @@ const (
 	RowFunc    = "row"
 	SetVar     = "setvar"
 	GetVar     = "getvar"
+	Values     = "values"
 
 	// common functions
 	Coalesce = "coalesce"
@@ -145,6 +146,7 @@ const (
 	Ucase          = "ucase"
 	Hex            = "hex"
 	Unhex          = "unhex"
+	Rpad           = "rpad"
 
 	// information functions
 	ConnectionID = "connection_id"
