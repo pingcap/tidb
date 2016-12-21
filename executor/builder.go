@@ -241,24 +241,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	if len(v.GetChildren()) > 0 {
 		ivs.SelectExec = b.build(v.GetChildByIndex(0))
 	}
-	// Get Table
-	ts, ok := v.Table.TableRefs.Left.(*ast.TableSource)
-	if !ok {
-		b.err = errors.New("Can not get table")
-		return nil
-	}
-	tn, ok := ts.Source.(*ast.TableName)
-	if !ok {
-		b.err = errors.New("Can not get table")
-		return nil
-	}
-	tableInfo := tn.TableInfo
-	tbl, ok := b.is.TableByID(tableInfo.ID)
-	if !ok {
-		b.err = errors.Errorf("Can not get table %d", tableInfo.ID)
-		return nil
-	}
-	ivs.Table = tbl
+	ivs.Table = v.Table
 	if v.IsReplace {
 		return b.buildReplace(ivs)
 	}
@@ -268,8 +251,6 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		Priority:     v.Priority,
 		Ignore:       v.Ignore,
 	}
-	// fields is used to evaluate values expr.
-	insert.fields = ts.GetResultFields()
 	return insert
 }
 
