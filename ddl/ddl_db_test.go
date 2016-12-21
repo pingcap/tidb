@@ -503,7 +503,7 @@ func (s *testDBSuite) TestIssue2293(c *C) {
 	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("create table t (a int)")
+	s.tk.MustExec("create table t_issue_2293 (a int)")
 	_, err := s.tk.Exec("alter table t add b int not null default ''")
 	c.Assert(err, NotNil)
 }
