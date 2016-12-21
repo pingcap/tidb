@@ -665,4 +665,8 @@ func (s *testEvaluatorSuite) TestYearWeek(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(result.GetInt64(), Equals, test.expect)
 	}
+
+	result, err := builtinYearWeek([]types.Datum{types.NewStringDatum("2016-00-05")}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(result.IsNull(), IsTrue)
 }

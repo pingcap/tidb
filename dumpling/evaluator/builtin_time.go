@@ -529,7 +529,7 @@ func builtinDayOfYear(args []types.Datum, ctx context.Context) (types.Datum, err
 	}
 
 	t := d.GetMysqlTime()
-	if t.IsZero() {
+	if t.Time.Month() == 0 || t.Time.Day() == 0 {
 		// TODO: log warning or return error?
 		d.SetNull()
 		return d, nil
@@ -628,7 +628,7 @@ func builtinYearWeek(args []types.Datum, ctx context.Context) (types.Datum, erro
 
 	// No need to check type here.
 	t := d.GetMysqlTime()
-	if t.IsZero() {
+	if t.Time.Month() == 0 || t.Time.Day() == 0 {
 		d.SetNull()
 		// TODO: log warning or return error?
 		return d, nil
