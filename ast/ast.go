@@ -161,7 +161,6 @@ type ResultSetNode interface {
 // If the Exec method requires any Execution domain local data,
 // they must be held out of the implementing instance.
 type Statement interface {
-
 	// OriginText gets the origin SQL text.
 	OriginText() string
 
