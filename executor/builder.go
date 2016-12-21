@@ -124,7 +124,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 }
 
 func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
-	// We get ddlInfo here because for Executors that returns result set,
+	// We get DDInfo here because for Executors that returns result set,
 	// next will be called after transaction has been committed.
 	// We need the transaction to get DDLInfo.
 	e := &ShowDDLExec{
