@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -133,7 +134,6 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
 	}
-
 	var ddlOwner, ddlJob string
 	if e.ddlInfo.Owner != nil {
 		ddlOwner = e.ddlInfo.Owner.String()
@@ -198,10 +198,7 @@ func (e *CheckTableExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		for _, idx := range tb.Indices() {
-			txn, err := e.ctx.GetTxn(false)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			txn := e.ctx.Txn()
 			err = inspectkv.CompareIndexData(txn, tb, idx)
 			if err != nil {
 				return nil, errors.Errorf("%v err:%v", t.Name, err)
@@ -247,10 +244,7 @@ func (e *SelectLockExec) Next() (*Row, error) {
 	}
 	if len(row.RowKeys) != 0 && e.Lock == ast.SelectLockForUpdate {
 		e.ctx.GetSessionVars().TxnCtx.ForUpdate = true
-		txn, err := e.ctx.GetTxn(false)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		txn := e.ctx.Txn()
 		for _, k := range row.RowKeys {
 			lockKey := tablecodec.EncodeRowKeyWithHandle(k.Tbl.Meta().ID, k.Handle)
 			err = txn.LockKeys(lockKey)
@@ -1390,6 +1384,7 @@ func (e *TableScanExec) Next() (*Row, error) {
 func (e *TableScanExec) nextForInfoSchema() (*Row, error) {
 	if e.infoSchemaRows == nil {
 		columns := make([]*table.Column, len(e.schema))
+		fmt.Printf("columns count %d, schema count %d\n", len(columns), len(e.schema))
 		for i, v := range e.columns {
 			columns[i] = table.ToColumn(v)
 		}
