@@ -599,14 +599,6 @@ func getShowColNamesAndTypes(s *ast.ShowStmt) (names []string, ftypes []byte) {
 		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:
 		names = []string{fmt.Sprintf("Grants for %s", s.User)}
-	case ast.ShowTriggers:
-		names = []string{"Trigger", "Event", "Table", "Statement", "Timing", "Created",
-			"sql_mode", "Definer", "character_set_client", "collation_connection", "Database Collation"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
-	case ast.ShowProcedureStatus, ast.ShowEvents:
-		names = []string{}
-		ftypes = []byte{}
 	case ast.ShowIndex:
 		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
 			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
