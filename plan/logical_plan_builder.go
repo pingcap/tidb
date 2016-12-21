@@ -903,6 +903,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		tableInfo:       tableInfo,
 		baseLogicalPlan: newBaseLogicalPlan(Tbl, b.allocator),
 		statisticTable:  statisticTable,
+		DBName:          &schemaName,
 	}
 	p.self = p
 	p.initIDAndContext(b.ctx)
@@ -918,7 +919,6 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		} else if col.State != model.StatePublic {
 			continue
 		}
-		p.DBName = &schemaName
 		p.Columns = append(p.Columns, col)
 		schema = append(schema, &expression.Column{
 			FromID:   p.id,
