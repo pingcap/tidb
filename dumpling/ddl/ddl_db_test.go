@@ -499,6 +499,15 @@ func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {
 	return s.mustQuery(c, fmt.Sprintf("show columns from %s", tableName))
 }
 
+func (s *testDBSuite) TestIssue2293(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t_issue_2293 (a int)")
+	_, err := s.tk.Exec("alter table t add b int not null default ''")
+	c.Assert(err, NotNil)
+}
+
 func (s *testDBSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
