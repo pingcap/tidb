@@ -298,6 +298,12 @@ func (t Time) CompareString(str string) (int, error) {
 	return t.Compare(o), nil
 }
 
+// roundTime rounds the time value according to digits count specified by fsp.
+func roundTime(t gotime.Time, fsp int) gotime.Time {
+	d := gotime.Duration(math.Pow10(9 - fsp))
+	return t.Round(d)
+}
+
 func (t Time) roundFrac(fsp int) (Time, error) {
 	if t.Type == mysql.TypeDate {
 		// date type has no fsp
@@ -316,21 +322,22 @@ func (t Time) roundFrac(fsp int) (Time, error) {
 
 	var nt TimeInternal
 	if t1, err := t.Time.GoTime(); err == nil {
-		nt = FromGoTime(t1.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond))
+		t1 = roundTime(t1, fsp)
+		nt = FromGoTime(t1)
 	} else {
 		// Take the hh:mm:ss part out to avoid handle month or day = 0.
 		hour, minute, second, microsecond := t.Time.Hour(), t.Time.Minute(), t.Time.Second(), t.Time.Microsecond()
 		t1 := gotime.Date(1, 1, 1, hour, minute, second, microsecond*1000, gotime.Local)
-		t2 := t1.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond)
+		t2 := roundTime(t1, fsp)
 		hour, minute, second = t2.Clock()
 		microsecond = t2.Nanosecond() / 1000
-		day := t2.Day() - 1
 
-		// TODO: Can't handle this currently, but never mind.
-		if day > 0 {
+		// TODO: when hh:mm:ss overflow one day after rounding, it should be add to yy:mm:dd part,
+		// but mm:dd may contain 0, it makes the code complex, so we ignore it here.
+		if t2.Day()-1 > 0 {
 			return t, errors.Trace(ErrInvalidTimeFormat)
 		}
-		nt = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day()+day, hour, minute, second, microsecond)
+		nt = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day(), hour, minute, second, microsecond)
 	}
 
 	return Time{Time: nt, Type: t.Type, Fsp: fsp}, nil

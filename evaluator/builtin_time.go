@@ -309,7 +309,7 @@ func builtinDayOfYear(args []types.Datum, ctx context.Context) (types.Datum, err
 	}
 
 	t := d.GetMysqlTime()
-	if t.IsZero() {
+	if t.Time.Month() == 0 || t.Time.Day() == 0 {
 		// TODO: log warning or return error?
 		d.SetNull()
 		return d, nil
