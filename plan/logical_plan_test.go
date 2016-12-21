@@ -58,7 +58,7 @@ func newStringType() types.FieldType {
 	return *ft
 }
 
-func mockResolve(node ast.Node) error {
+func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("c_d_e"),
@@ -223,9 +223,9 @@ func mockResolve(node ast.Node) error {
 	ctx := mock.NewContext()
 	err := MockResolveName(node, is, "test", ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return InferType(ctx.GetSessionVars().StmtCtx, node)
+	return is, InferType(ctx.GetSessionVars().StmtCtx, node)
 }
 
 func supportExpr(exprType tipb.ExprType) bool {
@@ -492,12 +492,13 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mock.NewContext(),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
@@ -553,10 +554,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			sql:  "explain select * from t union all select * from t limit 1, 1",
 			plan: "UnionAll{Table(t)->Table(t)->Limit}->*plan.Explain",
 		},
-		//{
-		//	sql:  "insert into t select * from t",
-		//	plan: "DataScan(t)->Projection->*plan.Insert",
-		//},
+		{
+			sql:  "insert into t select * from t",
+			plan: "DataScan(t)->Projection->*plan.Insert",
+		},
 		{
 			sql:  "show columns from t where `Key` = 'pri' like 't*'",
 			plan: "*plan.Show->Selection",
@@ -571,13 +572,14 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mock.NewContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
@@ -621,13 +623,14 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mock.NewContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
@@ -714,13 +717,14 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mock.NewContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
@@ -934,12 +938,13 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mock.NewContext(),
+			is:        is,
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
@@ -1069,13 +1074,14 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			allocator: new(idAllocator),
 			ctx:       mock.NewContext(),
+			is:        is,
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
@@ -1256,10 +1262,14 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		sql := "select * from t where " + ca.exprStr
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{allocator: new(idAllocator), ctx: mock.NewContext()}
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mock.NewContext(),
+			is:        is,
+		}
 		p := builder.build(stmt)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, ca.exprStr))
 		var selection *Selection
@@ -1387,12 +1397,13 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mock.NewContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		builder.build(stmt)
 		if ca.err == nil {
