@@ -147,7 +147,7 @@ func calcTimeDiff(t1, t2 TimeInternal, sign int) (seconds, microseconds int, neg
 
 // datetimeToUint64 converts time value to integer in YYYYMMDDHHMMSS format.
 func datetimeToUint64(t TimeInternal) uint64 {
-	return dateToUint64(t)*1000000 + timeToUint64(t)
+	return dateToUint64(t)*1e6 + timeToUint64(t)
 }
 
 // dateToUint64 converts time value to integer in YYYYMMDD format.
