@@ -310,7 +310,7 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 
 	checkTxn(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
 	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "set autocommit=0;", 0)
+	checkTxn(c, se, "set autocommit=0;", 1)
 	checkAutocommit(c, se, 0)
 	checkTxn(c, se, "insert t values ()", 1)
 	checkAutocommit(c, se, 0)
@@ -348,7 +348,7 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	checkInTrans(c, se, "commit", 0)
 	checkInTrans(c, se, "insert t values ()", 0)
 
-	checkInTrans(c, se, "set autocommit=0;", 0)
+	checkInTrans(c, se, "set autocommit=0;", 1)
 	checkInTrans(c, se, "begin", 1)
 	checkInTrans(c, se, "insert t values ()", 1)
 	checkInTrans(c, se, "commit", 0)

@@ -124,9 +124,8 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 }
 
 func (e *SimpleExec) executeCommit(s *ast.CommitStmt) error {
-	err := e.ctx.CommitTxn()
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
-	return errors.Trace(err)
+	return nil
 }
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
