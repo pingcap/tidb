@@ -253,10 +253,8 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 
 	skipCheck := false
 	optSkipCheck := c.txn.us.GetOption(kv.SkipCheckForWrite)
-	if optSkipCheck != nil {
-		if skip, ok := optSkipCheck.(bool); ok && skip {
-			skipCheck = true
-		}
+	if skip, ok := optSkipCheck.(bool); ok && skip {
+		skipCheck = true
 	}
 	req := &pb.Request{
 		Type: pb.MessageType_CmdPrewrite,
