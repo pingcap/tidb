@@ -141,3 +141,7 @@ func (txn *dbTxn) IsReadOnly() bool {
 func (txn *dbTxn) StartTS() uint64 {
 	return txn.tid
 }
+
+func (txn *dbTxn) Valid() bool {
+	return txn.valid
+}

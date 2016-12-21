@@ -52,23 +52,6 @@ func Eval(ctx context.Context, expr ast.ExprNode) (d types.Datum, err error) {
 	return *expr.GetDatum(), nil
 }
 
-// EvalBool evalueates an expression to a boolean value.
-func EvalBool(ctx context.Context, expr ast.ExprNode) (bool, error) {
-	val, err := Eval(ctx, expr)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if val.IsNull() {
-		return false, nil
-	}
-
-	i, err := val.ToBool(ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return i != 0, nil
-}
-
 func boolToInt64(v bool) int64 {
 	if v {
 		return int64(1)
@@ -589,13 +572,13 @@ func (e *Evaluator) values(v *ast.ValuesExpr) bool {
 	}
 
 	row := values.([]types.Datum)
-	off := v.Column.Refer.Column.Offset
-	if len(row) > off {
-		v.SetDatum(row[off])
+	offset := v.Column.Refer.Column.Offset
+	if len(row) > offset {
+		v.SetDatum(row[offset])
 		return true
 	}
 
-	e.err = errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), off)
+	e.err = errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), offset)
 	return false
 }
 

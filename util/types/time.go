@@ -131,7 +131,8 @@ type TimeInternal interface {
 	Second() int
 	Weekday() gotime.Weekday
 	YearDay() int
-	ISOWeek() (int, int)
+	YearWeek(mode int) (int, int)
+	Week(mode int) int
 	Microsecond() int
 	GoTime() (gotime.Time, error)
 }
@@ -264,37 +265,24 @@ func (t Time) Compare(o Time) int {
 	return compareTime(t.Time, o.Time)
 }
 
-func compareTime(t1, t2 TimeInternal) int {
+func compareTime(a, b TimeInternal) int {
+	ta := datetimeToUint64(a)
+	tb := datetimeToUint64(b)
+
 	switch {
-	case t1.Year() > t2.Year():
-		return 1
-	case t1.Year() < t2.Year():
+	case ta < tb:
 		return -1
-	case t1.Month() > t2.Month():
+	case ta > tb:
 		return 1
-	case t1.Month() < t2.Month():
-		return -1
-	case t1.Day() > t2.Day():
-		return 1
-	case t1.Day() < t2.Day():
-		return -1
-	case t1.Hour() > t2.Hour():
-		return 1
-	case t1.Hour() < t2.Hour():
-		return -1
-	case t1.Minute() > t2.Minute():
-		return 1
-	case t1.Minute() < t2.Minute():
-		return -1
-	case t1.Second() > t2.Second():
-		return 1
-	case t1.Second() < t2.Second():
-		return -1
-	case t1.Microsecond() > t2.Microsecond():
-		return 1
-	case t1.Microsecond() < t2.Microsecond():
-		return -1
 	}
+
+	switch {
+	case a.Microsecond() < b.Microsecond():
+		return -1
+	case a.Microsecond() > b.Microsecond():
+		return 1
+	}
+
 	return 0
 }
 
@@ -423,6 +411,32 @@ func (t *Time) check() error {
 		return checkDateType(t.Time)
 	}
 	return nil
+}
+
+// Sub subtracts t1 from t, returns a duration value.
+// Note that sub should not be done on different time types.
+func (t *Time) Sub(t1 *Time) Duration {
+	var duration gotime.Duration
+	if t.Type == mysql.TypeTimestamp && t1.Type == mysql.TypeTimestamp {
+		a, _ := t.Time.GoTime()
+		b, _ := t1.Time.GoTime()
+		duration = a.Sub(b)
+	} else {
+		seconds, microseconds, neg := calcTimeDiff(t.Time, t1.Time, 1)
+		duration = gotime.Duration(seconds*1e9 + microseconds*1e3)
+		if neg {
+			duration = -duration
+		}
+	}
+
+	fsp := t.Fsp
+	if fsp < t1.Fsp {
+		fsp = t1.Fsp
+	}
+	return Duration{
+		Duration: duration,
+		Fsp:      fsp,
+	}
 }
 
 func parseDateFormat(format string) []string {
@@ -1174,11 +1188,7 @@ func ExtractTimeNum(unit string, t Time) (int64, error) {
 	case "DAY":
 		return int64(t.Time.Day()), nil
 	case "WEEK":
-		t1, err := t.Time.GoTime()
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		_, week := t1.ISOWeek()
+		week := t.Time.Week(0)
 		return int64(week), nil
 	case "MONTH":
 		t1, err := t.Time.GoTime()
@@ -1663,11 +1673,17 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		fmt.Fprintf(buf, "%02d", t.Time.Second())
 	case 'f':
 		fmt.Fprintf(buf, "%06d", t.Time.Microsecond())
-	case 'U', 'u', 'V', 'v':
-		// TODO: Fix here.
-		// MySQL may use Sunday or Monday as the first day of week, U u V v controls which,
-		// but Go always use Sunday as the first day of week.
-		_, w := t.Time.ISOWeek()
+	case 'U':
+		w := t.Time.Week(0)
+		fmt.Fprintf(buf, "%02d", w)
+	case 'u':
+		w := t.Time.Week(1)
+		fmt.Fprintf(buf, "%02d", w)
+	case 'V':
+		w := t.Time.Week(2)
+		fmt.Fprintf(buf, "%02d", w)
+	case 'v':
+		_, w := t.Time.YearWeek(3)
 		fmt.Fprintf(buf, "%02d", w)
 	case 'a':
 		weekday := t.Time.Weekday()
@@ -1675,10 +1691,12 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	case 'W':
 		buf.WriteString(t.Time.Weekday().String())
 	case 'w':
-		fmt.Fprintf(buf, "%d", int(t.Time.Weekday()))
-	case 'X', 'x':
-		// TODO: Fix here.
-		year, _ := t.Time.ISOWeek()
+		fmt.Fprintf(buf, "%d", t.Time.Weekday())
+	case 'X':
+		year, _ := t.Time.YearWeek(2)
+		fmt.Fprintf(buf, "%04d", year)
+	case 'x':
+		year, _ := t.Time.YearWeek(3)
 		fmt.Fprintf(buf, "%04d", year)
 	case 'Y':
 		fmt.Fprintf(buf, "%04d", t.Time.Year())

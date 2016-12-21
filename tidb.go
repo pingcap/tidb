@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -143,7 +144,10 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
-	PrepareTxnCtx(ctx)
+	err := PrepareTxnCtx(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	compiler := executor.Compiler{}
 	st, err := compiler.Compile(ctx, rawStmt)
 	if err != nil {
@@ -153,33 +157,39 @@ func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
 }
 
 // PrepareTxnCtx resets transaction context if session is not in a transaction.
-func PrepareTxnCtx(ctx context.Context) {
+func PrepareTxnCtx(ctx context.Context) error {
 	se := ctx.(*session)
-	if se.txn == nil {
+	if se.txn == nil || !se.txn.Valid() {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		se.sessionVars.TxnCtx = &variable.TransactionContext{
 			InfoSchema:    is,
 			SchemaVersion: is.SchemaMetaVersion(),
 		}
+		var err error
+		se.txn, err = se.store.Begin()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = se.loadCommonGlobalVariablesIfNeeded()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !se.sessionVars.IsAutocommit() {
+			se.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+		}
 	}
+	return nil
 }
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	var err error
 	var rs ast.RecordSet
-	if s.IsDDL() {
-		err = ctx.CommitTxn()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
 	rs, err = s.Exec(ctx)
 	// All the history should be added here.
 	se := ctx.(*session)
 	getHistory(ctx).add(0, s)
-	// MySQL DDL should be auto-commit.
-	if s.IsDDL() || se.sessionVars.ShouldAutocommit() {
+	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
 			ctx.RollbackTxn()

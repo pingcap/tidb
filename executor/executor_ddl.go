@@ -72,6 +72,8 @@ func (e *DDLExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// DDL will force commit old transaction, after DDL, in transaction status should be false.
+	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
 	e.done = true
 	return nil, nil
 }

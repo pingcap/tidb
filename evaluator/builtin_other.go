@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -557,4 +558,22 @@ func builtinLock(args []types.Datum, _ context.Context) (d types.Datum, err erro
 func builtinReleaseLock(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	d.SetInt64(1)
 	return d, nil
+}
+
+// BuildinValuesFactory generates values builtin function.
+func BuildinValuesFactory(v *ast.ValuesExpr) BuiltinFunc {
+	return func(_ []types.Datum, ctx context.Context) (d types.Datum, err error) {
+		values := ctx.GetSessionVars().CurrInsertValues
+		if values == nil {
+			err = errors.New("Session current insert values is nil")
+			return
+		}
+		row := values.([]types.Datum)
+		offset := v.Column.Refer.Column.Offset
+		if len(row) > offset {
+			return row[offset], nil
+		}
+		err = errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), offset)
+		return
+	}
 }

@@ -435,11 +435,6 @@ func (s *session) SetGlobalSysVar(name string, value string) error {
 	return errors.Trace(err)
 }
 
-// IsAutocommit checks if it is in the auto-commit mode.
-func (s *session) isAutocommit(ctx context.Context) bool {
-	return s.sessionVars.GetStatusFlag(mysql.ServerStatusAutocommit)
-}
-
 func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
 	return s.parser.Parse(sql, charset, collation)
 }
@@ -467,6 +462,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
 			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
+			s.RollbackTxn()
 			return nil, errors.Trace(err1)
 		}
 		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
@@ -499,7 +495,9 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if err := s.checkSchemaValidOrRollback(); err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
-	PrepareTxnCtx(s)
+	if err := PrepareTxnCtx(s); err != nil {
+		return 0, 0, nil, errors.Trace(err)
+	}
 	prepareExec := &executor.PrepareExec{
 		IS:      executor.GetInfoSchema(s),
 		Ctx:     s,
@@ -564,7 +562,10 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	PrepareTxnCtx(s)
+	err = PrepareTxnCtx(s)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	r, err := runStmt(s, st)
 	return r, errors.Trace(err)
@@ -608,7 +609,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ac := s.isAutocommit(s)
+	ac := s.sessionVars.IsAutocommit()
 	if !ac {
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 	}
@@ -813,8 +814,7 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.DistSQLJoinConcurrencyVar + "', '" +
 	variable.DistSQLScanConcurrencyVar + "')"
 
-// LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session
-// right before creating a transaction for the first time.
+// LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars := s.sessionVars
 	if vars.CommonGlobalLoaded {

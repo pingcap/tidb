@@ -33,13 +33,22 @@ import (
 var (
 	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
 	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
+	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, "Unknown column '%s' in '%s'")
 )
 
 // Error codes.
 const (
 	CodeUnsupportedType terror.ErrCode = 1
 	SystemInternalError terror.ErrCode = 2
+	CodeUnknownColumn   terror.ErrCode = 1054
 )
+
+func init() {
+	tableMySQLErrCodes := map[terror.ErrCode]uint16{
+		CodeUnknownColumn: mysql.ErrBadField,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
+}
 
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
@@ -51,6 +60,7 @@ type planBuilder struct {
 	ctx          context.Context
 	is           infoschema.InfoSchema
 	outerSchemas []expression.Schema
+	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 }
@@ -202,15 +212,15 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func availableIndices(table *ast.TableName) (indices []*model.IndexInfo, includeTableScan bool) {
+func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indices []*model.IndexInfo, includeTableScan bool) {
 	var usableHints []*ast.IndexHint
-	for _, hint := range table.IndexHints {
+	for _, hint := range hints {
 		if hint.HintScope == ast.HintForScan {
 			usableHints = append(usableHints, hint)
 		}
 	}
-	publicIndices := make([]*model.IndexInfo, 0, len(table.TableInfo.Indices))
-	for _, index := range table.TableInfo.Indices {
+	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
+	for _, index := range tableInfo.Indices {
 		if index.State == model.StatePublic {
 			publicIndices = append(publicIndices, index)
 		}
@@ -436,17 +446,123 @@ func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 	return &Simple{Statement: node}
 }
 
+func (b *planBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
+	if value, ok, err := table.GetColDefaultValue(b.ctx, col.ToInfo()); ok {
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
+	}
+	return &expression.Constant{RetType: &col.FieldType}, nil
+}
+
+func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnName) (*expression.Constant, error) {
+	for _, col := range cols {
+		if col.Name.L == name.Name.L {
+			return b.getDefaultValue(col)
+		}
+	}
+	return nil, ErrUnknownColumn.GenByArgs(name.Name.O, "field_list")
+}
+
 func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
+	// Get Table
+	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
+	if !ok {
+		b.err = infoschema.ErrTableNotExists.GenByArgs()
+		return nil
+	}
+	tn, ok := ts.Source.(*ast.TableName)
+	if !ok {
+		b.err = infoschema.ErrTableNotExists.GenByArgs()
+		return nil
+	}
+	tableInfo := tn.TableInfo
+	schema := expression.TableInfo2Schema(tableInfo)
+	table, ok := b.is.TableByID(tableInfo.ID)
+	if !ok {
+		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
+		return nil
+	}
 	insertPlan := &Insert{
-		Table:           insert.Table,
+		Table:           table,
 		Columns:         insert.Columns,
-		Lists:           insert.Lists,
-		Setlist:         insert.Setlist,
-		OnDuplicate:     insert.OnDuplicate,
+		tableSchema:     schema,
 		IsReplace:       insert.IsReplace,
 		Priority:        insert.Priority,
 		Ignore:          insert.Ignore,
 		baseLogicalPlan: newBaseLogicalPlan(Ins, b.allocator),
+	}
+	cols := table.Cols()
+	for _, valuesItem := range insert.Lists {
+		exprList := make([]expression.Expression, 0, len(valuesItem))
+		for i, valueItem := range valuesItem {
+			var expr expression.Expression
+			var err error
+			if dft, ok := valueItem.(*ast.DefaultExpr); ok {
+				if dft.Name != nil {
+					expr, err = b.findDefaultValue(cols, dft.Name)
+				} else {
+					expr, err = b.getDefaultValue(cols[i])
+				}
+			} else if val, ok := valueItem.(*ast.ValueExpr); ok {
+				expr = &expression.Constant{
+					Value:   val.Datum,
+					RetType: &val.Type,
+				}
+			} else {
+				expr, _, err = b.rewrite(valueItem, nil, nil, true)
+			}
+			if err != nil {
+				b.err = errors.Trace(err)
+			}
+			exprList = append(exprList, expr)
+		}
+		insertPlan.Lists = append(insertPlan.Lists, exprList)
+	}
+	for _, assign := range insert.Setlist {
+		col, err := schema.FindColumn(assign.Column)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		if col == nil {
+			b.err = errors.Errorf("Can't find column %s", assign.Column)
+			return nil
+		}
+		// Here we keep different behaviours with MySQL. MySQL allow set a = b, b = a and the result is NULL, NULL.
+		// It's unreasonable.
+		expr, _, err := b.rewrite(assign.Expr, nil, nil, true)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		insertPlan.Setlist = append(insertPlan.Setlist, &expression.Assignment{
+			Col:  col,
+			Expr: expr,
+		})
+	}
+	mockTablePlan := &TableDual{}
+	mockTablePlan.SetSchema(schema)
+	for _, assign := range insert.OnDuplicate {
+		col, err := schema.FindColumn(assign.Column)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		if col == nil {
+			b.err = errors.Errorf("Can't find column %s", assign.Column)
+			return nil
+		}
+		expr, _, err := b.rewrite(assign.Expr, mockTablePlan, nil, true)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		insertPlan.OnDuplicate = append(insertPlan.OnDuplicate, &expression.Assignment{
+			Col:  col,
+			Expr: expr,
+		})
 	}
 	insertPlan.initIDAndContext(b.ctx)
 	insertPlan.self = insertPlan
