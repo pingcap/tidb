@@ -29,7 +29,7 @@ const (
 	PresumeKeyNotExistsError
 	// BinlogData is the binlog data to write.
 	BinlogData
-	// Skip exist check when prewrite
+	// Skip existing check when "prewrite".
 	SkipCheckForWrite
 )
 
