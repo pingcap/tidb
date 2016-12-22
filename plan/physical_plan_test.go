@@ -765,12 +765,14 @@ func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
