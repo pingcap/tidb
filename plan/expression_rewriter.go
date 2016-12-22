@@ -29,7 +29,9 @@ func EvalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 		ctx:       ctx,
 		allocator: new(idAllocator),
 		colMapper: make(map[*ast.ColumnNameExpr]int),
-		is:        ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema),
+	}
+	if ctx.GetSessionVars().TxnCtx.InfoSchema != nil {
+		b.is = ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
 	newExpr, _, err := b.rewrite(expr, nil, nil, true)
 	if err != nil {
