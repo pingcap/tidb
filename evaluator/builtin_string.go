@@ -18,9 +18,12 @@
 package evaluator
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -651,6 +654,88 @@ func builtinBitLength(args []types.Datum, ctx context.Context) (d types.Datum, e
 	}
 
 	d.SetInt64(int64(len(str) * 8))
+
+	return d, nil
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char
+func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	// args are number or string; last one is charset
+	result := make([]byte, 0, len(args)*2)
+	var resultLen int
+	var datumInt int64
+
+	for _, datum := range args[:len(args)-1] {
+		switch datum.Kind() {
+		case types.KindNull:
+			continue
+		case types.KindString:
+			x, err := datum.ToString()
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			i, err := strconv.Atoi(x)
+			if err != nil {
+				d.SetString("")
+				return d, nil
+			}
+			datumInt = int64(i)
+		case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+			x, _ := datum.Cast(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
+			datumInt = x.GetInt64()
+		default:
+			return d, errors.Errorf("Char invalid args, need int or string but get %T", args[0].GetValue())
+		}
+
+		// convert int64 to []byte, append to result bytes
+		buf := new(bytes.Buffer)
+		err := binary.Write(buf, binary.BigEndian, datumInt)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		bs := buf.Bytes()[4:]
+		var start bool
+		for _, b := range bs {
+			if start {
+				result = append(result, b)
+				resultLen++
+			} else {
+				if b > 0 {
+					start = true
+					result = append(result, b)
+					resultLen++
+				}
+			}
+		}
+	}
+
+	str := hack.String(result[:resultLen])
+
+	// convert to specified charset
+	if !args[len(args)-1].IsNull() {
+		char, err := args[len(args)-1].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		if strings.ToLower(char) == "ascii" || strings.Index(strings.ToLower(char), "utf8") == 0 {
+			d.SetString(str)
+			return d, nil
+		}
+
+		encoding, _ := charset.Lookup(char)
+		if encoding == nil {
+			return d, errors.Errorf("unknown encoding: %s", char)
+		}
+
+		str, _, err := transform.String(encoding.NewDecoder(), str)
+		if err != nil {
+			log.Errorf("Convert %s to %s with error: %v", str, char, err)
+			return d, errors.Trace(err)
+		}
+	}
+
+	d.SetString(str)
 
 	return d, nil
 }

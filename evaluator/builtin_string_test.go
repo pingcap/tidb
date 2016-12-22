@@ -758,3 +758,39 @@ func (s *testEvaluatorSuite) TestBitLength(c *C) {
 	}
 
 }
+
+func (s *testEvaluatorSuite) TestChar(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		str    string
+		iNum   int64
+		fNum   interface{}
+		result string
+	}{
+		{"65", 66, 67.5, "ABD"},                // float
+		{"65", 66, nil, "AB"},                  // nil
+		{"65", 16740, 67.5, "AAdD"},            // large num
+		{"65", -1, 67.5, "A\xff\xff\xff\xffD"}, // nagtive int
+		{"a", -1, 67.5, ""},                    // invalid 'a'
+		// x'41'
+	}
+	for _, v := range tbl {
+		for _, char := range []interface{}{"utf8", nil} {
+			f := &ast.FuncCallExpr{
+				FnName: model.NewCIStr("CHAR_FUNC"),
+				Args: []ast.ExprNode{
+					ast.NewValueExpr(v.str),
+					ast.NewValueExpr(v.iNum),
+					ast.NewValueExpr(v.fNum),
+					ast.NewValueExpr(char),
+				},
+			}
+
+			r, err := Eval(s.ctx, f)
+			c.Assert(err, IsNil)
+			c.Assert(r.Kind(), Equals, types.KindString)
+			c.Assert(r.GetString(), Equals, v.result)
+		}
+	}
+
+}

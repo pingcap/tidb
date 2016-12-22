@@ -119,6 +119,7 @@ var Funcs = map[string]Func{
 	ast.Unhex:          {builtinUnHex, 1, 1},
 	ast.Rpad:           {builtinRpad, 3, 3},
 	ast.BitLength:      {builtinBitLength, 1, 1},
+	ast.CharFunc:       {builtinChar, 1, -1},
 
 	// information functions
 	ast.ConnectionID: {builtinConnectionID, 0, 0},
