@@ -19,7 +19,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -1384,7 +1383,6 @@ func (e *TableScanExec) Next() (*Row, error) {
 func (e *TableScanExec) nextForInfoSchema() (*Row, error) {
 	if e.infoSchemaRows == nil {
 		columns := make([]*table.Column, len(e.schema))
-		fmt.Printf("columns count %d, schema count %d\n", len(columns), len(e.schema))
 		for i, v := range e.columns {
 			columns[i] = table.ToColumn(v)
 		}
