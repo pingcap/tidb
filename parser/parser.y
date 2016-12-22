@@ -287,6 +287,7 @@ import (
 	getLock		"GET_LOCK"
 	releaseLock	"RELEASE_LOCK"
 	rpad		"RPAD"
+	bitLength	"BIT_LENGTH"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -2976,6 +2977,13 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
+	}
+|	"BIT_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
 

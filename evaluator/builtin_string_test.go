@@ -736,7 +736,6 @@ func (s *testEvaluatorSuite) TestBitLength(c *C) {
 		{"hi", 16},
 		{"你好", 48},
 		{"", 0},
-		{nil, nil},
 	}
 	for _, test := range tests {
 		str := types.NewStringDatum(test.str)
@@ -744,4 +743,18 @@ func (s *testEvaluatorSuite) TestBitLength(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(result.GetInt64(), Equals, test.expect)
 	}
+
+	errTbl := []struct {
+		str    interface{}
+		expect interface{}
+	}{
+		{nil, nil},
+	}
+	for _, test := range errTbl {
+		str := types.NewDatum(test.str)
+		result, err := builtinBitLength([]types.Datum{str}, s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(result.Kind(), Equals, types.KindNull)
+	}
+
 }
