@@ -14,7 +14,7 @@
 package filesort
 
 import (
-	"encoding/gob"
+	"container/heap"
 	"io"
 	"io/ioutil"
 	"os"
@@ -23,85 +23,30 @@ import (
 	"strconv"
 )
 
-type ComparableItem interface {
-	LessThan(other ComparableItem) bool
+type FileSorter struct {
+	numMem int
+	byIdx  int
+	byDesc bool
+	buffer [][]types.Datum
+	splits []string
 }
 
-type GobHelper interface {
-	EncodeComparable(g *gob.Encoder, item ComparableItem) error
-	DecodeComparable(g *gob.Decoder) (ComparableItem, error)
+func NewFileSorter(numMem int, byIdx int, byDesc bool) *FileSorter {
+	fs := new(FileSorter)
+	fs.numMem = numMem
+	fs.byIdx = byIdx
+	fs.byDesc = byDesc
+	fs.buffer = make([][]types.Datum, 0, numMem)
+	fs.splits = make([]string, 0)
+	return fs
 }
 
-type ComparableItems []ComparableItem
-
-func (s ComparableItems) Len() int           { return len(s) }
-func (s ComparableItems) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
-func (s ComparableItems) Less(i, j int) bool { return s[i].LessThan(s[j]) }
-
-func mergeFiles(gobHelper GobHelper, path1, path2, outputPath string) {
-	f1, err := os.Open(path1)
-	if err != nil {
-		panic(err)
-	}
-	defer f1.Close()
-	f2, err := os.Open(path2)
-	if err != nil {
-		panic(err)
-	}
-	defer f2.Close()
-	fout, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		panic(err)
-	}
-	defer fout.Close()
-
-	g1 := gob.NewDecoder(f1)
-	g2 := gob.NewDecoder(f2)
-	gout := gob.NewEncoder(fout)
-
-	var h1, h2 ComparableItem
-	var err1, err2 error
-	h1, err1 = gobHelper.DecodeComparable(g1)
-	if err1 != nil {
-		panic(err1)
-	}
-	h2, err2 = gobHelper.DecodeComparable(g2)
-	if err2 != nil {
-		panic(err2)
-	}
-
-	for err1 != io.EOF && err2 != io.EOF {
-		if h1.LessThan(h2) {
-			gobHelper.EncodeComparable(gout, h1)
-			h1, err1 = gobHelper.DecodeComparable(g1)
-		} else {
-			gobHelper.EncodeComparable(gout, h2)
-			h2, err2 = gobHelper.DecodeComparable(g2)
-		}
-	}
-
-	for err1 != io.EOF {
-		gobHelper.EncodeComparable(gout, h1)
-		h1, err1 = gobHelper.DecodeComparable(g1)
-	}
-
-	for err2 != io.EOF {
-		gobHelper.EncodeComparable(gout, h2)
-		h2, err2 = gobHelper.DecodeComparable(g2)
-	}
-}
-
-func FileSort(numMemory int,
-	gobHelper GobHelper,
-	inputChan chan ComparableItem, outputChan chan ComparableItem) {
-	memoryItems := make(ComparableItems, 0, numMemory)
-	unmergedFiles := make([]string, 0)
-
+func (fs *FileSorter) Input(row []types.Datum) error {
 	tmpDir, err := ioutil.TempDir("", "util_filesort")
-	if err != nil {
-		panic(err)
-	}
 	defer os.RemoveAll(tmpDir)
+	if err != nil {
+		return err
+	}
 
 	fileCount := 0
 	uniqueFileName := func() string {
@@ -111,57 +56,40 @@ func FileSort(numMemory int,
 	}
 
 	flushMemory := func() {
-		sort.Sort(memoryItems)
+		//TODO: How to sort types.Datum via `byIdx` and `byDesc`
+		sort.Sort(buffer)
 		fileName := uniqueFileName()
 		outputFile, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-		if err != nil {
-			panic(err)
-		}
 		defer outputFile.Close()
+		if err != nil {
+			return err
+		}
 
-		gobEncoder := gob.NewEncoder(outputFile)
-		for _, item := range memoryItems {
-			err := gobHelper.EncodeComparable(gobEncoder, item)
+		for _, row := range buffer {
+
+			rowBytes, err := codec.EncodeKey(nil, row...)
 			if err != nil {
-				panic(err)
+				return err
 			}
 		}
-		unmergedFiles = append(unmergedFiles, fileName)
-		memoryItems = memoryItems[:0]
+		splits = append(splits, fileName)
+		//TODO: flush bytes into file
+		buffer = buffer[:0]
 	}
 
-	for i := range inputChan {
-		memoryItems = append(memoryItems, i)
-		if len(memoryItems) >= numMemory {
-			flushMemory()
-		}
+	buffer = append(buffer, row)
+	if len(buffer) >= numMem {
+		flushMemory()
 	}
+}
 
-	if len(memoryItems) > 0 {
+func (fs *FileSorter) Output() []types.Datum {
+	//TODO: should mark as dumped, any Input afterwards will lead to error
+	if len(buffer) > 0 {
 		flushMemory()
 	}
 
-	for len(unmergedFiles) > 1 {
-		mergeName := uniqueFileName()
-		mergeFiles(gobHelper, unmergedFiles[0], unmergedFiles[1], mergeName)
-		unmergedFiles = append(unmergedFiles[2:], mergeName)
-	}
-
-	f, err := os.Open(unmergedFiles[0])
-	defer f.Close()
-	g := gob.NewDecoder(f)
-
-	for {
-		h, err := gobHelper.DecodeComparable(g)
-		if err == io.EOF {
-			close(outputChan)
-			break
-		} else if err != nil {
-			panic(err)
-		} else {
-			outputChan <- h
-		}
-	}
-
-	return
+	//TODO:
+	//1. open all files
+	//2. DecodeKey and push into heap
 }
