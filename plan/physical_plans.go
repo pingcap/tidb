@@ -59,6 +59,22 @@ type PhysicalIndexScan struct {
 	TableAsName *model.CIStr
 }
 
+// PhysicalMemTable reads memory table.
+type PhysicalMemTable struct {
+	basePlan
+
+	DBName      *model.CIStr
+	Table       *model.TableInfo
+	Columns     []*model.ColumnInfo
+	Ranges      []TableRange
+	TableAsName *model.CIStr
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalMemTable) Copy() PhysicalPlan {
+	return &(*p)
+}
+
 // physicalDistSQLPlan means the plan that can be executed distributively.
 // We can push down other plan like selection, limit, aggregation, topn into this plan.
 type physicalDistSQLPlan interface {

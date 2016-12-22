@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -539,7 +538,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select a, b from t where b > 0",
-			ans: "Table(t)->Selection",
+			ans: "Table(t)",
 		},
 		{
 			sql: "select a as c1, b as c2 from t where a = 3",
@@ -563,11 +562,11 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select t1.a, t2.b from t t1, t t2 where t1.a > 0 and t2.b < 0",
-			ans: "RightHashJoin{Table(t)->Table(t)->Selection}",
+			ans: "RightHashJoin{Table(t)->Table(t)}",
 		},
 		{
 			sql: "select t1.a, t1.b, t2.a, t2.b from t t1, t t2 where t1.a > 0 and t2.b < 0",
-			ans: "RightHashJoin{Table(t)->Table(t)->Selection}",
+			ans: "RightHashJoin{Table(t)->Table(t)}",
 		},
 		{
 			sql: "select * from (t t1 join t t2) join (t t3 join t t4)",
@@ -576,15 +575,15 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		// projection can not be eliminated in following cases.
 		{
 			sql: "select t1.b, t1.a, t2.b, t2.a from t t1, t t2 where t1.a > 0 and t2.b < 0",
-			ans: "RightHashJoin{Table(t)->Table(t)->Selection}->Projection",
+			ans: "RightHashJoin{Table(t)->Table(t)}->Projection",
 		},
 		{
 			sql: "select d, c, b, a from t where a = b and b = 1",
-			ans: "Table(t)->Selection->Projection",
+			ans: "Table(t)->Projection",
 		},
 		{
 			sql: "select d as a, b as c from t as t1 where d > 0 and b < 0",
-			ans: "Table(t)->Selection->Projection",
+			ans: "Table(t)->Projection",
 		},
 		{
 			sql: "select c as a, c as b from t",
@@ -592,11 +591,11 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select c as a, c as b from t where d > 0",
-			ans: "Table(t)->Selection->Projection",
+			ans: "Table(t)->Projection",
 		},
 		{
 			sql: "select t1.a, t2.b, t2.a, t1.b from t t1, t t2 where t1.a > 0 and t2.b < 0",
-			ans: "RightHashJoin{Table(t)->Table(t)->Selection}->Projection",
+			ans: "RightHashJoin{Table(t)->Table(t)}->Projection",
 		},
 		{
 			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t1.a > 1)",
@@ -618,7 +617,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			is:        is,
 		}
 		p := builder.build(stmt)
