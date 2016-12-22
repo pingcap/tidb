@@ -216,7 +216,7 @@ func (t Time) ToNumber() *MyDecimal {
 
 	s, err := t.DateFormat(tfStr)
 	if err != nil {
-		log.Fatalf("No error because we've control the format!")
+		log.Error("Fatal: never happen because we've control the format!")
 	}
 
 	if t.Fsp > 0 {
