@@ -913,7 +913,7 @@ func (s *testEvaluatorSuite) TestMod(c *C) {
 	r, err = f.F(types.MakeDatums(29, 9), s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(2))
-	r, err = f.F(types.MakeDatums(35, 3), s.ctx)
+	r, err = f.F(types.MakeDatums(34.5, 3), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(2))
+	c.Assert(r, testutil.DatumEquals, types.NewDatum(1.5))
 }
