@@ -216,15 +216,6 @@ func (s *testEvaluatorSuite) TestDateFormat(c *C) {
 		c.Assert(v, testutil.DatumEquals, t["Expect"][0], Commentf("no.%d \nobtain:%v \nexpect:%v\n", i,
 			v.GetValue(), t["Expect"][0].GetValue()))
 	}
-
-	// error
-	// ds := types.MakeDatums("0000-01-00 00:00:00.123456",
-	// 	"%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%")
-	// _, err := builtinDateFormat(ds, s.ctx)
-	// Some like dayofweek() doesn't support the date format like 2000-00-00 returns 0,
-	// so it returns an error.
-	// TODO: Fix here.
-	// c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestClock(c *C) {
