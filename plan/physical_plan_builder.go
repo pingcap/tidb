@@ -1120,3 +1120,43 @@ func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanIn
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
+
+// PhysicalInitializer will do the initialization of some attributes after the convert2Physical process finish.
+type physicalInitializer struct {
+	ctx       context.Context
+	allocator *idAllocator
+}
+
+func (ps *physicalInitializer) initialize(p PhysicalPlan) {
+	for _, child := range p.GetChildren() {
+		ps.initialize(child.(PhysicalPlan))
+	}
+	// initialize attributes
+	p.SetCorrelated()
+}
+
+// addCachePlan will add a Cache plan above the plan whose father's IsCorrelated() is true but its own IsCorrelated() is false.
+func addCachePlan(p PhysicalPlan, allocator *idAllocator) {
+	if len(p.GetChildren()) == 0 {
+		return
+	}
+	newChildren := make([]Plan, 0, len(p.GetChildren()))
+	for _, child := range p.GetChildren() {
+		addCachePlan(child.(PhysicalPlan), allocator)
+		if p.IsCorrelated() && !child.IsCorrelated() {
+			newChild := &Cache{}
+			newChild.tp = "Cache"
+			newChild.allocator = allocator
+			newChild.initIDAndContext(p.context())
+			newChild.SetSchema(child.GetSchema())
+
+			addChild(newChild, child)
+			newChild.SetParents(p)
+
+			newChildren = append(newChildren, newChild)
+		} else {
+			newChildren = append(newChildren, child)
+		}
+	}
+	p.SetChildren(newChildren...)
+}
