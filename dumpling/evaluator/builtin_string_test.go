@@ -20,7 +20,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -320,19 +319,17 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 		{"", 2, 3, ""},
 	}
 	for _, v := range tbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("SUBSTRING"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.pos)},
-		}
+		f := Funcs[ast.Substring]
+		args := types.MakeDatums(v.str, v.pos)
 		if v.slen != -1 {
-			f.Args = append(f.Args, ast.NewValueExpr(v.slen))
+			args = append(args, types.NewDatum(v.slen))
 		}
-		r, err := Eval(s.ctx, f)
+		r, err := f.F(args, s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindString)
 		c.Assert(r.GetString(), Equals, v.result)
 
-		r1, err := Eval(s.ctx, f)
+		r1, err := f.F(args, s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(r1.Kind(), Equals, types.KindString)
 		c.Assert(r.GetString(), Equals, r1.GetString())
@@ -347,14 +344,12 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 		{"Quadratically", 5, "6", "ratica"},
 	}
 	for _, v := range errTbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("SUBSTRING"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.pos)},
-		}
+		f := Funcs[ast.Substring]
+		args := types.MakeDatums(v.str, v.pos)
 		if v.len != -1 {
-			f.Args = append(f.Args, ast.NewValueExpr(v.len))
+			args = append(args, types.NewDatum(v.len))
 		}
-		_, err := Eval(s.ctx, f)
+		_, err := f.F(args, s.ctx)
 		c.Assert(err, NotNil)
 	}
 }
@@ -370,15 +365,8 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		{"haha", "ascii", "haha"},
 	}
 	for _, v := range tbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("CONVERT"),
-			Args: []ast.ExprNode{
-				ast.NewValueExpr(v.str),
-				ast.NewValueExpr(v.cs),
-			},
-		}
-
-		r, err := Eval(s.ctx, f)
+		f := Funcs[ast.Convert]
+		r, err := f.F(types.MakeDatums(v.str, v.cs), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindString)
 		c.Assert(r.GetString(), Equals, v.result)
@@ -393,15 +381,8 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		{"haha", "wrongcharset", "haha"},
 	}
 	for _, v := range errTbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("CONVERT"),
-			Args: []ast.ExprNode{
-				ast.NewValueExpr(v.str),
-				ast.NewValueExpr(v.cs),
-			},
-		}
-
-		_, err := Eval(s.ctx, f)
+		f := Funcs[ast.Convert]
+		_, err := f.F(types.MakeDatums(v.str, v.cs), s.ctx)
 		c.Assert(err, NotNil)
 	}
 }
@@ -435,11 +416,8 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 		{"www.mysql.com", "", 0, ""},
 	}
 	for _, v := range tbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("SUBSTRING_INDEX"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.delim), ast.NewValueExpr(v.count)},
-		}
-		r, err := Eval(s.ctx, f)
+		f := Funcs[ast.SubstringIndex]
+		r, err := f.F(types.MakeDatums(v.str, v.delim, v.count), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindString)
 		c.Assert(r.GetString(), Equals, v.result)
@@ -458,11 +436,8 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 		{"www.mysql.com", ".", nil},
 	}
 	for _, v := range errTbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("SUBSTRING_INDEX"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.delim), ast.NewValueExpr(v.count)},
-		}
-		r, err := Eval(s.ctx, f)
+		f := Funcs[ast.SubstringIndex]
+		r, err := f.F(types.MakeDatums(v.str, v.delim, v.count), s.ctx)
 		c.Assert(err, NotNil)
 		c.Assert(r.Kind(), Equals, types.KindNull)
 	}
@@ -526,11 +501,8 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{"", "", 1},
 	}
 	for _, v := range tbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("LOCATE"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str)},
-		}
-		r, err := Eval(s.ctx, f)
+		f := Funcs[ast.Locate]
+		r, err := f.F(types.MakeDatums(v.subStr, v.Str), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindInt64)
 		c.Assert(r.GetInt64(), Equals, v.result)
@@ -549,11 +521,8 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{"", "", 2, 0},
 	}
 	for _, v := range tbl2 {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("LOCATE"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str), ast.NewValueExpr(v.pos)},
-		}
-		r, err := Eval(s.ctx, f)
+		f := Funcs[ast.Locate]
+		r, err := f.F(types.MakeDatums(v.subStr, v.Str, v.pos), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindInt64)
 		c.Assert(r.GetInt64(), Equals, v.result)
@@ -570,11 +539,8 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{nil, "bar"},
 	}
 	for _, v := range errTbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("LOCATE"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str)},
-		}
-		r, _ := Eval(s.ctx, f)
+		f := Funcs[ast.Locate]
+		r, _ := f.F(types.MakeDatums(v.subStr, v.Str), s.ctx)
 		c.Assert(r.Kind(), Equals, types.KindNull)
 	}
 
@@ -590,11 +556,8 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{nil, "bar", 0},
 	}
 	for _, v := range errTbl2 {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("LOCATE"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str), ast.NewValueExpr(v.pos)},
-		}
-		r, _ := Eval(s.ctx, f)
+		f := Funcs[ast.Locate]
+		r, _ := f.F(types.MakeDatums(v.subStr, v.Str), s.ctx)
 		c.Assert(r.Kind(), Equals, types.KindNull)
 	}
 }
@@ -616,15 +579,8 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		{"  \t\rbar\n   ", nil, ast.TrimBothDefault, "bar"},
 	}
 	for _, v := range tbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("TRIM"),
-			Args: []ast.ExprNode{
-				ast.NewValueExpr(v.str),
-				ast.NewValueExpr(v.remstr),
-				ast.NewValueExpr(v.dir),
-			},
-		}
-		r, err := Eval(s.ctx, f)
+		f := Funcs[ast.Trim]
+		r, err := f.F(types.MakeDatums(v.str, v.remstr, v.dir), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 	}
@@ -633,22 +589,19 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		str, result interface{}
 		fn          string
 	}{
-		{"  ", "", "LTRIM"},
-		{"  ", "", "RTRIM"},
-		{"foo0", "foo0", "LTRIM"},
-		{"bar0", "bar0", "RTRIM"},
-		{"  foo1", "foo1", "LTRIM"},
-		{"bar1  ", "bar1", "RTRIM"},
-		{spaceChars + "foo2  ", "foo2  ", "LTRIM"},
-		{"  bar2" + spaceChars, "  bar2", "RTRIM"},
-		{nil, nil, "LTRIM"},
-		{nil, nil, "RTRIM"},
+		{"  ", "", ast.Ltrim},
+		{"  ", "", ast.Rtrim},
+		{"foo0", "foo0", ast.Ltrim},
+		{"bar0", "bar0", ast.Rtrim},
+		{"  foo1", "foo1", ast.Ltrim},
+		{"bar1  ", "bar1", ast.Rtrim},
+		{spaceChars + "foo2  ", "foo2  ", ast.Ltrim},
+		{"  bar2" + spaceChars, "  bar2", ast.Rtrim},
+		{nil, nil, ast.Ltrim},
+		{nil, nil, ast.Rtrim},
 	} {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr(v.fn),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.str)},
-		}
-		r, err := Eval(s.ctx, f)
+		f := Funcs[v.fn]
+		r, err := f.F(types.MakeDatums(v.str), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 	}
