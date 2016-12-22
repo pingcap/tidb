@@ -2991,19 +2991,19 @@ FunctionCallNonKeyword:
     {
 		nilVal := ast.NewValueExpr(nil)
 		args := $3.([]ast.ExprNode)
-        $$ = &ast.FuncCallExpr{
-            FnName: model.NewCIStr("CHAR_FUNC"),
-            Args: append(args, nilVal),
-        }
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr("CHAR_FUNC"),
+			Args: append(args, nilVal),
+		}
     }
 |   "CHAR" '(' ExpressionList "USING" StringName ')'
     {
 		charset := ast.NewValueExpr($5)
 		args := $3.([]ast.ExprNode)
-        $$ = &ast.FuncCallExpr{
-            FnName: model.NewCIStr("CHAR_FUNC"),
-            Args: append(args, charset),
-        }
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr("CHAR_FUNC"),
+			Args: append(args, charset),
+		}
     }
 
 
