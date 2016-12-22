@@ -1121,15 +1121,11 @@ func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanIn
 	return info, nil
 }
 
-// PhysicalInitializer will do the initialization of some attributes after the convert2Physical process finish.
-type physicalInitializer struct {
-	ctx       context.Context
-	allocator *idAllocator
-}
-
-func (ps *physicalInitializer) initialize(p PhysicalPlan) {
+// physicalInitialize will set value of some attributes after convert2PhysicalPlan process.
+// Currently, only attribute "correlated" is considered.
+func physicalInitialize(p PhysicalPlan) {
 	for _, child := range p.GetChildren() {
-		ps.initialize(child.(PhysicalPlan))
+		physicalInitialize(child.(PhysicalPlan))
 	}
 	// initialize attributes
 	p.SetCorrelated()

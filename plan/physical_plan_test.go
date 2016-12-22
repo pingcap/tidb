@@ -784,12 +784,8 @@ func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		pp := info.p
 		pp = EliminateProjection(pp)
-		ps := physicalInitializer{
-			ctx:       builder.ctx,
-			allocator: builder.allocator,
-		}
-		ps.initialize(pp)
-		addCachePlan(pp, ps.allocator)
+		physicalInitialize(pp)
+		addCachePlan(pp, builder.allocator)
 		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
 	}
 }
