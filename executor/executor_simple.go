@@ -15,7 +15,6 @@ package executor
 
 import (
 	"fmt"
-	"math/rand"
 	"strings"
 
 	"github.com/juju/errors"
@@ -24,15 +23,12 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // SimpleExec represents simple statement executor.
@@ -77,8 +73,6 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeDropUser(x)
 	case *ast.SetPwdStmt:
 		err = e.executeSetPwd(x)
-	case *ast.AnalyzeTableStmt:
-		err = e.executeAnalyzeTable(x)
 	case *ast.BinlogStmt:
 		// We just ignore it.
 		return nil, nil
@@ -305,163 +299,4 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 func (e *SimpleExec) executeFlushTable(s *ast.FlushTableStmt) error {
 	// TODO: A dummy implement
 	return nil
-}
-
-func (e *SimpleExec) executeAnalyzeTable(s *ast.AnalyzeTableStmt) error {
-	for _, table := range s.TableNames {
-		err := e.createStatisticsForTable(table)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-const (
-	maxSampleCount     = 10000
-	defaultBucketCount = 256
-)
-
-func (e *SimpleExec) createStatisticsForTable(tn *ast.TableName) error {
-	var tableName string
-	if tn.Schema.L == "" {
-		tableName = tn.Name.L
-	} else {
-		tableName = tn.Schema.L + "." + tn.Name.L
-	}
-	indOffsets, colOffsets := detachIndexColumns(tn.TableInfo)
-	var count int64 = -1
-	var colSamples []*ast.Row
-	if colOffsets != nil {
-		var colNames []string
-		for _, offset := range colOffsets {
-			colNames = append(colNames, tn.TableInfo.Columns[offset].Name.L)
-		}
-		sql := "select " + strings.Join(colNames, ",") + " from " + tableName
-		result, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		count, colSamples, err = e.collectSamples(result)
-		result.Close()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	var indResults []ast.RecordSet
-	if indOffsets != nil {
-		for _, offset := range indOffsets {
-			colName := tn.TableInfo.Columns[offset].Name.L
-			sql := "select " + colName + " from " + tableName + " order by " + colName
-			result, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			indResults = append(indResults, result)
-		}
-	}
-	err := e.buildStatisticsAndSaveToKV(tn, count, colSamples, colOffsets, indResults, indOffsets)
-	for _, result := range indResults {
-		result.Close()
-	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func detachIndexColumns(tbl *model.TableInfo) (indexOffset []int, columnOffset []int) {
-	var indNames []string
-	if tbl.PKIsHandle {
-		for _, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				indNames = append(indNames, col.Name.L)
-			}
-		}
-	}
-	for _, ind := range tbl.Indices {
-		if ind.Columns[0].Length == types.UnspecifiedLength {
-			indNames = append(indNames, ind.Columns[0].Name.L)
-		}
-	}
-	for i, col := range tbl.Columns {
-		isIndexCol := false
-		for _, ind := range indNames {
-			if ind == col.Name.L {
-				isIndexCol = true
-				break
-			}
-		}
-		if isIndexCol {
-			indexOffset = append(indexOffset, i)
-		} else {
-			columnOffset = append(columnOffset, i)
-		}
-	}
-	return
-}
-
-// collectSamples collects sample from the result set, using Reservoir Sampling algorithm.
-// See https://en.wikipedia.org/wiki/Reservoir_sampling
-func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples []*ast.Row, err error) {
-	for {
-		var row *ast.Row
-		row, err = result.Next()
-		if err != nil {
-			return count, samples, errors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
-		if len(samples) < maxSampleCount {
-			samples = append(samples, row)
-		} else {
-			shouldAdd := rand.Int63n(count) < maxSampleCount
-			if shouldAdd {
-				idx := rand.Intn(maxSampleCount)
-				samples[idx] = row
-			}
-		}
-		count++
-	}
-	return count, samples, nil
-}
-
-func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, sampleRows []*ast.Row, colOffsets []int, indResults []ast.RecordSet, indOffsets []int) error {
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	columnSamples := rowsToColumnSamples(sampleRows)
-	sc := e.ctx.GetSessionVars().StmtCtx
-	t, err := statistics.NewTable(sc, tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples, colOffsets, indResults, indOffsets)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tpb, err := t.ToPB()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	m := meta.NewMeta(txn)
-	err = m.SetTableStats(tn.TableInfo.ID, tpb)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func rowsToColumnSamples(rows []*ast.Row) [][]types.Datum {
-	if len(rows) == 0 {
-		return nil
-	}
-	columnSamples := make([][]types.Datum, len(rows[0].Data))
-	for i := range columnSamples {
-		columnSamples[i] = make([]types.Datum, len(rows))
-	}
-	for j, row := range rows {
-		for i, val := range row.Data {
-			columnSamples[i][j] = val
-		}
-	}
-	return columnSamples
 }

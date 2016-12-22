@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
@@ -879,6 +880,7 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) getTableStats(table *model.TableInfo) *statistics.Table {
+	log.Warnf("%s", table)
 	txn, err := b.ctx.GetTxn(false)
 	if txn == nil || err != nil {
 		return statistics.PseudoTable(table)

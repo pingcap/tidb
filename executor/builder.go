@@ -116,6 +116,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildDummyScan(v)
 	case *plan.Cache:
 		return b.buildCache(v)
+	case *plan.Analyze:
+		return b.buildAnalyze(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -529,7 +531,6 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
 		return st
 	}
-
 	ts := &TableScanExec{
 		t:            table,
 		asName:       v.TableAsName,
@@ -679,4 +680,20 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 		schema: v.GetSchema(),
 		Src:    src,
 	}
+}
+
+func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
+	e := &AnalyzeExec{
+		schema:     v.GetSchema(),
+		table:      v.Table,
+		ctx:        b.ctx,
+		indOffsets: v.IndOffsets,
+		colOffsets: v.ColOffsets,
+		Srcs:       make([]Executor, len(v.GetChildren())),
+	}
+	for i, sel := range v.GetChildren() {
+		selExec := b.build(sel)
+		e.Srcs[i] = selExec
+	}
+	return e
 }

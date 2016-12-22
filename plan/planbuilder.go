@@ -14,6 +14,8 @@
 package plan
 
 import (
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -21,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
@@ -97,7 +100,9 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildDo(x)
 	case *ast.SetStmt:
 		return b.buildSet(x)
-	case *ast.AnalyzeTableStmt, *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt,
+	case *ast.AnalyzeTableStmt:
+		return b.buildAnalyze(x)
+	case *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
 		return b.buildSimple(node.(ast.StmtNode))
@@ -310,6 +315,82 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
 
+	return p
+}
+
+func detachIndexColumns(tn *ast.TableName) (indexOffset []int, columnOffset []int) {
+	tbl := tn.TableInfo
+	var indNames []string
+	if tbl.PKIsHandle {
+		for _, col := range tbl.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				indNames = append(indNames, col.Name.L)
+			}
+		}
+	}
+	indices, _ := availableIndices(tn)
+	for _, ind := range indices {
+		indNames = append(indNames, ind.Columns[0].Name.L)
+	}
+	for i, col := range tbl.Columns {
+		isIndexCol := false
+		for _, ind := range indNames {
+			if ind == col.Name.L {
+				isIndexCol = true
+				break
+			}
+		}
+		if isIndexCol {
+			indexOffset = append(indexOffset, i)
+		} else {
+			columnOffset = append(columnOffset, i)
+		}
+	}
+	return
+}
+
+func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
+	p := &Analyze{
+		baseLogicalPlan: newBaseLogicalPlan(Ana, b.allocator),
+	}
+	parser := parser.New()
+	for _, tbl := range as.TableNames {
+		indOffsets, colOffsets := detachIndexColumns(tbl)
+		result := &Analyze{
+			baseLogicalPlan: newBaseLogicalPlan(Ana, b.allocator),
+			Table:           tbl,
+			IndOffsets:      indOffsets,
+			ColOffsets:      colOffsets,
+		}
+		if indOffsets != nil {
+			for _, offset := range indOffsets {
+				colName := tbl.TableInfo.Columns[offset].Name.L
+				sql := "select " + colName + " from " + tbl.Name.L + " order by " + colName
+				stmt, _ := parser.ParseOneStmt(sql, "", "")
+				Preprocess(stmt, b.is, b.ctx)
+				Validate(stmt, false)
+				sel := b.build(stmt)
+				addChild(result, sel)
+			}
+		}
+		if colOffsets != nil {
+			var colNames []string
+			for _, offset := range colOffsets {
+				colNames = append(colNames, tbl.TableInfo.Columns[offset].Name.L)
+			}
+			sql := "select " + strings.Join(colNames, ",") + " from " + tbl.Name.L
+			stmt, _ := parser.ParseOneStmt(sql, "", "")
+			Preprocess(stmt, b.is, b.ctx)
+			Validate(stmt, false)
+			sel := b.build(stmt)
+			addChild(result, sel)
+		}
+		result.self = result
+		result.initIDAndContext(b.ctx)
+		addChild(p, result)
+	}
+	p.self = p
+	p.initIDAndContext(b.ctx)
 	return p
 }
 

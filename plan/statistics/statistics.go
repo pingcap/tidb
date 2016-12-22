@@ -350,6 +350,9 @@ func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, resu
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if row == nil {
+			break
+		}
 		cmp, err := col.Values[bucketIdx].CompareDatum(sc, row.Data[0])
 		if err != nil {
 			return errors.Trace(err)
@@ -407,7 +410,7 @@ func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, num
 		info:    ti,
 		TS:      ts,
 		Count:   count,
-		Columns: make([]*Column, len(columnSamples)),
+		Columns: make([]*Column, len(ti.Columns)),
 	}
 	for i, offset := range colOffsets {
 		err := t.buildColumn(sc, offset, columnSamples[i], numBuckets)

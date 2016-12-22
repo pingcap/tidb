@@ -187,6 +187,15 @@ type Insert struct {
 	Ignore    bool
 }
 
+// Analyze represents an analyze plan
+type Analyze struct {
+	baseLogicalPlan
+
+	Table      *ast.TableName
+	IndOffsets []int
+	ColOffsets []int
+}
+
 // LoadData represents a loaddata plan.
 type LoadData struct {
 	basePlan

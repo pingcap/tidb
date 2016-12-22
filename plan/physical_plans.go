@@ -738,3 +738,9 @@ func (p *Cache) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
+
+// Copy implements the Analyze Copy interface.
+func (p *Analyze) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}

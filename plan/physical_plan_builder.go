@@ -1176,3 +1176,25 @@ func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanIn
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
+
+// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
+func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
+	info, err := p.getPlanInfo(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if info != nil {
+		return info, nil
+	}
+	childInfos := make([]*physicalPlanInfo, 0, len(p.children))
+	for _, child := range p.GetChildren() {
+		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		childInfos = append(childInfos, childInfo)
+	}
+	info = p.matchProperty(prop, childInfos...)
+	p.storePlanInfo(prop, info)
+	return info, nil
+}
