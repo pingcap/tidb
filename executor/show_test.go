@@ -123,8 +123,8 @@ func (s *testSuite) TestShow(c *C) {
 	}
 
 	tk.MustExec("use show_test_DB")
-	result = tk.MustQuery("SHOW index from show_index from test")
-	c.Check(result.Rows(), HasLen, 2)
+	result = tk.MustQuery("SHOW index from show_index from test where Column_name = 'c'")
+	c.Check(result.Rows(), HasLen, 1)
 }
 
 type stats struct {
