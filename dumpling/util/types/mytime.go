@@ -74,9 +74,6 @@ func (t mysqlTime) YearDay() int {
 }
 
 func (t mysqlTime) YearWeek(mode int) (int, int) {
-	if t.month == 0 || t.day == 0 {
-		return 0, 0
-	}
 	behavior := weekMode(mode) | weekBehaviourYear
 	return calcWeek(&t, behavior)
 }
