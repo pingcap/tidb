@@ -683,25 +683,24 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		match := doMatch(v.input, patChars, patTypes)
 		c.Assert(match, Equals, v.match, Commentf("%v", v))
 	}
-	f := Funcs[ast.Like]
-	r, err := f.F(types.MakeDatums("a", "", 0), s.ctx)
-	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(0))
-	r, err = f.F(types.MakeDatums("a", "a", 0), s.ctx)
-	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(1))
-	r, err = f.F(types.MakeDatums("a", "b", 0), s.ctx)
-	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(0))
-	r, err = f.F(types.MakeDatums("aA", "Aa", 0), s.ctx)
-	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(1))
-	r, err = f.F(types.MakeDatums("aAb", "Aa%", 0), s.ctx)
-	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(1))
-	r, err = f.F(types.MakeDatums("aAb", "Aa_", 0), s.ctx)
-	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(1))
+	testCases := []struct {
+		input   string
+		pattern string
+		match   int
+	}{
+		{"a", "", 0},
+		{"a", "a", 1},
+		{"a", "b", 0},
+		{"aA", "Aa", 1},
+		{"aAb", "Aa%", 1},
+		{"aAb", "Aa_", 1},
+	}
+	for _, tc := range testCases {
+		f := Funcs[ast.Like]
+		r, err := f.F(types.MakeDatums(tc.input, tc.pattern, 0), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tc.match))
+	}
 }
 
 func (s *testEvaluatorSuite) TestRegexp(c *C) {
