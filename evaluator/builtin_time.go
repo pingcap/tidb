@@ -78,33 +78,28 @@ func builtinDate(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	return convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 }
 
-// Convert datum to gotime.
-// TODO: This is used for timediff(). After we finish time refactor, we should abandan this function.
-func convertToGoTime(sc *variable.StatementContext, d types.Datum) (t time.Time, err error) {
+func convertDatumToTime(sc *variable.StatementContext, d types.Datum) (t types.Time, err error) {
 	if d.Kind() != types.KindMysqlTime {
 		d, err = convertToTime(sc, d, mysql.TypeDatetime)
 		if err != nil {
 			return t, errors.Trace(err)
 		}
 	}
-	t, err = d.GetMysqlTime().Time.GoTime()
-	return t, errors.Trace(err)
+	return d.GetMysqlTime(), nil
 }
 
 func builtinTimeDiff(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	// TODO: use a better way to compute time diff after time refactor finished.
 	sc := ctx.GetSessionVars().StmtCtx
-	t1, err := convertToGoTime(sc, args[0])
+	t1, err := convertDatumToTime(sc, args[0])
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	t2, err := convertToGoTime(sc, args[1])
+	t2, err := convertDatumToTime(sc, args[1])
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	var t types.Duration
-	t.Duration = t1.Sub(t2)
-	t.Fsp = types.MaxFsp
+
+	t := t1.Sub(&t2)
 	d.SetMysqlDuration(t)
 	return d, nil
 }
@@ -534,7 +529,7 @@ func builtinDayOfYear(args []types.Datum, ctx context.Context) (types.Datum, err
 	}
 
 	t := d.GetMysqlTime()
-	if t.IsZero() {
+	if t.Time.Month() == 0 || t.Time.Day() == 0 {
 		// TODO: log warning or return error?
 		d.SetNull()
 		return d, nil
@@ -633,7 +628,7 @@ func builtinYearWeek(args []types.Datum, ctx context.Context) (types.Datum, erro
 
 	// No need to check type here.
 	t := d.GetMysqlTime()
-	if t.IsZero() {
+	if t.Time.Month() == 0 || t.Time.Day() == 0 {
 		d.SetNull()
 		// TODO: log warning or return error?
 		return d, nil

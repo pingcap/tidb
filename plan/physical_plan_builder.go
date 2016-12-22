@@ -131,7 +131,7 @@ func getRowCountByTableRange(sc *variable.StatementContext, statsTbl *statistics
 func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	client := p.ctx.GetClient()
 	ts := &PhysicalTableScan{
-		Table:               p.Table,
+		Table:               p.tableInfo,
 		Columns:             p.Columns,
 		TableAsName:         p.TableAsName,
 		DBName:              p.DBName,
@@ -153,7 +153,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 
 	var resultPlan PhysicalPlan
 	resultPlan = ts
-	table := p.Table
+	table := p.tableInfo
 	sc := p.ctx.GetSessionVars().StmtCtx
 	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
 		newSel := *sel
@@ -211,7 +211,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 	client := p.ctx.GetClient()
 	is := &PhysicalIndexScan{
 		Index:               index,
-		Table:               p.Table,
+		Table:               p.tableInfo,
 		Columns:             p.Columns,
 		TableAsName:         p.TableAsName,
 		OutOfOrder:          true,
@@ -319,7 +319,7 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 	if info != nil || err != nil {
 		return info, errors.Trace(err)
 	}
-	indices, includeTableScan := availableIndices(p.table)
+	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
 	if includeTableScan {
 		info, err = p.convert2TableScan(prop)
 		if err != nil {

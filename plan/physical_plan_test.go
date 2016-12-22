@@ -62,12 +62,13 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
@@ -151,12 +152,13 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
@@ -282,12 +284,13 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
@@ -487,13 +490,14 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
@@ -609,12 +613,13 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mock.NewContext(),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
@@ -705,12 +710,13 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)

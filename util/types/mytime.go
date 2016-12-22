@@ -66,12 +66,11 @@ func (t mysqlTime) Weekday() gotime.Weekday {
 }
 
 func (t mysqlTime) YearDay() int {
-	t1, err := t.GoTime()
-	if err != nil {
-		// TODO: Fix here.
+	if t.month == 0 || t.day == 0 {
 		return 0
 	}
-	return t1.YearDay()
+	return calcDaynr(int(t.year), int(t.month), int(t.day)) -
+		calcDaynr(int(t.year), 1, 1) + 1
 }
 
 func (t mysqlTime) YearWeek(mode int) (int, int) {
@@ -116,6 +115,58 @@ func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysql
 		uint8(second),
 		uint32(microsecond),
 	}
+}
+
+func calcTimeFromSec(to *mysqlTime, seconds, microseconds int) {
+	to.hour = uint8(seconds / 3600)
+	seconds = seconds % 3600
+	to.minute = uint8(seconds / 60)
+	to.second = uint8(seconds % 60)
+	to.microsecond = uint32(microseconds)
+}
+
+// calcTimeDiff calculates difference between two datetime values as seconds + microseconds.
+// t1 and t2 should be TIME/DATE/DATETIME value.
+// sign can be +1 or -1, and t2 is preprocessed with sign first.
+func calcTimeDiff(t1, t2 TimeInternal, sign int) (seconds, microseconds int, neg bool) {
+	const secondsIn24Hour = 86400
+	days := calcDaynr(t1.Year(), t1.Month(), t1.Day())
+	days -= sign * calcDaynr(t2.Year(), t2.Month(), t2.Day())
+
+	tmp := (int64(days)*secondsIn24Hour+
+		int64(t1.Hour())*3600+int64(t1.Minute())*60+
+		int64(t1.Second())-
+		int64(sign)*(int64(t2.Hour())*3600+int64(t2.Minute())*60+
+			int64(t2.Second())))*
+		1e6 +
+		int64(t1.Microsecond()) - int64(sign)*int64(t2.Microsecond())
+
+	if tmp < 0 {
+		tmp = -tmp
+		neg = true
+	}
+	seconds = int(tmp / 1e6)
+	microseconds = int(tmp % 1e6)
+	return
+}
+
+// datetimeToUint64 converts time value to integer in YYYYMMDDHHMMSS format.
+func datetimeToUint64(t TimeInternal) uint64 {
+	return dateToUint64(t)*1e6 + timeToUint64(t)
+}
+
+// dateToUint64 converts time value to integer in YYYYMMDD format.
+func dateToUint64(t TimeInternal) uint64 {
+	return (uint64)(uint64(t.Year())*10000 +
+		uint64(t.Month())*100 +
+		uint64(t.Day()))
+}
+
+// timeToUint64 converts time value to integer in HHMMSS format.
+func timeToUint64(t TimeInternal) uint64 {
+	return uint64(uint64(t.Hour())*10000 +
+		uint64(t.Minute())*100 +
+		uint64(t.Second()))
 }
 
 // calcDaynr calculates days since 0000-00-00.

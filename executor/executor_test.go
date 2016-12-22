@@ -1407,7 +1407,6 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	stmt, err := compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
-	c.Check(stmt.IsDDL(), IsFalse)
 
 	stmtNode, err = s.ParseOneStmt("create table t (a int)", "", "")
 	c.Check(err, IsNil)
