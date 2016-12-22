@@ -23,6 +23,7 @@ import (
 	"unicode"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 )
 
@@ -173,11 +174,11 @@ func CurrentTime(tp uint8) Time {
 func (t Time) String() string {
 	if t.Type == mysql.TypeDate {
 		// We control the format, so no error would occur.
-		str, _ := t.Format("%Y-%m-%d")
+		str, _ := t.DateFormat("%Y-%m-%d")
 		return str
 	}
 
-	str, _ := t.Format("%Y-%m-%d %H:%i:%s")
+	str, _ := t.DateFormat("%Y-%m-%d %H:%i:%s")
 	if t.Fsp > 0 {
 		tmp := fmt.Sprintf(".%06d", t.Time.Microsecond())
 		str = str + tmp[:1+t.Fsp]
@@ -191,8 +192,8 @@ func (t Time) IsZero() bool {
 	return isZero(t.Time)
 }
 
-const numberFormat = "20060102150405"
-const dateFormat = "20060102"
+const numberFormat = "%Y%m%d%H%i%s"
+const dateFormat = "%Y%m%d"
 
 // ToNumber returns a formatted number.
 // e.g,
@@ -213,15 +214,14 @@ func (t Time) ToNumber() *MyDecimal {
 		tfStr = numberFormat
 	}
 
-	if t.Fsp > 0 {
-		tfStr = fmt.Sprintf("%s.%s", tfStr, strings.Repeat("0", t.Fsp))
+	s, err := t.DateFormat(tfStr)
+	if err != nil {
+		log.Error("Fatal: never happen because we've control the format!")
 	}
 
-	var s string
-	if t1, err := t.Time.GoTime(); err == nil {
-		s = t1.Format(tfStr)
-	} else {
-		s = ErrInvalidTimeFormat.Error()
+	if t.Fsp > 0 {
+		s1 := fmt.Sprintf("%s.%06d", s, t.Time.Microsecond())
+		s = s1[:len(s)+t.Fsp+1]
 	}
 
 	// We skip checking error here because time formatted string can be parsed certainly.
@@ -265,37 +265,24 @@ func (t Time) Compare(o Time) int {
 	return compareTime(t.Time, o.Time)
 }
 
-func compareTime(t1, t2 TimeInternal) int {
+func compareTime(a, b TimeInternal) int {
+	ta := datetimeToUint64(a)
+	tb := datetimeToUint64(b)
+
 	switch {
-	case t1.Year() > t2.Year():
-		return 1
-	case t1.Year() < t2.Year():
+	case ta < tb:
 		return -1
-	case t1.Month() > t2.Month():
+	case ta > tb:
 		return 1
-	case t1.Month() < t2.Month():
-		return -1
-	case t1.Day() > t2.Day():
-		return 1
-	case t1.Day() < t2.Day():
-		return -1
-	case t1.Hour() > t2.Hour():
-		return 1
-	case t1.Hour() < t2.Hour():
-		return -1
-	case t1.Minute() > t2.Minute():
-		return 1
-	case t1.Minute() < t2.Minute():
-		return -1
-	case t1.Second() > t2.Second():
-		return 1
-	case t1.Second() < t2.Second():
-		return -1
-	case t1.Microsecond() > t2.Microsecond():
-		return 1
-	case t1.Microsecond() < t2.Microsecond():
-		return -1
 	}
+
+	switch {
+	case a.Microsecond() < b.Microsecond():
+		return -1
+	case a.Microsecond() > b.Microsecond():
+		return 1
+	}
+
 	return 0
 }
 
@@ -309,6 +296,12 @@ func (t Time) CompareString(str string) (int, error) {
 	}
 
 	return t.Compare(o), nil
+}
+
+// roundTime rounds the time value according to digits count specified by fsp.
+func roundTime(t gotime.Time, fsp int) gotime.Time {
+	d := gotime.Duration(math.Pow10(9 - fsp))
+	return t.Round(d)
 }
 
 func (t Time) roundFrac(fsp int) (Time, error) {
@@ -327,10 +320,27 @@ func (t Time) roundFrac(fsp int) (Time, error) {
 		return t, nil
 	}
 
-	t1, _ := t.Time.GoTime()
-	// TODO: Fix here.
-	nt := t1.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond)
-	return Time{Time: FromGoTime(nt), Type: t.Type, Fsp: fsp}, nil
+	var nt TimeInternal
+	if t1, err := t.Time.GoTime(); err == nil {
+		t1 = roundTime(t1, fsp)
+		nt = FromGoTime(t1)
+	} else {
+		// Take the hh:mm:ss part out to avoid handle month or day = 0.
+		hour, minute, second, microsecond := t.Time.Hour(), t.Time.Minute(), t.Time.Second(), t.Time.Microsecond()
+		t1 := gotime.Date(1, 1, 1, hour, minute, second, microsecond*1000, gotime.Local)
+		t2 := roundTime(t1, fsp)
+		hour, minute, second = t2.Clock()
+		microsecond = t2.Nanosecond() / 1000
+
+		// TODO: when hh:mm:ss overflow one day after rounding, it should be add to yy:mm:dd part,
+		// but mm:dd may contain 0, it makes the code complex, so we ignore it here.
+		if t2.Day()-1 > 0 {
+			return t, errors.Trace(ErrInvalidTimeFormat)
+		}
+		nt = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day(), hour, minute, second, microsecond)
+	}
+
+	return Time{Time: nt, Type: t.Type, Fsp: fsp}, nil
 }
 
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
@@ -424,6 +434,32 @@ func (t *Time) check() error {
 		return checkDateType(t.Time)
 	}
 	return nil
+}
+
+// Sub subtracts t1 from t, returns a duration value.
+// Note that sub should not be done on different time types.
+func (t *Time) Sub(t1 *Time) Duration {
+	var duration gotime.Duration
+	if t.Type == mysql.TypeTimestamp && t1.Type == mysql.TypeTimestamp {
+		a, _ := t.Time.GoTime()
+		b, _ := t1.Time.GoTime()
+		duration = a.Sub(b)
+	} else {
+		seconds, microseconds, neg := calcTimeDiff(t.Time, t1.Time, 1)
+		duration = gotime.Duration(seconds*1e9 + microseconds*1e3)
+		if neg {
+			duration = -duration
+		}
+	}
+
+	fsp := t.Fsp
+	if fsp < t1.Fsp {
+		fsp = t1.Fsp
+	}
+	return Duration{
+		Duration: duration,
+		Fsp:      fsp,
+	}
 }
 
 func parseDateFormat(format string) []string {
@@ -1560,10 +1596,10 @@ func ParseTimeFromInt64(num int64) (Time, error) {
 	return parseDateTimeFromNum(num)
 }
 
-// Format returns a textual representation of the time value formatted
+// DateFormat returns a textual representation of the time value formatted
 // according to layout.
-// See: http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
-func (t Time) Format(layout string) (string, error) {
+// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
+func (t Time) DateFormat(layout string) (string, error) {
 	var buf bytes.Buffer
 	inPatternMatch := false
 	for _, b := range layout {
@@ -1681,10 +1717,18 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		fmt.Fprintf(buf, "%d", t.Time.Weekday())
 	case 'X':
 		year, _ := t.Time.YearWeek(2)
-		fmt.Fprintf(buf, "%04d", year)
+		if year < 0 {
+			fmt.Fprintf(buf, "%v", math.MaxUint32)
+		} else {
+			fmt.Fprintf(buf, "%04d", year)
+		}
 	case 'x':
 		year, _ := t.Time.YearWeek(3)
-		fmt.Fprintf(buf, "%04d", year)
+		if year < 0 {
+			fmt.Fprintf(buf, "%v", math.MaxUint32)
+		} else {
+			fmt.Fprintf(buf, "%04d", year)
+		}
 	case 'Y':
 		fmt.Fprintf(buf, "%04d", t.Time.Year())
 	case 'y':

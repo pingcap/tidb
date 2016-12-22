@@ -319,6 +319,12 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+
+	skipCheck := ctx.GetSessionVars().SkipConstraintCheck
+	if skipCheck {
+		txn.SetOption(kv.SkipCheckForWrite, true)
+	}
+
 	bs := kv.NewBufferStore(txn)
 	// Insert new entries into indices.
 	h, err := t.addIndices(ctx, recordID, r, bs)

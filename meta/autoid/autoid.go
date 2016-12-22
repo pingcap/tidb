@@ -25,9 +25,8 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-const (
-	step = 5000
-)
+// Test needs to change it, so it's a variable.
+var step = int64(5000)
 
 var errInvalidTableID = terror.ClassAutoid.New(codeInvalidTableID, "invalid TableID")
 

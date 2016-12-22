@@ -101,9 +101,9 @@ func (s *testSuite) TestSetVar(c *C) {
 	vars := tk.Se.(context.Context).GetSessionVars()
 	tk.Se.CommitTxn()
 	tk.MustExec("set @@autocommit = 1")
-	c.Assert(vars.ShouldAutocommit(), IsTrue)
+	c.Assert(vars.IsAutocommit(), IsTrue)
 	tk.MustExec("set @@autocommit = 0")
-	c.Assert(vars.ShouldAutocommit(), IsFalse)
+	c.Assert(vars.IsAutocommit(), IsFalse)
 
 	tk.MustExec("set @@sql_mode = 'strict_trans_tables'")
 	c.Assert(vars.StrictSQLMode, IsTrue)

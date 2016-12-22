@@ -887,28 +887,47 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	if b.err != nil {
 		return nil
 	}
+	schemaName := tn.Schema
+	if schemaName.L == "" {
+		schemaName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	tbl, err := b.is.TableByName(schemaName, tn.Name)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	tableInfo := tbl.Meta()
+
 	p := &DataSource{
-		table:           tn,
-		Table:           tn.TableInfo,
+		indexHints:      tn.IndexHints,
+		tableInfo:       tableInfo,
 		baseLogicalPlan: newBaseLogicalPlan(Tbl, b.allocator),
 		statisticTable:  statisticTable,
+		DBName:          &schemaName,
 	}
 	p.self = p
 	p.initIDAndContext(b.ctx)
 	// Equal condition contains a column from previous joined table.
-	rfs := tn.GetResultFields()
-	schema := make([]*expression.Column, 0, len(rfs))
-	for i, rf := range rfs {
-		p.DBName = &rf.DBName
-		p.Columns = append(p.Columns, rf.Column)
+	schema := make([]*expression.Column, 0, len(tableInfo.Columns))
+	for i, col := range tableInfo.Columns {
+		if b.inUpdateStmt {
+			switch col.State {
+			case model.StatePublic, model.StateWriteOnly, model.StateWriteReorganization:
+			default:
+				continue
+			}
+		} else if col.State != model.StatePublic {
+			continue
+		}
+		p.Columns = append(p.Columns, col)
 		schema = append(schema, &expression.Column{
 			FromID:   p.id,
-			ColName:  rf.Column.Name,
-			TblName:  rf.Table.Name,
-			DBName:   rf.DBName,
-			RetType:  &rf.Column.FieldType,
+			ColName:  col.Name,
+			TblName:  tableInfo.Name,
+			DBName:   schemaName,
+			RetType:  &col.FieldType,
 			Position: i,
-			ID:       rf.Column.ID})
+			ID:       col.ID})
 	}
 	p.SetSchema(schema)
 	return p
@@ -1027,6 +1046,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 }
 
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
+	b.inUpdateStmt = true
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {

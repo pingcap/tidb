@@ -22,11 +22,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -48,37 +45,6 @@ type testEvaluatorSuite struct {
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
-}
-
-func (s *testEvaluatorSuite) parseExpr(c *C, expr string) ast.ExprNode {
-	st, err := s.ParseOneStmt("select "+expr, "", "")
-	c.Assert(err, IsNil)
-	stmt := st.(*ast.SelectStmt)
-	return stmt.Fields.Fields[0].Expr
-}
-
-type testCase struct {
-	exprStr   string
-	resultStr string
-}
-
-func (s *testEvaluatorSuite) runTests(c *C, cases []testCase) {
-	for _, ca := range cases {
-		expr := s.parseExpr(c, ca.exprStr)
-		val, err := Eval(s.ctx, expr)
-		c.Assert(err, IsNil)
-		valStr := fmt.Sprintf("%v", val.GetValue())
-		c.Assert(valStr, Equals, ca.resultStr, Commentf("for %s", ca.exprStr))
-	}
-}
-
-func (s *testEvaluatorSuite) TestBetween(c *C) {
-	defer testleak.AfterTest(c)()
-	cases := []testCase{
-		{exprStr: "1 between 2 and 3", resultStr: "0"},
-		{exprStr: "1 not between 2 and 3", resultStr: "1"},
-	}
-	s.runTests(c, cases)
 }
 
 func (s *testEvaluatorSuite) TestSleep(c *C) {
@@ -120,42 +86,42 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs    interface{}
-		op     opcode.Op
+		op     string
 		rhs    interface{}
 		result int64 // 0 for false, 1 for true
 	}{
 		// test EQ
-		{1, opcode.EQ, 2, 0},
-		{false, opcode.EQ, false, 1},
-		{false, opcode.EQ, true, 0},
-		{true, opcode.EQ, true, 1},
-		{true, opcode.EQ, false, 0},
-		{"1", opcode.EQ, true, 1},
-		{"1", opcode.EQ, false, 0},
+		{1, ast.EQ, 2, 0},
+		{false, ast.EQ, false, 1},
+		{false, ast.EQ, true, 0},
+		{true, ast.EQ, true, 1},
+		{true, ast.EQ, false, 0},
+		{"1", ast.EQ, true, 1},
+		{"1", ast.EQ, false, 0},
 
 		// test NEQ
-		{1, opcode.NE, 2, 1},
-		{false, opcode.NE, false, 0},
-		{false, opcode.NE, true, 1},
-		{true, opcode.NE, true, 0},
-		{"1", opcode.NE, true, 0},
-		{"1", opcode.NE, false, 1},
+		{1, ast.NE, 2, 1},
+		{false, ast.NE, false, 0},
+		{false, ast.NE, true, 1},
+		{true, ast.NE, true, 0},
+		{"1", ast.NE, true, 0},
+		{"1", ast.NE, false, 1},
 
 		// test GT, GE
-		{1, opcode.GT, 0, 1},
-		{1, opcode.GT, 1, 0},
-		{1, opcode.GE, 1, 1},
-		{3.14, opcode.GT, 3, 1},
-		{3.14, opcode.GE, 3.14, 1},
+		{1, ast.GT, 0, 1},
+		{1, ast.GT, 1, 0},
+		{1, ast.GE, 1, 1},
+		{3.14, ast.GT, 3, 1},
+		{3.14, ast.GE, 3.14, 1},
 
 		// test LT, LE
-		{1, opcode.LT, 2, 1},
-		{1, opcode.LT, 1, 0},
-		{1, opcode.LE, 1, 1},
+		{1, ast.LT, 2, 1},
+		{1, ast.LT, 1, 0},
+		{1, ast.LE, 1, 1},
 	}
 	for _, t := range tbl {
-		expr := &ast.BinaryOperationExpr{Op: t.op, L: ast.NewValueExpr(t.lhs), R: ast.NewValueExpr(t.rhs)}
-		v, err := Eval(s.ctx, expr)
+		f := Funcs[t.op]
+		v, err := f.F(types.MakeDatums(t.lhs, t.rhs), s.ctx)
 		c.Assert(err, IsNil)
 		val, err := v.ToBool(s.ctx.GetSessionVars().StmtCtx)
 		c.Assert(err, IsNil)
@@ -165,26 +131,26 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 	// test nil
 	nilTbl := []struct {
 		lhs interface{}
-		op  opcode.Op
+		op  string
 		rhs interface{}
 	}{
-		{nil, opcode.EQ, nil},
-		{nil, opcode.EQ, 1},
-		{nil, opcode.NE, nil},
-		{nil, opcode.NE, 1},
-		{nil, opcode.LT, nil},
-		{nil, opcode.LT, 1},
-		{nil, opcode.LE, nil},
-		{nil, opcode.LE, 1},
-		{nil, opcode.GT, nil},
-		{nil, opcode.GT, 1},
-		{nil, opcode.GE, nil},
-		{nil, opcode.GE, 1},
+		{nil, ast.EQ, nil},
+		{nil, ast.EQ, 1},
+		{nil, ast.NE, nil},
+		{nil, ast.NE, 1},
+		{nil, ast.LT, nil},
+		{nil, ast.LT, 1},
+		{nil, ast.LE, nil},
+		{nil, ast.LE, 1},
+		{nil, ast.GT, nil},
+		{nil, ast.GT, 1},
+		{nil, ast.GE, nil},
+		{nil, ast.GE, 1},
 	}
 
 	for _, t := range nilTbl {
-		expr := &ast.BinaryOperationExpr{Op: t.op, L: ast.NewValueExpr(t.lhs), R: ast.NewValueExpr(t.rhs)}
-		v, err := Eval(s.ctx, expr)
+		f := Funcs[t.op]
+		v, err := f.F(types.MakeDatums(t.lhs, t.rhs), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v.Kind(), Equals, types.KindNull)
 	}
@@ -194,29 +160,29 @@ func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs interface{}
-		op  opcode.Op
+		op  string
 		rhs interface{}
 		ret interface{}
 	}{
-		{nil, opcode.AndAnd, 1, nil},
-		{nil, opcode.AndAnd, 0, 0},
-		{nil, opcode.OrOr, 1, 1},
-		{nil, opcode.OrOr, 0, nil},
-		{nil, opcode.LogicXor, 1, nil},
-		{nil, opcode.LogicXor, 0, nil},
-		{1, opcode.AndAnd, 0, 0},
-		{1, opcode.AndAnd, 1, 1},
-		{1, opcode.OrOr, 0, 1},
-		{1, opcode.OrOr, 1, 1},
-		{0, opcode.OrOr, 0, 0},
-		{1, opcode.LogicXor, 0, 1},
-		{1, opcode.LogicXor, 1, 0},
-		{0, opcode.LogicXor, 0, 0},
-		{0, opcode.LogicXor, 1, 1},
+		{nil, ast.AndAnd, 1, nil},
+		{nil, ast.AndAnd, 0, 0},
+		{nil, ast.OrOr, 1, 1},
+		{nil, ast.OrOr, 0, nil},
+		{nil, ast.LogicXor, 1, nil},
+		{nil, ast.LogicXor, 0, nil},
+		{1, ast.AndAnd, 0, 0},
+		{1, ast.AndAnd, 1, 1},
+		{1, ast.OrOr, 0, 1},
+		{1, ast.OrOr, 1, 1},
+		{0, ast.OrOr, 0, 0},
+		{1, ast.LogicXor, 0, 1},
+		{1, ast.LogicXor, 1, 0},
+		{0, ast.LogicXor, 0, 0},
+		{0, ast.LogicXor, 1, 1},
 	}
 	for _, t := range tbl {
-		expr := &ast.BinaryOperationExpr{Op: t.op, L: ast.NewValueExpr(t.lhs), R: ast.NewValueExpr(t.rhs)}
-		v, err := Eval(s.ctx, expr)
+		f := Funcs[t.op]
+		v, err := f.F(types.MakeDatums(t.lhs, t.rhs), s.ctx)
 		c.Assert(err, IsNil)
 		switch x := t.ret.(type) {
 		case nil:
@@ -231,26 +197,26 @@ func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs interface{}
-		op  opcode.Op
+		op  string
 		rhs interface{}
 		ret interface{}
 	}{
-		{1, opcode.And, 1, 1},
-		{1, opcode.Or, 1, 1},
-		{1, opcode.Xor, 1, 0},
-		{1, opcode.LeftShift, 1, 2},
-		{2, opcode.RightShift, 1, 1},
-		{nil, opcode.And, 1, nil},
-		{1, opcode.And, nil, nil},
-		{nil, opcode.Or, 1, nil},
-		{nil, opcode.Xor, 1, nil},
-		{nil, opcode.LeftShift, 1, nil},
-		{nil, opcode.RightShift, 1, nil},
+		{1, ast.And, 1, 1},
+		{1, ast.Or, 1, 1},
+		{1, ast.Xor, 1, 0},
+		{1, ast.LeftShift, 1, 2},
+		{2, ast.RightShift, 1, 1},
+		{nil, ast.And, 1, nil},
+		{1, ast.And, nil, nil},
+		{nil, ast.Or, 1, nil},
+		{nil, ast.Xor, 1, nil},
+		{nil, ast.LeftShift, 1, nil},
+		{nil, ast.RightShift, 1, nil},
 	}
 
 	for _, t := range tbl {
-		expr := &ast.BinaryOperationExpr{Op: t.op, L: ast.NewValueExpr(t.lhs), R: ast.NewValueExpr(t.rhs)}
-		v, err := Eval(s.ctx, expr)
+		f := Funcs[t.op]
+		v, err := f.F(types.MakeDatums(t.lhs, t.rhs), s.ctx)
 		c.Assert(err, IsNil)
 
 		switch x := t.ret.(type) {
@@ -266,85 +232,85 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs interface{}
-		op  opcode.Op
+		op  string
 		rhs interface{}
 		ret interface{}
 	}{
 		// plus
-		{1, opcode.Plus, 1, 2},
-		{1, opcode.Plus, uint64(1), 2},
-		{1, opcode.Plus, "1", 2},
-		{1, opcode.Plus, types.NewDecFromInt(1), 2},
-		{uint64(1), opcode.Plus, 1, 2},
-		{uint64(1), opcode.Plus, uint64(1), 2},
-		{uint64(1), opcode.Plus, -1, 0},
-		{1, opcode.Plus, []byte("1"), 2},
-		{1, opcode.Plus, types.Hex{Value: 1}, 2},
-		{1, opcode.Plus, types.Bit{Value: 1, Width: 1}, 2},
-		{1, opcode.Plus, types.Enum{Name: "a", Value: 1}, 2},
-		{1, opcode.Plus, types.Set{Name: "a", Value: 1}, 2},
+		{1, ast.Plus, 1, 2},
+		{1, ast.Plus, uint64(1), 2},
+		{1, ast.Plus, "1", 2},
+		{1, ast.Plus, types.NewDecFromInt(1), 2},
+		{uint64(1), ast.Plus, 1, 2},
+		{uint64(1), ast.Plus, uint64(1), 2},
+		{uint64(1), ast.Plus, -1, 0},
+		{1, ast.Plus, []byte("1"), 2},
+		{1, ast.Plus, types.Hex{Value: 1}, 2},
+		{1, ast.Plus, types.Bit{Value: 1, Width: 1}, 2},
+		{1, ast.Plus, types.Enum{Name: "a", Value: 1}, 2},
+		{1, ast.Plus, types.Set{Name: "a", Value: 1}, 2},
 
 		// minus
-		{1, opcode.Minus, 1, 0},
-		{1, opcode.Minus, uint64(1), 0},
-		{1, opcode.Minus, float64(1), 0},
-		{1, opcode.Minus, types.NewDecFromInt(1), 0},
-		{uint64(1), opcode.Minus, 1, 0},
-		{uint64(1), opcode.Minus, uint64(1), 0},
-		{types.NewDecFromInt(1), opcode.Minus, 1, 0},
-		{"1", opcode.Minus, []byte("1"), 0},
+		{1, ast.Minus, 1, 0},
+		{1, ast.Minus, uint64(1), 0},
+		{1, ast.Minus, float64(1), 0},
+		{1, ast.Minus, types.NewDecFromInt(1), 0},
+		{uint64(1), ast.Minus, 1, 0},
+		{uint64(1), ast.Minus, uint64(1), 0},
+		{types.NewDecFromInt(1), ast.Minus, 1, 0},
+		{"1", ast.Minus, []byte("1"), 0},
 
 		// mul
-		{1, opcode.Mul, 1, 1},
-		{1, opcode.Mul, uint64(1), 1},
-		{1, opcode.Mul, float64(1), 1},
-		{1, opcode.Mul, types.NewDecFromInt(1), 1},
-		{uint64(1), opcode.Mul, 1, 1},
-		{uint64(1), opcode.Mul, uint64(1), 1},
-		{types.Time{Time: types.FromDate(0, 0, 0, 0, 0, 0, 0)}, opcode.Mul, 0, 0},
-		{types.ZeroDuration, opcode.Mul, 0, 0},
-		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},
-		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},
-		{types.Duration{Duration: 100000000, Fsp: 6}, opcode.Mul, 0, 0},
+		{1, ast.Mul, 1, 1},
+		{1, ast.Mul, uint64(1), 1},
+		{1, ast.Mul, float64(1), 1},
+		{1, ast.Mul, types.NewDecFromInt(1), 1},
+		{uint64(1), ast.Mul, 1, 1},
+		{uint64(1), ast.Mul, uint64(1), 1},
+		{types.Time{Time: types.FromDate(0, 0, 0, 0, 0, 0, 0)}, ast.Mul, 0, 0},
+		{types.ZeroDuration, ast.Mul, 0, 0},
+		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}, ast.Mul, 0, 0},
+		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, ast.Mul, 0, 0},
+		{types.Duration{Duration: 100000000, Fsp: 6}, ast.Mul, 0, 0},
 
 		// div
-		{1, opcode.Div, float64(1), 1},
-		{1, opcode.Div, float64(0), nil},
-		{1, opcode.Div, 2, 0.5},
-		{1, opcode.Div, 0, nil},
+		{1, ast.Div, float64(1), 1},
+		{1, ast.Div, float64(0), nil},
+		{1, ast.Div, 2, 0.5},
+		{1, ast.Div, 0, nil},
 
 		// int div
-		{1, opcode.IntDiv, 2, 0},
-		{1, opcode.IntDiv, uint64(2), 0},
-		{1, opcode.IntDiv, 0, nil},
-		{1, opcode.IntDiv, uint64(0), nil},
-		{uint64(1), opcode.IntDiv, 2, 0},
-		{uint64(1), opcode.IntDiv, uint64(2), 0},
-		{uint64(1), opcode.IntDiv, 0, nil},
-		{uint64(1), opcode.IntDiv, uint64(0), nil},
-		{1.0, opcode.IntDiv, 2.0, 0},
-		{1.0, opcode.IntDiv, 0, nil},
+		{1, ast.IntDiv, 2, 0},
+		{1, ast.IntDiv, uint64(2), 0},
+		{1, ast.IntDiv, 0, nil},
+		{1, ast.IntDiv, uint64(0), nil},
+		{uint64(1), ast.IntDiv, 2, 0},
+		{uint64(1), ast.IntDiv, uint64(2), 0},
+		{uint64(1), ast.IntDiv, 0, nil},
+		{uint64(1), ast.IntDiv, uint64(0), nil},
+		{1.0, ast.IntDiv, 2.0, 0},
+		{1.0, ast.IntDiv, 0, nil},
 
 		// mod
-		{10, opcode.Mod, 2, 0},
-		{10, opcode.Mod, uint64(2), 0},
-		{10, opcode.Mod, 0, nil},
-		{10, opcode.Mod, uint64(0), nil},
-		{-10, opcode.Mod, uint64(2), 0},
-		{uint64(10), opcode.Mod, 2, 0},
-		{uint64(10), opcode.Mod, uint64(2), 0},
-		{uint64(10), opcode.Mod, 0, nil},
-		{uint64(10), opcode.Mod, uint64(0), nil},
-		{uint64(10), opcode.Mod, -2, 0},
-		{float64(10), opcode.Mod, 2, 0},
-		{float64(10), opcode.Mod, 0, nil},
-		{types.NewDecFromInt(10), opcode.Mod, 2, 0},
-		{types.NewDecFromInt(10), opcode.Mod, 0, nil},
+		{10, ast.Mod, 2, 0},
+		{10, ast.Mod, uint64(2), 0},
+		{10, ast.Mod, 0, nil},
+		{10, ast.Mod, uint64(0), nil},
+		{-10, ast.Mod, uint64(2), 0},
+		{uint64(10), ast.Mod, 2, 0},
+		{uint64(10), ast.Mod, uint64(2), 0},
+		{uint64(10), ast.Mod, 0, nil},
+		{uint64(10), ast.Mod, uint64(0), nil},
+		{uint64(10), ast.Mod, -2, 0},
+		{float64(10), ast.Mod, 2, 0},
+		{float64(10), ast.Mod, 0, nil},
+		{types.NewDecFromInt(10), ast.Mod, 2, 0},
+		{types.NewDecFromInt(10), ast.Mod, 0, nil},
 	}
 
 	for _, t := range tbl {
-		expr := &ast.BinaryOperationExpr{Op: t.op, L: ast.NewValueExpr(t.lhs), R: ast.NewValueExpr(t.rhs)}
-		v, err := Eval(s.ctx, expr)
+		f := Funcs[t.op]
+		v, err := f.F(types.MakeDatums(t.lhs, t.rhs), s.ctx)
 		c.Assert(err, IsNil)
 		switch v.Kind() {
 		case types.KindNull:
@@ -360,131 +326,6 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 			c.Assert(r, Equals, f)
 		}
 	}
-}
-
-func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
-	defer testleak.AfterTest(c)()
-	cases := []testCase{
-		{
-			exprStr:   "case 1 when 1 then 'str1' when 2 then 'str2' end",
-			resultStr: "str1",
-		},
-		{
-			exprStr:   "case 2 when 1 then 'str1' when 2 then 'str2' end",
-			resultStr: "str2",
-		},
-		{
-			exprStr:   "case 3 when 1 then 'str1' when 2 then 'str2' end",
-			resultStr: "<nil>",
-		},
-		{
-			exprStr:   "case 4 when 1 then 'str1' when 2 then 'str2' else 'str3' end",
-			resultStr: "str3",
-		},
-	}
-	s.runTests(c, cases)
-
-	// When expression value changed, result set back to null.
-	valExpr := ast.NewValueExpr(1)
-	whenClause := &ast.WhenClause{Expr: ast.NewValueExpr(1), Result: ast.NewValueExpr(1)}
-	caseExpr := &ast.CaseExpr{
-		Value:       valExpr,
-		WhenClauses: []*ast.WhenClause{whenClause},
-	}
-	v, err := Eval(s.ctx, caseExpr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum(int64(1)))
-	valExpr.SetValue(4)
-	ast.ResetEvaluatedFlag(caseExpr)
-	v, err = Eval(s.ctx, caseExpr)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindNull)
-}
-
-func (s *testEvaluatorSuite) TestCall(c *C) {
-	defer testleak.AfterTest(c)()
-
-	// Test case for correct number of arguments
-	expr := &ast.FuncCallExpr{
-		FnName: model.NewCIStr("date"),
-		Args:   []ast.ExprNode{ast.NewValueExpr("2015-12-21 11:11:11")},
-	}
-	v, err := Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
-	c.Assert(v.GetMysqlTime().String(), Equals, "2015-12-21")
-
-	// Test case for unlimited upper bound
-	expr = &ast.FuncCallExpr{
-		FnName: model.NewCIStr("concat"),
-		Args: []ast.ExprNode{ast.NewValueExpr("Ti"),
-			ast.NewValueExpr("D"), ast.NewValueExpr("B")},
-	}
-	v, err = Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindString)
-	c.Assert(v.GetString(), Equals, "TiDB")
-
-	// Test case for unknown function
-	expr = &ast.FuncCallExpr{
-		FnName: model.NewCIStr("unknown"),
-		Args:   []ast.ExprNode{},
-	}
-	_, err = Eval(s.ctx, expr)
-	c.Assert(err, NotNil)
-
-	// Test case for invalid number of arguments, violating the lower bound
-	expr = &ast.FuncCallExpr{
-		FnName: model.NewCIStr("date"),
-		Args:   []ast.ExprNode{},
-	}
-	_, err = Eval(s.ctx, expr)
-	c.Assert(err, NotNil)
-
-	// Test case for invalid number of arguments, violating the upper bound
-	expr = &ast.FuncCallExpr{
-		FnName: model.NewCIStr("date"),
-		Args: []ast.ExprNode{ast.NewValueExpr("2015-12-21"),
-			ast.NewValueExpr("2015-12-22")},
-	}
-	_, err = Eval(s.ctx, expr)
-	c.Assert(err, NotNil)
-}
-
-func (s *testEvaluatorSuite) TestCast(c *C) {
-	defer testleak.AfterTest(c)()
-	f := types.NewFieldType(mysql.TypeLonglong)
-
-	expr := &ast.FuncCastExpr{
-		Expr: ast.NewValueExpr(1),
-		Tp:   f,
-	}
-	ast.SetFlag(expr)
-	v, err := Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum(int64(1)))
-
-	f.Flag |= mysql.UnsignedFlag
-	v, err = Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum(uint64(1)))
-
-	f.Tp = mysql.TypeString
-	f.Charset = charset.CharsetBin
-	v, err = Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum([]byte("1")))
-
-	f.Tp = mysql.TypeString
-	f.Charset = "utf8"
-	v, err = Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum("1"))
-
-	expr.Expr = ast.NewValueExpr(nil)
-	v, err = Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindNull)
 }
 
 func (s *testEvaluatorSuite) TestExtract(c *C) {
@@ -516,187 +357,36 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 		{"YEAR_MONTH", 201111},
 	}
 	for _, t := range tbl {
-		e := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("EXTRACT"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(t.Unit), ast.NewValueExpr(str)},
-		}
-		v, err := Eval(s.ctx, e)
+		f := Funcs[ast.Extract]
+		v, err := f.F(types.MakeDatums(t.Unit, str), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.Expect))
 	}
 
 	// Test nil
-	e := &ast.FuncCallExpr{
-		FnName: model.NewCIStr("EXTRACT"),
-		Args:   []ast.ExprNode{ast.NewValueExpr("SECOND"), ast.NewValueExpr(nil)},
-	}
-
-	v, err := Eval(s.ctx, e)
+	f := Funcs[ast.Extract]
+	v, err := f.F(types.MakeDatums("SECOND", nil), s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
-}
-
-func (s *testEvaluatorSuite) TestPatternIn(c *C) {
-	defer testleak.AfterTest(c)()
-	cases := []testCase{
-		{
-			exprStr:   "1 not in (1, 2, 3)",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "1 in (1, 2, 3)",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "1 in (2, 3)",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "NULL in (2, 3)",
-			resultStr: "<nil>",
-		},
-		{
-			exprStr:   "NULL not in (2, 3)",
-			resultStr: "<nil>",
-		},
-		{
-			exprStr:   "NULL in (NULL, 3)",
-			resultStr: "<nil>",
-		},
-		{
-			exprStr:   "1 in (1, NULL)",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "1 in (NULL, 1)",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "2 in (1, NULL)",
-			resultStr: "<nil>",
-		},
-		{
-			exprStr:   "(-(23)++46/51*+51) in (+23)",
-			resultStr: "0",
-		},
-	}
-	s.runTests(c, cases)
-}
-
-func (s *testEvaluatorSuite) TestIsNull(c *C) {
-	defer testleak.AfterTest(c)()
-	cases := []testCase{
-		{
-			exprStr:   "1 IS NULL",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "1 IS NOT NULL",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "NULL IS NULL",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "NULL IS NOT NULL",
-			resultStr: "0",
-		},
-	}
-	s.runTests(c, cases)
-}
-
-func (s *testEvaluatorSuite) TestIsTruth(c *C) {
-	defer testleak.AfterTest(c)()
-	cases := []testCase{
-		{
-			exprStr:   "1 IS TRUE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "2 IS TRUE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "0 IS TRUE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "NULL IS TRUE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "1 IS FALSE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "2 IS FALSE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "0 IS FALSE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "NULL IS NOT FALSE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "1 IS NOT TRUE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "2 IS NOT TRUE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "0 IS NOT TRUE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "NULL IS NOT TRUE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "1 IS NOT FALSE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "2 IS NOT FALSE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "0 IS NOT FALSE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "NULL IS NOT FALSE",
-			resultStr: "1",
-		},
-	}
-	s.runTests(c, cases)
 }
 
 func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
-		exprStr   []ast.ExprNode
+		args      []interface{}
 		resultStr string
 	}{
 		{nil, "0"},
-		{[]ast.ExprNode{ast.NewValueExpr(1)}, "1"},
+		{[]interface{}{1}, "1"},
 	}
 
 	c.Log(s.ctx)
 	for _, ca := range cases {
-		expr := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("last_insert_id"),
-			Args:   ca.exprStr,
-		}
-		val, err := Eval(s.ctx, expr)
+		f := Funcs[ast.LastInsertId]
+		val, err := f.F(types.MakeDatums(ca.args...), s.ctx)
 		c.Assert(err, IsNil)
 		valStr := fmt.Sprintf("%v", val.GetValue())
-		c.Assert(valStr, Equals, ca.resultStr, Commentf("for %s", ca.exprStr))
+		c.Assert(valStr, Equals, ca.resultStr, Commentf("for %v", ca.args))
 	}
 }
 
@@ -742,33 +432,24 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		match := doMatch(v.input, patChars, patTypes)
 		c.Assert(match, Equals, v.match, Commentf("%v", v))
 	}
-	cases := []testCase{
-		{
-			exprStr:   "'a' LIKE ''",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "'a' LIKE 'a'",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "'a' LIKE 'b'",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "'aA' LIKE 'Aa'",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "'aAb' LIKE 'Aa%'",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "'aAb' LIKE 'Aa_'",
-			resultStr: "1",
-		},
+	testCases := []struct {
+		input   string
+		pattern string
+		match   int
+	}{
+		{"a", "", 0},
+		{"a", "a", 1},
+		{"a", "b", 0},
+		{"aA", "Aa", 1},
+		{"aAb", "Aa%", 1},
+		{"aAb", "Aa_", 1},
 	}
-	s.runTests(c, cases)
+	for _, tc := range testCases {
+		f := Funcs[ast.Like]
+		r, err := f.F(types.MakeDatums(tc.input, tc.pattern, 0), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tc.match))
+	}
 }
 
 func (s *testEvaluatorSuite) TestRegexp(c *C) {
@@ -789,11 +470,8 @@ func (s *testEvaluatorSuite) TestRegexp(c *C) {
 		{".*", "abcd", 1},
 	}
 	for _, v := range tbl {
-		pattern := &ast.PatternRegexpExpr{
-			Pattern: ast.NewValueExpr(v.pattern),
-			Expr:    ast.NewValueExpr(v.input),
-		}
-		match, err := Eval(s.ctx, pattern)
+		f := Funcs[ast.Regexp]
+		match, err := f.F(types.MakeDatums(v.input, v.pattern), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(match, testutil.DatumEquals, types.NewDatum(v.match), Commentf("%v", v))
 	}
@@ -803,86 +481,83 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		arg    interface{}
-		op     opcode.Op
+		op     string
 		result interface{}
 	}{
 		// test NOT.
-		{1, opcode.Not, int64(0)},
-		{0, opcode.Not, int64(1)},
-		{nil, opcode.Not, nil},
-		{types.Hex{Value: 0}, opcode.Not, int64(1)},
-		{types.Bit{Value: 0, Width: 1}, opcode.Not, int64(1)},
-		{types.Enum{Name: "a", Value: 1}, opcode.Not, int64(0)},
-		{types.Set{Name: "a", Value: 1}, opcode.Not, int64(0)},
+		{1, ast.UnaryNot, int64(0)},
+		{0, ast.UnaryNot, int64(1)},
+		{nil, ast.UnaryNot, nil},
+		{types.Hex{Value: 0}, ast.UnaryNot, int64(1)},
+		{types.Bit{Value: 0, Width: 1}, ast.UnaryNot, int64(1)},
+		{types.Enum{Name: "a", Value: 1}, ast.UnaryNot, int64(0)},
+		{types.Set{Name: "a", Value: 1}, ast.UnaryNot, int64(0)},
 
 		// test BitNeg.
-		{nil, opcode.BitNeg, nil},
-		{-1, opcode.BitNeg, uint64(0)},
+		{nil, ast.BitNeg, nil},
+		{-1, ast.BitNeg, uint64(0)},
 
 		// test Plus.
-		{nil, opcode.Plus, nil},
-		{float64(1.0), opcode.Plus, float64(1.0)},
-		{int64(1), opcode.Plus, int64(1)},
-		{int64(1), opcode.Plus, int64(1)},
-		{uint64(1), opcode.Plus, uint64(1)},
-		{"1.0", opcode.Plus, "1.0"},
-		{[]byte("1.0"), opcode.Plus, []byte("1.0")},
-		{types.Hex{Value: 1}, opcode.Plus, types.Hex{Value: 1}},
-		{types.Bit{Value: 1, Width: 1}, opcode.Plus, types.Bit{Value: 1, Width: 1}},
-		{true, opcode.Plus, int64(1)},
-		{false, opcode.Plus, int64(0)},
-		{types.Enum{Name: "a", Value: 1}, opcode.Plus, types.Enum{Name: "a", Value: 1}},
-		{types.Set{Name: "a", Value: 1}, opcode.Plus, types.Set{Name: "a", Value: 1}},
+		{nil, ast.UnaryPlus, nil},
+		{float64(1.0), ast.UnaryPlus, float64(1.0)},
+		{int64(1), ast.UnaryPlus, int64(1)},
+		{int64(1), ast.UnaryPlus, int64(1)},
+		{uint64(1), ast.UnaryPlus, uint64(1)},
+		{"1.0", ast.UnaryPlus, "1.0"},
+		{[]byte("1.0"), ast.UnaryPlus, []byte("1.0")},
+		{types.Hex{Value: 1}, ast.UnaryPlus, types.Hex{Value: 1}},
+		{types.Bit{Value: 1, Width: 1}, ast.UnaryPlus, types.Bit{Value: 1, Width: 1}},
+		{true, ast.UnaryPlus, int64(1)},
+		{false, ast.UnaryPlus, int64(0)},
+		{types.Enum{Name: "a", Value: 1}, ast.UnaryPlus, types.Enum{Name: "a", Value: 1}},
+		{types.Set{Name: "a", Value: 1}, ast.UnaryPlus, types.Set{Name: "a", Value: 1}},
 
 		// test Minus.
-		{nil, opcode.Minus, nil},
-		{float64(1.0), opcode.Minus, float64(-1.0)},
-		{int64(1), opcode.Minus, int64(-1)},
-		{int64(1), opcode.Minus, int64(-1)},
-		{uint64(1), opcode.Minus, -int64(1)},
-		{"1.0", opcode.Minus, -1.0},
-		{[]byte("1.0"), opcode.Minus, -1.0},
-		{types.Hex{Value: 1}, opcode.Minus, -1.0},
-		{types.Bit{Value: 1, Width: 1}, opcode.Minus, -1.0},
-		{true, opcode.Minus, int64(-1)},
-		{false, opcode.Minus, int64(0)},
-		{types.Enum{Name: "a", Value: 1}, opcode.Minus, -1.0},
-		{types.Set{Name: "a", Value: 1}, opcode.Minus, -1.0},
+		{nil, ast.UnaryMinus, nil},
+		{float64(1.0), ast.UnaryMinus, float64(-1.0)},
+		{int64(1), ast.UnaryMinus, int64(-1)},
+		{int64(1), ast.UnaryMinus, int64(-1)},
+		{uint64(1), ast.UnaryMinus, -int64(1)},
+		{"1.0", ast.UnaryMinus, -1.0},
+		{[]byte("1.0"), ast.UnaryMinus, -1.0},
+		{types.Hex{Value: 1}, ast.UnaryMinus, -1.0},
+		{types.Bit{Value: 1, Width: 1}, ast.UnaryMinus, -1.0},
+		{true, ast.UnaryMinus, int64(-1)},
+		{false, ast.UnaryMinus, int64(0)},
+		{types.Enum{Name: "a", Value: 1}, ast.UnaryMinus, -1.0},
+		{types.Set{Name: "a", Value: 1}, ast.UnaryMinus, -1.0},
 	}
 	for i, t := range tbl {
-		expr := &ast.UnaryOperationExpr{}
-		expr.Op = t.op
-		expr.V = ast.NewValueExpr(t.arg)
-		result, err := Eval(s.ctx, expr)
+		f := Funcs[t.op]
+		result, err := f.F(types.MakeDatums(t.arg), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(t.result), Commentf("%d", i))
 	}
 
 	tbl = []struct {
 		arg    interface{}
-		op     opcode.Op
+		op     string
 		result interface{}
 	}{
-		{types.NewDecFromInt(1), opcode.Plus, types.NewDecFromInt(1)},
-		{types.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: types.DefaultFsp}, opcode.Plus,
+		{types.NewDecFromInt(1), ast.UnaryPlus, types.NewDecFromInt(1)},
+		{types.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: types.DefaultFsp}, ast.UnaryPlus,
 			types.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: types.DefaultFsp}},
 		{types.Time{
 			Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)),
 			Type: mysql.TypeDatetime,
 			Fsp:  0},
-			opcode.Plus,
+			ast.UnaryPlus,
 			types.Time{
 				Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)),
 				Type: mysql.TypeDatetime, Fsp: 0}},
-		{types.NewDecFromInt(1), opcode.Minus, types.NewDecFromInt(-1)},
-		{types.ZeroDuration, opcode.Minus, new(types.MyDecimal)},
-		{types.Time{Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)), Type: mysql.TypeDatetime, Fsp: 0}, opcode.Minus, types.NewDecFromInt(-20091110230000)},
+		{types.NewDecFromInt(1), ast.UnaryMinus, types.NewDecFromInt(-1)},
+		{types.ZeroDuration, ast.UnaryMinus, new(types.MyDecimal)},
+		{types.Time{Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)), Type: mysql.TypeDatetime, Fsp: 0}, ast.UnaryMinus, types.NewDecFromInt(-20091110230000)},
 	}
 
 	for _, t := range tbl {
-		expr := &ast.UnaryOperationExpr{Op: t.op, V: ast.NewValueExpr(t.arg)}
-
-		result, err := Eval(s.ctx, expr)
+		f := Funcs[t.op]
+		result, err := f.F(types.MakeDatums(t.arg), s.ctx)
 		c.Assert(err, IsNil)
 
 		ret, err := result.CompareDatum(s.ctx.GetSessionVars().StmtCtx, types.NewDatum(t.result))
@@ -891,99 +566,15 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestColumnNameExpr(c *C) {
-	defer testleak.AfterTest(c)()
-	value1 := ast.NewValueExpr(1)
-	rf := &ast.ResultField{Expr: value1}
-	expr := &ast.ColumnNameExpr{Refer: rf}
-
-	ast.SetFlag(expr)
-	result, err := Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(result, testutil.DatumEquals, types.NewDatum(int64(1)))
-
-	value2 := ast.NewValueExpr(2)
-	rf.Expr = value2
-	result, err = Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(result, testutil.DatumEquals, types.NewDatum(int64(2)))
-}
-
-func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
-	defer testleak.AfterTest(c)()
-	avg := &ast.AggregateFuncExpr{
-		F: ast.AggFuncAvg,
-	}
-	avg.CurrentGroup = []byte("emptyGroup")
-	ast.SetFlag(avg)
-	result, err := Eval(s.ctx, avg)
-	c.Assert(err, IsNil)
-	// Empty group should return nil.
-	c.Assert(result.Kind(), Equals, types.KindNull)
-
-	sc := s.ctx.GetSessionVars().StmtCtx
-	avg.Args = []ast.ExprNode{ast.NewValueExpr(2)}
-	avg.Update(sc)
-	avg.Args = []ast.ExprNode{ast.NewValueExpr(4)}
-	avg.Update(sc)
-
-	result, err = Eval(s.ctx, avg)
-	c.Assert(err, IsNil)
-	expect := types.NewDecFromInt(3)
-	c.Assert(result.Kind(), Equals, types.KindMysqlDecimal)
-	c.Assert(result.GetMysqlDecimal().Compare(expect), Equals, 0)
-}
-
-func (s *testEvaluatorSuite) TestEvaluatedFlag(c *C) {
-	l := ast.NewValueExpr(int64(1))
-	r := ast.NewValueExpr(int64(2))
-	b := &ast.BinaryOperationExpr{L: l, R: r, Op: opcode.Plus}
-	ast.SetFlag(b)
-	c.Assert(ast.IsPreEvaluable(b), Equals, true)
-	d, err := Eval(s.ctx, b)
-	c.Assert(ast.IsEvaluated(b), Equals, true)
-	c.Assert(err, IsNil)
-	c.Assert(d, testutil.DatumEquals, types.NewIntDatum(3))
-
-	funcCall := &ast.FuncCallExpr{
-		FnName: model.NewCIStr("abs"),
-		Args:   []ast.ExprNode{ast.NewValueExpr(int(-1))},
-	}
-	b = &ast.BinaryOperationExpr{L: funcCall, R: r, Op: opcode.Plus}
-	ast.ResetEvaluatedFlag(b)
-	ast.SetFlag(b)
-	c.Assert(ast.IsPreEvaluable(b), Equals, true)
-	d, err = Eval(s.ctx, b)
-	c.Assert(ast.IsEvaluated(b), Equals, false)
-	c.Assert(err, IsNil)
-	c.Assert(d, testutil.DatumEquals, types.NewIntDatum(3))
-
-	rf := &ast.ResultField{Expr: ast.NewValueExpr(int64(1))}
-	colExpr := &ast.ColumnNameExpr{Refer: rf}
-	b = &ast.BinaryOperationExpr{L: colExpr, R: r, Op: opcode.Plus}
-	ast.ResetEvaluatedFlag(b)
-	ast.SetFlag(b)
-	c.Assert(ast.IsPreEvaluable(b), Equals, false)
-	d, err = Eval(s.ctx, b)
-	c.Assert(ast.IsEvaluated(b), Equals, false)
-	c.Assert(err, IsNil)
-	c.Assert(d, testutil.DatumEquals, types.NewIntDatum(3))
-}
-
 func (s *testEvaluatorSuite) TestMod(c *C) {
-	cases := []testCase{
-		{
-			exprStr:   "MOD(234, 10)",
-			resultStr: "4",
-		},
-		{
-			exprStr:   "MOD(29, 9)",
-			resultStr: "2",
-		},
-		{
-			exprStr:   "MOD(34.5, 3)",
-			resultStr: "1.5",
-		},
-	}
-	s.runTests(c, cases)
+	f := Funcs[ast.Mod]
+	r, err := f.F(types.MakeDatums(234, 10), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(4))
+	r, err = f.F(types.MakeDatums(29, 9), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(2))
+	r, err = f.F(types.MakeDatums(34.5, 3), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewDatum(1.5))
 }
