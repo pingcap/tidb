@@ -121,6 +121,10 @@ func (s *testSuite) TestShow(c *C) {
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
+
+	tk.MustExec("use show_test_DB")
+	result = tk.MustQuery("SHOW index from show_index from test")
+	c.Check(result.Rows(), HasLen, 2)
 }
 
 type stats struct {
