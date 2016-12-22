@@ -29,6 +29,8 @@ const (
 	PresumeKeyNotExistsError
 	// BinlogData is the binlog data to write.
 	BinlogData
+	// Skip existing check when "prewrite".
+	SkipCheckForWrite
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.
