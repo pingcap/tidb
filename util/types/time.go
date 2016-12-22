@@ -1598,7 +1598,7 @@ func ParseTimeFromInt64(num int64) (Time, error) {
 
 // DateFormat returns a textual representation of the time value formatted
 // according to layout.
-// See: http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
+// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
 func (t Time) DateFormat(layout string) (string, error) {
 	var buf bytes.Buffer
 	inPatternMatch := false
