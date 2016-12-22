@@ -151,7 +151,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14))
 	c.Assert(err, IsNil)
-	err = ctx.Txn().Commit()
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 	values, err := t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
@@ -335,10 +335,6 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.Txn().Commit()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
@@ -375,11 +371,6 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.Txn().Commit()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
@@ -446,11 +437,6 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.Txn().Commit()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
@@ -487,11 +473,6 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.Txn().Commit()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
@@ -554,10 +535,6 @@ func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.Txn().Commit()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
@@ -595,11 +572,6 @@ func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.Txn().Commit()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
@@ -658,11 +630,6 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.Txn().Commit()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
@@ -689,11 +656,6 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 	}
 
 	err = t.RemoveRecord(ctx, handle, newRow)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = ctx.Txn().Commit()
 	if err != nil {
 		return errors.Trace(err)
 	}
