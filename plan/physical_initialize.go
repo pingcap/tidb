@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/context"
 )
 
+// PhysicalInitializer will do the initialization of some attributes after the convert2Physical process finish.
 type physicalInitializer struct {
 	ctx       context.Context
 	allocator *idAllocator
