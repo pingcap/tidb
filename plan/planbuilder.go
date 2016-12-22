@@ -362,10 +362,16 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 			IndOffsets:      indOffsets,
 			ColOffsets:      colOffsets,
 		}
+		var tableName string
+		if tbl.Schema.L == "" {
+			tableName = tbl.Name.L
+		} else {
+			tableName = tbl.Schema.L + "." + tbl.Name.L
+		}
 		if indOffsets != nil {
 			for _, offset := range indOffsets {
 				colName := tbl.TableInfo.Columns[offset].Name.L
-				sql := "select " + colName + " from " + tbl.Name.L + " order by " + colName
+				sql := "select " + colName + " from " + tableName + " order by " + colName
 				stmt, _ := parser.ParseOneStmt(sql, "", "")
 				Preprocess(stmt, b.is, b.ctx)
 				Validate(stmt, false)
@@ -378,7 +384,7 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 			for _, offset := range colOffsets {
 				colNames = append(colNames, tbl.TableInfo.Columns[offset].Name.L)
 			}
-			sql := "select " + strings.Join(colNames, ",") + " from " + tbl.Name.L
+			sql := "select " + strings.Join(colNames, ",") + " from " + tableName
 			stmt, _ := parser.ParseOneStmt(sql, "", "")
 			Preprocess(stmt, b.is, b.ctx)
 			Validate(stmt, false)
