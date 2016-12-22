@@ -681,23 +681,20 @@ func (s *testEvaluatorSuite) TestIsTruth(c *C) {
 func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
-		exprStr   []ast.ExprNode
+		args   []interface{}
 		resultStr string
 	}{
 		{nil, "0"},
-		{[]ast.ExprNode{ast.NewValueExpr(1)}, "1"},
+		{[]interface{}{1}, "1"},
 	}
 
 	c.Log(s.ctx)
 	for _, ca := range cases {
-		expr := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("last_insert_id"),
-			Args:   ca.exprStr,
-		}
-		val, err := Eval(s.ctx, expr)
+		f := Funcs[ast.LastInsertId]
+		val, err := f.F(types.MakeDatums(ca.args...), s.ctx)
 		c.Assert(err, IsNil)
 		valStr := fmt.Sprintf("%v", val.GetValue())
-		c.Assert(valStr, Equals, ca.resultStr, Commentf("for %s", ca.exprStr))
+		c.Assert(valStr, Equals, ca.resultStr, Commentf("for %v", ca.args))
 	}
 }
 
@@ -743,33 +740,25 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		match := doMatch(v.input, patChars, patTypes)
 		c.Assert(match, Equals, v.match, Commentf("%v", v))
 	}
-	cases := []testCase{
-		{
-			exprStr:   "'a' LIKE ''",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "'a' LIKE 'a'",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "'a' LIKE 'b'",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "'aA' LIKE 'Aa'",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "'aAb' LIKE 'Aa%'",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "'aAb' LIKE 'Aa_'",
-			resultStr: "1",
-		},
-	}
-	s.runTests(c, cases)
+	f := Funcs[ast.Like]
+	r, err := f.F(types.MakeDatums("a", "", 0), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(0))
+	r, err = f.F(types.MakeDatums("a", "a", 0), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(1))
+	r, err = f.F(types.MakeDatums("a", "b", 0), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(0))
+	r, err = f.F(types.MakeDatums("aA", "Aa", 0), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(1))
+	r, err = f.F(types.MakeDatums("aAb", "Aa%", 0), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(1))
+	r, err = f.F(types.MakeDatums("aAb", "Aa_", 0), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(1))
 }
 
 func (s *testEvaluatorSuite) TestRegexp(c *C) {
@@ -890,49 +879,6 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, 0)
 	}
-}
-
-func (s *testEvaluatorSuite) TestColumnNameExpr(c *C) {
-	defer testleak.AfterTest(c)()
-	value1 := ast.NewValueExpr(1)
-	rf := &ast.ResultField{Expr: value1}
-	expr := &ast.ColumnNameExpr{Refer: rf}
-
-	ast.SetFlag(expr)
-	result, err := Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(result, testutil.DatumEquals, types.NewDatum(int64(1)))
-
-	value2 := ast.NewValueExpr(2)
-	rf.Expr = value2
-	result, err = Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(result, testutil.DatumEquals, types.NewDatum(int64(2)))
-}
-
-func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
-	defer testleak.AfterTest(c)()
-	avg := &ast.AggregateFuncExpr{
-		F: ast.AggFuncAvg,
-	}
-	avg.CurrentGroup = []byte("emptyGroup")
-	ast.SetFlag(avg)
-	result, err := Eval(s.ctx, avg)
-	c.Assert(err, IsNil)
-	// Empty group should return nil.
-	c.Assert(result.Kind(), Equals, types.KindNull)
-
-	sc := s.ctx.GetSessionVars().StmtCtx
-	avg.Args = []ast.ExprNode{ast.NewValueExpr(2)}
-	avg.Update(sc)
-	avg.Args = []ast.ExprNode{ast.NewValueExpr(4)}
-	avg.Update(sc)
-
-	result, err = Eval(s.ctx, avg)
-	c.Assert(err, IsNil)
-	expect := types.NewDecFromInt(3)
-	c.Assert(result.Kind(), Equals, types.KindMysqlDecimal)
-	c.Assert(result.GetMysqlDecimal().Compare(expect), Equals, 0)
 }
 
 func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
@@ -1060,19 +1006,14 @@ func (s *testEvaluatorSuite) TestEvaluatedFlag(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestMod(c *C) {
-	cases := []testCase{
-		{
-			exprStr:   "MOD(234, 10)",
-			resultStr: "4",
-		},
-		{
-			exprStr:   "MOD(29, 9)",
-			resultStr: "2",
-		},
-		{
-			exprStr:   "MOD(34.5, 3)",
-			resultStr: "1.5",
-		},
-	}
-	s.runTests(c, cases)
+	f := Funcs[ast.Mod]
+	r, err := f.F(types.MakeDatums(234, 10), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(4))
+	r, err = f.F(types.MakeDatums(29, 9), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(2))
+	r, err = f.F(types.MakeDatums(35, 3), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(2))
 }
