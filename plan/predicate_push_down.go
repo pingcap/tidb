@@ -26,10 +26,6 @@ func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression,
 	selection.self = selection
 	selection.initIDAndContext(p.context())
 	selection.SetSchema(child.GetSchema().Clone())
-	selection.correlated = child.IsCorrelated()
-	for _, cond := range conditions {
-		selection.correlated = selection.correlated || cond.IsCorrelated()
-	}
 	return InsertPlan(p, child, selection)
 }
 

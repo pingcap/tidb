@@ -49,10 +49,4 @@ func (s *testMockSuite) TestContext(c *C) {
 	ctx.ClearValue(contextKey)
 	v = ctx.Value(contextKey)
 	c.Assert(v, IsNil)
-
-	_, err := ctx.GetTxn(false)
-	c.Assert(err, IsNil)
-
-	err = ctx.CommitTxn()
-	c.Assert(err, IsNil)
 }

@@ -51,13 +51,12 @@ import (
 
 // Session context
 type Session interface {
-	Status() uint16                               // Flag of current status, such as autocommit.
-	LastInsertID() uint64                         // Last inserted auto_increment id.
-	AffectedRows() uint64                         // Affected rows by latest executed stmt.
-	SetValue(key fmt.Stringer, value interface{}) // SetValue saves a value associated with this session for key.
-	Value(key fmt.Stringer) interface{}           // Value returns the value associated with this session for key.
-	Execute(sql string) ([]ast.RecordSet, error)  // Execute a sql statement.
-	String() string                               // For debug
+	context.Context
+	Status() uint16                              // Flag of current status, such as autocommit.
+	LastInsertID() uint64                        // Last inserted auto_increment id.
+	AffectedRows() uint64                        // Affected rows by latest executed stmt.
+	Execute(sql string) ([]ast.RecordSet, error) // Execute a sql statement.
+	String() string                              // For debug
 	CommitTxn() error
 	RollbackTxn() error
 	// For execute prepare statement in binary protocol.
@@ -112,12 +111,10 @@ func (h *stmtHistory) clone() *stmtHistory {
 const unlimitedRetryCnt = -1
 
 type session struct {
-	txn kv.Transaction // current transaction
-	// It is the schema version in current transaction. If it's 0, the transaction is nil.
-	schemaVerInCurrTxn int64
-	values             map[fmt.Stringer]interface{}
-	store              kv.Storage
-	maxRetryCnt        int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
+	txn         kv.Transaction // current transaction
+	values      map[fmt.Stringer]interface{}
+	store       kv.Storage
+	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
 	// For performance_schema only.
 	stmtState *perfschema.StatementState
@@ -155,22 +152,17 @@ func (s *session) checkSchemaValid() error {
 	var ts uint64
 	if s.txn != nil {
 		ts = s.txn.StartTS()
-	} else {
-		s.schemaVerInCurrTxn = 0
 	}
-
+	txnSchemaVer := s.sessionVars.TxnCtx.SchemaVersion
 	var err error
 	var currSchemaVer int64
 	for i := 0; i < schemaExpiredRetryTimes; i++ {
-		currSchemaVer, err = sessionctx.GetDomain(s).SchemaValidity.Check(ts, s.schemaVerInCurrTxn)
+		currSchemaVer, err = sessionctx.GetDomain(s).SchemaValidity.Check(ts, txnSchemaVer)
 		if err == nil {
-			if s.txn == nil {
-				s.schemaVerInCurrTxn = currSchemaVer
-			}
 			return nil
 		}
 		log.Infof("schema version original %d, current %d, sleep time %v",
-			s.schemaVerInCurrTxn, currSchemaVer, checkSchemaValiditySleepTime)
+			txnSchemaVer, currSchemaVer, checkSchemaValiditySleepTime)
 		if terror.ErrorEqual(err, domain.ErrInfoSchemaChanged) {
 			break
 		}
@@ -200,7 +192,7 @@ func (s *session) SetConnectionID(connectionID uint64) {
 }
 
 func (s *session) doCommit() error {
-	if s.txn == nil {
+	if s.txn == nil || !s.txn.Valid() {
 		return nil
 	}
 	defer func() {
@@ -254,11 +246,11 @@ func (s *session) CommitTxn() error {
 }
 
 func (s *session) RollbackTxn() error {
-	if s.txn == nil {
-		return nil
+	var err error
+	if s.txn != nil && s.txn.Valid() {
+		err = s.txn.Rollback()
 	}
 	s.cleanRetryInfo()
-	err := s.txn.Rollback()
 	s.txn = nil
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return errors.Trace(err)
@@ -313,31 +305,31 @@ func (s *session) Retry() error {
 	var err error
 	retryCnt := 0
 	for {
-		PrepareTxnCtx(s)
-		success := true
-		s.sessionVars.RetryInfo.ResetOffset()
-		for _, sr := range nh.history {
-			st := sr.st
-			txt := st.OriginText()
-			if len(txt) > sqlLogMaxLen {
-				txt = txt[:sqlLogMaxLen]
-			}
-			log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
-			_, err = st.Exec(s)
-			if err != nil {
-				if s.isRetryableError(err) {
-					success = false
+		err = PrepareTxnCtx(s)
+		if err == nil {
+			s.sessionVars.RetryInfo.ResetOffset()
+			for _, sr := range nh.history {
+				st := sr.st
+				txt := st.OriginText()
+				if len(txt) > sqlLogMaxLen {
+					txt = txt[:sqlLogMaxLen]
+				}
+				log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
+				_, err = st.Exec(s)
+				if err != nil {
 					break
 				}
-				log.Warnf("session:%v, err:%v", s, err)
-				return errors.Trace(err)
 			}
 		}
-		if success {
+		if err == nil {
 			err = s.doCommit()
-			if !s.isRetryableError(err) {
+			if err == nil {
 				break
 			}
+		}
+		if !s.isRetryableError(err) {
+			log.Warnf("session:%v, err:%v", s, err)
+			return errors.Trace(err)
 		}
 		retryCnt++
 		if (s.maxRetryCnt != unlimitedRetryCnt) && (retryCnt >= s.maxRetryCnt) {
@@ -564,6 +556,7 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	}
 	err = PrepareTxnCtx(s)
 	if err != nil {
+		s.RollbackTxn()
 		return nil, errors.Trace(err)
 	}
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
@@ -617,6 +610,25 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 	return s.txn, nil
 }
 
+func (s *session) Txn() kv.Transaction {
+	return s.txn
+}
+
+func (s *session) NewTxn() error {
+	if s.txn != nil && s.txn.Valid() {
+		err := s.doCommitWithRetry()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	txn, err := s.store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.txn = txn
+	return nil
+}
+
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
 	s.values[key] = value
 }
@@ -635,7 +647,7 @@ func (s *session) Close() error {
 	return s.RollbackTxn()
 }
 
-// GetSessionVars implements the context.Context interface
+// GetSessionVars implements the context.Context interface.
 func (s *session) GetSessionVars() *variable.SessionVars {
 	return s.sessionVars
 }

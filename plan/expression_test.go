@@ -56,7 +56,7 @@ type testCase struct {
 func (s *testExpressionSuite) runTests(c *C, cases []testCase) {
 	for _, ca := range cases {
 		expr := s.parseExpr(c, ca.exprStr)
-		val, err := EvalAstExpr(expr, s.ctx)
+		val, err := evalAstExpr(expr, s.ctx)
 		c.Assert(err, IsNil)
 		valStr := fmt.Sprintf("%v", val.GetValue())
 		c.Assert(valStr, Equals, ca.resultStr, Commentf("for %s", ca.exprStr))
@@ -101,12 +101,11 @@ func (s *testExpressionSuite) TestCaseWhen(c *C) {
 		Value:       valExpr,
 		WhenClauses: []*ast.WhenClause{whenClause},
 	}
-	v, err := EvalAstExpr(caseExpr, s.ctx)
+	v, err := evalAstExpr(caseExpr, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum(int64(1)))
 	valExpr.SetValue(4)
-	ast.ResetEvaluatedFlag(caseExpr)
-	v, err = EvalAstExpr(caseExpr, s.ctx)
+	v, err = evalAstExpr(caseExpr, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 }
@@ -120,29 +119,29 @@ func (s *testExpressionSuite) TestCast(c *C) {
 		Tp:   f,
 	}
 	ast.SetFlag(expr)
-	v, err := EvalAstExpr(expr, s.ctx)
+	v, err := evalAstExpr(expr, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum(int64(1)))
 
 	f.Flag |= mysql.UnsignedFlag
-	v, err = EvalAstExpr(expr, s.ctx)
+	v, err = evalAstExpr(expr, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum(uint64(1)))
 
 	f.Tp = mysql.TypeString
 	f.Charset = charset.CharsetBin
-	v, err = EvalAstExpr(expr, s.ctx)
+	v, err = evalAstExpr(expr, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum([]byte("1")))
 
 	f.Tp = mysql.TypeString
 	f.Charset = "utf8"
-	v, err = EvalAstExpr(expr, s.ctx)
+	v, err = evalAstExpr(expr, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum("1"))
 
 	expr.Expr = ast.NewValueExpr(nil)
-	v, err = EvalAstExpr(expr, s.ctx)
+	v, err = evalAstExpr(expr, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 }
@@ -381,7 +380,7 @@ func (s *testExpressionSuite) TestDateArith(c *C) {
 			},
 		}
 		ast.SetFlag(expr)
-		v, err := EvalAstExpr(expr, s.ctx)
+		v, err := evalAstExpr(expr, s.ctx)
 		if t.error == true {
 			c.Assert(err, NotNil)
 		} else {
@@ -397,7 +396,7 @@ func (s *testExpressionSuite) TestDateArith(c *C) {
 
 		op = ast.NewValueExpr(ast.DateSub)
 		expr.Args[0] = op
-		v, err = EvalAstExpr(expr, s.ctx)
+		v, err = evalAstExpr(expr, s.ctx)
 		if t.error == true {
 			c.Assert(err, NotNil)
 		} else {
