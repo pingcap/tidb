@@ -872,8 +872,8 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) getTableStats(table *model.TableInfo) *statistics.Table {
-	txn, err := b.ctx.GetTxn(false)
-	if txn == nil || err != nil {
+	txn := b.ctx.Txn()
+	if txn == nil {
 		return statistics.PseudoTable(table)
 	}
 	m := meta.NewMeta(txn)

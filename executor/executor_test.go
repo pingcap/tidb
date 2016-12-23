@@ -1551,8 +1551,9 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	c.Check(err, IsNil)
 	tableID := t.Meta().ID
 
-	txn, err := ctx.GetTxn(true)
+	err = ctx.NewTxn()
 	c.Check(err, IsNil)
+	txn := ctx.Txn()
 	mt := meta.NewMeta(txn)
 	tpb, err := mt.GetTableStats(tableID)
 	c.Check(err, IsNil)
@@ -1576,7 +1577,9 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	c.Check(err, IsNil)
 	tableID = t.Meta().ID
 
-	txn, err = ctx.GetTxn(true)
+	err = ctx.NewTxn()
+	c.Check(err, IsNil)
+	txn = ctx.Txn()
 	mt = meta.NewMeta(txn)
 	tpb, err = mt.GetTableStats(tableID)
 	c.Check(err, IsNil)

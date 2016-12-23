@@ -2127,10 +2127,7 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 }
 
 func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, indRes []ast.RecordSet) error {
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	txn := e.ctx.Txn()
 	sc := e.ctx.GetSessionVars().StmtCtx
 	t, err := statistics.NewTable(sc, e.table.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples, e.colOffsets, indRes, e.indOffsets)
 	if err != nil {
