@@ -659,6 +659,7 @@ func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	// The kinds of args are int or string, and the last one represents charset.
 	result := make([]byte, 0, len(args)*2)
 	var resultLen int
+	var resultStr string
 	var datumInt int64
 
 	for _, datum := range args[:len(args)-1] {
@@ -668,12 +669,15 @@ func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err er
 		case types.KindString:
 			i, err := datum.ToInt64(ctx.GetSessionVars().StmtCtx)
 			if err != nil {
-				d.SetString("")
+				d.SetString(resultStr)
 				return d, nil
 			}
 			datumInt = i
 		case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
-			x, _ := datum.Cast(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
+			x, err := datum.Cast(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
+			if err != nil {
+				return d, errors.Trace(err)
+			}
 			datumInt = x.GetInt64()
 		default:
 			return d, errors.Errorf("Char invalid args, need int or string but get %T", args[0].GetValue())
@@ -701,9 +705,10 @@ func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err er
 		}
 	}
 
-	str := hack.String(result[:resultLen])
+	resultStr = hack.String(result[:resultLen])
 
-	// convert to specified charset
+	// The last argument represents the charset name after "using".
+	// If it is nil, the default charset utf8 is used.
 	argCharset := args[len(args)-1]
 	if !argCharset.IsNull() {
 		char, err := argCharset.ToString()
@@ -711,8 +716,8 @@ func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err er
 			return d, errors.Trace(err)
 		}
 
-		if strings.ToLower(char) == "ascii" || strings.Index(strings.ToLower(char), "utf8") == 0 {
-			d.SetString(str)
+		if strings.ToLower(char) == "ascii" || strings.HasPrefix(strings.ToLower(char), "utf8") {
+			d.SetString(resultStr)
 			return d, nil
 		}
 
@@ -721,12 +726,12 @@ func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err er
 			return d, errors.Errorf("unknown encoding: %s", char)
 		}
 
-		str, _, err := transform.String(encoding.NewDecoder(), str)
+		resultStr, _, err = transform.String(encoding.NewDecoder(), resultStr)
 		if err != nil {
-			log.Errorf("Convert %s to %s with error: %v", str, char, err)
+			log.Errorf("Convert %s to %s with error: %v", resultStr, char, err)
 			return d, errors.Trace(err)
 		}
 	}
-	d.SetString(str)
+	d.SetString(resultStr)
 	return d, nil
 }
