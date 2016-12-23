@@ -18,12 +18,12 @@
 package evaluator
 
 import (
-	"bytes"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math"
 	"strings"
+
+	"encoding/binary"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
@@ -657,10 +658,9 @@ func builtinBitLength(args []types.Datum, ctx context.Context) (d types.Datum, e
 // https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char
 func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	// The kinds of args are int or string, and the last one represents charset.
-	result := make([]byte, 0, len(args)*2)
-	var resultLen int
 	var resultStr string
-	var datumInt int64
+	var resultBytes []byte
+	var intSlice = make([]int64, 0, len(args)-1)
 
 	for _, datum := range args[:len(args)-1] {
 		switch datum.Kind() {
@@ -672,40 +672,23 @@ func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err er
 				d.SetString(resultStr)
 				return d, nil
 			}
-			datumInt = i
+			intSlice = append(intSlice, i)
 		case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
 			x, err := datum.Cast(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
 			if err != nil {
 				return d, errors.Trace(err)
 			}
-			datumInt = x.GetInt64()
+			intSlice = append(intSlice, x.GetInt64())
 		default:
 			return d, errors.Errorf("Char invalid args, need int or string but get %T", args[0].GetValue())
 		}
-
-		// convert int64 to []byte, append to result bytes
-		buf := new(bytes.Buffer)
-		err := binary.Write(buf, binary.BigEndian, datumInt)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		bs := buf.Bytes()[4:]
-		var start bool
-		for _, b := range bs {
-			if start {
-				result = append(result, b)
-				resultLen++
-			} else {
-				if b > 0 {
-					start = true
-					result = append(result, b)
-					resultLen++
-				}
-			}
-		}
 	}
 
-	resultStr = hack.String(result[:resultLen])
+	resultBytes, err = codec.ConvertInt64ToBytes(intSlice, binary.BigEndian, 4)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	resultStr = hack.String(resultBytes)
 
 	// The last argument represents the charset name after "using".
 	// If it is nil, the default charset utf8 is used.
