@@ -193,13 +193,13 @@ func (c *Column) mergeBuckets(bucketIdx int64) {
 		c.Numbers[curBuck] = c.Numbers[i+1]
 		c.Values[curBuck] = c.Values[i+1]
 		c.Repeats[curBuck] = c.Repeats[i+1]
-		curBuck += 1
+		curBuck++
 	}
 	if bucketIdx%2 == 0 {
 		c.Numbers[curBuck] = c.Numbers[bucketIdx]
 		c.Values[curBuck] = c.Values[bucketIdx]
 		c.Repeats[curBuck] = c.Repeats[bucketIdx]
-		curBuck += 1
+		curBuck++
 	}
 	c.Numbers = c.Numbers[:curBuck]
 	c.Values = c.Values[:curBuck]
@@ -358,20 +358,20 @@ func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, resu
 			return errors.Trace(err)
 		}
 		if !knowCount {
-			t.Count += 1
+			t.Count++
 		}
 		if cmp == 0 {
 			// The new item has the same value as current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 			// valuesPerBucket.
-			col.Numbers[bucketIdx] += 1
-			col.Repeats[bucketIdx] += 1
+			col.Numbers[bucketIdx]++
+			col.Repeats[bucketIdx]++
 		} else if col.Numbers[bucketIdx]+1-lastNumber <= valuesPerBucket {
 			// The bucket still have room to store a new item, update the bucket.
-			col.Numbers[bucketIdx] += 1
+			col.Numbers[bucketIdx]++
 			col.Values[bucketIdx] = row.Data[0]
 			col.Repeats[bucketIdx] = 0
-			col.NDV += 1
+			col.NDV++
 		} else {
 			// All buckets are full, we should merge buckets.
 			if !knowCount && bucketIdx+1 == bucketCount {
@@ -386,7 +386,7 @@ func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, resu
 			}
 			// We may merge buckets, so we should check it again.
 			if col.Numbers[bucketIdx]+1-lastNumber <= valuesPerBucket {
-				col.Numbers[bucketIdx] += 1
+				col.Numbers[bucketIdx]++
 				col.Values[bucketIdx] = row.Data[0]
 				col.Repeats[bucketIdx] = 0
 			} else {
@@ -396,7 +396,7 @@ func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, resu
 				col.Values = append(col.Values, row.Data[0])
 				col.Repeats = append(col.Repeats, 0)
 			}
-			col.NDV += 1
+			col.NDV++
 		}
 	}
 	t.Columns[offset] = col

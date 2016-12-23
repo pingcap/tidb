@@ -57,7 +57,7 @@ func (r *recordSet) Next() (*ast.Row, error) {
 	if r.cursor == r.count {
 		return nil, nil
 	}
-	r.cursor += 1
+	r.cursor++
 	return &ast.Row{Data: []types.Datum{r.data[r.cursor-1]}}, nil
 }
 
