@@ -306,6 +306,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	if columnInfo.DefaultValue != nil {
 		colMeta.defaultVal, _, err = table.GetColDefaultValue(ctx, columnInfo)
 		if err != nil {
+			job.State = model.JobCancelled
 			return errors.Trace(err)
 		}
 	} else if mysql.HasNotNullFlag(columnInfo.Flag) {
