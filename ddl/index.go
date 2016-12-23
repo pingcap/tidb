@@ -392,6 +392,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
+			batchOpInfo.idxRecords = batchOpInfo.idxRecords[:0]
 			err1 = d.backfillIndexInTxn(t, txn, batchOpInfo, seekHandle)
 			if err1 != nil {
 				return errors.Trace(err1)
@@ -478,7 +479,6 @@ type indexRecord struct {
 // backfillIndexInTxn deals with a part of backfilling index data in a Transaction.
 // This part of the index data rows is defaultSmallBatchCnt.
 func (d *ddl) backfillIndexInTxn(t table.Table, txn kv.Transaction, batchOpInfo *indexBatchOpInfo, seekHandle int64) error {
-	batchOpInfo.idxRecords = batchOpInfo.idxRecords[:0]
 	err := d.fetchRowColVals(txn, t, batchOpInfo, seekHandle)
 	if err != nil {
 		return errors.Trace(err)
