@@ -101,7 +101,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 	}
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			log.Warnf("snapshot batchGet failed: %v, tid: %d", e, s.version.Ver)
+			log.Debugf("snapshot batchGet failed: %v, tid: %d", e, s.version.Ver)
 			err = e
 		}
 	}
@@ -248,7 +248,7 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 	}
 	if keyErr.Retryable != "" {
 		err := errors.Errorf("tikv restarts txn: %s", keyErr.GetRetryable())
-		log.Warn(err)
+		log.Debug(err)
 		return nil, errors.Annotate(err, txnRetryableMark)
 	}
 	if keyErr.Abort != "" {
