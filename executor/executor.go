@@ -2101,42 +2101,45 @@ func (e *AnalyzeExec) Close() error {
 	return nil
 }
 
+// Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next() (*Row, error) {
 	for _, ana := range e.Srcs {
 		e, _ := ana.(*AnalyzeExec)
-		err := buildStatisticsForTable(e)
+		var count int64 = -1
+		var sampleRows []*ast.Row
+		if e.colOffsets != nil {
+			rs := &recordSet{executor: e.Srcs[len(e.Srcs)-1]}
+			var err error
+			count, sampleRows, err = collectSamples(rs)
+			rs.Close()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		columnSamples := rowsToColumnSamples(sampleRows)
+		var indRes []ast.RecordSet
+		for i := range e.indOffsets {
+			indRes = append(indRes, &recordSet{executor: e.Srcs[i]})
+		}
+		err := e.buildStatisticsAndSaveToKV(count, columnSamples, indRes)
+		for _, ir := range indRes {
+			ir.Close()
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		e.Close()
 	}
 	return nil, nil
 }
 
-func buildStatisticsForTable(e *AnalyzeExec) error {
+func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, indRes []ast.RecordSet) error {
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var count int64 = -1
-	var sampleRows []*ast.Row
-	if e.colOffsets != nil {
-		rs := &recordSet{executor: e.Srcs[len(e.Srcs)-1]}
-		count, sampleRows, err = collectSamples(rs)
-		rs.Close()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	columnSamples := rowsToColumnSamples(sampleRows)
 	sc := e.ctx.GetSessionVars().StmtCtx
-	var indRes []ast.RecordSet
-	for i := range e.indOffsets {
-		indRes = append(indRes, &recordSet{executor: e.Srcs[i]})
-	}
 	t, err := statistics.NewTable(sc, e.table.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples, e.colOffsets, indRes, e.indOffsets)
-	for _, ir := range indRes {
-		ir.Close()
-	}
 	if err != nil {
 		return errors.Trace(err)
 	}

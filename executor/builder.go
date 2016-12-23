@@ -534,6 +534,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
 		return st
 	}
+
 	ts := &TableScanExec{
 		t:            table,
 		asName:       v.TableAsName,

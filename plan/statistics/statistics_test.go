@@ -19,6 +19,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -34,11 +35,35 @@ var _ = Suite(&testStatisticsSuite{})
 type testStatisticsSuite struct {
 	count   int64
 	samples []types.Datum
+	rc      ast.RecordSet
 }
 
 type dataTable struct {
 	count   int64
 	samples []types.Datum
+}
+
+type recordSet struct {
+	data   []types.Datum
+	count  int64
+	cursor int64
+}
+
+func (r *recordSet) Fields() ([]*ast.ResultField, error) {
+	return nil, nil
+}
+
+func (r *recordSet) Next() (*ast.Row, error) {
+	if r.cursor == r.count {
+		return nil, nil
+	}
+	r.cursor += 1
+	return &ast.Row{Data: []types.Datum{r.data[r.cursor-1]}}, nil
+}
+
+func (r *recordSet) Close() error {
+	r.cursor = 0
+	return nil
 }
 
 func (s *testStatisticsSuite) SetUpSuite(c *C) {
@@ -58,6 +83,24 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	err := types.SortDatums(sc, samples)
 	c.Check(err, IsNil)
 	s.samples = samples
+
+	rc := &recordSet{
+		data:   make([]types.Datum, s.count),
+		count:  s.count,
+		cursor: 0,
+	}
+	for i := int64(start); i < rc.count; i++ {
+		rc.data[i].SetInt64(int64(i))
+	}
+	for i := int64(start); i < rc.count; i += 3 {
+		rc.data[i].SetInt64(rc.data[i].GetInt64() + 1)
+	}
+	for i := int64(start); i < rc.count; i += 5 {
+		rc.data[i].SetInt64(rc.data[i].GetInt64() + 2)
+	}
+	err = types.SortDatums(sc, rc.data)
+	c.Check(err, IsNil)
+	s.rc = rc
 }
 
 func (s *testStatisticsSuite) TestEstimateNDV(c *C) {
@@ -76,12 +119,16 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 			ID:        2,
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
+		{
+			ID:        3,
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
 	}
 	tblInfo.Columns = columns
 	timestamp := int64(10)
 	bucketCount := int64(256)
 	sc := new(variable.StatementContext)
-	t, err := NewTable(sc, tblInfo, timestamp, s.count, bucketCount, [][]types.Datum{s.samples}, []int{0}, nil, nil)
+	t, err := NewTable(sc, tblInfo, timestamp, s.count, bucketCount, [][]types.Datum{s.samples}, []int{0}, []ast.RecordSet{s.rc}, []int{1})
 	c.Check(err, IsNil)
 
 	col := t.Columns[0]
@@ -94,6 +141,17 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	count, err = col.BetweenRowCount(sc, types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(err, IsNil)
 	c.Check(count, Equals, int64(5075))
+
+	col = t.Columns[1]
+	count, err = col.EqualRowCount(sc, types.NewIntDatum(10000))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(1))
+	count, err = col.LessRowCount(sc, types.NewIntDatum(20000))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(19980))
+	count, err = col.BetweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(4696))
 
 	str := t.String()
 	log.Debug(str)

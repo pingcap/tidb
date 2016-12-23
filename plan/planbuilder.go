@@ -14,8 +14,8 @@
 package plan
 
 import (
-	"strings"
 	"fmt"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
