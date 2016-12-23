@@ -348,6 +348,7 @@ LOOP:
 
 	// get all row handles
 	ctx := s.s.(context.Context)
+	c.Assert(ctx.NewTxn(), IsNil)
 	t := s.testGetTable(c, "t1")
 	handles := make(map[int64]struct{})
 	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(),
@@ -368,11 +369,10 @@ LOOP:
 	// Make sure there is index with name c3_index.
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
-	txn, err := ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-	defer ctx.RollbackTxn()
+	c.Assert(ctx.NewTxn(), IsNil)
+	defer ctx.Txn().Rollback()
 
-	it, err := nidx.SeekFirst(txn)
+	it, err := nidx.SeekFirst(ctx.Txn())
 	c.Assert(err, IsNil)
 	defer it.Close()
 
@@ -454,11 +454,10 @@ LOOP:
 	// Make sure there is no index with name c3_index.
 	c.Assert(nidx, IsNil)
 	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
-	txn, err := ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-	defer ctx.RollbackTxn()
+	c.Assert(ctx.NewTxn(), IsNil)
+	defer ctx.Txn().Rollback()
 
-	it, err := idx.SeekFirst(txn)
+	it, err := idx.SeekFirst(ctx.Txn())
 	c.Assert(err, IsNil)
 	defer it.Close()
 
@@ -590,7 +589,8 @@ LOOP:
 	t := s.testGetTable(c, "t2")
 	i := 0
 	j := 0
-	defer ctx.RollbackTxn()
+	ctx.NewTxn()
+	defer ctx.Txn().Rollback()
 	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
@@ -622,8 +622,6 @@ func (s *testDBSuite) testDropColumn(c *C) {
 	}
 
 	// get c4 column id
-	ctx := s.s.(context.Context)
-
 	go func() {
 		sessionExec(c, s.store, "alter table t2 drop column c4")
 		done <- struct{}{}
@@ -666,10 +664,6 @@ LOOP:
 	count, ok := rows[0][0].(int64)
 	c.Assert(ok, IsTrue)
 	c.Assert(count, Greater, int64(0))
-
-	_, err := ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-	ctx.CommitTxn()
 }
 
 func (s *testDBSuite) testChangeColumn(c *C) {
