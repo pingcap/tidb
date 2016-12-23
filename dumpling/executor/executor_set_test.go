@@ -101,6 +101,7 @@ func (s *testSuite) TestSetVar(c *C) {
 	vars := tk.Se.(context.Context).GetSessionVars()
 	tk.Se.CommitTxn()
 	tk.MustExec("set @@autocommit = 1")
+	c.Assert(vars.InTxn(), IsFalse)
 	c.Assert(vars.IsAutocommit(), IsTrue)
 	tk.MustExec("set @@autocommit = 0")
 	c.Assert(vars.IsAutocommit(), IsFalse)

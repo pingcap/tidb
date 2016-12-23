@@ -58,52 +58,9 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 	return c.sessionVars
 }
 
-// GetTxn implements context.Context GetTxn interface.
-func (c *Context) GetTxn(forceNew bool) (kv.Transaction, error) {
-	c.mux.Lock()
-	defer c.mux.Unlock()
-	if c.Store == nil {
-		return nil, nil
-	}
-
-	var err error
-	if c.txn == nil {
-		c.txn, err = c.Store.Begin()
-		return c.txn, err
-	}
-	if forceNew {
-		err = c.CommitTxn()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		c.txn, err = c.Store.Begin()
-		return c.txn, err
-	}
-
-	return c.txn, nil
-}
-
-func (c *Context) finishTxn(rollback bool) error {
-	if c.txn == nil {
-		return nil
-	}
-	defer func() { c.txn = nil }()
-
-	if rollback {
-		return c.txn.Rollback()
-	}
-
-	return c.txn.Commit()
-}
-
-// CommitTxn implements context.Context CommitTxn interface.
-func (c *Context) CommitTxn() error {
-	return c.finishTxn(false)
-}
-
-// RollbackTxn implements context.Context RollbackTxn interface.
-func (c *Context) RollbackTxn() error {
-	return c.finishTxn(true)
+// Txn implements context.Context Txn interface.
+func (c *Context) Txn() kv.Transaction {
+	return c.txn
 }
 
 // GetClient implements context.Context GetClient interface.
@@ -130,6 +87,25 @@ func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string
 		return variable.UnknownSystemVar.GenByArgs(name)
 	}
 	v.Value = value
+	return nil
+}
+
+// NewTxn implements the context.Context interface.
+func (c *Context) NewTxn() error {
+	if c.Store == nil {
+		return errors.New("store is not set")
+	}
+	if c.txn != nil && c.txn.Valid() {
+		err := c.txn.Commit()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	txn, err := c.Store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	c.txn = txn
 	return nil
 }
 

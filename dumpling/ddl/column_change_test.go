@@ -58,7 +58,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	// create table t (c1 int, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
 	ctx := testNewContext(c, d)
-	_, err := ctx.GetTxn(true)
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	// insert t values (1, 2);
@@ -66,7 +66,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	row := types.MakeDatums(1, 2)
 	_, err = originTable.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
-	err = ctx.CommitTxn()
+	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
 	var mu sync.Mutex
@@ -87,6 +87,10 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 		hookCtx.Store = s.store
 		prevState = job.SchemaState
 		var err error
+		err = hookCtx.NewTxn()
+		if err != nil {
+			checkErr = errors.Trace(err)
+		}
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			deleteOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
@@ -113,6 +117,10 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 				checkErr = errors.Trace(err)
 			}
 			mu.Unlock()
+		}
+		err = hookCtx.Txn().Commit()
+		if err != nil {
+			checkErr = errors.Trace(err)
 		}
 	}
 	d.setHook(tc)
@@ -142,6 +150,10 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 		hookCtx.Store = s.store
 		prevState = job.SchemaState
 		var err error
+		err = hookCtx.NewTxn()
+		if err != nil {
+			checkErr = errors.Trace(err)
+		}
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			writeOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
@@ -157,6 +169,10 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
+		}
+		err = hookCtx.Txn().Commit()
+		if err != nil {
+			checkErr = errors.Trace(err)
 		}
 	}
 	d.setHook(tc)
@@ -196,11 +212,15 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx context.Context, d *ddl
 
 func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, deleteOnlyTable, writeOnlyTable table.Table) error {
 	// WriteOnlyTable: insert t values (2, 3)
-	_, err := writeOnlyTable.AddRecord(ctx, types.MakeDatums(2, 3))
+	err := ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.CommitTxn()
+	_, err = writeOnlyTable.AddRecord(ctx, types.MakeDatums(2, 3))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -222,7 +242,7 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, d
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.CommitTxn()
+	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -236,7 +256,7 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, d
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.CommitTxn()
+	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -255,11 +275,15 @@ func touchedMap(t table.Table) map[int]bool {
 
 func (s *testColumnChangeSuite) checkAddPublic(d *ddl, ctx context.Context, writeOnlyTable, publicTable table.Table) error {
 	// publicTable Insert t values (4, 4, 4)
+	err := ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	h, err := publicTable.AddRecord(ctx, types.MakeDatums(4, 4, 4))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.CommitTxn()
+	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -276,7 +300,7 @@ func (s *testColumnChangeSuite) checkAddPublic(d *ddl, ctx context.Context, writ
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.CommitTxn()
+	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}

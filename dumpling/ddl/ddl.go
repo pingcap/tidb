@@ -1408,7 +1408,7 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 
 func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	// For every DDL, we must commit current transaction.
-	if err := ctx.CommitTxn(); err != nil {
+	if err := ctx.NewTxn(); err != nil {
 		return errors.Trace(err)
 	}
 

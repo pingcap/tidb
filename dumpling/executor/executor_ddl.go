@@ -72,6 +72,11 @@ func (e *DDLExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Update InfoSchema in TxnCtx, so it will pass schema check.
+	is := sessionctx.GetDomain(e.ctx).InfoSchema()
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	txnCtx.InfoSchema = is
+	txnCtx.SchemaVersion = is.SchemaMetaVersion()
 	// DDL will force commit old transaction, after DDL, in transaction status should be false.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
 	e.done = true
