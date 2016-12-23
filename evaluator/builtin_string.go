@@ -23,7 +23,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -643,7 +642,6 @@ func builtinRpad(args []types.Datum, ctx context.Context) (d types.Datum, err er
 
 // https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_bit-length
 func builtinBitLength(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	// args[0] string
 	if args[0].IsNull() {
 		return d, nil
 	}
@@ -652,15 +650,13 @@ func builtinBitLength(args []types.Datum, ctx context.Context) (d types.Datum, e
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
 	d.SetInt64(int64(len(str) * 8))
-
 	return d, nil
 }
 
 // https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char
 func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	// args are number or string; last one is charset
+	// The kinds of args are int or string, and the last one represents charset.
 	result := make([]byte, 0, len(args)*2)
 	var resultLen int
 	var datumInt int64
@@ -670,16 +666,12 @@ func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err er
 		case types.KindNull:
 			continue
 		case types.KindString:
-			x, err := datum.ToString()
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			i, err := strconv.Atoi(x)
+			i, err := datum.ToInt64(ctx.GetSessionVars().StmtCtx)
 			if err != nil {
 				d.SetString("")
 				return d, nil
 			}
-			datumInt = int64(i)
+			datumInt = i
 		case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
 			x, _ := datum.Cast(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
 			datumInt = x.GetInt64()
@@ -712,8 +704,9 @@ func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	str := hack.String(result[:resultLen])
 
 	// convert to specified charset
-	if !args[len(args)-1].IsNull() {
-		char, err := args[len(args)-1].ToString()
+	argCharset := args[len(args)-1]
+	if !argCharset.IsNull() {
+		char, err := argCharset.ToString()
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -734,8 +727,6 @@ func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err er
 			return d, errors.Trace(err)
 		}
 	}
-
 	d.SetString(str)
-
 	return d, nil
 }

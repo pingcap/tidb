@@ -2992,7 +2992,7 @@ FunctionCallNonKeyword:
 		nilVal := ast.NewValueExpr(nil)
 		args := $3.([]ast.ExprNode)
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr("CHAR_FUNC"),
+			FnName: model.NewCIStr(ast.CharFunc),
 			Args: append(args, nilVal),
 		}
     }
@@ -3001,7 +3001,7 @@ FunctionCallNonKeyword:
 		charset := ast.NewValueExpr($5)
 		args := $3.([]ast.ExprNode)
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr("CHAR_FUNC"),
+			FnName: model.NewCIStr(ast.CharFunc),
 			Args: append(args, charset),
 		}
     }

@@ -720,8 +720,7 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 		fNum   float64
 		result string
 	}{
-		{"65", 66, 67.5, "ABD"}, // float
-		//{"65", 66, nil, "AB"},                  // nil
+		{"65", 66, 67.5, "ABD"},                // float
 		{"65", 16740, 67.5, "AAdD"},            // large num
 		{"65", -1, 67.5, "A\xff\xff\xff\xffD"}, // nagtive int
 		{"a", -1, 67.5, ""},                    // invalid 'a'
