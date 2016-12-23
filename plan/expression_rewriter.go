@@ -33,8 +33,8 @@ import (
 // EvalSubquery evaluates incorrelated subqueries once.
 var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
 
-// EvalAstExpr evaluates ast expression directly.
-func EvalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
+// evalAstExpr evaluates ast expression directly.
+func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 	if val, ok := expr.(*ast.ValueExpr); ok {
 		return val.Datum, nil
 	}

@@ -31,9 +31,9 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testConstantSuite{})
+var _ = Suite(&testExpressionSuite{})
 
-type testConstantSuite struct{}
+type testExpressionSuite struct{}
 
 func newColumn(name string) *Column {
 	return &Column{
@@ -58,7 +58,7 @@ func newFunction(funcName string, args ...Expression) Expression {
 	return newFunc
 }
 
-func (*testConstantSuite) TestConstantPropagation(c *C) {
+func (*testExpressionSuite) TestConstantPropagation(c *C) {
 	defer testleak.AfterTest(c)()
 	nullValue := &Constant{Value: types.Datum{}}
 	cases := []struct {
@@ -133,7 +133,7 @@ func (*testConstantSuite) TestConstantPropagation(c *C) {
 	}
 }
 
-func (*testConstantSuite) TestConstantFolding(c *C) {
+func (*testExpressionSuite) TestConstantFolding(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		condition Expression

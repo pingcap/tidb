@@ -86,23 +86,19 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
 	ctx := testNewContext(c, s.d)
-	defer ctx.RollbackTxn()
-
-	txn, err := ctx.GetTxn(true)
-	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, s.d, s.dbInfo, tblInfo)
 
 	t := testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
-
+	err := ctx.NewTxn()
+	c.Assert(err, IsNil)
 	num := 10
 	for i := 0; i < num; i++ {
 		_, err = t.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
 
-	err = ctx.CommitTxn()
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	i := int64(0)
 	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -118,6 +114,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	index := tables.FindIndexByColName(t, "c1")
 	c.Assert(index, NotNil)
 
+	c.Assert(ctx.NewTxn(), IsNil)
 	h, err := t.AddRecord(ctx, types.MakeDatums(num+1, 1, 1))
 	c.Assert(err, IsNil)
 
@@ -128,10 +125,10 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	h, err = t.AddRecord(ctx, types.MakeDatums(1, 1, 1))
 	c.Assert(err, NotNil)
 
-	txn, err = ctx.GetTxn(true)
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
-	exist, _, err := index.Exist(txn, types.MakeDatums(1), h)
+	exist, _, err := index.Exist(ctx.Txn(), types.MakeDatums(1), h)
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
@@ -142,10 +139,10 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	index1 := tables.FindIndexByColName(t, "c1")
 	c.Assert(index1, IsNil)
 
-	txn, err = ctx.GetTxn(true)
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
-	exist, _, err = index.Exist(txn, types.MakeDatums(1), h)
+	exist, _, err = index.Exist(ctx.Txn(), types.MakeDatums(1), h)
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsFalse)
 
@@ -176,15 +173,12 @@ func (s *testIndexSuite) testGetIndex(c *C, t table.Table, name string, isExist 
 func (s *testIndexSuite) checkIndexKVExist(c *C, ctx context.Context, t table.Table, handle int64, indexCol table.Index, columnValues []types.Datum, isExist bool) {
 	c.Assert(len(indexCol.Meta().Columns), Equals, len(columnValues))
 
-	txn, err := ctx.GetTxn(true)
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
-	exist, _, err := indexCol.Exist(txn, columnValues, handle)
+	exist, _, err := indexCol.Exist(ctx.Txn(), columnValues, handle)
 	c.Assert(err, IsNil)
 	c.Assert(exist, Equals, isExist)
-
-	err = ctx.CommitTxn()
-	c.Assert(err, IsNil)
 }
 
 func (s *testIndexSuite) checkNoneIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum) {
@@ -201,12 +195,10 @@ func (s *testIndexSuite) checkNoneIndex(c *C, ctx context.Context, d *ddl, tblIn
 
 func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum, isDropped bool) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
-	_, err := ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -222,15 +214,13 @@ func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl,
 	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, isDropped)
 
 	// Test add a new row.
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	handle, err = t.AddRecord(ctx, newRow)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	rows := [][]types.Datum{row, newRow}
 
@@ -249,8 +239,7 @@ func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl,
 	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
 
 	// Test update a new row.
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	newUpdateRow := types.MakeDatums(int64(44), int64(55), int64(66))
 	touched := map[int]bool{0: true, 1: true, 2: true}
@@ -266,14 +255,11 @@ func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl,
 	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
 
 	// Test remove a row.
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	err = t.RemoveRecord(ctx, handle, newUpdateRow)
 	c.Assert(err, IsNil)
-
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	i = int64(0)
 	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -289,11 +275,10 @@ func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl,
 func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum, isDropped bool) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	_, err := ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -309,15 +294,13 @@ func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, 
 	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, isDropped)
 
 	// Test add a new row.
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	handle, err = t.AddRecord(ctx, newRow)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	rows := [][]types.Datum{row, newRow}
 
@@ -336,7 +319,7 @@ func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, 
 	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, true)
 
 	// Test update a new row.
-	_, err = ctx.GetTxn(true)
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	newUpdateRow := types.MakeDatums(int64(44), int64(55), int64(66))
@@ -353,13 +336,13 @@ func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, 
 	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, true)
 
 	// Test remove a row.
-	_, err = ctx.GetTxn(true)
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	err = t.RemoveRecord(ctx, handle, newUpdateRow)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	i = int64(0)
@@ -376,11 +359,10 @@ func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, 
 func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum, isDropped bool) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	_, err := ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -389,15 +371,13 @@ func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *
 	c.Assert(i, Equals, int64(1))
 
 	// Test add a new row.
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	handle, err = t.AddRecord(ctx, newRow)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	rows := [][]types.Datum{row, newRow}
 
@@ -417,8 +397,7 @@ func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *
 	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, !isDropped)
 
 	// Test update a new row.
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	newUpdateRow := types.MakeDatums(int64(44), int64(55), int64(66))
 	touched := map[int]bool{0: true, 1: true, 2: true}
@@ -434,14 +413,10 @@ func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *
 	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, !isDropped)
 
 	// Test remove a row.
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
+	c.Assert(t.RemoveRecord(ctx, handle, newUpdateRow), IsNil)
 
-	err = t.RemoveRecord(ctx, handle, newUpdateRow)
-	c.Assert(err, IsNil)
-
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	i = int64(0)
 	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -456,11 +431,10 @@ func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *
 func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	_, err := ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -476,15 +450,14 @@ func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tbl
 	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, true)
 
 	// Test add a new row.
-	_, err = ctx.GetTxn(true)
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	handle, err = t.AddRecord(ctx, newRow)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	rows := [][]types.Datum{row, newRow}
 
@@ -503,13 +476,11 @@ func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tbl
 	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, true)
 
 	// Test update a new row.
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
 
 	newUpdateRow := types.MakeDatums(int64(44), int64(55), int64(66))
 	touched := map[int]bool{0: true, 1: true, 2: true}
-	err = t.UpdateRecord(ctx, handle, newRow, newUpdateRow, touched)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
+	c.Assert(t.UpdateRecord(ctx, handle, newRow, newUpdateRow, touched), IsNil)
 
 	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
 
@@ -520,22 +491,16 @@ func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tbl
 	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, true)
 
 	// Test remove a row.
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
+	c.Assert(t.RemoveRecord(ctx, handle, newUpdateRow), IsNil)
 
-	err = t.RemoveRecord(ctx, handle, newUpdateRow)
-	c.Assert(err, IsNil)
-
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-
+	c.Assert(ctx.NewTxn(), IsNil)
 	i = int64(0)
 	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})
 	c.Assert(i, Equals, int64(1))
-
 	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
 	s.testGetIndex(c, t, index.Meta().Columns[0].Name.L, true)
 }
@@ -562,19 +527,16 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 	d := newDDL(s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(c, d)
-
-	_, err := ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
+	c.Assert(ctx.NewTxn(), IsNil)
 	row := types.MakeDatums(int64(1), int64(2), int64(3))
 	handle, err := t.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 
-	err = ctx.CommitTxn()
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	checkOK := false
@@ -612,13 +574,13 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 	job = testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c1", "c1")
 	testCheckJobDone(c, d, job, true)
 
-	_, err = ctx.GetTxn(true)
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.CommitTxn()
+	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
 	d.close()
@@ -631,7 +593,7 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(c, d)
 
-	_, err := ctx.GetTxn(true)
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -642,14 +604,11 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 	handle, err := t.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 
-	err = ctx.CommitTxn()
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	job := testCreateIndex(c, ctx, s.d, s.dbInfo, tblInfo, true, "c1_uni", "c1")
 	testCheckJobDone(c, d, job, true)
-
-	err = ctx.CommitTxn()
-	c.Assert(err, IsNil)
 
 	checkOK := false
 	oldIndexCol := tables.NewIndex(tblInfo, &model.IndexInfo{})
@@ -685,13 +644,13 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 	job = testDropIndex(c, ctx, d, s.dbInfo, tblInfo, "c1_uni")
 	testCheckJobDone(c, d, job, false)
 
-	_, err = ctx.GetTxn(true)
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.CommitTxn()
+	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
 	d.close()
@@ -706,7 +665,7 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 	tblInfo.Columns[1].DefaultValue = nil
 	ctx := testNewContext(c, d)
 
-	_, err := ctx.GetTxn(true)
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -718,7 +677,7 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 	handle, err := t.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 
-	err = ctx.CommitTxn()
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	checkOK := false
@@ -753,13 +712,12 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 	job := testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c2", "c2")
 	testCheckJobDone(c, d, job, true)
 
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
+	c.Assert(ctx.NewTxn(), IsNil)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.CommitTxn()
+	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
 	d.close()

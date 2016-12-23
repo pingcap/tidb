@@ -173,7 +173,6 @@ func (s *testTableSuite) TestTable(c *C) {
 	d := s.d
 
 	ctx := testNewContext(c, d)
-	defer ctx.RollbackTxn()
 
 	tblInfo := testTableInfo(c, d, "t", 3)
 	job := testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
