@@ -318,13 +318,14 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	for {
 		startTime := time.Now()
 		handles = handles[:0]
-		err = d.getSnapshotRows(t, version, seekHandle, func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
-			handles = append(handles, h)
-			if len(handles) == defaultBatchCnt {
-				return false, nil
-			}
-			return true, nil
-		})
+		err = d.iterateSnapshotRows(t, version, seekHandle,
+			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
+				handles = append(handles, h)
+				if len(handles) == defaultBatchCnt {
+					return false, nil
+				}
+				return true, nil
+			})
 		if err != nil {
 			return errors.Trace(err)
 		} else if len(handles) == 0 {

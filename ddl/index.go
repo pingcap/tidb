@@ -327,9 +327,8 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, batchOpInfo *indexBatchOpInfo, seekHandle int64) error {
 	cols := t.Cols()
 	idxInfo := batchOpInfo.tblIndex.Meta()
-	batchOpInfo.idxRecords = batchOpInfo.idxRecords[:0]
 
-	err := d.getSnapshotRows(t, txn.StartTS(), seekHandle,
+	err := d.iterateSnapshotRows(t, txn.StartTS(), seekHandle,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			rowMap, err := tablecodec.DecodeRow(rawRecord, batchOpInfo.colMap)
 			if err != nil {
@@ -420,7 +419,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h int64, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
+func (d *ddl) iterateSnapshotRows(t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
 	ver := kv.Version{Ver: version}
 	snap, err := d.store.GetSnapshot(ver)
 	if err != nil {
@@ -479,6 +478,7 @@ type indexRecord struct {
 // backfillIndexInTxn deals with a part of backfilling index data in a Transaction.
 // This part of the index data rows is defaultSmallBatchCnt.
 func (d *ddl) backfillIndexInTxn(t table.Table, txn kv.Transaction, batchOpInfo *indexBatchOpInfo, seekHandle int64) error {
+	batchOpInfo.idxRecords = batchOpInfo.idxRecords[:0]
 	err := d.fetchRowColVals(txn, t, batchOpInfo, seekHandle)
 	if err != nil {
 		return errors.Trace(err)
