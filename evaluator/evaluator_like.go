@@ -17,7 +17,8 @@ import (
 	"regexp"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/util/types"
 )
 
 const (
@@ -126,91 +127,51 @@ func doMatch(str string, patChars, patTypes []byte) bool {
 	return sIdx == len(str)
 }
 
-func (e *Evaluator) patternLike(p *ast.PatternLikeExpr) bool {
-	expr := p.Expr.GetDatum()
-	if expr.IsNull() {
-		p.SetNull()
-		return true
+// See http://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
+func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return
 	}
 
-	sexpr, err := expr.ToString()
+	valStr, err := args[0].ToString()
 	if err != nil {
-		e.err = errors.Trace(err)
-		return false
+		return d, errors.Trace(err)
 	}
 
-	// We need to compile pattern if it has not been compiled or it is not static.
-	var needCompile = len(p.PatChars) == 0 || !ast.IsConstant(p.Pattern)
-	if needCompile {
-		pattern := p.Pattern.GetDatum()
-		if pattern.IsNull() {
-			p.SetNull()
-			return true
-		}
-		spattern, err := pattern.ToString()
-		if err != nil {
-			e.err = errors.Trace(err)
-			return false
-		}
-		p.PatChars, p.PatTypes = compilePattern(spattern, p.Escape)
+	// TODO: We don't need to compile pattern if it has been compiled or it is static.
+	if args[1].IsNull() {
+		return
 	}
-	match := doMatch(sexpr, p.PatChars, p.PatTypes)
-	if p.Not {
-		match = !match
+	patternStr, err := args[1].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
 	}
-	p.SetInt64(boolToInt64(match))
-	return true
+	escape := byte(args[2].GetInt64())
+	patChars, patTypes := compilePattern(patternStr, escape)
+	match := doMatch(valStr, patChars, patTypes)
+	d.SetInt64(boolToInt64(match))
+	return
 }
 
-func (e *Evaluator) patternRegexp(p *ast.PatternRegexpExpr) bool {
-	var sexpr string
-	if p.Sexpr != nil {
-		sexpr = *p.Sexpr
-	} else {
-		expr := p.Expr.GetDatum()
-		if expr.IsNull() {
-			p.SetNull()
-			return true
-		}
-		var err error
-		sexpr, err = expr.ToString()
-		if err != nil {
-			e.err = errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", expr, expr)
-			return false
-		}
-
-		if ast.IsConstant(p.Expr) {
-			p.Sexpr = new(string)
-			*p.Sexpr = sexpr
-		}
+// See http://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
+func builtinRegexp(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	// TODO: We don't need to compile pattern if it has been compiled or it is static.
+	if args[0].IsNull() || args[1].IsNull() {
+		return
 	}
 
-	re := p.Re
-	if re == nil {
-		pattern := p.Pattern.GetDatum()
-		if pattern.IsNull() {
-			p.SetNull()
-			return true
-		}
-		spattern, err := pattern.ToString()
-		if err != nil {
-			e.err = errors.Errorf("non-string pattern in LIKE: %v (Value of type %T)", pattern, pattern)
-			return false
-		}
-
-		if re, err = regexp.Compile(spattern); err != nil {
-			e.err = errors.Trace(err)
-			return false
-		}
-
-		if ast.IsConstant(p.Pattern) {
-			p.Re = re
-		}
+	targetStr, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", args[0], args[0])
 	}
-	match := re.MatchString(sexpr)
-	if p.Not {
-		match = !match
+	patternStr, err := args[1].ToString()
+	if err != nil {
+		return d, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", args[1], args[1])
 	}
-	p.SetInt64(boolToInt64(match))
-	return true
+	re, err := regexp.Compile(patternStr)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetInt64(boolToInt64(re.MatchString(targetStr)))
+	return
 }
