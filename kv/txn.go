@@ -25,8 +25,9 @@ import (
 // RunInNewTxn will run the f in a new transaction environment.
 func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) error {
 	var (
-		err error
-		txn Transaction
+		err           error
+		originalTxnTS uint64
+		txn           Transaction
 	)
 	for i := 0; i < maxRetryCnt; i++ {
 		txn, err = store.Begin()
@@ -35,9 +36,13 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			return errors.Trace(err)
 		}
 
+		if i == 0 {
+			originalTxnTS = txn.StartTS()
+		}
+
 		err = f(txn)
 		if retryable && IsRetryableError(err) {
-			log.Warnf("[kv] Retry txn %v", txn)
+			log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
 			txn.Rollback()
 			continue
 		}
@@ -48,7 +53,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 
 		err = txn.Commit()
 		if retryable && IsRetryableError(err) {
-			log.Warnf("[kv] Retry txn %v", txn)
+			log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
 			txn.Rollback()
 			BackOff(i)
 			continue
