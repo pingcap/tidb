@@ -1919,8 +1919,7 @@ var dateFormatParserTable = map[string]dateFormatParser{
 
 func matchDateWithToken(t *mysqlTimeEx, date string, token string) (remain string, succ bool) {
 	if parse, ok := dateFormatParserTable[token]; ok {
-		remain, succ = parse(t, date)
-		return
+		return parse(t, date)
 	}
 
 	if strings.HasPrefix(date, token) {
