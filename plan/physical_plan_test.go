@@ -600,7 +600,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t1.a > 1)",
-			ans: "Apply{Table(t)->Table(t)->Cache->Selection}->Selection->Projection",
+			ans: "Apply{Table(t)->Table(t)->Selection}->Selection->Projection",
 		},
 		{
 			sql: "select t1.a from t t1, (select @a:=0, @b:=0) t2",
@@ -745,5 +745,47 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 			}
 			p = p.GetChildByIndex(0)
 		}
+	}
+}
+
+func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql string
+		ans string
+	}{
+		{
+			sql: "select * from t t1 where t1.a=(select min(t2.a) from t t2, t t3 where t2.a=t3.a and t2.b > t1.b + t3.b)",
+			ans: "Apply{Table(t)->LeftHashJoin{Table(t)->Cache->Table(t)->Cache}(t2.a,t3.a)->StreamAgg->MaxOneRow}->Selection->Projection",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		lp.PruneColumns(lp.GetSchema())
+		lp.ResolveIndicesAndCorCols()
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		pp := info.p
+		pp = EliminateProjection(pp)
+		physicalInitialize(pp)
+		addCachePlan(pp, builder.allocator)
+		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
 	}
 }
