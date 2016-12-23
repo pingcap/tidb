@@ -141,12 +141,8 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	ts.allocator = p.allocator
 	ts.SetSchema(p.GetSchema())
 	ts.initIDAndContext(p.ctx)
-	txn, err := p.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if txn != nil {
-		ts.readOnly = txn.IsReadOnly()
+	if p.ctx.Txn() != nil {
+		ts.readOnly = p.ctx.Txn().IsReadOnly()
 	} else {
 		ts.readOnly = true
 	}
@@ -196,6 +192,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 				break
 			}
 		}
+		var err error
 		rowCount, err = getRowCountByTableRange(sc, statsTbl, ts.Ranges, offset)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -222,12 +219,8 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 	is.allocator = p.allocator
 	is.initIDAndContext(p.ctx)
 	is.SetSchema(p.schema)
-	txn, err := p.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if txn != nil {
-		is.readOnly = txn.IsReadOnly()
+	if p.ctx.Txn() != nil {
+		is.readOnly = p.ctx.Txn().IsReadOnly()
 	} else {
 		is.readOnly = true
 	}

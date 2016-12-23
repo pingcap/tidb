@@ -48,10 +48,9 @@ func testNewContext(c *C, d *ddl) context.Context {
 }
 
 func getSchemaVer(c *C, ctx context.Context) int64 {
-	txn, err := ctx.GetTxn(true)
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
-	c.Assert(txn, NotNil)
-	m := meta.NewMeta(txn)
+	m := meta.NewMeta(ctx.Txn())
 	ver, err := m.GetSchemaVersion()
 	c.Assert(err, IsNil)
 	return ver
@@ -75,9 +74,8 @@ func checkEqualTable(c *C, t1, t2 *model.TableInfo) {
 }
 
 func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobArgs) {
-	txn, err := ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
+	c.Assert(ctx.NewTxn(), IsNil)
+	t := meta.NewMeta(ctx.Txn())
 	historyJob, err := t.GetHistoryDDLJob(id)
 	c.Assert(err, IsNil)
 

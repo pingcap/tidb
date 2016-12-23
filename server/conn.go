@@ -544,7 +544,7 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	loadDataInfo.Ctx.NewTxn()
 	var prevData []byte
 	var curData []byte
 	var shouldBreak bool
@@ -570,8 +570,7 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 			break
 		}
 	}
-
-	return nil
+	return loadDataInfo.Ctx.Txn().Commit()
 }
 
 const queryLogMaxLen = 2048
