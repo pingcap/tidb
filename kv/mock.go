@@ -19,7 +19,8 @@ import (
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
 type mockTxn struct {
-	opts map[Option]interface{}
+	opts  map[Option]interface{}
+	valid bool
 }
 
 // Always returns a retryable error.
@@ -28,6 +29,7 @@ func (t *mockTxn) Commit() error {
 }
 
 func (t *mockTxn) Rollback() error {
+	t.valid = false
 	return nil
 }
 
@@ -79,13 +81,18 @@ func (t *mockTxn) Delete(k Key) error {
 	return nil
 }
 
+func (t *mockTxn) Valid() bool {
+	return t.valid
+}
+
 // mockStorage is used to start a must commit-failed txn.
 type mockStorage struct {
 }
 
 func (s *mockStorage) Begin() (Transaction, error) {
 	tx := &mockTxn{
-		opts: make(map[Option]interface{}),
+		opts:  make(map[Option]interface{}),
+		valid: true,
 	}
 	return tx, nil
 

@@ -72,6 +72,9 @@ func SetSystemVar(vars *variable.SessionVars, name string, value types.Datum) er
 	case variable.AutocommitVar:
 		isAutocommit := strings.EqualFold(sVal, "ON") || sVal == "1"
 		vars.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
+		if isAutocommit {
+			vars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		}
 	case variable.TiDBSkipConstraintCheck:
 		vars.SkipConstraintCheck = (sVal == "1")
 	}

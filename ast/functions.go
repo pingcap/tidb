@@ -69,6 +69,7 @@ const (
 	RowFunc    = "row"
 	SetVar     = "setvar"
 	GetVar     = "getvar"
+	Values     = "values"
 
 	// common functions
 	Coalesce = "coalesce"

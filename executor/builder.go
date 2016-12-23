@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
@@ -125,10 +126,31 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 }
 
 func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
-	return &ShowDDLExec{
+	// We get DDLInfo here because for Executors that returns result set,
+	// next will be called after transaction has been committed.
+	// We need the transaction to get DDLInfo.
+	e := &ShowDDLExec{
 		ctx:    b.ctx,
 		schema: v.GetSchema(),
 	}
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	ddlInfo, err := inspectkv.GetDDLInfo(txn)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	bgInfo, err := inspectkv.GetBgDDLInfo(txn)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	e.ddlInfo = ddlInfo
+	e.bgInfo = bgInfo
+	return e
 }
 
 func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
@@ -148,7 +170,7 @@ func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 
 func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	if b.ctx.GetSessionVars().ShouldAutocommit() {
+	if !b.ctx.GetSessionVars().InTxn() {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
@@ -243,24 +265,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	if len(v.GetChildren()) > 0 {
 		ivs.SelectExec = b.build(v.GetChildByIndex(0))
 	}
-	// Get Table
-	ts, ok := v.Table.TableRefs.Left.(*ast.TableSource)
-	if !ok {
-		b.err = errors.New("Can not get table")
-		return nil
-	}
-	tn, ok := ts.Source.(*ast.TableName)
-	if !ok {
-		b.err = errors.New("Can not get table")
-		return nil
-	}
-	tableInfo := tn.TableInfo
-	tbl, ok := b.is.TableByID(tableInfo.ID)
-	if !ok {
-		b.err = errors.Errorf("Can not get table %d", tableInfo.ID)
-		return nil
-	}
-	ivs.Table = tbl
+	ivs.Table = v.Table
 	if v.IsReplace {
 		return b.buildReplace(ivs)
 	}
@@ -270,8 +275,6 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		Priority:     v.Priority,
 		Ignore:       v.Ignore,
 	}
-	// fields is used to evaluate values expr.
-	insert.fields = ts.GetResultFields()
 	return insert
 }
 

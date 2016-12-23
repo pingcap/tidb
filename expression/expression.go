@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -258,6 +259,21 @@ func ResultFieldsToSchema(fields []*ast.ResultField) Schema {
 			Position: i,
 		}
 		schema = append(schema, col)
+	}
+	return schema
+}
+
+// TableInfo2Schema converts table info to schema.
+func TableInfo2Schema(tbl *model.TableInfo) Schema {
+	schema := make(Schema, 0, len(tbl.Columns))
+	for i, col := range tbl.Columns {
+		newCol := &Column{
+			ColName:  col.Name,
+			TblName:  tbl.Name,
+			RetType:  &col.FieldType,
+			Position: i,
+		}
+		schema = append(schema, newCol)
 	}
 	return schema
 }

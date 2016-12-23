@@ -199,13 +199,14 @@ func (s *SessionVars) GetStatusFlag(flag uint16) bool {
 	return s.Status&flag > 0
 }
 
-// ShouldAutocommit checks if current session should autocommit.
-// With START TRANSACTION, autocommit remains disabled until you end
-// the transaction with COMMIT or ROLLBACK.
-func (s *SessionVars) ShouldAutocommit() bool {
-	isAutomcommit := s.GetStatusFlag(mysql.ServerStatusAutocommit)
-	inTransaction := s.GetStatusFlag(mysql.ServerStatusInTrans)
-	return isAutomcommit && !inTransaction
+// InTxn returns if the session is in transaction.
+func (s *SessionVars) InTxn() bool {
+	return s.GetStatusFlag(mysql.ServerStatusInTrans)
+}
+
+// IsAutocommit returns if the session is set to autocommit.
+func (s *SessionVars) IsAutocommit() bool {
+	return s.GetStatusFlag(mysql.ServerStatusAutocommit)
 }
 
 // GetNextPreparedStmtID generates and returns the next session scope prepared statement id.
