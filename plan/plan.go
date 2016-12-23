@@ -68,7 +68,7 @@ const (
 	Up = "Update"
 	// Del is the type of Delete.
 	Del = "Delete"
-	// Analyze is the type of Analyze.
+	// Ana is the type of Analyze.
 	Ana = "Analyze"
 )
 

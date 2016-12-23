@@ -2070,6 +2070,7 @@ func (e *CacheExec) Next() (*Row, error) {
 	return row, nil
 }
 
+// AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
 	schema     expression.Schema
 	table      *ast.TableName
