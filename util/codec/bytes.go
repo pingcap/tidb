@@ -14,7 +14,6 @@
 package codec
 
 import (
-	"bytes"
 	"encoding/binary"
 	"runtime"
 	"unsafe"
@@ -202,35 +201,4 @@ func reallocBytes(b []byte, n int) []byte {
 
 	// slice b has capability to store n bytes
 	return b
-}
-
-// ConvertInt64ToBytes converts []int64 to []byte
-func ConvertInt64ToBytes(ints []int64, bitOrder binary.ByteOrder, offset int) ([]byte, error) {
-	result := make([]byte, 0, len(ints)*(8-offset))
-	var resultLen int
-
-	for _, i := range ints {
-		buf := new(bytes.Buffer)
-		err := binary.Write(buf, bitOrder, i)
-		if err != nil {
-			return nil, err
-		}
-		bs := buf.Bytes()[offset:]
-
-		var start bool
-		for _, b := range bs {
-			if start {
-				result = append(result, b)
-				resultLen++
-			} else {
-				if b > 0 {
-					start = true
-					result = append(result, b)
-					resultLen++
-				}
-			}
-		}
-	}
-
-	return result[:resultLen], nil
 }

@@ -18,12 +18,11 @@
 package evaluator
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"math"
 	"strings"
-
-	"encoding/binary"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -31,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
@@ -659,7 +657,6 @@ func builtinBitLength(args []types.Datum, ctx context.Context) (d types.Datum, e
 func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	// The kinds of args are int or string, and the last one represents charset.
 	var resultStr string
-	var resultBytes []byte
 	var intSlice = make([]int64, 0, len(args)-1)
 
 	for _, datum := range args[:len(args)-1] {
@@ -684,11 +681,7 @@ func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err er
 		}
 	}
 
-	resultBytes, err = codec.ConvertInt64ToBytes(intSlice, binary.BigEndian, 4)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	resultStr = hack.String(resultBytes)
+	resultStr = hack.String(convertInt64ToBytes(intSlice))
 
 	// The last argument represents the charset name after "using".
 	// If it is nil, the default charset utf8 is used.
@@ -717,4 +710,33 @@ func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	}
 	d.SetString(resultStr)
 	return d, nil
+}
+
+func convertInt64ToBytes(ints []int64) []byte {
+	var buf bytes.Buffer
+	for i := len(ints) - 1; i >= 0; i-- {
+		var count int
+		v := ints[i]
+		for count < 4 {
+			buf.WriteByte(byte(v & 0xff))
+			v = v >> 8
+			if v == 0 {
+				break
+			}
+			count++
+		}
+	}
+	s := buf.Bytes()
+	reverseByteSlice(s)
+	return s
+}
+
+func reverseByteSlice(slice []byte) {
+	var start int
+	var end = len(slice) - 1
+	for start < end {
+		slice[start], slice[end] = slice[end], slice[start]
+		start++
+		end--
+	}
 }
