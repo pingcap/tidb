@@ -681,7 +681,7 @@ func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err er
 		}
 	}
 
-	resultStr = hack.String(convertInt64ToBytes(intSlice))
+	resultStr = string(convertInt64ToBytes(intSlice))
 
 	// The last argument represents the charset name after "using".
 	// If it is nil, the default charset utf8 is used.
