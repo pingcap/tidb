@@ -506,7 +506,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(ToString(lp), Equals, ca.first, Commentf("for %s", ca.sql))
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -638,7 +638,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -737,7 +737,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			alloc: builder.allocator,
 		}
 		solver.aggPushDown(lp)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -951,7 +951,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 
 		_, p, err = p.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		p.PruneColumns(p.GetSchema())
+		p.PruneColumns(p.GetSchema().Columns)
 		p.ResolveIndicesAndCorCols()
 		info, err := p.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -1088,7 +1088,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		_, p, err = p.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		p.PruneColumns(p.GetSchema())
+		p.PruneColumns(p.GetSchema().Columns)
 		p.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		checkDataSourceCols(p, c, ca.ans, comment)
@@ -1297,7 +1297,7 @@ func checkDataSourceCols(p Plan, c *C, ans map[string][]string, comment CommentI
 		colList, ok := ans[p.GetID()]
 		c.Assert(ok, IsTrue, comment)
 		for i, colName := range colList {
-			c.Assert(colName, Equals, p.GetSchema()[i].ColName.L, comment)
+			c.Assert(colName, Equals, p.GetSchema().Columns[i].ColName.L, comment)
 		}
 	}
 	for _, child := range p.GetChildren() {

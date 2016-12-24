@@ -21,24 +21,27 @@ import (
 )
 
 // Schema stands for the row schema get from input.
-type Schema []*Column
+type Schema struct {
+	Columns []*Column
+}
 
 // String implements fmt.Stringer interface.
 func (s Schema) String() string {
-	strs := make([]string, 0, len(s))
-	for _, col := range s {
-		strs = append(strs, col.String())
+	colStrs := make([]string, 0, len(s.Columns))
+	for _, col := range s.Columns {
+		colStrs = append(colStrs, col.String())
 	}
-	return "[" + strings.Join(strs, ",") + "]"
+	return "[" + strings.Join(colStrs, ",") + "]"
 }
 
 // Clone copies the total schema.
 func (s Schema) Clone() Schema {
-	result := make(Schema, 0, len(s))
-	for _, col := range s {
+	cols := make([]*Column, 0, len(s.Columns))
+	for _, col := range s.Columns {
 		newCol := *col
-		result = append(result, &newCol)
+		cols = append(cols, &newCol)
 	}
+	result := Schema{Columns:cols}
 	return result
 }
 
@@ -47,7 +50,7 @@ func (s Schema) Clone() Schema {
 func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
-	for i, col := range s {
+	for i, col := range s.Columns {
 		if (dbName.L == "" || dbName.L == col.DBName.L) &&
 			(tblName.L == "" || tblName.L == col.TblName.L) &&
 			(colName.L == col.ColName.L) {
@@ -61,28 +64,28 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	if idx == -1 {
 		return nil, nil
 	}
-	return s[idx], nil
+	return s.Columns[idx], nil
 }
 
-// InitIndices sets indices for columns in schema.
-func (s Schema) InitIndices() {
-	for i, c := range s {
+// InitColumnIndices sets indices for columns in schema.
+func (s Schema) InitColumnIndices() {
+	for i, c := range s.Columns {
 		c.Index = i
 	}
 }
 
 // RetrieveColumn retrieves column in expression from the columns in schema.
 func (s Schema) RetrieveColumn(col *Column) *Column {
-	index := s.GetIndex(col)
+	index := s.GetColumnIndex(col)
 	if index != -1 {
-		return s[index]
+		return s.Columns[index]
 	}
 	return nil
 }
 
-// GetIndex finds the index for a column.
-func (s Schema) GetIndex(col *Column) int {
-	for i, c := range s {
+// GetColumnIndex finds the index for a column.
+func (s Schema) GetColumnIndex(col *Column) int {
+	for i, c := range s.Columns {
 		if c.FromID == col.FromID && c.Position == col.Position {
 			return i
 		}
@@ -90,11 +93,8 @@ func (s Schema) GetIndex(col *Column) int {
 	return -1
 }
 
-//Schema2Exprs converts []*Column to []Expression.
-func Schema2Exprs(schema Schema) []Expression {
-	result := make([]Expression, 0, len(schema))
-	for _, col := range schema {
-		result = append(result, col.Clone())
-	}
-	return result
+// MergeSchame will merge two schema into one schema.
+func MergeSchema(lSchema, rSchema Schema) Schema {
+	lSchema.Columns = append(lSchema.Columns, rSchema.Columns...)
+	return lSchema
 }

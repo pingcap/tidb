@@ -185,7 +185,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	if table.PKIsHandle {
 		for i, colInfo := range ts.Columns {
 			if mysql.HasPriKeyFlag(colInfo.Flag) {
-				ts.pkCol = p.GetSchema()[i]
+				ts.pkCol = p.GetSchema().Columns[i]
 				break
 			}
 		}
@@ -470,7 +470,7 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	allLeft := true
 	for _, col := range prop.props {
-		if lChild.GetSchema().GetIndex(col.col) == -1 {
+		if lChild.GetSchema().GetColumnIndex(col.col) == -1 {
 			allLeft = false
 		}
 	}
@@ -529,7 +529,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	allLeft := true
 	for _, col := range prop.props {
-		if lChild.GetSchema().GetIndex(col.col) == -1 {
+		if lChild.GetSchema().GetColumnIndex(col.col) == -1 {
 			allLeft = false
 		}
 	}
@@ -590,11 +590,11 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 func replaceColsInPropBySchema(prop *requiredProperty, schema expression.Schema) *requiredProperty {
 	newProps := make([]*columnProp, 0, len(prop.props))
 	for _, p := range prop.props {
-		idx := schema.GetIndex(p.col)
+		idx := schema.GetColumnIndex(p.col)
 		if idx == -1 {
 			log.Errorf("Can't find column %s in schema", p.col)
 		}
-		newProps = append(newProps, &columnProp{col: schema[idx], desc: p.desc})
+		newProps = append(newProps, &columnProp{col: schema.Columns[idx], desc: p.desc})
 	}
 	return &requiredProperty{
 		props:      newProps,
@@ -609,7 +609,7 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	allRight := true
 	for _, col := range prop.props {
-		if rChild.GetSchema().GetIndex(col.col) == -1 {
+		if rChild.GetSchema().GetColumnIndex(col.col) == -1 {
 			allRight = false
 		}
 	}
@@ -781,7 +781,7 @@ func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, child
 		agg.correlated = agg.correlated || childInfo.p.IsCorrelated()
 	}
 	schema := x.addAggregation(p.ctx, agg)
-	if len(schema) == 0 {
+	if len(schema.Columns) == 0 {
 		return nil
 	}
 	x.(PhysicalPlan).SetSchema(schema)
@@ -880,8 +880,8 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 			newProp = convertLimitOffsetToCount(prop)
 			newProp.props = make([]*columnProp, 0, len(prop.props))
 			for _, c := range prop.props {
-				idx := p.GetSchema().GetIndex(c.col)
-				newProp.props = append(newProp.props, &columnProp{col: child.GetSchema()[idx], desc: c.desc})
+				idx := p.GetSchema().GetColumnIndex(c.col)
+				newProp.props = append(newProp.props, &columnProp{col: child.GetSchema().Columns[idx], desc: c.desc})
 			}
 		}
 		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(newProp)
@@ -980,14 +980,14 @@ func (p *Projection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 		sortKeyLen: prop.sortKeyLen,
 		limit:      prop.limit}
 	childSchema := p.GetChildByIndex(0).GetSchema()
-	usedCols := make([]bool, len(childSchema))
+	usedCols := make([]bool, len(childSchema.Columns))
 	canPassSort := true
 loop:
 	for _, c := range prop.props {
-		idx := p.schema.GetIndex(c.col)
+		idx := p.schema.GetColumnIndex(c.col)
 		switch v := p.Exprs[idx].(type) {
 		case *expression.Column:
-			childIdx := childSchema.GetIndex(v)
+			childIdx := childSchema.GetColumnIndex(v)
 			if !usedCols[childIdx] {
 				usedCols[childIdx] = true
 				newProp.props = append(newProp.props, &columnProp{col: v, desc: c.desc})
@@ -1120,7 +1120,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	innerPlan := p.children[1].(LogicalPlan)
 	allFromOuter := true
 	for _, col := range prop.props {
-		if innerPlan.GetSchema().GetIndex(col.col) != -1 {
+		if innerPlan.GetSchema().GetColumnIndex(col.col) != -1 {
 			allFromOuter = false
 		}
 	}

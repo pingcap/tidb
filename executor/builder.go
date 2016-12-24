@@ -339,7 +339,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	case *XSelectIndexExec:
 		us.desc = x.indexPlan.Desc
 		for _, ic := range x.indexPlan.Index.Columns {
-			for i, col := range x.indexPlan.GetSchema() {
+			for i, col := range x.indexPlan.GetSchema().Columns {
 				if col.ColName.L == ic.Name.L {
 					us.usedIndex = append(us.usedIndex, i)
 					break
@@ -613,7 +613,7 @@ func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 		apply.checker = &conditionChecker{
 			all:     v.Checker.All,
 			cond:    v.Checker.Condition,
-			trimLen: len(src.Schema()),
+			trimLen: len(src.Schema().Columns),
 			ctx:     b.ctx,
 		}
 	}
@@ -638,7 +638,7 @@ func (b *executorBuilder) buildTrim(v *plan.Trim) Executor {
 	return &TrimExec{
 		schema: v.GetSchema(),
 		Src:    b.build(v.GetChildByIndex(0)),
-		len:    len(v.GetSchema()),
+		len:    len(v.GetSchema().Columns),
 	}
 }
 
