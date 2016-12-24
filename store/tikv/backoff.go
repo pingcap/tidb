@@ -168,7 +168,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 
 	b.totalSleep += f()
 
-	log.Warnf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
+	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
 	b.errors = append(b.errors, err)
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
 		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)

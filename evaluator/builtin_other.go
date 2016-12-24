@@ -14,7 +14,6 @@
 package evaluator
 
 import (
-	"regexp"
 	"strings"
 	"time"
 
@@ -146,55 +145,6 @@ func builtinCaseWhen(args []types.Datum, ctx context.Context) (d types.Datum, er
 	if l%2 == 1 {
 		d = args[l-1]
 	}
-	return
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
-func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	if args[0].IsNull() {
-		return
-	}
-
-	valStr, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	// TODO: We don't need to compile pattern if it has been compiled or it is static.
-	if args[1].IsNull() {
-		return
-	}
-	patternStr, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	escape := byte(args[2].GetInt64())
-	patChars, patTypes := compilePattern(patternStr, escape)
-	match := doMatch(valStr, patChars, patTypes)
-	d.SetInt64(boolToInt64(match))
-	return
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
-func builtinRegexp(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	// TODO: We don't need to compile pattern if it has been compiled or it is static.
-	if args[0].IsNull() || args[1].IsNull() {
-		return
-	}
-
-	targetStr, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", args[0], args[0])
-	}
-	patternStr, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", args[1], args[1])
-	}
-	re, err := regexp.Compile(patternStr)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetInt64(boolToInt64(re.MatchString(targetStr)))
 	return
 }
 

@@ -258,6 +258,7 @@ func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table) *L
 		row:       row,
 		insertVal: &InsertValues{ctx: ctx, Table: tbl},
 		Table:     tbl,
+		Ctx:       ctx,
 	}
 }
 
@@ -270,6 +271,7 @@ type LoadDataInfo struct {
 	Table      table.Table
 	FieldsInfo *ast.FieldsClause
 	LinesInfo  *ast.LinesClause
+	Ctx        context.Context
 }
 
 // getValidData returns prevData and curData that starts from starting symbol.
@@ -576,7 +578,7 @@ func (e *InsertExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txn, err := e.ctx.GetTxn(false)
+	txn := e.ctx.Txn()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -112,7 +112,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 }
 
 func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
-	_, err := e.ctx.GetTxn(true)
+	err := e.ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -130,9 +130,11 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	log.Infof("[%d] execute rollback statement", sessVars.ConnectionID)
-	err := e.ctx.RollbackTxn()
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	return errors.Trace(err)
+	if e.ctx.Txn().Valid() {
+		return e.ctx.Txn().Rollback()
+	}
+	return nil
 }
 
 func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
@@ -213,12 +215,12 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 			failedUsers = append(failedUsers, spec.User)
 		}
 	}
-
-	err := e.ctx.CommitTxn()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	if len(failedUsers) > 0 {
+		// Commit the transaction even if we returns error
+		err := e.ctx.Txn().Commit()
+		if err != nil {
+			return errors.Trace(err)
+		}
 		errMsg := "Operation ALTER USER failed for " + strings.Join(failedUsers, ",")
 		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
 	}
@@ -245,11 +247,12 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			failedUsers = append(failedUsers, user)
 		}
 	}
-	err := e.ctx.CommitTxn()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	if len(failedUsers) > 0 {
+		// Commit the transaction even if we returns error
+		err := e.ctx.Txn().Commit()
+		if err != nil {
+			return errors.Trace(err)
+		}
 		errMsg := "Operation DROP USER failed for " + strings.Join(failedUsers, ",")
 		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
 	}
@@ -371,10 +374,7 @@ func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples 
 }
 
 func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, sampleRows []*ast.Row) error {
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	txn := e.ctx.Txn()
 	columnSamples := rowsToColumnSamples(sampleRows)
 	sc := e.ctx.GetSessionVars().StmtCtx
 	t, err := statistics.NewTable(sc, tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples)

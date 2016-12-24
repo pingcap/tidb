@@ -28,6 +28,7 @@ type recordSet struct {
 	fields   []*ast.ResultField
 	executor Executor
 	schema   expression.Schema
+	ctx      context.Context
 }
 
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
@@ -125,9 +126,9 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			}
 		}
 	}
-
 	return &recordSet{
 		executor: e,
 		schema:   e.Schema(),
+		ctx:      ctx,
 	}, nil
 }
