@@ -41,7 +41,7 @@ func (s Schema) Clone() Schema {
 		newCol := *col
 		cols = append(cols, &newCol)
 	}
-	result := Schema{Columns:cols}
+	result := Schema{Columns: cols}
 	return result
 }
 
@@ -93,7 +93,7 @@ func (s Schema) GetColumnIndex(col *Column) int {
 	return -1
 }
 
-// MergeSchame will merge two schema into one schema.
+// MergeSchema will merge two schema into one schema.
 func MergeSchema(lSchema, rSchema Schema) Schema {
 	lSchema.Columns = append(lSchema.Columns, rSchema.Columns...)
 	return lSchema
