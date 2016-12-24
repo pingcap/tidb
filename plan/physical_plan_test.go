@@ -779,7 +779,7 @@ func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
 		lp := p.(LogicalPlan)
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		pp := info.p
