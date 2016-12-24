@@ -22,17 +22,16 @@ import (
 
 // Context is an interface for transaction and executive args environment.
 type Context interface {
-	// GetTxn gets a transaction for further execution.
-	GetTxn(forceNew bool) (kv.Transaction, error)
+	// NewTxn creates a new transaction for further execution.
+	// If old transaction is valid, it is committed first.
+	// It's used in BEGIN statement and DDL statements to commit old transaction.
+	NewTxn() error
+
+	// Txn returns the current transaction which is created before executing a statement.
+	Txn() kv.Transaction
 
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
-
-	// RollbackTxn rolls back the current transaction.
-	RollbackTxn() error
-
-	// CommitTxn commits the current transaction.
-	CommitTxn() error
 
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})

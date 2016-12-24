@@ -300,11 +300,13 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	colMeta := &columnMeta{
 		colID:     columnInfo.ID,
 		oldColMap: make(map[int64]*types.FieldType)}
+	handles := make([]int64, 0, defaultBatchCnt)
 	// Get column default value.
 	var err error
 	if columnInfo.DefaultValue != nil {
 		colMeta.defaultVal, _, err = table.GetColDefaultValue(ctx, columnInfo)
 		if err != nil {
+			job.State = model.JobCancelled
 			return errors.Trace(err)
 		}
 	} else if mysql.HasNotNullFlag(columnInfo.Flag) {
@@ -316,7 +318,15 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 
 	for {
 		startTime := time.Now()
-		handles, err := d.getSnapshotRows(t, version, seekHandle)
+		handles = handles[:0]
+		err = d.iterateSnapshotRows(t, version, seekHandle,
+			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
+				handles = append(handles, h)
+				if len(handles) == defaultBatchCnt {
+					return false, nil
+				}
+				return true, nil
+			})
 		if err != nil {
 			return errors.Trace(err)
 		} else if len(handles) == 0 {

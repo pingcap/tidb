@@ -42,11 +42,11 @@ func (*testSuite) TestT(c *C) {
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
 	defer testleak.AfterTest(c)()
-	ctx := mock.NewContext()
-
 	dom, err := NewDomain(store, 80*time.Millisecond)
 	c.Assert(err, IsNil)
 	store = dom.Store()
+	ctx := mock.NewContext()
+	ctx.Store = store
 	dd := dom.DDL()
 	c.Assert(dd, NotNil)
 	c.Assert(dd.GetLease(), Equals, 80*time.Millisecond)
