@@ -480,6 +480,8 @@ var tokenMap = map[string]int{
 	"PARTITION":           partition,
 	"PARTITIONS":          partitions,
 	"RPAD":                rpad,
+	"BIT_LENGTH":          bitLength,
+	"CHAR_FUNC":           charFunc,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {
