@@ -158,12 +158,8 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 			conds = append(conds, cond.Clone())
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
-		memDB := infoschema.IsMemoryDB(p.DBName.L)
-		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
-		if isDistReq {
-			ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
-				expressionsToPB(sc, newSel.Conditions, client)
-		}
+		ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
+			expressionsToPB(sc, newSel.Conditions, client)
 		err := buildTableRange(ts)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -311,6 +307,24 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 	info, err = p.tryToConvert2DummyScan(prop)
 	if info != nil || err != nil {
 		return info, errors.Trace(err)
+	}
+	client := p.ctx.GetClient()
+	memDB := infoschema.IsMemoryDB(p.DBName.L)
+	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
+	if !isDistReq {
+		memTable := &PhysicalMemTable{
+			DBName:      p.DBName,
+			Table:       p.tableInfo,
+			Columns:     p.Columns,
+			TableAsName: p.TableAsName,
+		}
+		memTable.SetSchema(p.schema)
+		rb := &rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+		memTable.Ranges = rb.buildTableRanges(fullRange)
+		info = &physicalPlanInfo{p: memTable}
+		info = enforceProperty(prop, info)
+		p.storePlanInfo(prop, info)
+		return info, nil
 	}
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
 	if includeTableScan {
@@ -881,8 +895,15 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 			info = infoEnforce
 		}
 	}
-	if _, ok := p.GetChildByIndex(0).(*DataSource); !ok {
+	if ds, ok := p.GetChildByIndex(0).(*DataSource); !ok {
 		info = p.matchProperty(prop, info)
+	} else {
+		client := p.ctx.GetClient()
+		memDB := infoschema.IsMemoryDB(ds.DBName.L)
+		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
+		if !isDistReq {
+			info = p.matchProperty(prop, info)
+		}
 	}
 	p.storePlanInfo(prop, info)
 	return info, nil

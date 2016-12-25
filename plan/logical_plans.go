@@ -231,7 +231,6 @@ type DataSource struct {
 	tableInfo  *model.TableInfo
 	Columns    []*model.ColumnInfo
 	DBName     *model.CIStr
-	Desc       bool
 
 	TableAsName *model.CIStr
 
