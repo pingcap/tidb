@@ -16,7 +16,6 @@ package expression
 import (
 	"sort"
 	"strings"
-	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -26,10 +25,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 var _ = Suite(&testExpressionSuite{})
 
