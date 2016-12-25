@@ -131,17 +131,12 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 		ctx:    b.ctx,
 		schema: v.GetSchema(),
 	}
-	txn, err := e.ctx.GetTxn(false)
+	ddlInfo, err := inspectkv.GetDDLInfo(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	ddlInfo, err := inspectkv.GetDDLInfo(txn)
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
-	bgInfo, err := inspectkv.GetBgDDLInfo(txn)
+	bgInfo, err := inspectkv.GetBgDDLInfo(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -292,6 +287,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 			Table:      tbl,
 			FieldsInfo: v.FieldsInfo,
 			LinesInfo:  v.LinesInfo,
+			Ctx:        b.ctx,
 		},
 	}
 }
@@ -489,12 +485,7 @@ func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
 func (b *executorBuilder) getStartTS() uint64 {
 	startTS := b.ctx.GetSessionVars().SnapshotTS
 	if startTS == 0 {
-		txn, err := b.ctx.GetTxn(false)
-		if err != nil {
-			b.err = errors.Trace(err)
-			return 0
-		}
-		startTS = txn.StartTS()
+		startTS = b.ctx.Txn().StartTS()
 	}
 	return startTS
 }
