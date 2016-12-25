@@ -283,6 +283,7 @@ var tokenMap = map[string]int{
 	"KEYS":                keys,
 	"LAST_INSERT_ID":      lastInsertID,
 	"LEADING":             leading,
+	"LEAST":               least,
 	"LEFT":                left,
 	"LENGTH":              length,
 	"LESS":                less,
