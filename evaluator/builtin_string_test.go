@@ -754,6 +754,7 @@ func (s *testEvaluatorSuite) TestCharLength(c *C) {
 		result interface{}
 	}{
 		{"33", 2},  // string
+		{"你好", 2},  // mb string
 		{33, 2},    // int
 		{3.14, 4},  // float
 		{nil, nil}, // nil
