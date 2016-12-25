@@ -18,6 +18,7 @@
 package evaluator
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"math"
@@ -636,4 +637,106 @@ func builtinRpad(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	d.SetString(str[:l])
 
 	return d, nil
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_bit-length
+func builtinBitLength(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return d, nil
+	}
+
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetInt64(int64(len(str) * 8))
+	return d, nil
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char
+func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	// The kinds of args are int or string, and the last one represents charset.
+	var resultStr string
+	var intSlice = make([]int64, 0, len(args)-1)
+
+	for _, datum := range args[:len(args)-1] {
+		switch datum.Kind() {
+		case types.KindNull:
+			continue
+		case types.KindString:
+			i, err := datum.ToInt64(ctx.GetSessionVars().StmtCtx)
+			if err != nil {
+				d.SetString(resultStr)
+				return d, nil
+			}
+			intSlice = append(intSlice, i)
+		case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+			x, err := datum.Cast(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			intSlice = append(intSlice, x.GetInt64())
+		default:
+			return d, errors.Errorf("Char invalid args, need int or string but get %T", args[0].GetValue())
+		}
+	}
+
+	resultStr = string(convertInt64ToBytes(intSlice))
+
+	// The last argument represents the charset name after "using".
+	// If it is nil, the default charset utf8 is used.
+	argCharset := args[len(args)-1]
+	if !argCharset.IsNull() {
+		char, err := argCharset.ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		if strings.ToLower(char) == "ascii" || strings.HasPrefix(strings.ToLower(char), "utf8") {
+			d.SetString(resultStr)
+			return d, nil
+		}
+
+		encoding, _ := charset.Lookup(char)
+		if encoding == nil {
+			return d, errors.Errorf("unknown encoding: %s", char)
+		}
+
+		resultStr, _, err = transform.String(encoding.NewDecoder(), resultStr)
+		if err != nil {
+			log.Errorf("Convert %s to %s with error: %v", resultStr, char, err)
+			return d, errors.Trace(err)
+		}
+	}
+	d.SetString(resultStr)
+	return d, nil
+}
+
+func convertInt64ToBytes(ints []int64) []byte {
+	var buf bytes.Buffer
+	for i := len(ints) - 1; i >= 0; i-- {
+		var count int
+		v := ints[i]
+		for count < 4 {
+			buf.WriteByte(byte(v & 0xff))
+			v = v >> 8
+			if v == 0 {
+				break
+			}
+			count++
+		}
+	}
+	s := buf.Bytes()
+	reverseByteSlice(s)
+	return s
+}
+
+func reverseByteSlice(slice []byte) {
+	var start int
+	var end = len(slice) - 1
+	for start < end {
+		slice[start], slice[end] = slice[end], slice[start]
+		start++
+		end--
+	}
 }
