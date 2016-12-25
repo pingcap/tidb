@@ -680,3 +680,69 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestBitLength(c *C) {
+	tests := []struct {
+		str    string
+		expect int64
+	}{
+		{"hi", 16},
+		{"你好", 48},
+		{"", 0},
+	}
+	for _, test := range tests {
+		str := types.NewStringDatum(test.str)
+		result, err := builtinBitLength([]types.Datum{str}, s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(result.GetInt64(), Equals, test.expect)
+	}
+
+	errTbl := []struct {
+		str    interface{}
+		expect interface{}
+	}{
+		{nil, nil},
+	}
+	for _, test := range errTbl {
+		str := types.NewDatum(test.str)
+		result, err := builtinBitLength([]types.Datum{str}, s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(result.Kind(), Equals, types.KindNull)
+	}
+
+}
+
+func (s *testEvaluatorSuite) TestChar(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		str    string
+		iNum   int64
+		fNum   float64
+		result string
+	}{
+		{"65", 66, 67.5, "ABD"},                // float
+		{"65", 16740, 67.5, "AAdD"},            // large num
+		{"65", -1, 67.5, "A\xff\xff\xff\xffD"}, // nagtive int
+		{"a", -1, 67.5, ""},                    // invalid 'a'
+	}
+	for _, v := range tbl {
+		for _, char := range []interface{}{"utf8", nil} {
+			f := Funcs[ast.CharFunc]
+			r, err := f.F(types.MakeDatums(v.str, v.iNum, v.fNum, char), s.ctx)
+			c.Assert(err, IsNil)
+			c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
+		}
+	}
+
+	v := struct {
+		str    string
+		iNum   int64
+		fNum   interface{}
+		result string
+	}{"65", 66, nil, "AB"}
+
+	f := Funcs[ast.CharFunc]
+	r, err := f.F(types.MakeDatums(v.str, v.iNum, v.fNum, nil), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
+}

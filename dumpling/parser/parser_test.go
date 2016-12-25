@@ -657,6 +657,10 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT LTRIM(' foo ');`, true},
 		{`SELECT RTRIM(' bar ');`, true},
 
+		{`SELECT RPAD('hi', 6, 'c');`, true},
+		{`SELECT BIT_LENGTH('hi');`, true},
+		{`SELECT CHAR(65);`, true},
+
 		// Repeat
 		{`SELECT REPEAT("a", 10);`, true},
 
