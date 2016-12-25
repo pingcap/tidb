@@ -197,6 +197,7 @@ var DynamicFuncs = map[string]int{
 	"sleep":          0,
 	ast.GetVar:       0,
 	ast.SetVar:       0,
+	ast.Values:       0,
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
