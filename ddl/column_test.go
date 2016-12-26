@@ -873,7 +873,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 	for _, ca := range cases {
 		ftA := s.colDefStrToFieldType(c, ca.origin)
 		ftB := s.colDefStrToFieldType(c, ca.to)
-		c.Assert(d.modifiable(ftA, ftB), Equals, ca.ok)
+		c.Assert(modifiable(ftA, ftB), Equals, ca.ok)
 	}
 	d.close()
 }
