@@ -235,10 +235,10 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 	us.addedRows = make([]*Row, 0, len(us.dirty.addedRows))
 	for h, data := range us.dirty.addedRows {
 		var newData []types.Datum
-		if len(us.Src.Schema().Columns) == len(data) {
+		if us.Src.Schema().GetColumnsLen() == len(data) {
 			newData = data
 		} else {
-			newData = make([]types.Datum, 0, len(us.Src.Schema().Columns))
+			newData = make([]types.Datum, 0, us.Src.Schema().GetColumnsLen())
 			var columns []*model.ColumnInfo
 			if t, ok := us.Src.(*XSelectTableExec); ok {
 				columns = t.Columns

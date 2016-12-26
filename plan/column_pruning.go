@@ -20,7 +20,7 @@ import (
 )
 
 func getUsedList(usedCols []*expression.Column, schema expression.Schema) []bool {
-	used := make([]bool, len(schema.Columns))
+	used := make([]bool, schema.GetColumnsLen())
 	for _, col := range usedCols {
 		idx := schema.GetColumnIndex(col)
 		if idx == -1 {
@@ -120,13 +120,13 @@ func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
 	for _, c := range p.GetChildren() {
 		child := c.(LogicalPlan)
 		schema := child.GetSchema()
-		var newSchema []*expression.Column
+		var newCols []*expression.Column
 		for i, use := range used {
 			if use {
-				newSchema = append(newSchema, schema.Columns[i])
+				newCols = append(newCols, schema.Columns[i])
 			}
 		}
-		child.PruneColumns(newSchema)
+		child.PruneColumns(newCols)
 	}
 	p.schema.InitColumnIndices()
 }
@@ -198,13 +198,13 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 	}
 	lChild.PruneColumns(leftCols)
 	rChild.PruneColumns(rightCols)
-	composedSchema := expression.MergeSchema(lChild.GetSchema().Clone(), rChild.GetSchema().Clone())
+	composedSchema := expression.MergeSchema(lChild.GetSchema(), rChild.GetSchema())
 	if p.JoinType == SemiJoin {
 		p.schema = lChild.GetSchema().Clone()
 	} else if p.JoinType == SemiJoinWithAux {
 		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
 		p.schema = lChild.GetSchema().Clone()
-		p.schema.Columns = append(p.schema.Columns, joinCol)
+		p.schema.AppendColumn(joinCol)
 	} else {
 		p.schema = composedSchema
 	}
@@ -238,7 +238,7 @@ func (p *Apply) PruneColumns(parentUsedCols []*expression.Column) {
 		}
 	}
 	child.PruneColumns(usedCols)
-	combinedSchema := expression.MergeSchema(child.GetSchema().Clone(), innerPlan.GetSchema().Clone())
+	combinedSchema := expression.MergeSchema(child.GetSchema(), innerPlan.GetSchema())
 	if p.Checker == nil {
 		p.schema = combinedSchema
 	} else {

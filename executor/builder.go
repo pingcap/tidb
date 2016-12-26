@@ -604,7 +604,7 @@ func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 		apply.checker = &conditionChecker{
 			all:     v.Checker.All,
 			cond:    v.Checker.Condition,
-			trimLen: len(src.Schema().Columns),
+			trimLen: src.Schema().GetColumnsLen(),
 			ctx:     b.ctx,
 		}
 	}
@@ -629,7 +629,7 @@ func (b *executorBuilder) buildTrim(v *plan.Trim) Executor {
 	return &TrimExec{
 		schema: v.GetSchema(),
 		Src:    b.build(v.GetChildByIndex(0)),
-		len:    len(v.GetSchema().Columns),
+		len:    v.GetSchema().GetColumnsLen(),
 	}
 }
 

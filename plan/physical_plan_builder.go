@@ -746,7 +746,7 @@ func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, child
 	agg.SetSchema(p.schema)
 	agg.HasGby = len(p.GroupByItems) > 0
 	schema := x.addAggregation(p.ctx, agg)
-	if len(schema.Columns) == 0 {
+	if schema.GetColumnsLen() == 0 {
 		return nil
 	}
 	x.(PhysicalPlan).SetSchema(schema)
@@ -941,7 +941,7 @@ func (p *Projection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 		sortKeyLen: prop.sortKeyLen,
 		limit:      prop.limit}
 	childSchema := p.GetChildByIndex(0).GetSchema()
-	usedCols := make([]bool, len(childSchema.Columns))
+	usedCols := make([]bool, childSchema.GetColumnsLen())
 	canPassSort := true
 loop:
 	for _, c := range prop.props {

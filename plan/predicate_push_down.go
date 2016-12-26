@@ -294,7 +294,7 @@ func (p *Aggregation) getGbyColIndex(col *expression.Column) int {
 	if !isColumn {
 		return -1
 	}
-	return expression.Schema{Columns: p.groupByCols}.GetColumnIndex(colOriginal)
+	return expression.NewSchema(p.groupByCols).GetColumnIndex(colOriginal)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.

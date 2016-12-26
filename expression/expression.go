@@ -244,7 +244,7 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 
 // ResultFieldsToSchema converts slice of result fields to schema.
 func ResultFieldsToSchema(fields []*ast.ResultField) Schema {
-	cols := make([]*Column, 0, len(fields))
+	schema := NewSchema(make([]*Column, 0, len(fields)))
 	for i, field := range fields {
 		colName := field.ColumnAsName
 		if colName.L == "" {
@@ -261,14 +261,14 @@ func ResultFieldsToSchema(fields []*ast.ResultField) Schema {
 			RetType:  &field.Column.FieldType,
 			Position: i,
 		}
-		cols = append(cols, col)
+		schema.AppendColumn(col)
 	}
-	return Schema{Columns: cols}
+	return schema
 }
 
 // TableInfo2Schema converts table info to schema.
 func TableInfo2Schema(tbl *model.TableInfo) Schema {
-	cols := make([]*Column, 0, len(tbl.Columns))
+	schema := NewSchema(make([]*Column, 0, len(tbl.Columns)))
 	for i, col := range tbl.Columns {
 		newCol := &Column{
 			ColName:  col.Name,
@@ -276,7 +276,7 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 			RetType:  &col.FieldType,
 			Position: i,
 		}
-		cols = append(cols, newCol)
+		schema.AppendColumn(newCol)
 	}
-	return Schema{Columns: cols}
+	return schema
 }

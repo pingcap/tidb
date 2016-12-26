@@ -100,7 +100,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}
 
 	// Fields or Schema are only used for statements that return result set.
-	if len(e.Schema().Columns) == 0 {
+	if e.Schema().GetColumnsLen() == 0 {
 		// Check if "tidb_snapshot" is set for the write executors.
 		// In history read mode, we can not do write operations.
 		switch e.(type) {

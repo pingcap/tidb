@@ -221,21 +221,21 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	}
 	// Only (a,b,c) = all (...) and (a,b,c) != any () can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
-	if !canMultiCol && (getRowLen(lexpr) != 1 || len(np.GetSchema().Columns) != 1) {
+	if !canMultiCol && (getRowLen(lexpr) != 1 || np.GetSchema().GetColumnsLen() != 1) {
 		er.err = ErrOperandColumns.GenByArgs(1)
 		return v, true
 	}
 	lLen := getRowLen(lexpr)
-	if lLen != len(np.GetSchema().Columns) {
+	if lLen != np.GetSchema().GetColumnsLen() {
 		er.err = ErrOperandColumns.GenByArgs(lLen)
 		return v, true
 	}
 	var checkCondition expression.Expression
 	var rexpr expression.Expression
-	if len(np.GetSchema().Columns) == 1 {
+	if np.GetSchema().GetColumnsLen() == 1 {
 		rexpr = np.GetSchema().Columns[0].Clone()
 	} else {
-		args := make([]expression.Expression, 0, len(np.GetSchema().Columns))
+		args := make([]expression.Expression, 0, np.GetSchema().GetColumnsLen())
 		for _, col := range np.GetSchema().Columns {
 			args = append(args, col.Clone())
 		}
@@ -264,7 +264,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	}
 	er.p = er.b.buildApply(er.p, np, &ApplyConditionChecker{Condition: checkCondition, All: v.All})
 	// The parent expression only use the last column in schema, which represents whether the condition is matched.
-	er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema().Columns[len(er.p.GetSchema().Columns)-1]
+	er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema().Columns[er.p.GetSchema().GetColumnsLen()-1]
 	return v, true
 }
 
@@ -289,7 +289,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 			// Can't be built as semi-join.
 			er.p = er.b.buildApply(er.p, np, nil)
 		}
-		er.ctxStack = append(er.ctxStack, er.p.GetSchema().Columns[len(er.p.GetSchema().Columns)-1])
+		er.ctxStack = append(er.ctxStack, er.p.GetSchema().Columns[er.p.GetSchema().GetColumnsLen()-1])
 	} else {
 		physicalPlan, err := doOptimize(np, er.b.ctx, er.b.allocator)
 		d, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
@@ -322,15 +322,15 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		return v, true
 	}
 	lLen := getRowLen(lexpr)
-	if lLen != len(np.GetSchema().Columns) {
+	if lLen != np.GetSchema().GetColumnsLen() {
 		er.err = ErrOperandColumns.GenByArgs(lLen)
 		return v, true
 	}
 	var rexpr expression.Expression
-	if len(np.GetSchema().Columns) == 1 {
+	if np.GetSchema().GetColumnsLen() == 1 {
 		rexpr = np.GetSchema().Columns[0].Clone()
 	} else {
-		args := make([]expression.Expression, 0, len(np.GetSchema().Columns))
+		args := make([]expression.Expression, 0, np.GetSchema().GetColumnsLen())
 		for _, col := range np.GetSchema().Columns {
 			args = append(args, col.Clone())
 		}
@@ -350,7 +350,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	if !np.IsCorrelated() {
 		er.p = er.b.buildSemiJoin(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
 		if asScalar {
-			col := er.p.GetSchema().Columns[len(er.p.GetSchema().Columns)-1]
+			col := er.p.GetSchema().Columns[er.p.GetSchema().GetColumnsLen()-1]
 			er.ctxStack[len(er.ctxStack)-1] = col
 		} else {
 			er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
@@ -362,7 +362,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	}
 	er.p = er.b.buildApply(er.p, np, &ApplyConditionChecker{Condition: checkCondition, All: v.Not})
 	// The parent expression only use the last column in schema, which represents whether the condition is matched.
-	er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema().Columns[len(er.p.GetSchema().Columns)-1]
+	er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema().Columns[er.p.GetSchema().GetColumnsLen()-1]
 	return v, true
 
 }
@@ -375,7 +375,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 	np = er.b.buildMaxOneRow(np)
 	if np.IsCorrelated() {
 		er.p = er.b.buildApply(er.p, np, nil)
-		if len(np.GetSchema().Columns) > 1 {
+		if np.GetSchema().GetColumnsLen() > 1 {
 			newCols := make([]expression.Expression, 0, len(np.GetSchema().Columns))
 			for _, col := range np.GetSchema().Columns {
 				newCols = append(newCols, col.Clone())
@@ -387,7 +387,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 			}
 			er.ctxStack = append(er.ctxStack, expr)
 		} else {
-			er.ctxStack = append(er.ctxStack, er.p.GetSchema().Columns[len(er.p.GetSchema().Columns)-1])
+			er.ctxStack = append(er.ctxStack, er.p.GetSchema().Columns[er.p.GetSchema().GetColumnsLen()-1])
 		}
 		return v, true
 	}
@@ -401,7 +401,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	if len(np.GetSchema().Columns) > 1 {
+	if np.GetSchema().GetColumnsLen() > 1 {
 		newCols := make([]expression.Expression, 0, len(np.GetSchema().Columns))
 		for i, data := range d {
 			newCols = append(newCols, &expression.Constant{
@@ -644,7 +644,7 @@ func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 }
 
 func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
-	if v.N > 0 && v.N <= len(er.schema.Columns) {
+	if v.N > 0 && v.N <= er.schema.GetColumnsLen() {
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[v.N-1])
 	} else {
 		er.err = errors.Errorf("Position %d is out of range", v.N)

@@ -82,7 +82,7 @@ func (p *Apply) ResolveIndicesAndCorCols() {
 	innerPlan.ResolveIndicesAndCorCols()
 	corCols := innerPlan.extractCorrelatedCols()
 	childSchema := p.children[0].GetSchema()
-	resultCorCols := make([]*expression.CorrelatedColumn, len(childSchema.Columns))
+	resultCorCols := make([]*expression.CorrelatedColumn, childSchema.GetColumnsLen())
 	for _, corCol := range corCols {
 		idx := childSchema.GetColumnIndex(&corCol.Column)
 		if idx != -1 {

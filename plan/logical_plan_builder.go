@@ -50,7 +50,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	agg.self = agg
 	agg.initIDAndContext(b.ctx)
 	addChild(agg, p)
-	colSchema := make([]*expression.Column, 0, len(aggFuncList))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)))
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
 	for i, aggFunc := range aggFuncList {
@@ -77,7 +77,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			position := len(agg.AggFuncs)
 			aggIndexMap[i] = position
 			agg.AggFuncs = append(agg.AggFuncs, newFunc)
-			colSchema = append(colSchema, &expression.Column{
+			schema.AppendColumn(&expression.Column{
 				FromID:      agg.id,
 				ColName:     model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, position)),
 				Position:    position,
@@ -86,7 +86,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		}
 	}
 	agg.GroupByItems = gbyItems
-	agg.SetSchema(expression.Schema{Columns: colSchema})
+	agg.SetSchema(schema)
 	agg.collectGroupByColumns()
 	agg.SetCorrelated()
 	return agg, aggIndexMap
@@ -192,7 +192,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	}
 	leftPlan := b.buildResultSetNode(join.Left)
 	rightPlan := b.buildResultSetNode(join.Right)
-	newSchema := expression.MergeSchema(leftPlan.GetSchema().Clone(), rightPlan.GetSchema().Clone())
+	newSchema := expression.MergeSchema(leftPlan.GetSchema(), rightPlan.GetSchema())
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
 	joinPlan.self = joinPlan
 	joinPlan.initIDAndContext(b.ctx)
@@ -217,10 +217,10 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	}
 	if join.Tp == ast.LeftJoin {
 		joinPlan.JoinType = LeftOuterJoin
-		joinPlan.DefaultValues = make([]types.Datum, len(rightPlan.GetSchema().Columns))
+		joinPlan.DefaultValues = make([]types.Datum, rightPlan.GetSchema().GetColumnsLen())
 	} else if join.Tp == ast.RightJoin {
 		joinPlan.JoinType = RightOuterJoin
-		joinPlan.DefaultValues = make([]types.Datum, len(leftPlan.GetSchema().Columns))
+		joinPlan.DefaultValues = make([]types.Datum, leftPlan.GetSchema().GetColumnsLen())
 	} else {
 		joinPlan.JoinType = InnerJoin
 	}
@@ -266,7 +266,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	}
 	proj.self = proj
 	proj.initIDAndContext(b.ctx)
-	colSchema := make([]*expression.Column, 0, len(fields))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields)))
 	oldLen := 0
 	for _, field := range fields {
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
@@ -311,10 +311,10 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		if !field.Auxiliary {
 			oldLen++
 		}
-		colSchema = append(colSchema, col)
-		col.Position = len(colSchema)
+		schema.AppendColumn(col)
+		col.Position = schema.GetColumnsLen()
 	}
-	proj.SetSchema(expression.Schema{Columns: colSchema})
+	proj.SetSchema(schema)
 	addChild(proj, p)
 	proj.SetCorrelated()
 	return proj, oldLen
@@ -340,7 +340,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	}
 	firstSchema := u.children[0].GetSchema().Clone()
 	for _, sel := range u.children {
-		if len(firstSchema.Columns) != len(sel.GetSchema().Columns) {
+		if firstSchema.GetColumnsLen() != sel.GetSchema().GetColumnsLen() {
 			b.err = errors.New("The used SELECT statements have a different number of columns")
 			return nil
 		}
@@ -847,7 +847,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 			return nil
 		}
 	}
-	if oldLen != len(p.GetSchema().Columns) {
+	if oldLen != p.GetSchema().GetColumnsLen() {
 		return b.buildTrim(p, oldLen)
 	}
 	return p
@@ -858,8 +858,7 @@ func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
 	trim.self = trim
 	trim.initIDAndContext(b.ctx)
 	addChild(trim, p)
-	var schema expression.Schema
-	schema.Columns = p.GetSchema().Clone().Columns[:len]
+	schema := expression.NewSchema(p.GetSchema().Clone().Columns[:len])
 	trim.SetSchema(schema)
 	trim.SetCorrelated()
 	return trim
@@ -903,7 +902,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	p.self = p
 	p.initIDAndContext(b.ctx)
 	// Equal condition contains a column from previous joined table.
-	colSchema := make([]*expression.Column, 0, len(tableInfo.Columns))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns)))
 	for i, col := range tableInfo.Columns {
 		if b.inUpdateStmt {
 			switch col.State {
@@ -915,7 +914,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			continue
 		}
 		p.Columns = append(p.Columns, col)
-		colSchema = append(colSchema, &expression.Column{
+		schema.AppendColumn(&expression.Column{
 			FromID:   p.id,
 			ColName:  col.Name,
 			TblName:  tableInfo.Name,
@@ -924,7 +923,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			Position: i,
 			ID:       col.ID})
 	}
-	p.SetSchema(expression.Schema{Columns: colSchema})
+	p.SetSchema(schema)
 	return p
 }
 
@@ -950,10 +949,10 @@ func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, checker *Appl
 		for _, col := range innerSchema.Columns {
 			col.IsAggOrSubq = true
 		}
-		ap.SetSchema(expression.MergeSchema(outerPlan.GetSchema().Clone(), innerSchema))
+		ap.SetSchema(expression.MergeSchema(outerPlan.GetSchema(), innerSchema))
 	} else {
 		newSchema := outerPlan.GetSchema().Clone()
-		newSchema.Columns = append(newSchema.Columns, &expression.Column{
+		newSchema.AppendColumn(&expression.Column{
 			FromID:      ap.id,
 			ColName:     model.NewCIStr("exists_row"),
 			RetType:     types.NewFieldType(mysql.TypeTiny),
@@ -986,7 +985,7 @@ out:
 		FromID:  exists.id,
 		RetType: types.NewFieldType(mysql.TypeTiny),
 		ColName: model.NewCIStr("exists_col")}
-	exists.SetSchema(expression.Schema{Columns: []*expression.Column{newCol}})
+	exists.SetSchema(expression.NewSchema([]*expression.Column{newCol}))
 	exists.SetCorrelated()
 	return exists
 }
@@ -1015,7 +1014,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	joinPlan.OtherConditions = otherCond
 	if asScalar {
 		newSchema := outerPlan.GetSchema().Clone()
-		newSchema.Columns = append(newSchema.Columns, &expression.Column{
+		newSchema.AppendColumn(&expression.Column{
 			FromID:      joinPlan.id,
 			ColName:     model.NewCIStr(fmt.Sprintf("%s_aux_0", joinPlan.id)),
 			RetType:     types.NewFieldType(mysql.TypeTiny),
@@ -1077,7 +1076,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 
 func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
 	schema := p.GetSchema()
-	newList := make([]*expression.Assignment, len(schema.Columns))
+	newList := make([]*expression.Assignment, schema.GetColumnsLen())
 	for _, assign := range list {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {

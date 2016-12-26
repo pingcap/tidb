@@ -158,7 +158,7 @@ func (col *Column) ResolveIndices(schema Schema) {
 	}
 }
 
-// Column2Exprs will transfer column array to expression array.
+// Column2Exprs will transfer column slice to expression slice.
 func Column2Exprs(cols []*Column) []Expression {
 	result := make([]Expression, 0, len(cols))
 	for _, col := range cols {

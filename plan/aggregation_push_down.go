@@ -175,8 +175,8 @@ func (a *aggPushDownSolver) decompose(aggFunc expression.AggregationFunction, sc
 	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
 	result := []expression.AggregationFunction{aggFunc.Clone()}
 	for _, aggFunc := range result {
-		schema.Columns = append(schema.Columns, &expression.Column{
-			ColName:  model.NewCIStr(fmt.Sprintf("join_agg_%d", len(schema.Columns))), // useless but for debug
+		schema.AppendColumn(&expression.Column{
+			ColName:  model.NewCIStr(fmt.Sprintf("join_agg_%d", schema.GetColumnsLen())), // useless but for debug
 			FromID:   id,
 			Position: len(schema.Columns),
 			RetType:  aggFunc.GetType(),
@@ -225,7 +225,7 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 }
 
 func (a *aggPushDownSolver) getDefaultValues(agg *Aggregation) ([]types.Datum, bool) {
-	defaultValues := make([]types.Datum, 0, len(agg.GetSchema().Columns))
+	defaultValues := make([]types.Datum, 0, agg.GetSchema().GetColumnsLen())
 	for _, aggFunc := range agg.AggFuncs {
 		value, existsDefaultValue := aggFunc.CalculateDefaultValue(agg.children[0].GetSchema(), a.ctx)
 		if !existsDefaultValue {
@@ -253,7 +253,7 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 	}
 	agg.initIDAndContext(a.ctx)
 	var newAggFuncs []expression.AggregationFunction
-	schema := expression.Schema{Columns: make([]*expression.Column, 0, len(aggFuncs))}
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs)))
 	for _, aggFunc := range aggFuncs {
 		var newFuncs []expression.AggregationFunction
 		newFuncs, schema = a.decompose(aggFunc, schema, agg.GetID())
@@ -262,7 +262,7 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 	for _, gbyCol := range gbyCols {
 		firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
 		newAggFuncs = append(newAggFuncs, firstRow)
-		schema.Columns = append(schema.Columns, gbyCol.Clone().(*expression.Column))
+		schema.AppendColumn(gbyCol.Clone().(*expression.Column))
 	}
 	agg.AggFuncs = newAggFuncs
 	agg.SetSchema(schema)
@@ -320,7 +320,7 @@ func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) {
 				join.SetChildren(lChild, rChild)
 				lChild.SetParents(join)
 				rChild.SetParents(join)
-				join.SetSchema(expression.MergeSchema(lChild.GetSchema().Clone(), rChild.GetSchema().Clone()))
+				join.SetSchema(expression.MergeSchema(lChild.GetSchema(), rChild.GetSchema()))
 			}
 		} else if proj, ok1 := child.(*Projection); ok1 {
 			// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
