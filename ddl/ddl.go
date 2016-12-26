@@ -1021,6 +1021,15 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		return errors.Trace(err)
 	}
 
+	// Check column default value.
+	colInfo := col.ToInfo()
+	if colInfo.DefaultValue != nil {
+		_, _, err := table.GetColDefaultValue(ctx, colInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,

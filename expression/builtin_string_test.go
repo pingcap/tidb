@@ -746,3 +746,23 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 }
+
+func (s *testEvaluatorSuite) TestCharLength(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		input  interface{}
+		result interface{}
+	}{
+		{"33", 2},  // string
+		{"你好", 2},  // mb string
+		{33, 2},    // int
+		{3.14, 4},  // float
+		{nil, nil}, // nil
+	}
+	for _, v := range tbl {
+		f := Funcs[ast.CharLength]
+		r, err := f.F(types.MakeDatums(v.input), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
+	}
+}
