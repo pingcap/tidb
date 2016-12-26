@@ -119,7 +119,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 			lockTTL = defaultLockTTL
 		}
 		if lockTTL > maxLockTTL {
-			lockTTL = maxLockTTL
+			return nil, kv.ErrTxnTooLarge
 		}
 	}
 
