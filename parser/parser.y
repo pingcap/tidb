@@ -289,6 +289,8 @@ import (
 	rpad		"RPAD"
 	bitLength	"BIT_LENGTH"
 	charFunc	"CHAR_FUNC"
+	charLength	"CHAR_LENGTH"
+	characterLength	"CHARACTER_LENGTH"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -3005,7 +3007,20 @@ FunctionCallNonKeyword:
 			Args: append(args, charset),
 		}
     }
-
+|	"CHAR_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"CHARACTER_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr(ast.CharLength),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
 
 DateArithOpt:
 	"DATE_ADD"
