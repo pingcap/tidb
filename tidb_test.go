@@ -69,14 +69,12 @@ func (s *testMainSuite) SetUpSuite(c *C) {
     CREATE TABLE tbl_test1(id INT NOT NULL DEFAULT 2, name varchar(255), PRIMARY KEY(id), INDEX name(name));
     CREATE TABLE tbl_test2(id INT NOT NULL DEFAULT 3, name varchar(255), PRIMARY KEY(id));`
 	s.selectSQL = `SELECT * from tbl_test;`
-	schemaExpiredRetryTimes = 5
 	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
 func (s *testMainSuite) TearDownSuite(c *C) {
 	defer testleak.AfterTest(c)()
 	removeStore(c, s.dbName)
-	schemaExpiredRetryTimes = 30
 }
 
 func checkResult(c *C, se Session, affectedRows uint64, insertID uint64) {
