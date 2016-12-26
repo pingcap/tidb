@@ -1783,7 +1783,7 @@ func (t *Time) StrToDate(date, format string) bool {
 // to know which year, it can't be interpreted alone.
 type mysqlTimeEx struct {
 	mysqlTime
-	// key is the format char, such as `%j` `%p` and so on.
+	// Key is the format char, such as `%j` `%p` and so on.
 	context map[string]int
 }
 
