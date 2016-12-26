@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package evaluator
+package expression
 
 import (
 	"strings"
@@ -250,7 +250,7 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 		case opcode.NE:
 			result = n != 0
 		default:
-			return d, ErrInvalidOperation.Gen("invalid op %v in comparison operation", op)
+			return d, errInvalidOperation.Gen("invalid op %v in comparison operation", op)
 		}
 		if result {
 			d.SetInt64(oneI64)
@@ -295,7 +295,7 @@ func bitOpFactory(op opcode.Op) BuiltinFunc {
 		case opcode.LeftShift:
 			d.SetUint64(uint64(x) << uint64(y))
 		default:
-			return d, ErrInvalidOperation.Gen("invalid op %v in bit operation", op)
+			return d, errInvalidOperation.Gen("invalid op %v in bit operation", op)
 		}
 		return
 	}
@@ -335,7 +335,7 @@ func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 		case opcode.IntDiv:
 			return types.ComputeIntDiv(sc, a, b)
 		default:
-			return d, ErrInvalidOperation.Gen("invalid op %v in arithmetic operation", op)
+			return d, errInvalidOperation.Gen("invalid op %v in arithmetic operation", op)
 		}
 	}
 }
@@ -410,7 +410,7 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 				types.KindMysqlSet:
 				d = aDatum
 			default:
-				return d, ErrInvalidOperation.Gen("Unsupported type %v for op.Plus", aDatum.Kind())
+				return d, errInvalidOperation.Gen("Unsupported type %v for op.Plus", aDatum.Kind())
 			}
 		case opcode.Minus:
 			switch aDatum.Kind() {
@@ -447,10 +447,10 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 			case types.KindMysqlSet:
 				d.SetFloat64(-aDatum.GetMysqlSet().ToNumber())
 			default:
-				return d, ErrInvalidOperation.Gen("Unsupported type %v for op.Minus", aDatum.Kind())
+				return d, errInvalidOperation.Gen("Unsupported type %v for op.Minus", aDatum.Kind())
 			}
 		default:
-			return d, ErrInvalidOperation.Gen("Unsupported op %v for unary op", op)
+			return d, errInvalidOperation.Gen("Unsupported op %v for unary op", op)
 		}
 		return
 	}

@@ -505,6 +505,8 @@ func (s *testDBSuite) TestIssue2293(c *C) {
 	s.tk.MustExec("create table t_issue_2293 (a int)")
 	_, err := s.tk.Exec("alter table t add b int not null default ''")
 	c.Assert(err, NotNil)
+	s.tk.MustExec("insert into t_issue_2293 value(1)")
+	s.tk.MustQuery("select * from t_issue_2293").Check(testkit.Rows("1"))
 }
 
 func (s *testDBSuite) TestColumn(c *C) {

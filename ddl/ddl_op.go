@@ -756,6 +756,15 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		return errors.Trace(err)
 	}
 
+	// Check column default value.
+	colInfo := col.ToInfo()
+	if colInfo.DefaultValue != nil {
+		_, _, err := table.GetColDefaultValue(ctx, colInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -811,7 +820,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 	return errors.Trace(err)
 }
 
-// Modifiable checks if the 'origin' type can be modified to 'to' type with out the need to
+// modifiable checks if the 'origin' type can be modified to 'to' type with out the need to
 // change or check existing data in the table.
 // It returns true if the two types has the same Charset and Collation, the same sign, both are
 // integer types or string types, and new Flen and Decimal must be greater than or equal to origin.

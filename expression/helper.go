@@ -25,6 +25,18 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+const (
+	zeroI64 int64 = 0
+	oneI64  int64 = 1
+)
+
+func boolToInt64(v bool) int64 {
+	if v {
+		return int64(1)
+	}
+	return int64(0)
+}
+
 var (
 	// CurrentTimestamp is the keyword getting default value for datetime and timestamp type.
 	CurrentTimestamp  = "CURRENT_TIMESTAMP"

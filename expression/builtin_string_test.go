@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package evaluator
+package expression
 
 import (
 	"errors"
@@ -745,4 +745,24 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 	r, err := f.F(types.MakeDatums(v.str, v.iNum, v.fNum, nil), s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
+}
+
+func (s *testEvaluatorSuite) TestCharLength(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		input  interface{}
+		result interface{}
+	}{
+		{"33", 2},  // string
+		{"你好", 2},  // mb string
+		{33, 2},    // int
+		{3.14, 4},  // float
+		{nil, nil}, // nil
+	}
+	for _, v := range tbl {
+		f := Funcs[ast.CharLength]
+		r, err := f.F(types.MakeDatums(v.input), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
+	}
 }
