@@ -176,7 +176,7 @@ func (s *testSuite) TestMeta(c *C) {
 		TableID:    2,
 		OldTableID: 3,
 	}
-	err = t.SetSchemaDiff(schemaDiff.Version, schemaDiff)
+	err = t.SetSchemaDiff(schemaDiff)
 	c.Assert(err, IsNil)
 	readDiff, err := t.GetSchemaDiff(schemaDiff.Version)
 	c.Assert(readDiff, DeepEquals, schemaDiff)
