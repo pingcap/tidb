@@ -1784,7 +1784,7 @@ func (t *Time) StrToDate(date, format string) bool {
 func mysqlTimeFix(t *mysqlTime, ctx map[string]int) error {
 	// Key of the ctx is the format char, such as `%j` `%p` and so on.
 	if yearOfDay, ok := ctx["%j"]; ok {
-		// TODO Implement the function that converts day of year to yy:mm:dd.
+		// TODO: Implement the function that converts day of year to yy:mm:dd.
 		_ = yearOfDay
 	}
 	if valueAMorPm, ok := ctx["%p"]; ok {
@@ -2004,9 +2004,11 @@ func time12Hour(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	return remain, true
 }
 
+const time24HourLen = len("hh:mm:ss")
+
 func time24Hour(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	// hh:mm:ss
-	if len(input) < 8 {
+	if len(input) < time24HourLen {
 		return input, false
 	}
 
@@ -2171,16 +2173,12 @@ func fullNameMonth(t *mysqlTime, input string, ctx map[string]int) (string, bool
 }
 
 func monthNumeric(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
-	// TODO: This code is ugly!
-	for i := 12; i >= 0; i-- {
-		str := strconv.FormatInt(int64(i), 10)
-		if strings.HasPrefix(input, str) {
-			t.month = uint8(i)
-			return input[len(str):], true
-		}
+	v, rem := parseTwoNumeric(input)
+	if len(rem) == len(input) || v > 12 {
+		return rem, false
 	}
-
-	return input, false
+	t.month = uint8(v)
+	return rem, false
 }
 
 // 0th 1st 2nd 3rd ...
