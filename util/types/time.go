@@ -1783,6 +1783,7 @@ func (t *Time) StrToDate(date, format string) bool {
 // to know which year, it can't be interpreted alone.
 type mysqlTimeEx struct {
 	mysqlTime
+	// key is the format char, such as `%j` `%p` and so on.
 	context map[string]int
 }
 
@@ -1928,11 +1929,7 @@ func matchDateWithToken(t *mysqlTimeEx, date string, token string) (remain strin
 	return date, false
 }
 
-func parseTwoDigits(input string) (int, bool) {
-	return parseSomeDigits(input, 2)
-}
-
-func parseSomeDigits(input string, count int) (int, bool) {
+func parseDigits(input string, count int) (int, bool) {
 	if len(input) < count {
 		return 0, false
 	}
@@ -1945,7 +1942,7 @@ func parseSomeDigits(input string, count int) (int, bool) {
 }
 
 func hour24TwoDigits(t *mysqlTimeEx, input string) (string, bool) {
-	v, succ := parseTwoDigits(input)
+	v, succ := parseDigits(input, 2)
 	if !succ || v >= 24 {
 		return input, false
 	}
@@ -1954,7 +1951,7 @@ func hour24TwoDigits(t *mysqlTimeEx, input string) (string, bool) {
 }
 
 func secondsNumeric(t *mysqlTimeEx, input string) (string, bool) {
-	v, succ := parseTwoDigits(input)
+	v, succ := parseDigits(input, 2)
 	if !succ || v >= 60 {
 		return input, false
 	}
@@ -1963,7 +1960,7 @@ func secondsNumeric(t *mysqlTimeEx, input string) (string, bool) {
 }
 
 func minutesNumeric(t *mysqlTimeEx, input string) (string, bool) {
-	v, succ := parseTwoDigits(input)
+	v, succ := parseDigits(input, 2)
 	if !succ || v >= 60 {
 		return input, false
 	}
@@ -1973,21 +1970,17 @@ func minutesNumeric(t *mysqlTimeEx, input string) (string, bool) {
 
 func time12Hour(t *mysqlTimeEx, input string) (string, bool) {
 	// hh:mm:ss AM
-	if len(input) < 10 {
-		return input, false
-	}
-
-	hour, succ := parseTwoDigits(input)
+	hour, succ := parseDigits(input, 2)
 	if !succ || hour > 12 || input[2] != ':' {
 		return input, false
 	}
 
-	minute, succ := parseTwoDigits(input[3:])
+	minute, succ := parseDigits(input[3:], 2)
 	if !succ || minute > 59 || input[5] != ':' {
 		return input, false
 	}
 
-	second, succ := parseTwoDigits(input[6:])
+	second, succ := parseDigits(input[6:], 2)
 	if !succ || second > 59 {
 		return input, false
 	}
@@ -2013,17 +2006,17 @@ func time24Hour(t *mysqlTimeEx, input string) (string, bool) {
 		return input, false
 	}
 
-	hour, succ := parseTwoDigits(input)
+	hour, succ := parseDigits(input, 2)
 	if !succ || hour > 23 || input[2] != ':' {
 		return input, false
 	}
 
-	minute, succ := parseTwoDigits(input[3:])
+	minute, succ := parseDigits(input[3:], 2)
 	if !succ || minute > 59 || input[5] != ':' {
 		return input, false
 	}
 
-	second, succ := parseTwoDigits(input[6:])
+	second, succ := parseDigits(input[6:], 2)
 	if !succ || second > 59 {
 		return input, false
 	}
@@ -2046,7 +2039,7 @@ func isAMOrPM(t *mysqlTimeEx, input string) (string, bool) {
 }
 
 func dayOfMonthNumericTwoDigits(t *mysqlTimeEx, input string) (string, bool) {
-	v, succ := parseTwoDigits(input)
+	v, succ := parseDigits(input, 2)
 	if !succ || v >= 32 {
 		return input, false
 	}
@@ -2114,12 +2107,8 @@ func microSeconds(t *mysqlTimeEx, input string) (string, bool) {
 }
 
 func yearNumericFourDigits(t *mysqlTimeEx, input string) (string, bool) {
-	if len(input) < 4 {
-		return input, false
-	}
-
-	v, err := strconv.ParseUint(input[:4], 10, 64)
-	if err != nil {
+	v, succ := parseDigits(input, 4)
+	if !succ {
 		return input, false
 	}
 	t.year = uint16(v)
@@ -2127,7 +2116,7 @@ func yearNumericFourDigits(t *mysqlTimeEx, input string) (string, bool) {
 }
 
 func dayOfYearThreeDigits(t *mysqlTimeEx, input string) (string, bool) {
-	v, succ := parseSomeDigits(input, 3)
+	v, succ := parseDigits(input, 3)
 	if !succ || v == 0 || v > 366 {
 		return input, false
 	}
@@ -2136,7 +2125,7 @@ func dayOfYearThreeDigits(t *mysqlTimeEx, input string) (string, bool) {
 }
 
 func monthNumericTwoDigits(t *mysqlTimeEx, input string) (string, bool) {
-	v, succ := parseTwoDigits(input)
+	v, succ := parseDigits(input, 2)
 	if !succ || v > 12 {
 		return input, false
 	}
