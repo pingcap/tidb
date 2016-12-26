@@ -30,12 +30,12 @@ import (
 
 // Error instances.
 var (
-	ErrInvalidOperation = terror.ClassExpression.New(CodeInvalidOperation, "invalid operation")
+	errInvalidOperation = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
 )
 
 // Error codes.
 const (
-	CodeInvalidOperation terror.ErrCode = 1
+	codeInvalidOperation terror.ErrCode = 1
 )
 
 // EvalAstExpr evaluates ast expression directly.
