@@ -268,6 +268,9 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t2 values(22, 2), (3, 12), (38, 98)")
 	result = tk.MustQuery("SELECT COALESCE ( + 1, cor0.col0 ) + - CAST( NULL AS DECIMAL ) FROM t2, t1 AS cor0, t2 AS cor1 GROUP BY cor0.col1")
 	result.Check(testkit.Rows("<nil>", "<nil>"))
+
+	result = tk.MustQuery("select count(*) from information_schema.columns")
+	result.Check(testkit.Rows("529"))
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {

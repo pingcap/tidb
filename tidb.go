@@ -185,16 +185,16 @@ func PrepareTxnCtx(ctx context.Context) error {
 func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	var err error
 	var rs ast.RecordSet
+	se := ctx.(*session)
 	rs, err = s.Exec(ctx)
 	// All the history should be added here.
-	se := ctx.(*session)
 	getHistory(ctx).add(0, s)
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
-			ctx.RollbackTxn()
+			se.RollbackTxn()
 		} else {
-			err = ctx.CommitTxn()
+			err = se.CommitTxn()
 		}
 	}
 	return rs, errors.Trace(err)

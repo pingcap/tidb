@@ -1,3 +1,16 @@
+// Copyright 2016 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package plan
 
 import (
@@ -6,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -20,8 +32,8 @@ import (
 // EvalSubquery evaluates incorrelated subqueries once.
 var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
 
-// EvalAstExpr evaluates ast expression directly.
-func EvalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
+// evalAstExpr evaluates ast expression directly.
+func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 	if val, ok := expr.(*ast.ValueExpr); ok {
 		return val.Datum, nil
 	}
@@ -29,7 +41,9 @@ func EvalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 		ctx:       ctx,
 		allocator: new(idAllocator),
 		colMapper: make(map[*ast.ColumnNameExpr]int),
-		is:        ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema),
+	}
+	if ctx.GetSessionVars().TxnCtx.InfoSchema != nil {
+		b.is = ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
 	newExpr, _, err := b.rewrite(expr, nil, nil, true)
 	if err != nil {
@@ -841,7 +855,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 }
 
 func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
-	bt, err := evaluator.CastFuncFactory(v.Tp)
+	bt, err := expression.CastFuncFactory(v.Tp)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
@@ -860,7 +874,7 @@ func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
 }
 
 func (er *expressionRewriter) valuesToScalarFunc(v *ast.ValuesExpr) {
-	bt := evaluator.BuildinValuesFactory(v)
+	bt := expression.BuildinValuesFactory(v)
 	function := &expression.ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  &v.Type,

@@ -207,7 +207,6 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 	agg := a.makeNewAgg(aggFuncs, gbyCols)
 	child.SetParents(agg)
 	agg.SetChildren(child)
-	agg.correlated = agg.correlated || child.IsCorrelated()
 	// If agg has no group-by item, it will return a default value, which may cause some bugs.
 	// So here we add a group-by item forcely.
 	if len(agg.GroupByItems) == 0 {
@@ -259,9 +258,6 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 		var newFuncs []expression.AggregationFunction
 		newFuncs, schema = a.decompose(aggFunc, schema, agg.GetID())
 		newAggFuncs = append(newAggFuncs, newFuncs...)
-		for _, arg := range aggFunc.GetArgs() {
-			agg.correlated = agg.correlated || arg.IsCorrelated()
-		}
 	}
 	for _, gbyCol := range gbyCols {
 		firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
@@ -280,7 +276,6 @@ func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema expr
 		baseLogicalPlan: newBaseLogicalPlan(Agg, a.alloc),
 	}
 	newAgg.SetSchema(agg.schema.Clone())
-	newAgg.correlated = agg.correlated
 	newAgg.initIDAndContext(a.ctx)
 	for _, aggFunc := range agg.AggFuncs {
 		newAggFunc := aggFunc.Clone()

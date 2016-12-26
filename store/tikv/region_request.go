@@ -173,7 +173,7 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 	reportRegionError(regionErr)
 	if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 		// Retry if error is `NotLeader`.
-		log.Warnf("tikv reports `NotLeader`: %s, ctx: %s, retry later", notLeader, ctx.KVCtx)
+		log.Debugf("tikv reports `NotLeader`: %s, ctx: %s, retry later", notLeader, ctx.KVCtx)
 		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId())
 		if notLeader.GetLeader() == nil {
 			err = s.bo.Backoff(boRegionMiss, errors.Errorf("not leader: %v, ctx: %s", notLeader, ctx.KVCtx))
@@ -184,12 +184,12 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 		return true, nil
 	}
 	if staleEpoch := regionErr.GetStaleEpoch(); staleEpoch != nil {
-		log.Warnf("tikv reports `StaleEpoch`, ctx: %s, retry later", ctx.KVCtx)
+		log.Debugf("tikv reports `StaleEpoch`, ctx: %s, retry later", ctx.KVCtx)
 		err = s.regionCache.OnRegionStale(ctx, staleEpoch.NewRegions)
 		return false, errors.Trace(err)
 	}
 	if regionErr.GetServerIsBusy() != nil {
-		log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", ctx.KVCtx)
+		log.Debugf("tikv reports `ServerIsBusy`, ctx: %s, retry later", ctx.KVCtx)
 		err = s.bo.Backoff(boServerBusy, errors.Errorf("server is busy, ctx: %s", ctx.KVCtx))
 		if err != nil {
 			return false, errors.Trace(err)
@@ -197,12 +197,12 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 		return true, nil
 	}
 	if regionErr.GetStaleCommand() != nil {
-		log.Warnf("tikv reports `StaleCommand`, ctx: %s", ctx.KVCtx)
+		log.Debugf("tikv reports `StaleCommand`, ctx: %s", ctx.KVCtx)
 		return true, nil
 	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
-	log.Warnf("tikv reports region error: %s, ctx: %s", regionErr, ctx.KVCtx)
+	log.Debugf("tikv reports region error: %s, ctx: %s", regionErr, ctx.KVCtx)
 	s.regionCache.DropRegion(ctx.Region)
 	return false, nil
 }
