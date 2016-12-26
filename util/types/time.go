@@ -1788,11 +1788,15 @@ func mysqlTimeFix(t *mysqlTime, ctx map[string]int) error {
 		_ = yearOfDay
 	}
 	if valueAMorPm, ok := ctx["%p"]; ok {
-		if valueAMorPm == 2 {
+		if valueAMorPm == constForAM && t.hour == 0 {
+			return ErrInvalidTimeFormat
+		}
+		if valueAMorPm == constForPM {
 			t.hour += 12
-			if t.hour >= 24 {
+			if t.hour > 24 {
 				return ErrInvalidTimeFormat
 			}
+			t.hour = t.hour % 24
 		}
 	}
 	return nil
@@ -2033,11 +2037,16 @@ func time24Hour(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	return input[8:], true
 }
 
+const (
+	constForAM = 1 + iota
+	constForPM
+)
+
 func isAMOrPM(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	if strings.HasPrefix(input, "AM") {
-		ctx["%p"] = 1
+		ctx["%p"] = constForAM
 	} else if strings.HasPrefix(input, "PM") {
-		ctx["%p"] = 2
+		ctx["%p"] = constForPM
 	} else {
 		return input, false
 	}
@@ -2053,11 +2062,14 @@ func dayOfMonthNumericTwoDigits(t *mysqlTime, input string, ctx map[string]int) 
 	return input[2:], true
 }
 
-var twoDigitRegex = regexp.MustCompile("^[0-9][1-9]?")
+var twoDigitRegex = regexp.MustCompile("^[1-9][0-9]?")
 
 // parseTwoNumeric is used for pattens 0..31 0..24 0..60 and so on.
 // It returns the parsed int, and remain data after parse.
 func parseTwoNumeric(input string) (int, string) {
+	if len(input) > 1 && input[0] == '0' {
+		return 0, input[1:]
+	}
 	matched := twoDigitRegex.FindAllString(input, -1)
 	if len(matched) == 0 {
 		return 0, input

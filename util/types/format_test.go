@@ -94,7 +94,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`15:35:00`, `%H:%i:%s`, FromDate(0, 0, 0, 15, 35, 0, 0)},
 		{`Jul 17 33`, `%b %k %S`, FromDate(0, 7, 0, 17, 0, 33, 0)},
 		{`2016-January:7 432101`, `%Y-%M:%l %f`, FromDate(2016, 1, 0, 7, 0, 0, 432101)},
-		{`7:13 PM`, `%l:%i %p`, FromDate(0, 0, 0, 19, 13, 0, 0)},
+		{`10:13 PM`, `%l:%i %p`, FromDate(0, 0, 0, 22, 13, 0, 0)},
 	}
 	for i, test := range testcases {
 		var t Time
