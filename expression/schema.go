@@ -92,7 +92,7 @@ func (s Schema) GetColumnIndex(col *Column) int {
 	return -1
 }
 
-// ColumnsLen returns the number of columns in schema.
+// GetColumnsLen returns the number of columns in schema.
 func (s Schema) GetColumnsLen() int {
 	return len(s.Columns)
 }
