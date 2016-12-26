@@ -51,6 +51,22 @@ func builtinLength(args []types.Datum, _ context.Context) (d types.Datum, err er
 	}
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_bin.
+func builtinBIN(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	switch args[0].Kind() {
+	case types.KindNull:
+		return d, nil
+	default:
+		v, err := args[0].ToInt64(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		u := uint64(v)
+		d.SetString(fmt.Sprintf("%b", u))
+		return d, nil
+	}
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ascii
 func builtinASCII(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	switch args[0].Kind() {
