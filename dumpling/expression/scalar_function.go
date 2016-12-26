@@ -19,7 +19,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -31,7 +30,7 @@ type ScalarFunction struct {
 	FuncName model.CIStr
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType   *types.FieldType
-	Function  evaluator.BuiltinFunc
+	Function  BuiltinFunc
 	ArgValues []types.Datum
 }
 
@@ -56,12 +55,12 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 
 // NewFunction creates a new scalar function or constant.
 func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	f, ok := evaluator.Funcs[funcName]
+	f, ok := Funcs[funcName]
 	if !ok {
 		return nil, errors.Errorf("Function %s is not implemented.", funcName)
 	}
 	if len(args) < f.MinArgs || (f.MaxArgs != -1 && len(args) > f.MaxArgs) {
-		return nil, evaluator.ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].",
+		return nil, errInvalidOperation.Gen("number of function arguments must in [%d, %d].",
 			f.MinArgs, f.MaxArgs)
 	}
 	funcArgs := make([]Expression, len(args))
