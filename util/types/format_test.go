@@ -95,6 +95,8 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`Jul 17 33`, `%b %k %S`, FromDate(0, 7, 0, 17, 0, 33, 0)},
 		{`2016-January:7 432101`, `%Y-%M:%l %f`, FromDate(2016, 1, 0, 7, 0, 0, 432101)},
 		{`10:13 PM`, `%l:%i %p`, FromDate(0, 0, 0, 22, 13, 0, 0)},
+		{`12:00:00 AM`, `%h:%i:%s %p`, FromDate(0, 0, 0, 0, 0, 0, 0)},
+		{`12:00:00 PM`, `%h:%i:%s %p`, FromDate(0, 0, 0, 12, 0, 0, 0)},
 	}
 	for i, test := range testcases {
 		var t Time
@@ -112,6 +114,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`12:43:24`, `%r`}, // no PM or AM followed
 		{`23:60:12`, `%T`}, // invalid minute
 		{`18`, `%l`},
+		{`00:21:22 AM`, `%h:%i:%s %p`},
 	}
 	for _, test := range errcases {
 		var t Time

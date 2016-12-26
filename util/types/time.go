@@ -1788,15 +1788,21 @@ func mysqlTimeFix(t *mysqlTime, ctx map[string]int) error {
 		_ = yearOfDay
 	}
 	if valueAMorPm, ok := ctx["%p"]; ok {
-		if valueAMorPm == constForAM && t.hour == 0 {
+		if t.hour == 0 {
 			return ErrInvalidTimeFormat
+		}
+		if t.hour == 12 {
+			// 12 is a special hour.
+			switch valueAMorPm {
+			case constForAM:
+				t.hour = 0
+			case constForPM:
+				t.hour = 12
+			}
+			return nil
 		}
 		if valueAMorPm == constForPM {
 			t.hour += 12
-			if t.hour > 24 {
-				return ErrInvalidTimeFormat
-			}
-			t.hour = t.hour % 24
 		}
 	}
 	return nil
@@ -1979,7 +1985,7 @@ func time12Hour(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 		return input, false
 	}
 	hour, succ := parseDigits(input, 2)
-	if !succ || hour > 12 || input[2] != ':' {
+	if !succ || hour > 12 || hour == 0 || input[2] != ':' {
 		return input, false
 	}
 
