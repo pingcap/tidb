@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package evaluator
+package expression
 
 import (
 	"fmt"
@@ -679,13 +679,13 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	resultField.Decimal = types.MaxFsp
 	value, err := nodeDate.ConvertTo(ctx.GetSessionVars().StmtCtx, resultField)
 	if err != nil {
-		return d, ErrInvalidOperation.Gen("DateArith invalid args, need date but get %T", nodeDate)
+		return d, errInvalidOperation.Gen("DateArith invalid args, need date but get %T", nodeDate)
 	}
 	if value.IsNull() {
-		return d, ErrInvalidOperation.Gen("DateArith invalid args, need date but get %v", value.GetValue())
+		return d, errInvalidOperation.Gen("DateArith invalid args, need date but get %v", value.GetValue())
 	}
 	if value.Kind() != types.KindMysqlTime {
-		return d, ErrInvalidOperation.Gen("DateArith need time type, but got %T", value.GetValue())
+		return d, errInvalidOperation.Gen("DateArith need time type, but got %T", value.GetValue())
 	}
 	result := value.GetMysqlTime()
 	// parse interval
@@ -693,7 +693,7 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	if strings.ToLower(nodeInterval.Unit) == "day" {
 		day, err1 := parseDayInterval(sc, *nodeIntervalIntervalDatum)
 		if err1 != nil {
-			return d, ErrInvalidOperation.Gen("DateArith invalid day interval, need int but got %T", nodeIntervalIntervalDatum.GetString())
+			return d, errInvalidOperation.Gen("DateArith invalid day interval, need int but got %T", nodeIntervalIntervalDatum.GetString())
 		}
 		interval = fmt.Sprintf("%d", day)
 	} else {
