@@ -456,9 +456,9 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 	}
 }
 
-// CastFuncFactory produces builtin function according to field types.
+// castFuncFactory produces builtin function according to field types.
 // See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
-func CastFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
+func castFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
 	switch tp.Tp {
 	// Parser has restricted this.
 	case mysql.TypeString, mysql.TypeDuration, mysql.TypeDatetime,
@@ -510,8 +510,8 @@ func builtinReleaseLock(args []types.Datum, _ context.Context) (d types.Datum, e
 	return d, nil
 }
 
-// BuildinValuesFactory generates values builtin function.
-func BuildinValuesFactory(v *ast.ValuesExpr) BuiltinFunc {
+// buildinValuesFactory generates values builtin function.
+func buildinValuesFactory(v *ast.ValuesExpr) BuiltinFunc {
 	return func(_ []types.Datum, ctx context.Context) (d types.Datum, err error) {
 		values := ctx.GetSessionVars().CurrInsertValues
 		if values == nil {

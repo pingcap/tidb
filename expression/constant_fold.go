@@ -21,19 +21,19 @@ import (
 
 // FoldConstant does constant folding optimization on an expression.
 func FoldConstant(ctx context.Context, expr Expression) Expression {
-	scalarFunc, ok := expr.(*ScalarFunction)
+	scalarFunc, ok := expr.(ScalarFunction)
 	if !ok {
 		return expr
 	}
-	if _, isDynamic := DynamicFuncs[scalarFunc.FuncName.L]; isDynamic {
+	if _, isDynamic := DynamicFuncs[scalarFunc.GetName().L]; isDynamic {
 		return expr
 	}
-	args := scalarFunc.Args
+	args := scalarFunc.GetArgs()
 	datums := make([]types.Datum, 0, len(args))
 	canFold := true
 	for i := 0; i < len(args); i++ {
 		foldedArg := FoldConstant(ctx, args[i])
-		scalarFunc.Args[i] = foldedArg
+		scalarFunc.GetArgs()[i] = foldedArg
 		if con, ok := foldedArg.(*Constant); ok {
 			datums = append(datums, con.Value)
 		} else {
@@ -43,13 +43,13 @@ func FoldConstant(ctx context.Context, expr Expression) Expression {
 	if !canFold {
 		return expr
 	}
-	value, err := scalarFunc.Function(datums, ctx)
+	value, err := scalarFunc.Eval(datums, ctx)
 	if err != nil {
-		log.Warnf("There may exist an error during constant folding. The function name is %s, args are %s", scalarFunc.FuncName, args)
+		log.Warnf("There may exist an error during constant folding. The function name is %s, args are %s", scalarFunc.GetName(), args)
 		return expr
 	}
 	return &Constant{
 		Value:   value,
-		RetType: scalarFunc.RetType,
+		RetType: scalarFunc.GetType(),
 	}
 }

@@ -33,12 +33,12 @@ func getUsedList(usedCols []*expression.Column, schema expression.Schema) []bool
 
 // exprHasSetVar checks if the expression has set-var function. If do, we should not prune it.
 func exprHasSetVar(expr expression.Expression) bool {
-	if fun, ok := expr.(*expression.ScalarFunction); ok {
+	if fun, ok := expr.(expression.ScalarFunction); ok {
 		canPrune := true
-		if fun.FuncName.L == ast.SetVar {
+		if fun.GetName().L == ast.SetVar {
 			return false
 		}
-		for _, arg := range fun.Args {
+		for _, arg := range fun.GetArgs() {
 			canPrune = canPrune && exprHasSetVar(arg)
 			if !canPrune {
 				return false

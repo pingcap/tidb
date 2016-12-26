@@ -974,7 +974,7 @@ loop:
 				usedCols[childIdx] = true
 				newProp.props = append(newProp.props, &columnProp{col: v, desc: c.desc})
 			}
-		case *expression.ScalarFunction:
+		case expression.ScalarFunction:
 			newProp = nil
 			canPassSort = false
 			break loop

@@ -359,7 +359,7 @@ type PhysicalHashJoin struct {
 
 	JoinType JoinType
 
-	EqualConditions []*expression.ScalarFunction
+	EqualConditions []expression.ScalarFunction
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
@@ -376,7 +376,7 @@ type PhysicalHashSemiJoin struct {
 	WithAux bool
 	Anti    bool
 
-	EqualConditions []*expression.ScalarFunction
+	EqualConditions []expression.ScalarFunction
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression

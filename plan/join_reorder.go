@@ -102,10 +102,10 @@ func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.
 		}
 	}
 	for _, cond := range conds {
-		if f, ok := cond.(*expression.ScalarFunction); ok {
-			if f.FuncName.L == ast.EQ {
-				lCol, lok := f.Args[0].(*expression.Column)
-				rCol, rok := f.Args[1].(*expression.Column)
+		if f, ok := cond.(expression.ScalarFunction); ok {
+			if f.GetName().L == ast.EQ {
+				lCol, lok := f.GetArgs()[0].(*expression.Column)
+				rCol, rok := f.GetArgs()[1].(*expression.Column)
 				if lok && rok {
 					lID := findColumnIndexByGroup(group, lCol)
 					rID := findColumnIndexByGroup(group, rCol)
@@ -122,7 +122,7 @@ func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.
 			for _, col := range cols {
 				idx := findColumnIndexByGroup(group, col)
 				if id == -1 {
-					switch f.FuncName.L {
+					switch f.GetName().L {
 					case ast.EQ:
 						rate *= 0.1
 					case ast.LT, ast.LE, ast.GE, ast.GT:

@@ -92,20 +92,20 @@ func refineRangeDatum(v *types.Datum, ic *model.IndexColumn) {
 // getEQFunctionOffset judge if the expression is a eq function like A = 1 where a is an index.
 // If so, it will return the offset of A in index columns. e.g. for index(C,B,A), A's offset is 2.
 func getEQFunctionOffset(expr expression.Expression, cols []*model.IndexColumn) int {
-	f, ok := expr.(*expression.ScalarFunction)
-	if !ok || f.FuncName.L != ast.EQ {
+	f, ok := expr.(expression.ScalarFunction)
+	if !ok || f.GetName().L != ast.EQ {
 		return -1
 	}
-	if c, ok := f.Args[0].(*expression.Column); ok {
-		if _, ok := f.Args[1].(*expression.Constant); ok {
+	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+		if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
 			for i, col := range cols {
 				if col.Name.L == c.ColName.L {
 					return i
 				}
 			}
 		}
-	} else if _, ok := f.Args[0].(*expression.Constant); ok {
-		if c, ok := f.Args[1].(*expression.Column); ok {
+	} else if _, ok := f.GetArgs()[0].(*expression.Constant); ok {
+		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
 			for i, col := range cols {
 				if col.Name.L == c.ColName.L {
 					return i
@@ -293,7 +293,7 @@ type conditionChecker struct {
 
 func (c *conditionChecker) check(condition expression.Expression) bool {
 	switch x := condition.(type) {
-	case *expression.ScalarFunction:
+	case expression.ScalarFunction:
 		return c.checkScalarFunction(x)
 	case *expression.Column:
 		return c.checkColumn(x)
@@ -327,43 +327,43 @@ func (c *conditionChecker) findEqOrInFunc(conditions []expression.Expression) in
 		}
 	}
 	for i, cond := range conditions {
-		if in, ok := cond.(*expression.ScalarFunction); ok &&
-			in.FuncName.L == ast.In && c.checkScalarFunction(in) {
+		if in, ok := cond.(expression.ScalarFunction); ok &&
+			in.GetName().L == ast.In && c.checkScalarFunction(in) {
 			return i
 		}
 	}
 	return -1
 }
 
-func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
-	switch scalar.FuncName.L {
+func (c *conditionChecker) checkScalarFunction(scalar expression.ScalarFunction) bool {
+	switch scalar.GetName().L {
 	case ast.OrOr, ast.AndAnd:
-		return c.check(scalar.Args[0]) && c.check(scalar.Args[1])
+		return c.check(scalar.GetArgs()[0]) && c.check(scalar.GetArgs()[1])
 	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT:
-		if _, ok := scalar.Args[0].(*expression.Constant); ok {
-			return c.checkColumn(scalar.Args[1])
+		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
+			return c.checkColumn(scalar.GetArgs()[1])
 		}
-		if _, ok := scalar.Args[1].(*expression.Constant); ok {
-			return c.checkColumn(scalar.Args[0])
+		if _, ok := scalar.GetArgs()[1].(*expression.Constant); ok {
+			return c.checkColumn(scalar.GetArgs()[0])
 		}
 	case ast.IsNull, ast.IsTruth, ast.IsFalsity:
-		return c.checkColumn(scalar.Args[0])
+		return c.checkColumn(scalar.GetArgs()[0])
 	case ast.UnaryNot:
 		// TODO: support "not like" and "not in" convert to access conditions.
-		if s, ok := scalar.Args[0].(*expression.ScalarFunction); ok {
-			if s.FuncName.L == ast.In || s.FuncName.L == ast.Like {
+		if s, ok := scalar.GetArgs()[0].(expression.ScalarFunction); ok {
+			if s.GetName().L == ast.In || s.GetName().L == ast.Like {
 				return false
 			}
 		} else {
 			// "not column" or "not constant" can't lead to a range.
 			return false
 		}
-		return c.check(scalar.Args[0])
+		return c.check(scalar.GetArgs()[0])
 	case ast.In:
-		if !c.checkColumn(scalar.Args[0]) {
+		if !c.checkColumn(scalar.GetArgs()[0]) {
 			return false
 		}
-		for _, v := range scalar.Args[1:] {
+		for _, v := range scalar.GetArgs()[1:] {
 			if _, ok := v.(*expression.Constant); !ok {
 				return false
 			}
@@ -375,11 +375,11 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 	return false
 }
 
-func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool {
-	if !c.checkColumn(scalar.Args[0]) {
+func (c *conditionChecker) checkLikeFunc(scalar expression.ScalarFunction) bool {
+	if !c.checkColumn(scalar.GetArgs()[0]) {
 		return false
 	}
-	pattern, ok := scalar.Args[1].(*expression.Constant)
+	pattern, ok := scalar.GetArgs()[1].(*expression.Constant)
 	if !ok {
 		return false
 	}
@@ -393,7 +393,7 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool
 	if len(patternStr) == 0 {
 		return true
 	}
-	escape := byte(scalar.Args[2].(*expression.Constant).Value.GetInt64())
+	escape := byte(scalar.GetArgs()[2].(*expression.Constant).Value.GetInt64())
 	for i := 0; i < len(patternStr); i++ {
 		if patternStr[i] == escape {
 			i++
@@ -443,43 +443,43 @@ var oppositeOp = map[string]string{
 }
 
 func pushDownNot(expr expression.Expression, not bool) expression.Expression {
-	if f, ok := expr.(*expression.ScalarFunction); ok {
-		switch f.FuncName.L {
+	if f, ok := expr.(expression.ScalarFunction); ok {
+		switch f.GetName().L {
 		case ast.UnaryNot:
-			return pushDownNot(f.Args[0], !not)
+			return pushDownNot(f.GetArgs()[0], !not)
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
-				nf, _ := expression.NewFunction(oppositeOp[f.FuncName.L], f.GetType(), f.Args...)
+				nf, _ := expression.NewFunction(oppositeOp[f.GetName().L], f.GetType(), f.GetArgs()...)
 				return nf
 			}
-			for i, arg := range f.Args {
-				f.Args[i] = pushDownNot(arg, false)
+			for i, arg := range f.GetArgs() {
+				f.GetArgs()[i] = pushDownNot(arg, false)
 			}
 			return f
 		case ast.AndAnd:
 			if not {
-				args := f.Args
+				args := f.GetArgs()
 				for i, a := range args {
 					args[i] = pushDownNot(a, true)
 				}
 				nf, _ := expression.NewFunction(ast.OrOr, f.GetType(), args...)
 				return nf
 			}
-			for i, arg := range f.Args {
-				f.Args[i] = pushDownNot(arg, false)
+			for i, arg := range f.GetArgs() {
+				f.GetArgs()[i] = pushDownNot(arg, false)
 			}
 			return f
 		case ast.OrOr:
 			if not {
-				args := f.Args
+				args := f.GetArgs()
 				for i, a := range args {
 					args[i] = pushDownNot(a, true)
 				}
 				nf, _ := expression.NewFunction(ast.AndAnd, f.GetType(), args...)
 				return nf
 			}
-			for i, arg := range f.Args {
-				f.Args[i] = pushDownNot(arg, false)
+			for i, arg := range f.GetArgs() {
+				f.GetArgs()[i] = pushDownNot(arg, false)
 			}
 			return f
 		}

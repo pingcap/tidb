@@ -20,8 +20,8 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 	switch v := expr.(type) {
 	case *Column:
 		return []*Column{v}
-	case *ScalarFunction:
-		for _, arg := range v.Args {
+	case ScalarFunction:
+		for _, arg := range v.GetArgs() {
 			cols = append(cols, ExtractColumns(arg)...)
 		}
 	}
@@ -38,17 +38,17 @@ func ColumnSubstitute(expr Expression, schema Schema, newExprs []Expression) Exp
 			return v
 		}
 		return newExprs[id].Clone()
-	case *ScalarFunction:
-		if v.FuncName.L == ast.Cast {
-			newFunc := v.Clone().(*ScalarFunction)
-			newFunc.Args[0] = ColumnSubstitute(newFunc.Args[0], schema, newExprs)
+	case ScalarFunction:
+		if v.GetName().L == ast.Cast {
+			newFunc := v.Clone().(ScalarFunction)
+			newFunc.GetArgs()[0] = ColumnSubstitute(newFunc.GetArgs()[0], schema, newExprs)
 			return newFunc
 		}
-		newArgs := make([]Expression, 0, len(v.Args))
-		for _, arg := range v.Args {
+		newArgs := make([]Expression, 0, len(v.GetArgs()))
+		for _, arg := range v.GetArgs() {
 			newArgs = append(newArgs, ColumnSubstitute(arg, schema, newExprs))
 		}
-		fun, _ := NewFunction(v.FuncName.L, v.RetType, newArgs...)
+		fun, _ := NewFunction(v.GetName().L, v.GetType(), newArgs...)
 		return fun
 	}
 	return expr
