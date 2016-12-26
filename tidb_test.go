@@ -70,7 +70,6 @@ func (s *testMainSuite) SetUpSuite(c *C) {
     CREATE TABLE tbl_test2(id INT NOT NULL DEFAULT 3, name varchar(255), PRIMARY KEY(id));`
 	s.selectSQL = `SELECT * from tbl_test;`
 	schemaExpiredRetryTimes = 5
-	checkSchemaValiditySleepTime = 20 * time.Millisecond
 	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
@@ -78,7 +77,6 @@ func (s *testMainSuite) TearDownSuite(c *C) {
 	defer testleak.AfterTest(c)()
 	removeStore(c, s.dbName)
 	schemaExpiredRetryTimes = 30
-	checkSchemaValiditySleepTime = 1 * time.Second
 }
 
 func checkResult(c *C, se Session, affectedRows uint64, insertID uint64) {

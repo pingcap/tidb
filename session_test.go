@@ -55,14 +55,12 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.createTableSQL = `CREATE TABLE t(id TEXT);`
 	s.selectSQL = `SELECT * from t;`
 	schemaExpiredRetryTimes = 3
-	checkSchemaValiditySleepTime = 20 * time.Millisecond
 	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
 func (s *testSessionSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
 	schemaExpiredRetryTimes = 30
-	checkSchemaValiditySleepTime = 1 * time.Second
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {
