@@ -1761,16 +1761,18 @@ func abbrDayOfMonth(day int) string {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
 func (t *Time) StrToDate(date, format string) bool {
 	ctx := make(map[string]int)
-	tm := mysqlTimeEx{context: ctx}
-	if !strToDate(&tm, date, format) {
+	var tm mysqlTime
+	if !strToDate(&tm, date, format, ctx) {
 		t.Time = ZeroTime
 		t.Type = mysql.TypeDatetime
 		t.Fsp = 0
 		return false
 	}
-	mysqlTimeExFix(&tm)
+	if err := mysqlTimeFix(&tm, ctx); err != nil {
+		return false
+	}
 
-	t.Time = tm.mysqlTime
+	t.Time = tm
 	t.Type = mysql.TypeDatetime
 	if t.check() != nil {
 		return false
@@ -1778,30 +1780,27 @@ func (t *Time) StrToDate(date, format string) bool {
 	return true
 }
 
-// mysqlTimeEx wraps around mysqlTime and provides the context for parsing.
-// Some date format parser is not context free, for example, day of year needs
-// to know which year, it can't be interpreted alone.
-type mysqlTimeEx struct {
-	mysqlTime
-	// Key is the format char, such as `%j` `%p` and so on.
-	context map[string]int
-}
-
-func mysqlTimeExFix(t *mysqlTimeEx) {
-	ctx := t.context
+// mysqlTimeFix fixes the mysqlTime use the values in the context.
+func mysqlTimeFix(t *mysqlTime, ctx map[string]int) error {
+	// Key of the ctx is the format char, such as `%j` `%p` and so on.
 	if yearOfDay, ok := ctx["%j"]; ok {
-		_ = yearOfDay // TODO
+		// TODO Implement the function that converts day of year to yy:mm:dd.
+		_ = yearOfDay
 	}
 	if valueAMorPm, ok := ctx["%p"]; ok {
 		if valueAMorPm == 2 {
 			t.hour += 12
+			if t.hour >= 24 {
+				return ErrInvalidTimeFormat
+			}
 		}
 	}
+	return nil
 }
 
 // strToDate converts date string according to format, returns true on success,
-// the value will be stored in argument t.
-func strToDate(t *mysqlTimeEx, date string, format string) bool {
+// the value will be stored in argument t or ctx.
+func strToDate(t *mysqlTime, date string, format string, ctx map[string]int) bool {
 	date = skipWhiteSpace(date)
 	format = skipWhiteSpace(format)
 
@@ -1815,12 +1814,12 @@ func strToDate(t *mysqlTimeEx, date string, format string) bool {
 		return true
 	}
 
-	dateRemain, succ := matchDateWithToken(t, date, token)
+	dateRemain, succ := matchDateWithToken(t, date, token, ctx)
 	if !succ {
 		return false
 	}
 
-	return strToDate(t, dateRemain, formatRemain)
+	return strToDate(t, dateRemain, formatRemain, ctx)
 }
 
 // getFormatToken takes one format control token from the string.
@@ -1880,7 +1879,7 @@ var monthAbbrev = map[string]gotime.Month{
 	"Dec": gotime.December,
 }
 
-type dateFormatParser func(t *mysqlTimeEx, date string) (remain string, succ bool)
+type dateFormatParser func(t *mysqlTime, date string, ctx map[string]int) (remain string, succ bool)
 
 var dateFormatParserTable = map[string]dateFormatParser{
 	"%b": abbreviatedMonth,           // Abbreviated month name (Jan..Dec)
@@ -1918,9 +1917,9 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	// "%y": yearTwoDigits,         // Year, numeric (two digits)
 }
 
-func matchDateWithToken(t *mysqlTimeEx, date string, token string) (remain string, succ bool) {
+func matchDateWithToken(t *mysqlTime, date string, token string, ctx map[string]int) (remain string, succ bool) {
 	if parse, ok := dateFormatParserTable[token]; ok {
-		return parse(t, date)
+		return parse(t, date, ctx)
 	}
 
 	if strings.HasPrefix(date, token) {
@@ -1941,7 +1940,7 @@ func parseDigits(input string, count int) (int, bool) {
 	return int(v), true
 }
 
-func hour24TwoDigits(t *mysqlTimeEx, input string) (string, bool) {
+func hour24TwoDigits(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	v, succ := parseDigits(input, 2)
 	if !succ || v >= 24 {
 		return input, false
@@ -1950,7 +1949,7 @@ func hour24TwoDigits(t *mysqlTimeEx, input string) (string, bool) {
 	return input[2:], true
 }
 
-func secondsNumeric(t *mysqlTimeEx, input string) (string, bool) {
+func secondsNumeric(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	v, succ := parseDigits(input, 2)
 	if !succ || v >= 60 {
 		return input, false
@@ -1959,7 +1958,7 @@ func secondsNumeric(t *mysqlTimeEx, input string) (string, bool) {
 	return input[2:], true
 }
 
-func minutesNumeric(t *mysqlTimeEx, input string) (string, bool) {
+func minutesNumeric(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	v, succ := parseDigits(input, 2)
 	if !succ || v >= 60 {
 		return input, false
@@ -1968,8 +1967,13 @@ func minutesNumeric(t *mysqlTimeEx, input string) (string, bool) {
 	return input[2:], true
 }
 
-func time12Hour(t *mysqlTimeEx, input string) (string, bool) {
+const time12HourLen = len("hh:mm:ssAM")
+
+func time12Hour(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	// hh:mm:ss AM
+	if len(input) < time12HourLen {
+		return input, false
+	}
 	hour, succ := parseDigits(input, 2)
 	if !succ || hour > 12 || input[2] != ':' {
 		return input, false
@@ -2000,7 +2004,7 @@ func time12Hour(t *mysqlTimeEx, input string) (string, bool) {
 	return remain, true
 }
 
-func time24Hour(t *mysqlTimeEx, input string) (string, bool) {
+func time24Hour(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	// hh:mm:ss
 	if len(input) < 8 {
 		return input, false
@@ -2027,18 +2031,18 @@ func time24Hour(t *mysqlTimeEx, input string) (string, bool) {
 	return input[8:], true
 }
 
-func isAMOrPM(t *mysqlTimeEx, input string) (string, bool) {
+func isAMOrPM(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	if strings.HasPrefix(input, "AM") {
-		t.context["%p"] = 1
+		ctx["%p"] = 1
 	} else if strings.HasPrefix(input, "PM") {
-		t.context["%p"] = 2
+		ctx["%p"] = 2
 	} else {
 		return input, false
 	}
 	return input[2:], true
 }
 
-func dayOfMonthNumericTwoDigits(t *mysqlTimeEx, input string) (string, bool) {
+func dayOfMonthNumericTwoDigits(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	v, succ := parseDigits(input, 2)
 	if !succ || v >= 32 {
 		return input, false
@@ -2065,7 +2069,7 @@ func parseTwoNumeric(input string) (int, string) {
 	return int(v), input[len(str):]
 }
 
-func dayOfMonthNumeric(t *mysqlTimeEx, input string) (string, bool) {
+func dayOfMonthNumeric(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	v, remain := parseTwoNumeric(input) // 0..31
 	if len(remain) == len(input) || v > 31 {
 		return input, false
@@ -2074,7 +2078,7 @@ func dayOfMonthNumeric(t *mysqlTimeEx, input string) (string, bool) {
 	return remain, true
 }
 
-func hour24Numeric(t *mysqlTimeEx, input string) (string, bool) {
+func hour24Numeric(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	// 0..23
 	v, remain := parseTwoNumeric(input)
 	if len(remain) == len(input) || v > 23 {
@@ -2084,7 +2088,7 @@ func hour24Numeric(t *mysqlTimeEx, input string) (string, bool) {
 	return remain, true
 }
 
-func hour12Numeric(t *mysqlTimeEx, input string) (string, bool) {
+func hour12Numeric(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	// 1..12
 	v, remain := parseTwoNumeric(input)
 	if len(remain) == len(input) || v > 12 || v == 0 {
@@ -2094,7 +2098,7 @@ func hour12Numeric(t *mysqlTimeEx, input string) (string, bool) {
 	return remain, true
 }
 
-func microSeconds(t *mysqlTimeEx, input string) (string, bool) {
+func microSeconds(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	if len(input) < 6 {
 		return input, false
 	}
@@ -2106,7 +2110,7 @@ func microSeconds(t *mysqlTimeEx, input string) (string, bool) {
 	return input[6:], true
 }
 
-func yearNumericFourDigits(t *mysqlTimeEx, input string) (string, bool) {
+func yearNumericFourDigits(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	v, succ := parseDigits(input, 4)
 	if !succ {
 		return input, false
@@ -2115,16 +2119,16 @@ func yearNumericFourDigits(t *mysqlTimeEx, input string) (string, bool) {
 	return input[4:], true
 }
 
-func dayOfYearThreeDigits(t *mysqlTimeEx, input string) (string, bool) {
+func dayOfYearThreeDigits(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	v, succ := parseDigits(input, 3)
 	if !succ || v == 0 || v > 366 {
 		return input, false
 	}
-	t.context["%j"] = v
+	ctx["%j"] = v
 	return input[3:], true
 }
 
-func monthNumericTwoDigits(t *mysqlTimeEx, input string) (string, bool) {
+func monthNumericTwoDigits(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	v, succ := parseDigits(input, 2)
 	if !succ || v > 12 {
 		return input, false
@@ -2134,7 +2138,7 @@ func monthNumericTwoDigits(t *mysqlTimeEx, input string) (string, bool) {
 	return input[2:], true
 }
 
-func abbreviatedWeekday(t *mysqlTimeEx, input string) (string, bool) {
+func abbreviatedWeekday(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	if len(input) >= 3 {
 		dayName := input[:3]
 		if _, ok := weekdayAbbrev[dayName]; ok {
@@ -2145,7 +2149,7 @@ func abbreviatedWeekday(t *mysqlTimeEx, input string) (string, bool) {
 	return input, false
 }
 
-func abbreviatedMonth(t *mysqlTimeEx, input string) (string, bool) {
+func abbreviatedMonth(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	if len(input) >= 3 {
 		monthName := input[:3]
 		if month, ok := monthAbbrev[monthName]; ok {
@@ -2156,7 +2160,7 @@ func abbreviatedMonth(t *mysqlTimeEx, input string) (string, bool) {
 	return input, false
 }
 
-func fullNameMonth(t *mysqlTimeEx, input string) (string, bool) {
+func fullNameMonth(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	for i, month := range MonthNames {
 		if strings.HasPrefix(input, month) {
 			t.month = uint8(i + 1)
@@ -2166,7 +2170,7 @@ func fullNameMonth(t *mysqlTimeEx, input string) (string, bool) {
 	return input, false
 }
 
-func monthNumeric(t *mysqlTimeEx, input string) (string, bool) {
+func monthNumeric(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	// TODO: This code is ugly!
 	for i := 12; i >= 0; i-- {
 		str := strconv.FormatInt(int64(i), 10)
@@ -2180,7 +2184,7 @@ func monthNumeric(t *mysqlTimeEx, input string) (string, bool) {
 }
 
 // 0th 1st 2nd 3rd ...
-func dayOfMonthWithSuffix(t *mysqlTimeEx, input string) (string, bool) {
+func dayOfMonthWithSuffix(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	month, remain := parseOrdinalNumbers(input)
 	if month >= 0 {
 		t.month = uint8(month)
