@@ -740,3 +740,19 @@ func reverseByteSlice(slice []byte) {
 		end--
 	}
 }
+
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char-length
+func builtinCharLength(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	switch args[0].Kind() {
+	case types.KindNull:
+		return d, nil
+	default:
+		s, err := args[0].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		r := []rune(s)
+		d.SetInt64(int64(len(r)))
+		return d, nil
+	}
+}
