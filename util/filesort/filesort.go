@@ -23,25 +23,55 @@ import (
 	"strconv"
 )
 
+// orderByRow binds a row to its order values, so it can be sorted.
+type orderByRow struct {
+	key    []types.Datum
+	data   []types.Datum
+	handle int64
+}
+
 type FileSorter struct {
 	numMem int
-	byIdx  int
-	byDesc bool
-	buffer [][]types.Datum
+	byDesc []bool
+	rows   []*orderByRow
 	splits []string
+	sc     *StatementContext
 }
 
-func NewFileSorter(numMem int, byIdx int, byDesc bool) *FileSorter {
-	fs := new(FileSorter)
-	fs.numMem = numMem
-	fs.byIdx = byIdx
-	fs.byDesc = byDesc
-	fs.buffer = make([][]types.Datum, 0, numMem)
-	fs.splits = make([]string, 0)
-	return fs
+func (fs *FileSorter) Len() int {
+	return len(fs.rows)
 }
 
-func (fs *FileSorter) Input(row []types.Datum) error {
+func (fs *FileSorter) Swap(i, j int) {
+	fs.rows[i], fs.rows[j] = fs.rows[j], fs.rows[i]
+}
+
+func (fs *FileSorter) Less(i, j int) bool {
+	for index, desc := range fs.byDesc {
+		v1 := fs.rows[i].key[index]
+		v2 := fs.rows[j].key[index]
+
+		ret, err := v1.CompareDatum(fs.sc, v2)
+		if err != nil {
+			//TODO: error handling
+			return true
+		}
+
+		if desc {
+			ret = -ret
+		}
+
+		if ret < 0 {
+			return true
+		} else if ret > 0 {
+			return false
+		}
+	}
+
+	return false
+}
+
+func (fs *FileSorter) Input(key []types.Datum, data []types.Datum, handle int64) error {
 	tmpDir, err := ioutil.TempDir("", "util_filesort")
 	defer os.RemoveAll(tmpDir)
 	if err != nil {
@@ -56,8 +86,7 @@ func (fs *FileSorter) Input(row []types.Datum) error {
 	}
 
 	flushMemory := func() {
-		//TODO: How to sort types.Datum via `byIdx` and `byDesc`
-		sort.Sort(buffer)
+		sort.Sort(fs)
 		fileName := uniqueFileName()
 		outputFile, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 		defer outputFile.Close()
@@ -65,27 +94,36 @@ func (fs *FileSorter) Input(row []types.Datum) error {
 			return err
 		}
 
-		for _, row := range buffer {
-
-			rowBytes, err := codec.EncodeKey(nil, row...)
+		var rowBytes []byte
+		for _, row := range rows {
+			// serialize row and write to outputFile
+			rowBytes := codec.EncodeKey(rowBytes, row.key)
+			rowBytes := codec.EncodeValue(rowBytes, row.data)
+			rowBytes := codec.EncodeValue(rowBytes, NewIntDatum(row.handle))
+			_, err = outputFile.Write(rowBytes)
 			if err != nil {
 				return err
 			}
 		}
 		splits = append(splits, fileName)
-		//TODO: flush bytes into file
-		buffer = buffer[:0]
+		rows = rows[:0]
 	}
 
-	buffer = append(buffer, row)
-	if len(buffer) >= numMem {
+	orderRow := &orderByRow{
+		key:    key,
+		data:   data,
+		handle: handle,
+	}
+	rows = append(rows, orderRow)
+
+	if len(rows) >= numMem {
 		flushMemory()
 	}
 }
 
 func (fs *FileSorter) Output() []types.Datum {
 	//TODO: should mark as dumped, any Input afterwards will lead to error
-	if len(buffer) > 0 {
+	if len(rows) > 0 {
 		flushMemory()
 	}
 
