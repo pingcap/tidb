@@ -243,7 +243,7 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 		}
 		return FoldConstant(ctx, newFunc), nil
 	case *Column:
-		if schema.GetIndex(x) == -1 {
+		if schema.GetColumnIndex(x) == -1 {
 			return x, nil
 		}
 		constant := &Constant{Value: types.Datum{}}
@@ -255,7 +255,7 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 
 // TableInfo2Schema converts table info to schema.
 func TableInfo2Schema(tbl *model.TableInfo) Schema {
-	schema := make(Schema, 0, len(tbl.Columns))
+	schema := NewSchema(make([]*Column, 0, len(tbl.Columns)))
 	for i, col := range tbl.Columns {
 		newCol := &Column{
 			ColName:  col.Name,
@@ -263,7 +263,7 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 			RetType:  &col.FieldType,
 			Position: i,
 		}
-		schema = append(schema, newCol)
+		schema.Append(newCol)
 	}
 	return schema
 }

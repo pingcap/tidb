@@ -180,7 +180,7 @@ type CheckTableExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *CheckTableExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements the Executor Next interface.
@@ -744,7 +744,7 @@ func (e *HashJoinExec) constructMatchedRows(ctx *hashJoinCtx, bigRow *Row) (matc
 // It is used for outer join, when a row from outer table doesn't have any matching rows.
 func (e *HashJoinExec) fillRowWithDefaultValues(bigRow *Row) (returnRow *Row) {
 	smallRow := &Row{
-		Data: make([]types.Datum, len(e.smallExec.Schema())),
+		Data: make([]types.Datum, e.smallExec.Schema().Len()),
 	}
 	copy(smallRow.Data, e.defaultValues)
 	if e.leftSmall {
@@ -1382,7 +1382,7 @@ func (e *TableScanExec) Next() (*Row, error) {
 
 func (e *TableScanExec) nextForInfoSchema() (*Row, error) {
 	if e.infoSchemaRows == nil {
-		columns := make([]*table.Column, len(e.schema))
+		columns := make([]*table.Column, e.schema.Len())
 		for i, v := range e.columns {
 			columns[i] = table.ToColumn(v)
 		}
@@ -1425,7 +1425,7 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 	row := &Row{}
 	var err error
 
-	columns := make([]*table.Column, len(e.schema))
+	columns := make([]*table.Column, e.schema.Len())
 	for i, v := range e.columns {
 		columns[i] = table.ToColumn(v)
 	}
@@ -1835,7 +1835,7 @@ func (e *MaxOneRowExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if srcRow == nil {
-			return &Row{Data: make([]types.Datum, len(e.schema))}, nil
+			return &Row{Data: make([]types.Datum, e.schema.Len())}, nil
 		}
 		srcRow1, err := e.Src.Next()
 		if err != nil {
@@ -1933,7 +1933,7 @@ func (e *UnionExec) fetchData(idx int) {
 			if idx != 0 {
 				// TODO: Add cast function in plan building phase.
 				for j := range row.Data {
-					col := e.schema[j]
+					col := e.schema.Columns[j]
 					val, err := row.Data[j].ConvertTo(e.ctx.GetSessionVars().StmtCtx, col.RetType)
 					if err != nil {
 						e.finished.Store(true)

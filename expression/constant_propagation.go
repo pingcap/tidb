@@ -121,7 +121,7 @@ func (s *propagateConstantSolver) propagateEQ() {
 		if mapper == nil || len(mapper) == 0 {
 			return
 		}
-		cols := make(Schema, 0, len(mapper))
+		cols := make([]*Column, 0, len(mapper))
 		cons := make([]Expression, 0, len(mapper))
 		for id, con := range mapper {
 			cols = append(cols, s.columns[id])
@@ -129,7 +129,7 @@ func (s *propagateConstantSolver) propagateEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				s.conditions[i] = ColumnSubstitute(cond, Schema(cols), cons)
+				s.conditions[i] = ColumnSubstitute(cond, NewSchema(cols), cons)
 			}
 		}
 	}

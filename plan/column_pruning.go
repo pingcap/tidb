@@ -20,9 +20,9 @@ import (
 )
 
 func getUsedList(usedCols []*expression.Column, schema expression.Schema) []bool {
-	used := make([]bool, len(schema))
+	used := make([]bool, schema.Len())
 	for _, col := range usedCols {
-		idx := schema.GetIndex(col)
+		idx := schema.GetColumnIndex(col)
 		if idx == -1 {
 			log.Errorf("Can't find column %s from schema %s.", col, schema)
 		}
@@ -55,7 +55,7 @@ func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && exprHasSetVar(p.Exprs[i]) {
-			p.schema = append(p.schema[:i], p.schema[i+1:]...)
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
 	}
@@ -63,7 +63,7 @@ func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
 		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
 	}
 	child.PruneColumns(selfUsedCols)
-	p.schema.InitIndices()
+	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -82,7 +82,7 @@ func (p *Aggregation) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
-			p.schema = append(p.schema[:i], p.schema[i+1:]...)
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			p.AggFuncs = append(p.AggFuncs[:i], p.AggFuncs[i+1:]...)
 		}
 	}
@@ -96,7 +96,7 @@ func (p *Aggregation) PruneColumns(parentUsedCols []*expression.Column) {
 		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
 	}
 	child.PruneColumns(selfUsedCols)
-	p.schema.InitIndices()
+	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -114,21 +114,21 @@ func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.GetSchema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
-			p.schema = append(p.schema[:i], p.schema[i+1:]...)
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 		}
 	}
 	for _, c := range p.GetChildren() {
 		child := c.(LogicalPlan)
 		schema := child.GetSchema()
-		var newSchema []*expression.Column
+		var newCols []*expression.Column
 		for i, use := range used {
 			if use {
-				newSchema = append(newSchema, schema[i])
+				newCols = append(newCols, schema.Columns[i])
 			}
 		}
-		child.PruneColumns(newSchema)
+		child.PruneColumns(newCols)
 	}
-	p.schema.InitIndices()
+	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -136,11 +136,11 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
-			p.schema = append(p.schema[:i], p.schema[i+1:]...)
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
 		}
 	}
-	p.schema.InitIndices()
+	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -152,7 +152,7 @@ func (p *Trim) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
-			p.schema = append(p.schema[:i], p.schema[i+1:]...)
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 		}
 	}
 	p.GetChildByIndex(0).(LogicalPlan).PruneColumns(parentUsedCols)
@@ -169,7 +169,7 @@ func (p *Insert) PruneColumns(_ []*expression.Column) {
 		return
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
-	child.PruneColumns(child.GetSchema())
+	child.PruneColumns(child.GetSchema().Columns)
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -190,23 +190,25 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	var leftCols, rightCols []*expression.Column
 	for _, col := range parentUsedCols {
-		if lChild.GetSchema().GetIndex(col) != -1 {
+		if lChild.GetSchema().GetColumnIndex(col) != -1 {
 			leftCols = append(leftCols, col)
-		} else if rChild.GetSchema().GetIndex(col) != -1 {
+		} else if rChild.GetSchema().GetColumnIndex(col) != -1 {
 			rightCols = append(rightCols, col)
 		}
 	}
 	lChild.PruneColumns(leftCols)
 	rChild.PruneColumns(rightCols)
-	composedSchema := append(lChild.GetSchema().Clone(), rChild.GetSchema().Clone()...)
+	composedSchema := expression.MergeSchema(lChild.GetSchema(), rChild.GetSchema())
 	if p.JoinType == SemiJoin {
 		p.schema = lChild.GetSchema().Clone()
 	} else if p.JoinType == SemiJoinWithAux {
-		p.schema = append(lChild.GetSchema().Clone(), p.schema[len(p.schema)-1])
+		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
+		p.schema = lChild.GetSchema().Clone()
+		p.schema.Append(joinCol)
 	} else {
 		p.schema = composedSchema
 	}
-	p.schema.InitIndices()
+	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -223,29 +225,31 @@ func (p *Apply) PruneColumns(parentUsedCols []*expression.Column) {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(p.Checker.Condition)...)
 	}
 	for _, col := range parentUsedCols {
-		if child.GetSchema().GetIndex(col) != -1 {
+		if child.GetSchema().GetColumnIndex(col) != -1 {
 			usedCols = append(usedCols, col)
 		}
 	}
-	innerPlan.PruneColumns(innerPlan.GetSchema())
+	innerPlan.PruneColumns(innerPlan.GetSchema().Columns)
 	corCols := innerPlan.extractCorrelatedCols()
 	for _, corCol := range corCols {
-		idx := child.GetSchema().GetIndex(&corCol.Column)
+		idx := child.GetSchema().GetColumnIndex(&corCol.Column)
 		if idx != -1 {
 			usedCols = append(usedCols, &corCol.Column)
 		}
 	}
 	child.PruneColumns(usedCols)
-	combinedSchema := append(child.GetSchema().Clone(), innerPlan.GetSchema().Clone()...)
+	combinedSchema := expression.MergeSchema(child.GetSchema(), innerPlan.GetSchema())
 	if p.Checker == nil {
 		p.schema = combinedSchema
 	} else {
-		p.schema = append(child.GetSchema().Clone(), p.schema[len(p.schema)-1])
+		existsCol := p.schema.Columns[len(p.schema.Columns)-1]
+		p.schema = child.GetSchema().Clone()
+		p.schema.Columns = append(p.schema.Columns, existsCol)
 	}
-	p.schema.InitIndices()
+	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (p *Update) PruneColumns(parentUsedCols []*expression.Column) {
-	p.baseLogicalPlan.PruneColumns(p.GetChildByIndex(0).GetSchema())
+	p.baseLogicalPlan.PruneColumns(p.GetChildByIndex(0).GetSchema().Columns)
 }
