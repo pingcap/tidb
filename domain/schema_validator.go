@@ -53,7 +53,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, schemaVer int64) {
 	// Renewal lease.
 	s.items[schemaVer] = leaseExpire
 
-	// Delete expired items, leastGrantTime is server current time, actually.
+	// Delete expired items, leaseGrantTime is server current time, actually.
 	for k, expire := range s.items {
 		if leaseGrantTime.After(expire) {
 			delete(s.items, k)
