@@ -147,6 +147,9 @@ const (
 	Hex            = "hex"
 	Unhex          = "unhex"
 	Rpad           = "rpad"
+	BitLength      = "bit_length"
+	CharFunc       = "char_func"
+	CharLength     = "char_length"
 
 	// information functions
 	ConnectionID = "connection_id"

@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -856,7 +855,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 }
 
 func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
-	bt, err := evaluator.CastFuncFactory(v.Tp)
+	bt, err := expression.CastFuncFactory(v.Tp)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
@@ -875,7 +874,7 @@ func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
 }
 
 func (er *expressionRewriter) valuesToScalarFunc(v *ast.ValuesExpr) {
-	bt := evaluator.BuildinValuesFactory(v)
+	bt := expression.BuildinValuesFactory(v)
 	function := &expression.ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  &v.Type,

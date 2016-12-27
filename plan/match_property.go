@@ -331,3 +331,8 @@ func (p *Delete) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *phy
 func (p *Show) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }
+
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *PhysicalMemTable) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
+}

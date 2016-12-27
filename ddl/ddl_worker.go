@@ -426,6 +426,6 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	} else {
 		diff.TableID = job.TableID
 	}
-	err = t.SetSchemaDiff(schemaVersion, diff)
+	err = t.SetSchemaDiff(diff)
 	return schemaVersion, errors.Trace(err)
 }
