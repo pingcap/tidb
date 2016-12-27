@@ -57,7 +57,7 @@ func (pc pbConverter) exprToPB(expr expression.Expression) *tipb.Expr {
 		return pc.datumToPBExpr(x.Value)
 	case *expression.Column:
 		return pc.columnToPBExpr(x)
-	case *expression.ScalarFunction:
+	case expression.ScalarFunction:
 		return pc.scalarFuncToPBExpr(x)
 	}
 	return nil
@@ -122,8 +122,8 @@ func (pc pbConverter) columnToPBExpr(column *expression.Column) *tipb.Expr {
 		Val: codec.EncodeInt(nil, id)}
 }
 
-func (pc pbConverter) scalarFuncToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
-	switch expr.FuncName.L {
+func (pc pbConverter) scalarFuncToPBExpr(expr expression.ScalarFunction) *tipb.Expr {
+	switch expr.GetName().L {
 	case ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT,
 		ast.NullEQ, ast.In, ast.Like:
 		return pc.compareOpsToPBExpr(expr)
@@ -140,9 +140,9 @@ func (pc pbConverter) scalarFuncToPBExpr(expr *expression.ScalarFunction) *tipb.
 	}
 }
 
-func (pc pbConverter) compareOpsToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
+func (pc pbConverter) compareOpsToPBExpr(expr expression.ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
-	switch expr.FuncName.L {
+	switch expr.GetName().L {
 	case ast.LT:
 		tp = tipb.ExprType_LT
 	case ast.LE:
@@ -165,16 +165,16 @@ func (pc pbConverter) compareOpsToPBExpr(expr *expression.ScalarFunction) *tipb.
 	return pc.convertToPBExpr(expr, tp)
 }
 
-func (pc pbConverter) likeToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
+func (pc pbConverter) likeToPBExpr(expr expression.ScalarFunction) *tipb.Expr {
 	if !pc.client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_Like)) {
 		return nil
 	}
 	// Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
-	escape := expr.Args[2].(*expression.Constant).Value
+	escape := expr.GetArgs()[2].(*expression.Constant).Value
 	if escape.IsNull() || byte(escape.GetInt64()) != '\\' {
 		return nil
 	}
-	pattern, ok := expr.Args[1].(*expression.Constant)
+	pattern, ok := expr.GetArgs()[1].(*expression.Constant)
 	if !ok || pattern.Value.Kind() != types.KindString {
 		return nil
 	}
@@ -188,11 +188,11 @@ func (pc pbConverter) likeToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
 			}
 		}
 	}
-	expr0 := pc.exprToPB(expr.Args[0])
+	expr0 := pc.exprToPB(expr.GetArgs()[0])
 	if expr0 == nil {
 		return nil
 	}
-	expr1 := pc.exprToPB(expr.Args[1])
+	expr1 := pc.exprToPB(expr.GetArgs()[1])
 	if expr1 == nil {
 		return nil
 	}
@@ -201,9 +201,9 @@ func (pc pbConverter) likeToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
 		Children: []*tipb.Expr{expr0, expr1}}
 }
 
-func (pc pbConverter) arithmeticalOpsToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
+func (pc pbConverter) arithmeticalOpsToPBExpr(expr expression.ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
-	switch expr.FuncName.L {
+	switch expr.GetName().L {
 	case ast.Plus:
 		tp = tipb.ExprType_Plus
 	case ast.Minus:
@@ -220,9 +220,9 @@ func (pc pbConverter) arithmeticalOpsToPBExpr(expr *expression.ScalarFunction) *
 	return pc.convertToPBExpr(expr, tp)
 }
 
-func (pc pbConverter) logicalOpsToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
+func (pc pbConverter) logicalOpsToPBExpr(expr expression.ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
-	switch expr.FuncName.L {
+	switch expr.GetName().L {
 	case ast.AndAnd:
 		tp = tipb.ExprType_And
 	case ast.OrOr:
@@ -235,9 +235,9 @@ func (pc pbConverter) logicalOpsToPBExpr(expr *expression.ScalarFunction) *tipb.
 	return pc.convertToPBExpr(expr, tp)
 }
 
-func (pc pbConverter) bitwiseFuncToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
+func (pc pbConverter) bitwiseFuncToPBExpr(expr expression.ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
-	switch expr.FuncName.L {
+	switch expr.GetName().L {
 	case ast.And:
 		tp = tipb.ExprType_BitAnd
 	case ast.Or:
@@ -254,16 +254,16 @@ func (pc pbConverter) bitwiseFuncToPBExpr(expr *expression.ScalarFunction) *tipb
 	return pc.convertToPBExpr(expr, tp)
 }
 
-func (pc pbConverter) inToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
+func (pc pbConverter) inToPBExpr(expr expression.ScalarFunction) *tipb.Expr {
 	if !pc.client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_In)) {
 		return nil
 	}
 
-	pbExpr := pc.exprToPB(expr.Args[0])
+	pbExpr := pc.exprToPB(expr.GetArgs()[0])
 	if pbExpr == nil {
 		return nil
 	}
-	listExpr := pc.constListToPB(expr.Args[1:])
+	listExpr := pc.constListToPB(expr.GetArgs()[1:])
 	if listExpr == nil {
 		return nil
 	}
@@ -369,8 +369,8 @@ func aggFuncToPBExpr(sc *variable.StatementContext, client kv.Client, aggFunc ex
 	return &tipb.Expr{Tp: tp, Children: children}
 }
 
-func (pc pbConverter) builtinFuncToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
-	switch expr.FuncName.L {
+func (pc pbConverter) builtinFuncToPBExpr(expr expression.ScalarFunction) *tipb.Expr {
+	switch expr.GetName().L {
 	case ast.Case, ast.If, ast.Ifnull, ast.Nullif:
 		return pc.controlFuncsToPBExpr(expr)
 	case ast.Coalesce, ast.IsNull:
@@ -380,9 +380,9 @@ func (pc pbConverter) builtinFuncToPBExpr(expr *expression.ScalarFunction) *tipb
 	}
 }
 
-func (pc pbConverter) otherFuncsToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
+func (pc pbConverter) otherFuncsToPBExpr(expr expression.ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
-	switch expr.FuncName.L {
+	switch expr.GetName().L {
 	case ast.Coalesce:
 		tp = tipb.ExprType_Coalesce
 	case ast.IsNull:
@@ -391,9 +391,9 @@ func (pc pbConverter) otherFuncsToPBExpr(expr *expression.ScalarFunction) *tipb.
 	return pc.convertToPBExpr(expr, tp)
 }
 
-func (pc pbConverter) controlFuncsToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
+func (pc pbConverter) controlFuncsToPBExpr(expr expression.ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
-	switch expr.FuncName.L {
+	switch expr.GetName().L {
 	case ast.If:
 		tp = tipb.ExprType_If
 	case ast.Ifnull:
@@ -406,12 +406,12 @@ func (pc pbConverter) controlFuncsToPBExpr(expr *expression.ScalarFunction) *tip
 	return pc.convertToPBExpr(expr, tp)
 }
 
-func (pc pbConverter) convertToPBExpr(expr *expression.ScalarFunction, tp tipb.ExprType) *tipb.Expr {
+func (pc pbConverter) convertToPBExpr(expr expression.ScalarFunction, tp tipb.ExprType) *tipb.Expr {
 	if !pc.client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
 		return nil
 	}
-	children := make([]*tipb.Expr, 0, len(expr.Args))
-	for _, arg := range expr.Args {
+	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
+	for _, arg := range expr.GetArgs() {
 		pbArg := pc.exprToPB(arg)
 		if pbArg == nil {
 			return nil

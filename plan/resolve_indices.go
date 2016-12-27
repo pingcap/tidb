@@ -32,8 +32,8 @@ func (p *Join) ResolveIndicesAndCorCols() {
 	lSchema := p.GetChildByIndex(0).GetSchema()
 	rSchema := p.GetChildByIndex(1).GetSchema()
 	for _, fun := range p.EqualConditions {
-		fun.Args[0].ResolveIndices(lSchema)
-		fun.Args[1].ResolveIndices(rSchema)
+		fun.GetArgs()[0].ResolveIndices(lSchema)
+		fun.GetArgs()[1].ResolveIndices(rSchema)
 	}
 	for _, expr := range p.LeftConditions {
 		expr.ResolveIndices(lSchema)

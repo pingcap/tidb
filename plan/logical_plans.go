@@ -47,7 +47,7 @@ type Join struct {
 	reordered     bool
 	cartesianJoin bool
 
-	EqualConditions []*expression.ScalarFunction
+	EqualConditions []expression.ScalarFunction
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression

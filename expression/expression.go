@@ -200,10 +200,10 @@ type VarAssignment struct {
 // splitNormalFormItems split CNF(conjunctive normal form) like "a and b and c", or DNF(disjunctive normal form) like "a or b or c"
 func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
 	switch v := onExpr.(type) {
-	case *ScalarFunction:
-		if v.FuncName.L == funcName {
+	case ScalarFunction:
+		if v.GetName().L == funcName {
 			var ret []Expression
-			for _, arg := range v.Args {
+			for _, arg := range v.GetArgs() {
 				ret = append(ret, splitNormalFormItems(arg, funcName)...)
 			}
 			return ret
@@ -228,16 +228,16 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (Expression, error) {
 	switch x := expr.(type) {
-	case *ScalarFunction:
+	case ScalarFunction:
 		var err error
-		args := make([]Expression, len(x.Args))
-		for i, arg := range x.Args {
+		args := make([]Expression, len(x.GetArgs()))
+		for i, arg := range x.GetArgs() {
 			args[i], err = EvaluateExprWithNull(ctx, schema, arg)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		newFunc, err := NewFunction(x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		newFunc, err := NewFunction(x.GetName().L, types.NewFieldType(mysql.TypeTiny), args...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

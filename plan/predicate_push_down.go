@@ -77,7 +77,7 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 	leftPlan := p.GetChildByIndex(0).(LogicalPlan)
 	rightPlan := p.GetChildByIndex(1).(LogicalPlan)
 	var (
-		equalCond                              []*expression.ScalarFunction
+		equalCond                              []expression.ScalarFunction
 		leftPushCond, rightPushCond, otherCond []expression.Expression
 	)
 	if p.JoinType != InnerJoin {
@@ -242,7 +242,7 @@ func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret 
 		extractedCols := expression.ExtractColumns(cond)
 		for _, col := range extractedCols {
 			id := p.GetSchema().GetIndex(col)
-			if _, ok := p.Exprs[id].(*expression.ScalarFunction); ok {
+			if _, ok := p.Exprs[id].(expression.ScalarFunction); ok {
 				canSubstitute = false
 				break
 			}
@@ -313,7 +313,7 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 			// retained and pushed down at the same time. Because we will get a wrong query result that contains one column
 			// with value 0 rather than an empty query result.
 			ret = append(ret, cond)
-		case *expression.ScalarFunction:
+		case expression.ScalarFunction:
 			extractedCols := expression.ExtractColumns(cond)
 			ok := true
 			for _, col := range extractedCols {

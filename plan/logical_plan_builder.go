@@ -137,8 +137,8 @@ func extractCorColumns(expr expression.Expression) (cols []*expression.Correlate
 	switch v := expr.(type) {
 	case *expression.CorrelatedColumn:
 		return []*expression.CorrelatedColumn{v}
-	case *expression.ScalarFunction:
-		for _, arg := range v.Args {
+	case expression.ScalarFunction:
+		for _, arg := range v.GetArgs() {
 			cols = append(cols, extractCorColumns(arg)...)
 		}
 	}
@@ -146,13 +146,13 @@ func extractCorColumns(expr expression.Expression) (cols []*expression.Correlate
 }
 
 func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
-	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
+	eqCond []expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
 	otherCond []expression.Expression) {
 	for _, expr := range conditions {
-		binop, ok := expr.(*expression.ScalarFunction)
-		if ok && binop.FuncName.L == ast.EQ {
-			ln, lOK := binop.Args[0].(*expression.Column)
-			rn, rOK := binop.Args[1].(*expression.Column)
+		binop, ok := expr.(expression.ScalarFunction)
+		if ok && binop.GetName().L == ast.EQ {
+			ln, lOK := binop.GetArgs()[0].(*expression.Column)
+			rn, rOK := binop.GetArgs()[1].(*expression.Column)
 			if lOK && rOK {
 				if left.GetSchema().GetIndex(ln) != -1 && right.GetSchema().GetIndex(rn) != -1 {
 					eqCond = append(eqCond, binop)
@@ -160,7 +160,7 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 				}
 				if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
 					cond, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
-					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
+					eqCond = append(eqCond, cond.(expression.ScalarFunction))
 					continue
 				}
 			}
