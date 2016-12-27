@@ -254,7 +254,10 @@ func (c *RegionCache) GetStoreAddr(bo *Backoffer, id uint64) (string, error) {
 		return store.Addr, nil
 	}
 	c.storeMu.RUnlock()
+	return c.ReloadStoreAddr(bo, id)
+}
 
+func (c *RegionCache) ReloadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	addr, err := c.loadStoreAddr(bo, id)
 	if err != nil || addr == "" {
 		return "", errors.Trace(err)
