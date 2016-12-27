@@ -326,13 +326,13 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 }
 
 func buildShowDDLFields() expression.Schema {
-	schema := make(expression.Schema, 0, 6)
-	schema = append(schema, buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
-	schema = append(schema, buildColumn("", "OWNER", mysql.TypeVarchar, 64))
-	schema = append(schema, buildColumn("", "JOB", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn("", "BG_SCHEMA_VER", mysql.TypeLonglong, 4))
-	schema = append(schema, buildColumn("", "BG_OWNER", mysql.TypeVarchar, 64))
-	schema = append(schema, buildColumn("", "BG_JOB", mysql.TypeVarchar, 128))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 6))
+	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "OWNER", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "JOB", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn("", "BG_SCHEMA_VER", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "BG_OWNER", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "BG_JOB", mysql.TypeVarchar, 128))
 
 	return schema
 }
@@ -406,7 +406,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	default:
 		p.SetSchema(buildShowDefaultSchema(show))
 	}
-	for i, col := range p.schema {
+	for i, col := range p.schema.Columns {
 		col.Position = i
 	}
 	var conditions []expression.Expression
@@ -602,16 +602,16 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	}
 	p := &Explain{StmtPlan: targetPlan}
 	addChild(p, targetPlan)
-	schema := make(expression.Schema, 0, 3)
-	schema = append(schema, &expression.Column{
+	schema := expression.NewSchema(make([]*expression.Column, 0, 3))
+	schema.Append(&expression.Column{
 		ColName: model.NewCIStr("ID"),
 		RetType: types.NewFieldType(mysql.TypeString),
 	})
-	schema = append(schema, &expression.Column{
+	schema.Append(&expression.Column{
 		ColName: model.NewCIStr("Json"),
 		RetType: types.NewFieldType(mysql.TypeString),
 	})
-	schema = append(schema, &expression.Column{
+	schema.Append(&expression.Column{
 		ColName: model.NewCIStr("ParentID"),
 		RetType: types.NewFieldType(mysql.TypeString),
 	})
@@ -621,56 +621,56 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 
 func buildShowProcedureSchema() expression.Schema {
 	tblName := "ROUTINES"
-	schema := make(expression.Schema, 0, 11)
-	schema = append(schema, buildColumn(tblName, "Db", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Name", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Type", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Definer", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Modified", mysql.TypeDatetime, 19))
-	schema = append(schema, buildColumn(tblName, "Created", mysql.TypeDatetime, 19))
-	schema = append(schema, buildColumn(tblName, "Security_type", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Comment", mysql.TypeBlob, 196605))
-	schema = append(schema, buildColumn(tblName, "character_set_client", mysql.TypeVarchar, 32))
-	schema = append(schema, buildColumn(tblName, "collation_connection", mysql.TypeVarchar, 32))
-	schema = append(schema, buildColumn(tblName, "Database Collation", mysql.TypeVarchar, 32))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11))
+	schema.Append(buildColumn(tblName, "Db", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Name", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Type", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Definer", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Modified", mysql.TypeDatetime, 19))
+	schema.Append(buildColumn(tblName, "Created", mysql.TypeDatetime, 19))
+	schema.Append(buildColumn(tblName, "Security_type", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Comment", mysql.TypeBlob, 196605))
+	schema.Append(buildColumn(tblName, "character_set_client", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "collation_connection", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "Database Collation", mysql.TypeVarchar, 32))
 	return schema
 }
 
 func buildShowTriggerSchema() expression.Schema {
 	tblName := "TRIGGERS"
-	schema := make(expression.Schema, 0, 11)
-	schema = append(schema, buildColumn(tblName, "Trigger", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Event", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Table", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Statement", mysql.TypeBlob, 196605))
-	schema = append(schema, buildColumn(tblName, "Timing", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Created", mysql.TypeDatetime, 19))
-	schema = append(schema, buildColumn(tblName, "sql_mode", mysql.TypeBlob, 8192))
-	schema = append(schema, buildColumn(tblName, "Definer", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "character_set_client", mysql.TypeVarchar, 32))
-	schema = append(schema, buildColumn(tblName, "collation_connection", mysql.TypeVarchar, 32))
-	schema = append(schema, buildColumn(tblName, "Database Collation", mysql.TypeVarchar, 32))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11))
+	schema.Append(buildColumn(tblName, "Trigger", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Event", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Table", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Statement", mysql.TypeBlob, 196605))
+	schema.Append(buildColumn(tblName, "Timing", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Created", mysql.TypeDatetime, 19))
+	schema.Append(buildColumn(tblName, "sql_mode", mysql.TypeBlob, 8192))
+	schema.Append(buildColumn(tblName, "Definer", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "character_set_client", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "collation_connection", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "Database Collation", mysql.TypeVarchar, 32))
 	return schema
 }
 
 func buildShowEventsSchema() expression.Schema {
 	tblName := "EVENTS"
-	schema := make(expression.Schema, 0, 15)
-	schema = append(schema, buildColumn(tblName, "Db", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Name", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Time zone", mysql.TypeVarchar, 32))
-	schema = append(schema, buildColumn(tblName, "Definer", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Type", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Execute At", mysql.TypeDatetime, 19))
-	schema = append(schema, buildColumn(tblName, "Interval Value", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Interval Field", mysql.TypeVarchar, 128))
-	schema = append(schema, buildColumn(tblName, "Starts", mysql.TypeDatetime, 19))
-	schema = append(schema, buildColumn(tblName, "Ends", mysql.TypeDatetime, 19))
-	schema = append(schema, buildColumn(tblName, "Status", mysql.TypeVarchar, 32))
-	schema = append(schema, buildColumn(tblName, "Originator", mysql.TypeInt24, 4))
-	schema = append(schema, buildColumn(tblName, "character_set_client", mysql.TypeVarchar, 32))
-	schema = append(schema, buildColumn(tblName, "collation_connection", mysql.TypeVarchar, 32))
-	schema = append(schema, buildColumn(tblName, "Database Collation", mysql.TypeVarchar, 32))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 15))
+	schema.Append(buildColumn(tblName, "Db", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Name", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Time zone", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "Definer", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Type", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Execute At", mysql.TypeDatetime, 19))
+	schema.Append(buildColumn(tblName, "Interval Value", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Interval Field", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Starts", mysql.TypeDatetime, 19))
+	schema.Append(buildColumn(tblName, "Ends", mysql.TypeDatetime, 19))
+	schema.Append(buildColumn(tblName, "Status", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "Originator", mysql.TypeInt24, 4))
+	schema.Append(buildColumn(tblName, "character_set_client", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "collation_connection", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "Database Collation", mysql.TypeVarchar, 32))
 	return schema
 }
 
@@ -732,7 +732,7 @@ func getShowColNamesAndTypes(s *ast.ShowStmt) (names []string, ftypes []byte) {
 
 func buildShowDefaultSchema(s *ast.ShowStmt) expression.Schema {
 	names, ftypes := getShowColNamesAndTypes(s)
-	schema := make(expression.Schema, 0, len(names))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(names)))
 	for i, name := range names {
 		col := &expression.Column{
 			ColName: model.NewCIStr(name),
@@ -746,7 +746,7 @@ func buildShowDefaultSchema(s *ast.ShowStmt) expression.Schema {
 		}
 		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
 		col.RetType = &retType
-		schema = append(schema, col)
+		schema.Append(col)
 	}
 	return schema
 }

@@ -261,7 +261,7 @@ func (p *physicalTableSource) addTopN(ctx context.Context, prop *requiredPropert
 
 func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalAggregation) expression.Schema {
 	if p.client == nil {
-		return nil
+		return expression.NewSchema(nil)
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, f := range agg.AggFuncs {
@@ -269,7 +269,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		if pb == nil {
 			// When we fail to convert any agg function to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
-			return nil
+			return expression.NewSchema(nil)
 		}
 		p.AggFuncsPB = append(p.AggFuncsPB, pb)
 		p.aggFuncs = append(p.aggFuncs, f.Clone())
@@ -279,7 +279,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		if pb == nil {
 			// When we fail to convert any group-by item to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
-			return nil
+			return expression.NewSchema(nil)
 		}
 		p.GbyItemsPB = append(p.GbyItemsPB, pb)
 		p.gbyItems = append(p.gbyItems, item.Clone())
@@ -289,10 +289,10 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	gk.Charset = charset.CharsetBin
 	gk.Collate = charset.CollationBin
 	p.AggFields = append(p.AggFields, gk)
-	var schema expression.Schema
+	schema := expression.NewSchema(nil)
 	cursor := 0
-	schema = append(schema, &expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems))})
-	agg.GroupByItems = []expression.Expression{schema[cursor]}
+	schema.Append(&expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems))})
+	agg.GroupByItems = []expression.Expression{schema.Columns[cursor]}
 	newAggFuncs := make([]expression.AggregationFunction, len(agg.AggFuncs))
 	for i, aggFun := range agg.AggFuncs {
 		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
@@ -300,8 +300,8 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		colName := model.NewCIStr(fmt.Sprint(aggFun.GetArgs()))
 		if needCount(fun) {
 			cursor++
-			schema = append(schema, &expression.Column{Index: cursor, ColName: colName})
-			args = append(args, schema[cursor])
+			schema.Append(&expression.Column{Index: cursor, ColName: colName})
+			args = append(args, schema.Columns[cursor])
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen = 21
 			ft.Charset = charset.CharsetBin
@@ -310,9 +310,9 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		}
 		if needValue(fun) {
 			cursor++
-			schema = append(schema, &expression.Column{Index: cursor, ColName: colName})
-			args = append(args, schema[cursor])
-			p.AggFields = append(p.AggFields, agg.schema[i].GetType())
+			schema.Append(&expression.Column{Index: cursor, ColName: colName})
+			args = append(args, schema.Columns[cursor])
+			p.AggFields = append(p.AggFields, agg.schema.Columns[i].GetType())
 		}
 		fun.SetArgs(args)
 		fun.SetMode(expression.FinalMode)
@@ -545,7 +545,7 @@ func (p *PhysicalApply) SetCorrelated() {
 	corColumns := p.GetChildren()[1].extractCorrelatedCols()
 	p.correlated = p.GetChildren()[0].IsCorrelated()
 	for _, corCol := range corColumns {
-		if idx := p.GetChildren()[0].GetSchema().GetIndex(&corCol.Column); idx == -1 {
+		if idx := p.GetChildren()[0].GetSchema().GetColumnIndex(&corCol.Column); idx == -1 {
 			p.correlated = true
 			break
 		}

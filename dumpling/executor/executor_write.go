@@ -155,7 +155,7 @@ type DeleteExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *DeleteExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements the Executor Next interface.
@@ -530,7 +530,7 @@ func (e *LoadData) Next() (*Row, error) {
 
 // Schema implements the Executor Schema interface.
 func (e *LoadData) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Close implements the Executor Close interface.
@@ -566,7 +566,7 @@ type InsertExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *InsertExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements the Executor Next interface.
@@ -759,8 +759,8 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 
 func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
-	if len(e.SelectExec.Schema()) != len(cols) {
-		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Schema()))
+	if e.SelectExec.Schema().Len() != len(cols) {
+		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), e.SelectExec.Schema().Len())
 	}
 	var rows [][]types.Datum
 	for {
@@ -954,7 +954,7 @@ type ReplaceExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *ReplaceExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Close implements the Executor Close interface.
@@ -1061,7 +1061,7 @@ type UpdateExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *UpdateExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements the Executor Next interface.
@@ -1132,9 +1132,9 @@ func (e *UpdateExec) fetchRows() error {
 		if row == nil {
 			return nil
 		}
-		data := make([]types.Datum, len(e.SelectExec.Schema()))
-		newData := make([]types.Datum, len(e.SelectExec.Schema()))
-		for i, s := range e.SelectExec.Schema() {
+		data := make([]types.Datum, e.SelectExec.Schema().Len())
+		newData := make([]types.Datum, e.SelectExec.Schema().Len())
+		for i, s := range e.SelectExec.Schema().Columns {
 			data[i], err = s.Eval(row.Data, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
@@ -1163,8 +1163,8 @@ func (e *UpdateExec) getTableOffset(entry RowKeyEntry) int {
 		tblName = entry.TableAsName.L
 	}
 	schema := e.SelectExec.Schema()
-	for i := 0; i < len(schema); i++ {
-		s := schema[i]
+	for i := 0; i < schema.Len(); i++ {
+		s := schema.Columns[i]
 		if s.TblName.L == tblName {
 			return i
 		}
