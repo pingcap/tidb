@@ -759,8 +759,8 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 
 func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
-	if e.SelectExec.Schema().GetColumnsLen() != len(cols) {
-		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), e.SelectExec.Schema().GetColumnsLen())
+	if e.SelectExec.Schema().Len() != len(cols) {
+		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), e.SelectExec.Schema().Len())
 	}
 	var rows [][]types.Datum
 	for {
@@ -1132,8 +1132,8 @@ func (e *UpdateExec) fetchRows() error {
 		if row == nil {
 			return nil
 		}
-		data := make([]types.Datum, e.SelectExec.Schema().GetColumnsLen())
-		newData := make([]types.Datum, e.SelectExec.Schema().GetColumnsLen())
+		data := make([]types.Datum, e.SelectExec.Schema().Len())
+		newData := make([]types.Datum, e.SelectExec.Schema().Len())
 		for i, s := range e.SelectExec.Schema().Columns {
 			data[i], err = s.Eval(row.Data, e.ctx)
 			if err != nil {
@@ -1163,7 +1163,7 @@ func (e *UpdateExec) getTableOffset(entry RowKeyEntry) int {
 		tblName = entry.TableAsName.L
 	}
 	schema := e.SelectExec.Schema()
-	for i := 0; i < schema.GetColumnsLen(); i++ {
+	for i := 0; i < schema.Len(); i++ {
 		s := schema.Columns[i]
 		if s.TblName.L == tblName {
 			return i

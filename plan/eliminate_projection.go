@@ -47,7 +47,7 @@ func EliminateProjection(p PhysicalPlan) PhysicalPlan {
 // or "SELECT t1.a, t2.b, t1.b, t2.a FROM t1, t2 WHERE t1.a < 0 AND t2.b > 0".
 func projectionCanBeEliminated(p *Projection) bool {
 	child := p.GetChildByIndex(0).(PhysicalPlan)
-	if p.GetSchema().GetColumnsLen() != child.GetSchema().GetColumnsLen() {
+	if p.GetSchema().Len() != child.GetSchema().Len() {
 		return false
 	}
 	for i, expr := range p.Exprs {

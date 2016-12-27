@@ -36,10 +36,10 @@ func (s Schema) String() string {
 
 // Clone copies the total schema.
 func (s Schema) Clone() Schema {
-	result := NewSchema(make([]*Column, 0, s.GetColumnsLen()))
+	result := NewSchema(make([]*Column, 0, s.Len()))
 	for _, col := range s.Columns {
 		newCol := *col
-		result.AppendColumn(&newCol)
+		result.Append(&newCol)
 	}
 	return result
 }
@@ -92,13 +92,13 @@ func (s Schema) GetColumnIndex(col *Column) int {
 	return -1
 }
 
-// GetColumnsLen returns the number of columns in schema.
-func (s Schema) GetColumnsLen() int {
+// Len returns the number of columns in schema.
+func (s Schema) Len() int {
 	return len(s.Columns)
 }
 
-// AppendColumn append new column to the columns stored in schema.
-func (s *Schema) AppendColumn(col *Column) {
+// Append append new column to the columns stored in schema.
+func (s *Schema) Append(col *Column) {
 	s.Columns = append(s.Columns, col)
 }
 

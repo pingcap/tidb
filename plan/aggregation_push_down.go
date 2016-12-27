@@ -175,8 +175,8 @@ func (a *aggPushDownSolver) decompose(aggFunc expression.AggregationFunction, sc
 	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
 	result := []expression.AggregationFunction{aggFunc.Clone()}
 	for _, aggFunc := range result {
-		schema.AppendColumn(&expression.Column{
-			ColName:  model.NewCIStr(fmt.Sprintf("join_agg_%d", schema.GetColumnsLen())), // useless but for debug
+		schema.Append(&expression.Column{
+			ColName:  model.NewCIStr(fmt.Sprintf("join_agg_%d", schema.Len())), // useless but for debug
 			FromID:   id,
 			Position: len(schema.Columns),
 			RetType:  aggFunc.GetType(),
@@ -225,7 +225,7 @@ func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFu
 }
 
 func (a *aggPushDownSolver) getDefaultValues(agg *Aggregation) ([]types.Datum, bool) {
-	defaultValues := make([]types.Datum, 0, agg.GetSchema().GetColumnsLen())
+	defaultValues := make([]types.Datum, 0, agg.GetSchema().Len())
 	for _, aggFunc := range agg.AggFuncs {
 		value, existsDefaultValue := aggFunc.CalculateDefaultValue(agg.children[0].GetSchema(), a.ctx)
 		if !existsDefaultValue {
@@ -262,7 +262,7 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 	for _, gbyCol := range gbyCols {
 		firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
 		newAggFuncs = append(newAggFuncs, firstRow)
-		schema.AppendColumn(gbyCol.Clone().(*expression.Column))
+		schema.Append(gbyCol.Clone().(*expression.Column))
 	}
 	agg.AggFuncs = newAggFuncs
 	agg.SetSchema(schema)

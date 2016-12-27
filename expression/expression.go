@@ -263,7 +263,7 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 			RetType:  &col.FieldType,
 			Position: i,
 		}
-		schema.AppendColumn(newCol)
+		schema.Append(newCol)
 	}
 	return schema
 }

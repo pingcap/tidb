@@ -20,7 +20,7 @@ import (
 )
 
 func getUsedList(usedCols []*expression.Column, schema expression.Schema) []bool {
-	used := make([]bool, schema.GetColumnsLen())
+	used := make([]bool, schema.Len())
 	for _, col := range usedCols {
 		idx := schema.GetColumnIndex(col)
 		if idx == -1 {
@@ -204,7 +204,7 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 	} else if p.JoinType == SemiJoinWithAux {
 		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
 		p.schema = lChild.GetSchema().Clone()
-		p.schema.AppendColumn(joinCol)
+		p.schema.Append(joinCol)
 	} else {
 		p.schema = composedSchema
 	}

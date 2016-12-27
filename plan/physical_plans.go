@@ -291,7 +291,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	p.AggFields = append(p.AggFields, gk)
 	schema := expression.NewSchema(nil)
 	cursor := 0
-	schema.AppendColumn(&expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems))})
+	schema.Append(&expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems))})
 	agg.GroupByItems = []expression.Expression{schema.Columns[cursor]}
 	newAggFuncs := make([]expression.AggregationFunction, len(agg.AggFuncs))
 	for i, aggFun := range agg.AggFuncs {
@@ -300,7 +300,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		colName := model.NewCIStr(fmt.Sprint(aggFun.GetArgs()))
 		if needCount(fun) {
 			cursor++
-			schema.AppendColumn(&expression.Column{Index: cursor, ColName: colName})
+			schema.Append(&expression.Column{Index: cursor, ColName: colName})
 			args = append(args, schema.Columns[cursor])
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen = 21
@@ -310,7 +310,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		}
 		if needValue(fun) {
 			cursor++
-			schema.AppendColumn(&expression.Column{Index: cursor, ColName: colName})
+			schema.Append(&expression.Column{Index: cursor, ColName: colName})
 			args = append(args, schema.Columns[cursor])
 			p.AggFields = append(p.AggFields, agg.schema.Columns[i].GetType())
 		}
