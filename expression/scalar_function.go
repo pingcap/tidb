@@ -60,8 +60,7 @@ func NewFunction(funcName string, retType *types.FieldType, args ...Expression) 
 		return nil, errors.Errorf("Function %s is not implemented.", funcName)
 	}
 	if len(args) < f.MinArgs || (f.MaxArgs != -1 && len(args) > f.MaxArgs) {
-		return nil, errInvalidOperation.Gen("number of function arguments must in [%d, %d].",
-			f.MinArgs, f.MaxArgs)
+		return nil, errIncorrectParameterCount.Gen("Incorrect parameter count in the call to native function %s", funcName)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
