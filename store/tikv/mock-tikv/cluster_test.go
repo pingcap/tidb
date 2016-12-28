@@ -14,7 +14,7 @@
 package mocktikv_test
 
 import (
-	//"math"
+	"math"
 	"strconv"
 
 	"bytes"
@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"math"
 )
 
 var _ = Suite(&testClusterSuite{})
