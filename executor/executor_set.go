@@ -123,7 +123,7 @@ func (e *SetExecutor) executeSet() error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = varsutil.SetSystemVar(sessionVars, name, value)
+			err = varsutil.SetSessionSystemVar(sessionVars, name, value)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -168,7 +168,7 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		if sysVar != nil {
 			value = types.NewStringDatum(sysVar.Value)
 		} else {
-			s, err1 := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(strings.ToLower(v.Name))
+			s, err1 := varsutil.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 			if err1 != nil {
 				return value, errors.Trace(err1)
 			}
