@@ -77,9 +77,6 @@ func (txn *dbTxn) Delete(k kv.Key) error {
 }
 
 func (txn *dbTxn) SetOption(opt kv.Option, val interface{}) {
-	if opt == kv.SchemaLeaseChecker {
-		fmt.Println("set option for ", txn.tid)
-	}
 	txn.us.SetOption(opt, val)
 }
 

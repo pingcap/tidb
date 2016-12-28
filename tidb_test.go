@@ -267,8 +267,6 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 // TODO: Merge TestIssue1435 in session test.
 func (s *testMainSuite) TestSchemaValidity(c *C) {
 	localstore.MockRemoteStore = true
-	saveSchemaLease := schemaLease
-	schemaLease = 20 * time.Millisecond
 	store := newStore(c, s.dbName+"schema_validity")
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
@@ -288,12 +286,11 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	execFailedFunc := func(s Session, tbl string, start chan struct{}, end chan error) {
 		// execute successfully
 		_, err := exec(s, "begin;")
+		c.Assert(err, IsNil)
 		<-start
 		<-start
-		if err == nil {
-			// execute failed
-			_, err = exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
-		}
+
+		_, err = exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
 
 		// table t1 executes failed
 		// table t2 executes successfully
@@ -358,7 +355,6 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	err = store.Close()
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
-	schemaLease = saveSchemaLease
 }
 
 func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {

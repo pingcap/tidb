@@ -194,11 +194,6 @@ func (s *session) doCommit() error {
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
 	})
 	if err := s.txn.Commit(); err != nil {
-		// Should we call s.txn.Rollback() here?
-		err1 := s.txn.Rollback()
-		if err1 != nil {
-			log.Errorf("rollback txn failed, err:%v", err1)
-		}
 		return errors.Trace(err)
 	}
 	return nil
