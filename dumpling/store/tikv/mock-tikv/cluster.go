@@ -112,6 +112,13 @@ func (c *Cluster) RemoveStore(storeID uint64) {
 	delete(c.stores, storeID)
 }
 
+// UpdateStoreAddr updates store address for cluster.
+func (c *Cluster) UpdateStoreAddr(storeID uint64, addr string) {
+	c.Lock()
+	defer c.Unlock()
+	c.stores[storeID] = newStore(storeID, addr)
+}
+
 // GetRegion returns a Region's meta and leader ID.
 func (c *Cluster) GetRegion(regionID uint64) (*metapb.Region, uint64) {
 	c.RLock()
