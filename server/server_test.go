@@ -447,6 +447,10 @@ func runTestErrorCode(c *C) {
 		checkErrorCode(c, err, tmysql.ErrUnknownSystemVariable)
 		_, err = txn2.Exec("set @@unknown_sys_var='1';")
 		checkErrorCode(c, err, tmysql.ErrUnknownSystemVariable)
+
+		// Expression errors
+		_, err = txn2.Exec("select greatest(2);")
+		checkErrorCode(c, err, tmysql.ErrWrongParamcountToNativeFct)
 	})
 }
 
