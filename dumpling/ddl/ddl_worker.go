@@ -307,7 +307,14 @@ func (d *ddl) handleDDLJobQueue() error {
 		// If the job is done or still running, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
 		if job.State == model.JobRunning || job.State == model.JobDone {
-			d.waitSchemaChanged(waitTime)
+			switch job.Type {
+			case model.ActionCreateSchema, model.ActionDropSchema, model.ActionCreateTable,
+				model.ActionTruncateTable, model.ActionDropTable:
+				// Do not need to wait for those DDL, because those DDL do not need to modify data,
+				// So there is no data inconsistent issue.
+			default:
+				d.waitSchemaChanged(waitTime)
+			}
 		}
 		if job.IsFinished() {
 			d.startBgJob(job.Type)
