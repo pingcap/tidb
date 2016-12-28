@@ -335,16 +335,16 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Index(t.c_d_e)[[<nil>,+inf]]",
 		},
 		{
-			sql:  "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
-			best: "Index(t.c_d_e)[(0,1) (2,3) (4,5) (6,7) (9,10)]",
+			sql:  "select * from t where (t.c > 0 and t.c < 1)",
+			best: "Index(t.c_d_e)[(0,1)]",
 		},
 		{
-			sql:  "select sum(t.a) from t where t.c in (1,2) and t.d in (1,3) group by t.d order by t.d",
-			best: "Index(t.c_d_e)[[1 1,1 1] [1 3,1 3] [2 1,2 1] [2 3,2 3]]->HashAgg->Sort->Trim",
+			sql:  "select sum(t.a) from t where t.c in (1,2) and t.d in (1,3) and t.e in (1) group by t.d order by t.d",
+			best: "Index(t.c_d_e)[[1 1 1,1 1 1] [1 3 1,1 3 1] [2 1 1,2 1 1] [2 3 1,2 3 1]]->HashAgg->Sort->Trim",
 		},
 		{
-			sql:  "select * from t where t.c = 1 and t.e = 1 order by t.a limit 1",
-			best: "Index(t.c_d_e)[[1,1]]->Sort + Limit(1) + Offset(0)",
+			sql:  "select * from t where t.c = 1 and t.d = 1 and t.e = 1 order by t.a limit 1",
+			best: "Index(t.c_d_e)[[1 1 1,1 1 1]]->Sort + Limit(1) + Offset(0)",
 		},
 		{
 			sql:  "select * from t where t.c = 1 order by t.f limit 1",
@@ -356,7 +356,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t where t.c = 1 and t.e = 1 and t.f = 1 order by t.f limit 1",
-			best: "Index(t.c_d_e)[[1,1]]->Sort + Limit(1) + Offset(0)",
+			best: "Index(t.f)[[1,1]]->Sort + Limit(1) + Offset(0)",
 		},
 		{
 			sql:  "select * from t t1 ignore index(e) where c < 0",
@@ -368,7 +368,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t where f in (1,2) and g in(1,2,3,4,5)",
-			best: "Index(t.f_g)[[1 1,1 1] [1 2,1 2] [1 3,1 3] [1 4,1 4] [1 5,1 5] [2 1,2 1] [2 2,2 2] [2 3,2 3] [2 4,2 4] [2 5,2 5]]",
+			best: "Index(t.f)[[1,1] [2,2]]",
 		},
 		{
 			sql:  "select * from t t1 where 1 = 0",
@@ -376,7 +376,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t t1 where c in (1,2,3,4,5,6,7,8,9,0)",
-			best: "Index(t.c_d_e)[[0,0] [1,1] [2,2] [3,3] [4,4] [5,5] [6,6] [7,7] [8,8] [9,9]]",
+			best: "Table(t)",
 		},
 		{
 			sql:  "select * from t t1 where a in (1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,7,8,9)",

@@ -21,7 +21,6 @@ import (
 	"sync/atomic"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -2125,7 +2124,6 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		for i := range e.indOffsets {
 			indRes = append(indRes, &recordSet{executor: e.Srcs[i]})
 		}
-		log.Warnf("%s %s %s %s", count, columnSamples, indRes, pkRes)
 		err := e.buildStatisticsAndSaveToKV(count, columnSamples, indRes, pkRes)
 		for _, ir := range indRes {
 			ir.Close()
@@ -2144,9 +2142,6 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, indRes []ast.RecordSet, pkRes ast.RecordSet) error {
 	txn := e.ctx.Txn()
 	sc := e.ctx.GetSessionVars().StmtCtx
-	if columnSamples == nil && e.colOffsets != nil {
-		columnSamples = make([][]types.Datum, len(e.colOffsets))
-	}
 	t, err := statistics.NewTable(sc, e.table.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples, e.colOffsets, indRes, e.indOffsets, pkRes, e.pkOffset)
 	if err != nil {
 		return errors.Trace(err)

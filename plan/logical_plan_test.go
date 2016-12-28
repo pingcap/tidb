@@ -568,7 +568,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "analyze table t",
-			plan: "DataScan(t)->Projection->Sort->DataScan(t)->Projection->Sort->DataScan(t)->Projection->Sort->DataScan(t)->Projection->Sort->DataScan(t)->Projection->Sort->DataScan(t)->Projection->Sort->DataScan(t)->Projection->*plan.Analyze->*plan.Analyze",
+			plan: "DataScan(t)->Projection->Sort->DataScan(t)->Projection->*plan.Analyze->*plan.Analyze",
 		},
 	}
 	for _, ca := range cases {
@@ -804,7 +804,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
-			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3] [4,4] [5,5]]->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c = 5",
@@ -828,7 +828,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
-			best: "Index(t.c_d_e)[(1 3,1 4) (1 5,1 6) (2 3,2 4) (2 5,2 6) (3 3,3 4) (3 5,3 6)]->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c in (1, 2, 3)",

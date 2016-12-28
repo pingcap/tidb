@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -43,60 +44,66 @@ const (
 // JoinConcurrency means the number of goroutines that participate in joining.
 var JoinConcurrency = 5
 
-func getRowCountByIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo) (uint64, error) {
-	totalCount := float64(0)
-	log.Warnf("%s", indexInfo)
+func getRowCountByIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo, tableInfo *model.TableInfo) (uint64, error) {
+	totalCount := int64(0)
+	var offset int
+	for i := range tableInfo.Indices {
+		if tableInfo.Indices[i].Name.L == indexInfo.Name.L {
+			offset = i
+			break
+		}
+	}
 	for _, indexRange := range indexRanges {
-		log.Warnf("%s", indexRange)
-		count := float64(table.Count)
-		i := len(indexRange.LowVal) - 1
-		l := indexRange.LowVal[i]
-		r := indexRange.HighVal[i]
+		lv := indexRange.LowVal
+		rv := indexRange.HighVal
+		for i := len(lv); i < len(indexInfo.Columns); i++ {
+			lv = append(lv, types.MinNotNullDatum())
+		}
+		for i := len(rv); i < len(indexInfo.Columns); i++ {
+			rv = append(rv, types.MaxValueDatum())
+		}
+		lb, err := codec.EncodeKey(nil, lv...)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		rb, err := codec.EncodeKey(nil, rv...)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		l := types.NewBytesDatum(lb)
+		r := types.NewBytesDatum(rb)
 		var rowCount int64
-		var err error
-		offset := indexInfo.Columns[i].Offset
-		if l.Kind() == types.KindNull && r.Kind() == types.KindMaxValue {
+		if lv[0].Kind() == types.KindNull && rv[0].Kind() == types.KindMaxValue {
 			return uint64(table.Count), nil
-		} else if l.Kind() == types.KindMinNotNull {
-			rowCount, err = table.Columns[offset].EqualRowCount(sc, types.Datum{})
-			if r.Kind() == types.KindMaxValue {
+		} else if lv[0].Kind() == types.KindMinNotNull {
+			rowCount, err = table.Indices[offset].EqualRowCount(sc, types.Datum{})
+			if rv[0].Kind() == types.KindMaxValue {
 				rowCount = table.Count - rowCount
 			} else if err == nil {
-				lessCount, err1 := table.Columns[offset].LessRowCount(sc, r)
+				lessCount, err1 := table.Indices[offset].LessRowCount(sc, r)
 				rowCount = lessCount - rowCount
 				err = err1
 			}
-		} else if r.Kind() == types.KindMaxValue {
-			rowCount, err = table.Columns[offset].GreaterRowCount(sc, l)
+		} else if rv[0].Kind() == types.KindMaxValue {
+			rowCount, err = table.Indices[offset].GreaterRowCount(sc, l)
 		} else {
 			compare, err1 := l.CompareDatum(sc, r)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
 			}
 			if compare == 0 {
-				rowCount, err = table.Columns[offset].EqualRowCount(sc, l)
+				rowCount, err = table.Indices[offset].EqualRowCount(sc, l)
 			} else {
-				rowCount, err = table.Columns[offset].BetweenRowCount(sc, l, r)
+				rowCount, err = table.Indices[offset].BetweenRowCount(sc, l, r)
 			}
 		}
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		count = count / float64(table.Count) * float64(rowCount)
-		// If the condition is a = 1, b = 1, c = 1, d = 1, we think every a=1, b=1, c=1 only filtrate 1/100 data,
-		// so as to avoid collapsing too fast.
-		for j := 0; j < i; j++ {
-			count = count / float64(100)
-		}
-		totalCount += count
+		totalCount += rowCount
 	}
-	// To avoid the totalCount become too small.
-	if uint64(totalCount) < 1000 {
-		// We will not let the row count less than 1000 to avoid collapsing too fast in the future calculation.
-		totalCount = 1000.0
-	}
-	if totalCount > float64(table.Count) {
-		totalCount = float64(table.Count) / 3.0
+	if totalCount > table.Count {
+		totalCount = table.Count
 	}
 	return uint64(totalCount), nil
 }
@@ -213,12 +220,10 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
-	log.Warnf("%s\n %s \n%s \n%s \n %s",index, is.Table, is.Columns, is.TableAsName, is.DBName)
 	is.tp = Idx
 	is.allocator = p.allocator
 	is.initIDAndContext(p.ctx)
 	is.SetSchema(p.schema)
-	log.Warnf("%s", is.GetSchema())
 	if p.ctx.Txn() != nil {
 		is.readOnly = p.ctx.Txn().IsReadOnly()
 	} else {
@@ -252,7 +257,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			}
 			log.Warn("truncate error in buildIndexRange")
 		}
-		rowCount, err = getRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index)
+		rowCount, err = getRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, is.Table)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1148,7 +1153,27 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 	if info != nil {
 		return info, nil
 	}
-	childInfos := make([]*physicalPlanInfo, 0, len(p.children))
+	var childInfos []*physicalPlanInfo
+	for _, ind := range p.IndOffsets {
+		is := &PhysicalIndexScan{
+			Index:               p.Table.TableInfo.Indices[ind],
+			Table:               p.Table.TableInfo,
+			Columns:             p.Table.TableInfo.Columns,
+			TableAsName:         &p.Table.Name,
+			OutOfOrder:          true,
+			DBName:              &p.Table.DBInfo.Name,
+			physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
+			DoubleRead:          false,
+		}
+		is.tp = Ana
+		is.allocator = p.allocator
+		is.initIDAndContext(p.ctx)
+		is.SetSchema(expression.TableInfo2Schema(p.Table.TableInfo))
+		is.readOnly = true
+		rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
+		childInfos = append(childInfos, is.matchProperty(prop, &physicalPlanInfo{count: 0}))
+	}
 	for _, child := range p.GetChildren() {
 		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})
 		if err != nil {

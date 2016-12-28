@@ -403,17 +403,6 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 		} else {
 			tableName = tbl.Schema.L + "." + tbl.Name.L
 		}
-		if indOffsets != nil {
-			for _, offset := range indOffsets {
-				var colNames []string
-				indCols := tbl.TableInfo.Indices[offset].Columns
-				for _, indCol := range indCols {
-					colNames = append(colNames, indCol.Name.L)
-				}
-				sel := b.prepareSimpleSelect(strings.Join(colNames, ","), tableName, true)
-				addChild(result, sel)
-			}
-		}
 		if pkOffset != -1 {
 			colName := tbl.TableInfo.Columns[pkOffset].Name.L
 			sel := b.prepareSimpleSelect(colName, tableName, true)

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/ngaut/log"
 )
 
 const (
@@ -462,9 +461,33 @@ func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, resu
 	return nil
 }
 
+func copyFromIndiceColumns(ind *Column, id, numBuckets int64) (*Column, error) {
+	col := &Column{
+		ID:      id,
+		NDV:     ind.NDV,
+		Numbers: ind.Numbers,
+		Values:  make([]types.Datum, 0, numBuckets),
+		Repeats: ind.Repeats,
+	}
+	for _, val := range ind.Values {
+		if val.GetBytes() == nil {
+			break
+		}
+		data, err := codec.Decode(val.GetBytes(), 1)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		col.Values = append(col.Values, data[0])
+	}
+	return col, nil
+}
+
 // NewTable creates a table statistics.
 func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, numBuckets int64, columnSamples [][]types.Datum,
 	colOffsets []int, indResults []ast.RecordSet, indOffsets []int, pkResult ast.RecordSet, pkOffset int) (*Table, error) {
+	if count == 0 {
+		return PseudoTable(ti), nil
+	}
 	t := &Table{
 		info:    ti,
 		TS:      ts,
@@ -502,40 +525,26 @@ func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, num
 		}
 		if len(ti.Indices[offset].Columns) == 1 {
 			for j, col := range ti.Columns {
-				if col.Name.L == ti.Indices[offset].Columns[0].Name.L {
-					t.Columns[j] = &Column{
-						ID:      col.ID,
-						NDV:     t.Indices[offset].NDV,
-						Numbers: t.Indices[offset].Numbers,
-						Values:  make([]types.Datum, 0, numBuckets),
-						Repeats: t.Indices[offset].Repeats,
-					}
-					log.Warnf("%d %d %d",j,offset,t.Indices[offset].NDV)
-					for _, val := range t.Indices[offset].Values {
-						if val.GetBytes() == nil {
-							break;
-						}
-						data, err := codec.Decode(val.GetBytes(), 1)
-						if err != nil {
-							return nil, errors.Trace(err)
-						}
-						t.Columns[j].Values = append(t.Columns[j].Values, data[0])
+				if col.Name.L == ti.Indices[offset].Columns[0].Name.L && t.Columns[j] == nil {
+					t.Columns[j], err = copyFromIndiceColumns(t.Indices[offset], col.ID, numBuckets)
+					if err != nil {
+						return nil, errors.Trace(err)
 					}
 					break
 				}
 			}
 		}
 	}
+	if t.Count == 0 {
+		return PseudoTable(ti), nil
+	}
 	// Some Indices may not need to have histograms, here we give them pseudo one to remove edge cases in pb.
 	// However, it should be never used.
 	for i, idx := range ti.Indices {
 		if t.Indices[i] == nil {
 			t.Indices[i] = &Column{
-				ID:      idx.ID,
-				NDV:     pseudoRowCount / 2,
-				Numbers: make([]int64, 1),
-				Values:  make([]types.Datum, 1),
-				Repeats: make([]int64, 1),
+				ID:  idx.ID,
+				NDV: pseudoRowCount / 2,
 			}
 		}
 	}
@@ -591,12 +600,20 @@ func PseudoTable(ti *model.TableInfo) *Table {
 	t.TS = pseudoTimestamp
 	t.Count = pseudoRowCount
 	t.Columns = make([]*Column, len(ti.Columns))
+	t.Indices = make([]*Column, len(ti.Indices))
 	for i, v := range ti.Columns {
 		c := &Column{
 			ID:  v.ID,
 			NDV: pseudoRowCount / 2,
 		}
 		t.Columns[i] = c
+	}
+	for i, v := range ti.Indices {
+		c := &Column{
+			ID:  v.ID,
+			NDV: pseudoRowCount / 2,
+		}
+		t.Indices[i] = c
 	}
 	return t
 }
