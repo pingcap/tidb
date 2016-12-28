@@ -187,7 +187,7 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 	if storeNotMatch := regionErr.GetStoreNotMatch(); storeNotMatch != nil {
 		// store not match
 		log.Warnf("tikv reports `StoreNotMatch`: %s, ctx: %s, retry later", storeNotMatch, ctx.KVCtx)
-		s.regionCache.ClearStoreById(ctx.GetStoreID())
+		s.regionCache.ClearStoreByID(ctx.GetStoreID())
 		return true, nil
 	}
 

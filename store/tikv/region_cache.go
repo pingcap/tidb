@@ -57,6 +57,7 @@ type RPCContext struct {
 	Addr   string
 }
 
+// GetStoreID returns StoreID
 func (c *RPCContext) GetStoreID() uint64 {
 	if c.KVCtx != nil && c.KVCtx.Peer != nil {
 		return c.KVCtx.Peer.StoreId
@@ -264,6 +265,7 @@ func (c *RegionCache) GetStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	return c.ReloadStoreAddr(bo, id)
 }
 
+// ReloadStoreAddr reload and save store's address
 func (c *RegionCache) ReloadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	addr, err := c.loadStoreAddr(bo, id)
 	if err != nil || addr == "" {
@@ -279,7 +281,8 @@ func (c *RegionCache) ReloadStoreAddr(bo *Backoffer, id uint64) (string, error) 
 	return addr, nil
 }
 
-func (c *RegionCache) ClearStoreById(id uint64) {
+// ClearStoreByID clear store from cache with storeID
+func (c *RegionCache) ClearStoreByID(id uint64) {
 	c.storeMu.Lock()
 	defer c.storeMu.Unlock()
 	delete(c.storeMu.stores, id)
