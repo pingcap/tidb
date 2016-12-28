@@ -265,7 +265,7 @@ func (c *RegionCache) GetStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	return c.ReloadStoreAddr(bo, id)
 }
 
-// ReloadStoreAddr reload and save store's address
+// ReloadStoreAddr reloads store's address.
 func (c *RegionCache) ReloadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	addr, err := c.loadStoreAddr(bo, id)
 	if err != nil || addr == "" {
@@ -281,7 +281,7 @@ func (c *RegionCache) ReloadStoreAddr(bo *Backoffer, id uint64) (string, error) 
 	return addr, nil
 }
 
-// ClearStoreByID clear store from cache with storeID
+// ClearStoreByID clears store from cache with storeID.
 func (c *RegionCache) ClearStoreByID(id uint64) {
 	c.storeMu.Lock()
 	defer c.storeMu.Unlock()
