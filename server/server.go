@@ -201,7 +201,7 @@ func (s *Server) onConn(c net.Conn) {
 	}
 
 	s.rwlock.Lock()
-	s.clients[conn.connectionID] = conn // TODO:why unreuse?
+	s.clients[conn.connectionID] = conn
 	connections := len(s.clients)
 	s.rwlock.Unlock()
 	connGauge.Set(float64(connections))
