@@ -27,7 +27,10 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -261,16 +264,17 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
 }
 
-/* TODO: Merge TestIssue1435 in session test.
+// TODO: Merge TestIssue1435 in session test.
 func (s *testMainSuite) TestSchemaValidity(c *C) {
 	localstore.MockRemoteStore = true
+	saveSchemaLease := schemaLease
+	schemaLease = 20 * time.Millisecond
 	store := newStore(c, s.dbName+"schema_validity")
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
 	se2 := newSession(c, store, s.dbName)
 
 	ctx := se.(context.Context)
-	sessionctx.GetDomain(ctx).SetLease(20 * time.Millisecond)
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (a int);")
 	mustExecSQL(c, se, "drop table if exists t1;")
@@ -311,7 +315,7 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	default:
 	}
 	// Make sure loading information schema is failed and server is invalid.
-	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(true)
+	sessionctx.GetDomain(ctx).MockReloadFailed.SetValue(true)
 	sessionctx.GetDomain(ctx).Reload()
 	lease := sessionctx.GetDomain(ctx).DDL().GetLease()
 	time.Sleep(lease)
@@ -334,8 +338,8 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
-	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
-	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
+	sessionctx.GetDomain(ctx).MockReloadFailed.SetValue(false)
+	sessionctx.GetDomain(ctx).Reload()
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (a int);")
 	mustExecSQL(c, se, "insert t values (1);")
@@ -344,6 +348,7 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	err = <-endCh2
 	c.Assert(err, IsNil, Commentf("err:%v", err))
 
+	sessionctx.GetDomain(ctx).Close()
 	err = se.Close()
 	c.Assert(err, IsNil)
 	err = se1.Close()
@@ -353,8 +358,8 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	err = store.Close()
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
+	schemaLease = saveSchemaLease
 }
-*/
 
 func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {
 	se.Execute("BEGIN;")

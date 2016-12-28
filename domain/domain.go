@@ -258,7 +258,7 @@ func (do *Domain) Reload() error {
 		return errors.Trace(err)
 	}
 
-	log.Infof("reload schema success, update %d, %d", ver.Ver, latestSchemaVersion)
+	log.Debugf("reload schema success, update %d, %d", ver.Ver, latestSchemaVersion)
 	do.SchemaValidity.Update(ver.Ver, latestSchemaVersion)
 
 	lease := do.DDL().GetLease()
