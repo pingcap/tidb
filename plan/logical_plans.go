@@ -181,18 +181,9 @@ func (p *Selection) SetCorrelated() {
 
 // Apply gets one row from outer executor and gets one row from inner executor according to outer row.
 type Apply struct {
-	baseLogicalPlan
+	Join
 
-	Checker *ApplyConditionChecker
 	corCols []*expression.CorrelatedColumn
-}
-
-func (p *Apply) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
-	if p.Checker != nil {
-		corCols = append(corCols, extractCorColumns(p.Checker.Condition)...)
-	}
-	return corCols
 }
 
 // SetCorrelated implements Plan interface.
@@ -206,11 +197,6 @@ func (p *Apply) SetCorrelated() {
 			break
 		}
 	}
-}
-
-// Exists checks if a query returns result.
-type Exists struct {
-	baseLogicalPlan
 }
 
 // MaxOneRow checks if a query returns no more than one row.

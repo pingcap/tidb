@@ -932,59 +932,41 @@ type ApplyConditionChecker struct {
 	All       bool
 }
 
-// buildApply builds apply plan with outerPlan and innerPlan. Everytime we fetch a record from outerPlan and apply it to
-// innerPlan. This way is the so-called correlated execution.
-func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, checker *ApplyConditionChecker) LogicalPlan {
-	ap := &Apply{
-		Checker:         checker,
-		baseLogicalPlan: newBaseLogicalPlan(App, b.allocator),
+func (b *planBuilder) buildInnerApply(outerPlan, innerPlan LogicalPlan) LogicalPlan {
+	join := &Join{
+		JoinType:        InnerJoin,
+		baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator),
 	}
-	ap.self = ap
+	ap := &Apply{Join: *join}
 	ap.initIDAndContext(b.ctx)
+	ap.self = ap
 	addChild(ap, outerPlan)
 	addChild(ap, innerPlan)
-	innerSchema := innerPlan.GetSchema().Clone()
-	if checker == nil {
-		for _, col := range innerSchema {
-			col.IsAggOrSubq = true
-		}
-		ap.SetSchema(append(outerPlan.GetSchema().Clone(), innerSchema...))
-	} else {
-		ap.SetSchema(append(outerPlan.GetSchema().Clone(), &expression.Column{
-			FromID:      ap.id,
-			ColName:     model.NewCIStr("exists_row"),
-			RetType:     types.NewFieldType(mysql.TypeTiny),
-			IsAggOrSubq: true,
-		}))
-	}
-	ap.SetCorrelated()
+	ap.SetSchema(append(outerPlan.GetSchema().Clone(), innerPlan.GetSchema().Clone()...))
+	return ap
+}
+
+// buildApply builds apply plan with outerPlan and innerPlan. Everytime we fetch a record from outerPlan and apply it to
+// innerPlan. This way is the so-called correlated execution.
+func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not bool) LogicalPlan {
+	join := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
+	ap := &Apply{Join: *join}
+	ap.initIDAndContext(b.ctx)
+	ap.self = ap
 	return ap
 }
 
 func (b *planBuilder) buildExists(p LogicalPlan) LogicalPlan {
-out:
 	for {
 		switch p.(type) {
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
 		case *Trim, *Projection, *Sort, *Aggregation:
 			p = p.GetChildByIndex(0).(LogicalPlan)
-			p.SetParents()
 		default:
-			break out
+			return p
 		}
 	}
-	exists := &Exists{baseLogicalPlan: newBaseLogicalPlan(Ext, b.allocator)}
-	exists.self = exists
-	exists.initIDAndContext(b.ctx)
-	addChild(exists, p)
-	newCol := &expression.Column{
-		FromID:  exists.id,
-		RetType: types.NewFieldType(mysql.TypeTiny),
-		ColName: model.NewCIStr("exists_col")}
-	exists.SetSchema(expression.Schema{newCol})
-	exists.SetCorrelated()
-	return exists
 }
 
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
@@ -997,7 +979,7 @@ func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	return maxOneRow
 }
 
-func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) LogicalPlan {
+func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) *Join {
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
 	joinPlan.self = joinPlan
 	joinPlan.initIDAndContext(b.ctx)

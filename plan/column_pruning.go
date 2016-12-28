@@ -159,11 +159,6 @@ func (p *Trim) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Exists) PruneColumns(parentUsedCols []*expression.Column) {
-	p.GetChildByIndex(0).(LogicalPlan).PruneColumns(nil)
-}
-
-// PruneColumns implements LogicalPlan interface.
 func (p *Insert) PruneColumns(_ []*expression.Column) {
 	if len(p.GetChildren()) == 0 {
 		return
@@ -205,42 +200,6 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 		p.schema = append(lChild.GetSchema().Clone(), p.schema[len(p.schema)-1])
 	} else {
 		p.schema = composedSchema
-	}
-	p.schema.InitIndices()
-}
-
-// PruneColumns implements LogicalPlan interface.
-// e.g. For query select b.c, (select count(*) from a where a.id = b.id) from b. Its plan is Projection->Apply->TableScan.
-// The schema of b is (a,b,c,id). When Pruning Apply, the parentUsedCols is (c, extra), outerSchema is (a,b,c,id).
-// Then after pruning inner plan, the childOuterUsedCols schema in apply becomes (id).
-// Now there're two columns in parentUsedCols, c is the column from Apply's child ---- TableScan, but extra isn't.
-// So only c in parentUsedCols and id in outerSchema can be passed to TableScan.
-func (p *Apply) PruneColumns(parentUsedCols []*expression.Column) {
-	child := p.GetChildByIndex(0).(LogicalPlan)
-	innerPlan := p.GetChildByIndex(1).(LogicalPlan)
-	var usedCols []*expression.Column
-	if p.Checker != nil {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(p.Checker.Condition)...)
-	}
-	for _, col := range parentUsedCols {
-		if child.GetSchema().GetIndex(col) != -1 {
-			usedCols = append(usedCols, col)
-		}
-	}
-	innerPlan.PruneColumns(innerPlan.GetSchema())
-	corCols := innerPlan.extractCorrelatedCols()
-	for _, corCol := range corCols {
-		idx := child.GetSchema().GetIndex(&corCol.Column)
-		if idx != -1 {
-			usedCols = append(usedCols, &corCol.Column)
-		}
-	}
-	child.PruneColumns(usedCols)
-	combinedSchema := append(child.GetSchema().Clone(), innerPlan.GetSchema().Clone()...)
-	if p.Checker == nil {
-		p.schema = combinedSchema
-	} else {
-		p.schema = append(child.GetSchema().Clone(), p.schema[len(p.schema)-1])
 	}
 	p.schema.InitIndices()
 }

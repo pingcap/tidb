@@ -268,11 +268,6 @@ func (p *MaxOneRow) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Exists) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Trim) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }

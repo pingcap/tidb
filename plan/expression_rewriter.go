@@ -132,7 +132,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 			return nil, errors.Trace(err)
 		}
 	}
-	return expression.ComposeCNFCondition(funcs), nil
+	return expression.ComposeCNFCondition(funcs...), nil
 }
 
 func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) LogicalPlan {
@@ -229,7 +229,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 		er.err = ErrOperandColumns.GenByArgs(lLen)
 		return v, true
 	}
-	var checkCondition expression.Expression
+	var condition expression.Expression
 	var rexpr expression.Expression
 	if len(np.GetSchema()) == 1 {
 		rexpr = np.GetSchema()[0].Clone()
@@ -247,24 +247,127 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	switch v.Op {
 	// Only EQ, NE and NullEQ can be composed with and.
 	case opcode.EQ, opcode.NE, opcode.NullEQ:
-		checkCondition, er.err = er.constructBinaryOpFunction(lexpr, rexpr, opcode.Ops[v.Op])
+		condition, er.err = er.constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
 		if er.err != nil {
 			er.err = errors.Trace(er.err)
 			return v, true
+		}
+		if v.Op == opcode.EQ {
+			if v.All {
+				er.handleEQAll(lexpr, rexpr, np)
+			} else {
+				er.p = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, false)
+			}
+		} else if v.Op == opcode.NE {
+			if v.All {
+				er.p = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, true)
+			} else {
+				er.handleNEAny(lexpr, rexpr, np)
+			}
+		} else {
+			er.err = errors.New("We don't support <=> all or <=> any now.")
 		}
 	// If op is not EQ, NE, NullEQ, say LT, it will remain as row(a,b) < row(c,d), and be compared as row datum.
 	default:
-		checkCondition, er.err = expression.NewFunction(opcode.Ops[v.Op],
-			types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
-		if er.err != nil {
-			er.err = errors.Trace(er.err)
-			return v, true
-		}
+		// When < all or > any , the agg function should use min.
+		useMin := ((v.Op == opcode.LT || v.Op == opcode.LE) && v.All) || ((v.Op == opcode.GT || v.Op == opcode.GE) && !v.All)
+		er.handleOtherComparableSubq(lexpr, rexpr, np, useMin, v.Op.String())
 	}
-	er.p = er.b.buildApply(er.p, np, &ApplyConditionChecker{Condition: checkCondition, All: v.All})
-	// The parent expression only use the last column in schema, which represents whether the condition is matched.
-	er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
+	if er.asScalar {
+		// The parent expression only use the last column in schema, which represents whether the condition is matched.
+		er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
+	}
 	return v, true
+}
+
+func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string) {
+	funcName := ast.AggFuncMax
+	if useMin {
+		funcName = ast.AggFuncMin
+	}
+	aggFunc := expression.NewAggFunction(funcName, []expression.Expression{rexpr}, false)
+	agg := &Aggregation{
+		baseLogicalPlan: newBaseLogicalPlan(Agg, er.b.allocator),
+		AggFuncs:        []expression.AggregationFunction{aggFunc},
+	}
+	agg.initIDAndContext(er.b.ctx)
+	agg.self = agg
+	addChild(agg, np)
+	aggCol := &expression.Column{
+		ColName:  model.NewCIStr("agg_Col"),
+		FromID:   agg.id,
+		Position: 0,
+	}
+	agg.SetSchema([]*expression.Column{aggCol})
+	cond, _ := expression.NewFunction(cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
+	er.p = er.b.buildSemiApply(er.p, np, []expression.Expression{cond}, er.asScalar, false)
+}
+
+func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
+	firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	agg := &Aggregation{
+		baseLogicalPlan: newBaseLogicalPlan(Agg, er.b.allocator),
+		AggFuncs:        []expression.AggregationFunction{firstRow, countFunc},
+	}
+	agg.initIDAndContext(er.b.ctx)
+	agg.self = agg
+	addChild(agg, np)
+	firstRowResultCol := &expression.Column{
+		ColName:  model.NewCIStr("col_firstRow"),
+		FromID:   agg.id,
+		Position: 0,
+	}
+	count := &expression.Column{
+		ColName:  model.NewCIStr("col_count"),
+		FromID:   agg.id,
+		Position: 1,
+	}
+	agg.SetSchema([]*expression.Column{firstRowResultCol, count})
+	ltFunc, _ := expression.NewFunction(ast.GT, types.NewFieldType(mysql.TypeTiny), count.Clone(), &expression.Constant{
+		Value:   types.NewDatum(1),
+		RetType: types.NewFieldType(mysql.TypeShort),
+	})
+	neCond, _ := expression.NewFunction(ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
+	cond := expression.ComposeDNFCondition(ltFunc, neCond)
+	er.p = er.b.buildSemiApply(er.p, np, []expression.Expression{cond}, er.asScalar, false)
+}
+
+func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
+	firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	agg := &Aggregation{
+		baseLogicalPlan: newBaseLogicalPlan(Agg, er.b.allocator),
+		AggFuncs:        []expression.AggregationFunction{firstRow, countFunc},
+	}
+	agg.initIDAndContext(er.b.ctx)
+	agg.self = agg
+	addChild(agg, np)
+	firstRowResultCol := &expression.Column{
+		ColName:  model.NewCIStr("col_firstRow"),
+		FromID:   agg.id,
+		Position: 0,
+	}
+	count := &expression.Column{
+		ColName:  model.NewCIStr("col_count"),
+		FromID:   agg.id,
+		Position: 1,
+	}
+	agg.SetSchema([]*expression.Column{firstRowResultCol, count})
+	ltFunc, _ := expression.NewFunction(ast.LT, types.NewFieldType(mysql.TypeTiny), count.Clone(), &expression.Constant{
+		Value:   types.NewDatum(2),
+		RetType: types.NewFieldType(mysql.TypeShort),
+	})
+	sel := &Selection{
+		Conditions:      []expression.Expression{ltFunc},
+		baseLogicalPlan: newBaseLogicalPlan(Sel, er.b.allocator),
+	}
+	sel.initIDAndContext(er.b.ctx)
+	sel.self = sel
+	sel.SetSchema(agg.GetSchema())
+	addChild(sel, agg)
+	eqCond, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
+	er.p = er.b.buildSemiApply(er.p, np, []expression.Expression{eqCond}, er.asScalar, false)
 }
 
 func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (ast.Node, bool) {
@@ -279,14 +382,10 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	}
 	np = er.b.buildExists(np)
 	if np.IsCorrelated() {
-		if sel, ok := np.GetChildByIndex(0).(*Selection); ok && !sel.GetChildByIndex(0).IsCorrelated() {
-			er.p = er.b.buildSemiJoin(er.p, sel.GetChildByIndex(0).(LogicalPlan), sel.Conditions, er.asScalar, false)
-			if !er.asScalar {
-				return v, true
-			}
-		} else {
-			// Can't be built as semi-join.
-			er.p = er.b.buildApply(er.p, np, nil)
+		// Can't be built as semi-join.
+		er.p = er.b.buildSemiApply(er.p, np, nil, er.asScalar, false)
+		if !er.asScalar {
+			return v, true
 		}
 		er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
 	} else {
@@ -346,24 +445,14 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	if !np.IsCorrelated() {
-		er.p = er.b.buildSemiJoin(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
-		if asScalar {
-			col := er.p.GetSchema()[len(er.p.GetSchema())-1]
-			er.ctxStack[len(er.ctxStack)-1] = col
-		} else {
-			er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
-		}
-		return v, true
+	er.p = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
+	if asScalar {
+		col := er.p.GetSchema()[len(er.p.GetSchema())-1]
+		er.ctxStack[len(er.ctxStack)-1] = col
+	} else {
+		er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
 	}
-	if v.Not {
-		checkCondition, _ = expression.NewFunction(ast.UnaryNot, &v.Type, checkCondition)
-	}
-	er.p = er.b.buildApply(er.p, np, &ApplyConditionChecker{Condition: checkCondition, All: v.Not})
-	// The parent expression only use the last column in schema, which represents whether the condition is matched.
-	er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
 	return v, true
-
 }
 
 func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Node, bool) {
@@ -373,7 +462,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 	}
 	np = er.b.buildMaxOneRow(np)
 	if np.IsCorrelated() {
-		er.p = er.b.buildApply(er.p, np, nil)
+		er.p = er.b.buildInnerApply(er.p, np)
 		if len(np.GetSchema()) > 1 {
 			newCols := make([]expression.Expression, 0, len(np.GetSchema()))
 			for _, col := range np.GetSchema() {
@@ -585,7 +674,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 	switch v.Op {
 	case opcode.EQ, opcode.NE, opcode.NullEQ:
 		function, er.err = er.constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
-			opcode.Ops[v.Op])
+			v.Op.String())
 	default:
 		lLen := getRowLen(er.ctxStack[stkLen-2])
 		rLen := getRowLen(er.ctxStack[stkLen-1])
@@ -602,7 +691,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		if er.err != nil {
 			return
 		}
-		function, er.err = expression.NewFunction(opcode.Ops[v.Op], &v.Type, er.ctxStack[stkLen-2:]...)
+		function, er.err = expression.NewFunction(v.Op.String(), &v.Type, er.ctxStack[stkLen-2:]...)
 	}
 	if er.err != nil {
 		er.err = errors.Trace(er.err)

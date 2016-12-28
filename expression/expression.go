@@ -171,12 +171,12 @@ func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expr
 }
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeCNFCondition(conditions []Expression) Expression {
+func ComposeCNFCondition(conditions ...Expression) Expression {
 	return composeConditionWithBinaryOp(conditions, ast.AndAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
-func ComposeDNFCondition(conditions []Expression) Expression {
+func ComposeDNFCondition(conditions ...Expression) Expression {
 	return composeConditionWithBinaryOp(conditions, ast.OrOr)
 }
 
