@@ -37,7 +37,7 @@ var (
 // Error codes.
 const (
 	codeInvalidOperation        terror.ErrCode = 1
-	codeIncorrectParameterCount                = 2
+	codeIncorrectParameterCount                = 1582
 )
 
 // EvalAstExpr evaluates ast expression directly.
