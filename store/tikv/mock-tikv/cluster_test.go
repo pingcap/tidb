@@ -14,10 +14,10 @@
 package mocktikv_test
 
 import (
+	"bytes"
 	"math"
 	"strconv"
 
-	"bytes"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -64,15 +64,15 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	// Split Table into 10 regions.
 	cli := tikv.GetMockTiKVClient(store)
 	cluster := cli.Cluster
-	_ = cluster
 	cluster.SplitTable(cli.MvccStore, tblID, 10)
 
 	// 10 table regions and first region and last region.
-	c.Assert(len(cluster.Regions), Equals, 12)
+	regions := cluster.GetAllRegions()
+	c.Assert(len(regions), Equals, 12)
 
 	allKeysMap := make(map[string]bool)
 	recordPrefix := tablecodec.GenTableRecordPrefix(tblID)
-	for _, region := range cluster.Regions {
+	for _, region := range regions {
 		startKey := mocktikv.MvccKey(region.Meta.StartKey).Raw()
 		endKey := mocktikv.MvccKey(region.Meta.EndKey).Raw()
 		if !bytes.HasPrefix(startKey, recordPrefix) {
@@ -92,7 +92,8 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 
 	allIndexMap := make(map[string]bool)
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(tblID, idxID)
-	for _, region := range cluster.Regions {
+	regions = cluster.GetAllRegions()
+	for _, region := range regions {
 		startKey := mocktikv.MvccKey(region.Meta.StartKey).Raw()
 		endKey := mocktikv.MvccKey(region.Meta.EndKey).Raw()
 		if !bytes.HasPrefix(startKey, indexPrefix) {

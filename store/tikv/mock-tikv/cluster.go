@@ -37,7 +37,7 @@ type Cluster struct {
 	sync.RWMutex
 	id      uint64
 	stores  map[uint64]*Store
-	Regions map[uint64]*Region
+	regions map[uint64]*Region
 }
 
 // NewCluster creates an empty cluster. It needs to be bootstrapped before
@@ -45,7 +45,7 @@ type Cluster struct {
 func NewCluster() *Cluster {
 	return &Cluster{
 		stores:  make(map[uint64]*Store),
-		Regions: make(map[uint64]*Region),
+		regions: make(map[uint64]*Region),
 	}
 }
 
@@ -73,6 +73,15 @@ func (c *Cluster) AllocIDs(n int) []uint64 {
 func (c *Cluster) allocID() uint64 {
 	c.id++
 	return c.id
+}
+
+// GetAllRegions gets all the regions in the cluster.
+func (c *Cluster) GetAllRegions() []*Region {
+	regions := make([]*Region, 0, len(c.regions))
+	for _, region := range c.regions {
+		regions = append(regions, region)
+	}
+	return regions
 }
 
 // GetStore returns a Store's meta.
@@ -120,7 +129,7 @@ func (c *Cluster) GetRegion(regionID uint64) (*metapb.Region, uint64) {
 	c.RLock()
 	defer c.RUnlock()
 
-	r := c.Regions[regionID]
+	r := c.regions[regionID]
 	if r == nil {
 		return nil, 0
 	}
@@ -132,7 +141,7 @@ func (c *Cluster) GetRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
 	c.RLock()
 	defer c.RUnlock()
 
-	for _, r := range c.Regions {
+	for _, r := range c.regions {
 		if regionContains(r.Meta.StartKey, r.Meta.EndKey, key) {
 			return proto.Clone(r.Meta).(*metapb.Region), proto.Clone(r.leaderPeer()).(*metapb.Peer)
 		}
@@ -149,7 +158,7 @@ func (c *Cluster) Bootstrap(regionID uint64, storeIDs, peerIDs []uint64, leaderS
 	if len(storeIDs) != len(peerIDs) {
 		panic("len(storeIDs) != len(peerIDs)")
 	}
-	c.Regions[regionID] = newRegion(regionID, storeIDs, peerIDs, leaderStoreID)
+	c.regions[regionID] = newRegion(regionID, storeIDs, peerIDs, leaderStoreID)
 }
 
 // AddPeer adds a new Peer for the Region on the Store.
@@ -157,7 +166,7 @@ func (c *Cluster) AddPeer(regionID, storeID, peerID uint64) {
 	c.Lock()
 	defer c.Unlock()
 
-	c.Regions[regionID].addPeer(peerID, storeID)
+	c.regions[regionID].addPeer(peerID, storeID)
 }
 
 // RemovePeer removes the Peer from the Region. Note that if the Peer is leader,
@@ -166,7 +175,7 @@ func (c *Cluster) RemovePeer(regionID, storeID uint64) {
 	c.Lock()
 	defer c.Unlock()
 
-	c.Regions[regionID].removePeer(storeID)
+	c.regions[regionID].removePeer(storeID)
 }
 
 // ChangeLeader sets the Region's leader Peer. Caller should guarantee the Peer
@@ -175,7 +184,7 @@ func (c *Cluster) ChangeLeader(regionID, leaderStoreID uint64) {
 	c.Lock()
 	defer c.Unlock()
 
-	c.Regions[regionID].changeLeader(leaderStoreID)
+	c.regions[regionID].changeLeader(leaderStoreID)
 }
 
 // GiveUpLeader sets the Region's leader to 0. The Region will have no leader
@@ -189,17 +198,17 @@ func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, peerIDs []uint
 	c.Lock()
 	defer c.Unlock()
 
-	newRegion := c.Regions[regionID].split(newRegionID, []byte(NewMvccKey(key)), peerIDs, leaderPeerID)
-	c.Regions[newRegionID] = newRegion
+	newRegion := c.regions[regionID].split(newRegionID, []byte(NewMvccKey(key)), peerIDs, leaderPeerID)
+	c.regions[newRegionID] = newRegion
 }
 
-// Merge merges 2 Regions, their key ranges should be adjacent.
+// Merge merges 2 regions, their key ranges should be adjacent.
 func (c *Cluster) Merge(regionID1, regionID2 uint64) {
 	c.Lock()
 	defer c.Unlock()
 
-	c.Regions[regionID1].merge(c.Regions[regionID2].Meta.GetEndKey())
-	delete(c.Regions, regionID2)
+	c.regions[regionID1].merge(c.regions[regionID2].Meta.GetEndKey())
+	delete(c.regions, regionID2)
 }
 
 // SplitTable evenly splits the data in table into count regions.
@@ -247,8 +256,9 @@ func (c *Cluster) getEntriesGroupByRegions(mvccStore *MvccStore, start, end Mvcc
 }
 
 func (c *Cluster) createNewRegions(regionPairs [][]Pair, start, end MvccKey) {
-	storeID, peerID := c.firstStoreAndPeerID()
+	storeID, _ := c.firstStoreAndPeerID()
 	for i := range regionPairs {
+		peerID := c.allocID()
 		newRegion := newRegion(c.allocID(), []uint64{storeID}, []uint64{peerID}, peerID)
 		if i == 0 {
 			newRegion.updateKeyRange(start, NewMvccKey(regionPairs[i+1][0].Key))
@@ -257,7 +267,7 @@ func (c *Cluster) createNewRegions(regionPairs [][]Pair, start, end MvccKey) {
 		} else {
 			newRegion.updateKeyRange(NewMvccKey(regionPairs[i][0].Key), NewMvccKey(regionPairs[i+1][0].Key))
 		}
-		c.Regions[newRegion.Meta.Id] = newRegion
+		c.regions[newRegion.Meta.Id] = newRegion
 	}
 }
 
@@ -274,7 +284,7 @@ func (c *Cluster) evacuateOldRegionRanges(start, end MvccKey) {
 		}
 		if startCmp >= 0 && endCmp <= 0 {
 			// The region is within table data, it will be replaced by new regions.
-			delete(c.Regions, oldRegion.Meta.Id)
+			delete(c.regions, oldRegion.Meta.Id)
 		} else if startCmp < 0 && endCmp > 0 {
 			// a single Region covers table data, split into two regions that do not overlap table data.
 			oldEnd := oldRegion.Meta.EndKey
@@ -282,7 +292,7 @@ func (c *Cluster) evacuateOldRegionRanges(start, end MvccKey) {
 
 			newRegion := newRegion(c.allocID(), []uint64{storeID}, []uint64{peerID}, peerID)
 			newRegion.updateKeyRange(end, oldEnd)
-			c.Regions[newRegion.Meta.Id] = newRegion
+			c.regions[newRegion.Meta.Id] = newRegion
 		} else if startCmp < 0 {
 			oldRegion.updateKeyRange(oldRegion.Meta.StartKey, start)
 		} else {
@@ -296,7 +306,7 @@ func (c *Cluster) firstStoreAndPeerID() (storeID, peerID uint64) {
 		storeID = id
 		break
 	}
-	for _, region := range c.Regions {
+	for _, region := range c.regions {
 		peerID = region.leader
 		break
 	}
@@ -306,7 +316,7 @@ func (c *Cluster) firstStoreAndPeerID() (storeID, peerID uint64) {
 // getRegionsCoverRange gets regions in the cluster that has intersection with [start, end).
 func (c *Cluster) getRegionsCoverRange(start, end MvccKey) []*Region {
 	var regions []*Region
-	for _, region := range c.Regions {
+	for _, region := range c.regions {
 		onRight := bytes.Compare(end, region.Meta.StartKey) <= 0
 		onLeft := bytes.Compare(region.Meta.EndKey, start) <= 0
 		if len(region.Meta.EndKey) == 0 {
