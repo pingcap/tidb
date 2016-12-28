@@ -45,7 +45,7 @@ type SimpleExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *SimpleExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements Execution Next interface.

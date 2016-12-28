@@ -220,7 +220,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 		PKIsHandle: true,
 	}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{table})
-	ctx := mock.NewContext()
+	ctx := mockContext()
 	err := MockResolveName(node, is, "test", ctx)
 	if err != nil {
 		return nil, err
@@ -497,7 +497,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			is:        is,
 		}
 		p := builder.build(stmt)
@@ -506,7 +506,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(ToString(lp), Equals, ca.first, Commentf("for %s", ca.sql))
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -581,7 +581,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
@@ -632,7 +632,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
@@ -642,7 +642,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -726,7 +726,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
@@ -741,7 +741,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			alloc: builder.allocator,
 		}
 		solver.aggPushDown(lp)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -756,7 +756,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 	}{
 		{
 			sql:  "select a from t where c is not null",
-			best: "Index(t.c_d_e)[[-inf,+inf]]->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c >= 4",
@@ -776,7 +776,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c = 4 and e < 5",
-			best: "Index(t.c_d_e)[[4,4]]->Selection->Projection",
+			best: "Index(t.c_d_e)[[4,4]]->Projection",
 		},
 		{
 			sql:  "select a from t where c = 4 and d <= 5 and d > 3",
@@ -784,7 +784,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where d <= 5 and d > 3",
-			best: "Table(t)->Selection->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c between 1 and 2",
@@ -796,7 +796,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c <= 5 and c >= 3 and d = 1",
-			best: "Index(t.c_d_e)[[3,5]]->Selection->Projection",
+			best: "Index(t.c_d_e)[[3,5]]->Projection",
 		},
 		{
 			sql:  "select a from t where c = 1 or c = 2 or c = 3",
@@ -812,11 +812,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c = 5 and b = 1",
-			best: "Index(t.c_d_e)[[5,5]]->Selection->Projection",
+			best: "Index(t.c_d_e)[[5,5]]->Projection",
 		},
 		{
 			sql:  "select a from t where not a",
-			best: "Table(t)->Selection->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c in (1)",
@@ -840,11 +840,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where d in (1, 2, 3)",
-			best: "Table(t)->Selection->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c not in (1)",
-			best: "Table(t)->Selection->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c_str like ''",
@@ -856,11 +856,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c_str not like 'abc'",
-			best: "Table(t)->Selection->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where not (c_str like 'abc' or c_str like 'abd')",
-			best: "Table(t)->Selection->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c_str like '_abc'",
@@ -947,7 +947,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			is:        is,
 		}
 		p := builder.build(stmt).(LogicalPlan)
@@ -955,7 +955,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 
 		_, p, err = p.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		p.PruneColumns(p.GetSchema())
+		p.PruneColumns(p.GetSchema().Columns)
 		p.ResolveIndicesAndCorCols()
 		info, err := p.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -1084,7 +1084,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			is:        is,
 		}
 		p := builder.build(stmt).(LogicalPlan)
@@ -1092,7 +1092,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		_, p, err = p.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		p.PruneColumns(p.GetSchema())
+		p.PruneColumns(p.GetSchema().Columns)
 		p.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		checkDataSourceCols(p, c, ca.ans, comment)
@@ -1102,7 +1102,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 func (s *testPlanSuite) TestAllocID(c *C) {
 	pA := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Tbl, new(idAllocator))}
 	pB := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Tbl, new(idAllocator))}
-	ctx := mock.NewContext()
+	ctx := mockContext()
 	pA.initIDAndContext(ctx)
 	pB.initIDAndContext(ctx)
 	c.Assert(pA.id, Equals, pB.id)
@@ -1271,7 +1271,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			is:        is,
 		}
 		p := builder.build(stmt)
@@ -1301,7 +1301,7 @@ func checkDataSourceCols(p Plan, c *C, ans map[string][]string, comment CommentI
 		colList, ok := ans[p.GetID()]
 		c.Assert(ok, IsTrue, comment)
 		for i, colName := range colList {
-			c.Assert(colName, Equals, p.GetSchema()[i].ColName.L, comment)
+			c.Assert(colName, Equals, p.GetSchema().Columns[i].ColName.L, comment)
 		}
 	}
 	for _, child := range p.GetChildren() {
@@ -1405,7 +1405,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}

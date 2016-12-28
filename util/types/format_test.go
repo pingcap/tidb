@@ -71,3 +71,53 @@ func (s *testTimeSuite) TestTimeFormatMethod(c *C) {
 			str, t.Expect))
 	}
 }
+
+func (s *testTimeSuite) TestStrToDate(c *C) {
+	testcases := []struct {
+		input  string
+		format string
+		expect TimeInternal
+	}{
+		{`01,05,2013`, `%d,%m,%Y`, FromDate(2013, 5, 1, 0, 0, 0, 0)},
+		{`May 01, 2013`, `%M %d,%Y`, FromDate(2013, 5, 1, 0, 0, 0, 0)},
+		{`a09:30:17`, `a%h:%i:%s`, FromDate(0, 0, 0, 9, 30, 17, 0)},
+		{`09:30:17a`, `%h:%i:%s`, FromDate(0, 0, 0, 9, 30, 17, 0)},
+		{`abc`, `abc`, ZeroTime},
+		{`09`, `%m`, FromDate(0, 9, 0, 0, 0, 0, 0)},
+		{`09`, `%s`, FromDate(0, 0, 0, 0, 0, 9, 0)},
+		{`12:43:24 AM`, `%r`, FromDate(0, 0, 0, 12, 43, 24, 0)},
+		{`11:43:24 PM`, `%r`, FromDate(0, 0, 0, 23, 43, 24, 0)},
+		{`00:12:13`, `%T`, FromDate(0, 0, 0, 0, 12, 13, 0)},
+		{`23:59:59`, `%T`, FromDate(0, 0, 0, 23, 59, 59, 0)},
+		{`00/00/0000`, `%m/%d/%Y`, ZeroTime},
+		{`04/30/2004`, `%m/%d/%Y`, FromDate(2004, 4, 30, 0, 0, 0, 0)},
+		{`15:35:00`, `%H:%i:%s`, FromDate(0, 0, 0, 15, 35, 0, 0)},
+		{`Jul 17 33`, `%b %k %S`, FromDate(0, 7, 0, 17, 0, 33, 0)},
+		{`2016-January:7 432101`, `%Y-%M:%l %f`, FromDate(2016, 1, 0, 7, 0, 0, 432101)},
+		{`10:13 PM`, `%l:%i %p`, FromDate(0, 0, 0, 22, 13, 0, 0)},
+		{`12:00:00 AM`, `%h:%i:%s %p`, FromDate(0, 0, 0, 0, 0, 0, 0)},
+		{`12:00:00 PM`, `%h:%i:%s %p`, FromDate(0, 0, 0, 12, 0, 0, 0)},
+	}
+	for i, test := range testcases {
+		var t Time
+		c.Assert(t.StrToDate(test.input, test.format), IsTrue, Commentf("no.%d failed", i))
+		c.Assert(t.Time, Equals, test.expect, Commentf("no.%d failed", i))
+	}
+
+	errcases := []struct {
+		input  string
+		format string
+	}{
+		{`04/31/2004`, `%m/%d/%Y`},
+		{`a09:30:17`, `%h:%i:%s`}, // format mismatch
+		{`12:43:24 PM`, `%r`},
+		{`12:43:24`, `%r`}, // no PM or AM followed
+		{`23:60:12`, `%T`}, // invalid minute
+		{`18`, `%l`},
+		{`00:21:22 AM`, `%h:%i:%s %p`},
+	}
+	for _, test := range errcases {
+		var t Time
+		c.Assert(t.StrToDate(test.input, test.format), IsFalse)
+	}
+}
