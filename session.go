@@ -129,17 +129,30 @@ func (s *session) cleanRetryInfo() {
 	}
 }
 
+func getCurrentTSWithRetry(store kv.Storage) (uint64, error) {
+	for i := 0; i < 100; i++ {
+		ver, err := store.CurrentVersion()
+		if err == nil {
+			return ver.Ver, nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return 0, errors.Errorf("cannot get current timestamp.")
+}
+
 func (s *session) checkSchemaValid() error {
 	txnSchemaVer := s.sessionVars.TxnCtx.SchemaVersion
-	ver, err := s.store.CurrentVersion()
+	currTS, err := getCurrentTSWithRetry(s.store)
 	if err != nil {
-		// TODO: Should be retryable
 		return errors.Trace(err)
 	}
-	currTS := ver.Ver
 
-	succ := sessionctx.GetDomain(s).SchemaValidity.Check(currTS, txnSchemaVer)
+	validator := sessionctx.GetDomain(s).SchemaValidity
+	succ := validator.Check(currTS, txnSchemaVer)
 	if !succ {
+		if validator.Latest() > txnSchemaVer {
+			return errors.Trace(domain.ErrInfoSchemaChanged)
+		}
 		return errors.Trace(domain.ErrInfoSchemaExpired)
 	}
 
@@ -188,6 +201,9 @@ func (s *session) doCommit() error {
 			s.txn.SetOption(kv.BinlogData, bin)
 		}
 	}
+
+	// TODO: checkSchemaValid should be moved into 2PC commit, use transaction's
+	// commitTS to do schema lease validation.
 	if err := s.checkSchemaValid(); err != nil {
 		err1 := s.txn.Rollback()
 		if err1 != nil {
