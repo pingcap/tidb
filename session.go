@@ -129,36 +129,6 @@ func (s *session) cleanRetryInfo() {
 	}
 }
 
-func getCurrentTSWithRetry(store kv.Storage) (uint64, error) {
-	for i := 0; i < 100; i++ {
-		ver, err := store.CurrentVersion()
-		if err == nil {
-			return ver.Ver, nil
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return 0, errors.Errorf("cannot get current timestamp.")
-}
-
-func (s *session) checkSchemaValid() error {
-	txnSchemaVer := s.sessionVars.TxnCtx.SchemaVersion
-	currTS, err := getCurrentTSWithRetry(s.store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	validator := sessionctx.GetDomain(s).SchemaValidity
-	succ := validator.Check(currTS, txnSchemaVer)
-	if !succ {
-		if validator.Latest() > txnSchemaVer {
-			return errors.Trace(domain.ErrInfoSchemaChanged)
-		}
-		return errors.Trace(domain.ErrInfoSchemaExpired)
-	}
-
-	return nil
-}
-
 func (s *session) Status() uint16 {
 	return s.sessionVars.Status
 }
@@ -177,6 +147,22 @@ func (s *session) SetClientCapability(capability uint32) {
 
 func (s *session) SetConnectionID(connectionID uint64) {
 	s.sessionVars.ConnectionID = connectionID
+}
+
+type schemaLeaseChecker struct {
+	domain.SchemaValidator
+	schemaVer int64
+}
+
+func (s *schemaLeaseChecker) Check(txnTS uint64) error {
+	succ := s.SchemaValidator.Check(txnTS, s.schemaVer)
+	if !succ {
+		if s.SchemaValidator.Latest() > s.schemaVer {
+			return domain.ErrInfoSchemaChanged
+		}
+		return domain.ErrInfoSchemaExpired
+	}
+	return nil
 }
 
 func (s *session) doCommit() error {
@@ -202,16 +188,17 @@ func (s *session) doCommit() error {
 		}
 	}
 
-	// TODO: checkSchemaValid should be moved into 2PC commit, use transaction's
-	// commitTS to do schema lease validation.
-	if err := s.checkSchemaValid(); err != nil {
+	// Set this option for 2 phase commit to valid schema lease.
+	s.txn.SetOption(kv.SchemaLeaseChecker, &schemaLeaseChecker{
+		SchemaValidator: sessionctx.GetDomain(s).SchemaValidity,
+		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
+	})
+	if err := s.txn.Commit(); err != nil {
+		// Should we call s.txn.Rollback() here?
 		err1 := s.txn.Rollback()
 		if err1 != nil {
 			log.Errorf("rollback txn failed, err:%v", err1)
 		}
-		return errors.Trace(err)
-	}
-	if err := s.txn.Commit(); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

@@ -1945,8 +1945,6 @@ func (s *testSessionSuite) TestIssue1265(c *C) {
 func (s *testSessionSuite) TestIssue1435(c *C) {
 	defer testleak.AfterTest(c)()
 	localstore.MockRemoteStore = true
-	saveLease := schemaLease
-	schemaLease = 20 * time.Millisecond
 	store := newStore(c, s.dbName+"issue1435")
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
@@ -2031,6 +2029,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	err = <-endCh2
 	c.Assert(err, IsNil, Commentf("err:%v", err))
 
+	sessionctx.GetDomain(ctx).Close()
 	err = se.Close()
 	c.Assert(err, IsNil)
 	err = se1.Close()
@@ -2040,7 +2039,6 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	err = store.Close()
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
-	schemaLease = saveLease
 }
 
 // Testcase for session
