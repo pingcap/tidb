@@ -2114,7 +2114,7 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		columnSamples := rowsToColumnSamples(sampleRows)
 		var pkRes ast.RecordSet
 		if e.pkOffset != -1 {
-			var offset int = len(e.Srcs) - 1
+			offset := len(e.Srcs) - 1
 			if e.colOffsets != nil {
 				offset--
 			}

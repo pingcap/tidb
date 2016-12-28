@@ -207,7 +207,7 @@ func (c *Column) mergeBuckets(bucketIdx int64) {
 	return
 }
 
-func ColumnsToPB(col *Column) (*ColumnPB, error) {
+func columnsToPB(col *Column) (*ColumnPB, error) {
 	data, err := codec.EncodeValue(nil, col.Values...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -222,7 +222,7 @@ func ColumnsToPB(col *Column) (*ColumnPB, error) {
 	return cpb, nil
 }
 
-func ColumnFromPB(cpb *ColumnPB, ft *types.FieldType) (*Column, error) {
+func columnFromPB(cpb *ColumnPB, ft *types.FieldType) (*Column, error) {
 	values, err := codec.Decode(cpb.GetValue(), 1)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -272,14 +272,14 @@ func (t *Table) ToPB() (*TablePB, error) {
 		Indices: make([]*ColumnPB, len(t.Indices)),
 	}
 	for i, col := range t.Columns {
-		cpb, err := ColumnsToPB(col)
+		cpb, err := columnsToPB(col)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		tblPB.Columns[i] = cpb
 	}
 	for i, col := range t.Indices {
-		cpb, err := ColumnsToPB(col)
+		cpb, err := columnsToPB(col)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -578,14 +578,14 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 	t.Columns = make([]*Column, len(tpb.GetColumns()))
 	t.Indices = make([]*Column, len(tpb.GetIndices()))
 	for i, cInfo := range t.info.Columns {
-		c, err := ColumnFromPB(tpb.Columns[i], &cInfo.FieldType)
+		c, err := columnFromPB(tpb.Columns[i], &cInfo.FieldType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		t.Columns[i] = c
 	}
 	for i := range t.info.Indices {
-		c, err := ColumnFromPB(tpb.Indices[i], types.NewFieldType(types.KindBytes))
+		c, err := columnFromPB(tpb.Indices[i], types.NewFieldType(types.KindBytes))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
