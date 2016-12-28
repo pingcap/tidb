@@ -23,38 +23,36 @@ import (
 	"strconv"
 )
 
-// orderByRow binds a row to its order values, so it can be sorted.
-type orderByRow struct {
+type ComparableRow struct {
 	key    []types.Datum
-	data   []types.Datum
+	val    []types.Datum
 	handle int64
 }
 
-type FileSorter struct {
-	numMem int
-	byDesc []bool
-	rows   []*orderByRow
-	splits []string
+type Item struct {
+	index int
+	value *ComparableRow
+}
+
+// Min-heap of ComparableRows
+type RowHeap struct {
 	sc     *StatementContext
+	items  []*Item
+	byDesc []bool
 }
 
-func (fs *FileSorter) Len() int {
-	return len(fs.rows)
-}
+func (rh *RowHeap) Len() int { return len(items) }
 
-func (fs *FileSorter) Swap(i, j int) {
-	fs.rows[i], fs.rows[j] = fs.rows[j], fs.rows[i]
-}
+func (rh *RowHeap) Swap(i, j int) { rh.items[i], rh.items[j] = rh.items[j], rh.items[i] }
 
-func (fs *FileSorter) Less(i, j int) bool {
-	for index, desc := range fs.byDesc {
-		v1 := fs.rows[i].key[index]
-		v2 := fs.rows[j].key[index]
+func (rh *RowHeap) Less(i, j int) bool {
+	for k, desc := range rh.byDesc {
+		v1 := rh.items[i].key[k]
+		v2 := fs.items[j].key[k]
 
-		ret, err := v1.CompareDatum(fs.sc, v2)
+		ret, err := v1.CompareDatum(rh.sc, v2)
 		if err != nil {
-			//TODO: error handling
-			return true
+			panic(err)
 		}
 
 		if desc {
@@ -67,11 +65,64 @@ func (fs *FileSorter) Less(i, j int) bool {
 			return false
 		}
 	}
-
 	return false
 }
 
-func (fs *FileSorter) Input(key []types.Datum, data []types.Datum, handle int64) error {
+func (rh *RowHeap) Push(x interface{}) {
+	rh.items = append(rh.items, x.(*Item))
+}
+
+func (rh *RowHeap) Pop() interface{} {
+	old := rh.items
+	n := len(old)
+	x := old[n-1]
+	rh.items = old[0 : n-1]
+	return x
+}
+
+type FileSorter struct {
+	sc      *StatementContext
+	keySize int // size of key slice
+	valSize int // size of val slice
+	bufSize int // size of buf slice
+	buf     []*ComparableRow
+	files   []string
+	byDesc  []bool
+	fetched bool
+	rowHeap *RowHeap
+}
+
+func (fs *FileSorter) Len() int { return len(fs.buf) }
+
+func (fs *FileSorter) Swap(i, j int) { fs.buf[i], fs.buf[j] = fs.buf[j], fs.buf[i] }
+
+func (fs *FileSorter) Less(i, j int) bool {
+	for k := 0; k < fs.keySize; k++ {
+		v1 := fs.buf[i].key[k]
+		v2 := fs.buf[j].key[k]
+
+		ret, err := v1.CompareDatum(fs.sc, v2)
+		if err != nil {
+			panic(err)
+		}
+
+		if fs.byDesc[k] {
+			ret = -ret
+		}
+
+		if ret < 0 {
+			return true
+		} else if ret > 0 {
+			return false
+		}
+	}
+	return false
+}
+
+func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) error {
+	if fs.fetched {
+		panic(nil)
+	}
 	tmpDir, err := ioutil.TempDir("", "util_filesort")
 	defer os.RemoveAll(tmpDir)
 	if err != nil {
@@ -95,39 +146,101 @@ func (fs *FileSorter) Input(key []types.Datum, data []types.Datum, handle int64)
 		}
 
 		var rowBytes []byte
-		for _, row := range rows {
-			// serialize row and write to outputFile
+		for _, row := range buf {
 			rowBytes := codec.EncodeKey(rowBytes, row.key)
-			rowBytes := codec.EncodeValue(rowBytes, row.data)
-			rowBytes := codec.EncodeValue(rowBytes, NewIntDatum(row.handle))
-			_, err = outputFile.Write(rowBytes)
-			if err != nil {
-				return err
-			}
+			rowBytes := codec.EncodeKey(rowBytes, row.val)
+			rowBytes := codec.EncodeKey(rowBytes, NewIntDatum(row.handle))
 		}
-		splits = append(splits, fileName)
-		rows = rows[:0]
+		_, err = outputFile.Write(rowBytes)
+		if err != nil {
+			return err
+		}
+		fs.files = append(fs.files, fileName)
+		fs.buf = fs.buf[:0]
 	}
 
-	orderRow := &orderByRow{
+	row := &ComparableRow{
 		key:    key,
-		data:   data,
+		val:    val,
 		handle: handle,
 	}
-	rows = append(rows, orderRow)
+	fs.buf = append(fs.buf, row)
 
-	if len(rows) >= numMem {
+	if len(fs.buf) >= fs.bufSize {
 		flushMemory()
 	}
 }
 
-func (fs *FileSorter) Output() []types.Datum {
-	//TODO: should mark as dumped, any Input afterwards will lead to error
-	if len(rows) > 0 {
-		flushMemory()
+var fds []*File
+
+func (fs *FileSorter) Output() (val []types.Datum, handle int64) {
+	if !fs.fetched {
+		if len(fs.buf) > 0 {
+			flushMemory()
+		}
+
+		heap.Init(fs.rowHeap)
+
+		for _, fname := range fs.files {
+			fd, err := os.Open(fname)
+			if err != nil {
+				panic(err)
+			}
+			fds = append(fds, fd)
+		}
+
+		for id, fd := range fds {
+			rowSize := fs.keySize + fs.valSize + 1
+			rowBytes := make([]byte, rowSize)
+			n, err := fd.Read(rowBytes)
+			if err != nil || n != rowSize {
+				panic(err)
+			}
+
+			row := &ComparableRow{
+				key:    codec.Decode(rowBytes, fs.keySize),
+				val:    codec.Decode(rowBytes, fs.valSize),
+				handle: (codec.Decode(rowBytes, 1)).GetInt64(),
+			}
+
+			item := &Item{
+				index: id,
+				value: row,
+			}
+
+			heap.Push(fs.rowHeap, item)
+		}
+
+		fs.fetched = true
 	}
 
-	//TODO:
-	//1. open all files
-	//2. DecodeKey and push into heap
+	if fs.rowHeap.Len() > 0 {
+		next := heap.Pop(fs.rowHeap)
+
+		rowSize := fs.keySize + fs.valSize + 1
+		rowBytes := make([]byte, rowSize)
+
+		n, err := fds[next.index].Read(rowBytes)
+		if err == nil && n == rowSize {
+			row := &ComparableRow{
+				key:    codec.Decode(rowBytes, fs.keySize),
+				val:    codec.Decode(rowBytes, fs.valSize),
+				handle: (codec.Decode(rowBytes, 1)).GetInt64(),
+			}
+
+			item := &Item{
+				index: id,
+				value: row,
+			}
+
+			heap.Push(fs.rowHeap, item)
+		}
+
+		return next.row.val, next.row.handle
+	} else {
+		for _, fd := range fds {
+			fd.Close()
+		}
+		return nil, 0
+	}
 }
