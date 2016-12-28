@@ -112,7 +112,7 @@ func (c *Cluster) RemoveStore(storeID uint64) {
 	delete(c.stores, storeID)
 }
 
-// UpdateStoreAddr update store address for cluster
+// UpdateStoreAddr updates store address for cluster.
 func (c *Cluster) UpdateStoreAddr(storeID uint64, addr string) {
 	c.Lock()
 	defer c.Unlock()

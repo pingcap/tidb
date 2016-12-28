@@ -269,8 +269,8 @@ func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
 	s.cluster.UpdateStoreAddr(s.store1, s.storeAddr(s.store2))
 	s.cluster.UpdateStoreAddr(s.store2, store1Addr)
 
-	expectValue, err := client.Get(testKey)
+	getVal, err := client.Get(testKey)
 
 	c.Assert(err, IsNil)
-	c.Assert(expectValue, BytesEquals, testValue)
+	c.Assert(getVal, BytesEquals, testValue)
 }

@@ -57,7 +57,7 @@ type RPCContext struct {
 	Addr   string
 }
 
-// GetStoreID returns StoreID
+// GetStoreID returns StoreID.
 func (c *RPCContext) GetStoreID() uint64 {
 	if c.KVCtx != nil && c.KVCtx.Peer != nil {
 		return c.KVCtx.Peer.StoreId
