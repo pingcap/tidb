@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -376,7 +375,6 @@ func (b *planBuilder) prepareSimpleSelect(colNames, tableName string, ordered bo
 	if ordered {
 		sql = sql + " order by " + colNames
 	}
-	log.Warnf("%s", sql)
 	parser := parser.New()
 	stmt, _ := parser.ParseOneStmt(sql, "", "")
 	Preprocess(stmt, b.is, b.ctx)
