@@ -256,7 +256,7 @@ func getValidFloatPrefix(sc *variable.StatementContext, s string) (valid string,
 				break
 			}
 		} else if c == '.' {
-			if sawDot { // "1.1."
+			if sawDot || eIdx > 0 { // "1.1." or "1e1.1"
 				break
 			}
 			sawDot = true

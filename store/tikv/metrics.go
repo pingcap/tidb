@@ -195,6 +195,8 @@ func reportRegionError(e *errorpb.Error) {
 		regionErrorCounter.WithLabelValues("server_is_busy").Inc()
 	} else if e.GetStaleCommand() != nil {
 		regionErrorCounter.WithLabelValues("stale_command").Inc()
+	} else if e.GetStoreNotMatch() != nil {
+		regionErrorCounter.WithLabelValues("store_not_match").Inc()
 	} else {
 		regionErrorCounter.WithLabelValues("unknown").Inc()
 	}
