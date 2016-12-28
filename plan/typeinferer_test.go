@@ -89,6 +89,11 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"IFNULL(1,0)", mysql.TypeLonglong, charset.CharsetBin},
 		{"POW(2,2)", mysql.TypeDouble, charset.CharsetBin},
 		{"POWER(2,2)", mysql.TypeDouble, charset.CharsetBin},
+		{"LN(3)", mysql.TypeDouble, charset.CharsetBin},
+		{"LOG(3)", mysql.TypeDouble, charset.CharsetBin},
+		{"LOG(3, 10)", mysql.TypeDouble, charset.CharsetBin},
+		{"LOG2(3)", mysql.TypeDouble, charset.CharsetBin},
+		{"LOG10(3)", mysql.TypeDouble, charset.CharsetBin},
 		{"rand()", mysql.TypeDouble, charset.CharsetBin},
 		{"curdate()", mysql.TypeDate, charset.CharsetBin},
 		{"current_date()", mysql.TypeDate, charset.CharsetBin},
@@ -148,6 +153,11 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"unhex('TiDB')", mysql.TypeVarString, "utf8"},
 		{"unhex(12)", mysql.TypeVarString, "utf8"},
 		{"DATE_FORMAT('2009-10-04 22:23:00', '%W %M %Y')", mysql.TypeVarString, "utf8"},
+		{"rpad('TiDB', 12, 'go')", mysql.TypeVarString, charset.CharsetUTF8},
+		{"bit_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
+		{"char(66)", mysql.TypeVarString, charset.CharsetUTF8},
+		{"char_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
+		{"character_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)

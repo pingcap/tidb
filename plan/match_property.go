@@ -38,6 +38,10 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		sortedTS.Desc = prop.props[0].desc
 		sortedTS.KeepOrder = true
 		sortedTS.addLimit(prop.limit)
+		// If there exists a table filter, we should calculate the filter scan cost.
+		if len(sortedTS.tableFilterConditions) > 0 {
+			cost += rowCount * cpuFactor
+		}
 		p := sortedTS.tryToAddUnionScan(&sortedTS)
 		return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
 			p:     p,
@@ -325,5 +329,10 @@ func (p *Delete) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *phy
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Show) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
+}
+
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *PhysicalMemTable) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }

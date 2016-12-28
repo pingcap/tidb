@@ -88,7 +88,8 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
-		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than",
+		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
+		"ln", "log", "log2", "log10",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -382,7 +383,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW KEYS FROM t;`, true},
 		{`SHOW INDEX IN t;`, true},
 		{`SHOW KEYS IN t;`, true},
-		{`SHOW INDEXES IN t;`, true},
+		{`SHOW INDEXES IN t where true;`, true},
+		{`SHOW KEYS FROM t FROM test where true;`, true},
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		// For show character set
 		{"show character set;", true},
@@ -504,6 +506,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT ROUND(1.23, 1);", true},
 		{"SELECT CEIL(-1.23);", true},
 		{"SELECT CEILING(1.23);", true},
+		{"SELECT LN(1);", true},
+		{"SELECT LOG(-2);", true},
+		{"SELECT LOG(2, 65536);", true},
+		{"SELECT LOG2(2);", true},
+		{"SELECT LOG10(10);", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
@@ -568,6 +575,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select now(6)", true},
 		{"select sysdate(), sysdate(6)", true},
 		{"SELECT time('01:02:03');", true},
+		{"SELECT TIMEDIFF('2000:01:01 00:00:00', '2000:01:01 00:00:00.000001');", true},
 
 		// Select current_time
 		{"select current_time", true},
@@ -648,6 +656,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT TRIM(TRAILING 'xyz' FROM 'barxxyz');`, true},
 		{`SELECT LTRIM(' foo ');`, true},
 		{`SELECT RTRIM(' bar ');`, true},
+
+		{`SELECT RPAD('hi', 6, 'c');`, true},
+		{`SELECT BIT_LENGTH('hi');`, true},
+		{`SELECT CHAR(65);`, true},
+		{`SELECT CHAR_LENGTH('abc');`, true},
+		{`SELECT CHARACTER_LENGTH('abc');`, true},
 
 		// Repeat
 		{`SELECT REPEAT("a", 10);`, true},

@@ -1,3 +1,16 @@
+// Copyright 2016 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package plan
 
 import (
@@ -6,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -19,6 +31,26 @@ import (
 
 // EvalSubquery evaluates incorrelated subqueries once.
 var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
+
+// evalAstExpr evaluates ast expression directly.
+func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
+	if val, ok := expr.(*ast.ValueExpr); ok {
+		return val.Datum, nil
+	}
+	b := &planBuilder{
+		ctx:       ctx,
+		allocator: new(idAllocator),
+		colMapper: make(map[*ast.ColumnNameExpr]int),
+	}
+	if ctx.GetSessionVars().TxnCtx.InfoSchema != nil {
+		b.is = ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	}
+	newExpr, _, err := b.rewrite(expr, nil, nil, true)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return newExpr.Eval(nil, ctx)
+}
 
 // rewrite function rewrites ast expr to expression.Expression.
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
@@ -162,6 +194,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	case *ast.SubqueryExpr:
 		return er.handleScalarSubquery(v)
 	case *ast.ParenthesesExpr:
+	case *ast.ValuesExpr:
+		er.valuesToScalarFunc(v)
+		return inNode, true
 	default:
 		er.asScalar = true
 	}
@@ -395,7 +430,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
-		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr:
+		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
 	case *ast.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
@@ -820,7 +855,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 }
 
 func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
-	bt, err := evaluator.CastFuncFactory(v.Tp)
+	bt, err := expression.CastFuncFactory(v.Tp)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
@@ -836,4 +871,14 @@ func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
 		Function:  bt,
 		ArgValues: make([]types.Datum, 1)}
 	er.ctxStack[len(er.ctxStack)-1] = function
+}
+
+func (er *expressionRewriter) valuesToScalarFunc(v *ast.ValuesExpr) {
+	bt := expression.BuildinValuesFactory(v)
+	function := &expression.ScalarFunction{
+		FuncName: model.NewCIStr(ast.Values),
+		RetType:  &v.Type,
+		Function: bt,
+	}
+	er.ctxStack = append(er.ctxStack, function)
 }

@@ -14,12 +14,14 @@
 package executor_test
 
 import (
+	"errors"
 	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
@@ -217,7 +219,8 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
-	tk := testkit.NewTestKit(c, s.store)
+	var cfg kv.InjectionConfig
+	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
 	tk.MustExec("use test")
 	testSQL := `drop table if exists t;
     create table t (id int PRIMARY KEY AUTO_INCREMENT, c1 int);`
@@ -235,6 +238,11 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	rowStr = fmt.Sprintf("%v %v", "1", "2")
 	rowStr1 := fmt.Sprintf("%v %v", "2", "3")
 	r.Check(testkit.Rows(rowStr, rowStr1))
+
+	cfg.SetGetError(errors.New("foo"))
+	_, err := tk.Exec("insert ignore into t values (1, 3)")
+	c.Assert(err, NotNil)
+	cfg.SetGetError(nil)
 }
 
 func (s *testSuite) TestReplace(c *C) {

@@ -15,14 +15,11 @@ package plan
 
 import (
 	"fmt"
-	"sort"
-	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -61,7 +58,7 @@ func newStringType() types.FieldType {
 	return *ft
 }
 
-func mockResolve(node ast.Node) error {
+func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("c_d_e"),
@@ -223,12 +220,12 @@ func mockResolve(node ast.Node) error {
 		PKIsHandle: true,
 	}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{table})
-	ctx := mock.NewContext()
+	ctx := mockContext()
 	err := MockResolveName(node, is, "test", ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return InferType(ctx.GetSessionVars().StmtCtx, node)
+	return is, InferType(ctx.GetSessionVars().StmtCtx, node)
 }
 
 func supportExpr(exprType tipb.ExprType) bool {
@@ -495,12 +492,13 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
@@ -515,7 +513,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestLogicalPlanBuilder(c *C) {
+func (s *testPlanSuite) TestPlanBuilder(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql  string
@@ -540,23 +538,52 @@ func (s *testPlanSuite) TestLogicalPlanBuilder(c *C) {
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
 			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a),sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
 		},
+		{
+			sql:  "select * from t for update",
+			plan: "DataScan(t)->Lock->Projection",
+		},
+		{
+			sql:  "update t set t.a = t.a * 1.5 where t.a >= 1000 order by t.a desc limit 10",
+			plan: "DataScan(t)->Selection->Sort->Limit->*plan.Update",
+		},
+		{
+			sql:  "delete from t where t.a >= 1000 order by t.a desc limit 10",
+			plan: "DataScan(t)->Selection->Sort->Limit->*plan.Delete",
+		},
+		{
+			sql:  "explain select * from t union all select * from t limit 1, 1",
+			plan: "UnionAll{Table(t)->Table(t)->Limit}->*plan.Explain",
+		},
+		{
+			sql:  "insert into t select * from t",
+			plan: "DataScan(t)->Projection->*plan.Insert",
+		},
+		{
+			sql:  "show columns from t where `Key` = 'pri' like 't*'",
+			plan: "*plan.Show->Selection",
+		},
+		{
+			sql:  "do sleep(5)",
+			plan: "*plan.TableDual->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		c.Assert(ToString(p.(LogicalPlan)), Equals, ca.plan, Commentf("for %s", ca.sql))
+		c.Assert(ToString(p.(Plan)), Equals, ca.plan, Commentf("for %s", ca.sql))
 	}
 }
 
@@ -596,13 +623,14 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
@@ -689,13 +717,14 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
@@ -723,7 +752,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 	}{
 		{
 			sql:  "select a from t where c is not null",
-			best: "Index(t.c_d_e)[[-inf,+inf]]->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c >= 4",
@@ -743,7 +772,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c = 4 and e < 5",
-			best: "Index(t.c_d_e)[[4,4]]->Selection->Projection",
+			best: "Index(t.c_d_e)[[4,4]]->Projection",
 		},
 		{
 			sql:  "select a from t where c = 4 and d <= 5 and d > 3",
@@ -751,7 +780,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where d <= 5 and d > 3",
-			best: "Table(t)->Selection->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c between 1 and 2",
@@ -763,7 +792,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c <= 5 and c >= 3 and d = 1",
-			best: "Index(t.c_d_e)[[3,5]]->Selection->Projection",
+			best: "Index(t.c_d_e)[[3,5]]->Projection",
 		},
 		{
 			sql:  "select a from t where c = 1 or c = 2 or c = 3",
@@ -779,11 +808,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c = 5 and b = 1",
-			best: "Index(t.c_d_e)[[5,5]]->Selection->Projection",
+			best: "Index(t.c_d_e)[[5,5]]->Projection",
 		},
 		{
 			sql:  "select a from t where not a",
-			best: "Table(t)->Selection->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c in (1)",
@@ -807,11 +836,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where d in (1, 2, 3)",
-			best: "Table(t)->Selection->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c not in (1)",
-			best: "Table(t)->Selection->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c_str like ''",
@@ -823,11 +852,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c_str not like 'abc'",
-			best: "Table(t)->Selection->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where not (c_str like 'abc' or c_str like 'abd')",
-			best: "Table(t)->Selection->Projection",
+			best: "Table(t)->Projection",
 		},
 		{
 			sql:  "select a from t where c_str like '_abc'",
@@ -909,12 +938,13 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
+			is:        is,
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
@@ -1044,13 +1074,14 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
+			is:        is,
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
@@ -1065,10 +1096,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
-	pA := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
-
-	pB := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Ts, new(idAllocator))}
-	ctx := mock.NewContext()
+	pA := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Tbl, new(idAllocator))}
+	pB := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Tbl, new(idAllocator))}
+	ctx := mockContext()
 	pA.initIDAndContext(ctx)
 	pB.initIDAndContext(ctx)
 	c.Assert(pA.id, Equals, pB.id)
@@ -1232,10 +1262,14 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		sql := "select * from t where " + ca.exprStr
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{allocator: new(idAllocator), ctx: mock.NewContext()}
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			is:        is,
+		}
 		p := builder.build(stmt)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, ca.exprStr))
 		var selection *Selection
@@ -1257,77 +1291,6 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestConstantFolding(c *C) {
-	defer testleak.AfterTest(c)()
-
-	cases := []struct {
-		exprStr   string
-		resultStr string
-	}{
-		{
-			exprStr:   "a < 1 + 2",
-			resultStr: "lt(test.t.a, 3)",
-		},
-		{
-			exprStr:   "a < greatest(1, 2)",
-			resultStr: "lt(test.t.a, 2)",
-		},
-		{
-			exprStr:   "a <  1 + 2 + 3 + b",
-			resultStr: "lt(test.t.a, plus(6, test.t.b))",
-		},
-		{
-			exprStr: "a = CASE 1+2 " +
-				"WHEN 3 THEN 'a' " +
-				"WHEN 1 THEN 'b' " +
-				"END;",
-			resultStr: "eq(test.t.a, a)",
-		},
-		{
-			exprStr:   "a in (hex(12), 'a', '9')",
-			resultStr: "in(test.t.a, C, 0, 9)",
-		},
-		{
-			exprStr:   "'string' is not null",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "'string' is null",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "a = !(1+1)",
-			resultStr: "eq(test.t.a, 0)",
-		},
-		{
-			exprStr:   "a = rand()",
-			resultStr: "eq(test.t.a, rand())",
-		},
-		{
-			exprStr:   "a = version()",
-			resultStr: "eq(test.t.a, version())",
-		},
-	}
-
-	for _, ca := range cases {
-		sql := "select 1 from t where " + ca.exprStr
-		stmts, err := s.Parse(sql, "", "")
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
-		stmt := stmts[0].(*ast.SelectStmt)
-
-		err = mockResolve(stmt)
-		c.Assert(err, IsNil)
-
-		builder := &planBuilder{allocator: new(idAllocator), ctx: mock.NewContext()}
-		p := builder.build(stmt)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, ca.exprStr))
-
-		selection := p.GetChildByIndex(0).(*Selection)
-		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
-		c.Assert(expression.ComposeCNFCondition(selection.Conditions).String(), Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
-	}
-}
-
 func checkDataSourceCols(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
 	switch p.(type) {
 	case *PhysicalTableScan:
@@ -1339,77 +1302,6 @@ func checkDataSourceCols(p Plan, c *C, ans map[string][]string, comment CommentI
 	}
 	for _, child := range p.GetChildren() {
 		checkDataSourceCols(child, c, ans, comment)
-	}
-}
-
-func (s *testPlanSuite) TestConstantPropagation(c *C) {
-	defer testleak.AfterTest(c)()
-	cases := []struct {
-		sql   string
-		after string
-	}{
-		{
-			sql:   "a = b and b = c and c = d and d = 1",
-			after: "eq(test.t.a, 1), eq(test.t.b, 1), eq(test.t.c, 1), eq(test.t.d, 1)",
-		},
-		{
-			sql:   "a = b and b = 1 and a = null and c = d and c > 2 and c != 4 and d != 5",
-			after: "0",
-		},
-		{
-			sql:   "a = b and b = 1 and c = d and c > 2 and c != 4 and d != 5",
-			after: "eq(test.t.a, 1), eq(test.t.b, 1), eq(test.t.c, test.t.d), gt(test.t.c, 2), gt(test.t.d, 2), ne(test.t.c, 4), ne(test.t.c, 5), ne(test.t.d, 4), ne(test.t.d, 5)",
-		},
-		{
-			sql:   "a = b and b > 0 and a = c",
-			after: "eq(test.t.a, test.t.b), eq(test.t.a, test.t.c), gt(test.t.a, 0), gt(test.t.b, 0), gt(test.t.c, 0)",
-		},
-		{
-			sql:   "a = b and b = c and c LIKE 'abc%'",
-			after: "eq(test.t.a, test.t.b), eq(test.t.b, test.t.c), like(cast(test.t.c), abc%, 92)",
-		},
-		{
-			sql:   "a = b and a > 2 and b > 3 and a < 1 and b < 2",
-			after: "eq(test.t.a, test.t.b), gt(test.t.a, 2), gt(test.t.a, 3), gt(test.t.b, 2), gt(test.t.b, 3), lt(test.t.a, 1), lt(test.t.a, 2), lt(test.t.b, 1), lt(test.t.b, 2)",
-		},
-		{
-			sql:   "a = 1 and cast(null as SIGNED) is null",
-			after: "1, eq(test.t.a, 1)",
-		},
-	}
-	for _, ca := range cases {
-		sql := "select * from t where " + ca.sql
-		comment := Commentf("for %s", sql)
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil, comment)
-		err = mockResolve(stmt)
-		c.Assert(err, IsNil)
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
-		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
-		lp := p.(LogicalPlan)
-		var (
-			sel    *Selection
-			ok     bool
-			result []string
-		)
-		v := lp
-		for {
-			if sel, ok = v.(*Selection); ok {
-				break
-			}
-			v = v.GetChildByIndex(0).(LogicalPlan)
-		}
-		newConds := expression.PropagateConstant(builder.ctx, sel.Conditions)
-		for _, v := range newConds {
-			result = append(result, v.String())
-		}
-		sort.Strings(result)
-		c.Assert(strings.Join(result, ", "), Equals, ca.after, Commentf("for %s", ca.sql))
 	}
 }
 
@@ -1505,12 +1397,13 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = mockResolve(stmt)
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
-			ctx:       mock.NewContext(),
+			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
 		}
 		builder.build(stmt)
 		if ca.err == nil {

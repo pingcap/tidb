@@ -245,7 +245,11 @@ import (
 	lastInsertID	"LAST_INSERT_ID"
 	lcase 		"LCASE"
 	length		"LENGTH"
+	ln		"LN"
 	locate		"LOCATE"
+	log		"LOG"
+	log2		"LOG2"
+	log10		"LOG10"
 	lower 		"LOWER"
 	ltrim		"LTRIM"
 	max		"MAX"
@@ -269,6 +273,7 @@ import (
 	substringIndex	"SUBSTRING_INDEX"
 	sum		"SUM"
 	sysDate		"SYSDATE"
+	timediff	"TIMEDIFF"
 	trim		"TRIM"
 	rtrim 		"RTRIM"
 	ucase 		"UCASE"
@@ -281,6 +286,11 @@ import (
 	statsPersistent	"STATS_PERSISTENT"
 	getLock		"GET_LOCK"
 	releaseLock	"RELEASE_LOCK"
+	rpad		"RPAD"
+	bitLength	"BIT_LENGTH"
+	charFunc	"CHAR_FUNC"
+	charLength	"CHAR_LENGTH"
+	characterLength	"CHARACTER_LENGTH"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -2084,7 +2094,7 @@ NotKeywordToken:
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 |	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
 "SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
-|	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FROM_UNIXTIME"
+|	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10"
 
 /************************************************************************************
  *
@@ -2718,6 +2728,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"LN" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"LOCATE" '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
@@ -2731,6 +2745,22 @@ FunctionCallNonKeyword:
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
+	}
+|	"LOG" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"LOG" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
+	}
+|	"LOG2" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"LOG10" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"LOWER" '(' Expression ')'
 	{
@@ -2871,6 +2901,13 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"TIMEDIFF" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
 |	"TRIM" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
@@ -2937,6 +2974,52 @@ FunctionCallNonKeyword:
 |	"RELEASE_LOCK" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"RPAD" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
+	}
+|	"BIT_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|   "CHAR" '(' ExpressionList ')'
+    {
+		nilVal := ast.NewValueExpr(nil)
+		args := $3.([]ast.ExprNode)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr(ast.CharFunc),
+			Args: append(args, nilVal),
+		}
+    }
+|   "CHAR" '(' ExpressionList "USING" StringName ')'
+    {
+		charset := ast.NewValueExpr($5)
+		args := $3.([]ast.ExprNode)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr(ast.CharFunc),
+			Args: append(args, charset),
+		}
+    }
+|	"CHAR_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"CHARACTER_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr(ast.CharLength),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
 	}
 
 DateArithOpt:
@@ -4081,13 +4164,6 @@ ShowStmt:
 			User:	$4.(string),
 		}
 	}
-|	"SHOW" ShowIndexKwd FromOrIn TableName
-	{
-		$$ = &ast.ShowStmt{
-			Tp: ast.ShowIndex,
-			Table: $4.(*ast.TableName),
-		}
-	}
 |	"SHOW" "PROCESSLIST"
 	{
 		$$ = &ast.ShowStmt{
@@ -4135,6 +4211,21 @@ ShowTargetFilterable:
 			DBName:	$3.(string),
 		}
 	}
+|	ShowIndexKwd FromOrIn TableName
+    {
+        $$ = &ast.ShowStmt{
+            Tp: ast.ShowIndex,
+            Table: $3.(*ast.TableName),
+        }
+    }
+|	ShowIndexKwd FromOrIn Identifier FromOrIn Identifier
+    {
+        show := &ast.ShowStmt{
+            Tp: ast.ShowIndex,
+            Table: &ast.TableName{Name:model.NewCIStr($3), Schema: model.NewCIStr($5)},
+        }
+        $$ = show
+    }
 |	OptFull "COLUMNS" ShowTableAliasOpt ShowDatabaseNameOpt
 	{
 		$$ = &ast.ShowStmt{

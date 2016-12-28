@@ -21,10 +21,25 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
+
+// Error instances.
+var (
+	errInvalidOperation = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
+)
+
+// Error codes.
+const (
+	codeInvalidOperation terror.ErrCode = 1
+)
+
+// EvalAstExpr evaluates ast expression directly.
+var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error)
 
 // Expression represents all scalar expression in SQL.
 type Expression interface {
@@ -238,26 +253,17 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 	}
 }
 
-// ResultFieldsToSchema converts slice of result fields to schema.
-func ResultFieldsToSchema(fields []*ast.ResultField) Schema {
-	schema := make(Schema, 0, len(fields))
-	for i, field := range fields {
-		colName := field.ColumnAsName
-		if colName.L == "" {
-			colName = field.Column.Name
-		}
-		tblName := field.TableAsName
-		if tblName.L == "" {
-			tblName = field.Table.Name
-		}
-		col := &Column{
-			ColName:  colName,
-			TblName:  tblName,
-			DBName:   field.DBName,
-			RetType:  &field.Column.FieldType,
+// TableInfo2Schema converts table info to schema.
+func TableInfo2Schema(tbl *model.TableInfo) Schema {
+	schema := make(Schema, 0, len(tbl.Columns))
+	for i, col := range tbl.Columns {
+		newCol := &Column{
+			ColName:  col.Name,
+			TblName:  tbl.Name,
+			RetType:  &col.FieldType,
 			Position: i,
 		}
-		schema = append(schema, col)
+		schema = append(schema, newCol)
 	}
 	return schema
 }

@@ -26,8 +26,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -278,18 +276,16 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func checkTxn(c *C, se Session, stmt string, expect uint16) {
+func checkTxn(c *C, se Session, stmt string, expectStatus uint16) {
 	mustExecSQL(c, se, stmt)
-	if expect == 0 {
-		c.Assert(se.(*session).txn, IsNil)
-		return
+	if expectStatus != 0 {
+		c.Assert(se.(*session).txn.Valid(), IsTrue)
 	}
-	c.Assert(se.(*session).txn, NotNil)
 }
 
-func checkAutocommit(c *C, se Session, expect uint16) {
+func checkAutocommit(c *C, se Session, expectStatus uint16) {
 	ret := se.(*session).sessionVars.Status & mysql.ServerStatusAutocommit
-	c.Assert(ret, Equals, expect)
+	c.Assert(ret, Equals, expectStatus)
 }
 
 // See https://dev.mysql.com/doc/internals/en/status-flags.html
@@ -328,10 +324,10 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func checkInTrans(c *C, se Session, stmt string, expect uint16) {
-	checkTxn(c, se, stmt, expect)
+func checkInTrans(c *C, se Session, stmt string, expectStatus uint16) {
+	checkTxn(c, se, stmt, expectStatus)
 	ret := se.(*session).sessionVars.Status & mysql.ServerStatusInTrans
-	c.Assert(ret, Equals, expect)
+	c.Assert(ret, Equals, expectStatus)
 }
 
 // See https://dev.mysql.com/doc/internals/en/status-flags.html
@@ -2379,41 +2375,6 @@ func (s *testSessionSuite) TestSqlLogicTestCase(c *C) {
 
 	sql := "SELECT col0 FROM tab1 WHERE 71*22 >= col1"
 	mustExecMatch(c, se, sql, [][]interface{}{{"26"}})
-}
-
-func newSessionWithoutInit(c *C, store kv.Storage) *session {
-	s := &session{
-		values:      make(map[fmt.Stringer]interface{}),
-		store:       store,
-		debugInfos:  make(map[string]interface{}),
-		maxRetryCnt: 10,
-		sessionVars: variable.NewSessionVars(),
-	}
-	return s
-}
-
-func (s *testSessionSuite) TestRetryAttempts(c *C) {
-	defer testleak.AfterTest(c)()
-	store := kv.NewMockStorage()
-	se := newSessionWithoutInit(c, store)
-	c.Assert(se, NotNil)
-	sv := se.sessionVars
-	// Prevent getting variable value from storage.
-	varsutil.SetSystemVar(se.sessionVars, "autocommit", types.NewDatum("ON"))
-	sv.CommonGlobalLoaded = true
-
-	// Add retry info.
-	retryInfo := sv.RetryInfo
-	retryInfo.Retrying = true
-	retryInfo.Attempts = 10
-	tx, err := se.GetTxn(true)
-	c.Assert(tx, NotNil)
-	c.Assert(err, IsNil)
-	mtx, ok := tx.(kv.MockTxn)
-	c.Assert(ok, IsTrue)
-	// Make sure RetryAttempts option is set.
-	cnt := mtx.GetOption(kv.RetryAttempts)
-	c.Assert(cnt.(int), Equals, retryInfo.Attempts)
 }
 
 func (s *testSessionSuite) TestXAggregateWithIndexScan(c *C) {

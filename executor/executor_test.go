@@ -167,6 +167,7 @@ type testCase struct {
 func checkCases(cases []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx context.Context, selectSQL, deleteSQL string) {
 	for _, ca := range cases {
+		c.Assert(ctx.NewTxn(), IsNil)
 		data, err1 := ld.InsertData(ca.data1, ca.data2)
 		c.Assert(err1, IsNil)
 		if ca.restData == nil {
@@ -176,7 +177,7 @@ func checkCases(cases []testCase, ld *executor.LoadDataInfo,
 			c.Assert(data, DeepEquals, ca.restData,
 				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
 		}
-		err1 = ctx.CommitTxn()
+		err1 = ctx.Txn().Commit()
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
 		r.Check(testkit.Rows(ca.expected...))
@@ -1400,13 +1401,13 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(err, IsNil)
 	compiler := &executor.Compiler{}
 	ctx := se.(context.Context)
+	c.Check(tidb.PrepareTxnCtx(ctx), IsNil)
 
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
 	stmt, err := compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
-	c.Check(stmt.IsDDL(), IsFalse)
 
 	stmtNode, err = s.ParseOneStmt("create table t (a int)", "", "")
 	c.Check(err, IsNil)

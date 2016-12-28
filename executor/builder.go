@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
@@ -98,6 +99,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildAggregation(v)
 	case *plan.Projection:
 		return b.buildProjection(v)
+	case *plan.PhysicalMemTable:
+		return b.buildMemTable(v)
 	case *plan.PhysicalTableScan:
 		return b.buildTableScan(v)
 	case *plan.PhysicalIndexScan:
@@ -123,16 +126,33 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 }
 
 func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
-	return &ShowDDLExec{
+	// We get DDLInfo here because for Executors that returns result set,
+	// next will be called after transaction has been committed.
+	// We need the transaction to get DDLInfo.
+	e := &ShowDDLExec{
 		ctx:    b.ctx,
 		schema: v.GetSchema(),
 	}
+	ddlInfo, err := inspectkv.GetDDLInfo(e.ctx.Txn())
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	bgInfo, err := inspectkv.GetBgDDLInfo(e.ctx.Txn())
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	e.ddlInfo = ddlInfo
+	e.bgInfo = bgInfo
+	return e
 }
 
 func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 	return &CheckTableExec{
 		tables: v.Tables,
 		ctx:    b.ctx,
+		is:     b.is,
 	}
 }
 
@@ -145,7 +165,7 @@ func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 
 func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 	src := b.build(v.GetChildByIndex(0))
-	if b.ctx.GetSessionVars().ShouldAutocommit() {
+	if !b.ctx.GetSessionVars().InTxn() {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
@@ -220,7 +240,7 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	case *ast.GrantStmt:
 		return b.buildGrant(s)
 	}
-	return &SimpleExec{Statement: v.Statement, ctx: b.ctx}
+	return &SimpleExec{Statement: v.Statement, ctx: b.ctx, is: b.is}
 }
 
 func (b *executorBuilder) buildSet(v *plan.Set) Executor {
@@ -240,24 +260,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	if len(v.GetChildren()) > 0 {
 		ivs.SelectExec = b.build(v.GetChildByIndex(0))
 	}
-	// Get Table
-	ts, ok := v.Table.TableRefs.Left.(*ast.TableSource)
-	if !ok {
-		b.err = errors.New("Can not get table")
-		return nil
-	}
-	tn, ok := ts.Source.(*ast.TableName)
-	if !ok {
-		b.err = errors.New("Can not get table")
-		return nil
-	}
-	tableInfo := tn.TableInfo
-	tbl, ok := b.is.TableByID(tableInfo.ID)
-	if !ok {
-		b.err = errors.Errorf("Can not get table %d", tableInfo.ID)
-		return nil
-	}
-	ivs.Table = tbl
+	ivs.Table = v.Table
 	if v.IsReplace {
 		return b.buildReplace(ivs)
 	}
@@ -267,8 +270,6 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		Priority:     v.Priority,
 		Ignore:       v.Ignore,
 	}
-	// fields is used to evaluate values expr.
-	insert.fields = ts.GetResultFields()
 	return insert
 }
 
@@ -288,6 +289,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 			Table:      tbl,
 			FieldsInfo: v.FieldsInfo,
 			LinesInfo:  v.LinesInfo,
+			Ctx:        b.ctx,
 		},
 	}
 }
@@ -305,6 +307,7 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		ObjectType: grant.ObjectType,
 		Level:      grant.Level,
 		Users:      grant.Users,
+		is:         b.is,
 	}
 }
 
@@ -484,50 +487,13 @@ func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
 func (b *executorBuilder) getStartTS() uint64 {
 	startTS := b.ctx.GetSessionVars().SnapshotTS
 	if startTS == 0 {
-		txn, err := b.ctx.GetTxn(false)
-		if err != nil {
-			b.err = errors.Trace(err)
-			return 0
-		}
-		startTS = txn.StartTS()
+		startTS = b.ctx.Txn().StartTS()
 	}
 	return startTS
 }
 
-func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
-	startTS := b.getStartTS()
-	if b.err != nil {
-		return nil
-	}
+func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
-	client := b.ctx.GetClient()
-	memDB := infoschema.IsMemoryDB(v.DBName.L)
-	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
-	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
-		st := &XSelectTableExec{
-			tableInfo:   v.Table,
-			ctx:         b.ctx,
-			startTS:     startTS,
-			supportDesc: supportDesc,
-			asName:      v.TableAsName,
-			table:       table,
-			schema:      v.GetSchema(),
-			Columns:     v.Columns,
-			ranges:      v.Ranges,
-			desc:        v.Desc,
-			limitCount:  v.LimitCount,
-			keepOrder:   v.KeepOrder,
-			where:       v.TableConditionPBExpr,
-			aggregate:   v.Aggregated,
-			aggFuncs:    v.AggFuncsPB,
-			aggFields:   v.AggFields,
-			byItems:     v.GbyItemsPB,
-			orderByList: v.SortItemsPB,
-		}
-		st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
-		return st
-	}
-
 	ts := &TableScanExec{
 		t:            table,
 		asName:       v.TableAsName,
@@ -538,10 +504,39 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		ranges:       v.Ranges,
 		isInfoSchema: strings.EqualFold(v.DBName.L, infoschema.Name),
 	}
-	if v.Desc {
-		return &ReverseExec{Src: ts}
-	}
 	return ts
+}
+
+func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
+	startTS := b.getStartTS()
+	if b.err != nil {
+		return nil
+	}
+	table, _ := b.is.TableByID(v.Table.ID)
+	client := b.ctx.GetClient()
+	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
+	st := &XSelectTableExec{
+		tableInfo:   v.Table,
+		ctx:         b.ctx,
+		startTS:     startTS,
+		supportDesc: supportDesc,
+		asName:      v.TableAsName,
+		table:       table,
+		schema:      v.GetSchema(),
+		Columns:     v.Columns,
+		ranges:      v.Ranges,
+		desc:        v.Desc,
+		limitCount:  v.LimitCount,
+		keepOrder:   v.KeepOrder,
+		where:       v.TableConditionPBExpr,
+		aggregate:   v.Aggregated,
+		aggFuncs:    v.AggFuncsPB,
+		aggFields:   v.AggFields,
+		byItems:     v.GbyItemsPB,
+		orderByList: v.SortItemsPB,
+	}
+	st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
+	return st
 }
 
 func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
@@ -551,29 +546,24 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
-	memDB := infoschema.IsMemoryDB(v.DBName.L)
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
-	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
-		st := &XSelectIndexExec{
-			tableInfo:      v.Table,
-			ctx:            b.ctx,
-			supportDesc:    supportDesc,
-			asName:         v.TableAsName,
-			table:          table,
-			indexPlan:      v,
-			singleReadMode: !v.DoubleRead,
-			startTS:        startTS,
-			where:          v.TableConditionPBExpr,
-			aggregate:      v.Aggregated,
-			aggFuncs:       v.AggFuncsPB,
-			aggFields:      v.AggFields,
-			byItems:        v.GbyItemsPB,
-		}
-		st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
-		return st
+	st := &XSelectIndexExec{
+		tableInfo:      v.Table,
+		ctx:            b.ctx,
+		supportDesc:    supportDesc,
+		asName:         v.TableAsName,
+		table:          table,
+		indexPlan:      v,
+		singleReadMode: !v.DoubleRead,
+		startTS:        startTS,
+		where:          v.TableConditionPBExpr,
+		aggregate:      v.Aggregated,
+		aggFuncs:       v.AggFuncsPB,
+		aggFields:      v.AggFields,
+		byItems:        v.GbyItemsPB,
 	}
-	b.err = errors.New("not implement yet")
-	return nil
+	st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
+	return st
 }
 
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {

@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/store/localstore"
@@ -52,13 +51,12 @@ import (
 
 // Session context
 type Session interface {
-	Status() uint16                               // Flag of current status, such as autocommit.
-	LastInsertID() uint64                         // Last inserted auto_increment id.
-	AffectedRows() uint64                         // Affected rows by latest executed stmt.
-	SetValue(key fmt.Stringer, value interface{}) // SetValue saves a value associated with this session for key.
-	Value(key fmt.Stringer) interface{}           // Value returns the value associated with this session for key.
-	Execute(sql string) ([]ast.RecordSet, error)  // Execute a sql statement.
-	String() string                               // For debug
+	context.Context
+	Status() uint16                              // Flag of current status, such as autocommit.
+	LastInsertID() uint64                        // Last inserted auto_increment id.
+	AffectedRows() uint64                        // Affected rows by latest executed stmt.
+	Execute(sql string) ([]ast.RecordSet, error) // Execute a sql statement.
+	String() string                              // For debug
 	CommitTxn() error
 	RollbackTxn() error
 	// For execute prepare statement in binary protocol.
@@ -113,15 +111,10 @@ func (h *stmtHistory) clone() *stmtHistory {
 const unlimitedRetryCnt = -1
 
 type session struct {
-	txn kv.Transaction // current transaction
-	// It is the schema version in current transaction. If it's 0, the transaction is nil.
-	schemaVerInCurrTxn int64
-	values             map[fmt.Stringer]interface{}
-	store              kv.Storage
-	history            stmtHistory
-	maxRetryCnt        int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
-
-	debugInfos map[string]interface{} // Vars for debug and unit tests.
+	txn         kv.Transaction // current transaction
+	values      map[fmt.Stringer]interface{}
+	store       kv.Storage
+	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
 	// For performance_schema only.
 	stmtState *perfschema.StatementState
@@ -159,22 +152,17 @@ func (s *session) checkSchemaValid() error {
 	var ts uint64
 	if s.txn != nil {
 		ts = s.txn.StartTS()
-	} else {
-		s.schemaVerInCurrTxn = 0
 	}
-
+	txnSchemaVer := s.sessionVars.TxnCtx.SchemaVersion
 	var err error
 	var currSchemaVer int64
 	for i := 0; i < schemaExpiredRetryTimes; i++ {
-		currSchemaVer, err = sessionctx.GetDomain(s).SchemaValidity.Check(ts, s.schemaVerInCurrTxn)
+		currSchemaVer, err = sessionctx.GetDomain(s).SchemaValidity.Check(ts, txnSchemaVer)
 		if err == nil {
-			if s.txn == nil {
-				s.schemaVerInCurrTxn = currSchemaVer
-			}
 			return nil
 		}
 		log.Infof("schema version original %d, current %d, sleep time %v",
-			s.schemaVerInCurrTxn, currSchemaVer, checkSchemaValiditySleepTime)
+			txnSchemaVer, currSchemaVer, checkSchemaValiditySleepTime)
 		if terror.ErrorEqual(err, domain.ErrInfoSchemaChanged) {
 			break
 		}
@@ -195,11 +183,6 @@ func (s *session) AffectedRows() uint64 {
 	return s.sessionVars.StmtCtx.AffectedRows()
 }
 
-func (s *session) resetHistory() {
-	s.ClearValue(forupdate.ForUpdateKey)
-	s.history.reset()
-}
-
 func (s *session) SetClientCapability(capability uint32) {
 	s.sessionVars.ClientCapability = capability
 }
@@ -208,23 +191,14 @@ func (s *session) SetConnectionID(connectionID uint64) {
 	s.sessionVars.ConnectionID = connectionID
 }
 
-func (s *session) finishTxn(rollback bool) error {
-	// transaction has already been committed or rolled back
-	if s.txn == nil {
+func (s *session) doCommit() error {
+	if s.txn == nil || !s.txn.Valid() {
 		return nil
 	}
 	defer func() {
-		s.ClearValue(executor.DirtyDBKey)
 		s.txn = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-		binloginfo.ClearBinlog(s)
 	}()
-
-	if rollback {
-		s.resetHistory()
-		s.cleanRetryInfo()
-		return s.txn.Rollback()
-	}
 	if binloginfo.PumpClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
@@ -239,45 +213,47 @@ func (s *session) finishTxn(rollback bool) error {
 			s.txn.SetOption(kv.BinlogData, bin)
 		}
 	}
-
 	if err := s.checkSchemaValid(); err != nil {
-		if !s.sessionVars.RetryInfo.Retrying && s.isRetryableError(err) {
-			err = s.Retry()
-		} else {
-			err1 := s.txn.Rollback()
-			if err1 != nil {
-				// TODO: Handle this error.
-				log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
-			}
+		err1 := s.txn.Rollback()
+		if err1 != nil {
+			log.Errorf("rollback txn failed, err:%v", err1)
 		}
-		if err != nil {
-			log.Warnf("finished txn:%s, %v", s.txn, err)
-		}
-		s.resetHistory()
-		s.cleanRetryInfo()
 		return errors.Trace(err)
 	}
 	if err := s.txn.Commit(); err != nil {
-		if !s.sessionVars.RetryInfo.Retrying && s.isRetryableError(err) {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (s *session) doCommitWithRetry() error {
+	err := s.doCommit()
+	if err != nil {
+		if s.isRetryableError(err) {
 			err = s.Retry()
 		}
-		if err != nil {
-			log.Warnf("finished txn:%s, %v", s.txn, err)
-			return errors.Trace(err)
-		}
 	}
-
-	s.resetHistory()
 	s.cleanRetryInfo()
+	if err != nil {
+		log.Warnf("finished txn:%s, %v", s.txn, err)
+		return errors.Trace(err)
+	}
 	return nil
 }
 
 func (s *session) CommitTxn() error {
-	return s.finishTxn(false)
+	return s.doCommitWithRetry()
 }
 
 func (s *session) RollbackTxn() error {
-	return s.finishTxn(true)
+	var err error
+	if s.txn != nil && s.txn.Valid() {
+		err = s.txn.Rollback()
+	}
+	s.cleanRetryInfo()
+	s.txn = nil
+	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+	return errors.Trace(err)
 }
 
 func (s *session) GetClient() kv.Client {
@@ -318,57 +294,42 @@ func (s *session) isRetryableError(err error) bool {
 }
 
 func (s *session) Retry() error {
-	s.sessionVars.RetryInfo.Retrying = true
-	nh := s.history.clone()
-	// Debug infos.
-	if len(nh.history) == 0 {
-		s.debugInfos[retryEmptyHistoryList] = true
-	} else {
-		s.debugInfos[retryEmptyHistoryList] = false
-	}
-	defer func() {
-		s.history.history = nh.history
-		s.sessionVars.RetryInfo.Retrying = false
-	}()
-
-	if forUpdate := s.Value(forupdate.ForUpdateKey); forUpdate != nil {
+	if s.sessionVars.TxnCtx.ForUpdate {
 		return errors.Errorf("can not retry select for update statement")
 	}
+	s.sessionVars.RetryInfo.Retrying = true
+	defer func() {
+		s.sessionVars.RetryInfo.Retrying = false
+	}()
+	nh := getHistory(s)
 	var err error
 	retryCnt := 0
 	for {
-		s.sessionVars.RetryInfo.Attempts = retryCnt + 1
-		s.resetHistory()
-		log.Info("RollbackTxn for retry txn.")
-		err = s.RollbackTxn()
-		if err != nil {
-			// TODO: handle this error.
-			log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err))
-		}
-		success := true
-		s.sessionVars.RetryInfo.ResetOffset()
-		for _, sr := range nh.history {
-			st := sr.st
-			txt := st.OriginText()
-			if len(txt) > sqlLogMaxLen {
-				txt = txt[:sqlLogMaxLen]
-			}
-			log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
-			_, err = runStmt(s, st)
-			if err != nil {
-				if s.isRetryableError(err) {
-					success = false
+		err = PrepareTxnCtx(s)
+		if err == nil {
+			s.sessionVars.RetryInfo.ResetOffset()
+			for _, sr := range nh.history {
+				st := sr.st
+				txt := st.OriginText()
+				if len(txt) > sqlLogMaxLen {
+					txt = txt[:sqlLogMaxLen]
+				}
+				log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
+				_, err = st.Exec(s)
+				if err != nil {
 					break
 				}
-				log.Warnf("session:%v, err:%v", s, err)
-				return errors.Trace(err)
 			}
 		}
-		if success {
-			err = s.CommitTxn()
-			if !s.isRetryableError(err) {
+		if err == nil {
+			err = s.doCommit()
+			if err == nil {
 				break
 			}
+		}
+		if !s.isRetryableError(err) {
+			log.Warnf("session:%v, err:%v", s, err)
+			return errors.Trace(err)
 		}
 		retryCnt++
 		if (s.maxRetryCnt != unlimitedRetryCnt) && (retryCnt >= s.maxRetryCnt) {
@@ -466,11 +427,6 @@ func (s *session) SetGlobalSysVar(name string, value string) error {
 	return errors.Trace(err)
 }
 
-// IsAutocommit checks if it is in the auto-commit mode.
-func (s *session) isAutocommit(ctx context.Context) bool {
-	return s.sessionVars.GetStatusFlag(mysql.ServerStatusAutocommit)
-}
-
 func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
 	return s.parser.Parse(sql, charset, collation)
 }
@@ -498,6 +454,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
 			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
+			s.RollbackTxn()
 			return nil, errors.Trace(err1)
 		}
 		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
@@ -530,8 +487,11 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if err := s.checkSchemaValidOrRollback(); err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
+	if err := PrepareTxnCtx(s); err != nil {
+		return 0, 0, nil, errors.Trace(err)
+	}
 	prepareExec := &executor.PrepareExec{
-		IS:      sessionctx.GetDomain(s).InfoSchema(),
+		IS:      executor.GetInfoSchema(s),
 		Ctx:     s,
 		SQLText: sql,
 	}
@@ -594,6 +554,11 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	err = PrepareTxnCtx(s)
+	if err != nil {
+		s.RollbackTxn()
+		return nil, errors.Trace(err)
+	}
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	r, err := runStmt(s, st)
 	return r, errors.Trace(err)
@@ -615,46 +580,53 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 // In this situation, if current transaction is still in progress,
 // there will be an implicit commit and create a new transaction.
 func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
-	var (
-		err error
-		ac  bool
-	)
-	sessVars := s.sessionVars
+	if s.txn != nil && !forceNew {
+		return s.txn, nil
+	}
+
+	var err error
+	var force string
 	if s.txn == nil {
 		err = s.loadCommonGlobalVariablesIfNeeded()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		s.resetHistory()
-		s.txn, err = s.store.Begin()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ac = s.isAutocommit(s)
-		if !ac {
-			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
-		}
-		log.Infof("[%d] new txn:%s", sessVars.ConnectionID, s.txn)
 	} else if forceNew {
 		err = s.CommitTxn()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		s.txn, err = s.store.Begin()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ac = s.isAutocommit(s)
-		if !ac {
-			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
-		}
-		log.Warnf("[%d] force new txn:%s", sessVars.ConnectionID, s.txn)
+		force = "force"
 	}
-	retryInfo := s.sessionVars.RetryInfo
-	if retryInfo.Retrying {
-		s.txn.SetOption(kv.RetryAttempts, retryInfo.Attempts)
+	s.txn, err = s.store.Begin()
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+	ac := s.sessionVars.IsAutocommit()
+	if !ac {
+		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+	}
+	log.Infof("[%d] %s new txn:%s", s.sessionVars.ConnectionID, force, s.txn)
 	return s.txn, nil
+}
+
+func (s *session) Txn() kv.Transaction {
+	return s.txn
+}
+
+func (s *session) NewTxn() error {
+	if s.txn != nil && s.txn.Valid() {
+		err := s.doCommitWithRetry()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	txn, err := s.store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.txn = txn
+	return nil
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
@@ -675,7 +647,7 @@ func (s *session) Close() error {
 	return s.RollbackTxn()
 }
 
-// GetSessionVars implements the context.Context interface
+// GetSessionVars implements the context.Context interface.
 func (s *session) GetSessionVars() *variable.SessionVars {
 	return s.sessionVars
 }
@@ -784,7 +756,6 @@ func createSession(store kv.Storage) (*session, error) {
 	s := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
-		debugInfos:  make(map[string]interface{}),
 		maxRetryCnt: 10,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
@@ -855,8 +826,7 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.DistSQLJoinConcurrencyVar + "', '" +
 	variable.DistSQLScanConcurrencyVar + "')"
 
-// LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session
-// right before creating a transaction for the first time.
+// LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars := s.sessionVars
 	if vars.CommonGlobalLoaded {

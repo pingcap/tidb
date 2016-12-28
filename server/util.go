@@ -41,6 +41,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
@@ -193,11 +194,11 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 	return
 }
 
-func dumpBinaryDateTime(t types.Time, loc *time.Location) (data []byte) {
+func dumpBinaryDateTime(t types.Time, loc *time.Location) (data []byte, err error) {
 	if t.Type == mysql.TypeTimestamp && loc != nil {
 		t1, err := t.Time.GoTime()
 		if err != nil {
-			// TODO: Fix here.
+			return nil, errors.Errorf("FATAL: convert timestamp %v go time return error!", t.Time)
 		}
 		t.Time = types.FromGoTime(t1.In(loc))
 	}
@@ -296,7 +297,11 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 		case types.KindMysqlDecimal:
 			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlDecimal().String()), alloc)...)
 		case types.KindMysqlTime:
-			data = append(data, dumpBinaryDateTime(val.GetMysqlTime(), nil)...)
+			tmp, err := dumpBinaryDateTime(val.GetMysqlTime(), nil)
+			if err != nil {
+				return data, errors.Trace(err)
+			}
+			data = append(data, tmp...)
 		case types.KindMysqlDuration:
 			data = append(data, dumpBinaryTime(val.GetMysqlDuration().Duration)...)
 		case types.KindMysqlSet:

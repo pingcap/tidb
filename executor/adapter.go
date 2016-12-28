@@ -28,6 +28,7 @@ type recordSet struct {
 	fields   []*ast.ResultField
 	executor Executor
 	schema   expression.Schema
+	ctx      context.Context
 }
 
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
@@ -63,10 +64,9 @@ func (a *recordSet) Close() error {
 // statement implements the ast.Statement interface, it builds a plan.Plan to an ast.Statement.
 type statement struct {
 	// The InfoSchema cannot change during execution, so we hold a reference to it.
-	is    infoschema.InfoSchema
-	plan  plan.Plan
-	text  string
-	isDDL bool
+	is   infoschema.InfoSchema
+	plan plan.Plan
+	text string
 }
 
 func (a *statement) OriginText() string {
@@ -76,10 +76,6 @@ func (a *statement) OriginText() string {
 func (a *statement) SetText(text string) {
 	a.text = text
 	return
-}
-
-func (a *statement) IsDDL() bool {
-	return a.isDDL
 }
 
 // Exec implements the ast.Statement Exec interface.
@@ -130,9 +126,9 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			}
 		}
 	}
-
 	return &recordSet{
 		executor: e,
 		schema:   e.Schema(),
+		ctx:      ctx,
 	}, nil
 }

@@ -59,6 +59,7 @@ func (s *testStatSuite) TestStat(c *C) {
 	}
 
 	ctx := mock.NewContext()
+	ctx.Store = store
 	done := make(chan error, 1)
 	go func() {
 		done <- d.doDDLJob(ctx, job)

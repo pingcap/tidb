@@ -119,6 +119,7 @@ const (
 	getMaxBackoff           = 10000
 	prewriteMaxBackoff      = 10000
 	commitMaxBackoff        = 10000
+	commitPrimaryMaxBackoff = -1
 	cleanupMaxBackoff       = 10000
 	gcMaxBackoff            = 100000
 	gcResolveLockMaxBackoff = 100000
@@ -167,9 +168,9 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 
 	b.totalSleep += f()
 
-	log.Warnf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
+	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
 	b.errors = append(b.errors, err)
-	if b.totalSleep >= b.maxSleep {
+	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
 		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
 		for i, err := range b.errors {
 			// Print only last 3 errors for non-DEBUG log levels.

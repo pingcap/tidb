@@ -69,6 +69,7 @@ const (
 	RowFunc    = "row"
 	SetVar     = "setvar"
 	GetVar     = "getvar"
+	Values     = "values"
 
 	// common functions
 	Coalesce = "coalesce"
@@ -78,6 +79,10 @@ const (
 	Abs     = "abs"
 	Ceil    = "ceil"
 	Ceiling = "ceiling"
+	Ln      = "ln"
+	Log     = "log"
+	Log2    = "log2"
+	Log10   = "log10"
 	Pow     = "pow"
 	Power   = "power"
 	Rand    = "rand"
@@ -108,6 +113,7 @@ const (
 	StrToDate        = "str_to_date"
 	Sysdate          = "sysdate"
 	Time             = "time"
+	TimeDiff         = "timediff"
 	UTCDate          = "utc_date"
 	Week             = "week"
 	Weekday          = "weekday"
@@ -140,6 +146,10 @@ const (
 	Ucase          = "ucase"
 	Hex            = "hex"
 	Unhex          = "unhex"
+	Rpad           = "rpad"
+	BitLength      = "bit_length"
+	CharFunc       = "char_func"
+	CharLength     = "char_length"
 
 	// information functions
 	ConnectionID = "connection_id"

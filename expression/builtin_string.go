@@ -15,9 +15,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package evaluator
+package expression
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"math"
@@ -601,5 +602,157 @@ func trimRight(str, remstr string) string {
 			return x
 		}
 		str = x
+	}
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
+func builtinRpad(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	// RPAD(str,len,padstr)
+	// args[0] string, args[1] int, args[2] string
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	length, err := args[1].ToInt64(ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	l := int(length)
+
+	padStr, err := args[2].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if l < 0 || (len(str) < l && padStr == "") {
+		d.SetNull()
+		return d, nil
+	}
+
+	tailLen := l - len(str)
+	if tailLen > 0 {
+		repeatCount := tailLen/len(padStr) + 1
+		str = str + strings.Repeat(padStr, repeatCount)
+	}
+	d.SetString(str[:l])
+
+	return d, nil
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_bit-length
+func builtinBitLength(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return d, nil
+	}
+
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetInt64(int64(len(str) * 8))
+	return d, nil
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char
+func builtinChar(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	// The kinds of args are int or string, and the last one represents charset.
+	var resultStr string
+	var intSlice = make([]int64, 0, len(args)-1)
+
+	for _, datum := range args[:len(args)-1] {
+		switch datum.Kind() {
+		case types.KindNull:
+			continue
+		case types.KindString:
+			i, err := datum.ToInt64(ctx.GetSessionVars().StmtCtx)
+			if err != nil {
+				d.SetString(resultStr)
+				return d, nil
+			}
+			intSlice = append(intSlice, i)
+		case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+			x, err := datum.Cast(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			intSlice = append(intSlice, x.GetInt64())
+		default:
+			return d, errors.Errorf("Char invalid args, need int or string but get %T", args[0].GetValue())
+		}
+	}
+
+	resultStr = string(convertInt64ToBytes(intSlice))
+
+	// The last argument represents the charset name after "using".
+	// If it is nil, the default charset utf8 is used.
+	argCharset := args[len(args)-1]
+	if !argCharset.IsNull() {
+		char, err := argCharset.ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		if strings.ToLower(char) == "ascii" || strings.HasPrefix(strings.ToLower(char), "utf8") {
+			d.SetString(resultStr)
+			return d, nil
+		}
+
+		encoding, _ := charset.Lookup(char)
+		if encoding == nil {
+			return d, errors.Errorf("unknown encoding: %s", char)
+		}
+
+		resultStr, _, err = transform.String(encoding.NewDecoder(), resultStr)
+		if err != nil {
+			log.Errorf("Convert %s to %s with error: %v", resultStr, char, err)
+			return d, errors.Trace(err)
+		}
+	}
+	d.SetString(resultStr)
+	return d, nil
+}
+
+func convertInt64ToBytes(ints []int64) []byte {
+	var buf bytes.Buffer
+	for i := len(ints) - 1; i >= 0; i-- {
+		var count int
+		v := ints[i]
+		for count < 4 {
+			buf.WriteByte(byte(v & 0xff))
+			v = v >> 8
+			if v == 0 {
+				break
+			}
+			count++
+		}
+	}
+	s := buf.Bytes()
+	reverseByteSlice(s)
+	return s
+}
+
+func reverseByteSlice(slice []byte) {
+	var start int
+	var end = len(slice) - 1
+	for start < end {
+		slice[start], slice[end] = slice[end], slice[start]
+		start++
+		end--
+	}
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char-length
+func builtinCharLength(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	switch args[0].Kind() {
+	case types.KindNull:
+		return d, nil
+	default:
+		s, err := args[0].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		r := []rune(s)
+		d.SetInt64(int64(len(r)))
+		return d, nil
 	}
 }

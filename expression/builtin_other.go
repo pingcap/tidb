@@ -11,14 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package evaluator
+package expression
 
 import (
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -148,55 +148,6 @@ func builtinCaseWhen(args []types.Datum, ctx context.Context) (d types.Datum, er
 	return
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
-func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	if args[0].IsNull() {
-		return
-	}
-
-	valStr, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	// TODO: We don't need to compile pattern if it has been compiled or it is static.
-	if args[1].IsNull() {
-		return
-	}
-	patternStr, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	escape := byte(args[2].GetInt64())
-	patChars, patTypes := compilePattern(patternStr, escape)
-	match := doMatch(valStr, patChars, patTypes)
-	d.SetInt64(boolToInt64(match))
-	return
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
-func builtinRegexp(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	// TODO: We don't need to compile pattern if it has been compiled or it is static.
-	if args[0].IsNull() || args[1].IsNull() {
-		return
-	}
-
-	targetStr, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", args[0], args[0])
-	}
-	patternStr, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", args[1], args[1])
-	}
-	re, err := regexp.Compile(patternStr)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetInt64(boolToInt64(re.MatchString(targetStr)))
-	return
-}
-
 // See http://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
 func builtinIn(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
@@ -299,7 +250,7 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 		case opcode.NE:
 			result = n != 0
 		default:
-			return d, ErrInvalidOperation.Gen("invalid op %v in comparison operation", op)
+			return d, errInvalidOperation.Gen("invalid op %v in comparison operation", op)
 		}
 		if result {
 			d.SetInt64(oneI64)
@@ -344,7 +295,7 @@ func bitOpFactory(op opcode.Op) BuiltinFunc {
 		case opcode.LeftShift:
 			d.SetUint64(uint64(x) << uint64(y))
 		default:
-			return d, ErrInvalidOperation.Gen("invalid op %v in bit operation", op)
+			return d, errInvalidOperation.Gen("invalid op %v in bit operation", op)
 		}
 		return
 	}
@@ -384,7 +335,7 @@ func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
 		case opcode.IntDiv:
 			return types.ComputeIntDiv(sc, a, b)
 		default:
-			return d, ErrInvalidOperation.Gen("invalid op %v in arithmetic operation", op)
+			return d, errInvalidOperation.Gen("invalid op %v in arithmetic operation", op)
 		}
 	}
 }
@@ -459,7 +410,7 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 				types.KindMysqlSet:
 				d = aDatum
 			default:
-				return d, ErrInvalidOperation.Gen("Unsupported type %v for op.Plus", aDatum.Kind())
+				return d, errInvalidOperation.Gen("Unsupported type %v for op.Plus", aDatum.Kind())
 			}
 		case opcode.Minus:
 			switch aDatum.Kind() {
@@ -496,10 +447,10 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 			case types.KindMysqlSet:
 				d.SetFloat64(-aDatum.GetMysqlSet().ToNumber())
 			default:
-				return d, ErrInvalidOperation.Gen("Unsupported type %v for op.Minus", aDatum.Kind())
+				return d, errInvalidOperation.Gen("Unsupported type %v for op.Minus", aDatum.Kind())
 			}
 		default:
-			return d, ErrInvalidOperation.Gen("Unsupported op %v for unary op", op)
+			return d, errInvalidOperation.Gen("Unsupported op %v for unary op", op)
 		}
 		return
 	}
@@ -557,4 +508,22 @@ func builtinLock(args []types.Datum, _ context.Context) (d types.Datum, err erro
 func builtinReleaseLock(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	d.SetInt64(1)
 	return d, nil
+}
+
+// BuildinValuesFactory generates values builtin function.
+func BuildinValuesFactory(v *ast.ValuesExpr) BuiltinFunc {
+	return func(_ []types.Datum, ctx context.Context) (d types.Datum, err error) {
+		values := ctx.GetSessionVars().CurrInsertValues
+		if values == nil {
+			err = errors.New("Session current insert values is nil")
+			return
+		}
+		row := values.([]types.Datum)
+		offset := v.Column.Refer.Column.Offset
+		if len(row) > offset {
+			return row[offset], nil
+		}
+		err = errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), offset)
+		return
+	}
 }

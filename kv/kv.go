@@ -27,10 +27,10 @@ const (
 	// PresumeKeyNotExistsError is the option key for error.
 	// When PresumeKeyNotExists is set and condition is not match, should throw the error.
 	PresumeKeyNotExistsError
-	// RetryAttempts is the number of txn retry attempt.
-	RetryAttempts
 	// BinlogData is the binlog data to write.
 	BinlogData
+	// Skip existing check when "prewrite".
+	SkipCheckForWrite
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.
@@ -88,6 +88,9 @@ type Transaction interface {
 	IsReadOnly() bool
 	// StartTS returns the transaction start timestamp.
 	StartTS() uint64
+	// Valid returns if the transaction is valid.
+	// A transaction become invalid after commit or rollback.
+	Valid() bool
 }
 
 // Client is used to send request to KV layer.

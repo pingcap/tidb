@@ -174,7 +174,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		go func() {
 			e := c.doActionOnBatches(bo, action, batches)
 			if e != nil {
-				log.Warnf("2PC async doActionOnBatches %s err: %v", action, e)
+				log.Debugf("2PC async doActionOnBatches %s err: %v", action, e)
 			}
 		}()
 	} else {
@@ -200,7 +200,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	if len(batches) == 1 {
 		e := singleBatchActionFunc(bo, batches[0])
 		if e != nil {
-			log.Warnf("2PC doActionOnBatches %s failed: %v, tid: %d", action, e, c.startTS)
+			log.Debugf("2PC doActionOnBatches %s failed: %v, tid: %d", action, e, c.startTS)
 		}
 		return errors.Trace(e)
 	}
@@ -221,7 +221,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	var err error
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			log.Warnf("2PC doActionOnBatches %s failed: %v, tid: %d", action, e, c.startTS)
+			log.Debugf("2PC doActionOnBatches %s failed: %v, tid: %d", action, e, c.startTS)
 			if cancel != nil {
 				// Cancel other requests and return the first error.
 				cancel()
@@ -250,13 +250,20 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	for i, k := range batch.keys {
 		mutations[i] = c.mutations[string(k)]
 	}
+
+	skipCheck := false
+	optSkipCheck := c.txn.us.GetOption(kv.SkipCheckForWrite)
+	if skip, ok := optSkipCheck.(bool); ok && skip {
+		skipCheck = true
+	}
 	req := &pb.Request{
 		Type: pb.MessageType_CmdPrewrite,
 		CmdPrewriteReq: &pb.CmdPrewriteRequest{
-			Mutations:    mutations,
-			PrimaryLock:  c.primary(),
-			StartVersion: c.startTS,
-			LockTtl:      c.lockTTL,
+			Mutations:           mutations,
+			PrimaryLock:         c.primary(),
+			StartVersion:        c.startTS,
+			LockTtl:             c.lockTTL,
+			SkipConstraintCheck: skipCheck,
 		},
 	}
 
@@ -317,6 +324,15 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		},
 	}
 
+	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
+	// transaction has been successfully committed.
+	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
+	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
+	// workaround seems to be an infinite retry util server recovers and returns a success or failure response.
+	if bytes.Compare(batch.keys[0], c.primary()) == 0 {
+		bo = NewBackoffer(commitPrimaryMaxBackoff, bo.ctx)
+	}
+
 	resp, err := c.store.SendKVReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
@@ -345,7 +361,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 			return errors.Trace(err)
 		}
 		// The transaction maybe rolled back by concurrent transactions.
-		log.Warnf("2PC failed commit primary key: %v, retry later, tid: %d", err, c.startTS)
+		log.Debugf("2PC failed commit primary key: %v, retry later, tid: %d", err, c.startTS)
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
@@ -379,7 +395,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 	}
 	if keyErr := resp.GetCmdBatchRollbackResp().GetError(); keyErr != nil {
 		err = errors.Errorf("2PC cleanup failed: %s", keyErr)
-		log.Errorf("2PC failed cleanup key: %v, tid: %d", err, c.startTS)
+		log.Debugf("2PC failed cleanup key: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
 	}
 	return nil
@@ -432,7 +448,7 @@ func (c *twoPhaseCommitter) execute() error {
 		}
 	}
 	if err != nil {
-		log.Warnf("2PC failed on prewrite: %v, tid: %d", err, c.startTS)
+		log.Debugf("2PC failed on prewrite: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
 	}
 
@@ -451,10 +467,10 @@ func (c *twoPhaseCommitter) execute() error {
 	err = c.commitKeys(NewBackoffer(commitMaxBackoff, ctx), c.keys)
 	if err != nil {
 		if !c.mu.committed {
-			log.Warnf("2PC failed on commit: %v, tid: %d", err, c.startTS)
+			log.Debugf("2PC failed on commit: %v, tid: %d", err, c.startTS)
 			return errors.Trace(err)
 		}
-		log.Warnf("2PC succeed with error: %v, tid: %d", err, c.startTS)
+		log.Debugf("2PC succeed with error: %v, tid: %d", err, c.startTS)
 	}
 	return nil
 }
