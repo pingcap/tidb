@@ -222,6 +222,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 
 func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
 	ctx := mock.NewContext()
+	ctx.Store = d.store
 	done := make(chan error, 1)
 	go func() {
 		done <- d.doDDLJob(ctx, job)

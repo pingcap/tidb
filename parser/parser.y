@@ -287,6 +287,10 @@ import (
 	getLock		"GET_LOCK"
 	releaseLock	"RELEASE_LOCK"
 	rpad		"RPAD"
+	bitLength	"BIT_LENGTH"
+	charFunc	"CHAR_FUNC"
+	charLength	"CHAR_LENGTH"
+	characterLength	"CHARACTER_LENGTH"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -2978,6 +2982,45 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}
+|	"BIT_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|   "CHAR" '(' ExpressionList ')'
+    {
+		nilVal := ast.NewValueExpr(nil)
+		args := $3.([]ast.ExprNode)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr(ast.CharFunc),
+			Args: append(args, nilVal),
+		}
+    }
+|   "CHAR" '(' ExpressionList "USING" StringName ')'
+    {
+		charset := ast.NewValueExpr($5)
+		args := $3.([]ast.ExprNode)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr(ast.CharFunc),
+			Args: append(args, charset),
+		}
+    }
+|	"CHAR_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"CHARACTER_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr(ast.CharLength),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
 
 DateArithOpt:
 	"DATE_ADD"
@@ -4121,13 +4164,6 @@ ShowStmt:
 			User:	$4.(string),
 		}
 	}
-|	"SHOW" ShowIndexKwd FromOrIn TableName
-	{
-		$$ = &ast.ShowStmt{
-			Tp: ast.ShowIndex,
-			Table: $4.(*ast.TableName),
-		}
-	}
 |	"SHOW" "PROCESSLIST"
 	{
 		$$ = &ast.ShowStmt{
@@ -4175,6 +4211,21 @@ ShowTargetFilterable:
 			DBName:	$3.(string),
 		}
 	}
+|	ShowIndexKwd FromOrIn TableName
+    {
+        $$ = &ast.ShowStmt{
+            Tp: ast.ShowIndex,
+            Table: $3.(*ast.TableName),
+        }
+    }
+|	ShowIndexKwd FromOrIn Identifier FromOrIn Identifier
+    {
+        show := &ast.ShowStmt{
+            Tp: ast.ShowIndex,
+            Table: &ast.TableName{Name:model.NewCIStr($3), Schema: model.NewCIStr($5)},
+        }
+        $$ = show
+    }
 |	OptFull "COLUMNS" ShowTableAliasOpt ShowDatabaseNameOpt
 	{
 		$$ = &ast.ShowStmt{

@@ -28,11 +28,12 @@ type recordSet struct {
 	fields   []*ast.ResultField
 	executor Executor
 	schema   expression.Schema
+	ctx      context.Context
 }
 
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
 	if len(a.fields) == 0 {
-		for _, col := range a.schema {
+		for _, col := range a.schema.Columns {
 			rf := &ast.ResultField{
 				ColumnAsName: col.ColName,
 				TableAsName:  col.TblName,
@@ -99,7 +100,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}
 
 	// Fields or Schema are only used for statements that return result set.
-	if len(e.Schema()) == 0 {
+	if e.Schema().Len() == 0 {
 		// Check if "tidb_snapshot" is set for the write executors.
 		// In history read mode, we can not do write operations.
 		switch e.(type) {
@@ -125,9 +126,9 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			}
 		}
 	}
-
 	return &recordSet{
 		executor: e,
 		schema:   e.Schema(),
+		ctx:      ctx,
 	}, nil
 }

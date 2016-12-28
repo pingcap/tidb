@@ -70,6 +70,22 @@ func (s *testSuite) TestTransaction(c *C) {
 	c.Assert(inTxn(ctx), IsTrue)
 	tk.MustExec("rollback")
 	c.Assert(inTxn(ctx), IsFalse)
+
+	// Test that begin implicitly commits previous transaction.
+	tk.MustExec("use test")
+	tk.MustExec("create table txn (a int)")
+	tk.MustExec("begin")
+	tk.MustExec("insert txn values (1)")
+	tk.MustExec("begin")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from txn").Check(testkit.Rows("1"))
+
+	// Test that DDL implicitly commits previous transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert txn values (2)")
+	tk.MustExec("create table txn2 (a int)")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from txn").Check(testkit.Rows("1", "2"))
 }
 
 func inTxn(ctx context.Context) bool {
@@ -214,9 +230,9 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	c.Check(err, IsNil)
 	tableID := t.Meta().ID
 
-	txn, err := ctx.GetTxn(true)
+	err = ctx.NewTxn()
 	c.Check(err, IsNil)
-	meta := meta.NewMeta(txn)
+	meta := meta.NewMeta(ctx.Txn())
 	tpb, err := meta.GetTableStats(tableID)
 	c.Check(err, IsNil)
 	c.Check(tpb, NotNil)

@@ -48,16 +48,16 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(ctx.Value(testCtxKey), Equals, 1)
 	ctx.ClearValue(testCtxKey)
 
-	txn, err := ctx.GetTxn(true)
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
-	txn.Set([]byte("a"), []byte("b"))
-	err = ctx.RollbackTxn()
+	ctx.Txn().Set([]byte("a"), []byte("b"))
+	err = ctx.Txn().Rollback()
 	c.Assert(err, IsNil)
 
-	txn, err = ctx.GetTxn(false)
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
-	txn.Set([]byte("a"), []byte("b"))
-	err = ctx.CommitTxn()
+	ctx.Txn().Set([]byte("a"), []byte("b"))
+	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
 	done := make(chan struct{})
@@ -141,7 +141,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	err := ctx.CommitTxn()
+	err := ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
 	tc := &testDDLCallback{}

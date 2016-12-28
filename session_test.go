@@ -276,18 +276,16 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func checkTxn(c *C, se Session, stmt string, expect uint16) {
+func checkTxn(c *C, se Session, stmt string, expectStatus uint16) {
 	mustExecSQL(c, se, stmt)
-	if expect == 0 {
-		c.Assert(se.(*session).txn, IsNil)
-		return
+	if expectStatus != 0 {
+		c.Assert(se.(*session).txn.Valid(), IsTrue)
 	}
-	c.Assert(se.(*session).txn, NotNil)
 }
 
-func checkAutocommit(c *C, se Session, expect uint16) {
+func checkAutocommit(c *C, se Session, expectStatus uint16) {
 	ret := se.(*session).sessionVars.Status & mysql.ServerStatusAutocommit
-	c.Assert(ret, Equals, expect)
+	c.Assert(ret, Equals, expectStatus)
 }
 
 // See https://dev.mysql.com/doc/internals/en/status-flags.html
@@ -326,10 +324,10 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func checkInTrans(c *C, se Session, stmt string, expect uint16) {
-	checkTxn(c, se, stmt, expect)
+func checkInTrans(c *C, se Session, stmt string, expectStatus uint16) {
+	checkTxn(c, se, stmt, expectStatus)
 	ret := se.(*session).sessionVars.Status & mysql.ServerStatusInTrans
-	c.Assert(ret, Equals, expect)
+	c.Assert(ret, Equals, expectStatus)
 }
 
 // See https://dev.mysql.com/doc/internals/en/status-flags.html

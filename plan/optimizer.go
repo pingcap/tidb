@@ -18,6 +18,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -60,7 +61,7 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 		alloc: allocator,
 	}
 	solver.aggPushDown(logic)
-	logic.PruneColumns(logic.GetSchema())
+	logic.PruneColumns(logic.GetSchema().Columns)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -74,6 +75,8 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 	}
 	pp := info.p
 	pp = EliminateProjection(pp)
+	physicalInitialize(pp)
+	addCachePlan(pp, allocator)
 	log.Debugf("[PLAN] %s", ToString(pp))
 	return pp, nil
 }
@@ -129,4 +132,5 @@ func init() {
 		CodeIllegalReference:    mysql.ErrIllegalReference,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
+	expression.EvalAstExpr = evalAstExpr
 }

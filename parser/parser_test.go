@@ -383,7 +383,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW KEYS FROM t;`, true},
 		{`SHOW INDEX IN t;`, true},
 		{`SHOW KEYS IN t;`, true},
-		{`SHOW INDEXES IN t;`, true},
+		{`SHOW INDEXES IN t where true;`, true},
+		{`SHOW KEYS FROM t FROM test where true;`, true},
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		// For show character set
 		{"show character set;", true},
@@ -655,6 +656,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT TRIM(TRAILING 'xyz' FROM 'barxxyz');`, true},
 		{`SELECT LTRIM(' foo ');`, true},
 		{`SELECT RTRIM(' bar ');`, true},
+
+		{`SELECT RPAD('hi', 6, 'c');`, true},
+		{`SELECT BIT_LENGTH('hi');`, true},
+		{`SELECT CHAR(65);`, true},
+		{`SELECT CHAR_LENGTH('abc');`, true},
+		{`SELECT CHARACTER_LENGTH('abc');`, true},
 
 		// Repeat
 		{`SELECT REPEAT("a", 10);`, true},
