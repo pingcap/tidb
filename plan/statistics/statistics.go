@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/ngaut/log"
 )
 
 const (
@@ -207,11 +208,48 @@ func (c *Column) mergeBuckets(bucketIdx int64) {
 	return
 }
 
+func ColumnsToPB(col *Column) (*ColumnPB, error) {
+	data, err := codec.EncodeValue(nil, col.Values...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	cpb := &ColumnPB{
+		Id:      proto.Int64(col.ID),
+		Ndv:     proto.Int64(col.NDV),
+		Numbers: col.Numbers,
+		Value:   data,
+		Repeats: col.Repeats,
+	}
+	return cpb, nil
+}
+
+func ColumnFromPB(cpb *ColumnPB, ft *types.FieldType) (*Column, error) {
+	values, err := codec.Decode(cpb.GetValue(), 1)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	c := &Column{
+		ID:      cpb.GetId(),
+		NDV:     cpb.GetNdv(),
+		Numbers: cpb.GetNumbers(),
+		Values:  make([]types.Datum, len(values)),
+		Repeats: cpb.GetRepeats(),
+	}
+	for i, val := range values {
+		c.Values[i], err = tablecodec.Unflatten(val, ft, false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return c, nil
+}
+
 // Table represents statistics for a table.
 type Table struct {
 	info    *model.TableInfo
 	TS      int64 // build timestamp.
 	Columns []*Column
+	Indices []*Column
 	Count   int64 // Total row count in a table.
 }
 
@@ -232,19 +270,21 @@ func (t *Table) ToPB() (*TablePB, error) {
 		Ts:      proto.Int64(t.TS),
 		Count:   proto.Int64(t.Count),
 		Columns: make([]*ColumnPB, len(t.Columns)),
+		Indices: make([]*ColumnPB, len(t.Indices)),
 	}
 	for i, col := range t.Columns {
-		data, err := codec.EncodeValue(nil, col.Values...)
+		cpb, err := ColumnsToPB(col)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		tblPB.Columns[i] = &ColumnPB{
-			Id:      proto.Int64(col.ID),
-			Ndv:     proto.Int64(col.NDV),
-			Numbers: col.Numbers,
-			Value:   data,
-			Repeats: col.Repeats,
+		tblPB.Columns[i] = cpb
+	}
+	for i, col := range t.Indices {
+		cpb, err := ColumnsToPB(col)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
+		tblPB.Indices[i] = cpb
 	}
 	return tblPB, nil
 }
@@ -332,10 +372,15 @@ func estimateNDV(sc *variable.StatementContext, count int64, samples []types.Dat
 	return int64(estimatedDistinct), nil
 }
 
-func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, result ast.RecordSet, bucketCount int64, knowCount bool) error {
-	ci := t.info.Columns[offset]
+func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, result ast.RecordSet, bucketCount int64, knowCount, isPK bool) error {
+	var id int64
+	if isPK {
+		id = t.info.Columns[offset].ID
+	} else {
+		id = t.info.Indices[offset].ID
+	}
 	col := &Column{
-		ID:      ci.ID,
+		ID:      id,
 		NDV:     0,
 		Numbers: make([]int64, 1, bucketCount),
 		Values:  make([]types.Datum, 1, bucketCount),
@@ -353,7 +398,17 @@ func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, resu
 		if row == nil {
 			break
 		}
-		cmp, err := col.Values[bucketIdx].CompareDatum(sc, row.Data[0])
+		var data types.Datum
+		if isPK {
+			data = row.Data[0]
+		} else {
+			bytes, err := codec.EncodeKey(nil, row.Data...)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			data = types.NewBytesDatum(bytes)
+		}
+		cmp, err := col.Values[bucketIdx].CompareDatum(sc, data)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -369,7 +424,7 @@ func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, resu
 		} else if col.Numbers[bucketIdx]+1-lastNumber <= valuesPerBucket {
 			// The bucket still have room to store a new item, update the bucket.
 			col.Numbers[bucketIdx]++
-			col.Values[bucketIdx] = row.Data[0]
+			col.Values[bucketIdx] = data
 			col.Repeats[bucketIdx] = 0
 			col.NDV++
 		} else {
@@ -387,33 +442,49 @@ func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, resu
 			// We may merge buckets, so we should check it again.
 			if col.Numbers[bucketIdx]+1-lastNumber <= valuesPerBucket {
 				col.Numbers[bucketIdx]++
-				col.Values[bucketIdx] = row.Data[0]
+				col.Values[bucketIdx] = data
 				col.Repeats[bucketIdx] = 0
 			} else {
 				lastNumber = col.Numbers[bucketIdx]
 				bucketIdx++
 				col.Numbers = append(col.Numbers, lastNumber+1)
-				col.Values = append(col.Values, row.Data[0])
+				col.Values = append(col.Values, data)
 				col.Repeats = append(col.Repeats, 0)
 			}
 			col.NDV++
 		}
 	}
-	t.Columns[offset] = col
+	if isPK {
+		t.Columns[offset] = col
+	} else {
+		t.Indices[offset] = col
+	}
 	return nil
 }
 
 // NewTable creates a table statistics.
 func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, numBuckets int64, columnSamples [][]types.Datum,
-	colOffsets []int, indResults []ast.RecordSet, indOffsets []int) (*Table, error) {
+	colOffsets []int, indResults []ast.RecordSet, indOffsets []int, pkResult ast.RecordSet, pkOffset int) (*Table, error) {
 	t := &Table{
 		info:    ti,
 		TS:      ts,
 		Count:   count,
 		Columns: make([]*Column, len(ti.Columns)),
+		Indices: make([]*Column, len(ti.Indices)),
 	}
 	for i, offset := range colOffsets {
 		err := t.buildColumn(sc, offset, columnSamples[i], numBuckets)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if pkOffset != -1 {
+		knowCount := true
+		if t.Count < 0 {
+			t.Count = 0
+			knowCount = false
+		}
+		err := t.buildIndexColumn(sc, pkOffset, pkResult, numBuckets, knowCount, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -422,12 +493,50 @@ func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, num
 		var err error
 		if t.Count < 0 {
 			t.Count = 0
-			err = t.buildIndexColumn(sc, offset, indResults[i], numBuckets, false)
+			err = t.buildIndexColumn(sc, offset, indResults[i], numBuckets, false, false)
 		} else {
-			err = t.buildIndexColumn(sc, offset, indResults[i], numBuckets, true)
+			err = t.buildIndexColumn(sc, offset, indResults[i], numBuckets, true, false)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if len(ti.Indices[offset].Columns) == 1 {
+			for j, col := range ti.Columns {
+				if col.Name.L == ti.Indices[offset].Columns[0].Name.L {
+					t.Columns[j] = &Column{
+						ID:      col.ID,
+						NDV:     t.Indices[offset].NDV,
+						Numbers: t.Indices[offset].Numbers,
+						Values:  make([]types.Datum, 0, numBuckets),
+						Repeats: t.Indices[offset].Repeats,
+					}
+					log.Warnf("%d %d %d",j,offset,t.Indices[offset].NDV)
+					for _, val := range t.Indices[offset].Values {
+						if val.GetBytes() == nil {
+							break;
+						}
+						data, err := codec.Decode(val.GetBytes(), 1)
+						if err != nil {
+							return nil, errors.Trace(err)
+						}
+						t.Columns[j].Values = append(t.Columns[j].Values, data[0])
+					}
+					break
+				}
+			}
+		}
+	}
+	// Some Indices may not need to have histograms, here we give them pseudo one to remove edge cases in pb.
+	// However, it should be never used.
+	for i, idx := range ti.Indices {
+		if t.Indices[i] == nil {
+			t.Indices[i] = &Column{
+				ID:      idx.ID,
+				NDV:     pseudoRowCount / 2,
+				Numbers: make([]int64, 1),
+				Values:  make([]types.Datum, 1),
+				Repeats: make([]int64, 1),
+			}
 		}
 	}
 	return t, nil
@@ -441,35 +550,37 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 	if len(tpb.Columns) != len(ti.Columns) {
 		return nil, errors.Errorf("column count not match, expected %d, got %d", len(ti.Columns), len(tpb.Columns))
 	}
+	if len(tpb.Indices) != len(ti.Indices) {
+		return nil, errors.Errorf("indices count not match, expected %d, got %d", len(ti.Indices), len(tpb.Indices))
+	}
 	for i := range ti.Columns {
 		if ti.Columns[i].ID != tpb.Columns[i].GetId() {
 			return nil, errors.Errorf("column ID not match, expected %d, got %d", ti.Columns[i].ID, tpb.Columns[i].GetId())
+		}
+	}
+	for i := range ti.Indices {
+		if ti.Indices[i].ID != tpb.Indices[i].GetId() {
+			return nil, errors.Errorf("index column ID not match, expected %d, got %d", ti.Indices[i].ID, tpb.Indices[i].GetId())
 		}
 	}
 	t := &Table{info: ti}
 	t.TS = tpb.GetTs()
 	t.Count = tpb.GetCount()
 	t.Columns = make([]*Column, len(tpb.GetColumns()))
+	t.Indices = make([]*Column, len(tpb.GetIndices()))
 	for i, cInfo := range t.info.Columns {
-		cpb := tpb.Columns[i]
-		values, err := codec.Decode(cpb.GetValue(), 1)
+		c, err := ColumnFromPB(tpb.Columns[i], &cInfo.FieldType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		c := &Column{
-			ID:      cpb.GetId(),
-			NDV:     cpb.GetNdv(),
-			Numbers: cpb.GetNumbers(),
-			Values:  make([]types.Datum, len(values)),
-			Repeats: cpb.GetRepeats(),
-		}
-		for i, val := range values {
-			c.Values[i], err = tablecodec.Unflatten(val, &cInfo.FieldType, false)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
 		t.Columns[i] = c
+	}
+	for i := range t.info.Indices {
+		c, err := ColumnFromPB(tpb.Indices[i], types.NewFieldType(types.KindBytes))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		t.Indices[i] = c
 	}
 	return t, nil
 }

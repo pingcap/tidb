@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/ngaut/log"
 )
 
 // Error instances.
@@ -329,19 +330,31 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	return p
 }
 
-func detachIndexColumns(tn *ast.TableName) (indexOffset []int, columnOffset []int) {
+// detachIndexColumns will separate index columns from normal columns because index columns will
+// use more effective algorithms.
+func detachIndexColumns(tn *ast.TableName) (indexOffsets []int, columnOffsets []int, priOffset int) {
 	tbl := tn.TableInfo
 	var indNames []string
+	priOffset = -1
 	if tbl.PKIsHandle {
-		for _, col := range tbl.Columns {
+		for i, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				indNames = append(indNames, col.Name.L)
+				priOffset = i
 			}
 		}
 	}
 	indices, _ := availableIndices(tn.IndexHints, tn.TableInfo)
 	for _, ind := range indices {
-		indNames = append(indNames, ind.Columns[0].Name.L)
+		for i, idx := range tn.TableInfo.Indices {
+			if ind.Name.L == idx.Name.L {
+				indexOffsets = append(indexOffsets, i)
+				break
+			}
+		}
+		if len(ind.Columns) == 1 {
+			indNames = append(indNames, ind.Columns[0].Name.L)
+		}
 	}
 	for i, col := range tbl.Columns {
 		isIndexCol := false
@@ -351,27 +364,38 @@ func detachIndexColumns(tn *ast.TableName) (indexOffset []int, columnOffset []in
 				break
 			}
 		}
-		if isIndexCol {
-			indexOffset = append(indexOffset, i)
-		} else {
-			columnOffset = append(columnOffset, i)
+		if !isIndexCol {
+			columnOffsets = append(columnOffsets, i)
 		}
 	}
 	return
+}
+
+func (b *planBuilder) prepareSimpleSelect(colNames, tableName string, ordered bool) Plan {
+	sql := "select " + colNames + " from " + tableName
+	if ordered {
+		sql = sql + " order by " + colNames
+	}
+	log.Warnf("%s", sql)
+	parser := parser.New()
+	stmt, _ := parser.ParseOneStmt(sql, "", "")
+	Preprocess(stmt, b.is, b.ctx)
+	Validate(stmt, false)
+	return b.build(stmt)
 }
 
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 	p := &Analyze{
 		baseLogicalPlan: newBaseLogicalPlan(Ana, b.allocator),
 	}
-	parser := parser.New()
 	for _, tbl := range as.TableNames {
-		indOffsets, colOffsets := detachIndexColumns(tbl)
+		indOffsets, colOffsets, pkOffset := detachIndexColumns(tbl)
 		result := &Analyze{
 			baseLogicalPlan: newBaseLogicalPlan(Ana, b.allocator),
 			Table:           tbl,
 			IndOffsets:      indOffsets,
 			ColOffsets:      colOffsets,
+			PkOffset:        pkOffset,
 		}
 		var tableName string
 		if tbl.Schema.L == "" {
@@ -381,25 +405,26 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 		}
 		if indOffsets != nil {
 			for _, offset := range indOffsets {
-				colName := tbl.TableInfo.Columns[offset].Name.L
-				sql := "select " + colName + " from " + tableName + " order by " + colName
-				stmt, _ := parser.ParseOneStmt(sql, "", "")
-				Preprocess(stmt, b.is, b.ctx)
-				Validate(stmt, false)
-				sel := b.build(stmt)
+				var colNames []string
+				indCols := tbl.TableInfo.Indices[offset].Columns
+				for _, indCol := range indCols {
+					colNames = append(colNames, indCol.Name.L)
+				}
+				sel := b.prepareSimpleSelect(strings.Join(colNames, ","), tableName, true)
 				addChild(result, sel)
 			}
+		}
+		if pkOffset != -1 {
+			colName := tbl.TableInfo.Columns[pkOffset].Name.L
+			sel := b.prepareSimpleSelect(colName, tableName, true)
+			addChild(result, sel)
 		}
 		if colOffsets != nil {
 			var colNames []string
 			for _, offset := range colOffsets {
 				colNames = append(colNames, tbl.TableInfo.Columns[offset].Name.L)
 			}
-			sql := "select " + strings.Join(colNames, ",") + " from " + tableName
-			stmt, _ := parser.ParseOneStmt(sql, "", "")
-			Preprocess(stmt, b.is, b.ctx)
-			Validate(stmt, false)
-			sel := b.build(stmt)
+			sel := b.prepareSimpleSelect(strings.Join(colNames, ","), tableName, false)
 			addChild(result, sel)
 		}
 		result.self = result

@@ -684,6 +684,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 		ctx:        b.ctx,
 		indOffsets: v.IndOffsets,
 		colOffsets: v.ColOffsets,
+		pkOffset:   v.PkOffset,
 		Srcs:       make([]Executor, len(v.GetChildren())),
 	}
 	for i, sel := range v.GetChildren() {

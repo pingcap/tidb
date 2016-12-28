@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -2077,6 +2078,7 @@ type AnalyzeExec struct {
 	ctx        context.Context
 	indOffsets []int
 	colOffsets []int
+	pkOffset   int
 	Srcs       []Executor
 }
 
@@ -2111,13 +2113,25 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 			}
 		}
 		columnSamples := rowsToColumnSamples(sampleRows)
+		var pkRes ast.RecordSet
+		if e.pkOffset != -1 {
+			var offset int = len(e.Srcs) - 1
+			if e.colOffsets != nil {
+				offset--
+			}
+			pkRes = &recordSet{executor: e.Srcs[offset]}
+		}
 		var indRes []ast.RecordSet
 		for i := range e.indOffsets {
 			indRes = append(indRes, &recordSet{executor: e.Srcs[i]})
 		}
-		err := e.buildStatisticsAndSaveToKV(count, columnSamples, indRes)
+		log.Warnf("%s %s %s %s", count, columnSamples, indRes, pkRes)
+		err := e.buildStatisticsAndSaveToKV(count, columnSamples, indRes, pkRes)
 		for _, ir := range indRes {
 			ir.Close()
+		}
+		if e.pkOffset != -1 {
+			pkRes.Close()
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -2127,10 +2141,13 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, indRes []ast.RecordSet) error {
+func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, indRes []ast.RecordSet, pkRes ast.RecordSet) error {
 	txn := e.ctx.Txn()
 	sc := e.ctx.GetSessionVars().StmtCtx
-	t, err := statistics.NewTable(sc, e.table.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples, e.colOffsets, indRes, e.indOffsets)
+	if columnSamples == nil && e.colOffsets != nil {
+		columnSamples = make([][]types.Datum, len(e.colOffsets))
+	}
+	t, err := statistics.NewTable(sc, e.table.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples, e.colOffsets, indRes, e.indOffsets, pkRes, e.pkOffset)
 	if err != nil {
 		return errors.Trace(err)
 	}

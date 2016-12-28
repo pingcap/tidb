@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/ngaut/log"
 )
 
 type idAllocator struct {
@@ -884,6 +885,8 @@ func (b *planBuilder) getTableStats(table *model.TableInfo) *statistics.Table {
 	if tpb != nil {
 		tbl, err := statistics.TableFromPB(table, tpb)
 		if err != nil {
+			log.Infof("Error occured when convert pb table for %s", table.Name.O)
+			errors.Trace(err)
 			return statistics.PseudoTable(table)
 		}
 		return tbl

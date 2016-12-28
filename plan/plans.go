@@ -196,6 +196,7 @@ type Analyze struct {
 	Table      *ast.TableName
 	IndOffsets []int
 	ColOffsets []int
+	PkOffset   int
 }
 
 // LoadData represents a loaddata plan.

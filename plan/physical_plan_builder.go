@@ -45,7 +45,9 @@ var JoinConcurrency = 5
 
 func getRowCountByIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo) (uint64, error) {
 	totalCount := float64(0)
+	log.Warnf("%s", indexInfo)
 	for _, indexRange := range indexRanges {
+		log.Warnf("%s", indexRange)
 		count := float64(table.Count)
 		i := len(indexRange.LowVal) - 1
 		l := indexRange.LowVal[i]
@@ -215,10 +217,12 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
+	log.Warnf("%s\n %s \n%s \n%s \n %s",index, is.Table, is.Columns, is.TableAsName, is.DBName)
 	is.tp = Idx
 	is.allocator = p.allocator
 	is.initIDAndContext(p.ctx)
 	is.SetSchema(p.schema)
+	log.Warnf("%s", is.GetSchema())
 	if p.ctx.Txn() != nil {
 		is.readOnly = p.ctx.Txn().IsReadOnly()
 	} else {
