@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -52,30 +53,32 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	ctx := mock.NewContext()
 	sessVars := ctx.GetSessionVars()
 
+	f := &builtinSleep{newBaseBuiltinFunc(nil, false, ctx)}
+	f.self = f
 	// non-strict model
 	sessVars.StrictSQLMode = false
 	d := make([]types.Datum, 1)
-	ret, err := builtinSleep(d, ctx)
+	ret, err := f.constantFold(d)
 	c.Assert(err, IsNil)
 	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
 	d[0].SetInt64(-1)
-	ret, err = builtinSleep(d, ctx)
+	ret, err = f.constantFold(d)
 	c.Assert(err, IsNil)
 	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
 
 	// for error case under the strict model
 	sessVars.StrictSQLMode = true
 	d[0].SetNull()
-	_, err = builtinSleep(d, ctx)
+	ret, err = f.constantFold(d)
 	c.Assert(err, NotNil)
 	d[0].SetFloat64(-2.5)
-	_, err = builtinSleep(d, ctx)
+	ret, err = f.constantFold(d)
 	c.Assert(err, NotNil)
 
 	// strict model
 	d[0].SetFloat64(0.5)
 	start := time.Now()
-	ret, err = builtinSleep(d, ctx)
+	ret, err = f.constantFold(d)
 	c.Assert(err, IsNil)
 	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
 	sub := time.Since(start)
@@ -120,8 +123,11 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 		{1, ast.LE, 1, 1},
 	}
 	for _, t := range tbl {
-		f := Funcs[t.op]
-		v, err := f.F(types.MakeDatums(t.lhs, t.rhs), s.ctx)
+		fc := Funcs[t.op]
+		lc := &Constant{Value: types.NewDatum(t.lhs)}
+		rc := &Constant{Value: types.NewDatum(t.rhs)}
+		f, _ := fc.getFunction([]Expression{lc, rc}, s.ctx)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		val, err := v.ToBool(s.ctx.GetSessionVars().StmtCtx)
 		c.Assert(err, IsNil)
@@ -149,9 +155,11 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 	}
 
 	for _, t := range nilTbl {
-		f := Funcs[t.op]
-		v, err := f.F(types.MakeDatums(t.lhs, t.rhs), s.ctx)
-		c.Assert(err, IsNil)
+		fc := Funcs[t.op]
+		lc := &Constant{Value: types.NewDatum(t.lhs)}
+		rc := &Constant{Value: types.NewDatum(t.rhs)}
+		f, _ := fc.getFunction([]Expression{lc, rc}, s.ctx)
+		v, _ := f.eval(nil)
 		c.Assert(v.Kind(), Equals, types.KindNull)
 	}
 }
@@ -181,8 +189,11 @@ func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
 		{0, ast.LogicXor, 1, 1},
 	}
 	for _, t := range tbl {
-		f := Funcs[t.op]
-		v, err := f.F(types.MakeDatums(t.lhs, t.rhs), s.ctx)
+		fc := Funcs[t.op]
+		lc := &Constant{Value: types.NewDatum(t.lhs)}
+		rc := &Constant{Value: types.NewDatum(t.rhs)}
+		f, _ := fc.getFunction([]Expression{lc, rc}, s.ctx)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		switch x := t.ret.(type) {
 		case nil:
@@ -215,8 +226,11 @@ func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
 	}
 
 	for _, t := range tbl {
-		f := Funcs[t.op]
-		v, err := f.F(types.MakeDatums(t.lhs, t.rhs), s.ctx)
+		fc := Funcs[t.op]
+		lc := &Constant{Value: types.NewDatum(t.lhs)}
+		rc := &Constant{Value: types.NewDatum(t.rhs)}
+		f, _ := fc.getFunction([]Expression{lc, rc}, s.ctx)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 
 		switch x := t.ret.(type) {
@@ -309,8 +323,11 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 	}
 
 	for _, t := range tbl {
-		f := Funcs[t.op]
-		v, err := f.F(types.MakeDatums(t.lhs, t.rhs), s.ctx)
+		fc := Funcs[t.op]
+		lc := &Constant{Value: types.NewDatum(t.lhs)}
+		rc := &Constant{Value: types.NewDatum(t.rhs)}
+		f, _ := fc.getFunction([]Expression{lc, rc}, s.ctx)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		switch v.Kind() {
 		case types.KindNull:
@@ -356,16 +373,16 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 		{"DAY_HOUR", 1110},
 		{"YEAR_MONTH", 201111},
 	}
+	f := &builtinExtract{newBaseBuiltinFunc(nil, true, s.ctx)}
+	f.self = f
 	for _, t := range tbl {
-		f := Funcs[ast.Extract]
-		v, err := f.F(types.MakeDatums(t.Unit, str), s.ctx)
+		v, err := f.constantFold(types.MakeDatums(t.Unit, str))
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.Expect))
 	}
 
 	// Test nil
-	f := Funcs[ast.Extract]
-	v, err := f.F(types.MakeDatums("SECOND", nil), s.ctx)
+	v, err := f.constantFold(types.MakeDatums("SECOND", nil))
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 }
@@ -382,8 +399,9 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 
 	c.Log(s.ctx)
 	for _, ca := range cases {
-		f := Funcs[ast.LastInsertId]
-		val, err := f.F(types.MakeDatums(ca.args...), s.ctx)
+		f := &builtinLastInsertID{newBaseBuiltinFunc(nil, true, s.ctx)}
+		f.self = f
+		val, err := f.constantFold(types.MakeDatums(ca.args...))
 		c.Assert(err, IsNil)
 		valStr := fmt.Sprintf("%v", val.GetValue())
 		c.Assert(valStr, Equals, ca.resultStr, Commentf("for %v", ca.args))
@@ -445,8 +463,9 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		{"aAb", "Aa_", 1},
 	}
 	for _, tc := range testCases {
-		f := Funcs[ast.Like]
-		r, err := f.F(types.MakeDatums(tc.input, tc.pattern, 0), s.ctx)
+		f := &builtinLike{newBaseBuiltinFunc(nil, false, s.ctx)}
+		f.self = f
+		r, err := f.constantFold(types.MakeDatums(tc.input, tc.pattern, 0))
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tc.match))
 	}
@@ -470,8 +489,9 @@ func (s *testEvaluatorSuite) TestRegexp(c *C) {
 		{".*", "abcd", 1},
 	}
 	for _, v := range tbl {
-		f := Funcs[ast.Regexp]
-		match, err := f.F(types.MakeDatums(v.input, v.pattern), s.ctx)
+		f := &builtinRegExp{newBaseBuiltinFunc(nil, false, s.ctx)}
+		f.self = f
+		match, err := f.constantFold(types.MakeDatums(v.input, v.pattern))
 		c.Assert(err, IsNil)
 		c.Assert(match, testutil.DatumEquals, types.NewDatum(v.match), Commentf("%v", v))
 	}
@@ -528,8 +548,10 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{types.Set{Name: "a", Value: 1}, ast.UnaryMinus, -1.0},
 	}
 	for i, t := range tbl {
-		f := Funcs[t.op]
-		result, err := f.F(types.MakeDatums(t.arg), s.ctx)
+		fc := Funcs[t.op]
+		arg := &Constant{Value: types.NewDatum(t.arg)}
+		f, _ := fc.getFunction([]Expression{arg}, s.ctx)
+		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(t.result), Commentf("%d", i))
 	}
@@ -556,8 +578,10 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 	}
 
 	for _, t := range tbl {
-		f := Funcs[t.op]
-		result, err := f.F(types.MakeDatums(t.arg), s.ctx)
+		fc := Funcs[t.op]
+		arg := &Constant{Value: types.NewDatum(t.arg)}
+		f, _ := fc.getFunction([]Expression{arg}, s.ctx)
+		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 
 		ret, err := result.CompareDatum(s.ctx.GetSessionVars().StmtCtx, types.NewDatum(t.result))
@@ -567,14 +591,15 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestMod(c *C) {
-	f := Funcs[ast.Mod]
-	r, err := f.F(types.MakeDatums(234, 10), s.ctx)
+	f := &builtinArithmetic{newBaseBuiltinFunc(nil, true, s.ctx), opcode.Mod}
+	f.self = f
+	r, err := f.constantFold(types.MakeDatums(234, 10))
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(4))
-	r, err = f.F(types.MakeDatums(29, 9), s.ctx)
+	r, err = f.constantFold(types.MakeDatums(29, 9))
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(2))
-	r, err = f.F(types.MakeDatums(34.5, 3), s.ctx)
+	r, err = f.constantFold(types.MakeDatums(34.5, 3))
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(1.5))
 }

@@ -212,13 +212,13 @@ func needValue(af expression.AggregationFunction) bool {
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat
 }
 
-func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) PhysicalPlan {
+func (p *physicalTableSource) tryToAddUnionScan(ctx context.Context, resultPlan PhysicalPlan) PhysicalPlan {
 	if p.readOnly {
 		return resultPlan
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := &PhysicalUnionScan{
-		Condition: expression.ComposeCNFCondition(append(conditions, p.AccessCondition...)),
+		Condition: expression.ComposeCNFCondition(ctx, append(conditions, p.AccessCondition...)),
 	}
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.GetSchema())

@@ -358,15 +358,15 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 	var leftHashKey, rightHashKey []*expression.Column
 	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
-		ln, _ := eqCond.Args[0].(*expression.Column)
-		rn, _ := eqCond.Args[1].(*expression.Column)
+		ln, _ := eqCond.GetArgs()[0].(*expression.Column)
+		rn, _ := eqCond.GetArgs()[1].(*expression.Column)
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
 		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
 	e := &HashJoinExec{
 		schema:        v.GetSchema(),
-		otherFilter:   expression.ComposeCNFCondition(v.OtherConditions),
+		otherFilter:   expression.ComposeCNFCondition(b.ctx, v.OtherConditions),
 		prepared:      false,
 		ctx:           b.ctx,
 		targetTypes:   targetTypes,
@@ -374,15 +374,15 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 		defaultValues: v.DefaultValues,
 	}
 	if v.SmallTable == 1 {
-		e.smallFilter = expression.ComposeCNFCondition(v.RightConditions)
-		e.bigFilter = expression.ComposeCNFCondition(v.LeftConditions)
+		e.smallFilter = expression.ComposeCNFCondition(b.ctx, v.RightConditions)
+		e.bigFilter = expression.ComposeCNFCondition(b.ctx, v.LeftConditions)
 		e.smallHashKey = rightHashKey
 		e.bigHashKey = leftHashKey
 		e.leftSmall = false
 	} else {
 		e.leftSmall = true
-		e.smallFilter = expression.ComposeCNFCondition(v.LeftConditions)
-		e.bigFilter = expression.ComposeCNFCondition(v.RightConditions)
+		e.smallFilter = expression.ComposeCNFCondition(b.ctx, v.LeftConditions)
+		e.bigFilter = expression.ComposeCNFCondition(b.ctx, v.RightConditions)
 		e.smallHashKey = leftHashKey
 		e.bigHashKey = rightHashKey
 	}
@@ -415,17 +415,17 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 	var leftHashKey, rightHashKey []*expression.Column
 	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
-		ln, _ := eqCond.Args[0].(*expression.Column)
-		rn, _ := eqCond.Args[1].(*expression.Column)
+		ln, _ := eqCond.GetArgs()[0].(*expression.Column)
+		rn, _ := eqCond.GetArgs()[1].(*expression.Column)
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
 		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
 	e := &HashSemiJoinExec{
 		schema:       v.GetSchema(),
-		otherFilter:  expression.ComposeCNFCondition(v.OtherConditions),
-		bigFilter:    expression.ComposeCNFCondition(v.LeftConditions),
-		smallFilter:  expression.ComposeCNFCondition(v.RightConditions),
+		otherFilter:  expression.ComposeCNFCondition(b.ctx, v.OtherConditions),
+		bigFilter:    expression.ComposeCNFCondition(b.ctx, v.LeftConditions),
+		smallFilter:  expression.ComposeCNFCondition(b.ctx, v.RightConditions),
 		bigExec:      b.build(v.GetChildByIndex(0)),
 		smallExec:    b.build(v.GetChildByIndex(1)),
 		prepared:     false,
@@ -464,7 +464,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	exec := &SelectionExec{
 		Src:       b.build(v.GetChildByIndex(0)),
-		Condition: expression.ComposeCNFCondition(v.Conditions),
+		Condition: expression.ComposeCNFCondition(b.ctx, v.Conditions),
 		schema:    v.GetSchema(),
 		ctx:       b.ctx,
 	}

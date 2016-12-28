@@ -35,9 +35,10 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 	}
 
 	Dtbl := tblToDtbl(tbl)
-
+	f := &builtinAbs{newBaseBuiltinFunc(nil, true, s.ctx)}
+	f.self = f
 	for _, t := range Dtbl {
-		v, err := builtinAbs(t["Arg"], s.ctx)
+		v, err := f.constantFold(t["Arg"])
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -58,9 +59,10 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 	}
 
 	Dtbl := tblToDtbl(tbl)
-
+	f := &builtinCeil{newBaseBuiltinFunc(nil, true, s.ctx)}
+	f.self = f
 	for _, t := range Dtbl {
-		v, err := builtinCeil(t["Arg"], s.ctx)
+		v, err := f.constantFold(t["Arg"])
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
 	}
@@ -80,9 +82,10 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 	}
 
 	Dtbl := tblToDtbl(tbl)
-
+	f := &builtinLog{newBaseBuiltinFunc(nil, true, s.ctx)}
+	f.self = f
 	for _, t := range Dtbl {
-		v, err := builtinLog(t["Arg"], s.ctx)
+		v, err := f.constantFold(t["Arg"])
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
 	}
@@ -97,7 +100,7 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 	nullDtbl := tblToDtbl(nullTbl)
 
 	for _, t := range nullDtbl {
-		v, err := builtinLog(t["Arg"], s.ctx)
+		v, err := f.constantFold(t["Arg"])
 		c.Assert(err, IsNil)
 		c.Assert(v.Kind(), Equals, types.KindNull)
 	}
@@ -105,7 +108,9 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 
 func (s *testEvaluatorSuite) TestRand(c *C) {
 	defer testleak.AfterTest(c)()
-	v, err := builtinRand(make([]types.Datum, 0), s.ctx)
+	f := &builtinRand{newBaseBuiltinFunc(nil, false, s.ctx)}
+	f.self = f
+	v, err := f.constantFold(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Less, float64(1))
 	c.Assert(v.GetFloat64(), GreaterEqual, float64(0))
@@ -124,9 +129,10 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 	}
 
 	Dtbl := tblToDtbl(tbl)
-
+	f := &builtinPow{newBaseBuiltinFunc(nil, true, s.ctx)}
+	f.self = f
 	for _, t := range Dtbl {
-		v, err := builtinPow(t["Arg"], s.ctx)
+		v, err := f.constantFold(t["Arg"])
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -142,7 +148,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 
 	errDtbl := tblToDtbl(errTbl)
 	for _, t := range errDtbl {
-		_, err := builtinPow(t["Arg"], s.ctx)
+		_, err := f.constantFold(t["Arg"])
 		c.Assert(err, NotNil)
 	}
 }
@@ -164,9 +170,10 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 	}
 
 	Dtbl := tblToDtbl(tbl)
-
+	f := &builtinRound{newBaseBuiltinFunc(nil, true, s.ctx)}
+	f.self = f
 	for _, t := range Dtbl {
-		v, err := builtinRound(t["Arg"], s.ctx)
+		v, err := f.constantFold(t["Arg"])
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}

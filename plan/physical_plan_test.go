@@ -312,7 +312,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			}
 			if ts != nil {
 				conditions := append(ts.indexFilterConditions, ts.tableFilterConditions...)
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(builder.ctx, conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
 				break
 			}
 			p = p.GetChildByIndex(0)

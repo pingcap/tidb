@@ -127,8 +127,29 @@ func doMatch(str string, patChars, patTypes []byte) bool {
 	return sIdx == len(str)
 }
 
+type likeFuncClass struct {
+	baseFuncClass
+}
+
+type builtinLike struct {
+	baseBuiltinFunc
+}
+
+func (b *likeFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinLike{baseBuiltinFunc: newBaseBuiltinFunc(args, true, ctx)}
+	f.self = f
+	return f, nil
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
-func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func (b *builtinLike) eval(args []types.Datum) (d types.Datum, err error) {
+	if args, err = b.evalArgs(args); err != nil {
+		return d, errors.Trace(err)
+	}
 	if args[0].IsNull() {
 		return
 	}
@@ -153,8 +174,29 @@ func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	return
 }
 
+type regexpFuncClass struct {
+	baseFuncClass
+}
+
+type builtinRegExp struct {
+	baseBuiltinFunc
+}
+
+func (b *regexpFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinRegExp{baseBuiltinFunc: newBaseBuiltinFunc(args, true, ctx)}
+	f.self = f
+	return f, nil
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
-func builtinRegexp(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func (b *builtinRegExp) eval(args []types.Datum) (d types.Datum, err error) {
+	if args, err = b.evalArgs(args); err != nil {
+		return d, errors.Trace(err)
+	}
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
 	if args[0].IsNull() || args[1].IsNull() {
 		return

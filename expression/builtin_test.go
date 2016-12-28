@@ -60,12 +60,14 @@ func makeDatums(i interface{}) []types.Datum {
 func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 	defer testleak.AfterTest(c)()
 	args := types.MakeDatums(1, nil)
-	v, err := builtinCoalesce(args, s.ctx)
+	f := &builtinCoalesce{newBaseBuiltinFunc(nil, true, s.ctx)}
+	f.self = f
+	v, err := f.constantFold(args)
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum(1))
 
 	args = types.MakeDatums(nil, nil)
-	v, err = builtinCoalesce(args, s.ctx)
+	v, err = f.constantFold(args)
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum(nil))
 }
@@ -73,20 +75,22 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 func (s *testEvaluatorSuite) TestGreatestFunc(c *C) {
 	defer testleak.AfterTest(c)()
 
-	v, err := builtinGreatest(types.MakeDatums(2, 0), s.ctx)
+	f := &builtinGreatest{newBaseBuiltinFunc(nil, true, s.ctx)}
+	f.self = f
+	v, err := f.constantFold(types.MakeDatums(2, 0))
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(2))
 
-	v, err = builtinGreatest(types.MakeDatums(34.0, 3.0, 5.0, 767.0), s.ctx)
+	v, err = f.constantFold(types.MakeDatums(34.0, 3.0, 5.0, 767.0))
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Equals, float64(767.0))
 
-	v, err = builtinGreatest(types.MakeDatums("B", "A", "C"), s.ctx)
+	v, err = f.constantFold(types.MakeDatums("B", "A", "C"))
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, "C")
 
 	// GREATEST() returns NULL if any argument is NULL.
-	v, err = builtinGreatest(types.MakeDatums(1, nil, 2), s.ctx)
+	v, err = f.constantFold(types.MakeDatums(1, nil, 2))
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
 }
@@ -94,11 +98,13 @@ func (s *testEvaluatorSuite) TestGreatestFunc(c *C) {
 func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 	defer testleak.AfterTest(c)()
 
-	v, err := builtinIsNull(types.MakeDatums(1), s.ctx)
+	f := &builtinIsNull{newBaseBuiltinFunc(nil, true, s.ctx)}
+	f.self = f
+	v, err := f.constantFold(types.MakeDatums(1))
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(0))
 
-	v, err = builtinIsNull(types.MakeDatums(nil), s.ctx)
+	v, err = f.constantFold(types.MakeDatums(nil))
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }
@@ -106,15 +112,19 @@ func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 func (s *testEvaluatorSuite) TestLock(c *C) {
 	defer testleak.AfterTest(c)()
 
-	v, err := builtinLock(types.MakeDatums(1), s.ctx)
+	f := &builtinLock{newBaseBuiltinFunc(nil, true, s.ctx)}
+	f.self = f
+	v, err := f.constantFold(types.MakeDatums(1))
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 
-	v, err = builtinLock(types.MakeDatums(nil), s.ctx)
+	v, err = f.constantFold(types.MakeDatums(nil))
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 
-	v, err = builtinReleaseLock(types.MakeDatums(1), s.ctx)
+	g := &builtinReleaseLock{newBaseBuiltinFunc(nil, true, s.ctx)}
+	g.self = g
+	v, err = g.constantFold(types.MakeDatums(1))
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }

@@ -26,8 +26,29 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+type absFuncClass struct {
+	baseFuncClass
+}
+
+type builtinAbs struct {
+	baseBuiltinFunc
+}
+
+func (b *absFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinAbs{baseBuiltinFunc: newBaseBuiltinFunc(args, true, ctx)}
+	f.self = f
+	return f, nil
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_abs
-func builtinAbs(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+func (b *builtinAbs) eval(args []types.Datum) (d types.Datum, err error) {
+	if args, err = b.evalArgs(args); err != nil {
+		return d, errors.Trace(err)
+	}
 	d = args[0]
 	switch d.Kind() {
 	case types.KindNull:
@@ -45,20 +66,41 @@ func builtinAbs(args []types.Datum, ctx context.Context) (d types.Datum, err err
 	default:
 		// we will try to convert other types to float
 		// TODO: if time has no precision, it will be a integer
-		f, err := d.ToFloat64(ctx.GetSessionVars().StmtCtx)
+		f, err := d.ToFloat64(b.ctx.GetSessionVars().StmtCtx)
 		d.SetFloat64(math.Abs(f))
 		return d, errors.Trace(err)
 	}
 }
 
+type ceilFuncClass struct {
+	baseFuncClass
+}
+
+type builtinCeil struct {
+	baseBuiltinFunc
+}
+
+func (b *ceilFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinCeil{baseBuiltinFunc: newBaseBuiltinFunc(args, true, ctx)}
+	f.self = f
+	return f, nil
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_ceiling
-func builtinCeil(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+func (b *builtinCeil) eval(args []types.Datum) (d types.Datum, err error) {
+	if args, err = b.evalArgs(args); err != nil {
+		return d, errors.Trace(err)
+	}
 	if args[0].IsNull() ||
 		args[0].Kind() == types.KindUint64 || args[0].Kind() == types.KindInt64 {
 		return args[0], nil
 	}
 
-	f, err := args[0].ToFloat64(ctx.GetSessionVars().StmtCtx)
+	f, err := args[0].ToFloat64(b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -66,10 +108,30 @@ func builtinCeil(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	return
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log
-func builtinLog(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
+type logFuncClass struct {
+	baseFuncClass
+}
 
+type builtinLog struct {
+	baseBuiltinFunc
+}
+
+func (b *logFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinLog{baseBuiltinFunc: newBaseBuiltinFunc(args, true, ctx)}
+	f.self = f
+	return f, nil
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log
+func (b *builtinLog) eval(args []types.Datum) (d types.Datum, err error) {
+	if args, err = b.evalArgs(args); err != nil {
+		return d, errors.Trace(err)
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
 	switch len(args) {
 	case 1:
 		x, err := args[0].ToFloat64(sc)
@@ -104,9 +166,30 @@ func builtinLog(args []types.Datum, ctx context.Context) (d types.Datum, err err
 	return
 }
 
+type log2FuncClass struct {
+	baseFuncClass
+}
+
+type builtinLog2 struct {
+	baseBuiltinFunc
+}
+
+func (b *log2FuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinLog2{baseBuiltinFunc: newBaseBuiltinFunc(args, true, ctx)}
+	f.self = f
+	return f, nil
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log2
-func builtinLog2(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
+func (b *builtinLog2) eval(args []types.Datum) (d types.Datum, err error) {
+	if args, err = b.evalArgs(args); err != nil {
+		return d, errors.Trace(err)
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
 	x, err := args[0].ToFloat64(sc)
 	if err != nil {
 		return d, errors.Trace(err)
@@ -120,9 +203,30 @@ func builtinLog2(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	return
 }
 
+type log10FuncClass struct {
+	baseFuncClass
+}
+
+type builtinLog10 struct {
+	baseBuiltinFunc
+}
+
+func (b *log10FuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinLog10{baseBuiltinFunc: newBaseBuiltinFunc(args, true, ctx)}
+	f.self = f
+	return f, nil
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log10
-func builtinLog10(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
+func (b *builtinLog10) eval(args []types.Datum) (d types.Datum, err error) {
+	if args, err = b.evalArgs(args); err != nil {
+		return d, errors.Trace(err)
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
 	x, err := args[0].ToFloat64(sc)
 	if err != nil {
 		return d, errors.Trace(err)
@@ -137,10 +241,31 @@ func builtinLog10(args []types.Datum, ctx context.Context) (d types.Datum, err e
 
 }
 
+type randFuncClass struct {
+	baseFuncClass
+}
+
+type builtinRand struct {
+	baseBuiltinFunc
+}
+
+func (b *randFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinRand{baseBuiltinFunc: newBaseBuiltinFunc(args, false, ctx)}
+	f.self = f
+	return f, nil
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
-func builtinRand(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+func (b *builtinRand) eval(args []types.Datum) (d types.Datum, err error) {
+	if args, err = b.evalArgs(args); err != nil {
+		return d, errors.Trace(err)
+	}
 	if len(args) == 1 && !args[0].IsNull() {
-		seed, err := args[0].ToInt64(ctx.GetSessionVars().StmtCtx)
+		seed, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -150,9 +275,30 @@ func builtinRand(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	return d, nil
 }
 
+type powFuncClass struct {
+	baseFuncClass
+}
+
+type builtinPow struct {
+	baseBuiltinFunc
+}
+
+func (b *powFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinPow{baseBuiltinFunc: newBaseBuiltinFunc(args, true, ctx)}
+	f.self = f
+	return f, nil
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_pow
-func builtinPow(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
+func (b *builtinPow) eval(args []types.Datum) (d types.Datum, err error) {
+	if args, err = b.evalArgs(args); err != nil {
+		return d, errors.Trace(err)
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
 	x, err := args[0].ToFloat64(sc)
 	if err != nil {
 		return d, errors.Trace(err)
@@ -166,9 +312,30 @@ func builtinPow(args []types.Datum, ctx context.Context) (d types.Datum, err err
 	return d, nil
 }
 
+type roundFuncClass struct {
+	baseFuncClass
+}
+
+type builtinRound struct {
+	baseBuiltinFunc
+}
+
+func (b *roundFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinRound{baseBuiltinFunc: newBaseBuiltinFunc(args, true, ctx)}
+	f.self = f
+	return f, nil
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
-func builtinRound(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
+func (b *builtinRound) eval(args []types.Datum) (d types.Datum, err error) {
+	if args, err = b.evalArgs(args); err != nil {
+		return d, errors.Trace(err)
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
 	x, err := args[0].ToFloat64(sc)
 	if err != nil {
 		return d, errors.Trace(err)

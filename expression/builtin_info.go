@@ -24,9 +24,27 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+type databaseFuncClass struct {
+	baseFuncClass
+}
+
+type builtinDatabase struct {
+	baseBuiltinFunc
+}
+
+func (b *databaseFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinDatabase{baseBuiltinFunc: newBaseBuiltinFunc(args, false, ctx)}
+	f.self = f
+	return f, nil
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
-func builtinDatabase(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	currentDB := ctx.GetSessionVars().CurrentDB
+func (b *builtinDatabase) eval(_ []types.Datum) (d types.Datum, err error) {
+	currentDB := b.ctx.GetSessionVars().CurrentDB
 	if currentDB == "" {
 		return d, nil
 	}
@@ -34,8 +52,26 @@ func builtinDatabase(args []types.Datum, ctx context.Context) (d types.Datum, er
 	return d, nil
 }
 
-func builtinFoundRows(arg []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := ctx.GetSessionVars()
+type foundRowsFuncClass struct {
+	baseFuncClass
+}
+
+type builtinFoundRows struct {
+	baseBuiltinFunc
+}
+
+func (b *foundRowsFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinFoundRows{baseBuiltinFunc: newBaseBuiltinFunc(args, false, ctx)}
+	f.self = f
+	return f, nil
+}
+
+func (b *builtinFoundRows) eval(_ []types.Datum) (d types.Datum, err error) {
+	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -44,10 +80,28 @@ func builtinFoundRows(arg []types.Datum, ctx context.Context) (d types.Datum, er
 	return d, nil
 }
 
+type currentUserFuncClass struct {
+	baseFuncClass
+}
+
+type builtinCurrentUser struct {
+	baseBuiltinFunc
+}
+
+func (b *currentUserFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinCurrentUser{baseBuiltinFunc: newBaseBuiltinFunc(args, false, ctx)}
+	f.self = f
+	return f, nil
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 // TODO: The value of CURRENT_USER() can differ from the value of USER(). We will finish this after we support grant tables.
-func builtinCurrentUser(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := ctx.GetSessionVars()
+func (b *builtinCurrentUser) eval(_ []types.Datum) (d types.Datum, err error) {
+	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -56,8 +110,26 @@ func builtinCurrentUser(args []types.Datum, ctx context.Context) (d types.Datum,
 	return d, nil
 }
 
-func builtinUser(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := ctx.GetSessionVars()
+type userFuncClass struct {
+	baseFuncClass
+}
+
+type builtinUser struct {
+	baseBuiltinFunc
+}
+
+func (b *userFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinUser{baseBuiltinFunc: newBaseBuiltinFunc(args, false, ctx)}
+	f.self = f
+	return f, nil
+}
+
+func (b *builtinUser) eval(_ []types.Datum) (d types.Datum, err error) {
+	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -66,8 +138,26 @@ func builtinUser(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	return d, nil
 }
 
-func builtinConnectionID(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := ctx.GetSessionVars()
+type connectionIDFuncClass struct {
+	baseFuncClass
+}
+
+type builtinConnectionID struct {
+	baseBuiltinFunc
+}
+
+func (b *connectionIDFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinConnectionID{baseBuiltinFunc: newBaseBuiltinFunc(args, false, ctx)}
+	f.self = f
+	return f, nil
+}
+
+func (b *builtinConnectionID) eval(_ []types.Datum) (d types.Datum, err error) {
+	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -76,21 +166,60 @@ func builtinConnectionID(args []types.Datum, ctx context.Context) (d types.Datum
 	return d, nil
 }
 
+type lastInsertIDFuncClass struct {
+	baseFuncClass
+}
+
+type builtinLastInsertID struct {
+	baseBuiltinFunc
+}
+
+func (b *lastInsertIDFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinLastInsertID{baseBuiltinFunc: newBaseBuiltinFunc(args, false, ctx)}
+	f.self = f
+	return f, nil
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
-func builtinLastInsertID(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+func (b *builtinLastInsertID) eval(args []types.Datum) (d types.Datum, err error) {
+	if args, err = b.evalArgs(args); err != nil {
+		return d, errors.Trace(err)
+	}
 	if len(args) == 1 {
-		id, err := args[0].ToInt64(ctx.GetSessionVars().StmtCtx)
+		id, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-		ctx.GetSessionVars().SetLastInsertID(uint64(id))
+		b.ctx.GetSessionVars().SetLastInsertID(uint64(id))
 	}
 
-	d.SetUint64(ctx.GetSessionVars().LastInsertID)
+	d.SetUint64(b.ctx.GetSessionVars().LastInsertID)
 	return
 }
 
-func builtinVersion(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+type versionFuncClass struct {
+	baseFuncClass
+}
+
+type builtinVersion struct {
+	baseBuiltinFunc
+}
+
+func (b *versionFuncClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := b.checkValid(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	f := &builtinVersion{baseBuiltinFunc: newBaseBuiltinFunc(args, false, ctx)}
+	f.self = f
+	return f, nil
+}
+
+func (b *builtinVersion) eval(_ []types.Datum) (d types.Datum, err error) {
 	d.SetString(mysql.ServerVersion)
 	return d, nil
 }

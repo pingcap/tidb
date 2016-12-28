@@ -31,12 +31,21 @@ import (
 // Error instances.
 var (
 	errInvalidOperation = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
+	errWrongParamCount  = terror.ClassExecutor.New(codeWrongParameterCount, "Incorrect parameter count in the call to native function '%s'")
 )
 
 // Error codes.
 const (
-	codeInvalidOperation terror.ErrCode = 1
+	codeInvalidOperation    terror.ErrCode = 1
+	codeWrongParameterCount terror.ErrCode = 1582
 )
+
+func init() {
+	mySQLErrCodes := map[terror.ErrCode]uint16{
+		codeWrongParameterCount: mysql.ErrWrongParamcountToNativeFct,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassExpression] = mySQLErrCodes
+}
 
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error)
@@ -155,7 +164,7 @@ func (c *Constant) ResolveIndices(_ Schema) {
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
-func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expression {
+func composeConditionWithBinaryOp(ctx context.Context, conditions []Expression, funcName string) Expression {
 	length := len(conditions)
 	if length == 0 {
 		return nil
@@ -163,21 +172,21 @@ func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expr
 	if length == 1 {
 		return conditions[0]
 	}
-	expr, _ := NewFunction(funcName,
+	expr, _ := NewFunction(ctx, funcName,
 		types.NewFieldType(mysql.TypeTiny),
-		composeConditionWithBinaryOp(conditions[:length/2], funcName),
-		composeConditionWithBinaryOp(conditions[length/2:], funcName))
+		composeConditionWithBinaryOp(ctx, conditions[:length/2], funcName),
+		composeConditionWithBinaryOp(ctx, conditions[length/2:], funcName))
 	return expr
 }
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeCNFCondition(conditions []Expression) Expression {
-	return composeConditionWithBinaryOp(conditions, ast.AndAnd)
+func ComposeCNFCondition(ctx context.Context, conditions []Expression) Expression {
+	return composeConditionWithBinaryOp(ctx, conditions, ast.AndAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
-func ComposeDNFCondition(conditions []Expression) Expression {
-	return composeConditionWithBinaryOp(conditions, ast.OrOr)
+func ComposeDNFCondition(ctx context.Context, conditions []Expression) Expression {
+	return composeConditionWithBinaryOp(ctx, conditions, ast.OrOr)
 }
 
 // Assignment represents a set assignment in Update, such as
@@ -203,7 +212,7 @@ func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
 	case *ScalarFunction:
 		if v.FuncName.L == funcName {
 			var ret []Expression
-			for _, arg := range v.Args {
+			for _, arg := range v.GetArgs() {
 				ret = append(ret, splitNormalFormItems(arg, funcName)...)
 			}
 			return ret
@@ -230,14 +239,14 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		var err error
-		args := make([]Expression, len(x.Args))
-		for i, arg := range x.Args {
+		args := make([]Expression, len(x.GetArgs()))
+		for i, arg := range x.GetArgs() {
 			args[i], err = EvaluateExprWithNull(ctx, schema, arg)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		newFunc, err := NewFunction(x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		newFunc, err := NewFunction(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -266,4 +275,32 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 		schema = append(schema, newCol)
 	}
 	return schema
+}
+
+// NewCastFunc creates a new cast function.
+func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) *ScalarFunction {
+	f := &builtinCast{baseBuiltinFunc: baseBuiltinFunc{
+		args:          []Expression{arg},
+		argValues:     make([]types.Datum, 1),
+		deterministic: true,
+		ctx:           ctx,
+	}, tp: tp}
+	f.self = f
+	return &ScalarFunction{
+		FuncName: model.NewCIStr(ast.Cast),
+		RetType:  tp,
+		Function: f,
+	}
+}
+
+// NewValuesFunc creates a new values function.
+func NewValuesFunc(v *ast.ValuesExpr, ctx context.Context) *ScalarFunction {
+	return &ScalarFunction{
+		FuncName: model.NewCIStr(ast.Values),
+		RetType:  &v.Type,
+		Function: &builtinValues{baseBuiltinFunc: baseBuiltinFunc{
+			deterministic: false,
+			ctx:           ctx,
+		}, v: v},
+	}
 }

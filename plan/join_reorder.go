@@ -104,8 +104,8 @@ func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.
 	for _, cond := range conds {
 		if f, ok := cond.(*expression.ScalarFunction); ok {
 			if f.FuncName.L == ast.EQ {
-				lCol, lok := f.Args[0].(*expression.Column)
-				rCol, rok := f.Args[1].(*expression.Column)
+				lCol, lok := f.GetArgs()[0].(*expression.Column)
+				rCol, rok := f.GetArgs()[1].(*expression.Column)
 				if lok && rok {
 					lID := findColumnIndexByGroup(group, lCol)
 					rID := findColumnIndexByGroup(group, rCol)

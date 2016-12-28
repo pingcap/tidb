@@ -36,13 +36,15 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 		{0, 1, 2, 2},
 	}
 
+	f := &builtinIf{newBaseBuiltinFunc(nil, true, s.ctx)}
+	f.self = f
 	for _, t := range tbl {
-		d, err := builtinIf(types.MakeDatums([]interface{}{t.Arg1, t.Arg2, t.Arg3}...), s.ctx)
+		d, err := f.constantFold(types.MakeDatums([]interface{}{t.Arg1, t.Arg2, t.Arg3}...))
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
 
-	_, err := builtinIf(types.MakeDatums([]interface{}{errors.New("must error"), 1, 2}...), s.ctx)
+	_, err := f.constantFold(types.MakeDatums([]interface{}{errors.New("must error"), 1, 2}...))
 	c.Assert(err, NotNil)
 }
 
@@ -58,8 +60,10 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 		{nil, nil, nil},
 	}
 
+	f := &builtinIfNull{newBaseBuiltinFunc(nil, true, s.ctx)}
+	f.self = f
 	for _, t := range tbl {
-		d, err := builtinIfNull(types.MakeDatums([]interface{}{t.Arg1, t.Arg2}...), s.ctx)
+		d, err := f.constantFold(types.MakeDatums([]interface{}{t.Arg1, t.Arg2}...))
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
@@ -78,8 +82,10 @@ func (s *testEvaluatorSuite) TestNullIf(c *C) {
 		{1, 2, 1},
 	}
 
+	f := &builtinNullIf{newBaseBuiltinFunc(nil, true, s.ctx)}
+	f.self = f
 	for _, t := range tbl {
-		d, err := builtinNullIf(types.MakeDatums([]interface{}{t.Arg1, t.Arg2}...), s.ctx)
+		d, err := f.constantFold(types.MakeDatums([]interface{}{t.Arg1, t.Arg2}...))
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}

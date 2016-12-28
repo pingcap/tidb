@@ -25,25 +25,28 @@ import (
 func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
-	d, err := builtinDatabase(types.MakeDatums(), ctx)
+	fc := Funcs[ast.Database]
+	f, _ := fc.getFunction(nil, ctx)
+	d, err := f.eval(types.MakeDatums())
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 	ctx.GetSessionVars().CurrentDB = "test"
-	d, err = builtinDatabase(types.MakeDatums(), ctx)
+	d, err = f.eval(types.MakeDatums())
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 
 	// Test case for schema().
-	f := Funcs[ast.Schema]
+	fc = Funcs[ast.Schema]
+	f, _ = fc.getFunction(nil, ctx)
 	c.Assert(f, NotNil)
-	d, err = f.F(types.MakeDatums(), ctx)
+	d, err = f.eval(types.MakeDatums())
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 }
 
 func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	defer testleak.AfterTest(c)()
-	d, err := builtinFoundRows(types.MakeDatums(), s.ctx)
+	d, err := (&builtinFoundRows{newBaseBuiltinFunc(nil, true, s.ctx)}).eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(0))
 }
@@ -54,7 +57,7 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.User = "root@localhost"
 
-	d, err := builtinUser(types.MakeDatums(), ctx)
+	d, err := (&builtinUser{newBaseBuiltinFunc(nil, true, ctx)}).eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
 }
@@ -65,7 +68,7 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.User = "root@localhost"
 
-	d, err := builtinCurrentUser(types.MakeDatums(), ctx)
+	d, err := (&builtinCurrentUser{newBaseBuiltinFunc(nil, true, ctx)}).eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
 }
@@ -76,14 +79,14 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.ConnectionID = uint64(1)
 
-	d, err := builtinConnectionID(types.MakeDatums(), ctx)
+	d, err := (&builtinConnectionID{newBaseBuiltinFunc(nil, true, ctx)}).eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(1))
 }
 
 func (s *testEvaluatorSuite) TestVersion(c *C) {
 	defer testleak.AfterTest(c)()
-	v, err := builtinVersion(nil, s.ctx)
+	v, err := (&builtinVersion{newBaseBuiltinFunc(nil, true, s.ctx)}).eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
 }
