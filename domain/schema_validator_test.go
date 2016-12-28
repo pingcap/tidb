@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-type leaseItem struct {
+type leaseGrantItem struct {
 	leaseGrantTS uint64
 	schemaVer    int64
 }
@@ -29,51 +29,51 @@ type leaseItem struct {
 func (*testSuite) TestSchemaValidator(c *C) {
 	defer testleak.AfterTest(c)()
 	lease := 2 * time.Millisecond
-	leaseCh := make(chan leaseItem)
+	leaseGrantCh := make(chan leaseGrantItem)
 	oracleCh := make(chan uint64)
 	exit := make(chan struct{})
-	go serverFunc(lease, leaseCh, oracleCh, exit)
+	go serverFunc(lease, leaseGrantCh, oracleCh, exit)
 
-	svi := newSchemaValidator(lease)
+	validator := newSchemaValidator(lease)
 
 	for i := 0; i < 10; i++ {
 		delay := time.Duration(100+rand.Intn(900)) * time.Microsecond
 		time.Sleep(delay)
-		// reload can run arbitrarily, at any time.
-		reload(svi, leaseCh)
+		// Reload can run arbitrarily, at any time.
+		reload(validator, leaseGrantCh)
 	}
 
-	// take a lease, check it's valid.
-	item := <-leaseCh
-	svi.Update(item.leaseGrantTS, item.schemaVer)
-	valid := svi.Check(item.leaseGrantTS, item.schemaVer)
+	// Take a lease, check it's valid.
+	item := <-leaseGrantCh
+	validator.Update(item.leaseGrantTS, item.schemaVer)
+	valid := validator.Check(item.leaseGrantTS, item.schemaVer)
 	c.Assert(valid, IsTrue)
 
-	// sleep for a long time, check schema is invalid.
+	// Sleep for a long time, check schema is invalid.
 	time.Sleep(lease)
 	ts := <-oracleCh
-	valid = svi.Check(ts, item.schemaVer)
+	valid = validator.Check(ts, item.schemaVer)
 	c.Assert(valid, IsFalse)
 
-	reload(svi, leaseCh)
-	valid = svi.Check(ts, item.schemaVer)
+	reload(validator, leaseGrantCh)
+	valid = validator.Check(ts, item.schemaVer)
 	c.Assert(valid, IsFalse)
 
-	// check the latest schema version must changed.
-	c.Assert(item.schemaVer, LessEqual, svi.Latest())
+	// Check the latest schema version must changed.
+	c.Assert(item.schemaVer, Less, validator.Latest())
 
 	exit <- struct{}{}
 }
 
-func reload(svi SchemaValidator, leaseCh chan leaseItem) {
-	item := <-leaseCh
-	svi.Update(item.leaseGrantTS, item.schemaVer)
+func reload(validator SchemaValidator, leaseGrantCh chan leaseGrantItem) {
+	item := <-leaseGrantCh
+	validator.Update(item.leaseGrantTS, item.schemaVer)
 }
 
 // serverFunc plays the role as a remote server, runs in a seperate goroutine.
-// communicate with it through channel to mock network, it can grant lease and
-// provide timestamp oracle.
-func serverFunc(lease time.Duration, requireLease chan leaseItem, oracleCh chan uint64, exit chan struct{}) {
+// It can grant lease and provide timestamp oracle.
+// Caller should communicate with it through channel to mock network.
+func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh chan uint64, exit chan struct{}) {
 	var version int64
 	leaseTS := uint64(time.Now().UnixNano())
 	ticker := time.NewTicker(lease)
@@ -82,7 +82,7 @@ func serverFunc(lease time.Duration, requireLease chan leaseItem, oracleCh chan 
 		case <-ticker.C:
 			version++
 			leaseTS = uint64(time.Now().UnixNano())
-		case requireLease <- leaseItem{
+		case requireLease <- leaseGrantItem{
 			leaseGrantTS: leaseTS,
 			schemaVer:    version,
 		}:

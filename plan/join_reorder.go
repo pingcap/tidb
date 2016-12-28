@@ -37,7 +37,7 @@ func tryToGetJoinGroup(j *Join) ([]LogicalPlan, bool) {
 
 func findColumnIndexByGroup(groups []LogicalPlan, col *expression.Column) int {
 	for i, plan := range groups {
-		idx := plan.GetSchema().GetIndex(col)
+		idx := plan.GetSchema().GetColumnIndex(col)
 		if idx != -1 {
 			return i
 		}
@@ -188,7 +188,7 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *Join {
 	join.self = join
 	join.initIDAndContext(lChild.context())
 	join.SetChildren(lChild, rChild)
-	join.SetSchema(append(lChild.GetSchema().Clone(), rChild.GetSchema().Clone()...))
+	join.SetSchema(expression.MergeSchema(lChild.GetSchema(), rChild.GetSchema()))
 	lChild.SetParents(join)
 	rChild.SetParents(join)
 	return join
