@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -43,7 +44,79 @@ const (
 // JoinConcurrency means the number of goroutines that participate in joining.
 var JoinConcurrency = 5
 
-func getRowCountByIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo) (uint64, error) {
+func getRowCountByIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo, tableInfo *model.TableInfo) (uint64, error) {
+	var offset int
+	for i := range tableInfo.Indices {
+		if tableInfo.Indices[i].Name.L == indexInfo.Name.L {
+			offset = i
+			break
+		}
+	}
+	if len(table.Indices[offset].Numbers) == 0 {
+		return getRowCountByPseudoIndexRanges(sc, table, indexRanges, indexInfo)
+	} else {
+		return getRowCountByRealIndexRanges(sc, table, indexRanges, indexInfo, offset)
+	}
+}
+
+func getRowCountByRealIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo, offset int) (uint64, error) {
+	totalCount := int64(0)
+	for _, indexRange := range indexRanges {
+		lv := indexRange.LowVal
+		rv := indexRange.HighVal
+		for i := len(lv); i < len(indexInfo.Columns); i++ {
+			lv = append(lv, types.MinNotNullDatum())
+		}
+		for i := len(rv); i < len(indexInfo.Columns); i++ {
+			rv = append(rv, types.MaxValueDatum())
+		}
+		lb, err := codec.EncodeKey(nil, lv...)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		rb, err := codec.EncodeKey(nil, rv...)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		l := types.NewBytesDatum(lb)
+		r := types.NewBytesDatum(rb)
+		var rowCount int64
+		if lv[0].Kind() == types.KindNull && rv[0].Kind() == types.KindMaxValue {
+			return uint64(table.Count), nil
+		} else if lv[0].Kind() == types.KindMinNotNull {
+			rowCount, err = table.Indices[offset].EqualRowCount(sc, types.Datum{})
+			if rv[0].Kind() == types.KindMaxValue {
+				rowCount = table.Count - rowCount
+			} else if err == nil {
+				lessCount, err1 := table.Indices[offset].LessRowCount(sc, r)
+				rowCount = lessCount - rowCount
+				err = err1
+			}
+		} else if rv[0].Kind() == types.KindMaxValue {
+			rowCount, err = table.Indices[offset].GreaterRowCount(sc, l)
+		} else {
+			compare, err1 := l.CompareDatum(sc, r)
+			if err1 != nil {
+				return 0, errors.Trace(err1)
+			}
+			if compare == 0 {
+				rowCount, err = table.Indices[offset].EqualRowCount(sc, l)
+			} else {
+				rowCount, err = table.Indices[offset].BetweenRowCount(sc, l, r)
+			}
+		}
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		totalCount += rowCount
+	}
+	if totalCount > table.Count {
+		totalCount = table.Count
+	}
+	return uint64(totalCount), nil
+}
+
+func getRowCountByPseudoIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo) (uint64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
 		count := float64(table.Count)
@@ -248,7 +321,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			}
 			log.Warn("truncate error in buildIndexRange")
 		}
-		rowCount, err = getRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index)
+		rowCount, err = getRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, is.Table)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

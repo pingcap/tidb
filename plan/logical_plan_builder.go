@@ -17,8 +17,10 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
@@ -872,7 +874,24 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) getTableStats(table *model.TableInfo) *statistics.Table {
-	// TODO: Currently we always return a pseudo table for good performance. We will use a cache in future.
+	txn := b.ctx.Txn()
+	if txn == nil {
+		return statistics.PseudoTable(table)
+	}
+	m := meta.NewMeta(txn)
+	tpb, err := m.GetTableStats(table.ID)
+	if err != nil {
+		return statistics.PseudoTable(table)
+	}
+	if tpb != nil {
+		tbl, err := statistics.TableFromPB(table, tpb)
+		if err != nil {
+			log.Errorf("Error occured when convert pb table for %s", table.Name.O)
+			errors.Trace(err)
+			return statistics.PseudoTable(table)
+		}
+		return tbl
+	}
 	return statistics.PseudoTable(table)
 }
 

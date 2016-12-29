@@ -377,7 +377,11 @@ func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, 
 	txn := e.ctx.Txn()
 	columnSamples := rowsToColumnSamples(sampleRows)
 	sc := e.ctx.GetSessionVars().StmtCtx
-	t, err := statistics.NewTable(sc, tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples)
+	var colOffsets []int
+	for i := range columnSamples {
+		colOffsets = append(colOffsets, i)
+	}
+	t, err := statistics.NewTable(sc, tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples, colOffsets, nil, nil, nil, -1)
 	if err != nil {
 		return errors.Trace(err)
 	}
