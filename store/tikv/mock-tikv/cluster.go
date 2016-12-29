@@ -259,13 +259,19 @@ func (c *Cluster) createNewRegions(regionPairs [][]Pair, start, end MvccKey) {
 	for i := range regionPairs {
 		peerID := c.allocID()
 		newRegion := newRegion(c.allocID(), []uint64{c.firstStoreID()}, []uint64{peerID}, peerID)
+		var regionStartKey, regionEndKey MvccKey
 		if i == 0 {
-			newRegion.updateKeyRange(start, NewMvccKey(regionPairs[i+1][0].Key))
-		} else if i == len(regionPairs)-1 {
-			newRegion.updateKeyRange(NewMvccKey(regionPairs[i][0].Key), end)
+			regionStartKey = start
 		} else {
-			newRegion.updateKeyRange(NewMvccKey(regionPairs[i][0].Key), NewMvccKey(regionPairs[i+1][0].Key))
+			regionStartKey = NewMvccKey(regionPairs[i][0].Key)
 		}
+		if i == len(regionPairs)-1 {
+			regionEndKey = end
+		} else {
+			// Use the next region's first key as region end key.
+			regionEndKey = NewMvccKey(regionPairs[i+1][0].Key)
+		}
+		newRegion.updateKeyRange(regionStartKey, regionEndKey)
 		c.regions[newRegion.Meta.Id] = newRegion
 	}
 }
@@ -284,7 +290,7 @@ func (c *Cluster) evacuateOldRegionRanges(start, end MvccKey) {
 			// The region is within table data, it will be replaced by new regions.
 			delete(c.regions, oldRegion.Meta.Id)
 		} else if startCmp < 0 && endCmp > 0 {
-			// a single Region covers table data, split into two regions that do not overlap table data.
+			// A single Region covers table data, split into two regions that do not overlap table data.
 			oldEnd := oldRegion.Meta.EndKey
 			oldRegion.updateKeyRange(oldRegion.Meta.StartKey, start)
 			peerID := c.allocID()
