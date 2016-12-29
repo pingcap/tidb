@@ -545,7 +545,7 @@ func (p *PhysicalApply) SetCorrelated() {
 	corColumns := p.GetChildren()[1].extractCorrelatedCols()
 	p.correlated = p.GetChildren()[0].IsCorrelated()
 	for _, corCol := range corColumns {
-		if idx := p.GetChildren()[0].GetSchema().GetColumnIndex(&corCol.Column); idx == -1 {
+		if idx := expression.GetColumnIndex(p.GetChildren()[0].GetSchema().Columns, &corCol.Column); idx == -1 {
 			p.correlated = true
 			break
 		}
