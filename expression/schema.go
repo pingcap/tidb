@@ -75,21 +75,11 @@ func (s Schema) InitColumnIndices() {
 
 // RetrieveColumn retrieves column in expression from the columns in schema.
 func (s Schema) RetrieveColumn(col *Column) *Column {
-	index := s.GetColumnIndex(col)
+	index := GetColumnIndex(s.Columns, col)
 	if index != -1 {
 		return s.Columns[index]
 	}
 	return nil
-}
-
-// GetColumnIndex finds the index for a column.
-func (s Schema) GetColumnIndex(col *Column) int {
-	for i, c := range s.Columns {
-		if c.FromID == col.FromID && c.Position == col.Position {
-			return i
-		}
-	}
-	return -1
 }
 
 // Len returns the number of columns in schema.

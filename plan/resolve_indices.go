@@ -84,7 +84,7 @@ func (p *Apply) ResolveIndicesAndCorCols() {
 	childSchema := p.children[0].GetSchema()
 	resultCorCols := make([]*expression.CorrelatedColumn, childSchema.Len())
 	for _, corCol := range corCols {
-		idx := childSchema.GetColumnIndex(&corCol.Column)
+		idx := expression.GetColumnIndex(childSchema.Columns, &corCol.Column)
 		if idx != -1 {
 			if resultCorCols[idx] == nil {
 				resultCorCols[idx] = &expression.CorrelatedColumn{
@@ -119,7 +119,7 @@ func (p *Update) ResolveIndicesAndCorCols() {
 		if v == nil {
 			continue
 		}
-		orderedList[schema.GetColumnIndex(v.Col)] = v
+		orderedList[expression.GetColumnIndex(schema.Columns, v.Col)] = v
 	}
 	for i := 0; i < len(orderedList); i++ {
 		if orderedList[i] == nil {

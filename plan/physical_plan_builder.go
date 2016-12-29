@@ -475,7 +475,7 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	allLeft := true
 	for _, col := range prop.props {
-		if lChild.GetSchema().GetColumnIndex(col.col) == -1 {
+		if expression.GetColumnIndex(lChild.GetSchema().Columns, col.col) == -1 {
 			allLeft = false
 		}
 	}
@@ -527,7 +527,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	allLeft := true
 	for _, col := range prop.props {
-		if lChild.GetSchema().GetColumnIndex(col.col) == -1 {
+		if expression.GetColumnIndex(lChild.GetSchema().Columns, col.col) == -1 {
 			allLeft = false
 		}
 	}
@@ -581,7 +581,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 func replaceColsInPropBySchema(prop *requiredProperty, schema expression.Schema) *requiredProperty {
 	newProps := make([]*columnProp, 0, len(prop.props))
 	for _, p := range prop.props {
-		idx := schema.GetColumnIndex(p.col)
+		idx := expression.GetColumnIndex(schema.Columns, p.col)
 		if idx == -1 {
 			log.Errorf("Can't find column %s in schema", p.col)
 		}
@@ -600,7 +600,7 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	allRight := true
 	for _, col := range prop.props {
-		if rChild.GetSchema().GetColumnIndex(col.col) == -1 {
+		if expression.GetColumnIndex(rChild.GetSchema().Columns, col.col) == -1 {
 			allRight = false
 		}
 	}
@@ -855,7 +855,7 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 			newProp = convertLimitOffsetToCount(prop)
 			newProp.props = make([]*columnProp, 0, len(prop.props))
 			for _, c := range prop.props {
-				idx := p.GetSchema().GetColumnIndex(c.col)
+				idx := expression.GetColumnIndex(p.GetSchema().Columns, c.col)
 				newProp.props = append(newProp.props, &columnProp{col: child.GetSchema().Columns[idx], desc: c.desc})
 			}
 		}
@@ -966,10 +966,10 @@ func (p *Projection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 	canPassSort := true
 loop:
 	for _, c := range prop.props {
-		idx := p.schema.GetColumnIndex(c.col)
+		idx := expression.GetColumnIndex(p.schema.Columns, c.col)
 		switch v := p.Exprs[idx].(type) {
 		case *expression.Column:
-			childIdx := childSchema.GetColumnIndex(v)
+			childIdx := expression.GetColumnIndex(childSchema.Columns, v)
 			if !usedCols[childIdx] {
 				usedCols[childIdx] = true
 				newProp.props = append(newProp.props, &columnProp{col: v, desc: c.desc})
@@ -1080,7 +1080,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	innerPlan := p.children[1].(LogicalPlan)
 	allFromOuter := true
 	for _, col := range prop.props {
-		if innerPlan.GetSchema().GetColumnIndex(col.col) != -1 {
+		if expression.GetColumnIndex(innerPlan.GetSchema().Columns, col.col) != -1 {
 			allFromOuter = false
 		}
 	}

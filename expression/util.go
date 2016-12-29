@@ -30,10 +30,10 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
-func ColumnSubstitute(expr Expression, schema Schema, newExprs []Expression) Expression {
+func ColumnSubstitute(expr Expression, cols []*Column, newExprs []Expression) Expression {
 	switch v := expr.(type) {
 	case *Column:
-		id := schema.GetColumnIndex(v)
+		id := GetColumnIndex(cols, v)
 		if id == -1 {
 			return v
 		}
@@ -41,12 +41,12 @@ func ColumnSubstitute(expr Expression, schema Schema, newExprs []Expression) Exp
 	case *ScalarFunction:
 		if v.FuncName.L == ast.Cast {
 			newFunc := v.Clone().(*ScalarFunction)
-			newFunc.Args[0] = ColumnSubstitute(newFunc.Args[0], schema, newExprs)
+			newFunc.Args[0] = ColumnSubstitute(newFunc.Args[0], cols, newExprs)
 			return newFunc
 		}
 		newArgs := make([]Expression, 0, len(v.Args))
 		for _, arg := range v.Args {
-			newArgs = append(newArgs, ColumnSubstitute(arg, schema, newExprs))
+			newArgs = append(newArgs, ColumnSubstitute(arg, cols, newExprs))
 		}
 		fun, _ := NewFunction(v.FuncName.L, v.RetType, newArgs...)
 		return fun

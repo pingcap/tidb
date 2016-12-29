@@ -22,7 +22,7 @@ import (
 func getUsedList(usedCols []*expression.Column, schema expression.Schema) []bool {
 	used := make([]bool, schema.Len())
 	for _, col := range usedCols {
-		idx := schema.GetColumnIndex(col)
+		idx := expression.GetColumnIndex(schema.Columns, col)
 		if idx == -1 {
 			log.Errorf("Can't find column %s from schema %s.", col, schema)
 		}
@@ -190,9 +190,9 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	var leftCols, rightCols []*expression.Column
 	for _, col := range parentUsedCols {
-		if lChild.GetSchema().GetColumnIndex(col) != -1 {
+		if expression.GetColumnIndex(lChild.GetSchema().Columns, col) != -1 {
 			leftCols = append(leftCols, col)
-		} else if rChild.GetSchema().GetColumnIndex(col) != -1 {
+		} else if expression.GetColumnIndex(rChild.GetSchema().Columns, col) != -1 {
 			rightCols = append(rightCols, col)
 		}
 	}
@@ -225,14 +225,14 @@ func (p *Apply) PruneColumns(parentUsedCols []*expression.Column) {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(p.Checker.Condition)...)
 	}
 	for _, col := range parentUsedCols {
-		if child.GetSchema().GetColumnIndex(col) != -1 {
+		if expression.GetColumnIndex(child.GetSchema().Columns, col) != -1 {
 			usedCols = append(usedCols, col)
 		}
 	}
 	innerPlan.PruneColumns(innerPlan.GetSchema().Columns)
 	corCols := innerPlan.extractCorrelatedCols()
 	for _, corCol := range corCols {
-		idx := child.GetSchema().GetColumnIndex(&corCol.Column)
+		idx := expression.GetColumnIndex(child.GetSchema().Columns, &corCol.Column)
 		if idx != -1 {
 			usedCols = append(usedCols, &corCol.Column)
 		}

@@ -148,17 +148,19 @@ func extractCorColumns(expr expression.Expression) (cols []*expression.Correlate
 func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
 	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
 	otherCond []expression.Expression) {
+	lCols := left.GetSchema().Columns
+	rCols := right.GetSchema().Columns
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && binop.FuncName.L == ast.EQ {
 			ln, lOK := binop.Args[0].(*expression.Column)
 			rn, rOK := binop.Args[1].(*expression.Column)
 			if lOK && rOK {
-				if left.GetSchema().GetColumnIndex(ln) != -1 && right.GetSchema().GetColumnIndex(rn) != -1 {
+				if expression.GetColumnIndex(lCols, ln) != -1 && expression.GetColumnIndex(rCols, rn) != -1 {
 					eqCond = append(eqCond, binop)
 					continue
 				}
-				if left.GetSchema().GetColumnIndex(rn) != -1 && right.GetSchema().GetColumnIndex(ln) != -1 {
+				if expression.GetColumnIndex(lCols, rn) != -1 && expression.GetColumnIndex(rCols, ln) != -1 {
 					cond, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
 					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
@@ -168,10 +170,10 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 		columns := expression.ExtractColumns(expr)
 		allFromLeft, allFromRight := true, true
 		for _, col := range columns {
-			if left.GetSchema().GetColumnIndex(col) == -1 {
+			if expression.GetColumnIndex(lCols, col) == -1 {
 				allFromLeft = false
 			}
-			if right.GetSchema().GetColumnIndex(col) == -1 {
+			if expression.GetColumnIndex(rCols, col) == -1 {
 				allFromRight = false
 			}
 		}
@@ -1087,7 +1089,7 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([
 			b.err = errors.Trace(errors.Errorf("column %s not found", assign.Column.Name.O))
 			return nil, nil
 		}
-		offset := schema.GetColumnIndex(col)
+		offset := expression.GetColumnIndex(schema.Columns, col)
 		if offset == -1 {
 			b.err = errors.Trace(errors.Errorf("could not find column %s.%s", col.TblName, col.ColName))
 		}
