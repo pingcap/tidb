@@ -82,15 +82,24 @@ func (b *baseBuiltinFunc) getCtx() context.Context {
 	return b.ctx
 }
 
+// builtinFunc stands for a particular function signature.
 type builtinFunc interface {
+	// eval does evaluation by the given row.
 	eval([]types.Datum) (types.Datum, error)
+	// getArgs returns the arguments expressions.
 	getArgs() []Expression
+	// isDeterministic checks if a function is deterministic.
+	// a function is deterministic if it returns different results for same inputs.
 	isDeterministic() bool
+	// equal check if this function equals to another function.
 	equal(builtinFunc) bool
+	// getCtx returns this function's context.
 	getCtx() context.Context
 }
 
+// builtinFunc stands for a class for a function which may contains multiple functions.
 type functionClass interface {
+	// getFunction gets a function signature by the types and the counts of given arguments.
 	getFunction(args []Expression, ctx context.Context) (builtinFunc, error)
 }
 
