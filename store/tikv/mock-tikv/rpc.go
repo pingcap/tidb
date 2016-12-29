@@ -151,7 +151,7 @@ func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
 }
 
 func (h *rpcHandler) keyInRegion(key []byte) bool {
-	return regionContains(h.startKey, h.endKey, []byte(newMvccKey(key)))
+	return regionContains(h.startKey, h.endKey, []byte(NewMvccKey(key)))
 }
 
 func (h *rpcHandler) onGet(req *kvrpcpb.CmdGetRequest) *kvrpcpb.CmdGetResponse {
@@ -334,27 +334,27 @@ func encodeRegionKey(r *metapb.Region) *metapb.Region {
 
 // RPCClient sends kv RPC calls to mock cluster.
 type RPCClient struct {
-	cluster   *Cluster
-	mvccStore *MvccStore
+	Cluster   *Cluster
+	MvccStore *MvccStore
 }
 
 // SendKVReq sends a kv request to mock cluster.
 func (c *RPCClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
-	store := c.cluster.GetStoreByAddr(addr)
+	store := c.Cluster.GetStoreByAddr(addr)
 	if store == nil {
 		return nil, errors.New("connect fail")
 	}
-	handler := newRPCHandler(c.cluster, c.mvccStore, store.GetId())
+	handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
 	return handler.handleRequest(req), nil
 }
 
 // SendCopReq sends a coprocessor request to mock cluster.
 func (c *RPCClient) SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
-	store := c.cluster.GetStoreByAddr(addr)
+	store := c.Cluster.GetStoreByAddr(addr)
 	if store == nil {
 		return nil, errors.New("connect fail")
 	}
-	handler := newRPCHandler(c.cluster, c.mvccStore, store.GetId())
+	handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
 	return handler.handleCopRequest(req)
 }
 
@@ -366,7 +366,7 @@ func (c *RPCClient) Close() error {
 // NewRPCClient creates an RPCClient.
 func NewRPCClient(cluster *Cluster, mvccStore *MvccStore) *RPCClient {
 	return &RPCClient{
-		cluster:   cluster,
-		mvccStore: mvccStore,
+		Cluster:   cluster,
+		MvccStore: mvccStore,
 	}
 }
