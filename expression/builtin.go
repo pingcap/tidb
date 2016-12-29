@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
 	args          []Expression
 	argValues     []types.Datum
