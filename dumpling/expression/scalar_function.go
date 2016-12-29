@@ -26,7 +26,7 @@ import (
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
-	Args     []Expression
+	args     []Expression
 	FuncName model.CIStr
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType   *types.FieldType
@@ -34,12 +34,17 @@ type ScalarFunction struct {
 	ArgValues []types.Datum
 }
 
+// GetArgs gets arguments of function.
+func (sf *ScalarFunction) GetArgs() []Expression {
+	return sf.args
+}
+
 // String implements fmt.Stringer interface.
 func (sf *ScalarFunction) String() string {
 	result := sf.FuncName.L + "("
-	for i, arg := range sf.Args {
+	for i, arg := range sf.GetArgs() {
 		result += arg.String()
-		if i+1 != len(sf.Args) {
+		if i+1 != len(sf.args) {
 			result += ", "
 		}
 	}
@@ -65,7 +70,7 @@ func NewFunction(funcName string, retType *types.FieldType, args ...Expression) 
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
 	return &ScalarFunction{
-		Args:      funcArgs,
+		args:      funcArgs,
 		FuncName:  model.NewCIStr(funcName),
 		RetType:   retType,
 		Function:  f.F,
@@ -87,10 +92,10 @@ func (sf *ScalarFunction) Clone() Expression {
 		FuncName:  sf.FuncName,
 		Function:  sf.Function,
 		RetType:   sf.RetType,
-		ArgValues: make([]types.Datum, len(sf.Args))}
-	newFunc.Args = make([]Expression, 0, len(sf.Args))
-	for _, arg := range sf.Args {
-		newFunc.Args = append(newFunc.Args, arg.Clone())
+		ArgValues: make([]types.Datum, len(sf.args))}
+	newFunc.args = make([]Expression, 0, len(sf.args))
+	for _, arg := range sf.args {
+		newFunc.args = append(newFunc.args, arg.Clone())
 	}
 	return newFunc
 }
@@ -109,11 +114,11 @@ func (sf *ScalarFunction) Equal(e Expression, ctx context.Context) bool {
 	if sf.FuncName.L != fun.FuncName.L {
 		return false
 	}
-	if len(sf.Args) != len(fun.Args) {
+	if len(sf.args) != len(fun.args) {
 		return false
 	}
-	for i, argX := range sf.Args {
-		if !argX.Equal(fun.Args[i], ctx) {
+	for i, argX := range sf.args {
+		if !argX.Equal(fun.args[i], ctx) {
 			return false
 		}
 	}
@@ -122,7 +127,7 @@ func (sf *ScalarFunction) Equal(e Expression, ctx context.Context) bool {
 
 // IsCorrelated implements Expression interface.
 func (sf *ScalarFunction) IsCorrelated() bool {
-	for _, arg := range sf.Args {
+	for _, arg := range sf.GetArgs() {
 		if arg.IsCorrelated() {
 			return true
 		}
@@ -132,8 +137,8 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 
 // Decorrelate implements Expression interface.
 func (sf *ScalarFunction) Decorrelate(schema Schema) Expression {
-	for i, arg := range sf.Args {
-		sf.Args[i] = arg.Decorrelate(schema)
+	for i, arg := range sf.GetArgs() {
+		sf.args[i] = arg.Decorrelate(schema)
 	}
 	return sf
 }
@@ -141,7 +146,7 @@ func (sf *ScalarFunction) Decorrelate(schema Schema) Expression {
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Datum, error) {
 	var err error
-	for i, arg := range sf.Args {
+	for i, arg := range sf.GetArgs() {
 		sf.ArgValues[i], err = arg.Eval(row, ctx)
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
@@ -153,10 +158,10 @@ func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Da
 // HashCode implements Expression interface.
 func (sf *ScalarFunction) HashCode() []byte {
 	var bytes []byte
-	v := make([]types.Datum, 0, len(sf.Args)+1)
+	v := make([]types.Datum, 0, len(sf.args)+1)
 	bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(sf.FuncName.L))
 	v = append(v, types.NewBytesDatum(bytes))
-	for _, arg := range sf.Args {
+	for _, arg := range sf.GetArgs() {
 		v = append(v, types.NewBytesDatum(arg.HashCode()))
 	}
 	bytes = bytes[:0]
@@ -166,7 +171,7 @@ func (sf *ScalarFunction) HashCode() []byte {
 
 // ResolveIndices implements Expression interface.
 func (sf *ScalarFunction) ResolveIndices(schema Schema) {
-	for _, arg := range sf.Args {
+	for _, arg := range sf.args {
 		arg.ResolveIndices(schema)
 	}
 }
