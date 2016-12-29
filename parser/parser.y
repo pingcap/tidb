@@ -291,9 +291,9 @@ import (
 	charFunc	"CHAR_FUNC"
 	charLength	"CHAR_LENGTH"
 	characterLength	"CHARACTER_LENGTH"
-    conv        "CONV"
-    bitXor      "BIT_XOR"
-    crc32       "CRC32"
+	conv        "CONV"
+	bitXor      "BIT_XOR"
+	crc32       "CRC32"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -3029,15 +3029,15 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{
             FnName: model.NewCIStr($1),
             Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
-        }
-    }
+		}
+	}
 |	"CRC32" '(' Expression ')'
 	{
         $$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
-    }
+	}
 
 
 DateArithOpt:
