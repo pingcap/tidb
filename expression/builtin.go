@@ -53,6 +53,7 @@ func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err erro
 	return b.argValues, nil
 }
 
+// isDeterministic will be true by default. Non-deterministic function will override this function.
 func (b *baseBuiltinFunc) isDeterministic() bool {
 	return true
 }
@@ -61,6 +62,8 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
+// equal only checks if both functions are non-deterministic and if these arguments are same.
+// Function name will be checked outside.
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
 	if !b.self.isDeterministic() || !fun.isDeterministic() {
 		return false
