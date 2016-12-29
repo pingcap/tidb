@@ -326,7 +326,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-func isFinish(limit, input int64) bool {
+func isFinished(limit, input int64) bool {
 	if limit == 0 || input < limit {
 		return false
 	}
@@ -344,7 +344,7 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, batchOpInfo *in
 			rawRecords = append(rawRecords, rawRecord)
 			indexRecord := &indexRecord{handle: h, key: rowKey}
 			idxRecords = append(idxRecords, indexRecord)
-			if len(idxRecords) == batchCnt || isFinish(handleInfo.endHandle, h) {
+			if len(idxRecords) == batchCnt || isFinished(handleInfo.endHandle, h) {
 				return false, nil
 			}
 			return true, nil
@@ -395,6 +395,7 @@ const (
 	defaultSmallBatches  = 16
 )
 
+// batchRet is the result of the batch.
 type batchRet struct {
 	count      int
 	doneHandle int64 // This is the last reorg handle that has been processed.
@@ -417,7 +418,7 @@ type indexBatchOpInfo struct {
 	tblIndex   table.Index
 	colMap     map[int64]*types.FieldType
 	batchRetCh chan *batchRet
-	nextCh     chan int64
+	nextCh     chan int64 // It notifies to start the next batch.
 }
 
 // How to add index in reorganization state?
@@ -447,6 +448,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	for {
 		startTime := time.Now()
 		for i := 0; i < batches; i++ {
+			wg.Add(1)
 			go d.backfillIndex(t, batchOpInfo, seekHandle, &wg)
 			handle := <-batchOpInfo.nextCh
 			// There is no data to seek.
@@ -520,7 +522,6 @@ func getCountAndHandle(batchOpInfo *indexBatchOpInfo) (int64, int64, error) {
 }
 
 func (d *ddl) backfillIndex(t table.Table, batchOpInfo *indexBatchOpInfo, seekHandle int64, wg *sync.WaitGroup) {
-	wg.Add(1)
 	defer wg.Done()
 
 	ret := new(batchRet)
