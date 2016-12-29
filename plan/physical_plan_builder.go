@@ -54,9 +54,8 @@ func getRowCountByIndexRanges(sc *variable.StatementContext, table *statistics.T
 	}
 	if len(table.Indices[offset].Numbers) == 0 {
 		return getRowCountByPseudoIndexRanges(sc, table, indexRanges, indexInfo)
-	} else {
-		return getRowCountByRealIndexRanges(sc, table, indexRanges, indexInfo, offset)
 	}
+	return getRowCountByRealIndexRanges(sc, table, indexRanges, indexInfo, offset)
 }
 
 func getRowCountByRealIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo, offset int) (uint64, error) {
