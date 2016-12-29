@@ -1007,7 +1007,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	joinPlan.self = joinPlan
 	joinPlan.initIDAndContext(b.ctx)
 	for i, expr := range onCondition {
-		onCondition[i] = expr.Decorrelate(outerPlan.GetSchema().Columns)
+		onCondition[i] = expr.Decorrelate(outerPlan.GetSchema())
 	}
 	eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, outerPlan, innerPlan)
 	joinPlan.EqualConditions = eqCond

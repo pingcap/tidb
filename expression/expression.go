@@ -63,11 +63,11 @@ type Expression interface {
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
 
-	// Decorrelate try to decorrelate the expression by columns of schema.
-	Decorrelate(cols []*Column) Expression
+	// Decorrelate try to decorrelate the expression by schema.
+	Decorrelate(schema Schema) Expression
 
-	// ResolveIndices resolves indices by the given columns of schema.
-	ResolveIndices(cols []*Column)
+	// ResolveIndices resolves indices by the given schema.
+	ResolveIndices(schema Schema)
 }
 
 // EvalBool evaluates expression to a boolean value.
@@ -139,7 +139,7 @@ func (c *Constant) IsCorrelated() bool {
 }
 
 // Decorrelate implements Expression interface.
-func (c *Constant) Decorrelate(_ []*Column) Expression {
+func (c *Constant) Decorrelate(_ Schema) Expression {
 	return c
 }
 
@@ -151,7 +151,7 @@ func (c *Constant) HashCode() []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (c *Constant) ResolveIndices(_ []*Column) {
+func (c *Constant) ResolveIndices(_ Schema) {
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
