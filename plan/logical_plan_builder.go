@@ -138,7 +138,7 @@ func extractCorColumns(expr expression.Expression) (cols []*expression.Correlate
 	case *expression.CorrelatedColumn:
 		return []*expression.CorrelatedColumn{v}
 	case *expression.ScalarFunction:
-		for _, arg := range v.Args {
+		for _, arg := range v.GetArgs() {
 			cols = append(cols, extractCorColumns(arg)...)
 		}
 	}
@@ -151,8 +151,8 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && binop.FuncName.L == ast.EQ {
-			ln, lOK := binop.Args[0].(*expression.Column)
-			rn, rOK := binop.Args[1].(*expression.Column)
+			ln, lOK := binop.GetArgs()[0].(*expression.Column)
+			rn, rOK := binop.GetArgs()[1].(*expression.Column)
 			if lOK && rOK {
 				if left.GetSchema().GetColumnIndex(ln) != -1 && right.GetSchema().GetColumnIndex(rn) != -1 {
 					eqCond = append(eqCond, binop)
