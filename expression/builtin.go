@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"reflect"
 	"strings"
 
 	"github.com/juju/errors"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
-	"reflect"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
