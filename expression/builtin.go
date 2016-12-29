@@ -18,7 +18,6 @@
 package expression
 
 import (
-	"reflect"
 	"strings"
 
 	"github.com/juju/errors"
@@ -63,7 +62,7 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 }
 
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
-	if reflect.TypeOf(b.self).String() == reflect.TypeOf(fun).String() {
+	if !b.self.isDeterministic() || !fun.isDeterministic() {
 		return false
 	}
 	funArgs := fun.getArgs()
