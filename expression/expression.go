@@ -30,12 +30,14 @@ import (
 
 // Error instances.
 var (
-	errInvalidOperation = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
+	errInvalidOperation        = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
+	errIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count")
 )
 
 // Error codes.
 const (
-	codeInvalidOperation terror.ErrCode = 1
+	codeInvalidOperation        terror.ErrCode = 1
+	codeIncorrectParameterCount                = 1582
 )
 
 // EvalAstExpr evaluates ast expression directly.
@@ -266,4 +268,11 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 		schema.Append(newCol)
 	}
 	return schema
+}
+
+func init() {
+	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
+		codeIncorrectParameterCount: mysql.ErrWrongParamcountToNativeFct,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }
