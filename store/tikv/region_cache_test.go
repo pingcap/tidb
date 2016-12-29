@@ -253,3 +253,24 @@ func (s *testRegionCacheSuite) TestRequestFail(c *C) {
 	// Out of range of Peers, so get Region again and pick Stores[0] as leader.
 	c.Assert(region.unreachableStores, HasLen, 0)
 }
+
+func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
+	client := &RawKVClient{
+		clusterID:   0,
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mocktikv.NewMvccStore()),
+	}
+	testKey := []byte("test_key")
+	testValue := []byte("test_value")
+	err := client.Put(testKey, testValue)
+	c.Assert(err, IsNil)
+	// tikv-server reports `StoreNotMatch` And retry
+	store1Addr := s.storeAddr(s.store1)
+	s.cluster.UpdateStoreAddr(s.store1, s.storeAddr(s.store2))
+	s.cluster.UpdateStoreAddr(s.store2, store1Addr)
+
+	getVal, err := client.Get(testKey)
+
+	c.Assert(err, IsNil)
+	c.Assert(getVal, BytesEquals, testValue)
+}

@@ -78,6 +78,13 @@ func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
 }
 
 func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
+	ctxPear := ctx.GetPeer()
+	if ctxPear != nil && ctxPear.GetStoreId() != h.storeID {
+		return &errorpb.Error{
+			Message:       proto.String("store not match"),
+			StoreNotMatch: &errorpb.StoreNotMatch{},
+		}
+	}
 	region, leaderID := h.cluster.GetRegion(ctx.GetRegionId())
 	// No region found.
 	if region == nil {
