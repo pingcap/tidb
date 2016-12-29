@@ -79,6 +79,8 @@ const (
 	Abs     = "abs"
 	Ceil    = "ceil"
 	Ceiling = "ceiling"
+	Conv    = "conv"
+	CRC32   = "crc32"
 	Ln      = "ln"
 	Log     = "log"
 	Log2    = "log2"
