@@ -291,9 +291,9 @@ import (
 	charFunc	"CHAR_FUNC"
 	charLength	"CHAR_LENGTH"
 	characterLength	"CHARACTER_LENGTH"
-	conv        "CONV"
-	bitXor      "BIT_XOR"
-	crc32       "CRC32"
+	conv		"CONV"
+	bitXor		"BIT_XOR"
+	crc32		"CRC32"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
