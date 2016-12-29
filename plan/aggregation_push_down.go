@@ -112,8 +112,8 @@ func (a *aggPushDownSolver) collectGbyCols(agg *Aggregation, join *Join) (leftGb
 	}
 	// extract equal conditions
 	for _, eqFunc := range join.EqualConditions {
-		leftGbyCols = a.addGbyCol(leftGbyCols, eqFunc.Args[0].(*expression.Column))
-		rightGbyCols = a.addGbyCol(rightGbyCols, eqFunc.Args[1].(*expression.Column))
+		leftGbyCols = a.addGbyCol(leftGbyCols, eqFunc.GetArgs()[0].(*expression.Column))
+		rightGbyCols = a.addGbyCol(rightGbyCols, eqFunc.GetArgs()[1].(*expression.Column))
 	}
 	for _, leftCond := range join.LeftConditions {
 		cols := expression.ExtractColumns(leftCond)

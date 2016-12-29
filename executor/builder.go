@@ -358,8 +358,8 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 	var leftHashKey, rightHashKey []*expression.Column
 	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
-		ln, _ := eqCond.Args[0].(*expression.Column)
-		rn, _ := eqCond.Args[1].(*expression.Column)
+		ln, _ := eqCond.GetArgs()[0].(*expression.Column)
+		rn, _ := eqCond.GetArgs()[1].(*expression.Column)
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
 		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
@@ -415,8 +415,8 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 	var leftHashKey, rightHashKey []*expression.Column
 	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
-		ln, _ := eqCond.Args[0].(*expression.Column)
-		rn, _ := eqCond.Args[1].(*expression.Column)
+		ln, _ := eqCond.GetArgs()[0].(*expression.Column)
+		rn, _ := eqCond.GetArgs()[1].(*expression.Column)
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
 		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))

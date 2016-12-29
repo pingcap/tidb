@@ -170,11 +170,11 @@ func (pc pbConverter) likeToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
 		return nil
 	}
 	// Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
-	escape := expr.Args[2].(*expression.Constant).Value
+	escape := expr.GetArgs()[2].(*expression.Constant).Value
 	if escape.IsNull() || byte(escape.GetInt64()) != '\\' {
 		return nil
 	}
-	pattern, ok := expr.Args[1].(*expression.Constant)
+	pattern, ok := expr.GetArgs()[1].(*expression.Constant)
 	if !ok || pattern.Value.Kind() != types.KindString {
 		return nil
 	}
@@ -188,11 +188,11 @@ func (pc pbConverter) likeToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
 			}
 		}
 	}
-	expr0 := pc.exprToPB(expr.Args[0])
+	expr0 := pc.exprToPB(expr.GetArgs()[0])
 	if expr0 == nil {
 		return nil
 	}
-	expr1 := pc.exprToPB(expr.Args[1])
+	expr1 := pc.exprToPB(expr.GetArgs()[1])
 	if expr1 == nil {
 		return nil
 	}
@@ -259,11 +259,11 @@ func (pc pbConverter) inToPBExpr(expr *expression.ScalarFunction) *tipb.Expr {
 		return nil
 	}
 
-	pbExpr := pc.exprToPB(expr.Args[0])
+	pbExpr := pc.exprToPB(expr.GetArgs()[0])
 	if pbExpr == nil {
 		return nil
 	}
-	listExpr := pc.constListToPB(expr.Args[1:])
+	listExpr := pc.constListToPB(expr.GetArgs()[1:])
 	if listExpr == nil {
 		return nil
 	}
@@ -410,8 +410,8 @@ func (pc pbConverter) convertToPBExpr(expr *expression.ScalarFunction, tp tipb.E
 	if !pc.client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
 		return nil
 	}
-	children := make([]*tipb.Expr, 0, len(expr.Args))
-	for _, arg := range expr.Args {
+	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
+	for _, arg := range expr.GetArgs() {
 		pbArg := pc.exprToPB(arg)
 		if pbArg == nil {
 			return nil
