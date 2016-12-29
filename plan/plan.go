@@ -68,6 +68,8 @@ const (
 	Up = "Update"
 	// Del is the type of Delete.
 	Del = "Delete"
+	// Ana is the type of Analyze.
+	Ana = "Analyze"
 )
 
 // Plan is the description of an execution flow.
