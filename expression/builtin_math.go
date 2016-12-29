@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"hash/crc32"
 	"math"
 	"math/rand"
 
@@ -188,10 +189,22 @@ func builtinRound(args []types.Datum, ctx context.Context) (d types.Datum, err e
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv
 func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	return
+	//TODO  implement
+	return d, errors.New("Function unimplement")
 }
 
 //　See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_crc32
 func builtinCRC32(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	return
+	switch args[0].Kind() {
+	case types.KindNull:
+		return d, nil
+	default:
+		x, err := args[0].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		r := crc32.ChecksumIEEE([]byte(x))
+		d.SetUint64(uint64(r))
+		return d, nil
+	}
 }
