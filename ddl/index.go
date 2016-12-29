@@ -439,19 +439,19 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	}
 
 	addedCount := job.GetRowCount()
-	seekHandle := reorgInfo.Handle
+	batchStartHandle := reorgInfo.Handle
 	wg := sync.WaitGroup{}
 	for {
 		startTime := time.Now()
 		for i := 0; i < batches; i++ {
 			wg.Add(1)
-			go d.backfillIndex(t, batchOpInfo, seekHandle, &wg)
-			handle := <-batchOpInfo.nextCh
+			go d.backfillIndex(t, batchOpInfo, batchStartHandle, &wg)
+			doneHandle := <-batchOpInfo.nextCh
 			// There is no data to seek.
-			if handle == 0 {
+			if doneHandle == 0 {
 				break
 			}
-			seekHandle = handle + 1
+			batchStartHandle = doneHandle + 1
 		}
 		wg.Wait()
 
