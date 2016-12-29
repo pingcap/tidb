@@ -21,7 +21,7 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 	case *Column:
 		return []*Column{v}
 	case *ScalarFunction:
-		for _, arg := range v.Args {
+		for _, arg := range v.GetArgs() {
 			cols = append(cols, ExtractColumns(arg)...)
 		}
 	}
@@ -41,11 +41,11 @@ func ColumnSubstitute(expr Expression, schema Schema, newExprs []Expression) Exp
 	case *ScalarFunction:
 		if v.FuncName.L == ast.Cast {
 			newFunc := v.Clone().(*ScalarFunction)
-			newFunc.Args[0] = ColumnSubstitute(newFunc.Args[0], schema, newExprs)
+			newFunc.GetArgs()[0] = ColumnSubstitute(newFunc.GetArgs()[0], schema, newExprs)
 			return newFunc
 		}
-		newArgs := make([]Expression, 0, len(v.Args))
-		for _, arg := range v.Args {
+		newArgs := make([]Expression, 0, len(v.GetArgs()))
+		for _, arg := range v.GetArgs() {
 			newArgs = append(newArgs, ColumnSubstitute(arg, schema, newExprs))
 		}
 		fun, _ := NewFunction(v.FuncName.L, v.RetType, newArgs...)
