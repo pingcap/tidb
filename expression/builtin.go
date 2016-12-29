@@ -25,23 +25,22 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
+	"reflect"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args          []Expression
-	argValues     []types.Datum
-	deterministic bool
-	ctx           context.Context
-	self          builtinFunc
+	args      []Expression
+	argValues []types.Datum
+	ctx       context.Context
+	self      builtinFunc
 }
 
-func newBaseBuiltinFunc(args []Expression, deterministic bool, ctx context.Context) baseBuiltinFunc {
+func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
 	return baseBuiltinFunc{
-		args:          args,
-		deterministic: deterministic,
-		argValues:     make([]types.Datum, len(args)),
-		ctx:           ctx,
+		args:      args,
+		argValues: make([]types.Datum, len(args)),
+		ctx:       ctx,
 	}
 }
 
@@ -56,7 +55,7 @@ func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err erro
 }
 
 func (b *baseBuiltinFunc) isDeterministic() bool {
-	return b.deterministic
+	return true
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
@@ -64,7 +63,7 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 }
 
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
-	if !b.deterministic || !fun.isDeterministic() {
+	if reflect.TypeOf(b.self).String() == reflect.TypeOf(fun).String() {
 		return false
 	}
 	funArgs := fun.getArgs()
