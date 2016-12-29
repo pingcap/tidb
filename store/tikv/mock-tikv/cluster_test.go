@@ -68,7 +68,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 
 	// 10 table regions and first region and last region.
 	regions := cluster.GetAllRegions()
-	c.Assert(len(regions), Equals, 12)
+	c.Assert(regions, HasLen, 12)
 
 	allKeysMap := make(map[string]bool)
 	recordPrefix := tablecodec.GenTableRecordPrefix(tblID)
@@ -80,7 +80,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		}
 		pairs := cli.MvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64)
 		if len(pairs) > 0 {
-			c.Assert(len(pairs), Equals, 100)
+			c.Assert(pairs, HasLen, 100)
 		}
 		for _, pair := range pairs {
 			allKeysMap[string(pair.Key)] = true
@@ -101,11 +101,11 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		}
 		pairs := cli.MvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64)
 		if len(pairs) > 0 {
-			c.Assert(len(pairs), Equals, 100)
+			c.Assert(pairs, HasLen, 100)
 		}
 		for _, pair := range pairs {
 			allIndexMap[string(pair.Key)] = true
 		}
 	}
-	c.Assert(len(allIndexMap), Equals, 1000)
+	c.Assert(allIndexMap, HasLen, 1000)
 }
