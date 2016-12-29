@@ -256,10 +256,9 @@ func (c *Cluster) getEntriesGroupByRegions(mvccStore *MvccStore, start, end Mvcc
 }
 
 func (c *Cluster) createNewRegions(regionPairs [][]Pair, start, end MvccKey) {
-	storeID, _ := c.firstStoreAndPeerID()
 	for i := range regionPairs {
 		peerID := c.allocID()
-		newRegion := newRegion(c.allocID(), []uint64{storeID}, []uint64{peerID}, peerID)
+		newRegion := newRegion(c.allocID(), []uint64{c.firstStoreID()}, []uint64{peerID}, peerID)
 		if i == 0 {
 			newRegion.updateKeyRange(start, NewMvccKey(regionPairs[i+1][0].Key))
 		} else if i == len(regionPairs)-1 {
@@ -274,7 +273,6 @@ func (c *Cluster) createNewRegions(regionPairs [][]Pair, start, end MvccKey) {
 // evacuateOldRegionRanges evacuate the range [start, end].
 // Old regions has intersection with [start, end) will be updated or deleted.
 func (c *Cluster) evacuateOldRegionRanges(start, end MvccKey) {
-	storeID, peerID := c.firstStoreAndPeerID()
 	oldRegions := c.getRegionsCoverRange(start, end)
 	for _, oldRegion := range oldRegions {
 		startCmp := bytes.Compare(oldRegion.Meta.StartKey, start)
@@ -289,8 +287,8 @@ func (c *Cluster) evacuateOldRegionRanges(start, end MvccKey) {
 			// a single Region covers table data, split into two regions that do not overlap table data.
 			oldEnd := oldRegion.Meta.EndKey
 			oldRegion.updateKeyRange(oldRegion.Meta.StartKey, start)
-
-			newRegion := newRegion(c.allocID(), []uint64{storeID}, []uint64{peerID}, peerID)
+			peerID := c.allocID()
+			newRegion := newRegion(c.allocID(), []uint64{c.firstStoreID()}, []uint64{peerID}, peerID)
 			newRegion.updateKeyRange(end, oldEnd)
 			c.regions[newRegion.Meta.Id] = newRegion
 		} else if startCmp < 0 {
@@ -301,16 +299,11 @@ func (c *Cluster) evacuateOldRegionRanges(start, end MvccKey) {
 	}
 }
 
-func (c *Cluster) firstStoreAndPeerID() (storeID, peerID uint64) {
+func (c *Cluster) firstStoreID() uint64 {
 	for id := range c.stores {
-		storeID = id
-		break
+		return id
 	}
-	for _, region := range c.regions {
-		peerID = region.leader
-		break
-	}
-	return
+	return 0
 }
 
 // getRegionsCoverRange gets regions in the cluster that has intersection with [start, end).
