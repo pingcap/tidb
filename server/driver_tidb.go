@@ -50,6 +50,7 @@ type TiDBStatement struct {
 	id          uint32
 	numParams   int
 	boundParams [][]byte
+	paramsType  []byte
 	ctx         *TiDBContext
 }
 
@@ -90,6 +91,16 @@ func (ts *TiDBStatement) NumParams() int {
 // BoundParams implements IStatement BoundParams method.
 func (ts *TiDBStatement) BoundParams() [][]byte {
 	return ts.boundParams
+}
+
+// SetParamsType implements IStatement SetParamsType method.
+func (ts *TiDBStatement) SetParamsType(paramsType []byte) {
+	ts.paramsType = paramsType
+}
+
+// GetParamsType implements IStatement GetParamsType method.
+func (ts *TiDBStatement) GetParamsType() []byte {
+	return ts.paramsType
 }
 
 // Reset implements IStatement Reset method.

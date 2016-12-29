@@ -93,6 +93,12 @@ type IStatement interface {
 	// BoundParams returns bound parameters.
 	BoundParams() [][]byte
 
+	// SetParamsType sets type for parameters.
+	SetParamsType([]byte)
+
+	// GetParamsType returns the type for parameters.
+	GetParamsType() []byte
+
 	// Reset removes all bound parameters.
 	Reset()
 
