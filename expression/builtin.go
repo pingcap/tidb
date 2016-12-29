@@ -20,11 +20,79 @@ package expression
 import (
 	"strings"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
+
+type baseBuiltinFunc struct {
+	args          []Expression
+	argValues     []types.Datum
+	deterministic bool
+	ctx           context.Context
+	self          builtinFunc
+}
+
+func newBaseBuiltinFunc(args []Expression, deterministic bool, ctx context.Context) baseBuiltinFunc {
+	return baseBuiltinFunc{
+		args:          args,
+		deterministic: deterministic,
+		argValues:     make([]types.Datum, len(args)),
+		ctx:           ctx,
+	}
+}
+
+func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err error) {
+	for i, arg := range b.args {
+		b.argValues[i], err = arg.Eval(row, b.ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return b.argValues, nil
+}
+
+func (b *baseBuiltinFunc) isDeterministic() bool {
+	return b.deterministic
+}
+
+func (b *baseBuiltinFunc) getArgs() []Expression {
+	return b.args
+}
+
+func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
+	if !b.deterministic || !fun.isDeterministic() {
+		return false
+	}
+	funArgs := fun.getArgs()
+	if len(funArgs) != len(b.args) {
+		return false
+	}
+	for i := range b.args {
+		if !b.args[i].Equal(funArgs[i], b.ctx) {
+			return false
+		}
+	}
+	return true
+}
+
+func (b *baseBuiltinFunc) getCtx() context.Context {
+	return b.ctx
+}
+
+type builtinFunc interface {
+	eval([]types.Datum) (types.Datum, error)
+	getArgs() []Expression
+	isDeterministic() bool
+	equal(builtinFunc) bool
+	getCtx() context.Context
+}
+
+type functionClass interface {
+	getFunction(args []Expression, ctx context.Context) (builtinFunc, error)
+}
 
 // BuiltinFunc is the function signature for builtin functions
 type BuiltinFunc func([]types.Datum, context.Context) (types.Datum, error)
