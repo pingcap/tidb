@@ -185,3 +185,13 @@ func builtinRound(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	d.SetFloat64(types.Round(x, dec))
 	return d, nil
 }
+
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv
+func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	return
+}
+
+//　See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_crc32
+func builtinCRC32(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	return
+}
