@@ -90,7 +90,8 @@ type builtinFunc interface {
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// isDeterministic checks if a function is deterministic.
-	// a function is deterministic if it returns different results for same inputs.
+	// A function is deterministic if it returns same results for same inputs.
+	// e.g. random is non-deterministic.
 	isDeterministic() bool
 	// equal check if this function equals to another function.
 	equal(builtinFunc) bool
