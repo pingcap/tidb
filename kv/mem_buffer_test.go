@@ -31,6 +31,7 @@ const (
 )
 
 func TestT(t *testing.T) {
+	CustomVerboseFlag = true
 	TestingT(t)
 }
 
@@ -46,10 +47,9 @@ func (s *testKVSuite) SetUpSuite(c *C) {
 	s.bs[1] = NewMemDbBuffer()
 }
 
-func (s *testKVSuite) TearDownSuite(c *C) {
-	for _, buffer := range s.bs {
-		buffer.Release()
-	}
+func (s *testKVSuite) ResetMembuffers() {
+	s.bs[0] = NewRBTreeBuffer()
+	s.bs[1] = NewMemDbBuffer()
 }
 
 func insertData(c *C, buffer MemBuffer) {
@@ -142,8 +142,8 @@ func (s *testKVSuite) TestGetSet(c *C) {
 	for _, buffer := range s.bs {
 		insertData(c, buffer)
 		mustGet(c, buffer)
-		buffer.Release()
 	}
+	s.ResetMembuffers()
 }
 
 func (s *testKVSuite) TestNewIterator(c *C) {
@@ -156,8 +156,23 @@ func (s *testKVSuite) TestNewIterator(c *C) {
 
 		insertData(c, buffer)
 		checkNewIterator(c, buffer)
-		buffer.Release()
 	}
+	s.ResetMembuffers()
+}
+
+func (s *testKVSuite) TestIterNextUntil(c *C) {
+	defer testleak.AfterTest(c)()
+	buffer := NewMemDbBuffer()
+	insertData(c, buffer)
+
+	iter, err := buffer.Seek(nil)
+	c.Assert(err, IsNil)
+
+	err = NextUntil(iter, func(k Key) bool {
+		return false
+	})
+	c.Assert(err, IsNil)
+	c.Assert(iter.Valid(), IsFalse)
 }
 
 func (s *testKVSuite) TestBasicNewIterator(c *C) {
@@ -166,7 +181,6 @@ func (s *testKVSuite) TestBasicNewIterator(c *C) {
 		it, err := buffer.Seek([]byte("2"))
 		c.Assert(err, IsNil)
 		c.Assert(it.Valid(), IsFalse)
-		buffer.Release()
 	}
 }
 
@@ -200,9 +214,8 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 		it, err = buffer.Seek([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"))
 		c.Assert(err, IsNil)
 		c.Assert(string(it.Key()), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
-
-		buffer.Release()
 	}
+	s.ResetMembuffers()
 }
 
 var opCnt = 100000
@@ -214,7 +227,6 @@ func BenchmarkRBTreeBufferSequential(b *testing.B) {
 	}
 	buffer := NewRBTreeBuffer()
 	benchmarkSetGet(b, buffer, data)
-	buffer.Release()
 	b.ReportAllocs()
 }
 
@@ -226,7 +238,6 @@ func BenchmarkRBTreeBufferRandom(b *testing.B) {
 	shuffle(data)
 	buffer := NewRBTreeBuffer()
 	benchmarkSetGet(b, buffer, data)
-	buffer.Release()
 	b.ReportAllocs()
 }
 
@@ -237,7 +248,6 @@ func BenchmarkMemDbBufferSequential(b *testing.B) {
 	}
 	buffer := NewMemDbBuffer()
 	benchmarkSetGet(b, buffer, data)
-	buffer.Release()
 	b.ReportAllocs()
 }
 
@@ -249,36 +259,31 @@ func BenchmarkMemDbBufferRandom(b *testing.B) {
 	shuffle(data)
 	buffer := NewMemDbBuffer()
 	benchmarkSetGet(b, buffer, data)
-	buffer.Release()
 	b.ReportAllocs()
 }
 
 func BenchmarkRBTreeIter(b *testing.B) {
 	buffer := NewRBTreeBuffer()
 	benchIterator(b, buffer)
-	buffer.Release()
 	b.ReportAllocs()
 }
 
 func BenchmarkMemDbIter(b *testing.B) {
 	buffer := NewMemDbBuffer()
 	benchIterator(b, buffer)
-	buffer.Release()
 	b.ReportAllocs()
 }
 
 func BenchmarkRBTreeCreation(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		buffer := NewRBTreeBuffer()
-		buffer.Release()
+		NewRBTreeBuffer()
 	}
 	b.ReportAllocs()
 }
 
 func BenchmarkMemDbCreation(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		buffer := NewMemDbBuffer()
-		buffer.Release()
+		NewMemDbBuffer()
 	}
 	b.ReportAllocs()
 }

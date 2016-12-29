@@ -22,7 +22,10 @@ import (
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists truncate_test;`)
@@ -36,7 +39,10 @@ func (s *testSuite) TestTruncateTable(c *C) {
 }
 
 func (s *testSuite) TestCreateTable(c *C) {
-	defer testleak.AfterTest(c)()
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Test create an exist database
@@ -134,10 +140,68 @@ func (s *testSuite) TestCreateDropIndex(c *C) {
 	tk.MustExec("drop table drop_test")
 }
 
-func (s *testSuite) TestAlterTable(c *C) {
+func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists alter_test (c1 int)")
 	tk.MustExec("alter table alter_test add column c2 int")
+}
+
+func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table nn (c1 int)")
+	tk.MustExec("insert nn values (1), (2)")
+	tk.MustExec("alter table nn add column c2 int not null")
+	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0"))
+	_, err := tk.Exec("insert nn (c1) values (3)")
+	c.Check(err, NotNil)
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("insert nn (c1) values (3)")
+	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0", "3 0"))
+}
+
+func (s *testSuite) TestAlterTableModifyColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists mc (c1 int, c2 varchar(10))")
+	_, err := tk.Exec("alter table mc modify column c1 short")
+	c.Assert(err, NotNil)
+	tk.MustExec("alter table mc modify column c1 bigint")
+
+	_, err = tk.Exec("alter table mc modify column c2 blob")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("alter table mc modify column c2 varchar(8)")
+	c.Assert(err, NotNil)
+	tk.MustExec("alter table mc modify column c2 varchar(11)")
+	tk.MustExec("alter table mc modify column c2 text(13)")
+	tk.MustExec("alter table mc modify column c2 text")
+	result := tk.MustQuery("show create table mc")
+	createSQL := result.Rows()[0][1]
+	expected := "CREATE TABLE `mc` (\n  `c1` bigint(21) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB"
+	c.Assert(createSQL, Equals, expected)
+}
+
+func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+
+	testSQL := `create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
+	tk.MustExec(testSQL)
+
+	testSQL = `use test_db;`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select database();`).Check(testkit.Rows("test_db"))
+	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
+	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
+
+	testSQL = `drop database test_db;`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select database();`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("utf8"))
+	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_unicode_ci"))
 }

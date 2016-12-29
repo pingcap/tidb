@@ -15,17 +15,18 @@ package tikv
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"sync"
+	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tipb/go-tipb"
+	"golang.org/x/net/context"
 )
 
 // CopClient is coprocessor client.
@@ -36,17 +37,12 @@ type CopClient struct {
 // SupportRequestType checks whether reqType is supported.
 func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
 	switch reqType {
-	case kv.ReqTypeSelect:
+	case kv.ReqTypeSelect, kv.ReqTypeIndex:
 		switch subType {
-		case kv.ReqSubTypeGroupBy:
+		case kv.ReqSubTypeGroupBy, kv.ReqSubTypeBasic:
 			return true
 		default:
 			return supportExpr(tipb.ExprType(subType))
-		}
-	case kv.ReqTypeIndex:
-		switch subType {
-		case kv.ReqSubTypeDesc, kv.ReqSubTypeBasic:
-			return true
 		}
 	}
 	return false
@@ -55,7 +51,7 @@ func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
 func supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
-		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlDecimal,
+		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
 		tipb.ExprType_ColumnRef,
 		tipb.ExprType_And, tipb.ExprType_Or,
 		tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
@@ -63,7 +59,11 @@ func supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_In, tipb.ExprType_ValueList,
 		tipb.ExprType_Like, tipb.ExprType_Not:
 		return true
-	case tipb.ExprType_Count, tipb.ExprType_First:
+	case tipb.ExprType_Plus, tipb.ExprType_Div:
+		return true
+	case tipb.ExprType_Case:
+		return true
+	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
@@ -74,16 +74,19 @@ func supportExpr(exprType tipb.ExprType) bool {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(req *kv.Request) kv.Response {
-	tasks, err := buildCopTasks(c.store.regionCache, req.KeyRanges, req.Desc)
+	coprocessorCounter.WithLabelValues("send").Inc()
+
+	bo := NewBackoffer(copBuildTaskMaxBackoff, context.Background())
+	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc)
 	if err != nil {
 		return copErrorResponse{err}
 	}
 	it := &copIterator{
 		store:       c.store,
 		req:         req,
-		tasks:       tasks,
 		concurrency: req.Concurrency,
 	}
+	it.mu.tasks = tasks
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
 	}
@@ -94,8 +97,8 @@ func (c *CopClient) Send(req *kv.Request) kv.Response {
 	if !it.req.KeepOrder {
 		it.respChan = make(chan *coprocessor.Response, it.concurrency)
 	}
-	it.errChan = make(chan error, 1)
-	if len(it.tasks) == 0 {
+	it.errChan = make(chan error, it.concurrency)
+	if len(it.mu.tasks) == 0 {
 		it.Close()
 	}
 	it.run()
@@ -110,36 +113,171 @@ const (
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
-	region *Region
-	ranges []kv.KeyRange
+	region RegionVerID
+	ranges *copRanges
 
 	status   int
 	idx      int // Index of task in the tasks slice.
 	respChan chan *coprocessor.Response
 }
 
-func (t *copTask) pbRanges() []*coprocessor.KeyRange {
-	ranges := make([]*coprocessor.KeyRange, 0, len(t.ranges))
-	for _, r := range t.ranges {
-		ranges = append(ranges, &coprocessor.KeyRange{
-			Start: r.StartKey,
-			End:   r.EndKey,
-		})
+// copRanges is like []kv.KeyRange, but may has extra elements at head/tail.
+// It's for avoiding alloc big slice during build copTask.
+type copRanges struct {
+	first *kv.KeyRange
+	mid   []kv.KeyRange
+	last  *kv.KeyRange
+}
+
+func (r *copRanges) String() string {
+	var s string
+	r.do(func(ran *kv.KeyRange) {
+		s += fmt.Sprintf("[%q, %q]", ran.StartKey, ran.EndKey)
+	})
+	return s
+}
+
+func (r *copRanges) len() int {
+	var l int
+	if r.first != nil {
+		l++
 	}
+	l += len(r.mid)
+	if r.last != nil {
+		l++
+	}
+	return l
+}
+
+func (r *copRanges) at(i int) kv.KeyRange {
+	if r.first != nil {
+		if i == 0 {
+			return *r.first
+		}
+		i--
+	}
+	if i < len(r.mid) {
+		return r.mid[i]
+	}
+	return *r.last
+}
+
+func (r *copRanges) slice(from, to int) *copRanges {
+	var ran copRanges
+	if r.first != nil {
+		if from == 0 && to > 0 {
+			ran.first = r.first
+		}
+		if from > 0 {
+			from--
+		}
+		if to > 0 {
+			to--
+		}
+	}
+	if to <= len(r.mid) {
+		ran.mid = r.mid[from:to]
+	} else {
+		if from <= len(r.mid) {
+			ran.mid = r.mid[from:]
+		}
+		if from < to {
+			ran.last = r.last
+		}
+	}
+	return &ran
+}
+
+func (r *copRanges) do(f func(ran *kv.KeyRange)) {
+	if r.first != nil {
+		f(r.first)
+	}
+	for _, ran := range r.mid {
+		f(&ran)
+	}
+	if r.last != nil {
+		f(r.last)
+	}
+}
+
+func (r *copRanges) toPBRanges() []*coprocessor.KeyRange {
+	ranges := make([]*coprocessor.KeyRange, 0, r.len())
+	r.do(func(ran *kv.KeyRange) {
+		ranges = append(ranges, &coprocessor.KeyRange{
+			Start: ran.StartKey,
+			End:   ran.EndKey,
+		})
+	})
 	return ranges
 }
 
-func buildCopTasks(cache *RegionCache, ranges []kv.KeyRange, desc bool) ([]*copTask, error) {
+func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool) ([]*copTask, error) {
+	coprocessorCounter.WithLabelValues("build_task").Inc()
+
+	start := time.Now()
+	rangesLen := ranges.len()
+
 	var tasks []*copTask
-	for _, r := range ranges {
-		var err error
-		if tasks, err = appendTask(tasks, cache, r); err != nil {
+	appendTask := func(region RegionVerID, ranges *copRanges) {
+		tasks = append(tasks, &copTask{
+			idx:      len(tasks),
+			region:   region,
+			status:   taskNew,
+			ranges:   ranges,
+			respChan: make(chan *coprocessor.Response, 1),
+		})
+	}
+
+	for ranges.len() > 0 {
+		loc, err := cache.LocateKey(bo, ranges.at(0).StartKey)
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
+
+		// Iterate to the first range that is not complete in the region.
+		var i int
+		for ; i < ranges.len(); i++ {
+			r := ranges.at(i)
+			if !(loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)) {
+				break
+			}
+		}
+		// All rest ranges belong to the same region.
+		if i == ranges.len() {
+			appendTask(loc.Region, ranges)
+			break
+		}
+
+		r := ranges.at(i)
+		if loc.Contains(r.StartKey) {
+			// Part of r is not in the region. We need to split it.
+			taskRanges := ranges.slice(0, i)
+			taskRanges.last = &kv.KeyRange{
+				StartKey: r.StartKey,
+				EndKey:   loc.EndKey,
+			}
+			appendTask(loc.Region, taskRanges)
+
+			ranges = ranges.slice(i+1, ranges.len())
+			ranges.first = &kv.KeyRange{
+				StartKey: loc.EndKey,
+				EndKey:   r.EndKey,
+			}
+		} else {
+			// rs[i] is not in the region.
+			appendTask(loc.Region, ranges.slice(0, i))
+			ranges = ranges.slice(i, ranges.len())
+		}
 	}
+
 	if desc {
 		reverseTasks(tasks)
 	}
+	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
+		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
+	}
+	copBuildTaskHistogram.Observe(time.Since(start).Seconds())
+	copTaskLenHistogram.Observe(float64(len(tasks)))
 	return tasks, nil
 }
 
@@ -151,67 +289,31 @@ func reverseTasks(tasks []*copTask) {
 	}
 }
 
-func appendTask(tasks []*copTask, cache *RegionCache, r kv.KeyRange) ([]*copTask, error) {
-	var last *copTask
-	if len(tasks) > 0 {
-		last = tasks[len(tasks)-1]
-	}
-	// Ensure `r` (or part of `r`) is inside `last`, create a task if need.
-	if last == nil || !last.region.Contains(r.StartKey) {
-		region, err := cache.GetRegion(r.StartKey)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		last = &copTask{
-			idx:    len(tasks),
-			region: region,
-			status: taskNew,
-		}
-		last.respChan = make(chan *coprocessor.Response, 1)
-		tasks = append(tasks, last)
-	}
-	if last.region.Contains(r.EndKey) || bytes.Equal(last.region.EndKey(), r.EndKey) {
-		// The whole range is inside last task.
-		last.ranges = append(last.ranges, r)
-	} else {
-		// Part of r is not in the range of last task.
-		last.ranges = append(last.ranges, kv.KeyRange{
-			StartKey: r.StartKey,
-			EndKey:   last.region.EndKey(),
-		})
-		remain := kv.KeyRange{
-			StartKey: last.region.EndKey(),
-			EndKey:   r.EndKey,
-		}
-		return appendTask(tasks, cache, remain)
-	}
-	return tasks, nil
-}
-
 type copIterator struct {
-	store *tikvStore
-	req   *kv.Request
-	tasks []*copTask
-
-	mu          sync.RWMutex
-	respGot     int
+	store       *tikvStore
+	req         *kv.Request
 	concurrency int
-	respChan    chan *coprocessor.Response
-	errChan     chan error
-	finished    bool
+	mu          struct {
+		sync.RWMutex
+		tasks    []*copTask
+		respGot  int
+		finished bool
+	}
+	respChan chan *coprocessor.Response
+	errChan  chan error
 }
 
 // Pick the next new copTask and send request to tikv-server.
 func (it *copIterator) work() {
 	for {
 		it.mu.Lock()
-		if it.finished {
-			it.mu.Lock()
+		if it.mu.finished {
+			it.mu.Unlock()
 			break
 		}
 		// Find the next task to send.
 		var task *copTask
-		for _, t := range it.tasks {
+		for _, t := range it.mu.tasks {
 			if t.status == taskNew {
 				task = t
 				break
@@ -223,7 +325,8 @@ func (it *copIterator) work() {
 		}
 		task.status = taskRunning
 		it.mu.Unlock()
-		resp, err := it.handleTask(task)
+		bo := NewBackoffer(copNextMaxBackoff, context.Background())
+		resp, err := it.handleTask(bo, task)
 		if err != nil {
 			it.errChan <- err
 			break
@@ -245,9 +348,14 @@ func (it *copIterator) run() {
 
 // Return next coprocessor result.
 func (it *copIterator) Next() (io.ReadCloser, error) {
-	if it.finished {
+	coprocessorCounter.WithLabelValues("next").Inc()
+
+	it.mu.RLock()
+	if it.mu.finished {
+		it.mu.RUnlock()
 		return nil, nil
 	}
+	it.mu.RUnlock()
 	var (
 		resp *coprocessor.Response
 		err  error
@@ -263,7 +371,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	} else {
 		var task *copTask
 		it.mu.Lock()
-		for _, t := range it.tasks {
+		for _, t := range it.mu.tasks {
 			if t.status != taskDone {
 				task = t
 				break
@@ -272,6 +380,8 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		it.mu.Unlock()
 		if task == nil {
 			it.Close()
+		}
+		if task == nil {
 			return nil, nil
 		}
 		select {
@@ -282,60 +392,69 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		task.status = taskDone
 		it.mu.Unlock()
 	}
-	if err != nil {
-		it.Close()
-		return nil, err
-	}
+
 	it.mu.Lock()
 	defer it.mu.Unlock()
-	it.respGot++
-	if it.respGot == len(it.tasks) {
-		it.Close()
+	if err != nil {
+		it.mu.finished = true
+		return nil, errors.Trace(err)
+	}
+	if it.mu.finished {
+		// resp will be nil if iterator is finished.
+		return nil, nil
+	}
+	it.mu.respGot++
+	if it.mu.respGot == len(it.mu.tasks) {
+		it.mu.finished = true
 	}
 	return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
 }
 
 // Handle single copTask.
-func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) {
-	var backoffErr error
-	for backoff := rpcBackoff(); backoffErr == nil; backoffErr = backoff() {
+func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Response, error) {
+	coprocessorCounter.WithLabelValues("handle_task").Inc()
+	sender := NewRegionRequestSender(bo, it.store.regionCache, it.store.client)
+	for {
+		it.mu.RLock()
+		if it.mu.finished {
+			it.mu.RUnlock()
+			return nil, nil
+		}
+		it.mu.RUnlock()
+
 		req := &coprocessor.Request{
-			Context: task.region.GetContext(),
-			Tp:      proto.Int64(it.req.Tp),
-			Data:    it.req.Data,
-			Ranges:  task.pbRanges(),
+			Tp:     it.req.Tp,
+			Data:   it.req.Data,
+			Ranges: task.ranges.toPBRanges(),
 		}
-		resp, err := it.store.client.SendCopReq(task.region.GetAddress(), req)
+		resp, err := sender.SendCopReq(req, task.region, readTimeoutMedium)
 		if err != nil {
-			it.store.regionCache.NextPeer(task.region.VerID())
-			err1 := it.rebuildCurrentTask(task)
-			if err1 != nil {
-				return nil, errors.Trace(err1)
-			}
-			log.Warnf("send coprocessor request error: %v, try next peer later", err)
-			continue
+			return nil, errors.Trace(err)
 		}
-		if e := resp.GetRegionError(); e != nil {
-			if notLeader := e.GetNotLeader(); notLeader != nil {
-				it.store.regionCache.UpdateLeader(task.region.VerID(), notLeader.GetLeader().GetId())
-			} else {
-				it.store.regionCache.DropRegion(task.region.VerID())
-			}
-			err = it.rebuildCurrentTask(task)
+		if regionErr := resp.GetRegionError(); regionErr != nil {
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			log.Warnf("coprocessor region error: %v, retry later", e)
+			err = it.rebuildCurrentTask(bo, task)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			continue
 		}
 		if e := resp.GetLocked(); e != nil {
-			lock := newLock(it.store, e.GetPrimaryLock(), e.GetLockVersion(), e.GetKey(), e.GetLockVersion())
-			_, lockErr := lock.cleanup()
-			if lockErr == nil || terror.ErrorEqual(lockErr, errInnerRetryable) {
-				continue
+			log.Debugf("coprocessor encounters lock: %v", e)
+			ok, err1 := it.store.lockResolver.ResolveLocks(bo, []*Lock{newLock(e)})
+			if err1 != nil {
+				return nil, errors.Trace(err1)
 			}
-			log.Warnf("cleanup lock error: %v", lockErr)
-			return nil, errors.Trace(lockErr)
+			if !ok {
+				err = bo.Backoff(boTxnLock, errors.New(e.String()))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+			continue
 		}
 		if e := resp.GetOtherError(); e != "" {
 			err = errors.Errorf("other error: %s", e)
@@ -344,12 +463,13 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 		}
 		return resp, nil
 	}
-	return nil, errors.Trace(backoffErr)
 }
 
 // Rebuild current task. It may be split into multiple tasks (in region split scenario).
-func (it *copIterator) rebuildCurrentTask(task *copTask) error {
-	newTasks, err := buildCopTasks(it.store.regionCache, task.ranges, it.req.Desc)
+func (it *copIterator) rebuildCurrentTask(bo *Backoffer, task *copTask) error {
+	coprocessorCounter.WithLabelValues("rebuild_task").Inc()
+
+	newTasks, err := buildCopTasks(bo, it.store.regionCache, task.ranges, it.req.Desc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -366,16 +486,18 @@ func (it *copIterator) rebuildCurrentTask(task *copTask) error {
 	task.ranges = t.ranges
 	close(t.respChan)
 	newTasks[0] = task
-	it.tasks = append(it.tasks[:task.idx], append(newTasks, it.tasks[task.idx+1:]...)...)
+	it.mu.tasks = append(it.mu.tasks[:task.idx], append(newTasks, it.mu.tasks[task.idx+1:]...)...)
 	// Update index.
-	for i := task.idx; i < len(it.tasks); i++ {
-		it.tasks[i].idx = i
+	for i := task.idx; i < len(it.mu.tasks); i++ {
+		it.mu.tasks[i].idx = i
 	}
 	return nil
 }
 
 func (it *copIterator) Close() error {
-	it.finished = true
+	it.mu.Lock()
+	it.mu.finished = true
+	it.mu.Unlock()
 	return nil
 }
 

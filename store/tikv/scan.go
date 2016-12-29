@@ -14,12 +14,11 @@
 package tikv
 
 import (
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/terror"
+	"golang.org/x/net/context"
 )
 
 // Scanner support tikv scan
@@ -74,6 +73,7 @@ func (s *Scanner) Value() []byte {
 
 // Next return next element.
 func (s *Scanner) Next() error {
+	bo := NewBackoffer(scannerNextMaxBackoff, context.Background())
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}
@@ -82,9 +82,9 @@ func (s *Scanner) Next() error {
 		if s.idx >= len(s.cache) {
 			if s.eof {
 				s.Close()
-				return kv.ErrNotExist
+				return nil
 			}
-			err := s.getData()
+			err := s.getData(bo)
 			if err != nil {
 				s.Close()
 				return errors.Trace(err)
@@ -93,7 +93,7 @@ func (s *Scanner) Next() error {
 				continue
 			}
 		}
-		if err := s.resolveCurrentLock(); err != nil {
+		if err := s.resolveCurrentLock(bo); err != nil {
 			s.Close()
 			return errors.Trace(err)
 		}
@@ -114,50 +114,45 @@ func (s *Scanner) startTS() uint64 {
 	return s.snapshot.version.Ver
 }
 
-func (s *Scanner) resolveCurrentLock() error {
+func (s *Scanner) resolveCurrentLock(bo *Backoffer) error {
 	current := s.cache[s.idx]
 	if current.GetError() == nil {
 		return nil
 	}
-	var backoffErr error
-	for backoff := txnLockBackoff(); backoffErr == nil; backoffErr = backoff() {
-		val, err := s.snapshot.handleKeyError(current.GetError())
-		if err != nil {
-			if terror.ErrorEqual(err, errInnerRetryable) {
-				continue
-			}
-			return errors.Trace(err)
-		}
-		current.Error = nil
-		current.Value = val
-		return nil
+	val, err := s.snapshot.get(bo, kv.Key(current.Key))
+	if err != nil {
+		return errors.Trace(err)
 	}
-	return errors.Annotate(backoffErr, txnRetryableMark)
+	current.Error = nil
+	current.Value = val
+	return nil
 }
 
-func (s *Scanner) getData() error {
+func (s *Scanner) getData(bo *Backoffer) error {
 	log.Debugf("txn getData nextStartKey[%q], txn %d", s.nextStartKey, s.startTS())
-
-	var backoffErr error
-	for backoff := regionMissBackoff(); backoffErr == nil; backoffErr = backoff() {
-		region, err := s.snapshot.store.regionCache.GetRegion(s.nextStartKey)
+	for {
+		loc, err := s.snapshot.store.regionCache.LocateKey(bo, s.nextStartKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		req := &pb.Request{
-			Type: pb.MessageType_CmdScan.Enum(),
+			Type: pb.MessageType_CmdScan,
 			CmdScanReq: &pb.CmdScanRequest{
 				StartKey: []byte(s.nextStartKey),
-				Limit:    proto.Uint32(uint32(s.batchSize)),
-				Version:  proto.Uint64(s.startTS()),
+				Limit:    uint32(s.batchSize),
+				Version:  s.startTS(),
 			},
 		}
-		resp, err := s.snapshot.store.SendKVReq(req, region.VerID())
+		resp, err := s.snapshot.store.SendKVReq(bo, req, loc.Region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			log.Warnf("scanner getData failed: %s", regionErr)
+			log.Debugf("scanner getData failed: %s", regionErr)
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return errors.Trace(err)
+			}
 			continue
 		}
 		cmdScanResp := resp.GetCmdScanResp()
@@ -169,7 +164,7 @@ func (s *Scanner) getData() error {
 		// Check if kvPair contains error, it should be a Lock.
 		for _, pair := range kvPairs {
 			if keyErr := pair.GetError(); keyErr != nil {
-				lock, err := extractLockInfoFromKeyErr(keyErr)
+				lock, err := extractLockFromKeyErr(keyErr)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -181,8 +176,8 @@ func (s *Scanner) getData() error {
 		if len(kvPairs) < s.batchSize {
 			// No more data in current Region. Next getData() starts
 			// from current Region's endKey.
-			s.nextStartKey = region.EndKey()
-			if len(region.EndKey()) == 0 {
+			s.nextStartKey = loc.EndKey
+			if len(loc.EndKey) == 0 {
 				// Current Region is the last one.
 				s.eof = true
 			}
@@ -196,5 +191,4 @@ func (s *Scanner) getData() error {
 		s.nextStartKey = kv.Key(lastKey).Next()
 		return nil
 	}
-	return errors.Annotate(backoffErr, txnRetryableMark)
 }

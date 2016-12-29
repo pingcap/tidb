@@ -17,7 +17,7 @@ import "testing"
 
 func TestT(t *testing.T) {
 	op := Plus
-	if op.String() != "+" {
+	if op.String() != "plus" {
 		t.Fatalf("invalid op code")
 	}
 

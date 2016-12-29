@@ -1,15 +1,30 @@
+// Copyright 2016 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tidb
 
 import (
 	"fmt"
+	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/plan"
 )
 
 var smallCount = 100
+var bigCount = 10000
 
 func prepareBenchSession() Session {
 	store, err := NewStore("memory://bench")
@@ -31,6 +46,17 @@ func prepareBenchData(se Session, colType string, valueFormat string, valueCount
 	mustExecute(se, "begin")
 	for i := 0; i < valueCount; i++ {
 		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, i)+")")
+	}
+	mustExecute(se, "commit")
+}
+
+func prepareSortBenchData(se Session, colType string, valueFormat string, valueCount int) {
+	mustExecute(se, "drop table if exists t")
+	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s)", colType))
+	mustExecute(se, "begin")
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for i := 0; i < valueCount; i++ {
+		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, r.Intn(valueCount))+")")
 	}
 	mustExecute(se, "commit")
 }
@@ -84,6 +110,20 @@ func BenchmarkTableScan(b *testing.B) {
 	}
 }
 
+func BenchmarkExplainTableScan(b *testing.B) {
+	b.StopTimer()
+	se := prepareBenchSession()
+	prepareBenchData(se, "int", "%v", 0)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute("explain select * from t")
+		if err != nil {
+			b.Fatal(err)
+		}
+		readResult(rs[0], 1)
+	}
+}
+
 func BenchmarkTableLookup(b *testing.B) {
 	b.StopTimer()
 	se := prepareBenchSession()
@@ -91,6 +131,20 @@ func BenchmarkTableLookup(b *testing.B) {
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute("select * from t where pk = 64")
+		if err != nil {
+			b.Fatal(err)
+		}
+		readResult(rs[0], 1)
+	}
+}
+
+func BenchmarkExplainTableLookup(b *testing.B) {
+	b.StopTimer()
+	se := prepareBenchSession()
+	prepareBenchData(se, "int", "%d", 0)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute("explain select * from t where pk = 64")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -109,6 +163,20 @@ func BenchmarkStringIndexScan(b *testing.B) {
 			b.Fatal(err)
 		}
 		readResult(rs[0], smallCount)
+	}
+}
+
+func BenchmarkExplainStringIndexScan(b *testing.B) {
+	b.StopTimer()
+	se := prepareBenchSession()
+	prepareBenchData(se, "varchar(255)", "'hello %d'", 0)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute("explain select * from t where col > 'hello'")
+		if err != nil {
+			b.Fatal(err)
+		}
+		readResult(rs[0], 1)
 	}
 }
 
@@ -204,6 +272,20 @@ func BenchmarkInsertNoIndex(b *testing.B) {
 	}
 }
 
+func BenchmarkSort(b *testing.B) {
+	b.StopTimer()
+	se := prepareBenchSession()
+	prepareSortBenchData(se, "int", "%v", bigCount)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute("select * from t order by col limit 50")
+		if err != nil {
+			b.Fatal(err)
+		}
+		readResult(rs[0], 50)
+	}
+}
+
 func BenchmarkJoin(b *testing.B) {
 	b.StopTimer()
 	se := prepareBenchSession()
@@ -214,24 +296,8 @@ func BenchmarkJoin(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], 100)
+		readResult(rs[0], smallCount)
 	}
-}
-
-func BenchmarkNewJoin(b *testing.B) {
-	b.StopTimer()
-	se := prepareBenchSession()
-	prepareJoinBenchData(se, "int", "%v", smallCount)
-	b.StartTimer()
-	plan.UseNewPlanner = true
-	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute("select * from t a join t b on a.col = b.col")
-		if err != nil {
-			b.Fatal(err)
-		}
-		readResult(rs[0], 100)
-	}
-	plan.UseNewPlanner = false
 }
 
 func BenchmarkJoinLimit(b *testing.B) {
@@ -246,20 +312,4 @@ func BenchmarkJoinLimit(b *testing.B) {
 		}
 		readResult(rs[0], 1)
 	}
-}
-
-func BenchmarkNewJoinLimit(b *testing.B) {
-	b.StopTimer()
-	se := prepareBenchSession()
-	prepareJoinBenchData(se, "int", "%v", smallCount)
-	b.StartTimer()
-	plan.UseNewPlanner = true
-	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute("select * from t a join t b on a.col = b.col limit 1")
-		if err != nil {
-			b.Fatal(err)
-		}
-		readResult(rs[0], 1)
-	}
-	plan.UseNewPlanner = false
 }

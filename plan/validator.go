@@ -19,9 +19,10 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Validate checkes whether the node is valid.
@@ -41,7 +42,7 @@ type validator struct {
 }
 
 func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch in.(type) {
+	switch node := in.(type) {
 	case *ast.AggregateFuncExpr:
 		if v.inAggregate {
 			// Aggregate function can not contain aggregate function.
@@ -49,6 +50,21 @@ func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			return in, true
 		}
 		v.inAggregate = true
+	case *ast.CreateTableStmt:
+		v.checkCreateTableGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
+	case *ast.CreateIndexStmt:
+		v.checkCreateIndexGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
+	case *ast.AlterTableStmt:
+		v.checkAlterTableGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
 	}
 	return in, false
 }
@@ -57,30 +73,12 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
 	case *ast.AggregateFuncExpr:
 		v.inAggregate = false
-	case *ast.BetweenExpr:
-		v.checkAllOneColumn(x.Expr, x.Left, x.Right)
-	case *ast.BinaryOperationExpr:
-		v.checkBinaryOperation(x)
-	case *ast.ByItem:
-		v.checkAllOneColumn(x.Expr)
 	case *ast.CreateTableStmt:
 		v.checkAutoIncrement(x)
-	case *ast.CompareSubqueryExpr:
-		v.checkSameColumns(x.L, x.R)
-	case *ast.FieldList:
-		v.checkFieldList(x)
-	case *ast.HavingClause:
-		v.checkAllOneColumn(x.Expr)
-	case *ast.IsNullExpr:
-		v.checkAllOneColumn(x.Expr)
-	case *ast.IsTruthExpr:
-		v.checkAllOneColumn(x.Expr)
 	case *ast.ParamMarkerExpr:
 		if !v.inPrepare {
 			v.err = parser.ErrSyntax.Gen("syntax error, unexpected '?'")
 		}
-	case *ast.PatternInExpr:
-		v.checkSameColumns(append(x.List, x.Expr)...)
 	case *ast.Limit:
 		if x.Count > math.MaxUint64-x.Offset {
 			x.Count = math.MaxUint64 - x.Offset
@@ -88,23 +86,6 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	}
 
 	return in, v.err == nil
-}
-
-// checkAllOneColumn checks that all expressions have one column.
-// Expression may have more than one column when it is a rowExpr or
-// a Subquery with more than one result fields.
-func (v *validator) checkAllOneColumn(exprs ...ast.ExprNode) {
-	for _, expr := range exprs {
-		switch x := expr.(type) {
-		case *ast.RowExpr:
-			v.err = ErrOneColumn
-		case *ast.SubqueryExpr:
-			if len(x.Query.GetResultFields()) != 1 {
-				v.err = ErrOneColumn
-			}
-		}
-	}
-	return
 }
 
 func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
@@ -116,12 +97,15 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
 			return hasAutoIncrement, nil
 		}
 		for _, op := range colDef.Options[num+1:] {
-			if op.Tp == ast.ColumnOptionDefaultValue {
+			if op.Tp == ast.ColumnOptionDefaultValue && !op.Expr.GetDatum().IsNull() {
 				return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
 			}
 		}
 	}
 	if colDef.Options[num].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != num+1 {
+		if colDef.Options[num].Expr.GetDatum().IsNull() {
+			return hasAutoIncrement, nil
+		}
 		for _, op := range colDef.Options[num+1:] {
 			if op.Tp == ast.ColumnOptionAutoIncrement {
 				return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
@@ -205,54 +189,89 @@ func (v *validator) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	}
 }
 
-func (v *validator) checkBinaryOperation(x *ast.BinaryOperationExpr) {
-	// row constructor only supports comparison operation.
-	switch x.Op {
-	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE, opcode.NullEQ:
-		v.checkSameColumns(x.L, x.R)
-	default:
-		v.checkAllOneColumn(x.L, x.R)
-	}
-}
-
-func columnCount(ex ast.ExprNode) int {
-	switch x := ex.(type) {
-	case *ast.RowExpr:
-		return len(x.Values)
-	case *ast.SubqueryExpr:
-		return len(x.Query.GetResultFields())
-	default:
-		return 1
-	}
-}
-
-func (v *validator) checkSameColumns(exprs ...ast.ExprNode) {
-	if len(exprs) == 0 {
-		return
-	}
-	count := columnCount(exprs[0])
-	for i := 1; i < len(exprs); i++ {
-		if columnCount(exprs[i]) != count {
-			v.err = ErrSameColumns
+func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
+	countPrimaryKey := 0
+	for _, colDef := range stmt.Cols {
+		tp := colDef.Tp
+		if tp.Tp == mysql.TypeString &&
+			tp.Flen != types.UnspecifiedLength && tp.Flen > 255 {
+			v.err = errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
+			return
+		}
+		countPrimaryKey += isPrimary(colDef.Options)
+		if countPrimaryKey > 1 {
+			v.err = infoschema.ErrMultiplePriKey
 			return
 		}
 	}
-}
-
-// checkFieldList checks if there is only one '*' and each field has only one column.
-func (v *validator) checkFieldList(x *ast.FieldList) {
-	var hasWildCard bool
-	for _, val := range x.Fields {
-		if val.WildCard != nil && val.WildCard.Table.L == "" {
-			if hasWildCard {
-				v.err = ErrMultiWildCard
+	for _, constraint := range stmt.Constraints {
+		switch tp := constraint.Tp; tp {
+		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+			err := checkDuplicateColumnName(constraint.Keys)
+			if err != nil {
+				v.err = err
 				return
 			}
-			hasWildCard = true
-		}
-		v.checkAllOneColumn(val.Expr)
-		if v.err != nil {
-			return
+		case ast.ConstraintPrimaryKey:
+			if countPrimaryKey > 0 {
+				v.err = infoschema.ErrMultiplePriKey
+				return
+			}
+			countPrimaryKey++
+			err := checkDuplicateColumnName(constraint.Keys)
+			if err != nil {
+				v.err = err
+				return
+			}
 		}
 	}
+}
+
+func isPrimary(ops []*ast.ColumnOption) int {
+	for _, op := range ops {
+		if op.Tp == ast.ColumnOptionPrimaryKey {
+			return 1
+		}
+	}
+	return 0
+}
+
+func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
+	v.err = checkDuplicateColumnName(stmt.IndexColNames)
+	return
+}
+
+func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
+	specs := stmt.Specs
+	for _, spec := range specs {
+		switch spec.Tp {
+		case ast.AlterTableAddConstraint:
+			switch spec.Constraint.Tp {
+			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
+				ast.ConstraintUniqKey:
+				v.err = checkDuplicateColumnName(spec.Constraint.Keys)
+				if v.err != nil {
+					return
+				}
+			default:
+				// Nothing to do now.
+			}
+		default:
+			// Nothing to do now.
+		}
+	}
+}
+
+// checkDuplicateColumnName checks if index exists duplicated columns.
+func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
+	for i := 0; i < len(indexColNames); i++ {
+		name1 := indexColNames[i].Column.Name
+		for j := i + 1; j < len(indexColNames); j++ {
+			name2 := indexColNames[j].Column.Name
+			if name1.L == name2.L {
+				return infoschema.ErrColumnExists.GenByArgs(name2)
+			}
+		}
+	}
+	return nil
 }

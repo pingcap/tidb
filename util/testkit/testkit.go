@@ -15,12 +15,14 @@ package testkit
 
 import (
 	"fmt"
-	"strings"
+	"sync/atomic"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 // TestKit is a utility to run sql test.
@@ -57,12 +59,17 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	}
 }
 
+var connectionID uint64
+
 // Exec executes a sql statement.
 func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
 		tk.Se, err = tidb.CreateSession(tk.store)
 		tk.c.Assert(err, check.IsNil)
+		id := atomic.AddUint64(&connectionID, 1)
+		tk.Se.SetConnectionID(id)
+		tk.Se.GetSessionVars().SkipDDLWait = true
 	}
 	if len(args) == 0 {
 		var rss []ast.RecordSet
@@ -70,19 +77,19 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) 
 		if err == nil && len(rss) > 0 {
 			return rss[0], nil
 		}
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	stmtID, _, _, err := tk.Se.PrepareStmt(sql)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	rs, err := tk.Se.ExecutePreparedStmt(stmtID, args...)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	err = tk.Se.DropPreparedStmt(stmtID)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return rs, nil
 }
@@ -104,10 +111,10 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	comment := check.Commentf("sql:%s, %v", sql, args)
 	rs, err := tk.Exec(sql, args...)
-	tk.c.Assert(err, check.IsNil, comment)
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	tk.c.Assert(rs, check.NotNil, comment)
 	rows, err := tidb.GetRows(rs)
-	tk.c.Assert(err, check.IsNil, comment)
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	iRows := make([][]interface{}, len(rows))
 	for i := range rows {
 		row := rows[i]
@@ -120,22 +127,7 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	return &Result{rows: iRows, c: tk.c, comment: comment}
 }
 
-// RowsWithSep is a convenient function to wrap args to a slice of []interface.
-// The arg represents a row, split by sep.
-func RowsWithSep(sep string, args ...string) [][]interface{} {
-	rows := make([][]interface{}, len(args))
-	for i, v := range args {
-		strs := strings.Split(v, sep)
-		row := make([]interface{}, len(strs))
-		for j, s := range strs {
-			row[j] = s
-		}
-		rows[i] = row
-	}
-	return rows
-}
-
 // Rows is similar to RowsWithSep, use white space as separator string.
 func Rows(args ...string) [][]interface{} {
-	return RowsWithSep(" ", args...)
+	return testutil.RowsWithSep(" ", args...)
 }

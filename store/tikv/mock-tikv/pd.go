@@ -17,17 +17,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 )
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
-var (
-	tsMu       sync.Mutex
+var tsMu = struct {
+	sync.Mutex
 	physicalTS int64
 	logicalTS  int64
-)
+}{}
 
 type pdClient struct {
 	cluster *Cluster
@@ -41,33 +40,31 @@ func NewPDClient(cluster *Cluster) pd.Client {
 	}
 }
 
+func (c *pdClient) GetClusterID() uint64 {
+	return 1
+}
+
 func (c *pdClient) GetTS() (int64, int64, error) {
 	tsMu.Lock()
 	defer tsMu.Unlock()
 
 	ts := time.Now().UnixNano() / int64(time.Millisecond)
-	if physicalTS >= ts {
-		logicalTS++
+	if tsMu.physicalTS >= ts {
+		tsMu.logicalTS++
 	} else {
-		physicalTS = ts
-		logicalTS = 0
+		tsMu.physicalTS = ts
+		tsMu.logicalTS = 0
 	}
-	return physicalTS, logicalTS, nil
+	return tsMu.physicalTS, tsMu.logicalTS, nil
 }
 
-func (c *pdClient) GetRegion(key []byte) (*metapb.Region, error) {
-	region := c.cluster.GetRegionByKey(key)
-	if region == nil {
-		return nil, errors.New("not found")
-	}
-	return region, nil
+func (c *pdClient) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, error) {
+	region, peer := c.cluster.GetRegionByKey(key)
+	return region, peer, nil
 }
 
 func (c *pdClient) GetStore(storeID uint64) (*metapb.Store, error) {
 	store := c.cluster.GetStore(storeID)
-	if store == nil {
-		return nil, errors.New("not found")
-	}
 	return store, nil
 }
 

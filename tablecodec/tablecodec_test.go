@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -62,7 +63,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	row := make([]types.Datum, 3)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
-	row[2] = types.NewDecimalDatum(mysql.NewDecimalFromInt(1, 1))
+	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
 	// Encode
 	colIDs := make([]int64, 0, 3)
 	for _, col := range cols {
@@ -81,11 +82,12 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 3)
+	sc := new(variable.StatementContext)
 	// Compare decoded row and original row
 	for i, col := range cols {
 		v, ok := r[col.id]
 		c.Assert(ok, IsTrue)
-		equal, err1 := v.CompareDatum(row[i])
+		equal, err1 := v.CompareDatum(sc, row[i])
 		c.Assert(err1, IsNil)
 		c.Assert(equal, Equals, 0)
 	}
@@ -99,7 +101,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		c.Assert(ok, IsTrue)
-		equal, err1 := v.CompareDatum(row[i])
+		equal, err1 := v.CompareDatum(sc, row[i])
 		c.Assert(err1, IsNil)
 		c.Assert(equal, Equals, 0)
 	}
@@ -117,7 +119,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 		}
 		v, ok := r[col.id]
 		c.Assert(ok, IsTrue)
-		equal, err1 := v.CompareDatum(row[i])
+		equal, err1 := v.CompareDatum(sc, row[i])
 		c.Assert(err1, IsNil)
 		c.Assert(equal, Equals, 0)
 	}
@@ -143,7 +145,7 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	row := make([]types.Datum, 3)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
-	ts, err := mysql.ParseTimestamp("2016-06-23 11:30:45")
+	ts, err := types.ParseTimestamp("2016-06-23 11:30:45")
 	c.Assert(err, IsNil)
 	row[2] = types.NewDatum(ts)
 	// Encode
@@ -164,12 +166,35 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 3)
+	sc := new(variable.StatementContext)
 	// Compare decoded row and original row
 	for i, col := range cols {
 		v, ok := r[col.id]
 		c.Assert(ok, IsTrue)
-		equal, err1 := v.CompareDatum(row[i])
+		equal, err1 := v.CompareDatum(sc, row[i])
 		c.Assert(err1, IsNil)
 		c.Assert(equal, Equals, 0)
 	}
+}
+
+func (s *testTableCodecSuite) TestCutKey(c *C) {
+	colIDs := []int64{1, 2, 3}
+	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
+	handle := types.NewIntDatum(100)
+	values = append(values, handle)
+	encodedValue, err := codec.EncodeKey(nil, values...)
+	c.Assert(err, IsNil)
+	tableID := int64(4)
+	indexID := int64(5)
+	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
+	valuesMap, handleBytes, err := CutIndexKey(indexKey, colIDs)
+	c.Assert(err, IsNil)
+	for i, colID := range colIDs {
+		valueBytes := valuesMap[colID]
+		var val types.Datum
+		_, val, _ = codec.DecodeOne(valueBytes)
+		c.Assert(val, DeepEquals, values[i])
+	}
+	_, handleVal, _ := codec.DecodeOne(handleBytes)
+	c.Assert(handleVal, DeepEquals, types.NewIntDatum(100))
 }

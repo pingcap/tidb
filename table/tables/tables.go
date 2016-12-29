@@ -23,17 +23,19 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-binlog"
 )
 
 // Table implements table.Table interface.
@@ -68,7 +70,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 			return nil, table.ErrColumnStateCantNone.Gen("column %s can't be in none state", colInfo.Name)
 		}
 
-		col := &table.Column{ColumnInfo: *colInfo}
+		col := table.ToColumn(colInfo)
 		columns = append(columns, col)
 	}
 
@@ -166,19 +168,6 @@ func (t *Table) FirstKey() kv.Key {
 	return t.RecordKey(0)
 }
 
-// Truncate implements table.Table Truncate interface.
-func (t *Table) Truncate(ctx context.Context) error {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = util.DelKeyWithPrefix(txn, t.RecordPrefix())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return util.DelKeyWithPrefix(txn, t.IndexPrefix())
-}
-
 // UpdateRecord implements table.Table UpdateRecord interface.
 func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum, newData []types.Datum, touched map[int]bool) error {
 	// We should check whether this table has on update column which state is write only.
@@ -191,20 +180,15 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 		return errors.Trace(err)
 	}
 
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	bs := kv.NewBufferStore(txn)
-	defer bs.Release()
+	txn := ctx.Txn()
+	bs := kv.NewBufferStore(ctx.Txn())
 
 	// Compose new row
 	t.composeNewData(touched, currentData, oldData)
 	colIDs := make([]int64, 0, len(t.WritableCols()))
 	for i, col := range t.WritableCols() {
 		if col.State != model.StatePublic && currentData[i].IsNull() {
-			defaultVal, _, err1 := table.GetColDefaultValue(ctx, &col.ColumnInfo)
+			defaultVal, _, err1 := table.GetColDefaultValue(ctx, col.ToInfo())
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
@@ -231,7 +215,9 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	if shouldWriteBinlog(ctx) {
+		t.addUpdateBinlog(ctx, h, oldData, value, colIDs)
+	}
 	return nil
 }
 
@@ -239,7 +225,7 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data 
 	ucols := table.FindOnUpdateCols(t.WritableCols())
 	for _, col := range ucols {
 		if !touched[col.Offset] {
-			value, err := evaluator.GetTimeValue(ctx, evaluator.CurrentTimestamp, col.Tp, col.Decimal)
+			value, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -312,12 +298,13 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 			return 0, errors.Trace(err)
 		}
 	}
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return 0, errors.Trace(err)
+	txn := ctx.Txn()
+	skipCheck := ctx.GetSessionVars().SkipConstraintCheck
+	if skipCheck {
+		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
+
 	bs := kv.NewBufferStore(txn)
-	defer bs.Release()
 	// Insert new entries into indices.
 	h, err := t.addIndices(ctx, recordID, r, bs)
 	if err != nil {
@@ -331,19 +318,19 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		if col.IsPKHandleColumn(t.meta) {
 			continue
 		}
-		if col.DefaultValue == nil && r[col.Offset].IsNull() {
-			// Save storage space by not storing null value.
-			continue
-		}
 		var value types.Datum
 		if col.State == model.StateWriteOnly || col.State == model.StateWriteReorganization {
 			// if col is in write only or write reorganization state, we must add it with its default value.
-			value, _, err = table.GetColDefaultValue(ctx, &col.ColumnInfo)
+			value, _, err = table.GetColDefaultValue(ctx, col.ToInfo())
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
 		} else {
 			value = r[col.Offset]
+			if col.DefaultValue == nil && r[col.Offset].IsNull() {
+				// Save storage space by not storing null value.
+				continue
+			}
 		}
 		colIDs = append(colIDs, col.ID)
 		row = append(row, value)
@@ -359,8 +346,15 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 	if err = bs.SaveTo(txn); err != nil {
 		return 0, errors.Trace(err)
 	}
-
-	variable.GetSessionVars(ctx).AddAffectedRows(1)
+	if shouldWriteBinlog(ctx) {
+		mutation := t.getMutation(ctx)
+		// prepend handle to the row value
+		handleVal, _ := codec.EncodeValue(nil, types.NewIntDatum(recordID))
+		bin := append(handleVal, value...)
+		mutation.InsertedRows = append(mutation.InsertedRows, bin)
+		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Insert)
+	}
+	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return recordID, nil
 }
 
@@ -384,18 +378,16 @@ func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 
 // Add data into indices.
 func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum, bs *kv.BufferStore) (int64, error) {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
+	txn := ctx.Txn()
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
-	if t.meta.PKIsHandle {
+	skipCheck := ctx.GetSessionVars().SkipConstraintCheck
+	if t.meta.PKIsHandle && !skipCheck {
 		// Check key exists.
 		recordKey := t.RecordKey(recordID)
-		e := kv.ErrKeyExists.Gen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
+		e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
 		txn.SetOption(kv.PresumeKeyNotExistsError, e)
-		_, err = txn.Get(recordKey)
+		_, err := txn.Get(recordKey)
 		if err == nil {
 			return recordID, errors.Trace(e)
 		} else if !terror.ErrorEqual(err, kv.ErrNotExist) {
@@ -409,29 +401,22 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			// if index is in delete only or delete reorganization state, we can't add it.
 			continue
 		}
-		colVals, _ := v.FetchValues(r)
+		colVals, err2 := v.FetchValues(r)
+		if err2 != nil {
+			return 0, errors.Trace(err2)
+		}
 		var dupKeyErr error
-		if v.Meta().Unique || v.Meta().Primary {
+		if !skipCheck && (v.Meta().Unique || v.Meta().Primary) {
 			entryKey, err1 := t.genIndexKeyStr(colVals)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
 			}
-			dupKeyErr = kv.ErrKeyExists.Gen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
+			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if err = v.Create(bs, colVals, recordID); err != nil {
+		if dupHandle, err := v.Create(bs, colVals, recordID); err != nil {
 			if terror.ErrorEqual(err, kv.ErrKeyExists) {
-				// Get the duplicate row handle
-				// For insert on duplicate syntax, we should update the row
-				iter, _, err1 := v.Seek(bs, colVals)
-				if err1 != nil {
-					return 0, errors.Trace(err1)
-				}
-				_, h, err1 := iter.Next()
-				if err1 != nil {
-					return 0, errors.Trace(err1)
-				}
-				return h, errors.Trace(dupKeyErr)
+				return dupHandle, errors.Trace(dupKeyErr)
 			}
 			return 0, errors.Trace(err)
 		}
@@ -442,13 +427,9 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 
 // RowWithCols implements table.Table RowWithCols interface.
 func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	// Get raw row data from kv.
 	key := t.RecordKey(h)
-	value, err := txn.Get(key)
+	value, err := ctx.Txn().Get(key)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -458,9 +439,6 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 	for i, col := range cols {
 		if col == nil {
 			continue
-		}
-		if col.State != model.StatePublic {
-			return nil, table.ErrColumnStateNonPublic.Gen("Cannot use none public column - %v", cols)
 		}
 		if col.IsPKHandleColumn(t.meta) {
 			if mysql.HasUnsignedFlag(col.Flag) {
@@ -479,10 +457,6 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 	for i, col := range cols {
 		if col == nil {
 			continue
-		}
-		if col.State != model.StatePublic {
-			// TODO: check this
-			return nil, table.ErrColumnStateNonPublic.Gen("Cannot use none public column - %v", cols)
 		}
 		if col.IsPKHandleColumn(t.meta) {
 			continue
@@ -505,24 +479,6 @@ func (t *Table) Row(ctx context.Context, h int64) ([]types.Datum, error) {
 	return r, nil
 }
 
-// LockRow implements table.Table LockRow interface.
-// TODO: remove forRead parameter, it should always be true now.
-func (t *Table) LockRow(ctx context.Context, h int64, forRead bool) error {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Get row lock key
-	lockKey := t.RecordKey(h)
-	if forRead {
-		err = txn.LockKeys(lockKey)
-	} else {
-		// set row lock key to current txn
-		err = txn.Set(lockKey, []byte(txn.String()))
-	}
-	return errors.Trace(err)
-}
-
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) error {
 	err := t.removeRowData(ctx, h)
@@ -534,17 +490,87 @@ func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if shouldWriteBinlog(ctx) {
+		err = t.addDeleteBinlog(ctx, h, r)
+	}
+	return errors.Trace(err)
+}
 
+func (t *Table) addUpdateBinlog(ctx context.Context, h int64, old []types.Datum, newValue []byte, colIDs []int64) error {
+	mutation := t.getMutation(ctx)
+	hasPK := false
+	if t.meta.PKIsHandle {
+		hasPK = true
+	} else {
+		for _, idx := range t.meta.Indices {
+			if idx.Primary {
+				hasPK = true
+				break
+			}
+		}
+	}
+	var bin []byte
+	if hasPK {
+		handleData, _ := codec.EncodeValue(nil, types.NewIntDatum(h))
+		bin = append(handleData, newValue...)
+	} else {
+		oldData, err := tablecodec.EncodeRow(old, colIDs)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		bin = append(oldData, newValue...)
+	}
+	mutation.UpdatedRows = append(mutation.UpdatedRows, bin)
+	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Update)
+	return nil
+}
+
+func (t *Table) addDeleteBinlog(ctx context.Context, h int64, r []types.Datum) error {
+	mutation := t.getMutation(ctx)
+	if t.meta.PKIsHandle {
+		mutation.DeletedIds = append(mutation.DeletedIds, h)
+		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeleteID)
+		return nil
+	}
+
+	var primaryIdx *model.IndexInfo
+	for _, idx := range t.meta.Indices {
+		if idx.Primary {
+			primaryIdx = idx
+			break
+		}
+	}
+	var data []byte
+	var err error
+	if primaryIdx != nil {
+		indexedValues := make([]types.Datum, len(primaryIdx.Columns))
+		for i := range indexedValues {
+			indexedValues[i] = r[primaryIdx.Columns[i].Offset]
+		}
+		data, err = codec.EncodeKey(nil, indexedValues...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		mutation.DeletedPks = append(mutation.DeletedPks, data)
+		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeletePK)
+		return nil
+	}
+	colIDs := make([]int64, len(t.Cols()))
+	for i, col := range t.Cols() {
+		colIDs[i] = col.ID
+	}
+	data, err = tablecodec.EncodeRow(r, colIDs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	mutation.DeletedRows = append(mutation.DeletedRows, data)
+	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeleteRow)
 	return nil
 }
 
 func (t *Table) removeRowData(ctx context.Context, h int64) error {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	// Remove row data.
-	err = txn.Delete([]byte(t.RecordKey(h)))
+	err := ctx.Txn().Delete([]byte(t.RecordKey(h)))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -559,11 +585,7 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 			// TODO: check this
 			continue
 		}
-		txn, err := ctx.GetTxn(false)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if err = v.Delete(txn, vals, h); err != nil {
+		if err = v.Delete(ctx.Txn(), vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && terror.ErrorEqual(err, kv.ErrNotExist) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
@@ -591,7 +613,7 @@ func (t *Table) buildIndexForRow(rm kv.RetrieverMutator, h int64, vals []types.D
 		return nil
 	}
 
-	if err := idx.Create(rm, vals, h); err != nil {
+	if _, err := idx.Create(rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -600,11 +622,7 @@ func (t *Table) buildIndexForRow(rm kv.RetrieverMutator, h int64, vals []types.D
 // IterRecords implements table.Table IterRecords interface.
 func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	it, err := txn.Seek(startKey)
+	it, err := ctx.Txn().Seek(startKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -661,6 +679,11 @@ func (t *Table) AllocAutoID() (int64, error) {
 	return t.alloc.Alloc(t.ID)
 }
 
+// Allocator implements table.Table Allocator interface.
+func (t *Table) Allocator() autoid.Allocator {
+	return t.alloc
+}
+
 // RebaseAutoID implements table.Table RebaseAutoID interface.
 func (t *Table) RebaseAutoID(newBase int64, isSetStep bool) error {
 	return t.alloc.Rebase(t.ID, newBase, isSetStep)
@@ -669,11 +692,7 @@ func (t *Table) RebaseAutoID(newBase int64, isSetStep bool) error {
 // Seek implements table.Table Seek interface.
 func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 	seekKey := tablecodec.EncodeRowKeyWithHandle(t.ID, h)
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return 0, false, errors.Trace(err)
-	}
-	iter, err := txn.Seek(seekKey)
+	iter, err := ctx.Txn().Seek(seekKey)
 	if !iter.Valid() || !iter.Key().HasPrefix(t.RecordPrefix()) {
 		// No more records in the table, skip to the end.
 		return 0, false, nil
@@ -683,6 +702,25 @@ func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 		return 0, false, errors.Trace(err)
 	}
 	return handle, true, nil
+}
+
+func shouldWriteBinlog(ctx context.Context) bool {
+	if binloginfo.PumpClient == nil {
+		return false
+	}
+	return !ctx.GetSessionVars().InRestrictedSQL
+}
+
+func (t *Table) getMutation(ctx context.Context) *binlog.TableMutation {
+	bin := binloginfo.GetPrewriteValue(ctx, true)
+	for i := range bin.Mutations {
+		if bin.Mutations[i].TableId == t.ID {
+			return &bin.Mutations[i]
+		}
+	}
+	idx := len(bin.Mutations)
+	bin.Mutations = append(bin.Mutations, binlog.TableMutation{TableId: t.ID})
+	return &bin.Mutations[idx]
 }
 
 var (

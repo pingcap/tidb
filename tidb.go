@@ -18,14 +18,10 @@
 package tidb
 
 import (
-	"net/http"
-	"time"
-	// For pprof
-	_ "net/http/pprof"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -34,21 +30,22 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metric"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx/autocommit"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
 
 // Engine prefix name
 const (
-	EngineGoLevelDBMemory = "memory://"
-	defaultMaxRetries     = 30
-	retrySleepInterval    = 500 * time.Millisecond
+	EngineGoLevelDBMemory        = "memory://"
+	defaultMaxRetries            = 30
+	retryInterval         uint64 = 500
 )
 
 type domainMap struct {
@@ -69,7 +66,11 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if !localstore.IsLocalStore(store) {
 		lease = schemaLease
 	}
-	d, err = domain.NewDomain(store, lease)
+	err = util.RunWithRetry(defaultMaxRetries, retryInterval, func() (retry bool, err1 error) {
+		log.Infof("store %v new domain, lease %v", store.UUID(), lease)
+		d, err1 = domain.NewDomain(store, lease)
+		return true, errors.Trace(err1)
+	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -77,15 +78,17 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	return
 }
 
+func (dm *domainMap) Delete(store kv.Storage) {
+	dm.mu.Lock()
+	delete(dm.domains, store.UUID())
+	dm.mu.Unlock()
+}
+
 var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
 	}
 	stores = make(map[string]kv.Driver)
-	// EnablePprof indicates whether to enable HTTP Pprof or not.
-	EnablePprof = os.Getenv("TIDB_PPROF") != "0"
-	// PprofAddr is the pprof url.
-	PprofAddr = ":8888"
 	// store.UUID()-> IfBootstrapped
 	storeBootstrapped = make(map[string]bool)
 
@@ -105,26 +108,11 @@ func SetSchemaLease(lease time.Duration) {
 	schemaLease = lease
 }
 
-// What character set should the server translate a statement to after receiving it?
-// For this, the server uses the character_set_connection and collation_connection system variables.
-// It converts statements sent by the client from character_set_client to character_set_connection
-// (except for string literals that have an introducer such as _latin1 or _utf8).
-// collation_connection is important for comparisons of literal strings.
-// For comparisons of strings with column values, collation_connection does not matter because columns
-// have their own collation, which has a higher collation precedence.
-// See: https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
-func getCtxCharsetInfo(ctx context.Context) (string, string) {
-	sessionVars := variable.GetSessionVars(ctx)
-	charset := sessionVars.GetSystemVar("character_set_connection")
-	collation := sessionVars.GetSystemVar("collation_connection")
-	return charset.GetString(), collation.GetString()
-}
-
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
-	charset, collation := getCtxCharsetInfo(ctx)
-	stmts, err := parser.Parse(src, charset, collation)
+	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
+	stmts, err := parser.New().Parse(src, charset, collation)
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", src, err)
 		return nil, errors.Trace(err)
@@ -132,9 +120,35 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	return stmts, nil
 }
 
+// Before every execution, we must clear statement context.
+func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
+	sessVars := ctx.GetSessionVars()
+	sc := new(variable.StatementContext)
+	switch s.(type) {
+	case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
+		sc.IgnoreTruncate = false
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		if _, ok := s.(*ast.UpdateStmt); ok {
+			sc.InUpdateStmt = true
+		}
+	default:
+		sc.IgnoreTruncate = true
+		if show, ok := s.(*ast.ShowStmt); ok {
+			if show.Tp == ast.ShowWarnings {
+				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
+			}
+		}
+	}
+	sessVars.StmtCtx = sc
+}
+
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
-	compiler := &executor.Compiler{}
+	err := PrepareTxnCtx(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	compiler := executor.Compiler{}
 	st, err := compiler.Compile(ctx, rawStmt)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -142,30 +156,58 @@ func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
 	return st, nil
 }
 
-func runStmt(ctx context.Context, s ast.Statement, args ...interface{}) (ast.RecordSet, error) {
-	var err error
-	var rs ast.RecordSet
-	// before every execution, we must clear affectedrows.
-	variable.GetSessionVars(ctx).SetAffectedRows(0)
-	if s.IsDDL() {
-		err = ctx.CommitTxn()
+// PrepareTxnCtx resets transaction context if session is not in a transaction.
+func PrepareTxnCtx(ctx context.Context) error {
+	se := ctx.(*session)
+	if se.txn == nil || !se.txn.Valid() {
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		se.sessionVars.TxnCtx = &variable.TransactionContext{
+			InfoSchema:    is,
+			SchemaVersion: is.SchemaMetaVersion(),
+		}
+		var err error
+		se.txn, err = se.store.Begin()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
+		}
+		err = se.loadCommonGlobalVariablesIfNeeded()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !se.sessionVars.IsAutocommit() {
+			se.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 	}
+	return nil
+}
+
+// runStmt executes the ast.Statement and commit or rollback the current transaction.
+func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
+	var err error
+	var rs ast.RecordSet
+	se := ctx.(*session)
 	rs, err = s.Exec(ctx)
 	// All the history should be added here.
-	se := ctx.(*session)
-	se.history.add(0, s)
-	// MySQL DDL should be auto-commit
-	if s.IsDDL() || autocommit.ShouldAutocommit(ctx) {
+	getHistory(ctx).add(0, s)
+	if !se.sessionVars.InTxn() {
 		if err != nil {
-			ctx.RollbackTxn()
+			log.Info("RollbackTxn for ddl/autocommit error.")
+			se.RollbackTxn()
 		} else {
-			err = ctx.CommitTxn()
+			err = se.CommitTxn()
 		}
 	}
 	return rs, errors.Trace(err)
+}
+
+func getHistory(ctx context.Context) *stmtHistory {
+	hist, ok := ctx.GetSessionVars().TxnCtx.Histroy.(*stmtHistory)
+	if ok {
+		return hist
+	}
+	hist = new(stmtHistory)
+	ctx.GetSessionVars().TxnCtx.Histroy = hist
+	return hist
 }
 
 // GetRows gets all the rows from a RecordSet.
@@ -233,15 +275,10 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	}
 
 	var s kv.Storage
-	for i := 1; i <= maxRetries; i++ {
+	util.RunWithRetry(maxRetries, retryInterval, func() (bool, error) {
 		s, err = d.Open(path)
-		if err == nil || !kv.IsRetryableError(err) {
-			break
-		}
-		sleepTime := time.Duration(uint64(retrySleepInterval) * uint64(i))
-		log.Warnf("Waiting store to get ready, sleep %v and try again...", sleepTime)
-		time.Sleep(sleepTime)
-	}
+		return kv.IsRetryableError(err), err
+	})
 	return s, errors.Trace(err)
 }
 
@@ -277,22 +314,8 @@ func IsQuery(sql string) bool {
 	return false
 }
 
-var tpsMetrics metric.TPSMetrics
-
-// GetTPS gets tidb tps.
-func GetTPS() int64 {
-	return tpsMetrics.Get()
-}
-
 func init() {
 	// Register default memory and goleveldb storage
 	RegisterLocalStore("memory", goleveldb.MemoryDriver{})
 	RegisterLocalStore("goleveldb", goleveldb.Driver{})
-	// start pprof handlers
-	if EnablePprof {
-		go http.ListenAndServe(PprofAddr, nil)
-	}
-
-	// Init metrics
-	tpsMetrics = metric.NewTPSMetrics()
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
@@ -46,7 +47,7 @@ type ShowExec struct {
 	// Used by show variables
 	GlobalScope bool
 
-	fields []*ast.ResultField
+	schema expression.Schema
 	ctx    context.Context
 	is     infoschema.InfoSchema
 
@@ -55,14 +56,9 @@ type ShowExec struct {
 	cursor  int
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *ShowExec) Schema() expression.Schema {
-	return nil
-}
-
-// Fields implements Executor Fields interface.
-func (e *ShowExec) Fields() []*ast.ResultField {
-	return e.fields
+	return e.schema
 }
 
 // Next implements Execution Next interface.
@@ -77,9 +73,6 @@ func (e *ShowExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	row := e.rows[e.cursor]
-	for i, field := range e.fields {
-		field.Expr.SetValue(row.Data[i].GetValue())
-	}
 	e.cursor++
 	return row, nil
 }
@@ -94,6 +87,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowColumns()
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
+	case ast.ShowCreateDatabase:
+		return e.fetchShowCreateDatabase()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowEngines:
@@ -114,7 +109,7 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowTriggers()
 	case ast.ShowVariables:
 		return e.fetchShowVariables()
-	case ast.ShowWarnings:
+	case ast.ShowWarnings, ast.ShowProcessList, ast.ShowEvents:
 		// empty result
 	}
 	return nil
@@ -152,7 +147,7 @@ func (e *ShowExec) fetchShowTables() error {
 	// sort for tables
 	var tableNames []string
 	for _, v := range e.is.SchemaTables(e.DBName) {
-		tableNames = append(tableNames, v.Meta().Name.L)
+		tableNames = append(tableNames, v.Meta().Name.O)
 	}
 	sort.Strings(tableNames)
 	for _, v := range tableNames {
@@ -173,16 +168,13 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	}
 
 	// sort for tables
-	var tableNames []string
-	for _, v := range e.is.SchemaTables(e.DBName) {
-		tableNames = append(tableNames, v.Meta().Name.L)
-	}
-	sort.Strings(tableNames)
+	tables := e.is.SchemaTables(e.DBName)
+	sort.Sort(table.Slice(tables))
 
-	for _, v := range tableNames {
-		now := mysql.CurrentTime(mysql.TypeDatetime)
-		data := types.MakeDatums(v, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
-			now, now, now, "utf8_general_ci", "", "", "")
+	for _, t := range tables {
+		now := types.CurrentTime(mysql.TypeDatetime)
+		data := types.MakeDatums(t.Meta().Name.O, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
+			now, now, now, "utf8_general_ci", "", "", t.Meta().Comment)
 		e.rows = append(e.rows, &Row{Data: data})
 	}
 	return nil
@@ -236,6 +228,31 @@ func (e *ShowExec) fetchShowIndex() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if tb.Meta().PKIsHandle {
+		var pkCol *table.Column
+		for _, col := range tb.Cols() {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				pkCol = col
+				break
+			}
+		}
+		data := types.MakeDatums(
+			tb.Meta().Name.O, // Table
+			0,                // Non_unique
+			"PRIMARY",        // Key_name
+			1,                // Seq_in_index
+			pkCol.Name.O,     // Column_name
+			"utf8_bin",       // Colation
+			0,                // Cardinality
+			nil,              // Sub_part
+			nil,              // Packed
+			"",               // Null
+			"BTREE",          // Index_type
+			"",               // Comment
+			"",               // Index_comment
+		)
+		e.rows = append(e.rows, &Row{Data: data})
+	}
 	for _, idx := range tb.Indices() {
 		for i, col := range idx.Meta().Columns {
 			nonUniq := 1
@@ -267,8 +284,8 @@ func (e *ShowExec) fetchShowIndex() error {
 	return nil
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
 func (e *ShowExec) fetchShowCharset() error {
-	// See: http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
 	descs := charset.GetAllCharsets()
 	for _, desc := range descs {
 		row := &Row{
@@ -285,28 +302,28 @@ func (e *ShowExec) fetchShowCharset() error {
 }
 
 func (e *ShowExec) fetchShowVariables() error {
-	sessionVars := variable.GetSessionVars(e.ctx)
-	globalVars := variable.GetGlobalVarAccessor(e.ctx)
+	sessionVars := e.ctx.GetSessionVars()
+	globalVars := sessionVars.GlobalVarsAccessor
 	for _, v := range variable.SysVars {
 		var err error
 		var value string
 		if !e.GlobalScope {
 			// Try to get Session Scope variable value first.
-			sv := sessionVars.GetSystemVar(v.Name)
+			sv := varsutil.GetSystemVar(sessionVars, v.Name)
 			if sv.IsNull() {
-				value, err = globalVars.GetGlobalSysVar(e.ctx, v.Name)
+				value, err = globalVars.GetGlobalSysVar(v.Name)
 				if err != nil {
 					return errors.Trace(err)
 				}
 				sv.SetString(value)
-				err = sessionVars.SetSystemVar(v.Name, sv)
+				err = varsutil.SetSystemVar(sessionVars, v.Name, sv)
 				if err != nil {
 					return errors.Trace(err)
 				}
 			}
 			value = sv.GetString()
 		} else {
-			value, err = globalVars.GetGlobalSysVar(e.ctx, v.Name)
+			value, err = globalVars.GetGlobalSysVar(v.Name)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -361,7 +378,12 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			if !mysql.HasNoDefaultValueFlag(col.Flag) {
 				switch col.DefaultValue {
 				case nil:
-					buf.WriteString(" DEFAULT NULL")
+					if !mysql.HasNotNullFlag(col.Flag) {
+						if mysql.HasTimestampFlag(col.Flag) {
+							buf.WriteString(" NULL")
+						}
+						buf.WriteString(" DEFAULT NULL")
+					}
 				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
 				default:
@@ -386,10 +408,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if pkCol != nil {
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
-		buf.WriteString(fmt.Sprintf(" PRIMARY KEY (`%s`) ", pkCol.Name.O))
+		buf.WriteString(fmt.Sprintf(" PRIMARY KEY (`%s`)", pkCol.Name.O))
 	}
 
-	if len(tb.Indices()) > 0 {
+	if len(tb.Indices()) > 0 || len(tb.Meta().ForeignKeys) > 0 {
 		buf.WriteString(",\n")
 	}
 
@@ -413,24 +435,27 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 	}
 
+	if len(tb.Indices()) > 0 && len(tb.Meta().ForeignKeys) > 0 {
+		buf.WriteString(",\n")
+	}
+
 	for _, fk := range tb.Meta().ForeignKeys {
 		if fk.State != model.StatePublic {
 			continue
 		}
 
-		buf.WriteString("\n")
 		cols := make([]string, 0, len(fk.Cols))
 		for _, c := range fk.Cols {
-			cols = append(cols, c.L)
+			cols = append(cols, c.O)
 		}
 
 		refCols := make([]string, 0, len(fk.RefCols))
 		for _, c := range fk.Cols {
-			refCols = append(refCols, c.L)
+			refCols = append(refCols, c.O)
 		}
 
-		buf.WriteString(fmt.Sprintf("  CONSTRAINT `%s` FOREIGN KEY (`%s`)", fk.Name.L, strings.Join(cols, "`,`")))
-		buf.WriteString(fmt.Sprintf(" REFERENCES `%s` (`%s`)", fk.RefTable.L, strings.Join(refCols, "`,`")))
+		buf.WriteString(fmt.Sprintf("  CONSTRAINT `%s` FOREIGN KEY (`%s`)", fk.Name.O, strings.Join(cols, "`,`")))
+		buf.WriteString(fmt.Sprintf(" REFERENCES `%s` (`%s`)", fk.RefTable.O, strings.Join(refCols, "`,`")))
 
 		if ast.ReferOptionType(fk.OnDelete) != ast.ReferOptionNoOption {
 			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete)))
@@ -460,6 +485,24 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	return nil
 }
 
+// Compose show create database result.
+func (e *ShowExec) fetchShowCreateDatabase() error {
+	db, ok := e.is.SchemaByName(e.DBName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenByArgs(e.DBName.O)
+	}
+
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "CREATE DATABASE `%s`", db.Name.O)
+	if s := db.Charset; len(s) > 0 {
+		fmt.Fprintf(&buf, " /* !40100 DEFAULT CHARACTER SET %s */", s)
+	}
+
+	data := types.MakeDatums(db.Name.O, buf.String())
+	e.rows = append(e.rows, &Row{Data: data})
+	return nil
+}
+
 func (e *ShowExec) fetchShowCollation() error {
 	collations := charset.GetCollations()
 	for _, v := range collations {
@@ -484,7 +527,7 @@ func (e *ShowExec) fetchShowGrants() error {
 	// Get checker
 	checker := privilege.GetPrivilegeChecker(e.ctx)
 	if checker == nil {
-		return errors.New("Miss privilege checker!")
+		return errors.New("miss privilege checker")
 	}
 	gs, err := checker.ShowGrants(e.ctx, e.User)
 	if err != nil {
@@ -516,7 +559,7 @@ func (e *ShowExec) getTable() (table.Table, error) {
 	return tb, nil
 }
 
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *ShowExec) Close() error {
 	return nil
 }

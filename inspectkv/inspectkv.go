@@ -294,7 +294,6 @@ func ScanSnapshotTableRecord(store kv.Storage, ver kv.Version, t table.Table, st
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	defer snap.Release()
 
 	records, nextHandle, err := ScanTableRecord(snap, t, startHandle, limit)
 

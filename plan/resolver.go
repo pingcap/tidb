@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/db"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -31,7 +29,7 @@ import (
 // ResolveName resolves table name and column name.
 // It generates ResultFields for ResultSetNode and resolves ColumnNameExpr to a ResultField.
 func ResolveName(node ast.Node, info infoschema.InfoSchema, ctx context.Context) error {
-	defaultSchema := db.GetCurrentSchema(ctx)
+	defaultSchema := ctx.GetSessionVars().CurrentDB
 	resolver := nameResolver{Info: info, Ctx: ctx, DefaultSchema: model.NewCIStr(defaultSchema)}
 	node.Accept(&resolver)
 	return errors.Trace(resolver.Err)
@@ -195,6 +193,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.currentContext().inHaving = true
 	case *ast.InsertStmt:
 		nr.pushContext()
+	case *ast.LoadDataStmt:
+		nr.pushContext()
 	case *ast.Join:
 		nr.pushJoin(v)
 	case *ast.OnCondition:
@@ -317,6 +317,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		nr.handleUnionSelectList(v)
 	case *ast.InsertStmt:
 		nr.popContext()
+	case *ast.LoadDataStmt:
+		nr.popContext()
 	case *ast.DeleteStmt:
 		nr.popContext()
 	case *ast.UpdateStmt:
@@ -359,17 +361,27 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 	tn.DBInfo = dbInfo
 
 	rfs := make([]*ast.ResultField, 0, len(tn.TableInfo.Columns))
-	sVars := variable.GetSessionVars(nr.Ctx)
-	for _, v := range tn.TableInfo.Columns {
-		if v.State != model.StatePublic {
-			if !sVars.InUpdateStmt || v.State != model.StateWriteReorganization {
-				// TODO: check this
+	tmp := make([]struct {
+		ast.ValueExpr
+		ast.ResultField
+	}, len(tn.TableInfo.Columns))
+	status := nr.Ctx.GetSessionVars().StmtCtx
+	for i, v := range tn.TableInfo.Columns {
+		if status.InUpdateStmt {
+			switch v.State {
+			case model.StatePublic, model.StateWriteOnly, model.StateWriteReorganization:
+			default:
+				continue
+			}
+		} else {
+			if v.State != model.StatePublic {
 				continue
 			}
 		}
-		expr := &ast.ValueExpr{}
+		expr := &tmp[i].ValueExpr
+		rf := &tmp[i].ResultField
 		expr.SetType(&v.FieldType)
-		rf := &ast.ResultField{
+		*rf = ast.ResultField{
 			Column:    v,
 			Table:     tn.TableInfo,
 			DBName:    tn.Schema,
@@ -568,7 +580,7 @@ func (nr *nameResolver) resolveColumnNameInOnCondition(cn *ast.ColumnNameExpr) {
 	join := ctx.joinNodeStack[len(ctx.joinNodeStack)-1]
 	tableSources := appendTableSources(nil, join)
 	if !nr.resolveColumnInTableSources(cn, tableSources) {
-		nr.Err = errors.Errorf("unkown column name %s", cn.Name.Name.O)
+		nr.Err = errors.Errorf("unknown column name %s", cn.Name.Name.O)
 	}
 }
 
@@ -709,7 +721,7 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 	ctx := nr.currentContext()
 	if field.WildCard != nil {
 		if len(ctx.tables) == 0 {
-			nr.Err = errors.New("No table used.")
+			nr.Err = errors.New("no table used")
 			return
 		}
 		tableRfs := []*ast.ResultField{}
@@ -897,6 +909,8 @@ func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowCreateTable:
 		names = []string{"Table", "Create Table"}
+	case ast.ShowCreateDatabase:
+		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:
 		names = []string{fmt.Sprintf("Grants for %s", s.User)}
 	case ast.ShowTriggers:
@@ -904,7 +918,7 @@ func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
 			"sql_mode", "Definer", "character_set_client", "collation_connection", "Database Collation"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
-	case ast.ShowProcedureStatus:
+	case ast.ShowProcedureStatus, ast.ShowEvents:
 		names = []string{}
 		ftypes = []byte{}
 	case ast.ShowIndex:
@@ -914,6 +928,10 @@ func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowProcessList:
+		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
 	}
 	for i, name := range names {
 		f := &ast.ResultField{

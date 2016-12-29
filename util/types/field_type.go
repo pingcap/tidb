@@ -48,6 +48,13 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+// Init initializes the FieldType data.
+func (ft *FieldType) Init(tp byte) {
+	ft.Tp = tp
+	ft.Flen = UnspecifiedLength
+	ft.Decimal = UnspecifiedLength
+}
+
 // CompactStr only considers Tp/CharsetBin/Flen/Deimal.
 // This is used for showing column type in infoschema.
 func (ft *FieldType) CompactStr() string {
@@ -109,64 +116,64 @@ func (ft *FieldType) String() string {
 }
 
 // DefaultTypeForValue returns the default FieldType for the value.
-func DefaultTypeForValue(value interface{}) *FieldType {
-	var tp *FieldType
+func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	switch x := value.(type) {
 	case nil:
-		tp = NewFieldType(mysql.TypeNull)
+		tp.Tp = mysql.TypeNull
 	case bool, int64, int:
-		tp = NewFieldType(mysql.TypeLonglong)
+		tp.Tp = mysql.TypeLonglong
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case uint64:
-		tp = NewFieldType(mysql.TypeLonglong)
+		tp.Tp = mysql.TypeLonglong
 		tp.Flag |= mysql.UnsignedFlag
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case string:
-		tp = NewFieldType(mysql.TypeVarString)
+		tp.Tp = mysql.TypeVarString
 		tp.Charset = mysql.DefaultCharset
 		tp.Collate = mysql.DefaultCollationName
 	case float64:
-		tp = NewFieldType(mysql.TypeNewDecimal)
+		tp.Tp = mysql.TypeNewDecimal
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case []byte:
-		tp = NewFieldType(mysql.TypeBlob)
+		tp.Tp = mysql.TypeBlob
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-	case mysql.Bit:
-		tp = NewFieldType(mysql.TypeBit)
+	case Bit:
+		tp.Tp = mysql.TypeBit
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-	case mysql.Hex:
-		tp = NewFieldType(mysql.TypeVarchar)
+	case Hex:
+		tp.Tp = mysql.TypeVarchar
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-	case mysql.Time:
-		tp = NewFieldType(x.Type)
+	case Time:
+		tp.Tp = x.Type
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-	case mysql.Duration:
-		tp = NewFieldType(mysql.TypeDuration)
+	case Duration:
+		tp.Tp = mysql.TypeDuration
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-	case mysql.Decimal:
-		tp = NewFieldType(mysql.TypeNewDecimal)
+	case *MyDecimal:
+		tp.Tp = mysql.TypeNewDecimal
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-	case mysql.Enum:
-		tp = NewFieldType(mysql.TypeEnum)
+	case Enum:
+		tp.Tp = mysql.TypeEnum
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-	case mysql.Set:
-		tp = NewFieldType(mysql.TypeSet)
+	case Set:
+		tp.Tp = mysql.TypeSet
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	default:
-		tp = NewFieldType(mysql.TypeDecimal)
+		tp.Tp = mysql.TypeDecimal
 	}
-	return tp
+	tp.Flen = UnspecifiedLength
+	tp.Decimal = UnspecifiedLength
 }
 
 // DefaultCharsetForType returns the default charset/collation for mysql type.
@@ -182,8 +189,8 @@ func DefaultCharsetForType(tp byte) (string, string) {
 // MergeFieldType merges two MySQL type to a new type.
 // This is used in hybrid field type expression.
 // For example "select case c when 1 then 2 when 2 then 'tidb' from t;"
-// The resule field type of the case expression is the merged type of the two when clause.
-// See: https://github.com/mysql/mysql-server/blob/5.7/sql/field.cc#L1042
+// The result field type of the case expression is the merged type of the two when clause.
+// See https://github.com/mysql/mysql-server/blob/5.7/sql/field.cc#L1042
 func MergeFieldType(a byte, b byte) byte {
 	ia := getFieldTypeIndex(a)
 	ib := getFieldTypeIndex(b)

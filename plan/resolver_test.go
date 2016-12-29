@@ -21,11 +21,17 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
+var _ = Suite(&testNameResolverSuite{})
+
+func (s *testNameResolverSuite) SetUpSuite(c *C) {
+	s.Parser = parser.New()
+}
+
 type testNameResolverSuite struct {
+	*parser.Parser
 }
 
 type resolverVerifier struct {
@@ -85,9 +91,9 @@ func (ts *testNameResolverSuite) TestNameResolver(c *C) {
 	testKit.MustExec("create table t3 (c1 int, c2 int)")
 	ctx := testKit.Se.(context.Context)
 	domain := sessionctx.GetDomain(ctx)
-	db.BindCurrentSchema(ctx, "test")
+	ctx.GetSessionVars().CurrentDB = "test"
 	for _, tc := range resolverTestCases {
-		node, err := parser.ParseOneStmt(tc.src, "", "")
+		node, err := ts.ParseOneStmt(tc.src, "", "")
 		c.Assert(err, IsNil)
 		resolveErr := plan.ResolveName(node, domain.InfoSchema(), ctx)
 		if tc.valid {

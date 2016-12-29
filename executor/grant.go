@@ -21,11 +21,9 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/db"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
@@ -33,7 +31,7 @@ import (
 
 /***
  * Grant Statement
- * See: https://dev.mysql.com/doc/refman/5.7/en/grant.html
+ * See https://dev.mysql.com/doc/refman/5.7/en/grant.html
  ************************************************************************************/
 var (
 	_ Executor = (*GrantExec)(nil)
@@ -47,17 +45,13 @@ type GrantExec struct {
 	Users      []*ast.UserSpec
 
 	ctx  context.Context
+	is   infoschema.InfoSchema
 	done bool
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *GrantExec) Schema() expression.Schema {
-	return nil
-}
-
-// Fields implements Executor Fields interface.
-func (e *GrantExec) Fields() []*ast.ResultField {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements Execution Next interface.
@@ -113,7 +107,7 @@ func (e *GrantExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *GrantExec) Close() error {
 	return nil
 }
@@ -376,7 +370,7 @@ func composeTablePrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name 
 			}
 		}
 	}
-	return fmt.Sprintf(`Table_priv="%s", Column_priv="%s", Grantor="%s"`, newTablePriv, newColumnPriv, variable.GetSessionVars(ctx).User), nil
+	return fmt.Sprintf(`Table_priv="%s", Column_priv="%s", Grantor="%s"`, newTablePriv, newColumnPriv, ctx.GetSessionVars().User), nil
 }
 
 // Compose update stmt assignment list for column scope privilege update.
@@ -494,15 +488,14 @@ func (e *GrantExec) getTargetSchema() (*model.DBInfo, error) {
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		// Grant *, use current schema
-		dbName = db.GetCurrentSchema(e.ctx)
+		dbName = e.ctx.GetSessionVars().CurrentDB
 		if len(dbName) == 0 {
-			return nil, errors.New("Miss DB name for grant privilege.")
+			return nil, errors.New("miss DB name for grant privilege")
 		}
 	}
 	//check if db exists
 	schema := model.NewCIStr(dbName)
-	is := sessionctx.GetDomain(e.ctx).InfoSchema()
-	db, ok := is.SchemaByName(schema)
+	db, ok := e.is.SchemaByName(schema)
 	if !ok {
 		return nil, errors.Errorf("Unknown schema name: %s", dbName)
 	}
@@ -516,8 +509,7 @@ func (e *GrantExec) getTargetSchemaAndTable() (*model.DBInfo, table.Table, error
 		return nil, nil, errors.Trace(err)
 	}
 	name := model.NewCIStr(e.Level.TableName)
-	is := sessionctx.GetDomain(e.ctx).InfoSchema()
-	tbl, err := is.TableByName(db.Name, name)
+	tbl, err := e.is.TableByName(db.Name, name)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

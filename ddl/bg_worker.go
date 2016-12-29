@@ -41,7 +41,7 @@ func (d *ddl) handleBgJobQueue() error {
 			return errors.Trace(err)
 		}
 
-		// get the first background job and run
+		// Get the first background job and run it.
 		job, err = d.getFirstBgJob(t)
 		if err != nil {
 			return errors.Trace(err)
@@ -65,10 +65,13 @@ func (d *ddl) handleBgJobQueue() error {
 
 		return errors.Trace(err)
 	})
-
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	d.hookMu.Lock()
+	d.hook.OnBgJobUpdated(job)
+	d.hookMu.Unlock()
 
 	return nil
 }
@@ -81,7 +84,7 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 	switch job.Type {
 	case model.ActionDropSchema:
 		err = d.delReorgSchema(t, job)
-	case model.ActionDropTable:
+	case model.ActionDropTable, model.ActionTruncateTable:
 		err = d.delReorgTable(t, job)
 	default:
 		job.State = model.JobCancelled
@@ -90,10 +93,9 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 
 	if err != nil {
 		if job.State != model.JobCancelled {
-			log.Errorf("run background job err %v", errors.ErrorStack(err))
+			log.Errorf("[ddl] run background job err %v", errors.ErrorStack(err))
 		}
-
-		job.Error = err.Error()
+		job.Error = toTError(err)
 		job.ErrorCount++
 	}
 }
@@ -105,8 +107,19 @@ func (d *ddl) prepareBgJob(t *meta.Meta, ddlJob *model.Job) error {
 		SchemaID: ddlJob.SchemaID,
 		TableID:  ddlJob.TableID,
 		Type:     ddlJob.Type,
-		Args:     ddlJob.Args,
 	}
+
+	// TODO: Remove it.
+	// This is for compatibility with previous version.
+	if len(ddlJob.Args) >= 2 {
+		// ddlJob.Args[0] is the schema version that isn't necessary in background job and
+		// ddlJob.Args[1] is the table information or the database information.
+		// They will make the background job of dropping schema become more complicated to handle.
+		job.Args = ddlJob.Args[2:]
+	} else {
+		job.Args = ddlJob.Args
+	}
+
 	err := t.EnQueueBgJob(job)
 	return errors.Trace(err)
 }
@@ -114,7 +127,7 @@ func (d *ddl) prepareBgJob(t *meta.Meta, ddlJob *model.Job) error {
 // startBgJob starts a background job.
 func (d *ddl) startBgJob(tp model.ActionType) {
 	switch tp {
-	case model.ActionDropSchema, model.ActionDropTable:
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable:
 		asyncNotify(d.bgJobCh)
 	}
 }
@@ -133,7 +146,7 @@ func (d *ddl) updateBgJob(t *meta.Meta, job *model.Job) error {
 
 // finishBgJob finishs a background job.
 func (d *ddl) finishBgJob(t *meta.Meta, job *model.Job) error {
-	log.Warnf("[ddl] finish background job %v", job)
+	log.Infof("[ddl] finish background job %v", job)
 	if _, err := t.DeQueueBgJob(); err != nil {
 		return errors.Trace(err)
 	}
@@ -146,8 +159,8 @@ func (d *ddl) finishBgJob(t *meta.Meta, job *model.Job) error {
 func (d *ddl) onBackgroundWorker() {
 	defer d.wait.Done()
 
-	// we use 4 * lease time to check owner's timeout, so here, we will update owner's status
-	// every 2 * lease time, if lease is 0, we will use default 10s.
+	// We use 4 * lease time to check owner's timeout, so here, we will update owner's status
+	// every 2 * lease time. If lease is 0, we will use default 10s.
 	checkTime := chooseLeaseTime(2*d.lease, 10*time.Second)
 
 	ticker := time.NewTicker(checkTime)

@@ -14,6 +14,7 @@
 package oracles
 
 import (
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -28,30 +29,59 @@ const slowDist = 30 * time.Millisecond
 
 // pdOracle is an Oracle that uses a placement driver client as source.
 type pdOracle struct {
-	c pd.Client
+	c  pd.Client
+	mu struct {
+		sync.RWMutex
+		lastTS uint64
+	}
+	quit    chan struct{}
+	updated chan struct{}
 }
 
 // NewPdOracle create an Oracle that uses a pd client source.
 // Refer https://github.com/pingcap/pd/blob/master/pd-client/client.go for more details.
-func NewPdOracle(pdClient pd.Client) oracle.Oracle {
-	return &pdOracle{
-		c: pdClient,
+// PdOracle mantains `lastTS` to store the last timestamp got from PD server. If
+// `GetTimestamp()` is not called after `updateInterval`, it will be called by
+// itself to keep up with the timestamp on PD server.
+func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracle, error) {
+	o := &pdOracle{
+		c:       pdClient,
+		quit:    make(chan struct{}),
+		updated: make(chan struct{}),
 	}
+	go o.updateTS(updateInterval)
+	// Initialize lastTS by Get.
+	_, err := o.GetTimestamp()
+	if err != nil {
+		o.Close()
+		return nil, errors.Trace(err)
+	}
+	return o, nil
 }
 
-// IsExpired returns whether lockTs+TTL is expired, both are ms.
-func (t *pdOracle) IsExpired(lockTs, TTL uint64) (bool, error) {
-	physical, _, err := t.c.GetTS()
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return uint64(physical) >= (lockTs>>epochShiftBits)+TTL, nil
+// IsExpired returns whether lockTS+TTL is expired, both are ms. It uses `lastTS`
+// to compare, may return false negative result temporarily.
+func (o *pdOracle) IsExpired(lockTS, TTL uint64) bool {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
+	return oracle.ExtractPhysical(o.mu.lastTS) >= oracle.ExtractPhysical(lockTS)+int64(TTL)
 }
 
 // GetTimestamp gets a new increasing time.
-func (t *pdOracle) GetTimestamp() (uint64, error) {
+func (o *pdOracle) GetTimestamp() (uint64, error) {
+	ts, err := o.getTimestamp()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	o.setLastTS(ts)
+	o.updated <- struct{}{}
+	return ts, nil
+}
+
+func (o *pdOracle) getTimestamp() (uint64, error) {
 	now := time.Now()
-	physical, logical, err := t.c.GetTS()
+	physical, logical, err := o.c.GetTS()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -59,5 +89,35 @@ func (t *pdOracle) GetTimestamp() (uint64, error) {
 	if dist > slowDist {
 		log.Warnf("get timestamp too slow: %s", dist)
 	}
-	return uint64((physical << epochShiftBits) + logical), nil
+	return oracle.ComposeTS(physical, logical), nil
+}
+
+func (o *pdOracle) setLastTS(ts uint64) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if ts >= o.mu.lastTS {
+		o.mu.lastTS = ts
+	}
+}
+
+func (o *pdOracle) updateTS(interval time.Duration) {
+	for {
+		select {
+		case <-time.After(interval):
+			ts, err := o.getTimestamp()
+			if err != nil {
+				log.Errorf("updateTS error: %v", err)
+				break
+			}
+			o.setLastTS(ts)
+		case <-o.updated:
+		case <-o.quit:
+			return
+		}
+	}
+}
+
+func (o *pdOracle) Close() {
+	close(o.quit)
 }

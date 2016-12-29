@@ -1,10 +1,13 @@
+bin
 /interpreter/interpreter
 /interpreter/test
 /parser/parser.go
-/parser/scanner.go
 /tidb-server/tidb-server
 coverage.out
 .idea/
 *.iml
+*.swp
+*.log
+tags
 temp_parser_file
 y.output

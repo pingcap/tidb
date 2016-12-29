@@ -34,3 +34,11 @@ type RestrictedSQLExecutor interface {
 	// ExecRestrictedSQL run sql statement in ctx with some restriction.
 	ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error)
 }
+
+// SQLParser is an interface provides parsing sql statement.
+// To parse a sql statement, we could run parser.New() to get a parser object, and then run Parse method on it.
+// But a session already has a parser bind in it, so we define this interface and use session as its implementation,
+// thus avoid allocating new parser. See session.SQLParser for more information.
+type SQLParser interface {
+	ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error)
+}

@@ -14,19 +14,16 @@
 package executor
 
 import (
-	"fmt"
+	"bytes"
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
@@ -36,133 +33,21 @@ var (
 	_ Executor = &UpdateExec{}
 	_ Executor = &DeleteExec{}
 	_ Executor = &InsertExec{}
+	_ Executor = &ReplaceExec{}
+	_ Executor = &LoadData{}
 )
 
-// UpdateExec represents an update executor.
-type UpdateExec struct {
-	SelectExec  Executor
-	OrderedList []*ast.Assignment
-
-	// Map for unique (Table, handle) pair.
-	updatedRowKeys map[table.Table]map[int64]struct{}
-	ctx            context.Context
-
-	rows        []*Row          // The rows fetched from TableExec.
-	newRowsData [][]types.Datum // The new values to be set.
-	fetched     bool
-	cursor      int
-}
-
-// Schema implements Executor Schema interface.
-func (e *UpdateExec) Schema() expression.Schema {
-	return nil
-}
-
-// Next implements Executor Next interface.
-func (e *UpdateExec) Next() (*Row, error) {
-	if !e.fetched {
-		err := e.fetchRows()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.fetched = true
-	}
-
-	columns, err := getUpdateColumns(e.OrderedList)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if e.cursor >= len(e.rows) {
-		return nil, nil
-	}
-	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[table.Table]map[int64]struct{})
-	}
-	row := e.rows[e.cursor]
-	newData := e.newRowsData[e.cursor]
-	for _, entry := range row.RowKeys {
-		tbl := entry.Tbl
-		if e.updatedRowKeys[tbl] == nil {
-			e.updatedRowKeys[tbl] = make(map[int64]struct{})
-		}
-		offset := e.getTableOffset(tbl)
-		handle := entry.Handle
-		oldData := row.Data[offset : offset+len(tbl.Cols())]
-		newTableData := newData[offset : offset+len(tbl.Cols())]
-
-		_, ok := e.updatedRowKeys[tbl][handle]
-		if ok {
-			// Each matching row is updated once, even if it matches the conditions multiple times.
-			continue
-		}
-		// Update row
-		err1 := updateRecord(e.ctx, handle, oldData, newTableData, columns, tbl, offset, false)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
-		}
-		e.updatedRowKeys[tbl][handle] = struct{}{}
-	}
-	e.cursor++
-	return &Row{}, nil
-}
-
-func getUpdateColumns(assignList []*ast.Assignment) (map[int]*ast.Assignment, error) {
-	m := make(map[int]*ast.Assignment, len(assignList))
-	for i, v := range assignList {
-		m[i] = v
-	}
-	return m, nil
-}
-
-func (e *UpdateExec) fetchRows() error {
-	for {
-		row, err := e.SelectExec.Next()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if row == nil {
-			return nil
-		}
-		data := make([]types.Datum, len(e.SelectExec.Fields()))
-		newData := make([]types.Datum, len(e.SelectExec.Fields()))
-		for i, f := range e.SelectExec.Fields() {
-			data[i] = types.NewDatum(f.Expr.GetValue())
-			newData[i] = data[i]
-			if e.OrderedList[i] != nil {
-				val, err := evaluator.Eval(e.ctx, e.OrderedList[i].Expr)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				newData[i] = val
-			}
-		}
-		row.Data = data
-		e.rows = append(e.rows, row)
-		e.newRowsData = append(e.newRowsData, newData)
-	}
-}
-
-func (e *UpdateExec) getTableOffset(t table.Table) int {
-	fields := e.SelectExec.Fields()
-	i := 0
-	for i < len(fields) {
-		field := fields[i]
-		if field.Table.Name.L == t.Meta().Name.L {
-			return i
-		}
-		i += len(field.Table.Columns)
-	}
-	return 0
-}
-
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, updateColumns map[int]*ast.Assignment, t table.Table, offset int, onDuplicateUpdate bool) error {
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, offset int, onDuplicateUpdate bool) error {
 	cols := t.Cols()
 	touched := make(map[int]bool, len(cols))
-
 	assignExists := false
+	sc := ctx.GetSessionVars().StmtCtx
 	var newHandle types.Datum
-	for i, asgn := range updateColumns {
-		if asgn == nil {
+	for i, hasSetExpr := range assignFlag {
+		if !hasSetExpr {
+			if onDuplicateUpdate {
+				newData[i] = oldData[i]
+			}
 			continue
 		}
 		if i < offset || i >= offset+len(cols) {
@@ -179,7 +64,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			if newData[i].IsNull() {
 				return errors.Errorf("Column '%v' cannot be null", col.Name.O)
 			}
-			val, err := newData[i].ToInt64()
+			val, err := newData[i].ToInt64(sc)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -196,7 +81,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	}
 
 	// Check whether new value is valid.
-	if err := table.CastValues(ctx, newData, cols); err != nil {
+	if err := table.CastValues(ctx, newData, cols, false); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -211,7 +96,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			continue
 		}
 
-		n, err := newData[i].CompareDatum(oldData[i])
+		n, err := newData[i].CompareDatum(sc, oldData[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -221,9 +106,9 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		}
 	}
 	if !rowChanged {
-		// See: https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
-		if variable.GetSessionVars(ctx).ClientCapability&mysql.ClientFoundRows > 0 {
-			variable.GetSessionVars(ctx).AddAffectedRows(1)
+		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
+		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
+			sc.AddAffectedRows(1)
 		}
 		return nil
 	}
@@ -249,26 +134,15 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 
 	// Record affected rows.
 	if !onDuplicateUpdate {
-		variable.GetSessionVars(ctx).AddAffectedRows(1)
+		sc.AddAffectedRows(1)
 	} else {
-		variable.GetSessionVars(ctx).AddAffectedRows(2)
+		sc.AddAffectedRows(2)
 	}
 	return nil
 }
 
-// Fields implements Executor Fields interface.
-// Returns nil to indicate there is no output.
-func (e *UpdateExec) Fields() []*ast.ResultField {
-	return nil
-}
-
-// Close implements Executor Close interface.
-func (e *UpdateExec) Close() error {
-	return e.SelectExec.Close()
-}
-
 // DeleteExec represents a delete executor.
-// See: https://dev.mysql.com/doc/refman/5.7/en/delete.html
+// See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteExec struct {
 	SelectExec Executor
 
@@ -279,12 +153,12 @@ type DeleteExec struct {
 	finished bool
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *DeleteExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
-// Next implements Executor Next interface.
+// Next implements the Executor Next interface.
 func (e *DeleteExec) Next() (*Row, error) {
 	if e.finished {
 		return nil, nil
@@ -298,23 +172,9 @@ func (e *DeleteExec) Next() (*Row, error) {
 
 	tblMap := make(map[int64][]string, len(e.Tables))
 	// Get table alias map.
-	tblNames := make(map[string]string)
 	if e.IsMultiTable {
 		// Delete from multiple tables should consider table ident list.
-		fs := e.SelectExec.Fields()
-		for _, f := range fs {
-			if len(f.TableAsName.L) > 0 {
-				tblNames[f.TableAsName.L] = f.TableName.Name.L
-			} else {
-				tblNames[f.TableName.Name.L] = f.TableName.Name.L
-			}
-		}
 		for _, t := range e.Tables {
-			// Consider DBName.
-			_, ok := tblNames[t.Name.L]
-			if !ok {
-				return nil, errors.Errorf("Unknown table '%s' in MULTI DELETE", t.Name.O)
-			}
 			tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
 		}
 	}
@@ -377,29 +237,305 @@ func isMatchTableName(entry *RowKeyEntry, tblMap map[int64][]string) bool {
 	return false
 }
 
-func (e *DeleteExec) getTable(ctx context.Context, tableName *ast.TableName) (table.Table, error) {
-	return sessionctx.GetDomain(ctx).InfoSchema().TableByName(tableName.Schema, tableName.Name)
-}
-
 func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data []types.Datum) error {
 	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	getDirtyDB(ctx).deleteRow(t.Meta().ID, h)
-	variable.GetSessionVars(ctx).AddAffectedRows(1)
+	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
 }
 
-// Fields implements Executor Fields interface.
-// Returns nil to indicate there is no output.
-func (e *DeleteExec) Fields() []*ast.ResultField {
-	return nil
-}
-
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
 	return e.SelectExec.Close()
+}
+
+// NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
+func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table) *LoadDataInfo {
+	return &LoadDataInfo{
+		row:       row,
+		insertVal: &InsertValues{ctx: ctx, Table: tbl},
+		Table:     tbl,
+		Ctx:       ctx,
+	}
+}
+
+// LoadDataInfo saves the information of loading data operation.
+type LoadDataInfo struct {
+	row       []types.Datum
+	insertVal *InsertValues
+
+	Path       string
+	Table      table.Table
+	FieldsInfo *ast.FieldsClause
+	LinesInfo  *ast.LinesClause
+	Ctx        context.Context
+}
+
+// getValidData returns prevData and curData that starts from starting symbol.
+// If the data doesn't have starting symbol, prevData is nil and curData is curData[len(curData)-startingLen+1:].
+// If curData size less than startingLen, curData is returned directly.
+func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
+	startingLen := len(e.LinesInfo.Starting)
+	if startingLen == 0 {
+		return prevData, curData
+	}
+
+	prevLen := len(prevData)
+	if prevLen > 0 {
+		// starting symbol in the prevData
+		idx := strings.Index(string(prevData), e.LinesInfo.Starting)
+		if idx != -1 {
+			return prevData[idx:], curData
+		}
+
+		// starting symbol in the middle of prevData and curData
+		restStart := curData
+		if len(curData) >= startingLen {
+			restStart = curData[:startingLen-1]
+		}
+		prevData = append(prevData, restStart...)
+		idx = strings.Index(string(prevData), e.LinesInfo.Starting)
+		if idx != -1 {
+			return prevData[idx:prevLen], curData
+		}
+	}
+
+	// starting symbol in the curData
+	idx := strings.Index(string(curData), e.LinesInfo.Starting)
+	if idx != -1 {
+		return nil, curData[idx:]
+	}
+
+	// no starting symbol
+	if len(curData) >= startingLen {
+		curData = curData[len(curData)-startingLen+1:]
+	}
+	return nil, curData
+}
+
+// getLine returns a line, curData, the next data start index and a bool value.
+// If it has starting symbol the bool is true, otherwise is false.
+func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) {
+	startingLen := len(e.LinesInfo.Starting)
+	prevData, curData = e.getValidData(prevData, curData)
+	if prevData == nil && len(curData) < startingLen {
+		return nil, curData, false
+	}
+
+	prevLen := len(prevData)
+	terminatedLen := len(e.LinesInfo.Terminated)
+	curStartIdx := 0
+	if prevLen < startingLen {
+		curStartIdx = startingLen - prevLen
+	}
+	endIdx := -1
+	if len(curData) >= curStartIdx {
+		endIdx = strings.Index(string(curData[curStartIdx:]), e.LinesInfo.Terminated)
+	}
+	if endIdx == -1 {
+		// no terminated symbol
+		if len(prevData) == 0 {
+			return nil, curData, true
+		}
+
+		// terminated symbol in the middle of prevData and curData
+		curData = append(prevData, curData...)
+		endIdx = strings.Index(string(curData[startingLen:]), e.LinesInfo.Terminated)
+		if endIdx != -1 {
+			nextDataIdx := startingLen + endIdx + terminatedLen
+			return curData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
+		}
+		// no terminated symbol
+		return nil, curData, true
+	}
+
+	// terminated symbol in the curData
+	nextDataIdx := curStartIdx + endIdx + terminatedLen
+	if len(prevData) == 0 {
+		return curData[curStartIdx : curStartIdx+endIdx], curData[nextDataIdx:], true
+	}
+
+	// terminated symbol in the curData
+	prevData = append(prevData, curData[:nextDataIdx]...)
+	endIdx = strings.Index(string(prevData[startingLen:]), e.LinesInfo.Terminated)
+	if endIdx >= prevLen {
+		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
+	}
+
+	// terminated symbol in the middle of prevData and curData
+	lineLen := startingLen + endIdx + terminatedLen
+	return prevData[startingLen : startingLen+endIdx], curData[lineLen-prevLen:], true
+}
+
+// InsertData inserts data into specified table according to the specified format.
+// If it has the rest of data isn't completed the processing, then is returns without completed data.
+// If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
+func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
+	// TODO: support enclosed and escape.
+	if len(prevData) == 0 && len(curData) == 0 {
+		return nil, nil
+	}
+
+	var line []byte
+	var isEOF, hasStarting bool
+	cols := make([]string, 0, len(e.row))
+	if len(prevData) > 0 && len(curData) == 0 {
+		isEOF = true
+		prevData, curData = curData, prevData
+	}
+	for len(curData) > 0 {
+		line, curData, hasStarting = e.getLine(prevData, curData)
+		prevData = nil
+
+		// If it doesn't find the terminated symbol and this data isn't the last data,
+		// the data can't be inserted.
+		if line == nil && !isEOF {
+			break
+		}
+		// If doesn't find starting symbol, this data can't be inserted.
+		if !hasStarting {
+			if isEOF {
+				curData = nil
+			}
+			break
+		}
+		if line == nil && isEOF {
+			line = curData[len(e.LinesInfo.Starting):]
+			curData = nil
+		}
+
+		rawCols := bytes.Split(line, []byte(e.FieldsInfo.Terminated))
+		cols = escapeCols(rawCols)
+		e.insertData(cols)
+		e.insertVal.currRow++
+	}
+	if e.insertVal.lastInsertID != 0 {
+		e.insertVal.ctx.GetSessionVars().SetLastInsertID(e.insertVal.lastInsertID)
+	}
+
+	return curData, nil
+}
+
+func escapeCols(strs [][]byte) []string {
+	ret := make([]string, len(strs))
+	for i, v := range strs {
+		ret[i] = string(escape(v))
+	}
+	return ret
+}
+
+// TODO: escape need to be improved, it should support ESCAPED BY to specify
+// the escape character and handle \N escape.
+// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
+func escape(str []byte) []byte {
+	pos := 0
+	for i := 0; i < len(str); i++ {
+		c := str[i]
+		if c == '\\' && i+1 < len(str) {
+			var ok bool
+			if c, ok = escapeChar(str[i+1]); ok {
+				i++
+			}
+		}
+
+		str[pos] = c
+		pos++
+	}
+	return str[:pos]
+}
+
+func escapeChar(c byte) (byte, bool) {
+	switch c {
+	case '0':
+		return 0, true
+	case 'b':
+		return '\b', true
+	case 'n':
+		return '\n', true
+	case 'r':
+		return '\r', true
+	case 't':
+		return '\t', true
+	case 'Z':
+		return 26, true
+	case '\\':
+		return '\\', true
+	}
+	return c, false
+}
+
+func (e *LoadDataInfo) insertData(cols []string) {
+	for i := 0; i < len(e.row); i++ {
+		if i >= len(cols) {
+			e.row[i].SetString("")
+			continue
+		}
+		e.row[i].SetString(cols[i])
+	}
+	row, err := e.insertVal.fillRowData(e.Table.Cols(), e.row, true)
+	if err != nil {
+		log.Warnf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
+		return
+	}
+	_, err = e.Table.AddRecord(e.insertVal.ctx, row)
+	if err != nil {
+		log.Warnf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
+	}
+}
+
+// LoadData represents a load data executor.
+type LoadData struct {
+	IsLocal      bool
+	loadDataInfo *LoadDataInfo
+}
+
+// loadDataVarKeyType is a dummy type to avoid naming collision in context.
+type loadDataVarKeyType int
+
+// String defines a Stringer function for debugging and pretty printing.
+func (k loadDataVarKeyType) String() string {
+	return "load_data_var"
+}
+
+// LoadDataVarKey is a variable key for load data.
+const LoadDataVarKey loadDataVarKeyType = 0
+
+// Next implements the Executor Next interface.
+func (e *LoadData) Next() (*Row, error) {
+	// TODO: support load data without local field.
+	if !e.IsLocal {
+		return nil, errors.New("Load Data: don't support load data without local field")
+	}
+	// TODO: support lines terminated is "".
+	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
+		return nil, errors.New("Load Data: don't support load data terminated is nil")
+	}
+
+	ctx := e.loadDataInfo.insertVal.ctx
+	val := ctx.Value(LoadDataVarKey)
+	if val != nil {
+		ctx.SetValue(LoadDataVarKey, nil)
+		return nil, errors.New("Load Data: previous load data option isn't closed normal")
+	}
+	if e.loadDataInfo.Path == "" {
+		return nil, errors.New("Load Data: infile path is empty")
+	}
+	ctx.SetValue(LoadDataVarKey, e.loadDataInfo)
+
+	return nil, nil
+}
+
+// Schema implements the Executor Schema interface.
+func (e *LoadData) Schema() expression.Schema {
+	return expression.NewSchema(nil)
+}
+
+// Close implements the Executor Close interface.
+func (e *LoadData) Close() error {
+	return nil
 }
 
 // InsertValues is the data to insert.
@@ -411,8 +547,8 @@ type InsertValues struct {
 
 	Table     table.Table
 	Columns   []*ast.ColumnName
-	Lists     [][]ast.ExprNode
-	Setlist   []*ast.Assignment
+	Lists     [][]expression.Expression
+	Setlist   []*expression.Assignment
 	IsPrepare bool
 }
 
@@ -420,20 +556,20 @@ type InsertValues struct {
 type InsertExec struct {
 	*InsertValues
 
-	OnDuplicate []*ast.Assignment
-	fields      []*ast.ResultField
+	OnDuplicate []*expression.Assignment
 
 	Priority int
+	Ignore   bool
 
 	finished bool
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *InsertExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
-// Next implements Executor Next interface.
+// Next implements the Executor Next interface.
 func (e *InsertExec) Next() (*Row, error) {
 	if e.finished {
 		return nil, nil
@@ -442,7 +578,7 @@ func (e *InsertExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txn, err := e.ctx.GetTxn(false)
+	txn := e.ctx.Txn()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -462,7 +598,7 @@ func (e *InsertExec) Next() (*Row, error) {
 	}
 
 	for _, row := range rows {
-		if len(e.OnDuplicate) == 0 {
+		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
 		h, err := e.Table.AddRecord(e.ctx, row)
@@ -472,29 +608,33 @@ func (e *InsertExec) Next() (*Row, error) {
 			continue
 		}
 
-		if len(e.OnDuplicate) == 0 || !terror.ErrorEqual(err, kv.ErrKeyExists) {
-			return nil, errors.Trace(err)
+		if terror.ErrorEqual(err, kv.ErrKeyExists) {
+			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
+			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
+			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
+			if e.Ignore {
+				continue
+			}
+			if len(e.OnDuplicate) > 0 {
+				if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
+					return nil, errors.Trace(err)
+				}
+				continue
+			}
 		}
-		if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
-			return nil, errors.Trace(err)
-		}
+		return nil, errors.Trace(err)
 	}
 
 	if e.lastInsertID != 0 {
-		variable.GetSessionVars(e.ctx).LastInsertID = e.lastInsertID
+		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 	e.finished = true
 	return nil, nil
 }
 
-// Fields implements Executor Fields interface.
-// Returns nil to indicate there is no output.
-func (e *InsertExec) Fields() []*ast.ResultField {
-	return nil
-}
-
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
+	e.ctx.GetSessionVars().CurrInsertValues = nil
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
 	}
@@ -505,7 +645,7 @@ func (e *InsertExec) Close() error {
 // 1 insert ... values(...)  --> name type column
 // 2 insert ... set x=y...   --> set type column
 // 3 insert ... (select ..)  --> name type column
-// See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
+// See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, error) {
 	var cols []*table.Column
 	var err error
@@ -514,7 +654,7 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		// Process `set` type column.
 		columns := make([]string, 0, len(e.Setlist))
 		for _, v := range e.Setlist {
-			columns = append(columns, v.Column.Name.O)
+			columns = append(columns, v.Col.ColName.O)
 		}
 
 		cols, err = table.FindCols(tableCols, columns)
@@ -556,7 +696,7 @@ func (e *InsertValues) fillValueList() error {
 		if len(e.Lists) > 0 {
 			return errors.Errorf("INSERT INTO %s: set type should not use values", e.Table)
 		}
-		var l []ast.ExprNode
+		l := make([]expression.Expression, 0, len(e.Setlist))
 		for _, v := range e.Setlist {
 			l = append(l, v.Expr)
 		}
@@ -566,6 +706,7 @@ func (e *InsertValues) fillValueList() error {
 }
 
 func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, cols []*table.Column) error {
+	// TODO: This check should be done in plan builder.
 	if insertValueCount != valueCount {
 		// "insert into t values (), ()" is valid.
 		// "insert into t values (), (1)" is not valid.
@@ -583,27 +724,9 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 	return nil
 }
 
-func (e *InsertValues) getColumnDefaultValues(cols []*table.Column) (map[string]types.Datum, error) {
-	defaultValMap := map[string]types.Datum{}
-	for _, col := range cols {
-		if value, ok, err := table.GetColDefaultValue(e.ctx, &col.ColumnInfo); ok {
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			defaultValMap[col.Name.L] = value
-		}
-	}
-	return defaultValMap, nil
-}
-
 func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	defaultVals, err := e.getColumnDefaultValues(e.Table.Cols())
-	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -614,7 +737,7 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 			return nil, errors.Trace(err)
 		}
 		e.currRow = i
-		rows[i], err = e.getRow(cols, list, defaultVals)
+		rows[i], err = e.getRow(cols, list)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -622,37 +745,22 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 	return
 }
 
-func (e *InsertValues) getRow(cols []*table.Column, list []ast.ExprNode, defaultVals map[string]types.Datum) ([]types.Datum, error) {
+func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression) ([]types.Datum, error) {
 	vals := make([]types.Datum, len(list))
-	var err error
 	for i, expr := range list {
-		if d, ok := expr.(*ast.DefaultExpr); ok {
-			cn := d.Name
-			if cn != nil {
-				var found bool
-				vals[i], found = defaultVals[cn.Name.L]
-				if !found {
-					return nil, errors.Errorf("default column not found - %s", cn.Name.O)
-				}
-			} else {
-				vals[i] = defaultVals[cols[i].Name.L]
-			}
-		} else {
-			var val types.Datum
-			val, err = evaluator.Eval(e.ctx, expr)
-			vals[i] = val
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+		val, err := expr.Eval(nil, e.ctx)
+		vals[i] = val
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
-	return e.fillRowData(cols, vals)
+	return e.fillRowData(cols, vals, false)
 }
 
 func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
-	if (!plan.UseNewPlanner && len(e.SelectExec.Fields()) != len(cols)) || (plan.UseNewPlanner && len(e.SelectExec.Schema()) != len(cols)) {
-		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Fields()))
+	if e.SelectExec.Schema().Len() != len(cols) {
+		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), e.SelectExec.Schema().Len())
 	}
 	var rows [][]types.Datum
 	for {
@@ -664,7 +772,7 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 			break
 		}
 		e.currRow = len(rows)
-		row, err := e.fillRowData(cols, innerRow.Data)
+		row, err := e.fillRowData(cols, innerRow.Data, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -673,19 +781,21 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 	return rows, nil
 }
 
-func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]types.Datum, error) {
+func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ignoreErr bool) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	marked := make(map[int]struct{}, len(vals))
 	for i, v := range vals {
 		offset := cols[i].Offset
 		row[offset] = v
-		marked[offset] = struct{}{}
+		if !ignoreErr {
+			marked[offset] = struct{}{}
+		}
 	}
-	err := e.initDefaultValues(row, marked)
+	err := e.initDefaultValues(row, marked, ignoreErr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = table.CastValues(e.ctx, row, cols); err != nil {
+	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err = table.CheckNotNull(e.Table.Cols(), row); err != nil {
@@ -694,13 +804,25 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]
 	return row, nil
 }
 
-func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}) error {
+func filterErr(err error, ignoreErr bool) error {
+	if err == nil {
+		return nil
+	}
+	if !ignoreErr {
+		return errors.Trace(err)
+	}
+	log.Warning("ignore err:%v", errors.ErrorStack(err))
+	return nil
+}
+
+func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}, ignoreErr bool) error {
 	var defaultValueCols []*table.Column
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for i, c := range e.Table.Cols() {
 		// It's used for retry.
 		if mysql.HasAutoIncrementFlag(c.Flag) && row[i].IsNull() &&
-			variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
-			id, err := variable.GetSessionVars(e.ctx).RetryInfo.GetCurrAutoIncrementID()
+			e.ctx.GetSessionVars().RetryInfo.Retrying {
+			id, err := e.ctx.GetSessionVars().RetryInfo.GetCurrAutoIncrementID()
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -711,10 +833,11 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			if !mysql.HasAutoIncrementFlag(c.Flag) {
 				continue
 			}
-			val, err := row[i].ToInt64()
-			if err != nil {
+			val, err := row[i].ToInt64(sc)
+			if filterErr(errors.Trace(err), ignoreErr) != nil {
 				return errors.Trace(err)
 			}
+			row[i].SetInt64(val)
 			if val != 0 {
 				e.Table.RebaseAutoID(val, true)
 				continue
@@ -737,40 +860,37 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				e.lastInsertID = uint64(recordID)
 			}
 			// It's used for retry.
-			if !variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
-				variable.GetSessionVars(e.ctx).RetryInfo.AddAutoIncrementID(recordID)
+			if !e.ctx.GetSessionVars().RetryInfo.Retrying {
+				e.ctx.GetSessionVars().RetryInfo.AddAutoIncrementID(recordID)
 			}
 		} else {
 			var err error
-			row[i], _, err = table.GetColDefaultValue(e.ctx, &c.ColumnInfo)
-			if err != nil {
+			row[i], _, err = table.GetColDefaultValue(e.ctx, c.ToInfo())
+			if filterErr(err, ignoreErr) != nil {
 				return errors.Trace(err)
 			}
 		}
 
 		defaultValueCols = append(defaultValueCols, c)
 	}
-	if err := table.CastValues(e.ctx, row, defaultValueCols); err != nil {
+	if err := table.CastValues(e.ctx, row, defaultValueCols, ignoreErr); err != nil {
 		return errors.Trace(err)
 	}
 
 	return nil
 }
 
-func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]*ast.Assignment) error {
-	// On duplicate key update the duplicate row.
-	// Evaluate the updated value.
-	// TODO: report rows affected and last insert id.
+// onDuplicateUpdate updates the duplicate row.
+// TODO: Report rows affected and last insert id.
+func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]*expression.Assignment) error {
 	data, err := e.Table.Row(e.ctx, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// For evaluate ValuesExpr
-	// http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-	for i, rf := range e.fields {
-		rf.Expr.SetValue(row[i].GetValue())
-	}
-	// Evaluate assignment
+
+	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+	e.ctx.GetSessionVars().CurrInsertValues = row
+	// evaluate assignment
 	newData := make([]types.Datum, len(data))
 	for i, c := range row {
 		asgn, ok := cols[i]
@@ -778,21 +898,28 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 			newData[i] = c
 			continue
 		}
-		var val types.Datum
-		val, err = evaluator.Eval(e.ctx, asgn.Expr)
-		if err != nil {
-			return errors.Trace(err)
+		val, err1 := asgn.Expr.Eval(data, e.ctx)
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 		newData[i] = val
 	}
-	if err = updateRecord(e.ctx, h, data, newData, cols, e.Table, 0, true); err != nil {
+
+	assignFlag := make([]bool, len(e.Table.Cols()))
+	for i, asgn := range cols {
+		if asgn != nil {
+			assignFlag[i] = true
+		} else {
+			assignFlag[i] = false
+		}
+	}
+	if err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, 0, true); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func findColumnByName(t table.Table, name string) (*table.Column, error) {
-	_, tableName, colName := splitQualifiedName(name)
+func findColumnByName(t table.Table, tableName, colName string) (*table.Column, error) {
 	if len(tableName) > 0 && tableName != t.Meta().Name.O {
 		return nil, errors.Errorf("unknown field %s.%s", tableName, colName)
 	}
@@ -804,12 +931,12 @@ func findColumnByName(t table.Table, name string) (*table.Column, error) {
 	return c, nil
 }
 
-func getOnDuplicateUpdateColumns(assignList []*ast.Assignment, t table.Table) (map[int]*ast.Assignment, error) {
-	m := make(map[int]*ast.Assignment, len(assignList))
+func getOnDuplicateUpdateColumns(assignList []*expression.Assignment, t table.Table) (map[int]*expression.Assignment, error) {
+	m := make(map[int]*expression.Assignment, len(assignList))
 
 	for _, v := range assignList {
-		col := v.Column
-		c, err := findColumnByName(t, joinQualifiedName("", col.Table.L, col.Name.L))
+		col := v.Col
+		c, err := findColumnByName(t, col.TblName.L, col.ColName.L)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -825,18 +952,12 @@ type ReplaceExec struct {
 	finished bool
 }
 
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *ReplaceExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
-// Fields implements Executor Fields interface.
-// Returns nil to indicate there is no output.
-func (e *ReplaceExec) Fields() []*ast.ResultField {
-	return nil
-}
-
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *ReplaceExec) Close() error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
@@ -844,7 +965,7 @@ func (e *ReplaceExec) Close() error {
 	return nil
 }
 
-// Next implements Executor Next interface.
+// Next implements the Executor Next interface.
 func (e *ReplaceExec) Next() (*Row, error) {
 	if e.finished {
 		return nil, nil
@@ -870,14 +991,15 @@ func (e *ReplaceExec) Next() (*Row, error) {
 	 *  2. While the insertion fails because a duplicate-key error occurs for a primary key or unique index:
 	 *  3. Delete from the table the conflicting row that has the duplicate key value
 	 *  4. Try again to insert the new row into the table
-	 * See: http://dev.mysql.com/doc/refman/5.7/en/replace.html
+	 * See http://dev.mysql.com/doc/refman/5.7/en/replace.html
 	 *
 	 * For REPLACE statements, the affected-rows value is 2 if the new row replaced an old row,
 	 * because in this case, one row was inserted after the duplicate was deleted.
-	 * See: http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
+	 * See http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
 	 */
 	idx := 0
 	rowsLen := len(rows)
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for {
 		if idx >= rowsLen {
 			break
@@ -896,13 +1018,13 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		rowUnchanged, err1 := types.EqualDatums(oldRow, row)
+		rowUnchanged, err1 := types.EqualDatums(sc, oldRow, row)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
 		if rowUnchanged {
 			// If row unchanged, we do not need to do insert.
-			variable.GetSessionVars(e.ctx).AddAffectedRows(1)
+			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 			idx++
 			continue
 		}
@@ -912,46 +1034,145 @@ func (e *ReplaceExec) Next() (*Row, error) {
 			return nil, errors.Trace(err1)
 		}
 		getDirtyDB(e.ctx).deleteRow(e.Table.Meta().ID, h)
-		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
+		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	}
 
 	if e.lastInsertID != 0 {
-		variable.GetSessionVars(e.ctx).LastInsertID = e.lastInsertID
+		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 	e.finished = true
 	return nil, nil
 }
 
-// SplitQualifiedName splits an identifier name to db, table and field name.
-func splitQualifiedName(name string) (db string, table string, field string) {
-	seps := strings.Split(name, ".")
+// UpdateExec represents a new update executor.
+type UpdateExec struct {
+	SelectExec  Executor
+	OrderedList []*expression.Assignment
 
-	l := len(seps)
-	switch l {
-	case 1:
-		// `name` is field.
-		field = seps[0]
-	case 2:
-		// `name` is `table.field`.
-		table, field = seps[0], seps[1]
-	case 3:
-		// `name` is `db.table.field`.
-		db, table, field = seps[0], seps[1], seps[2]
-	default:
-		// `name` is `db.table.field`.
-		db, table, field = seps[l-3], seps[l-2], seps[l-1]
-	}
+	// Map for unique (Table, handle) pair.
+	updatedRowKeys map[table.Table]map[int64]struct{}
+	ctx            context.Context
 
-	return
+	rows        []*Row          // The rows fetched from TableExec.
+	newRowsData [][]types.Datum // The new values to be set.
+	fetched     bool
+	cursor      int
 }
 
-// JoinQualifiedName converts db, table, field to a qualified name.
-func joinQualifiedName(db string, table string, field string) string {
-	if len(db) > 0 {
-		return fmt.Sprintf("%s.%s.%s", db, table, field)
-	} else if len(table) > 0 {
-		return fmt.Sprintf("%s.%s", table, field)
-	} else {
-		return field
+// Schema implements the Executor Schema interface.
+func (e *UpdateExec) Schema() expression.Schema {
+	return expression.NewSchema(nil)
+}
+
+// Next implements the Executor Next interface.
+func (e *UpdateExec) Next() (*Row, error) {
+	if !e.fetched {
+		err := e.fetchRows()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.fetched = true
 	}
+
+	assignFlag, err := getUpdateColumns(e.OrderedList)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if e.cursor >= len(e.rows) {
+		return nil, nil
+	}
+	if e.updatedRowKeys == nil {
+		e.updatedRowKeys = make(map[table.Table]map[int64]struct{})
+	}
+	row := e.rows[e.cursor]
+	newData := e.newRowsData[e.cursor]
+	for _, entry := range row.RowKeys {
+		tbl := entry.Tbl
+		if e.updatedRowKeys[tbl] == nil {
+			e.updatedRowKeys[tbl] = make(map[int64]struct{})
+		}
+		offset := e.getTableOffset(*entry)
+		handle := entry.Handle
+		oldData := row.Data[offset : offset+len(tbl.WritableCols())]
+		newTableData := newData[offset : offset+len(tbl.WritableCols())]
+		_, ok := e.updatedRowKeys[tbl][handle]
+		if ok {
+			// Each matched row is updated once, even if it matches the conditions multiple times.
+			continue
+		}
+		// Update row
+		err1 := updateRecord(e.ctx, handle, oldData, newTableData, assignFlag, tbl, offset, false)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		e.updatedRowKeys[tbl][handle] = struct{}{}
+	}
+	e.cursor++
+	return &Row{}, nil
+}
+
+func getUpdateColumns(assignList []*expression.Assignment) ([]bool, error) {
+	assignFlag := make([]bool, len(assignList))
+	for i, v := range assignList {
+		if v != nil {
+			assignFlag[i] = true
+		} else {
+			assignFlag[i] = false
+		}
+	}
+	return assignFlag, nil
+}
+
+func (e *UpdateExec) fetchRows() error {
+	for {
+		row, err := e.SelectExec.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if row == nil {
+			return nil
+		}
+		data := make([]types.Datum, e.SelectExec.Schema().Len())
+		newData := make([]types.Datum, e.SelectExec.Schema().Len())
+		for i, s := range e.SelectExec.Schema().Columns {
+			data[i], err = s.Eval(row.Data, e.ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			newData[i] = data[i]
+			if e.OrderedList[i] != nil {
+				val, err := e.OrderedList[i].Expr.Eval(row.Data, e.ctx)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				newData[i] = val
+			}
+		}
+		row.Data = data
+		e.rows = append(e.rows, row)
+		e.newRowsData = append(e.newRowsData, newData)
+	}
+}
+
+func (e *UpdateExec) getTableOffset(entry RowKeyEntry) int {
+	t := entry.Tbl
+	var tblName string
+	if entry.TableAsName == nil || len(entry.TableAsName.L) == 0 {
+		tblName = t.Meta().Name.L
+	} else {
+		tblName = entry.TableAsName.L
+	}
+	schema := e.SelectExec.Schema()
+	for i := 0; i < schema.Len(); i++ {
+		s := schema.Columns[i]
+		if s.TblName.L == tblName {
+			return i
+		}
+	}
+	return 0
+}
+
+// Close implements the Executor Close interface.
+func (e *UpdateExec) Close() error {
+	return e.SelectExec.Close()
 }

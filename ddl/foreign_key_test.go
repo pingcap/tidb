@@ -15,7 +15,7 @@ package ddl
 
 import (
 	"strings"
-	"time"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -36,14 +36,10 @@ type testForeighKeySuite struct {
 }
 
 func (s *testForeighKeySuite) SetUpSuite(c *C) {
-	trySkipTest(c)
-
 	s.store = testCreateStore(c, "test_foreign")
 }
 
 func (s *testForeighKeySuite) TearDownSuite(c *C) {
-	trySkipTest(c)
-
 	err := s.store.Close()
 	c.Assert(err, IsNil)
 }
@@ -61,10 +57,7 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 		RefKeys[i] = model.NewCIStr(key)
 	}
 
-	fkID, err := s.d.genGlobalID()
-	c.Assert(err, IsNil)
 	fkInfo := &model.FKInfo{
-		ID:       fkID,
 		Name:     FKName,
 		RefTable: RefTable,
 		RefCols:  RefKeys,
@@ -80,7 +73,7 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 		Type:     model.ActionAddForeignKey,
 		Args:     []interface{}{fkInfo},
 	}
-	err = s.d.doDDLJob(s.ctx, job)
+	err := s.d.doDDLJob(s.ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -94,6 +87,8 @@ func testDropForeignKey(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo,
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -121,7 +116,7 @@ func (s *testForeighKeySuite) testForeignKeyExist(c *C, t table.Table, name stri
 
 func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	d := newDDL(s.store, nil, nil, testLease)
 	s.d = d
 	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
 	ctx := testNewContext(c, d)
@@ -129,14 +124,16 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	testCreateSchema(c, ctx, d, s.dbInfo)
 	tblInfo := testTableInfo(c, d, "t", 3)
 
-	_, err := ctx.GetTxn(true)
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 
-	err = ctx.CommitTxn()
+	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
+	// fix data race
+	var mu sync.Mutex
 	checkOK := false
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
@@ -146,30 +143,38 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 		s.testForeignKeyExist(c, t, "c1_fk", true)
+		mu.Lock()
 		checkOK = true
+		mu.Unlock()
 	}
 
-	d.hook = tc
+	d.setHook(tc)
 
 	d.close()
 	d.start()
 
 	job := s.testCreateForeignKey(c, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
-
 	testCheckJobDone(c, d, job, true)
-
-	err = ctx.CommitTxn()
+	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
+	mu.Lock()
 	c.Assert(checkOK, IsTrue)
+	mu.Unlock()
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 
+	mu.Lock()
 	checkOK = false
+	mu.Unlock()
 	tc.onJobUpdated = func(job *model.Job) {
 		if job.State != model.JobDone {
 			return
 		}
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 		s.testForeignKeyExist(c, t, "c1_fk", false)
+		mu.Lock()
 		checkOK = true
+		mu.Unlock()
 	}
 
 	d.close()
@@ -177,9 +182,11 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
 	testCheckJobDone(c, d, job, false)
+	mu.Lock()
 	c.Assert(checkOK, IsTrue)
+	mu.Unlock()
 
-	_, err = ctx.GetTxn(true)
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	tc.onJobUpdated = func(job *model.Job) {
@@ -191,7 +198,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.CommitTxn()
+	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
 	d.close()

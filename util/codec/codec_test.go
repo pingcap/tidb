@@ -20,11 +20,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
+	CustomVerboseFlag = true
 	TestingT(t)
 }
 
@@ -64,12 +66,12 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		},
 
 		{
-			types.MakeDatums(mysql.Hex{Value: 100}, mysql.Bit{Value: 100, Width: 8}),
+			types.MakeDatums(types.Hex{Value: 100}, types.Bit{Value: 100, Width: 8}),
 			types.MakeDatums(int64(100), uint64(100)),
 		},
 
 		{
-			types.MakeDatums(mysql.Enum{Name: "a", Value: 1}, mysql.Set{Name: "a", Value: 1}),
+			types.MakeDatums(types.Enum{Name: "a", Value: 1}, types.Set{Name: "a", Value: 1}),
 			types.MakeDatums(uint64(1), uint64(1)),
 		},
 	}
@@ -78,13 +80,13 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		comment := Commentf("%d %v", i, t)
 		b, err := EncodeKey(nil, t.Input...)
 		c.Assert(err, IsNil, comment)
-		args, err := Decode(b)
+		args, err := Decode(b, 1)
 		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
 
 		b, err = EncodeValue(nil, t.Input...)
 		c.Assert(err, IsNil)
-		args, err = Decode(b)
+		args, err = Decode(b, 1)
 		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
 	}
@@ -237,6 +239,11 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 		_, v, err = DecodeVarint(b)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t)
+
+		b = EncodeComparableVarint(nil, t)
+		_, v, err = DecodeComparableVarint(b)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, t)
 	}
 
 	tblUint64 := []uint64{
@@ -270,7 +277,25 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 		_, v, err = DecodeUvarint(b)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t)
+
+		b = EncodeComparableUvarint(nil, t)
+		_, v, err = DecodeComparableUvarint(b)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, t)
 	}
+	var b []byte
+	b = EncodeComparableVarint(b, -1)
+	b = EncodeComparableUvarint(b, 1)
+	b = EncodeComparableVarint(b, 2)
+	b, i, err := DecodeComparableVarint(b)
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(-1))
+	b, u, err := DecodeComparableUvarint(b)
+	c.Assert(err, IsNil)
+	c.Assert(u, Equals, uint64(1))
+	b, i, err = DecodeComparableVarint(b)
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(2))
 }
 
 func (s *testCodecSuite) TestNumberOrder(c *C) {
@@ -307,6 +332,11 @@ func (s *testCodecSuite) TestNumberOrder(c *C) {
 
 		ret = bytes.Compare(b1, b2)
 		c.Assert(ret, Equals, -t.Ret)
+
+		b1 = EncodeComparableVarint(nil, t.Arg1)
+		b2 = EncodeComparableVarint(nil, t.Arg2)
+		ret = bytes.Compare(b1, b2)
+		c.Assert(ret, Equals, t.Ret)
 	}
 
 	tblUint64 := []struct {
@@ -339,6 +369,11 @@ func (s *testCodecSuite) TestNumberOrder(c *C) {
 
 		ret = bytes.Compare(b1, b2)
 		c.Assert(ret, Equals, -t.Ret)
+
+		b1 = EncodeComparableUvarint(nil, t.Arg1)
+		b2 = EncodeComparableUvarint(nil, t.Arg2)
+		ret = bytes.Compare(b1, b2)
+		c.Assert(ret, Equals, t.Ret)
 	}
 }
 
@@ -467,14 +502,14 @@ func (s *testCodecSuite) TestBytes(c *C) {
 	}
 }
 
-func parseTime(c *C, s string) mysql.Time {
-	m, err := mysql.ParseTime(s, mysql.TypeDatetime, mysql.DefaultFsp)
+func parseTime(c *C, s string) types.Time {
+	m, err := types.ParseTime(s, mysql.TypeDatetime, types.DefaultFsp)
 	c.Assert(err, IsNil)
 	return m
 }
 
-func parseDuration(c *C, s string) mysql.Duration {
-	m, err := mysql.ParseDuration(s, mysql.DefaultFsp)
+func parseDuration(c *C, s string) types.Duration {
+	m, err := types.ParseDuration(s, types.DefaultFsp)
 	c.Assert(err, IsNil)
 	return m
 }
@@ -492,9 +527,12 @@ func (s *testCodecSuite) TestTime(c *C) {
 
 		b, err := EncodeKey(nil, m)
 		c.Assert(err, IsNil)
-		v, err := Decode(b)
+		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, types.MakeDatums([]byte(t)))
+		var t types.Time
+		t.Type = mysql.TypeDatetime
+		t.FromPackedUint(v[0].GetUint64())
+		c.Assert(types.NewDatum(t), DeepEquals, m)
 	}
 
 	tblCmp := []struct {
@@ -534,9 +572,9 @@ func (s *testCodecSuite) TestDuration(c *C) {
 
 		b, err := EncodeKey(nil, types.NewDatum(m))
 		c.Assert(err, IsNil)
-		v, err := Decode(b)
+		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
-		m.Fsp = mysql.MaxFsp
+		m.Fsp = types.MaxFsp
 		c.Assert(v, DeepEquals, types.MakeDatums(m))
 	}
 
@@ -580,18 +618,20 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		"-1234",
 		"-12.34",
 		"-12.340",
-		"-0.1234"}
+		"-0.1234",
+	}
 
 	for _, t := range tbl {
-		m, err := mysql.ParseDecimal(t)
+		dec := new(types.MyDecimal)
+		err := dec.FromString([]byte(t))
 		c.Assert(err, IsNil)
-		b, err := EncodeKey(nil, types.NewDatum(m))
+		b, err := EncodeKey(nil, types.NewDatum(dec))
 		c.Assert(err, IsNil)
-		v, err := Decode(b)
+		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
 		c.Assert(v, HasLen, 1)
 		vv := v[0].GetMysqlDecimal()
-		c.Assert(vv.Equals(m), IsTrue)
+		c.Assert(vv.Compare(dec), Equals, 0)
 	}
 
 	tblCmp := []struct {
@@ -659,28 +699,40 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		{uint64(math.MaxUint64), uint64(0), 1},
 		{uint64(0), uint64(math.MaxUint64), -1},
 	}
-
+	sc := new(variable.StatementContext)
 	for _, t := range tblCmp {
-		m1, err := mysql.ConvertToDecimal(t.Arg1)
+		d1 := types.NewDatum(t.Arg1)
+		dec1, err := d1.ToDecimal(sc)
 		c.Assert(err, IsNil)
-		m2, err := mysql.ConvertToDecimal(t.Arg2)
+		d1.SetMysqlDecimal(dec1)
+		d2 := types.NewDatum(t.Arg2)
+		dec2, err := d2.ToDecimal(sc)
 		c.Assert(err, IsNil)
+		d2.SetMysqlDecimal(dec2)
 
-		b1, err := EncodeKey(nil, types.NewDatum(m1))
+		d1.SetLength(30)
+		d1.SetFrac(6)
+		d2.SetLength(30)
+		d2.SetFrac(6)
+		b1, err := EncodeKey(nil, d1)
 		c.Assert(err, IsNil)
-		b2, err := EncodeKey(nil, types.NewDatum(m2))
+		b2, err := EncodeKey(nil, d2)
 		c.Assert(err, IsNil)
 
 		ret := bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, t.Ret)
+		c.Assert(ret, Equals, t.Ret, Commentf("%v %x %x", t, b1, b2))
 	}
 
 	floats := []float64{-123.45, -123.40, -23.45, -1.43, -0.93, -0.4333, -0.068,
 		-0.0099, 0, 0.001, 0.0012, 0.12, 1.2, 1.23, 123.3, 2424.242424}
 	var decs [][]byte
 	for i := range floats {
-		dec := mysql.NewDecimalFromFloat(floats[i])
-		decs = append(decs, EncodeDecimal(nil, dec))
+		dec := types.NewDecFromFloatForTest(floats[i])
+		var d types.Datum
+		d.SetLength(20)
+		d.SetFrac(6)
+		d.SetMysqlDecimal(dec)
+		decs = append(decs, EncodeDecimal(nil, d))
 	}
 	for i := 0; i < len(decs)-1; i++ {
 		cmp := bytes.Compare(decs[i], decs[i+1])
@@ -719,17 +771,21 @@ func (s *testCodecSuite) TestCut(c *C) {
 		},
 
 		{
-			types.MakeDatums(mysql.Hex{Value: 100}, mysql.Bit{Value: 100, Width: 8}),
+			types.MakeDatums(types.Hex{Value: 100}, types.Bit{Value: 100, Width: 8}),
 			types.MakeDatums(int64(100), uint64(100)),
 		},
 
 		{
-			types.MakeDatums(mysql.Enum{Name: "a", Value: 1}, mysql.Set{Name: "a", Value: 1}),
+			types.MakeDatums(types.Enum{Name: "a", Value: 1}, types.Set{Name: "a", Value: 1}),
 			types.MakeDatums(uint64(1), uint64(1)),
 		},
 		{
 			types.MakeDatums(float32(1), float64(3.15), []byte("123456789012345")),
 			types.MakeDatums(float64(1), float64(3.15), []byte("123456789012345")),
+		},
+		{
+			types.MakeDatums(types.NewDecFromInt(0), types.NewDecFromFloatForTest(-1.3)),
+			types.MakeDatums(types.NewDecFromInt(0), types.NewDecFromFloatForTest(-1.3)),
 		},
 	}
 	for i, t := range table {

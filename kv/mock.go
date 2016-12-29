@@ -13,9 +13,14 @@
 
 package kv
 
+import (
+	"github.com/juju/errors"
+)
+
 // mockTxn is a txn that returns a retryAble error when called Commit.
 type mockTxn struct {
-	opts map[Option]interface{}
+	opts  map[Option]interface{}
+	valid bool
 }
 
 // Always returns a retryable error.
@@ -24,6 +29,7 @@ func (t *mockTxn) Commit() error {
 }
 
 func (t *mockTxn) Rollback() error {
+	t.valid = false
 	return nil
 }
 
@@ -53,10 +59,6 @@ func (t *mockTxn) IsReadOnly() bool {
 	return true
 }
 
-func (t *mockTxn) GetClient() Client {
-	return nil
-}
-
 func (t *mockTxn) StartTS() uint64 {
 	return uint64(0)
 }
@@ -79,20 +81,28 @@ func (t *mockTxn) Delete(k Key) error {
 	return nil
 }
 
+func (t *mockTxn) Valid() bool {
+	return t.valid
+}
+
 // mockStorage is used to start a must commit-failed txn.
 type mockStorage struct {
 }
 
 func (s *mockStorage) Begin() (Transaction, error) {
 	tx := &mockTxn{
-		opts: make(map[Option]interface{}),
+		opts:  make(map[Option]interface{}),
+		valid: true,
 	}
 	return tx, nil
 
 }
 func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
-	return nil, nil
+	return &mockSnapshot{
+		store: NewMemDbBuffer(),
+	}, nil
 }
+
 func (s *mockStorage) Close() error {
 	return nil
 }
@@ -103,7 +113,11 @@ func (s *mockStorage) UUID() string {
 
 // CurrentVersion returns current max committed version.
 func (s *mockStorage) CurrentVersion() (Version, error) {
-	return Version{uint64(1)}, nil
+	return NewVersion(1), nil
+}
+
+func (s *mockStorage) GetClient() Client {
+	return nil
 }
 
 // MockTxn is used for test cases that need more interfaces than Transaction.
@@ -115,4 +129,35 @@ type MockTxn interface {
 // NewMockStorage creates a new mockStorage.
 func NewMockStorage() Storage {
 	return &mockStorage{}
+}
+
+type mockSnapshot struct {
+	store MemBuffer
+}
+
+func (s *mockSnapshot) Get(k Key) ([]byte, error) {
+	return s.store.Get(k)
+}
+
+func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
+	m := make(map[string][]byte)
+	for _, k := range keys {
+		v, err := s.store.Get(k)
+		if IsErrNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		m[string(k)] = v
+	}
+	return m, nil
+}
+
+func (s *mockSnapshot) Seek(k Key) (Iterator, error) {
+	return s.store.Seek(k)
+}
+
+func (s *mockSnapshot) SeekReverse(k Key) (Iterator, error) {
+	return s.store.SeekReverse(k)
 }

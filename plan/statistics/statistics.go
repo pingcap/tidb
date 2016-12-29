@@ -15,14 +15,30 @@ package statistics
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+)
+
+const (
+	// Default number of buckets a column histogram has.
+	defaultBucketCount = 256
+
+	// When we haven't analyzed a table, we use pseudo statistics to estimate costs.
+	// It has row count 10000000, equal condition selects 1/1000 of total rows, less condition selects 1/3 of total rows,
+	// between condition selects 1/4 of total rows.
+	pseudoRowCount    = 10000000
+	pseudoEqualRate   = 1000
+	pseudoLessRate    = 3
+	pseudoBetweenRate = 4
+	pseudoTimestamp   = 1
 )
 
 // Column represents statistics for a column.
@@ -57,13 +73,125 @@ func (c *Column) String() string {
 	return strings.Join(strs, "\n")
 }
 
+// EqualRowCount estimates the row count where the column equals to value.
+func (c *Column) EqualRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
+	if len(c.Numbers) == 0 {
+		return pseudoRowCount / pseudoEqualRate, nil
+	}
+	index, match, err := c.search(sc, value)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if index == len(c.Numbers) {
+		return c.Numbers[index-1] + 1, nil
+	}
+	if match {
+		return c.Repeats[index] + 1, nil
+	}
+	totalCount := c.Numbers[len(c.Numbers)-1] + 1
+	return totalCount / c.NDV, nil
+}
+
+// GreaterRowCount estimates the row count where the column greater than value.
+func (c *Column) GreaterRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
+	if len(c.Numbers) == 0 {
+		return pseudoRowCount / pseudoLessRate, nil
+	}
+	index, match, err := c.search(sc, value)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if index == 0 {
+		return c.totalRowCount(), nil
+	}
+	number := c.Numbers[index]
+	nextNumber := int64(0)
+	if index < len(c.Numbers)-1 {
+		nextNumber = c.Numbers[index+1]
+	}
+	greaterThanBucketValueCount := number - c.Repeats[index]
+	if match {
+		return greaterThanBucketValueCount, nil
+	}
+	return (nextNumber + greaterThanBucketValueCount) / 2, nil
+}
+
+// LessRowCount estimates the row count where the column less than value.
+func (c *Column) LessRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
+	if len(c.Numbers) == 0 {
+		return pseudoRowCount / pseudoLessRate, nil
+	}
+	index, match, err := c.search(sc, value)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if index == len(c.Numbers) {
+		return c.totalRowCount(), nil
+	}
+	number := c.Numbers[index]
+	prevNumber := int64(0)
+	if index > 0 {
+		prevNumber = c.Numbers[index-1]
+	}
+	lessThanBucketValueCount := number - c.Repeats[index]
+	if match {
+		return lessThanBucketValueCount, nil
+	}
+	return (prevNumber + lessThanBucketValueCount) / 2, nil
+}
+
+// BetweenRowCount estimates the row count where column greater or equal to a and less than b.
+func (c *Column) BetweenRowCount(sc *variable.StatementContext, a, b types.Datum) (int64, error) {
+	if len(c.Numbers) == 0 {
+		return pseudoRowCount / pseudoBetweenRate, nil
+	}
+	lessCountA, err := c.LessRowCount(sc, a)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	lessCountB, err := c.LessRowCount(sc, b)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if lessCountA >= lessCountB {
+		return c.inBucketBetweenCount(), nil
+	}
+	return lessCountB - lessCountA, nil
+}
+
+func (c *Column) totalRowCount() int64 {
+	return c.Numbers[len(c.Numbers)-1] + 1
+}
+
+func (c *Column) bucketRowCount() int64 {
+	return c.totalRowCount() / int64(len(c.Numbers))
+}
+
+func (c *Column) inBucketBetweenCount() int64 {
+	return c.bucketRowCount()/3 + 1
+}
+
+func (c *Column) search(sc *variable.StatementContext, target types.Datum) (index int, match bool, err error) {
+	index = sort.Search(len(c.Values), func(i int) bool {
+		cmp, err1 := c.Values[i].CompareDatum(sc, target)
+		if err1 != nil {
+			err = errors.Trace(err1)
+			return false
+		}
+		if cmp == 0 {
+			match = true
+		}
+		return cmp >= 0
+	})
+	return
+}
+
 // Table represents statistics for a table.
 type Table struct {
-	info        *model.TableInfo
-	TS          int64 // build timestamp.
-	Columns     []*Column
-	Count       int64 // Total row count in a table.
-	BucketCount int64 // Number of histogram bucket.
+	info    *model.TableInfo
+	TS      int64 // build timestamp.
+	Columns []*Column
+	Count   int64 // Total row count in a table.
 }
 
 // String implements Stringer interface.
@@ -101,12 +229,12 @@ func (t *Table) ToPB() (*TablePB, error) {
 }
 
 // buildColumn builds column statistics from samples.
-func (t *Table) buildColumn(offset int, samples []types.Datum) error {
-	err := types.SortDatums(samples)
+func (t *Table) buildColumn(sc *variable.StatementContext, offset int, samples []types.Datum, bucketCount int64) error {
+	err := types.SortDatums(sc, samples)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	estimatedNDV, err := estimateNDV(t.Count, samples)
+	estimatedNDV, err := estimateNDV(sc, t.Count, samples)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -114,18 +242,18 @@ func (t *Table) buildColumn(offset int, samples []types.Datum) error {
 	col := &Column{
 		ID:      ci.ID,
 		NDV:     estimatedNDV,
-		Numbers: make([]int64, 1, t.BucketCount),
-		Values:  make([]types.Datum, 1, t.BucketCount),
-		Repeats: make([]int64, 1, t.BucketCount),
+		Numbers: make([]int64, 1, bucketCount),
+		Values:  make([]types.Datum, 1, bucketCount),
+		Repeats: make([]int64, 1, bucketCount),
 	}
-	valuesPerBucket := t.Count/t.BucketCount + 1
+	valuesPerBucket := t.Count/bucketCount + 1
 
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := t.Count / int64(len(samples))
 	bucketIdx := 0
 	var lastNumber int64
 	for i := int64(0); i < int64(len(samples)); i++ {
-		cmp, err := col.Values[bucketIdx].CompareDatum(samples[i])
+		cmp, err := col.Values[bucketIdx].CompareDatum(sc, samples[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -156,13 +284,13 @@ func (t *Table) buildColumn(offset int, samples []types.Datum) error {
 // estimateNDV estimates the number of distinct value given a count and samples.
 // It implements a simplified Good–Turing frequency estimation algorithm.
 // See https://en.wikipedia.org/wiki/Good%E2%80%93Turing_frequency_estimation
-func estimateNDV(count int64, samples []types.Datum) (int64, error) {
+func estimateNDV(sc *variable.StatementContext, count int64, samples []types.Datum) (int64, error) {
 	lastValue := samples[0]
 	occurrence := 1
 	sampleDistinct := 1
 	occurredOnceCount := 0
 	for i := 1; i < len(samples); i++ {
-		cmp, err := lastValue.CompareDatum(samples[i])
+		cmp, err := lastValue.CompareDatum(sc, samples[i])
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -184,16 +312,15 @@ func estimateNDV(count int64, samples []types.Datum) (int64, error) {
 }
 
 // NewTable creates a table statistics.
-func NewTable(ti *model.TableInfo, ts, count, numBuckets int64, columnSamples [][]types.Datum) (*Table, error) {
+func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, numBuckets int64, columnSamples [][]types.Datum) (*Table, error) {
 	t := &Table{
-		info:        ti,
-		TS:          ts,
-		Count:       count,
-		BucketCount: numBuckets,
-		Columns:     make([]*Column, len(columnSamples)),
+		info:    ti,
+		TS:      ts,
+		Count:   count,
+		Columns: make([]*Column, len(columnSamples)),
 	}
 	for i, sample := range columnSamples {
-		err := t.buildColumn(i, sample)
+		err := t.buildColumn(sc, i, sample, defaultBucketCount)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -220,7 +347,7 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 	t.Columns = make([]*Column, len(tpb.GetColumns()))
 	for i, cInfo := range t.info.Columns {
 		cpb := tpb.Columns[i]
-		values, err := codec.Decode(cpb.GetValue())
+		values, err := codec.Decode(cpb.GetValue(), 1)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -232,7 +359,7 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 			Repeats: cpb.GetRepeats(),
 		}
 		for i, val := range values {
-			c.Values[i], err = tablecodec.Unflatten(val, &cInfo.FieldType)
+			c.Values[i], err = tablecodec.Unflatten(val, &cInfo.FieldType, false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -240,4 +367,20 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 		t.Columns[i] = c
 	}
 	return t, nil
+}
+
+// PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
+func PseudoTable(ti *model.TableInfo) *Table {
+	t := &Table{info: ti}
+	t.TS = pseudoTimestamp
+	t.Count = pseudoRowCount
+	t.Columns = make([]*Column, len(ti.Columns))
+	for i, v := range ti.Columns {
+		c := &Column{
+			ID:  v.ID,
+			NDV: pseudoRowCount / 2,
+		}
+		t.Columns[i] = c
+	}
+	return t
 }

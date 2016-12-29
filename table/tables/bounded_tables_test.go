@@ -113,7 +113,7 @@ func (ts *testBoundedTableSuite) TestBoundedBasic(c *C) {
 	c.Assert(vals, HasLen, 1)
 	c.Assert(vals[0].GetString(), Equals, "abc")
 
-	c.Assert(tb.Truncate(ctx), IsNil)
+	tb.(*tables.BoundedTable).Truncate()
 	_, err = tb.Row(ctx, rid)
 	c.Assert(err, NotNil)
 }

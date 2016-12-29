@@ -16,7 +16,9 @@ package mock
 
 import (
 	"fmt"
+	"sync"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -28,8 +30,11 @@ var _ context.Context = (*Context)(nil)
 type Context struct {
 	values map[fmt.Stringer]interface{}
 	// mock global variable
-	txn   kv.Transaction
-	Store kv.Storage
+	txn         kv.Transaction
+	Store       kv.Storage
+	sessionVars *variable.SessionVars
+	// Fix data race in ddl test.
+	mux sync.Mutex
 }
 
 // SetValue implements context.Context SetValue interface.
@@ -48,57 +53,29 @@ func (c *Context) ClearValue(key fmt.Stringer) {
 	delete(c.values, key)
 }
 
-// GetTxn implements context.Context GetTxn interface.
-func (c *Context) GetTxn(forceNew bool) (kv.Transaction, error) {
-	if c.Store == nil {
-		return nil, nil
-	}
-
-	var err error
-	if c.txn == nil {
-		c.txn, err = c.Store.Begin()
-		return c.txn, err
-	}
-	if forceNew {
-		err = c.CommitTxn()
-		if err != nil {
-			return nil, err
-		}
-		c.txn, err = c.Store.Begin()
-		return c.txn, err
-	}
-
-	return c.txn, nil
+// GetSessionVars implements the context.Context GetSessionVars interface.
+func (c *Context) GetSessionVars() *variable.SessionVars {
+	return c.sessionVars
 }
 
-func (c *Context) finishTxn(rollback bool) error {
-	if c.txn == nil {
+// Txn implements context.Context Txn interface.
+func (c *Context) Txn() kv.Transaction {
+	return c.txn
+}
+
+// GetClient implements context.Context GetClient interface.
+func (c *Context) GetClient() kv.Client {
+	if c.Store == nil {
 		return nil
 	}
-	defer func() { c.txn = nil }()
-
-	if rollback {
-		return c.txn.Rollback()
-	}
-
-	return c.txn.Commit()
-}
-
-// CommitTxn implements context.Context CommitTxn interface.
-func (c *Context) CommitTxn() error {
-	return c.finishTxn(false)
-}
-
-// RollbackTxn implements context.Context RollbackTxn interface.
-func (c *Context) RollbackTxn() error {
-	return c.finishTxn(true)
+	return c.Store.GetClient()
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return "", variable.UnknownSystemVar.Gen("Unknown system variable: %s", name)
+		return "", variable.UnknownSystemVar.GenByArgs(name)
 	}
 	return v.Value, nil
 }
@@ -107,15 +84,35 @@ func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, err
 func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string) error {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return variable.UnknownSystemVar.Gen("Unknown system variable: %s", name)
+		return variable.UnknownSystemVar.GenByArgs(name)
 	}
 	v.Value = value
+	return nil
+}
+
+// NewTxn implements the context.Context interface.
+func (c *Context) NewTxn() error {
+	if c.Store == nil {
+		return errors.New("store is not set")
+	}
+	if c.txn != nil && c.txn.Valid() {
+		err := c.txn.Commit()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	txn, err := c.Store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	c.txn = txn
 	return nil
 }
 
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
 	return &Context{
-		values: make(map[fmt.Stringer]interface{}),
+		values:      make(map[fmt.Stringer]interface{}),
+		sessionVars: variable.NewSessionVars(),
 	}
 }

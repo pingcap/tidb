@@ -63,7 +63,7 @@ func BoundedTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo, capa
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))
 	var pkHandleColumn *table.Column
 	for _, colInfo := range tblInfo.Columns {
-		col := &table.Column{ColumnInfo: *colInfo}
+		col := table.ToColumn(colInfo)
 		columns = append(columns, col)
 		if col.IsPKHandleColumn(tblInfo) {
 			pkHandleColumn = col
@@ -170,14 +170,13 @@ func (t *BoundedTable) FirstKey() kv.Key {
 	return t.RecordKey(0)
 }
 
-// Truncate implements table.Table Truncate interface.
-func (t *BoundedTable) Truncate(ctx context.Context) error {
+// Truncate drops all data in BoundedTable.
+func (t *BoundedTable) Truncate() {
 	// just reset everything.
 	for i := int64(0); i < t.capacity; i++ {
 		atomic.StorePointer(&t.records[i], unsafe.Pointer(nil))
 	}
 	t.cursor = 0
-	return nil
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
@@ -203,7 +202,7 @@ func (t *BoundedTable) AddRecord(ctx context.Context, r []types.Datum) (int64, e
 	var recordID int64
 	var err error
 	if t.pkHandleCol != nil {
-		recordID, err = r[t.pkHandleCol.Offset].ToInt64()
+		recordID, err = r[t.pkHandleCol.Offset].ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return invalidRecordID, errors.Trace(err)
 		}
@@ -256,11 +255,6 @@ func (t *BoundedTable) Row(ctx context.Context, h int64) ([]types.Datum, error) 
 	return r, nil
 }
 
-// LockRow implements table.Table LockRow interface.
-func (t *BoundedTable) LockRow(ctx context.Context, h int64, forRead bool) error {
-	return nil
-}
-
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *BoundedTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum) error {
 	// not supported, BoundedTable is TRUNCATE only
@@ -274,6 +268,11 @@ func (t *BoundedTable) AllocAutoID() (int64, error) {
 		return invalidRecordID, errors.Trace(err)
 	}
 	return recordID + initialRecordID, nil
+}
+
+// Allocator implements table.Table Allocator interface.
+func (t *BoundedTable) Allocator() autoid.Allocator {
+	return t.alloc
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.

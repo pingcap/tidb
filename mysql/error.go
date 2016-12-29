@@ -55,7 +55,7 @@ func NewErr(errCode uint16, args ...interface{}) *SQLError {
 	return e
 }
 
-// NewErrf creates a SQL error, with an error code and a format specifier
+// NewErrf creates a SQL error, with an error code and a format specifier.
 func NewErrf(errCode uint16, format string, args ...interface{}) *SQLError {
 	e := &SQLError{Code: errCode}
 

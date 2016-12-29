@@ -63,36 +63,36 @@ func (dn *dmlNode) dmlStatement() {}
 type exprNode struct {
 	node
 	types.Datum
-	Type *types.FieldType
+	Type types.FieldType
 	flag uint64
 }
 
-// SetDatum implements Expression interface.
+// SetDatum implements ExprNode interface.
 func (en *exprNode) SetDatum(datum types.Datum) {
 	en.Datum = datum
 }
 
-// GetDatum implements Expression interface.
+// GetDatum implements ExprNode interface.
 func (en *exprNode) GetDatum() *types.Datum {
 	return &en.Datum
 }
 
-// SetType implements Expression interface.
+// SetType implements ExprNode interface.
 func (en *exprNode) SetType(tp *types.FieldType) {
-	en.Type = tp
+	en.Type = *tp
 }
 
-// GetType implements Expression interface.
+// GetType implements ExprNode interface.
 func (en *exprNode) GetType() *types.FieldType {
-	return en.Type
+	return &en.Type
 }
 
-// SetFlag implements Expression interface.
+// SetFlag implements ExprNode interface.
 func (en *exprNode) SetFlag(flag uint64) {
 	en.flag = flag
 }
 
-// GetFlag implements Expression interface.
+// GetFlag implements ExprNode interface.
 func (en *exprNode) GetFlag() uint64 {
 	return en.flag
 }
@@ -101,7 +101,7 @@ type funcNode struct {
 	exprNode
 }
 
-// FunctionExpression implements FounctionNode interface.
+// FunctionExpression implements FunctionNode interface.
 func (fn *funcNode) functionExpression() {}
 
 type resultSetNode struct {

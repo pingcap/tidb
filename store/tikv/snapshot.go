@@ -15,14 +15,14 @@ package tikv
 
 import (
 	"sync"
+	"time"
 	"unsafe"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/terror"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -51,13 +51,18 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	txnCmdCounter.WithLabelValues("batch_get").Inc()
+	start := time.Now()
+	defer func() { txnCmdHistogram.WithLabelValues("batch_get").Observe(time.Since(start).Seconds()) }()
+
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
+	bo := NewBackoffer(batchGetMaxBackoff, context.Background())
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
 	m := make(map[string][]byte)
-	err := s.batchGetKeysByRegions(bytesKeys, func(k, v []byte) {
+	err := s.batchGetKeysByRegions(bo, bytesKeys, func(k, v []byte) {
 		if len(v) == 0 {
 			return
 		}
@@ -71,8 +76,8 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	return m, nil
 }
 
-func (s *tikvSnapshot) batchGetKeysByRegions(keys [][]byte, collectF func(k, v []byte)) error {
-	groups, _, err := s.store.regionCache.GroupKeysByRegion(keys)
+func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
+	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -86,100 +91,118 @@ func (s *tikvSnapshot) batchGetKeysByRegions(keys [][]byte, collectF func(k, v [
 		return nil
 	}
 	if len(batches) == 1 {
-		return errors.Trace(s.batchGetSingleRegion(batches[0], collectF))
+		return errors.Trace(s.batchGetSingleRegion(bo, batches[0], collectF))
 	}
 	ch := make(chan error)
 	for _, batch := range batches {
 		go func(batch batchKeys) {
-			ch <- s.batchGetSingleRegion(batch, collectF)
+			ch <- s.batchGetSingleRegion(bo.Fork(), batch, collectF)
 		}(batch)
 	}
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			log.Warnf("snapshot batchGet failed: %v, tid: %d", e, s.version.Ver)
+			log.Debugf("snapshot batchGet failed: %v, tid: %d", e, s.version.Ver)
 			err = e
 		}
 	}
 	return errors.Trace(err)
 }
 
-func (s *tikvSnapshot) batchGetSingleRegion(batch batchKeys, collectF func(k, v []byte)) error {
+func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
 	pending := batch.keys
-	var backoffErr error
-	for backoff := txnLockBackoff(); backoffErr == nil; backoffErr = backoff() {
+	for {
 		req := &pb.Request{
-			Type: pb.MessageType_CmdBatchGet.Enum(),
+			Type: pb.MessageType_CmdBatchGet,
 			CmdBatchGetReq: &pb.CmdBatchGetRequest{
 				Keys:    pending,
-				Version: proto.Uint64(s.version.Ver),
+				Version: s.version.Ver,
 			},
 		}
-		resp, err := s.store.SendKVReq(req, batch.region)
+		resp, err := s.store.SendKVReq(bo, req, batch.region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			err = s.batchGetKeysByRegions(pending, collectF)
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = s.batchGetKeysByRegions(bo, pending, collectF)
 			return errors.Trace(err)
 		}
 		batchGetResp := resp.GetCmdBatchGetResp()
 		if batchGetResp == nil {
 			return errors.Trace(errBodyMissing)
 		}
-		var lockedKeys [][]byte
+		var (
+			lockedKeys [][]byte
+			locks      []*Lock
+		)
 		for _, pair := range batchGetResp.Pairs {
 			keyErr := pair.GetError()
 			if keyErr == nil {
 				collectF(pair.GetKey(), pair.GetValue())
 				continue
 			}
-			// This could be slow if we meet many expired locks.
-			// TODO: Find a way to do quick unlock.
-			val, err := s.handleKeyError(keyErr)
+			lock, err := extractLockFromKeyErr(keyErr)
 			if err != nil {
-				if terror.ErrorNotEqual(err, errInnerRetryable) {
-					return errors.Trace(err)
-				}
-				lockedKeys = append(lockedKeys, pair.GetKey())
-				continue
+				return errors.Trace(err)
 			}
-			collectF(pair.GetKey(), val)
+			lockedKeys = append(lockedKeys, lock.Key)
+			locks = append(locks, lock)
 		}
 		if len(lockedKeys) > 0 {
+			ok, err := s.store.lockResolver.ResolveLocks(bo, locks)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !ok {
+				err = bo.Backoff(boTxnLock, errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
 			pending = lockedKeys
 			continue
 		}
 		return nil
 	}
-	return errors.Annotate(backoffErr, txnRetryableMark)
 }
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
+	val, err := s.get(NewBackoffer(getMaxBackoff, context.Background()), k)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return nil, kv.ErrNotExist
+	}
+	return val, nil
+}
+
+func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	req := &pb.Request{
-		Type: pb.MessageType_CmdGet.Enum(),
+		Type: pb.MessageType_CmdGet,
 		CmdGetReq: &pb.CmdGetRequest{
 			Key:     k,
-			Version: proto.Uint64(s.version.Ver),
+			Version: s.version.Ver,
 		},
 	}
-
-	var (
-		backoffErr    error
-		regionBackoff = regionMissBackoff()
-		txnBackoff    = txnLockBackoff()
-	)
-	for backoffErr == nil {
-		region, err := s.store.regionCache.GetRegion(k)
+	for {
+		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := s.store.SendKVReq(req, region.VerID())
+		resp, err := s.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			backoffErr = regionBackoff()
+			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			continue
 		}
 		cmdGetResp := resp.GetCmdGetResp()
@@ -188,21 +211,24 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 		}
 		val := cmdGetResp.GetValue()
 		if keyErr := cmdGetResp.GetError(); keyErr != nil {
-			val, err = s.handleKeyError(keyErr)
+			lock, err := extractLockFromKeyErr(keyErr)
 			if err != nil {
-				if terror.ErrorEqual(err, errInnerRetryable) {
-					backoffErr = txnBackoff()
-					continue
-				}
 				return nil, errors.Trace(err)
 			}
-		}
-		if len(val) == 0 {
-			return nil, kv.ErrNotExist
+			ok, err := s.store.lockResolver.ResolveLocks(bo, []*Lock{lock})
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !ok {
+				err = bo.Backoff(boTxnLock, errors.New(keyErr.String()))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+			continue
 		}
 		return val, nil
 	}
-	return nil, errors.Annotate(backoffErr, txnRetryableMark)
 }
 
 // Seek return a list of key-value pair after `k`.
@@ -216,37 +242,19 @@ func (s *tikvSnapshot) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	return nil, kv.ErrNotImplemented
 }
 
-// Release unimplement.
-func (s *tikvSnapshot) Release() {
-}
-
-func extractLockInfoFromKeyErr(keyErr *pb.KeyError) (*pb.LockInfo, error) {
+func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
-		return locked, nil
+		return newLock(locked), nil
 	}
-	if keyErr.Retryable != nil {
+	if keyErr.Retryable != "" {
 		err := errors.Errorf("tikv restarts txn: %s", keyErr.GetRetryable())
-		log.Warn(err)
+		log.Debug(err)
 		return nil, errors.Annotate(err, txnRetryableMark)
 	}
-	if keyErr.Abort != nil {
+	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
 		log.Warn(err)
 		return nil, errors.Trace(err)
 	}
 	return nil, errors.Errorf("unexpected KeyError: %s", keyErr.String())
-}
-
-// handleKeyError tries to resolve locks then retry to get value.
-func (s *tikvSnapshot) handleKeyError(keyErr *pb.KeyError) ([]byte, error) {
-	lockInfo, err := extractLockInfoFromKeyErr(keyErr)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	lock := newLock(s.store, lockInfo.GetPrimaryLock(), lockInfo.GetLockVersion(), lockInfo.GetKey(), s.version.Ver)
-	val, err := lock.cleanup()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return val, nil
 }

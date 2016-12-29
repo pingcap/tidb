@@ -24,6 +24,7 @@ import (
 )
 
 func TestTxStructure(t *testing.T) {
+	CustomVerboseFlag = true
 	TestingT(t)
 }
 
@@ -54,7 +55,7 @@ func (s *testTxStructureSuite) TestString(c *C) {
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 
-	tx := NewStructure(txn, []byte{0x00})
+	tx := NewStructure(txn, txn, []byte{0x00})
 
 	key := []byte("a")
 	value := []byte("1")
@@ -94,7 +95,7 @@ func (s *testTxStructureSuite) TestList(c *C) {
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 
-	tx := NewStructure(txn, []byte{0x00})
+	tx := NewStructure(txn, txn, []byte{0x00})
 
 	key := []byte("a")
 	err = tx.LPush(key, []byte("3"), []byte("2"), []byte("1"))
@@ -177,7 +178,7 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 
-	tx := NewStructure(txn, []byte{0x00})
+	tx := NewStructure(txn, txn, []byte{0x00})
 
 	key := []byte("a")
 
@@ -331,7 +332,7 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 	c.Assert(err, IsNil)
 
 	err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-		t := NewStructure(txn, []byte{0x00})
+		t := NewStructure(txn, txn, []byte{0x00})
 		err = t.Set(key, []byte("abc"))
 		c.Assert(err, IsNil)
 

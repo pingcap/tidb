@@ -21,7 +21,7 @@ import (
 )
 
 // CalcPassword is the algorithm convert hashed password to auth string.
-// See: https://dev.mysql.com/doc/internals/en/secure-password-authentication.html
+// See https://dev.mysql.com/doc/internals/en/secure-password-authentication.html
 // SHA1( password ) XOR SHA1( "20-bytes random data from server" <concat> SHA1( SHA1( password ) ) )
 func CalcPassword(scramble, sha1pwd []byte) []byte {
 	if len(sha1pwd) == 0 {

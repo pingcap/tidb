@@ -17,21 +17,21 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite) TestCharsetDatabase(c *C) {
-	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
@@ -49,94 +49,13 @@ func (s *testSuite) TestCharsetDatabase(c *C) {
 	tk.MustExec(testSQL)
 	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
-	plan.UseNewPlanner = false
-}
-
-func (s *testSuite) TestSetVar(c *C) {
-	plan.UseNewPlanner = true
-	defer testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
-	testSQL := "SET @a = 1;"
-	tk.MustExec(testSQL)
-
-	testSQL = `SET @a = "1";`
-	tk.MustExec(testSQL)
-
-	testSQL = "SET @a = null;"
-	tk.MustExec(testSQL)
-
-	testSQL = "SET @@global.autocommit = 1;"
-	tk.MustExec(testSQL)
-
-	// TODO: this test case should returns error.
-	// testSQL = "SET @@global.autocommit = null;"
-	// _, err := tk.Exec(testSQL)
-	// c.Assert(err, NotNil)
-
-	testSQL = "SET @@autocommit = 1;"
-	tk.MustExec(testSQL)
-
-	testSQL = "SET @@autocommit = null;"
-	_, err := tk.Exec(testSQL)
-	c.Assert(err, NotNil)
-
-	errTestSql := "SET @@date_format = 1;"
-	_, err = tk.Exec(errTestSql)
-	c.Assert(err, NotNil)
-
-	errTestSql = "SET @@rewriter_enabled = 1;"
-	_, err = tk.Exec(errTestSql)
-	c.Assert(err, NotNil)
-
-	errTestSql = "SET xxx = abcd;"
-	_, err = tk.Exec(errTestSql)
-	c.Assert(err, NotNil)
-
-	errTestSql = "SET @@global.a = 1;"
-	_, err = tk.Exec(errTestSql)
-	c.Assert(err, NotNil)
-
-	errTestSql = "SET @@global.timestamp = 1;"
-	_, err = tk.Exec(errTestSql)
-	c.Assert(err, NotNil)
-
-	// For issue 998
-	testSQL = "SET @issue998a=1, @issue998b=5;"
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select @issue998a, @issue998b;`).Check(testkit.Rows("1 5"))
-	testSQL = "SET @@autocommit=0, @issue998a=2;"
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select @issue998a, @@autocommit;`).Check(testkit.Rows("2 0"))
-	testSQL = "SET @@global.autocommit=1, @issue998b=6;"
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select @issue998b, @@global.autocommit;`).Check(testkit.Rows("6 1"))
-	plan.UseNewPlanner = false
-}
-
-func (s *testSuite) TestSetCharset(c *C) {
-	defer testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`SET NAMES latin1`)
-
-	ctx := tk.Se.(context.Context)
-	sessionVars := variable.GetSessionVars(ctx)
-	for _, v := range variable.SetNamesVariables {
-		sVar := sessionVars.GetSystemVar(v)
-		c.Assert(sVar.GetString() != "utf8", IsTrue)
-	}
-	tk.MustExec(`SET NAMES utf8`)
-	for _, v := range variable.SetNamesVariables {
-		sVar := sessionVars.GetSystemVar(v)
-		c.Assert(sVar.GetString(), Equals, "utf8")
-	}
-	sVar := sessionVars.GetSystemVar(variable.CollationConnection)
-	c.Assert(sVar.GetString(), Equals, "utf8_general_ci")
 }
 
 func (s *testSuite) TestDo(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("do 1, 2")
+	tk.MustExec("do 1, @a:=1")
+	tk.MustQuery("select @a").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestTransaction(c *C) {
@@ -151,13 +70,29 @@ func (s *testSuite) TestTransaction(c *C) {
 	c.Assert(inTxn(ctx), IsTrue)
 	tk.MustExec("rollback")
 	c.Assert(inTxn(ctx), IsFalse)
+
+	// Test that begin implicitly commits previous transaction.
+	tk.MustExec("use test")
+	tk.MustExec("create table txn (a int)")
+	tk.MustExec("begin")
+	tk.MustExec("insert txn values (1)")
+	tk.MustExec("begin")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from txn").Check(testkit.Rows("1"))
+
+	// Test that DDL implicitly commits previous transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert txn values (2)")
+	tk.MustExec("create table txn2 (a int)")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from txn").Check(testkit.Rows("1", "2"))
 }
 
 func inTxn(ctx context.Context) bool {
-	return (variable.GetSessionVars(ctx).Status & mysql.ServerStatusInTrans) > 0
+	return (ctx.GetSessionVars().Status & mysql.ServerStatusInTrans) > 0
 }
 
-func (s *testSuite) TestCreateUser(c *C) {
+func (s *testSuite) TestUser(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.
@@ -178,22 +113,110 @@ func (s *testSuite) TestCreateUser(c *C) {
 	createUserSQL = `CREATE USER 'test'@'localhost' IDENTIFIED BY '123';`
 	_, err := tk.Exec(createUserSQL)
 	c.Check(err, NotNil)
+	dropUserSQL := `DROP USER IF EXISTS 'test'@'localhost' ;`
+	tk.MustExec(dropUserSQL)
+	// Create user test.
+	createUserSQL = `CREATE USER 'test1'@'localhost';`
+	tk.MustExec(createUserSQL)
+	// Make sure user test in mysql.User.
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("")))
+	result.Check(testkit.Rows(rowStr))
+	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost' ;`
+	tk.MustExec(dropUserSQL)
+
+	// Test alter user.
+	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123';`
+	tk.MustExec(createUserSQL)
+	alterUserSQL := `ALTER USER 'test1'@'localhost' IDENTIFIED BY '111';`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("111")))
+	result.Check(testkit.Rows(rowStr))
+	alterUserSQL = `ALTER USER IF EXISTS 'test2'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '1';`
+	_, err = tk.Exec(alterUserSQL)
+	c.Check(err, NotNil)
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test2" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("222")))
+	result.Check(testkit.Rows(rowStr))
+	alterUserSQL = `ALTER USER IF EXISTS'test_not_exist'@'localhost' IDENTIFIED BY '1', 'test3'@'localhost' IDENTIFIED BY '333';`
+	_, err = tk.Exec(alterUserSQL)
+	c.Check(err, NotNil)
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test3" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("333")))
+	result.Check(testkit.Rows(rowStr))
+	// Test alter user user().
+	alterUserSQL = `ALTER USER USER() IDENTIFIED BY '1';`
+	_, err = tk.Exec(alterUserSQL)
+	c.Check(err, NotNil)
+	tk.Se, err = tidb.CreateSession(s.store)
+	c.Check(err, IsNil)
+	ctx := tk.Se.(context.Context)
+	ctx.GetSessionVars().User = "test1@localhost"
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("1")))
+	result.Check(testkit.Rows(rowStr))
+	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
+	tk.MustExec(dropUserSQL)
+
+	// Test drop user if exists.
+	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
+	tk.MustExec(createUserSQL)
+	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost' ;`
+	tk.MustExec(dropUserSQL)
+	// Test negative cases without IF EXISTS.
+	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
+	tk.MustExec(createUserSQL)
+	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
+	_, err = tk.Exec(dropUserSQL)
+	c.Check(err, NotNil)
+	dropUserSQL = `DROP USER 'test3'@'localhost';`
+	_, err = tk.Exec(dropUserSQL)
+	c.Check(err, NotNil)
+	dropUserSQL = `DROP USER 'test1'@'localhost';`
+	_, err = tk.Exec(dropUserSQL)
+	c.Check(err, NotNil)
+	// Test positive cases without IF EXISTS.
+	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
+	tk.MustExec(createUserSQL)
+	dropUserSQL = `DROP USER 'test1'@'localhost', 'test3'@'localhost';`
+	tk.MustExec(dropUserSQL)
 }
 
 func (s *testSuite) TestSetPwd(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+
 	createUserSQL := `CREATE USER 'testpwd'@'localhost' IDENTIFIED BY '';`
 	tk.MustExec(createUserSQL)
-
 	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	rowStr := fmt.Sprintf("%v", []byte(""))
 	result.Check(testkit.Rows(rowStr))
 
+	// set password for
 	tk.MustExec(`SET PASSWORD FOR 'testpwd'@'localhost' = 'password';`)
-
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("password")))
+	result.Check(testkit.Rows(rowStr))
+
+	// set password
+	setPwdSQL := `SET PASSWORD = 'pwd'`
+	// Session user is empty.
+	_, err := tk.Exec(setPwdSQL)
+	c.Check(err, NotNil)
+	tk.Se, err = tidb.CreateSession(s.store)
+	c.Check(err, IsNil)
+	ctx := tk.Se.(context.Context)
+	ctx.GetSessionVars().User = "testpwd1@localhost"
+	// Session user doesn't exist.
+	_, err = tk.Exec(setPwdSQL)
+	c.Check(terror.ErrorEqual(err, executor.ErrPasswordNoMatch), IsTrue)
+	// normal
+	ctx.GetSessionVars().User = "testpwd@localhost"
+	tk.MustExec(setPwdSQL)
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("pwd")))
 	result.Check(testkit.Rows(rowStr))
 }
 
@@ -207,9 +230,9 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	c.Check(err, IsNil)
 	tableID := t.Meta().ID
 
-	txn, err := ctx.GetTxn(true)
+	err = ctx.NewTxn()
 	c.Check(err, IsNil)
-	meta := meta.NewMeta(txn)
+	meta := meta.NewMeta(ctx.Txn())
 	tpb, err := meta.GetTableStats(tableID)
 	c.Check(err, IsNil)
 	c.Check(tpb, NotNil)

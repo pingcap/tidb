@@ -91,9 +91,6 @@ type Table interface {
 	// RecordKey returns the key in KV storage for the row.
 	RecordKey(h int64) kv.Key
 
-	// Truncate truncates the table.
-	Truncate(ctx context.Context) (err error)
-
 	// AddRecord inserts a row into the table.
 	AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error)
 
@@ -106,6 +103,9 @@ type Table interface {
 	// AllocAutoID allocates an auto_increment ID for a new row.
 	AllocAutoID() (int64, error)
 
+	// Allocator returns Allocator.
+	Allocator() autoid.Allocator
+
 	// RebaseAutoID rebases the auto_increment ID base.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
@@ -113,9 +113,6 @@ type Table interface {
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
-
-	// LockRow locks a row.
-	LockRow(ctx context.Context, h int64, forRead bool) error
 
 	// Seek returns the handle greater or equal to h.
 	Seek(ctx context.Context, h int64) (handle int64, found bool, err error)
@@ -145,6 +142,17 @@ const (
 	codeDuplicateColumn = 1110
 	codeNoDefaultValue  = 1364
 )
+
+// Slice is used for table sorting.
+type Slice []Table
+
+func (s Slice) Len() int { return len(s) }
+
+func (s Slice) Less(i, j int) bool {
+	return s[i].Meta().Name.O < s[j].Meta().Name.O
+}
+
+func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{

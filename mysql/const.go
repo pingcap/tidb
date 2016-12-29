@@ -15,9 +15,11 @@ package mysql
 
 // Version informations.
 const (
-	MinProtocolVersion byte   = 10
-	MaxPayloadLen      int    = 1<<24 - 1
-	ServerVersion      string = "5.5.31-TiDB-1.0"
+	MinProtocolVersion byte = 10
+	MaxPayloadLen      int  = 1<<24 - 1
+	// The version number should be three digits.
+	// See https://dev.mysql.com/doc/refman/5.7/en/which-version.html
+	ServerVersion string = "5.7.1-TiDB-1.0"
 )
 
 // Header informations.
@@ -42,6 +44,13 @@ const (
 	ServerStatusMetadataChanged    uint16 = 0x0400
 	ServerStatusWasSlow            uint16 = 0x0800
 	ServerPSOutParams              uint16 = 0x1000
+)
+
+// Identifier length limitations.
+const (
+	MaxTableNameLength    int = 64
+	MaxDatabaseNameLength int = 64
+	MaxColumnNameLength   int = 64
 )
 
 // Command informations.

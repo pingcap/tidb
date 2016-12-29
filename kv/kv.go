@@ -14,7 +14,6 @@
 package kv
 
 import (
-	"bytes"
 	"io"
 )
 
@@ -28,8 +27,10 @@ const (
 	// PresumeKeyNotExistsError is the option key for error.
 	// When PresumeKeyNotExists is set and condition is not match, should throw the error.
 	PresumeKeyNotExistsError
-	// RetryAttempts is the number of txn retry attempt.
-	RetryAttempts
+	// BinlogData is the binlog data to write.
+	BinlogData
+	// Skip existing check when "prewrite".
+	SkipCheckForWrite
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.
@@ -63,12 +64,8 @@ type RetrieverMutator interface {
 	Mutator
 }
 
-// MemBuffer is an in-memory kv collection. It should be released after use.
-type MemBuffer interface {
-	RetrieverMutator
-	// Release releases the buffer.
-	Release()
-}
+// MemBuffer is an in-memory kv collection, can be used to buffer write operations.
+type MemBuffer RetrieverMutator
 
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
@@ -89,10 +86,11 @@ type Transaction interface {
 	DelOption(opt Option)
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
-	// GetClient gets a client instance.
-	GetClient() Client
 	// StartTS returns the transaction start timestamp.
 	StartTS() uint64
+	// Valid returns if the transaction is valid.
+	// A transaction become invalid after commit or rollback.
+	Valid() bool
 }
 
 // Client is used to send request to KV layer.
@@ -112,18 +110,8 @@ const (
 	ReqSubTypeBasic   = 0
 	ReqSubTypeDesc    = 10000
 	ReqSubTypeGroupBy = 10001
+	ReqSubTypeTopN    = 10002
 )
-
-// KeyRange represents a range where StartKey <= key < EndKey.
-type KeyRange struct {
-	StartKey Key
-	EndKey   Key
-}
-
-// IsPoint checks if the key range represents a point.
-func (r *KeyRange) IsPoint() bool {
-	return bytes.Equal(r.StartKey.PrefixNext(), r.EndKey)
-}
 
 // Request represents a kv request.
 type Request struct {
@@ -156,8 +144,6 @@ type Snapshot interface {
 	Retriever
 	// BatchGet gets a batch of values from snapshot.
 	BatchGet(keys []Key) (map[string][]byte, error)
-	// Release releases the snapshot to store.
-	Release()
 }
 
 // Driver is the interface that must be implemented by a KV storage.
@@ -175,6 +161,8 @@ type Storage interface {
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) (Snapshot, error)
+	// GetClient gets a client instance.
+	GetClient() Client
 	// Close store
 	Close() error
 	// Storage's unique ID

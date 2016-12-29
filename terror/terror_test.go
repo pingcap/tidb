@@ -14,6 +14,7 @@
 package terror
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -23,6 +24,7 @@ import (
 )
 
 func TestT(t *testing.T) {
+	CustomVerboseFlag = true
 	TestingT(t)
 }
 
@@ -50,6 +52,35 @@ func (s *testTErrorSuite) TestTError(c *C) {
 	c.Assert(optimizerErr.Equal(optimizerErr.Gen("def")), IsTrue)
 	c.Assert(optimizerErr.Equal(nil), IsFalse)
 	c.Assert(optimizerErr.Equal(errors.New("abc")), IsFalse)
+
+	// Test case for FastGen.
+	c.Assert(optimizerErr.Equal(optimizerErr.FastGen("def")), IsTrue)
+	c.Assert(optimizerErr.Equal(optimizerErr.FastGen("def: %s", "def")), IsTrue)
+	kvErr := ClassKV.New(1062, "key already exist")
+	e := kvErr.FastGen("Duplicate entry '%d' for key 'PRIMARY'", 1)
+	c.Assert(e.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	kvMySQLErrCodes := map[ErrCode]uint16{
+		1062: uint16(1062),
+	}
+	ErrClassToMySQLCodes[ClassKV] = kvMySQLErrCodes
+	sqlErr := e.ToSQLError()
+	c.Assert(sqlErr.Message, Equals, "Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(sqlErr.Code, Equals, uint16(1062))
+}
+
+func (s *testTErrorSuite) TestJson(c *C) {
+	prevTErr := &Error{
+		class:   ClassTable,
+		code:    CodeExecResultIsEmpty,
+		message: "json test",
+	}
+	buf, err := json.Marshal(prevTErr)
+	c.Assert(err, IsNil)
+	var curTErr Error
+	err = json.Unmarshal(buf, &curTErr)
+	c.Assert(err, IsNil)
+	isEqual := prevTErr.Equal(&curTErr)
+	c.Assert(isEqual, IsTrue)
 }
 
 var predefinedErr = ClassExecutor.New(ErrCode(123), "predefiend error")

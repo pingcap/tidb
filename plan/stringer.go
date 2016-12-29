@@ -15,7 +15,6 @@ package plan
 
 import (
 	"fmt"
-	"math"
 	"strings"
 )
 
@@ -27,7 +26,7 @@ func ToString(p Plan) string {
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch in.(type) {
-	case *JoinOuter, *JoinInner, *Join, *Union, *NewUnion:
+	case *Join, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin, *Apply, *PhysicalApply:
 		idxs = append(idxs, len(strs))
 	}
 
@@ -39,60 +38,61 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch x := in.(type) {
 	case *CheckTable:
 		str = "CheckTable"
-	case *IndexScan:
-		str = fmt.Sprintf("Index(%s.%s)", x.Table.Name.L, x.Index.Name.L)
-		if x.LimitCount != nil {
-			str += fmt.Sprintf(" + Limit(%v)", *x.LimitCount)
+	case *PhysicalIndexScan:
+		str = fmt.Sprintf("Index(%s.%s)%v", x.Table.Name.L, x.Index.Name.L, x.Ranges)
+	case *PhysicalTableScan:
+		str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
+	case *PhysicalDummyScan:
+		str = "Dummy"
+	case *PhysicalHashJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		if x.SmallTable == 0 {
+			str = "RightHashJoin{" + strings.Join(children, "->") + "}"
+		} else {
+			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
 		}
-	case *Apply:
-		str = fmt.Sprintf("Apply(%s)", ToString(x.InnerPlan))
+		for _, eq := range x.EqualConditions {
+			l := eq.Args[0].String()
+			r := eq.Args[1].String()
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
+	case *PhysicalHashSemiJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		if x.WithAux {
+			str = "SemiJoinWithAux{" + strings.Join(children, "->") + "}"
+		} else {
+			str = "SemiJoin{" + strings.Join(children, "->") + "}"
+		}
+	case *Apply, *PhysicalApply:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		str = "Apply{" + strings.Join(children, "->") + "}"
 	case *Exists:
 		str = "Exists"
 	case *MaxOneRow:
 		str = "MaxOneRow"
 	case *Limit:
 		str = "Limit"
-	case *SelectFields:
-		str = "Fields"
 	case *SelectLock:
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
-	case *Filter:
-		str = "Filter"
 	case *Sort:
 		str = "Sort"
 		if x.ExecLimit != nil {
 			str += fmt.Sprintf(" + Limit(%v) + Offset(%v)", x.ExecLimit.Count, x.ExecLimit.Offset)
 		}
-	case *TableScan:
-		if len(x.Ranges) > 0 {
-			ran := x.Ranges[0]
-			if ran.LowVal != math.MinInt64 || ran.HighVal != math.MaxInt64 {
-				str = fmt.Sprintf("Range(%s)", x.Table.Name.L)
-			} else {
-				str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
-			}
-		} else {
-			str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
-		}
-		if x.LimitCount != nil {
-			str += fmt.Sprintf(" + Limit(%v)", *x.LimitCount)
-		}
-	case *JoinOuter:
-		last := len(idxs) - 1
-		idx := idxs[last]
-		children := strs[idx:]
-		strs = strs[:idx]
-		str = "OuterJoin{" + strings.Join(children, "->") + "}"
-		idxs = idxs[:last]
-	case *JoinInner:
-		last := len(idxs) - 1
-		idx := idxs[last]
-		children := strs[idx:]
-		strs = strs[:idx]
-		str = "InnerJoin{" + strings.Join(children, "->") + "}"
-		idxs = idxs[:last]
 	case *Join:
 		last := len(idxs) - 1
 		idx := idxs[last]
@@ -100,27 +100,50 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		str = "Join{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
-	case *Union, *NewUnion:
+		for _, eq := range x.EqualConditions {
+			l := eq.Args[0].String()
+			r := eq.Args[1].String()
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
+	case *Union:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
 		strs = strs[:idx]
 		str = "UnionAll{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
-	case *NewTableScan:
-		str = fmt.Sprintf("DataScan(%v)", x.Table.Name.L)
+	case *DataSource:
+		if x.TableAsName != nil && x.TableAsName.L != "" {
+			str = fmt.Sprintf("DataScan(%s)", x.TableAsName)
+		} else {
+			str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
+		}
 	case *Selection:
 		str = "Selection"
 	case *Projection:
 		str = "Projection"
+	case *PhysicalAggregation:
+		switch x.AggType {
+		case StreamedAgg:
+			str = "StreamAgg"
+		default:
+			str = "HashAgg"
+		}
 	case *Aggregation:
-		str = "Aggr"
-	case *Aggregate:
-		str = "Aggregate"
+		str = "Aggr("
+		for i, aggFunc := range x.AggFuncs {
+			str += aggFunc.String()
+			if i != len(x.AggFuncs)-1 {
+				str += ","
+			}
+		}
+		str += ")"
 	case *Distinct:
 		str = "Distinct"
 	case *Trim:
 		str = "Trim"
+	case *Cache:
+		str = "Cache"
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

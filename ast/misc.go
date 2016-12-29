@@ -19,12 +19,13 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/db"
 )
 
 var (
 	_ StmtNode = &AdminStmt{}
+	_ StmtNode = &AlterUserStmt{}
 	_ StmtNode = &BeginStmt{}
+	_ StmtNode = &BinlogStmt{}
 	_ StmtNode = &CommitStmt{}
 	_ StmtNode = &CreateUserStmt{}
 	_ StmtNode = &DeallocateStmt{}
@@ -34,11 +35,11 @@ var (
 	_ StmtNode = &GrantStmt{}
 	_ StmtNode = &PrepareStmt{}
 	_ StmtNode = &RollbackStmt{}
-	_ StmtNode = &SetCharsetStmt{}
 	_ StmtNode = &SetPwdStmt{}
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &UseStmt{}
 	_ StmtNode = &AnalyzeTableStmt{}
+	_ StmtNode = &FlushTableStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -51,7 +52,7 @@ type TypeOpt struct {
 }
 
 // FloatOpt is used for parsing floating-point type option from SQL.
-// See: http://dev.mysql.com/doc/refman/5.7/en/floating-point-types.html
+// See http://dev.mysql.com/doc/refman/5.7/en/floating-point-types.html
 type FloatOpt struct {
 	Flen    int
 	Decimal int
@@ -68,7 +69,7 @@ type AuthOption struct {
 
 // ExplainStmt is a statement to provide information about how is SQL statement executed
 // or get columns information in a table.
-// See: https://dev.mysql.com/doc/refman/5.7/en/explain.html
+// See https://dev.mysql.com/doc/refman/5.7/en/explain.html
 type ExplainStmt struct {
 	stmtNode
 
@@ -92,7 +93,7 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 
 // PrepareStmt is a statement to prepares a SQL statement which contains placeholders,
 // and it is executed with ExecuteStmt and released with DeallocateStmt.
-// See: https://dev.mysql.com/doc/refman/5.7/en/prepare.html
+// See https://dev.mysql.com/doc/refman/5.7/en/prepare.html
 type PrepareStmt struct {
 	stmtNode
 
@@ -119,7 +120,7 @@ func (n *PrepareStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // DeallocateStmt is a statement to release PreparedStmt.
-// See: https://dev.mysql.com/doc/refman/5.7/en/deallocate-prepare.html
+// See https://dev.mysql.com/doc/refman/5.7/en/deallocate-prepare.html
 type DeallocateStmt struct {
 	stmtNode
 
@@ -137,7 +138,7 @@ func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // ExecuteStmt is a statement to execute PreparedStmt.
-// See: https://dev.mysql.com/doc/refman/5.7/en/execute.html
+// See https://dev.mysql.com/doc/refman/5.7/en/execute.html
 type ExecuteStmt struct {
 	stmtNode
 
@@ -163,7 +164,7 @@ func (n *ExecuteStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // BeginStmt is a statement to start a new transaction.
-// See: https://dev.mysql.com/doc/refman/5.7/en/commit.html
+// See https://dev.mysql.com/doc/refman/5.7/en/commit.html
 type BeginStmt struct {
 	stmtNode
 }
@@ -178,8 +179,26 @@ func (n *BeginStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// BinlogStmt is an internal-use statement.
+// We just parse and ignore it.
+// See http://dev.mysql.com/doc/refman/5.7/en/binlog.html
+type BinlogStmt struct {
+	stmtNode
+	Str string
+}
+
+// Accept implements Node Accept interface.
+func (n *BinlogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*BinlogStmt)
+	return v.Leave(n)
+}
+
 // CommitStmt is a statement to commit the current transaction.
-// See: https://dev.mysql.com/doc/refman/5.7/en/commit.html
+// See https://dev.mysql.com/doc/refman/5.7/en/commit.html
 type CommitStmt struct {
 	stmtNode
 }
@@ -195,7 +214,7 @@ func (n *CommitStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // RollbackStmt is a statement to roll back the current transaction.
-// See: https://dev.mysql.com/doc/refman/5.7/en/commit.html
+// See https://dev.mysql.com/doc/refman/5.7/en/commit.html
 type RollbackStmt struct {
 	stmtNode
 }
@@ -211,7 +230,7 @@ func (n *RollbackStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // UseStmt is a statement to use the DBName database as the current database.
-// See: https://dev.mysql.com/doc/refman/5.7/en/use.html
+// See https://dev.mysql.com/doc/refman/5.7/en/use.html
 type UseStmt struct {
 	stmtNode
 
@@ -228,6 +247,12 @@ func (n *UseStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+const (
+	// SetNames is the const for set names/charset stmt.
+	// If VariableAssignment.Name == Names, it should be set names/charset stmt.
+	SetNames = "SetNAMES"
+)
+
 // VariableAssignment is a variable assignment struct.
 type VariableAssignment struct {
 	node
@@ -235,6 +260,11 @@ type VariableAssignment struct {
 	Value    ExprNode
 	IsGlobal bool
 	IsSystem bool
+
+	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
+	// For SetCharsetStmt, Value is charset, ExtendValue is collation.
+	// TODO: Use SetStmt to implement set password statement.
+	ExtendValue *ValueExpr
 }
 
 // Accept implements Node interface.
@@ -249,6 +279,26 @@ func (n *VariableAssignment) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Value = node.(ExprNode)
+	return v.Leave(n)
+}
+
+// FlushTableStmt is the statement to flush table.
+// if Tables is empty, it means flush all tables.
+type FlushTableStmt struct {
+	stmtNode
+
+	Tables          []*TableName
+	NoWriteToBinLog bool
+	ReadLock        bool
+}
+
+// Accept implements Node Accept interface.
+func (n *FlushTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*FlushTableStmt)
 	return v.Leave(n)
 }
 
@@ -276,8 +326,9 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+/*
 // SetCharsetStmt is a statement to assign values to character and collation variables.
-// See: https://dev.mysql.com/doc/refman/5.7/en/set-statement.html
+// See https://dev.mysql.com/doc/refman/5.7/en/set-statement.html
 type SetCharsetStmt struct {
 	stmtNode
 
@@ -294,9 +345,10 @@ func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
 	n = newNode.(*SetCharsetStmt)
 	return v.Leave(n)
 }
+*/
 
 // SetPwdStmt is a statement to assign a password to user account.
-// See: https://dev.mysql.com/doc/refman/5.7/en/set-password.html
+// See https://dev.mysql.com/doc/refman/5.7/en/set-password.html
 type SetPwdStmt struct {
 	stmtNode
 
@@ -321,7 +373,7 @@ type UserSpec struct {
 }
 
 // CreateUserStmt creates user account.
-// See: https://dev.mysql.com/doc/refman/5.7/en/create-user.html
+// See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 type CreateUserStmt struct {
 	stmtNode
 
@@ -336,6 +388,45 @@ func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateUserStmt)
+	return v.Leave(n)
+}
+
+// AlterUserStmt modifies user account.
+// See https://dev.mysql.com/doc/refman/5.7/en/alter-user.html
+type AlterUserStmt struct {
+	stmtNode
+
+	IfExists    bool
+	CurrentAuth *AuthOption
+	Specs       []*UserSpec
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterUserStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterUserStmt)
+	return v.Leave(n)
+}
+
+// DropUserStmt creates user account.
+// See http://dev.mysql.com/doc/refman/5.7/en/drop-user.html
+type DropUserStmt struct {
+	stmtNode
+
+	IfExists bool
+	UserList []string
+}
+
+// Accept implements Node Accept interface.
+func (n *DropUserStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropUserStmt)
 	return v.Leave(n)
 }
 
@@ -494,7 +585,7 @@ func (i Ident) Full(ctx context.Context) (full Ident) {
 	if i.Schema.O != "" {
 		full.Schema = i.Schema
 	} else {
-		full.Schema = model.NewCIStr(db.GetCurrentSchema(ctx))
+		full.Schema = model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	}
 	return
 }

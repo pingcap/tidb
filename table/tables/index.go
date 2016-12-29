@@ -68,7 +68,7 @@ func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 	}
 	// get indexedValues
 	buf := c.it.Key()[len(c.prefix):]
-	vv, err := codec.Decode(buf)
+	vv, err := codec.Decode(buf, len(c.idx.idxInfo.Columns))
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
@@ -118,7 +118,7 @@ func (c *index) Meta() *model.IndexInfo {
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
 func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, distinct bool, err error) {
 	if c.idxInfo.Unique {
-		// See: https://dev.mysql.com/doc/refman/5.7/en/create-index.html
+		// See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 		// A UNIQUE index creates a constraint such that all values in the index must be distinct.
 		// An error occurs if you try to add a new row with a key value that matches an existing row.
 		// For all engines, a UNIQUE index permits multiple NULL values for columns that can contain NULL.
@@ -130,6 +130,20 @@ func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, d
 			}
 		}
 	}
+
+	// For string columns, indexes can be created that use only the leading part of column values,
+	// using col_name(length) syntax to specify an index prefix length.
+	for i := 0; i < len(indexedValues); i++ {
+		v := &indexedValues[i]
+		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+			ic := c.idxInfo.Columns[i]
+			if ic.Length != types.UnspecifiedLength && len(v.GetBytes()) > ic.Length {
+				// truncate value and limit its length
+				v.SetBytes(v.GetBytes()[:ic.Length])
+			}
+		}
+	}
+
 	key = append(key, []byte(c.prefix)...)
 	if distinct {
 		key, err = codec.EncodeKey(key, indexedValues...)
@@ -143,25 +157,29 @@ func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, d
 }
 
 // Create creates a new entry in the kvIndex data.
-// If the index is unique and there is an existing entry with the same key, Create will return ErrKeyExists.
-func (c *index) Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) error {
+// If the index is unique and there is an existing entry with the same key,
+// Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
+func (c *index) Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error) {
 	key, distinct, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	if !distinct {
-		// TODO: reconsider value
-		err = rm.Set(key, []byte("timestamp?"))
-		return errors.Trace(err)
+		// non-unique index doesn't need store value, write a '0' to reduce space
+		err = rm.Set(key, []byte{'0'})
+		return 0, errors.Trace(err)
 	}
 
-	_, err = rm.Get(key)
+	value, err := rm.Get(key)
 	if kv.IsErrNotFound(err) {
 		err = rm.Set(key, encodeHandle(h))
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-
-	return errors.Trace(kv.ErrKeyExists)
+	handle, err := decodeHandle(value)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return handle, errors.Trace(kv.ErrKeyExists)
 }
 
 // Delete removes the entry for handle h and indexdValues from KV index.
@@ -260,8 +278,9 @@ func (c *index) Exist(rm kv.RetrieverMutator, indexedValues []types.Datum, h int
 func (c *index) FetchValues(r []types.Datum) ([]types.Datum, error) {
 	vals := make([]types.Datum, len(c.idxInfo.Columns))
 	for i, ic := range c.idxInfo.Columns {
-		if ic.Offset < 0 || ic.Offset > len(r) {
-			return nil, table.ErrIndexOutBound.Gen("Index column offset out of bound")
+		if ic.Offset < 0 || ic.Offset >= len(r) {
+			return nil, table.ErrIndexOutBound.Gen("Index column %s offset out of bound, offset: %d, row: %v",
+				ic.Name, ic.Offset, r)
 		}
 		vals[i] = r[ic.Offset]
 	}

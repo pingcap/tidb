@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
@@ -178,7 +177,7 @@ func (p *UserPrivileges) Check(ctx context.Context, db *model.DBInfo, tbl *model
 		// Lazy load
 		if len(p.User) == 0 {
 			// User current user
-			p.User = variable.GetSessionVars(ctx).User
+			p.User = ctx.GetSessionVars().User
 			if len(p.User) == 0 {
 				// In embedded db mode, user does not need to login. So we do not have username.
 				// TODO: remove this check latter.
@@ -246,7 +245,7 @@ func (p *UserPrivileges) loadPrivileges(ctx context.Context) error {
 }
 
 // mysql.User/mysql.DB table privilege columns start from index 3.
-// See: booststrap.go CreateUserTable/CreateDBPrivTable
+// See booststrap.go CreateUserTable/CreateDBPrivTable
 const userTablePrivColumnStartIndex = 3
 const dbTablePrivColumnStartIndex = 3
 

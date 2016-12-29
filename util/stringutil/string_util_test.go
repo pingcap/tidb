@@ -21,31 +21,13 @@ import (
 )
 
 func TestT(t *testing.T) {
+	CustomVerboseFlag = true
 	TestingT(t)
 }
 
 var _ = Suite(&testStringUtilSuite{})
 
 type testStringUtilSuite struct {
-}
-
-func (s *testStringUtilSuite) TestRemoveUselessBackslash(c *C) {
-	defer testleak.AfterTest(c)()
-	table := []struct {
-		str    string
-		expect string
-	}{
-		{"xxxx", "xxxx"},
-		{`\x01`, `x01`},
-		{`\b01`, `\b01`},
-		{`\B01`, `B01`},
-		{`'\'a\''`, `'\'a\''`},
-	}
-
-	for _, t := range table {
-		x := RemoveUselessBackslash(t.str)
-		c.Assert(x, Equals, t.expect)
-	}
 }
 
 func (s *testStringUtilSuite) TestReverse(c *C) {
@@ -73,90 +55,32 @@ func (s *testStringUtilSuite) TestUnquote(c *C) {
 		expect string
 		ok     bool
 	}{
-		{"", "", false},
-		{"'", "", false},
-		{`'abc"`, "", false},
-		{`abcdef`, "", false},
-		{`abcdea`, "", false},
-		{"```", "", false},
-		{"'abc'def'", "", false},
+		{``, ``, false},
+		{`'`, ``, false},
+		{`'abc"`, ``, false},
+		{`abcdea`, ``, false},
+		{`'abc'def'`, ``, false},
+		{`"abc\"`, ``, false},
 
 		{`"abcdef"`, `abcdef`, true},
 		{`"abc'def"`, `abc'def`, true},
-		{`"汉字测试"`, `汉字测试`, true},
+		{`"\a汉字测试"`, `a汉字测试`, true},
 		{`"☺"`, "☺", true},
-		{`"\xFF"`, "\xFF", true},
-		{`"\U00010111"`, "\U00010111", true},
-		{`"\U0001011111"`, "\U0001011111", true},
-		{`"\a\b\f\n\r\t\v\\\""`, "\a\b\f\n\r\t\v\\\"", true},
+		{`"\xFF"`, "xFF", true},
+		{`"\U00010111"`, "U00010111", true},
+		{`"\U0001011111"`, "U0001011111", true},
+		{`"\a\b\f\n\r\t\v\\\""`, "a\bf\n\r\tv\\\"", true},
+		{`"\Z\%\_"`, "\032\\%\\_", true},
+		{`"abc\0"`, "abc\000", true},
+		{`"abc\"abc"`, `abc"abc`, true},
 
 		{`'abcdef'`, `abcdef`, true},
 		{`'"'`, "\"", true},
-		{`'\a\b\f\n\r\t\v\\\''`, "\a\b\f\n\r\t\v\\'", true},
+		{`'\a\b\f\n\r\t\v\\\''`, "a\bf\n\r\tv\\'", true},
 		{`' '`, " ", true},
-
-		{"``", ``, true},
-		{"`a`", `a`, true},
-		{"`abc`", `abc`, true},
-		{"`☺`", `☺`, true},
-		{"`hello world`", `hello world`, true},
-		{"`\\xFF`", `\xFF`, true},
-	}
-
-	for _, t := range table {
-		x, err := Unquote(t.str)
-		c.Assert(x, Equals, t.expect)
-		comment := Commentf("source %v", t.str)
-		if t.ok {
-			c.Assert(err, IsNil, comment)
-		} else {
-			c.Assert(err, NotNil, comment)
-		}
-	}
-}
-
-func (s *testStringUtilSuite) TestUnquoteChar(c *C) {
-	defer testleak.AfterTest(c)()
-	table := []struct {
-		str    string
-		expect string
-		ok     bool
-	}{
-		{"", "", false},
-		{"'", "", false},
-		{`'abc"`, "", false},
-		{`abcdef`, "", false},
-		{`abcdea`, "", false},
-		{"```", "", false},
-		{"'abc'def'", "", false},
-		{`'abc\n\'`, "", false},
-		{`"abc\0"`, "", false},
-		{`"\098"`, "", false},
-		{`"\777"`, "", false},
-		{`"\汉字"`, "", false},
-
-		{`"abcdef"`, `abcdef`, true},
-		{`"abc'def"`, `abc'def`, true},
-		{`"汉字测试"`, `汉字测试`, true},
-		{`"☺"`, "☺", true},
-		{`"\u0011"`, "\u0011", true},
-		{`"\xFF"`, "\xFF", true},
-		{`"\U00010111"`, "\U00010111", true},
-		{`"\U0001011111"`, "\U0001011111", true},
-		{`"\a\b\f\n\r\t\v\\\""`, "\a\b\f\n\r\t\v\\\"", true},
-		{`"\066"`, "\066", true},
-
-		{`'abcdef'`, `abcdef`, true},
-		{`'"'`, "\"", true},
-		{`'\a\b\f\n\r\t\v\\\''`, "\a\b\f\n\r\t\v\\'", true},
-		{`' '`, " ", true},
-
-		{"``", ``, true},
-		{"`a`", `a`, true},
-		{"`abc`", `abc`, true},
-		{"`☺`", `☺`, true},
-		{"`hello world`", `hello world`, true},
-		{"`\\xFF`", `\xFF`, true},
+		{"'\\a汉字'", "a汉字", true},
+		{"'\\a\x90'", "a\x90", true},
+		{`"\aèàø»"`, `aèàø»`, true},
 	}
 
 	for _, t := range table {

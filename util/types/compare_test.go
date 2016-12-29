@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -41,19 +42,19 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{uint64(1), uint64(1), 0},
 		{uint64(1), int64(-1), 1},
 		{uint64(1), "1", 0},
-		{mysql.NewDecimalFromInt(1, 0), mysql.NewDecimalFromInt(1, 0), 0},
-		{mysql.NewDecimalFromInt(1, 0), "1", 0},
-		{mysql.NewDecimalFromInt(1, 0), []byte("1"), 0},
+		{NewDecFromInt(1), NewDecFromInt(1), 0},
+		{NewDecFromInt(1), "1", 0},
+		{NewDecFromInt(1), []byte("1"), 0},
 		{"1", "1", 0},
 		{"1", int64(-1), 1},
 		{"1", float64(2), -1},
 		{"1", uint64(1), 0},
-		{"1", mysql.NewDecimalFromInt(1, 0), 0},
-		{"2011-01-01 11:11:11", mysql.Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 0}, -1},
-		{"12:00:00", mysql.ZeroDuration, 1},
-		{mysql.ZeroDuration, mysql.ZeroDuration, 0},
-		{mysql.Time{Time: time.Now().Add(time.Second * 10), Type: mysql.TypeDatetime, Fsp: 0},
-			mysql.Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 0}, 1},
+		{"1", NewDecFromInt(1), 0},
+		{"2011-01-01 11:11:11", Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 0}, -1},
+		{"12:00:00", ZeroDuration, 1},
+		{ZeroDuration, ZeroDuration, 0},
+		{Time{Time: FromGoTime(time.Now().Add(time.Second * 10)), Type: mysql.TypeDatetime, Fsp: 0},
+			Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 0}, 1},
 
 		{nil, 2, -1},
 		{nil, nil, 0},
@@ -91,14 +92,14 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{[]byte(""), nil, 1},
 		{[]byte(""), []byte("sff"), -1},
 
-		{mysql.Time{}, nil, 1},
-		{mysql.Time{}, mysql.Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 3}, -1},
-		{mysql.Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 3}, "0000-00-00 00:00:00", 1},
+		{Time{Time: ZeroTime}, nil, 1},
+		{Time{Time: ZeroTime}, Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 3}, -1},
+		{Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 3}, "0000-00-00 00:00:00", 1},
 
-		{mysql.Duration{Duration: time.Duration(34), Fsp: 2}, nil, 1},
-		{mysql.Duration{Duration: time.Duration(34), Fsp: 2}, mysql.Duration{Duration: time.Duration(29034), Fsp: 2}, -1},
-		{mysql.Duration{Duration: time.Duration(3340), Fsp: 2}, mysql.Duration{Duration: time.Duration(34), Fsp: 2}, 1},
-		{mysql.Duration{Duration: time.Duration(34), Fsp: 2}, mysql.Duration{Duration: time.Duration(34), Fsp: 2}, 0},
+		{Duration{Duration: time.Duration(34), Fsp: 2}, nil, 1},
+		{Duration{Duration: time.Duration(34), Fsp: 2}, Duration{Duration: time.Duration(29034), Fsp: 2}, -1},
+		{Duration{Duration: time.Duration(3340), Fsp: 2}, Duration{Duration: time.Duration(34), Fsp: 2}, 1},
+		{Duration{Duration: time.Duration(34), Fsp: 2}, Duration{Duration: time.Duration(34), Fsp: 2}, 0},
 
 		{[]byte{}, []byte{}, 0},
 		{[]byte("abc"), []byte("ab"), 1},
@@ -109,54 +110,62 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{[]interface{}{1, 3, 3}, []interface{}{1, 2, 3}, 1},
 		{[]interface{}{1, 2, 3}, []interface{}{2, 2, 3}, -1},
 
-		{mysql.Hex{Value: 1}, 1, 0},
-		{mysql.Hex{Value: 0x4D7953514C}, "MySQL", 0},
-		{mysql.Hex{Value: 0}, uint64(10), -1},
-		{mysql.Hex{Value: 1}, float64(0), 1},
-		{mysql.Hex{Value: 1}, mysql.NewDecimalFromInt(1, 0), 0},
-		{mysql.Hex{Value: 1}, mysql.Bit{Value: 0, Width: 1}, 1},
-		{mysql.Hex{Value: 1}, mysql.Hex{Value: 1}, 0},
+		{Hex{Value: 1}, 1, 0},
+		{Hex{Value: 0x4D7953514C}, "MySQL", 0},
+		{Hex{Value: 0}, uint64(10), -1},
+		{Hex{Value: 1}, float64(0), 1},
+		{Hex{Value: 1}, NewDecFromInt(1), 0},
+		{Hex{Value: 1}, Bit{Value: 0, Width: 1}, 1},
+		{Hex{Value: 1}, Hex{Value: 1}, 0},
 
-		{mysql.Bit{Value: 1, Width: 1}, 1, 0},
-		{mysql.Bit{Value: 0x41, Width: 8}, "A", 0},
-		{mysql.Bit{Value: 1, Width: 1}, uint64(10), -1},
-		{mysql.Bit{Value: 1, Width: 1}, float64(0), 1},
-		{mysql.Bit{Value: 1, Width: 1}, mysql.NewDecimalFromInt(1, 0), 0},
-		{mysql.Bit{Value: 1, Width: 1}, mysql.Hex{Value: 2}, -1},
-		{mysql.Bit{Value: 1, Width: 1}, mysql.Bit{Value: 1, Width: 1}, 0},
+		{Bit{Value: 1, Width: 1}, 1, 0},
+		{Bit{Value: 0x41, Width: 8}, "A", 0},
+		{Bit{Value: 1, Width: 1}, uint64(10), -1},
+		{Bit{Value: 1, Width: 1}, float64(0), 1},
+		{Bit{Value: 1, Width: 1}, NewDecFromInt(1), 0},
+		{Bit{Value: 1, Width: 1}, Hex{Value: 2}, -1},
+		{Bit{Value: 1, Width: 1}, Bit{Value: 1, Width: 1}, 0},
 
-		{mysql.Enum{Name: "a", Value: 1}, 1, 0},
-		{mysql.Enum{Name: "a", Value: 1}, "a", 0},
-		{mysql.Enum{Name: "a", Value: 1}, uint64(10), -1},
-		{mysql.Enum{Name: "a", Value: 1}, float64(0), 1},
-		{mysql.Enum{Name: "a", Value: 1}, mysql.NewDecimalFromInt(1, 0), 0},
-		{mysql.Enum{Name: "a", Value: 1}, mysql.Hex{Value: 2}, -1},
-		{mysql.Enum{Name: "a", Value: 1}, mysql.Bit{Value: 1, Width: 1}, 0},
-		{mysql.Enum{Name: "a", Value: 1}, mysql.Hex{Value: 1}, 0},
-		{mysql.Enum{Name: "a", Value: 1}, mysql.Enum{Name: "a", Value: 1}, 0},
+		{Enum{Name: "a", Value: 1}, 1, 0},
+		{Enum{Name: "a", Value: 1}, "a", 0},
+		{Enum{Name: "a", Value: 1}, uint64(10), -1},
+		{Enum{Name: "a", Value: 1}, float64(0), 1},
+		{Enum{Name: "a", Value: 1}, NewDecFromInt(1), 0},
+		{Enum{Name: "a", Value: 1}, Hex{Value: 2}, -1},
+		{Enum{Name: "a", Value: 1}, Bit{Value: 1, Width: 1}, 0},
+		{Enum{Name: "a", Value: 1}, Hex{Value: 1}, 0},
+		{Enum{Name: "a", Value: 1}, Enum{Name: "a", Value: 1}, 0},
 
-		{mysql.Set{Name: "a", Value: 1}, 1, 0},
-		{mysql.Set{Name: "a", Value: 1}, "a", 0},
-		{mysql.Set{Name: "a", Value: 1}, uint64(10), -1},
-		{mysql.Set{Name: "a", Value: 1}, float64(0), 1},
-		{mysql.Set{Name: "a", Value: 1}, mysql.NewDecimalFromInt(1, 0), 0},
-		{mysql.Set{Name: "a", Value: 1}, mysql.Hex{Value: 2}, -1},
-		{mysql.Set{Name: "a", Value: 1}, mysql.Bit{Value: 1, Width: 1}, 0},
-		{mysql.Set{Name: "a", Value: 1}, mysql.Hex{Value: 1}, 0},
-		{mysql.Set{Name: "a", Value: 1}, mysql.Enum{Name: "a", Value: 1}, 0},
-		{mysql.Set{Name: "a", Value: 1}, mysql.Set{Name: "a", Value: 1}, 0},
+		{Set{Name: "a", Value: 1}, 1, 0},
+		{Set{Name: "a", Value: 1}, "a", 0},
+		{Set{Name: "a", Value: 1}, uint64(10), -1},
+		{Set{Name: "a", Value: 1}, float64(0), 1},
+		{Set{Name: "a", Value: 1}, NewDecFromInt(1), 0},
+		{Set{Name: "a", Value: 1}, Hex{Value: 2}, -1},
+		{Set{Name: "a", Value: 1}, Bit{Value: 1, Width: 1}, 0},
+		{Set{Name: "a", Value: 1}, Hex{Value: 1}, 0},
+		{Set{Name: "a", Value: 1}, Enum{Name: "a", Value: 1}, 0},
+		{Set{Name: "a", Value: 1}, Set{Name: "a", Value: 1}, 0},
 	}
 
 	for i, t := range cmpTbl {
 		comment := Commentf("%d %v %v", i, t.lhs, t.rhs)
-		ret, err := Compare(t.lhs, t.rhs)
+		ret, err := compareForTest(t.lhs, t.rhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, t.ret, comment)
 
-		ret, err = Compare(t.rhs, t.lhs)
+		ret, err = compareForTest(t.rhs, t.lhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, -t.ret, comment)
 	}
+}
+
+func compareForTest(a, b interface{}) (int, error) {
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
+	aDatum := NewDatum(a)
+	bDatum := NewDatum(b)
+	return aDatum.CompareDatum(sc, bDatum)
 }
 
 func (s *testCompareSuite) TestCompareDatum(c *C) {
@@ -175,13 +184,15 @@ func (s *testCompareSuite) TestCompareDatum(c *C) {
 		{Datum{}, MinNotNullDatum(), -1},
 		{MinNotNullDatum(), MaxValueDatum(), -1},
 	}
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
 	for i, t := range cmpTbl {
 		comment := Commentf("%d %v %v", i, t.lhs, t.rhs)
-		ret, err := t.lhs.CompareDatum(t.rhs)
+		ret, err := t.lhs.CompareDatum(sc, t.rhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, t.ret, comment)
 
-		ret, err = t.rhs.CompareDatum(t.lhs)
+		ret, err = t.rhs.CompareDatum(sc, t.lhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, -t.ret, comment)
 	}

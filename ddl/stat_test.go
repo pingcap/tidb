@@ -39,15 +39,13 @@ func (s *testStatSuite) TestStat(c *C) {
 	store := testCreateStore(c, "test_stat")
 	defer store.Close()
 
-	lease := 50 * time.Millisecond
-
-	d := newDDL(store, nil, nil, lease)
+	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
 
-	time.Sleep(lease)
+	time.Sleep(testLease)
 
 	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(c, mock.NewContext(), d, dbInfo)
+	testCreateSchema(c, testNewContext(c, d), d, dbInfo)
 
 	m, err := d.Stats()
 	c.Assert(err, IsNil)
@@ -60,6 +58,7 @@ func (s *testStatSuite) TestStat(c *C) {
 	}
 
 	ctx := mock.NewContext()
+	ctx.Store = store
 	done := make(chan error, 1)
 	go func() {
 		done <- d.doDDLJob(ctx, job)

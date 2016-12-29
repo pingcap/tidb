@@ -17,46 +17,39 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
-	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
 
 // SimpleExec represents simple statement executor.
 // For statements do simple execution.
-// includes `UseStmt`, 'SetStmt`, `SetCharsetStmt`.
-// `DoStmt`, `BeginStmt`, `CommitStmt`, `RollbackStmt`.
+// includes `UseStmt`, 'SetStmt`, `DoStmt`,
+// `BeginStmt`, `CommitStmt`, `RollbackStmt`.
 // TODO: list all simple statements.
 type SimpleExec struct {
 	Statement ast.StmtNode
 	ctx       context.Context
 	done      bool
+	is        infoschema.InfoSchema
 }
 
-// Fields implements Executor Fields interface.
-func (e *SimpleExec) Fields() []*ast.ResultField {
-	return nil
-}
-
-// Schema implements Executor Schema interface.
+// Schema implements the Executor Schema interface.
 func (e *SimpleExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements Execution Next interface.
@@ -68,24 +61,27 @@ func (e *SimpleExec) Next() (*Row, error) {
 	switch x := e.Statement.(type) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
-	case *ast.SetStmt:
-		err = e.executeSet(x)
-	case *ast.SetCharsetStmt:
-		err = e.executeSetCharset(x)
-	case *ast.DoStmt:
-		err = e.executeDo(x)
+	case *ast.FlushTableStmt:
+		err = e.executeFlushTable(x)
 	case *ast.BeginStmt:
 		err = e.executeBegin(x)
 	case *ast.CommitStmt:
-		err = e.executeCommit(x)
+		e.executeCommit(x)
 	case *ast.RollbackStmt:
 		err = e.executeRollback(x)
 	case *ast.CreateUserStmt:
 		err = e.executeCreateUser(x)
+	case *ast.AlterUserStmt:
+		err = e.executeAlterUser(x)
+	case *ast.DropUserStmt:
+		err = e.executeDropUser(x)
 	case *ast.SetPwdStmt:
 		err = e.executeSetPwd(x)
 	case *ast.AnalyzeTableStmt:
 		err = e.executeAnalyzeTable(x)
+	case *ast.BinlogStmt:
+		// We just ignore it.
+		return nil, nil
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -94,159 +90,51 @@ func (e *SimpleExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *SimpleExec) Close() error {
 	return nil
 }
 
 func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	dbname := model.NewCIStr(s.DBName)
-	dbinfo, exists := sessionctx.GetDomain(e.ctx).InfoSchema().SchemaByName(dbname)
+	dbinfo, exists := e.is.SchemaByName(dbname)
 	if !exists {
-		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", dbname)
+		return infoschema.ErrDatabaseNotExists.GenByArgs(dbname)
 	}
-	db.BindCurrentSchema(e.ctx, dbname.O)
+	e.ctx.GetSessionVars().CurrentDB = dbname.O
 	// character_set_database is the character set used by the default database.
 	// The server sets this variable whenever the default database changes.
-	// See: http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
-	sessionVars := variable.GetSessionVars(e.ctx)
-	err := sessionVars.SetSystemVar(variable.CharsetDatabase, types.NewStringDatum(dbinfo.Charset))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = sessionVars.SetSystemVar(variable.CollationDatabase, types.NewStringDatum(dbinfo.Collate))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
-	sessionVars := variable.GetSessionVars(e.ctx)
-	globalVars := variable.GetGlobalVarAccessor(e.ctx)
-	for _, v := range s.Variables {
-		// Variable is case insensitive, we use lower case.
-		name := strings.ToLower(v.Name)
-		if !v.IsSystem {
-			// Set user variable.
-			value, err := evaluator.Eval(e.ctx, v.Value)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			if value.IsNull() {
-				delete(sessionVars.Users, name)
-			} else {
-				svalue, err1 := value.ToString()
-				if err1 != nil {
-					return errors.Trace(err1)
-				}
-				sessionVars.Users[name] = fmt.Sprintf("%v", svalue)
-			}
-			continue
-		}
-
-		// Set system variable
-		sysVar := variable.GetSysVar(name)
-		if sysVar == nil {
-			return variable.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
-		}
-		if sysVar.Scope == variable.ScopeNone {
-			return errors.Errorf("Variable '%s' is a read only variable", name)
-		}
-		if v.IsGlobal {
-			// Set global scope system variable.
-			if sysVar.Scope&variable.ScopeGlobal == 0 {
-				return errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
-			}
-			value, err := evaluator.Eval(e.ctx, v.Value)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if value.IsNull() {
-				value.SetString("")
-			}
-			svalue, err := value.ToString()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = globalVars.SetGlobalSysVar(e.ctx, name, svalue)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
-			// Set session scope system variable.
-			if sysVar.Scope&variable.ScopeSession == 0 {
-				return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
-			}
-			value, err := evaluator.Eval(e.ctx, v.Value)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = sessionVars.SetSystemVar(name, value)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	return nil
-}
-
-func (e *SimpleExec) executeSetCharset(s *ast.SetCharsetStmt) error {
-	collation := s.Collate
-	var err error
-	if len(collation) == 0 {
-		collation, err = charset.GetDefaultCollation(s.Charset)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	sessionVars := variable.GetSessionVars(e.ctx)
-	for _, v := range variable.SetNamesVariables {
-		err = sessionVars.SetSystemVar(v, types.NewStringDatum(s.Charset))
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	err = sessionVars.SetSystemVar(variable.CollationConnection, types.NewStringDatum(collation))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (e *SimpleExec) executeDo(s *ast.DoStmt) error {
-	for _, expr := range s.Exprs {
-		_, err := evaluator.Eval(e.ctx, expr)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
+	// See http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
+	sessionVars := e.ctx.GetSessionVars()
+	sessionVars.Systems[variable.CharsetDatabase] = dbinfo.Charset
+	sessionVars.Systems[variable.CollationDatabase] = dbinfo.Collate
 	return nil
 }
 
 func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
-	_, err := e.ctx.GetTxn(true)
+	err := e.ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
-	variable.GetSessionVars(e.ctx).SetStatusFlag(mysql.ServerStatusInTrans, true)
+	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	return nil
 }
 
-func (e *SimpleExec) executeCommit(s *ast.CommitStmt) error {
-	err := e.ctx.CommitTxn()
-	variable.GetSessionVars(e.ctx).SetStatusFlag(mysql.ServerStatusInTrans, false)
-	return errors.Trace(err)
+func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
+	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
 }
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
-	err := e.ctx.RollbackTxn()
-	variable.GetSessionVars(e.ctx).SetStatusFlag(mysql.ServerStatusInTrans, false)
-	return errors.Trace(err)
+	sessVars := e.ctx.GetSessionVars()
+	log.Infof("[%d] execute rollback statement", sessVars.ConnectionID)
+	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+	if e.ctx.Txn().Valid() {
+		return e.ctx.Txn().Rollback()
+	}
+	return nil
 }
 
 func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
@@ -264,10 +152,12 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 			continue
 		}
 		pwd := ""
-		if spec.AuthOpt.ByAuthString {
-			pwd = util.EncodePassword(spec.AuthOpt.AuthString)
-		} else {
-			pwd = util.EncodePassword(spec.AuthOpt.HashString)
+		if spec.AuthOpt != nil {
+			if spec.AuthOpt.ByAuthString {
+				pwd = util.EncodePassword(spec.AuthOpt.AuthString)
+			} else {
+				pwd = util.EncodePassword(spec.AuthOpt.HashString)
+			}
 		}
 		user := fmt.Sprintf(`("%s", "%s", "%s")`, host, userName, pwd)
 		users = append(users, user)
@@ -283,8 +173,94 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 	return nil
 }
 
+func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
+	if s.CurrentAuth != nil {
+		user := e.ctx.GetSessionVars().User
+		if len(user) == 0 {
+			return errors.New("Session user is empty")
+		}
+		spec := &ast.UserSpec{
+			User:    user,
+			AuthOpt: s.CurrentAuth,
+		}
+		s.Specs = []*ast.UserSpec{spec}
+	}
+
+	failedUsers := make([]string, 0, len(s.Specs))
+	for _, spec := range s.Specs {
+		userName, host := parseUser(spec.User)
+		exists, err := userExists(e.ctx, userName, host)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !exists {
+			failedUsers = append(failedUsers, spec.User)
+			if s.IfExists {
+				// TODO: Make this error as a warning.
+			}
+			continue
+		}
+		pwd := ""
+		if spec.AuthOpt != nil {
+			if spec.AuthOpt.ByAuthString {
+				pwd = util.EncodePassword(spec.AuthOpt.AuthString)
+			} else {
+				pwd = util.EncodePassword(spec.AuthOpt.HashString)
+			}
+		}
+		sql := fmt.Sprintf(`UPDATE %s.%s SET Password = "%s" WHERE Host = "%s" and User = "%s";`,
+			mysql.SystemDB, mysql.UserTable, pwd, host, userName)
+		_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		if err != nil {
+			failedUsers = append(failedUsers, spec.User)
+		}
+	}
+	if len(failedUsers) > 0 {
+		// Commit the transaction even if we returns error
+		err := e.ctx.Txn().Commit()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		errMsg := "Operation ALTER USER failed for " + strings.Join(failedUsers, ",")
+		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
+	}
+	return nil
+}
+
+func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
+	failedUsers := make([]string, 0, len(s.UserList))
+	for _, user := range s.UserList {
+		userName, host := parseUser(user)
+		exists, err := userExists(e.ctx, userName, host)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !exists {
+			if !s.IfExists {
+				failedUsers = append(failedUsers, user)
+			}
+			continue
+		}
+		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.UserTable, host, userName)
+		_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		if err != nil {
+			failedUsers = append(failedUsers, user)
+		}
+	}
+	if len(failedUsers) > 0 {
+		// Commit the transaction even if we returns error
+		err := e.ctx.Txn().Commit()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		errMsg := "Operation DROP USER failed for " + strings.Join(failedUsers, ",")
+		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
+	}
+	return nil
+}
+
 // parse user string into username and host
-// root@localhost -> roor, localhost
+// root@localhost -> root, localhost
 func parseUser(user string) (string, string) {
 	strs := strings.Split(user, "@")
 	return strs[0], strs[1]
@@ -305,12 +281,31 @@ func userExists(ctx context.Context, name string, host string) (bool, error) {
 }
 
 func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
-	// TODO: If len(s.User) == 0, use CURRENT_USER()
+	if len(s.User) == 0 {
+		vars := e.ctx.GetSessionVars()
+		s.User = vars.User
+		if len(s.User) == 0 {
+			return errors.New("Session error is empty")
+		}
+	}
 	userName, host := parseUser(s.User)
-	// Update mysql.user
+	exists, err := userExists(e.ctx, userName, host)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !exists {
+		return errors.Trace(ErrPasswordNoMatch)
+	}
+
+	// update mysql.user
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, util.EncodePassword(s.Password), userName, host)
-	_, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
+}
+
+func (e *SimpleExec) executeFlushTable(s *ast.FlushTableStmt) error {
+	// TODO: A dummy implement
+	return nil
 }
 
 func (e *SimpleExec) executeAnalyzeTable(s *ast.AnalyzeTableStmt) error {
@@ -355,7 +350,6 @@ func (e *SimpleExec) createStatisticsForTable(tn *ast.TableName) error {
 // collectSamples collects sample from the result set, using Reservoir Sampling algorithm.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
 func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples []*ast.Row, err error) {
-	ran := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for {
 		var row *ast.Row
 		row, err = result.Next()
@@ -368,9 +362,9 @@ func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples 
 		if len(samples) < maxSampleCount {
 			samples = append(samples, row)
 		} else {
-			shouldAdd := ran.Int63n(count) < maxSampleCount
+			shouldAdd := rand.Int63n(count) < maxSampleCount
 			if shouldAdd {
-				idx := ran.Intn(maxSampleCount)
+				idx := rand.Intn(maxSampleCount)
 				samples[idx] = row
 			}
 		}
@@ -380,12 +374,10 @@ func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples 
 }
 
 func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, sampleRows []*ast.Row) error {
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	txn := e.ctx.Txn()
 	columnSamples := rowsToColumnSamples(sampleRows)
-	t, err := statistics.NewTable(tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	t, err := statistics.NewTable(sc, tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples)
 	if err != nil {
 		return errors.Trace(err)
 	}

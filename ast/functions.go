@@ -20,6 +20,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -32,29 +33,30 @@ var (
 
 // List scalar function names.
 const (
-	AndAnd     = "&&"
-	LeftShift  = "<<"
-	RightShift = ">>"
-	OrOr       = "||"
-	GE         = ">="
-	LE         = "<="
-	EQ         = "="
-	NE         = "!="
-	LT         = "<"
-	GT         = ">"
-	Plus       = "+"
-	Minus      = "-"
-	And        = "&"
-	Or         = "|"
-	Mod        = "%"
-	Xor        = "^"
-	Div        = "/"
-	Mul        = "*"
-	UnaryNot   = "!" // Avoid name conflict with Not in github/pingcap/check.
-	BitNeg     = "~"
-	IntDiv     = "DIV"
-	LogicXor   = "XOR"
-	NullEQ     = "<=>"
+	AndAnd     = "and"
+	Cast       = "cast"
+	LeftShift  = "leftshift"
+	RightShift = "rightshift"
+	OrOr       = "or"
+	GE         = "ge"
+	LE         = "le"
+	EQ         = "eq"
+	NE         = "ne"
+	LT         = "lt"
+	GT         = "gt"
+	Plus       = "plus"
+	Minus      = "minus"
+	And        = "bitand"
+	Or         = "bitor"
+	Mod        = "mod"
+	Xor        = "bitxor"
+	Div        = "div"
+	Mul        = "mul"
+	UnaryNot   = "not" // Avoid name conflict with Not in github/pingcap/check.
+	BitNeg     = "bitneg"
+	IntDiv     = "intdiv"
+	LogicXor   = "xor"
+	NullEQ     = "nulleq"
 	UnaryPlus  = "unaryplus"
 	UnaryMinus = "unaryminus"
 	In         = "in"
@@ -65,6 +67,112 @@ const (
 	IsTruth    = "istrue"  // Avoid name conflict with IsTrue in github/pingcap/check.
 	IsFalsity  = "isfalse" // Avoid name conflict with IsFalse in github/pingcap/check.
 	RowFunc    = "row"
+	SetVar     = "setvar"
+	GetVar     = "getvar"
+	Values     = "values"
+
+	// common functions
+	Coalesce = "coalesce"
+	Greatest = "greatest"
+
+	// math functions
+	Abs     = "abs"
+	Ceil    = "ceil"
+	Ceiling = "ceiling"
+	Ln      = "ln"
+	Log     = "log"
+	Log2    = "log2"
+	Log10   = "log10"
+	Pow     = "pow"
+	Power   = "power"
+	Rand    = "rand"
+	Round   = "round"
+
+	// time functions
+	Curdate          = "curdate"
+	CurrentDate      = "current_date"
+	CurrentTime      = "current_time"
+	CurrentTimestamp = "current_timestamp"
+	Curtime          = "curtime"
+	Date             = "date"
+	DateArith        = "date_arith"
+	DateFormat       = "date_format"
+	Day              = "day"
+	DayName          = "dayname"
+	DayOfMonth       = "dayofmonth"
+	DayOfWeek        = "dayofweek"
+	DayOfYear        = "dayofyear"
+	Extract          = "extract"
+	Hour             = "hour"
+	MicroSecond      = "microsecond"
+	Minute           = "minute"
+	Month            = "month"
+	MonthName        = "monthname"
+	Now              = "now"
+	Second           = "second"
+	StrToDate        = "str_to_date"
+	Sysdate          = "sysdate"
+	Time             = "time"
+	TimeDiff         = "timediff"
+	UTCDate          = "utc_date"
+	Week             = "week"
+	Weekday          = "weekday"
+	WeekOfYear       = "weekofyear"
+	Year             = "year"
+	YearWeek         = "yearweek"
+	FromUnixTime     = "from_unixtime"
+
+	// string functions
+	ASCII          = "ascii"
+	Concat         = "concat"
+	ConcatWS       = "concat_ws"
+	Convert        = "convert"
+	Lcase          = "lcase"
+	Left           = "left"
+	Length         = "length"
+	Locate         = "locate"
+	Lower          = "lower"
+	Ltrim          = "ltrim"
+	Repeat         = "repeat"
+	Replace        = "replace"
+	Reverse        = "reverse"
+	Rtrim          = "rtrim"
+	Space          = "space"
+	Strcmp         = "strcmp"
+	Substring      = "substring"
+	SubstringIndex = "substring_index"
+	Trim           = "trim"
+	Upper          = "upper"
+	Ucase          = "ucase"
+	Hex            = "hex"
+	Unhex          = "unhex"
+	Rpad           = "rpad"
+	BitLength      = "bit_length"
+	CharFunc       = "char_func"
+	CharLength     = "char_length"
+
+	// information functions
+	ConnectionID = "connection_id"
+	CurrentUser  = "current_user"
+	Database     = "database"
+	Schema       = "schema"
+	FoundRows    = "found_rows"
+	LastInsertId = "last_insert_id"
+	User         = "user"
+	Version      = "version"
+
+	// control functions
+	If     = "if"
+	Ifnull = "ifnull"
+	Nullif = "nullif"
+
+	// miscellaneous functions
+	Sleep = "sleep"
+
+	// get_lock() and release_lock() is parsed but do nothing.
+	// It is used for preventing error in Ruby's activerecord migrations.
+	GetLock     = "get_lock"
+	ReleaseLock = "release_lock"
 )
 
 // FuncCallExpr is for function expression.
@@ -149,12 +257,12 @@ type DateArithType byte
 
 const (
 	// DateAdd is to run adddate or date_add function option.
-	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
-	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
+	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
+	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
 	DateAdd DateArithType = iota + 1
 	// DateSub is to run subdate or date_sub function option.
-	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
-	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
+	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
+	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
 	DateSub
 )
 
@@ -193,7 +301,7 @@ type AggregateFuncExpr struct {
 	// but "sum(distinct c1)" is "3".
 	Distinct bool
 
-	CurrentGroup string
+	CurrentGroup []byte
 	// contextPerGroupMap is used to store aggregate evaluation context.
 	// Each entry for a group.
 	contextPerGroupMap map[string](*AggEvaluateContext)
@@ -218,26 +326,26 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 
 // Clear clears aggregate computing context.
 func (n *AggregateFuncExpr) Clear() {
-	n.CurrentGroup = ""
+	n.CurrentGroup = []byte{}
 	n.contextPerGroupMap = nil
 }
 
 // Update is used for update aggregate context.
-func (n *AggregateFuncExpr) Update() error {
+func (n *AggregateFuncExpr) Update(sc *variable.StatementContext) error {
 	name := strings.ToLower(n.F)
 	switch name {
 	case AggFuncCount:
-		return n.updateCount()
+		return n.updateCount(sc)
 	case AggFuncFirstRow:
-		return n.updateFirstRow()
+		return n.updateFirstRow(sc)
 	case AggFuncGroupConcat:
-		return n.updateGroupConcat()
+		return n.updateGroupConcat(sc)
 	case AggFuncMax:
-		return n.updateMaxMin(true)
+		return n.updateMaxMin(sc, true)
 	case AggFuncMin:
-		return n.updateMaxMin(false)
+		return n.updateMaxMin(sc, false)
 	case AggFuncSum, AggFuncAvg:
-		return n.updateSum()
+		return n.updateSum(sc)
 	}
 	return nil
 }
@@ -248,14 +356,14 @@ func (n *AggregateFuncExpr) GetContext() *AggEvaluateContext {
 	if n.contextPerGroupMap == nil {
 		n.contextPerGroupMap = make(map[string](*AggEvaluateContext))
 	}
-	if _, ok := n.contextPerGroupMap[n.CurrentGroup]; !ok {
+	if _, ok := n.contextPerGroupMap[string(n.CurrentGroup)]; !ok {
 		c := &AggEvaluateContext{}
 		if n.Distinct {
 			c.DistinctChecker = distinct.CreateDistinctChecker()
 		}
-		n.contextPerGroupMap[n.CurrentGroup] = c
+		n.contextPerGroupMap[string(n.CurrentGroup)] = c
 	}
-	return n.contextPerGroupMap[n.CurrentGroup]
+	return n.contextPerGroupMap[string(n.CurrentGroup)]
 }
 
 // SetContext sets the aggregate expr evaluation context.
@@ -263,7 +371,7 @@ func (n *AggregateFuncExpr) SetContext(ctx map[string](*AggEvaluateContext)) {
 	n.contextPerGroupMap = ctx
 }
 
-func (n *AggregateFuncExpr) updateCount() error {
+func (n *AggregateFuncExpr) updateCount(sc *variable.StatementContext) error {
 	ctx := n.GetContext()
 	vals := make([]interface{}, 0, len(n.Args))
 	for _, a := range n.Args {
@@ -286,31 +394,29 @@ func (n *AggregateFuncExpr) updateCount() error {
 	return nil
 }
 
-func (n *AggregateFuncExpr) updateFirstRow() error {
+func (n *AggregateFuncExpr) updateFirstRow(sc *variable.StatementContext) error {
 	ctx := n.GetContext()
-	if ctx.Evaluated {
+	if !ctx.Value.IsNull() {
 		return nil
 	}
 	if len(n.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
-	ctx.Value = n.Args[0].GetValue()
-	ctx.Evaluated = true
+	ctx.Value = *n.Args[0].GetDatum()
 	return nil
 }
 
-func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
+func (n *AggregateFuncExpr) updateMaxMin(sc *variable.StatementContext, max bool) error {
 	ctx := n.GetContext()
 	if len(n.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
-	v := n.Args[0].GetValue()
-	if !ctx.Evaluated {
+	v := *n.Args[0].GetDatum()
+	if ctx.Value.IsNull() {
 		ctx.Value = v
-		ctx.Evaluated = true
 		return nil
 	}
-	c, err := types.Compare(ctx.Value, v)
+	c, err := ctx.Value.CompareDatum(sc, v)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -327,15 +433,14 @@ func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
 	return nil
 }
 
-func (n *AggregateFuncExpr) updateSum() error {
+func (n *AggregateFuncExpr) updateSum(sc *variable.StatementContext) error {
 	ctx := n.GetContext()
-	a := n.Args[0]
-	value := a.GetValue()
-	if value == nil {
+	value := *n.Args[0].GetDatum()
+	if value.IsNull() {
 		return nil
 	}
 	if n.Distinct {
-		d, err := ctx.DistinctChecker.Check([]interface{}{value})
+		d, err := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -344,7 +449,7 @@ func (n *AggregateFuncExpr) updateSum() error {
 		}
 	}
 	var err error
-	ctx.Value, err = types.CalculateSum(ctx.Value, value)
+	ctx.Value, err = types.CalculateSum(sc, ctx.Value, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -352,7 +457,7 @@ func (n *AggregateFuncExpr) updateSum() error {
 	return nil
 }
 
-func (n *AggregateFuncExpr) updateGroupConcat() error {
+func (n *AggregateFuncExpr) updateGroupConcat(sc *variable.StatementContext) error {
 	ctx := n.GetContext()
 	vals := make([]interface{}, 0, len(n.Args))
 	for _, a := range n.Args {
@@ -438,7 +543,7 @@ func (a *AggregateFuncExtractor) Leave(n Node) (node Node, ok bool) {
 type AggEvaluateContext struct {
 	DistinctChecker *distinct.Checker
 	Count           int64
-	Value           interface{}
+	Value           types.Datum
 	Buffer          *bytes.Buffer // Buffer is used for group_concat.
-	Evaluated       bool
+	GotFirstRow     bool          // It will check if the agg has met the first row key.
 }

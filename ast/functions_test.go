@@ -1,9 +1,23 @@
+// Copyright 2016 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package ast
 
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testFunctionsSuite{})
@@ -72,6 +86,7 @@ func (ts *testFunctionsSuite) TestAggregateFuncExtractor(c *C) {
 }
 
 func (ts *testFunctionsSuite) TestAggFuncCount(c *C) {
+	sc := new(variable.StatementContext)
 	args := make([]ExprNode, 1)
 	// count with distinct
 	agg := &AggregateFuncExpr{
@@ -79,14 +94,14 @@ func (ts *testFunctionsSuite) TestAggFuncCount(c *C) {
 		F:        AggFuncCount,
 		Distinct: true,
 	}
-	agg.CurrentGroup = "xx"
+	agg.CurrentGroup = []byte("xx")
 	expr := NewValueExpr(1)
 	expr1 := NewValueExpr(nil)
 	expr2 := NewValueExpr(1)
 	exprs := []ExprNode{expr, expr1, expr2}
 	for _, e := range exprs {
 		args[0] = e
-		agg.Update()
+		agg.Update(sc)
 	}
 	ctx := agg.GetContext()
 	c.Assert(ctx.Count, Equals, int64(1))
@@ -95,20 +110,21 @@ func (ts *testFunctionsSuite) TestAggFuncCount(c *C) {
 		Args: args,
 		F:    AggFuncCount,
 	}
-	agg.CurrentGroup = "xx"
+	agg.CurrentGroup = []byte("xx")
 	expr = NewValueExpr(1)
 	expr1 = NewValueExpr(nil)
 	expr2 = NewValueExpr(1)
 	exprs = []ExprNode{expr, expr1, expr2}
 	for _, e := range exprs {
 		args[0] = e
-		agg.Update()
+		agg.Update(sc)
 	}
 	ctx = agg.GetContext()
 	c.Assert(ctx.Count, Equals, int64(2))
 }
 
 func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
+	sc := new(variable.StatementContext)
 	args := make([]ExprNode, 1)
 	// sum with distinct
 	agg := &AggregateFuncExpr{
@@ -116,37 +132,74 @@ func (ts *testFunctionsSuite) TestAggFuncSum(c *C) {
 		F:        AggFuncSum,
 		Distinct: true,
 	}
-	agg.CurrentGroup = "xx"
+	agg.CurrentGroup = []byte("xx")
 	expr := NewValueExpr(1)
 	expr1 := NewValueExpr(nil)
 	expr2 := NewValueExpr(1)
 	exprs := []ExprNode{expr, expr1, expr2}
 	for _, e := range exprs {
 		args[0] = e
-		agg.Update()
+		agg.Update(sc)
 	}
 	ctx := agg.GetContext()
-	expect, _ := mysql.ConvertToDecimal(1)
-	v, ok := ctx.Value.(mysql.Decimal)
-	c.Assert(ok, IsTrue)
-	c.Assert(v.Equals(expect), IsTrue)
+	expect := types.NewDecFromInt(1)
+	c.Assert(ctx.Value.Kind(), Equals, types.KindMysqlDecimal)
+	c.Assert(ctx.Value.GetMysqlDecimal().Compare(expect), Equals, 0)
 	// sum without distinct
 	agg = &AggregateFuncExpr{
 		Args: args,
 		F:    AggFuncSum,
 	}
-	agg.CurrentGroup = "xx"
+	agg.CurrentGroup = []byte("xx")
 	expr = NewValueExpr(2)
 	expr1 = NewValueExpr(nil)
 	expr2 = NewValueExpr(2)
 	exprs = []ExprNode{expr, expr1, expr2}
 	for _, e := range exprs {
 		args[0] = e
-		agg.Update()
+		agg.Update(sc)
 	}
 	ctx = agg.GetContext()
-	expect, _ = mysql.ConvertToDecimal(4)
-	v, ok = ctx.Value.(mysql.Decimal)
-	c.Assert(ok, IsTrue)
-	c.Assert(v.Equals(expect), IsTrue)
+	expect = types.NewDecFromInt(4)
+	c.Assert(ctx.Value.Kind(), Equals, types.KindMysqlDecimal)
+	c.Assert(ctx.Value.GetMysqlDecimal().Compare(expect), Equals, 0)
+}
+
+func (ts *testFunctionsSuite) TestAggFuncMaxMin(c *C) {
+	sc := new(variable.StatementContext)
+	args := make([]ExprNode, 1)
+	// test max
+	agg := &AggregateFuncExpr{
+		Args: args,
+		F:    AggFuncMax,
+	}
+	agg.CurrentGroup = []byte("xx")
+	expr := NewValueExpr(1)
+	expr1 := NewValueExpr(2)
+	expr2 := NewValueExpr(3)
+	exprs := []ExprNode{expr, expr1, expr2}
+	for _, e := range exprs {
+		args[0] = e
+		agg.Update(sc)
+	}
+	ctx := agg.GetContext()
+	c.Assert(ctx.Value.Kind(), Equals, types.KindInt64)
+	c.Assert(ctx.Value.GetInt64(), Equals, int64(3))
+	// test min
+	agg = &AggregateFuncExpr{
+		Args: args,
+		F:    AggFuncMin,
+	}
+	agg.CurrentGroup = []byte("xx")
+	expr = NewValueExpr(1)
+	expr1 = NewValueExpr(2)
+	expr2 = NewValueExpr(3)
+	exprs = []ExprNode{expr, expr1, expr2}
+	for _, e := range exprs {
+		args[0] = e
+		agg.Update(sc)
+	}
+	ctx = agg.GetContext()
+	c.Assert(ctx.Value.Kind(), Equals, types.KindInt64)
+	c.Assert(ctx.Value.GetInt64(), Equals, int64(1))
 }

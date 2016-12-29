@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/table"
@@ -36,6 +35,7 @@ import (
 )
 
 func TestT(t *testing.T) {
+	CustomVerboseFlag = true
 	TestingT(t)
 }
 
@@ -56,7 +56,6 @@ func (s *testSuite) SetUpSuite(c *C) {
 
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
-	variable.BindSessionVars(s.ctx)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -152,6 +151,7 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	job := &model.Job{
 		SchemaID: dbInfo2.ID,
 		Type:     model.ActionCreateSchema,
+		RowCount: 0,
 	}
 	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
@@ -176,6 +176,7 @@ func (s *testSuite) TestGetBgDDLInfo(c *C) {
 	job := &model.Job{
 		SchemaID: 1,
 		Type:     model.ActionDropTable,
+		RowCount: 0,
 	}
 	err = t.EnQueueBgJob(job)
 	c.Assert(err, IsNil)
@@ -194,9 +195,10 @@ func (s *testSuite) TestScan(c *C) {
 	tb, err := tables.TableFromMeta(alloc, s.tbInfo)
 	c.Assert(err, IsNil)
 	indices := tb.Indices()
+	c.Assert(s.ctx.NewTxn(), IsNil)
 	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11))
 	c.Assert(err, IsNil)
-	s.ctx.CommitTxn()
+	c.Assert(s.ctx.Txn().Commit(), IsNil)
 
 	record1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(1), int64(10), int64(11))}
 	record2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(2), int64(20), int64(21))}
@@ -206,9 +208,10 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(records, DeepEquals, []*RecordData{record1})
 
+	c.Assert(s.ctx.NewTxn(), IsNil)
 	_, err = tb.AddRecord(s.ctx, record2.Values)
 	c.Assert(err, IsNil)
-	s.ctx.CommitTxn()
+	c.Assert(s.ctx.Txn().Commit(), IsNil)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
@@ -245,10 +248,12 @@ func (s *testSuite) TestScan(c *C) {
 
 	s.testIndex(c, tb, tb.Indices()[0])
 
+	c.Assert(s.ctx.NewTxn(), IsNil)
 	err = tb.RemoveRecord(s.ctx, 1, record1.Values)
 	c.Assert(err, IsNil)
 	err = tb.RemoveRecord(s.ctx, 2, record2.Values)
 	c.Assert(err, IsNil)
+	c.Assert(s.ctx.Txn().Commit(), IsNil)
 }
 
 func newDiffRetError(prefix string, ra, rb *RecordData) string {
@@ -319,7 +324,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
-	err = idx.Create(txn, types.MakeDatums(int64(30)), 3)
+	_, err = idx.Create(txn, types.MakeDatums(int64(30)), 3)
 	c.Assert(err, IsNil)
 	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
@@ -337,7 +342,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40), (3, 31)
-	err = idx.Create(txn, types.MakeDatums(int64(40)), 4)
+	_, err = idx.Create(txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	setColValue(c, txn, key, types.NewDatum(int64(31)))

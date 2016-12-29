@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/bytes"
 )
 
 const (
@@ -88,7 +87,7 @@ func (gc *localstoreCompactor) getAllVersions(key kv.Key) ([]kv.EncodedKey, erro
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		keys = append(keys, bytes.CloneBytes(mvccK))
+		keys = append(keys, mvccK)
 	}
 	return keys, nil
 }
@@ -175,9 +174,7 @@ func (gc *localstoreCompactor) Compact(k kv.Key) error {
 		return errors.Trace(err)
 	}
 	filteredKeys := gc.filterExpiredKeys(keys)
-	if len(filteredKeys) > 0 {
-		log.Debugf("[kv] GC send %d keys to delete worker", len(filteredKeys))
-	}
+
 	for _, key := range filteredKeys {
 		gc.delCh <- key
 	}

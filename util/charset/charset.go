@@ -116,11 +116,15 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 	return true
 }
 
-// GetDefaultCollation returns the default collation for charset
+// GetDefaultCollation returns the default collation for charset.
 func GetDefaultCollation(charset string) (string, error) {
+	charset = strings.ToLower(charset)
+	if charset == CharsetBin {
+		return CollationBin, nil
+	}
 	c, ok := charsets[charset]
 	if !ok {
-		return "", errors.Errorf("Unkown charset %s", charset)
+		return "", errors.Errorf("Unknown charset %s", charset)
 	}
 	return c.DefaultCollation.Name, nil
 }
@@ -144,6 +148,14 @@ const (
 	CharsetBin = "binary"
 	// CollationBin is the default collation for CharsetBin.
 	CollationBin = "binary"
+	// CharsetUTF8 is the default charset for string types.
+	CharsetUTF8 = "utf8"
+	// CollationUTF8 is the default collation for CharsetUTF8.
+	CollationUTF8 = "utf8_general_ci"
+	// CharsetUTF8MB4 represents 4 bytes utf8, which works the same way as utf8 in Go.
+	CharsetUTF8MB4 = "utf8mb4"
+	// CollationUTF8MB4 is the default collation for CharsetUTF8MB4.
+	CollationUTF8MB4 = "utf8mb4_general_ci"
 )
 
 var collations = []*Collation{

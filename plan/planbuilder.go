@@ -14,11 +14,9 @@
 package plan
 
 import (
-	"math"
+	"fmt"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -26,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -35,20 +33,21 @@ import (
 var (
 	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
 	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
+	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, "Unknown column '%s' in '%s'")
 )
 
 // Error codes.
 const (
 	CodeUnsupportedType terror.ErrCode = 1
 	SystemInternalError terror.ErrCode = 2
+	CodeUnknownColumn   terror.ErrCode = 1054
 )
 
-// BuildPlan builds a plan from a node.
-// It returns ErrUnsupportedType if ast.Node type is not supported yet.
-func BuildPlan(node ast.Node, sb SubQueryBuilder) (Plan, error) {
-	builder := planBuilder{sb: sb, allocator: new(idAllocator)}
-	p := builder.build(node)
-	return p, builder.err
+func init() {
+	tableMySQLErrCodes := map[terror.ErrCode]uint16{
+		CodeUnknownColumn: mysql.ErrBadField,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
 }
 
 // planBuilder builds Plan from an ast.Node.
@@ -56,14 +55,14 @@ func BuildPlan(node ast.Node, sb SubQueryBuilder) (Plan, error) {
 type planBuilder struct {
 	err          error
 	hasAgg       bool
-	sb           SubQueryBuilder
 	obj          interface{}
 	allocator    *idAllocator
 	ctx          context.Context
 	is           infoschema.InfoSchema
 	outerSchemas []expression.Schema
+	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
-	colMapper map[*ast.ColumnNameExpr]expression.Expression
+	colMapper map[*ast.ColumnNameExpr]int
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -72,8 +71,6 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildAdmin(x)
 	case *ast.AlterTableStmt:
 		return b.buildDDL(x)
-	case *ast.AnalyzeTableStmt:
-		return b.buildSimple(x)
 	case *ast.CreateDatabaseStmt:
 		return b.buildDDL(x)
 	case *ast.CreateIndexStmt:
@@ -91,52 +88,103 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	case *ast.DropTableStmt:
 		return b.buildDDL(x)
 	case *ast.ExecuteStmt:
-		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
+		return b.buildExecute(x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
 	case *ast.InsertStmt:
 		return b.buildInsert(x)
+	case *ast.LoadDataStmt:
+		return b.buildLoadData(x)
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
-		if UseNewPlanner {
-			return b.buildNewSelect(x)
-		}
 		return b.buildSelect(x)
 	case *ast.UnionStmt:
-		if UseNewPlanner {
-			return b.buildNewUnion(x)
-		}
 		return b.buildUnion(x)
 	case *ast.UpdateStmt:
 		return b.buildUpdate(x)
-	case *ast.UseStmt:
-		return b.buildSimple(x)
-	case *ast.SetCharsetStmt:
-		return b.buildSimple(x)
-	case *ast.SetStmt:
-		return b.buildSimple(x)
 	case *ast.ShowStmt:
 		return b.buildShow(x)
 	case *ast.DoStmt:
-		return b.buildSimple(x)
-	case *ast.BeginStmt:
-		return b.buildSimple(x)
-	case *ast.CommitStmt:
-		return b.buildSimple(x)
-	case *ast.RollbackStmt:
-		return b.buildSimple(x)
-	case *ast.CreateUserStmt:
-		return b.buildSimple(x)
-	case *ast.SetPwdStmt:
-		return b.buildSimple(x)
-	case *ast.GrantStmt:
-		return b.buildSimple(x)
+		return b.buildDo(x)
+	case *ast.SetStmt:
+		return b.buildSet(x)
+	case *ast.AnalyzeTableStmt, *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt,
+		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
+		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
+		return b.buildSimple(node.(ast.StmtNode))
 	case *ast.TruncateTableStmt:
 		return b.buildDDL(x)
 	}
 	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil
+}
+
+func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
+	vars := make([]expression.Expression, 0, len(v.UsingVars))
+	for _, expr := range v.UsingVars {
+		newExpr, _, err := b.rewrite(expr, nil, nil, true)
+		if err != nil {
+			b.err = errors.Trace(err)
+		}
+		vars = append(vars, newExpr)
+	}
+	exe := &Execute{Name: v.Name, UsingVars: vars}
+	return exe
+}
+
+func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
+	exprs := make([]expression.Expression, 0, len(v.Exprs))
+	dual := &TableDual{
+		baseLogicalPlan: newBaseLogicalPlan(Dual, b.allocator),
+	}
+	dual.self = dual
+	for _, astExpr := range v.Exprs {
+		expr, _, err := b.rewrite(astExpr, dual, nil, true)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		exprs = append(exprs, expr)
+	}
+	p := &Projection{
+		Exprs:           exprs,
+		baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
+	}
+	p.initIDAndContext(b.ctx)
+	addChild(p, dual)
+	p.self = p
+	return p
+}
+
+func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
+	p := &Set{}
+	p.tp = St
+	p.allocator = b.allocator
+	for _, vars := range v.Variables {
+		assign := &expression.VarAssignment{
+			Name:     vars.Name,
+			IsGlobal: vars.IsGlobal,
+			IsSystem: vars.IsSystem,
+		}
+		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
+			assign.Expr, _, b.err = b.rewrite(vars.Value, nil, nil, true)
+			if b.err != nil {
+				return nil
+			}
+		} else {
+			assign.IsDefault = true
+		}
+		if vars.ExtendValue != nil {
+			assign.ExtendValue = &expression.Constant{
+				Value:   vars.ExtendValue.Datum,
+				RetType: &vars.ExtendValue.Type,
+			}
+		}
+		p.VarAssigns = append(p.VarAssigns, assign)
+	}
+	p.initIDAndContext(b.ctx)
+	return p
 }
 
 // Detect aggregate function or groupby clause.
@@ -164,212 +212,21 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-// extractSelectAgg extracts aggregate functions and converts ColumnNameExpr to aggregate function.
-func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFuncExpr {
-	extractor := &ast.AggregateFuncExtractor{AggFuncs: make([]*ast.AggregateFuncExpr, 0)}
-	for _, f := range sel.GetResultFields() {
-		n, ok := f.Expr.Accept(extractor)
-		if !ok {
-			b.err = errors.New("Failed to extract agg expr!")
-			return nil
-		}
-		ve, ok := f.Expr.(*ast.ValueExpr)
-		if ok && len(f.Column.Name.O) > 0 {
-			agg := &ast.AggregateFuncExpr{
-				F:    ast.AggFuncFirstRow,
-				Args: []ast.ExprNode{ve},
-			}
-			agg.SetType(ve.GetType())
-			extractor.AggFuncs = append(extractor.AggFuncs, agg)
-			n = agg
-		}
-		f.Expr = n.(ast.ExprNode)
-	}
-	// Extract agg funcs from having clause.
-	if sel.Having != nil {
-		n, ok := sel.Having.Expr.Accept(extractor)
-		if !ok {
-			b.err = errors.New("Failed to extract agg expr from having clause")
-			return nil
-		}
-		sel.Having.Expr = n.(ast.ExprNode)
-	}
-	// Extract agg funcs from orderby clause.
-	if sel.OrderBy != nil {
-		for _, item := range sel.OrderBy.Items {
-			n, ok := item.Expr.Accept(extractor)
-			if !ok {
-				b.err = errors.New("Failed to extract agg expr from orderby clause")
-				return nil
-			}
-			item.Expr = n.(ast.ExprNode)
-			// If item is PositionExpr, we need to rebind it.
-			// For PositionExpr will refer to a ResultField in fieldlist.
-			// After extract AggExpr from fieldlist, it may be changed (See the code above).
-			if pe, ok := item.Expr.(*ast.PositionExpr); ok {
-				pe.Refer = sel.GetResultFields()[pe.N-1]
-			}
-		}
-	}
-	return extractor.AggFuncs
-}
-
-func (b *planBuilder) buildSubquery(n ast.Node) {
-	sv := &subqueryVisitor{
-		builder: b,
-	}
-	_, ok := n.Accept(sv)
-	if !ok {
-		log.Errorf("Extract subquery error")
-	}
-}
-
-func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
-	var aggFuncs []*ast.AggregateFuncExpr
-	hasAgg := b.detectSelectAgg(sel)
-	canPushLimit := !hasAgg
-	if hasAgg {
-		aggFuncs = b.extractSelectAgg(sel)
-	}
-	// Build subquery
-	// Convert subquery to expr with plan
-	b.buildSubquery(sel)
-	var p Plan
-	if sel.From != nil {
-		p = b.buildFrom(sel)
-		if b.err != nil {
-			return nil
-		}
-		if sel.LockTp != ast.SelectLockNone {
-			p = b.buildSelectLock(p, sel.LockTp)
-			if b.err != nil {
-				return nil
-			}
-		}
-		if hasAgg {
-			p = b.buildAggregate(p, aggFuncs, sel.GroupBy)
-		}
-		p = b.buildSelectFields(p, sel.GetResultFields())
-		if b.err != nil {
-			return nil
-		}
-	} else {
-		canPushLimit = false
-		if sel.Where != nil {
-			p = b.buildTableDual(sel)
-		}
-		if hasAgg {
-			p = b.buildAggregate(p, aggFuncs, nil)
-		}
-		p = b.buildSelectFields(p, sel.GetResultFields())
-		if b.err != nil {
-			return nil
-		}
-	}
-	if sel.Having != nil {
-		p = b.buildHaving(p, sel.Having)
-		if b.err != nil {
-			return nil
-		}
-	}
-	if sel.Distinct {
-		canPushLimit = false
-		p = b.buildDistinct(p)
-		if b.err != nil {
-			return nil
-		}
-	}
-	if sel.OrderBy != nil && !pushOrder(p, sel.OrderBy.Items) {
-		canPushLimit = false
-		p = b.buildSort(p, sel.OrderBy.Items)
-		if b.err != nil {
-			return nil
-		}
-	}
-	if sel.Limit != nil {
-		if canPushLimit {
-			pushLimit(p, sel.Limit)
-		}
-		p = b.buildLimit(p, sel.Limit)
-		if b.err != nil {
-			return nil
-		}
-	}
-	return p
-}
-
-func (b *planBuilder) buildFrom(sel *ast.SelectStmt) Plan {
-	from := sel.From.TableRefs
-	if from.Right == nil {
-		return b.buildTableSource(sel)
-	}
-	return b.buildJoin(sel)
-}
-
-func (b *planBuilder) buildTableSource(sel *ast.SelectStmt) Plan {
-	from := sel.From.TableRefs
-	ts, ok := from.Left.(*ast.TableSource)
-	if !ok {
-		b.err = ErrUnsupportedType.Gen("Unsupported type %T", from.Left)
-		return nil
-	}
-	var bestPlan Plan
-	switch v := ts.Source.(type) {
-	case *ast.TableName:
-	case *ast.SelectStmt:
-		bestPlan = b.buildSelect(v)
-	case *ast.UnionStmt:
-		bestPlan = b.buildUnion(v)
-	}
-	if bestPlan != nil {
-		return bestPlan
-	}
-	tn, ok := ts.Source.(*ast.TableName)
-	if !ok {
-		b.err = ErrUnsupportedType.Gen("Unsupported type %T", ts.Source)
-		return nil
-	}
-	conditions := splitWhere(sel.Where)
-	path := &joinPath{table: tn, conditions: conditions}
-	candidates := b.buildAllAccessMethodsPlan(path)
-	var lowestCost float64
-	for _, v := range candidates {
-		cost := EstimateCost(b.buildPseudoSelectPlan(v, sel))
-		if bestPlan == nil {
-			bestPlan = v
-			lowestCost = cost
-		}
-		if cost <= lowestCost {
-			bestPlan = v
-			lowestCost = cost
-		}
-	}
-	return bestPlan
-}
-
-func (b *planBuilder) buildAllAccessMethodsPlan(path *joinPath) []Plan {
-	indices, includeTableScan := b.availableIndices(path.table)
-	var candidates []Plan
-	if includeTableScan {
-		p := b.buildTableScanPlan(path)
-		candidates = append(candidates, p)
-	}
-	for _, index := range indices {
-		ip := b.buildIndexScanPlan(index, path)
-		candidates = append(candidates, ip)
-	}
-	return candidates
-}
-
-func (b *planBuilder) availableIndices(table *ast.TableName) (indices []*model.IndexInfo, includeTableScan bool) {
+func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indices []*model.IndexInfo, includeTableScan bool) {
 	var usableHints []*ast.IndexHint
-	for _, hint := range table.IndexHints {
+	for _, hint := range hints {
 		if hint.HintScope == ast.HintForScan {
 			usableHints = append(usableHints, hint)
 		}
 	}
+	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
+	for _, index := range tableInfo.Indices {
+		if index.State == model.StatePublic {
+			publicIndices = append(publicIndices, index)
+		}
+	}
 	if len(usableHints) == 0 {
-		return table.TableInfo.Indices, true
+		return publicIndices, true
 	}
 	var hasUse bool
 	var ignores []*model.IndexInfo
@@ -379,7 +236,7 @@ func (b *planBuilder) availableIndices(table *ast.TableName) (indices []*model.I
 			// Currently we don't distinguish between Force and Use because our cost estimation is not reliable.
 			hasUse = true
 			for _, idxName := range hint.IndexNames {
-				idx := findIndexByName(table.TableInfo.Indices, idxName)
+				idx := findIndexByName(publicIndices, idxName)
 				if idx != nil {
 					indices = append(indices, idx)
 				}
@@ -387,7 +244,7 @@ func (b *planBuilder) availableIndices(table *ast.TableName) (indices []*model.I
 		case ast.HintIgnore:
 			// Collect all the ignore index hints.
 			for _, idxName := range hint.IndexNames {
-				idx := findIndexByName(table.TableInfo.Indices, idxName)
+				idx := findIndexByName(publicIndices, idxName)
 				if idx != nil {
 					ignores = append(ignores, idx)
 				}
@@ -403,16 +260,7 @@ func (b *planBuilder) availableIndices(table *ast.TableName) (indices []*model.I
 		// Empty use hint means don't use any index.
 		return nil, true
 	}
-	if len(ignores) == 0 {
-		return table.TableInfo.Indices, true
-	}
-	for _, idx := range table.TableInfo.Indices {
-		// Exclude ignored index.
-		if findIndexByName(ignores, idx.Name) == nil {
-			indices = append(indices, idx)
-		}
-	}
-	return indices, true
+	return removeIgnores(publicIndices, ignores), true
 }
 
 func removeIgnores(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
@@ -437,203 +285,16 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 	return nil
 }
 
-func (b *planBuilder) buildTableDual(sel *ast.SelectStmt) Plan {
-	dual := &TableDual{FilterConditions: splitWhere(sel.Where)}
-	ret := ast.ResultField{}
-	dual.SetFields([]*ast.ResultField{&ret})
-	return dual
-}
-
-func getTableAsName(fields []*ast.ResultField) *model.CIStr {
-	if len(fields) > 0 {
-		return &fields[0].TableAsName
-	}
-	return nil
-}
-
-func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {
-	tn := path.table
-	p := &TableScan{
-		Table:     tn.TableInfo,
-		TableName: tn,
-	}
-	// Equal condition contains a column from previous joined table.
-	p.RefAccess = len(path.eqConds) > 0
-	p.SetFields(tn.GetResultFields())
-	p.TableAsName = getTableAsName(p.Fields())
-	var pkName model.CIStr
-	if p.Table.PKIsHandle {
-		for _, colInfo := range p.Table.Columns {
-			if mysql.HasPriKeyFlag(colInfo.Flag) {
-				pkName = colInfo.Name
-			}
-		}
-	}
-	for _, con := range path.conditions {
-		if pkName.L != "" {
-			checker := conditionChecker{tableName: tn.TableInfo.Name, pkName: pkName}
-			if checker.check(con) {
-				p.AccessConditions = append(p.AccessConditions, con)
-			} else {
-				p.FilterConditions = append(p.FilterConditions, con)
-			}
-		} else {
-			p.FilterConditions = append(p.FilterConditions, con)
-		}
-	}
-	return p
-}
-
-func (b *planBuilder) buildIndexScanPlan(index *model.IndexInfo, path *joinPath) Plan {
-	tn := path.table
-	ip := &IndexScan{Table: tn.TableInfo, Index: index, TableName: tn}
-	ip.RefAccess = len(path.eqConds) > 0
-	ip.SetFields(tn.GetResultFields())
-	ip.TableAsName = getTableAsName(ip.Fields())
-
-	condMap := map[ast.ExprNode]bool{}
-	for _, con := range path.conditions {
-		condMap[con] = true
-	}
-out:
-	// Build equal access conditions first.
-	// Starts from the first index column, if equal condition is found, add it to access conditions,
-	// proceed to the next index column. until we can't find any equal condition for the column.
-	for ip.AccessEqualCount < len(index.Columns) {
-		for con := range condMap {
-			binop, ok := con.(*ast.BinaryOperationExpr)
-			if !ok || binop.Op != opcode.EQ {
-				continue
-			}
-			if ast.IsPreEvaluable(binop.L) {
-				binop.L, binop.R = binop.R, binop.L
-			}
-			if !ast.IsPreEvaluable(binop.R) {
-				continue
-			}
-			cn, ok2 := binop.L.(*ast.ColumnNameExpr)
-			if !ok2 || cn.Refer.Column.Name.L != index.Columns[ip.AccessEqualCount].Name.L {
-				continue
-			}
-			ip.AccessConditions = append(ip.AccessConditions, con)
-			delete(condMap, con)
-			ip.AccessEqualCount++
-			continue out
-		}
-		break
-	}
-
-	for con := range condMap {
-		if ip.AccessEqualCount < len(ip.Index.Columns) {
-			// Try to add non-equal access condition for index column at AccessEqualCount.
-			checker := conditionChecker{tableName: tn.TableInfo.Name, idx: index, columnOffset: ip.AccessEqualCount}
-			if checker.check(con) {
-				ip.AccessConditions = append(ip.AccessConditions, con)
-			} else {
-				ip.FilterConditions = append(ip.FilterConditions, con)
-			}
-		} else {
-			ip.FilterConditions = append(ip.FilterConditions, con)
-		}
-	}
-	return ip
-}
-
-// buildPseudoSelectPlan pre-builds more complete plans that may affect total cost.
-// Also set OutOfOrder and NoLimit property.
-func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
-	if sel.OrderBy == nil {
-		return p
-	}
-	if sel.GroupBy != nil {
-		return p
-	}
-	if !pushOrder(p, sel.OrderBy.Items) {
-		switch x := p.(type) {
-		case *IndexScan:
-			x.OutOfOrder = true
-			x.NoLimit = true
-		}
-		np := &Sort{ByItems: sel.OrderBy.Items}
-		addChild(np, p)
-		p = np
-	}
-	if sel.Limit != nil {
-		np := &Limit{Offset: sel.Limit.Offset, Count: sel.Limit.Count}
-		addChild(np, p)
-		np.SetLimit(0)
-		p = np
-	} else {
-		switch x := p.(type) {
-		case *IndexScan:
-			x.NoLimit = true
-		}
-	}
-	return p
-}
-
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
 	selectLock := &SelectLock{
-		Lock: lock,
+		Lock:            lock,
+		baseLogicalPlan: newBaseLogicalPlan(Lock, b.allocator),
 	}
+	selectLock.self = selectLock
+	selectLock.initIDAndContext(b.ctx)
 	addChild(selectLock, src)
-	selectLock.SetFields(src.Fields())
+	selectLock.SetSchema(src.GetSchema())
 	return selectLock
-}
-
-func (b *planBuilder) buildSelectFields(src Plan, fields []*ast.ResultField) Plan {
-	selectFields := &SelectFields{}
-	addChild(selectFields, src)
-	selectFields.SetFields(fields)
-	return selectFields
-}
-
-func (b *planBuilder) buildAggregate(src Plan, aggFuncs []*ast.AggregateFuncExpr, groupby *ast.GroupByClause) Plan {
-	// Add aggregate plan.
-	aggPlan := &Aggregate{
-		AggFuncs: aggFuncs,
-	}
-	addChild(aggPlan, src)
-	if src != nil {
-		aggPlan.SetFields(src.Fields())
-	}
-	if groupby != nil {
-		aggPlan.GroupByItems = groupby.Items
-	}
-	return aggPlan
-}
-
-func (b *planBuilder) buildHaving(src Plan, having *ast.HavingClause) Plan {
-	p := &Having{
-		Conditions: splitWhere(having.Expr),
-	}
-	addChild(p, src)
-	p.SetFields(src.Fields())
-	return p
-}
-
-func (b *planBuilder) buildSort(src Plan, byItems []*ast.ByItem) Plan {
-	sort := &Sort{
-		ByItems: byItems,
-	}
-	addChild(sort, src)
-	sort.SetFields(src.Fields())
-	return sort
-}
-
-func (b *planBuilder) buildLimit(src Plan, limit *ast.Limit) Plan {
-	li := &Limit{
-		Offset: limit.Offset,
-		Count:  limit.Count,
-	}
-	if s, ok := src.(*Sort); ok {
-		s.ExecLimit = li
-		return s
-	}
-	addChild(li, src)
-	li.SetFields(src.Fields())
-	li.SetSchema(src.GetSchema().DeepCopy())
-	return li
 }
 
 func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
@@ -656,7 +317,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p = &CheckTable{Tables: as.Tables}
 	case ast.AdminShowDDL:
 		p = &ShowDDL{}
-		p.SetFields(buildShowDDLFields())
+		p.SetSchema(buildShowDDLFields())
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
@@ -664,21 +325,20 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	return p
 }
 
-func buildShowDDLFields() []*ast.ResultField {
-	rfs := make([]*ast.ResultField, 0, 6)
-	rfs = append(rfs, buildResultField("", "SCHEMA_VER", mysql.TypeLonglong, 4))
-	rfs = append(rfs, buildResultField("", "OWNER", mysql.TypeVarchar, 64))
-	rfs = append(rfs, buildResultField("", "JOB", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "BG_SCHEMA_VER", mysql.TypeLonglong, 4))
-	rfs = append(rfs, buildResultField("", "BG_OWNER", mysql.TypeVarchar, 64))
-	rfs = append(rfs, buildResultField("", "BG_JOB", mysql.TypeVarchar, 128))
+func buildShowDDLFields() expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 6))
+	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "OWNER", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "JOB", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn("", "BG_SCHEMA_VER", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "BG_OWNER", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "BG_JOB", mysql.TypeVarchar, 128))
 
-	return rfs
+	return schema
 }
 
-func buildResultField(tableName, name string, tp byte, size int) *ast.ResultField {
-	cs := charset.CharsetBin
-	cl := charset.CharsetBin
+func buildColumn(tableName, name string, tp byte, size int) *expression.Column {
+	cs, cl := types.DefaultCharsetForType(tp)
 	flag := mysql.UnsignedFlag
 	if tp == mysql.TypeVarchar || tp == mysql.TypeBlob {
 		cs = mysql.DefaultCharset
@@ -686,120 +346,19 @@ func buildResultField(tableName, name string, tp byte, size int) *ast.ResultFiel
 		flag = 0
 	}
 
-	fieldType := types.FieldType{
+	fieldType := &types.FieldType{
 		Charset: cs,
 		Collate: cl,
 		Tp:      tp,
 		Flen:    size,
 		Flag:    uint(flag),
 	}
-	colInfo := &model.ColumnInfo{
-		Name:      model.NewCIStr(name),
-		FieldType: fieldType,
+	return &expression.Column{
+		ColName: model.NewCIStr(name),
+		TblName: model.NewCIStr(tableName),
+		DBName:  model.NewCIStr(infoschema.Name),
+		RetType: fieldType,
 	}
-	expr := &ast.ValueExpr{}
-	expr.SetType(&fieldType)
-
-	return &ast.ResultField{
-		Column:       colInfo,
-		ColumnAsName: colInfo.Name,
-		TableAsName:  model.NewCIStr(tableName),
-		DBName:       model.NewCIStr(infoschema.Name),
-		Expr:         expr,
-	}
-}
-
-func pushLimit(p Plan, limit *ast.Limit) {
-	switch x := p.(type) {
-	case *IndexScan:
-		limitCount := limit.Offset + limit.Count
-		if limitCount < math.MaxInt64 {
-			x.LimitCount = proto.Int64(int64(limitCount))
-		}
-	case *TableScan:
-		limitCount := limit.Offset + limit.Count
-		if limitCount < math.MaxInt64 {
-			x.LimitCount = proto.Int64(int64(limitCount))
-		}
-	default:
-		child := x.GetChildByIndex(0)
-		if child != nil {
-			pushLimit(child, limit)
-		}
-	}
-}
-
-// pushOrder tries to push order by items to the plan, returns true if
-// order is pushed.
-func pushOrder(p Plan, items []*ast.ByItem) bool {
-	switch x := p.(type) {
-	case *Aggregate:
-		return false
-	case *IndexScan:
-		if len(items) > len(x.Index.Columns) {
-			return false
-		}
-		var hasDesc bool
-		var hasAsc bool
-		for i, item := range items {
-			var rf *ast.ResultField
-			switch y := item.Expr.(type) {
-			case *ast.ColumnNameExpr:
-				rf = y.Refer
-			case *ast.PositionExpr:
-				rf = y.Refer
-			default:
-				return false
-			}
-			if rf.Table.Name.L != x.Table.Name.L || rf.Column.Name.L != x.Index.Columns[i].Name.L {
-				return false
-			}
-			if item.Desc {
-				if hasAsc {
-					return false
-				}
-				hasDesc = true
-			} else {
-				if hasDesc {
-					return false
-				}
-				hasAsc = true
-			}
-		}
-		x.Desc = hasDesc
-		return true
-	case *TableScan:
-		if len(items) != 1 || !x.Table.PKIsHandle {
-			return false
-		}
-		var refer *ast.ResultField
-		switch x := items[0].Expr.(type) {
-		case *ast.ColumnNameExpr:
-			refer = x.Refer
-		case *ast.PositionExpr:
-			refer = x.Refer
-		default:
-			return false
-		}
-		if mysql.HasPriKeyFlag(refer.Column.Flag) {
-			x.Desc = items[0].Desc
-			return true
-		}
-		return false
-	case *JoinOuter:
-		return false
-	case *JoinInner:
-		return false
-	case *Sort:
-		// Sort plan should not be checked here as there should only be one sort plan in a plan tree.
-		return false
-	default:
-		child := x.GetChildByIndex(0)
-		if child != nil {
-			return pushOrder(child, items)
-		}
-	}
-	return false
 }
 
 // splitWhere split a where expression to a list of AND conditions.
@@ -822,264 +381,210 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 	return conditions
 }
 
-// SubQueryBuilder is the interface for building SubQuery executor.
-type SubQueryBuilder interface {
-	Build(p Plan) ast.SubqueryExec
-}
-
-// subqueryVisitor visits AST and handles SubqueryExpr.
-type subqueryVisitor struct {
-	builder *planBuilder
-}
-
-func (se *subqueryVisitor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch x := in.(type) {
-	case *ast.SubqueryExpr:
-		p := se.builder.build(x.Query)
-		// The expr pointer is copied into ResultField when running name resolver.
-		// So we can not just replace the expr node in AST. We need to put SubQuery into the expr.
-		// See: optimizer.nameResolver.createResultFields()
-		x.SubqueryExec = se.builder.sb.Build(p)
-		return in, true
-	case *ast.Join:
-		// SubSelect in from clause will be handled in buildJoin().
-		return in, true
+func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
+	var resultPlan Plan
+	p := &Show{
+		Tp:              show.Tp,
+		DBName:          show.DBName,
+		Table:           show.Table,
+		Column:          show.Column,
+		Flag:            show.Flag,
+		Full:            show.Full,
+		User:            show.User,
+		baseLogicalPlan: newBaseLogicalPlan("Show", b.allocator),
 	}
-	return in, false
-}
-
-func (se *subqueryVisitor) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
-}
-
-func (b *planBuilder) buildUnion(union *ast.UnionStmt) Plan {
-	sels := make([]Plan, len(union.SelectList.Selects))
-	for i, sel := range union.SelectList.Selects {
-		sels[i] = b.buildSelect(sel)
+	resultPlan = p
+	p.initIDAndContext(b.ctx)
+	p.self = p
+	switch show.Tp {
+	case ast.ShowProcedureStatus:
+		p.SetSchema(buildShowProcedureSchema())
+	case ast.ShowTriggers:
+		p.SetSchema(buildShowTriggerSchema())
+	case ast.ShowEvents:
+		p.SetSchema(buildShowEventsSchema())
+	default:
+		p.SetSchema(buildShowDefaultSchema(show))
 	}
-	var p Plan
-	p = &Union{
-		Selects: sels,
+	for i, col := range p.schema.Columns {
+		col.Position = i
 	}
-	unionFields := union.GetResultFields()
-	for _, sel := range sels {
-		for i, f := range sel.Fields() {
-			if i == len(unionFields) {
-				b.err = errors.New("The used SELECT statements have a different number of columns")
-				return nil
-			}
-			uField := unionFields[i]
-			/*
-			 * The lengths of the columns in the UNION result take into account the values retrieved by all of the SELECT statements
-			 * SELECT REPEAT('a',1) UNION SELECT REPEAT('b',10);
-			 * +---------------+
-			 * | REPEAT('a',1) |
-			 * +---------------+
-			 * | a             |
-			 * | bbbbbbbbbb    |
-			 * +---------------+
-			 */
-			if f.Column.Flen > uField.Column.Flen {
-				uField.Column.Flen = f.Column.Flen
-			}
-			// For select nul union select "abc", we should not convert "abc" to nil.
-			// And the result field type should be VARCHAR.
-			if uField.Column.Tp == 0 || uField.Column.Tp == mysql.TypeNull {
-				uField.Column.Tp = f.Column.Tp
-			}
-		}
-		addChild(p, sel)
-	}
-	for _, v := range unionFields {
-		v.Expr.SetType(&v.Column.FieldType)
-	}
-
-	p.SetFields(unionFields)
-	if union.Distinct {
-		p = b.buildDistinct(p)
-	}
-	if union.OrderBy != nil {
-		p = b.buildSort(p, union.OrderBy.Items)
-	}
-	if union.Limit != nil {
-		p = b.buildLimit(p, union.Limit)
-	}
-	return p
-}
-
-func (b *planBuilder) buildDistinct(src Plan) Plan {
-	d := &Distinct{}
-	addChild(d, src)
-	d.SetFields(src.Fields())
-	return d
-}
-
-func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
-	sel := &ast.SelectStmt{From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
-	p := b.buildFrom(sel)
-	for _, v := range p.Fields() {
-		v.Referenced = true
-	}
-	if sel.OrderBy != nil && !pushOrder(p, sel.OrderBy.Items) {
-		p = b.buildSort(p, sel.OrderBy.Items)
-		if b.err != nil {
-			return nil
-		}
-	}
-	if sel.Limit != nil {
-		pushLimit(p, sel.Limit)
-		p = b.buildLimit(p, sel.Limit)
-		if b.err != nil {
-			return nil
-		}
-	}
-	orderedList := b.buildUpdateLists(update.List, p.Fields())
-	if b.err != nil {
-		return nil
-	}
-	return &Update{OrderedList: orderedList, SelectPlan: p, basePlan: basePlan{children: []Plan{p}}}
-}
-
-func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, fields []*ast.ResultField) []*ast.Assignment {
-	newList := make([]*ast.Assignment, len(fields))
-	for _, assign := range list {
-		offset, err := columnOffsetInFields(assign.Column, fields)
+	var conditions []expression.Expression
+	if show.Pattern != nil {
+		expr, _, err := b.rewrite(show.Pattern, p, nil, false)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		newList[offset] = assign
-	}
-	return newList
-}
-
-func (b *planBuilder) buildDelete(del *ast.DeleteStmt) Plan {
-	sel := &ast.SelectStmt{From: del.TableRefs, Where: del.Where, OrderBy: del.Order, Limit: del.Limit}
-	p := b.buildFrom(sel)
-	for _, v := range p.Fields() {
-		v.Referenced = true
-	}
-	if sel.OrderBy != nil && !pushOrder(p, sel.OrderBy.Items) {
-		p = b.buildSort(p, sel.OrderBy.Items)
-		if b.err != nil {
-			return nil
-		}
-	}
-	if sel.Limit != nil {
-		pushLimit(p, sel.Limit)
-		p = b.buildLimit(p, sel.Limit)
-		if b.err != nil {
-			return nil
-		}
-	}
-	var tables []*ast.TableName
-	if del.Tables != nil {
-		tables = del.Tables.Tables
-	}
-	return &Delete{
-		Tables:       tables,
-		IsMultiTable: del.IsMultiTable,
-		SelectPlan:   p,
-		basePlan:     basePlan{children: []Plan{p}},
-	}
-}
-
-func columnOffsetInFields(cn *ast.ColumnName, fields []*ast.ResultField) (int, error) {
-	offset := -1
-	tableNameL := cn.Table.L
-	columnNameL := cn.Name.L
-	if tableNameL != "" {
-		for i, f := range fields {
-			// Check table name.
-			if f.TableAsName.L != "" {
-				if tableNameL != f.TableAsName.L {
-					continue
-				}
-			} else {
-				if tableNameL != f.Table.Name.L {
-					continue
-				}
-			}
-			// Check column name.
-			if f.ColumnAsName.L != "" {
-				if columnNameL != f.ColumnAsName.L {
-					continue
-				}
-			} else {
-				if columnNameL != f.Column.Name.L {
-					continue
-				}
-			}
-
-			offset = i
-		}
-	} else {
-		for i, f := range fields {
-			matchAsName := f.ColumnAsName.L != "" && f.ColumnAsName.L == columnNameL
-			matchColumnName := f.ColumnAsName.L == "" && f.Column.Name.L == columnNameL
-			if matchAsName || matchColumnName {
-				if offset != -1 {
-					return -1, errors.Errorf("column %s is ambiguous.", cn.Name.O)
-				}
-				offset = i
-			}
-		}
-	}
-	if offset == -1 {
-		return -1, errors.Errorf("column %s not found", cn.Name.O)
-	}
-	return offset, nil
-}
-
-func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
-	var p Plan
-	p = &Show{
-		Tp:     show.Tp,
-		DBName: show.DBName,
-		Table:  show.Table,
-		Column: show.Column,
-		Flag:   show.Flag,
-		Full:   show.Full,
-		User:   show.User,
-	}
-	p.SetFields(show.GetResultFields())
-	var conditions []ast.ExprNode
-	if show.Pattern != nil {
-		conditions = append(conditions, show.Pattern)
+		conditions = append(conditions, expr)
 	}
 	if show.Where != nil {
-		conditions = append(conditions, show.Where)
+		conds := splitWhere(show.Where)
+		for _, cond := range conds {
+			expr, _, err := b.rewrite(cond, p, nil, false)
+			if err != nil {
+				b.err = errors.Trace(err)
+				return nil
+			}
+			conditions = append(conditions, expr)
+		}
 	}
 	if len(conditions) != 0 {
-		filter := &Filter{Conditions: conditions}
-		addChild(filter, p)
-		p = filter
+		sel := &Selection{
+			baseLogicalPlan: newBaseLogicalPlan(Sel, b.allocator),
+			Conditions:      conditions,
+		}
+		sel.initIDAndContext(b.ctx)
+		sel.self = sel
+		addChild(sel, p)
+		resultPlan = sel
 	}
-	return p
+	return resultPlan
 }
 
 func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 	return &Simple{Statement: node}
 }
 
-func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
-	insertPlan := &Insert{
-		Table:       insert.Table,
-		Columns:     insert.Columns,
-		Lists:       insert.Lists,
-		Setlist:     insert.Setlist,
-		OnDuplicate: insert.OnDuplicate,
-		IsReplace:   insert.IsReplace,
-		Priority:    insert.Priority,
+func (b *planBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
+	if value, ok, err := table.GetColDefaultValue(b.ctx, col.ToInfo()); ok {
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
 	}
+	return &expression.Constant{RetType: &col.FieldType}, nil
+}
+
+func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnName) (*expression.Constant, error) {
+	for _, col := range cols {
+		if col.Name.L == name.Name.L {
+			return b.getDefaultValue(col)
+		}
+	}
+	return nil, ErrUnknownColumn.GenByArgs(name.Name.O, "field_list")
+}
+
+func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
+	// Get Table
+	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
+	if !ok {
+		b.err = infoschema.ErrTableNotExists.GenByArgs()
+		return nil
+	}
+	tn, ok := ts.Source.(*ast.TableName)
+	if !ok {
+		b.err = infoschema.ErrTableNotExists.GenByArgs()
+		return nil
+	}
+	tableInfo := tn.TableInfo
+	schema := expression.TableInfo2Schema(tableInfo)
+	table, ok := b.is.TableByID(tableInfo.ID)
+	if !ok {
+		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
+		return nil
+	}
+	insertPlan := &Insert{
+		Table:           table,
+		Columns:         insert.Columns,
+		tableSchema:     schema,
+		IsReplace:       insert.IsReplace,
+		Priority:        insert.Priority,
+		Ignore:          insert.Ignore,
+		baseLogicalPlan: newBaseLogicalPlan(Ins, b.allocator),
+	}
+	cols := table.Cols()
+	for _, valuesItem := range insert.Lists {
+		exprList := make([]expression.Expression, 0, len(valuesItem))
+		for i, valueItem := range valuesItem {
+			var expr expression.Expression
+			var err error
+			if dft, ok := valueItem.(*ast.DefaultExpr); ok {
+				if dft.Name != nil {
+					expr, err = b.findDefaultValue(cols, dft.Name)
+				} else {
+					expr, err = b.getDefaultValue(cols[i])
+				}
+			} else if val, ok := valueItem.(*ast.ValueExpr); ok {
+				expr = &expression.Constant{
+					Value:   val.Datum,
+					RetType: &val.Type,
+				}
+			} else {
+				expr, _, err = b.rewrite(valueItem, nil, nil, true)
+			}
+			if err != nil {
+				b.err = errors.Trace(err)
+			}
+			exprList = append(exprList, expr)
+		}
+		insertPlan.Lists = append(insertPlan.Lists, exprList)
+	}
+	for _, assign := range insert.Setlist {
+		col, err := schema.FindColumn(assign.Column)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		if col == nil {
+			b.err = errors.Errorf("Can't find column %s", assign.Column)
+			return nil
+		}
+		// Here we keep different behaviours with MySQL. MySQL allow set a = b, b = a and the result is NULL, NULL.
+		// It's unreasonable.
+		expr, _, err := b.rewrite(assign.Expr, nil, nil, true)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		insertPlan.Setlist = append(insertPlan.Setlist, &expression.Assignment{
+			Col:  col,
+			Expr: expr,
+		})
+	}
+	mockTablePlan := &TableDual{}
+	mockTablePlan.SetSchema(schema)
+	for _, assign := range insert.OnDuplicate {
+		col, err := schema.FindColumn(assign.Column)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		if col == nil {
+			b.err = errors.Errorf("Can't find column %s", assign.Column)
+			return nil
+		}
+		expr, _, err := b.rewrite(assign.Expr, mockTablePlan, nil, true)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		insertPlan.OnDuplicate = append(insertPlan.OnDuplicate, &expression.Assignment{
+			Col:  col,
+			Expr: expr,
+		})
+	}
+	insertPlan.initIDAndContext(b.ctx)
+	insertPlan.self = insertPlan
 	if insert.Select != nil {
-		insertPlan.SelectPlan = b.build(insert.Select)
-		addChild(insertPlan, insertPlan.SelectPlan)
+		selectPlan := b.build(insert.Select)
 		if b.err != nil {
 			return nil
 		}
+		addChild(insertPlan, selectPlan)
 	}
 	return insertPlan
+}
+
+func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
+	p := &LoadData{
+		IsLocal:    ld.IsLocal,
+		Path:       ld.Path,
+		Table:      ld.Table,
+		FieldsInfo: ld.FieldsInfo,
+		LinesInfo:  ld.LinesInfo,
+	}
+	return p
 }
 
 func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
@@ -1090,28 +595,158 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
 		return b.buildShow(show)
 	}
-	targetPlan := b.build(explain.Stmt)
-	if b.err != nil {
+	targetPlan, err := Optimize(b.ctx, explain.Stmt, b.is)
+	if err != nil {
+		b.err = errors.Trace(err)
 		return nil
 	}
 	p := &Explain{StmtPlan: targetPlan}
 	addChild(p, targetPlan)
-	p.SetFields(buildExplainFields())
+	schema := expression.NewSchema(make([]*expression.Column, 0, 3))
+	schema.Append(&expression.Column{
+		ColName: model.NewCIStr("ID"),
+		RetType: types.NewFieldType(mysql.TypeString),
+	})
+	schema.Append(&expression.Column{
+		ColName: model.NewCIStr("Json"),
+		RetType: types.NewFieldType(mysql.TypeString),
+	})
+	schema.Append(&expression.Column{
+		ColName: model.NewCIStr("ParentID"),
+		RetType: types.NewFieldType(mysql.TypeString),
+	})
+	p.SetSchema(schema)
 	return p
 }
 
-// See: https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
-func buildExplainFields() []*ast.ResultField {
-	rfs := make([]*ast.ResultField, 0, 10)
-	rfs = append(rfs, buildResultField("", "id", mysql.TypeLonglong, 4))
-	rfs = append(rfs, buildResultField("", "select_type", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "table", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "type", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "possible_keys", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "key", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "key_len", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "ref", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "rows", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "Extra", mysql.TypeVarchar, 128))
-	return rfs
+func buildShowProcedureSchema() expression.Schema {
+	tblName := "ROUTINES"
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11))
+	schema.Append(buildColumn(tblName, "Db", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Name", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Type", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Definer", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Modified", mysql.TypeDatetime, 19))
+	schema.Append(buildColumn(tblName, "Created", mysql.TypeDatetime, 19))
+	schema.Append(buildColumn(tblName, "Security_type", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Comment", mysql.TypeBlob, 196605))
+	schema.Append(buildColumn(tblName, "character_set_client", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "collation_connection", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "Database Collation", mysql.TypeVarchar, 32))
+	return schema
+}
+
+func buildShowTriggerSchema() expression.Schema {
+	tblName := "TRIGGERS"
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11))
+	schema.Append(buildColumn(tblName, "Trigger", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Event", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Table", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Statement", mysql.TypeBlob, 196605))
+	schema.Append(buildColumn(tblName, "Timing", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Created", mysql.TypeDatetime, 19))
+	schema.Append(buildColumn(tblName, "sql_mode", mysql.TypeBlob, 8192))
+	schema.Append(buildColumn(tblName, "Definer", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "character_set_client", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "collation_connection", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "Database Collation", mysql.TypeVarchar, 32))
+	return schema
+}
+
+func buildShowEventsSchema() expression.Schema {
+	tblName := "EVENTS"
+	schema := expression.NewSchema(make([]*expression.Column, 0, 15))
+	schema.Append(buildColumn(tblName, "Db", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Name", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Time zone", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "Definer", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Type", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Execute At", mysql.TypeDatetime, 19))
+	schema.Append(buildColumn(tblName, "Interval Value", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Interval Field", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn(tblName, "Starts", mysql.TypeDatetime, 19))
+	schema.Append(buildColumn(tblName, "Ends", mysql.TypeDatetime, 19))
+	schema.Append(buildColumn(tblName, "Status", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "Originator", mysql.TypeInt24, 4))
+	schema.Append(buildColumn(tblName, "character_set_client", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "collation_connection", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn(tblName, "Database Collation", mysql.TypeVarchar, 32))
+	return schema
+}
+
+// getShowColNamesAndTypes gets column names and types. If the `ftypes` is empty, every column is set to varchar type.
+func getShowColNamesAndTypes(s *ast.ShowStmt) (names []string, ftypes []byte) {
+	switch s.Tp {
+	case ast.ShowEngines:
+		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
+	case ast.ShowDatabases:
+		names = []string{"Database"}
+	case ast.ShowTables:
+		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
+		if s.Full {
+			names = append(names, "Table_type")
+		}
+	case ast.ShowTableStatus:
+		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
+			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",
+			"Create_time", "Update_time", "Check_time", "Collation", "Checksum",
+			"Create_options", "Comment"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowColumns:
+		names = table.ColDescFieldNames(s.Full)
+	case ast.ShowWarnings:
+		names = []string{"Level", "Code", "Message"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar}
+	case ast.ShowCharset:
+		names = []string{"Charset", "Description", "Default collation", "Maxlen"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
+	case ast.ShowVariables, ast.ShowStatus:
+		names = []string{"Variable_name", "Value"}
+	case ast.ShowCollation:
+		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
+	case ast.ShowCreateTable:
+		names = []string{"Table", "Create Table"}
+	case ast.ShowCreateDatabase:
+		names = []string{"Database", "Create Database"}
+	case ast.ShowGrants:
+		names = []string{fmt.Sprintf("Grants for %s", s.User)}
+	case ast.ShowIndex:
+		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
+			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
+			"Null", "Index_type", "Comment", "Index_comment"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowProcessList:
+		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+	}
+	return
+}
+
+func buildShowDefaultSchema(s *ast.ShowStmt) expression.Schema {
+	names, ftypes := getShowColNamesAndTypes(s)
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(names)))
+	for i, name := range names {
+		col := &expression.Column{
+			ColName: model.NewCIStr(name),
+		}
+		var retType types.FieldType
+		if len(ftypes) == 0 || ftypes[i] == 0 {
+			// Use varchar as the default return column type.
+			retType.Tp = mysql.TypeVarchar
+		} else {
+			retType.Tp = ftypes[i]
+		}
+		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
+		col.RetType = &retType
+		schema.Append(col)
+	}
+	return schema
 }
