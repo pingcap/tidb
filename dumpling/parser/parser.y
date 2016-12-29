@@ -291,6 +291,9 @@ import (
 	charFunc	"CHAR_FUNC"
 	charLength	"CHAR_LENGTH"
 	characterLength	"CHARACTER_LENGTH"
+	conv		"CONV"
+	bitXor		"BIT_XOR"
+	crc32		"CRC32"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -3021,6 +3024,21 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
+|	"CONV" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
+	}
+|	"CRC32" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+
 
 DateArithOpt:
 	"DATE_ADD"
@@ -3096,6 +3114,10 @@ FunctionCallAgg:
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
 |	"SUM" '(' DistinctOpt Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
+	}
+|	"BIT_XOR" '(' DistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}

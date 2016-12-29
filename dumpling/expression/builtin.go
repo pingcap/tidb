@@ -138,6 +138,8 @@ var Funcs = map[string]Func{
 	ast.Power:   {builtinPow, 2, 2},
 	ast.Rand:    {builtinRand, 0, 1},
 	ast.Round:   {builtinRound, 1, 2},
+	ast.Conv:    {builtinConv, 3, 3},
+	ast.CRC32:   {builtinCRC32, 1, 1},
 
 	// time functions
 	ast.Curdate:          {builtinCurrentDate, 0, 0},
