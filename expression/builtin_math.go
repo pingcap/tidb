@@ -195,16 +195,14 @@ func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err er
 
 //　See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_crc32
 func builtinCRC32(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	switch args[0].Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		x, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		r := crc32.ChecksumIEEE([]byte(x))
-		d.SetUint64(uint64(r))
+	if args[0].IsNull() {
 		return d, nil
 	}
+	x, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	r := crc32.ChecksumIEEE([]byte(x))
+	d.SetUint64(uint64(r))
+	return d, nil
 }
