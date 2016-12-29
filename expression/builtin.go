@@ -20,11 +20,91 @@ package expression
 import (
 	"strings"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
+
+// baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
+type baseBuiltinFunc struct {
+	args      []Expression
+	argValues []types.Datum
+	ctx       context.Context
+	self      builtinFunc
+}
+
+func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
+	return baseBuiltinFunc{
+		args:      args,
+		argValues: make([]types.Datum, len(args)),
+		ctx:       ctx,
+	}
+}
+
+func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err error) {
+	for i, arg := range b.args {
+		b.argValues[i], err = arg.Eval(row, b.ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return b.argValues, nil
+}
+
+// isDeterministic will be true by default. Non-deterministic function will override this function.
+func (b *baseBuiltinFunc) isDeterministic() bool {
+	return true
+}
+
+func (b *baseBuiltinFunc) getArgs() []Expression {
+	return b.args
+}
+
+// equal only checks if both functions are non-deterministic and if these arguments are same.
+// Function name will be checked outside.
+func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
+	if !b.self.isDeterministic() || !fun.isDeterministic() {
+		return false
+	}
+	funArgs := fun.getArgs()
+	if len(funArgs) != len(b.args) {
+		return false
+	}
+	for i := range b.args {
+		if !b.args[i].Equal(funArgs[i], b.ctx) {
+			return false
+		}
+	}
+	return true
+}
+
+func (b *baseBuiltinFunc) getCtx() context.Context {
+	return b.ctx
+}
+
+// builtinFunc stands for a particular function signature.
+type builtinFunc interface {
+	// eval does evaluation by the given row.
+	eval([]types.Datum) (types.Datum, error)
+	// getArgs returns the arguments expressions.
+	getArgs() []Expression
+	// isDeterministic checks if a function is deterministic.
+	// A function is deterministic if it returns same results for same inputs.
+	// e.g. random is non-deterministic.
+	isDeterministic() bool
+	// equal check if this function equals to another function.
+	equal(builtinFunc) bool
+	// getCtx returns this function's context.
+	getCtx() context.Context
+}
+
+// builtinFunc stands for a class for a function which may contains multiple functions.
+type functionClass interface {
+	// getFunction gets a function signature by the types and the counts of given arguments.
+	getFunction(args []Expression, ctx context.Context) (builtinFunc, error)
+}
 
 // BuiltinFunc is the function signature for builtin functions
 type BuiltinFunc func([]types.Datum, context.Context) (types.Datum, error)
