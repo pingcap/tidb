@@ -77,8 +77,8 @@ func (s *propagateConstantSolver) propagateInEQ() {
 	s.unionSet.init(len(s.columns))
 	for i := range s.conditions {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
-			lCol, lOk := fun.Args[0].(*Column)
-			rCol, rOk := fun.Args[1].(*Column)
+			lCol, lOk := fun.GetArgs()[0].(*Column)
+			rCol, rOk := fun.GetArgs()[1].(*Column)
 			if lOk && rOk {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
@@ -98,7 +98,7 @@ func (s *propagateConstantSolver) propagateInEQ() {
 			if id != j && s.unionSet.findRoot(id) == s.unionSet.findRoot(j) {
 				funName := cond.(*ScalarFunction).FuncName.L
 				var newExpr Expression
-				if _, ok := cond.(*ScalarFunction).Args[0].(*Column); ok {
+				if _, ok := cond.(*ScalarFunction).GetArgs()[0].(*Column); ok {
 					newExpr, _ = NewFunction(funName, cond.GetType(), s.columns[j], con)
 				} else {
 					newExpr, _ = NewFunction(funName, cond.GetType(), con, s.columns[j])
@@ -141,13 +141,13 @@ func (s *propagateConstantSolver) validPropagateCond(cond Expression, funNameMap
 		if _, ok := funNameMap[eq.FuncName.L]; !ok {
 			return nil, nil
 		}
-		if col, colOk := eq.Args[0].(*Column); colOk {
-			if con, conOk := eq.Args[1].(*Constant); conOk {
+		if col, colOk := eq.GetArgs()[0].(*Column); colOk {
+			if con, conOk := eq.GetArgs()[1].(*Constant); conOk {
 				return col, con
 			}
 		}
-		if col, colOk := eq.Args[1].(*Column); colOk {
-			if con, conOk := eq.Args[0].(*Constant); conOk {
+		if col, colOk := eq.GetArgs()[1].(*Column); colOk {
+			if con, conOk := eq.GetArgs()[0].(*Constant); conOk {
 				return col, con
 			}
 		}

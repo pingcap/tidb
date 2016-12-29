@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -99,7 +98,7 @@ type expressionRewriter struct {
 
 func getRowLen(e expression.Expression) int {
 	if f, ok := e.(*expression.ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
-		return len(f.Args)
+		return len(f.GetArgs())
 	}
 	if c, ok := e.(*expression.Constant); ok && c.Value.Kind() == types.KindRow {
 		return len(c.Value.GetRow())
@@ -109,7 +108,7 @@ func getRowLen(e expression.Expression) int {
 
 func getRowArg(e expression.Expression, idx int) expression.Expression {
 	if f, ok := e.(*expression.ScalarFunction); ok {
-		return f.Args[idx]
+		return f.GetArgs()[idx]
 	}
 	c, _ := e.(*expression.Constant)
 	d := c.Value.GetRow()[idx]
@@ -195,7 +194,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		return er.handleScalarSubquery(v)
 	case *ast.ParenthesesExpr:
 	case *ast.ValuesExpr:
-		er.valuesToScalarFunc(v)
+		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v))
 		return inNode, true
 	default:
 		er.asScalar = true
@@ -452,7 +451,15 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	case *ast.CaseExpr:
 		er.caseToExpression(v)
 	case *ast.FuncCastExpr:
-		er.castToScalarFunc(v)
+		arg := er.ctxStack[len(er.ctxStack)-1]
+		er.checkArgsOneColumn(arg)
+		if er.err != nil {
+			return retNode, false
+		}
+		er.ctxStack[len(er.ctxStack)-1], er.err = expression.NewCastFunc(v.Tp, arg)
+		if er.err != nil {
+			return retNode, false
+		}
 	case *ast.PatternLikeExpr:
 		er.likeToScalarFunc(v)
 	case *ast.PatternRegexpExpr:
@@ -852,33 +859,4 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		}
 	}
 	er.err = errors.Errorf("Unknown column %s %s %s.", v.Schema.L, v.Table.L, v.Name.L)
-}
-
-func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
-	bt, err := expression.CastFuncFactory(v.Tp)
-	if err != nil {
-		er.err = errors.Trace(err)
-		return
-	}
-	er.checkArgsOneColumn(er.ctxStack[len(er.ctxStack)-1])
-	if er.err != nil {
-		return
-	}
-	function := &expression.ScalarFunction{
-		Args:      []expression.Expression{er.ctxStack[len(er.ctxStack)-1]},
-		FuncName:  model.NewCIStr(ast.Cast),
-		RetType:   v.Tp,
-		Function:  bt,
-		ArgValues: make([]types.Datum, 1)}
-	er.ctxStack[len(er.ctxStack)-1] = function
-}
-
-func (er *expressionRewriter) valuesToScalarFunc(v *ast.ValuesExpr) {
-	bt := expression.BuildinValuesFactory(v)
-	function := &expression.ScalarFunction{
-		FuncName: model.NewCIStr(ast.Values),
-		RetType:  &v.Type,
-		Function: bt,
-	}
-	er.ctxStack = append(er.ctxStack, function)
 }
