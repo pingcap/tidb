@@ -207,7 +207,7 @@ func (c *Column) mergeBuckets(bucketIdx int64) {
 	return
 }
 
-func columnsToPB(col *Column) (*ColumnPB, error) {
+func columnToPB(col *Column) (*ColumnPB, error) {
 	data, err := codec.EncodeValue(nil, col.Values...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -272,14 +272,14 @@ func (t *Table) ToPB() (*TablePB, error) {
 		Indices: make([]*ColumnPB, len(t.Indices)),
 	}
 	for i, col := range t.Columns {
-		cpb, err := columnsToPB(col)
+		cpb, err := columnToPB(col)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		tblPB.Columns[i] = cpb
 	}
 	for i, col := range t.Indices {
-		cpb, err := columnsToPB(col)
+		cpb, err := columnToPB(col)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
