@@ -879,20 +879,17 @@ func (b *planBuilder) getTableStats(table *model.TableInfo) *statistics.Table {
 		return statistics.PseudoTable(table)
 	}
 	m := meta.NewMeta(txn)
-	tpb, err := m.GetTableStats(table.ID)
-	if err != nil {
+	tblStats, err := m.GetTableStats(table.ID)
+	if err != nil || tblStats == nil {
 		return statistics.PseudoTable(table)
 	}
-	if tpb != nil {
-		tbl, err := statistics.TableFromPB(table, tpb)
-		if err != nil {
-			log.Errorf("Error occured when convert pb table for %s", table.Name.O)
-			errors.Trace(err)
-			return statistics.PseudoTable(table)
-		}
-		return tbl
+	tbl, err := statistics.TableFromPB(table, tblStats)
+	if err != nil {
+		log.Errorf("Error occured when convert pb table for %s", table.Name.O)
+		errors.Trace(err)
+		return statistics.PseudoTable(table)
 	}
-	return statistics.PseudoTable(table)
+	return tbl
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
