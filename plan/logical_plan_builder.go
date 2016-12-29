@@ -886,7 +886,6 @@ func (b *planBuilder) getTableStats(table *model.TableInfo) *statistics.Table {
 	tbl, err := statistics.TableFromPB(table, tblStats)
 	if err != nil {
 		log.Errorf("Error occured when convert pb table for %s", table.Name.O)
-		errors.Trace(err)
 		return statistics.PseudoTable(table)
 	}
 	return tbl
