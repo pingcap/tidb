@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/juju/errors"
@@ -126,6 +127,7 @@ var Funcs = map[string]Func{
 	ast.IsNull:   {builtinIsNull, 1, 1},
 	ast.Greatest: {builtinGreatest, 2, -1},
 	ast.Least:    {builtinLeast, 2, -1},
+	ast.Interval: {builtinInterval, 2, -1},
 
 	// math functions
 	ast.Abs:     {builtinAbs, 1, 1},
@@ -353,5 +355,37 @@ func builtinLeast(args []types.Datum, ctx context.Context) (d types.Datum, err e
 		}
 	}
 	d = args[min]
+	return
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
+func builtinInterval(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		d.SetInt64(int64(-1))
+		return
+	}
+	sc := ctx.GetSessionVars().StmtCtx
+
+	lt := func(d1, d2 types.Datum) bool {
+		if d1.Kind() == types.KindString || d2.Kind() == types.KindString {
+			// Although the doc says that 'all arguments are treated
+			// as integers', the actual behavior of official mysql
+			// seems to be that the args are compared as IEEE 754
+			// float when any arg is a string. Thus, in some cases,
+			// precision loss is appropriate.
+			v1, _ := d1.ToFloat64(sc)
+			v2, _ := d2.ToFloat64(sc)
+			return v1 < v2
+		}
+		v1, _ := d1.ToInt64(sc)
+		v2, _ := d2.ToInt64(sc)
+		return v1 < v2
+	}
+
+	idx := sort.Search(len(args)-1, func(i int) bool {
+		return lt(args[0], args[i+1])
+	})
+	d.SetInt64(int64(idx))
+
 	return
 }

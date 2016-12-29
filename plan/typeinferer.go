@@ -272,6 +272,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 				mergeArithType(tp.Tp, x.Args[i].GetType().Tp)
 			}
 		}
+	case "interval":
+		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "ceil", "ceiling":
 		t := x.Args[0].GetType().Tp
 		if t == mysql.TypeNull || t == mysql.TypeFloat || t == mysql.TypeDouble || t == mysql.TypeVarchar ||

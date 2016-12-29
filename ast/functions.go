@@ -71,6 +71,7 @@ const (
 	Coalesce = "coalesce"
 	Greatest = "greatest"
 	Least    = "least"
+	Interval = "interval"
 
 	// math functions
 	Abs     = "abs"

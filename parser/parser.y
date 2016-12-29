@@ -723,6 +723,9 @@ import (
 %precedence lowerThanSQLCache
 %precedence sqlCache sqlNoCache
 
+%precedence lowerThanIntervalKeyword
+%precedence interval
+
 %precedence lowerThanSetKeyword
 %precedence set
 
@@ -2448,6 +2451,7 @@ FunctionNameConflict:
 |	"UTC_DATE"
 |	"CURRENT_DATE"
 |	"VERSION"
+|	"INTERVAL" %prec lowerThanIntervalKeyword
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')'
