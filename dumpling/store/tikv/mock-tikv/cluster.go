@@ -235,6 +235,8 @@ func (c *Cluster) SplitIndex(mvccStore *MvccStore, tableID, indexID int64, count
 }
 
 func (c *Cluster) splitRange(mvccStore *MvccStore, start, end MvccKey, count int) {
+	c.Lock()
+	defer c.Unlock()
 	c.evacuateOldRegionRanges(start, end)
 	regionPairs := c.getEntriesGroupByRegions(mvccStore, start, end, count)
 	c.createNewRegions(regionPairs, start, end)
