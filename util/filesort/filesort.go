@@ -164,10 +164,6 @@ func (fs *FileSorter) uniqueFileName() string {
 func (fs *FileSorter) flushMemory() {
 	sort.Sort(fs)
 
-	fmt.Printf("flushMemory: %d\n", fs.buf[0].key[0].GetInt64())
-	fmt.Printf("flushMemory: %d\n", fs.buf[0].val[0].GetInt64())
-	fmt.Printf("flushMemory: %d\n", fs.buf[0].handle)
-
 	fileName := fs.uniqueFileName()
 
 	fmt.Printf("flushMemory: %s\n", fileName)
@@ -178,8 +174,12 @@ func (fs *FileSorter) flushMemory() {
 		return
 	}
 
-	var body []byte
+	var output []byte
 	for _, row := range fs.buf {
+		var body []byte
+		fmt.Printf("flushMemory: %d\n", row.key[0].GetInt64())
+		fmt.Printf("flushMemory: %d\n", row.val[0].GetInt64())
+		fmt.Printf("flushMemory: %d\n", row.handle)
 		body, err = codec.EncodeKey(body, row.key...)
 		if err != nil {
 			panic(err)
@@ -192,14 +192,16 @@ func (fs *FileSorter) flushMemory() {
 		if err != nil {
 			panic(err)
 		}
+
+		fmt.Printf("flushMemory: body size = %d\n", len(body))
+
+		var head = make([]byte, 8)
+		binary.BigEndian.PutUint64(head, uint64(len(body)))
+
+		output = append(output, head...)
+		output = append(output, body...)
 	}
 
-	fmt.Printf("flushMemory: body size = %d\n", len(body))
-
-	var head = make([]byte, 8)
-	binary.BigEndian.PutUint64(head, uint64(len(body)))
-
-	output := append(head, body...)
 	fmt.Printf("flushMemory: output size = %d\n", len(output))
 
 	_, err = outputFile.Write(output)
@@ -226,9 +228,9 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 		fs.flushMemory()
 	}
 
-	fmt.Printf("Input: %d\n", fs.buf[0].key[0].GetInt64())
-	fmt.Printf("Input: %d\n", fs.buf[0].val[0].GetInt64())
-	fmt.Printf("Input: %d\n", fs.buf[0].handle)
+	fmt.Printf("Input: %d\n", fs.buf[len(fs.buf)-1].key[0].GetInt64())
+	fmt.Printf("Input: %d\n", fs.buf[len(fs.buf)-1].val[0].GetInt64())
+	fmt.Printf("Input: %d\n", fs.buf[len(fs.buf)-1].handle)
 
 	return nil
 }
@@ -283,7 +285,7 @@ func (fs *FileSorter) Output() (val []types.Datum, handle int64) {
 				handle: dcod[fs.keySize+fs.valSize:][0].GetInt64(),
 			}
 
-			fmt.Printf("Output: row.handle = %d\n", row.handle)
+			fmt.Printf("Output: push row.handle = %d\n", row.handle)
 
 			item := &Item{
 				index: id,
@@ -299,34 +301,34 @@ func (fs *FileSorter) Output() (val []types.Datum, handle int64) {
 	if fs.rowHeap.Len() > 0 {
 		next := heap.Pop(fs.rowHeap).(*Item)
 
-		fmt.Printf("Output: fds size = %d, next.index = %d\n", len(fds), next.index)
-		var head = make([]byte, 8)
-		n, err := fds[next.index].Read(head)
-		fmt.Printf("Output: n = %d\n", n)
+		var (
+			n    int
+			err  error
+			head = make([]byte, 8)
+			dcod = make([]types.Datum, 0, fs.keySize+fs.valSize+1)
+		)
+		n, err = fds[next.index].Read(head)
 		if err == nil && n == 8 {
-			//TODO: refine the logic here
-			rowSize := int64(binary.BigEndian.Uint64(head))
-			fmt.Printf("Output: rowSize = %d\n", rowSize)
+			rowSize := int(binary.BigEndian.Uint64(head))
+
 			rowBytes := make([]byte, rowSize)
-			// TODO: assertion read size == rowSize
-			fds[next.index].Read(rowBytes)
-			k, err := codec.Decode(rowBytes, fs.keySize)
+			n, err = fds[next.index].Read(rowBytes)
+			if err != nil || n != rowSize {
+				panic(err)
+			}
+
+			dcod, err = codec.Decode(rowBytes, fs.keySize+fs.valSize+1)
 			if err != nil {
 				panic(err)
 			}
-			v, err := codec.Decode(rowBytes, fs.valSize)
-			if err != nil {
-				panic(err)
-			}
-			h, err := codec.Decode(rowBytes, 1)
-			if err != nil {
-				panic(err)
-			}
+
 			row := &ComparableRow{
-				key:    k,
-				val:    v,
-				handle: h[0].GetInt64(),
+				key:    dcod[:fs.keySize],
+				val:    dcod[fs.keySize : fs.keySize+fs.valSize],
+				handle: dcod[fs.keySize+fs.valSize:][0].GetInt64(),
 			}
+
+			fmt.Printf("Output: push row.handle = %d\n", row.handle)
 
 			item := &Item{
 				index: next.index,

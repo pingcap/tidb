@@ -28,8 +28,11 @@ func (s *testFileSortSuite) TestFileSort(c *C) {
 	byDesc := []bool{false}
 	fs := NewFileSorter(sc, keySize, valSize, bufSize, byDesc)
 
+	fs.Input([]types.Datum{types.NewDatum(4)}, []types.Datum{types.NewDatum(5)}, 6)
 	fs.Input([]types.Datum{types.NewDatum(1)}, []types.Datum{types.NewDatum(2)}, 3)
 
 	_, handle := fs.Output()
 	c.Assert(handle, Equals, int64(3))
+	_, handle = fs.Output()
+	c.Assert(handle, Equals, int64(6))
 }
