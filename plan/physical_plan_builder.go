@@ -44,7 +44,7 @@ const (
 // JoinConcurrency means the number of goroutines that participate in joining.
 var JoinConcurrency = 5
 
-func getRowCountByIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo, tableInfo *model.TableInfo) (uint64, error) {
+func getRowCountByIndexRanges(sc *variable.StatementContext, statstbl *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo, tableInfo *model.TableInfo) (uint64, error) {
 	var offset int
 	for i := range tableInfo.Indices {
 		if tableInfo.Indices[i].Name.L == indexInfo.Name.L {
@@ -52,13 +52,47 @@ func getRowCountByIndexRanges(sc *variable.StatementContext, table *statistics.T
 			break
 		}
 	}
-	if len(table.Indices[offset].Numbers) == 0 {
-		return getRowCountByPseudoIndexRanges(sc, table, indexRanges, indexInfo)
+	if len(statstbl.Indices[offset].Numbers) == 0 {
+		return getPseudoRowCountByIndexRanges(sc, statstbl, indexRanges, indexInfo)
 	}
-	return getRowCountByRealIndexRanges(sc, table, indexRanges, indexInfo, offset)
+	return getRealRowCountByIndexRanges(sc, statstbl, indexRanges, indexInfo, offset)
 }
 
-func getRowCountByRealIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo, offset int) (uint64, error) {
+func getRowCountByRange(sc *variable.StatementContext, statsTblCount int64, statsCol *statistics.Column, l, r types.Datum) (int64, error) {
+	var rowCount int64
+	var err error
+	if l.Kind() == types.KindNull && r.Kind() == types.KindMaxValue {
+		return statsTblCount, nil
+	} else if l.Kind() == types.KindMinNotNull {
+		var nullCount int64
+		nullCount, err = statsCol.EqualRowCount(sc, types.Datum{})
+		if r.Kind() == types.KindMaxValue {
+			rowCount = statsTblCount - nullCount
+		} else if err == nil {
+			lessCount, err1 := statsCol.LessRowCount(sc, r)
+			rowCount = lessCount - nullCount
+			err = err1
+		}
+	} else if r.Kind() == types.KindMaxValue {
+		rowCount, err = statsCol.GreaterRowCount(sc, l)
+	} else {
+		compare, err1 := l.CompareDatum(sc, r)
+		if err1 != nil {
+			return 0, errors.Trace(err1)
+		}
+		if compare == 0 {
+			rowCount, err = statsCol.EqualRowCount(sc, l)
+		} else {
+			rowCount, err = statsCol.BetweenRowCount(sc, l, r)
+		}
+	}
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return rowCount, nil
+}
+
+func getRealRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo, offset int) (uint64, error) {
 	totalCount := int64(0)
 	for _, indexRange := range indexRanges {
 		lv := indexRange.LowVal
@@ -79,80 +113,31 @@ func getRowCountByRealIndexRanges(sc *variable.StatementContext, table *statisti
 		}
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)
-		var rowCount int64
-		if lv[0].Kind() == types.KindNull && rv[0].Kind() == types.KindMaxValue {
-			return uint64(table.Count), nil
-		} else if lv[0].Kind() == types.KindMinNotNull {
-			rowCount, err = table.Indices[offset].EqualRowCount(sc, types.Datum{})
-			if rv[0].Kind() == types.KindMaxValue {
-				rowCount = table.Count - rowCount
-			} else if err == nil {
-				lessCount, err1 := table.Indices[offset].LessRowCount(sc, r)
-				rowCount = lessCount - rowCount
-				err = err1
-			}
-		} else if rv[0].Kind() == types.KindMaxValue {
-			rowCount, err = table.Indices[offset].GreaterRowCount(sc, l)
-		} else {
-			compare, err1 := l.CompareDatum(sc, r)
-			if err1 != nil {
-				return 0, errors.Trace(err1)
-			}
-			if compare == 0 {
-				rowCount, err = table.Indices[offset].EqualRowCount(sc, l)
-			} else {
-				rowCount, err = table.Indices[offset].BetweenRowCount(sc, l, r)
-			}
-		}
+		rowCount, err := getRowCountByRange(sc, statsTbl.Count, statsTbl.Indices[offset], l, r)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		totalCount += rowCount
 	}
-	if totalCount > table.Count {
-		totalCount = table.Count
+	if totalCount > statsTbl.Count {
+		totalCount = statsTbl.Count
 	}
 	return uint64(totalCount), nil
 }
 
-func getRowCountByPseudoIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo) (uint64, error) {
+func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo) (uint64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
-		count := float64(table.Count)
+		count := float64(statsTbl.Count)
 		i := len(indexRange.LowVal) - 1
 		l := indexRange.LowVal[i]
 		r := indexRange.HighVal[i]
-		var rowCount int64
-		var err error
 		offset := indexInfo.Columns[i].Offset
-		if l.Kind() == types.KindNull && r.Kind() == types.KindMaxValue {
-			return uint64(table.Count), nil
-		} else if l.Kind() == types.KindMinNotNull {
-			rowCount, err = table.Columns[offset].EqualRowCount(sc, types.Datum{})
-			if r.Kind() == types.KindMaxValue {
-				rowCount = table.Count - rowCount
-			} else if err == nil {
-				lessCount, err1 := table.Columns[offset].LessRowCount(sc, r)
-				rowCount = lessCount - rowCount
-				err = err1
-			}
-		} else if r.Kind() == types.KindMaxValue {
-			rowCount, err = table.Columns[offset].GreaterRowCount(sc, l)
-		} else {
-			compare, err1 := l.CompareDatum(sc, r)
-			if err1 != nil {
-				return 0, errors.Trace(err1)
-			}
-			if compare == 0 {
-				rowCount, err = table.Columns[offset].EqualRowCount(sc, l)
-			} else {
-				rowCount, err = table.Columns[offset].BetweenRowCount(sc, l, r)
-			}
-		}
+		rowCount, err := getRowCountByRange(sc, statsTbl.Count, statsTbl.Columns[offset], l, r)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		count = count / float64(table.Count) * float64(rowCount)
+		count = count / float64(statsTbl.Count) * float64(rowCount)
 		// If the condition is a = 1, b = 1, c = 1, d = 1, we think every a=1, b=1, c=1 only filtrate 1/100 data,
 		// so as to avoid collapsing too fast.
 		for j := 0; j < i; j++ {
@@ -165,8 +150,8 @@ func getRowCountByPseudoIndexRanges(sc *variable.StatementContext, table *statis
 		// We will not let the row count less than 1000 to avoid collapsing too fast in the future calculation.
 		totalCount = 1000.0
 	}
-	if totalCount > float64(table.Count) {
-		totalCount = float64(table.Count) / 3.0
+	if totalCount > float64(statsTbl.Count) {
+		totalCount = float64(statsTbl.Count) / 3.0
 	}
 	return uint64(totalCount), nil
 }
