@@ -310,9 +310,8 @@ func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err er
 func builtinGreatest(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	max := 0
 	sc := ctx.GetSessionVars().StmtCtx
-	for i := 0; i < len(args); i++ {
+	for i := 1; i < len(args); i++ {
 		if args[i].IsNull() {
-			d.SetNull()
 			return
 		}
 
@@ -333,9 +332,8 @@ func builtinGreatest(args []types.Datum, ctx context.Context) (d types.Datum, er
 func builtinLeast(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	min := 0
 	sc := ctx.GetSessionVars().StmtCtx
-	for i := 0; i < len(args); i++ {
+	for i := 1; i < len(args); i++ {
 		if args[i].IsNull() {
-			d.SetNull()
 			return
 		}
 
