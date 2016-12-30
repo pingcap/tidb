@@ -711,6 +711,14 @@ func (s *testSuite) TestJoin(c *C) {
 	_, err = tk.Exec("select * from t right join t1 on 1")
 	c.Check(plan.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	plan.AllowCartesianProduct = true
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int)")
+	tk.MustExec("create table t1(c1 int unsigned)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t1 values (1)")
+	result = tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestMultiJoin(c *C) {

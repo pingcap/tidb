@@ -503,11 +503,9 @@ func getHashKey(sc *variable.StatementContext, cols []*expression.Column, row *R
 		if vals[i].IsNull() {
 			return true, nil, nil
 		}
-		if targetTypes[i].Tp != col.RetType.Tp {
-			vals[i], err = vals[i].ConvertTo(sc, targetTypes[i])
-			if err != nil {
-				return false, nil, errors.Trace(err)
-			}
+		vals[i], err = vals[i].ConvertTo(sc, targetTypes[i])
+		if err != nil {
+			return false, nil, errors.Trace(err)
 		}
 	}
 	if len(vals) == 0 {
