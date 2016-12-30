@@ -73,7 +73,7 @@ type clientConn struct {
 	salt         []byte            // random bytes used for authentication.
 	alloc        arena.Allocator   // an memory allocator for reducing memory allocation.
 	lastCmd      string            // latest sql query string, currently used for logging error.
-	ctx          IContext          // an interface to execute sql statements.
+	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
 }
 

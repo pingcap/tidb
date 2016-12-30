@@ -22,11 +22,11 @@ import (
 // IDriver opens IContext.
 type IDriver interface {
 	// OpenCtx opens an IContext with connection id, client capability, collation and dbname.
-	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string) (IContext, error)
+	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string) (QueryCtx, error)
 }
 
-// IContext is the interface to execute command.
-type IContext interface {
+// QueryCtx is the interface to execute command.
+type QueryCtx interface {
 	// Status returns server status code.
 	Status() uint16
 
