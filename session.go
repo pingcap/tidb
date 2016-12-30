@@ -188,9 +188,9 @@ func (s *session) doCommit() error {
 		}
 	}
 
-	// Set this option for 2 phase commit to valid schema lease.
+	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaLeaseChecker, &schemaLeaseChecker{
-		SchemaValidator: sessionctx.GetDomain(s).SchemaValidity,
+		SchemaValidator: sessionctx.GetDomain(s).SchemaValidator,
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
 	})
 	if err := s.txn.Commit(); err != nil {

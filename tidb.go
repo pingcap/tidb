@@ -160,19 +160,16 @@ func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
 func PrepareTxnCtx(ctx context.Context) error {
 	se := ctx.(*session)
 	if se.txn == nil || !se.txn.Valid() {
-		dom := sessionctx.GetDomain(ctx)
-		is := dom.InfoSchema()
-		schemaVer := is.SchemaMetaVersion()
+		is := sessionctx.GetDomain(ctx).InfoSchema()
 		se.sessionVars.TxnCtx = &variable.TransactionContext{
 			InfoSchema:    is,
-			SchemaVersion: schemaVer,
+			SchemaVersion: is.SchemaMetaVersion(),
 		}
 		var err error
 		se.txn, err = se.store.Begin()
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		err = se.loadCommonGlobalVariablesIfNeeded()
 		if err != nil {
 			return errors.Trace(err)

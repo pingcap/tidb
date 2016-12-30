@@ -32,12 +32,12 @@ import (
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store          kv.Storage
-	infoHandle     *infoschema.Handle
-	ddl            ddl.DDL
-	m              sync.Mutex
-	SchemaValidity SchemaValidator
-	exit           chan struct{}
+	store           kv.Storage
+	infoHandle      *infoschema.Handle
+	ddl             ddl.DDL
+	m               sync.Mutex
+	SchemaValidator SchemaValidator
+	exit            chan struct{}
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
@@ -258,7 +258,7 @@ func (do *Domain) Reload() error {
 		return errors.Trace(err)
 	}
 
-	do.SchemaValidity.Update(ver.Ver, latestSchemaVersion)
+	do.SchemaValidator.Update(ver.Ver, latestSchemaVersion)
 
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
@@ -336,9 +336,9 @@ func (m *MockFailure) getValue() bool {
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	d = &Domain{
-		store:          store,
-		SchemaValidity: newSchemaValidator(lease),
-		exit:           make(chan struct{}),
+		store:           store,
+		SchemaValidator: newSchemaValidator(lease),
+		exit:            make(chan struct{}),
 	}
 
 	d.infoHandle, err = infoschema.NewHandle(d.store)
