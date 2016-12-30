@@ -61,34 +61,34 @@ func (*testSuite) TestT(c *C) {
 	// for setting lease
 	lease := 100 * time.Millisecond
 
-	// for schemaValidity
-	schemaVer := dom.SchemaValidity.Latest()
+	// for schemaValidator
+	schemaVer := dom.SchemaValidator.Latest()
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
 	ts := ver.Ver
 
-	succ := dom.SchemaValidity.Check(ts, schemaVer)
+	succ := dom.SchemaValidator.Check(ts, schemaVer)
 	c.Assert(succ, IsTrue)
 	dom.MockReloadFailed.SetValue(true)
 	err = dom.Reload()
 	c.Assert(err, NotNil)
-	succ = dom.SchemaValidity.Check(ts, schemaVer)
+	succ = dom.SchemaValidator.Check(ts, schemaVer)
 	c.Assert(succ, IsTrue)
 	time.Sleep(lease)
 
 	ver, err = store.CurrentVersion()
 	c.Assert(err, IsNil)
 	ts = ver.Ver
-	succ = dom.SchemaValidity.Check(ts, schemaVer)
+	succ = dom.SchemaValidator.Check(ts, schemaVer)
 	c.Assert(succ, IsFalse)
 	dom.MockReloadFailed.SetValue(false)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
-	succ = dom.SchemaValidity.Check(ts, schemaVer)
+	succ = dom.SchemaValidator.Check(ts, schemaVer)
 	c.Assert(succ, IsTrue)
 	ver, err = store.CurrentVersion()
 	c.Assert(err, IsNil)
-	succ = dom.SchemaValidity.Check(ver.Ver, schemaVer)
+	succ = dom.SchemaValidator.Check(ver.Ver, schemaVer)
 	c.Assert(succ, IsTrue)
 
 	err = store.Close()
