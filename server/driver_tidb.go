@@ -37,7 +37,7 @@ func NewTiDBDriver(store kv.Storage) *TiDBDriver {
 	return driver
 }
 
-// TiDBContext implements IContext.
+// TiDBContext implements QueryCtx.
 type TiDBContext struct {
 	session      tidb.Session
 	currentDB    string
@@ -122,7 +122,7 @@ func (ts *TiDBStatement) Close() error {
 }
 
 // OpenCtx implements IDriver.
-func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string) (IContext, error) {
+func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string) (QueryCtx, error) {
 	session, err := tidb.CreateSession(qd.store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -143,52 +143,52 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	return tc, nil
 }
 
-// Status implements IContext Status method.
+// Status implements QueryCtx Status method.
 func (tc *TiDBContext) Status() uint16 {
 	return tc.session.Status()
 }
 
-// LastInsertID implements IContext LastInsertID method.
+// LastInsertID implements QueryCtx LastInsertID method.
 func (tc *TiDBContext) LastInsertID() uint64 {
 	return tc.session.LastInsertID()
 }
 
-// Value implements IContext Value method.
+// Value implements QueryCtx Value method.
 func (tc *TiDBContext) Value(key fmt.Stringer) interface{} {
 	return tc.session.Value(key)
 }
 
-// SetValue implements IContext SetValue method.
+// SetValue implements QueryCtx SetValue method.
 func (tc *TiDBContext) SetValue(key fmt.Stringer, value interface{}) {
 	tc.session.SetValue(key, value)
 }
 
-// CommitTxn implements IContext CommitTxn method.
+// CommitTxn implements QueryCtx CommitTxn method.
 func (tc *TiDBContext) CommitTxn() error {
 	return tc.session.CommitTxn()
 }
 
-// RollbackTxn implements IContext RollbackTxn method.
+// RollbackTxn implements QueryCtx RollbackTxn method.
 func (tc *TiDBContext) RollbackTxn() error {
 	return tc.session.RollbackTxn()
 }
 
-// AffectedRows implements IContext AffectedRows method.
+// AffectedRows implements QueryCtx AffectedRows method.
 func (tc *TiDBContext) AffectedRows() uint64 {
 	return tc.session.AffectedRows()
 }
 
-// CurrentDB implements IContext CurrentDB method.
+// CurrentDB implements QueryCtx CurrentDB method.
 func (tc *TiDBContext) CurrentDB() string {
 	return tc.currentDB
 }
 
-// WarningCount implements IContext WarningCount method.
+// WarningCount implements QueryCtx WarningCount method.
 func (tc *TiDBContext) WarningCount() uint16 {
 	return tc.warningCount
 }
 
-// Execute implements IContext Execute method.
+// Execute implements QueryCtx Execute method.
 func (tc *TiDBContext) Execute(sql string) (rs []ResultSet, err error) {
 	rsList, err := tc.session.Execute(sql)
 	if err != nil {
@@ -206,22 +206,22 @@ func (tc *TiDBContext) Execute(sql string) (rs []ResultSet, err error) {
 	return
 }
 
-// SetClientCapability implements IContext SetClientCapability method.
+// SetClientCapability implements QueryCtx SetClientCapability method.
 func (tc *TiDBContext) SetClientCapability(flags uint32) {
 	tc.session.SetClientCapability(flags)
 }
 
-// Close implements IContext Close method.
+// Close implements QueryCtx Close method.
 func (tc *TiDBContext) Close() (err error) {
 	return tc.session.Close()
 }
 
-// Auth implements IContext Auth method.
+// Auth implements QueryCtx Auth method.
 func (tc *TiDBContext) Auth(user string, auth []byte, salt []byte) bool {
 	return tc.session.Auth(user, auth, salt)
 }
 
-// FieldList implements IContext FieldList method.
+// FieldList implements QueryCtx FieldList method.
 func (tc *TiDBContext) FieldList(table string) (colums []*ColumnInfo, err error) {
 	rs, err := tc.Execute("SELECT * FROM `" + table + "` LIMIT 0")
 	if err != nil {
@@ -234,7 +234,7 @@ func (tc *TiDBContext) FieldList(table string) (colums []*ColumnInfo, err error)
 	return
 }
 
-// GetStatement implements IContext GetStatement method.
+// GetStatement implements QueryCtx GetStatement method.
 func (tc *TiDBContext) GetStatement(stmtID int) IStatement {
 	tcStmt := tc.stmts[stmtID]
 	if tcStmt != nil {
@@ -243,7 +243,7 @@ func (tc *TiDBContext) GetStatement(stmtID int) IStatement {
 	return nil
 }
 
-// Prepare implements IContext Prepare method.
+// Prepare implements QueryCtx Prepare method.
 func (tc *TiDBContext) Prepare(sql string) (statement IStatement, columns, params []*ColumnInfo, err error) {
 	stmtID, paramCount, fields, err := tc.session.PrepareStmt(sql)
 	if err != nil {
