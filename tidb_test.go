@@ -315,7 +315,7 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	sessionctx.GetDomain(ctx).MockReloadFailed.SetValue(true)
 	sessionctx.GetDomain(ctx).Reload()
 	lease := sessionctx.GetDomain(ctx).DDL().GetLease()
-	time.Sleep(lease)
+	time.Sleep(lease + time.Millisecond) // time.Sleep maybe not very reliable
 	// Make sure insert to table t1 transaction executes.
 	startCh1 <- struct{}{}
 	// Make sure executing insert statement is failed when server is invalid.
