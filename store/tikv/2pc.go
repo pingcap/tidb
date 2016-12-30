@@ -110,7 +110,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
 	// When writeSize <= 256K, ttl is defaultTTL (3s);
 	// When writeSize is 1MiB, 100MiB, or 400MiB, ttl is 6s, 60s, 120s correspondingly;
-	// When writeSize >= 400MiB, ttl is maxTTL (120s).
+	// When writeSize >= 400MiB, we return kv.ErrTxnTooLarge.
 	var lockTTL uint64
 	if size > txnCommitBatchSize {
 		sizeMiB := float64(size) / 1024 / 1024
@@ -119,7 +119,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 			lockTTL = defaultLockTTL
 		}
 		if lockTTL > maxLockTTL {
-			lockTTL = maxLockTTL
+			return nil, kv.ErrTxnTooLarge
 		}
 	}
 

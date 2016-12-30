@@ -61,7 +61,7 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 		alloc: allocator,
 	}
 	solver.aggPushDown(logic)
-	logic.PruneColumns(logic.GetSchema())
+	logic.PruneColumns(logic.GetSchema().Columns)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -756,12 +756,12 @@ func (m *Meta) GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error) {
 }
 
 // SetSchemaDiff sets the modification information on a given schema version.
-func (m *Meta) SetSchemaDiff(schemaVersion int64, diff *model.SchemaDiff) error {
+func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	data, err := json.Marshal(diff)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	diffKey := m.schemaDiffKey(schemaVersion)
+	diffKey := m.schemaDiffKey(diff.Version)
 	err = m.txn.Set(diffKey, data)
 	return errors.Trace(err)
 }

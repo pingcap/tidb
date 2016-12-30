@@ -34,6 +34,8 @@ func GetSystemVar(s *variable.SessionVars, key string) types.Datum {
 		// TiDBSkipConstraintCheck is a session scope vars. We do not store it in the global table.
 		if key == variable.TiDBSkipConstraintCheck {
 			d.SetString(variable.SysVars[variable.TiDBSkipConstraintCheck].Value)
+		} else if key == variable.TiDBSkipDDLWait {
+			d.SetString(variable.SysVars[variable.TiDBSkipDDLWait].Value)
 		}
 	}
 	return d
@@ -77,6 +79,8 @@ func SetSystemVar(vars *variable.SessionVars, name string, value types.Datum) er
 		}
 	case variable.TiDBSkipConstraintCheck:
 		vars.SkipConstraintCheck = (sVal == "1")
+	case variable.TiDBSkipDDLWait:
+		vars.SkipDDLWait = (sVal == "1")
 	}
 	vars.Systems[name] = sVal
 	return nil

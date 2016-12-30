@@ -16,7 +16,6 @@ package expression
 import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -26,15 +25,15 @@ func FoldConstant(ctx context.Context, expr Expression) Expression {
 	if !ok {
 		return expr
 	}
-	if _, isDynamic := evaluator.DynamicFuncs[scalarFunc.FuncName.L]; isDynamic {
+	if _, isDynamic := DynamicFuncs[scalarFunc.FuncName.L]; isDynamic {
 		return expr
 	}
-	args := scalarFunc.Args
+	args := scalarFunc.GetArgs()
 	datums := make([]types.Datum, 0, len(args))
 	canFold := true
 	for i := 0; i < len(args); i++ {
 		foldedArg := FoldConstant(ctx, args[i])
-		scalarFunc.Args[i] = foldedArg
+		scalarFunc.GetArgs()[i] = foldedArg
 		if con, ok := foldedArg.(*Constant); ok {
 			datums = append(datums, con.Value)
 		} else {

@@ -183,6 +183,14 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 		}
 		return true, nil
 	}
+
+	if storeNotMatch := regionErr.GetStoreNotMatch(); storeNotMatch != nil {
+		// store not match
+		log.Warnf("tikv reports `StoreNotMatch`: %s, ctx: %s, retry later", storeNotMatch, ctx.KVCtx)
+		s.regionCache.ClearStoreByID(ctx.GetStoreID())
+		return true, nil
+	}
+
 	if staleEpoch := regionErr.GetStaleEpoch(); staleEpoch != nil {
 		log.Debugf("tikv reports `StaleEpoch`, ctx: %s, retry later", ctx.KVCtx)
 		err = s.regionCache.OnRegionStale(ctx, staleEpoch.NewRegions)
