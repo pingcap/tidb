@@ -171,8 +171,9 @@ func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[
 		}
 		col, con := s.validPropagateCond(cond, eqFuncNameMap)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
+		ok := false
 		if col == nil {
-			if con, ok := cond.(*Constant); ok {
+			if con, ok = cond.(*Constant); ok {
 				value, _ := EvalBool(con, nil, s.ctx)
 				if !value {
 					s.setConds2ConstFalse()
