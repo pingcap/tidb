@@ -235,7 +235,7 @@ func (s *session) doCommitWithRetry() error {
 	}
 	s.cleanRetryInfo()
 	if err != nil {
-		log.Warnf("finished txn:%s, %v", s.txn, err)
+		log.Warnf("finished txn:%v, %v", s.txn, err)
 		return errors.Trace(err)
 	}
 	return nil
