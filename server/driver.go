@@ -25,7 +25,7 @@ type IDriver interface {
 	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string) (QueryCtx, error)
 }
 
-// IContext is the interface to execute command.
+// QueryCtx is the interface to execute command.
 type QueryCtx interface {
 	// Status returns server status code.
 	Status() uint16
