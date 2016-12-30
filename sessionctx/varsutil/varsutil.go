@@ -36,7 +36,7 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	if ok {
 		return sVal, nil
 	}
-	if sysVar.Scope & variable.ScopeGlobal == 0 {
+	if sysVar.Scope&variable.ScopeGlobal == 0 {
 		// None-Global variable can use pre-defined default value.
 		return sysVar.Value, nil
 	}

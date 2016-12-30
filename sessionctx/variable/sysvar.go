@@ -57,7 +57,7 @@ func GetSysVar(name string) *SysVar {
 const (
 	CodeUnknownStatusVar terror.ErrCode = 1
 	CodeUnknownSystemVar terror.ErrCode = 1193
-	CodeIncorrectScope     terror.ErrCode = 1238
+	CodeIncorrectScope   terror.ErrCode = 1238
 )
 
 var tidbSysVars map[string]bool

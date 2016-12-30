@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/cockroachdb/cockroach/ts"
 )
 
 const (

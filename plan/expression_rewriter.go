@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -517,30 +516,13 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		}
 		return
 	}
-
-	sysVar, ok := variable.SysVars[name]
-	if !ok {
-		// select null sys vars is not permitted
-		er.err = variable.UnknownSystemVar.GenByArgs(name)
-		return
-	}
-	if sysVar.Scope == variable.ScopeNone {
-		er.ctxStack = append(er.ctxStack, datumToConstant(types.NewDatum(sysVar.Value), mysql.TypeString))
-		return
-	}
-
+	var val string
+	var err error
 	if v.IsGlobal {
-		value, err := varsutil.GetGlobalSystemVar(name)
-		if err != nil {
-			er.err = errors.Trace(err)
-			return
-		}
-		er.ctxStack = append(er.ctxStack, datumToConstant(types.NewDatum(value), mysql.TypeString))
-		return
+		val, err = varsutil.GetGlobalSystemVar(sessionVars, name)
 	} else {
-
+		val, err = varsutil.GetSessionSystemVar(sessionVars, name)
 	}
-	val, err := varsutil.GetSessionSystemVar(sessionVars, name)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
