@@ -45,7 +45,7 @@ type TiDBContext struct {
 	stmts        map[int]*TiDBStatement
 }
 
-// TiDBStatement implements IStatement.
+// TiDBStatement implements PreparedStatement.
 type TiDBStatement struct {
 	id          uint32
 	numParams   int
@@ -54,12 +54,12 @@ type TiDBStatement struct {
 	ctx         *TiDBContext
 }
 
-// ID implements IStatement ID method.
+// ID implements PreparedStatement ID method.
 func (ts *TiDBStatement) ID() int {
 	return int(ts.id)
 }
 
-// Execute implements IStatement Execute method.
+// Execute implements PreparedStatement Execute method.
 func (ts *TiDBStatement) Execute(args ...interface{}) (rs ResultSet, err error) {
 	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ts.id, args...)
 	if err != nil {
@@ -74,7 +74,7 @@ func (ts *TiDBStatement) Execute(args ...interface{}) (rs ResultSet, err error) 
 	return
 }
 
-// AppendParam implements IStatement AppendParam method.
+// AppendParam implements PreparedStatement AppendParam method.
 func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	if paramID >= len(ts.boundParams) {
 		return mysql.NewErr(mysql.ErrWrongArguments, "stmt_send_longdata")
@@ -83,34 +83,34 @@ func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	return nil
 }
 
-// NumParams implements IStatement NumParams method.
+// NumParams implements PreparedStatement NumParams method.
 func (ts *TiDBStatement) NumParams() int {
 	return ts.numParams
 }
 
-// BoundParams implements IStatement BoundParams method.
+// BoundParams implements PreparedStatement BoundParams method.
 func (ts *TiDBStatement) BoundParams() [][]byte {
 	return ts.boundParams
 }
 
-// SetParamsType implements IStatement SetParamsType method.
+// SetParamsType implements PreparedStatement SetParamsType method.
 func (ts *TiDBStatement) SetParamsType(paramsType []byte) {
 	ts.paramsType = paramsType
 }
 
-// GetParamsType implements IStatement GetParamsType method.
+// GetParamsType implements PreparedStatement GetParamsType method.
 func (ts *TiDBStatement) GetParamsType() []byte {
 	return ts.paramsType
 }
 
-// Reset implements IStatement Reset method.
+// Reset implements PreparedStatement Reset method.
 func (ts *TiDBStatement) Reset() {
 	for i := range ts.boundParams {
 		ts.boundParams[i] = nil
 	}
 }
 
-// Close implements IStatement Close method.
+// Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
 	//TODO close at tidb level
 	err := ts.ctx.session.DropPreparedStmt(ts.id)
@@ -235,7 +235,7 @@ func (tc *TiDBContext) FieldList(table string) (colums []*ColumnInfo, err error)
 }
 
 // GetStatement implements QueryCtx GetStatement method.
-func (tc *TiDBContext) GetStatement(stmtID int) IStatement {
+func (tc *TiDBContext) GetStatement(stmtID int) PreparedStatement {
 	tcStmt := tc.stmts[stmtID]
 	if tcStmt != nil {
 		return tcStmt
@@ -244,7 +244,7 @@ func (tc *TiDBContext) GetStatement(stmtID int) IStatement {
 }
 
 // Prepare implements QueryCtx Prepare method.
-func (tc *TiDBContext) Prepare(sql string) (statement IStatement, columns, params []*ColumnInfo, err error) {
+func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns, params []*ColumnInfo, err error) {
 	stmtID, paramCount, fields, err := tc.session.PrepareStmt(sql)
 	if err != nil {
 		return
