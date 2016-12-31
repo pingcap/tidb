@@ -25,6 +25,12 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+var (
+	_ Executor = &HashAggExec{}
+	_ Executor = &NestedLoopJoinExec{}
+	_ Executor = &HashJoinExec{}
+)
+
 // HashJoinExec implements the hash join algorithm.
 type HashJoinExec struct {
 	hashTable     map[string][]*Row
@@ -382,6 +388,148 @@ func (e *HashJoinExec) Next() (*Row, error) {
 	return row, nil
 }
 
+// joinExec is the common interface of join algorithm except for hash join.
+type joinExec interface {
+	Executor
+
+	// fetchBigRow fetches a valid big row from big Exec.
+	fetchBigRow() (*Row, error)
+	// prepare reads all records from small Exec and stores them.
+	prepare() error
+	// doJoin fetch a row from big exec and get all the rows matches the on condition.
+	doJoin(*Row) ([]*Row, error)
+}
+
+// NestedLoopJoinExec implements nested-loop algorithm for join.
+// TODO: Currently we only implements inner join for it. We will complete it in future.
+type NestedLoopJoinExec struct {
+	innerRows   []*Row
+	cursor      int
+	resultRows  []*Row
+	SmallExec   Executor
+	BigExec     Executor
+	prepared    bool
+	Ctx         context.Context
+	SmallFilter expression.Expression
+	BigFilter   expression.Expression
+	OtherFilter expression.Expression
+	schema      expression.Schema
+}
+
+// Schema implements Executor interface.
+func (e *NestedLoopJoinExec) Schema() expression.Schema {
+	return e.schema
+}
+
+// Close implements Executor interface.
+func (e *NestedLoopJoinExec) Close() error {
+	e.resultRows = nil
+	e.innerRows = nil
+	e.cursor = 0
+	e.prepared = false
+	err := e.BigExec.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return e.SmallExec.Close()
+}
+
+func (e *NestedLoopJoinExec) fetchBigRow() (*Row, error) {
+	for {
+		bigRow, err := e.BigExec.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if bigRow == nil {
+			e.BigExec.Close()
+			return nil, nil
+		}
+
+		matched := true
+		if e.BigFilter != nil {
+			matched, err = expression.EvalBool(e.BigFilter, bigRow.Data, e.Ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		if matched {
+			return bigRow, err
+		}
+	}
+}
+
+// Prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
+// them in a slice.
+func (e *NestedLoopJoinExec) prepare() error {
+	for {
+		row, err := e.SmallExec.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if row == nil {
+			e.SmallExec.Close()
+			break
+		}
+
+		matched := true
+		if e.SmallFilter != nil {
+			matched, err = expression.EvalBool(e.SmallFilter, row.Data, e.Ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !matched {
+				continue
+			}
+		}
+		if matched {
+			e.innerRows = append(e.innerRows, row)
+		}
+	}
+	e.prepared = true
+	return nil
+}
+
+func (e *NestedLoopJoinExec) doJoin(bigRow *Row) ([]*Row, error) {
+	e.resultRows = e.resultRows[0:0]
+	for _, row := range e.innerRows {
+		mergedRow := makeJoinRow(bigRow, row)
+		if e.OtherFilter != nil {
+			matched, err := expression.EvalBool(e.OtherFilter, mergedRow.Data, e.Ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !matched {
+				continue
+			}
+		}
+		e.resultRows = append(e.resultRows, mergedRow)
+	}
+	return e.resultRows, nil
+}
+
+// Next implements the Executor interface.
+func (e *NestedLoopJoinExec) Next() (*Row, error) {
+	if !e.prepared {
+		if err := e.prepare(); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	for {
+		if e.cursor < len(e.resultRows) {
+			retRow := e.resultRows[e.cursor]
+			e.cursor++
+			return retRow, nil
+		}
+		bigRow, err := e.fetchBigRow()
+		if bigRow == nil || err != nil {
+			return bigRow, errors.Trace(err)
+		}
+		e.resultRows, err = e.doJoin(bigRow)
+		e.cursor = 0
+	}
+}
+
 // HashSemiJoinExec implements the hash join algorithm for semi join.
 type HashSemiJoinExec struct {
 	hashTable    map[string][]*Row
@@ -496,14 +644,7 @@ func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, hasNull bool
 	return
 }
 
-// Next implements the Executor Next interface.
-func (e *HashSemiJoinExec) Next() (*Row, error) {
-	if !e.prepared {
-		if err := e.prepare(); err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
+func (e *HashSemiJoinExec) fetchBigRow() (*Row, error) {
 	for {
 		bigRow, err := e.bigExec.Next()
 		if err != nil {
@@ -521,32 +662,97 @@ func (e *HashSemiJoinExec) Next() (*Row, error) {
 				return nil, errors.Trace(err)
 			}
 		}
-		isNull := false
 		if matched {
-			matched, isNull, err = e.rowIsMatched(bigRow)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			return bigRow, err
 		}
-		if !matched && e.smallTableHasNull {
-			isNull = true
+	}
+}
+
+func (e *HashSemiJoinExec) doJoin(bigRow *Row) ([]*Row, error) {
+	matched, isNull, err := e.rowIsMatched(bigRow)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !matched && e.smallTableHasNull {
+		isNull = true
+	}
+	if e.anti && !isNull {
+		matched = !matched
+	}
+	// For the auxMode subquery, we return the row with a Datum indicating if it's a match,
+	// For the non-auxMode subquery, we return the matching row only.
+	if e.auxMode {
+		if isNull {
+			bigRow.Data = append(bigRow.Data, types.NewDatum(nil))
+		} else {
+			bigRow.Data = append(bigRow.Data, types.NewDatum(matched))
 		}
-		if e.anti && !isNull {
-			matched = !matched
+		return []*Row{bigRow}, nil
+	}
+	if matched {
+		return []*Row{bigRow}, nil
+	}
+	return nil, nil
+}
+
+// Next implements the Executor Next interface.
+func (e *HashSemiJoinExec) Next() (*Row, error) {
+	if !e.prepared {
+		if err := e.prepare(); err != nil {
+			return nil, errors.Trace(err)
 		}
-		// For the auxMode subquery, we return the row with a Datum indicating if it's a match,
-		// For the non-auxMode subquery, we return the matching row only.
-		if e.auxMode {
-			if isNull {
-				bigRow.Data = append(bigRow.Data, types.NewDatum(nil))
-			} else {
-				bigRow.Data = append(bigRow.Data, types.NewDatum(matched))
-			}
-			return bigRow, nil
+	}
+
+	for {
+		bigRow, err := e.fetchBigRow()
+		if bigRow == nil || err != nil {
+			return bigRow, errors.Trace(err)
 		}
-		if matched {
-			return bigRow, nil
+		resultRows, err := e.doJoin(bigRow)
+		if len(resultRows) > 0 {
+			return resultRows[0], nil
 		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+}
+
+// ApplyJoinExec is the new logic of apply.
+// TODO: I will add test for it after refactoring the plan part of apply.
+type ApplyJoinExec struct {
+	join        joinExec
+	innerExec   Executor
+	outerSchema []*expression.CorrelatedColumn
+	cursor      int
+	resultRow   []*Row
+}
+
+// Next implements the Executor interface.
+func (e *ApplyJoinExec) Next() (*Row, error) {
+	for {
+		if e.cursor < len(e.resultRow) {
+			row := e.resultRow[e.cursor]
+			e.cursor++
+			return row, nil
+		}
+		bigRow, err := e.join.fetchBigRow()
+		if bigRow == nil || err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, col := range e.outerSchema {
+			*col.Data = bigRow.Data[col.Index]
+		}
+		e.innerExec.Close()
+		err = e.join.prepare()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.resultRow, err = e.join.doJoin(bigRow)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.cursor = 0
 	}
 }
 
