@@ -15,8 +15,10 @@ package plan
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -419,10 +421,43 @@ func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 	return sort
 }
 
+// getUintForLimitOffset gets uint64 value for limit/offset.
+// For ordinary statement, limit/offset should be uint64 constant value.
+// For prepared statement, limit/offset is string. We should convert it to uint64.
+func getUintForLimitOffset(val interface{}) (uint64, error) {
+	switch v := val.(type) {
+	case uint64:
+		return v, nil
+	case string:
+		uVal, err := strconv.ParseUint(v, 10, 64)
+		return uVal, errors.Trace(err)
+	}
+	return 0, errors.Errorf("Invalid type %T for Limit/Offset", val)
+}
+
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
+	var (
+		offset, count uint64
+		err           error
+	)
+	if limit.Offset != nil {
+		offset, err = getUintForLimitOffset(limit.Offset.GetValue())
+		if err != nil {
+			log.Error(err)
+			b.err = ErrWrongArguments
+			return nil
+		}
+	}
+	if limit.Count != nil {
+		count, err = getUintForLimitOffset(limit.Count.GetValue())
+		if err != nil {
+			log.Error(err)
+			b.err = ErrWrongArguments
+		}
+	}
 	li := &Limit{
-		Offset:          limit.Offset,
-		Count:           limit.Count,
+		Offset:          offset,
+		Count:           count,
 		baseLogicalPlan: newBaseLogicalPlan(Lim, b.allocator),
 	}
 	li.self = li
