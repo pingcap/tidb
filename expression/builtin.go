@@ -308,6 +308,9 @@ func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err er
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
 func builtinGreatest(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return
+	}
 	max := 0
 	sc := ctx.GetSessionVars().StmtCtx
 	for i := 1; i < len(args); i++ {
@@ -330,6 +333,9 @@ func builtinGreatest(args []types.Datum, ctx context.Context) (d types.Datum, er
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
 func builtinLeast(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return
+	}
 	min := 0
 	sc := ctx.GetSessionVars().StmtCtx
 	for i := 1; i < len(args); i++ {

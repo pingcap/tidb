@@ -100,6 +100,14 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 	c.Assert(v.GetString(), Equals, "A")
 
 	// GREATEST() and LEAST() return NULL if any argument is NULL.
+	datums = types.MakeDatums(nil, 1, 2)
+	v, err = builtinGreatest(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+	v, err = builtinLeast(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+
 	datums = types.MakeDatums(1, nil, 2)
 	v, err = builtinGreatest(datums, s.ctx)
 	c.Assert(err, IsNil)
