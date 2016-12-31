@@ -100,13 +100,14 @@ type builtinFunc interface {
 	getCtx() context.Context
 }
 
+// baseFunctionClass will be contained in every struct that implement functionClass interface.
 type baseFunctionClass struct {
 	funcName string
 	minArgs  int
 	maxArgs  int
 }
 
-func (b *baseFunctionClass) checkValid(args []Expression) error {
+func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 	l := len(args)
 	if l < b.minArgs || (b.maxArgs != -1 && l > b.maxArgs) {
 		return errIncorrectParameterCount.GenByArgs(b.funcName)
@@ -299,12 +300,13 @@ var DynamicFuncs = map[string]int{
 	ast.Values:       0,
 }
 
+// Function family for coalesce.
 type coalesceFunctionClass struct {
 	baseFunctionClass
 }
 
 func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCoalesceSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.checkValid(args))
+	return &builtinCoalesceSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCoalesceSig struct {
