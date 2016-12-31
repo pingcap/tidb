@@ -146,7 +146,7 @@ const (
 )
 
 // PrivilegeType  privilege
-type PrivilegeType uint32
+type PrivilegeType uint64
 
 const (
 	_ PrivilegeType = 1 << iota
@@ -174,8 +174,44 @@ const (
 	ExecutePriv
 	// IndexPriv is the privilege to create/drop index.
 	IndexPriv
+	// ReloadPriv is the privilege to reload data.
+	ReloadPriv
+	// ShutdownPriv is the privilege to shutdown server.
+	ShutdownPriv
+	// ProcessPriv is the privilege for process management.
+	ProcessPriv
+	// FilePriv is the privilege to load data.
+	FilePriv
+	// SuperPriv is a kind of PrivilegeType.
+	SuperPriv
+	// CreateTMPTablePriv is the privilege to create temporary table.
+	CreateTMPTablePriv
+	// LockTablesPriv is the privilege to lock table.
+	LockTablesPriv
+	// ReplSlavePriv is a kind of PrivilegeType.
+	ReplSlavePriv
+	// ReplClientPriv is a kind of PrivilegeType.
+	ReplClientPriv
+	// CreateViewPriv is the privilege to create view.
+	CreateViewPriv
+	// ShowViewPriv is the privilege to show view.
+	ShowViewPriv
+	// CreateRoutinePriv is the privilege to create routine.
+	CreateRoutinePriv
+	// AlterRoutinePriv is the privilege to alter routine.
+	AlterRoutinePriv
+	// EventPriv is the event related privilege.
+	EventPriv
+	// TriggerPriv is the trigger related privilege.
+	TriggerPriv
+	// CreateTablespacePriv is a kind of PrivilegeType.
+	CreateTablespacePriv
+	// ReferencesPriv is a kind of PrivilegeType.
+	ReferencesPriv
 	// AllPriv is the privilege for all actions.
 	AllPriv
+	// PrivilegeTypeMax must small than 64
+	PrivilegeTypeMax
 )
 
 // Priv2UserCol is the privilege to mysql.user table column name.
@@ -231,30 +267,38 @@ var Priv2Str = map[PrivilegeType]string{
 
 // Priv2SetStr is the map for privilege to string.
 var Priv2SetStr = map[PrivilegeType]string{
-	CreatePriv:  "Create",
-	SelectPriv:  "Select",
-	InsertPriv:  "Insert",
-	UpdatePriv:  "Update",
-	DeletePriv:  "Delete",
-	DropPriv:    "Drop",
-	GrantPriv:   "Grant",
-	AlterPriv:   "Alter",
-	ExecutePriv: "Execute",
-	IndexPriv:   "Index",
+	CreatePriv:     "Create",
+	SelectPriv:     "Select",
+	InsertPriv:     "Insert",
+	UpdatePriv:     "Update",
+	DeletePriv:     "Delete",
+	DropPriv:       "Drop",
+	GrantPriv:      "Grant",
+	AlterPriv:      "Alter",
+	ExecutePriv:    "Execute",
+	IndexPriv:      "Index",
+	ReferencesPriv: "References",
+	CreateViewPriv: "Create View",
+	ShowViewPriv:   "Show View",
+	TriggerPriv:    "Trigger",
 }
 
 // SetStr2Priv is the map for privilege set string to privilege type.
 var SetStr2Priv = map[string]PrivilegeType{
-	"Create":  CreatePriv,
-	"Select":  SelectPriv,
-	"Insert":  InsertPriv,
-	"Update":  UpdatePriv,
-	"Delete":  DeletePriv,
-	"Drop":    DropPriv,
-	"Grant":   GrantPriv,
-	"Alter":   AlterPriv,
-	"Execute": ExecutePriv,
-	"Index":   IndexPriv,
+	"Create":      CreatePriv,
+	"Select":      SelectPriv,
+	"Insert":      InsertPriv,
+	"Update":      UpdatePriv,
+	"Delete":      DeletePriv,
+	"Drop":        DropPriv,
+	"Grant":       GrantPriv,
+	"Alter":       AlterPriv,
+	"Execute":     ExecutePriv,
+	"Index":       IndexPriv,
+	"References":  ReferencesPriv,
+	"Create View": CreateViewPriv,
+	"Show View":   ShowViewPriv,
+	"Trigger":     TriggerPriv,
 }
 
 // AllDBPrivs is all the privileges in database scope.
