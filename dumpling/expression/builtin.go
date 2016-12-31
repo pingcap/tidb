@@ -125,6 +125,7 @@ var Funcs = map[string]Func{
 	ast.Coalesce: {builtinCoalesce, 1, -1},
 	ast.IsNull:   {builtinIsNull, 1, 1},
 	ast.Greatest: {builtinGreatest, 2, -1},
+	ast.Least:    {builtinLeast, 2, -1},
 
 	// math functions
 	ast.Abs:     {builtinAbs, 1, 1},
@@ -307,11 +308,13 @@ func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err er
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
 func builtinGreatest(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return
+	}
 	max := 0
 	sc := ctx.GetSessionVars().StmtCtx
-	for i := 0; i < len(args); i++ {
+	for i := 1; i < len(args); i++ {
 		if args[i].IsNull() {
-			d.SetNull()
 			return
 		}
 
@@ -325,5 +328,30 @@ func builtinGreatest(args []types.Datum, ctx context.Context) (d types.Datum, er
 		}
 	}
 	d = args[max]
+	return
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
+func builtinLeast(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return
+	}
+	min := 0
+	sc := ctx.GetSessionVars().StmtCtx
+	for i := 1; i < len(args); i++ {
+		if args[i].IsNull() {
+			return
+		}
+
+		var cmp int
+		if cmp, err = args[i].CompareDatum(sc, args[min]); err != nil {
+			return
+		}
+
+		if cmp < 0 {
+			min = i
+		}
+	}
+	d = args[min]
 	return
 }

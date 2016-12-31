@@ -262,7 +262,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if x.FnName.L == "abs" && tp.Tp == mysql.TypeDatetime {
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
-	case "greatest":
+	case "greatest", "least":
 		for _, arg := range x.Args {
 			InferType(v.sc, arg)
 		}
