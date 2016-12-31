@@ -72,4 +72,15 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSystemVar(v, variable.TiDBSkipConstraintCheck, types.NewStringDatum("1"))
 	d = GetSystemVar(v, variable.TiDBSkipConstraintCheck)
 	c.Assert(d.GetString(), Equals, "1")
+
+	// Test case for get TiDBSkipDDLWait session variable
+	d = GetSystemVar(v, variable.TiDBSkipDDLWait)
+	c.Assert(d.GetString(), Equals, "0")
+	c.Assert(v.SkipDDLWait, IsFalse)
+	SetSystemVar(v, variable.TiDBSkipDDLWait, types.NewStringDatum("0"))
+	c.Assert(v.SkipDDLWait, IsFalse)
+	SetSystemVar(v, variable.TiDBSkipDDLWait, types.NewStringDatum("1"))
+	c.Assert(v.SkipDDLWait, IsTrue)
+	d = GetSystemVar(v, variable.TiDBSkipDDLWait)
+	c.Assert(d.GetString(), Equals, "1")
 }

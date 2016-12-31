@@ -32,8 +32,8 @@ func (p *Join) ResolveIndicesAndCorCols() {
 	lSchema := p.GetChildByIndex(0).GetSchema()
 	rSchema := p.GetChildByIndex(1).GetSchema()
 	for _, fun := range p.EqualConditions {
-		fun.Args[0].ResolveIndices(lSchema)
-		fun.Args[1].ResolveIndices(rSchema)
+		fun.GetArgs()[0].ResolveIndices(lSchema)
+		fun.GetArgs()[1].ResolveIndices(rSchema)
 	}
 	for _, expr := range p.LeftConditions {
 		expr.ResolveIndices(lSchema)
@@ -42,7 +42,7 @@ func (p *Join) ResolveIndicesAndCorCols() {
 		expr.ResolveIndices(rSchema)
 	}
 	for _, expr := range p.OtherConditions {
-		expr.ResolveIndices(append(lSchema, rSchema...))
+		expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
 	}
 }
 
@@ -77,11 +77,10 @@ func (p *Sort) ResolveIndicesAndCorCols() {
 
 // ResolveIndicesAndCorCols implements LogicalPlan interface.
 func (p *Apply) ResolveIndicesAndCorCols() {
-	p.baseLogicalPlan.ResolveIndicesAndCorCols()
-	innerPlan := p.children[1].(LogicalPlan)
-	innerPlan.ResolveIndicesAndCorCols()
-	childSchema := p.children[0].GetSchema()
-	p.corCols = resultCorCols[:length]
+	p.Join.ResolveIndicesAndCorCols()
+	for _, col := range p.corCols {
+		col.Column.ResolveIndices(p.children[0].GetSchema())
+	}
 }
 
 // ResolveIndicesAndCorCols implements LogicalPlan interface.
@@ -93,7 +92,7 @@ func (p *Update) ResolveIndicesAndCorCols() {
 		if v == nil {
 			continue
 		}
-		orderedList[schema.GetIndex(v.Col)] = v
+		orderedList[schema.GetColumnIndex(v.Col)] = v
 	}
 	for i := 0; i < len(orderedList); i++ {
 		if orderedList[i] == nil {

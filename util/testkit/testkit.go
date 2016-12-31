@@ -69,6 +69,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) 
 		tk.c.Assert(err, check.IsNil)
 		id := atomic.AddUint64(&connectionID, 1)
 		tk.Se.SetConnectionID(id)
+		tk.Se.GetSessionVars().SkipDDLWait = true
 	}
 	if len(args) == 0 {
 		var rss []ast.RecordSet

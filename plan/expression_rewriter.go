@@ -21,12 +21,12 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/model"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
@@ -99,7 +99,7 @@ type expressionRewriter struct {
 
 func getRowLen(e expression.Expression) int {
 	if f, ok := e.(*expression.ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
-		return len(f.Args)
+		return len(f.GetArgs())
 	}
 	if c, ok := e.(*expression.Constant); ok && c.Value.Kind() == types.KindRow {
 		return len(c.Value.GetRow())
@@ -109,7 +109,7 @@ func getRowLen(e expression.Expression) int {
 
 func getRowArg(e expression.Expression, idx int) expression.Expression {
 	if f, ok := e.(*expression.ScalarFunction); ok {
-		return f.Args[idx]
+		return f.GetArgs()[idx]
 	}
 	c, _ := e.(*expression.Constant)
 	d := c.Value.GetRow()[idx]
@@ -159,11 +159,11 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.err = errors.New("Can't appear aggrFunctions")
 			return inNode, true
 		}
-		er.ctxStack = append(er.ctxStack, er.schema[index])
+		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
 		return inNode, true
 	case *ast.ColumnNameExpr:
 		if index, ok := er.b.colMapper[v]; ok {
-			er.ctxStack = append(er.ctxStack, er.schema[index])
+			er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
 			return inNode, true
 		}
 	case *ast.CompareSubqueryExpr:
@@ -195,7 +195,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		return er.handleScalarSubquery(v)
 	case *ast.ParenthesesExpr:
 	case *ast.ValuesExpr:
-		er.valuesToScalarFunc(v)
+		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v))
 		return inNode, true
 	default:
 		er.asScalar = true
@@ -220,22 +220,22 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	}
 	// Only (a,b,c) = all (...) and (a,b,c) != any () can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
-	if !canMultiCol && (getRowLen(lexpr) != 1 || len(np.GetSchema()) != 1) {
+	if !canMultiCol && (getRowLen(lexpr) != 1 || np.GetSchema().Len() != 1) {
 		er.err = ErrOperandColumns.GenByArgs(1)
 		return v, true
 	}
 	lLen := getRowLen(lexpr)
-	if lLen != len(np.GetSchema()) {
+	if lLen != np.GetSchema().Len() {
 		er.err = ErrOperandColumns.GenByArgs(lLen)
 		return v, true
 	}
 	var condition expression.Expression
 	var rexpr expression.Expression
-	if len(np.GetSchema()) == 1 {
-		rexpr = np.GetSchema()[0].Clone()
+	if np.GetSchema().Len() == 1 {
+		rexpr = np.GetSchema().Columns[0].Clone()
 	} else {
-		args := make([]expression.Expression, 0, len(np.GetSchema()))
-		for _, col := range np.GetSchema() {
+		args := make([]expression.Expression, 0, np.GetSchema().Len())
+		for _, col := range np.GetSchema().Columns {
 			args = append(args, col.Clone())
 		}
 		rexpr, er.err = expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), args...)
@@ -275,7 +275,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	}
 	if er.asScalar {
 		// The parent expression only use the last column in schema, which represents whether the condition is matched.
-		er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema()[len(er.p.GetSchema())-1]
+		er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema().Columns[len(er.p.GetSchema())-1]
 	}
 	return v, true
 }
@@ -387,7 +387,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		if !er.asScalar {
 			return v, true
 		}
-		er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
+		er.ctxStack = append(er.ctxStack, er.p.GetSchema().Columns[er.p.GetSchema().Len()-1])
 	} else {
 		physicalPlan, err := doOptimize(np, er.b.ctx, er.b.allocator)
 		d, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
@@ -397,7 +397,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		}
 		er.ctxStack = append(er.ctxStack, &expression.Constant{
 			Value:   d[0],
-			RetType: np.GetSchema()[0].GetType()})
+			RetType: np.GetSchema().Columns[0].GetType()})
 	}
 	return v, true
 }
@@ -420,16 +420,16 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		return v, true
 	}
 	lLen := getRowLen(lexpr)
-	if lLen != len(np.GetSchema()) {
+	if lLen != np.GetSchema().Len() {
 		er.err = ErrOperandColumns.GenByArgs(lLen)
 		return v, true
 	}
 	var rexpr expression.Expression
-	if len(np.GetSchema()) == 1 {
-		rexpr = np.GetSchema()[0].Clone()
+	if np.GetSchema().Len() == 1 {
+		rexpr = np.GetSchema().Columns[0].Clone()
 	} else {
-		args := make([]expression.Expression, 0, len(np.GetSchema()))
-		for _, col := range np.GetSchema() {
+		args := make([]expression.Expression, 0, np.GetSchema().Len())
+		for _, col := range np.GetSchema().Columns {
 			args = append(args, col.Clone())
 		}
 		rexpr, er.err = expression.NewFunction(ast.RowFunc, nil, args...)
@@ -447,7 +447,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	}
 	er.p = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
 	if asScalar {
-		col := er.p.GetSchema()[len(er.p.GetSchema())-1]
+		col := er.p.GetSchema().Columns[len(er.p.GetSchema())-1]
 		er.ctxStack[len(er.ctxStack)-1] = col
 	} else {
 		er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
@@ -465,7 +465,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		er.p = er.b.buildInnerApply(er.p, np)
 		if len(np.GetSchema()) > 1 {
 			newCols := make([]expression.Expression, 0, len(np.GetSchema()))
-			for _, col := range np.GetSchema() {
+			for _, col := range np.GetSchema().Columns {
 				newCols = append(newCols, col.Clone())
 			}
 			expr, err := expression.NewFunction(ast.RowFunc, nil, newCols...)
@@ -475,7 +475,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 			}
 			er.ctxStack = append(er.ctxStack, expr)
 		} else {
-			er.ctxStack = append(er.ctxStack, er.p.GetSchema()[len(er.p.GetSchema())-1])
+			er.ctxStack = append(er.ctxStack, er.p.GetSchema().Columns[er.p.GetSchema().Len()-1])
 		}
 		return v, true
 	}
@@ -489,12 +489,12 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	if len(np.GetSchema()) > 1 {
-		newCols := make([]expression.Expression, 0, len(np.GetSchema()))
+	if np.GetSchema().Len() > 1 {
+		newCols := make([]expression.Expression, 0, len(np.GetSchema().Columns))
 		for i, data := range d {
 			newCols = append(newCols, &expression.Constant{
 				Value:   data,
-				RetType: np.GetSchema()[i].GetType()})
+				RetType: np.GetSchema().Columns[i].GetType()})
 		}
 		expr, err1 := expression.NewFunction(ast.RowFunc, nil, newCols...)
 		if err1 != nil {
@@ -505,7 +505,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 	} else {
 		er.ctxStack = append(er.ctxStack, &expression.Constant{
 			Value:   d[0],
-			RetType: np.GetSchema()[0].GetType(),
+			RetType: np.GetSchema().Columns[0].GetType(),
 		})
 	}
 	return v, true
@@ -541,7 +541,15 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	case *ast.CaseExpr:
 		er.caseToExpression(v)
 	case *ast.FuncCastExpr:
-		er.castToScalarFunc(v)
+		arg := er.ctxStack[len(er.ctxStack)-1]
+		er.checkArgsOneColumn(arg)
+		if er.err != nil {
+			return retNode, false
+		}
+		er.ctxStack[len(er.ctxStack)-1], er.err = expression.NewCastFunc(v.Tp, arg)
+		if er.err != nil {
+			return retNode, false
+		}
 	case *ast.PatternLikeExpr:
 		er.likeToScalarFunc(v)
 	case *ast.PatternRegexpExpr:
@@ -732,8 +740,8 @@ func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 }
 
 func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
-	if v.N > 0 && v.N <= len(er.schema) {
-		er.ctxStack = append(er.ctxStack, er.schema[v.N-1])
+	if v.N > 0 && v.N <= er.schema.Len() {
+		er.ctxStack = append(er.ctxStack, er.schema.Columns[v.N-1])
 	} else {
 		er.err = errors.Errorf("Position %d is out of range", v.N)
 	}
@@ -941,33 +949,4 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		}
 	}
 	er.err = errors.Errorf("Unknown column %s %s %s.", v.Schema.L, v.Table.L, v.Name.L)
-}
-
-func (er *expressionRewriter) castToScalarFunc(v *ast.FuncCastExpr) {
-	bt, err := expression.CastFuncFactory(v.Tp)
-	if err != nil {
-		er.err = errors.Trace(err)
-		return
-	}
-	er.checkArgsOneColumn(er.ctxStack[len(er.ctxStack)-1])
-	if er.err != nil {
-		return
-	}
-	function := &expression.ScalarFunction{
-		Args:      []expression.Expression{er.ctxStack[len(er.ctxStack)-1]},
-		FuncName:  model.NewCIStr(ast.Cast),
-		RetType:   v.Tp,
-		Function:  bt,
-		ArgValues: make([]types.Datum, 1)}
-	er.ctxStack[len(er.ctxStack)-1] = function
-}
-
-func (er *expressionRewriter) valuesToScalarFunc(v *ast.ValuesExpr) {
-	bt := expression.BuildinValuesFactory(v)
-	function := &expression.ScalarFunction{
-		FuncName: model.NewCIStr(ast.Values),
-		RetType:  &v.Type,
-		Function: bt,
-	}
-	er.ctxStack = append(er.ctxStack, function)
 }

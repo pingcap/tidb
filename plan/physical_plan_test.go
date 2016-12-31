@@ -75,7 +75,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -165,7 +165,7 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -297,7 +297,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -509,7 +509,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			alloc: builder.allocator,
 		}
 		solver.aggPushDown(lp)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -625,7 +625,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		lp := p.(LogicalPlan)
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		p = EliminateProjection(info.p)
@@ -723,7 +723,7 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -778,7 +778,7 @@ func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
 		lp := p.(LogicalPlan)
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema())
+		lp.PruneColumns(lp.GetSchema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		pp := info.p

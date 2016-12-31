@@ -274,7 +274,7 @@ func (p *baseLogicalPlan) ResolveIndicesAndCorCols() {
 	for _, child := range p.children {
 		child.(LogicalPlan).ResolveIndicesAndCorCols()
 	}
-	p.schema.InitIndices()
+	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
