@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -23,7 +22,7 @@ func extractCorColumnsBySchema(schema expression.Schema, innerPlan LogicalPlan) 
 	corCols := innerPlan.extractCorrelatedCols()
 	resultCorCols := make([]*expression.CorrelatedColumn, len(schema))
 	for _, corCol := range corCols {
-		idx := schema.GetIndex(&corCol.Column)
+		idx := schema.GetColumnIndex(&corCol.Column)
 		if idx != -1 {
 			if resultCorCols[idx] == nil {
 				resultCorCols[idx] = &expression.CorrelatedColumn{
@@ -45,7 +44,7 @@ func extractCorColumnsBySchema(schema expression.Schema, innerPlan LogicalPlan) 
 	return resultCorCols
 }
 
-func decorrelate(ctx context.Context, p LogicalPlan) LogicalPlan {
+func decorrelate(p LogicalPlan) LogicalPlan {
 	if apply, ok := p.(*Apply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1].(LogicalPlan)
@@ -54,15 +53,25 @@ func decorrelate(ctx context.Context, p LogicalPlan) LogicalPlan {
 			join := &apply.Join
 			innerPlan.SetParents(&join)
 			outerPlan.SetParents(&join)
-			return join
-		}
-		if sel, ok := innerPlan.(*Selection); ok {
-			innerPlan = sel.children[0].(LogicalPlan)
-			sel.SetChildren(apply)
-			apply.SetParents(sel)
+			p = apply.Join
+		} else if sel, ok := innerPlan.(*Selection); ok {
+			newConds := make([]expression.Expression, 0, len(sel.Conditions))
+			for _, cond := range sel.Conditions {
+				newConds = append(newConds, cond.Decorrelate(outerPlan.GetSchema()))
+			}
+			apply.Join.attachOnConds(newConds)
+			innerPlan = sel.children[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			innerPlan.SetParents(apply)
-			p = sel
+			return decorrelate(p)
 		}
+		// TODO: Deal with aggregation.
 	}
+	newChildren := make([]Plan, 0, len(p.GetChildren()))
+	for _, child := range p.GetChildren() {
+		newChildren = append(newChildren, decorrelate(child))
+		child.SetParents(p)
+	}
+	p.SetChildren(newChildren)
+	return p
 }

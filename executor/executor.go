@@ -1665,41 +1665,6 @@ type ApplyExec struct {
 	innerExec   Executor
 	// checker checks if an Src row with an inner row matches the condition,
 	// and if it needs to check more inner rows.
-	checker *conditionChecker
-}
-
-// conditionChecker checks if all or any of the row match this condition.
-type conditionChecker struct {
-	cond        expression.Expression
-	trimLen     int
-	ctx         context.Context
-	all         bool
-	dataHasNull bool
-}
-
-// Check returns finished for checking if the input row can determine the final result,
-// and returns data for the evaluation result.
-func (c *conditionChecker) check(rowData []types.Datum) (finished bool, data types.Datum, err error) {
-	data, err = c.cond.Eval(rowData, c.ctx)
-	if err != nil {
-		return false, data, errors.Trace(err)
-	}
-	var matched int64
-	if data.IsNull() {
-		c.dataHasNull = true
-		matched = 0
-	} else {
-		matched, err = data.ToBool(c.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return false, data, errors.Trace(err)
-		}
-	}
-	return (matched != 0) != c.all, data, nil
-}
-
-// Reset resets dataHasNull to false, so it can be reused for the next row from ApplyExec.Src.
-func (c *conditionChecker) reset() {
-	c.dataHasNull = false
 }
 
 // Schema implements the Executor Schema interface.
@@ -1709,9 +1674,6 @@ func (e *ApplyExec) Schema() expression.Schema {
 
 // Close implements the Executor Close interface.
 func (e *ApplyExec) Close() error {
-	if e.checker != nil {
-		e.checker.dataHasNull = false
-	}
 	return e.Src.Close()
 }
 

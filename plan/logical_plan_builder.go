@@ -194,6 +194,8 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	rightPlan := b.buildResultSetNode(join.Right)
 	newSchema := expression.MergeSchema(leftPlan.GetSchema(), rightPlan.GetSchema())
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
+	addChild(joinPlan, leftPlan)
+	addChild(joinPlan, rightPlan)
 	joinPlan.self = joinPlan
 	joinPlan.initIDAndContext(b.ctx)
 	joinPlan.SetSchema(newSchema)
@@ -207,11 +209,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 			b.err = errors.New("ON condition doesn't support subqueries yet")
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
-		eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, leftPlan, rightPlan)
-		joinPlan.EqualConditions = eqCond
-		joinPlan.LeftConditions = leftCond
-		joinPlan.RightConditions = rightCond
-		joinPlan.OtherConditions = otherCond
+		joinPlan.attachOnConds(onCondition)
 	} else if joinPlan.JoinType == InnerJoin {
 		joinPlan.cartesianJoin = true
 	}
@@ -224,8 +222,6 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	} else {
 		joinPlan.JoinType = InnerJoin
 	}
-	addChild(joinPlan, leftPlan)
-	addChild(joinPlan, rightPlan)
 	joinPlan.SetCorrelated()
 	return joinPlan
 }
@@ -987,11 +983,10 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.GetSchema())
 	}
-	eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, outerPlan, innerPlan)
-	joinPlan.EqualConditions = eqCond
-	joinPlan.LeftConditions = leftCond
-	joinPlan.RightConditions = rightCond
-	joinPlan.OtherConditions = otherCond
+	joinPlan.SetChildren(outerPlan, innerPlan)
+	outerPlan.SetParents(joinPlan)
+	innerPlan.SetParents(joinPlan)
+	joinPlan.attachOnConds(onCondition)
 	if asScalar {
 		newSchema := outerPlan.GetSchema().Clone()
 		newSchema.Append(&expression.Column{
@@ -1007,9 +1002,6 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		joinPlan.JoinType = SemiJoin
 	}
 	joinPlan.anti = not
-	joinPlan.SetChildren(outerPlan, innerPlan)
-	outerPlan.SetParents(joinPlan)
-	innerPlan.SetParents(joinPlan)
 	joinPlan.SetCorrelated()
 	return joinPlan
 }

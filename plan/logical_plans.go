@@ -57,6 +57,14 @@ type Join struct {
 	DefaultValues []types.Datum
 }
 
+func (p *Join) attachOnConds(onConds []expression.Expression) {
+	eq, left, right, other := extractOnCondition(onConds, p.children[0], p.children[1])
+	p.EqualConditions = eq
+	p.LeftConditions = left
+	p.RightConditions = right
+	p.OtherConditions = other
+}
+
 func (p *Join) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.basePlan.extractCorrelatedCols()
 	for _, fun := range p.EqualConditions {
