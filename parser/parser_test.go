@@ -87,7 +87,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"delay_key_write", "isolation", "partitions", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
-		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
+		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10",
 	}
@@ -525,6 +525,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT SUBSTRING('Quadratically' FROM 5 FOR 3);", true},
 
 		{"SELECT CONVERT('111', SIGNED);", true},
+
+		{"SELECT LEAST(1, 2, 3);", true},
 
 		// Information Functions
 		{"SELECT DATABASE();", true},
