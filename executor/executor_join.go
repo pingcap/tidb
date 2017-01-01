@@ -392,7 +392,7 @@ func (e *HashJoinExec) Next() (*Row, error) {
 type joinExec interface {
 	Executor
 
-	// fetchBigRow fetches a valid big row from big Exec.
+	// fetchBigRow fetches a valid row from big Exec.
 	fetchBigRow() (*Row, error)
 	// prepare reads all records from small Exec and stores them.
 	prepare() error
@@ -526,6 +526,9 @@ func (e *NestedLoopJoinExec) Next() (*Row, error) {
 			return bigRow, errors.Trace(err)
 		}
 		e.resultRows, err = e.doJoin(bigRow)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		e.cursor = 0
 	}
 }
@@ -709,11 +712,11 @@ func (e *HashSemiJoinExec) Next() (*Row, error) {
 			return bigRow, errors.Trace(err)
 		}
 		resultRows, err := e.doJoin(bigRow)
-		if len(resultRows) > 0 {
-			return resultRows[0], nil
-		}
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if len(resultRows) > 0 {
+			return resultRows[0], nil
 		}
 	}
 }
