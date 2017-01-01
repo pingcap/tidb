@@ -42,7 +42,7 @@ var (
 	_ Executor = &DistinctExec{}
 	_ Executor = &DummyScanExec{}
 	_ Executor = &ExistsExec{}
-	_ Executor = &HashSemiJoinExec{}
+	_ Executor = &HashAggExec{}
 	_ Executor = &LimitExec{}
 	_ Executor = &MaxOneRowExec{}
 	_ Executor = &ProjectionExec{}

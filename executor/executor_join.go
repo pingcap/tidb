@@ -26,9 +26,9 @@ import (
 )
 
 var (
-	_ Executor = &HashAggExec{}
 	_ Executor = &NestedLoopJoinExec{}
 	_ Executor = &HashJoinExec{}
+	_ Executor = &HashSemiJoinExec{}
 )
 
 // HashJoinExec implements the hash join algorithm.
