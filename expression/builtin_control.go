@@ -19,6 +19,32 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+func builtinCaseWhen(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	l := len(args)
+	for i := 0; i < l-1; i += 2 {
+		if args[i].IsNull() {
+			continue
+		}
+		b, err1 := args[i].ToBool(sc)
+		if err1 != nil {
+			return d, errors.Trace(err1)
+		}
+		if b == 1 {
+			d = args[i+1]
+			return
+		}
+	}
+	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
+	// else clause -> args[l-1]
+	// If case clause has else clause, l%2 == 1.
+	if l%2 == 1 {
+		d = args[l-1]
+	}
+	return
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
 func builtinIf(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	// if(expr1, expr2, expr3)

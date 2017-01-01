@@ -74,6 +74,7 @@ const (
 	// common functions
 	Coalesce = "coalesce"
 	Greatest = "greatest"
+	Least    = "least"
 
 	// math functions
 	Abs     = "abs"
