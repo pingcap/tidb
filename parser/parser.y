@@ -278,6 +278,7 @@ import (
 	trim		"TRIM"
 	rtrim 		"RTRIM"
 	ucase 		"UCASE"
+	unixTimestamp	"UNIX_TIMESTAMP"
 	upper 		"UPPER"
 	version		"VERSION"
 	weekday		"WEEKDAY"
@@ -2952,6 +2953,14 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"UCASE" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"UNIX_TIMESTAMP" '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
+	}
+|	"UNIX_TIMESTAMP" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}

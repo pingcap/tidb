@@ -533,3 +533,28 @@ func (s *testEvaluatorSuite) TestYearWeek(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(result.IsNull(), IsTrue)
 }
+
+func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
+	d, err := builtinUnixTimestamp(nil, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
+	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
+
+	tests := []struct {
+		input  types.Datum
+		expect string
+	}{
+		{types.NewIntDatum(20151113102019), "1447381219"},
+		{types.NewStringDatum("2015-11-13 10:20:19"), "1447381219"},
+		{types.NewStringDatum("2015-11-13 10:20:19.012"), "1447381219.012"},
+		{types.NewStringDatum("2017-00-02"), "0"},
+	}
+
+	for i, test := range tests {
+		d, err = builtinUnixTimestamp([]types.Datum{test.input}, s.ctx)
+		c.Assert(err, IsNil)
+		str, err := d.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, test.expect, Commentf("%dth", i))
+	}
+}

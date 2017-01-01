@@ -401,6 +401,7 @@ var tokenMap = map[string]int{
 	"UNIQUE":              unique,
 	"UNLOCK":              unlock,
 	"UNSIGNED":            unsigned,
+	"UNIX_TIMESTAMP":      unixTimestamp,
 	"UPDATE":              update,
 	"UPPER":               upper,
 	"UCASE":               ucase,

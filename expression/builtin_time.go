@@ -745,3 +745,43 @@ func parseDayInterval(sc *variable.StatementContext, value types.Datum) (int64, 
 	}
 	return value.ToInt64(sc)
 }
+
+func builtinUnixTimestamp(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if len(args) == 0 {
+		now := time.Now().Unix()
+		d.SetInt64(now)
+		return
+	}
+
+	d.SetInt64(0)
+	var (
+		t  types.Time
+		t1 time.Time
+		e  error
+	)
+	switch args[0].Kind() {
+	case types.KindString:
+		t, e = types.ParseTime(args[0].GetString(), mysql.TypeDatetime, types.MaxFsp)
+	case types.KindInt64, types.KindUint64:
+		t, e = types.ParseTimeFromInt64(args[0].GetInt64())
+	default:
+		return
+	}
+	if e != nil {
+		return
+	}
+
+	t1, e = t.Time.GoTime()
+	if e != nil {
+		return
+	}
+
+	if t.Time.Microsecond() > 0 {
+		var dec types.MyDecimal
+		dec.FromFloat64(float64(t1.Unix()) + float64(t.Time.Microsecond())/1e6)
+		d.SetMysqlDecimal(&dec)
+	} else {
+		d.SetInt64(t1.Unix())
+	}
+	return
+}
