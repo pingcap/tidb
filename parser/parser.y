@@ -534,6 +534,7 @@ import (
 	IndexName		"index name"
 	IndexNameList		"index name list"
 	IndexOption		"Index Option"
+	IndexOptionList		"Index Option List or empty"
 	IndexType		"index type"
 	IndexTypeOpt		"Optional index type"
 	InsertIntoStmt		"INSERT INTO statement"
@@ -1087,7 +1088,7 @@ ColumnOptionListOpt:
 	}
 
 ConstraintElem:
-	"PRIMARY" "KEY" IndexTypeOpt '(' IndexColNameList ')' IndexOption
+	"PRIMARY" "KEY" IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp: ast.ConstraintPrimaryKey,
@@ -1104,7 +1105,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"FULLTEXT" "KEY" IndexName '(' IndexColNameList ')' IndexOption
+|	"FULLTEXT" "KEY" IndexName '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintFulltext,
@@ -1116,7 +1117,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
+|	"INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintIndex,
@@ -1134,7 +1135,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
+|	"KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintKey,
@@ -1152,7 +1153,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"UNIQUE" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
+|	"UNIQUE" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniq,
@@ -1170,7 +1171,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"UNIQUE" "INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
+|	"UNIQUE" "INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniqIndex,
@@ -1188,7 +1189,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"UNIQUE" "KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
+|	"UNIQUE" "KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniqKey,
@@ -2004,11 +2005,30 @@ IndexName:
 		$$ = $1
 	}
 
-IndexOption:
+IndexOptionList:
 	{
 		$$ = nil
 	}
-|	"KEY_BLOCK_SIZE" EqOpt LengthNum
+|	IndexOptionList IndexOption
+	{
+		// Merge the options
+		if $1 == nil {
+			$$ = $2
+		} else {
+			opt1 := $1.(*ast.IndexOption)
+			opt2 := $2.(*ast.IndexOption)
+			if len(opt2.Comment) > 0 {
+				opt1.Comment = opt2.Comment
+			} else if opt2.Tp != 0 {
+				opt1.Tp = opt2.Tp
+			}
+			$$ = opt1
+		}
+	}
+
+
+IndexOption:
+	"KEY_BLOCK_SIZE" EqOpt LengthNum
 	{
 		$$ = &ast.IndexOption{
 			// TODO bug should be fix here!
