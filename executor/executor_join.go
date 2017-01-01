@@ -26,9 +26,10 @@ import (
 )
 
 var (
-	_ Executor = &NestedLoopJoinExec{}
+	_ joinExec = &NestedLoopJoinExec{}
 	_ Executor = &HashJoinExec{}
-	_ Executor = &HashSemiJoinExec{}
+	_ joinExec = &HashSemiJoinExec{}
+	_ Executor = &ApplyJoinExec{}
 )
 
 // HashJoinExec implements the hash join algorithm.
@@ -729,6 +730,18 @@ type ApplyJoinExec struct {
 	outerSchema []*expression.CorrelatedColumn
 	cursor      int
 	resultRow   []*Row
+}
+
+// Schema implements the Executor interface.
+func (e *ApplyJoinExec) Schema() expression.Schema {
+	return e.join.Schema()
+}
+
+// Close implements the Executor interface.
+func (e *ApplyJoinExec) Close() error {
+	e.cursor = 0
+	e.resultRow = nil
+	return e.join.Close()
 }
 
 // Next implements the Executor interface.
