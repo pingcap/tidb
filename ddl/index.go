@@ -37,6 +37,9 @@ func BuildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr,
 	idxColNames []*ast.IndexColName, primary bool, unique bool, state model.SchemaState) (*model.IndexInfo, error) {
 	// build offsets
 	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
+
+	sumMaxLength := 0
+
 	for _, ic := range idxColNames {
 		col := findCol(tblInfo.Columns, ic.Column.Name.O)
 		if col == nil {
@@ -62,6 +65,16 @@ func BuildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr,
 		// if a column is defined with the type varchar and the prefix at creating index is not specified,
 		// the column length will be used
 		if ic.Length == -1 && types.IsTypeChar(col.FieldType.Tp) && col.Flen > maxPrefixLength {
+			return nil, errors.Trace(errTooLongKey)
+		}
+
+		if ic.Length == -1 {
+			sumMaxLength += col.Flen
+		} else {
+			sumMaxLength += ic.Length
+		}
+
+		if sumMaxLength > maxPrefixLength {
 			return nil, errors.Trace(errTooLongKey)
 		}
 
