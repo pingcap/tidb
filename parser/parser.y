@@ -224,7 +224,8 @@ import (
 	curTime 	"CUR_TIME"
 	count		"COUNT"
 	day		"DAY"
-	dateAdd		"DATE_ADD"
+	datediff    "DATEDIFF"
+    dateAdd		"DATE_ADD"
 	dateFormat	"DATE_FORMAT"
 	dateSub		"DATE_SUB"
 	dayname		"DAYNAME"
@@ -2093,7 +2094,7 @@ ReservedKeyword:
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
-|	"DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS"
+|	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 |	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
@@ -2607,6 +2608,13 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"DATEDIFF" '(' Expression ',' Expression ')'
+    {
+   		$$ = &ast.FuncCallExpr{
+   			FnName: model.NewCIStr($1),
+   			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+   		}
+   	}
 |	"DAY" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}

@@ -88,6 +88,24 @@ func convertDatumToTime(sc *variable.StatementContext, d types.Datum) (t types.T
 	return d.GetMysqlTime(), nil
 }
 
+func builtinDateDiff(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	t1, err := convertDatumToTime(sc, args[0])
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	t2, err := convertDatumToTime(sc, args[1])
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	r := t1.TotalDays() - t2.TotalDays()
+
+	d.SetInt64(int64(r))
+	return d, nil
+}
+
 func builtinTimeDiff(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	t1, err := convertDatumToTime(sc, args[0])

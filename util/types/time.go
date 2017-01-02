@@ -437,6 +437,15 @@ func (t *Time) check() error {
 	return nil
 }
 
+// TotalDays returns number of days starting from 0/1/1
+func (t Time) TotalDays() int {
+	d := t.Time.Day()
+	m := (t.Time.Month() + 9)%12
+	y := t.Time.Year() - m/10
+
+	return 365*y + y/4 - y/100 + y/400 + (m*306 + 5)/10 + ( d - 1 )
+}
+
 // Sub subtracts t1 from t, returns a duration value.
 // Note that sub should not be done on different time types.
 func (t *Time) Sub(t1 *Time) Duration {
