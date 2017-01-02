@@ -148,12 +148,21 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"greatest('TiDB', 'D', 'd')", mysql.TypeVarString, "utf8"},
 		{"greatest(1.1, 2.2)", mysql.TypeNewDecimal, charset.CharsetBin},
 		{"greatest('TiDB', 3)", mysql.TypeVarString, "utf8"},
+		{"least(1, 2, 3)", mysql.TypeLonglong, charset.CharsetBin},
+		{"least('TiDB', 'D', 'd')", mysql.TypeVarString, "utf8"},
+		{"least(1.1, 2.2)", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"least('TiDB', 3)", mysql.TypeVarString, "utf8"},
 		{"hex('TiDB')", mysql.TypeVarString, "utf8"},
 		{"hex(12)", mysql.TypeVarString, "utf8"},
 		{"unhex('TiDB')", mysql.TypeVarString, "utf8"},
 		{"unhex(12)", mysql.TypeVarString, "utf8"},
 		{"DATE_FORMAT('2009-10-04 22:23:00', '%W %M %Y')", mysql.TypeVarString, "utf8"},
 		{"rpad('TiDB', 12, 'go')", mysql.TypeVarString, charset.CharsetUTF8},
+		{"bit_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
+		{"char(66)", mysql.TypeVarString, charset.CharsetUTF8},
+		{"char_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
+		{"character_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
+		{"crc32('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)

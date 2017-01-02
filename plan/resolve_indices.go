@@ -32,8 +32,8 @@ func (p *Join) ResolveIndicesAndCorCols() {
 	lSchema := p.GetChildByIndex(0).GetSchema()
 	rSchema := p.GetChildByIndex(1).GetSchema()
 	for _, fun := range p.EqualConditions {
-		fun.Args[0].ResolveIndices(lSchema)
-		fun.Args[1].ResolveIndices(rSchema)
+		fun.GetArgs()[0].ResolveIndices(lSchema)
+		fun.GetArgs()[1].ResolveIndices(rSchema)
 	}
 	for _, expr := range p.LeftConditions {
 		expr.ResolveIndices(lSchema)
@@ -42,7 +42,7 @@ func (p *Join) ResolveIndicesAndCorCols() {
 		expr.ResolveIndices(rSchema)
 	}
 	for _, expr := range p.OtherConditions {
-		expr.ResolveIndices(append(lSchema, rSchema...))
+		expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
 	}
 }
 
@@ -82,13 +82,13 @@ func (p *Apply) ResolveIndicesAndCorCols() {
 	innerPlan.ResolveIndicesAndCorCols()
 	corCols := innerPlan.extractCorrelatedCols()
 	childSchema := p.children[0].GetSchema()
-	resultCorCols := make([]*expression.CorrelatedColumn, len(childSchema))
+	resultCorCols := make([]*expression.CorrelatedColumn, childSchema.Len())
 	for _, corCol := range corCols {
-		idx := childSchema.GetIndex(&corCol.Column)
+		idx := childSchema.GetColumnIndex(&corCol.Column)
 		if idx != -1 {
 			if resultCorCols[idx] == nil {
 				resultCorCols[idx] = &expression.CorrelatedColumn{
-					Column: *childSchema[idx],
+					Column: *childSchema.Columns[idx],
 					Data:   new(types.Datum),
 				}
 			}
@@ -106,7 +106,7 @@ func (p *Apply) ResolveIndicesAndCorCols() {
 	p.corCols = resultCorCols[:length]
 
 	if p.Checker != nil {
-		p.Checker.Condition.ResolveIndices(append(childSchema, innerPlan.GetSchema()...))
+		p.Checker.Condition.ResolveIndices(expression.MergeSchema(childSchema, innerPlan.GetSchema()))
 	}
 }
 
@@ -119,7 +119,7 @@ func (p *Update) ResolveIndicesAndCorCols() {
 		if v == nil {
 			continue
 		}
-		orderedList[schema.GetIndex(v.Col)] = v
+		orderedList[schema.GetColumnIndex(v.Col)] = v
 	}
 	for i := 0; i < len(orderedList); i++ {
 		if orderedList[i] == nil {

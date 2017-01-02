@@ -146,7 +146,7 @@ func (r *rangeBuilder) buildFormBinOp(expr *expression.ScalarFunction) []rangePo
 	// the operand is column name expression.
 	var value types.Datum
 	var op string
-	if v, ok := expr.Args[0].(*expression.Constant); ok {
+	if v, ok := expr.GetArgs()[0].(*expression.Constant); ok {
 		value = v.Value
 		switch expr.FuncName.L {
 		case ast.GE:
@@ -161,7 +161,7 @@ func (r *rangeBuilder) buildFormBinOp(expr *expression.ScalarFunction) []rangePo
 			op = expr.FuncName.L
 		}
 	} else {
-		value = expr.Args[1].(*expression.Constant).Value
+		value = expr.GetArgs()[1].(*expression.Constant).Value
 		op = expr.FuncName.L
 	}
 	if value.IsNull() {
@@ -241,7 +241,7 @@ func (r *rangeBuilder) buildFromIsFalse(expr *expression.ScalarFunction, isNot i
 
 func (r *rangeBuilder) newBuildFromIn(expr *expression.ScalarFunction) []rangePoint {
 	var rangePoints []rangePoint
-	list := expr.Args[1:]
+	list := expr.GetArgs()[1:]
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
@@ -285,7 +285,7 @@ func (r *rangeBuilder) newBuildFromIn(expr *expression.ScalarFunction) []rangePo
 }
 
 func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) []rangePoint {
-	pattern, err := expr.Args[1].(*expression.Constant).Value.ToString()
+	pattern, err := expr.GetArgs()[1].(*expression.Constant).Value.ToString()
 	if err != nil {
 		r.err = errors.Trace(err)
 		return fullRange
@@ -296,7 +296,7 @@ func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) 
 		return []rangePoint{startPoint, endPoint}
 	}
 	lowValue := make([]byte, 0, len(pattern))
-	escape := byte(expr.Args[2].(*expression.Constant).Value.GetInt64())
+	escape := byte(expr.GetArgs()[2].(*expression.Constant).Value.GetInt64())
 	var exclude bool
 	isExactMatch := true
 	for i := 0; i < len(pattern); i++ {
@@ -379,9 +379,9 @@ func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []ra
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE:
 		return r.buildFormBinOp(expr)
 	case ast.AndAnd:
-		return r.intersection(r.build(expr.Args[0]), r.build(expr.Args[1]))
+		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	case ast.OrOr:
-		return r.union(r.build(expr.Args[0]), r.build(expr.Args[1]))
+		return r.union(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	case ast.IsTruth:
 		return r.buildFromIsTrue(expr, 0)
 	case ast.IsFalsity:
@@ -395,7 +395,7 @@ func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []ra
 		endPoint := rangePoint{}
 		return []rangePoint{startPoint, endPoint}
 	case ast.UnaryNot:
-		return r.buildFromNot(expr.Args[0].(*expression.ScalarFunction))
+		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction))
 	}
 
 	return nil

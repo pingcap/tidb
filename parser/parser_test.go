@@ -87,7 +87,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"delay_key_write", "isolation", "partitions", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
-		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
+		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10",
 	}
@@ -383,7 +383,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW KEYS FROM t;`, true},
 		{`SHOW INDEX IN t;`, true},
 		{`SHOW KEYS IN t;`, true},
-		{`SHOW INDEXES IN t;`, true},
+		{`SHOW INDEXES IN t where true;`, true},
+		{`SHOW KEYS FROM t FROM test where true;`, true},
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		// For show character set
 		{"show character set;", true},
@@ -510,6 +511,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT LOG(2, 65536);", true},
 		{"SELECT LOG2(2);", true},
 		{"SELECT LOG10(10);", true},
+		{"SELECT CONV(10+'10'+'10'+X'0a',10,10);", true},
+		{"SELECT CRC32('MySQL');", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
@@ -522,6 +525,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT SUBSTRING('Quadratically' FROM 5 FOR 3);", true},
 
 		{"SELECT CONVERT('111', SIGNED);", true},
+
+		{"SELECT LEAST(1, 2, 3);", true},
 
 		// Information Functions
 		{"SELECT DATABASE();", true},
@@ -655,6 +660,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT TRIM(TRAILING 'xyz' FROM 'barxxyz');`, true},
 		{`SELECT LTRIM(' foo ');`, true},
 		{`SELECT RTRIM(' bar ');`, true},
+
+		{`SELECT RPAD('hi', 6, 'c');`, true},
+		{`SELECT BIT_LENGTH('hi');`, true},
+		{`SELECT CHAR(65);`, true},
+		{`SELECT CHAR_LENGTH('abc');`, true},
+		{`SELECT CHARACTER_LENGTH('abc');`, true},
 
 		// Repeat
 		{`SELECT REPEAT("a", 10);`, true},

@@ -245,6 +245,7 @@ import (
 	lastInsertID	"LAST_INSERT_ID"
 	lcase 		"LCASE"
 	length		"LENGTH"
+	least		"LEAST"
 	ln		"LN"
 	locate		"LOCATE"
 	log		"LOG"
@@ -287,6 +288,13 @@ import (
 	getLock		"GET_LOCK"
 	releaseLock	"RELEASE_LOCK"
 	rpad		"RPAD"
+	bitLength	"BIT_LENGTH"
+	charFunc	"CHAR_FUNC"
+	charLength	"CHAR_LENGTH"
+	characterLength	"CHARACTER_LENGTH"
+	conv		"CONV"
+	bitXor		"BIT_XOR"
+	crc32		"CRC32"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -2086,7 +2094,7 @@ ReservedKeyword:
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
 |	"DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS"
-|	"GROUP_CONCAT"| "GREATEST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
+|	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 |	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
 "SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
@@ -2691,6 +2699,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|	"LEAST" '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
 |	"HOUR" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -2978,6 +2990,60 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}
+|	"BIT_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|   "CHAR" '(' ExpressionList ')'
+    {
+		nilVal := ast.NewValueExpr(nil)
+		args := $3.([]ast.ExprNode)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr(ast.CharFunc),
+			Args: append(args, nilVal),
+		}
+    }
+|   "CHAR" '(' ExpressionList "USING" StringName ')'
+    {
+		charset := ast.NewValueExpr($5)
+		args := $3.([]ast.ExprNode)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr(ast.CharFunc),
+			Args: append(args, charset),
+		}
+    }
+|	"CHAR_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"CHARACTER_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr(ast.CharLength),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"CONV" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
+	}
+|	"CRC32" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+
 
 DateArithOpt:
 	"DATE_ADD"
@@ -3053,6 +3119,10 @@ FunctionCallAgg:
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
 |	"SUM" '(' DistinctOpt Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
+	}
+|	"BIT_XOR" '(' DistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
@@ -4121,13 +4191,6 @@ ShowStmt:
 			User:	$4.(string),
 		}
 	}
-|	"SHOW" ShowIndexKwd FromOrIn TableName
-	{
-		$$ = &ast.ShowStmt{
-			Tp: ast.ShowIndex,
-			Table: $4.(*ast.TableName),
-		}
-	}
 |	"SHOW" "PROCESSLIST"
 	{
 		$$ = &ast.ShowStmt{
@@ -4175,6 +4238,21 @@ ShowTargetFilterable:
 			DBName:	$3.(string),
 		}
 	}
+|	ShowIndexKwd FromOrIn TableName
+    {
+        $$ = &ast.ShowStmt{
+            Tp: ast.ShowIndex,
+            Table: $3.(*ast.TableName),
+        }
+    }
+|	ShowIndexKwd FromOrIn Identifier FromOrIn Identifier
+    {
+        show := &ast.ShowStmt{
+            Tp: ast.ShowIndex,
+            Table: &ast.TableName{Name:model.NewCIStr($3), Schema: model.NewCIStr($5)},
+        }
+        $$ = show
+    }
 |	OptFull "COLUMNS" ShowTableAliasOpt ShowDatabaseNameOpt
 	{
 		$$ = &ast.ShowStmt{

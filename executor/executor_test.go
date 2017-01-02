@@ -167,6 +167,7 @@ type testCase struct {
 func checkCases(cases []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx context.Context, selectSQL, deleteSQL string) {
 	for _, ca := range cases {
+		c.Assert(ctx.NewTxn(), IsNil)
 		data, err1 := ld.InsertData(ca.data1, ca.data2)
 		c.Assert(err1, IsNil)
 		if ca.restData == nil {
@@ -176,7 +177,7 @@ func checkCases(cases []testCase, ld *executor.LoadDataInfo,
 			c.Assert(data, DeepEquals, ca.restData,
 				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
 		}
-		err1 = ctx.CommitTxn()
+		err1 = ctx.Txn().Commit()
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
 		r.Check(testkit.Rows(ca.expected...))
@@ -710,6 +711,14 @@ func (s *testSuite) TestJoin(c *C) {
 	_, err = tk.Exec("select * from t right join t1 on 1")
 	c.Check(plan.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	plan.AllowCartesianProduct = true
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int)")
+	tk.MustExec("create table t1(c1 int unsigned)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t1 values (1)")
+	result = tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestMultiJoin(c *C) {
@@ -1400,7 +1409,7 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(err, IsNil)
 	compiler := &executor.Compiler{}
 	ctx := se.(context.Context)
-	tidb.PrepareTxnCtx(ctx)
+	c.Check(tidb.PrepareTxnCtx(ctx), IsNil)
 
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)

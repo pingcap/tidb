@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package evaluator
+package expression
 
 import (
 	"testing"
@@ -22,12 +22,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -49,37 +45,6 @@ type testEvaluatorSuite struct {
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
-}
-
-func (s *testEvaluatorSuite) parseExpr(c *C, expr string) ast.ExprNode {
-	st, err := s.ParseOneStmt("select "+expr, "", "")
-	c.Assert(err, IsNil)
-	stmt := st.(*ast.SelectStmt)
-	return stmt.Fields.Fields[0].Expr
-}
-
-type testCase struct {
-	exprStr   string
-	resultStr string
-}
-
-func (s *testEvaluatorSuite) runTests(c *C, cases []testCase) {
-	for _, ca := range cases {
-		expr := s.parseExpr(c, ca.exprStr)
-		val, err := Eval(s.ctx, expr)
-		c.Assert(err, IsNil)
-		valStr := fmt.Sprintf("%v", val.GetValue())
-		c.Assert(valStr, Equals, ca.resultStr, Commentf("for %s", ca.exprStr))
-	}
-}
-
-func (s *testEvaluatorSuite) TestBetween(c *C) {
-	defer testleak.AfterTest(c)()
-	cases := []testCase{
-		{exprStr: "1 between 2 and 3", resultStr: "0"},
-		{exprStr: "1 not between 2 and 3", resultStr: "1"},
-	}
-	s.runTests(c, cases)
 }
 
 func (s *testEvaluatorSuite) TestSleep(c *C) {
@@ -363,81 +328,6 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
-	defer testleak.AfterTest(c)()
-	cases := []testCase{
-		{
-			exprStr:   "case 1 when 1 then 'str1' when 2 then 'str2' end",
-			resultStr: "str1",
-		},
-		{
-			exprStr:   "case 2 when 1 then 'str1' when 2 then 'str2' end",
-			resultStr: "str2",
-		},
-		{
-			exprStr:   "case 3 when 1 then 'str1' when 2 then 'str2' end",
-			resultStr: "<nil>",
-		},
-		{
-			exprStr:   "case 4 when 1 then 'str1' when 2 then 'str2' else 'str3' end",
-			resultStr: "str3",
-		},
-	}
-	s.runTests(c, cases)
-
-	// When expression value changed, result set back to null.
-	valExpr := ast.NewValueExpr(1)
-	whenClause := &ast.WhenClause{Expr: ast.NewValueExpr(1), Result: ast.NewValueExpr(1)}
-	caseExpr := &ast.CaseExpr{
-		Value:       valExpr,
-		WhenClauses: []*ast.WhenClause{whenClause},
-	}
-	v, err := Eval(s.ctx, caseExpr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum(int64(1)))
-	valExpr.SetValue(4)
-	ast.ResetEvaluatedFlag(caseExpr)
-	v, err = Eval(s.ctx, caseExpr)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindNull)
-}
-
-func (s *testEvaluatorSuite) TestCast(c *C) {
-	defer testleak.AfterTest(c)()
-	f := types.NewFieldType(mysql.TypeLonglong)
-
-	expr := &ast.FuncCastExpr{
-		Expr: ast.NewValueExpr(1),
-		Tp:   f,
-	}
-	ast.SetFlag(expr)
-	v, err := Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum(int64(1)))
-
-	f.Flag |= mysql.UnsignedFlag
-	v, err = Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum(uint64(1)))
-
-	f.Tp = mysql.TypeString
-	f.Charset = charset.CharsetBin
-	v, err = Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum([]byte("1")))
-
-	f.Tp = mysql.TypeString
-	f.Charset = "utf8"
-	v, err = Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum("1"))
-
-	expr.Expr = ast.NewValueExpr(nil)
-	v, err = Eval(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindNull)
-}
-
 func (s *testEvaluatorSuite) TestExtract(c *C) {
 	defer testleak.AfterTest(c)()
 	str := "2011-11-11 10:10:10.123456"
@@ -478,147 +368,6 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 	v, err := f.F(types.MakeDatums("SECOND", nil), s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
-}
-
-func (s *testEvaluatorSuite) TestPatternIn(c *C) {
-	defer testleak.AfterTest(c)()
-	cases := []testCase{
-		{
-			exprStr:   "1 not in (1, 2, 3)",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "1 in (1, 2, 3)",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "1 in (2, 3)",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "NULL in (2, 3)",
-			resultStr: "<nil>",
-		},
-		{
-			exprStr:   "NULL not in (2, 3)",
-			resultStr: "<nil>",
-		},
-		{
-			exprStr:   "NULL in (NULL, 3)",
-			resultStr: "<nil>",
-		},
-		{
-			exprStr:   "1 in (1, NULL)",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "1 in (NULL, 1)",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "2 in (1, NULL)",
-			resultStr: "<nil>",
-		},
-		{
-			exprStr:   "(-(23)++46/51*+51) in (+23)",
-			resultStr: "0",
-		},
-	}
-	s.runTests(c, cases)
-}
-
-func (s *testEvaluatorSuite) TestIsNull(c *C) {
-	defer testleak.AfterTest(c)()
-	cases := []testCase{
-		{
-			exprStr:   "1 IS NULL",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "1 IS NOT NULL",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "NULL IS NULL",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "NULL IS NOT NULL",
-			resultStr: "0",
-		},
-	}
-	s.runTests(c, cases)
-}
-
-func (s *testEvaluatorSuite) TestIsTruth(c *C) {
-	defer testleak.AfterTest(c)()
-	cases := []testCase{
-		{
-			exprStr:   "1 IS TRUE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "2 IS TRUE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "0 IS TRUE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "NULL IS TRUE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "1 IS FALSE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "2 IS FALSE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "0 IS FALSE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "NULL IS NOT FALSE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "1 IS NOT TRUE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "2 IS NOT TRUE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "0 IS NOT TRUE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "NULL IS NOT TRUE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "1 IS NOT FALSE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "2 IS NOT FALSE",
-			resultStr: "1",
-		},
-		{
-			exprStr:   "0 IS NOT FALSE",
-			resultStr: "0",
-		},
-		{
-			exprStr:   "NULL IS NOT FALSE",
-			resultStr: "1",
-		},
-	}
-	s.runTests(c, cases)
 }
 
 func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
@@ -815,94 +564,6 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, 0)
 	}
-}
-
-func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
-	defer testleak.AfterTest(c)()
-	v, err := GetTimeValue(nil, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
-	c.Assert(err, IsNil)
-
-	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
-	timeValue := v.GetMysqlTime()
-	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
-	ctx := mock.NewContext()
-	sessionVars := ctx.GetSessionVars()
-	varsutil.SetSystemVar(sessionVars, "timestamp", types.NewStringDatum(""))
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
-	c.Assert(err, IsNil)
-
-	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
-	timeValue = v.GetMysqlTime()
-	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
-
-	varsutil.SetSystemVar(sessionVars, "timestamp", types.NewStringDatum("0"))
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
-	c.Assert(err, IsNil)
-
-	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
-	timeValue = v.GetMysqlTime()
-	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
-
-	varsutil.SetSystemVar(sessionVars, "timestamp", types.Datum{})
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
-	c.Assert(err, IsNil)
-
-	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
-	timeValue = v.GetMysqlTime()
-	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
-
-	varsutil.SetSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
-
-	tbl := []struct {
-		Expr interface{}
-		Ret  interface{}
-	}{
-		{"2012-12-12 00:00:00", "2012-12-12 00:00:00"},
-		{CurrentTimestamp, time.Unix(1234, 0).Format(types.TimeFormat)},
-		{ZeroTimestamp, "0000-00-00 00:00:00"},
-		{ast.NewValueExpr("2012-12-12 00:00:00"), "2012-12-12 00:00:00"},
-		{ast.NewValueExpr(int64(0)), "0000-00-00 00:00:00"},
-		{ast.NewValueExpr(nil), nil},
-		{&ast.FuncCallExpr{FnName: model.NewCIStr(CurrentTimestamp)}, CurrentTimestamp},
-		{&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(0))}, "0000-00-00 00:00:00"},
-	}
-
-	for i, t := range tbl {
-		comment := Commentf("expr: %d", i)
-		v, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, types.MinFsp)
-		c.Assert(err, IsNil)
-
-		switch v.Kind() {
-		case types.KindMysqlTime:
-			c.Assert(v.GetMysqlTime().String(), DeepEquals, t.Ret, comment)
-		default:
-			c.Assert(v.GetValue(), DeepEquals, t.Ret, comment)
-		}
-	}
-
-	errTbl := []struct {
-		Expr interface{}
-	}{
-		{"2012-13-12 00:00:00"},
-		{ast.NewValueExpr("2012-13-12 00:00:00")},
-		{ast.NewValueExpr(int64(1))},
-		{&ast.FuncCallExpr{FnName: model.NewCIStr("xxx")}},
-		{&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(1))}},
-	}
-
-	for _, t := range errTbl {
-		_, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, types.MinFsp)
-		c.Assert(err, NotNil)
-	}
-}
-
-func (s *testEvaluatorSuite) TestIsCurrentTimeExpr(c *C) {
-	defer testleak.AfterTest(c)()
-	v := IsCurrentTimeExpr(ast.NewValueExpr("abc"))
-	c.Assert(v, IsFalse)
-
-	v = IsCurrentTimeExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")})
-	c.Assert(v, IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestMod(c *C) {

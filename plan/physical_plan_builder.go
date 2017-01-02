@@ -141,12 +141,8 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	ts.allocator = p.allocator
 	ts.SetSchema(p.GetSchema())
 	ts.initIDAndContext(p.ctx)
-	txn, err := p.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if txn != nil {
-		ts.readOnly = txn.IsReadOnly()
+	if p.ctx.Txn() != nil {
+		ts.readOnly = p.ctx.Txn().IsReadOnly()
 	} else {
 		ts.readOnly = true
 	}
@@ -162,12 +158,8 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 			conds = append(conds, cond.Clone())
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
-		memDB := infoschema.IsMemoryDB(p.DBName.L)
-		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
-		if isDistReq {
-			ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
-				expressionsToPB(sc, newSel.Conditions, client)
-		}
+		ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
+			expressionsToPB(sc, newSel.Conditions, client)
 		err := buildTableRange(ts)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -185,7 +177,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	if table.PKIsHandle {
 		for i, colInfo := range ts.Columns {
 			if mysql.HasPriKeyFlag(colInfo.Flag) {
-				ts.pkCol = p.GetSchema()[i]
+				ts.pkCol = p.GetSchema().Columns[i]
 				break
 			}
 		}
@@ -196,6 +188,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 				break
 			}
 		}
+		var err error
 		rowCount, err = getRowCountByTableRange(sc, statsTbl, ts.Ranges, offset)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -222,12 +215,8 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 	is.allocator = p.allocator
 	is.initIDAndContext(p.ctx)
 	is.SetSchema(p.schema)
-	txn, err := p.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if txn != nil {
-		is.readOnly = txn.IsReadOnly()
+	if p.ctx.Txn() != nil {
+		is.readOnly = p.ctx.Txn().IsReadOnly()
 	} else {
 		is.readOnly = true
 	}
@@ -319,6 +308,24 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 	if info != nil || err != nil {
 		return info, errors.Trace(err)
 	}
+	client := p.ctx.GetClient()
+	memDB := infoschema.IsMemoryDB(p.DBName.L)
+	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
+	if !isDistReq {
+		memTable := &PhysicalMemTable{
+			DBName:      p.DBName,
+			Table:       p.tableInfo,
+			Columns:     p.Columns,
+			TableAsName: p.TableAsName,
+		}
+		memTable.SetSchema(p.schema)
+		rb := &rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+		memTable.Ranges = rb.buildTableRanges(fullRange)
+		info = &physicalPlanInfo{p: memTable}
+		info = enforceProperty(prop, info)
+		p.storePlanInfo(prop, info)
+		return info, nil
+	}
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
 	if includeTableScan {
 		info, err = p.convert2TableScan(prop)
@@ -392,7 +399,6 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 			ExecLimit: prop.limit,
 		}
 		sort.SetSchema(info.p.GetSchema())
-		sort.correlated = info.p.IsCorrelated()
 		info = addPlanToResponse(sort, info)
 		count := info.count
 		if prop.limit != nil {
@@ -402,7 +408,6 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 	} else if prop.limit != nil {
 		limit := prop.limit.Copy().(*Limit)
 		limit.SetSchema(info.p.GetSchema())
-		limit.correlated = info.p.IsCorrelated()
 		info = addPlanToResponse(limit, info)
 	}
 	if prop.limit != nil && prop.limit.Count < info.count {
@@ -470,7 +475,7 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	allLeft := true
 	for _, col := range prop.props {
-		if lChild.GetSchema().GetIndex(col.col) == -1 {
+		if lChild.GetSchema().GetColumnIndex(col.col) == -1 {
 			allLeft = false
 		}
 	}
@@ -486,7 +491,6 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 	join.tp = "HashSemiJoin"
 	join.allocator = p.allocator
 	join.initIDAndContext(p.ctx)
-	join.correlated = p.IsCorrelated()
 	join.SetSchema(p.schema)
 	lProp := prop
 	if !allLeft {
@@ -502,12 +506,6 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 	rInfo, err := rChild.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if lInfo.p != nil {
-		join.correlated = join.correlated || lInfo.p.IsCorrelated()
-	}
-	if rInfo.p != nil {
-		join.correlated = join.correlated || rInfo.p.IsCorrelated()
 	}
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
 	if p.JoinType == SemiJoin {
@@ -529,7 +527,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	allLeft := true
 	for _, col := range prop.props {
-		if lChild.GetSchema().GetIndex(col.col) == -1 {
+		if lChild.GetSchema().GetColumnIndex(col.col) == -1 {
 			allLeft = false
 		}
 	}
@@ -547,7 +545,6 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	join.allocator = p.allocator
 	join.initIDAndContext(lChild.context())
 	join.SetSchema(p.schema)
-	join.correlated = p.IsCorrelated()
 	if innerJoin {
 		join.JoinType = InnerJoin
 	} else {
@@ -571,12 +568,6 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if lInfo.p != nil {
-		join.correlated = join.correlated || lInfo.p.IsCorrelated()
-	}
-	if rInfo.p != nil {
-		join.correlated = join.correlated || rInfo.p.IsCorrelated()
-	}
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
 	if !allLeft {
 		resultInfo = enforceProperty(prop, resultInfo)
@@ -590,11 +581,11 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 func replaceColsInPropBySchema(prop *requiredProperty, schema expression.Schema) *requiredProperty {
 	newProps := make([]*columnProp, 0, len(prop.props))
 	for _, p := range prop.props {
-		idx := schema.GetIndex(p.col)
+		idx := schema.GetColumnIndex(p.col)
 		if idx == -1 {
 			log.Errorf("Can't find column %s in schema", p.col)
 		}
-		newProps = append(newProps, &columnProp{col: schema[idx], desc: p.desc})
+		newProps = append(newProps, &columnProp{col: schema.Columns[idx], desc: p.desc})
 	}
 	return &requiredProperty{
 		props:      newProps,
@@ -609,7 +600,7 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	rChild := p.GetChildByIndex(1).(LogicalPlan)
 	allRight := true
 	for _, col := range prop.props {
-		if rChild.GetSchema().GetIndex(col.col) == -1 {
+		if rChild.GetSchema().GetColumnIndex(col.col) == -1 {
 			allRight = false
 		}
 	}
@@ -625,7 +616,6 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	join.tp = "HashRightJoin"
 	join.allocator = p.allocator
 	join.initIDAndContext(p.ctx)
-	join.correlated = p.IsCorrelated()
 	join.SetSchema(p.schema)
 	if innerJoin {
 		join.JoinType = InnerJoin
@@ -650,12 +640,6 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if lInfo.p != nil {
-		join.correlated = join.correlated || lInfo.p.IsCorrelated()
-	}
-	if rInfo.p != nil {
-		join.correlated = join.correlated || rInfo.p.IsCorrelated()
 	}
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
 	if !allRight {
@@ -725,7 +709,6 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 	agg.tp = "StreamAgg"
 	agg.allocator = p.allocator
 	agg.initIDAndContext(p.ctx)
-	agg.correlated = p.IsCorrelated()
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
 	// TODO: Consider distinct key.
@@ -774,14 +757,10 @@ func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, child
 	agg.tp = "HashAgg"
 	agg.allocator = p.allocator
 	agg.initIDAndContext(p.ctx)
-	agg.correlated = p.IsCorrelated()
 	agg.SetSchema(p.schema)
 	agg.HasGby = len(p.GroupByItems) > 0
-	if childInfo.p != nil {
-		agg.correlated = agg.correlated || childInfo.p.IsCorrelated()
-	}
 	schema := x.addAggregation(p.ctx, agg)
-	if len(schema) == 0 {
+	if schema.Len() == 0 {
 		return nil
 	}
 	x.(PhysicalPlan).SetSchema(schema)
@@ -802,12 +781,8 @@ func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanIn
 	agg.tp = "HashAgg"
 	agg.allocator = p.allocator
 	agg.initIDAndContext(p.ctx)
-	agg.correlated = p.IsCorrelated()
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
-	if childInfo.p != nil {
-		agg.correlated = agg.correlated || childInfo.p.IsCorrelated()
-	}
 	info := addPlanToResponse(agg, childInfo)
 	info.cost += float64(info.count) * memoryFactor
 	info.count = uint64(float64(info.count) * aggFactor)
@@ -880,8 +855,8 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 			newProp = convertLimitOffsetToCount(prop)
 			newProp.props = make([]*columnProp, 0, len(prop.props))
 			for _, c := range prop.props {
-				idx := p.GetSchema().GetIndex(c.col)
-				newProp.props = append(newProp.props, &columnProp{col: child.GetSchema()[idx], desc: c.desc})
+				idx := p.GetSchema().GetColumnIndex(c.col)
+				newProp.props = append(newProp.props, &columnProp{col: child.GetSchema().Columns[idx], desc: c.desc})
 			}
 		}
 		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(newProp)
@@ -920,8 +895,15 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 			info = infoEnforce
 		}
 	}
-	if _, ok := p.GetChildByIndex(0).(*DataSource); !ok {
+	if ds, ok := p.GetChildByIndex(0).(*DataSource); !ok {
 		info = p.matchProperty(prop, info)
+	} else {
+		client := p.ctx.GetClient()
+		memDB := infoschema.IsMemoryDB(ds.DBName.L)
+		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
+		if !isDistReq {
+			info = p.matchProperty(prop, info)
+		}
 	}
 	p.storePlanInfo(prop, info)
 	return info, nil
@@ -980,14 +962,14 @@ func (p *Projection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 		sortKeyLen: prop.sortKeyLen,
 		limit:      prop.limit}
 	childSchema := p.GetChildByIndex(0).GetSchema()
-	usedCols := make([]bool, len(childSchema))
+	usedCols := make([]bool, childSchema.Len())
 	canPassSort := true
 loop:
 	for _, c := range prop.props {
-		idx := p.schema.GetIndex(c.col)
+		idx := p.schema.GetColumnIndex(c.col)
 		switch v := p.Exprs[idx].(type) {
 		case *expression.Column:
-			childIdx := childSchema.GetIndex(v)
+			childIdx := childSchema.GetColumnIndex(v)
 			if !usedCols[childIdx] {
 				usedCols[childIdx] = true
 				newProp.props = append(newProp.props, &columnProp{col: v, desc: c.desc})
@@ -1086,28 +1068,6 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	return sortedPlanInfo, nil
 }
 
-// addCachePlan will add a Cache plan above the plan whose father's IsCorrelated() is true but its own IsCorrelated() is false.
-func addCachePlan(p PhysicalPlan) PhysicalPlan {
-	if len(p.GetChildren()) == 0 {
-		return p
-	}
-	np := p
-	newChildren := make([]Plan, 0, len(np.GetChildren()))
-	for _, child := range p.GetChildren() {
-		if child.IsCorrelated() {
-			newChildren = append(newChildren, addCachePlan(child.(PhysicalPlan)))
-		} else {
-			newChild := &Cache{}
-			addChild(newChild, child)
-			newChild.SetSchema(child.GetSchema())
-			newChild.SetParents(np)
-			newChildren = append(newChildren, newChild)
-		}
-	}
-	np.SetChildren(newChildren...)
-	return np
-}
-
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
@@ -1120,7 +1080,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	innerPlan := p.children[1].(LogicalPlan)
 	allFromOuter := true
 	for _, col := range prop.props {
-		if innerPlan.GetSchema().GetIndex(col.col) != -1 {
+		if innerPlan.GetSchema().GetColumnIndex(col.col) != -1 {
 			allFromOuter = false
 		}
 	}
@@ -1129,7 +1089,6 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	}
 	child := p.GetChildByIndex(0).(LogicalPlan)
 	innerInfo, err := innerPlan.convert2PhysicalPlan(&requiredProperty{})
-	innerInfo.p = addCachePlan(innerInfo.p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1140,7 +1099,6 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	np.tp = "PhysicalApply"
 	np.allocator = p.allocator
 	np.initIDAndContext(p.ctx)
-	np.correlated = p.IsCorrelated()
 	np.SetSchema(p.GetSchema())
 	limit := prop.limit
 	info, err = child.convert2PhysicalPlan(removeLimit(prop))
@@ -1175,4 +1133,40 @@ func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanIn
 	info = enforceProperty(limitProperty(limit), info)
 	p.storePlanInfo(prop, info)
 	return info, nil
+}
+
+// physicalInitialize will set value of some attributes after convert2PhysicalPlan process.
+// Currently, only attribute "correlated" is considered.
+func physicalInitialize(p PhysicalPlan) {
+	for _, child := range p.GetChildren() {
+		physicalInitialize(child.(PhysicalPlan))
+	}
+	// initialize attributes
+	p.SetCorrelated()
+}
+
+// addCachePlan will add a Cache plan above the plan whose father's IsCorrelated() is true but its own IsCorrelated() is false.
+func addCachePlan(p PhysicalPlan, allocator *idAllocator) {
+	if len(p.GetChildren()) == 0 {
+		return
+	}
+	newChildren := make([]Plan, 0, len(p.GetChildren()))
+	for _, child := range p.GetChildren() {
+		addCachePlan(child.(PhysicalPlan), allocator)
+		if p.IsCorrelated() && !child.IsCorrelated() {
+			newChild := &Cache{}
+			newChild.tp = "Cache"
+			newChild.allocator = allocator
+			newChild.initIDAndContext(p.context())
+			newChild.SetSchema(child.GetSchema())
+
+			addChild(newChild, child)
+			newChild.SetParents(p)
+
+			newChildren = append(newChildren, newChild)
+		} else {
+			newChildren = append(newChildren, child)
+		}
+	}
+	p.SetChildren(newChildren...)
 }

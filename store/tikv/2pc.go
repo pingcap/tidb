@@ -110,7 +110,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
 	// When writeSize <= 256K, ttl is defaultTTL (3s);
 	// When writeSize is 1MiB, 100MiB, or 400MiB, ttl is 6s, 60s, 120s correspondingly;
-	// When writeSize >= 400MiB, ttl is maxTTL (120s).
+	// When writeSize >= 400MiB, we return kv.ErrTxnTooLarge.
 	var lockTTL uint64
 	if size > txnCommitBatchSize {
 		sizeMiB := float64(size) / 1024 / 1024
@@ -119,7 +119,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 			lockTTL = defaultLockTTL
 		}
 		if lockTTL > maxLockTTL {
-			lockTTL = maxLockTTL
+			return nil, kv.ErrTxnTooLarge
 		}
 	}
 
@@ -174,7 +174,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		go func() {
 			e := c.doActionOnBatches(bo, action, batches)
 			if e != nil {
-				log.Warnf("2PC async doActionOnBatches %s err: %v", action, e)
+				log.Debugf("2PC async doActionOnBatches %s err: %v", action, e)
 			}
 		}()
 	} else {
@@ -200,7 +200,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	if len(batches) == 1 {
 		e := singleBatchActionFunc(bo, batches[0])
 		if e != nil {
-			log.Warnf("2PC doActionOnBatches %s failed: %v, tid: %d", action, e, c.startTS)
+			log.Debugf("2PC doActionOnBatches %s failed: %v, tid: %d", action, e, c.startTS)
 		}
 		return errors.Trace(e)
 	}
@@ -221,7 +221,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	var err error
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			log.Warnf("2PC doActionOnBatches %s failed: %v, tid: %d", action, e, c.startTS)
+			log.Debugf("2PC doActionOnBatches %s failed: %v, tid: %d", action, e, c.startTS)
 			if cancel != nil {
 				// Cancel other requests and return the first error.
 				cancel()
@@ -361,7 +361,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 			return errors.Trace(err)
 		}
 		// The transaction maybe rolled back by concurrent transactions.
-		log.Warnf("2PC failed commit primary key: %v, retry later, tid: %d", err, c.startTS)
+		log.Debugf("2PC failed commit primary key: %v, retry later, tid: %d", err, c.startTS)
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
@@ -395,7 +395,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 	}
 	if keyErr := resp.GetCmdBatchRollbackResp().GetError(); keyErr != nil {
 		err = errors.Errorf("2PC cleanup failed: %s", keyErr)
-		log.Errorf("2PC failed cleanup key: %v, tid: %d", err, c.startTS)
+		log.Debugf("2PC failed cleanup key: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
 	}
 	return nil
@@ -448,7 +448,7 @@ func (c *twoPhaseCommitter) execute() error {
 		}
 	}
 	if err != nil {
-		log.Warnf("2PC failed on prewrite: %v, tid: %d", err, c.startTS)
+		log.Debugf("2PC failed on prewrite: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
 	}
 
@@ -467,10 +467,10 @@ func (c *twoPhaseCommitter) execute() error {
 	err = c.commitKeys(NewBackoffer(commitMaxBackoff, ctx), c.keys)
 	if err != nil {
 		if !c.mu.committed {
-			log.Warnf("2PC failed on commit: %v, tid: %d", err, c.startTS)
+			log.Debugf("2PC failed on commit: %v, tid: %d", err, c.startTS)
 			return errors.Trace(err)
 		}
-		log.Warnf("2PC succeed with error: %v, tid: %d", err, c.startTS)
+		log.Debugf("2PC succeed with error: %v, tid: %d", err, c.startTS)
 	}
 	return nil
 }
