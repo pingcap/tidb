@@ -38,6 +38,7 @@ func BuildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr,
 	// build offsets
 	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
 
+	// the sum of length of all index columns
 	sumMaxLength := 0
 
 	for _, ic := range idxColNames {
@@ -62,9 +63,13 @@ func BuildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr,
 			return nil, errors.Trace(errTooLongKey)
 		}
 
-		// take care of the sum of length of all columns in a compound index
-		if ic.Length == types.UnspecifiedLength {
+		// take care of the sum of length of all index columns
+		if ic.Length != types.UnspecifiedLength {
+			sumMaxLength += ic.Length
+		} else {
+			// specified data types
 			if col.Flen != types.UnspecifiedLength {
+				// special case for the bit type
 				if col.FieldType.Tp == mysql.TypeBit {
 					sumMaxLength += (col.Flen + 7) / 8
 				} else {
@@ -73,6 +78,7 @@ func BuildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr,
 			} else {
 				sumMaxLength += mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]
 
+				// special case for time fraction
 				if (col.FieldType.Tp == mysql.TypeDatetime ||
 					col.FieldType.Tp == mysql.TypeDuration ||
 					col.FieldType.Tp == mysql.TypeTimestamp) && col.FieldType.Decimal != 0 {
@@ -80,13 +86,11 @@ func BuildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr,
 						sumMaxLength += 1
 					} else if col.FieldType.Decimal == 3 || col.FieldType.Decimal == 4 {
 						sumMaxLength += 2
-					} else if col.FieldType.Decimal == 3 || col.FieldType.Decimal == 4 {
+					} else {
 						sumMaxLength += 3
 					}
 				}
 			}
-		} else {
-			sumMaxLength += ic.Length
 		}
 
 		if sumMaxLength > maxPrefixLength {

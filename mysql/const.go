@@ -283,4 +283,6 @@ var DefaultLengthOfMysqlTypes = map[byte]int {
 	TypeLonglong: 8,
 	TypeFloat: 4,
 	TypeDouble: 8,
+
+	TypeString: 1,
 }

@@ -2203,7 +2203,31 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 	// ERROR 1071 (42000): Specified key was too long; max key length is 767 bytes
 	c.Assert(err, NotNil)
 
+	_, err = exec(se, "create table t (c1 varchar(767), c2 char(1), index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 767 bytes
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 varchar(767), c2 char, index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 767 bytes
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 varchar(767), c2 date, index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 767 bytes
+	c.Assert(err, NotNil)
+
 	mustExecSQL(c, se, "create table t (c1 varchar(767), c2 varchar(1));")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2) ")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 767 bytes
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(767), c2 char(1));")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2) ")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 767 bytes
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(767), c2 char);")
 	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2) ")
 	// ERROR 1071 (42000): Specified key was too long; max key length is 767 bytes
 	c.Assert(err, NotNil)
