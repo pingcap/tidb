@@ -259,7 +259,7 @@ func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx contex
 			return nil
 		}
 	}
-	ctx.Value, err = types.CalculateSum(ectx.GetSessionVars().StmtCtx, ctx.Value, value)
+	ctx.Value, err = calculateSum(ectx.GetSessionVars().StmtCtx, ctx.Value, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -286,7 +286,7 @@ func (af *aggFunction) streamUpdateSum(row []types.Datum, ectx context.Context) 
 			return nil
 		}
 	}
-	ctx.Value, err = types.CalculateSum(ectx.GetSessionVars().StmtCtx, ctx.Value, value)
+	ctx.Value, err = calculateSum(ectx.GetSessionVars().StmtCtx, ctx.Value, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -342,7 +342,7 @@ func (sf *sumFunction) CalculateDefaultValue(schema Schema, ctx context.Context)
 		return d, false
 	}
 	if con, ok := result.(*Constant); ok {
-		d, err = types.CalculateSum(ctx.GetSessionVars().StmtCtx, d, con.Value)
+		d, err = calculateSum(ctx.GetSessionVars().StmtCtx, d, con.Value)
 		if err != nil {
 			log.Warnf("CalculateSum failed in function %s, err msg is %s", sf, err.Error())
 		}
@@ -529,7 +529,7 @@ func (af *avgFunction) updateAvg(row []types.Datum, groupKey []byte, ectx contex
 			return nil
 		}
 	}
-	ctx.Value, err = types.CalculateSum(ectx.GetSessionVars().StmtCtx, ctx.Value, value)
+	ctx.Value, err = calculateSum(ectx.GetSessionVars().StmtCtx, ctx.Value, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
