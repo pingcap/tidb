@@ -62,14 +62,29 @@ func BuildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr,
 			return nil, errors.Trace(errTooLongKey)
 		}
 
-		// if a column is defined with the type varchar and the prefix at creating index is not specified,
-		// the column length will be used
-		if ic.Length == -1 && types.IsTypeChar(col.FieldType.Tp) && col.Flen > maxPrefixLength {
-			return nil, errors.Trace(errTooLongKey)
-		}
+		// take care of the sum of length of all columns in a compound index
+		if ic.Length == types.UnspecifiedLength {
+			if col.Flen != types.UnspecifiedLength {
+				if col.FieldType.Tp == mysql.TypeBit {
+					sumMaxLength += (col.Flen + 7) / 8
+				} else {
+					sumMaxLength += col.Flen
+				}
+			} else {
+				sumMaxLength += mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]
 
-		if ic.Length == -1 {
-			sumMaxLength += col.Flen
+				if (col.FieldType.Tp == mysql.TypeDatetime ||
+					col.FieldType.Tp == mysql.TypeDuration ||
+					col.FieldType.Tp == mysql.TypeTimestamp) && col.FieldType.Decimal != 0 {
+					if col.FieldType.Decimal == 1 || col.FieldType.Decimal == 2 {
+						sumMaxLength += 1
+					} else if col.FieldType.Decimal == 3 || col.FieldType.Decimal == 4 {
+						sumMaxLength += 2
+					} else if col.FieldType.Decimal == 3 || col.FieldType.Decimal == 4 {
+						sumMaxLength += 3
+					}
+				}
+			}
 		} else {
 			sumMaxLength += ic.Length
 		}
