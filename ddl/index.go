@@ -33,8 +33,8 @@ import (
 
 const maxPrefixLength = 767
 
-func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr,
-	idxColNames []*ast.IndexColName) (*model.IndexInfo, error) {
+func BuildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr,
+	idxColNames []*ast.IndexColName, primary bool, unique bool, state model.SchemaState) (*model.IndexInfo, error) {
 	// build offsets
 	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
 	for _, ic := range idxColNames {
@@ -59,6 +59,12 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 			return nil, errors.Trace(errTooLongKey)
 		}
 
+		// if a column is defined with the type varchar and the prefix at creating index is not specified,
+		// the column length will be used
+		if ic.Length == -1 && types.IsTypeChar(col.FieldType.Tp) && col.Flen > maxPrefixLength {
+			return nil, errors.Trace(errTooLongKey)
+		}
+
 		idxColumns = append(idxColumns, &model.IndexColumn{
 			Name:   col.Name,
 			Offset: col.Offset,
@@ -69,8 +75,9 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 	idxInfo := &model.IndexInfo{
 		Name:    indexName,
 		Columns: idxColumns,
+		Primary: primary,
 		Unique:  unique,
-		State:   model.StateNone,
+		State:   state,
 	}
 	return idxInfo, nil
 }
@@ -143,7 +150,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 	}
 
 	if indexInfo == nil {
-		indexInfo, err = buildIndexInfo(tblInfo, unique, indexName, idxColNames)
+		indexInfo, err = BuildIndexInfo(tblInfo, indexName, idxColNames, false, unique, model.StateNone)
 		if err != nil {
 			job.State = model.JobCancelled
 			return errors.Trace(err)

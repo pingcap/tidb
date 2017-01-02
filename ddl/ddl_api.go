@@ -537,31 +537,21 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 
 		// 1. check if the column is exists
 		// 2. add index
-		indexColumns := make([]*model.IndexColumn, 0, len(constr.Keys))
-		for _, key := range constr.Keys {
-			col := table.FindCol(cols, key.Column.Name.O)
-			if col == nil {
-				return nil, errKeyColumnDoesNotExits.Gen("key column %s doesn't exist in table", key.Column.Name)
-			}
-			indexColumns = append(indexColumns, &model.IndexColumn{
-				Name:   key.Column.Name,
-				Offset: col.Offset,
-				Length: key.Length,
-			})
-		}
-		idxInfo := &model.IndexInfo{
-			Name:    model.NewCIStr(constr.Name),
-			Columns: indexColumns,
-			State:   model.StatePublic,
-		}
+		var primary, unique bool
+
 		switch constr.Tp {
 		case ast.ConstraintPrimaryKey:
-			idxInfo.Unique = true
-			idxInfo.Primary = true
-			idxInfo.Name = model.NewCIStr(table.PrimaryKeyName)
+			primary = true
+			unique = true
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
-			idxInfo.Unique = true
+			unique = true
 		}
+
+		idxInfo, err := BuildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, primary, unique, model.StatePublic)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		if constr.Option != nil {
 			idxInfo.Comment = constr.Option.Comment
 			idxInfo.Tp = constr.Option.Tp
@@ -569,6 +559,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 			// Use btree as default index type.
 			idxInfo.Tp = model.IndexTypeBtree
 		}
+
 		idxInfo.ID = allocateIndexID(tbInfo)
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}

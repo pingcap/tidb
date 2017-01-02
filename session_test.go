@@ -2180,13 +2180,36 @@ func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestIndexMaxLength(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t;")
+
+	// create index at table creation
+	_, err := exec(se, "create table t (c1 varchar(768), index(c1));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 767 bytes
+	c.Assert(err, NotNil)
+	mustExecSQL(c, se, "create table t (c1 varchar(768));")
+
+	// create index after table creation
+	_, err = exec(se, "create index idx_c1 on t(c1) ")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 767 bytes
+	c.Assert(err, NotNil)
+}
+
 func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t;")
+
+	_, err := exec(se, "create table t (c1 int, c2 blob, c3 varchar(64), index(c2));")
+	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
+	c.Assert(err, NotNil)
+
 	mustExecSQL(c, se, "create table t (c1 int, c2 blob, c3 varchar(64));")
-	_, err := exec(se, "create index idx_c1 on t (c2);")
+	_, err = exec(se, "create index idx_c1 on t (c2);")
 	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
 	c.Assert(err, NotNil)
 
