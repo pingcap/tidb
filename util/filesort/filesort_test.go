@@ -24,15 +24,29 @@ func (s *testFileSortSuite) TestFileSort(c *C) {
 	sc := new(variable.StatementContext)
 	keySize := 1
 	valSize := 1
-	bufSize := 3
+	bufSize := 1
 	byDesc := []bool{false}
-	fs := NewFileSorter(sc, keySize, valSize, bufSize, byDesc)
 
-	fs.Input([]types.Datum{types.NewDatum(4)}, []types.Datum{types.NewDatum(5)}, 6)
-	fs.Input([]types.Datum{types.NewDatum(1)}, []types.Datum{types.NewDatum(2)}, 3)
+	var (
+		err    error
+		fs     *FileSorter
+		handle int64
+	)
 
-	_, handle := fs.Output()
+	fs, err = NewFileSorter(sc, keySize, valSize, bufSize, byDesc)
+	c.Assert(err, IsNil)
+
+	err = fs.Input([]types.Datum{types.NewDatum(4)}, []types.Datum{types.NewDatum(5)}, 6)
+	c.Assert(err, IsNil)
+
+	err = fs.Input([]types.Datum{types.NewDatum(1)}, []types.Datum{types.NewDatum(2)}, 3)
+	c.Assert(err, IsNil)
+
+	_, handle, err = fs.Output()
+	c.Assert(err, IsNil)
 	c.Assert(handle, Equals, int64(3))
-	_, handle = fs.Output()
+
+	_, handle, err = fs.Output()
+	c.Assert(err, IsNil)
 	c.Assert(handle, Equals, int64(6))
 }
