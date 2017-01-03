@@ -540,14 +540,8 @@ func (s *testEvaluatorSuite) TestDateArith(c *C) {
 
 	date := []string{"2016-12-31", "2017-01-01"}
 
-	var (
-		args []types.Datum
-		v    types.Datum
-		err  error
-	)
-
-	args = types.MakeDatums(ast.DateAdd, date[0], 1, "DAY")
-	v, err = builtinDateArith(args, s.ctx)
+	args := types.MakeDatums(ast.DateAdd, date[0], 1, "DAY")
+	v, err := builtinDateArith(args, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime().String(), Equals, date[1])
 
