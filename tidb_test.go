@@ -290,7 +290,8 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 		<-start
 		<-start
 
-		exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
+		_, err = exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
+		c.Check(err, IsNil)
 
 		// table t1 executes failed
 		// table t2 executes successfully
