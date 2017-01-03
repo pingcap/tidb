@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-const maxPrefixLength = 767
+const maxPrefixLength = 3072
 
 func BuildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr,
 	idxColNames []*ast.IndexColName, primary bool, unique bool, state model.SchemaState) (*model.IndexInfo, error) {
@@ -76,18 +76,21 @@ func BuildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr,
 					sumMaxLength += col.Flen
 				}
 			} else {
-				sumMaxLength += mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]
+				if len, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
+					sumMaxLength += len
+				} else {
+					return nil, errUnknownTypeLength.GenByArgs(col.FieldType.Tp)
+				}
 
 				// special case for time fraction
 				if (col.FieldType.Tp == mysql.TypeDatetime ||
 					col.FieldType.Tp == mysql.TypeDuration ||
-					col.FieldType.Tp == mysql.TypeTimestamp) && col.FieldType.Decimal != 0 {
-					if col.FieldType.Decimal == 1 || col.FieldType.Decimal == 2 {
-						sumMaxLength += 1
-					} else if col.FieldType.Decimal == 3 || col.FieldType.Decimal == 4 {
-						sumMaxLength += 2
+					col.FieldType.Tp == mysql.TypeTimestamp) && col.FieldType.Decimal != -1 {
+
+					if len, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
+						sumMaxLength += len
 					} else {
-						sumMaxLength += 3
+						return nil, errUnknownFractionLength.GenByArgs(col.FieldType.Tp, col.FieldType.Decimal)
 					}
 				}
 			}

@@ -62,6 +62,8 @@ var (
 	errDupKeyName            = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
 	errWrongDBName           = terror.ClassDDL.New(codeWrongDBName, "Incorrect database name '%s'")
 	errWrongTableName        = terror.ClassDDL.New(codeWrongTableName, "Incorrect table name '%s'")
+	errUnknownTypeLength     = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
+	errUnknownFractionLength = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -400,6 +402,8 @@ const (
 	codeWrongTableName        = 1103
 	codeBlobKeyWithoutLength  = 1170
 	codeInvalidOnUpdate       = 1294
+	codeUnknownTypeLength     = 1300
+	codeUnknownFractionLength = 1301
 )
 
 func init() {
