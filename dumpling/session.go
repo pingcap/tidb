@@ -129,48 +129,6 @@ func (s *session) cleanRetryInfo() {
 	}
 }
 
-// TODO: Set them as system variables.
-var (
-	schemaExpiredRetryTimes      = 30
-	checkSchemaValiditySleepTime = 1 * time.Second
-)
-
-// If the schema is invalid, we need to rollback the current transaction.
-func (s *session) checkSchemaValidOrRollback() error {
-	err := s.checkSchemaValid()
-	if err != nil {
-		err1 := s.RollbackTxn()
-		if err1 != nil {
-			// TODO: Handle this error.
-			log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err1))
-		}
-	}
-	return errors.Trace(err)
-}
-
-func (s *session) checkSchemaValid() error {
-	var ts uint64
-	if s.txn != nil {
-		ts = s.txn.StartTS()
-	}
-	txnSchemaVer := s.sessionVars.TxnCtx.SchemaVersion
-	var err error
-	var currSchemaVer int64
-	for i := 0; i < schemaExpiredRetryTimes; i++ {
-		currSchemaVer, err = sessionctx.GetDomain(s).SchemaValidity.Check(ts, txnSchemaVer)
-		if err == nil {
-			return nil
-		}
-		log.Infof("schema version original %d, current %d, sleep time %v",
-			txnSchemaVer, currSchemaVer, checkSchemaValiditySleepTime)
-		if terror.ErrorEqual(err, domain.ErrInfoSchemaChanged) {
-			break
-		}
-		time.Sleep(checkSchemaValiditySleepTime)
-	}
-	return errors.Trace(err)
-}
-
 func (s *session) Status() uint16 {
 	return s.sessionVars.Status
 }
@@ -189,6 +147,22 @@ func (s *session) SetClientCapability(capability uint32) {
 
 func (s *session) SetConnectionID(connectionID uint64) {
 	s.sessionVars.ConnectionID = connectionID
+}
+
+type schemaLeaseChecker struct {
+	domain.SchemaValidator
+	schemaVer int64
+}
+
+func (s *schemaLeaseChecker) Check(txnTS uint64) error {
+	succ := s.SchemaValidator.Check(txnTS, s.schemaVer)
+	if !succ {
+		if s.SchemaValidator.Latest() > s.schemaVer {
+			return domain.ErrInfoSchemaChanged
+		}
+		return domain.ErrInfoSchemaExpired
+	}
+	return nil
 }
 
 func (s *session) doCommit() error {
@@ -213,13 +187,12 @@ func (s *session) doCommit() error {
 			s.txn.SetOption(kv.BinlogData, bin)
 		}
 	}
-	if err := s.checkSchemaValid(); err != nil {
-		err1 := s.txn.Rollback()
-		if err1 != nil {
-			log.Errorf("rollback txn failed, err:%v", err1)
-		}
-		return errors.Trace(err)
-	}
+
+	// Set this option for 2 phase commit to validate schema lease.
+	s.txn.SetOption(kv.SchemaLeaseChecker, &schemaLeaseChecker{
+		SchemaValidator: sessionctx.GetDomain(s).SchemaValidator,
+		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
+	})
 	if err := s.txn.Commit(); err != nil {
 		return errors.Trace(err)
 	}
@@ -345,9 +318,6 @@ func (s *session) Retry() error {
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error) {
-	if err := s.checkSchemaValidOrRollback(); err != nil {
-		return nil, errors.Trace(err)
-	}
 	charset, collation := s.sessionVars.GetCharsetInfo()
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
@@ -432,9 +402,6 @@ func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, erro
 }
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
-	if err := s.checkSchemaValidOrRollback(); err != nil {
-		return nil, errors.Trace(err)
-	}
 	startTS := time.Now()
 	charset, collation := s.sessionVars.GetCharsetInfo()
 	connID := s.sessionVars.ConnectionID
@@ -484,9 +451,6 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 
 // For execute prepare statement in binary protocol
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
-	if err := s.checkSchemaValidOrRollback(); err != nil {
-		return 0, 0, nil, errors.Trace(err)
-	}
 	if err := PrepareTxnCtx(s); err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
@@ -547,9 +511,6 @@ func checkArgs(args ...interface{}) error {
 
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.RecordSet, error) {
-	if err := s.checkSchemaValidOrRollback(); err != nil {
-		return nil, errors.Trace(err)
-	}
 	err := checkArgs(args...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -565,9 +526,6 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
-	if err := s.checkSchemaValidOrRollback(); err != nil {
-		return errors.Trace(err)
-	}
 	vars := s.sessionVars
 	if _, ok := vars.PreparedStmts[stmtID]; !ok {
 		return executor.ErrStmtNotFound
