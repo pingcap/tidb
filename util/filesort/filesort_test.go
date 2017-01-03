@@ -42,91 +42,48 @@ func (s *testFileSortSuite) TestLessThan(c *C) {
 
 	sc := new(variable.StatementContext)
 
-	byDescs := [8][]bool{
-		{false, false, false}, // 000
-		{false, false, true},  // 001
-		{false, true, false},  // 010
-		{false, true, true},   // 011
-		{true, false, false},  // 100
-		{true, false, true},   // 101
-		{true, true, false},   // 110
-		{true, true, true},    // 111
+	d0 := types.NewDatum(0)
+	d1 := types.NewDatum(1)
+
+	tblOneColumn := []struct {
+		Arg1 []types.Datum
+		Arg2 []types.Datum
+		Arg3 []bool
+		Ret  bool
+	}{
+		{[]types.Datum{d0}, []types.Datum{d0}, []bool{false}, false},
+		{[]types.Datum{d0}, []types.Datum{d1}, []bool{false}, true},
+		{[]types.Datum{d1}, []types.Datum{d0}, []bool{false}, false},
+		{[]types.Datum{d0}, []types.Datum{d0}, []bool{true}, false},
+		{[]types.Datum{d0}, []types.Datum{d1}, []bool{true}, false},
+		{[]types.Datum{d1}, []types.Datum{d0}, []bool{true}, true},
 	}
 
-	i := []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
-	j := []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
-	for k := 0; k < 8; k++ {
-		c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
+	for _, t := range tblOneColumn {
+		ret := lessThan(sc, t.Arg1, t.Arg2, t.Arg3)
+		c.Assert(ret, Equals, t.Ret)
 	}
 
-	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
-	j = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(4)}
-	for k := 0; k < 8; k++ {
-		if byDescs[k][2] {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
-		} else {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
-		}
+	tblTwoColumns := []struct {
+		Arg1 []types.Datum
+		Arg2 []types.Datum
+		Arg3 []bool
+		Ret  bool
+	}{
+		{[]types.Datum{d0, d0}, []types.Datum{d1, d1}, []bool{false, false}, true},
+		{[]types.Datum{d0, d1}, []types.Datum{d1, d1}, []bool{false, false}, true},
+		{[]types.Datum{d0, d0}, []types.Datum{d1, d1}, []bool{false, false}, true},
+		{[]types.Datum{d0, d0}, []types.Datum{d0, d1}, []bool{false, false}, true},
+		{[]types.Datum{d0, d1}, []types.Datum{d0, d1}, []bool{false, false}, false},
+		{[]types.Datum{d0, d1}, []types.Datum{d0, d0}, []bool{false, false}, false},
+		{[]types.Datum{d1, d0}, []types.Datum{d0, d1}, []bool{false, false}, false},
+		{[]types.Datum{d1, d1}, []types.Datum{d0, d1}, []bool{false, false}, false},
+		{[]types.Datum{d1, d1}, []types.Datum{d0, d0}, []bool{false, false}, false},
 	}
 
-	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
-	j = []types.Datum{types.NewDatum(1), types.NewDatum(3), types.NewDatum(3)}
-	for k := 0; k < 8; k++ {
-		if byDescs[k][1] {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
-		} else {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
-		}
-	}
-
-	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
-	j = []types.Datum{types.NewDatum(1), types.NewDatum(3), types.NewDatum(4)}
-	for k := 0; k < 8; k++ {
-		if byDescs[k][1] {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
-		} else {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
-		}
-	}
-
-	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
-	j = []types.Datum{types.NewDatum(1), types.NewDatum(3), types.NewDatum(2)}
-	for k := 0; k < 8; k++ {
-		if byDescs[k][1] {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
-		} else {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
-		}
-	}
-
-	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
-	j = []types.Datum{types.NewDatum(2), types.NewDatum(2), types.NewDatum(3)}
-	for k := 0; k < 8; k++ {
-		if byDescs[k][0] {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
-		} else {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
-		}
-	}
-
-	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
-	j = []types.Datum{types.NewDatum(2), types.NewDatum(1), types.NewDatum(3)}
-	for k := 0; k < 8; k++ {
-		if byDescs[k][0] {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
-		} else {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
-		}
-	}
-
-	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
-	j = []types.Datum{types.NewDatum(2), types.NewDatum(1), types.NewDatum(4)}
-	for k := 0; k < 8; k++ {
-		if byDescs[k][0] {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
-		} else {
-			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
-		}
+	for _, t := range tblTwoColumns {
+		ret := lessThan(sc, t.Arg1, t.Arg2, t.Arg3)
+		c.Assert(ret, Equals, t.Ret)
 	}
 }
 
