@@ -16,7 +16,7 @@ package filesort
 import (
 	"container/heap"
 	"encoding/binary"
-	"io/ioutil"
+	"io"
 	"os"
 	"path"
 	"sort"
@@ -106,7 +106,7 @@ type FileSorter struct {
 	fileCount int
 }
 
-func NewFileSorter(sc *variable.StatementContext, keySize int, valSize int, bufSize int, byDesc []bool) (*FileSorter, error) {
+func NewFileSorter(sc *variable.StatementContext, keySize int, valSize int, bufSize int, byDesc []bool, tmpDir string) (*FileSorter, error) {
 	// Sanity checks
 	if sc == nil {
 		return nil, errors.New("StatementContext is nil")
@@ -123,9 +123,11 @@ func NewFileSorter(sc *variable.StatementContext, keySize int, valSize int, bufS
 	if bufSize <= 0 {
 		return nil, errors.New("buffer size is not positive")
 	}
-
-	dir, err := ioutil.TempDir("", "util_filesort")
+	_, err := os.Stat(tmpDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, errors.New("tmpDir does not exist")
+		}
 		return nil, errors.Trace(err)
 	}
 
@@ -143,7 +145,7 @@ func NewFileSorter(sc *variable.StatementContext, keySize int, valSize int, bufS
 		byDesc:    byDesc,
 		fetched:   false,
 		rowHeap:   rh,
-		tmpDir:    dir,
+		tmpDir:    tmpDir,
 		fds:       make([]*os.File, 0),
 		fileCount: 0,
 	}, nil
@@ -243,31 +245,27 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 	return nil
 }
 
-// return next row's size
-// return 0 if does not have next row
-func (fs *FileSorter) probeNextRow(index int) (int, error) {
+func (fs *FileSorter) fetchNextRow(index int) (*ComparableRow, error) {
 	var (
 		err  error
 		n    int
 		head = make([]byte, 8)
+		dcod = make([]types.Datum, 0, fs.keySize+fs.valSize+1)
 	)
 	n, err = fs.fds[index].Read(head)
+	if err == io.EOF {
+		return nil, nil
+	}
 	if err != nil {
-		return 0, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if n != 8 {
-		return 0, errors.New("incorrect header")
+		return nil, errors.New("incorrect header")
 	}
-	return int(binary.BigEndian.Uint64(head)), nil
-}
+	rowSize := int(binary.BigEndian.Uint64(head))
 
-func (fs *FileSorter) fetchNextRow(index int, rowSize int) (*ComparableRow, error) {
-	var (
-		err      error
-		n        int
-		rowBytes = make([]byte, rowSize)
-		dcod     = make([]types.Datum, 0, fs.keySize+fs.valSize+1)
-	)
+	rowBytes := make([]byte, rowSize)
+
 	n, err = fs.fds[index].Read(rowBytes)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -327,14 +325,13 @@ func (fs *FileSorter) Output() (key []types.Datum, val []types.Datum, handle int
 		fs.openAllFiles()
 
 		for id, _ := range fs.fds {
-			rowSize, err := fs.probeNextRow(id)
-			if err != nil {
-				return nil, nil, 0, errors.Trace(err)
-			}
-
-			row, err := fs.fetchNextRow(id, rowSize)
-			if err != nil {
-				return nil, nil, 0, errors.Trace(err)
+			row, err := fs.fetchNextRow(id)
+			if row == nil {
+				if err != nil {
+					return nil, nil, 0, errors.Trace(err)
+				} else {
+					return nil, nil, 0, errors.New("file is empty")
+				}
 			}
 
 			item := &Item{
@@ -351,13 +348,12 @@ func (fs *FileSorter) Output() (key []types.Datum, val []types.Datum, handle int
 	if fs.rowHeap.Len() > 0 {
 		item := heap.Pop(fs.rowHeap).(*Item)
 
-		rowSize, err := fs.probeNextRow(item.index)
-		if err == nil {
-			row, err := fs.fetchNextRow(item.index, rowSize)
+		row, err := fs.fetchNextRow(item.index)
+		if row == nil {
 			if err != nil {
 				return nil, nil, 0, errors.Trace(err)
 			}
-
+		} else {
 			item := &Item{
 				index: item.index,
 				value: row,

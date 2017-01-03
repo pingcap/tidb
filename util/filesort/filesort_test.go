@@ -1,6 +1,7 @@
 package filesort
 
 import (
+	"io/ioutil"
 	"math/rand"
 	"testing"
 	"time"
@@ -145,13 +146,19 @@ func (s *testFileSortSuite) TestSingleFile(c *C) {
 	}
 
 	var (
-		err  error
-		fs   *FileSorter
-		pkey []types.Datum
-		key  []types.Datum
+		err    error
+		fs     *FileSorter
+		pkey   []types.Datum
+		key    []types.Datum
+		tmpDir string
 	)
 
-	fs, err = NewFileSorter(sc, keySize, valSize, bufSize, byDesc)
+	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
+	if err != nil {
+		panic(err)
+	}
+
+	fs, err = NewFileSorter(sc, keySize, valSize, bufSize, byDesc, tmpDir)
 	c.Assert(err, IsNil)
 
 	nRows := r.Intn(bufSize-1) + 1 // random int in range [1, bufSize - 1]
@@ -186,13 +193,19 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 	}
 
 	var (
-		err  error
-		fs   *FileSorter
-		pkey []types.Datum
-		key  []types.Datum
+		err    error
+		fs     *FileSorter
+		pkey   []types.Datum
+		key    []types.Datum
+		tmpDir string
 	)
 
-	fs, err = NewFileSorter(sc, keySize, valSize, bufSize, byDesc)
+	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
+	if err != nil {
+		panic(err)
+	}
+
+	fs, err = NewFileSorter(sc, keySize, valSize, bufSize, byDesc, tmpDir)
 	c.Assert(err, IsNil)
 
 	nRows := (r.Intn(bufSize) + 1) * (r.Intn(10) + 2)
