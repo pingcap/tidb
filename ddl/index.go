@@ -419,21 +419,21 @@ type indexTaskOpInfo struct {
 }
 
 // How to add index in reorganization state?
-// Concurrently process defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
+// Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
 // The handle range size is defaultTaskHandleCnt.
 // Because each handle range depends on the previous one, it's necessary to obtain the handle range serially.
 // Real concurrent processing needs to perform after the handle range has been acquired.
 // The operation flow of the each task of data is as follows:
-//  1. Open a goroutine. Traverse the snapshot to obtain the handle range, while access to the corresponding row key and
+//  1. Open a goroutine. Traverse the snapshot to obtain the handle range, while accessing the corresponding row key and
 // raw index value. Then notify to start the next task.
-//  2. Decoding this task of raw index value gets the corresponding index value.
-//  3. Deal with this index records one by one. If the index record exists, skip to the next row.
+//  2. Decode this task of raw index value to get the corresponding index value.
+//  3. Deal with these index records one by one. If the index record exists, skip to the next row.
 // If the index doesn't exist, create the index and then continue to handle the next row.
-//  4. When the handle of a range is completed, returns the corresponding task result.
+//  4. When the handle of a range is completed, return the corresponding task result.
 // The above operations are completed in a transaction.
 // When concurrent tasks are processed, the task result returned by each task is sorted by the handle. Then traverse the
-// task results, gets the total number of row in the concurrent task and update the processed handle value. If
-// we encounter an error message, exit traversal.
+// task results, get the total number of rows in the concurrent task and update the processed handle value. If
+// an error message is displayed, exit the traversal.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
 func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
 	cols := t.Cols()
