@@ -31,6 +31,8 @@ const (
 	BinlogData
 	// Skip existing check when "prewrite".
 	SkipCheckForWrite
+	// SchemaLeaseChecker is used for schema lease check.
+	SchemaLeaseChecker
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.
