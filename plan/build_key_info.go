@@ -20,11 +20,15 @@ import (
 
 func (p *Aggregation) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
+	// Aggregation's schema is create from aggFunc.
+	// And the ith column in schema correspond to the ith function in aggFunc.
+	// So we create a temp schema from aggFunc to build key information.
 	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()), nil)
 	for _, fun := range p.AggFuncs {
 		if col, isCol := fun.GetArgs()[0].(*expression.Column); isCol && fun.GetName() == ast.AggFuncFirstRow {
 			schema.Append(col)
 		} else {
+			// If the arg is not a column, we add a column to occupy the position.
 			schema.Append(&expression.Column{
 				FromID:   "",
 				Position: -1})
@@ -50,11 +54,15 @@ func (p *Aggregation) buildKeyInfo() {
 
 func (p *Projection) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
+	// Projection's schema is create from expression of projection.
+	// And the ith column in schema correspond to the ith expression.
+	// So we create a temp schema from p.Exprs to build key information.
 	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()), nil)
 	for _, expr := range p.Exprs {
 		if col, isCol := expr.(*expression.Column); isCol {
 			schema.Append(col)
 		} else {
+			// If the expression is not a column, we add a column to occupy the position.
 			schema.Append(&expression.Column{
 				FromID:   "",
 				Position: -1})
@@ -80,7 +88,7 @@ func (p *Projection) buildKeyInfo() {
 
 func (p *Trim) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	for _, key := range p.GetSchema().Keys {
+	for _, key := range p.children[0].GetSchema().Keys {
 		ok := false
 		newKey := make([]*expression.Column, 0, len(key))
 		for _, col := range key {
@@ -117,11 +125,6 @@ func (p *Distinct) buildKeyInfo() {
 	p.schema.Keys = p.children[0].GetSchema().Clone().Keys
 }
 
-func (p *Union) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.Keys = nil
-}
-
 func (p *Sort) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	p.schema.Keys = p.children[0].GetSchema().Clone().Keys
@@ -142,6 +145,7 @@ func (p *DataSource) buildKeyInfo() {
 		newKey := make([]*expression.Column, 0, len(idx.Columns))
 		ok := true
 		for _, idxCol := range idx.Columns {
+			// The columns of this index should all occur in column schema.
 			find := false
 			for i, col := range p.schema.Columns {
 				if idxCol.Name.L == col.ColName.L {
