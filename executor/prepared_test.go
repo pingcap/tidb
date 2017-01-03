@@ -95,6 +95,10 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 	r := tk.MustQuery(`execute stmt_test_1 using @a, @b;`)
 	r.Check(testkit.Rows("2"))
 
+	tk.MustExec(`set @a=1.1`)
+	r = tk.MustQuery(`execute stmt_test_1 using @a, @b;`)
+	r.Check(testkit.Rows("2"))
+
 	tk.MustExec(`set @c="-1"`)
 	_, err := tk.Exec("execute stmt_test_1 using @c, @c")
 	c.Assert(plan.ErrWrongArguments.Equal(err), IsTrue)

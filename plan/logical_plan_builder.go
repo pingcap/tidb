@@ -15,7 +15,6 @@ package plan
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -424,12 +424,12 @@ func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 // getUintForLimitOffset gets uint64 value for limit/offset.
 // For ordinary statement, limit/offset should be uint64 constant value.
 // For prepared statement, limit/offset is string. We should convert it to uint64.
-func getUintForLimitOffset(val interface{}) (uint64, error) {
+func getUintForLimitOffset(sc *variable.StatementContext, val interface{}) (uint64, error) {
 	switch v := val.(type) {
 	case uint64:
 		return v, nil
 	case string:
-		uVal, err := strconv.ParseUint(v, 10, 64)
+		uVal, err := types.StrToUint(sc, v)
 		return uVal, errors.Trace(err)
 	}
 	return 0, errors.Errorf("Invalid type %T for Limit/Offset", val)
@@ -440,8 +440,9 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 		offset, count uint64
 		err           error
 	)
+	sc := b.ctx.GetSessionVars().StmtCtx
 	if limit.Offset != nil {
-		offset, err = getUintForLimitOffset(limit.Offset.GetValue())
+		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
 		if err != nil {
 			log.Error(err)
 			b.err = ErrWrongArguments
@@ -449,7 +450,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 		}
 	}
 	if limit.Count != nil {
-		count, err = getUintForLimitOffset(limit.Count.GetValue())
+		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
 		if err != nil {
 			log.Error(err)
 			b.err = ErrWrongArguments
