@@ -369,6 +369,8 @@ LOOP:
 	// Make sure there is index with name c3_index.
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
+	ctx.Txn().Rollback()
+
 	c.Assert(ctx.NewTxn(), IsNil)
 	defer ctx.Txn().Rollback()
 

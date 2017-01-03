@@ -100,6 +100,21 @@ type builtinFunc interface {
 	getCtx() context.Context
 }
 
+// baseFunctionClass will be contained in every struct that implement functionClass interface.
+type baseFunctionClass struct {
+	funcName string
+	minArgs  int
+	maxArgs  int
+}
+
+func (b *baseFunctionClass) verifyArgs(args []Expression) error {
+	l := len(args)
+	if l < b.minArgs || (b.maxArgs != -1 && l > b.maxArgs) {
+		return errIncorrectParameterCount.GenByArgs(b.funcName)
+	}
+	return nil
+}
+
 // builtinFunc stands for a class for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
@@ -284,6 +299,27 @@ var DynamicFuncs = map[string]int{
 	ast.GetVar:       0,
 	ast.SetVar:       0,
 	ast.Values:       0,
+}
+
+// Function family for coalesce.
+type coalesceFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinCoalesceSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinCoalesceSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinCoalesceSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinCoalesce(args, b.ctx)
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
