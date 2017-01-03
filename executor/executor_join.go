@@ -444,8 +444,7 @@ func (e *NestedLoopJoinExec) fetchBigRow() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if bigRow == nil {
-			e.BigExec.Close()
-			return nil, nil
+			return nil, e.BigExec.Close()
 		}
 
 		matched := true
@@ -456,7 +455,7 @@ func (e *NestedLoopJoinExec) fetchBigRow() (*Row, error) {
 			}
 		}
 		if matched {
-			return bigRow, err
+			return bigRow, nil
 		}
 	}
 }
@@ -466,14 +465,14 @@ func (e *NestedLoopJoinExec) fetchBigRow() (*Row, error) {
 func (e *NestedLoopJoinExec) prepare() error {
 	e.SmallExec.Close()
 	e.innerRows = e.innerRows[:0]
+	e.prepared = true
 	for {
 		row, err := e.SmallExec.Next()
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if row == nil {
-			e.SmallExec.Close()
-			break
+			return e.SmallExec.Close()
 		}
 
 		matched := true
@@ -490,7 +489,6 @@ func (e *NestedLoopJoinExec) prepare() error {
 			e.innerRows = append(e.innerRows, row)
 		}
 	}
-	e.prepared = true
 	return nil
 }
 
@@ -551,6 +549,7 @@ type HashSemiJoinExec struct {
 	bigFilter    expression.Expression
 	otherFilter  expression.Expression
 	schema       expression.Schema
+	resultRows   []*Row
 	// In auxMode, the result row always returns with an extra column which stores a boolean
 	// or NULL value to indicate if this row is matched.
 	auxMode           bool
@@ -565,6 +564,7 @@ func (e *HashSemiJoinExec) Close() error {
 	e.prepared = false
 	e.hashTable = make(map[string][]*Row)
 	e.smallTableHasNull = false
+	e.resultRows = nil
 	err := e.smallExec.Close()
 	if err != nil {
 		return errors.Trace(err)
@@ -583,6 +583,7 @@ func (e *HashSemiJoinExec) prepare() error {
 	e.smallExec.Close()
 	e.hashTable = make(map[string][]*Row)
 	sc := e.ctx.GetSessionVars().StmtCtx
+	e.resultRows = make([]*Row, 1)
 	for {
 		row, err := e.smallExec.Next()
 		if err != nil {
@@ -706,10 +707,11 @@ func (e *HashSemiJoinExec) doJoin(bigRow *Row) ([]*Row, error) {
 		} else {
 			bigRow.Data = append(bigRow.Data, types.NewDatum(matched))
 		}
-		return []*Row{bigRow}, nil
+		matched = true
 	}
 	if matched {
-		return []*Row{bigRow}, nil
+		e.resultRows[0] = bigRow
+		return e.resultRows, nil
 	}
 	return nil, nil
 }
@@ -743,7 +745,7 @@ type ApplyJoinExec struct {
 	join        joinExec
 	outerSchema []*expression.CorrelatedColumn
 	cursor      int
-	resultRow   []*Row
+	resultRows  []*Row
 	schema      expression.Schema
 }
 
@@ -755,15 +757,15 @@ func (e *ApplyJoinExec) Schema() expression.Schema {
 // Close implements the Executor interface.
 func (e *ApplyJoinExec) Close() error {
 	e.cursor = 0
-	e.resultRow = nil
+	e.resultRows = nil
 	return e.join.Close()
 }
 
 // Next implements the Executor interface.
 func (e *ApplyJoinExec) Next() (*Row, error) {
 	for {
-		if e.cursor < len(e.resultRow) {
-			row := e.resultRow[e.cursor]
+		if e.cursor < len(e.resultRows) {
+			row := e.resultRows[e.cursor]
 			e.cursor++
 			return row, nil
 		}
@@ -778,7 +780,7 @@ func (e *ApplyJoinExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.resultRow, err = e.join.doJoin(bigRow)
+		e.resultRows, err = e.join.doJoin(bigRow)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
