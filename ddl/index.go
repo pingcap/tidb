@@ -331,7 +331,7 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, batchOpInfo *in
 	batchCnt := defaultSmallBatchCnt
 	rawRecords := make([][]byte, 0, batchCnt)
 	idxRecords := make([]*indexRecord, 0, batchCnt)
-	ret := new(batchResult)
+	ret := &batchResult{doneHandle: handleInfo.startHandle}
 	err := d.iterateSnapshotRows(t, txn.StartTS(), handleInfo.startHandle,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			rawRecords = append(rawRecords, rawRecord)
@@ -352,14 +352,14 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, batchOpInfo *in
 		ret.doneHandle = idxRecords[ret.count-1].handle
 	}
 	// Be sure to do this operation only once.
-	if !handleInfo.isRetry {
+	if !handleInfo.isSent {
 		// Notice to start the next batch operation.
 		batchOpInfo.nextCh <- ret.doneHandle
 		// Record the last handle.
 		// Ensure that the handle scope of the batch doesn't change,
 		// even if the transaction retries it can't effect the other batches.
 		handleInfo.endHandle = ret.doneHandle
-		handleInfo.isRetry = true
+		handleInfo.isSent = true
 	}
 	if ret.count == 0 {
 		return nil, ret
@@ -456,10 +456,10 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		startTime := time.Now()
 		for i := 0; i < batches; i++ {
 			wg.Add(1)
-			go d.backfillIndex(t, batchOpInfo, batchStartHandle, &wg)
+			go d.doBackfillIndexTask(t, batchOpInfo, batchStartHandle, &wg)
 			doneHandle := <-batchOpInfo.nextCh
 			// There is no data to seek.
-			if doneHandle == 0 {
+			if doneHandle == batchStartHandle {
 				break
 			}
 			batchStartHandle = doneHandle + 1
@@ -504,11 +504,11 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 type handleInfo struct {
 	startHandle int64
 	endHandle   int64
-	isRetry     bool // It ensures that the endHandle only be assigned once.
+	isSent      bool // It ensures that the endHandle only be assigned once and be sent once.
 }
 
 func (h *handleInfo) isFinished(input int64) bool {
-	if !h.isRetry || input < h.endHandle {
+	if !h.isSent || input < h.endHandle {
 		return false
 	}
 	return true
@@ -536,17 +536,17 @@ func getCountAndHandle(batchOpInfo *indexBatchOpInfo) (int64, int64, error) {
 	return batchAddedCount, currHandle, errors.Trace(err)
 }
 
-func (d *ddl) backfillIndex(t table.Table, batchOpInfo *indexBatchOpInfo, seekHandle int64, wg *sync.WaitGroup) {
+func (d *ddl) doBackfillIndexTask(t table.Table, batchOpInfo *indexBatchOpInfo, startHandle int64, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	ret := new(batchResult)
-	handleInfo := &handleInfo{startHandle: seekHandle}
+	handleInfo := &handleInfo{startHandle: startHandle}
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		err1 := d.isReorgRunnable(txn, ddlJobFlag)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		ret = d.backfillIndexInTxn(t, txn, batchOpInfo, handleInfo)
+		ret = d.doBackfillIndexTaskInTxn(t, txn, batchOpInfo, handleInfo)
 		if ret.err != nil {
 			return errors.Trace(ret.err)
 		}
@@ -557,16 +557,16 @@ func (d *ddl) backfillIndex(t table.Table, batchOpInfo *indexBatchOpInfo, seekHa
 	}
 
 	// It's failed to fetch row keys.
-	if ret.count == 0 && ret.err != nil {
-		batchOpInfo.nextCh <- seekHandle
+	if !handleInfo.isSent {
+		batchOpInfo.nextCh <- startHandle
 	}
 
 	batchOpInfo.batchRetCh <- ret
 }
 
-// backfillIndexInTxn deals with a part of backfilling index data in a Transaction.
+// doBackfillIndexTaskInTxn deals with a part of backfilling index data in a Transaction.
 // This part of the index data rows is defaultSmallBatchCnt.
-func (d *ddl) backfillIndexInTxn(t table.Table, txn kv.Transaction, batchOpInfo *indexBatchOpInfo,
+func (d *ddl) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, batchOpInfo *indexBatchOpInfo,
 	handleInfo *handleInfo) *batchResult {
 	idxRecords, batchRet := d.fetchRowColVals(txn, t, batchOpInfo, handleInfo)
 	if batchRet.err != nil {
