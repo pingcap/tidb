@@ -2209,6 +2209,10 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)
 
+	_, err = exec(se, "create table t (c1 varchar(3068), c2 bit(26), index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
 	// create compound index after table creation
 	mustExecSQL(c, se, "create table t (c1 varchar(3072), c2 varchar(1));")
 	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
@@ -2239,6 +2243,11 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)
 
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 bit(26));")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
 }
 
 func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {

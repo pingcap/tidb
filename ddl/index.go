@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
+	"math"
 )
 
 const maxPrefixLength = 3072
@@ -71,7 +72,7 @@ func BuildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr,
 			if col.Flen != types.UnspecifiedLength {
 				// special case for the bit type
 				if col.FieldType.Tp == mysql.TypeBit {
-					sumMaxLength += (col.Flen + 7) / 8
+					sumMaxLength += int(math.Ceil(float64(col.Flen + 7) / float64(8)))
 				} else {
 					sumMaxLength += col.Flen
 				}
