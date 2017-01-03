@@ -418,11 +418,23 @@ type indexBatchOpInfo struct {
 }
 
 // How to add index in reorganization state?
-//  1. Generate a snapshot with special version.
-//  2. Traverse the snapshot, get every row in the table.
-//  3. For one row, if the row has been already deleted, skip to next row.
-//  4. If not deleted, check whether index has existed, if existed, skip to next row.
-//  5. If index doesn't exist, create the index and then continue to handle next row.
+// Concurrently process defaultSmallBatches tasks. Each task deals with a handle interval of the index record.
+// The handle interval is defaultSmallBatchCnt.
+// Although the length of each handle interval is controllable, but the range of the handle value can't be expected,
+// so it's necessary to obtain the handle range serially. Real concurrent processing needs to perform
+// after the handle interval has been acquired.
+// The operation flow of the each batch of data is as follows:
+//  1. Open a goroutine. Traverse the snapshot to obtain the handle range, while access to the corresponding row key and
+// raw index value. Then notify to start the next batch.
+//  2. Decoding this batch of raw index value, gets the corresponding index value.
+//  3. Deal with this index records one by one. If the index record is existed, skip to the next row.
+// If the index doesn't exist, create the index ande then continue to handle the next row.
+//  4. When the handle of range is completed, returns the corresponding batch result.
+// The above operations are completed in a transaction.
+// When concurrent tasks are processed, the batch result returned by each batch is sorted by handle. Then traverse the
+// batch results, gets the total number of row in the concurrent task and update the processed handle value. If
+// you encounter an error message, exit traversal.
+// Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
 func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
 	cols := t.Cols()
 	colMap := make(map[int64]*types.FieldType)
