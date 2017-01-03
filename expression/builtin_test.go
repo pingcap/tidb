@@ -70,23 +70,49 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 	c.Assert(v, testutil.DatumEquals, types.NewDatum(nil))
 }
 
-func (s *testEvaluatorSuite) TestGreatestFunc(c *C) {
+func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 	defer testleak.AfterTest(c)()
 
-	v, err := builtinGreatest(types.MakeDatums(2, 0), s.ctx)
+	var datums []types.Datum
+
+	datums = types.MakeDatums(2, 0)
+	v, err := builtinGreatest(datums, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(2))
+	v, err = builtinLeast(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetInt64(), Equals, int64(0))
 
-	v, err = builtinGreatest(types.MakeDatums(34.0, 3.0, 5.0, 767.0), s.ctx)
+	datums = types.MakeDatums(34.0, 3.0, 5.0, 767.0)
+	v, err = builtinGreatest(datums, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Equals, float64(767.0))
+	v, err = builtinLeast(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetFloat64(), Equals, float64(3.0))
 
-	v, err = builtinGreatest(types.MakeDatums("B", "A", "C"), s.ctx)
+	datums = types.MakeDatums("B", "A", "C")
+	v, err = builtinGreatest(datums, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, "C")
+	v, err = builtinLeast(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, "A")
 
-	// GREATEST() returns NULL if any argument is NULL.
-	v, err = builtinGreatest(types.MakeDatums(1, nil, 2), s.ctx)
+	// GREATEST() and LEAST() return NULL if any argument is NULL.
+	datums = types.MakeDatums(nil, 1, 2)
+	v, err = builtinGreatest(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+	v, err = builtinLeast(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+
+	datums = types.MakeDatums(1, nil, 2)
+	v, err = builtinGreatest(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+	v, err = builtinLeast(datums, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
 }

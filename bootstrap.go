@@ -312,8 +312,11 @@ func doDMLWorks(s Session) {
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))
 	for k, v := range variable.SysVars {
-		value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
-		values = append(values, value)
+		// Session only variable should not be inserted.
+		if v.Scope != variable.ScopeSession {
+			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
+			values = append(values, value)
+		}
 	}
 	sql := fmt.Sprintf("INSERT INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
 		strings.Join(values, ", "))
@@ -324,7 +327,7 @@ func doDMLWorks(s Session) {
 		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, bootstrappedVarTrue, bootstrappedVarTrue)
 	mustExecute(s, sql)
 
-	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES("%s", "%d", "Bootstrap version. Do not delete")`,
+	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES("%s", "%d", "Bootstrap version. Do not delete.")`,
 		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion)
 	mustExecute(s, sql)
 

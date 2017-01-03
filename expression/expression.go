@@ -31,13 +31,15 @@ import (
 // Error instances.
 var (
 	errInvalidOperation        = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
-	errIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count")
+	errIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count in the call to native function '%s'")
+	errFunctionNotExists       = terror.ClassExpression.New(codeFunctionNotExists, "FUNCTION %s does not exist")
 )
 
 // Error codes.
 const (
 	codeInvalidOperation        terror.ErrCode = 1
 	codeIncorrectParameterCount                = 1582
+	codeFunctionNotExists                      = 1305
 )
 
 // EvalAstExpr evaluates ast expression directly.
@@ -205,7 +207,7 @@ func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
 	case *ScalarFunction:
 		if v.FuncName.L == funcName {
 			var ret []Expression
-			for _, arg := range v.Args {
+			for _, arg := range v.GetArgs() {
 				ret = append(ret, splitNormalFormItems(arg, funcName)...)
 			}
 			return ret
@@ -232,8 +234,8 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		var err error
-		args := make([]Expression, len(x.Args))
-		for i, arg := range x.Args {
+		args := make([]Expression, len(x.GetArgs()))
+		for i, arg := range x.GetArgs() {
 			args[i], err = EvaluateExprWithNull(ctx, schema, arg)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -270,9 +272,34 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 	return schema
 }
 
+// NewCastFunc creates a new cast function.
+func NewCastFunc(tp *types.FieldType, arg Expression) (*ScalarFunction, error) {
+	bt, err := CastFuncFactory(tp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &ScalarFunction{
+		args:      []Expression{arg},
+		FuncName:  model.NewCIStr(ast.Cast),
+		RetType:   tp,
+		Function:  bt,
+		ArgValues: make([]types.Datum, 1)}, nil
+}
+
+// NewValuesFunc creates a new values function.
+func NewValuesFunc(v *ast.ValuesExpr) *ScalarFunction {
+	bt := BuildinValuesFactory(v)
+	return &ScalarFunction{
+		FuncName: model.NewCIStr(ast.Values),
+		RetType:  &v.Type,
+		Function: bt,
+	}
+}
+
 func init() {
 	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeIncorrectParameterCount: mysql.ErrWrongParamcountToNativeFct,
+		codeFunctionNotExists:       mysql.ErrSpDoesNotExist,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }

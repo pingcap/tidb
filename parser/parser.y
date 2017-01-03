@@ -245,6 +245,7 @@ import (
 	lastInsertID	"LAST_INSERT_ID"
 	lcase 		"LCASE"
 	length		"LENGTH"
+	least		"LEAST"
 	ln		"LN"
 	locate		"LOCATE"
 	log		"LOG"
@@ -291,6 +292,9 @@ import (
 	charFunc	"CHAR_FUNC"
 	charLength	"CHAR_LENGTH"
 	characterLength	"CHARACTER_LENGTH"
+	conv		"CONV"
+	bitXor		"BIT_XOR"
+	crc32		"CRC32"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -530,6 +534,7 @@ import (
 	IndexName		"index name"
 	IndexNameList		"index name list"
 	IndexOption		"Index Option"
+	IndexOptionList		"Index Option List or empty"
 	IndexType		"index type"
 	IndexTypeOpt		"Optional index type"
 	InsertIntoStmt		"INSERT INTO statement"
@@ -538,6 +543,7 @@ import (
 	JoinType		"join type"
 	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
+	LimitOption		"Limit option could be integer or parameter marker."
 	Lines			"Lines clause"
 	LinesTerminated		"Lines terminated by"
 	Literal			"literal value"
@@ -1083,7 +1089,7 @@ ColumnOptionListOpt:
 	}
 
 ConstraintElem:
-	"PRIMARY" "KEY" IndexTypeOpt '(' IndexColNameList ')' IndexOption
+	"PRIMARY" "KEY" IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp: ast.ConstraintPrimaryKey,
@@ -1100,7 +1106,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"FULLTEXT" "KEY" IndexName '(' IndexColNameList ')' IndexOption
+|	"FULLTEXT" "KEY" IndexName '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintFulltext,
@@ -1112,7 +1118,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
+|	"INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintIndex,
@@ -1130,7 +1136,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
+|	"KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintKey,
@@ -1148,7 +1154,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"UNIQUE" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
+|	"UNIQUE" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniq,
@@ -1166,7 +1172,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"UNIQUE" "INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
+|	"UNIQUE" "INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniqIndex,
@@ -1184,7 +1190,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"UNIQUE" "KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
+|	"UNIQUE" "KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniqKey,
@@ -2000,11 +2006,30 @@ IndexName:
 		$$ = $1
 	}
 
-IndexOption:
+IndexOptionList:
 	{
 		$$ = nil
 	}
-|	"KEY_BLOCK_SIZE" EqOpt LengthNum
+|	IndexOptionList IndexOption
+	{
+		// Merge the options
+		if $1 == nil {
+			$$ = $2
+		} else {
+			opt1 := $1.(*ast.IndexOption)
+			opt2 := $2.(*ast.IndexOption)
+			if len(opt2.Comment) > 0 {
+				opt1.Comment = opt2.Comment
+			} else if opt2.Tp != 0 {
+				opt1.Tp = opt2.Tp
+			}
+			$$ = opt1
+		}
+	}
+
+
+IndexOption:
+	"KEY_BLOCK_SIZE" EqOpt LengthNum
 	{
 		$$ = &ast.IndexOption{
 			// TODO bug should be fix here!
@@ -2090,7 +2115,7 @@ ReservedKeyword:
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
 |	"DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS"
-|	"GROUP_CONCAT"| "GREATEST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
+|	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 |	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
 "SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
@@ -2695,6 +2720,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|	"LEAST" '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
 |	"HOUR" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -3021,6 +3050,21 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
+|	"CONV" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
+	}
+|	"CRC32" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+
 
 DateArithOpt:
 	"DATE_ADD"
@@ -3096,6 +3140,10 @@ FunctionCallAgg:
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
 |	"SUM" '(' DistinctOpt Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
+	}
+|	"BIT_XOR" '(' DistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
@@ -3729,26 +3777,38 @@ LimitClause:
 	{
 		$$ = nil
 	}
-|	"LIMIT" LengthNum
+|	"LIMIT" LimitOption
 	{
-		$$ = &ast.Limit{Count: $2.(uint64)}
+		$$ = &ast.Limit{Count: $2.(ast.ExprNode)}
+	}
+
+LimitOption:
+	LengthNum
+	{
+		$$ = ast.NewValueExpr($1)	
+	}
+|	"PLACEHOLDER"
+	{
+		$$ = &ast.ParamMarkerExpr{
+			Offset: yyS[yypt].offset,
+		}
 	}
 
 SelectStmtLimit:
 	{
 		$$ = nil
 	}
-|	"LIMIT" LengthNum
+|	"LIMIT" LimitOption
 	{
-		$$ = &ast.Limit{Count: $2.(uint64)}
+		$$ = &ast.Limit{Count: $2.(ast.ExprNode)}
 	}
-|	"LIMIT" LengthNum ',' LengthNum
+|	"LIMIT" LimitOption ',' LimitOption
 	{
-		$$ = &ast.Limit{Offset: $2.(uint64), Count: $4.(uint64)}
+		$$ = &ast.Limit{Offset: $2.(ast.ExprNode), Count: $4.(ast.ExprNode)}
 	}
-|	"LIMIT" LengthNum "OFFSET" LengthNum
+|	"LIMIT" LimitOption "OFFSET" LimitOption
 	{
-		$$ = &ast.Limit{Offset: $4.(uint64), Count: $2.(uint64)}
+		$$ = &ast.Limit{Offset: $4.(ast.ExprNode), Count: $2.(ast.ExprNode)}
 	}
 
 SelectStmtDistinct:

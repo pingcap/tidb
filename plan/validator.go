@@ -78,10 +78,25 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.ParamMarkerExpr:
 		if !v.inPrepare {
 			v.err = parser.ErrSyntax.Gen("syntax error, unexpected '?'")
+			return
 		}
 	case *ast.Limit:
-		if x.Count > math.MaxUint64-x.Offset {
-			x.Count = math.MaxUint64 - x.Offset
+		if x.Count == nil {
+			break
+		}
+		if _, isParamMarker := x.Count.(*ast.ParamMarkerExpr); isParamMarker {
+			break
+		}
+		// We only accept ? and uint64 for count/offset in parser.y
+		var count, offset uint64
+		if x.Count != nil {
+			count, _ = x.Count.GetValue().(uint64)
+		}
+		if x.Offset != nil {
+			offset, _ = x.Offset.GetValue().(uint64)
+		}
+		if count > math.MaxUint64-offset {
+			x.Count.SetValue(math.MaxUint64 - offset)
 		}
 	}
 
