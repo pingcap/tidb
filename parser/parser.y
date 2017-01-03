@@ -543,6 +543,7 @@ import (
 	JoinType		"join type"
 	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
+	LimitOption		"Limit option could be integer or parameter marker."
 	Lines			"Lines clause"
 	LinesTerminated		"Lines terminated by"
 	Literal			"literal value"
@@ -3776,26 +3777,38 @@ LimitClause:
 	{
 		$$ = nil
 	}
-|	"LIMIT" LengthNum
+|	"LIMIT" LimitOption
 	{
-		$$ = &ast.Limit{Count: $2.(uint64)}
+		$$ = &ast.Limit{Count: $2.(ast.ExprNode)}
+	}
+
+LimitOption:
+	LengthNum
+	{
+		$$ = ast.NewValueExpr($1)	
+	}
+|	"PLACEHOLDER"
+	{
+		$$ = &ast.ParamMarkerExpr{
+			Offset: yyS[yypt].offset,
+		}
 	}
 
 SelectStmtLimit:
 	{
 		$$ = nil
 	}
-|	"LIMIT" LengthNum
+|	"LIMIT" LimitOption
 	{
-		$$ = &ast.Limit{Count: $2.(uint64)}
+		$$ = &ast.Limit{Count: $2.(ast.ExprNode)}
 	}
-|	"LIMIT" LengthNum ',' LengthNum
+|	"LIMIT" LimitOption ',' LimitOption
 	{
-		$$ = &ast.Limit{Offset: $2.(uint64), Count: $4.(uint64)}
+		$$ = &ast.Limit{Offset: $2.(ast.ExprNode), Count: $4.(ast.ExprNode)}
 	}
-|	"LIMIT" LengthNum "OFFSET" LengthNum
+|	"LIMIT" LimitOption "OFFSET" LimitOption
 	{
-		$$ = &ast.Limit{Offset: $4.(uint64), Count: $2.(uint64)}
+		$$ = &ast.Limit{Offset: $4.(ast.ExprNode), Count: $2.(ast.ExprNode)}
 	}
 
 SelectStmtDistinct:
