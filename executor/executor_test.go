@@ -1195,10 +1195,9 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	defer testleak.AfterTest(c)()
 	se, err := tidb.CreateSession(s.store)
 	c.Check(err, IsNil)
+	se.GetSessionVars().TxnCtx.InfoSchema = sessionctx.GetDomain(se).InfoSchema()
 	compiler := &executor.Compiler{}
 	ctx := se.(context.Context)
-	c.Check(tidb.PrepareTxnCtx(ctx), IsNil)
-
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
 	stmt, err := compiler.Compile(ctx, stmtNode)
