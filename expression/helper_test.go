@@ -36,7 +36,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
-	varsutil.SetSystemVar(sessionVars, "timestamp", types.NewStringDatum(""))
+	varsutil.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum(""))
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -44,7 +44,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
-	varsutil.SetSystemVar(sessionVars, "timestamp", types.NewStringDatum("0"))
+	varsutil.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("0"))
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -52,7 +52,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
-	varsutil.SetSystemVar(sessionVars, "timestamp", types.Datum{})
+	varsutil.SetSessionSystemVar(sessionVars, "timestamp", types.Datum{})
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -60,7 +60,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
-	varsutil.SetSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
+	varsutil.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
 
 	tbl := []struct {
 		Expr interface{}

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -493,7 +492,6 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	stkLen := len(er.ctxStack)
 	name := strings.ToLower(v.Name)
 	sessionVars := er.b.ctx.GetSessionVars()
-	globalVars := sessionVars.GlobalVarsAccessor
 	if !v.IsSystem {
 		if v.Value != nil {
 			er.ctxStack[stkLen-1], er.err = expression.NewFunction(ast.SetVar,
@@ -518,47 +516,18 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		}
 		return
 	}
-
-	sysVar, ok := variable.SysVars[name]
-	if !ok {
-		// select null sys vars is not permitted
-		er.err = variable.UnknownSystemVar.GenByArgs(name)
-		return
-	}
-	if sysVar.Scope == variable.ScopeNone {
-		er.ctxStack = append(er.ctxStack, datumToConstant(types.NewDatum(sysVar.Value), mysql.TypeString))
-		return
-	}
-
+	var val string
+	var err error
 	if v.IsGlobal {
-		value, err := globalVars.GetGlobalSysVar(name)
-		if err != nil {
-			er.err = errors.Trace(err)
-			return
-		}
-		er.ctxStack = append(er.ctxStack, datumToConstant(types.NewDatum(value), mysql.TypeString))
+		val, err = varsutil.GetGlobalSystemVar(sessionVars, name)
+	} else {
+		val, err = varsutil.GetSessionSystemVar(sessionVars, name)
+	}
+	if err != nil {
+		er.err = errors.Trace(err)
 		return
 	}
-	d := varsutil.GetSystemVar(sessionVars, name)
-	if d.IsNull() {
-		if sysVar.Scope&variable.ScopeGlobal == 0 {
-			d.SetString(sysVar.Value)
-		} else {
-			// Get global system variable and fill it in session.
-			globalVal, err := globalVars.GetGlobalSysVar(name)
-			if err != nil {
-				er.err = errors.Trace(err)
-				return
-			}
-			d.SetString(globalVal)
-			err = varsutil.SetSystemVar(sessionVars, name, d)
-			if err != nil {
-				er.err = errors.Trace(err)
-				return
-			}
-		}
-	}
-	er.ctxStack = append(er.ctxStack, datumToConstant(d, mysql.TypeString))
+	er.ctxStack = append(er.ctxStack, datumToConstant(types.NewStringDatum(val), mysql.TypeString))
 	return
 }
 
