@@ -14,6 +14,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
@@ -294,7 +295,7 @@ func (p *Aggregation) getGbyColIndex(col *expression.Column) int {
 	if !isColumn {
 		return -1
 	}
-	return expression.NewSchema(p.groupByCols).GetColumnIndex(colOriginal)
+	return expression.NewSchema(p.groupByCols, nil).GetColumnIndex(colOriginal)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
@@ -315,6 +316,7 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 			ret = append(ret, cond)
 		case *expression.ScalarFunction:
 			extractedCols := expression.ExtractColumns(cond)
+			log.Warnf("extracted cols: %v", extractedCols)
 			ok := true
 			for _, col := range extractedCols {
 				if p.getGbyColIndex(col) == -1 {

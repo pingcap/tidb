@@ -51,7 +51,7 @@ type GrantExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *GrantExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+	return expression.NewSchema(nil, nil)
 }
 
 // Next implements Execution Next interface.

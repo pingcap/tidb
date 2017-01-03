@@ -155,7 +155,7 @@ type DeleteExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *DeleteExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+	return expression.NewSchema(nil, nil)
 }
 
 // Next implements the Executor Next interface.
@@ -530,7 +530,7 @@ func (e *LoadData) Next() (*Row, error) {
 
 // Schema implements the Executor Schema interface.
 func (e *LoadData) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+	return expression.NewSchema(nil, nil)
 }
 
 // Close implements the Executor Close interface.
@@ -566,7 +566,7 @@ type InsertExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *InsertExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+	return expression.NewSchema(nil, nil)
 }
 
 // Next implements the Executor Next interface.
@@ -954,7 +954,7 @@ type ReplaceExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *ReplaceExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+	return expression.NewSchema(nil, nil)
 }
 
 // Close implements the Executor Close interface.
@@ -1061,7 +1061,7 @@ type UpdateExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *UpdateExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+	return expression.NewSchema(nil, nil)
 }
 
 // Next implements the Executor Next interface.

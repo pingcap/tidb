@@ -20,9 +20,23 @@ import (
 	"github.com/pingcap/tidb/ast"
 )
 
-// Schema stands for the row schema get from input.
+// KeyInfo stores the columns of one unique key or primary key.
+type KeyInfo []*Column
+
+//Clone copies the entire UniqueKey
+func (ki KeyInfo) Clone() KeyInfo {
+	result := make([]*Column, 0, len(ki))
+	for _, col := range ki {
+		newCol := *col
+		result = append(result, &newCol)
+	}
+	return result
+}
+
+// Schema stands for the row schema and unique key information get from input.
 type Schema struct {
 	Columns []*Column
+	Keys    []KeyInfo
 }
 
 // String implements fmt.Stringer interface.
@@ -31,15 +45,26 @@ func (s Schema) String() string {
 	for _, col := range s.Columns {
 		colStrs = append(colStrs, col.String())
 	}
-	return "[" + strings.Join(colStrs, ",") + "]"
+	ukStrs := make([]string, 0, len(s.Keys))
+	for _, key := range s.Keys {
+		ukColStrs := make([]string, 0, len(key))
+		for _, col := range key {
+			ukColStrs = append(ukColStrs, col.String())
+		}
+		ukStrs = append(ukStrs, "["+strings.Join(ukColStrs, ",")+"]")
+	}
+	return "Column: [" + strings.Join(colStrs, ",") + "] Unique key: [" + strings.Join(ukStrs, ",") + "]"
 }
 
 // Clone copies the total schema.
 func (s Schema) Clone() Schema {
-	result := NewSchema(make([]*Column, 0, s.Len()))
+	result := NewSchema(make([]*Column, 0, s.Len()), make([]KeyInfo, 0, len(s.Keys)))
 	for _, col := range s.Columns {
 		newCol := *col
 		result.Append(&newCol)
+	}
+	for _, key := range s.Keys {
+		result.Keys = append(result.Keys, key.Clone())
 	}
 	return result
 }
@@ -92,7 +117,7 @@ func (s Schema) GetColumnIndex(col *Column) int {
 	return -1
 }
 
-// Len returns the number of columns in schema.
+// ColumnsLen returns the number of columns in schema.
 func (s Schema) Len() int {
 	return len(s.Columns)
 }
@@ -104,10 +129,12 @@ func (s *Schema) Append(col *Column) {
 
 // MergeSchema will merge two schema into one schema.
 func MergeSchema(lSchema, rSchema Schema) Schema {
-	return NewSchema(append(lSchema.Clone().Columns, rSchema.Clone().Columns...))
+	tmpL := lSchema.Clone()
+	tmpR := rSchema.Clone()
+	return NewSchema(append(tmpL.Columns, tmpR.Columns...), append(tmpL.Keys, tmpR.Keys...))
 }
 
 // NewSchema returns a schema made by its parameter.
-func NewSchema(cols []*Column) Schema {
-	return Schema{Columns: cols}
+func NewSchema(cols []*Column, keys []KeyInfo) Schema {
+	return Schema{Columns: cols, Keys: keys}
 }

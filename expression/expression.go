@@ -255,7 +255,7 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 
 // TableInfo2Schema converts table info to schema.
 func TableInfo2Schema(tbl *model.TableInfo) Schema {
-	schema := NewSchema(make([]*Column, 0, len(tbl.Columns)))
+	schema := NewSchema(make([]*Column, 0, len(tbl.Columns)), make([]KeyInfo, 0, len(tbl.Indices)))
 	for i, col := range tbl.Columns {
 		newCol := &Column{
 			ColName:  col.Name,
@@ -264,6 +264,21 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 			Position: i,
 		}
 		schema.Append(newCol)
+	}
+	for _, idx := range tbl.Indices {
+		if !idx.Unique || idx.State != model.StatePublic {
+			continue
+		}
+		newKey := make([]*Column, 0, len(idx.Columns))
+		for _, idxCol := range idx.Columns {
+			for i, col := range tbl.Columns {
+				if idxCol.Name.L == col.Name.L {
+					newKey = append(newKey, schema.Columns[i])
+					break
+				}
+			}
+		}
+		schema.Keys = append(schema.Keys, newKey)
 	}
 	return schema
 }

@@ -50,7 +50,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	agg.self = agg
 	agg.initIDAndContext(b.ctx)
 	addChild(agg, p)
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)), nil)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
 	for i, aggFunc := range aggFuncList {
@@ -116,8 +116,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 			v.TableAsName = &x.AsName
 		}
 		if x.AsName.L != "" {
-			schema := p.GetSchema()
-			for _, col := range schema.Columns {
+			for _, col := range p.GetSchema().Columns {
 				col.TblName = x.AsName
 				col.DBName = model.NewCIStr("")
 			}
@@ -266,7 +265,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	}
 	proj.self = proj
 	proj.initIDAndContext(b.ctx)
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields)))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields)), nil)
 	oldLen := 0
 	for _, field := range fields {
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
@@ -858,7 +857,7 @@ func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
 	trim.self = trim
 	trim.initIDAndContext(b.ctx)
 	addChild(trim, p)
-	schema := expression.NewSchema(p.GetSchema().Clone().Columns[:len])
+	schema := expression.NewSchema(p.GetSchema().Clone().Columns[:len], nil)
 	trim.SetSchema(schema)
 	trim.SetCorrelated()
 	return trim
@@ -902,7 +901,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	p.self = p
 	p.initIDAndContext(b.ctx)
 	// Equal condition contains a column from previous joined table.
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns)))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns)), nil)
 	for i, col := range tableInfo.Columns {
 		if b.inUpdateStmt {
 			switch col.State {
@@ -985,7 +984,7 @@ out:
 		FromID:  exists.id,
 		RetType: types.NewFieldType(mysql.TypeTiny),
 		ColName: model.NewCIStr("exists_col")}
-	exists.SetSchema(expression.NewSchema([]*expression.Column{newCol}))
+	exists.SetSchema(expression.NewSchema([]*expression.Column{newCol}, nil))
 	exists.SetCorrelated()
 	return exists
 }

@@ -326,7 +326,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 }
 
 func buildShowDDLFields() expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 6))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 6), nil)
 	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "OWNER", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "JOB", mysql.TypeVarchar, 128))
@@ -602,7 +602,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	}
 	p := &Explain{StmtPlan: targetPlan}
 	addChild(p, targetPlan)
-	schema := expression.NewSchema(make([]*expression.Column, 0, 3))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 3), nil)
 	schema.Append(&expression.Column{
 		ColName: model.NewCIStr("ID"),
 		RetType: types.NewFieldType(mysql.TypeString),
@@ -621,7 +621,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 
 func buildShowProcedureSchema() expression.Schema {
 	tblName := "ROUTINES"
-	schema := expression.NewSchema(make([]*expression.Column, 0, 11))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11), nil)
 	schema.Append(buildColumn(tblName, "Db", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn(tblName, "Name", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn(tblName, "Type", mysql.TypeVarchar, 128))
@@ -638,7 +638,7 @@ func buildShowProcedureSchema() expression.Schema {
 
 func buildShowTriggerSchema() expression.Schema {
 	tblName := "TRIGGERS"
-	schema := expression.NewSchema(make([]*expression.Column, 0, 11))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11), nil)
 	schema.Append(buildColumn(tblName, "Trigger", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn(tblName, "Event", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn(tblName, "Table", mysql.TypeVarchar, 128))
@@ -655,7 +655,7 @@ func buildShowTriggerSchema() expression.Schema {
 
 func buildShowEventsSchema() expression.Schema {
 	tblName := "EVENTS"
-	schema := expression.NewSchema(make([]*expression.Column, 0, 15))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 15), nil)
 	schema.Append(buildColumn(tblName, "Db", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn(tblName, "Name", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn(tblName, "Time zone", mysql.TypeVarchar, 32))
@@ -732,7 +732,7 @@ func getShowColNamesAndTypes(s *ast.ShowStmt) (names []string, ftypes []byte) {
 
 func buildShowDefaultSchema(s *ast.ShowStmt) expression.Schema {
 	names, ftypes := getShowColNamesAndTypes(s)
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(names)))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(names)), nil)
 	for i, name := range names {
 		col := &expression.Column{
 			ColName: model.NewCIStr(name),
