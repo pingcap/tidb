@@ -286,11 +286,11 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	execFailedFunc := func(s Session, tbl string, start chan struct{}, end chan error) {
 		// execute successfully
 		_, err := exec(s, "begin;")
-		c.Assert(err, IsNil)
+		c.Check(err, IsNil)
 		<-start
 		<-start
 
-		_, err = exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
+		exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
 
 		// table t1 executes failed
 		// table t2 executes successfully

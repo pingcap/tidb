@@ -270,8 +270,8 @@ func (do *Domain) Reload() error {
 }
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
-	// lease renewal can run at any frequency
-	// use lease/2 here as recommend by paper.
+	// Lease renewal can run at any frequency.
+	// Use lease/2 here as recommend by paper.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 
