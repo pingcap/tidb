@@ -13,7 +13,12 @@
 
 package expression
 
-import "github.com/pingcap/tidb/ast"
+import (
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/types"
+)
 
 // ExtractColumns extracts all columns from an expression.
 func ExtractColumns(expr Expression) (cols []*Column) {
@@ -52,4 +57,44 @@ func ColumnSubstitute(expr Expression, schema Schema, newExprs []Expression) Exp
 		return fun
 	}
 	return expr
+}
+
+// calculateSum adds v to sum.
+func calculateSum(sc *variable.StatementContext, sum, v types.Datum) (data types.Datum, err error) {
+	// for avg and sum calculation
+	// avg and sum use decimal for integer and decimal type, use float for others
+	// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
+
+	switch v.Kind() {
+	case types.KindNull:
+	case types.KindInt64, types.KindUint64:
+		var d *types.MyDecimal
+		d, err = v.ToDecimal(sc)
+		if err == nil {
+			data = types.NewDecimalDatum(d)
+		}
+	case types.KindMysqlDecimal:
+		data = v
+	default:
+		var f float64
+		f, err = v.ToFloat64(sc)
+		if err == nil {
+			data = types.NewFloat64Datum(f)
+		}
+	}
+
+	if err != nil {
+		return data, errors.Trace(err)
+	}
+	if data.IsNull() {
+		return sum, nil
+	}
+	switch sum.Kind() {
+	case types.KindNull:
+		return data, nil
+	case types.KindFloat64, types.KindMysqlDecimal:
+		return types.ComputePlus(sum, data)
+	default:
+		return data, errors.Errorf("invalid value %v for aggregate", sum.Kind())
+	}
 }
