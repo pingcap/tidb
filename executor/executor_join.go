@@ -547,6 +547,7 @@ type HashSemiJoinExec struct {
 	bigFilter    expression.Expression
 	otherFilter  expression.Expression
 	schema       expression.Schema
+	resultRows   []*Row
 	// In auxMode, the result row always returns with an extra column which stores a boolean
 	// or NULL value to indicate if this row is matched.
 	auxMode           bool
@@ -561,6 +562,7 @@ func (e *HashSemiJoinExec) Close() error {
 	e.prepared = false
 	e.hashTable = make(map[string][]*Row)
 	e.smallTableHasNull = false
+	e.resultRows = nil
 	err := e.smallExec.Close()
 	if err != nil {
 		return errors.Trace(err)
@@ -578,6 +580,7 @@ func (e *HashSemiJoinExec) Schema() expression.Schema {
 func (e *HashSemiJoinExec) prepare() error {
 	e.hashTable = make(map[string][]*Row)
 	sc := e.ctx.GetSessionVars().StmtCtx
+	e.resultRows = make([]*Row, 1)
 	for {
 		row, err := e.smallExec.Next()
 		if err != nil {
@@ -691,10 +694,11 @@ func (e *HashSemiJoinExec) doJoin(bigRow *Row) ([]*Row, error) {
 		} else {
 			bigRow.Data = append(bigRow.Data, types.NewDatum(matched))
 		}
-		return []*Row{bigRow}, nil
+		matched = true
 	}
 	if matched {
-		return []*Row{bigRow}, nil
+		e.resultRows[0] = bigRow
+		return e.resultRows, nil
 	}
 	return nil, nil
 }
