@@ -84,7 +84,7 @@ func (p *Trim) buildKeyInfo() {
 		ok := false
 		newKey := make([]*expression.Column, 0, len(key))
 		for _, col := range key {
-			pos := p.schema().GetColumnIndex(col)
+			pos := p.schema.GetColumnIndex(col)
 			if pos == -1 {
 				ok = false
 				break
@@ -150,7 +150,8 @@ func (p *DataSource) buildKeyInfo() {
 					break
 				}
 			}
-			if ok = ok && find; !ok {
+			if !find {
+				ok = false
 				break
 			}
 		}
@@ -165,11 +166,6 @@ func (p *Apply) buildKeyInfo() {
 	p.schema.Keys = append(p.children[0].GetSchema().Clone().Keys, p.children[1].GetSchema().Clone().Keys...)
 }
 
-func (p *Exists) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.Keys = nil
-}
-
 func (p *MaxOneRow) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	p.schema.Keys = p.children[0].GetSchema().Clone().Keys
@@ -182,5 +178,5 @@ func (p *Update) buildKeyInfo() {
 
 func (p *SelectLock) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.Keys = p.children[0].GetSchema().Keys
+	p.schema.Keys = p.children[0].GetSchema().Clone().Keys
 }
