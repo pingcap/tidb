@@ -504,7 +504,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 type handleInfo struct {
 	startHandle int64
 	endHandle   int64
-	isSent      bool // It ensures that the endHandle only be assigned once and be sent once.
+	isSent      bool // It ensures that the endHandle is assigned only once and is sent once.
 }
 
 func (h *handleInfo) isFinished(input int64) bool {
