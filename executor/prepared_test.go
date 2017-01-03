@@ -16,6 +16,7 @@ package executor_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -78,4 +79,27 @@ func (s *testSuite) TestPrepared(c *C) {
 	exec := &executor.ExecuteExec{}
 	exec.Next()
 	exec.Close()
+}
+
+func (s *testSuite) TestPreparedLimitOffset(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists prepare_test")
+	tk.MustExec("create table prepare_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)")
+	tk.MustExec("insert prepare_test (c1) values (1),(2),(NULL)")
+	tk.MustExec(`prepare stmt_test_1 from 'select id from prepare_test limit ? offset ?'; set @a = 1, @b=1;`)
+	r := tk.MustQuery(`execute stmt_test_1 using @a, @b;`)
+	r.Check(testkit.Rows("2"))
+
+	tk.MustExec(`set @a=1.1`)
+	r = tk.MustQuery(`execute stmt_test_1 using @a, @b;`)
+	r.Check(testkit.Rows("2"))
+
+	tk.MustExec(`set @c="-1"`)
+	_, err := tk.Exec("execute stmt_test_1 using @c, @c")
+	c.Assert(plan.ErrWrongArguments.Equal(err), IsTrue)
 }
