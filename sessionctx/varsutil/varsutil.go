@@ -23,30 +23,56 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// GetSystemVar gets a system variable.
-func GetSystemVar(s *variable.SessionVars, key string) types.Datum {
-	var d types.Datum
+// GetSessionSystemVar gets a system variable.
+// If it is a session only variable, use the default value defined in code.
+// Returns error if there is no such variable.
+func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
+	sysVar := variable.SysVars[key]
+	if sysVar == nil {
+		return "", variable.UnknownSystemVar
+	}
 	sVal, ok := s.Systems[key]
 	if ok {
-		d.SetString(sVal)
-	} else {
-		// TiDBSkipConstraintCheck is a session scope vars. We do not store it in the global table.
-		if key == variable.TiDBSkipConstraintCheck {
-			d.SetString(variable.SysVars[variable.TiDBSkipConstraintCheck].Value)
-		} else if key == variable.TiDBSkipDDLWait {
-			d.SetString(variable.SysVars[variable.TiDBSkipDDLWait].Value)
-		}
+		return sVal, nil
 	}
-	return d
+	if sysVar.Scope&variable.ScopeGlobal == 0 {
+		// None-Global variable can use pre-defined default value.
+		return sysVar.Value, nil
+	}
+	gVal, err := s.GlobalVarsAccessor.GetGlobalSysVar(key)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	s.Systems[key] = gVal
+	return gVal, nil
+}
+
+// GetGlobalSystemVar gets a global system variable.
+func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
+	key = strings.ToLower(key)
+	sysVar := variable.SysVars[key]
+	if sysVar == nil {
+		return "", variable.UnknownSystemVar
+	}
+	if sysVar.Scope == variable.ScopeSession {
+		return "", variable.ErrIncorrectScope
+	} else if sysVar.Scope == variable.ScopeNone {
+		return sysVar.Value, nil
+	}
+	return s.GlobalVarsAccessor.GetGlobalSysVar(key)
 }
 
 // epochShiftBits is used to reserve logical part of the timestamp.
 const epochShiftBits = 18
 
-// SetSystemVar sets system variable and updates SessionVars states.
-func SetSystemVar(vars *variable.SessionVars, name string, value types.Datum) error {
+// SetSessionSystemVar sets system variable and updates SessionVars states.
+func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Datum) error {
 	name = strings.ToLower(name)
+	sysVar := variable.SysVars[name]
+	if sysVar == nil {
+		return variable.UnknownSystemVar
+	}
 	if value.IsNull() {
 		if name != variable.CharacterSetResults {
 			return variable.ErrCantSetToNull
