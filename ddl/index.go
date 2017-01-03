@@ -326,18 +326,18 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, batchOpInfo *indexBatchOpInfo, handleInfo *handleInfo) (
-	[]*indexRecord, *batchResult) {
-	batchCnt := defaultSmallBatchCnt
-	rawRecords := make([][]byte, 0, batchCnt)
-	idxRecords := make([]*indexRecord, 0, batchCnt)
-	ret := &batchResult{doneHandle: handleInfo.startHandle}
+func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *indexTaskOpInfo, handleInfo *handleInfo) (
+	[]*indexRecord, *taskResult) {
+	handleCnt := defaultTaskHandleCnt
+	rawRecords := make([][]byte, 0, handleCnt)
+	idxRecords := make([]*indexRecord, 0, handleCnt)
+	ret := &taskResult{doneHandle: handleInfo.startHandle}
 	err := d.iterateSnapshotRows(t, txn.StartTS(), handleInfo.startHandle,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			rawRecords = append(rawRecords, rawRecord)
 			indexRecord := &indexRecord{handle: h, key: rowKey}
 			idxRecords = append(idxRecords, indexRecord)
-			if len(idxRecords) == batchCnt || handleInfo.isFinished(h) {
+			if len(idxRecords) == handleCnt || handleInfo.isFinished(h) {
 				return false, nil
 			}
 			return true, nil
@@ -353,11 +353,11 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, batchOpInfo *in
 	}
 	// Be sure to do this operation only once.
 	if !handleInfo.isSent {
-		// Notice to start the next batch operation.
-		batchOpInfo.nextCh <- ret.doneHandle
+		// Notice to start the next task operation.
+		taskOpInfo.nextCh <- ret.doneHandle
 		// Record the last handle.
-		// Ensure that the handle scope of the batch doesn't change,
-		// even if the transaction retries it can't effect the other batches.
+		// Ensure that the handle scope of the task doesn't change,
+		// even if the transaction retries it can't effect the other tasks.
 		handleInfo.endHandle = ret.doneHandle
 		handleInfo.isSent = true
 	}
@@ -366,9 +366,9 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, batchOpInfo *in
 	}
 
 	cols := t.Cols()
-	idxInfo := batchOpInfo.tblIndex.Meta()
+	idxInfo := taskOpInfo.tblIndex.Meta()
 	for i, idxRecord := range idxRecords {
-		rowMap, err := tablecodec.DecodeRow(rawRecords[i], batchOpInfo.colMap)
+		rowMap, err := tablecodec.DecodeRow(rawRecords[i], taskOpInfo.colMap)
 		if err != nil {
 			ret.err = errors.Trace(err)
 			return nil, ret
@@ -386,21 +386,22 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, batchOpInfo *in
 const (
 	defaultBatchCnt      = 1024
 	defaultSmallBatchCnt = 128
-	defaultSmallBatches  = 16
+	defaultTaskHandleCnt = 128
+	defaultTaskCnt       = 16
 )
 
-// batchResult is the result of the batch.
-type batchResult struct {
-	count      int   // The number of records that has been proceed in the batch.
+// taskResult is the result of the task.
+type taskResult struct {
+	count      int   // The number of records that has been proceed in the task.
 	doneHandle int64 // This is the last reorg handle that has been processed.
 	err        error
 }
 
-type batchRetSlice []*batchResult
+type taskRetSlice []*taskResult
 
-func (b batchRetSlice) Len() int           { return len(b) }
-func (b batchRetSlice) Less(i, j int) bool { return b[i].doneHandle < b[j].doneHandle }
-func (b batchRetSlice) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
+func (b taskRetSlice) Len() int           { return len(b) }
+func (b taskRetSlice) Less(i, j int) bool { return b[i].doneHandle < b[j].doneHandle }
+func (b taskRetSlice) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
 
 // indexRecord is the record information of an index.
 type indexRecord struct {
@@ -409,29 +410,29 @@ type indexRecord struct {
 	vals   []types.Datum // It's the index values.
 }
 
-// indexBatchOpInfo records the information that is needed in the batch process.
-type indexBatchOpInfo struct {
-	tblIndex   table.Index
-	colMap     map[int64]*types.FieldType // It's the index columns map.
-	batchRetCh chan *batchResult          // Get the results of all batches.
-	nextCh     chan int64                 // It notifies to start the next batch.
+// indexTaskOpInfo records the information that is needed in the task.
+type indexTaskOpInfo struct {
+	tblIndex  table.Index
+	colMap    map[int64]*types.FieldType // It's the index columns map.
+	taskRetCh chan *taskResult           // Get the results of all tasks.
+	nextCh    chan int64                 // It notifies to start the next task.
 }
 
 // How to add index in reorganization state?
-// Concurrently process defaultSmallBatches tasks. Each task deals with a handle range of the index record.
-// The handle range size is defaultSmallBatchCnt.
+// Concurrently process defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
+// The handle range size is defaultTaskHandleCnt.
 // Because each handle range depends on the previous one, it's necessary to obtain the handle range serially.
 // Real concurrent processing needs to perform after the handle range has been acquired.
-// The operation flow of the each batch of data is as follows:
+// The operation flow of the each task of data is as follows:
 //  1. Open a goroutine. Traverse the snapshot to obtain the handle range, while access to the corresponding row key and
-// raw index value. Then notify to start the next batch.
-//  2. Decoding this batch of raw index value gets the corresponding index value.
+// raw index value. Then notify to start the next task.
+//  2. Decoding this task of raw index value gets the corresponding index value.
 //  3. Deal with this index records one by one. If the index record exists, skip to the next row.
-// If the index doesn't exist, create the index ande then continue to handle the next row.
-//  4. When the handle of a range is completed, returns the corresponding batch result.
+// If the index doesn't exist, create the index and then continue to handle the next row.
+//  4. When the handle of a range is completed, returns the corresponding task result.
 // The above operations are completed in a transaction.
-// When concurrent tasks are processed, the batch result returned by each batch is sorted by the handle. Then traverse the
-// batch results, gets the total number of row in the concurrent task and update the processed handle value. If
+// When concurrent tasks are processed, the task result returned by each task is sorted by the handle. Then traverse the
+// task results, gets the total number of row in the concurrent task and update the processed handle value. If
 // we encounter an error message, exit traversal.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
 func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
@@ -441,35 +442,35 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		col := cols[v.Offset]
 		colMap[col.ID] = &col.FieldType
 	}
-	batches := defaultSmallBatches
-	batchOpInfo := &indexBatchOpInfo{
-		tblIndex:   tables.NewIndex(t.Meta(), indexInfo),
-		colMap:     colMap,
-		nextCh:     make(chan int64, 1),
-		batchRetCh: make(chan *batchResult, batches),
+	tasks := defaultTaskCnt
+	taskOpInfo := &indexTaskOpInfo{
+		tblIndex:  tables.NewIndex(t.Meta(), indexInfo),
+		colMap:    colMap,
+		nextCh:    make(chan int64, 1),
+		taskRetCh: make(chan *taskResult, tasks),
 	}
 
 	addedCount := job.GetRowCount()
-	batchStartHandle := reorgInfo.Handle
-	wg := sync.WaitGroup{}
+	taskStartHandle := reorgInfo.Handle
 	for {
 		startTime := time.Now()
-		for i := 0; i < batches; i++ {
+		wg := sync.WaitGroup{}
+		for i := 0; i < tasks; i++ {
 			wg.Add(1)
-			go d.doBackfillIndexTask(t, batchOpInfo, batchStartHandle, &wg)
-			doneHandle := <-batchOpInfo.nextCh
+			go d.doBackfillIndexTask(t, taskOpInfo, taskStartHandle, &wg)
+			doneHandle := <-taskOpInfo.nextCh
 			// There is no data to seek.
-			if doneHandle == batchStartHandle {
+			if doneHandle == taskStartHandle {
 				break
 			}
-			batchStartHandle = doneHandle + 1
+			taskStartHandle = doneHandle + 1
 		}
 		wg.Wait()
 
-		retCnt := len(batchOpInfo.batchRetCh)
-		batchAddedCount, doneHandle, err := getCountAndHandle(batchOpInfo)
+		retCnt := len(taskOpInfo.taskRetCh)
+		taskAddedCount, doneHandle, err := getCountAndHandle(taskOpInfo)
 		// Update the reorg handle that has been processed.
-		if batchAddedCount != 0 {
+		if taskAddedCount != 0 {
 			err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 				return errors.Trace(reorgInfo.UpdateHandle(txn, doneHandle+1))
 			})
@@ -482,25 +483,25 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 			}
 		}
 
-		addedCount += int64(batchAddedCount)
+		addedCount += int64(taskAddedCount)
 		sub := time.Since(startTime).Seconds()
 		if err != nil {
-			log.Warnf("[ddl] total added index for %d rows, this batch add index for %d failed, take time %v",
-				addedCount, batchAddedCount, sub)
+			log.Warnf("[ddl] total added index for %d rows, this task add index for %d failed, take time %v",
+				addedCount, taskAddedCount, sub)
 			return errors.Trace(err)
 		}
 		job.SetRowCount(addedCount)
 		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
-		log.Infof("[ddl] total added index for %d rows, this batch added index for %d rows, take time %v",
-			addedCount, batchAddedCount, sub)
+		log.Infof("[ddl] total added index for %d rows, this task added index for %d rows, take time %v",
+			addedCount, taskAddedCount, sub)
 
-		if retCnt < batches {
+		if retCnt < tasks {
 			return nil
 		}
 	}
 }
 
-// handleInfo records start ande end handle that is used in a batch.
+// handleInfo records start ande end handle that is used in a task.
 type handleInfo struct {
 	startHandle int64
 	endHandle   int64
@@ -514,39 +515,39 @@ func (h *handleInfo) isFinished(input int64) bool {
 	return true
 }
 
-func getCountAndHandle(batchOpInfo *indexBatchOpInfo) (int64, int64, error) {
-	l := len(batchOpInfo.batchRetCh)
-	batchRets := make([]*batchResult, 0, l)
+func getCountAndHandle(taskOpInfo *indexTaskOpInfo) (int64, int64, error) {
+	l := len(taskOpInfo.taskRetCh)
+	taskRets := make([]*taskResult, 0, l)
 	for i := 0; i < l; i++ {
-		batchRet := <-batchOpInfo.batchRetCh
-		batchRets = append(batchRets, batchRet)
+		taskRet := <-taskOpInfo.taskRetCh
+		taskRets = append(taskRets, taskRet)
 	}
-	sort.Sort(batchRetSlice(batchRets))
+	sort.Sort(taskRetSlice(taskRets))
 
-	batchAddedCount, currHandle := int64(0), int64(0)
+	taskAddedCount, currHandle := int64(0), int64(0)
 	var err error
-	for _, ret := range batchRets {
+	for _, ret := range taskRets {
 		if ret.err != nil {
 			err = ret.err
 			break
 		}
-		batchAddedCount += int64(ret.count)
+		taskAddedCount += int64(ret.count)
 		currHandle = ret.doneHandle
 	}
-	return batchAddedCount, currHandle, errors.Trace(err)
+	return taskAddedCount, currHandle, errors.Trace(err)
 }
 
-func (d *ddl) doBackfillIndexTask(t table.Table, batchOpInfo *indexBatchOpInfo, startHandle int64, wg *sync.WaitGroup) {
+func (d *ddl) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, startHandle int64, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	ret := new(batchResult)
+	ret := new(taskResult)
 	handleInfo := &handleInfo{startHandle: startHandle}
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		err1 := d.isReorgRunnable(txn, ddlJobFlag)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		ret = d.doBackfillIndexTaskInTxn(t, txn, batchOpInfo, handleInfo)
+		ret = d.doBackfillIndexTaskInTxn(t, txn, taskOpInfo, handleInfo)
 		if ret.err != nil {
 			return errors.Trace(ret.err)
 		}
@@ -558,42 +559,42 @@ func (d *ddl) doBackfillIndexTask(t table.Table, batchOpInfo *indexBatchOpInfo, 
 
 	// It's failed to fetch row keys.
 	if !handleInfo.isSent {
-		batchOpInfo.nextCh <- startHandle
+		taskOpInfo.nextCh <- startHandle
 	}
 
-	batchOpInfo.batchRetCh <- ret
+	taskOpInfo.taskRetCh <- ret
 }
 
 // doBackfillIndexTaskInTxn deals with a part of backfilling index data in a Transaction.
-// This part of the index data rows is defaultSmallBatchCnt.
-func (d *ddl) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, batchOpInfo *indexBatchOpInfo,
-	handleInfo *handleInfo) *batchResult {
-	idxRecords, batchRet := d.fetchRowColVals(txn, t, batchOpInfo, handleInfo)
-	if batchRet.err != nil {
-		batchRet.err = errors.Trace(batchRet.err)
-		return batchRet
+// This part of the index data rows is defaultTaskHandleCnt.
+func (d *ddl) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, taskOpInfo *indexTaskOpInfo,
+	handleInfo *handleInfo) *taskResult {
+	idxRecords, taskRet := d.fetchRowColVals(txn, t, taskOpInfo, handleInfo)
+	if taskRet.err != nil {
+		taskRet.err = errors.Trace(taskRet.err)
+		return taskRet
 	}
 
 	for _, idxRecord := range idxRecords {
 		log.Debug("[ddl] backfill index...", idxRecord.handle)
 		err := txn.LockKeys(idxRecord.key)
 		if err != nil {
-			batchRet.err = errors.Trace(err)
-			return batchRet
+			taskRet.err = errors.Trace(err)
+			return taskRet
 		}
 
 		// Create the index.
-		handle, err := batchOpInfo.tblIndex.Create(txn, idxRecord.vals, idxRecord.handle)
+		handle, err := taskOpInfo.tblIndex.Create(txn, idxRecord.vals, idxRecord.handle)
 		if err != nil {
 			if terror.ErrorEqual(err, kv.ErrKeyExists) && idxRecord.handle == handle {
 				// Index already exists, skip it.
 				continue
 			}
-			batchRet.err = errors.Trace(err)
-			return batchRet
+			taskRet.err = errors.Trace(err)
+			return taskRet
 		}
 	}
-	return batchRet
+	return taskRet
 }
 
 func (d *ddl) dropTableIndex(indexInfo *model.IndexInfo, job *model.Job) error {
