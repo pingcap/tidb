@@ -2174,12 +2174,70 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t;")
 
-	_, err := exec(se, "create table t (c1 varchar(3067), c2 timestamp(1), index(c1, c2));")
+	// create simple index at table creation
+	_, err := exec(se, "create table t (c1 varchar(3073), index(c1));")
 	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)
 
+	// create simple index after table creation
+	mustExecSQL(c, se, "create table t (c1 varchar(3073));")
+	_, err = exec(se, "create index idx_c1 on t(c1) ")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
 
+	// create compound index at table creation
+	mustExecSQL(c, se, "drop table if exists t;")
+	_, err = exec(se, "create table t (c1 varchar(3072), c2 varchar(1), index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 varchar(3072), c2 char(1), index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 varchar(3072), c2 char, index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 varchar(3072), c2 date, index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 varchar(3068), c2 timestamp(1), index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	// create compound index after table creation
+	mustExecSQL(c, se, "create table t (c1 varchar(3072), c2 varchar(1));")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(3072), c2 char(1));")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(3072), c2 char);")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(3072), c2 date);")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 timestamp(1));")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
 
 }
 
