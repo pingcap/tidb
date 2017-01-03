@@ -391,6 +391,7 @@ import (
 	than		"THAN"
 	timeType	"TIME"
 	timestampType	"TIMESTAMP"
+	timestampDiff	"TIMESTAMPDIFF"
 	transaction	"TRANSACTION"
 	triggers	"TRIGGERS"
 	truncate	"TRUNCATE"
@@ -2086,6 +2087,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
+| "TIMESTAMPDIFF"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -2935,6 +2937,13 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"TIMESTAMPDIFF" '(' TimeUnit ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{ast.NewValueExpr($3), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}
 |	"TRIM" '(' Expression ')'

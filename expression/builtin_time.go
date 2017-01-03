@@ -745,3 +745,24 @@ func parseDayInterval(sc *variable.StatementContext, value types.Datum) (int64, 
 	}
 	return value.ToInt64(sc)
 }
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampdiff
+func builtinTimestampDiff(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	t1, err := convertDatumToTime(sc, args[1])
+	if err != nil {
+		return
+	}
+	t2, err := convertDatumToTime(sc, args[2])
+	if err != nil {
+		return
+	}
+	if t1.Time.Month() == 0 || t1.Time.Day() == 0 ||
+		t2.Time.Month() == 0 || t2.Time.Day() == 0 {
+		return
+	}
+
+	v := types.TimestampDiff(args[0].GetString(), t1, t2)
+	d.SetInt64(v)
+	return
+}

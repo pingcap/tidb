@@ -463,6 +463,13 @@ func (t *Time) Sub(t1 *Time) Duration {
 	}
 }
 
+// TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.
+// The unit for the result (an integer) is given by the unit argument.
+// The legal values for unit are "YEAR" "QUARTER" "MONTH" "DAY" "HOUR" "SECOND" and so on.
+func TimestampDiff(unit string, t1 Time, t2 Time) int64 {
+	return timestampDiff(unit, t1.Time, t2.Time)
+}
+
 func parseDateFormat(format string) []string {
 	format = strings.TrimSpace(format)
 
