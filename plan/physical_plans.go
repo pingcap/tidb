@@ -709,6 +709,12 @@ func (p *Projection) MarshalJSON() ([]byte, error) {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
+func (p *Exists) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
 func (p *MaxOneRow) Copy() PhysicalPlan {
 	np := *p
 	return &np

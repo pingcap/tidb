@@ -940,6 +940,9 @@ func (b *planBuilder) buildInnerApply(outerPlan, innerPlan LogicalPlan) LogicalP
 	addChild(ap, outerPlan)
 	addChild(ap, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.GetSchema(), innerPlan.GetSchema()))
+	for i := outerPlan.GetSchema().Len(); i < ap.GetSchema().Len(); i++ {
+		ap.schema.Columns[i].IsAggOrSubq = true
+	}
 	return ap
 }
 
@@ -950,20 +953,35 @@ func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	ap := &Apply{Join: *join}
 	ap.initIDAndContext(b.ctx)
 	ap.self = ap
+	ap.children[0].SetParents(ap)
+	ap.children[1].SetParents(ap)
 	return ap
 }
 
 func (b *planBuilder) buildExists(p LogicalPlan) LogicalPlan {
+out:
 	for {
 		switch p.(type) {
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
 		case *Trim, *Projection, *Sort, *Aggregation:
 			p = p.GetChildByIndex(0).(LogicalPlan)
+			p.SetParents()
 		default:
-			return p
+			break out
 		}
 	}
+	exists := &Exists{baseLogicalPlan: newBaseLogicalPlan(Ext, b.allocator)}
+	exists.self = exists
+	exists.initIDAndContext(b.ctx)
+	addChild(exists, p)
+	newCol := &expression.Column{
+		FromID:  exists.id,
+		RetType: types.NewFieldType(mysql.TypeTiny),
+		ColName: model.NewCIStr("exists_col")}
+	exists.SetSchema(expression.NewSchema([]*expression.Column{newCol}))
+	exists.SetCorrelated()
+	return exists
 }
 
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {

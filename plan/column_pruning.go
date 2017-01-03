@@ -159,6 +159,11 @@ func (p *Trim) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
+func (p *Exists) PruneColumns(parentUsedCols []*expression.Column) {
+	p.GetChildByIndex(0).(LogicalPlan).PruneColumns(nil)
+}
+
+// PruneColumns implements LogicalPlan interface.
 func (p *Insert) PruneColumns(_ []*expression.Column) {
 	if len(p.GetChildren()) == 0 {
 		return
@@ -204,6 +209,14 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 		p.schema = composedSchema
 	}
 	p.schema.InitColumnIndices()
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *Apply) PruneColumns(parentUseCols []*expression.Column) {
+	for _, col := range p.corCols {
+		parentUseCols = append(parentUseCols, &col.Column)
+	}
+	p.Join.PruneColumns(parentUseCols)
 }
 
 // PruneColumns implements LogicalPlan interface.

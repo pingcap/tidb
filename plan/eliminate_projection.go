@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -26,6 +27,7 @@ func EliminateProjection(p PhysicalPlan) PhysicalPlan {
 		}
 		child := p.GetChildByIndex(0).(PhysicalPlan)
 		child.SetSchema(plan.GetSchema())
+		log.Warnf("child schema %s", child.GetSchema())
 		RemovePlan(p)
 		p = EliminateProjection(child)
 	}

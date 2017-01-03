@@ -58,11 +58,11 @@ type Join struct {
 }
 
 func (p *Join) attachOnConds(onConds []expression.Expression) {
-	eq, left, right, other := extractOnCondition(onConds, p.children[0], p.children[1])
-	p.EqualConditions = eq
-	p.LeftConditions = left
-	p.RightConditions = right
-	p.OtherConditions = other
+	eq, left, right, other := extractOnCondition(onConds, p.children[0].(LogicalPlan), p.children[1].(LogicalPlan))
+	p.EqualConditions = append(eq, p.EqualConditions...)
+	p.LeftConditions = append(left, p.LeftConditions...)
+	p.RightConditions = append(right, p.RightConditions...)
+	p.OtherConditions = append(other, p.OtherConditions...)
 }
 
 func (p *Join) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -205,6 +205,11 @@ func (p *Apply) SetCorrelated() {
 			break
 		}
 	}
+}
+
+// Exists checks if a query returns result.
+type Exists struct {
+	baseLogicalPlan
 }
 
 // MaxOneRow checks if a query returns no more than one row.

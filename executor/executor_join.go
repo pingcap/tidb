@@ -81,7 +81,9 @@ type hashJoinCtx struct {
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
 	e.finished.Store(true)
-	<-e.closeCh
+	if e.prepared {
+		<-e.closeCh
+	}
 	e.prepared = false
 	e.cursor = 0
 	return e.smallExec.Close()
@@ -462,6 +464,8 @@ func (e *NestedLoopJoinExec) fetchBigRow() (*Row, error) {
 // Prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a slice.
 func (e *NestedLoopJoinExec) prepare() error {
+	e.SmallExec.Close()
+	e.innerRows = e.innerRows[:0]
 	for {
 		row, err := e.SmallExec.Next()
 		if err != nil {
@@ -576,6 +580,7 @@ func (e *HashSemiJoinExec) Schema() expression.Schema {
 // Prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a hash table.
 func (e *HashSemiJoinExec) prepare() error {
+	e.smallExec.Close()
 	e.hashTable = make(map[string][]*Row)
 	sc := e.ctx.GetSessionVars().StmtCtx
 	for {
@@ -636,9 +641,19 @@ func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, hasNull bool
 		if e.otherFilter != nil {
 			var matchedRow *Row
 			matchedRow = makeJoinRow(bigRow, smallRow)
-			matched, err = expression.EvalBool(e.otherFilter, matchedRow.Data, e.ctx)
+			r, err := e.otherFilter.Eval(matchedRow.Data, e.ctx)
 			if err != nil {
 				return false, false, errors.Trace(err)
+			}
+			if r.IsNull() {
+				hasNull = true
+				matched = false
+			} else {
+				m, err := r.ToBool(e.ctx.GetSessionVars().StmtCtx)
+				if err != nil {
+					return false, false, errors.Trace(err)
+				}
+				matched = (m != 0)
 			}
 		}
 		if matched {
@@ -726,15 +741,15 @@ func (e *HashSemiJoinExec) Next() (*Row, error) {
 // TODO: I will add test for it after refactoring the plan part of apply.
 type ApplyJoinExec struct {
 	join        joinExec
-	innerExec   Executor
 	outerSchema []*expression.CorrelatedColumn
 	cursor      int
 	resultRow   []*Row
+	schema      expression.Schema
 }
 
 // Schema implements the Executor interface.
 func (e *ApplyJoinExec) Schema() expression.Schema {
-	return e.join.Schema()
+	return e.schema
 }
 
 // Close implements the Executor interface.
@@ -759,7 +774,6 @@ func (e *ApplyJoinExec) Next() (*Row, error) {
 		for _, col := range e.outerSchema {
 			*col.Data = bigRow.Data[col.Index]
 		}
-		e.innerExec.Close()
 		err = e.join.prepare()
 		if err != nil {
 			return nil, errors.Trace(err)

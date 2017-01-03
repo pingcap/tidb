@@ -503,6 +503,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
+		lp = decorrelate(lp)
 		c.Assert(ToString(lp), Equals, ca.first, Commentf("for %s", ca.sql))
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
@@ -522,12 +523,12 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (select b from t s where s.a = t.a)",
-			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Selection->Projection",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Projection",
 		},
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
-			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Selection->Projection",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Projection",
 		},
 		{
 			// This will be resolved as in function.
@@ -536,7 +537,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a),sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
+			plan: "Apply{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a),sum(s.a))->Projection->Selection}->Projection",
 		},
 		{
 			sql:  "select * from t for update",
@@ -611,11 +612,11 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
-			best: "Apply{DataScan(o)->Join{Join{DataScan(t2)->Selection->DataScan(t3)}(t2.a,t3.a)->DataScan(t1)}(t3.a,t1.a)->Projection}->Selection->Projection",
+			best: "Apply{DataScan(o)->Join{Join{DataScan(t2)->Selection->DataScan(t3)}(t2.a,t3.a)->DataScan(t1)}(t3.a,t1.a)->Projection}->Projection",
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)",
-			best: "Apply{DataScan(o)->Join{Join{DataScan(t1)->Selection->DataScan(t3)->Selection}->DataScan(t2)->Selection}->Projection}->Selection->Projection",
+			best: "Apply{DataScan(o)->Join{Join{DataScan(t1)->Selection->DataScan(t3)->Selection}->DataScan(t2)->Selection}->Projection}->Projection",
 		},
 	}
 	for _, ca := range cases {

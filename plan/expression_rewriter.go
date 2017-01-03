@@ -21,12 +21,12 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/model"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
@@ -271,16 +271,16 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	default:
 		// When < all or > any , the agg function should use min.
 		useMin := ((v.Op == opcode.LT || v.Op == opcode.LE) && v.All) || ((v.Op == opcode.GT || v.Op == opcode.GE) && !v.All)
-		er.handleOtherComparableSubq(lexpr, rexpr, np, useMin, v.Op.String())
+		er.handleOtherComparableSubq(lexpr, rexpr, np, useMin, v.Op.String(), v.All)
 	}
 	if er.asScalar {
 		// The parent expression only use the last column in schema, which represents whether the condition is matched.
-		er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema().Columns[len(er.p.GetSchema())-1]
+		er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema().Columns[er.p.GetSchema().Len()-1]
 	}
 	return v, true
 }
 
-func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string) {
+func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool) {
 	funcName := ast.AggFuncMax
 	if useMin {
 		funcName = ast.AggFuncMin
@@ -293,19 +293,49 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	agg.initIDAndContext(er.b.ctx)
 	agg.self = agg
 	addChild(agg, np)
-	aggCol := &expression.Column{
-		ColName:  model.NewCIStr("agg_Col"),
+	aggCol0 := &expression.Column{
+		ColName:  model.NewCIStr("agg_Col_0"),
 		FromID:   agg.id,
 		Position: 0,
+		RetType:  aggFunc.GetType(),
 	}
-	agg.SetSchema([]*expression.Column{aggCol})
-	cond, _ := expression.NewFunction(cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
-	er.p = er.b.buildSemiApply(er.p, np, []expression.Expression{cond}, er.asScalar, false)
+	schema := expression.NewSchema([]*expression.Column{aggCol0})
+	cond, _ := expression.NewFunction(cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, aggCol0.Clone())
+	if all {
+		// All of them should not contain null value.
+		isNullFunc, _ := expression.NewFunction(ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
+		countNull := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc}, false)
+		count := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, false)
+		agg.AggFuncs = append(agg.AggFuncs, countNull, count)
+		aggCol1 := &expression.Column{
+			ColName:  model.NewCIStr("agg_Col_1"),
+			FromID:   agg.id,
+			Position: 1,
+			RetType:  countNull.GetType(),
+		}
+		aggCol2 := &expression.Column{
+			ColName:  model.NewCIStr("agg_Col_2"),
+			FromID:   agg.id,
+			Position: 2,
+			RetType:  count.GetType(),
+		}
+		schema.Append(aggCol1)
+		schema.Append(aggCol2)
+		cond1, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggCol1.Clone(), aggCol2.Clone())
+		cond = expression.ComposeCNFCondition(cond, cond1)
+		checkEmpty, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggCol2.Clone(), &expression.Constant{
+			Value:   types.NewDatum(0),
+			RetType: types.NewFieldType(mysql.TypeShort),
+		})
+		cond = expression.ComposeDNFCondition(cond, checkEmpty)
+	}
+	agg.SetSchema(schema)
+	er.p = er.b.buildSemiApply(er.p, agg, []expression.Expression{cond}, er.asScalar, false)
 }
 
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
 	firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
-	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := &Aggregation{
 		baseLogicalPlan: newBaseLogicalPlan(Agg, er.b.allocator),
 		AggFuncs:        []expression.AggregationFunction{firstRow, countFunc},
@@ -317,25 +347,27 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		ColName:  model.NewCIStr("col_firstRow"),
 		FromID:   agg.id,
 		Position: 0,
+		RetType:  firstRow.GetType(),
 	}
 	count := &expression.Column{
 		ColName:  model.NewCIStr("col_count"),
 		FromID:   agg.id,
 		Position: 1,
+		RetType:  countFunc.GetType(),
 	}
-	agg.SetSchema([]*expression.Column{firstRowResultCol, count})
-	ltFunc, _ := expression.NewFunction(ast.GT, types.NewFieldType(mysql.TypeTiny), count.Clone(), &expression.Constant{
+	agg.SetSchema(expression.NewSchema([]*expression.Column{firstRowResultCol, count}))
+	gtFunc, _ := expression.NewFunction(ast.GT, types.NewFieldType(mysql.TypeTiny), count.Clone(), &expression.Constant{
 		Value:   types.NewDatum(1),
 		RetType: types.NewFieldType(mysql.TypeShort),
 	})
-	neCond, _ := expression.NewFunction(ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
-	cond := expression.ComposeDNFCondition(ltFunc, neCond)
-	er.p = er.b.buildSemiApply(er.p, np, []expression.Expression{cond}, er.asScalar, false)
+	neCond, _ := expression.NewFunction(ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
+	cond := expression.ComposeDNFCondition(gtFunc, neCond)
+	er.p = er.b.buildSemiApply(er.p, agg, []expression.Expression{cond}, er.asScalar, false)
 }
 
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
 	firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
-	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := &Aggregation{
 		baseLogicalPlan: newBaseLogicalPlan(Agg, er.b.allocator),
 		AggFuncs:        []expression.AggregationFunction{firstRow, countFunc},
@@ -347,27 +379,26 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		ColName:  model.NewCIStr("col_firstRow"),
 		FromID:   agg.id,
 		Position: 0,
+		RetType:  firstRow.GetType(),
 	}
 	count := &expression.Column{
 		ColName:  model.NewCIStr("col_count"),
 		FromID:   agg.id,
 		Position: 1,
+		RetType:  countFunc.GetType(),
 	}
-	agg.SetSchema([]*expression.Column{firstRowResultCol, count})
+	agg.SetSchema(expression.NewSchema([]*expression.Column{firstRowResultCol, count}))
 	ltFunc, _ := expression.NewFunction(ast.LT, types.NewFieldType(mysql.TypeTiny), count.Clone(), &expression.Constant{
 		Value:   types.NewDatum(2),
 		RetType: types.NewFieldType(mysql.TypeShort),
 	})
-	sel := &Selection{
-		Conditions:      []expression.Expression{ltFunc},
-		baseLogicalPlan: newBaseLogicalPlan(Sel, er.b.allocator),
-	}
-	sel.initIDAndContext(er.b.ctx)
-	sel.self = sel
-	sel.SetSchema(agg.GetSchema())
-	addChild(sel, agg)
-	eqCond, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
-	er.p = er.b.buildSemiApply(er.p, np, []expression.Expression{eqCond}, er.asScalar, false)
+	checkEmpty, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), count.Clone(), &expression.Constant{
+		Value:   types.NewDatum(0),
+		RetType: types.NewFieldType(mysql.TypeShort),
+	})
+	eqCond, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
+	cond := expression.ComposeDNFCondition(checkEmpty, expression.ComposeCNFCondition(ltFunc, eqCond))
+	er.p = er.b.buildSemiApply(er.p, agg, []expression.Expression{cond}, er.asScalar, false)
 }
 
 func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (ast.Node, bool) {
@@ -382,8 +413,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	}
 	np = er.b.buildExists(np)
 	if np.IsCorrelated() {
-		// Can't be built as semi-join.
-		er.p = er.b.buildSemiApply(er.p, np, nil, er.asScalar, false)
+		er.p = er.b.buildSemiApply(er.p, np.GetChildren()[0].(LogicalPlan), nil, er.asScalar, false)
 		if !er.asScalar {
 			return v, true
 		}
@@ -397,7 +427,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		}
 		er.ctxStack = append(er.ctxStack, &expression.Constant{
 			Value:   d[0],
-			RetType: np.GetSchema().Columns[0].GetType()})
+			RetType: types.NewFieldType(mysql.TypeTiny)})
 	}
 	return v, true
 }
@@ -447,7 +477,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	}
 	er.p = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
 	if asScalar {
-		col := er.p.GetSchema().Columns[len(er.p.GetSchema())-1]
+		col := er.p.GetSchema().Columns[er.p.GetSchema().Len()-1]
 		er.ctxStack[len(er.ctxStack)-1] = col
 	} else {
 		er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
@@ -463,8 +493,8 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 	np = er.b.buildMaxOneRow(np)
 	if np.IsCorrelated() {
 		er.p = er.b.buildInnerApply(er.p, np)
-		if len(np.GetSchema()) > 1 {
-			newCols := make([]expression.Expression, 0, len(np.GetSchema()))
+		if np.GetSchema().Len() > 1 {
+			newCols := make([]expression.Expression, 0, np.GetSchema().Len())
 			for _, col := range np.GetSchema().Columns {
 				newCols = append(newCols, col.Clone())
 			}
@@ -490,7 +520,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		return v, true
 	}
 	if np.GetSchema().Len() > 1 {
-		newCols := make([]expression.Expression, 0, len(np.GetSchema().Columns))
+		newCols := make([]expression.Expression, 0, np.GetSchema().Len())
 		for i, data := range d {
 			newCols = append(newCols, &expression.Constant{
 				Value:   data,

@@ -20,13 +20,13 @@ import (
 
 func extractCorColumnsBySchema(schema expression.Schema, innerPlan LogicalPlan) []*expression.CorrelatedColumn {
 	corCols := innerPlan.extractCorrelatedCols()
-	resultCorCols := make([]*expression.CorrelatedColumn, len(schema))
+	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
 	for _, corCol := range corCols {
 		idx := schema.GetColumnIndex(&corCol.Column)
 		if idx != -1 {
 			if resultCorCols[idx] == nil {
 				resultCorCols[idx] = &expression.CorrelatedColumn{
-					Column: *schema[idx],
+					Column: *schema.Columns[idx],
 					Data:   new(types.Datum),
 				}
 			}
@@ -41,6 +41,7 @@ func extractCorColumnsBySchema(schema expression.Schema, innerPlan LogicalPlan) 
 			length++
 		}
 	}
+	resultCorCols = resultCorCols[:length]
 	return resultCorCols
 }
 
@@ -51,16 +52,16 @@ func decorrelate(p LogicalPlan) LogicalPlan {
 		apply.corCols = extractCorColumnsBySchema(outerPlan.GetSchema(), innerPlan)
 		if len(apply.corCols) == 0 {
 			join := &apply.Join
-			innerPlan.SetParents(&join)
-			outerPlan.SetParents(&join)
-			p = apply.Join
+			innerPlan.SetParents(join)
+			outerPlan.SetParents(join)
+			p = join
 		} else if sel, ok := innerPlan.(*Selection); ok {
 			newConds := make([]expression.Expression, 0, len(sel.Conditions))
 			for _, cond := range sel.Conditions {
 				newConds = append(newConds, cond.Decorrelate(outerPlan.GetSchema()))
 			}
 			apply.Join.attachOnConds(newConds)
-			innerPlan = sel.children[0]
+			innerPlan = sel.children[0].(LogicalPlan)
 			apply.SetChildren(outerPlan, innerPlan)
 			innerPlan.SetParents(apply)
 			return decorrelate(p)
@@ -69,9 +70,9 @@ func decorrelate(p LogicalPlan) LogicalPlan {
 	}
 	newChildren := make([]Plan, 0, len(p.GetChildren()))
 	for _, child := range p.GetChildren() {
-		newChildren = append(newChildren, decorrelate(child))
+		newChildren = append(newChildren, decorrelate(child.(LogicalPlan)))
 		child.SetParents(p)
 	}
-	p.SetChildren(newChildren)
+	p.SetChildren(newChildren...)
 	return p
 }

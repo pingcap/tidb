@@ -342,3 +342,10 @@ func (p *Limit) PredicatePushDown(predicates []expression.Expression) ([]express
 	_, _, err := p.baseLogicalPlan.PredicatePushDown(nil)
 	return predicates, p, errors.Trace(err)
 }
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *MaxOneRow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	// Limit forbids any condition to push down.
+	_, _, err := p.baseLogicalPlan.PredicatePushDown(nil)
+	return predicates, p, errors.Trace(err)
+}

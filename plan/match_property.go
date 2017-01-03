@@ -263,6 +263,11 @@ func (p *Cache) matchProperty(prop *requiredProperty, childPlanInfo ...*physical
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Exists) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
+}
+
+// matchProperty implements PhysicalPlan matchProperty interface.
 func (p *MaxOneRow) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }

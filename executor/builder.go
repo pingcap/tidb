@@ -109,6 +109,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildTableDual(v)
 	case *plan.PhysicalApply:
 		return b.buildApply(v)
+	case *plan.Exists:
+		return b.buildExists(v)
 	case *plan.MaxOneRow:
 		return b.buildMaxOneRow(v)
 	case *plan.Trim:
@@ -409,7 +411,7 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
+func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJoinExec {
 	var leftHashKey, rightHashKey []*expression.Column
 	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
@@ -584,23 +586,43 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 	}
 }
 
-func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
-	src := b.build(v.GetChildByIndex(0))
-	apply := &ApplyExec{
+func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedLoopJoinExec {
+	bigExec := b.build(v.GetChildByIndex(0))
+	smallExec := b.build(v.GetChildByIndex(1))
+	return &NestedLoopJoinExec{
+		SmallExec:   smallExec,
+		BigExec:     bigExec,
+		Ctx:         b.ctx,
+		BigFilter:   expression.ComposeCNFCondition(v.LeftConditions...),
+		SmallFilter: expression.ComposeCNFCondition(v.RightConditions...),
+		OtherFilter: expression.ComposeCNFCondition(append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
 		schema:      v.GetSchema(),
-		innerExec:   b.build(v.GetChildByIndex(1)),
-		outerSchema: v.OuterSchema,
-		Src:         src,
 	}
-	if v.Checker != nil {
-		apply.checker = &conditionChecker{
-			all:     v.Checker.All,
-			cond:    v.Checker.Condition,
-			trimLen: src.Schema().Len(),
-			ctx:     b.ctx,
+}
+
+func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
+	var join joinExec
+	switch x := v.PhysicalJoin.(type) {
+	case *plan.PhysicalHashSemiJoin:
+		join = b.buildSemiJoin(x)
+	case *plan.PhysicalHashJoin:
+		if x.JoinType == plan.InnerJoin {
+			join = b.buildNestedLoopJoin(x)
 		}
 	}
+	apply := &ApplyJoinExec{
+		join:        join,
+		outerSchema: v.OuterSchema,
+		schema:      v.GetSchema(),
+	}
 	return apply
+}
+
+func (b *executorBuilder) buildExists(v *plan.Exists) Executor {
+	return &ExistsExec{
+		schema: v.GetSchema(),
+		Src:    b.build(v.GetChildByIndex(0)),
+	}
 }
 
 func (b *executorBuilder) buildMaxOneRow(v *plan.MaxOneRow) Executor {

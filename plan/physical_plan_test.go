@@ -16,6 +16,7 @@ package plan
 import (
 	"fmt"
 
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -501,7 +502,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
-
+		lp = decorrelate(lp)
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		solver := aggPushDownSolver{
@@ -599,7 +600,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t1.a > 1)",
-			ans: "Apply{Table(t)->Table(t)->Selection}->Selection->Projection",
+			ans: "Apply{Table(t)->Table(t)->Selection}",
 		},
 		{
 			sql: "select t1.a from t t1, (select @a:=0, @b:=0) t2",
@@ -607,6 +608,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 	}
 	for _, ca := range cases {
+		log.Warnf("sql %s", ca.sql)
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
@@ -623,6 +625,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
+		lp = decorrelate(lp)
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		lp.PruneColumns(lp.GetSchema().Columns)
@@ -755,7 +758,7 @@ func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
 	}{
 		{
 			sql: "select * from t t1 where t1.a=(select min(t2.a) from t t2, t t3 where t2.a=t3.a and t2.b > t1.b + t3.b)",
-			ans: "Apply{Table(t)->LeftHashJoin{Table(t)->Cache->Table(t)->Cache}(t2.a,t3.a)->StreamAgg->MaxOneRow}->Selection->Projection",
+			ans: "Apply{Table(t)->LeftHashJoin{Table(t)->Cache->Table(t)->Cache}(t2.a,t3.a)->StreamAgg->MaxOneRow}->Projection",
 		},
 	}
 	for _, ca := range cases {

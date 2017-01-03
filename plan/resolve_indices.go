@@ -15,7 +15,6 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // ResolveIndicesAndCorCols implements LogicalPlan interface.

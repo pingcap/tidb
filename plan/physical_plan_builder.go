@@ -1094,7 +1094,8 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		ap.tp = App
 		ap.allocator = p.allocator
 		ap.initIDAndContext(p.ctx)
-		ap.SetChildren(info.p.GetChildren()[0])
+		ap.SetChildren(info.p.GetChildren()...)
+		ap.SetSchema(info.p.GetSchema())
 		info.p = ap
 	default:
 		info.cost = math.MaxFloat64
