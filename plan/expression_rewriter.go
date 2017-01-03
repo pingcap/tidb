@@ -265,7 +265,8 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 				er.handleNEAny(lexpr, rexpr, np)
 			}
 		} else {
-			er.err = errors.New("We don't support <=> all or <=> any now.")
+			er.err = errors.New("We don't support <=> all or <=> any now")
+			return v, true
 		}
 	// If op is not EQ, NE, NullEQ, say LT, it will remain as row(a,b) < row(c,d), and be compared as row datum.
 	default:
