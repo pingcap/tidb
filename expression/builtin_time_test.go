@@ -550,11 +550,11 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 		{types.NewStringDatum("2017-00-02"), "0"},
 	}
 
-	for i, test := range tests {
+	for _, test := range tests {
 		d, err = builtinUnixTimestamp([]types.Datum{test.input}, s.ctx)
 		c.Assert(err, IsNil)
 		str, err := d.ToString()
 		c.Assert(err, IsNil)
-		c.Assert(str, Equals, test.expect, Commentf("%dth", i))
+		c.Assert(str, Equals, test.expect)
 	}
 }
