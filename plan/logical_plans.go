@@ -201,7 +201,7 @@ func (p *Apply) SetCorrelated() {
 	p.correlated = p.GetChildren()[0].IsCorrelated()
 	for _, corCol := range corCols {
 		// If the outer column can't be resolved from this outer schema, it should be resolved by outer schema.
-		if idx := p.GetChildren()[0].GetSchema().GetIndex(&corCol.Column); idx == -1 {
+		if idx := p.GetChildren()[0].GetSchema().GetColumnIndex(&corCol.Column); idx == -1 {
 			p.correlated = true
 			break
 		}

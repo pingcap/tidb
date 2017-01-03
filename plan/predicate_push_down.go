@@ -241,7 +241,7 @@ func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret 
 		canSubstitute := true
 		extractedCols := expression.ExtractColumns(cond)
 		for _, col := range extractedCols {
-			id := p.GetSchema().GetIndex(col)
+			id := p.GetSchema().GetColumnIndex(col)
 			if _, ok := p.Exprs[id].(*expression.ScalarFunction); ok {
 				canSubstitute = false
 				break
@@ -273,7 +273,7 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 	for _, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		for _, cond := range predicates {
-			newCond := expression.ColumnSubstitute(cond, p.GetSchema(), expression.Schema2Exprs(proj.GetSchema()))
+			newCond := expression.ColumnSubstitute(cond, p.GetSchema(), expression.Column2Exprs(proj.GetSchema().Columns))
 			newExprs = append(newExprs, newCond)
 		}
 		retCond, _, err := proj.(LogicalPlan).PredicatePushDown(newExprs)
@@ -289,12 +289,12 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 
 // getGbyColIndex gets the column's index in the group-by columns.
 func (p *Aggregation) getGbyColIndex(col *expression.Column) int {
-	id := p.GetSchema().GetIndex(col)
+	id := p.GetSchema().GetColumnIndex(col)
 	colOriginal, isColumn := p.AggFuncs[id].GetArgs()[0].(*expression.Column)
 	if !isColumn {
 		return -1
 	}
-	return expression.Schema(p.groupByCols).GetIndex(colOriginal)
+	return expression.NewSchema(p.groupByCols).GetColumnIndex(colOriginal)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
@@ -344,7 +344,7 @@ func (p *Apply) PredicatePushDown(predicates []expression.Expression) (ret []exp
 		extractedCols := expression.ExtractColumns(cond)
 		canPush := true
 		for _, col := range extractedCols {
-			if child.GetSchema().GetIndex(col) == -1 {
+			if child.GetSchema().GetColumnIndex(col) == -1 {
 				canPush = false
 				break
 			}

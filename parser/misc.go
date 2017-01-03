@@ -283,6 +283,7 @@ var tokenMap = map[string]int{
 	"KEYS":                keys,
 	"LAST_INSERT_ID":      lastInsertID,
 	"LEADING":             leading,
+	"LEAST":               least,
 	"LEFT":                left,
 	"LENGTH":              length,
 	"LESS":                less,
@@ -484,6 +485,9 @@ var tokenMap = map[string]int{
 	"CHAR_FUNC":           charFunc,
 	"CHAR_LENGTH":         charLength,
 	"CHARACTER_LENGTH":    charLength,
+	"CONV":                conv,
+	"BIT_XOR":             bitXor,
+	"CRC32":               crc32,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {

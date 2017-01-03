@@ -18,11 +18,13 @@
 package expression
 
 import (
+	"hash/crc32"
 	"math"
 	"math/rand"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -184,4 +186,63 @@ func builtinRound(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	}
 	d.SetFloat64(types.Round(x, dec))
 	return d, nil
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv
+func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	//TODO  implement
+	return d, errors.New("Function unimplement")
+}
+
+//　See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_crc32
+func builtinCRC32(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return d, nil
+	}
+	x, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	r := crc32.ChecksumIEEE([]byte(x))
+	d.SetUint64(uint64(r))
+	return d, nil
+}
+
+func arithmeticFuncFactory(op opcode.Op) BuiltinFunc {
+	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+		sc := ctx.GetSessionVars().StmtCtx
+		a, err := types.CoerceArithmetic(sc, args[0])
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		b, err := types.CoerceArithmetic(sc, args[1])
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		a, b, err = types.CoerceDatum(sc, a, b)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if a.IsNull() || b.IsNull() {
+			return
+		}
+
+		switch op {
+		case opcode.Plus:
+			return types.ComputePlus(a, b)
+		case opcode.Minus:
+			return types.ComputeMinus(a, b)
+		case opcode.Mul:
+			return types.ComputeMul(a, b)
+		case opcode.Div:
+			return types.ComputeDiv(sc, a, b)
+		case opcode.Mod:
+			return types.ComputeMod(sc, a, b)
+		case opcode.IntDiv:
+			return types.ComputeIntDiv(sc, a, b)
+		default:
+			return d, errInvalidOperation.Gen("invalid op %v in arithmetic operation", op)
+		}
+	}
 }

@@ -17,9 +17,6 @@ import (
 	"math"
 	"strings"
 	"unicode"
-
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 // RoundFloat rounds float val to the nearest integer value with float64 format, like MySQL Round function.
@@ -83,50 +80,6 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	}
 
 	return f, nil
-}
-
-// CalculateSum adds v to sum.
-func CalculateSum(sc *variable.StatementContext, sum Datum, v Datum) (Datum, error) {
-	// for avg and sum calculation
-	// avg and sum use decimal for integer and decimal type, use float for others
-	// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
-	var (
-		data Datum
-		err  error
-	)
-
-	switch v.Kind() {
-	case KindNull:
-	case KindInt64, KindUint64:
-		var d *MyDecimal
-		d, err = v.ToDecimal(sc)
-		if err == nil {
-			data = NewDecimalDatum(d)
-		}
-	case KindMysqlDecimal:
-		data = v
-	default:
-		var f float64
-		f, err = v.ToFloat64(sc)
-		if err == nil {
-			data = NewFloat64Datum(f)
-		}
-	}
-
-	if err != nil {
-		return data, errors.Trace(err)
-	}
-	if data.IsNull() {
-		return sum, nil
-	}
-	switch sum.Kind() {
-	case KindNull:
-		return data, nil
-	case KindFloat64, KindMysqlDecimal:
-		return ComputePlus(sum, data)
-	default:
-		return data, errors.Errorf("invalid value %v for aggregate", sum.Kind())
-	}
 }
 
 func isSpace(c byte) bool {

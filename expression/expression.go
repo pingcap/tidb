@@ -30,12 +30,16 @@ import (
 
 // Error instances.
 var (
-	errInvalidOperation = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
+	errInvalidOperation        = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
+	errIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count in the call to native function '%s'")
+	errFunctionNotExists       = terror.ClassExpression.New(codeFunctionNotExists, "FUNCTION %s does not exist")
 )
 
 // Error codes.
 const (
-	codeInvalidOperation terror.ErrCode = 1
+	codeInvalidOperation        terror.ErrCode = 1
+	codeIncorrectParameterCount                = 1582
+	codeFunctionNotExists                      = 1305
 )
 
 // EvalAstExpr evaluates ast expression directly.
@@ -203,7 +207,7 @@ func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
 	case *ScalarFunction:
 		if v.FuncName.L == funcName {
 			var ret []Expression
-			for _, arg := range v.Args {
+			for _, arg := range v.GetArgs() {
 				ret = append(ret, splitNormalFormItems(arg, funcName)...)
 			}
 			return ret
@@ -230,8 +234,8 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		var err error
-		args := make([]Expression, len(x.Args))
-		for i, arg := range x.Args {
+		args := make([]Expression, len(x.GetArgs()))
+		for i, arg := range x.GetArgs() {
 			args[i], err = EvaluateExprWithNull(ctx, schema, arg)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -243,7 +247,7 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 		}
 		return FoldConstant(ctx, newFunc), nil
 	case *Column:
-		if schema.GetIndex(x) == -1 {
+		if schema.GetColumnIndex(x) == -1 {
 			return x, nil
 		}
 		constant := &Constant{Value: types.Datum{}}
@@ -255,7 +259,7 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 
 // TableInfo2Schema converts table info to schema.
 func TableInfo2Schema(tbl *model.TableInfo) Schema {
-	schema := make(Schema, 0, len(tbl.Columns))
+	schema := NewSchema(make([]*Column, 0, len(tbl.Columns)))
 	for i, col := range tbl.Columns {
 		newCol := &Column{
 			ColName:  col.Name,
@@ -263,7 +267,39 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 			RetType:  &col.FieldType,
 			Position: i,
 		}
-		schema = append(schema, newCol)
+		schema.Append(newCol)
 	}
 	return schema
+}
+
+// NewCastFunc creates a new cast function.
+func NewCastFunc(tp *types.FieldType, arg Expression) (*ScalarFunction, error) {
+	bt, err := CastFuncFactory(tp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &ScalarFunction{
+		args:      []Expression{arg},
+		FuncName:  model.NewCIStr(ast.Cast),
+		RetType:   tp,
+		Function:  bt,
+		ArgValues: make([]types.Datum, 1)}, nil
+}
+
+// NewValuesFunc creates a new values function.
+func NewValuesFunc(v *ast.ValuesExpr) *ScalarFunction {
+	bt := BuildinValuesFactory(v)
+	return &ScalarFunction{
+		FuncName: model.NewCIStr(ast.Values),
+		RetType:  &v.Type,
+		Function: bt,
+	}
+}
+
+func init() {
+	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
+		codeIncorrectParameterCount: mysql.ErrWrongParamcountToNativeFct,
+		codeFunctionNotExists:       mysql.ErrSpDoesNotExist,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }

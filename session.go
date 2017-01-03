@@ -855,8 +855,8 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 			break
 		}
 		varName := row.Data[0].GetString()
-		if d := varsutil.GetSystemVar(vars, varName); d.IsNull() {
-			varsutil.SetSystemVar(s.sessionVars, varName, row.Data[1])
+		if _, ok := vars.Systems[varName]; !ok {
+			varsutil.SetSessionSystemVar(s.sessionVars, varName, row.Data[1])
 		}
 	}
 	vars.CommonGlobalLoaded = true

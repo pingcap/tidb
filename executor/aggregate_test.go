@@ -34,7 +34,7 @@ type MockExec struct {
 }
 
 func (m *MockExec) Schema() expression.Schema {
-	return nil
+	return expression.Schema{}
 }
 
 func (m *MockExec) Fields() []*ast.ResultField {
