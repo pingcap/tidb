@@ -46,21 +46,17 @@ type RowHeap struct {
 	byDesc []bool
 }
 
-func (rh *RowHeap) Len() int { return len(rh.items) }
+func lessThan(sc *variable.StatementContext, i []types.Datum, j []types.Datum, byDesc []bool) bool {
+	for k, _ := range byDesc {
+		v1 := i[k]
+		v2 := j[k]
 
-func (rh *RowHeap) Swap(i, j int) { rh.items[i], rh.items[j] = rh.items[j], rh.items[i] }
-
-func (rh *RowHeap) Less(i, j int) bool {
-	for k, desc := range rh.byDesc {
-		v1 := rh.items[i].value.key[k]
-		v2 := rh.items[j].value.key[k]
-
-		ret, err := v1.CompareDatum(rh.sc, v2)
+		ret, err := v1.CompareDatum(sc, v2)
 		if err != nil {
 			panic(err)
 		}
 
-		if desc {
+		if byDesc[k] {
 			ret = -ret
 		}
 
@@ -71,6 +67,16 @@ func (rh *RowHeap) Less(i, j int) bool {
 		}
 	}
 	return false
+}
+
+func (rh *RowHeap) Len() int { return len(rh.items) }
+
+func (rh *RowHeap) Swap(i, j int) { rh.items[i], rh.items[j] = rh.items[j], rh.items[i] }
+
+func (rh *RowHeap) Less(i, j int) bool {
+	l := rh.items[i].value.key
+	r := rh.items[j].value.key
+	return lessThan(rh.sc, l, r, rh.byDesc)
 }
 
 func (rh *RowHeap) Push(x interface{}) {
@@ -148,26 +154,9 @@ func (fs *FileSorter) Len() int { return len(fs.buf) }
 func (fs *FileSorter) Swap(i, j int) { fs.buf[i], fs.buf[j] = fs.buf[j], fs.buf[i] }
 
 func (fs *FileSorter) Less(i, j int) bool {
-	for k := 0; k < fs.keySize; k++ {
-		v1 := fs.buf[i].key[k]
-		v2 := fs.buf[j].key[k]
-
-		ret, err := v1.CompareDatum(fs.sc, v2)
-		if err != nil {
-			panic(err)
-		}
-
-		if fs.byDesc[k] {
-			ret = -ret
-		}
-
-		if ret < 0 {
-			return true
-		} else if ret > 0 {
-			return false
-		}
-	}
-	return false
+	l := fs.buf[i].key
+	r := fs.buf[j].key
+	return lessThan(fs.sc, l, r, fs.byDesc)
 }
 
 func (fs *FileSorter) uniqueFileName() string {
@@ -254,6 +243,76 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 	return nil
 }
 
+// return next row's size
+// return 0 if does not have next row
+func (fs *FileSorter) probeNextRow(index int) (int, error) {
+	var (
+		err  error
+		n    int
+		head = make([]byte, 8)
+	)
+	n, err = fs.fds[index].Read(head)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if n != 8 {
+		return 0, errors.New("incorrect header")
+	}
+	return int(binary.BigEndian.Uint64(head)), nil
+}
+
+func (fs *FileSorter) fetchNextRow(index int, rowSize int) (*ComparableRow, error) {
+	var (
+		err      error
+		n        int
+		rowBytes = make([]byte, rowSize)
+		dcod     = make([]types.Datum, 0, fs.keySize+fs.valSize+1)
+	)
+	n, err = fs.fds[index].Read(rowBytes)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if n != rowSize {
+		return nil, errors.New("incorrect row")
+	}
+
+	dcod, err = codec.Decode(rowBytes, fs.keySize+fs.valSize+1)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &ComparableRow{
+		key:    dcod[:fs.keySize],
+		val:    dcod[fs.keySize : fs.keySize+fs.valSize],
+		handle: dcod[fs.keySize+fs.valSize:][0].GetInt64(),
+	}, nil
+}
+
+func (fs *FileSorter) openAllFiles() error {
+	for _, fname := range fs.files {
+		fd, err := os.Open(fname)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		fs.fds = append(fs.fds, fd)
+	}
+	return nil
+}
+
+func (fs *FileSorter) closeAllFiles() error {
+	for _, fd := range fs.fds {
+		err := fd.Close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	err := os.RemoveAll(fs.tmpDir)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func (fs *FileSorter) Output() (key []types.Datum, val []types.Datum, handle int64, err error) {
 	if !fs.fetched {
 		if len(fs.buf) > 0 {
@@ -265,50 +324,17 @@ func (fs *FileSorter) Output() (key []types.Datum, val []types.Datum, handle int
 
 		heap.Init(fs.rowHeap)
 
-		for _, fname := range fs.files {
-			var fd *os.File
-			fd, err = os.Open(fname)
-			if err != nil {
-				return nil, nil, 0, errors.Trace(err)
-			}
-			fs.fds = append(fs.fds, fd)
-		}
+		fs.openAllFiles()
 
-		var (
-			n    int
-			head = make([]byte, 8)
-			dcod = make([]types.Datum, 0, fs.keySize+fs.valSize+1)
-		)
-
-		for id, fd := range fs.fds {
-			n, err = fd.Read(head)
-			if err != nil {
-				return nil, nil, 0, errors.Trace(err)
-			}
-			if n != 8 {
-				return nil, nil, 0, errors.New("incorrect header")
-			}
-
-			rowSize := int(binary.BigEndian.Uint64(head))
-
-			rowBytes := make([]byte, rowSize)
-			n, err = fd.Read(rowBytes)
-			if err != nil {
-				return nil, nil, 0, errors.Trace(err)
-			}
-			if n != rowSize {
-				return nil, nil, 0, errors.New("incorrect row")
-			}
-
-			dcod, err = codec.Decode(rowBytes, fs.keySize+fs.valSize+1)
+		for id, _ := range fs.fds {
+			rowSize, err := fs.probeNextRow(id)
 			if err != nil {
 				return nil, nil, 0, errors.Trace(err)
 			}
 
-			row := &ComparableRow{
-				key:    dcod[:fs.keySize],
-				val:    dcod[fs.keySize : fs.keySize+fs.valSize],
-				handle: dcod[fs.keySize+fs.valSize:][0].GetInt64(),
+			row, err := fs.fetchNextRow(id, rowSize)
+			if err != nil {
+				return nil, nil, 0, errors.Trace(err)
 			}
 
 			item := &Item{
@@ -323,51 +349,29 @@ func (fs *FileSorter) Output() (key []types.Datum, val []types.Datum, handle int
 	}
 
 	if fs.rowHeap.Len() > 0 {
-		next := heap.Pop(fs.rowHeap).(*Item)
+		item := heap.Pop(fs.rowHeap).(*Item)
 
-		var (
-			n    int
-			head = make([]byte, 8)
-			dcod = make([]types.Datum, 0, fs.keySize+fs.valSize+1)
-		)
-		n, err = fs.fds[next.index].Read(head)
-		if err == nil && n == 8 {
-			rowSize := int(binary.BigEndian.Uint64(head))
-
-			rowBytes := make([]byte, rowSize)
-			n, err = fs.fds[next.index].Read(rowBytes)
+		rowSize, err := fs.probeNextRow(item.index)
+		if err == nil {
+			row, err := fs.fetchNextRow(item.index, rowSize)
 			if err != nil {
 				return nil, nil, 0, errors.Trace(err)
-			}
-			if n != rowSize {
-				return nil, nil, 0, errors.New("incorrect row")
-			}
-
-			dcod, err = codec.Decode(rowBytes, fs.keySize+fs.valSize+1)
-			if err != nil {
-				return nil, nil, 0, errors.Trace(err)
-			}
-
-			row := &ComparableRow{
-				key:    dcod[:fs.keySize],
-				val:    dcod[fs.keySize : fs.keySize+fs.valSize],
-				handle: dcod[fs.keySize+fs.valSize:][0].GetInt64(),
 			}
 
 			item := &Item{
-				index: next.index,
+				index: item.index,
 				value: row,
 			}
 
 			heap.Push(fs.rowHeap, item)
 		}
 
-		return next.value.key, next.value.val, next.value.handle, nil
+		return item.value.key, item.value.val, item.value.handle, nil
 	} else {
-		for _, fd := range fs.fds {
-			fd.Close()
+		err := fs.closeAllFiles()
+		if err != nil {
+			return nil, nil, 0, errors.Trace(err)
 		}
-		os.RemoveAll(fs.tmpDir)
 		return nil, nil, 0, nil
 	}
 }

@@ -36,29 +36,6 @@ func nextRow(r *rand.Rand, keySize int, valSize int) (key []types.Datum, val []t
 	return
 }
 
-func lessThan(sc *variable.StatementContext, i []types.Datum, j []types.Datum, byDesc []bool) bool {
-	for k, _ := range byDesc {
-		v1 := i[k]
-		v2 := j[k]
-
-		ret, err := v1.CompareDatum(sc, v2)
-		if err != nil {
-			panic(err)
-		}
-
-		if byDesc[k] {
-			ret = -ret
-		}
-
-		if ret < 0 {
-			return true
-		} else if ret > 0 {
-			return false
-		}
-	}
-	return false
-}
-
 func (s *testFileSortSuite) TestSingleFile(c *C) {
 	defer testleak.AfterTest(c)()
 
