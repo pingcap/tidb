@@ -38,7 +38,7 @@ func exprHasSetVar(expr expression.Expression) bool {
 		if fun.FuncName.L == ast.SetVar {
 			return false
 		}
-		for _, arg := range fun.Args {
+		for _, arg := range fun.GetArgs() {
 			canPrune = canPrune && exprHasSetVar(arg)
 			if !canPrune {
 				return false

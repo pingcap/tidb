@@ -131,6 +131,10 @@ type SessionVars struct {
 	// SkipConstraintCheck is true when importing data.
 	SkipConstraintCheck bool
 
+	// SkipDDLWait can be set to true to skip 2 lease wait after create/drop/truncate table, create/drop database.
+	// Then if there are multiple TiDB servers, the new table may not be available for other TiDB servers.
+	SkipDDLWait bool
+
 	// GlobalAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 

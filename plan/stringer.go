@@ -56,8 +56,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
 		}
 		for _, eq := range x.EqualConditions {
-			l := eq.Args[0].String()
-			r := eq.Args[1].String()
+			l := eq.GetArgs()[0].String()
+			r := eq.GetArgs()[1].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *PhysicalHashSemiJoin:
@@ -101,8 +101,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Join{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
 		for _, eq := range x.EqualConditions {
-			l := eq.Args[0].String()
-			r := eq.Args[1].String()
+			l := eq.GetArgs()[0].String()
+			r := eq.GetArgs()[1].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *Union:
