@@ -442,8 +442,7 @@ func (e *NestedLoopJoinExec) fetchBigRow() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if bigRow == nil {
-			e.BigExec.Close()
-			return nil, nil
+			return nil, e.BigExec.Close()
 		}
 
 		matched := true
@@ -454,7 +453,7 @@ func (e *NestedLoopJoinExec) fetchBigRow() (*Row, error) {
 			}
 		}
 		if matched {
-			return bigRow, err
+			return bigRow, nil
 		}
 	}
 }
@@ -462,14 +461,14 @@ func (e *NestedLoopJoinExec) fetchBigRow() (*Row, error) {
 // Prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a slice.
 func (e *NestedLoopJoinExec) prepare() error {
+	e.prepared = true
 	for {
 		row, err := e.SmallExec.Next()
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if row == nil {
-			e.SmallExec.Close()
-			break
+			return e.SmallExec.Close()
 		}
 
 		matched := true
@@ -486,8 +485,6 @@ func (e *NestedLoopJoinExec) prepare() error {
 			e.innerRows = append(e.innerRows, row)
 		}
 	}
-	e.prepared = true
-	return nil
 }
 
 func (e *NestedLoopJoinExec) doJoin(bigRow *Row) ([]*Row, error) {
@@ -763,7 +760,6 @@ func (e *ApplyJoinExec) Next() (*Row, error) {
 		for _, col := range e.outerSchema {
 			*col.Data = bigRow.Data[col.Index]
 		}
-		e.innerExec.Close()
 		err = e.join.prepare()
 		if err != nil {
 			return nil, errors.Trace(err)
