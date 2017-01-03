@@ -733,7 +733,7 @@ type ApplyJoinExec struct {
 	innerExec   Executor
 	outerSchema []*expression.CorrelatedColumn
 	cursor      int
-	resultRow   []*Row
+	resultRows  []*Row
 }
 
 // Schema implements the Executor interface.
@@ -744,15 +744,15 @@ func (e *ApplyJoinExec) Schema() expression.Schema {
 // Close implements the Executor interface.
 func (e *ApplyJoinExec) Close() error {
 	e.cursor = 0
-	e.resultRow = nil
+	e.resultRows = nil
 	return e.join.Close()
 }
 
 // Next implements the Executor interface.
 func (e *ApplyJoinExec) Next() (*Row, error) {
 	for {
-		if e.cursor < len(e.resultRow) {
-			row := e.resultRow[e.cursor]
+		if e.cursor < len(e.resultRows) {
+			row := e.resultRows[e.cursor]
 			e.cursor++
 			return row, nil
 		}
@@ -768,7 +768,7 @@ func (e *ApplyJoinExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.resultRow, err = e.join.doJoin(bigRow)
+		e.resultRows, err = e.join.doJoin(bigRow)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
