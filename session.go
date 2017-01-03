@@ -151,10 +151,26 @@ func (s *session) SetConnectionID(connectionID uint64) {
 
 type schemaLeaseChecker struct {
 	domain.SchemaValidator
-	schemaVer int64
+	schemaVer     int64
+	retryInterval time.Duration
 }
 
 func (s *schemaLeaseChecker) Check(txnTS uint64) error {
+	for i := 0; i < 5; i++ {
+		err := s.checkOnce(txnTS)
+		switch err {
+		case nil:
+			return nil
+		case domain.ErrInfoSchemaChanged:
+			return errors.Trace(err)
+		default:
+			time.Sleep(s.retryInterval)
+		}
+	}
+	return domain.ErrInfoSchemaExpired
+}
+
+func (s *schemaLeaseChecker) checkOnce(txnTS uint64) error {
 	succ := s.SchemaValidator.Check(txnTS, s.schemaVer)
 	if !succ {
 		if s.SchemaValidator.Latest() > s.schemaVer {
@@ -192,6 +208,7 @@ func (s *session) doCommit() error {
 	s.txn.SetOption(kv.SchemaLeaseChecker, &schemaLeaseChecker{
 		SchemaValidator: sessionctx.GetDomain(s).SchemaValidator,
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
+		retryInterval:   sessionctx.GetDomain(s).DDL().GetLease(),
 	})
 	if err := s.txn.Commit(); err != nil {
 		return errors.Trace(err)
