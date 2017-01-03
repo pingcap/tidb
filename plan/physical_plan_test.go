@@ -16,7 +16,6 @@ package plan
 import (
 	"fmt"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -608,7 +607,6 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		log.Warnf("sql %s", ca.sql)
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)

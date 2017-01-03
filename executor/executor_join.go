@@ -489,7 +489,6 @@ func (e *NestedLoopJoinExec) prepare() error {
 			e.innerRows = append(e.innerRows, row)
 		}
 	}
-	return nil
 }
 
 func (e *NestedLoopJoinExec) doJoin(bigRow *Row) ([]*Row, error) {
