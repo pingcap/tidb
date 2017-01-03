@@ -36,6 +36,99 @@ func nextRow(r *rand.Rand, keySize int, valSize int) (key []types.Datum, val []t
 	return
 }
 
+func (s *testFileSortSuite) TestLessThan(c *C) {
+	defer testleak.AfterTest(c)()
+
+	sc := new(variable.StatementContext)
+
+	byDescs := [8][]bool{
+		{false, false, false}, // 000
+		{false, false, true},  // 001
+		{false, true, false},  // 010
+		{false, true, true},   // 011
+		{true, false, false},  // 100
+		{true, false, true},   // 101
+		{true, true, false},   // 110
+		{true, true, true},    // 111
+	}
+
+	i := []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
+	j := []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
+	for k := 0; k < 8; k++ {
+		c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
+	}
+
+	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
+	j = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(4)}
+	for k := 0; k < 8; k++ {
+		if byDescs[k][2] {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
+		} else {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
+		}
+	}
+
+	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
+	j = []types.Datum{types.NewDatum(1), types.NewDatum(3), types.NewDatum(3)}
+	for k := 0; k < 8; k++ {
+		if byDescs[k][1] {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
+		} else {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
+		}
+	}
+
+	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
+	j = []types.Datum{types.NewDatum(1), types.NewDatum(3), types.NewDatum(4)}
+	for k := 0; k < 8; k++ {
+		if byDescs[k][1] {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
+		} else {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
+		}
+	}
+
+	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
+	j = []types.Datum{types.NewDatum(1), types.NewDatum(3), types.NewDatum(2)}
+	for k := 0; k < 8; k++ {
+		if byDescs[k][1] {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
+		} else {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
+		}
+	}
+
+	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
+	j = []types.Datum{types.NewDatum(2), types.NewDatum(2), types.NewDatum(3)}
+	for k := 0; k < 8; k++ {
+		if byDescs[k][0] {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
+		} else {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
+		}
+	}
+
+	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
+	j = []types.Datum{types.NewDatum(2), types.NewDatum(1), types.NewDatum(3)}
+	for k := 0; k < 8; k++ {
+		if byDescs[k][0] {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
+		} else {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
+		}
+	}
+
+	i = []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
+	j = []types.Datum{types.NewDatum(2), types.NewDatum(1), types.NewDatum(4)}
+	for k := 0; k < 8; k++ {
+		if byDescs[k][0] {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsFalse)
+		} else {
+			c.Assert(lessThan(sc, i, j, byDescs[k]), IsTrue)
+		}
+	}
+}
+
 func (s *testFileSortSuite) TestSingleFile(c *C) {
 	defer testleak.AfterTest(c)()
 
