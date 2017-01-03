@@ -442,12 +442,12 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		col := cols[v.Offset]
 		colMap[col.ID] = &col.FieldType
 	}
-	tasks := defaultTaskCnt
+	taskCnt := defaultTaskCnt
 	taskOpInfo := &indexTaskOpInfo{
 		tblIndex:  tables.NewIndex(t.Meta(), indexInfo),
 		colMap:    colMap,
 		nextCh:    make(chan int64, 1),
-		taskRetCh: make(chan *taskResult, tasks),
+		taskRetCh: make(chan *taskResult, taskCnt),
 	}
 
 	addedCount := job.GetRowCount()
@@ -455,7 +455,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	for {
 		startTime := time.Now()
 		wg := sync.WaitGroup{}
-		for i := 0; i < tasks; i++ {
+		for i := 0; i < taskCnt; i++ {
 			wg.Add(1)
 			go d.doBackfillIndexTask(t, taskOpInfo, taskStartHandle, &wg)
 			doneHandle := <-taskOpInfo.nextCh
@@ -495,13 +495,13 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		log.Infof("[ddl] total added index for %d rows, this task added index for %d rows, take time %v",
 			addedCount, taskAddedCount, sub)
 
-		if retCnt < tasks {
+		if retCnt < taskCnt {
 			return nil
 		}
 	}
 }
 
-// handleInfo records start ande end handle that is used in a task.
+// handleInfo records start and end handle that is used in a task.
 type handleInfo struct {
 	startHandle int64
 	endHandle   int64
