@@ -596,6 +596,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, DistSQLJoinConcurrencyVar, "5"},
 	{ScopeSession, TiDBSkipConstraintCheck, "0"},
 	{ScopeSession, TiDBSkipDDLWait, "0"},
+	{ScopeGlobal | ScopeSession, "time_zone", ""},
 }
 
 // TiDB system variables
