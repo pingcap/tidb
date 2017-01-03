@@ -73,6 +73,7 @@ func (s *testFileSortSuite) TestSingleFile(c *C) {
 		key, _, _, err = fs.Output()
 		c.Assert(err, IsNil)
 		c.Assert(lessThan(sc, key, pkey, byDesc), IsFalse)
+		pkey = key
 	}
 }
 
@@ -113,5 +114,6 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 		key, _, _, err = fs.Output()
 		c.Assert(err, IsNil)
 		c.Assert(lessThan(sc, key, pkey, byDesc), IsFalse)
+		pkey = key
 	}
 }
