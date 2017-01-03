@@ -24,12 +24,12 @@ type testFileSortSuite struct {
 
 func nextRow(r *rand.Rand, keySize int, valSize int) (key []types.Datum, val []types.Datum, handle int64) {
 	key = make([]types.Datum, keySize)
-	for i, _ := range key {
+	for i := range key {
 		key[i] = types.NewDatum(r.Int())
 	}
 
 	val = make([]types.Datum, valSize)
-	for j, _ := range val {
+	for j := range val {
 		val[j] = types.NewDatum(r.Int())
 	}
 
@@ -141,7 +141,7 @@ func (s *testFileSortSuite) TestSingleFile(c *C) {
 	valSize := r.Intn(20) + 1 // random int in range [1, 20]
 	bufSize := 40             // hold up to 40 items per file
 	byDesc := make([]bool, keySize)
-	for i, _ := range byDesc {
+	for i := range byDesc {
 		byDesc[i] = (r.Intn(2) == 0)
 	}
 
@@ -188,7 +188,7 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 	valSize := r.Intn(20) + 1 // random int in range [1, 20]
 	bufSize := 40             // hold up to 40 items per file
 	byDesc := make([]bool, keySize)
-	for i, _ := range byDesc {
+	for i := range byDesc {
 		byDesc[i] = (r.Intn(2) == 0)
 	}
 
