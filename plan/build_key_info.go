@@ -16,6 +16,7 @@ package plan
 import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
 )
 
 func (p *Aggregation) buildKeyInfo() {
@@ -189,6 +190,14 @@ func (p *DataSource) buildKeyInfo() {
 		}
 		if ok {
 			p.schema.Keys = append(p.schema.Keys, newKey)
+		}
+	}
+	if p.tableInfo.PKIsHandle {
+		for i, col := range p.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				p.schema.Keys = append(p.schema.Keys, []*expression.Column{p.schema.Columns[i]})
+				break
+			}
 		}
 	}
 }
