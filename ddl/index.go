@@ -392,7 +392,7 @@ const (
 
 // taskResult is the result of the task.
 type taskResult struct {
-	count      int   // The number of records that has been proceed in the task.
+	count      int   // The number of records that has been processed in the task.
 	doneHandle int64 // This is the last reorg handle that has been processed.
 	err        error
 }
