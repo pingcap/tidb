@@ -125,11 +125,6 @@ type Builder struct {
 	tmpDir  string
 }
 
-// NewBuilder creates a new Builder.
-func NewBuilder() *Builder {
-	return new(Builder)
-}
-
 // SetSC sets StatementContext instance which is required in row comparison.
 func (b *Builder) SetSC(sc *variable.StatementContext) *Builder {
 	b.sc = sc

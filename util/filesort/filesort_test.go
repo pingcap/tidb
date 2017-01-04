@@ -132,7 +132,7 @@ func (s *testFileSortSuite) TestSingleFile(c *C) {
 		panic(err)
 	}
 
-	fsBuilder := NewBuilder()
+	fsBuilder := new(Builder)
 	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
 
@@ -183,7 +183,7 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 		panic(err)
 	}
 
-	fsBuilder := NewBuilder()
+	fsBuilder := new(Builder)
 	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
 
@@ -227,7 +227,7 @@ func (s *testFileSortSuite) TestClose(c *C) {
 	)
 
 	// Prepare two FileSorter instances for tests
-	fsBuilder := NewBuilder()
+	fsBuilder := new(Builder)
 	tmpDir0, err = ioutil.TempDir("", "util_filesort_test")
 	if err != nil {
 		panic(err)
@@ -308,7 +308,7 @@ func (s *testFileSortSuite) TestMismatchedUsage(c *C) {
 	)
 
 	// Prepare two FileSorter instances for tests
-	fsBuilder := NewBuilder()
+	fsBuilder := new(Builder)
 	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
 	if err != nil {
 		panic(err)
