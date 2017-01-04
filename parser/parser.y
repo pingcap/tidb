@@ -224,7 +224,7 @@ import (
 	curTime 	"CUR_TIME"
 	count		"COUNT"
 	day		"DAY"
-	datediff    "DATEDIFF"
+	datediff	"DATEDIFF"
     dateAdd		"DATE_ADD"
 	dateFormat	"DATE_FORMAT"
 	dateSub		"DATE_SUB"
