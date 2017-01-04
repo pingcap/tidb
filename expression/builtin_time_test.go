@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -532,4 +533,30 @@ func (s *testEvaluatorSuite) TestYearWeek(c *C) {
 	result, err := builtinYearWeek([]types.Datum{types.NewStringDatum("2016-00-05")}, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(result.IsNull(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestDateArith(c *C) {
+	defer testleak.AfterTest(c)()
+
+	date := []string{"2016-12-31", "2017-01-01"}
+
+	args := types.MakeDatums(ast.DateAdd, date[0], 1, "DAY")
+	v, err := builtinDateArith(args, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetMysqlTime().String(), Equals, date[1])
+
+	args = types.MakeDatums(ast.DateSub, date[1], 1, "DAY")
+	v, err = builtinDateArith(args, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetMysqlTime().String(), Equals, date[0])
+
+	args = types.MakeDatums(ast.DateAdd, date[0], nil, "DAY")
+	v, err = builtinDateArith(args, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+
+	args = types.MakeDatums(ast.DateSub, date[1], nil, "DAY")
+	v, err = builtinDateArith(args, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
 }
