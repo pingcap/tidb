@@ -151,9 +151,10 @@ func (s *session) SetConnectionID(connectionID uint64) {
 
 type schemaLeaseChecker struct {
 	domain.SchemaValidator
-	schemaVer     int64
-	retryInterval time.Duration
+	schemaVer int64
 }
+
+const schemaOutOfDateRetryInterval = 500 * time.Millisecond
 
 func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 	for i := 0; i < 5; i++ {
@@ -164,7 +165,7 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 		case domain.ErrInfoSchemaChanged:
 			return errors.Trace(err)
 		default:
-			time.Sleep(s.retryInterval)
+			time.Sleep(schemaOutOfDateRetryInterval)
 		}
 	}
 	return domain.ErrInfoSchemaExpired
@@ -208,7 +209,6 @@ func (s *session) doCommit() error {
 	s.txn.SetOption(kv.SchemaLeaseChecker, &schemaLeaseChecker{
 		SchemaValidator: sessionctx.GetDomain(s).SchemaValidator,
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
-		retryInterval:   sessionctx.GetDomain(s).DDL().GetLease(),
 	})
 	if err := s.txn.Commit(); err != nil {
 		return errors.Trace(err)
