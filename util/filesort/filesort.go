@@ -410,7 +410,10 @@ func (fs *FileSorter) Output() (key []types.Datum, val []types.Datum, handle int
 			return nil, nil, 0, errors.Trace(fs.rowHeap.err)
 		}
 
-		fs.openAllFiles()
+		err = fs.openAllFiles()
+		if err != nil {
+			return nil, nil, 0, errors.Trace(err)
+		}
 
 		for id := range fs.fds {
 			row, err := fs.fetchNextRow(id)
