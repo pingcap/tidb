@@ -162,7 +162,7 @@ var Funcs = map[string]Func{
 	ast.CurrentDate:      {builtinCurrentDate, 0, 0},
 	ast.CurrentTime:      {builtinCurrentTime, 0, 1},
 	ast.Date:             {builtinDate, 1, 1},
-	ast.DateArith:        {builtinDateArith, 3, 3},
+	ast.DateArith:        {builtinDateArith, 4, 4},
 	ast.DateFormat:       {builtinDateFormat, 2, 2},
 	ast.CurrentTimestamp: {builtinNow, 0, 1},
 	ast.Curtime:          {builtinCurrentTime, 0, 1},
