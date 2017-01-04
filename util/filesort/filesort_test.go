@@ -3,6 +3,7 @@ package filesort
 import (
 	"io/ioutil"
 	"math/rand"
+	"os"
 	"testing"
 	"time"
 
@@ -204,27 +205,28 @@ func (s *testFileSortSuite) TestClose(c *C) {
 	byDesc := []bool{false, false}
 
 	var (
-		err    error
-		fs0    *FileSorter
-		fs1    *FileSorter
-		tmpDir string
-		errmsg = "FileSorter has been closed"
+		err     error
+		fs0     *FileSorter
+		fs1     *FileSorter
+		tmpDir0 string
+		tmpDir1 string
+		errmsg  = "FileSorter has been closed"
 	)
 
 	// Prepare two FileSorter instances for tests
 	fsBuilder := NewBuilder()
-	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
+	tmpDir0, err = ioutil.TempDir("", "util_filesort_test")
 	if err != nil {
 		panic(err)
 	}
-	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
+	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir0).Build()
 	c.Assert(err, IsNil)
 
-	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
+	tmpDir1, err = ioutil.TempDir("", "util_filesort_test")
 	if err != nil {
 		panic(err)
 	}
-	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
+	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir1).Build()
 	c.Assert(err, IsNil)
 
 	// 1. Close after some Input
@@ -233,6 +235,9 @@ func (s *testFileSortSuite) TestClose(c *C) {
 
 	err = fs0.Close()
 	c.Assert(err, IsNil)
+
+	_, err = os.Stat(tmpDir0)
+	c.Assert(os.IsNotExist(err), IsTrue)
 
 	_, _, _, err = fs0.Output()
 	c.Assert(err, ErrorMatches, errmsg)
@@ -254,6 +259,9 @@ func (s *testFileSortSuite) TestClose(c *C) {
 
 	err = fs1.Close()
 	c.Assert(err, IsNil)
+
+	_, err = os.Stat(tmpDir1)
+	c.Assert(os.IsNotExist(err), IsTrue)
 
 	_, _, _, err = fs1.Output()
 	c.Assert(err, ErrorMatches, errmsg)
