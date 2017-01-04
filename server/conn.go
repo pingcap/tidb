@@ -513,6 +513,8 @@ func (cc *clientConn) writeReq(filePath string) error {
 	return errors.Trace(cc.flush())
 }
 
+var defaultLoadDataBatchCnt = 200000
+
 // handleLoadData does the additional work after processing the 'load data' query.
 // It sends client a file path, then reads the file content from client, inserts data into database.
 func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error {
@@ -520,40 +522,26 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return errNotAllowedCommand
 	}
-
-	var err error
-	defer func() {
-		cc.ctx.SetValue(executor.LoadDataVarKey, nil)
-		if err == nil {
-			err = cc.ctx.CommitTxn()
-		}
-		if err == nil {
-			return
-		}
-		err1 := cc.ctx.RollbackTxn()
-		if err1 != nil {
-			log.Errorf("load data rollback failed: %v", err1)
-		}
-	}()
-
 	if loadDataInfo == nil {
-		err = errors.New("load data info is empty")
-		return errors.Trace(err)
+		return errors.New("load data info is empty")
 	}
-	err = cc.writeReq(loadDataInfo.Path)
+
+	err := cc.writeReq(loadDataInfo.Path)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	var shouldCommit, shouldBreak bool
+	var prevData, curData []byte
+	// TODO: Make the loadDataRowCnt settable.
+	loadDataInfo.SetBatchCount(int64(defaultLoadDataBatchCnt))
 	loadDataInfo.Ctx.NewTxn()
-	var prevData []byte
-	var curData []byte
-	var shouldBreak bool
 	for {
 		curData, err = cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				log.Error(errors.ErrorStack(err))
-				return errors.Trace(err)
+				break
 			}
 		}
 		if len(curData) == 0 {
@@ -562,15 +550,38 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 				break
 			}
 		}
-		prevData, err = loadDataInfo.InsertData(prevData, curData)
+		for {
+			prevData, shouldCommit, err = loadDataInfo.InsertData(prevData, curData)
+			if err != nil {
+				break
+			}
+			if !shouldCommit {
+				break
+			}
+			if err = loadDataInfo.Ctx.Txn().Commit(); err != nil {
+				break
+			}
+			loadDataInfo.Ctx.NewTxn()
+			shouldCommit = false
+			curData = prevData
+			prevData = nil
+		}
 		if err != nil {
-			return errors.Trace(err)
+			break
 		}
 		if shouldBreak {
 			break
 		}
 	}
-	return loadDataInfo.Ctx.Txn().Commit()
+
+	txn := loadDataInfo.Ctx.Txn()
+	if err != nil {
+		if err1 := txn.Rollback(); err1 != nil {
+			log.Errorf("load data rollback failed: %v", err1)
+		}
+		return errors.Trace(err)
+	}
+	return errors.Trace(txn.Commit())
 }
 
 const queryLogMaxLen = 2048
@@ -603,6 +614,7 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 	} else {
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 		if loadDataInfo != nil {
+			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
 			if err = cc.handleLoadData(loadDataInfo.(*executor.LoadDataInfo)); err != nil {
 				return errors.Trace(err)
 			}
