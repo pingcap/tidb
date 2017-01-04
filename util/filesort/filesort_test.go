@@ -190,3 +190,135 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 		pkey = key
 	}
 }
+
+func (s *testFileSortSuite) TestClose(c *C) {
+	defer testleak.AfterTest(c)()
+
+	seed := rand.NewSource(time.Now().UnixNano())
+	r := rand.New(seed)
+
+	sc := new(variable.StatementContext)
+	keySize := 2
+	valSize := 2
+	bufSize := 40
+	byDesc := []bool{false, false}
+
+	var (
+		err    error
+		fs0    *FileSorter
+		fs1    *FileSorter
+		tmpDir string
+		errmsg = "FileSorter has been closed"
+	)
+
+	// Prepare two FileSorter instances for tests
+	fsBuilder := NewBuilder()
+	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
+	if err != nil {
+		panic(err)
+	}
+	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
+	c.Assert(err, IsNil)
+
+	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
+	if err != nil {
+		panic(err)
+	}
+	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
+	c.Assert(err, IsNil)
+
+	// 1. Close after some Input
+	err = fs0.Input(nextRow(r, keySize, valSize))
+	c.Assert(err, IsNil)
+
+	err = fs0.Close()
+	c.Assert(err, IsNil)
+
+	_, _, _, err = fs0.Output()
+	c.Assert(err, ErrorMatches, errmsg)
+
+	err = fs0.Input(nextRow(r, keySize, valSize))
+	c.Assert(err, ErrorMatches, errmsg)
+
+	err = fs0.Close()
+	c.Assert(err, ErrorMatches, errmsg)
+
+	// 2. Close after some Output
+	err = fs1.Input(nextRow(r, keySize, valSize))
+	c.Assert(err, IsNil)
+	err = fs1.Input(nextRow(r, keySize, valSize))
+	c.Assert(err, IsNil)
+
+	_, _, _, err = fs1.Output()
+	c.Assert(err, IsNil)
+
+	err = fs1.Close()
+	c.Assert(err, IsNil)
+
+	_, _, _, err = fs1.Output()
+	c.Assert(err, ErrorMatches, errmsg)
+
+	err = fs1.Input(nextRow(r, keySize, valSize))
+	c.Assert(err, ErrorMatches, errmsg)
+
+	err = fs1.Close()
+	c.Assert(err, ErrorMatches, errmsg)
+}
+
+func (s *testFileSortSuite) TestMismatchedUsage(c *C) {
+	defer testleak.AfterTest(c)()
+
+	seed := rand.NewSource(time.Now().UnixNano())
+	r := rand.New(seed)
+
+	sc := new(variable.StatementContext)
+	keySize := 2
+	valSize := 2
+	bufSize := 40
+	byDesc := []bool{false, false}
+
+	var (
+		err     error
+		fs0     *FileSorter
+		fs1     *FileSorter
+		tmpDir  string
+		errmsg0 = "all rows have been fetched"
+		errmsg1 = "call input after output"
+	)
+
+	// Prepare two FileSorter instances for tests
+	fsBuilder := NewBuilder()
+	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
+	if err != nil {
+		panic(err)
+	}
+	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
+	c.Assert(err, IsNil)
+
+	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
+	if err != nil {
+		panic(err)
+	}
+	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
+	c.Assert(err, IsNil)
+
+	// 1. call Output after fetched all rows
+	err = fs0.Input(nextRow(r, keySize, valSize))
+	c.Assert(err, IsNil)
+
+	_, _, _, err = fs0.Output()
+	c.Assert(err, IsNil)
+
+	_, _, _, err = fs0.Output()
+	c.Assert(err, ErrorMatches, errmsg0)
+
+	// 2. call Input after Output
+	err = fs1.Input(nextRow(r, keySize, valSize))
+	c.Assert(err, IsNil)
+
+	_, _, _, err = fs1.Output()
+	c.Assert(err, IsNil)
+
+	err = fs1.Input(nextRow(r, keySize, valSize))
+	c.Assert(err, ErrorMatches, errmsg1)
+}
