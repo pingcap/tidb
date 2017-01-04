@@ -474,7 +474,6 @@ import (
 	CreateUserStmt		"CREATE User statement"
 	DateArithOpt		"Date arith dateadd or datesub option"
 	DateArithMultiFormsOpt	"Date arith adddate or subdate option"
-	DateArithInterval       "Date arith interval part"
 	DBName			"Database Name"
 	DeallocateStmt		"Deallocate prepared statement"
 	Default			"DEFAULT clause"
@@ -2648,35 +2647,39 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
-|	DateArithOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+|	DateArithMultiFormsOpt '(' Expression ',' Expression ')'
 	{
-		op := ast.NewValueExpr($1)
-		dateArithInterval := ast.NewValueExpr(
-			ast.DateArithInterval{
-				Unit: $7,
-				Interval: $6.(ast.ExprNode),
-			},
-		)
-
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr("DATE_ARITH"),
 			Args: []ast.ExprNode{
-				op,
+				ast.NewValueExpr($1),
 				$3.(ast.ExprNode),
-				dateArithInterval,
+				$5.(ast.ExprNode),
+				ast.NewValueExpr("DAY"),
 			},
 		}
 	}
-|	DateArithMultiFormsOpt '(' Expression ',' DateArithInterval')'
+|	DateArithMultiFormsOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
-		op := ast.NewValueExpr($1)
-		dateArithInterval := ast.NewValueExpr($5)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr("DATE_ARITH"),
 			Args: []ast.ExprNode{
-				op,
+				ast.NewValueExpr($1),
 				$3.(ast.ExprNode),
-				dateArithInterval,
+				$6.(ast.ExprNode),
+				ast.NewValueExpr($7),
+			},
+		}
+	}
+|	DateArithOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr("DATE_ARITH"),
+			Args: []ast.ExprNode{
+				ast.NewValueExpr($1),
+				$3.(ast.ExprNode),
+				$6.(ast.ExprNode),
+				ast.NewValueExpr($7),
 			},
 		}
 	}
@@ -3084,19 +3087,6 @@ DateArithMultiFormsOpt:
 |	"SUBDATE"
 	{
 		$$ = ast.DateSub
-	}
-
-DateArithInterval:
-	Expression
-	{
-		$$ = ast.DateArithInterval{
-					Unit: "day",
-					Interval: $1.(ast.ExprNode),
-		}
-	}
-|	"INTERVAL" Expression TimeUnit
-	{
-		$$ = ast.DateArithInterval{Unit: $3, Interval: $2.(ast.ExprNode)}
 	}
 
 TrimDirection:
