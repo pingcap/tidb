@@ -111,17 +111,16 @@ func (p *Join) buildKeyInfo() {
 	case SemiJoin, SemiJoinWithAux:
 		p.schema.Keys = p.children[0].GetSchema().Clone().Keys
 	case InnerJoin, LeftOuterJoin, RightOuterJoin:
-		// We first check the equal conditions. If one of the equal conditions' both sides are unique key,
-		// all unique key information will be reserved. Otherwise none of them is unique key any more.
+		// We first check the equal conditions. If one side of one equal condition is unique key,
+		// another side's unique key information will all be reserved.
 		if len(p.EqualConditions) == 0 {
 			return
 		}
-		ok := false
+		lOk := false
+		rOk := false
 		for _, expr := range p.EqualConditions {
 			ln := expr.GetArgs()[0].(*expression.Column)
 			rn := expr.GetArgs()[1].(*expression.Column)
-			lOk := false
-			rOk := false
 			for _, key := range p.children[0].GetSchema().Keys {
 				if len(key) == 1 && key[0].Equal(ln, p.ctx) {
 					lOk = true
@@ -134,12 +133,12 @@ func (p *Join) buildKeyInfo() {
 					break
 				}
 			}
-			if lOk && rOk {
-				ok = true
-			}
 		}
-		if ok {
-			p.schema.Keys = append(p.children[0].GetSchema().Clone().Keys, p.children[1].GetSchema().Clone().Keys...)
+		if lOk {
+			p.schema.Keys = append(p.schema.Keys, p.children[1].GetSchema().Keys...)
+		}
+		if rOk {
+			p.schema.Keys = append(p.schema.Keys, p.children[0].GetSchema().Keys...)
 		}
 	}
 }

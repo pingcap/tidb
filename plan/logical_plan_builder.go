@@ -213,10 +213,6 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		joinPlan.LeftConditions = leftCond
 		joinPlan.RightConditions = rightCond
 		joinPlan.OtherConditions = otherCond
-		log.Warnf("eq cond: %v", eqCond)
-		log.Warnf("lt cond: %v", leftCond)
-		log.Warnf("rt cond: %v", rightCond)
-		log.Warnf("ot cond: %v", otherCond)
 	} else if joinPlan.JoinType == InnerJoin {
 		joinPlan.cartesianJoin = true
 	}

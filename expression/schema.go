@@ -23,7 +23,7 @@ import (
 // KeyInfo stores the columns of one unique key or primary key.
 type KeyInfo []*Column
 
-//Clone copies the entire UniqueKey
+//Clone copies the entire UniqueKey.
 func (ki KeyInfo) Clone() KeyInfo {
 	result := make([]*Column, 0, len(ki))
 	for _, col := range ki {
