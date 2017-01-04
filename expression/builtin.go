@@ -366,24 +366,23 @@ func builtinInterval(args []types.Datum, ctx context.Context) (d types.Datum, er
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 
-	lt := func(d1, d2 types.Datum) bool {
-		if d1.Kind() == types.KindString || d2.Kind() == types.KindString {
-			// Although the doc says that 'all arguments are treated
-			// as integers', the actual behavior of official mysql
-			// seems to be that the args are compared as IEEE 754
-			// float when any arg is a string. Thus, in some cases,
-			// precision loss is appropriate.
-			v1, _ := d1.ToFloat64(sc)
-			v2, _ := d2.ToFloat64(sc)
-			return v1 < v2
-		}
-		v1, _ := d1.ToInt64(sc)
-		v2, _ := d2.ToInt64(sc)
-		return v1 < v2
-	}
-
 	idx := sort.Search(len(args)-1, func(i int) bool {
-		return lt(args[0], args[i+1])
+		d1, d2 := args[0], args[i+1]
+		if d1.Kind() == types.KindInt64 && d1.Kind() == d2.Kind() {
+			return d1.GetInt64() < d2.GetInt64()
+		}
+		if d1.Kind() == types.KindUint64 && d1.Kind() == d2.Kind() {
+			return d1.GetUint64() < d2.GetUint64()
+		}
+		if d1.Kind() == types.KindInt64 && d2.Kind() == types.KindUint64 {
+			return d1.GetInt64() < 0 || d1.GetUint64() < d2.GetUint64()
+		}
+		if d1.Kind() == types.KindUint64 && d2.Kind() == types.KindInt64 {
+			return d2.GetInt64() > 0 && d1.GetUint64() < d2.GetUint64()
+		}
+		v1, _ := d1.ToFloat64(sc)
+		v2, _ := d2.ToFloat64(sc)
+		return v1 < v2
 	})
 	d.SetInt64(int64(idx))
 

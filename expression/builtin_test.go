@@ -130,7 +130,14 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		{types.MakeDatums(3, 1, 2), 2},
 		{types.MakeDatums(0, "b", "1", "2"), 1},
 		{types.MakeDatums("a", "b", "1", "2"), 1},
+		{types.MakeDatums(23, 1, 23, 23, 23, 30, 44, 200), 4},
+		{types.MakeDatums(23, 1.7, 15.3, 23.1, 30, 44, 200), 2},
 		{types.MakeDatums(9007199254740992, 9007199254740993), 0},
+		{types.MakeDatums(uint64(9223372036854775808), uint64(9223372036854775809)), 0},
+		{types.MakeDatums(9223372036854775807, uint64(9223372036854775808)), 0},
+		{types.MakeDatums(-9223372036854775807, uint64(9223372036854775808)), 0},
+		{types.MakeDatums(uint64(9223372036854775806), 9223372036854775807), 0},
+		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1},
 		{types.MakeDatums("9007199254740991", "9007199254740992"), 0},
 
 		// tests for appropriate precision loss
