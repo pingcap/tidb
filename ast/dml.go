@@ -873,8 +873,8 @@ func (n *UpdateStmt) Accept(v Visitor) (Node, bool) {
 type Limit struct {
 	node
 
-	Offset uint64
-	Count  uint64
+	Count  ExprNode
+	Offset ExprNode
 }
 
 // Accept implements Node Accept interface.
@@ -883,6 +883,21 @@ func (n *Limit) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
+	if n.Count != nil {
+		node, ok := n.Count.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Count = node.(ExprNode)
+	}
+	if n.Offset != nil {
+		node, ok := n.Offset.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Offset = node.(ExprNode)
+	}
+
 	n = newNode.(*Limit)
 	return v.Leave(n)
 }

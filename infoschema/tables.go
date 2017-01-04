@@ -310,22 +310,12 @@ func dataForColltions() (records [][]types.Datum) {
 
 func dataForSessionVar(ctx context.Context) (records [][]types.Datum, err error) {
 	sessionVars := ctx.GetSessionVars()
-	globalVars := sessionVars.GlobalVarsAccessor
 	for _, v := range variable.SysVars {
 		var value string
-		sv := varsutil.GetSystemVar(sessionVars, v.Name)
-		if sv.IsNull() {
-			value, err = globalVars.GetGlobalSysVar(v.Name)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			sv.SetString(value)
-			err = varsutil.SetSystemVar(sessionVars, v.Name, sv)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+		value, err = varsutil.GetSessionSystemVar(sessionVars, v.Name)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		value = sv.GetString()
 		row := types.MakeDatums(v.Name, value)
 		records = append(records, row)
 	}

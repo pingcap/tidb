@@ -55,7 +55,7 @@ type testDBSuite struct {
 func (s *testDBSuite) SetUpSuite(c *C) {
 	var err error
 
-	s.lease = 100 * time.Millisecond
+	s.lease = 200 * time.Millisecond
 	tidb.SetSchemaLease(s.lease)
 	s.schemaName = "test_db"
 	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
@@ -369,6 +369,8 @@ LOOP:
 	// Make sure there is index with name c3_index.
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
+	ctx.Txn().Rollback()
+
 	c.Assert(ctx.NewTxn(), IsNil)
 	defer ctx.Txn().Rollback()
 

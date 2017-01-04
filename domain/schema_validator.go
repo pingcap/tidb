@@ -48,7 +48,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, schemaVer int64) {
 
 	s.latestSchemaVer = schemaVer
 	leaseGrantTime := extractPhysicalTime(leaseGrantTS)
-	leaseExpire := leaseGrantTime.Add(s.lease)
+	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
 
 	// Renewal lease.
 	s.items[schemaVer] = leaseExpire
