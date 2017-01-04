@@ -22,17 +22,17 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/model"
 )
 
 var _ = Suite(&testSessionSuite{})
