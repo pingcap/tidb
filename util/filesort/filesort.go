@@ -310,7 +310,10 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 	fs.buf = append(fs.buf, row)
 
 	if len(fs.buf) >= fs.bufSize {
-		fs.flushMemory()
+		err := fs.flushMemory()
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	return nil
