@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// extractCorColumnsBySchema only extracts the correlated columns that match the outer plan's schema.
 func extractCorColumnsBySchema(schema expression.Schema, innerPlan LogicalPlan) []*expression.CorrelatedColumn {
 	corCols := innerPlan.extractCorrelatedCols()
 	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
@@ -33,7 +34,7 @@ func extractCorColumnsBySchema(schema expression.Schema, innerPlan LogicalPlan) 
 			corCol.Data = resultCorCols[idx].Data
 		}
 	}
-	// Shrink slice. e.g. [col1, nil, col2, nil] will be changed to [col1, col2]
+	// Shrink slice. e.g. [col1, nil, col2, nil] will be changed to [col1, col2].
 	length := 0
 	for _, col := range resultCorCols {
 		if col != nil {
@@ -45,17 +46,21 @@ func extractCorColumnsBySchema(schema expression.Schema, innerPlan LogicalPlan) 
 	return resultCorCols
 }
 
+// decorrelate function tries to convert apply plan to join plan.
 func decorrelate(p LogicalPlan) LogicalPlan {
 	if apply, ok := p.(*Apply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1].(LogicalPlan)
 		apply.corCols = extractCorColumnsBySchema(outerPlan.GetSchema(), innerPlan)
 		if len(apply.corCols) == 0 {
+			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.Join
 			innerPlan.SetParents(join)
 			outerPlan.SetParents(join)
 			p = join
 		} else if sel, ok := innerPlan.(*Selection); ok {
+			// If the inner plan is a selection, we add this condition to join predicates.
+			// Notice that no matter what kind of join is, it's always right.
 			newConds := make([]expression.Expression, 0, len(sel.Conditions))
 			for _, cond := range sel.Conditions {
 				newConds = append(newConds, cond.Decorrelate(outerPlan.GetSchema()))
@@ -66,7 +71,7 @@ func decorrelate(p LogicalPlan) LogicalPlan {
 			innerPlan.SetParents(apply)
 			return decorrelate(p)
 		}
-		// TODO: Deal with aggregation.
+		// TODO: Deal with aggregation and projection.
 	}
 	newChildren := make([]Plan, 0, len(p.GetChildren()))
 	for _, child := range p.GetChildren() {

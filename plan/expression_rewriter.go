@@ -264,10 +264,10 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 				er.handleNEAny(lexpr, rexpr, np)
 			}
 		} else {
+			// TODO: support this in future.
 			er.err = errors.New("We don't support <=> all or <=> any now")
 			return v, true
 		}
-	// If op is not EQ, NE, NullEQ, say LT, it will remain as row(a,b) < row(c,d), and be compared as row datum.
 	default:
 		// When < all or > any , the agg function should use min.
 		useMin := ((v.Op == opcode.LT || v.Op == opcode.LE) && v.All) || ((v.Op == opcode.GT || v.Op == opcode.GE) && !v.All)
@@ -280,6 +280,8 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	return v, true
 }
 
+// handleNEAny handles the case of != any. For example, if the query is t.id < any (select s.id from s), it will be rewrited to
+// t.id < (select max(s.id) from s).
 func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool) {
 	funcName := ast.AggFuncMax
 	if useMin {
@@ -302,7 +304,8 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	schema := expression.NewSchema([]*expression.Column{aggCol0})
 	cond, _ := expression.NewFunction(cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, aggCol0.Clone())
 	if all {
-		// All of them should not contain null value.
+		// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
+		// should be rewrited to t.id < min(s.id) and count(s.id) != count(s.id is null)
 		isNullFunc, _ := expression.NewFunction(ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
 		countNull := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc}, false)
 		count := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, false)
@@ -333,6 +336,8 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	er.p = er.b.buildSemiApply(er.p, agg, []expression.Expression{cond}, er.asScalar, false)
 }
 
+// handleNEAny handles the case of != any. For exmaple, if the query is t.id != any (select s.id from s), it will be rewrited to
+// t.id != s.id or count(distinct s.id) > 1. If there are two different values in s.id , there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
 	firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
@@ -365,6 +370,9 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	er.p = er.b.buildSemiApply(er.p, agg, []expression.Expression{cond}, er.asScalar, false)
 }
 
+// handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrited to
+// t.id = (select s.id from s having count(distinct s.id) < 2) or count(distinct s.id) = 0. We add a condition `count(distinct s.id) = 0`
+// to process the case that sub query returns an empty set.
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
 	firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
