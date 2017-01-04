@@ -49,7 +49,7 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	c.Assert(r, NotNil)
 	v, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(v.Data[0].GetInt64(), Equals, int64(len(variable.SysVars)))
+	c.Assert(v.Data[0].GetInt64(), Equals, globalVarsCount())
 
 	// Check a storage operations are default autocommit after the second start.
 	mustExecSQL(c, se, "USE test;")
@@ -81,6 +81,16 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 
 	err = store.Close()
 	c.Assert(err, IsNil)
+}
+
+func globalVarsCount() int64 {
+	var count int64
+	for _, v := range variable.SysVars {
+		if v.Scope != variable.ScopeSession {
+			count++
+		}
+	}
+	return count
 }
 
 // Create a new session on store but only do ddl works.
@@ -127,7 +137,7 @@ func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	v, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(v.Data[0].GetInt64(), Equals, int64(len(variable.SysVars)))
+	c.Assert(v.Data[0].GetInt64(), Equals, globalVarsCount())
 
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
 	row, err = r.Next()
