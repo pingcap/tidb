@@ -57,14 +57,16 @@ func GetSysVar(name string) *SysVar {
 const (
 	CodeUnknownStatusVar terror.ErrCode = 1
 	CodeUnknownSystemVar terror.ErrCode = 1193
+	CodeIncorrectScope   terror.ErrCode = 1238
 )
 
 var tidbSysVars map[string]bool
 
 // Variable errors
 var (
-	UnknownStatusVar = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
+	UnknownStatusVar  = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar  = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
+	ErrIncorrectScope = terror.ClassVariable.New(CodeIncorrectScope, "Incorrect variable scope")
 )
 
 func init() {
@@ -76,6 +78,7 @@ func init() {
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
 		CodeUnknownSystemVar: mysql.ErrUnknownSystemVariable,
+		CodeIncorrectScope:   mysql.ErrIncorrectGlobalLocalVar,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 
