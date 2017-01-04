@@ -266,12 +266,6 @@ const (
 	DateSub
 )
 
-// DateArithInterval is the struct of DateArith interval part.
-type DateArithInterval struct {
-	Unit     string
-	Interval ExprNode
-}
-
 const (
 	// AggFuncCount is the name of Count function.
 	AggFuncCount = "count"

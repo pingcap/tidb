@@ -62,10 +62,10 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 func NewFunction(funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	f, ok := Funcs[funcName]
 	if !ok {
-		return nil, errors.Errorf("Function %s is not implemented.", funcName)
+		return nil, errFunctionNotExists.GenByArgs(funcName)
 	}
 	if len(args) < f.MinArgs || (f.MaxArgs != -1 && len(args) > f.MaxArgs) {
-		return nil, errIncorrectParameterCount.Gen("Incorrect parameter count in the call to native function %s", funcName)
+		return nil, errIncorrectParameterCount.GenByArgs(funcName)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)

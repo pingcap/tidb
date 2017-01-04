@@ -166,11 +166,11 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	sessionVars := e.ctx.GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
-		err = varsutil.SetSystemVar(sessionVars, variable.CharsetDatabase, types.NewStringDatum("utf8"))
+		err = varsutil.SetSessionSystemVar(sessionVars, variable.CharsetDatabase, types.NewStringDatum("utf8"))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = varsutil.SetSystemVar(sessionVars, variable.CollationDatabase, types.NewStringDatum("utf8_unicode_ci"))
+		err = varsutil.SetSessionSystemVar(sessionVars, variable.CollationDatabase, types.NewStringDatum("utf8_unicode_ci"))
 		if err != nil {
 			return errors.Trace(err)
 		}
