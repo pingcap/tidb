@@ -157,7 +157,7 @@ type schemaLeaseChecker struct {
 const schemaOutOfDateRetryInterval = 500 * time.Millisecond
 
 func (s *schemaLeaseChecker) Check(txnTS uint64) error {
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		err := s.checkOnce(txnTS)
 		switch err {
 		case nil:
