@@ -78,7 +78,9 @@ func (rh *rowHeap) Less(i, j int) bool {
 	l := rh.ims[i].value.key
 	r := rh.ims[j].value.key
 	ret, err := lessThan(rh.sc, l, r, rh.byDesc)
-	rh.err = err
+	if rh.err == nil {
+		rh.err = err
+	}
 	return ret
 }
 
@@ -181,7 +183,9 @@ func (fs *FileSorter) Less(i, j int) bool {
 	l := fs.buf[i].key
 	r := fs.buf[j].key
 	ret, err := lessThan(fs.sc, l, r, fs.byDesc)
-	fs.err = err
+	if fs.err == nil {
+		fs.err = err
+	}
 	return ret
 }
 
