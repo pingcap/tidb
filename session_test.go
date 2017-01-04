@@ -30,6 +30,9 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/model"
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -2248,6 +2251,29 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	c.Assert(err, IsNil)
 	err = store.Close()
 	c.Assert(err, IsNil)
+}
+
+func (s *testSessionSuite) TestIndexColumnLength(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 int, c2 blob);")
+	mustExecSQL(c, se, "create index idx_c1 on t(c1);")
+	mustExecSQL(c, se, "create index idx_c2 on t(c2(6));")
+
+	dom, err1 := domain.NewDomain(store, 80*time.Millisecond)
+	c.Assert(err1, Equals, nil)
+	is := dom.InfoSchema()
+
+	tab, err2 := is.TableByName(model.NewCIStr(s.dbName), model.NewCIStr("t"))
+	c.Assert(err2, Equals, nil)
+
+	idx_c1_cols := tables.FindIndexByColName(tab, "c1").Meta().Columns
+	c.Assert(idx_c1_cols[0].Length, Equals, types.UnspecifiedLength)
+
+	idx_c2_cols := tables.FindIndexByColName(tab, "c2").Meta().Columns
+	c.Assert(idx_c2_cols[0].Length, Equals, 6)
 }
 
 func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
