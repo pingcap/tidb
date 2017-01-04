@@ -187,6 +187,7 @@ func (c *Column) search(sc *variable.StatementContext, target types.Datum) (inde
 	return
 }
 
+// mergeBuckets is used to merge every two neighbor buckets.
 func (c *Column) mergeBuckets(bucketIdx int64) {
 	curBuck := 0
 	for i := int64(0); i+1 <= bucketIdx; i += 2 {
@@ -207,6 +208,7 @@ func (c *Column) mergeBuckets(bucketIdx int64) {
 	return
 }
 
+// columnToPB converts Column to ColumnPB.
 func columnToPB(col *Column) (*ColumnPB, error) {
 	data, err := codec.EncodeValue(nil, col.Values...)
 	if err != nil {
@@ -222,6 +224,7 @@ func columnToPB(col *Column) (*ColumnPB, error) {
 	return cpb, nil
 }
 
+// columnFromPB gets Column from ColumnPB.
 func columnFromPB(cpb *ColumnPB, ft *types.FieldType) (*Column, error) {
 	var values []types.Datum
 	var err error
@@ -375,7 +378,8 @@ func estimateNDV(sc *variable.StatementContext, count int64, samples []types.Dat
 	return int64(estimatedDistinct), nil
 }
 
-func (t *Table) buildIndexColumn(sc *variable.StatementContext, offset int, result ast.RecordSet, bucketCount int64, isPK bool) error {
+// build4SortedColumn builds column statistics for sorted columns.
+func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, result ast.RecordSet, bucketCount int64, isPK bool) error {
 	var id int64
 	if isPK {
 		id = t.info.Columns[offset].ID
@@ -491,40 +495,52 @@ func copyFromIndexColumns(ind *Column, id, numBuckets int64) (*Column, error) {
 	return col, nil
 }
 
+// Builder describes information needed by NewTable
+type Builder struct {
+	Sc                    *variable.StatementContext
+	TblInfo               *model.TableInfo
+	TS, Count, NumBuckets int64
+	ColumnSamples         [][]types.Datum
+	ColOffsets            []int
+	IndResults            []ast.RecordSet
+	IndOffsets            []int
+	PkResult              ast.RecordSet
+	PkOffset              int
+}
+
 // NewTable creates a table statistics.
-func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, numBuckets int64, columnSamples [][]types.Datum,
-	colOffsets []int, indResults []ast.RecordSet, indOffsets []int, pkResult ast.RecordSet, pkOffset int) (*Table, error) {
-	if count == 0 {
-		return PseudoTable(ti), nil
+func (b *Builder) NewTable() (*Table, error) {
+	if b.Count == 0 {
+		return PseudoTable(b.TblInfo), nil
 	}
 	t := &Table{
-		info:    ti,
-		TS:      ts,
-		Count:   count,
-		Columns: make([]*Column, len(ti.Columns)),
-		Indices: make([]*Column, len(ti.Indices)),
+		info:    b.TblInfo,
+		TS:      b.TS,
+		Count:   b.Count,
+		Columns: make([]*Column, len(b.TblInfo.Columns)),
+		Indices: make([]*Column, len(b.TblInfo.Indices)),
 	}
-	for i, offset := range colOffsets {
-		err := t.buildColumn(sc, offset, columnSamples[i], numBuckets)
+	for i, offset := range b.ColOffsets {
+		err := t.buildColumn(b.Sc, offset, b.ColumnSamples[i], b.NumBuckets)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	if pkOffset != -1 {
-		err := t.buildIndexColumn(sc, pkOffset, pkResult, numBuckets, true)
+	if b.PkOffset != -1 {
+		err := t.build4SortedColumn(b.Sc, b.PkOffset, b.PkResult, b.NumBuckets, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	for i, offset := range indOffsets {
-		err := t.buildIndexColumn(sc, offset, indResults[i], numBuckets, false)
+	for i, offset := range b.IndOffsets {
+		err := t.build4SortedColumn(b.Sc, offset, b.IndResults[i], b.NumBuckets, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if len(ti.Indices[offset].Columns) == 1 {
-			for j, col := range ti.Columns {
-				if col.Name.L == ti.Indices[offset].Columns[0].Name.L && t.Columns[j] == nil {
-					t.Columns[j], err = copyFromIndexColumns(t.Indices[offset], col.ID, numBuckets)
+		if len(b.TblInfo.Indices[offset].Columns) == 1 {
+			for j, col := range b.TblInfo.Columns {
+				if col.Name.L == b.TblInfo.Indices[offset].Columns[0].Name.L && t.Columns[j] == nil {
+					t.Columns[j], err = copyFromIndexColumns(t.Indices[offset], col.ID, b.NumBuckets)
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
@@ -533,12 +549,14 @@ func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, num
 			}
 		}
 	}
+	// There may be cases that we have no columnSamples, and only after we build the index columns that we can know it is 0,
+	// so we should also checked it here.
 	if t.Count == 0 {
-		return PseudoTable(ti), nil
+		return PseudoTable(b.TblInfo), nil
 	}
 	// Some Indices may not need to have histograms, here we give them pseudo one to remove edge cases in pb.
-	// However, it should be never used.
-	for i, idx := range ti.Indices {
+	// However, it should never be used.
+	for i, idx := range b.TblInfo.Indices {
 		if t.Indices[i] == nil {
 			t.Indices[i] = &Column{
 				ID:  idx.ID,

@@ -375,13 +375,19 @@ func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples 
 
 func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, sampleRows []*ast.Row) error {
 	txn := e.ctx.Txn()
-	columnSamples := rowsToColumnSamples(sampleRows)
-	sc := e.ctx.GetSessionVars().StmtCtx
-	var colOffsets []int
-	for i := range columnSamples {
-		colOffsets = append(colOffsets, i)
+	statBuilder := &statistics.Builder{
+		Sc:            e.ctx.GetSessionVars().StmtCtx,
+		TblInfo:       tn.TableInfo,
+		TS:            int64(txn.StartTS()),
+		Count:         count,
+		NumBuckets:    defaultBucketCount,
+		ColumnSamples: rowsToColumnSamples(sampleRows),
+		PkOffset:      -1,
 	}
-	t, err := statistics.NewTable(sc, tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples, colOffsets, nil, nil, nil, -1)
+	for i := range statBuilder.ColumnSamples {
+		statBuilder.ColOffsets = append(statBuilder.ColOffsets, i)
+	}
+	t, err := statBuilder.NewTable()
 	if err != nil {
 		return errors.Trace(err)
 	}

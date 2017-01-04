@@ -158,7 +158,20 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	timestamp := int64(10)
 	bucketCount := int64(256)
 	sc := new(variable.StatementContext)
-	t, err := NewTable(sc, tblInfo, timestamp, s.count, bucketCount, [][]types.Datum{s.samples}, []int{0}, []ast.RecordSet{s.rc}, []int{0}, ast.RecordSet(s.pk), 2)
+	builder := &Builder{
+		Sc:            sc,
+		TblInfo:       tblInfo,
+		TS:            timestamp,
+		Count:         s.count,
+		NumBuckets:    bucketCount,
+		ColumnSamples: [][]types.Datum{s.samples},
+		ColOffsets:    []int{0},
+		IndResults:    []ast.RecordSet{s.rc},
+		IndOffsets:    []int{0},
+		PkResult:      ast.RecordSet(s.pk),
+		PkOffset:      2,
+	}
+	t, err := builder.NewTable()
 	c.Check(err, IsNil)
 
 	col := t.Columns[0]
