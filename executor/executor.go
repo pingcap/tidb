@@ -37,7 +37,6 @@ import (
 )
 
 var (
-	_ Executor = &ApplyExec{}
 	_ Executor = &CheckTableExec{}
 	_ Executor = &DistinctExec{}
 	_ Executor = &DummyScanExec{}
