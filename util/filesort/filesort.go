@@ -44,16 +44,17 @@ type rowHeap struct {
 	sc     *variable.StatementContext
 	ims    []*item
 	byDesc []bool
+	err    error
 }
 
-func lessThan(sc *variable.StatementContext, i []types.Datum, j []types.Datum, byDesc []bool) bool {
+func lessThan(sc *variable.StatementContext, i []types.Datum, j []types.Datum, byDesc []bool) (bool, error) {
 	for k := range byDesc {
 		v1 := i[k]
 		v2 := j[k]
 
 		ret, err := v1.CompareDatum(sc, v2)
 		if err != nil {
-			panic(err)
+			return false, errors.Trace(err)
 		}
 
 		if byDesc[k] {
@@ -61,12 +62,12 @@ func lessThan(sc *variable.StatementContext, i []types.Datum, j []types.Datum, b
 		}
 
 		if ret < 0 {
-			return true
+			return true, nil
 		} else if ret > 0 {
-			return false
+			return false, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func (rh *rowHeap) Len() int { return len(rh.ims) }
@@ -76,7 +77,9 @@ func (rh *rowHeap) Swap(i, j int) { rh.ims[i], rh.ims[j] = rh.ims[j], rh.ims[i] 
 func (rh *rowHeap) Less(i, j int) bool {
 	l := rh.ims[i].value.key
 	r := rh.ims[j].value.key
-	return lessThan(rh.sc, l, r, rh.byDesc)
+	ret, err := lessThan(rh.sc, l, r, rh.byDesc)
+	rh.err = err
+	return ret
 }
 
 func (rh *rowHeap) Push(x interface{}) {
@@ -106,6 +109,7 @@ type FileSorter struct {
 	rowHeap   *rowHeap
 	fds       []*os.File
 	fileCount int
+	err       error
 }
 
 // NewFileSorter creates a FileSorter instance.
@@ -150,6 +154,7 @@ func NewFileSorter(sc *variable.StatementContext, keySize int, valSize int, bufS
 	rh := &rowHeap{sc: sc,
 		ims:    make([]*item, 0),
 		byDesc: byDesc,
+		err:    nil,
 	}
 
 	return &FileSorter{sc: sc,
@@ -164,6 +169,7 @@ func NewFileSorter(sc *variable.StatementContext, keySize int, valSize int, bufS
 		tmpDir:    tmpDir,
 		fds:       make([]*os.File, 0),
 		fileCount: 0,
+		err:       nil,
 	}, nil
 }
 
@@ -174,7 +180,9 @@ func (fs *FileSorter) Swap(i, j int) { fs.buf[i], fs.buf[j] = fs.buf[j], fs.buf[
 func (fs *FileSorter) Less(i, j int) bool {
 	l := fs.buf[i].key
 	r := fs.buf[j].key
-	return lessThan(fs.sc, l, r, fs.byDesc)
+	ret, err := lessThan(fs.sc, l, r, fs.byDesc)
+	fs.err = err
+	return ret
 }
 
 func (fs *FileSorter) uniqueFileName() string {
@@ -192,6 +200,9 @@ func (fs *FileSorter) flushMemory() error {
 	)
 
 	sort.Sort(fs)
+	if fs.err != nil {
+		return errors.Trace(fs.err)
+	}
 
 	fileName = fs.uniqueFileName()
 
@@ -341,6 +352,9 @@ func (fs *FileSorter) Output() (key []types.Datum, val []types.Datum, handle int
 		}
 
 		heap.Init(fs.rowHeap)
+		if fs.rowHeap.err != nil {
+			return nil, nil, 0, errors.Trace(fs.rowHeap.err)
+		}
 
 		fs.openAllFiles()
 
@@ -359,6 +373,9 @@ func (fs *FileSorter) Output() (key []types.Datum, val []types.Datum, handle int
 			}
 
 			heap.Push(fs.rowHeap, im)
+			if fs.rowHeap.err != nil {
+				return nil, nil, 0, errors.Trace(fs.rowHeap.err)
+			}
 		}
 
 		fs.fetched = true
@@ -366,6 +383,9 @@ func (fs *FileSorter) Output() (key []types.Datum, val []types.Datum, handle int
 
 	if fs.rowHeap.Len() > 0 {
 		im := heap.Pop(fs.rowHeap).(*item)
+		if fs.rowHeap.err != nil {
+			return nil, nil, 0, errors.Trace(fs.rowHeap.err)
+		}
 
 		row, err := fs.fetchNextRow(im.index)
 		if row == nil {
@@ -379,6 +399,9 @@ func (fs *FileSorter) Output() (key []types.Datum, val []types.Datum, handle int
 			}
 
 			heap.Push(fs.rowHeap, im)
+			if fs.rowHeap.err != nil {
+				return nil, nil, 0, errors.Trace(fs.rowHeap.err)
+			}
 		}
 
 		return im.value.key, im.value.val, im.value.handle, nil

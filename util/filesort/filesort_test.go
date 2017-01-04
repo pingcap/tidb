@@ -60,7 +60,8 @@ func (s *testFileSortSuite) TestLessThan(c *C) {
 	}
 
 	for _, t := range tblOneColumn {
-		ret := lessThan(sc, t.Arg1, t.Arg2, t.Arg3)
+		ret, err := lessThan(sc, t.Arg1, t.Arg2, t.Arg3)
+		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, t.Ret)
 	}
 
@@ -82,7 +83,8 @@ func (s *testFileSortSuite) TestLessThan(c *C) {
 	}
 
 	for _, t := range tblTwoColumns {
-		ret := lessThan(sc, t.Arg1, t.Arg2, t.Arg3)
+		ret, err := lessThan(sc, t.Arg1, t.Arg2, t.Arg3)
+		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, t.Ret)
 	}
 }
@@ -108,6 +110,7 @@ func (s *testFileSortSuite) TestSingleFile(c *C) {
 		pkey   []types.Datum
 		key    []types.Datum
 		tmpDir string
+		ret    bool
 	)
 
 	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
@@ -129,7 +132,9 @@ func (s *testFileSortSuite) TestSingleFile(c *C) {
 	for i := 1; i < nRows; i++ {
 		key, _, _, err = fs.Output()
 		c.Assert(err, IsNil)
-		c.Assert(lessThan(sc, key, pkey, byDesc), IsFalse)
+		ret, err = lessThan(sc, key, pkey, byDesc)
+		c.Assert(err, IsNil)
+		c.Assert(ret, IsFalse)
 		pkey = key
 	}
 }
@@ -155,6 +160,7 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 		pkey   []types.Datum
 		key    []types.Datum
 		tmpDir string
+		ret    bool
 	)
 
 	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
@@ -176,7 +182,9 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 	for i := 1; i < nRows; i++ {
 		key, _, _, err = fs.Output()
 		c.Assert(err, IsNil)
-		c.Assert(lessThan(sc, key, pkey, byDesc), IsFalse)
+		ret, err = lessThan(sc, key, pkey, byDesc)
+		c.Assert(err, IsNil)
+		c.Assert(ret, IsFalse)
 		pkey = key
 	}
 }
