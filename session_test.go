@@ -2269,11 +2269,11 @@ func (s *testSessionSuite) TestIndexColumnLength(c *C) {
 	tab, err2 := is.TableByName(model.NewCIStr(s.dbName), model.NewCIStr("t"))
 	c.Assert(err2, Equals, nil)
 
-	idx_c1_cols := tables.FindIndexByColName(tab, "c1").Meta().Columns
-	c.Assert(idx_c1_cols[0].Length, Equals, types.UnspecifiedLength)
+	idxC1Cols := tables.FindIndexByColName(tab, "c1").Meta().Columns
+	c.Assert(idxC1Cols[0].Length, Equals, types.UnspecifiedLength)
 
-	idx_c2_cols := tables.FindIndexByColName(tab, "c2").Meta().Columns
-	c.Assert(idx_c2_cols[0].Length, Equals, 6)
+	idxC2Cols := tables.FindIndexByColName(tab, "c2").Meta().Columns
+	c.Assert(idxC2Cols[0].Length, Equals, 6)
 }
 
 func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
