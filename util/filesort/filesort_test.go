@@ -118,7 +118,8 @@ func (s *testFileSortSuite) TestSingleFile(c *C) {
 		panic(err)
 	}
 
-	fs, err = NewFileSorter(sc, keySize, valSize, bufSize, byDesc, tmpDir)
+	fsBuilder := NewBuilder()
+	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
 
 	nRows := r.Intn(bufSize-1) + 1 // random int in range [1, bufSize - 1]
@@ -168,7 +169,8 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 		panic(err)
 	}
 
-	fs, err = NewFileSorter(sc, keySize, valSize, bufSize, byDesc, tmpDir)
+	fsBuilder := NewBuilder()
+	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
 
 	nRows := (r.Intn(bufSize) + 1) * (r.Intn(10) + 2)

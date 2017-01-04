@@ -114,38 +114,71 @@ type FileSorter struct {
 	err       error
 }
 
-// NewFileSorter creates a FileSorter instance.
-// Following arguments are mandatory:
-// sc     : StatementContext instance
-//          required by row comparison
-// keySize: the size of the row key
-//          should be positive
-// valSize: the size of the row value
-//          should be positive
-// bufSize: specify the number of rows FileSorter can hold in memory at a time
-//          should be positive
-// byDesc : sepcify the ordering rule of row comparison
-//        : the size of byDesc should match the keySize
-// tmpDir : working directory for FileSorter
-//          caller should make sure differnet FileSorters do not share the same directory
-func NewFileSorter(sc *variable.StatementContext, keySize int, valSize int, bufSize int, byDesc []bool, tmpDir string) (*FileSorter, error) {
+// Builder builds a new FileSorter.
+type Builder struct {
+	sc      *variable.StatementContext
+	keySize int
+	valSize int
+	bufSize int
+	byDesc  []bool
+	tmpDir  string
+}
+
+// NewBuilder creates a new Builder.
+func NewBuilder() *Builder {
+	return new(Builder)
+}
+
+// SetSC sets StatementContext instance which is required in row comparison.
+func (b *Builder) SetSC(sc *variable.StatementContext) *Builder {
+	b.sc = sc
+	return b
+}
+
+// SetSchema sets the schema of row, including key size and value size.
+func (b *Builder) SetSchema(keySize, valSize int) *Builder {
+	b.keySize = keySize
+	b.valSize = valSize
+	return b
+}
+
+// SetBuf sets the number of rows FileSorter can hold in memory at a time.
+func (b *Builder) SetBuf(bufSize int) *Builder {
+	b.bufSize = bufSize
+	return b
+}
+
+// SetDesc sets the ordering rule of row comparison.
+func (b *Builder) SetDesc(byDesc []bool) *Builder {
+	b.byDesc = byDesc
+	return b
+}
+
+// SetDir sets the working directory for FileSorter.
+func (b *Builder) SetDir(tmpDir string) *Builder {
+	b.tmpDir = tmpDir
+	return b
+}
+
+// Build creates a FileSorter instance using given data.
+func (b *Builder) Build() (*FileSorter, error) {
 	// Sanity checks
-	if sc == nil {
+	if b.sc == nil {
 		return nil, errors.New("StatementContext is nil")
 	}
-	if keySize != len(byDesc) {
+	if b.keySize != len(b.byDesc) {
 		return nil, errors.New("mismatch in key size and byDesc slice")
 	}
-	if keySize <= 0 {
+	if b.keySize <= 0 {
 		return nil, errors.New("key size is not positive")
 	}
-	if valSize <= 0 {
+	if b.valSize <= 0 {
 		return nil, errors.New("value size is not positive")
 	}
-	if bufSize <= 0 {
+	if b.bufSize <= 0 {
 		return nil, errors.New("buffer size is not positive")
 	}
-	_, err := os.Stat(tmpDir)
+	_, err := os.Stat(b.tmpDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, errors.New("tmpDir does not exist")
@@ -153,22 +186,22 @@ func NewFileSorter(sc *variable.StatementContext, keySize int, valSize int, bufS
 		return nil, errors.Trace(err)
 	}
 
-	rh := &rowHeap{sc: sc,
+	rh := &rowHeap{sc: b.sc,
 		ims:    make([]*item, 0),
-		byDesc: byDesc,
+		byDesc: b.byDesc,
 		err:    nil,
 	}
 
-	return &FileSorter{sc: sc,
-		keySize:   keySize,
-		valSize:   valSize,
-		bufSize:   bufSize,
-		buf:       make([]*comparableRow, 0, bufSize),
+	return &FileSorter{sc: b.sc,
+		keySize:   b.keySize,
+		valSize:   b.valSize,
+		bufSize:   b.bufSize,
+		buf:       make([]*comparableRow, 0, b.bufSize),
 		files:     make([]string, 0),
-		byDesc:    byDesc,
+		byDesc:    b.byDesc,
 		fetched:   false,
 		rowHeap:   rh,
-		tmpDir:    tmpDir,
+		tmpDir:    b.tmpDir,
 		fds:       make([]*os.File, 0),
 		fileCount: 0,
 		err:       nil,
