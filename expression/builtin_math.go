@@ -192,7 +192,6 @@ func builtinRound(args []types.Datum, ctx context.Context) (d types.Datum, err e
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv
 func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	// TODO: Implement it.
 	var (
 		n        string
 		r        string

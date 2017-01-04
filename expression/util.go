@@ -101,32 +101,36 @@ func calculateSum(sc *variable.StatementContext, sum, v types.Datum) (data types
 	}
 }
 
-// getValidPrefix gets a prefix of string which can parsed to integer.
+// getValidPrefix gets a prefix of string which can parsed to a number with base. the minimun base is 2 and the maximum is 36.
 func getValidPrefix(s string, base int64) string {
 	var (
 		validLen int
-		upper    byte
+		upper    rune
 	)
 	switch {
 	case base >= 2 && base <= 9:
-		upper = byte('0' + base)
+		upper = rune('0' + base)
 	case base <= 36:
-		upper = byte('A' + base - 10)
+		upper = rune('A' + base - 10)
+	default:
+		return ""
 	}
+
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if ('0' <= c && c <= '9') || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') {
-			c = byte(unicode.ToUpper(rune(c)))
+		c := rune(s[i])
+		switch {
+		case unicode.IsDigit(c) || unicode.IsLower(c) || unicode.IsUpper(c):
+			c = unicode.ToUpper(c)
 			if c < upper {
 				validLen = i + 1
 			} else {
 				break
 			}
-		} else if c == '+' || c == '-' {
+		case c == '+' || c == '-':
 			if i != 0 {
 				break
 			}
-		} else {
+		default:
 			break
 		}
 	}
