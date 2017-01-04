@@ -230,9 +230,8 @@ func (fs *FileSorter) uniqueFileName() string {
 	return ret
 }
 
-func (fs *FileSorter) flushMemory() error {
+func (fs *FileSorter) flushMemory() (err error) {
 	var (
-		err        error
 		fileName   string
 		outputFile *os.File
 		outputByte []byte
@@ -246,7 +245,11 @@ func (fs *FileSorter) flushMemory() error {
 	fileName = fs.uniqueFileName()
 
 	outputFile, err = os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	defer outputFile.Close()
+	defer func() {
+		if err = outputFile.Close(); err != nil {
+			err = errors.Trace(err)
+		}
+	}()
 	if err != nil {
 		return errors.Trace(err)
 	}
