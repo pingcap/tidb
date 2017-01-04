@@ -27,6 +27,20 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+var (
+	_ functionClass = &coalesceFunctionClass{}
+	_ functionClass = &isNullFunctionClass{}
+	_ functionClass = &greatestFunctionClass{}
+	_ functionClass = &leastFunctionClass{}
+)
+
+var (
+	_ builtinFunc = &builtinCoalesceSig{}
+	_ builtinFunc = &builtinIsNullSig{}
+	_ builtinFunc = &builtinGreatestSig{}
+	_ builtinFunc = &builtinLeastSig{}
+)
+
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
 	args      []Expression
@@ -332,6 +346,26 @@ func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, er
 	return d, nil
 }
 
+type isNullFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinIsNullSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinIsNullSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinIsNullSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinIsNull(args, b.ctx)
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
 func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
@@ -340,6 +374,26 @@ func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err er
 		d.SetInt64(0)
 	}
 	return d, nil
+}
+
+type greatestFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *greatestFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinGreatestSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinGreatestSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGreatestSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinGreatest(args, b.ctx)
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
@@ -365,6 +419,26 @@ func builtinGreatest(args []types.Datum, ctx context.Context) (d types.Datum, er
 	}
 	d = args[max]
 	return
+}
+
+type leastFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *leastFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinLeastSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinLeastSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLeastSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinLeast(args, b.ctx)
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
