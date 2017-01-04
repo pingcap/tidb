@@ -719,7 +719,8 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	if op == ast.DateSub {
 		year, month, day, duration = -year, -month, -day, -duration
 	}
-	t, err := result.Time.GoTime()
+	// TODO: Consider time_zone variable.
+	t, err := result.Time.GoTime(time.Local)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -776,7 +777,7 @@ func builtinUnixTimestamp(args []types.Datum, ctx context.Context) (d types.Datu
 		return
 	}
 
-	t1, e = t.Time.GoTime()
+	t1, e = t.Time.GoTime(getTimeZone(ctx))
 	if e != nil {
 		return
 	}
@@ -789,4 +790,12 @@ func builtinUnixTimestamp(args []types.Datum, ctx context.Context) (d types.Datu
 		d.SetInt64(t1.Unix())
 	}
 	return
+}
+
+func getTimeZone(ctx context.Context) *time.Location {
+	ret := ctx.GetSessionVars().TimeZone
+	if ret == nil {
+		ret = time.Local
+	}
+	return ret
 }
