@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -333,7 +332,6 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 			RetType: types.NewFieldType(mysql.TypeShort),
 		})
 		cond = expression.ComposeDNFCondition(cond, checkEmpty)
-		log.Warnf("cond %s", cond)
 	} else {
 		countNE, _ := expression.NewFunction(ast.NE, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), aggColCount.Clone())
 		nullChecker, _ := expression.NewFunction(ast.If, types.NewFieldType(mysql.TypeTiny), countNE, expression.Null, expression.Zero)
