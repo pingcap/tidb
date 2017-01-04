@@ -43,8 +43,6 @@ var (
 	_ Executor = &DummyScanExec{}
 	_ Executor = &ExistsExec{}
 	_ Executor = &HashAggExec{}
-	_ Executor = &HashJoinExec{}
-	_ Executor = &HashSemiJoinExec{}
 	_ Executor = &LimitExec{}
 	_ Executor = &MaxOneRowExec{}
 	_ Executor = &ProjectionExec{}
