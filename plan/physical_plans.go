@@ -261,7 +261,7 @@ func (p *physicalTableSource) addTopN(ctx context.Context, prop *requiredPropert
 
 func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalAggregation) expression.Schema {
 	if p.client == nil {
-		return expression.NewSchema(nil, nil)
+		return expression.NewSchema(nil)
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, f := range agg.AggFuncs {
@@ -269,7 +269,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		if pb == nil {
 			// When we fail to convert any agg function to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
-			return expression.NewSchema(nil, nil)
+			return expression.NewSchema(nil)
 		}
 		p.AggFuncsPB = append(p.AggFuncsPB, pb)
 		p.aggFuncs = append(p.aggFuncs, f.Clone())
@@ -279,7 +279,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		if pb == nil {
 			// When we fail to convert any group-by item to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
-			return expression.NewSchema(nil, nil)
+			return expression.NewSchema(nil)
 		}
 		p.GbyItemsPB = append(p.GbyItemsPB, pb)
 		p.gbyItems = append(p.gbyItems, item.Clone())
@@ -289,7 +289,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	gk.Charset = charset.CharsetBin
 	gk.Collate = charset.CollationBin
 	p.AggFields = append(p.AggFields, gk)
-	schema := expression.NewSchema(nil, nil)
+	schema := expression.NewSchema(nil)
 	cursor := 0
 	schema.Append(&expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems))})
 	agg.GroupByItems = []expression.Expression{schema.Columns[cursor]}

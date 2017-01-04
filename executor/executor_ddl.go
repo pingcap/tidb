@@ -43,7 +43,7 @@ type DDLExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *DDLExec) Schema() expression.Schema {
-	return expression.NewSchema(nil, nil)
+	return expression.NewSchema(nil)
 }
 
 // Next implements Execution Next interface.

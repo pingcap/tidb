@@ -23,7 +23,7 @@ func (p *Aggregation) buildKeyInfo() {
 	// Aggregation's schema is create from aggFunc.
 	// And the ith column in schema correspond to the ith function in aggFunc.
 	// So we create a temp schema from aggFunc to build key information.
-	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()), nil)
+	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()))
 	for _, fun := range p.AggFuncs {
 		if col, isCol := fun.GetArgs()[0].(*expression.Column); isCol && fun.GetName() == ast.AggFuncFirstRow {
 			schema.Append(col)
@@ -57,7 +57,7 @@ func (p *Projection) buildKeyInfo() {
 	// Projection's schema is create from expression of projection.
 	// And the ith column in schema correspond to the ith expression.
 	// So we create a temp schema from p.Exprs to build key information.
-	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()), nil)
+	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()))
 	for _, expr := range p.Exprs {
 		if col, isCol := expr.(*expression.Column); isCol {
 			schema.Append(col)
@@ -111,7 +111,36 @@ func (p *Join) buildKeyInfo() {
 	case SemiJoin, SemiJoinWithAux:
 		p.schema.Keys = p.children[0].GetSchema().Clone().Keys
 	case InnerJoin, LeftOuterJoin, RightOuterJoin:
-		p.schema.Keys = append(p.children[0].GetSchema().Clone().Keys, p.children[1].GetSchema().Clone().Keys...)
+		// We first check the equal conditions. If one of the equal conditions' both sides are unique key,
+		// all unique key information will be reserved. Otherwise none of them is unique key any more.
+		if len(p.EqualConditions) == 0 {
+			return
+		}
+		ok := false
+		for _, expr := range p.EqualConditions {
+			ln := expr.GetArgs()[0].(*expression.Column)
+			rn := expr.GetArgs()[1].(*expression.Column)
+			lOk := false
+			rOk := false
+			for _, key := range p.children[0].GetSchema().Keys {
+				if len(key) == 1 && key[0].Equal(ln, p.ctx) {
+					lOk = true
+					break
+				}
+			}
+			for _, key := range p.children[1].GetSchema().Keys {
+				if len(key) == 1 && key[0].Equal(rn, p.ctx) {
+					rOk = true
+					break
+				}
+			}
+			if lOk && rOk {
+				ok = true
+			}
+		}
+		if ok {
+			p.schema.Keys = append(p.children[0].GetSchema().Clone().Keys, p.children[1].GetSchema().Clone().Keys...)
+		}
 	}
 }
 
@@ -182,5 +211,5 @@ func (p *Update) buildKeyInfo() {
 
 func (p *SelectLock) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.Keys = p.children[0].GetSchema().Clone().Keys
+	p.schema.Keys = p.children[0].GetSchema().Keys
 }

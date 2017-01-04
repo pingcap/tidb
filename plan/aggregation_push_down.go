@@ -253,7 +253,7 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 	}
 	agg.initIDAndContext(a.ctx)
 	var newAggFuncs []expression.AggregationFunction
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs)), nil)
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs)))
 	for _, aggFunc := range aggFuncs {
 		var newFuncs []expression.AggregationFunction
 		newFuncs, schema = a.decompose(aggFunc, schema, agg.GetID())

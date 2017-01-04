@@ -70,6 +70,7 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 		return nil, ErrCartesianProductUnsupported
 	}
 	logic.buildKeyInfo()
+	log.Warnf("[PLAN] %s", ToString(logic))
 	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -58,14 +58,16 @@ func (s Schema) String() string {
 
 // Clone copies the total schema.
 func (s Schema) Clone() Schema {
-	result := NewSchema(make([]*Column, 0, s.Len()), make([]KeyInfo, 0, len(s.Keys)))
+	result := NewSchema(make([]*Column, 0, s.Len()))
+	keys := make([]KeyInfo, 0, len(s.Keys))
 	for _, col := range s.Columns {
 		newCol := *col
 		result.Append(&newCol)
 	}
 	for _, key := range s.Keys {
-		result.Keys = append(result.Keys, key.Clone())
+		keys = append(keys, key.Clone())
 	}
+	result.SetUniqueKeys(keys)
 	return result
 }
 
@@ -127,14 +129,20 @@ func (s *Schema) Append(col *Column) {
 	s.Columns = append(s.Columns, col)
 }
 
+func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
+	s.Keys = keys
+}
+
 // MergeSchema will merge two schema into one schema.
 func MergeSchema(lSchema, rSchema Schema) Schema {
 	tmpL := lSchema.Clone()
 	tmpR := rSchema.Clone()
-	return NewSchema(append(tmpL.Columns, tmpR.Columns...), append(tmpL.Keys, tmpR.Keys...))
+	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...))
+	ret.SetUniqueKeys(append(tmpL.Keys, tmpR.Keys...))
+	return ret
 }
 
 // NewSchema returns a schema made by its parameter.
-func NewSchema(cols []*Column, keys []KeyInfo) Schema {
-	return Schema{Columns: cols, Keys: keys}
+func NewSchema(cols []*Column) Schema {
+	return Schema{Columns: cols}
 }

@@ -178,7 +178,7 @@ type CheckTableExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *CheckTableExec) Schema() expression.Schema {
-	return expression.NewSchema(nil, nil)
+	return expression.NewSchema(nil)
 }
 
 // Next implements the Executor Next interface.
