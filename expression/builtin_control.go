@@ -19,6 +19,40 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+var (
+	_ functionClass = &caseWhenFunctionClass{}
+	_ functionClass = &ifFunctionClass{}
+	_ functionClass = &ifNullFunctionClass{}
+	_ functionClass = &nullIfFunctionClass{}
+)
+
+var (
+	_ builtinFunc = &builtinCaseWhenSig{}
+	_ builtinFunc = &builtinIfSig{}
+	_ builtinFunc = &builtinIfNullSig{}
+	_ builtinFunc = &builtinNullIfSig{}
+)
+
+type caseWhenFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinCaseWhenSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinCaseWhenSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinCaseWhenSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinCaseWhen(args, b.ctx)
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
 func builtinCaseWhen(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
@@ -43,6 +77,26 @@ func builtinCaseWhen(args []types.Datum, ctx context.Context) (d types.Datum, er
 		d = args[l-1]
 	}
 	return
+}
+
+type ifFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinIfSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinIfSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinIfSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinIf(args, b.ctx)
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
@@ -71,6 +125,26 @@ func builtinIf(args []types.Datum, ctx context.Context) (d types.Datum, err erro
 	return v3, nil
 }
 
+type ifNullFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinIfNullSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinIfNullSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinIfNullSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinIfNull(args, b.ctx)
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_ifnull
 func builtinIfNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// ifnull(expr1, expr2)
@@ -83,6 +157,26 @@ func builtinIfNull(args []types.Datum, _ context.Context) (d types.Datum, err er
 	}
 
 	return v2, nil
+}
+
+type nullIfFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *nullIfFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinNullIfSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinNullIfSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNullIfSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinNullIf(args, b.ctx)
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_nullif
