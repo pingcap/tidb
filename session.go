@@ -154,7 +154,27 @@ type schemaLeaseChecker struct {
 	schemaVer int64
 }
 
+const (
+	schemaOutOfDateRetryInterval = 500 * time.Millisecond
+	schemaOutOfDateRetryTimes    = 10
+)
+
 func (s *schemaLeaseChecker) Check(txnTS uint64) error {
+	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
+		err := s.checkOnce(txnTS)
+		switch err {
+		case nil:
+			return nil
+		case domain.ErrInfoSchemaChanged:
+			return errors.Trace(err)
+		default:
+			time.Sleep(schemaOutOfDateRetryInterval)
+		}
+	}
+	return domain.ErrInfoSchemaExpired
+}
+
+func (s *schemaLeaseChecker) checkOnce(txnTS uint64) error {
 	succ := s.SchemaValidator.Check(txnTS, s.schemaVer)
 	if !succ {
 		if s.SchemaValidator.Latest() > s.schemaVer {
