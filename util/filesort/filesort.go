@@ -465,5 +465,5 @@ func (fs *FileSorter) Output() (key []types.Datum, val []types.Datum, handle int
 	if err != nil {
 		return nil, nil, 0, errors.Trace(err)
 	}
-	return nil, nil, 0, errors.New("all rows have been fetched")
+	return nil, nil, 0, nil
 }

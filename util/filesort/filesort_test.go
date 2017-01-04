@@ -278,12 +278,12 @@ func (s *testFileSortSuite) TestMismatchedUsage(c *C) {
 	byDesc := []bool{false, false}
 
 	var (
-		err     error
-		fs0     *FileSorter
-		fs1     *FileSorter
-		tmpDir  string
-		errmsg0 = "all rows have been fetched"
-		errmsg1 = "call input after output"
+		err    error
+		fs0    *FileSorter
+		fs1    *FileSorter
+		key    []types.Datum
+		tmpDir string
+		errmsg = "call input after output"
 	)
 
 	// Prepare two FileSorter instances for tests
@@ -306,19 +306,22 @@ func (s *testFileSortSuite) TestMismatchedUsage(c *C) {
 	err = fs0.Input(nextRow(r, keySize, valSize))
 	c.Assert(err, IsNil)
 
-	_, _, _, err = fs0.Output()
+	key, _, _, err = fs0.Output()
 	c.Assert(err, IsNil)
+	c.Assert(key, NotNil)
 
-	_, _, _, err = fs0.Output()
-	c.Assert(err, ErrorMatches, errmsg0)
+	key, _, _, err = fs0.Output()
+	c.Assert(err, IsNil)
+	c.Assert(key, IsNil)
 
 	// 2. call Input after Output
 	err = fs1.Input(nextRow(r, keySize, valSize))
 	c.Assert(err, IsNil)
 
-	_, _, _, err = fs1.Output()
+	key, _, _, err = fs1.Output()
 	c.Assert(err, IsNil)
+	c.Assert(key, NotNil)
 
 	err = fs1.Input(nextRow(r, keySize, valSize))
-	c.Assert(err, ErrorMatches, errmsg1)
+	c.Assert(err, ErrorMatches, errmsg)
 }
