@@ -182,7 +182,7 @@ func calcDaynr(year, month, day int) int {
 	return delsum + year/4 - temp
 }
 
-// calculates number of days between two days.
+// DateDiff calculates number of days between two days.
 func DateDiff(startTime, endTime TimeInternal) (int, error) {
 	return calcDaynr(startTime.Year(), startTime.Month(), startTime.Day()) - calcDaynr(endTime.Year(), endTime.Month(), endTime.Day()), nil
 }
