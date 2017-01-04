@@ -85,6 +85,19 @@ func (txn *dbTxn) DelOption(opt kv.Option) {
 }
 
 func (txn *dbTxn) doCommit() error {
+	// Check schema lease.
+	checker, ok := txn.us.GetOption(kv.SchemaLeaseChecker).(schemaLeaseChecker)
+	if ok {
+		// DDL job doesn't set this option.
+		currVer, err := txn.store.CurrentVersion()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := checker.Check(currVer.Ver); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	// check lazy condition pairs
 	if err := txn.us.CheckLazyConditionPairs(); err != nil {
 		return errors.Trace(err)
@@ -111,6 +124,10 @@ func (txn *dbTxn) Commit() error {
 	}()
 
 	return errors.Trace(txn.doCommit())
+}
+
+type schemaLeaseChecker interface {
+	Check(txnTS uint64) error
 }
 
 func (txn *dbTxn) close() error {

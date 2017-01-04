@@ -304,6 +304,9 @@ func (s *testExpressionSuite) TestDateArith(c *C) {
 		// nil test
 		{nil, 1, "DAY", nil, nil, false},
 		{"2011-11-11", nil, "DAY", nil, nil, false},
+		// tests for inner function call
+		{"2011-11-11", s.parseExpr(c, "LEAST(1, 2)"), "DAY", "2011-11-12", "2011-11-10", false},
+		{"2011-11-11", s.parseExpr(c, "LEAST(NULL, 2)"), "DAY", nil, nil, false},
 		// tests for different units
 		{"2011-11-11 10:10:10", 1000, "MICROSECOND", "2011-11-11 10:10:10.001000", "2011-11-11 10:10:09.999000", false},
 		{"2011-11-11 10:10:10", "10", "SECOND", "2011-11-11 10:10:20", "2011-11-11 10:10:00", false},
@@ -364,19 +367,19 @@ func (s *testExpressionSuite) TestDateArith(c *C) {
 	// run the test cases
 	for _, t := range tests {
 		op := ast.NewValueExpr(ast.DateAdd)
-		dateArithInterval := ast.NewValueExpr(
-			ast.DateArithInterval{
-				Unit:     t.Unit,
-				Interval: ast.NewValueExpr(t.Interval),
-			},
-		)
-		date := ast.NewValueExpr(t.Date)
+		var interval ast.ExprNode
+		if n, ok := t.Interval.(ast.ExprNode); ok {
+			interval = n
+		} else {
+			interval = ast.NewValueExpr(t.Interval)
+		}
 		expr := &ast.FuncCallExpr{
 			FnName: model.NewCIStr("DATE_ARITH"),
 			Args: []ast.ExprNode{
 				op,
-				date,
-				dateArithInterval,
+				ast.NewValueExpr(t.Date),
+				interval,
+				ast.NewValueExpr(t.Unit),
 			},
 		}
 		ast.SetFlag(expr)
